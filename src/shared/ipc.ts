@@ -2722,6 +2722,12 @@ export interface AppSettings {
    */
   notifications: boolean;
   /**
+   * Short sound when a thread needs the user (#1506). Opt-in: only an
+   * explicit true plays it. Rides on the desktop notification when one is
+   * shown, so the OS Focus / Do Not Disturb setting silences it.
+   */
+  notificationSound: boolean;
+  /**
    * Ask "how much time did this save you?" when a run finishes (issue #401).
    * Opt-in: absent/false means the card never appears and the felt-vs-actual
    * section of the Fleet view stays empty.

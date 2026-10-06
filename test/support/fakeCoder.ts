@@ -352,6 +352,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
     defaultWorktree: false,
     updateChannel: null,
     notifications: true,
+    notificationSound: false,
     theme: "dark",
     agentsPanelDefault: "closed",
     agentsPanelRememberLast: false,

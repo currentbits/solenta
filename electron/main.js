@@ -24,6 +24,7 @@ const {
   shouldNotify,
   isNotifyTransition,
   isEffectivelySnoozed,
+  needsUser,
   notifyEvent,
   notifyBody,
   dispatchWebhook,
@@ -386,15 +387,19 @@ function threadNotifyState(thread) {
 /**
  * Desktop notification when a run settles or blocks on a prompt while the
  * window is in the background. Click focuses the window and selects that
- * thread.
+ * thread. `sound` is the opt-in attention sound (#1506): played by the OS
+ * with the notification, so Focus / Do Not Disturb silences it.
  * @param {{ id: string, title?: string, status: string }} thread
+ * @param {boolean} sound
+ * @returns {boolean} whether a notification was shown
  */
-function notifyThreadComplete(thread) {
-  if (typeof Notification !== "function") return;
-  if (Notification.isSupported && !Notification.isSupported()) return;
+function notifyThreadComplete(thread, sound) {
+  if (typeof Notification !== "function") return false;
+  if (Notification.isSupported && !Notification.isSupported()) return false;
   const n = new Notification({
     title: thread.title || "Thread",
     body: notifyBody(notifyEvent(threadNotifyState(thread))),
+    silent: !sound,
   });
   n.on("click", () => {
     const win = focusMainWindow();
@@ -403,6 +408,22 @@ function notifyThreadComplete(thread) {
     }
   });
   n.show();
+  return true;
+}
+
+let attentionBadge = 0;
+/**
+ * Dock (macOS) / launcher (Linux Unity) badge: how many threads wait on
+ * the user (#1506). Windows has no badge count API; this is a no-op there.
+ * @param {import('./store').Store} store
+ */
+function syncAttentionBadge(store) {
+  const now = Date.now();
+  let n = 0;
+  for (const t of store.getThreads()) if (needsUser(t, now)) n += 1;
+  if (n === attentionBadge) return;
+  attentionBadge = n;
+  app.setBadgeCount(n);
 }
 
 /**
@@ -693,12 +714,14 @@ app.whenReady().then(async () => {
           !isEffectivelySnoozed(payload.thread, Date.now())
         ) {
           const settings = store.getSettings();
-          if (
+          const sound = settings.notificationSound === true;
+          const shown =
             shouldNotify(prev, next, isAnyWindowFocused()) &&
-            settings.notifications
-          ) {
-            notifyThreadComplete(payload.thread);
-          }
+            settings.notifications &&
+            notifyThreadComplete(payload.thread, sound);
+          // No notification to carry it (window focused, or notifications
+          // off): the system alert sound instead.
+          if (sound && !shown) shell.beep();
           void dispatchWebhook({
             thread: payload.thread,
             prevStatus: prev,
@@ -724,6 +747,12 @@ app.whenReady().then(async () => {
     userDataPath: userData,
     getIosSimulator: currentIosSimulator,
   });
+
+  // Polled, not pushed: opening a thread clears its unread by stamping the
+  // store with no broadcast, and a snooze expires on the clock.
+  // ponytail: O(threads) every 2s; hook store writes if it ever shows in a profile.
+  syncAttentionBadge(store);
+  setInterval(() => syncAttentionBadge(store), 2000);
 
   const registered = registerIpc({
     ipcMain,

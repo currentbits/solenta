@@ -1576,6 +1576,28 @@ describe("SettingsModal confirm-quit-with-active-work (#1195)", () => {
   });
 });
 
+describe("SettingsModal notification sound (#1506)", () => {
+  it("is off by default and saves the toggle", async () => {
+    const patches: Partial<AppSettings>[] = [];
+    const m = await mount(
+      modal({
+        initialPane: "general",
+        settings: { dailyBudgetUsd: null, autoSettleAfterDays: 3 } as AppSettings,
+        onSaveSettings: async (patch) => {
+          patches.push(patch);
+          return { dailyBudgetUsd: null, autoSettleAfterDays: 3, ...patch } as AppSettings;
+        },
+      }),
+    );
+    const box = m.query("[data-notification-sound]") as HTMLInputElement;
+    assert.ok(box, "sound checkbox");
+    assert.equal(box.checked, false);
+    await m.click(box);
+    assert.deepEqual(patches, [{ notificationSound: true }]);
+    m.unmount();
+  });
+});
+
 describe("SettingsModal quota-wait auto-resume (#462)", () => {
   it("saves the continue-at-usage-limit toggle", async () => {
     const patches: Partial<AppSettings>[] = [];

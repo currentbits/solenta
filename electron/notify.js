@@ -68,6 +68,33 @@ function isEffectivelySnoozed(thread, now) {
 }
 
 /**
+ * Whether a thread is waiting on the user, for the dock / taskbar badge
+ * (#1506). The sidebar's "needs you" rows: blocked on a permission, plan
+ * or question card, or failed / finished and unread (src/threadUnread.ts).
+ * A failure the user has already looked at stops counting, or one old
+ * failure would pin the badge forever. Muted, snoozed, archived, trashed
+ * and memory-consolidation threads never count.
+ *
+ * @param {{ status?: string, awaitingInput?: boolean, pendingQuestion?: unknown, muted?: boolean, archived?: boolean, trashedAt?: number | null, memoryConsolidate?: boolean, updatedAt?: number, lastVisitedAt?: number | null, snoozedUntil?: number | null, snoozedAt?: number | null } | null | undefined} thread
+ * @param {number} now
+ * @returns {boolean}
+ */
+function needsUser(thread, now) {
+  if (!thread || thread.muted || thread.archived) return false;
+  if (Number.isFinite(thread.trashedAt) || thread.memoryConsolidate === true) {
+    return false;
+  }
+  if (isEffectivelySnoozed(thread, now)) return false;
+  if (thread.awaitingInput || thread.pendingQuestion) return true;
+  const unread =
+    thread.lastVisitedAt != null && Number(thread.updatedAt) > thread.lastVisitedAt;
+  return (
+    unread &&
+    (thread.status === "failed" || thread.status === "done" || thread.status === "idle")
+  );
+}
+
+/**
  * @param {unknown} u
  * @returns {boolean}
  */
@@ -328,6 +355,7 @@ module.exports = {
   shouldNotify,
   isNotifyTransition,
   isEffectivelySnoozed,
+  needsUser,
   notifyEvent,
   notifyBody,
   shouldPostWebhook,

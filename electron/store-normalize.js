@@ -282,6 +282,9 @@ function validateQuotaFailover(raw) {
  * notifications: only an explicit false turns desktop notifications off, so
  * absent/junk keeps the pre-setting behaviour (notify).
  *
+ * notificationSound: absent/junk → false. The attention sound (#1506) is
+ * opt-in; only an explicit true plays it.
+ *
  * feltEstimatePrompt: absent/junk → false. The "how much time did this save
  * you?" card is opt-in; only an explicit true asks.
  *
@@ -314,7 +317,7 @@ function validateQuotaFailover(raw) {
  * off, so a pasted URL fires all three until the user unchecks.
  *
  * @param {unknown} raw
- * @returns {{ dailyBudgetUsd: number | null, orchestrationBudgetUsd: number | null, autoSettleAfterDays: number | null, autoSettleOnMerge: boolean, prDiffCapLines: number | null, mcpServers: Array<{ name: string, url: string, token?: string, enabled: boolean }>, defaultWorktree: boolean, defaultOrchestrate: boolean, updateChannel: "prod" | "nightly" | null, notifications: boolean, agentProfiles: Array<{ id: string, name: string, provider: string, model: string | null, reasoningEffort: string | null, permissionMode: string }> }}
+ * @returns {{ dailyBudgetUsd: number | null, orchestrationBudgetUsd: number | null, autoSettleAfterDays: number | null, autoSettleOnMerge: boolean, prDiffCapLines: number | null, mcpServers: Array<{ name: string, url: string, token?: string, enabled: boolean }>, defaultWorktree: boolean, defaultOrchestrate: boolean, updateChannel: "prod" | "nightly" | null, notifications: boolean, notificationSound: boolean, agentProfiles: Array<{ id: string, name: string, provider: string, model: string | null, reasoningEffort: string | null, permissionMode: string }> }}
  */
 function normalizeSettings(raw) {
   const settings = {
@@ -331,6 +334,7 @@ function normalizeSettings(raw) {
     onboardingSeen: false,
     updateChannel: null,
     notifications: true,
+    notificationSound: false,
     feltEstimatePrompt: false,
     uiScale: UI_SCALE_DEFAULT,
     theme: "dark",
@@ -436,6 +440,9 @@ function normalizeSettings(raw) {
   settings.updateChannel = ch === "prod" || ch === "nightly" ? ch : null;
   settings.notifications =
     /** @type {{ notifications?: unknown }} */ (obj).notifications !== false;
+  settings.notificationSound =
+    /** @type {{ notificationSound?: unknown }} */ (obj).notificationSound ===
+    true;
   settings.feltEstimatePrompt =
     /** @type {{ feltEstimatePrompt?: unknown }} */ (obj).feltEstimatePrompt ===
     true;
