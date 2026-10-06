@@ -1,5 +1,6 @@
 /** Projects and spaces for the browser-dev fixture. */
 import type {
+  CloneProgressPush,
   CoderApi,
   AgentConfigDoctorReport,
   AgentConfigPreview,
@@ -11,6 +12,10 @@ import type {
 } from "../shared/ipc";
 import type { DevCtx } from "./context.ts";
 import { id } from "./util.ts";
+
+/** "clone:progress" subscribers for the browser-dev mock (#1506). */
+export const devCloneProgress = new Set<(push: CloneProgressPush) => void>();
+const devCloneCancels = new Map<string, () => void>();
 
 export function createProjects(ctx: DevCtx): Pick<CoderApi, "projects" | "spaces"> {
   const { details, runStates, clearedDiff, emitThreads, clearRunTimer } = ctx;
@@ -84,6 +89,49 @@ export function createProjects(ctx: DevCtx): Pick<CoderApi, "projects" | "spaces
         };
         ctx.projects.push(project);
         return { ...project };
+      },
+      /** Fake clone: a few progress lines over ~3s, cancellable. */
+      async clone(input) {
+        const url = String(input.url ?? "").trim();
+        if (!/^(https:\/\/|ssh:\/\/|[\w.-]+@[\w.-]+:)/.test(url)) {
+          throw new Error(
+            "Use an https:// or ssh URL (for example git@github.com:owner/repo.git)",
+          );
+        }
+        const parentDir = String(input.parentDir ?? "").trim().replace(/\/+$/, "");
+        if (!parentDir) throw new Error("Location is required");
+        const name =
+          input.name?.trim() ||
+          url.replace(/\/+$/, "").split(/[/:]/).pop()?.replace(/\.git$/, "") ||
+          "repo";
+        const cloneId = input.cloneId ?? "";
+        const lines = [
+          `Cloning into '${parentDir}/${name}'...`,
+          "Receiving objects:  38% (412/1084), 2.1 MiB | 4.2 MiB/s",
+          "Receiving objects: 100% (1084/1084), 5.6 MiB | 4.4 MiB/s, done.",
+          "Resolving deltas: 100% (702/702), done.",
+        ];
+        await new Promise<void>((resolve, reject) => {
+          let i = 0;
+          const timer = setInterval(() => {
+            for (const fn of devCloneProgress) fn({ cloneId, line: lines[i] });
+            i += 1;
+            if (i >= lines.length) {
+              clearInterval(timer);
+              devCloneCancels.delete(cloneId);
+              resolve();
+            }
+          }, 750);
+          devCloneCancels.set(cloneId, () => {
+            clearInterval(timer);
+            reject(new Error("Clone cancelled"));
+          });
+        });
+        return ctx.api().projects.add(`${parentDir}/${name}`);
+      },
+      async cancelClone(input) {
+        devCloneCancels.get(input.cloneId)?.();
+        devCloneCancels.delete(input.cloneId);
       },
       async discoverRecent(): Promise<RecentRepoGroup[]> {
         const hour = 3_600_000;
@@ -164,6 +212,8 @@ export function createProjects(ctx: DevCtx): Pick<CoderApi, "projects" | "spaces
         setupCommand?: string | null;
         quickActions?: ProjectInfo["quickActions"];
         threadDefaults?: ProjectInfo["threadDefaults"] | null;
+        waitForSetup?: boolean | null;
+        branchPrefix?: string | null;
       }) {
         const project = ctx.projects.find((p) => p.id === input.projectId);
         if (!project) {
@@ -229,6 +279,18 @@ export function createProjects(ctx: DevCtx): Pick<CoderApi, "projects" | "spaces
         if (Object.prototype.hasOwnProperty.call(input, "threadDefaults")) {
           if (input.threadDefaults) project.threadDefaults = input.threadDefaults;
           else delete project.threadDefaults;
+        }
+        if (input.waitForSetup === true) project.waitForSetup = true;
+        else if (input.waitForSetup === false || input.waitForSetup === null) {
+          delete project.waitForSetup;
+        }
+        if (Object.prototype.hasOwnProperty.call(input, "branchPrefix")) {
+          const prefix = input.branchPrefix?.trim() ?? "";
+          if (prefix && /[\s~^:?*[\\]|\.\.|^[-/]/.test(prefix)) {
+            throw new Error("Branch prefix cannot contain spaces or any of ~ ^ : ? * [ \\");
+          }
+          if (prefix && prefix !== "coder/") project.branchPrefix = prefix;
+          else delete project.branchPrefix;
         }
         return { ...project };
       },

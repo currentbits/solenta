@@ -3,6 +3,7 @@
 const services = require("./services.js");
 const { browseFilesystem } = require("./fsBrowse.js");
 const { retireAgent } = require("./ipc-shared.js");
+const { cloneProject, cancelClone } = require("./projectClone.js");
 const { discoverRecentRepos } = require("./recentRepos.js");
 
 /** IPC_HANDLERS rows for projects:*, fs:*, spaces:*; ipc.js spreads them in. */
@@ -24,6 +25,15 @@ module.exports = {
   },
   "projects:create": async (ctx, input) => {
     return services.createProject(ctx.store, input || {});
+  },
+  "projects:clone": async (ctx, input) => {
+    return cloneProject(input && typeof input === "object" ? input : {}, {
+      addProject: (target) => services.addProject(ctx.store, target),
+      broadcast: ctx.broadcast,
+    });
+  },
+  "projects:cancelClone": async (_ctx, input) => {
+    cancelClone(input);
   },
   "projects:pickDirectory": async (ctx) => {
     if (!ctx.dialog || typeof ctx.dialog.showOpenDialog !== "function") {

@@ -97,6 +97,15 @@ export interface ProjectInfo {
    * Absent/empty = none. Cap 8.
    */
   quickActions?: ProjectQuickAction[];
+  /** Checked-in solenta.json commands (#1506). Never persisted. */
+  repoConfig?: ProjectRepoConfig;
+  /**
+   * First run in a new worktree waits for setup to finish (#1506).
+   * Absent = the agent starts alongside setup.
+   */
+  waitForSetup?: boolean;
+  /** Worktree branch prefix (#1506). Absent = "coder/". */
+  branchPrefix?: string;
   /** Defaults for new threads in this project (#1501). Absent = global defaults. */
   threadDefaults?: ProjectThreadDefaults;
   /**
@@ -144,6 +153,21 @@ export interface ProjectQuickAction {
   id: string;
   name: string;
   command: string;
+}
+
+/**
+ * Commands from a checked-in solenta.json (#1506), derived at list time.
+ * Project settings win field by field. They only run once the user approved
+ * this `hash` for the project; pass it as runCommand's trustRepoConfig.
+ * `error` set = the file is invalid and contributes no commands.
+ */
+export interface ProjectRepoConfig {
+  setupCommand?: string;
+  /** Ids are `repo:<index>`. */
+  quickActions?: ProjectQuickAction[];
+  hash?: string;
+  trusted: boolean;
+  error?: string;
 }
 
 /** Source-control probe for a local project checkout (issue #521). */
@@ -283,6 +307,21 @@ export interface CreateProjectInput {
   parentDir: string;
 }
 
+/** projects.clone (#1506). `name` defaults to the repo name in the URL. */
+export interface CloneProjectInput {
+  url: string;
+  parentDir: string;
+  name?: string;
+  /** Caller-minted id that tags "clone:progress" pushes and cancelClone. */
+  cloneId?: string;
+}
+
+/** One git progress line for an in-flight clone, pushed on "clone:progress". */
+export interface CloneProgressPush {
+  cloneId: string;
+  line: string;
+}
+
 /**
  * Patch for projects.update. An empty remoteHost string clears the remote
  * config, turning the project local again; a non-empty host requires an
@@ -312,6 +351,10 @@ export interface ProjectUpdateInput {
    * Named header actions (issue #153). Empty array clears them.
    */
   quickActions?: ProjectQuickAction[];
+  /** #1506. false / null clears it. */
+  waitForSetup?: boolean | null;
+  /** #1506. Empty / null restores "coder/"; an invalid prefix rejects. */
+  branchPrefix?: string | null;
   /** New-thread defaults (#1501). Replaces the whole object; null clears. */
   threadDefaults?: ProjectThreadDefaults | null;
 }
@@ -3945,6 +3988,14 @@ export interface CoderApi {
     /** Create a new folder + git repo at parentDir/name, then add it as a project. */
     create(input: CreateProjectInput): Promise<ProjectInfo>;
     /**
+     * `git clone` an https:// or ssh URL into parentDir/name, then add it
+     * (#1506). Rejects an existing non-empty target, other URL schemes, and
+     * on cancel ("Clone cancelled"); a failed clone leaves nothing behind.
+     */
+    clone(input: CloneProjectInput): Promise<ProjectInfo>;
+    /** Stop the clone tagged `cloneId`. Unknown ids are a no-op. */
+    cancelClone(input: { cloneId: string }): Promise<void>;
+    /**
      * The built-in Scratch workspace ("start without a project", #1411):
      * created on first call under Solenta's data dir, no git. Idempotent.
      */
@@ -4522,10 +4573,14 @@ export interface CoderApi {
      * named quick action (issue #153). Rejects when no command is set, the
      * action is unknown, a run is active, or another command is in flight.
      * Command failure is a result, not a throw. Logged as transcript events.
+     * A solenta.json command rejects with REPO_CONFIG_UNTRUSTED until
+     * `trustRepoConfig` carries the ProjectRepoConfig.hash the user approved
+     * (#1506); that approval is stored on the project.
      */
     runCommand(input: {
       threadId: string;
       actionId?: string;
+      trustRepoConfig?: string;
     }): Promise<CommandRunResult>;
     /**
      * Move an eligible thread to Recently deleted for seven days (#940).
@@ -5436,6 +5491,8 @@ export interface CoderApi {
   on(channel: "speech:changed", cb: (status: SpeechStatus) => void): () => void;
   /** Batched Terminal pane output (#1493). */
   on(channel: "terminal:data", cb: (push: TerminalDataPush) => void): () => void;
+  /** Add project from URL: git clone progress (#1506). */
+  on(channel: "clone:progress", cb: (push: CloneProgressPush) => void): () => void;
 }
 
 declare global {

@@ -421,8 +421,49 @@ function branchRefExists(repoPath, name) {
   return false;
 }
 
+/** Worktree branch prefix when a project sets none (#1506). */
+const DEFAULT_BRANCH_PREFIX = "coder/";
+
 /**
- * Pick a free `coder/...` name: `base`, then `base-2`, `base-3`, …
+ * Why `prefix` cannot start a branch name, or null when it can. Applies
+ * git's check-ref-format rules to `<prefix>x`, since a slug always
+ * follows, so a trailing "/" or "-" is fine.
+ * @param {unknown} prefix
+ * @returns {string | null}
+ */
+function branchPrefixError(prefix) {
+  if (typeof prefix !== "string" || !prefix) return "Branch prefix is empty";
+  if (prefix.length > 40) return "Branch prefix is longer than 40 characters";
+  const name = `${prefix}x`;
+  // eslint-disable-next-line no-control-regex
+  if (/[\x00-\x20\x7f~^:?*[\\]/.test(name)) {
+    return "Branch prefix cannot contain spaces or any of ~ ^ : ? * [ \\";
+  }
+  if (name.startsWith("-") || name.startsWith("/")) {
+    return "Branch prefix cannot start with - or /";
+  }
+  if (name.includes("..") || name.includes("//") || name.includes("@{")) {
+    return "Branch prefix cannot contain .., // or @{";
+  }
+  if (name.split("/").some((c) => c.startsWith(".") || c.endsWith(".lock"))) {
+    return "Branch prefix parts cannot start with . or end with .lock";
+  }
+  return null;
+}
+
+/**
+ * The project's prefix, or the default for unset/invalid values.
+ * @param {{ branchPrefix?: unknown } | null | undefined} project
+ */
+function branchPrefixFor(project) {
+  const p = project && project.branchPrefix;
+  return typeof p === "string" && !branchPrefixError(p)
+    ? p
+    : DEFAULT_BRANCH_PREFIX;
+}
+
+/**
+ * Pick a free `<prefix>...` name: `base`, then `base-2`, `base-3`, …
  * Returns null when 2..99 are all taken so a best-effort rename can bail.
  * @param {string} repoPath
  * @param {string} base
@@ -487,5 +528,8 @@ module.exports = {
   worktreePathForBranch,
   slugify,
   uniqueCoderBranch,
+  DEFAULT_BRANCH_PREFIX,
+  branchPrefixError,
+  branchPrefixFor,
   resolveCommitOrThrow,
 };

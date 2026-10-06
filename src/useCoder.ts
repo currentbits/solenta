@@ -11,6 +11,7 @@ import type {
   CheckpointInfo,
   CoderApi,
   DigestResult,
+  CloneProjectInput,
   CreateProjectInput,
   RunStatInfo,
   ConflictContext,
@@ -194,6 +195,8 @@ export interface UseCoderResult {
   ) => Promise<ProjectInfo | null>;
   /** Create a new folder + git repo (projects.create) and add it. */
   createProject: (input: CreateProjectInput) => Promise<ProjectInfo | null>;
+  /** git clone a URL and add it (projects.clone, #1506). Rejects on failure. */
+  cloneProject: (input: CloneProjectInput) => Promise<ProjectInfo>;
   /** The built-in Scratch workspace ("start without a project", #1411). */
   ensureScratchProject: () => Promise<ProjectInfo | null>;
   /** Patch name, SSH remotes, or worktree retention of a project. */
@@ -1454,6 +1457,7 @@ export function useCoder(): UseCoderResult {
   const {
     addProject,
     createProject,
+    cloneProject,
     ensureScratchProject,
     updateProject,
   } = useCoderProjects({ api, setProjects, setError });
@@ -1864,8 +1868,24 @@ export function useCoder(): UseCoderResult {
   );
 
   const runCommand = useCallback(
-    async (threadId: string, actionId?: string) => {
-      return api.threads.runCommand({ threadId, actionId });
+    async (threadId: string, actionId?: string, trustRepoConfig?: string) => {
+      const run = api.threads.runCommand({
+        threadId,
+        actionId,
+        ...(trustRepoConfig ? { trustRepoConfig } : {}),
+      });
+      // The approval lives on the project (#1506): pick up trusted=true, or
+      // the file's new hash when it changed under an older approval.
+      const refresh = () => {
+        void api.projects.list().then(setProjects).catch(() => {});
+      };
+      if (trustRepoConfig) refresh();
+      return run.catch((err: unknown) => {
+        if (String(err instanceof Error ? err.message : err).includes("REPO_CONFIG_UNTRUSTED")) {
+          refresh();
+        }
+        throw err;
+      });
     },
     [api],
   );
@@ -2000,6 +2020,7 @@ export function useCoder(): UseCoderResult {
     clearError,
     addProject,
     createProject,
+    cloneProject,
     ensureScratchProject,
     updateProject,
     createThread,

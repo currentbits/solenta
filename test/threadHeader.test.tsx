@@ -1684,6 +1684,83 @@ describe("project quick actions in Thread details (#153)", () => {
   });
 });
 
+describe("solenta.json commands in Thread details (#1506)", () => {
+  const HASH = "b".repeat(64);
+  const repoProject = (trusted: boolean) => ({
+    ...project,
+    repoConfig: {
+      setupCommand: "npm ci",
+      quickActions: [{ id: "repo:0", name: "Test", command: "npm test" }],
+      hash: HASH,
+      trusted,
+    },
+  });
+
+  it("asks once before running an unapproved file command, listing all of them", async () => {
+    const calls: unknown[][] = [];
+    const m = await mount(
+      view({
+        project: repoProject(false),
+        onRunCommand: async (...args) => {
+          calls.push(args);
+        },
+      }),
+    );
+    await m.flush();
+    await m.click(m.query("[data-thread-details-btn]"));
+    assert.equal(m.query('[data-thread-command="repo:0"]')?.textContent, "Test");
+    await m.click(m.query('[data-thread-command="repo:0"]'));
+    await m.flush();
+    assert.deepEqual(calls, [], "nothing runs before approval");
+    const card = m.query("[data-repo-config-approve]");
+    assert.ok(card);
+    assert.match(card!.textContent || "", /npm ci/);
+    assert.match(card!.textContent || "", /npm test/);
+    await m.click(m.query("[data-repo-config-approve-run]"));
+    await m.flush();
+    assert.deepEqual(calls, [["t1", "repo:0", HASH]]);
+    assert.equal(m.query("[data-repo-config-approve]"), null);
+    m.unmount();
+  });
+
+  it("runs approved file commands directly, and own settings win", async () => {
+    const calls: unknown[][] = [];
+    const m = await mount(
+      view({
+        project: { ...repoProject(true), setupCommand: "make deps" },
+        onRunCommand: async (...args) => {
+          calls.push(args);
+        },
+      }),
+    );
+    await m.flush();
+    await m.click(m.query("[data-thread-details-btn]"));
+    assert.equal(m.query('[data-thread-command="setup"]')?.getAttribute("title"), "make deps");
+    await m.click(m.query('[data-thread-command="repo:0"]'));
+    await m.flush();
+    assert.deepEqual(calls, [["t1", "repo:0", undefined]]);
+    m.unmount();
+  });
+
+  it("reopens the approval when main says the file changed", async () => {
+    const m = await mount(
+      view({
+        project: repoProject(true),
+        onRunCommand: async () => {
+          throw new Error("REPO_CONFIG_UNTRUSTED: approve this repo's solenta.json commands before they run");
+        },
+      }),
+    );
+    await m.flush();
+    await m.click(m.query("[data-thread-details-btn]"));
+    await m.click(m.query('[data-thread-command="setup"]'));
+    await m.flush();
+    assert.ok(m.query("[data-repo-config-approve]"));
+    assert.equal(m.query("[data-thread-command-error]"), null);
+    m.unmount();
+  });
+});
+
 describe("Workers header control and parent navigation", () => {
   it("shows Workers (n) and opens the inspector callback", async () => {
     const opened: number[] = [];

@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import type {
+  CloneProjectInput,
   CoderApi,
   CreateProjectInput,
   ProjectInfo,
@@ -71,6 +72,20 @@ export function useCoderProjects({
     }
   }, [api]);
 
+  /**
+   * git clone + add (#1506). Rejects instead of raising the banner: the
+   * Add project modal shows clone failures (and "Clone cancelled") inline.
+   */
+  const cloneProject = useCallback(async (input: CloneProjectInput) => {
+    const p = await api.projects.clone(input);
+    setProjects((prev) => {
+      if (prev.some((x) => x.id === p.id)) return prev;
+      return [...prev, p];
+    });
+    setError(null);
+    return p;
+  }, [api]);
+
   const ensureScratchProject = useCallback(async () => {
     try {
       const p = await api.projects.ensureScratch();
@@ -103,6 +118,7 @@ export function useCoderProjects({
   return {
     addProject,
     createProject,
+    cloneProject,
     ensureScratchProject,
     updateProject,
   };

@@ -13,6 +13,7 @@
  * trailer records this UI.
  */
 import type {
+  CloneProgressPush,
   AppStatus,
   UpdateStatus,
   CheckpointInfo,
@@ -32,7 +33,7 @@ import { createSourceControl, createIssues } from "./dev/issues.ts";
 import { createMcp } from "./dev/mcp.ts";
 import type { MemoryRow } from "./dev/memory.ts";
 import { seedMemoryEntries, createMemory } from "./dev/memory.ts";
-import { createProjects } from "./dev/projects.ts";
+import { createProjects, devCloneProgress } from "./dev/projects.ts";
 import type { RunState } from "./dev/runs.ts";
 import { createRunEngine, createRuns } from "./dev/runs.ts";
 import {
@@ -297,7 +298,7 @@ function buildDevCoder(): CoderApi {
     return {
       pendingWorktree: false,
       pendingFork: false,
-      branch: thread.branch ?? `coder/${slug}-${thread.id.slice(0, 6)}`,
+      branch: thread.branch ?? `${project?.branchPrefix ?? "coder/"}${slug}-${thread.id.slice(0, 6)}`,
       worktreePath: `${project?.path ?? "/Users/demo/project"}/.coder/worktrees/${thread.id}`,
     };
   };
@@ -490,6 +491,13 @@ function buildDevCoder(): CoderApi {
         listeners["boot:ready"].add(fn);
         return () => {
           listeners["boot:ready"].delete(fn);
+        };
+      }
+      if (channel === "clone:progress") {
+        const fn = cb as (push: CloneProgressPush) => void;
+        devCloneProgress.add(fn);
+        return () => {
+          devCloneProgress.delete(fn);
         };
       }
       if (channel === "speech:changed") {

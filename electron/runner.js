@@ -1941,6 +1941,11 @@ function createRunner(opts) {
           : null,
       );
 
+    /** @type {() => void} */
+    let wakeOnStop = () => {};
+    const stopped = new Promise((resolve) => {
+      wakeOnStop = () => resolve(null);
+    });
     const pendingEntry = {
       kind: "preparing",
       runId,
@@ -1948,10 +1953,39 @@ function createRunner(opts) {
       handle: {
         kill() {
           pendingEntry.stopping = true;
+          wakeOnStop();
         },
       },
     };
     active.set(threadId, pendingEntry);
+
+    // #1506 "Agent waits for setup": a new worktree's setup (and submodule
+    // update) is in flight; hold the agent until it settles. The command's
+    // own 30 min timeout bounds the wait, and Stop cuts it short. A failed
+    // setup is reported and the agent starts anyway, same as setup failures
+    // everywhere else: the worktree is kept, the transcript carries the log,
+    // and the agent can often repair a half-installed tree itself.
+    const setupJob =
+      projectForGate && projectForGate.waitForSetup === true
+        ? require("./projectCommands.js").pendingSetup(threadId)
+        : null;
+    if (setupJob) {
+      const waitId = beginWorkLogStep(threadId, runId, "Waiting for setup");
+      stampPreparingSteps(threadId, runId, { workingId: waitId });
+      pushDetail(threadId);
+      const ran = await Promise.race([setupJob, stopped]);
+      completeWorkLogStep(threadId, waitId);
+      if (abortIfCancelled(threadId, runId)) return { runId };
+      if (ran && /** @type {any} */ (ran).ok === false) {
+        appendMessage(
+          threadId,
+          "event",
+          "Setup did not finish cleanly. Starting the agent anyway.",
+          runId,
+        );
+      }
+      pushDetail(threadId);
+    }
 
     const bootNote = await ask.prefetchBootstrapNote({
       userDataPath,

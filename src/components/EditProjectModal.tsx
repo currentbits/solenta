@@ -66,6 +66,9 @@ export function EditProjectModal({
   const [iconUrl, setIconUrl] = useState(project.iconUrl ?? null);
   const [iconDirty, setIconDirty] = useState(false);
   const [setupCommand, setSetupCommand] = useState(project.setupCommand ?? "");
+  const [waitForSetup, setWaitForSetup] = useState(project.waitForSetup === true);
+  const [branchPrefix, setBranchPrefix] = useState(project.branchPrefix ?? "");
+  const repo = project.repoConfig;
   const [quickActions, setQuickActions] = useState<ProjectQuickAction[]>(
     () => (project.quickActions ?? []).map((a) => ({ ...a })),
   );
@@ -132,6 +135,8 @@ export function EditProjectModal({
         worktreeRetention,
         autoDispatch,
         setupCommand: setupCommand.trim() || null,
+        waitForSetup,
+        branchPrefix: branchPrefix.trim() || null,
         quickActions: quickActions
           .map((a) => ({
             id: a.id,
@@ -496,9 +501,34 @@ export function EditProjectModal({
             />
             <p className={styles.note}>
               0 keeps every worktree. New projects start at 10. Fork and
-              archived worktrees never take a slot — those are reclaimed as
+              archived worktrees never take a slot. Those are reclaimed as
               soon as they go quiet. Cleanup removes directories only.
               Branches stay.
+            </p>
+          </div>
+          <div className={styles.field}>
+            <label
+              className={styles.fieldLabel}
+              htmlFor="edit-project-branch-prefix"
+            >
+              Branch prefix
+            </label>
+            <input
+              id="edit-project-branch-prefix"
+              className={`${styles.input} ${styles.monoInput}`}
+              data-edit-project-branch-prefix=""
+              value={branchPrefix}
+              onChange={(e) => setBranchPrefix(e.target.value)}
+              placeholder="coder/"
+              autoComplete="off"
+              spellCheck={false}
+              disabled={pending}
+              onKeyDown={enterToSubmit}
+            />
+            <p className={styles.note}>
+              New worktree branches are named{" "}
+              {(branchPrefix.trim() || "coder/") + "<title>-<id>"}. Existing
+              branches keep their names.
             </p>
           </div>
           <div className={styles.field}>
@@ -538,6 +568,11 @@ export function EditProjectModal({
           <div className={styles.field}>
             <label className={styles.fieldLabel} htmlFor="edit-project-setup">
               Worktree setup
+              {repo?.setupCommand && !setupCommand.trim() ? (
+                <span className={styles.sourceTag} data-repo-config-source="setup">
+                  from solenta.json
+                </span>
+              ) : null}
             </label>
             <input
               id="edit-project-setup"
@@ -545,14 +580,35 @@ export function EditProjectModal({
               data-edit-project-setup=""
               value={setupCommand}
               onChange={(e) => setSetupCommand(e.target.value)}
-              placeholder="npm install"
+              placeholder={repo?.setupCommand ?? "npm install"}
               autoComplete="off"
               spellCheck={false}
               disabled={pending}
             />
             <p className={styles.note}>
-              Runs once when a new worktree is created. Failure is logged on
-              the thread and does not remove the worktree.
+              Runs once when a new worktree is created, after submodules are
+              fetched. Failure is logged on the thread and does not remove the
+              worktree.
+              {repo?.setupCommand
+                ? setupCommand.trim()
+                  ? " This overrides the setup in solenta.json."
+                  : " Leave empty to use the setup in solenta.json."
+                : ""}
+            </p>
+            <label className={styles.fieldRow} htmlFor="edit-project-wait-setup">
+              <input
+                id="edit-project-wait-setup"
+                type="checkbox"
+                data-edit-project-wait-setup=""
+                checked={waitForSetup}
+                disabled={pending}
+                onChange={(e) => setWaitForSetup(e.target.checked)}
+              />
+              <span>Agent waits for setup</span>
+            </label>
+            <p className={styles.note}>
+              The first message in a new worktree starts once setup finishes.
+              If setup fails, the thread says so and the agent starts anyway.
             </p>
           </div>
           <div className={styles.field}>
@@ -623,6 +679,19 @@ export function EditProjectModal({
                   </button>
                 </div>
               ))}
+              {quickActions.length === 0 && repo?.quickActions?.length
+                ? repo.quickActions.map((action) => (
+                    <div
+                      key={action.id}
+                      className={styles.actionRow}
+                      data-repo-config-action=""
+                    >
+                      <span className={styles.note}>{action.name}</span>
+                      <code className={styles.repoCommand}>{action.command}</code>
+                      <span className={styles.sourceTag}>from solenta.json</span>
+                    </div>
+                  ))
+                : null}
               {quickActions.length < 8 ? (
                 <button
                   type="button"
@@ -650,7 +719,21 @@ export function EditProjectModal({
             <p className={styles.note}>
               Named buttons in the thread header. Run from the worktree when
               one exists.
+              {repo?.quickActions?.length
+                ? " Actions added here replace the list in solenta.json."
+                : ""}
             </p>
+            {repo?.error ? (
+              <p className={styles.fieldError} data-repo-config-error="">
+                {repo.error}
+              </p>
+            ) : repo && !repo.error ? (
+              <p className={styles.note} data-repo-config-trust="">
+                {repo.trusted
+                  ? "The commands in solenta.json are approved for this project."
+                  : "Commands from solenta.json ask for your approval before they first run, and again whenever they change."}
+              </p>
+            ) : null}
           </div>
           <div className={styles.field}>
             <label className={styles.fieldRow} htmlFor="edit-project-auto-dispatch">

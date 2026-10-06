@@ -13,6 +13,7 @@ const PUSH_CHANNELS = new Set([
   "simulator:focus",
   "speech:changed",
   "terminal:data",
+  "clone:progress",
 ]);
 /* </ipc-push> */
 
@@ -127,6 +128,8 @@ const IPC_CHANNELS = Object.freeze([
   { ns: "projects", method: "add" },
   { ns: "projects", method: "discoverRecent" },
   { ns: "projects", method: "create" },
+  { ns: "projects", method: "clone" },
+  { ns: "projects", method: "cancelClone" },
   { ns: "projects", method: "ensureScratch" },
   { ns: "projects", method: "update" },
   { ns: "projects", method: "pickIcon" },

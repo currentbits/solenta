@@ -24,6 +24,8 @@ const {
   worktreePathForBranch,
   slugify,
   uniqueCoderBranch,
+  DEFAULT_BRANCH_PREFIX,
+  branchPrefixFor,
   resolveCommitOrThrow,
 } = require("./worktrees-branches.js");
 const {
@@ -747,7 +749,7 @@ function setupWorktree(opts) {
   }
 
   const shortId = String(thread.id).slice(0, 6);
-  const wanted = `coder/${slugify(thread.title)}-${shortId}`;
+  const wanted = `${branchPrefixFor(project)}${slugify(thread.title)}-${shortId}`;
   const branch = uniqueCoderBranch(project.path, wanted) || wanted;
   const { dir, addPath } = resolveWorktreeDir(project, worktreeBase, thread.id);
 
@@ -899,11 +901,20 @@ function maybeRenameWorktreeBranch(opts) {
     return null;
   }
   const shortId = String(thread.id).slice(0, 6);
-  const placeholder = `coder/new-thread-${shortId}`;
-  if (thread.branch !== placeholder) {
+  // Keep the prefix the branch was born with (#1506): the project's
+  // prefix may have changed since, and older threads carry `coder/`.
+  const placeholderTail = `new-thread-${shortId}`;
+  const bornWith = thread.branch.endsWith(placeholderTail)
+    ? thread.branch.slice(0, -placeholderTail.length)
+    : null;
+  const project = store.getProject(thread.projectId);
+  if (
+    bornWith === null ||
+    (bornWith !== DEFAULT_BRANCH_PREFIX && bornWith !== branchPrefixFor(project))
+  ) {
     return null;
   }
-  const wanted = `coder/${slugify(newTitle)}-${shortId}`;
+  const wanted = `${bornWith}${slugify(newTitle)}-${shortId}`;
   if (wanted === thread.branch) {
     return null;
   }
