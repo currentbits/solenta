@@ -116,6 +116,7 @@ import {
   whenIdle,
 } from "./bootSnapshot";
 import { prunePaneLayouts } from "./paneLayout";
+import { pruneComposerDrafts } from "./composerSession";
 import { createThreadDetailCache } from "./threadDetailCache";
 import { errorMessage } from "./coder/errorMessage";
 import { useCoderMemory } from "./coder/useCoderMemory";
@@ -1245,10 +1246,14 @@ export function useCoder(): UseCoderResult {
           if (selectedRef.current == null && preferred) {
             selectedRef.current = preferred;
           }
-          // Off the boot path: drop pane layouts of deleted threads (#1475).
+          // Off the boot path: drop pane layouts and drafts of deleted threads (#1475).
           // The fetched list, not threadsRef: a raced boot can still hold the
           // snapshot, which leaves archived threads out.
-          whenIdle(() => prunePaneLayouts(list.map((t) => t.id)));
+          whenIdle(() => {
+            const ids = list.map((t) => t.id);
+            prunePaneLayouts(ids);
+            pruneComposerDrafts(ids);
+          });
         } catch {
           // IPC may not be registered yet (#618); boot:ready retries.
         } finally {

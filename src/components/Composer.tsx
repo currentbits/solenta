@@ -80,7 +80,7 @@ import {
 import { parseDelegate } from "../delegate";
 import { asBtwPrompt } from "../btw";
 import { buildBestOfNEntries, providerVendor } from "../bestOfN";
-import { keptDrafts } from "../composerSession";
+import { keptDrafts, scheduleDraftSave } from "../composerSession";
 import {
   pickerVerb,
   type SlashAction,
@@ -389,6 +389,7 @@ export const Composer = memo(function Composer({
   const rememberDraft = useCallback(
     (text: string) => {
       draftsRef.current[threadId] = text;
+      scheduleDraftSave();
       syncHasPrompt(text);
       syncOverflow(text);
     },
@@ -397,6 +398,7 @@ export const Composer = memo(function Composer({
   const writeDraft = useCallback(
     (text: string, caret?: number) => {
       draftsRef.current[threadId] = text;
+      scheduleDraftSave();
       const el = textareaRef.current;
       if (el) {
         el.value = text;
