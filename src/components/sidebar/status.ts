@@ -61,7 +61,7 @@ export function statusDotFor(
   }
   return {
     ...base,
-    label: `${base.label} — Queued: ${thread.queued.prompt}`,
+    label: `${base.label}. Queued: ${thread.queued.prompt}`,
     flags: { ...base.flags, "data-queued-dot": thread.id },
   };
 }
@@ -72,7 +72,7 @@ function baseStatusDot(
   wait: WaitState | null,
   active: boolean,
 ): StatusDotInfo | null {
-  const waitSuffix = wait ? ` — ${waitTooltip(wait)}` : "";
+  const waitSuffix = wait ? `. ${waitTooltip(wait)}` : "";
   const waitFlags: Record<string, string> = wait
     ? {
         "data-wait-badge": thread.id,

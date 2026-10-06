@@ -1,12 +1,14 @@
 import { useCallback } from "react";
 import type { Dispatch, RefObject, SetStateAction } from "react";
-import type {
-  AttachmentInfo,
-  CoderApi,
-  DiffOptions,
-  ReviewSymbol,
-  ThreadDetail,
-  ThreadInfo,
+import {
+  EDITOR_PREF_KEY,
+  type AttachmentInfo,
+  type CoderApi,
+  type DiffOptions,
+  type EditorId,
+  type ReviewSymbol,
+  type ThreadDetail,
+  type ThreadInfo,
 } from "../shared/ipc";
 import type { DroppedFolder } from "../dropFiles";
 import { isWebMode } from "../shared/wire";
@@ -15,6 +17,20 @@ import {
   pickWebFiles,
   pickWebFolder,
 } from "./webAttachments";
+
+/**
+ * The "Open in" editor last picked in Thread details (#1506), for opening
+ * files. The file manager and Terminal are skipped: neither opens a file
+ * at a line, and Terminal would run it.
+ */
+function preferredFileEditor(): EditorId | null {
+  try {
+    const id = window.localStorage.getItem(EDITOR_PREF_KEY) as EditorId | null;
+    return id && id !== "finder" && id !== "terminal" ? id : null;
+  } catch {
+    return null;
+  }
+}
 
 /** Selected thread's worktree, diff/review/commit, files and attachments. */
 export function useCoderWorkspace({
@@ -192,11 +208,29 @@ export function useCoderWorkspace({
   );
 
   const openWorkspacePath = useCallback(
-    async (abs: string, opts?: { reveal?: boolean }) => {
+    async (
+      abs: string,
+      opts?: { reveal?: boolean; line?: number; col?: number },
+    ) => {
       if (!selectedThreadId || !abs) return;
       if (opts?.reveal) {
         await api.shell.reveal({ threadId: selectedThreadId, path: abs });
         return;
+      }
+      const editor = preferredFileEditor();
+      if (editor) {
+        try {
+          await api.shell.openIn({
+            threadId: selectedThreadId,
+            path: abs,
+            editor,
+            line: opts?.line,
+            column: opts?.col,
+          });
+          return;
+        } catch {
+          // Editor gone since it was picked: the default app still opens it.
+        }
       }
       await api.shell.openPath({ threadId: selectedThreadId, path: abs });
     },

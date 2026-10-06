@@ -48,6 +48,7 @@ class StoreSettingsMethods {
       onboardingSeen: n.onboardingSeen,
       updateChannel: n.updateChannel,
       notifications: n.notifications,
+      notificationSound: n.notificationSound,
       feltEstimatePrompt: n.feltEstimatePrompt,
       uiScale: n.uiScale,
       theme: n.theme,
@@ -256,6 +257,13 @@ class StoreSettingsMethods {
         throw new Error("notifications must be a boolean");
       }
       this.data.settings.notifications = v;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "notificationSound")) {
+      const v = patch.notificationSound;
+      if (typeof v !== "boolean") {
+        throw new Error("notificationSound must be a boolean");
+      }
+      this.data.settings.notificationSound = v;
     }
     if (Object.prototype.hasOwnProperty.call(patch, "feltEstimatePrompt")) {
       const v = patch.feltEstimatePrompt;

@@ -295,6 +295,35 @@ export function GeneralPane({
           <label className={styles.fieldRow}>
             <input
               type="checkbox"
+              data-notification-sound=""
+              checked={settings?.notificationSound ?? false}
+              disabled={saving || settings == null}
+              onChange={(e) => {
+                setError(null);
+                void onSaveSettings({
+                  notificationSound: e.target.checked,
+                }).catch((err) => {
+                  setError(
+                    err instanceof Error && err.message
+                      ? err.message
+                      : "Failed to save settings",
+                  );
+                });
+              }}
+            />
+            <span>Play a sound when a thread needs you</span>
+          </label>
+          <p className={styles.note}>
+            While the window is focused, when a thread finishes, fails or
+            asks for permission. In the background the desktop
+            notification plays its usual sound. Muted and snoozed threads
+            stay quiet. The dock badge counts the threads waiting on you.
+          </p>
+        </div>
+        <div className={styles.field}>
+          <label className={styles.fieldRow}>
+            <input
+              type="checkbox"
               data-confirm-quit-with-active-work=""
               checked={settings?.confirmQuitWithActiveWork !== false}
               disabled={saving || settings == null}
@@ -568,7 +597,7 @@ export function GeneralPane({
               Update {update.tag} available
               {update.url ? (
                 <>
-                  {" — "}
+                  {": "}
                   <a href={update.url} target="_blank" rel="noreferrer">
                     release page
                   </a>

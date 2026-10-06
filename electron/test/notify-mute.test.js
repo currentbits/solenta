@@ -19,6 +19,20 @@ describe("notifications setting", () => {
     assert.equal(normalizeSettings({ notifications: "no" }).notifications, true);
     assert.equal(normalizeSettings({ notifications: 0 }).notifications, true);
   });
+
+  it("the attention sound is opt-in: only an explicit true plays it (#1506)", () => {
+    assert.equal(normalizeSettings({}).notificationSound, false);
+    assert.equal(normalizeSettings({ notificationSound: "yes" }).notificationSound, false);
+    assert.equal(normalizeSettings({ notificationSound: true }).notificationSound, true);
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "coder-sound-"));
+    try {
+      const store = new Store(path.join(tmp, "store.json"));
+      assert.equal(store.setSettings({ notificationSound: true }).notificationSound, true);
+      assert.throws(() => store.setSettings({ notificationSound: 1 }), /must be a boolean/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("mute", () => {

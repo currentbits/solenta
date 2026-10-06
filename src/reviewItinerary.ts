@@ -117,11 +117,11 @@ export const AREA_TITLE: Record<ReviewArea, string> = {
 };
 
 const AREA_RATIONALE: Record<ReviewArea, string> = {
-  "ci-config": "Workflows and config fail closed — read these before anything else.",
+  "ci-config": "Workflows and config fail closed. Read these before anything else.",
   tests: "What the agent claims this proves.",
-  critical: "Entry points and contracts — a miss here is a runtime miss.",
+  critical: "Entry points and contracts: a miss here is a runtime miss.",
   impl: "The rest of the change, grouped by area.",
-  docs: "Evidence last — comments, docs, screenshots.",
+  docs: "Evidence last: comments, docs, screenshots.",
   meta: "Agent workspace files.",
 };
 
@@ -727,7 +727,7 @@ export function buildReviewItinerary(input: ReviewItineraryInput): ReviewItinera
       ? {
           files: hardStopFiles,
           reason:
-            "CI and config changes first — a bad config file ships to every run.",
+            "CI and config changes first, since a bad config file ships to every run.",
         }
       : null;
 
@@ -769,7 +769,7 @@ export function buildReviewItinerary(input: ReviewItineraryInput): ReviewItinera
       id: "blast-radius",
       title: "Blast radius",
       kind: "blast-radius",
-      detail: `${n} CI workflow file${n === 1 ? "" : "s"} — privilege-escalation, human sign-off required.${extra}`,
+      detail: `${n} CI workflow file${n === 1 ? "" : "s"}: privilege-escalation, human sign-off required.${extra}`,
     });
   }
   if (hardStop) {
@@ -786,7 +786,7 @@ export function buildReviewItinerary(input: ReviewItineraryInput): ReviewItinera
       id: "reuse",
       title: "Reuse scan",
       kind: "reuse",
-      detail: `${n} possible duplicate${n === 1 ? "" : "s"} — check the repo before keeping a new helper.`,
+      detail: `${n} possible duplicate${n === 1 ? "" : "s"}. Check the repo before keeping a new helper.`,
     });
   }
   for (const chunk of chunks) {

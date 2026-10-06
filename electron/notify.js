@@ -68,6 +68,54 @@ function isEffectivelySnoozed(thread, now) {
 }
 
 /**
+ * Whether a thread is waiting on the user, for the dock / taskbar badge
+ * (#1506). The sidebar's "needs you" rows: blocked on a permission, plan
+ * or question card, or failed / finished and unread (src/threadUnread.ts).
+ * A failure the user has already looked at stops counting, or one old
+ * failure would pin the badge forever. Muted, snoozed, archived, trashed
+ * and memory-consolidation threads never count.
+ *
+ * @param {{ status?: string, awaitingInput?: boolean, pendingQuestion?: unknown, muted?: boolean, archived?: boolean, trashedAt?: number | null, memoryConsolidate?: boolean, updatedAt?: number, lastVisitedAt?: number | null, snoozedUntil?: number | null, snoozedAt?: number | null } | null | undefined} thread
+ * @param {number} now
+ * @returns {boolean}
+ */
+function needsUser(thread, now) {
+  if (!thread || thread.muted || thread.archived) return false;
+  if (Number.isFinite(thread.trashedAt) || thread.memoryConsolidate === true) {
+    return false;
+  }
+  if (isEffectivelySnoozed(thread, now)) return false;
+  if (thread.awaitingInput || thread.pendingQuestion) return true;
+  const unread =
+    thread.lastVisitedAt != null && Number(thread.updatedAt) > thread.lastVisitedAt;
+  return (
+    unread &&
+    (thread.status === "failed" || thread.status === "done" || thread.status === "idle")
+  );
+}
+
+/**
+ * Desktop notification options. No `silent`: the OS plays its default
+ * sound, as it always has. The attention-sound setting never changes that.
+ * @param {string | undefined} title
+ * @param {string} body
+ */
+function notificationOptions(title, body) {
+  return { title: title || "Thread", body };
+}
+
+/**
+ * The opt-in attention sound (#1506) covers the one case a notification
+ * cannot: the window is focused, so shouldNotify posts nothing. Callers
+ * have already applied the transition, mute and snooze checks.
+ * @param {{ notificationSound?: boolean }} settings
+ * @param {boolean} windowFocused
+ */
+function shouldPlayAlert(settings, windowFocused) {
+  return windowFocused && settings.notificationSound === true;
+}
+
+/**
  * @param {unknown} u
  * @returns {boolean}
  */
@@ -328,6 +376,9 @@ module.exports = {
   shouldNotify,
   isNotifyTransition,
   isEffectivelySnoozed,
+  needsUser,
+  notificationOptions,
+  shouldPlayAlert,
   notifyEvent,
   notifyBody,
   shouldPostWebhook,

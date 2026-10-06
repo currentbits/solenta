@@ -20,7 +20,7 @@ import type { ReviewComment } from "../diffView";
 import { formatBytes } from "../format";
 import { languageForPath, useHighlightedLines } from "../syntaxHighlight";
 import { MarkdownBody } from "./Markdown";
-import { EDITOR_PREF_KEY } from "./WorktreeControl";
+import { EDITOR_PREF_KEY } from "../shared/ipc";
 import styles from "./FilesPane.module.css";
 
 export type FilesPaneApi = Pick<CoderApi["files"], "tree" | "read"> &

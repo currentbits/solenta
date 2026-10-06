@@ -276,7 +276,7 @@ export function PathBrowser({
           ) : rows.length === 0 ? (
             <li className={styles.browseEmpty} role="presentation">
               {willCreate
-                ? "No matching folder — Add will create this path."
+                ? "No matching folder. Add will create this path."
                 : "No folders here."}
             </li>
           ) : (

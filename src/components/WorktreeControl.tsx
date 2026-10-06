@@ -18,9 +18,8 @@ import {
 import { mergeOntoLabel, sourceSnapshotLabel } from "../crewIntegration";
 import { useEscapeClose } from "../useEscapeClose";
 import styles from "./WorktreeControl.module.css";
-import type { EditorId, EditorOption } from "../shared/ipc";
+import { EDITOR_PREF_KEY, type EditorId, type EditorOption } from "../shared/ipc";
 
-export const EDITOR_PREF_KEY = "solenta:openInEditor";
 
 type GitAction = "setup" | "merge" | "remove" | null;
 

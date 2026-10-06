@@ -4,12 +4,65 @@ const {
   shouldNotify,
   isEffectivelySnoozed,
   isNotifyTransition,
+  needsUser,
+  notificationOptions,
+  shouldPlayAlert,
   shouldPostWebhook,
   buildWebhookPayload,
   shapeWebhookRequest,
   dispatchWebhook,
   testWebhook,
 } = require("../notify.js");
+
+describe("needsUser (dock badge, #1506)", () => {
+  const now = 1_000_000;
+  const seen = { lastVisitedAt: 500, updatedAt: 400 };
+  const unread = { lastVisitedAt: 400, updatedAt: 500 };
+
+  it("counts permission, plan and question cards whether read or not", () => {
+    assert.equal(needsUser({ status: "working", awaitingInput: true, ...seen }, now), true);
+    assert.equal(needsUser({ status: "idle", pendingQuestion: { question: "?" }, ...seen }, now), true);
+  });
+
+  it("counts failed and done/idle only while unread", () => {
+    for (const status of ["failed", "done", "idle"]) {
+      assert.equal(needsUser({ status, ...unread }, now), true, status);
+      assert.equal(needsUser({ status, ...seen }, now), false, status);
+    }
+    assert.equal(needsUser({ status: "working", ...unread }, now), false);
+    // Legacy rows with no visit stamp never light up (threadUnread.ts).
+    assert.equal(needsUser({ status: "done", lastVisitedAt: null, updatedAt: 1 }, now), false);
+  });
+
+  it("skips muted, snoozed, archived, trashed and consolidation threads", () => {
+    const failed = { status: "failed", ...unread };
+    assert.equal(needsUser({ ...failed, muted: true }, now), false);
+    assert.equal(needsUser({ ...failed, archived: true }, now), false);
+    assert.equal(needsUser({ ...failed, trashedAt: 1 }, now), false);
+    assert.equal(needsUser({ ...failed, memoryConsolidate: true }, now), false);
+    assert.equal(
+      needsUser({ ...failed, snoozedUntil: now + 1000, snoozedAt: 600 }, now),
+      false,
+    );
+    assert.equal(needsUser(null, now), false);
+  });
+});
+
+describe("notification sound (#1506)", () => {
+  it("leaves the OS default notification sound alone", () => {
+    const opts = notificationOptions("Fix tests", "done");
+    assert.deepEqual(opts, { title: "Fix tests", body: "done" });
+    assert.equal("silent" in opts, false, "never silenced");
+    assert.equal(notificationOptions(undefined, "failed").title, "Thread");
+  });
+
+  it("adds the alert sound only when the option is on and the window is focused", () => {
+    assert.equal(shouldPlayAlert({ notificationSound: true }, true), true);
+    assert.equal(shouldPlayAlert({ notificationSound: true }, false), false);
+    assert.equal(shouldPlayAlert({ notificationSound: false }, true), false);
+    assert.equal(shouldPlayAlert({}, true), false, "off by default");
+  });
+});
 
 describe("shouldNotify", () => {
   it("notifies working -> done when the window is not focused", () => {

@@ -16,7 +16,24 @@ export interface SpaceInfo {
 }
 
 /** Thread details "Open in" targets (#1411). */
-export type EditorId = "cursor" | "vscode" | "zed" | "terminal" | "finder";
+export type EditorId =
+  | "cursor"
+  | "vscode"
+  | "zed"
+  | "idea"
+  | "webstorm"
+  | "pycharm"
+  | "goland"
+  | "rubymine"
+  | "rider"
+  | "clion"
+  | "phpstorm"
+  | "rustrover"
+  | "fleet"
+  | "terminal"
+  | "finder";
+/** localStorage key for the editor last picked in "Open in". */
+export const EDITOR_PREF_KEY = "solenta:openInEditor";
 export interface EditorOption {
   id: EditorId;
   name: string;
@@ -2796,6 +2813,12 @@ export interface AppSettings {
    */
   notifications: boolean;
   /**
+   * Alert sound when a thread needs the user while the window is focused
+   * (#1506), the case where no desktop notification is shown. Opt-in: only
+   * an explicit true plays it. Never changes the notifications' own sound.
+   */
+  notificationSound: boolean;
+  /**
    * Ask "how much time did this save you?" when a run finishes (issue #401).
    * Opt-in: absent/false means the card never appears and the felt-vs-actual
    * section of the Fleet view stays empty.
@@ -5263,8 +5286,17 @@ export interface CoderApi {
     openPath(input: { threadId: string; path: string }): Promise<void>;
     /** Installed editors for Thread details' "Open in" (#1411). */
     editors(): Promise<EditorOption[]>;
-    /** Open a thread path with one of `editors()`. Ids only, never commands. */
-    openIn(input: { threadId: string; path: string; editor: EditorId }): Promise<void>;
+    /**
+     * Open a thread path with one of `editors()`. Ids only, never commands.
+     * `line`/`column` (1-based) jump there in editors that support it.
+     */
+    openIn(input: {
+      threadId: string;
+      path: string;
+      editor: EditorId;
+      line?: number;
+      column?: number;
+    }): Promise<void>;
   };
   devserver: {
     /** Runnable scripts (dev, start, serve) present in the thread root. */

@@ -913,7 +913,7 @@ function ProvenanceStrip({
         <span
           className={styles.provChip}
           data-tier="prior"
-          title="No repo file, shared-memory entry, or GitHub issue backs this message — it came from the model's prior knowledge."
+          title="No repo file, shared-memory entry, or GitHub issue backs this message. It came from the model's prior knowledge."
         >
           model prior knowledge
         </span>

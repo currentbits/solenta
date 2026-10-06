@@ -3059,7 +3059,7 @@ describe("ThreadView transcript windowing (issue #564)", () => {
       "Show earlier control must render when entries sit above the window",
     );
     assert.ok(
-      html.includes("Show earlier — 380 messages"),
+      html.includes("Show 380 earlier messages"),
       `expected hidden-count copy, got near: ${html.slice(
         html.indexOf("Show earlier"),
         html.indexOf("Show earlier") + 80,
@@ -3095,7 +3095,7 @@ describe("ThreadView transcript windowing (issue #564)", () => {
     assert.equal(ids[ids.length - 1], n - 1);
     assert.equal(ids.length, TRANSCRIPT_WINDOW * 2);
     assert.ok(
-      m.text().includes("Show earlier — 260 messages"),
+      m.text().includes("Show 260 earlier messages"),
       "hidden count drops by one chunk",
     );
     assert.ok(!m.html().includes("#0#"), "the oldest message is still above the window");
@@ -3148,7 +3148,7 @@ describe("ThreadView transcript windowing (issue #564)", () => {
       "a pinned append drops the oldest mounted entries",
     );
     assert.ok(
-      m.text().includes("Show earlier — 382 messages"),
+      m.text().includes("Show 382 earlier messages"),
       "the mounted tail stays at TRANSCRIPT_WINDOW entries",
     );
     m.unmount();
@@ -3167,7 +3167,7 @@ describe("ThreadView transcript windowing (issue #564)", () => {
       m.html().includes("#380#"),
       "content above a reader who scrolled up must not be unmounted",
     );
-    assert.ok(m.text().includes("Show earlier — 380 messages"));
+    assert.ok(m.text().includes("Show 380 earlier messages"));
     m.unmount();
   });
 
@@ -3192,7 +3192,7 @@ describe("ThreadView transcript windowing (issue #564)", () => {
       // The append trims the head. The next layout clamps scrollTop to the
       // shorter body and queues a scroll event for the frame after.
       await m.click(m.query("[data-append-stream]"));
-      assert.ok(m.text().includes("Show earlier — 381 messages"), "the append trimmed");
+      assert.ok(m.text().includes("Show 381 earlier messages"), "the append trimmed");
       runFrame();
       layout.scrollHeight = 19_000;
       layout.scrollTop = layout.scrollHeight - layout.clientHeight;
@@ -3205,7 +3205,7 @@ describe("ThreadView transcript windowing (issue #564)", () => {
     }
     await m.click(m.query("[data-append-stream]"));
     assert.ok(
-      m.text().includes("Show earlier — 382 messages"),
+      m.text().includes("Show 382 earlier messages"),
       "the clamp's scroll event must not unstick the view and stop the trim",
     );
     m.unmount();
@@ -3216,15 +3216,15 @@ describe("ThreadView transcript windowing (issue #564)", () => {
     const Harness = streamHarness(n);
     const m = await mount(<Harness />);
     await m.click(m.query("[data-append-stream]"));
-    assert.ok(m.text().includes("Show earlier — 381 messages"));
+    assert.ok(m.text().includes("Show 381 earlier messages"));
     await m.click(m.query("[data-show-earlier]"));
-    assert.ok(m.text().includes("Show earlier — 261 messages"));
+    assert.ok(m.text().includes("Show 261 earlier messages"));
     assert.ok(m.html().includes("#261#") && m.html().includes("#380#"));
     // Show earlier unsticks, so the next append must not trim it away again.
     await m.click(m.query("[data-append-stream]"));
     assert.ok(m.text().includes("STREAMED_TAIL_2"));
     assert.ok(
-      m.text().includes("Show earlier — 261 messages"),
+      m.text().includes("Show 261 earlier messages"),
       "paged-in entries survive an append",
     );
     m.unmount();

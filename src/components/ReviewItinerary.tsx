@@ -50,9 +50,9 @@ export function ReviewItineraryView({
           role="alert"
           data-blast-radius="ci-workflow"
         >
-          <strong>Blast radius — CI workflow</strong>
+          <strong>Blast radius: CI workflow</strong>
           <span>
-            Privilege-escalation — a human must sign off before merge.
+            Privilege-escalation: a human must sign off before merge.
           </span>
           <span className={styles.paths}>
             {itinerary.blastRadius.files.join(" · ")}
@@ -62,7 +62,7 @@ export function ReviewItineraryView({
               {itinerary.blastRadius.findings.map((f, i) => (
                 <li key={`${f.path}:${i}`}>
                   <code>{f.path}</code> {f.reason}
-                  {f.excerpt ? ` — ${f.excerpt}` : ""}
+                  {f.excerpt ? `: ${f.excerpt}` : ""}
                 </li>
               ))}
             </ul>
@@ -76,7 +76,7 @@ export function ReviewItineraryView({
           role="alert"
           data-review-hard-stop=""
         >
-          <strong>Hard stop — CI / config</strong>
+          <strong>Hard stop: CI / config</strong>
           <span>{itinerary.hardStop.reason}</span>
           <span className={styles.paths}>
             {itinerary.hardStop.files.join(" · ")}

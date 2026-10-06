@@ -19,7 +19,7 @@ export interface LiveWorkingInput {
 
 export function liveWorkingLabel(input: LiveWorkingInput = {}): string {
   if (input.stalledElapsed) {
-    return `No output for ${input.stalledElapsed} — the agent may be hung`;
+    return `No output for ${input.stalledElapsed}. The agent may be hung`;
   }
   // Zero means every workflow agent finished while the turn is still live:
   // fall through to the tool / thinking label instead of "0 agents working".

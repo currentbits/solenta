@@ -65,7 +65,7 @@ const PANE_META: Record<
     label: "General",
     hint: "Display, notifications, the welcome tour, and this build.",
     keywords:
-      "notifications tour welcome update version build channel nightly prod felt estimate time saved webhook slack discord ntfy push phone agents panel sidebar collapse remember last quit confirm accidental close display divergence compare run duration paste cards vim motions",
+      "notifications sound badge dock tour welcome update version build channel nightly prod felt estimate time saved webhook slack discord ntfy push phone agents panel sidebar collapse remember last quit confirm accidental close display divergence compare run duration paste cards vim motions",
   },
   keyboard: {
     label: "Keyboard",

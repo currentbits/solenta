@@ -47,6 +47,7 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
   /** Update channel override; null follows the (absent) dev stamp. */
   let updateChannel: "prod" | "nightly" | null = null;
   let notifications = true;
+  let notificationSound = false;
   let feltEstimatePrompt = false;
   let uiScale = 1;
   let theme: AppSettings["theme"] = "dark";
@@ -136,6 +137,7 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           onboardingSeen,
           updateChannel,
           notifications,
+          notificationSound,
           feltEstimatePrompt,
           uiScale,
           theme,
@@ -243,6 +245,14 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
             throw new Error("notifications must be a boolean");
           }
           notifications = patch.notifications;
+        }
+        if (
+          Object.prototype.hasOwnProperty.call(patch, "notificationSound")
+        ) {
+          if (typeof patch.notificationSound !== "boolean") {
+            throw new Error("notificationSound must be a boolean");
+          }
+          notificationSound = patch.notificationSound;
         }
         if (
           Object.prototype.hasOwnProperty.call(patch, "feltEstimatePrompt")
@@ -402,6 +412,7 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           onboardingSeen,
           updateChannel,
           notifications,
+          notificationSound,
           feltEstimatePrompt,
           uiScale,
           theme,

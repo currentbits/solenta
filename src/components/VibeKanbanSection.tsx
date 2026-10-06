@@ -142,7 +142,7 @@ export function VibeKanbanSection({ active }: VibeKanbanSectionProps) {
       <p className={styles.note}>
         Import a local Vibe Kanban database (cards become threads, worktrees
         are mapped when they still exist). Export writes a JSON dump of
-        projects, threads, and messages — nothing is locked in.
+        projects, threads, and messages, so nothing is locked in.
       </p>
       {preview?.found ? (
         <p className={styles.note} data-vk-preview="">

@@ -608,7 +608,7 @@ export function UsageView({
                   <tr data-usage-breakdown-empty={group}>
                     <td colSpan={group === "thread" ? 6 : 5} className={styles.breakdownEmpty}>
                       {group === "project" || group === "thread"
-                        ? "No per-thread usage recorded in this range. Attribution starts from the first run after this update — earlier turns were never stored per thread."
+                        ? "No per-thread usage recorded in this range. Attribution starts from the first run after this update. Earlier turns were never stored per thread."
                         : "No usage in this range."}
                     </td>
                   </tr>
