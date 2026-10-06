@@ -1,4 +1,5 @@
 import { useEffect, type Dispatch, type SetStateAction } from "react";
+import { matchesBinding } from "../../keybindings";
 import { isShortcutBlocked, stepVisibleId } from "../../sidebarSelection";
 
 /**
@@ -38,17 +39,14 @@ export function useSidebarShortcuts({
       if (isShortcutBlocked(e.target)) return;
       if (keyboardSheetOpen && e.key !== "Escape") return;
 
-      const mod = e.metaKey || e.ctrlKey;
-
-      if (e.key === "?" && !mod) {
+      if (matchesBinding(e, "keyboard.sheet")) {
         e.preventDefault();
         setKeyboardSheetOpen(true);
         return;
       }
 
-      if (!mod) return;
-
-      if (e.key >= "1" && e.key <= "9") {
+      // ⌘1–9 stays fixed: a range, not one chord.
+      if ((e.metaKey || e.ctrlKey) && e.key >= "1" && e.key <= "9") {
         const n = Number(e.key);
         const id = visibleIds[n - 1];
         if (id) {
@@ -60,11 +58,14 @@ export function useSidebarShortcuts({
         return;
       }
 
-      const key = e.key.toLowerCase();
-      if (key === "j") {
+      const step = matchesBinding(e, "thread.next")
+        ? 1
+        : matchesBinding(e, "thread.prev")
+          ? -1
+          : 0;
+      if (step) {
         e.preventDefault();
-        const delta = e.shiftKey ? -1 : 1;
-        const next = stepVisibleId(visibleIds, activeThreadId, delta as 1 | -1);
+        const next = stepVisibleId(visibleIds, activeThreadId, step);
         if (next) {
           setMultiSelected(new Set());
           setSelectAnchor(next);
@@ -73,10 +74,12 @@ export function useSidebarShortcuts({
         return;
       }
 
-      if (key === "n") {
+      if (matchesBinding(e, "thread.new")) {
         e.preventDefault();
-        if (e.shiftKey) createInTargetProject();
-        else handleBrandCreate();
+        handleBrandCreate();
+      } else if (matchesBinding(e, "thread.newInProject")) {
+        e.preventDefault();
+        createInTargetProject();
       }
     };
     const onKeyUp = (e: KeyboardEvent) => {

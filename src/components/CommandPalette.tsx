@@ -11,6 +11,7 @@ import { useEscapeClose } from "../useEscapeClose";
 import { useModalFocus } from "../useModalFocus";
 import {
   groupPaletteItems,
+  paletteActionShortcut,
   paletteModeLabel,
   palettePlaceholder,
   rankPaletteItems,
@@ -224,7 +225,7 @@ export function CommandPalette({
         kind: "action",
         title: action.title,
         subtitle: action.subtitle,
-        shortcut: action.shortcut,
+        shortcut: paletteActionShortcut(action),
         haystack: [action.title, action.subtitle ?? "", action.keywords ?? ""],
       });
     }

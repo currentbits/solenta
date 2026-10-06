@@ -1,5 +1,6 @@
 import { useEffect, type Dispatch, type RefObject, type SetStateAction } from "react";
 import { matchPaletteShortcut, type PaletteMode } from "../commandPalette";
+import { matchesBinding } from "../keybindings";
 
 function dialogOpen(): boolean {
   return (
@@ -26,8 +27,7 @@ export function useAppShortcuts({
 }): void {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return;
-      if (e.key.toLowerCase() !== "b" || narrow || dialogOpen()) return;
+      if (!matchesBinding(e, "sidebar.toggle") || narrow || dialogOpen()) return;
       e.preventDefault();
       toggleSidebar();
     };
@@ -37,9 +37,7 @@ export function useAppShortcuts({
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (!(e.metaKey || e.ctrlKey) || e.key !== ".") return;
-      if (e.altKey || e.shiftKey) return;
-      if (dialogOpen()) return;
+      if (!matchesBinding(e, "agents.toggle") || dialogOpen()) return;
       e.preventDefault();
       toggleAgents();
     };

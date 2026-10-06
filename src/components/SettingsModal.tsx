@@ -37,11 +37,13 @@ import {
   type ProfileDraft,
 } from "./settings/AgentsPane";
 import { GeneralPane } from "./settings/GeneralPane";
+import { KeyboardPane } from "./settings/KeyboardPane";
 
 export { formatOtelHeaders, parseOtelHeaders } from "./settings/AdvancedPane";
 
 export const SETTINGS_PANES = [
   "general",
+  "keyboard",
   "threads",
   "spending",
   "git",
@@ -64,6 +66,11 @@ const PANE_META: Record<
     hint: "Display, notifications, the welcome tour, and this build.",
     keywords:
       "notifications tour welcome update version build channel nightly prod felt estimate time saved webhook slack discord ntfy push phone agents panel sidebar collapse remember last quit confirm accidental close display divergence compare run duration paste cards vim motions",
+  },
+  keyboard: {
+    label: "Keyboard",
+    hint: "Remap app shortcuts. Anything you leave alone keeps its default.",
+    keywords: "shortcuts keybindings hotkeys chord remap keys",
   },
   threads: {
     label: "Threads",
@@ -757,6 +764,8 @@ export function SettingsModal({
             {...skills}
           />
           )}
+
+          {pane === "keyboard" && <KeyboardPane />}
 
           {pane === "general" && (
           <GeneralPane

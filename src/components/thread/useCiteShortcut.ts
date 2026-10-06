@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { matchesBinding } from "../../keybindings";
 import type { ThreadDetail } from "../../shared/ipc";
 import {
   captureCiteFromSelection,
@@ -14,8 +15,7 @@ export function useCiteShortcut(
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented) return;
-      if (!(e.metaKey || e.ctrlKey) || !e.shiftKey) return;
-      if (e.key.toLowerCase() !== "c") return;
+      if (!matchesBinding(e, "message.cite")) return;
       const t = e.target;
       if (
         t instanceof HTMLTextAreaElement ||

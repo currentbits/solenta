@@ -9,6 +9,10 @@ import { inAct, mount } from "./support/dom";
 import { Sidebar } from "../src/components/Sidebar";
 import type { ProjectInfo, ProviderInfo, ThreadInfo } from "../src/shared/ipc";
 import { thread as mkThread } from "./support/fakeCoder";
+import { setMacPlatformForTests } from "../src/keybindings";
+
+// The sheet prints ⌘ glyphs only on mac; pin it so CI on Linux agrees.
+setMacPlatformForTests(true);
 
 const NOW = Date.now();
 const p1: ProjectInfo = {
