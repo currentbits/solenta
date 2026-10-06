@@ -625,6 +625,7 @@ async function importFrom(store, opts) {
     const thread = services.createThread(store, {
       projectId,
       title: task.title,
+      projectDefaults: false,
     });
     const attempt = task.attempt;
     const worktreePath =

@@ -11,6 +11,7 @@ const configDoctor = require("./configDoctor.js");
 const {
   normalizeSetupCommand,
   normalizeQuickActions,
+  normalizeThreadDefaults,
 } = require("./projectCommands.js");
 const { DEFAULT_WORKTREE_RETENTION } = require("./store.js");
 const { scheduleImagePruneFromStore } = require("./image-store.js");
@@ -453,6 +454,13 @@ function updateProject(store, projectId, patch) {
     const quickActions = normalizeQuickActions(input.quickActions);
     if (quickActions) next.quickActions = quickActions;
     else delete next.quickActions;
+  }
+
+  // #1501. Replaces the whole object; null / empty clears it.
+  if (Object.prototype.hasOwnProperty.call(input, "threadDefaults")) {
+    const threadDefaults = normalizeThreadDefaults(input.threadDefaults);
+    if (threadDefaults) next.threadDefaults = threadDefaults;
+    else delete next.threadDefaults;
   }
 
   projects[idx] = next;

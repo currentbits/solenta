@@ -75,6 +75,42 @@ function normalizeQuickActions(raw) {
 }
 
 /**
+ * Per-project defaults for new threads (#1501). Shape only: the provider
+ * id is kept even when that CLI is not installed or unknown here, and
+ * createThread validates it at use. A model is only meaningful next to
+ * the provider it was picked for, so it is dropped without one. Empty →
+ * null so the key can be deleted from the stored project.
+ *
+ * @param {unknown} raw
+ * @returns {{ provider?: string, model?: string, reasoningEffort?: string, permissionMode?: string, lastUsed?: true } | null}
+ */
+function normalizeThreadDefaults(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const { PERMISSION_MODES } = require("./services-shared.js");
+  /** @param {unknown} v @param {number} max */
+  const str = (v, max) =>
+    typeof v === "string" && v.trim() && v.trim().length <= max
+      ? v.trim()
+      : "";
+  /** @type {{ provider?: string, model?: string, reasoningEffort?: string, permissionMode?: string, lastUsed?: true }} */
+  const out = {};
+  const r = /** @type {Record<string, unknown>} */ (raw);
+  const provider = str(r.provider, 64);
+  if (provider) {
+    out.provider = provider;
+    const model = str(r.model, 100);
+    if (model) out.model = model;
+  }
+  const effort = str(r.reasoningEffort, 32);
+  if (effort) out.reasoningEffort = effort;
+  if (typeof r.permissionMode === "string" && PERMISSION_MODES.has(r.permissionMode)) {
+    out.permissionMode = r.permissionMode;
+  }
+  if (r.lastUsed === true) out.lastUsed = true;
+  return Object.keys(out).length ? out : null;
+}
+
+/**
  * @param {number} ms
  */
 function formatDuration(ms) {
@@ -339,6 +375,7 @@ module.exports = {
   EVENT_LOG_MAX,
   normalizeSetupCommand,
   normalizeQuickActions,
+  normalizeThreadDefaults,
   kickWorktreeSetup,
   waitForCommand,
   runCommand,

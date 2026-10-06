@@ -116,6 +116,7 @@ function commitImportedTurns(store, opts) {
     projectId: opts.projectId,
     title: titleLine || opts.defaultTitle,
     provider: opts.provider,
+    projectDefaults: false,
   });
   store.updateThread(thread.id, { sessionId: opts.sessionId });
   absorbTurns(store, thread.id, turns);

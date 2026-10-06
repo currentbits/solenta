@@ -219,6 +219,7 @@ module.exports = {
   },
   "threads:setPermissionMode": async (ctx, input) => {
     const updated = services.setPermissionMode(ctx.store, input);
+    services.recordLastUsedDefaults(ctx.store, input.threadId);
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
     // Drop a synthesized plan card from the open thread (issue #707).
     if (ctx.runner.refreshDetail) ctx.runner.refreshDetail(input.threadId);
@@ -471,11 +472,13 @@ module.exports = {
   },
   "threads:setProvider": async (ctx, input) => {
     const updated = services.setProvider(ctx.store, input);
+    services.recordLastUsedDefaults(ctx.store, input.threadId);
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
     return updated;
   },
   "threads:setReasoningEffort": async (ctx, input) => {
     const updated = services.setReasoningEffort(ctx.store, input);
+    services.recordLastUsedDefaults(ctx.store, input.threadId);
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
     return updated;
   },

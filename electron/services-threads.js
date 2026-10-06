@@ -5,6 +5,8 @@
 const { randomUUID } = require("node:crypto");
 const {
   getProvider,
+  resolveBin,
+  isBinAvailable,
   listProviders,
   honouredEfforts,
   probeCatalogCli,
@@ -46,10 +48,11 @@ const {
  * @param {{ defaultProvider?: unknown } | null | undefined} settings
  * @returns {string}
  */
-function resolveNewThreadProvider(input, settings) {
+function resolveNewThreadProvider(input, settings, projectProvider = null) {
   const fromInput =
     input && typeof input.provider === "string" ? input.provider.trim() : "";
   if (fromInput && isKnownProviderId(fromInput)) return fromInput;
+  if (projectProvider) return projectProvider;
   const fromSettings =
     settings && typeof settings.defaultProvider === "string"
       ? settings.defaultProvider.trim()
@@ -89,6 +92,61 @@ function resolveNewThreadModel(input, settings, provider) {
   } catch {
     return null;
   }
+}
+
+/**
+ * True when a provider's CLI can run for this project. Remote projects run
+ * the CLI on the other host, so the local PATH says nothing there.
+ * @param {any} project
+ * @param {string} id
+ */
+function providerInstalledFor(project, id) {
+  if (project && project.remoteHost) return true;
+  if (id === "simulate") return true;
+  return isBinAvailable(resolveBin(getProvider(id)));
+}
+
+/**
+ * Project defaults for a new thread (#1501). Precedence, highest first:
+ *
+ *   1. Explicit create input (`provider` / `model`).
+ *   2. Agent profiles, orchestration worker pools and automations. Profiles
+ *      and automations call setProvider / setReasoningEffort /
+ *      setPermissionMode AFTER create; pool workers and every other fork
+ *      patch the source's (or the pool's) config onto the new thread. So
+ *      they always land on top. Forks, imports, automations and memory
+ *      passes also skip project defaults outright (`projectDefaults: false`,
+ *      automationId, memoryConsolidate) so a project effort or permission
+ *      mode cannot leak onto a thread whose config came from elsewhere.
+ *   3. project.threadDefaults (this function).
+ *   4. settings.defaultProvider / defaultModel, then "claude".
+ *
+ * Validation: an unknown or uninstalled provider falls through to the
+ * global default (the Edit Project modal says so). The model applies only
+ * when the thread ends up on the provider it was picked for, normalized the
+ * same way setProvider does. Effort and permission mode apply independently
+ * of where the provider came from, snapped to what that provider honours.
+ *
+ * @param {any} input
+ * @param {any} project
+ * @returns {{ provider?: string, model?: string, reasoningEffort?: string, permissionMode?: string } | null}
+ */
+function projectDefaultsFor(input, project) {
+  const d = project && project.threadDefaults;
+  if (!d || typeof d !== "object") return null;
+  if (input.projectDefaults === false || input.automationId || input.memoryConsolidate) {
+    return null;
+  }
+  const out = { ...d };
+  if (
+    !out.provider ||
+    !isKnownProviderId(out.provider) ||
+    !providerInstalledFor(project, out.provider)
+  ) {
+    delete out.provider;
+    delete out.model;
+  }
+  return out;
 }
 
 /** Sanitize ThreadInfo.baseBranch (#187). Empty/null clears to the repo default. */
@@ -132,8 +190,37 @@ function createThread(store, input) {
 
   const settings =
     typeof store.getSettings === "function" ? store.getSettings() : null;
-  const provider = resolveNewThreadProvider(input, settings);
-  const model = resolveNewThreadModel(input, settings, provider);
+  const defaults = projectDefaultsFor(input, project);
+  const provider = resolveNewThreadProvider(
+    input,
+    settings,
+    defaults && defaults.provider,
+  );
+  const entry = getProvider(provider);
+  let model;
+  if (
+    defaults &&
+    defaults.provider === provider &&
+    !Object.prototype.hasOwnProperty.call(input, "model")
+  ) {
+    try {
+      model = normalizeModelForProvider(entry, defaults.model);
+    } catch {
+      model = null;
+    }
+  } else {
+    model = resolveNewThreadModel(input, settings, provider);
+  }
+  const reasoningEffort =
+    defaults &&
+    defaults.reasoningEffort &&
+    honouredEfforts(entry, model).includes(defaults.reasoningEffort)
+      ? defaults.reasoningEffort
+      : null;
+  const permissionMode =
+    defaults && defaults.permissionMode
+      ? snapPermissionModeForThread(entry, defaults.permissionMode, null)
+      : "default";
 
   const now = Date.now();
   const thread = {
@@ -172,8 +259,8 @@ function createThread(store, input) {
     provider,
     model,
     sessionId: null,
-    permissionMode: "default",
-    reasoningEffort: null,
+    permissionMode,
+    reasoningEffort,
     webSearch: false,
     worktreePath: null,
     handoffFrom: null,
@@ -192,6 +279,44 @@ function createThread(store, input) {
   store.setWorkLog(thread.id, []);
   store.save();
   return thread;
+}
+
+/**
+ * "Last used" project defaults (#1501): when the project opts in, a pick
+ * the user makes on a thread that has not run yet becomes the project's
+ * default for the next new thread. Called from the IPC setters only, so
+ * quota failover, pools and automations (which call setProvider too)
+ * never count as a user pick. Returns true when the project changed.
+ *
+ * @param {import('./store').Store} store
+ * @param {string} threadId
+ * @returns {boolean}
+ */
+function recordLastUsedDefaults(store, threadId) {
+  const thread = store.getThread(threadId);
+  if (!thread || thread.sessionId || thread.orchWorker || thread.handoffFrom) {
+    return false;
+  }
+  if (thread.automationId || thread.memoryConsolidate) return false;
+  const project = store.getProject(thread.projectId);
+  const d = project && project.threadDefaults;
+  if (!d || d.lastUsed !== true) return false;
+  if (store.getMessages(threadId).length > 0) return false;
+  const { normalizeThreadDefaults } = require("./projectCommands.js");
+  const next = normalizeThreadDefaults({
+    lastUsed: true,
+    provider: thread.provider,
+    model: thread.model,
+    reasoningEffort: thread.reasoningEffort,
+    permissionMode: thread.permissionMode,
+  });
+  store.setProjects(
+    store
+      .getProjects()
+      .map((p) => (p.id === project.id ? { ...p, threadDefaults: next } : p)),
+  );
+  store.save();
+  return true;
 }
 
 /**
@@ -361,6 +486,8 @@ function forkThread(store, input) {
   const created = createThread(store, {
     projectId: source.projectId,
     title: resolveOrdinaryForkTitle(input && input.title, sourceTitle),
+    // Config comes from the source (or the worker pool), never the project.
+    projectDefaults: false,
   });
 
   // createThread stamps lastVisitedAt = createdAt and handoffFrom null;
@@ -1215,6 +1342,7 @@ function getThreadDetail(store, threadId, workflow = null, opts) {
 module.exports = {
   normalizeBaseBranch,
   createThread,
+  recordLastUsedDefaults,
   setPermissionMode,
   setReasoningEffort,
   setWebSearch,
