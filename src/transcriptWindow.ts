@@ -17,6 +17,12 @@ export const TRANSCRIPT_WINDOW = 120;
 export const TRANSCRIPT_CHAR_BUDGET = 100_000;
 
 /**
+ * Message text the first render of a thread mounts (#1475): about a screen
+ * of answers. The rest of the tail window mounts right after paint.
+ */
+export const FIRST_PAINT_CHAR_BUDGET = 8_000;
+
+/**
  * First index of the tail window: at most `windowSize` entries and at most
  * `budget` characters of message text, but always the last entry.
  */

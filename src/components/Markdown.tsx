@@ -261,6 +261,11 @@ function cachedParse(text: string): ReactElement {
   return el;
 }
 
+/** Parse `text` into the cache ahead of its mount (tail-first switch). */
+export function preparseMarkdown(text: string): void {
+  cachedParse(text);
+}
+
 /**
  * One parse. memo: a settled chunk of a streaming reply keeps its text.
  * `live` marks the growing tail of a streaming reply: its text changes on

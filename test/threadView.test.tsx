@@ -3199,13 +3199,69 @@ describe("ThreadView transcript windowing (issue #564)", () => {
         createdAt: 10 + i,
       }),
     );
-    const html = render({ detail: detail({ messages: answers }) });
+    const m = await mount(view({ detail: detail({ messages: answers }) }));
+    const html = m.html();
     assert.ok(html.includes("LONG_ANSWER_5") && html.includes("LONG_ANSWER_4"));
     assert.ok(
       !html.includes("LONG_ANSWER_0"),
       "six 45 KB answers must not all mount",
     );
     assert.ok(html.includes("data-show-earlier"));
+    m.unmount();
+  });
+
+  it("mounts a big thread's tail first, the rest after paint, still pinned (#1475)", async () => {
+    const answers = Array.from({ length: 6 }, (_, i) =>
+      msg({
+        id: `big-${i}`,
+        role: "assistant",
+        text: `BIG_ANSWER_${i} ${"word ".repeat(1_800)}`,
+        createdAt: 10 + i,
+      }),
+    );
+    const big = detail({ thread: thread({ id: "t-big" }), messages: answers });
+    const small = detail({
+      thread: thread({ id: "t-small" }),
+      messages: [msg({ id: "s1", role: "assistant", text: "SMALL", createdAt: 1 })],
+    });
+    function SwitchHarness() {
+      const [open, setOpen] = useState(small);
+      return (
+        <div>
+          <button type="button" data-open-big="" onClick={() => setOpen(big)}>
+            big
+          </button>
+          {view({ detail: open })}
+        </div>
+      );
+    }
+    // The pane overflows, so the tail is not mounted all at once.
+    const layout = { clientHeight: 400, scrollHeight: 5_000, scrollTop: 0 };
+    const m = await mount(<SwitchHarness />);
+    const proto = HTMLElement.prototype;
+    const saved = ["clientHeight", "scrollHeight", "scrollTop"].map(
+      (k) => [k, Object.getOwnPropertyDescriptor(proto, k)] as const,
+    );
+    fakeScrollMetrics(proto as HTMLElement, layout);
+    try {
+      await inAct(async () => {
+        (m.query("[data-open-big]") as HTMLButtonElement).click();
+      });
+      assert.ok(m.html().includes("BIG_ANSWER_5"), "the on-screen tail paints first");
+      assert.ok(!m.html().includes("BIG_ANSWER_4"), "answers above it wait");
+      assert.equal(layout.scrollTop, 5_000, "pinned on the switch");
+
+      layout.scrollHeight = 9_000;
+      await inAct(() => new Promise((r) => setTimeout(r, 50)));
+      assert.ok(m.html().includes("BIG_ANSWER_0"), "the full window mounts after paint");
+      assert.equal(layout.scrollTop, 9_000, "and stays pinned to the bottom (#607)");
+      m.unmount();
+    } finally {
+      for (const [k, d] of saved) {
+        if (d) Object.defineProperty(proto, k, d);
+        else delete (proto as unknown as Record<string, unknown>)[k];
+      }
+    }
   });
 
   it("extends the window to include a jump-to-anchor above it", async () => {

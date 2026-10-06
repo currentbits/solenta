@@ -1,6 +1,7 @@
 import {
   Fragment,
   memo,
+  startTransition,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -85,11 +86,14 @@ import {
   type DiffViewMode,
 } from "./TurnDiffPanel";
 import {
+  FIRST_PAINT_CHAR_BUDGET,
+  TRANSCRIPT_WINDOW,
   clampWindowStart,
   ensureVisibleStart,
   tailWindowStart,
 } from "../transcriptWindow";
 import { lastUserMessage } from "../retryTurn";
+import { preparseMarkdown } from "./Markdown";
 import {
   isEditableUserMessage,
   rewindConfirmText,
@@ -1003,7 +1007,7 @@ export const ThreadView = memo(function ThreadView({
     );
   }, [timeline, revealTargetId]);
 
-  const start = clampWindowStart(
+  const windowAt = clampWindowStart(
     ensureVisibleStart(
       threadId !== windowThreadId
         ? tailWindowStart(timeline)
@@ -1016,11 +1020,81 @@ export const ThreadView = memo(function ThreadView({
   );
   if (threadId !== windowThreadId) {
     setWindowThreadId(threadId);
-    setWindowStart(start);
+    setWindowStart(windowAt);
     setJumpMessageId(null);
-  } else if (start !== windowStart) {
-    setWindowStart(start);
+  } else if (windowAt !== windowStart) {
+    setWindowStart(windowAt);
   }
+
+  /**
+   * Tail first (#1475): the first render of a thread mounts only the last
+   * FIRST_PAINT_CHAR_BUDGET of message text, so the switch frame parses what
+   * is on screen, not long answers far above it. The rest of the window
+   * mounts in a transition after paint; useStickToBottom keeps it pinned
+   * (#607). `start` is what is mounted, `windowAt` the window itself.
+   */
+  const fullWindowThread = useRef<string | null>(null);
+  const [, setFullWindowTick] = useState(0);
+  let start = windowAt;
+  if (
+    fullWindowThread.current !== threadId &&
+    detail?.thread.id === threadId
+  ) {
+    const tail =
+      revealIndex >= 0
+        ? windowAt
+        : Math.max(
+            windowAt,
+            tailWindowStart(timeline, TRANSCRIPT_WINDOW, FIRST_PAINT_CHAR_BUDGET),
+          );
+    if (tail === windowAt) fullWindowThread.current = threadId;
+    else start = tail;
+  }
+  const tailOnly = start !== windowAt;
+  useLayoutEffect(() => {
+    if (!tailOnly) return;
+    const showAll = () => {
+      fullWindowThread.current = threadId;
+      setFullWindowTick((n) => n + 1);
+    };
+    const el = bodyRef.current;
+    // A tail that doesn't fill the pane would grow visibly: mount it all now,
+    // before paint.
+    if (!el || el.scrollHeight <= el.clientHeight) {
+      showAll();
+      return;
+    }
+    // Parse the deferred answers one per idle slot, so a 35 KB answer's
+    // ~20 ms parse never shares a frame with the mount, then mount them all
+    // from the cache.
+    const texts: string[] = [];
+    for (let i = windowAt; i < start; i++) {
+      const entry = timeline[i];
+      if (entry?.kind === "message" && entry.message.role === "assistant") {
+        texts.push(entry.message.text);
+      }
+    }
+    // The timeout keeps a busy renderer (a stream elsewhere) from starving it.
+    const idle = (cb: () => void) =>
+      window.requestIdleCallback
+        ? window.requestIdleCallback(cb, { timeout: 100 })
+        : setTimeout(cb, 0);
+    let live = true;
+    const step = () => {
+      if (!live) return;
+      const text = texts.pop();
+      if (text === undefined) {
+        startTransition(showAll);
+        return;
+      }
+      preparseMarkdown(text);
+      idle(step);
+    };
+    idle(step);
+    return () => {
+      live = false;
+    };
+  });
 
   const visibleTimeline = start === 0 ? timeline : timeline.slice(start);
   const hiddenCount = start;
@@ -1081,6 +1155,12 @@ export const ThreadView = memo(function ThreadView({
     for (let i = start; i < prevTimelineStart.current; i++) {
       const entry = timeline[i];
       if (entry) seenEntryKeys.current.add(timelineKey(entry));
+    }
+    // A tool run cut by the old start re-keys once its head mounts.
+    for (const entry of displayTimeline) {
+      if (entry.kind === "group") {
+        seenEntryKeys.current.add(`group:${entry.group.id}`);
+      }
     }
   }
   prevTimelineStart.current = start;
@@ -3359,7 +3439,10 @@ export const ThreadView = memo(function ThreadView({
               className={styles.showEarlierBtn}
               data-show-earlier=""
               data-hidden-count={hiddenCount}
-              onClick={showEarlier}
+              onClick={() => {
+                fullWindowThread.current = threadId;
+                showEarlier();
+              }}
             >
               {`Show earlier — ${hiddenCount} ${hiddenCount === 1 ? "message" : "messages"}`}
             </button>
