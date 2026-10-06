@@ -282,8 +282,8 @@ function validateQuotaFailover(raw) {
  * notifications: only an explicit false turns desktop notifications off, so
  * absent/junk keeps the pre-setting behaviour (notify).
  *
- * notificationSound: absent/junk → false. The attention sound (#1506) is
- * opt-in; only an explicit true plays it.
+ * notificationSound: absent/junk → false. The focused-window alert sound
+ * (#1506) is opt-in; only an explicit true plays it.
  *
  * feltEstimatePrompt: absent/junk → false. The "how much time did this save
  * you?" card is opt-in; only an explicit true asks.

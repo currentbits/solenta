@@ -25,6 +25,8 @@ const {
   isNotifyTransition,
   isEffectivelySnoozed,
   needsUser,
+  notificationOptions,
+  shouldPlayAlert,
   notifyEvent,
   notifyBody,
   dispatchWebhook,
@@ -387,20 +389,15 @@ function threadNotifyState(thread) {
 /**
  * Desktop notification when a run settles or blocks on a prompt while the
  * window is in the background. Click focuses the window and selects that
- * thread. `sound` is the opt-in attention sound (#1506): played by the OS
- * with the notification, so Focus / Do Not Disturb silences it.
+ * thread.
  * @param {{ id: string, title?: string, status: string }} thread
- * @param {boolean} sound
- * @returns {boolean} whether a notification was shown
  */
-function notifyThreadComplete(thread, sound) {
-  if (typeof Notification !== "function") return false;
-  if (Notification.isSupported && !Notification.isSupported()) return false;
-  const n = new Notification({
-    title: thread.title || "Thread",
-    body: notifyBody(notifyEvent(threadNotifyState(thread))),
-    silent: !sound,
-  });
+function notifyThreadComplete(thread) {
+  if (typeof Notification !== "function") return;
+  if (Notification.isSupported && !Notification.isSupported()) return;
+  const n = new Notification(
+    notificationOptions(thread.title, notifyBody(notifyEvent(threadNotifyState(thread)))),
+  );
   n.on("click", () => {
     const win = focusMainWindow();
     if (win && win.webContents && !win.webContents.isDestroyed()) {
@@ -408,7 +405,6 @@ function notifyThreadComplete(thread, sound) {
     }
   });
   n.show();
-  return true;
 }
 
 let attentionBadge = 0;
@@ -714,14 +710,11 @@ app.whenReady().then(async () => {
           !isEffectivelySnoozed(payload.thread, Date.now())
         ) {
           const settings = store.getSettings();
-          const sound = settings.notificationSound === true;
-          const shown =
-            shouldNotify(prev, next, isAnyWindowFocused()) &&
-            settings.notifications &&
-            notifyThreadComplete(payload.thread, sound);
-          // No notification to carry it (window focused, or notifications
-          // off): the system alert sound instead.
-          if (sound && !shown) shell.beep();
+          const focused = isAnyWindowFocused();
+          if (shouldNotify(prev, next, focused) && settings.notifications) {
+            notifyThreadComplete(payload.thread);
+          }
+          if (shouldPlayAlert(settings, focused)) shell.beep();
           void dispatchWebhook({
             thread: payload.thread,
             prevStatus: prev,

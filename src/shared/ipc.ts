@@ -2722,9 +2722,9 @@ export interface AppSettings {
    */
   notifications: boolean;
   /**
-   * Short sound when a thread needs the user (#1506). Opt-in: only an
-   * explicit true plays it. Rides on the desktop notification when one is
-   * shown, so the OS Focus / Do Not Disturb setting silences it.
+   * Alert sound when a thread needs the user while the window is focused
+   * (#1506), the case where no desktop notification is shown. Opt-in: only
+   * an explicit true plays it. Never changes the notifications' own sound.
    */
   notificationSound: boolean;
   /**

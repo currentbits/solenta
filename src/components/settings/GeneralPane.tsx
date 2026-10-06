@@ -314,10 +314,10 @@ export function GeneralPane({
             <span>Play a sound when a thread needs you</span>
           </label>
           <p className={styles.note}>
-            When a thread finishes, fails or asks for permission. Muted
-            and snoozed threads stay quiet, and Focus or Do Not Disturb
-            silences it while the window is in the background. The dock
-            badge counts the threads waiting on you.
+            While the window is focused, when a thread finishes, fails or
+            asks for permission. In the background the desktop
+            notification plays its usual sound. Muted and snoozed threads
+            stay quiet. The dock badge counts the threads waiting on you.
           </p>
         </div>
         <div className={styles.field}>

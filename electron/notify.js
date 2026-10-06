@@ -95,6 +95,27 @@ function needsUser(thread, now) {
 }
 
 /**
+ * Desktop notification options. No `silent`: the OS plays its default
+ * sound, as it always has. The attention-sound setting never changes that.
+ * @param {string | undefined} title
+ * @param {string} body
+ */
+function notificationOptions(title, body) {
+  return { title: title || "Thread", body };
+}
+
+/**
+ * The opt-in attention sound (#1506) covers the one case a notification
+ * cannot: the window is focused, so shouldNotify posts nothing. Callers
+ * have already applied the transition, mute and snooze checks.
+ * @param {{ notificationSound?: boolean }} settings
+ * @param {boolean} windowFocused
+ */
+function shouldPlayAlert(settings, windowFocused) {
+  return windowFocused && settings.notificationSound === true;
+}
+
+/**
  * @param {unknown} u
  * @returns {boolean}
  */
@@ -356,6 +377,8 @@ module.exports = {
   isNotifyTransition,
   isEffectivelySnoozed,
   needsUser,
+  notificationOptions,
+  shouldPlayAlert,
   notifyEvent,
   notifyBody,
   shouldPostWebhook,

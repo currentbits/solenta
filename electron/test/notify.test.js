@@ -5,6 +5,8 @@ const {
   isEffectivelySnoozed,
   isNotifyTransition,
   needsUser,
+  notificationOptions,
+  shouldPlayAlert,
   shouldPostWebhook,
   buildWebhookPayload,
   shapeWebhookRequest,
@@ -43,6 +45,22 @@ describe("needsUser (dock badge, #1506)", () => {
       false,
     );
     assert.equal(needsUser(null, now), false);
+  });
+});
+
+describe("notification sound (#1506)", () => {
+  it("leaves the OS default notification sound alone", () => {
+    const opts = notificationOptions("Fix tests", "done");
+    assert.deepEqual(opts, { title: "Fix tests", body: "done" });
+    assert.equal("silent" in opts, false, "never silenced");
+    assert.equal(notificationOptions(undefined, "failed").title, "Thread");
+  });
+
+  it("adds the alert sound only when the option is on and the window is focused", () => {
+    assert.equal(shouldPlayAlert({ notificationSound: true }, true), true);
+    assert.equal(shouldPlayAlert({ notificationSound: true }, false), false);
+    assert.equal(shouldPlayAlert({ notificationSound: false }, true), false);
+    assert.equal(shouldPlayAlert({}, true), false, "off by default");
   });
 });
 
