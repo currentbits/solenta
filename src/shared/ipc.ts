@@ -2868,6 +2868,11 @@ export interface AppSettings {
    * Default on; only an explicit false opts out.
    */
   confirmQuitWithActiveWork: boolean;
+  /**
+   * After a restart, give each thread whose run was interrupted one
+   * automatic follow-up turn (issue #1512 I3). Default off.
+   */
+  resumeInterruptedRuns: boolean;
   /** Solenta tool, injection, and secret checks. Default on; false opts out. */
   guardrailsEnabled: boolean;
   /**
