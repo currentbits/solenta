@@ -779,3 +779,26 @@
     flex-shrink: 0;
   }
 }
+
+/* "from solenta.json" source marker (#1506). */
+.sourceTag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 6px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-pill);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 400;
+  line-height: 16px;
+  color: var(--text-muted);
+  vertical-align: 1px;
+}
+
+.repoCommand {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}

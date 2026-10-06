@@ -576,10 +576,14 @@ interface ThreadViewProps {
   onRefreshWorkerSnapshot?: (
     threadId: string,
   ) => void | Promise<void>;
-  /** Run the project's setup command or a named quick action (issue #153). */
+  /**
+   * Run the project's setup command or a named quick action (issue #153).
+   * trustRepoConfig approves the project's solenta.json commands (#1506).
+   */
   onRunCommand?: (
     threadId: string,
     actionId?: string,
+    trustRepoConfig?: string,
   ) => Promise<unknown>;
   runError?: string | null;
   onDismissRunError?: () => void;
@@ -916,6 +920,8 @@ export const ThreadView = memo(function ThreadView({
   /** Header quick action currently in flight (issue #153). */
   const [commandRunningId, setCommandRunningId] = useState<string | null>(null);
   const [commandError, setCommandError] = useState<string | null>(null);
+  /** solenta.json command waiting on the approval card (#1506). */
+  const [approveCommandId, setApproveCommandId] = useState<string | null>(null);
   /** Image opened in the lightbox; null when closed. */
   const [lightbox, setLightbox] = useState<{ src: string; alt: string } | null>(
     null,
@@ -2205,34 +2211,68 @@ export const ThreadView = memo(function ThreadView({
   };
   const projectSlug = project?.slug ?? "project";
   const newThreadLabel = `New thread in ${projectSlug}`;
-  const headerCommands: Array<{ id: string; name: string; command: string }> =
-    [];
+  // Project settings win over solenta.json field by field (#1506).
+  const repoConfig = project?.repoConfig;
+  const headerCommands: Array<{
+    id: string;
+    name: string;
+    command: string;
+    fromRepo?: boolean;
+  }> = [];
   if (onRunCommand) {
-    if (project?.setupCommand) {
+    const setup = project?.setupCommand || repoConfig?.setupCommand;
+    if (setup) {
       headerCommands.push({
         id: "setup",
         name: "Setup",
-        command: project.setupCommand,
+        command: setup,
+        fromRepo: !project?.setupCommand,
       });
     }
-    for (const action of project?.quickActions ?? []) {
+    const ownActions = project?.quickActions ?? [];
+    for (const action of ownActions.length
+      ? ownActions
+      : (repoConfig?.quickActions ?? []).map((a) => ({ ...a, fromRepo: true }))) {
       if (action && action.id && action.name) headerCommands.push(action);
     }
   }
+  // The approval covers every command in the file (its hash), so list them
+  // all, including any a project setting currently overrides.
+  const repoCommandsShown = [
+    ...(repoConfig?.setupCommand
+      ? [{ id: "setup", name: "Setup", command: repoConfig.setupCommand }]
+      : []),
+    ...(repoConfig?.quickActions ?? []),
+  ];
 
-  const runHeaderCommand = (actionId: string) => {
+  const runHeaderCommand = (actionId: string, trust?: string) => {
     if (!onRunCommand || commandRunningId) return;
+    const row = headerCommands.find((a) => a.id === actionId);
+    if (row?.fromRepo && !repoConfig?.trusted && !trust) {
+      setApproveCommandId(actionId);
+      return;
+    }
+    setApproveCommandId(null);
     setCommandRunningId(actionId);
     setCommandError(null);
-    void onRunCommand(thread.id, actionId === "setup" ? "setup" : actionId)
+    void onRunCommand(
+      thread.id,
+      actionId === "setup" ? "setup" : actionId,
+      trust,
+    )
       .then(() => {
         setCommandRunningId(null);
       })
       .catch((err: unknown) => {
         setCommandRunningId(null);
-        setCommandError(
-          err instanceof Error && err.message ? err.message : String(err),
-        );
+        const message =
+          err instanceof Error && err.message ? err.message : String(err);
+        // solenta.json changed since it was approved: ask again.
+        if (message.includes("REPO_CONFIG_UNTRUSTED")) {
+          setApproveCommandId(actionId);
+          return;
+        }
+        setCommandError(message);
       });
   };
 
@@ -3016,6 +3056,50 @@ export const ThreadView = memo(function ThreadView({
                             {commandError}
                           </span>
                         ) : null}
+                      </div>
+                    </div>
+                  ) : null}
+                  {approveCommandId && repoConfig?.hash ? (
+                    <div
+                      className={styles.permissionCard}
+                      role="alertdialog"
+                      aria-label="Approve solenta.json commands"
+                      data-repo-config-approve=""
+                    >
+                      <div className={styles.permissionHead}>
+                        Run commands from this repo&apos;s solenta.json?
+                      </div>
+                      <p className={styles.repoApproveNote}>
+                        These come from a checked-in file, so anyone who
+                        can push to the repo can change them. You will be
+                        asked again if they change.
+                      </p>
+                      <ul className={styles.repoApproveList}>
+                        {repoCommandsShown.map((a) => (
+                          <li key={a.id}>
+                            <span>{a.name}</span>
+                            <code>{a.command}</code>
+                          </li>
+                        ))}
+                      </ul>
+                      <div className={styles.permissionActions}>
+                        <button
+                          type="button"
+                          className={styles.permissionAllow}
+                          data-repo-config-approve-run=""
+                          onClick={() =>
+                            runHeaderCommand(approveCommandId, repoConfig.hash)
+                          }
+                        >
+                          Approve and run
+                        </button>
+                        <button
+                          type="button"
+                          className={styles.permissionDeny}
+                          onClick={() => setApproveCommandId(null)}
+                        >
+                          Cancel
+                        </button>
                       </div>
                     </div>
                   ) : null}
