@@ -209,7 +209,11 @@ module.exports = {
     return info;
   },
   "git:mergeOptions": async (ctx, input) => {
-    return mergeOptions({ store: ctx.store, threadId: input && input.threadId });
+    return mergeOptions({
+      store: ctx.store,
+      threadId: input && input.threadId,
+      projectPath: input && input.projectPath,
+    });
   },
   "git:listPrs": async (_ctx, projectPath, opts) => {
     return listPrs(projectPath, opts);

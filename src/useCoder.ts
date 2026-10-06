@@ -590,6 +590,7 @@ export interface UseCoderResult {
   prMergeAt: (input: {
     projectPath: string;
     prNumber: number;
+    method?: MergeMethod;
   }) => Promise<PrDetailResult>;
   /** Issues for a project checkout (`gh issue list`). Failures are in-band. */
   listIssues: (projectPath: string) => Promise<ListIssuesResult>;

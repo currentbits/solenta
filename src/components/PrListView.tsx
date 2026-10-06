@@ -18,6 +18,7 @@ import {
 } from "../prList";
 import { forgeReadiness } from "../sourceControl";
 import type {
+  MergeMethod,
   CheckoutPrResult,
   CoderApi,
   ListPrsOptions,
@@ -78,6 +79,7 @@ export interface PrListViewProps {
   prMergeAt?: (input: {
     projectPath: string;
     prNumber: number;
+    method?: MergeMethod;
   }) => Promise<PrDetailResult>;
 }
 

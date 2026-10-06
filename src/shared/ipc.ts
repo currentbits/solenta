@@ -4696,10 +4696,13 @@ export interface CoderApi {
       auto?: boolean;
     }): Promise<PrInfo>;
     /**
-     * Merge methods the thread's repo allows and the one to preselect.
-     * Cached ~10 minutes per checkout. Never rejects.
+     * Merge methods the repo allows and the one to preselect, for a
+     * thread's checkout or a project checkout (PR list view). Cached ~10
+     * minutes per checkout. Never rejects.
      */
-    mergeOptions(input: { threadId: string }): Promise<MergeOptionsResult>;
+    mergeOptions(
+      input: { threadId: string } | { projectPath: string },
+    ): Promise<MergeOptionsResult>;
     /**
      * Open PRs for a project checkout via `gh pr list`. Never rejects for
      * missing gh / non-GitHub remotes / auth: those come back as

@@ -1064,11 +1064,21 @@ async function repoMergeOptions(cwd, opts) {
 }
 
 /**
- * repoMergeOptions for a thread's checkout. Never throws.
- * @param {{ store: import('./store').Store, threadId: string }} opts
+ * repoMergeOptions for a thread's checkout, or a project checkout when
+ * projectPath is given. Never throws.
+ * @param {{ store: import('./store').Store, threadId?: string, projectPath?: string }} opts
  */
 async function mergeOptions(opts) {
   try {
+    if (opts.projectPath) {
+      // PR list view: no bound thread, just the project checkout.
+      const cwd = String(opts.projectPath);
+      const remote = await gitTryAsync(cwd, ["remote", "get-url", "origin"]);
+      if (!remote.ok || !isGitHubRemote(remote.stdout.trim())) {
+        return { ok: false, reason: "not a GitHub repo" };
+      }
+      return await repoMergeOptions(cwd);
+    }
     const { cwd, originUrl } = await resolveThreadGit(opts.store, opts.threadId);
     if (!isGitHubRemote(originUrl)) return { ok: false, reason: "not a GitHub repo" };
     return await repoMergeOptions(cwd);

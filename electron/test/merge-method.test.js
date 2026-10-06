@@ -51,3 +51,21 @@ describe("repoMergeOptions", () => {
     assert.equal(bad.ok, false);
   });
 });
+
+describe("mergeOptions for a project checkout", () => {
+  it("refuses a non-GitHub origin without calling gh", async () => {
+    const os = require("node:os");
+    const fs = require("node:fs");
+    const path = require("node:path");
+    const { execFileSync } = require("node:child_process");
+    const { mergeOptions } = require("../worktrees-pr.js");
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "merge-opts-proj-"));
+    execFileSync("git", ["init"], { cwd: dir, stdio: "ignore" });
+    execFileSync("git", ["remote", "add", "origin", "https://gitlab.com/a/b.git"], { cwd: dir });
+    assert.deepEqual(await mergeOptions({ projectPath: dir }), {
+      ok: false,
+      reason: "not a GitHub repo",
+    });
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+});

@@ -201,7 +201,7 @@ export function useCoderGitHub({
   );
 
   const prMergeAt = useCallback(
-    async (input: { projectPath: string; prNumber: number }) => {
+    async (input: { projectPath: string; prNumber: number; method?: MergeMethod }) => {
       return api.git.prMergeAt(input);
     },
     [api],

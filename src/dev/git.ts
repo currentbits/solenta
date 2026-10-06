@@ -125,7 +125,7 @@ export function createGit(ctx: DevCtx): Pick<CoderApi, "git" | "mergeQueue"> {
         });
         return merged;
       },
-      async mergeOptions(_input: { threadId: string }) {
+      async mergeOptions(_input: { threadId: string } | { projectPath: string }) {
         return {
           ok: true as const,
           methods: ["squash", "merge", "rebase"] as MergeMethod[],
