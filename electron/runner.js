@@ -18,6 +18,7 @@ const { createSessionRecording } = require("./runner-session-recording.js");
 const { createClaudeSessions } = require("./runner-claude-sessions.js");
 const { createVerifyGate } = require("./runner-verify-gate.js");
 const { createQuotaWait } = require("./runner-quota-wait.js");
+const { createAutoResume } = require("./runner-auto-resume.js");
 const { createOrchNotices } = require("./runner-orch-notices.js");
 const { createPermissions } = require("./runner-permissions.js");
 const { createClaudeRun } = require("./runner-provider-claude.js");
@@ -1841,6 +1842,11 @@ function createRunner(opts) {
         lastEventAt: null,
         stalledAt: null,
         stoppedAt: null,
+        // Any new run answers the interruption (issue #1512 I3). Only a
+        // human turn re-arms auto-resume, so a resumed run that is itself
+        // interrupted is never resumed again.
+        interruptedAt: null,
+        ...(machineTurn || isReplayTurn(input) ? {} : { autoResumedAt: null }),
         quotaWaitUntil: null,
         quotaWaitResumed: input.fromQuotaWait === true,
         quotaFailoverPending: false,
@@ -2196,6 +2202,7 @@ function createRunner(opts) {
    */
   async function stopRun(input, seen = new Set()) {
     const { threadId } = input;
+    cancelAutoResume(threadId);
     // Cascade first: a worker outliving its stopped orchestrator keeps
     // burning tokens and re-wakes the parent through queueOrchNotice. Doing
     // it before this thread's own terminal also means a notice that races in
@@ -2404,12 +2411,19 @@ function createRunner(opts) {
       );
       store.updateThread(
         threadId,
-        { status: "idle", runStartedAt: null, stoppedAt: Date.now() },
+        {
+          status: "idle",
+          runStartedAt: null,
+          stoppedAt: Date.now(),
+          // Opt-in resume after restart (issue #1512 I3).
+          interruptedAt: Date.now(),
+        },
         { touch: true },
       );
     }
     cancelAllQuotaWakes();
     cancelAllOrchNotices();
+    cancelAllAutoResume();
     // Kept-alive Claude sessions (idle between turns): kill + clear timers.
     for (const threadId of [...claudeSessions.keys()]) {
       disposeClaudeSession(threadId);
@@ -2558,6 +2572,13 @@ function createRunner(opts) {
   Object.assign(ctx, { queueOrchNotice, flushOrchNotices, sweepDoneWorkers });
   // createPermissions destructures this eagerly.
   ctx.isAutoTurn = isAutoTurn;
+  ctx.deliverNotice = deliverNotice;
+
+  const {
+    resumeInterruptedRuns,
+    cancel: cancelAutoResume,
+    cancelAll: cancelAllAutoResume,
+  } = createAutoResume(ctx);
 
   const {
     ciWorkflowSignOffs,
@@ -2692,6 +2713,7 @@ function createRunner(opts) {
     listActiveBtwCount,
     activeRunId,
     isAutoTurn,
+    resumeInterruptedRuns,
     stopAll,
     flushTranscripts,
     workflowNameFromThreadId,

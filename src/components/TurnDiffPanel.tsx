@@ -2,6 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import type { DiffResult, FileChange } from "../shared/ipc";
 import {
   annotateHunkLines,
+  diffHighlightGroups,
   diffLineKind,
   isEmptyDiff,
   type DiffLineKind,
@@ -79,7 +80,8 @@ function FileHunks({ patch, mode }: { patch: ReviewFilePatch; mode: DiffViewMode
     () => layout.flatMap((h) => h.rows.map((r) => splitLineText(r.text, r.kind))),
     [layout],
   );
-  const html = useHighlightedLines(languageForPath(patch.path), codes);
+  const groups = useMemo(() => diffHighlightGroups(layout), [layout]);
+  const html = useHighlightedLines(languageForPath(patch.path), codes, groups);
   const hl = (offset: number, i: number, text: string) =>
     text.startsWith("\\") ? null : (html[offset + i] ?? null);
 

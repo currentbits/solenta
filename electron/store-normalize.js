@@ -306,6 +306,9 @@ function validateQuotaFailover(raw) {
  * confirmQuitWithActiveWork: only an explicit false opts out of the
  * accidental-quit dialog (issue #1195). Absent/junk keeps the confirm.
  *
+ * resumeInterruptedRuns: opt-in (issue #1512 I3); only an explicit true
+ * resumes interrupted runs after a restart.
+ *
  * prDiffCapLines: absent/junk → DEFAULT_PR_DIFF_CAP_LINES (400); only an
  * explicit null disables the PR-size cap (issue #402).
  *
@@ -344,6 +347,7 @@ function normalizeSettings(raw) {
     stayAwake: "agent",
     quotaWaitAutoResume: true,
     confirmQuitWithActiveWork: true,
+    resumeInterruptedRuns: false,
     guardrailsEnabled: true,
     prDiffCapLines: DEFAULT_PR_DIFF_CAP_LINES,
     agentProfiles: [],
@@ -484,6 +488,9 @@ function normalizeSettings(raw) {
   settings.confirmQuitWithActiveWork =
     /** @type {{ confirmQuitWithActiveWork?: unknown }} */ (obj)
       .confirmQuitWithActiveWork !== false;
+  settings.resumeInterruptedRuns =
+    /** @type {{ resumeInterruptedRuns?: unknown }} */ (obj)
+      .resumeInterruptedRuns === true;
   settings.guardrailsEnabled =
     /** @type {{ guardrailsEnabled?: unknown }} */ (obj).guardrailsEnabled !== false;
   settings.autoSettleOnMerge =

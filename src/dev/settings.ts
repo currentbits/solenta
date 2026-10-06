@@ -56,6 +56,7 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
   let agentsPanelRememberLast = false;
   let stayAwake: AppSettings["stayAwake"] = "agent";
   let confirmQuitWithActiveWork = true;
+  let resumeInterruptedRuns = false;
   let guardrailsEnabled = true;
   let otel: OtelSettings = { endpoint: null, headers: {}, claudeMetrics: false };
   let webhook: WebhookSettings = {
@@ -148,6 +149,7 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           stayAwake,
           quotaWaitAutoResume: ctx.quotaWaitAutoResume,
           confirmQuitWithActiveWork,
+          resumeInterruptedRuns,
           guardrailsEnabled,
           agentProfiles: agentProfiles.map((p) => ({ ...p })),
           providerInstances: providerInstances.map((p) => ({ ...p, env: { ...p.env } })),
@@ -312,6 +314,12 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           }
           confirmQuitWithActiveWork = patch.confirmQuitWithActiveWork;
         }
+        if (Object.prototype.hasOwnProperty.call(patch, "resumeInterruptedRuns")) {
+          if (typeof patch.resumeInterruptedRuns !== "boolean") {
+            throw new Error("resumeInterruptedRuns must be a boolean");
+          }
+          resumeInterruptedRuns = patch.resumeInterruptedRuns;
+        }
         if (Object.prototype.hasOwnProperty.call(patch, "guardrailsEnabled")) {
           if (typeof patch.guardrailsEnabled !== "boolean") {
             throw new Error("guardrailsEnabled must be a boolean");
@@ -430,6 +438,7 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           stayAwake,
           quotaWaitAutoResume: ctx.quotaWaitAutoResume,
           confirmQuitWithActiveWork,
+          resumeInterruptedRuns,
           guardrailsEnabled,
           agentProfiles: agentProfiles.map((p) => ({ ...p })),
           providerInstances: providerInstances.map((p) => ({ ...p, env: { ...p.env } })),

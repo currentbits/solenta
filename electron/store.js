@@ -214,6 +214,8 @@ function recoverInterruptedRuns(store, data) {
     t.lastError = "Run error: app quit while the run was in flight";
     t.lastErrorKind = null;
     t.updatedAt = Date.now();
+    // Opt-in resume after restart (issue #1512 I3) keys off this stamp.
+    t.interruptedAt = Date.now();
     store._appendLazyMessage(t.id, {
       id: randomUUID(),
       role: "event",

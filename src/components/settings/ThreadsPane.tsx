@@ -299,6 +299,32 @@ export function ThreadsPane({
             sends the same prompt once. Off = fail the turn. Distinct
             from the daily budget cap above.
           </p>
+          <label className={styles.fieldRow}>
+            <input
+              type="checkbox"
+              data-resume-interrupted-runs=""
+              checked={settings?.resumeInterruptedRuns === true}
+              disabled={saving || settings == null}
+              onChange={(e) => {
+                setError(null);
+                void onSaveSettings({
+                  resumeInterruptedRuns: e.target.checked,
+                }).catch((err) => {
+                  setError(
+                    err instanceof Error && err.message
+                      ? err.message
+                      : "Failed to save settings",
+                  );
+                });
+              }}
+            />
+            <span>Resume interrupted runs after restart</span>
+          </label>
+          <p className={styles.note}>
+            When the app quits or crashes mid-run, each thread gets one
+            automatic turn to continue, two at a time. Runs interrupted
+            more than 12 hours ago are left alone.
+          </p>
         </div>
         {providers.length > 0 && (
           <div className={styles.field} data-quota-failover="">

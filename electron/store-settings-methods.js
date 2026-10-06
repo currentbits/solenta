@@ -58,6 +58,7 @@ class StoreSettingsMethods {
       stayAwake: n.stayAwake,
       quotaWaitAutoResume: n.quotaWaitAutoResume,
       confirmQuitWithActiveWork: n.confirmQuitWithActiveWork,
+      resumeInterruptedRuns: n.resumeInterruptedRuns,
       guardrailsEnabled: n.guardrailsEnabled,
       prDiffCapLines: n.prDiffCapLines,
       agentProfiles: n.agentProfiles,
@@ -327,6 +328,13 @@ class StoreSettingsMethods {
         throw new Error("confirmQuitWithActiveWork must be a boolean");
       }
       this.data.settings.confirmQuitWithActiveWork = v;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "resumeInterruptedRuns")) {
+      const v = patch.resumeInterruptedRuns;
+      if (typeof v !== "boolean") {
+        throw new Error("resumeInterruptedRuns must be a boolean");
+      }
+      this.data.settings.resumeInterruptedRuns = v;
     }
     if (Object.prototype.hasOwnProperty.call(patch, "guardrailsEnabled")) {
       const v = patch.guardrailsEnabled;

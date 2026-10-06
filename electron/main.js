@@ -6,7 +6,8 @@
 // support buys nothing — turn it off for the whole main process.
 process.noAsar = true;
 
-const { app, BrowserWindow, ipcMain, dialog, shell, Notification, nativeTheme, protocol, net, powerSaveBlocker, powerMonitor, session } = require("electron");
+const { app, BrowserWindow, ipcMain, dialog, shell, Notification, nativeTheme, nativeImage, protocol, net, powerSaveBlocker, powerMonitor, session } = require("electron");
+const { overlayLabel, overlayDescription, overlayBitmap } = require("./taskbarOverlay.js");
 const { windowBackgroundColor, nativeThemeSource } = require("./theme.js");
 const { createStayAwake } = require("./caffeinate.js");
 const {
@@ -54,7 +55,11 @@ const { startScheduler } = require("./automations.js");
 const { startAutoDispatch } = require("./autodispatch.js");
 const { startPostMergeScheduler } = require("./postmerge.js");
 const { startMemoryConsolidateScheduler } = require("./memory-consolidate.js");
-const { primeProcessPath, refreshLoginPath } = require("./pathEnv.js");
+const {
+  primeProcessPath,
+  refreshLoginPath,
+  whenPathReady,
+} = require("./pathEnv.js");
 const {
   parseServeWebArgs,
   startWebServer,
@@ -340,6 +345,7 @@ function createWindow() {
   } else {
     win.loadFile(path.join(__dirname, "../dist/index.html"));
   }
+  if (process.platform === "win32" && attentionBadge) applyTaskbarOverlay();
 }
 
 const encodeThreadList = createThreadListEncoder();
@@ -410,7 +416,7 @@ function notifyThreadComplete(thread) {
 let attentionBadge = 0;
 /**
  * Dock (macOS) / launcher (Linux Unity) badge: how many threads wait on
- * the user (#1506). Windows has no badge count API; this is a no-op there.
+ * the user (#1506). Windows gets a taskbar overlay instead (#1512).
  * @param {import('./store').Store} store
  */
 function syncAttentionBadge(store) {
@@ -419,7 +425,22 @@ function syncAttentionBadge(store) {
   for (const t of store.getThreads()) if (needsUser(t, now)) n += 1;
   if (n === attentionBadge) return;
   attentionBadge = n;
-  app.setBadgeCount(n);
+  if (process.platform === "win32") applyTaskbarOverlay();
+  else app.setBadgeCount(n);
+}
+
+/** Windows: draw attentionBadge as a taskbar overlay on every window (#1512). */
+function applyTaskbarOverlay() {
+  const label = overlayLabel(attentionBadge);
+  const icon = label
+    ? (() => {
+        const { width, height, buffer } = overlayBitmap(label);
+        return nativeImage.createFromBitmap(buffer, { width, height });
+      })()
+    : null;
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) win.setOverlayIcon(icon, label ? overlayDescription(attentionBadge) : "");
+  }
 }
 
 /**
@@ -783,6 +804,28 @@ app.whenReady().then(async () => {
   // Renderer may already have mounted against empty state; this is the
   // signal that invoke channels will answer (#618).
   broadcast("boot:ready");
+
+  // Opt-in resume after restart (issue #1512 I3): only after first paint
+  // and the login-shell PATH, so the notice can render and providers resolve.
+  void (async () => {
+    await whenPathReady();
+    await Promise.all(
+      BrowserWindow.getAllWindows()
+        .filter((w) => w.webContents.isLoading())
+        .map(
+          (w) =>
+            new Promise((resolve) =>
+              w.webContents.once("did-finish-load", resolve),
+            ),
+        ),
+    );
+    if (runner) await runner.resumeInterruptedRuns();
+  })().catch((err) =>
+    console.warn(
+      "solenta: resume after restart failed:",
+      err && err.message ? err.message : err,
+    ),
+  );
 
   if (serveOpts.enabled) {
     const token = loadOrCreateToken(userData);

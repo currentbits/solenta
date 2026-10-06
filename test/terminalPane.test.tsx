@@ -315,8 +315,45 @@ describe("TerminalPane", () => {
     const h = harness({ open: async () => state({ staleRoot: true, pty: false }) });
     const m = await mount(<TerminalPane threadId="t1" api={h.api} load={h.load} />);
     await settle();
-    assert.match(m.query("[data-terminal-stale]")!.textContent!, /Restart/);
+    assert.match(m.query("[data-terminal-stale]")!.textContent!, /Move to worktree/);
     assert.ok(m.query("[data-terminal-basic]"));
+  });
+
+  it("Move to worktree reopens with move at the xterm's size and re-attaches (#1512)", async () => {
+    let stale = true;
+    const h = harness({
+      open: async (input) => {
+        if (input.move) stale = false;
+        return state({ staleRoot: stale });
+      },
+    });
+    const m = await mount(<TerminalPane threadId="t1" api={h.api} load={h.load} />);
+    await settle();
+    await m.click(m.query("[data-terminal-move]"));
+    await settle();
+    const opens = h.calls.filter((c) => c.call === "open").map((c) => c.input);
+    assert.deepEqual(opens[1], { threadId: "t1", termId: "1", cols: 91, rows: 17, move: true });
+    assert.equal(opens.length, 3, "remounts onto the moved shell");
+    assert.equal(h.calls.some((c) => c.call === "close"), false, "scrollback is not dropped");
+    assert.equal(m.query("[data-terminal-stale]"), null);
+  });
+
+  it("Close session ends the shell without reopening it (#1512)", async () => {
+    const h = harness();
+    const m = await mount(<TerminalPane threadId="t1" api={h.api} load={h.load} />);
+    await settle();
+    await m.click(m.query("[data-terminal-end]"));
+    await h.push({ from: 0, data: "\r\n[session closed]", cursor: 20, running: false });
+    await settle();
+    assert.deepEqual(h.calls.find((c) => c.call === "close")?.input, {
+      threadId: "t1",
+      termId: "1",
+      keep: true,
+    });
+    assert.equal(h.calls.filter((c) => c.call === "open").length, 1, "no restart");
+    assert.equal(h.terms[0].disposed, false, "scrollback stays on screen");
+    assert.equal(m.query("[data-running]")!.getAttribute("data-running"), "false");
+    assert.equal(m.query("[data-terminal-end]"), null);
   });
 
   it("copies a selection on Cmd+C and lets Ctrl+C reach the shell", async () => {

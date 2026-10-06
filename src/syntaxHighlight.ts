@@ -56,6 +56,11 @@ const MAX_LINE = 2000;
 const MAX_BLOCK = 20_000;
 /** Lines highlighted per idle slice, so a 5k-line file never blocks input. */
 const SLICE = 200;
+/**
+ * A slice that ends inside a span (an unclosed comment or string) is redone
+ * this many lines long so the construct colours through; past it, it is cut.
+ */
+const MAX_GROW = 10 * SLICE;
 
 // ponytail: flat cache, dropped wholesale at the cap; LRU if reloads thrash it.
 const CACHE_CAP = 20_000;
@@ -72,6 +77,37 @@ function cached(engine: Engine, lang: string, code: string): string | null {
   return html;
 }
 
+/**
+ * Split highlighted HTML into lines that each stand alone: spans still open
+ * at a line break are closed there and reopened on the next line, so a
+ * multi-line comment or string keeps its colour on every line (#1512).
+ * `open` is how many spans the last line inherits from the one before.
+ */
+export function splitHighlightedLines(html: string): { lines: string[]; open: number } {
+  const lines: string[] = [];
+  const stack: string[] = [];
+  let line = "";
+  let last = 0;
+  let open = 0;
+  for (const m of html.matchAll(/<span[^>]*>|<\/span>|\n/g)) {
+    line += html.slice(last, m.index);
+    last = m.index + m[0].length;
+    if (m[0] === "\n") {
+      lines.push(line + "</span>".repeat(stack.length));
+      line = stack.join("");
+      open = stack.length;
+    } else if (m[0] === "</span>") {
+      stack.pop();
+      line += m[0];
+    } else {
+      stack.push(m[0]);
+      line += m[0];
+    }
+  }
+  lines.push(line + html.slice(last));
+  return { lines, open };
+}
+
 const idle: (cb: () => void) => number =
   typeof requestIdleCallback === "function"
     ? (cb) => requestIdleCallback(cb, { timeout: 120 })
@@ -81,13 +117,16 @@ const cancelIdle: (id: number) => void =
 
 /**
  * Per-line highlighted HTML (null = plain) for `codes`, filled in idle
- * slices once the engine loads. Pass a memoized array: identity is the key.
- * ponytail: lines are highlighted one at a time, so a block comment that
- * opens above a hunk is not coloured. Highlight whole sides if that bites.
+ * slices once the engine loads. Each of `groups` (indices into codes) is
+ * highlighted as one document, so multi-line comments and strings colour
+ * through (#1512); the default is the whole list. A diff passes one group
+ * per side per hunk; a line in several groups takes the last one's colour.
+ * Pass memoized arrays: identity is the key.
  */
 export function useHighlightedLines(
   lang: string | null,
   codes: string[],
+  groups?: number[][],
 ): Array<string | null> {
   const [state, setState] = useState<{
     codes: string[];
@@ -98,17 +137,43 @@ export function useHighlightedLines(
     let cancelled = false;
     let handle = 0;
     const html: Array<string | null> = new Array(codes.length).fill(null);
+    const docs = groups ?? [codes.map((_, i) => i)];
     void loadEngine().then((engine) => {
-      let i = 0;
+      let g = 0;
+      let pos = 0;
       const step = () => {
         if (cancelled) return;
-        const end = Math.min(codes.length, i + SLICE);
-        for (; i < end; i++) {
-          const code = codes[i]!;
-          html[i] = code.length > MAX_LINE ? null : cached(engine, lang, code);
+        let budget = SLICE;
+        while (budget > 0 && g < docs.length) {
+          const doc = docs[g]!;
+          let end = Math.min(doc.length, pos + SLICE);
+          let out: { lines: string[]; open: number } | null;
+          for (;;) {
+            // The engine closes every scope at the end of its input, so an
+            // empty last line is the probe: it inherits whatever the block's
+            // real last line left open.
+            const text = doc
+              .slice(pos, end)
+              .map((i) => (codes[i]!.length > MAX_LINE ? "" : codes[i]!))
+              .join("\n");
+            const hl = cached(engine, lang, `${text}\n`);
+            out = hl == null ? null : splitHighlightedLines(hl);
+            if (!out || !out.open || end >= doc.length || end - pos >= MAX_GROW) break;
+            end = Math.min(doc.length, pos + MAX_GROW);
+          }
+          for (let k = pos; k < end; k++) {
+            const i = doc[k]!;
+            html[i] = !out || codes[i]!.length > MAX_LINE ? null : (out.lines[k - pos] ?? null);
+          }
+          budget -= end - pos;
+          pos = end;
+          if (pos >= doc.length) {
+            g += 1;
+            pos = 0;
+          }
         }
         setState({ codes, html: html.slice() });
-        if (i < codes.length) handle = idle(step);
+        if (g < docs.length) handle = idle(step);
       };
       step();
     });
@@ -116,7 +181,7 @@ export function useHighlightedLines(
       cancelled = true;
       cancelIdle(handle);
     };
-  }, [lang, codes]);
+  }, [lang, codes, groups]);
   return state && state.codes === codes && lang ? state.html : [];
 }
 

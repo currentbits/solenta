@@ -23,6 +23,7 @@ import {
 import { ClaimedLanesHeartbeat } from "./components/LaneHeartbeat";
 import type { SettingsPane } from "./components/SettingsModal";
 import { ArchiveToast } from "./components/ArchiveToast";
+import { ResumeNotice } from "./components/ResumeNotice";
 import { UNDO_WINDOW_MS, useUndoLast } from "./app/useUndoLast";
 import { bindingLabel, matchesBinding } from "./keybindings";
 import { isShortcutBlocked } from "./sidebarSelection";
@@ -46,6 +47,7 @@ import {
   type RepeatDraft,
 } from "./repeatThread";
 import type {
+  AttachmentInfo,
   CloneProgressPush,
   AgentProfile,
   ConflictForecast,
@@ -1040,8 +1042,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   );
 
   const handleEditQueued = useCallback(
-    (prompt: string, items?: string[]) => {
-      return editQueued(prompt, undefined, items);
+    (prompt: string, items?: string[], itemAttachments?: AttachmentInfo[][]) => {
+      return editQueued(prompt, undefined, items, itemAttachments);
     },
     [editQueued],
   );
@@ -1884,6 +1886,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         queuedItems={
           selectedThreadId ? queued[selectedThreadId]?.items : undefined
         }
+        queuedFiles={selectedThreadId ? queued[selectedThreadId] : null}
         queuedError={
           selectedThreadId ? (queued[selectedThreadId]?.error ?? null) : null
         }
@@ -2214,6 +2217,15 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         />
         )}
         </Suspense>
+        <ResumeNotice
+          threads={threads}
+          onStopAll={(ids) => {
+            // Stopping a still-queued thread also drops its pending resume.
+            for (const threadId of ids) {
+              void api.runs.stop({ threadId }).catch(() => {});
+            }
+          }}
+        />
         {archiveToastIds && (
           <ArchiveToast
             key={`archive-${archiveToastIds.join(",")}`}

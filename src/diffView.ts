@@ -124,6 +124,30 @@ export function annotateHunkLines(
   return out;
 }
 
+/**
+ * Highlight groups for a diff (#1512): per hunk, the old side (removed +
+ * context rows) and the new side (added + context rows), as indices into
+ * the flattened rows, so each side highlights as one document. The
+ * "No newline at end of file" markers are left out. New comes last, so
+ * context rows take the new side's colour.
+ */
+export function diffHighlightGroups(
+  hunks: { rows: Pick<AnnotatedDiffLine, "kind" | "text">[]; offset: number }[],
+): number[][] {
+  const groups: number[][] = [];
+  for (const { rows, offset } of hunks) {
+    const old: number[] = [];
+    const neu: number[] = [];
+    rows.forEach((r, i) => {
+      if (r.text.startsWith("\\")) return;
+      if (r.kind !== "add") old.push(offset + i);
+      if (r.kind !== "del") neu.push(offset + i);
+    });
+    groups.push(old, neu);
+  }
+  return groups;
+}
+
 export interface DiffCommentAnchor {
   path: string;
   kind: DiffLineKind;
