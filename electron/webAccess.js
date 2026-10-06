@@ -278,6 +278,11 @@ function createWebAccess(deps) {
       if (server) server.broadcast(channel, payload);
     },
 
+    /** --serve-web's printed token is the Legacy device row. */
+    adoptLegacy(token) {
+      return devices.adoptLegacy(token);
+    },
+
     isRunning() {
       return Boolean(server);
     },

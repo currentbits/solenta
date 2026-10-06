@@ -302,4 +302,17 @@ describe("webAccess", () => {
     await access.setEnabled({ enabled: false });
     assert.deepEqual(tsState.serve, {}, "no tailnet URL left pointing at a closed port");
   });
+
+  it("web:* handlers are desktop only, so a paired browser cannot mint or revoke", async () => {
+    const handlers = require("../ipc-web.js");
+    for (const channel of Object.keys(handlers)) {
+      await assert.rejects(
+        handlers[channel]({ transport: "web", webAccess: access }, {}),
+        /require the desktop app/,
+        channel,
+      );
+    }
+    const st = await handlers["web:status"]({ transport: "desktop", webAccess: access });
+    assert.equal(st.running, false);
+  });
 });

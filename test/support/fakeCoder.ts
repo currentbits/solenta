@@ -55,6 +55,8 @@ import type {
   PairingCreated,
   PairingInfo,
   PairingList,
+  WebAccessStatus,
+  WebDeviceInfo,
   MemoryEntryInfo,
   MemoryMaintenanceReport,
   PrChecksResult,
@@ -291,6 +293,8 @@ export interface FakeOptions {
   insights?: FailureMode[];
   /** Override usage.byDay (default: empty ledger). */
   usage?: UsageReport;
+  /** Solenta Web (#1512 I2). Default: off, no devices, no Tailscale. */
+  webAccess?: WebAccessStatus;
 }
 
 /** Idle terminal session for the harness; no shell exists under jsdom. */
@@ -673,6 +677,15 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
     Object.assign(new Error("iOS Simulator requires macOS"), {
       code: "unsupported_platform",
     });
+
+  let web: WebAccessStatus = opts.webAccess ?? {
+    running: false,
+    lan: false,
+    port: 4620,
+    urls: [],
+    devices: [],
+    tailscale: { installed: false, loggedIn: false, host: null, serving: false, url: null },
+  };
 
   /** Record the call, then either reject (if configured) or resolve. */
   function rec<T>(channel: string, args: unknown[], value: T): Promise<T> {
@@ -3474,6 +3487,45 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       approve: (input: unknown) => rec("pairing.approve", [input], { runId: "r1" }),
       reject: (input: unknown) =>
         rec("pairing.reject", [input], threads[0] ?? ({} as ThreadInfo)),
+    },
+    web: {
+      status: () => rec("web.status", [], { ...web }),
+      setEnabled: (input: { enabled: boolean; lan?: boolean }) => {
+        web = {
+          ...web,
+          running: input.enabled,
+          lan: input.lan ?? web.lan,
+          urls: input.enabled ? [{ kind: "local", url: `http://127.0.0.1:${web.port}` }] : [],
+        };
+        return rec("web.setEnabled", [input], { ...web });
+      },
+      addDevice: (input: { name: string }) => {
+        const device: WebDeviceInfo = {
+          id: `web-dev-${web.devices.length + 1}`,
+          name: input.name,
+          createdAt: 0,
+          lastSeenAt: null,
+          legacy: false,
+        };
+        web = { ...web, devices: web.devices.concat(device) };
+        return rec("web.addDevice", [input], { device, token: "t".repeat(43) });
+      },
+      revokeDevice: (input: { id: string }) => {
+        const hit = web.devices.find((d) => d.id === input.id);
+        web = { ...web, devices: web.devices.filter((d) => d.id !== input.id) };
+        return rec("web.revokeDevice", [input], hit as WebDeviceInfo);
+      },
+      setTailscale: (input: { on: boolean }) => {
+        web = {
+          ...web,
+          tailscale: {
+            ...web.tailscale,
+            serving: input.on,
+            url: input.on && web.tailscale.host ? `https://${web.tailscale.host}` : null,
+          },
+        };
+        return rec("web.setTailscale", [input], web.tailscale);
+      },
     },
     vibeKanban: {
       preview: (input?: unknown) =>

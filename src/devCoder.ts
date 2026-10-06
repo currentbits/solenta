@@ -42,7 +42,7 @@ import {
   seedThreads,
   seedDetail,
 } from "./dev/seed.ts";
-import { createSettings, createPairing } from "./dev/settings.ts";
+import { createSettings, createPairing, createWeb } from "./dev/settings.ts";
 import { createSkills } from "./dev/skills.ts";
 import { createThreads } from "./dev/threads.ts";
 import { createUsage } from "./dev/usage.ts";
@@ -473,6 +473,7 @@ function buildDevCoder(): CoderApi {
       },
     },
     ...createPairing(ctx),
+    ...createWeb(),
     ...createIssues(ctx),
     ...createWorkspace(),
     on(channel, cb) {

@@ -12,6 +12,8 @@ import type {
   OtelSettings,
   WebhookSettings,
   ThreadInfo,
+  WebAccessStatus,
+  WebDeviceInfo,
 } from "../shared/ipc";
 import {
   mergeMcpSettingsPatch,
@@ -534,6 +536,70 @@ export function createPairing(ctx: DevCtx): Pick<CoderApi, "pairing"> {
         t.pendingExternalPrompt = null;
         t.archived = true;
         return t;
+      },
+    },
+  };
+}
+
+/** Solenta Web switch + devices for browser dev and screenshots (#1512 I2). */
+export function createWeb(): Pick<CoderApi, "web"> {
+  const now = Date.now();
+  let running = false;
+  let lan = false;
+  let serving = false;
+  let devices: WebDeviceInfo[] = [
+    { id: "dev-legacy", name: "Legacy device", createdAt: now - 40 * 864e5, lastSeenAt: now - 3 * 864e5, legacy: true },
+    { id: "dev-ipad", name: "iPad", createdAt: now - 9 * 864e5, lastSeenAt: now - 12 * 60e3, legacy: false },
+  ];
+  const status = async (): Promise<WebAccessStatus> => ({
+    running,
+    lan,
+    port: 4620,
+    urls: running
+      ? [
+          { kind: "local", url: "http://127.0.0.1:4620" },
+          ...(lan ? [{ kind: "lan" as const, url: "http://192.168.1.20:4620" }] : []),
+        ]
+      : [],
+    devices,
+    tailscale: {
+      installed: true,
+      loggedIn: true,
+      host: "studio.tail1234.ts.net",
+      serving: running && serving,
+      url: running && serving ? "https://studio.tail1234.ts.net" : null,
+    },
+  });
+  return {
+    web: {
+      status,
+      async setEnabled(input) {
+        running = input.enabled;
+        if (typeof input.lan === "boolean") lan = input.lan;
+        if (!running) serving = false;
+        return status();
+      },
+      async addDevice(input) {
+        const device: WebDeviceInfo = {
+          id: `dev-${devices.length + 1}`,
+          name: input.name.trim(),
+          createdAt: Date.now(),
+          lastSeenAt: null,
+          legacy: false,
+        };
+        devices = devices.concat(device);
+        return { device, token: "dEvT0kEn-scan-me-from-the-settings-pane-0123456789" };
+      },
+      async revokeDevice(input) {
+        const hit = devices.find((d) => d.id === input.id);
+        if (!hit) throw new Error(`Unknown device: ${input.id}`);
+        devices = devices.filter((d) => d.id !== input.id);
+        return hit;
+      },
+      async setTailscale(input) {
+        if (input.on && !running) throw new Error("Turn on Solenta Web first.");
+        serving = input.on;
+        return (await status()).tailscale;
       },
     },
   };
