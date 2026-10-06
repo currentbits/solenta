@@ -82,6 +82,8 @@ export interface ProjectInfo {
    * Absent/empty = none. Cap 8.
    */
   quickActions?: ProjectQuickAction[];
+  /** Defaults for new threads in this project (#1501). Absent = global defaults. */
+  threadDefaults?: ProjectThreadDefaults;
   /**
    * Conductor Spotlight (#250 stretch). When true, one heavy app instance
    * at the project checkout hot-swaps which claimed lane it serves.
@@ -99,6 +101,27 @@ export interface ProjectInfo {
   memoryConsolidateProvider?: string | null;
   /** When the last consolidation pass ended; null while one is running (#1384). */
   memoryConsolidateDoneAt?: number | null;
+}
+
+/**
+ * Per-project defaults for NEW threads (#1501). Never changes existing
+ * threads. Precedence: explicit create input > agent profile / worker pool /
+ * automation > these > Settings defaults. A provider that is unknown or not
+ * installed falls back to the global default; `model` applies only on the
+ * provider it was picked for.
+ */
+export interface ProjectThreadDefaults {
+  /** ProviderInfo.id. Kept even when that CLI is not installed. */
+  provider?: string;
+  /** Model id for `provider`; absent = provider default. */
+  model?: string;
+  reasoningEffort?: ReasoningEffort;
+  permissionMode?: PermissionMode;
+  /**
+   * When true, the defaults follow the last pick the user made on a new
+   * (not yet run) thread in this project. Absent = off.
+   */
+  lastUsed?: true;
 }
 
 /** One named per-project shell command (issue #153). */
@@ -274,6 +297,8 @@ export interface ProjectUpdateInput {
    * Named header actions (issue #153). Empty array clears them.
    */
   quickActions?: ProjectQuickAction[];
+  /** New-thread defaults (#1501). Replaces the whole object; null clears. */
+  threadDefaults?: ProjectThreadDefaults | null;
 }
 
 /**

@@ -330,6 +330,7 @@ function importMuseSession(store, input) {
     projectId,
     title: titleLine || "Imported Muse session",
     provider: "muse",
+    projectDefaults: false,
   });
   store.updateThread(thread.id, { sessionId });
   for (const turn of turns) {

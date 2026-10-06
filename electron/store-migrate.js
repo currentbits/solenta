@@ -11,6 +11,7 @@ const { normalizeMessagePins } = require("./messagePins.js");
 const {
   normalizeSetupCommand,
   normalizeQuickActions,
+  normalizeThreadDefaults,
 } = require("./projectCommands.js");
 
 /** Builtin "Plan and Verify" workflow template (seeded on every store). */
@@ -220,6 +221,9 @@ function migrateProject(p) {
   const quickActions = normalizeQuickActions(next.quickActions);
   if (quickActions) next.quickActions = quickActions;
   else delete next.quickActions;
+  const threadDefaults = normalizeThreadDefaults(next.threadDefaults);
+  if (threadDefaults) next.threadDefaults = threadDefaults;
+  else delete next.threadDefaults;
   return next;
 }
 

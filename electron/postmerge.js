@@ -455,6 +455,7 @@ async function spawnFixThread(ctx, source, result, issueNumber) {
     projectId: source.projectId,
     title,
     issueNumber,
+    projectDefaults: false,
   });
   ctx.store.updateThread(thread.id, {
     pendingWorktree: true,

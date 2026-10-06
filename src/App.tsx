@@ -2062,6 +2062,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
             project={editProject}
             onClose={() => setEditProjectId(null)}
             onSubmit={submitEditProject}
+            providers={providers}
+            globalProvider={settings?.defaultProvider ?? null}
             onPickIcon={
               isWebMode()
                 ? undefined

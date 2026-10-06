@@ -127,6 +127,7 @@ export function createProjects(ctx: DevCtx): Pick<CoderApi, "projects" | "spaces
         iconPath?: string | null;
         setupCommand?: string | null;
         quickActions?: ProjectInfo["quickActions"];
+        threadDefaults?: ProjectInfo["threadDefaults"] | null;
       }) {
         const project = ctx.projects.find((p) => p.id === input.projectId);
         if (!project) {
@@ -188,6 +189,10 @@ export function createProjects(ctx: DevCtx): Pick<CoderApi, "projects" | "spaces
             : [];
           if (rows.length) project.quickActions = rows;
           else delete project.quickActions;
+        }
+        if (Object.prototype.hasOwnProperty.call(input, "threadDefaults")) {
+          if (input.threadDefaults) project.threadDefaults = input.threadDefaults;
+          else delete project.threadDefaults;
         }
         return { ...project };
       },

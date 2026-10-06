@@ -91,7 +91,13 @@ export function useCoderRuns({
         setError({ scope: "run", message: errorMessage(err) });
         return null;
       }
-      if (opts?.inheritProvider !== false && inheritFrom) {
+      // A project default provider (#1501) beats inheriting from whatever
+      // thread happens to be selected; main already applied it at create.
+      if (
+        opts?.inheritProvider !== false &&
+        inheritFrom &&
+        !project?.threadDefaults?.provider
+      ) {
         const needsProvider = inheritFrom.provider !== t.provider;
         const needsModel = inheritFrom.model !== t.model;
         if (needsProvider || needsModel) {

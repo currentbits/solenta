@@ -59,6 +59,7 @@ const {
 } = require("./services-teach.js");
 const {
   createThread,
+  recordLastUsedDefaults,
   setPermissionMode,
   setReasoningEffort,
   setWebSearch,
@@ -193,6 +194,7 @@ module.exports = {
   previewAgentConfig,
   writeAgentConfig,
   createThread,
+  recordLastUsedDefaults,
   forkThread,
   canHostWorktree,
   forkWorkerThread,

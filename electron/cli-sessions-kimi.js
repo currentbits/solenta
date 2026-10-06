@@ -366,6 +366,7 @@ function importKimiSession(store, input) {
     projectId,
     title: titleLine || "Imported Kimi session",
     provider: "kimi",
+    projectDefaults: false,
   });
   store.updateThread(thread.id, { sessionId });
   for (const turn of turns) {
