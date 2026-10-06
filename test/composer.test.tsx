@@ -1132,6 +1132,11 @@ describe("Composer model picker (#1429)", () => {
     // On the instance, the picker opens on the instance, not the base.
     const h2 = makeHarness();
     const m2 = await mount(composer(h2, { provider: "claude:w1", model: null, providers }));
+    assert.match(
+      m2.query('button[aria-label^="Model:"]')?.getAttribute("aria-label") ?? "",
+      / \(work\)$/,
+      "the pill names the account",
+    );
     await m2.click(m2.query('button[aria-label^="Model:"]'));
     assert.equal(
       m2.query('button[aria-label="Provider Claude Code (work)"]')?.getAttribute("data-active"),
