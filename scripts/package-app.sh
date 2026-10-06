@@ -152,10 +152,16 @@ done
 # electron/webBridge.js `require("ws")`, the provider spawn path
 # `require("cross-spawn")`, and skillPackages.js `require("yauzl")` (pulled
 # in at boot via mcpImports -> ipc -> main) therefore need explicit copies.
-# All three trees are pure JS (no native addon). Production transitives
-# must come too: a missing nested require dies at load (Electron dialog,
-# never reaches whenReady). electron/test/package-deps.test.js owns the list.
-ROOT_NM_PKGS=(ws cross-spawn path-key shebang-command shebang-regex which isexe yauzl pend)
+# Those three trees are pure JS. Production transitives must come too: a
+# missing nested require dies at load (Electron dialog, never reaches
+# whenReady). electron/test/package-deps.test.js owns the list.
+#
+# @lydell/node-pty (Terminal pane) is the one native addon: an N-API
+# prebuild, so no Electron-ABI rebuild. Its loader requires
+# @lydell/node-pty-<platform>-<arch>; this bundle is arm64 only (see the
+# speech runtime below). pty.node + the executable spawn-helper are loose
+# Mach-O files, signed by the nested-binary walk at the end of this script.
+ROOT_NM_PKGS=(ws cross-spawn path-key shebang-command shebang-regex which isexe yauzl pend @lydell/node-pty @lydell/node-pty-darwin-arm64)
 mkdir -p "$APP_DIR/node_modules"
 for pkg in "${ROOT_NM_PKGS[@]}"; do
   if [[ ! -d "node_modules/$pkg" ]]; then
@@ -163,6 +169,7 @@ for pkg in "${ROOT_NM_PKGS[@]}"; do
     exit 1
   fi
   rm -rf "$APP_DIR/node_modules/$pkg"
+  mkdir -p "$(dirname "$APP_DIR/node_modules/$pkg")"
   cp -R "node_modules/$pkg" "$APP_DIR/node_modules/$pkg"
 done
 echo "packaged node_modules: ${ROOT_NM_PKGS[*]}"

@@ -6,6 +6,7 @@ import {
   useId,
   useRef,
   useState,
+  useSyncExternalStore,
   type ClipboardEvent,
   type CSSProperties,
   type KeyboardEvent,
@@ -80,7 +81,16 @@ import {
 import { parseDelegate } from "../delegate";
 import { asBtwPrompt } from "../btw";
 import { buildBestOfNEntries, providerVendor } from "../bestOfN";
-import { keptDrafts } from "../composerSession";
+import {
+  getReviewComments,
+  keptDrafts,
+  recordSent,
+  scheduleDraftSave,
+  sentHistory,
+  setReviewComments,
+  subscribeReviewComments,
+} from "../composerSession";
+import { formatReviewCommentsPrompt } from "../diffView";
 import {
   pickerVerb,
   type SlashAction,
@@ -103,6 +113,7 @@ import {
   getPasteCardsEnabled,
   setComposerBusyAction,
   setLastReasoningEffort,
+  useEnterSendsEnabled,
   useTranscriptViewMode,
   type ComposerBusyAction,
 } from "../uiPrefs";
@@ -110,6 +121,7 @@ import { applyComposerVim } from "../composerVim";
 import { AttachmentChip } from "./composer/AttachmentChip";
 import { CommandList, MentionList } from "./composer/ComposerPopups";
 import { ReplyChip } from "./composer/ReplyChip";
+import { ReviewCommentChips } from "./composer/ReviewCommentChips";
 import { PasteCardList } from "./composer/PasteCardList";
 import { SpeechControls } from "./composer/SpeechControls";
 import { useComposerAttachments } from "./composer/useComposerAttachments";
@@ -352,6 +364,7 @@ export const Composer = memo(function Composer({
   const currentProviderInfo = providers.find((p) => p.id === provider);
   const canAttachImages = supportsImagesForModel(currentProviderInfo, model);
   const transcriptView = useTranscriptViewMode();
+  const enterSends = useEnterSendsEnabled();
   const { vimEnabled, vimMode, setVimMode, vimStateRef } =
     useComposerVim(threadId);
   const [viewOpen, setViewOpen] = useState(false);
@@ -389,6 +402,7 @@ export const Composer = memo(function Composer({
   const rememberDraft = useCallback(
     (text: string) => {
       draftsRef.current[threadId] = text;
+      scheduleDraftSave();
       syncHasPrompt(text);
       syncOverflow(text);
     },
@@ -397,6 +411,7 @@ export const Composer = memo(function Composer({
   const writeDraft = useCallback(
     (text: string, caret?: number) => {
       draftsRef.current[threadId] = text;
+      scheduleDraftSave();
       const el = textareaRef.current;
       if (el) {
         el.value = text;
@@ -472,6 +487,17 @@ export const Composer = memo(function Composer({
     removePasteCard,
     clearPasteCards,
   } = usePasteCards({ threadId, pasteCardsRef, syncOverflow, readDraft });
+  /** Diff comments from the Git pane, sent as one block with the next prompt. */
+  const readReviewComments = () => getReviewComments(threadId);
+  const reviewComments = useSyncExternalStore(
+    subscribeReviewComments,
+    readReviewComments,
+    readReviewComments,
+  );
+  const clearReviewComments = useCallback(
+    () => setReviewComments(threadId, () => []),
+    [threadId],
+  );
   const [stashToast, setStashToast] = useState<"stashed" | "restored" | null>(
     null,
   );
@@ -570,10 +596,13 @@ export const Composer = memo(function Composer({
   });
   /** Last idle Esc; a second press within DOUBLE_ESC_MS rewinds (#478). */
   const lastEscAt = useRef(0);
+  /** Index into sentHistory while ↑/↓ is browsing; null when not. */
+  const recallIndexRef = useRef<number | null>(null);
 
   useEffect(() => {
     commandDismissed.current = false;
     lastEscAt.current = 0;
+    recallIndexRef.current = null;
     syncHasPrompt(draftsRef.current[threadId] ?? "");
     return () => {
       void cancelDictationRef.current();
@@ -615,7 +644,9 @@ export const Composer = memo(function Composer({
     workflows.find((w) => w.id === templateId)?.name ?? null;
 
   const canSend =
-    !disabled && !sending && (hasPrompt || pasteCards.length > 0);
+    !disabled &&
+    !sending &&
+    (hasPrompt || pasteCards.length > 0 || reviewComments.length > 0);
   /**
    * Everything that cannot be queued (workflow start, model, permission mode)
    * waits for the run to land; only the prompt and Send stay live while busy.
@@ -865,7 +896,12 @@ export const Composer = memo(function Composer({
 
   const composeOutgoing = useCallback(
     (draft: string) => {
-      let body = composePastePrompt(draft.trim(), pasteCards);
+      let body = [
+        formatReviewCommentsPrompt(reviewComments),
+        composePastePrompt(draft.trim(), pasteCards),
+      ]
+        .filter(Boolean)
+        .join("\n\n");
       if (replyTo) {
         body = wrapReplyContext(replyTo.text, body, replyTo.messageId, {
           truncated: replyTo.truncated,
@@ -873,22 +909,26 @@ export const Composer = memo(function Composer({
       }
       return body;
     },
-    [pasteCards, replyTo],
+    [pasteCards, replyTo, reviewComments],
   );
 
   const runAction = async (
     action: (prompt: string) => void | Promise<void>,
     failLabel: string,
   ) => {
-    const prompt = composeOutgoing(readDraft());
+    const typed = readDraft();
+    const prompt = composeOutgoing(typed);
     if (!prompt.trim() || disabled || sending) return;
     setSending(true);
     setLocalError(null);
     try {
       await action(prompt);
+      recordSent(threadId, typed);
+      recallIndexRef.current = null;
       writeDraft("");
       clearAttachments();
       clearPasteCards();
+      clearReviewComments();
       onClearReply?.();
       closeMention();
       closeCommand();
@@ -1039,6 +1079,7 @@ export const Composer = memo(function Composer({
     writeDraft("");
     clearAttachments();
     clearPasteCards();
+    clearReviewComments();
     onClearReply?.();
     setStashToast("stashed");
   };
@@ -1055,6 +1096,38 @@ export const Composer = memo(function Composer({
     setStashToast(null);
     if (!entry) return;
     applyStashEntry(entry);
+  };
+
+  /**
+   * ↑ in an empty composer recalls the last prompt sent on this thread; ↑/↓
+   * keep walking while the recalled text is untouched. Edits, or a caret not
+   * on the first (↑) / last (↓) line, leave the arrows to the textarea.
+   */
+  const recallSent = (el: HTMLTextAreaElement, up: boolean): boolean => {
+    const history = sentHistory[threadId] ?? [];
+    const at = recallIndexRef.current;
+    const browsing = at != null && el.value === history[at];
+    if (!browsing) recallIndexRef.current = null;
+    let next: number | null;
+    if (up) {
+      if (browsing) {
+        const caret = el.selectionStart;
+        if (at === 0 || (caret > 0 && el.value.lastIndexOf("\n", caret - 1) !== -1))
+          return false;
+        next = at - 1;
+      } else {
+        if (el.value !== "" || !history.length) return false;
+        next = history.length - 1;
+      }
+    } else {
+      if (!browsing || el.value.indexOf("\n", el.selectionEnd) !== -1)
+        return false;
+      next = at + 1 < history.length ? at + 1 : null;
+    }
+    recallIndexRef.current = next;
+    const text = next == null ? "" : history[next]!;
+    writeDraft(text, text.length);
+    return true;
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -1116,6 +1189,17 @@ export const Composer = memo(function Composer({
         return;
       }
     }
+    if (
+      (e.key === "ArrowUp" || e.key === "ArrowDown") &&
+      !e.metaKey &&
+      !e.ctrlKey &&
+      !e.altKey &&
+      !e.shiftKey &&
+      recallSent(e.currentTarget, e.key === "ArrowUp")
+    ) {
+      e.preventDefault();
+      return;
+    }
     // Ctrl+C interrupts a live turn when nothing is selected so copy still
     // works on a highlighted draft. Cmd+C is left to the platform copy chord.
     if (
@@ -1149,7 +1233,13 @@ export const Composer = memo(function Composer({
       else submitSend();
       return;
     }
-    if ((e.metaKey || e.ctrlKey || e.shiftKey) && e.key === "Enter") {
+    // Default: ⌘/Ctrl/⇧+Enter send, bare Enter is a newline. With the
+    // Enter-sends preference, bare Enter sends and ⇧Enter is the newline.
+    if (
+      e.key === "Enter" &&
+      !e.nativeEvent.isComposing &&
+      (e.metaKey || e.ctrlKey || (enterSends ? !e.shiftKey : e.shiftKey))
+    ) {
       e.preventDefault();
       submitSend();
       return;
@@ -1556,6 +1646,21 @@ export const Composer = memo(function Composer({
             expandedCardIds={expandedCardIds}
             setExpandedCardIds={setExpandedCardIds}
             removePasteCard={removePasteCard}
+          />
+        )}
+        {reviewComments.length > 0 && (
+          <ReviewCommentChips
+            comments={reviewComments}
+            onEdit={(id, text) =>
+              setReviewComments(threadId, (prev) =>
+                prev.map((c) => (c.id === id ? { ...c, text } : c)),
+              )
+            }
+            onRemove={(id) =>
+              setReviewComments(threadId, (prev) =>
+                prev.filter((c) => c.id !== id),
+              )
+            }
           />
         )}
         {attachments.length > 0 && (

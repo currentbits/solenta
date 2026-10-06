@@ -8,6 +8,24 @@
   background: var(--bg);
 }
 
+.splits {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.view {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.view + .view {
+  border-left: 1px solid var(--border-soft);
+}
+
 .bar {
   display: flex;
   align-items: center;
@@ -38,7 +56,7 @@
   color: var(--success-fg);
 }
 
-.restart {
+.button {
   flex: 0 0 auto;
   padding: 2px 8px;
   border: 1px solid var(--border);
@@ -49,50 +67,25 @@
   cursor: pointer;
 }
 
-.restart:hover {
+.button:hover {
   background: var(--overlay-hover);
   color: var(--text);
 }
 
-.out {
+.notice {
+  margin: 0;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--border-soft);
+  color: var(--warning-fg);
+  font-size: 11px;
+}
+
+/* xterm measures this box; padding lives inside so fit() sees the real size. */
+.screen {
   flex: 1;
   min-height: 0;
-  margin: 0;
-  padding: 8px 10px;
-  overflow: auto;
-  overflow-anchor: none;
-  font-family: var(--mono);
-  font-size: 12px;
-  line-height: 1.45;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  color: var(--text-muted);
-  user-select: text;
-}
-
-.form {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  border-top: 1px solid var(--border-soft);
-}
-
-.prompt {
-  color: var(--success-fg);
-  font-family: var(--mono);
-  font-size: 12px;
-}
-
-.input {
-  flex: 1;
-  min-width: 0;
-  border: 0;
-  background: transparent;
-  color: var(--text);
-  font-family: var(--mono);
-  font-size: 12px;
-  outline: none;
+  overflow: hidden;
+  padding: 4px 0 0 8px;
 }
 
 .hint {

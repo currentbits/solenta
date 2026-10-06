@@ -360,6 +360,7 @@ function runCodexAppServerTurn(opts) {
     onError,
     onExit,
     onServerRequest,
+    compact = false,
   } = opts;
 
   let expectedTurnId = null;
@@ -560,6 +561,12 @@ function runCodexAppServerTurn(opts) {
         session_id: thread.id,
         thread,
       });
+      if (compact) {
+        // Native compaction runs as its own turn; turn/started supplies
+        // expectedTurnId and turn/completed ends it like any other turn.
+        await client.send("thread/compact/start", { threadId });
+        return;
+      }
       const startedTurn = await client.send(
         "turn/start",
         turnParams(

@@ -1,5 +1,6 @@
 "use strict";
 
+const path = require("node:path");
 const { listLocalServers } = require("./servers.js");
 const { spotlightEnv, spotlightLane } = require("./mergeQueue.js");
 const { spawnEnvForDevServer, laneEnvExtra } = require("./worktreeEnv.js");
@@ -17,6 +18,16 @@ const preview = require("./preview.js");
 function sinceOf(input) {
   const since = input && input.since;
   return typeof since === "number" && Number.isFinite(since) ? since : null;
+}
+
+/**
+ * Where Terminal scrollback is flushed so it replays after a restart.
+ *
+ * @param {{ userDataPath?: string }} ctx
+ * @returns {string | undefined}
+ */
+function terminalLogDir(ctx) {
+  return ctx.userDataPath ? path.join(ctx.userDataPath, "terminals") : undefined;
 }
 
 /**
@@ -113,22 +124,39 @@ module.exports = {
   "terminal:open": async (ctx, input) => {
     const threadId = input && input.threadId;
     const { root, project } = resolveDevServerRoot(ctx, threadId);
-    return terminal.open(threadId, root, { project });
+    return terminal.open(threadId, root, {
+      project,
+      termId: input && input.termId,
+      cols: input && input.cols,
+      rows: input && input.rows,
+      logDir: terminalLogDir(ctx),
+      broadcast: ctx.broadcast,
+    });
   },
   "terminal:write": async (ctx, input) => {
     const threadId = input && input.threadId;
     resolveDevServerRoot(ctx, threadId);
-    return terminal.write(threadId, input && input.data, sinceOf(input));
+    return terminal.write(threadId, input && input.data, input && input.termId);
+  },
+  "terminal:resize": async (ctx, input) => {
+    const threadId = input && input.threadId;
+    resolveDevServerRoot(ctx, threadId);
+    return terminal.resize(threadId, input && input.cols, input && input.rows, input && input.termId);
   },
   "terminal:read": async (ctx, input) => {
     const threadId = input && input.threadId;
     resolveDevServerRoot(ctx, threadId);
-    return terminal.read(threadId, sinceOf(input));
+    return terminal.read(threadId, sinceOf(input), input && input.termId);
+  },
+  "terminal:list": async (ctx, input) => {
+    const threadId = input && input.threadId;
+    resolveDevServerRoot(ctx, threadId);
+    return terminal.list(threadId, terminalLogDir(ctx));
   },
   "terminal:close": async (ctx, input) => {
     const threadId = input && input.threadId;
     resolveDevServerRoot(ctx, threadId);
-    return terminal.close(threadId);
+    return terminal.close(threadId, input && input.termId, terminalLogDir(ctx));
   },
   "preview:bind": async (ctx, input) => {
     resolveDevServerRoot(ctx, input && input.threadId);

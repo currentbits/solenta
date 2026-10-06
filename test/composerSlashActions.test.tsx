@@ -118,6 +118,7 @@ async function mountView(
       prompt: string,
     ) => void | Promise<void>;
     onViewChanges?: () => void;
+    onStartRun?: (prompt: string) => void;
     loadProviderLimits?: () => Promise<ProviderUsage[]>;
   } = {},
 ) {
@@ -129,7 +130,7 @@ async function mountView(
       workflows={[]}
       hasProjects={true}
       onAddProject={() => {}}
-      onStartRun={() => {}}
+      onStartRun={over.onStartRun ?? (() => {})}
       onRewindAndResubmit={over.onRewindAndResubmit}
       onStartWorkflow={() => {}}
       onSaveWorkflow={noopSave}
@@ -349,6 +350,65 @@ describe("ThreadView / palette actions", () => {
     });
     await acceptSlash(working, "/context");
     assert.equal(working.query("[data-context-fork]"), null);
+  });
+
+  it("/compact runs native compaction on a claude or codex session", async () => {
+    for (const provider of ["claude", "codex"]) {
+      const sent: string[] = [];
+      const forks: number[] = [];
+      const m = await mountView({
+        detail: detail({ thread: thread({ provider, sessionId: "s1" }) }),
+        onFork: () => forks.push(1),
+        onStartRun: (p) => sent.push(p),
+      });
+      await acceptSlash(m, "/compact");
+      assert.deepEqual(sent, ["/compact"], provider);
+      assert.deepEqual(forks, [], provider);
+      m.unmount();
+    }
+  });
+
+  it("/compact forks when the provider has no native compaction", async () => {
+    const sent: string[] = [];
+    const forks: number[] = [];
+    const m = await mountView({
+      detail: detail({ thread: thread({ provider: "grok", sessionId: "s1" }) }),
+      onFork: () => forks.push(1),
+      onStartRun: (p) => sent.push(p),
+    });
+    await acceptSlash(m, "/compact");
+    assert.deepEqual(sent, []);
+    assert.deepEqual(forks, [1]);
+  });
+
+  it("context popover offers Compact on a native session, and says so when it can't", async () => {
+    const sent: string[] = [];
+    const native = await mountView({
+      detail: detail({ thread: thread({ provider: "claude", sessionId: "s1" }) }),
+      onFork: () => {},
+      onStartRun: (p) => sent.push(p),
+    });
+    await acceptSlash(native, "/context");
+    const compact = native.query("[data-context-compact]");
+    assert.ok(compact, "Compact shows below warn too");
+    await native.click(compact as HTMLElement);
+    assert.deepEqual(sent, ["/compact"]);
+    native.unmount();
+
+    const fallback = await mountView({
+      detail: detail({
+        thread: thread({ provider: "grok", sessionId: "s1" }),
+        usage: { ...USAGE, contextTokens: 180_000 },
+      }),
+      onFork: () => {},
+    });
+    await acceptSlash(fallback, "/context");
+    assert.equal(fallback.query("[data-context-compact]"), null);
+    assert.ok(fallback.query("[data-context-fork]"));
+    assert.match(
+      fallback.query("[data-context-popover]")?.textContent ?? "",
+      /can't compact in place/,
+    );
   });
 
   it("/compact is inert while the thread is working", async () => {

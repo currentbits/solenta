@@ -159,6 +159,24 @@ NODE
 )
 rm -rf "$RESOLVE_CWD"
 
+# Terminal PTY: the native addon must LOAD and fork under the packaged,
+# signed binary (hardened runtime, re-signed pty.node + spawn-helper), not
+# just resolve. Running the bundle as plain Node exercises exactly that.
+echo "verify: PTY spawn under the packaged binary"
+PTY_BIN="$(cd "$(dirname "$BIN")" && pwd)/$(basename "$BIN")"
+PTY_OUT="$(cd "${TMPDIR:-/tmp}" && ELECTRON_RUN_AS_NODE=1 "$PTY_BIN" -e '
+const pty = require(process.argv[1] + "/node_modules/@lydell/node-pty");
+const p = pty.spawn("/bin/sh", ["-c", "stty size"], { cols: 91, rows: 17, cwd: "/", env: process.env });
+let out = ""; p.onData((d) => (out += d));
+p.onExit(() => { console.log(out.trim()); process.exit(0); });
+setTimeout(() => { console.log("timeout"); process.exit(1); }, 10000);
+' "$APP_RES" 2>&1)" || true
+if [[ "$PTY_OUT" != "17 91" ]]; then
+  echo "ERROR: packaged app cannot open a PTY: $PTY_OUT" >&2
+  exit 1
+fi
+echo "  pty ok (stty size: $PTY_OUT)"
+
 # ---------------------------------------------------------------------------
 # Gatekeeper
 # ---------------------------------------------------------------------------

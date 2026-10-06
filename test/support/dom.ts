@@ -120,6 +120,7 @@ function installDom(): JSDOM {
   g.HTMLInputElement = dom.window.HTMLInputElement;
   g.HTMLTextAreaElement = dom.window.HTMLTextAreaElement;
   g.getComputedStyle = dom.window.getComputedStyle;
+  g.MutationObserver = dom.window.MutationObserver;
   // jsdom has no layout, so it ships no scrollIntoView. Stub it rather than
   // guarding the call site: the component should be able to call it plainly,
   // and a test should exercise the real path.

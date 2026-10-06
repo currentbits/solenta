@@ -27,6 +27,7 @@ export const PUSH_CHANNELS = [
   "simulator:changed",
   "simulator:focus",
   "speech:changed",
+  "terminal:data",
 ] as const;
 
 export type PushChannel = (typeof PUSH_CHANNELS)[number];
@@ -257,7 +258,9 @@ export const IPC_CHANNELS = [
   { ns: "devserver", method: "status" },
   { ns: "terminal", method: "open" },
   { ns: "terminal", method: "write" },
+  { ns: "terminal", method: "resize" },
   { ns: "terminal", method: "read" },
+  { ns: "terminal", method: "list" },
   { ns: "terminal", method: "close" },
   { ns: "preview", method: "bind" },
   { ns: "preview", method: "unbind" },

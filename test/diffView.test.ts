@@ -7,7 +7,9 @@ import { describe, it } from "node:test";
 import {
   annotateHunkLines,
   diffLineKind,
-  formatDiffCommentPrompt,
+  formatReviewCommentsPrompt,
+  reviewCommentFromAnchors,
+  reviewCommentLabel,
   isEmptyDiff,
   parseHunkHeader,
 } from "../src/diffView.ts";
@@ -125,68 +127,74 @@ describe("annotateHunkLines", () => {
   });
 });
 
-describe("formatDiffCommentPrompt", () => {
-  it("anchors an added line on the new-file number and quotes it", () => {
-    const prompt = formatDiffCommentPrompt(
-      {
-        path: "src/foo.ts",
-        kind: "add",
-        text: "+  const x = 1;",
-        oldLine: null,
-        newLine: 42,
-      },
-      "use Y instead",
-    );
-    assert.match(prompt, /^Comment on src\/foo\.ts:42:\n/);
-    assert.match(prompt, /\n    \+  const x = 1;\n/);
-    assert.match(prompt, /\nuse Y instead$/);
+describe("review comments (#1493)", () => {
+  const add = (n: number, text: string) => ({
+    path: "src/foo.ts",
+    kind: "add" as const,
+    text,
+    oldLine: null,
+    newLine: n,
   });
 
-  it("labels a deletion with the old-file line", () => {
-    const prompt = formatDiffCommentPrompt(
-      {
-        path: "src/foo.ts",
-        kind: "del",
-        text: "-  keepMe()",
-        oldLine: 18,
-        newLine: null,
-      },
-      "do not delete this",
+  it("anchors a single added line on the new-file number", () => {
+    const c = reviewCommentFromAnchors([add(42, "+  const x = 1;")], " use Y ", "c1");
+    assert.equal(reviewCommentLabel(c), "src/foo.ts:L42");
+    assert.equal(c.text, "use Y");
+    const prompt = formatReviewCommentsPrompt([c]);
+    assert.match(prompt, /^Review comment:\n\nsrc\/foo\.ts:L42\n/);
+    assert.match(prompt, /\n    \+  const x = 1;\n/);
+    assert.match(prompt, /\nuse Y$/);
+  });
+
+  it("spans a range and ignores removed rows inside it", () => {
+    const c = reviewCommentFromAnchors(
+      [
+        add(12, "+a"),
+        { path: "src/foo.ts", kind: "del", text: "-b", oldLine: 9, newLine: null },
+        add(18, "+c"),
+      ],
+      "tidy",
+      "c2",
     );
-    assert.match(prompt, /^Comment on src\/foo\.ts \(removed line 18\):\n/);
-    assert.match(prompt, /\n    -  keepMe\(\)\n/);
-    assert.match(prompt, /\ndo not delete this$/);
+    assert.equal(reviewCommentLabel(c), "src/foo.ts:L12-18");
+    assert.equal(c.code, "+a\n-b\n+c");
+  });
+
+  it("labels an all-removed pick with old-file lines", () => {
+    const c = reviewCommentFromAnchors(
+      [{ path: "src/foo.ts", kind: "del", text: "-keepMe()", oldLine: 18, newLine: null }],
+      "do not delete this",
+      "c3",
+    );
+    assert.equal(reviewCommentLabel(c), "src/foo.ts (removed L18)");
   });
 
   it("falls back to path-only when line numbers are missing", () => {
-    const prompt = formatDiffCommentPrompt(
-      {
-        path: "notes.txt",
-        kind: "add",
-        text: "+hello",
-        oldLine: null,
-        newLine: null,
-      },
+    const c = reviewCommentFromAnchors(
+      [{ path: "notes.txt", kind: "add", text: "+hello", oldLine: null, newLine: null }],
       "rename this",
+      "c4",
     );
-    assert.match(prompt, /^Comment on notes\.txt:\n/);
-    assert.doesNotMatch(prompt, /line /);
-    assert.match(prompt, /\nrename this$/);
+    assert.equal(reviewCommentLabel(c), "notes.txt");
   });
 
-  it("trims the comment and refuses a blank one", () => {
-    assert.equal(
-      formatDiffCommentPrompt(
-        {
-          path: "a.ts",
-          kind: "ctx",
-          text: " keep",
-          oldLine: 1,
-          newLine: 1,
-        },
-        "   \n",
-      ),
-      "",
-    );
+  it("batches several comments into one block and drops blank ones", () => {
+    const a = reviewCommentFromAnchors([add(1, "+x")], "one", "a");
+    const b = reviewCommentFromAnchors([add(2, "+y")], "two", "b");
+    const blank = reviewCommentFromAnchors([add(3, "+z")], "  ", "c");
+    const prompt = formatReviewCommentsPrompt([a, blank, b]);
+    assert.match(prompt, /^Review comments:\n/);
+    assert.match(prompt, /L1\n    \+x\n\none\n\nsrc\/foo\.ts:L2/);
+    assert.doesNotMatch(prompt, /L3/);
+    assert.equal(formatReviewCommentsPrompt([blank]), "");
+  });
+
+  it("caps the code excerpt", () => {
+    const rows = Array.from({ length: 20 }, (_, i) => add(i + 1, `+l${i}`));
+    const prompt = formatReviewCommentsPrompt([
+      reviewCommentFromAnchors(rows, "long", "d"),
+    ]);
+    assert.match(prompt, /… 8 more lines/);
+    assert.doesNotMatch(prompt, /l12/);
   });
 });

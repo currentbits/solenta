@@ -2041,25 +2041,40 @@ export interface DevServerState {
 }
 
 /**
- * Per-thread shell session behind the Terminal pane (#147). Output is
- * polled: `cursor` is an absolute character offset into the session's
- * scrollback, and `text` is everything committed since the caller's cursor.
+ * One shell session behind the Terminal pane (#147, #1493). A thread can
+ * have several (`termId`). `cursor` is an absolute character offset into
+ * the session's raw (ANSI) scrollback; `text` is everything since the
+ * caller's cursor. Live output is pushed on "terminal:data".
  */
 export interface TerminalState {
+  termId: string;
   running: boolean;
+  /** Real PTY. False = pipe fallback: no curses apps, Ctrl-C cannot interrupt. */
+  pty: boolean;
   /** Directory the shell started in (thread worktree, else project root). */
   cwd: string;
   /** Shell binary actually spawned, e.g. `/bin/zsh`. */
   shell: string;
   /** Absolute offset to pass back as `since` on the next read. */
   cursor: number;
-  /** Committed output since the caller's cursor (whole buffer when reset). */
+  /** Output since the caller's cursor (whole scrollback when reset). */
   text: string;
-  /** Current partial line — no newline yet, rewritten by every read. */
-  pending: string;
   /** The caller's cursor was missing or scrolled out; `text` replaces all. */
   reset: boolean;
   startedAt: number;
+  /** The shell is still running in a checkout the thread has since left. */
+  staleRoot: boolean;
+}
+
+/** Batched live output for one terminal, pushed on "terminal:data". */
+export interface TerminalDataPush {
+  threadId: string;
+  termId: string;
+  /** Absolute offset of data[0]; a gap past the reader's cursor means re-read. */
+  from: number;
+  data: string;
+  cursor: number;
+  running: boolean;
 }
 
 /** Live state of the embedded Browser pane guest (issue #155). */
@@ -5076,18 +5091,27 @@ export interface CoderApi {
    * (kill + respawn) is how the pane spells Ctrl-C.
    */
   terminal: {
-    /** Start the thread's shell, or re-attach to a live one. */
-    open(input: { threadId: string }): Promise<TerminalState>;
-    /** Run one command line. Echoed into the scrollback first. */
-    write(input: {
+    /** Start one of the thread's shells, or re-attach to a live one. */
+    open(input: {
       threadId: string;
-      data: string;
-      since?: number;
+      termId?: string;
+      cols?: number;
+      rows?: number;
     }): Promise<TerminalState>;
-    /** Poll for output committed since `since`. */
-    read(input: { threadId: string; since?: number }): Promise<TerminalState>;
+    /** Raw keystrokes / paste for the shell. */
+    write(input: { threadId: string; termId?: string; data: string }): Promise<{ ok: boolean }>;
+    resize(input: {
+      threadId: string;
+      termId?: string;
+      cols: number;
+      rows: number;
+    }): Promise<{ ok: boolean }>;
+    /** Output since `since` (whole scrollback without one). */
+    read(input: { threadId: string; termId?: string; since?: number }): Promise<TerminalState>;
+    /** Terminal ids for this thread: live ones plus scrollback kept on disk. */
+    list(input: { threadId: string }): Promise<string[]>;
     /** Kill the shell and drop its scrollback. */
-    close(input: { threadId: string }): Promise<TerminalState>;
+    close(input: { threadId: string; termId?: string }): Promise<TerminalState>;
   };
   /**
    * Embedded Browser pane (issue #155). Desktop-only: the renderer hosts a
@@ -5264,6 +5288,8 @@ export interface CoderApi {
    * (concatenate); `transcript` replaces the provisional range.
    */
   on(channel: "speech:changed", cb: (status: SpeechStatus) => void): () => void;
+  /** Batched Terminal pane output (#1493). */
+  on(channel: "terminal:data", cb: (push: TerminalDataPush) => void): () => void;
 }
 
 declare global {

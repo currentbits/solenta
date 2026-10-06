@@ -7,7 +7,7 @@
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { mount, type Mounted } from "./support/dom.ts";
+import { inAct, mount, type Mounted } from "./support/dom.ts";
 import { ThreadView } from "../src/components/ThreadView";
 import type {
   DiffResult,
@@ -305,6 +305,26 @@ describe("ChangesPanel commit flow", () => {
   });
 });
 
+function addButton(view: Mounted): HTMLButtonElement | null {
+  return ([...view.queryAll("[data-diff-comment-box] button")].find(
+    (b) => (b.textContent || "").trim() === "Add to prompt",
+  ) ?? null) as HTMLButtonElement | null;
+}
+
+function composerInput(view: Mounted): HTMLTextAreaElement {
+  const ta = view.container.querySelector(
+    "textarea:not([aria-label])",
+  ) as HTMLTextAreaElement | null;
+  assert.ok(ta, "composer textarea");
+  return ta!;
+}
+
+async function comment(view: Mounted, gutter: string, text: string) {
+  await view.click(view.query(`button[aria-label="${gutter}"]`));
+  await view.type(view.query('textarea[aria-label="Diff comment"]'), text);
+  await view.click(addButton(view));
+}
+
 describe("ChangesPanel inline comments (issue #162)", () => {
   it("puts a comment control on code lines, not on the hunk header", async () => {
     const { m } = mountPanel();
@@ -329,68 +349,92 @@ describe("ChangesPanel inline comments (issue #162)", () => {
     await view.click(view.query('button[aria-label="Comment on line 2"]'));
     const box = view.query("[data-diff-comment-box]");
     assert.ok(box, "comment box appears");
-    const input = view.query(
-      'textarea[aria-label="Diff comment"]',
-    ) as HTMLTextAreaElement | null;
-    assert.ok(input);
-    const send = [...box!.querySelectorAll("button")].find(
-      (b) => (b.textContent || "").trim() === "Send",
-    );
-    assert.ok(send);
-    assert.ok(send!.hasAttribute("disabled"), "empty comment cannot send");
+    const add = addButton(view);
+    assert.ok(add);
+    assert.ok(add!.hasAttribute("disabled"), "empty comment cannot be added");
   });
 
-  it("sends the comment as a follow-up prompt with file and line", async () => {
+  it("adds comments to the draft instead of starting a run each (#1493)", async () => {
     const { m, spies } = mountPanel();
     const view = await m;
-    await view.click(view.query('button[aria-label="Comment on line 2"]'));
-    const input = view.query('textarea[aria-label="Diff comment"]');
-    await view.type(input, "use Y instead");
-    const send = [...view.queryAll("[data-diff-comment-box] button")].find(
-      (b) => (b.textContent || "").trim() === "Send",
-    );
-    await view.click(send ?? null);
-    assert.equal(spies.comments.length, 1);
-    assert.match(spies.comments[0]!, /^Comment on src\/a\.ts:2:\n/);
-    assert.match(spies.comments[0]!, /\n    \+new\n/);
-    assert.match(spies.comments[0]!, /\nuse Y instead$/);
-    assert.equal(
-      view.query("[data-diff-comment-box]"),
-      null,
-      "box closes after send",
-    );
+    await comment(view, "Comment on line 2", "use Y instead");
+    assert.equal(spies.comments.length, 0, "no run starts");
+    assert.equal(view.query("[data-diff-comment-box]"), null, "box closes");
+    await comment(view, "Comment on removed line 2", "keep the old one");
+    const chips = view.queryAll("[data-review-comment-chip]");
+    assert.equal(chips.length, 2);
+    assert.match(chips[0]!.textContent || "", /src\/a\.ts:L2.*use Y instead/);
+    assert.match(chips[1]!.textContent || "", /src\/a\.ts \(removed L2\)/);
+
+    const ta = composerInput(view);
+    await view.type(ta, "and run the tests");
+    await view.press(ta, "Enter", { metaKey: true });
+    assert.equal(spies.comments.length, 1, "one prompt for all comments");
+    const prompt = spies.comments[0]!;
+    assert.match(prompt, /^Review comments:\n\nsrc\/a\.ts:L2\n    \+new\n\nuse Y instead\n/);
+    assert.match(prompt, /\(removed L2\)\n    -old\n\nkeep the old one\n/);
+    assert.match(prompt, /\n\nand run the tests$/);
+    assert.equal(view.queryAll("[data-review-comment-chip]").length, 0, "chips clear on send");
   });
 
-  it("queues the comment while the thread is working", async () => {
-    const { m, spies } = mountPanel({ working: true });
+  it("sends comments alone with no typed text", async () => {
+    const { m, spies } = mountPanel();
     const view = await m;
-    await view.click(view.query('button[aria-label="Comment on line 2"]'));
-    const queue = [...view.queryAll("[data-diff-comment-box] button")].find(
-      (b) => (b.textContent || "").trim() === "Queue",
-    );
-    assert.ok(queue, "Send relabels to Queue mid-run");
-    const input = view.query('textarea[aria-label="Diff comment"]');
-    await view.type(input, "fix the new line");
-    await view.click(queue);
+    await comment(view, "Comment on line 2", "just this");
+    await view.press(composerInput(view), "Enter", { metaKey: true });
     assert.equal(spies.comments.length, 1);
-    assert.match(spies.comments[0]!, /fix the new line$/);
+    assert.match(spies.comments[0]!, /\njust this$/);
   });
 
-  it("sends with Cmd+Enter and closes on Escape", async () => {
+  it("⇧-click selects a line range inside the hunk", async () => {
+    const { m } = mountPanel();
+    const view = await m;
+    await view.click(view.query('button[aria-label="Comment on line 1"]'));
+    const last = view.query('button[aria-label="Comment on line 3"]')!;
+    await inAct(() => {
+      last.dispatchEvent(new MouseEvent("click", { bubbles: true, shiftKey: true }));
+    });
+    assert.equal(view.queryAll("[data-commenting]").length, 4, "all rows highlight");
+    await view.type(view.query('textarea[aria-label="Diff comment"]'), "tidy this block");
+    await view.click(addButton(view));
+    const chip = view.query("[data-review-comment-chip]")!;
+    assert.match(chip.textContent || "", /src\/a\.ts:L1-3/);
+    assert.match(chip.getAttribute("title") || "", / keep\n-old\n\+new\n context/);
+  });
+
+  it("edits and removes a comment chip", async () => {
+    const { m, spies } = mountPanel();
+    const view = await m;
+    await comment(view, "Comment on line 2", "first take");
+    await comment(view, "Comment on line 1", "drop me");
+    await view.click(view.query('button[aria-label="Edit comment on src/a.ts:L2"]'));
+    const input = view.query('input[aria-label="Edit comment on src/a.ts:L2"]') as HTMLInputElement;
+    await view.type(input, "second take");
+    await view.press(input, "Enter");
+    await view.click(view.query('button[aria-label="Remove comment on src/a.ts:L1"]'));
+    const chips = view.queryAll("[data-review-comment-chip]");
+    assert.equal(chips.length, 1);
+    assert.match(chips[0]!.textContent || "", /second take/);
+    await view.press(composerInput(view), "Enter", { metaKey: true });
+    assert.match(spies.comments[0]!, /\nsecond take$/);
+    assert.doesNotMatch(spies.comments[0]!, /drop me/);
+  });
+
+  it("adds with Cmd+Enter and closes on Escape", async () => {
     const { m, spies } = mountPanel();
     const view = await m;
     await view.click(view.query('button[aria-label="Comment on line 2"]'));
     const input = view.query('textarea[aria-label="Diff comment"]');
     await view.type(input, "first");
     await view.pressFocused("Enter", { metaKey: true });
-    assert.equal(spies.comments.length, 1);
-    assert.match(spies.comments[0]!, /\nfirst$/);
+    assert.equal(view.queryAll("[data-review-comment-chip]").length, 1);
 
     await view.click(view.query('button[aria-label="Comment on line 1"]'));
     assert.ok(view.query("[data-diff-comment-box]"));
     await view.pressFocused("Escape");
     assert.equal(view.query("[data-diff-comment-box]"), null);
-    assert.equal(spies.comments.length, 1, "Escape must not send");
+    assert.equal(view.queryAll("[data-review-comment-chip]").length, 1, "Escape adds nothing");
+    assert.equal(spies.comments.length, 0);
   });
 
   it("Escape with a draft arms a confirm instead of discarding (issue #364)", async () => {

@@ -142,6 +142,14 @@ export const setComposerVimEnabled = composerVim.set;
 export const useComposerVimEnabled = composerVim.use;
 
 /**
+ * Bare Enter sends and ⇧Enter is a newline. Off by default: Enter is a
+ * newline and ⌘/Ctrl+Enter sends, as the composer has always done.
+ */
+const enterSends = makeFlagPref("coder.enterSends", false);
+export const setEnterSendsEnabled = enterSends.set;
+export const useEnterSendsEnabled = enterSends.use;
+
+/**
  * The last reasoning level the user picked, remembered across harness switches.
  *
  * Effort lives on the thread, and setProvider (electron/services.js) has to

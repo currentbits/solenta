@@ -16,7 +16,6 @@ import type {
   ConflictContext,
   ConflictForecast,
   DevServerState,
-  TerminalState,
   DiffResult,
   ReviewContext,
   GitSyncInfo,
@@ -117,12 +116,14 @@ import {
   whenIdle,
 } from "./bootSnapshot";
 import { prunePaneLayouts } from "./paneLayout";
+import { pruneComposerDrafts } from "./composerSession";
 import { createThreadDetailCache } from "./threadDetailCache";
 import { errorMessage } from "./coder/errorMessage";
 import { useCoderMemory } from "./coder/useCoderMemory";
 import { useCoderAgentTools } from "./coder/useCoderAgentTools";
 import { useCoderInsights } from "./coder/useCoderInsights";
 import { useCoderRepoTools } from "./coder/useCoderRepoTools";
+import type { TerminalApi } from "./components/TerminalPane";
 import { useCoderProjects } from "./coder/useCoderProjects";
 import { useCoderUpdates } from "./coder/useCoderUpdates";
 import { useCoderWorkflows } from "./coder/useCoderWorkflows";
@@ -689,20 +690,11 @@ export interface UseCoderResult {
   /** Live status for the thread's spawned dev server. */
   devServerStatus: (threadId: string) => Promise<DevServerState>;
   /**
-   * Terminal pane shell session (#147). Passed through as the namespace:
-   * the pane owns the open/poll/close lifecycle, so unwrapping four
-   * callbacks here would only be four more props to thread through App.
+   * Terminal pane shell sessions (#147, #1493). Passed through as the
+   * namespace plus the "terminal:data" subscription: the pane owns the
+   * open/stream/close lifecycle.
    */
-  terminal: {
-    open: (threadId: string) => Promise<TerminalState>;
-    write: (
-      threadId: string,
-      data: string,
-      since: number,
-    ) => Promise<TerminalState>;
-    read: (threadId: string, since: number) => Promise<TerminalState>;
-    close: (threadId: string) => Promise<TerminalState>;
-  };
+  terminal: TerminalApi;
   /** Embedded Browser pane guest (issue #155). Desktop-only. */
   preview: CoderApi["preview"];
   /** Desktop-only iOS Simulator pane (#248). */
@@ -1251,10 +1243,14 @@ export function useCoder(): UseCoderResult {
           if (selectedRef.current == null && preferred) {
             selectedRef.current = preferred;
           }
-          // Off the boot path: drop pane layouts of deleted threads (#1475).
+          // Off the boot path: drop pane layouts and drafts of deleted threads (#1475).
           // The fetched list, not threadsRef: a raced boot can still hold the
           // snapshot, which leaves archived threads out.
-          whenIdle(() => prunePaneLayouts(list.map((t) => t.id)));
+          whenIdle(() => {
+            const ids = list.map((t) => t.id);
+            prunePaneLayouts(ids);
+            pruneComposerDrafts(ids);
+          });
         } catch {
           // IPC may not be registered yet (#618); boot:ready retries.
         } finally {

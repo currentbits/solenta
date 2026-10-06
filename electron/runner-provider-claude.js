@@ -30,6 +30,7 @@ const { classifyTool } = require("./guardrails.js");
 const { isMemoryConsolidateTool } = require("./memory-consolidate.js");
 const { saveToolImages, extractImages } = require("./tool-images.js");
 const fs = require("node:fs");
+const { recordCompaction } = require("./compaction.js");
 
 /**
  * @param {object} ctx - createRunner context (see runner-watchdogs.js header)
@@ -724,6 +725,22 @@ function createClaudeRun(ctx) {
           store.save();
           pushDetail(threadId, claudeState);
           pushThreadsChanged();
+          return;
+        }
+
+        // Native compaction (manual `/compact` or auto). A manual compact's
+        // result is an empty success, so this also keeps it from reading
+        // as a phantom result.
+        if (type === "system" && ev.subtype === "compact_boundary") {
+          markTurnContent();
+          const meta = ev.compact_metadata || {};
+          recordCompaction({ store, appendMessage }, threadId, runId, {
+            pre: meta.pre_tokens,
+            post: meta.post_tokens,
+            auto: meta.trigger === "auto",
+          });
+          store.save();
+          pushDetail(threadId, claudeState);
           return;
         }
 

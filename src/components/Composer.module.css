@@ -985,6 +985,62 @@
   max-width: 220px;
 }
 
+/* Diff comments batched into the draft (#1493): same pill as attachments,
+   wider, with the file:line in mono ahead of the comment. */
+.reviewCommentRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 2px 2px 8px;
+}
+
+.reviewCommentChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 3px 6px 3px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--card-hover);
+  border: 1px solid var(--border-soft);
+  color: var(--text-muted);
+  font-size: 11.5px;
+}
+
+.reviewCommentWhere {
+  flex-shrink: 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.reviewCommentText {
+  min-width: 0;
+  max-width: 360px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  text-align: left;
+}
+
+.reviewCommentText:hover {
+  text-decoration: underline;
+  text-decoration-color: var(--border-soft);
+}
+
+.reviewCommentInput {
+  min-width: 200px;
+  max-width: 360px;
+  padding: 0 4px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: var(--card);
+  color: var(--text);
+  font: inherit;
+}
+
 .attachmentIcon {
   flex-shrink: 0;
   opacity: 0.8;
