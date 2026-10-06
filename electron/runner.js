@@ -6,6 +6,7 @@ const services = require("./services.js");
 const { runAgent } = require("./agent.js");
 const { whenPathReady } = require("./pathEnv.js");
 const { truncate, toolSummary } = require("./claude.js");
+const { threadInstanceEnv, threadProviderRef } = require("./providerInstances.js");
 const { runCodexAppServerTurn } = require("./codex-appserver.js");
 const { isNativeCompactTurn } = require("./compaction.js");
 const { heartbeatLane } = require("./mergeQueue.js");
@@ -854,7 +855,8 @@ function createRunner(opts) {
           thread.model ||
           "unknown";
         store.recordWastedSpend({
-          provider,
+          // Spend is per instance (#453), same key recordUsage wrote.
+          provider: extras.provider != null ? provider : threadProviderRef(thread),
           model,
           threadId,
           costUsd: extras.costUsd,
@@ -1313,6 +1315,15 @@ function createRunner(opts) {
    *   kind: "context-overflow" | "writer-lock" | "cli-upgrade" | null
    * }}
    */
+  /** The instance's CODEX_HOME, when this thread runs on one (#453). */
+  function instanceCodexHome(thread) {
+    try {
+      return (thread && (threadInstanceEnv(store.getSettings(), thread) || {}).CODEX_HOME) || null;
+    } catch {
+      return null;
+    }
+  }
+
   function markRunFailed(threadId, errText, runId, extraPatch) {
     const overflow = classifyContextOverflow(errText);
     const writerLock = overflow ? null : classifyWriterLock(errText);
@@ -1333,7 +1344,8 @@ function createRunner(opts) {
         errText,
         codexHome: overlayExists
           ? overlayHome
-          : process.env.CODEX_HOME ||
+          : instanceCodexHome(thread) ||
+            process.env.CODEX_HOME ||
             path.join(require("node:os").homedir(), ".codex"),
         ourPids: liveCodexPids,
       });
@@ -1720,6 +1732,16 @@ function createRunner(opts) {
     if (provider !== "simulate" && provider !== "generic") {
       const entryDef = getProvider(provider) || getProvider("claude");
       assertProviderBinary(entryDef, projectForGate);
+      if (thread.providerInstance) {
+        // Throws when the instance was removed: never fall back to the
+        // default account (#453).
+        threadInstanceEnv(store.getSettings(), thread);
+        // The overlay is a local config dir; over ssh/WSL it would not reach
+        // the remote CLI, which would then run on whatever account it has.
+        if (crossesBoundary(projectForGate)) {
+          throw new Error("Provider instances run on this machine only. Pick the base provider for remote projects.");
+        }
+      }
     }
 
     // Lazy worktree (t3-style): pendingWorktree threads materialize their

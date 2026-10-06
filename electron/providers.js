@@ -1670,6 +1670,7 @@ function ejectResumeTail(entry, sessionId) {
  *   cwd?: string | null,
  *   model?: string | null,
  *   sessionStartModel?: string | null,
+ *   configEnv?: Record<string, string>,
  * }} input
  * @returns {{ command: string, note?: string }}
  */
@@ -1683,9 +1684,13 @@ function ejectCommand(input) {
       : "";
   const resumeTail = ejectResumeTail(entry, sessionId);
   if (resumeTail && entry && entry.defaultBin) {
+    // A named instance's session lives in its own config dir (#453).
+    const prefix = Object.entries((input && input.configEnv) || {})
+      .map(([k, v]) => `${k}=${posixQuote(v)} `)
+      .join("");
     const command = cd
-      ? `${cd} && ${entry.defaultBin} ${resumeTail}`
-      : `${entry.defaultBin} ${resumeTail}`;
+      ? `${cd} && ${prefix}${entry.defaultBin} ${resumeTail}`
+      : `${prefix}${entry.defaultBin} ${resumeTail}`;
     const wanted =
       input && input.model != null && String(input.model).trim() !== ""
         ? String(input.model).trim()

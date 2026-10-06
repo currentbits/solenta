@@ -16,9 +16,11 @@ module.exports = {
       threadsByDay: ctx.store.getUsageThreadsByDay(),
     };
   },
-  "usage:providerLimits": async () => {
+  "usage:providerLimits": async (ctx) => {
     const { fetchProviderLimits } = require("./providerUsage.js");
-    return fetchProviderLimits();
+    return fetchProviderLimits({
+      instances: require("./services.js").instanceAuthProbes(ctx.store),
+    });
   },
   "insights:failureModes": async (ctx) => {
     const { clusterFailureModes } = require("./failuremodes.js");

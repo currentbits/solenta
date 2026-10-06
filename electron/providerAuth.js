@@ -140,21 +140,35 @@ async function probeOne(id, env) {
 
 /**
  * Re-probe every provider unless the last probe is younger than TTL_MS.
+ * Named instances (#453) probe their base CLI under the instance's env and
+ * cache under their ref; a new instance skips the TTL so it shows at once.
  *
- * @param {{ env?: NodeJS.ProcessEnv, force?: boolean, now?: number }} [opts]
+ * @param {{
+ *   env?: NodeJS.ProcessEnv,
+ *   force?: boolean,
+ *   now?: number,
+ *   instances?: Array<{ ref: string, provider: string, env: Record<string, string> }>,
+ * }} [opts]
  * @returns {Promise<void>}
  */
 function refresh(opts = {}) {
   const now = opts.now ?? Date.now();
   if (inflight) return inflight;
-  if (!opts.force && probedAt && now - probedAt < TTL_MS) return Promise.resolve();
+  const instances = opts.instances || [];
+  const fresh = probedAt && now - probedAt < TTL_MS;
+  if (!opts.force && fresh && instances.every((i) => cache.has(i.ref))) {
+    return Promise.resolve();
+  }
   const env = opts.env || process.env;
   probedAt = now;
-  inflight = Promise.all(
-    Object.keys(PROBES).map(async (id) => {
+  inflight = Promise.all([
+    ...Object.keys(PROBES).map(async (id) => {
       cache.set(id, await probeOne(id, env));
     }),
-  ).finally(() => {
+    ...instances.map(async (i) => {
+      cache.set(i.ref, await probeOne(i.provider, { ...env, ...i.env }));
+    }),
+  ]).finally(() => {
     inflight = null;
   });
   return inflight;
@@ -177,14 +191,16 @@ function invalidate() {
  */
 function get(id) {
   if (cache.has(id)) return cache.get(id);
-  return started() && getProvider(id) ? "unknown" : undefined;
+  return started() && getProvider(id.split(":")[0]) ? "unknown" : undefined;
 }
 
 /**
  * Shell line that starts the provider's login flow, or null.
+ * `configEnv` is a named instance's config-dir var (#453). Only that one
+ * goes on the line: instance env may hold keys, and a terminal echoes.
  *
  * @param {string} id
- * @param {{ env?: NodeJS.ProcessEnv, platform?: NodeJS.Platform }} [opts]
+ * @param {{ env?: NodeJS.ProcessEnv, platform?: NodeJS.Platform, configEnv?: Record<string, string> }} [opts]
  * @returns {string | null}
  */
 function loginCommand(id, opts = {}) {
@@ -194,12 +210,14 @@ function loginCommand(id, opts = {}) {
   const bin = resolveBin(entry, opts.env || process.env);
   if (!bin) return null;
   const win = (opts.platform || process.platform) === "win32";
-  const quoted = /^[\w.-]+$/.test(bin)
-    ? bin
-    : win
-      ? `"${bin}"`
-      : `'${bin.replace(/'/g, `'\\''`)}'`;
-  return [quoted, ...args].join(" ");
+  /** @param {string} v */
+  const q = (v) => (win ? `"${v}"` : `'${v.replace(/'/g, `'\\''`)}'`);
+  const quoted = /^[\w.-]+$/.test(bin) ? bin : q(bin);
+  const line = [quoted, ...args].join(" ");
+  const pairs = Object.entries(opts.configEnv || {});
+  if (!pairs.length) return line;
+  if (win) return `${pairs.map(([k, v]) => `set "${k}=${v}"`).join(" && ")} && ${line}`;
+  return `${pairs.map(([k, v]) => `${k}=${q(v)}`).join(" ")} ${line}`;
 }
 
 /** Test hook: drop all state. */

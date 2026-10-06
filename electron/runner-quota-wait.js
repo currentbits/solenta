@@ -9,6 +9,18 @@
 const services = require("./services.js");
 const { getProvider } = require("./providers.js");
 const { nextQuotaFailover, quotaWaitEnabled } = require("./quotaWait.js");
+const {
+  parseProviderRef,
+  threadProviderRef,
+  findInstance,
+} = require("./providerInstances.js");
+
+/** A chain entry that can run: known provider, and a live instance if named. */
+function runnableRef(ref, settings) {
+  const { provider, instance } = parseProviderRef(ref);
+  if (!getProvider(provider)) return false;
+  return !instance || Boolean(findInstance(settings, provider, instance));
+}
 
 /**
  * @param {object} ctx - createRunner context (see runner-watchdogs.js header)
@@ -62,12 +74,12 @@ function createQuotaWait(ctx) {
         settings,
       });
       if (!candidate) return false;
-      if (getProvider(candidate.provider)) break;
+      if (runnableRef(candidate.provider, settings)) break;
       probe = { ...probe, quotaFailoverTried: candidate.tried };
       candidate = null;
     }
     if (!candidate) return false;
-    const fromProvider = String(thread.provider || "provider");
+    const fromProvider = threadProviderRef(thread) || "provider";
     // The run has already left `active`, but status is still "working"
     // until this function patches it. setProvider refuses a live run.
     store.updateThread(threadId, {
@@ -83,7 +95,7 @@ function createQuotaWait(ctx) {
       return false;
     }
     const switched = store.getThread(threadId);
-    if (!switched || switched.provider !== candidate.provider) return false;
+    if (!switched || threadProviderRef(switched) !== candidate.provider) return false;
     store.updateThread(
       threadId,
       {

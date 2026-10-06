@@ -1,5 +1,7 @@
 "use strict";
 
+const { threadProviderRef } = require("./providerInstances.js");
+
 /**
  * Provider quota-wait (#462): parse a reset clock from a provider error.
  *
@@ -419,7 +421,7 @@ function decideQuotaWait(opts) {
  *
  * @param {object} opts
  * @param {unknown} opts.text
- * @param {{ provider?: string, quotaFailoverTried?: unknown } | null | undefined} opts.thread
+ * @param {{ provider?: string, providerInstance?: string | null, quotaFailoverTried?: unknown } | null | undefined} opts.thread
  * @param {{ quotaFailover?: unknown } | null | undefined} opts.settings
  * @returns {{ provider: string, tried: string[] } | null}
  */
@@ -431,8 +433,11 @@ function nextQuotaFailover(opts) {
     : [];
   if (chain.length === 0) return null;
   const thread = opts && opts.thread;
+  // Chain entries are refs (#453): "claude:work" is its own quota.
   const current =
-    thread && typeof thread.provider === "string" ? thread.provider.trim() : "";
+    thread && typeof thread.provider === "string"
+      ? threadProviderRef({ ...thread, provider: thread.provider.trim() })
+      : "";
   const tried = new Set(
     Array.isArray(thread && thread.quotaFailoverTried)
       ? thread.quotaFailoverTried.filter((id) => typeof id === "string" && id)

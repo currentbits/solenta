@@ -14,6 +14,14 @@ const {
   honouredPermissionModes,
 } = require("./providers.js");
 const providerAuth = require("./providerAuth.js");
+const {
+  parseProviderRef,
+  providerRef,
+  threadProviderRef,
+  findInstance,
+  instanceEnv,
+  instanceDisplayName,
+} = require("./providerInstances.js");
 const { resolveSandbox } = require("./sandbox.js");
 const {
   messagesInMemory,
@@ -53,14 +61,26 @@ const {
 function resolveNewThreadProvider(input, settings, projectProvider = null) {
   const fromInput =
     input && typeof input.provider === "string" ? input.provider.trim() : "";
-  if (fromInput && isKnownProviderId(fromInput)) return fromInput;
+  if (fromInput && isKnownProviderRef(fromInput, settings)) return fromInput;
   if (projectProvider) return projectProvider;
   const fromSettings =
     settings && typeof settings.defaultProvider === "string"
       ? settings.defaultProvider.trim()
       : "";
-  if (fromSettings && isKnownProviderId(fromSettings)) return fromSettings;
+  if (fromSettings && isKnownProviderRef(fromSettings, settings)) return fromSettings;
   return "claude";
+}
+
+/**
+ * A provider id, or `<id>:<instance>` naming an instance that still exists
+ * (#453). A removed instance falls through like an unknown provider.
+ * @param {string} ref
+ * @param {{ providerInstances?: unknown } | null | undefined} settings
+ */
+function isKnownProviderRef(ref, settings) {
+  const { provider, instance } = parseProviderRef(ref);
+  if (!isKnownProviderId(provider)) return false;
+  return !instance || Boolean(findInstance(settings, provider, instance));
 }
 
 /**
@@ -74,7 +94,7 @@ function resolveNewThreadProvider(input, settings, projectProvider = null) {
  * @returns {string | null}
  */
 function resolveNewThreadModel(input, settings, provider) {
-  const entry = getProvider(provider);
+  const entry = getProvider(parseProviderRef(provider).provider);
   if (input && Object.prototype.hasOwnProperty.call(input, "model")) {
     try {
       return normalizeModelForProvider(entry, input.model);
@@ -133,7 +153,7 @@ function providerInstalledFor(project, id) {
  * @param {any} project
  * @returns {{ provider?: string, model?: string, reasoningEffort?: string, permissionMode?: string } | null}
  */
-function projectDefaultsFor(input, project) {
+function projectDefaultsFor(input, project, settings = null) {
   const d = project && project.threadDefaults;
   if (!d || typeof d !== "object") return null;
   if (input.projectDefaults === false || input.automationId || input.memoryConsolidate) {
@@ -142,8 +162,8 @@ function projectDefaultsFor(input, project) {
   const out = { ...d };
   if (
     !out.provider ||
-    !isKnownProviderId(out.provider) ||
-    !providerInstalledFor(project, out.provider)
+    !isKnownProviderRef(out.provider, settings) ||
+    !providerInstalledFor(project, parseProviderRef(out.provider).provider)
   ) {
     delete out.provider;
     delete out.model;
@@ -192,17 +212,18 @@ function createThread(store, input) {
 
   const settings =
     typeof store.getSettings === "function" ? store.getSettings() : null;
-  const defaults = projectDefaultsFor(input, project);
-  const provider = resolveNewThreadProvider(
+  const defaults = projectDefaultsFor(input, project, settings);
+  const providerRefId = resolveNewThreadProvider(
     input,
     settings,
     defaults && defaults.provider,
   );
+  const { provider, instance: providerInstance } = parseProviderRef(providerRefId);
   const entry = getProvider(provider);
   let model;
   if (
     defaults &&
-    defaults.provider === provider &&
+    defaults.provider === providerRefId &&
     !Object.prototype.hasOwnProperty.call(input, "model")
   ) {
     try {
@@ -211,7 +232,7 @@ function createThread(store, input) {
       model = null;
     }
   } else {
-    model = resolveNewThreadModel(input, settings, provider);
+    model = resolveNewThreadModel(input, settings, providerRefId);
   }
   const reasoningEffort =
     defaults &&
@@ -259,6 +280,7 @@ function createThread(store, input) {
     issueNumber: require("./postmerge.js").normalizeIssueNumber(input.issueNumber),
     postMergeVerify: null,
     provider,
+    ...(providerInstance ? { providerInstance } : {}),
     model,
     sessionId: null,
     permissionMode,
@@ -307,7 +329,7 @@ function recordLastUsedDefaults(store, threadId) {
   const { normalizeThreadDefaults } = require("./projectCommands.js");
   const next = normalizeThreadDefaults({
     lastUsed: true,
-    provider: thread.provider,
+    provider: threadProviderRef(thread),
     model: thread.model,
     reasoningEffort: thread.reasoningEffort,
     permissionMode: thread.permissionMode,
@@ -453,13 +475,15 @@ function forkThread(store, input) {
   );
   const modelProvided = Object.prototype.hasOwnProperty.call(input, "model");
 
+  // Refs (#453): a fork stays on the source's instance unless told otherwise.
   let nextProvider = source.provider;
+  let nextInstance = source.providerInstance || null;
   if (providerProvided) {
     const id = String(input.provider || "");
-    if (!isKnownProviderId(id)) {
+    if (!isKnownProviderRef(id, store.getSettings())) {
       throw new Error(`Unknown provider: ${input.provider}`);
     }
-    nextProvider = id;
+    ({ provider: nextProvider, instance: nextInstance } = parseProviderRef(id));
   }
 
   const providerChanging =
@@ -496,6 +520,7 @@ function forkThread(store, input) {
   // patch config + provenance. sessionId stays null (fresh session).
   const forkPatch = {
     provider: nextProvider,
+    ...(nextInstance ? { providerInstance: nextInstance } : {}),
     model: nextModel,
     permissionMode: source.permissionMode,
     handoffFrom: source.id,
@@ -716,33 +741,46 @@ function setProvider(store, input) {
     return decorateThread(store, thread);
   }
 
-  const nextProvider = providerProvided ? input.provider : thread.provider;
-  if (providerProvided) {
-    const id = String(input.provider || "");
-    if (!isKnownProviderId(id)) {
+  // input.provider is a ref: "claude" or "claude:<instanceId>" (#453).
+  const ref = providerProvided ? parseProviderRef(input.provider) : null;
+  if (ref) {
+    if (!isKnownProviderId(ref.provider)) {
       throw new Error(`Unknown provider: ${input.provider}`);
     }
+    if (ref.instance && !findInstance(store.getSettings(), ref.provider, ref.instance)) {
+      throw new Error(`Unknown provider instance: ${input.provider}`);
+    }
   }
+  const nextProvider = ref ? ref.provider : thread.provider;
 
   const providerChanging =
-    providerProvided && String(input.provider) !== String(thread.provider);
+    ref != null && ref.provider !== String(thread.provider);
+  // Another instance is another config dir: same harness, different
+  // account, so the session cannot follow but the model and effort can.
+  const instanceChanging =
+    ref != null && (ref.instance || null) !== (thread.providerInstance || null);
 
-  /** @type {{ provider?: string, model?: string | null, sessionId?: null, replayContext?: boolean, reasoningEffort?: null, webSearch?: boolean }} */
+  /** @type {{ provider?: string, providerInstance?: string | null, model?: string | null, sessionId?: null, replayContext?: boolean, reasoningEffort?: null, webSearch?: boolean }} */
   const patch = {};
 
-  if (providerChanging && thread.status === "working") {
+  if ((providerChanging || instanceChanging) && thread.status === "working") {
     // The runner writes sessionId back when the turn ends, which would
     // resurrect the old CLI's session onto the new provider. Same rule as
     // deleteThread: wait the run out.
     throw new Error("Cannot switch provider while a run is active");
   }
 
-  if (providerChanging && thread.sessionId) {
+  if ((providerChanging || instanceChanging) && thread.sessionId) {
     // The old CLI's session cannot be resumed by the new one, so drop it and
     // let the next send start fresh. The thread and its transcript stay.
     patch.sessionId = null;
   }
-  if (providerProvided) patch.provider = String(input.provider);
+  if (ref) {
+    patch.provider = ref.provider;
+    if (ref.instance || thread.providerInstance) {
+      patch.providerInstance = ref.instance || null;
+    }
+  }
 
   const nextEntry = getProvider(nextProvider);
 
@@ -819,7 +857,7 @@ function setProvider(store, input) {
  * @param {object} [opts] - forwarded to listProviders (which, env, …)
  * @returns {Promise<import('../src/shared/ipc').ProviderInfo[]>}
  */
-async function listProvidersForApi(_store, opts) {
+async function listProvidersForApi(store, opts) {
   const already = catalogCliProbeStarted();
   // First callers (boot) must stay cheap: file caches only, kick CLI probes
   // in the background. A later list (model picker open) awaits the inflight
@@ -832,12 +870,46 @@ async function listProvidersForApi(_store, opts) {
       // Missing cache / failed local command = no warning.
     }
   }
-  const list = listProviders(opts);
+  const base = listProviders(opts);
+  const instances =
+    store && typeof store.getSettings === "function"
+      ? store.getSettings().providerInstances || []
+      : [];
+  // Each instance sits right after its base, so the picker groups them.
+  /** @type {import('../src/shared/ipc').ProviderInfo[]} */
+  const list = [];
+  for (const p of base) {
+    list.push(p);
+    for (const inst of instances) {
+      if (inst.provider !== p.id) continue;
+      list.push({
+        ...p,
+        id: providerRef(p.id, inst.id),
+        name: instanceDisplayName(p.name, inst),
+        baseProvider: p.id,
+        instanceId: inst.id,
+      });
+    }
+  }
   for (const p of list) {
     const auth = providerAuth.get(p.id);
     if (auth && p.available) p.auth = auth;
   }
   return list;
+}
+
+/**
+ * Sign-in probe inputs for every named instance (#453).
+ * @param {import('./store').Store} store
+ * @returns {Array<{ ref: string, provider: string, env: Record<string, string> }>}
+ */
+function instanceAuthProbes(store) {
+  const instances = store.getSettings().providerInstances || [];
+  return instances.map((inst) => ({
+    ref: providerRef(inst.provider, inst.id),
+    provider: inst.provider,
+    env: instanceEnv(inst),
+  }));
 }
 
 /**
@@ -1414,6 +1486,7 @@ module.exports = {
   normalizeBaseBranch,
   createThread,
   recordLastUsedDefaults,
+  instanceAuthProbes,
   setPermissionMode,
   setReasoningEffort,
   setWebSearch,

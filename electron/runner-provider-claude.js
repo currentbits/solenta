@@ -12,6 +12,7 @@ const {
   OUTPUT_TRUNCATE,
   runClaude,
 } = require("./claude.js");
+const { threadInstanceEnv, threadProviderRef } = require("./providerInstances.js");
 const { randomUUID, createHash } = require("node:crypto");
 const { grokGuardrailNotice } = require("./grok-guardrail-hook.js");
 const {
@@ -916,7 +917,7 @@ function createClaudeRun(ctx) {
             store.recordSpend(costDelta);
           }
           store.recordUsage({
-            provider: thread.provider,
+            provider: threadProviderRef(thread),
             model,
             costUsd: costDelta,
             inputTokens: turnIn,
@@ -1118,7 +1119,12 @@ function createClaudeRun(ctx) {
     // warm CLI predates the setting — hence it joins the reuse key below.
     // undefined rather than {} when export is off: claude.js only replaces the
     // inherited env when this is set, and an empty replacement is not the same.
-    const claudeOtel = otel.claudeEnv();
+    // Named instance (#453): its config dir and env ride this child only.
+    // Joins the reuse key through spawnEnv, so switching instance respawns.
+    const claudeOtel = {
+      ...(threadInstanceEnv(store.getSettings(), thread) || {}),
+      ...otel.claudeEnv(),
+    };
     const otelEnv = Object.keys(claudeOtel).length > 0 ? claudeOtel : undefined;
     const grokMerged =
       entryDef.id === "grok"
