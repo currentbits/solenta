@@ -1,5 +1,6 @@
 "use strict";
 
+const os = require("node:os");
 const path = require("node:path");
 const { listLocalServers } = require("./servers.js");
 const { spotlightEnv, spotlightLane } = require("./mergeQueue.js");
@@ -7,6 +8,10 @@ const { spawnEnvForDevServer, laneEnvExtra } = require("./worktreeEnv.js");
 const devservers = require("./devservers.js");
 const terminal = require("./terminal.js");
 const preview = require("./preview.js");
+const providerAuth = require("./providerAuth.js");
+
+/** Mirrors SIGNIN_TERMINAL_ID in src/shared/ipc.ts. */
+const SIGNIN_TERMINAL_ID = "__signin__";
 
 /**
  * Terminal read cursor. Anything that is not a finite number means "replay
@@ -55,6 +60,22 @@ function resolveDevServerRoot(ctx, threadId) {
     throw new Error(`Unknown project for thread: ${threadId}`);
   }
   return { thread, project, root };
+}
+
+/**
+ * Terminal cwd: the thread's root, or the home directory for the dedicated
+ * Sign in shell (#1501), whose scrollback is not kept.
+ *
+ * @param {object} ctx
+ * @param {unknown} threadId
+ */
+function terminalRoot(ctx, threadId) {
+  if (threadId === SIGNIN_TERMINAL_ID) {
+    const home = os.homedir();
+    return { root: home, project: { path: home }, logDir: undefined };
+  }
+  const { root, project } = resolveDevServerRoot(ctx, threadId);
+  return { root, project, logDir: terminalLogDir(ctx) };
 }
 
 /** IPC_HANDLERS rows for servers:*, devserver:*, terminal:*, preview:*; ipc.js spreads them in. */
@@ -123,40 +144,56 @@ module.exports = {
   },
   "terminal:open": async (ctx, input) => {
     const threadId = input && input.threadId;
-    const { root, project } = resolveDevServerRoot(ctx, threadId);
+    const { root, project, logDir } = terminalRoot(ctx, threadId);
     return terminal.open(threadId, root, {
       project,
       termId: input && input.termId,
       cols: input && input.cols,
       rows: input && input.rows,
-      logDir: terminalLogDir(ctx),
+      logDir,
       broadcast: ctx.broadcast,
     });
   },
   "terminal:write": async (ctx, input) => {
     const threadId = input && input.threadId;
-    resolveDevServerRoot(ctx, threadId);
+    terminalRoot(ctx, threadId);
     return terminal.write(threadId, input && input.data, input && input.termId);
   },
   "terminal:resize": async (ctx, input) => {
     const threadId = input && input.threadId;
-    resolveDevServerRoot(ctx, threadId);
+    terminalRoot(ctx, threadId);
     return terminal.resize(threadId, input && input.cols, input && input.rows, input && input.termId);
   },
   "terminal:read": async (ctx, input) => {
     const threadId = input && input.threadId;
-    resolveDevServerRoot(ctx, threadId);
+    terminalRoot(ctx, threadId);
     return terminal.read(threadId, sinceOf(input), input && input.termId);
   },
   "terminal:list": async (ctx, input) => {
     const threadId = input && input.threadId;
-    resolveDevServerRoot(ctx, threadId);
-    return terminal.list(threadId, terminalLogDir(ctx));
+    const { logDir } = terminalRoot(ctx, threadId);
+    return terminal.list(threadId, logDir);
   },
   "terminal:close": async (ctx, input) => {
     const threadId = input && input.threadId;
-    resolveDevServerRoot(ctx, threadId);
-    return terminal.close(threadId, input && input.termId, terminalLogDir(ctx));
+    const { logDir } = terminalRoot(ctx, threadId);
+    return terminal.close(threadId, input && input.termId, logDir);
+  },
+  // Sign in (#1501): a fresh "signin" shell with the provider's login
+  // command typed in. The command comes from a fixed table, never the caller.
+  "terminal:signIn": async (ctx, input) => {
+    const provider = String((input && input.provider) || "");
+    const command = providerAuth.loginCommand(provider);
+    if (!command) throw new Error(`No sign-in command for ${provider || "this provider"}`);
+    const threadId = (input && input.threadId) || SIGNIN_TERMINAL_ID;
+    const { root, project, logDir } = terminalRoot(ctx, threadId);
+    const termId = "signin";
+    terminal.close(threadId, termId, logDir);
+    terminal.open(threadId, root, { project, termId, logDir, broadcast: ctx.broadcast });
+    terminal.write(threadId, `${command}\r`, termId);
+    // The next list re-probes instead of serving the signed-out cache.
+    providerAuth.invalidate();
+    return { threadId, termId };
   },
   "preview:bind": async (ctx, input) => {
     resolveDevServerRoot(ctx, input && input.threadId);

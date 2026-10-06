@@ -259,6 +259,7 @@ export const IPC_CHANNELS = [
   { ns: "terminal", method: "read" },
   { ns: "terminal", method: "list" },
   { ns: "terminal", method: "close" },
+  { ns: "terminal", method: "signIn" },
   { ns: "preview", method: "bind" },
   { ns: "preview", method: "unbind" },
   { ns: "preview", method: "navigate" },

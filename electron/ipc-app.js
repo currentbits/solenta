@@ -10,6 +10,7 @@ const feedback = require("./feedback.js");
 const { discoverSourceControl } = require("./sourceControl.js");
 const { applyZoom } = require("./zoom.js");
 const { whenPathReady } = require("./pathEnv.js");
+const providerAuth = require("./providerAuth.js");
 
 /** Version stamped in the embedded package.json; "dev" outside a build. */
 function appVersion() {
@@ -191,6 +192,11 @@ module.exports = {
     // First launch: `which` each CLI only once the login-shell PATH is in (#1475).
     const pathWait = whenPathReady({ ifUncached: true });
     if (pathWait) await pathWait;
+    // Sign-in probes (#1501): the boot list kicks them in the background; a
+    // later list (picker or Agents pane opening) waits for a rate-limited one.
+    const first = !providerAuth.started();
+    const probing = providerAuth.refresh();
+    if (!first) await probing;
     return services.listProvidersForApi(ctx.store);
   },
   "sourceControl:discover": async (_ctx, input) => {

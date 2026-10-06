@@ -11,6 +11,7 @@ const {
   catalogCliProbeStarted,
   honouredPermissionModes,
 } = require("./providers.js");
+const providerAuth = require("./providerAuth.js");
 const { resolveSandbox } = require("./sandbox.js");
 const {
   messagesInMemory,
@@ -643,7 +644,12 @@ async function listProvidersForApi(_store, opts) {
       // Missing cache / failed local command = no warning.
     }
   }
-  return listProviders(opts);
+  const list = listProviders(opts);
+  for (const p of list) {
+    const auth = providerAuth.get(p.id);
+    if (auth && p.available) p.auth = auth;
+  }
+  return list;
 }
 
 /**

@@ -6,6 +6,7 @@ import type {
   PreviewSnapshot,
   LocalServerInfo,
 } from "../shared/ipc";
+import { SIGNIN_TERMINAL_ID } from "../shared/ipc";
 
 export function createWorkspace(): Pick<CoderApi, "servers" | "simulator" | "preview" | "devserver" | "terminal" | "files" | "fs" | "attachments" | "shell"> {
   /** In-memory per-thread demo servers (Vite-only; Electron uses electron/devservers.js). */
@@ -241,6 +242,11 @@ export function createWorkspace(): Pick<CoderApi, "servers" | "simulator" | "pre
       async close(input: { threadId: string }): Promise<TerminalState> {
         demoTerminals.delete(input.threadId);
         return demoTerminal(input.threadId);
+      },
+      async signIn(input: { provider: string; threadId?: string | null }) {
+        const threadId = input.threadId || SIGNIN_TERMINAL_ID;
+        demoTerminals.set(threadId, `Demo shell. Electron would run: ${input.provider} login\r\n`);
+        return { threadId, termId: "signin" };
       },
     },
     files: {

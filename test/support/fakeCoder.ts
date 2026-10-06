@@ -3518,6 +3518,11 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       read: (input: unknown) => rec("terminal.read", [input], fakeTerminal()),
       list: (input: unknown) => rec("terminal.list", [input], [] as string[]),
       close: (input: unknown) => rec("terminal.close", [input], fakeTerminal()),
+      signIn: (input: { provider: string; threadId?: string | null }) =>
+        rec("terminal.signIn", [input], {
+          threadId: input.threadId || "__signin__",
+          termId: "signin",
+        }),
     },
     simulator: {
       capabilities: (input: unknown) =>

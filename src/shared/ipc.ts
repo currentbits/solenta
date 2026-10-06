@@ -902,6 +902,13 @@ export interface ThreadSpec {
 /** Cap for ThreadInfo.notes / threads.setNotes (issue #194). */
 export const THREAD_NOTES_MAX = 2000;
 
+/**
+ * Terminal "thread" for a Sign in with no thread open (#1501): a shell in
+ * the home directory. Thread ids are UUIDs, so this cannot collide.
+ * Mirrored in electron/ipc-devserver.js.
+ */
+export const SIGNIN_TERMINAL_ID = "__signin__";
+
 /** Per-thread transcript bookmarks (issue #1217). Mirror electron/messagePins.js. */
 export const THREAD_MESSAGE_PINS_MAX = 20;
 export const THREAD_MESSAGE_PIN_EXCERPT_MAX = 120;
@@ -2444,6 +2451,13 @@ export interface ProviderInfo {
    * `models` (issue #745).
    */
   catalogNote?: string;
+  /**
+   * Sign-in state from the CLI's own status command (#1501). "unknown" when
+   * the CLI has no such command; absent before the first probe or when the
+   * CLI is not installed. Probed after boot, re-probed (rate-limited) when
+   * the picker or Settings › Agents opens.
+   */
+  auth?: "signedIn" | "signedOut" | "unknown";
 }
 
 /** One phase of a user-defined workflow template. */
@@ -5054,6 +5068,15 @@ export interface CoderApi {
     list(input: { threadId: string }): Promise<string[]>;
     /** Kill the shell and drop its scrollback. */
     close(input: { threadId: string; termId?: string }): Promise<TerminalState>;
+    /**
+     * Type a provider's login command into a fresh "signin" shell (#1501):
+     * the thread's when one is given, else a dedicated one in the home
+     * directory (threadId SIGNIN_TERMINAL_ID). Returns where it runs.
+     */
+    signIn(input: {
+      provider: string;
+      threadId?: string | null;
+    }): Promise<{ threadId: string; termId: string }>;
   };
   /**
    * Embedded Browser pane (issue #155). Desktop-only: the renderer hosts a
