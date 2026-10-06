@@ -384,6 +384,7 @@ function buildDevCoder(): CoderApi {
     }
   }
 
+  const devSettings = createSettings(ctx);
   const api: CoderApi = {
     app: {
       async status(): Promise<AppStatus> {
@@ -433,15 +434,26 @@ function buildDevCoder(): CoderApi {
       },
     },
     ...createMemory(ctx),
-    ...createSettings(ctx),
+    ...devSettings,
     ...createMcp(ctx),
     ...createSkills(),
     providers: {
       async list() {
-        return DEV_PROVIDERS.map((p) => ({
-          ...p,
-          models: [...p.models],
-        }));
+        // Named instances (#453) follow their base, like electron's list.
+        const { providerInstances } = await devSettings.settings.get();
+        return DEV_PROVIDERS.flatMap((p) => [
+          { ...p, models: [...p.models] },
+          ...providerInstances
+            .filter((i) => i.provider === p.id)
+            .map((i) => ({
+              ...p,
+              models: [...p.models],
+              id: `${p.id}:${i.id}`,
+              name: `${p.name} (${i.name})`,
+              baseProvider: p.id,
+              instanceId: i.id,
+            })),
+        ]);
       },
     },
     ...createSourceControl(),

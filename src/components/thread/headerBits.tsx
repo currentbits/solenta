@@ -15,7 +15,7 @@ import {
 } from "../../viewReturn";
 import type { ContextBreakdownSegment } from "../../contextBreakdown";
 import type { ContextRingView } from "../../contextRing";
-import { formatElapsed, formatRelativeAge } from "../../format";
+import { formatElapsed, formatRelativeAge, threadProviderRef } from "../../format";
 import { useEscapeClose } from "../../useEscapeClose";
 import styles from "../ThreadView.module.css";
 
@@ -445,7 +445,7 @@ export function HeaderForkControl({
 }) {
   const menuRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
-  const others = providers.filter((p) => p.id !== thread.provider);
+  const others = providers.filter((p) => p.id !== threadProviderRef(thread));
 
   useEffect(() => {
     if (!open) return;

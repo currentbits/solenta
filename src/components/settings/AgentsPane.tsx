@@ -16,6 +16,7 @@ import type {
   AppSettings,
   PermissionMode,
   ProviderInfo,
+  ProviderInstance,
   ReasoningEffort,
   SubagentPool,
   SubagentPoolEntry,
@@ -154,6 +155,51 @@ export function AgentsPane({
     onRefreshProviders?.();
   }, []);
 
+  const [instanceDraft, setInstanceDraft] = useState<InstanceDraft | null>(null);
+  const instances = settings?.providerInstances ?? [];
+  const persistInstances = async (next: ProviderInstance[]) => {
+    setError(null);
+    try {
+      await onSaveSettings({ providerInstances: next });
+      onRefreshProviders?.();
+      return true;
+    } catch (err) {
+      setError(
+        err instanceof Error && err.message ? err.message : "Failed to save settings",
+      );
+      return false;
+    }
+  };
+  const submitInstance = async () => {
+    if (!instanceDraft) return;
+    const name = instanceDraft.name.trim();
+    if (!name) {
+      setError("Name is required");
+      return;
+    }
+    const env: Record<string, string> = {};
+    for (const row of instanceDraft.env) {
+      const key = row.key.trim();
+      if (!key) continue;
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+        setError(`"${key}" is not a valid variable name`);
+        return;
+      }
+      env[key] = row.value;
+    }
+    const next: ProviderInstance = {
+      id: instanceDraft.id ?? crypto.randomUUID().slice(0, 8),
+      name,
+      provider: instanceDraft.provider,
+      configDir: instanceDraft.configDir.trim() || null,
+      env,
+    };
+    const list = instanceDraft.id
+      ? instances.map((i) => (i.id === instanceDraft.id ? next : i))
+      : [...instances, next];
+    if (await persistInstances(list)) setInstanceDraft(null);
+  };
+
   const submitDraft = async () => {
     if (!draft) return;
     const name = draft.name.trim();
@@ -250,6 +296,47 @@ export function AgentsPane({
     <>
       <ProviderStatusList
         providers={providers}
+        saving={saving}
+        onEditInstance={(id) => {
+          const found = instances.find((i) => i.id === id);
+          if (!found) return;
+          setError(null);
+          setInstanceDraft(draftFromInstance(found));
+        }}
+        onDeleteInstance={(id) => {
+          if (instanceDraft?.id === id) setInstanceDraft(null);
+          void persistInstances(instances.filter((i) => i.id !== id));
+        }}
+        footer={
+          instanceDraft ? (
+            <InstanceForm
+              draft={instanceDraft}
+              providers={providers}
+              saving={saving}
+              onChange={setInstanceDraft}
+              onCancel={() => {
+                setInstanceDraft(null);
+                setError(null);
+              }}
+              onSubmit={() => void submitInstance()}
+            />
+          ) : (
+            <div className={styles.fieldRow}>
+              <button
+                type="button"
+                className={styles.btn}
+                data-add-instance=""
+                disabled={saving || settings == null}
+                onClick={() => {
+                  setError(null);
+                  setInstanceDraft(emptyInstanceDraft(providers));
+                }}
+              >
+                Add instance
+              </button>
+            </div>
+          )
+        }
         onSignIn={
           onProviderSignIn
             ? (id) => {
@@ -581,13 +668,203 @@ const AUTH_LABELS = {
   unknown: "Sign-in unknown",
 } as const;
 
+/** CLIs that take a separate config folder per instance (#453). */
+const INSTANCE_PROVIDERS: Record<string, string> = {
+  claude: "CLAUDE_CONFIG_DIR",
+  codex: "CODEX_HOME",
+};
+
+interface InstanceDraft {
+  id: string | null;
+  name: string;
+  provider: string;
+  configDir: string;
+  env: Array<{ key: string; value: string }>;
+}
+
+function emptyInstanceDraft(providers: readonly ProviderInfo[]): InstanceDraft {
+  const base =
+    providers.find((p) => p.available && !p.instanceId && p.id in INSTANCE_PROVIDERS)?.id ??
+    "claude";
+  return { id: null, name: "", provider: base, configDir: "", env: [] };
+}
+
+function draftFromInstance(inst: ProviderInstance): InstanceDraft {
+  return {
+    id: inst.id,
+    name: inst.name,
+    provider: inst.provider,
+    configDir: inst.configDir ?? "",
+    env: Object.entries(inst.env).map(([key, value]) => ({ key, value })),
+  };
+}
+
+/** Add or edit a named provider instance (#453). */
+function InstanceForm({
+  draft,
+  providers,
+  saving,
+  onChange,
+  onCancel,
+  onSubmit,
+}: {
+  draft: InstanceDraft;
+  providers: ProviderInfo[];
+  saving: boolean;
+  onChange: (draft: InstanceDraft) => void;
+  onCancel: () => void;
+  onSubmit: () => void;
+}) {
+  const bases = providers.filter((p) => !p.instanceId && p.id in INSTANCE_PROVIDERS);
+  const dirVar = INSTANCE_PROVIDERS[draft.provider] ?? "config folder";
+  const setRow = (i: number, patch: Partial<{ key: string; value: string }>) =>
+    onChange({
+      ...draft,
+      env: draft.env.map((row, j) => (j === i ? { ...row, ...patch } : row)),
+    });
+  return (
+    <div className={styles.section} data-instance-form="">
+      <div className={styles.field}>
+        <label className={styles.fieldLabel} htmlFor="instance-provider">
+          Provider
+        </label>
+        <select
+          id="instance-provider"
+          className={styles.input}
+          value={draft.provider}
+          // The id names a config of one CLI; it cannot move to another.
+          disabled={saving || draft.id != null}
+          onChange={(e) => onChange({ ...draft, provider: e.target.value })}
+        >
+          {bases.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+              {!p.available ? " (not installed)" : ""}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div className={styles.field}>
+        <label className={styles.fieldLabel} htmlFor="instance-name">
+          Name
+        </label>
+        <input
+          id="instance-name"
+          className={styles.input}
+          value={draft.name}
+          maxLength={40}
+          disabled={saving}
+          autoComplete="off"
+          placeholder="work"
+          onChange={(e) => onChange({ ...draft, name: e.target.value })}
+        />
+      </div>
+      <div className={styles.field}>
+        <label className={styles.fieldLabel} htmlFor="instance-dir">
+          Config folder
+        </label>
+        <input
+          id="instance-dir"
+          className={styles.input}
+          value={draft.configDir}
+          disabled={saving}
+          autoComplete="off"
+          spellCheck={false}
+          placeholder={draft.provider === "codex" ? "~/.codex-work" : "~/.claude-work"}
+          onChange={(e) => onChange({ ...draft, configDir: e.target.value })}
+        />
+        <p className={styles.note}>
+          Sets {dirVar} for this instance, so it keeps its own sign-in,
+          settings and sessions. Empty uses the CLI&apos;s usual folder.
+        </p>
+      </div>
+      <div className={styles.field}>
+        <span className={styles.fieldLabel}>Environment</span>
+        {draft.env.map((row, i) => (
+          <div key={i} className={styles.fieldRow} data-instance-env-row="">
+            <input
+              className={styles.input}
+              aria-label="Variable name"
+              value={row.key}
+              disabled={saving}
+              autoComplete="off"
+              spellCheck={false}
+              placeholder="ANTHROPIC_BASE_URL"
+              onChange={(e) => setRow(i, { key: e.target.value })}
+            />
+            <input
+              className={styles.input}
+              aria-label={`Value of ${row.key || "variable"}`}
+              type="password"
+              value={row.value}
+              disabled={saving}
+              autoComplete="off"
+              spellCheck={false}
+              onChange={(e) => setRow(i, { value: e.target.value })}
+            />
+            <button
+              type="button"
+              className={styles.btn}
+              aria-label={`Remove ${row.key || "variable"}`}
+              disabled={saving}
+              onClick={() =>
+                onChange({ ...draft, env: draft.env.filter((_, j) => j !== i) })
+              }
+            >
+              Remove
+            </button>
+          </div>
+        ))}
+        <div className={styles.fieldRow}>
+          <button
+            type="button"
+            className={styles.btn}
+            data-instance-add-env=""
+            disabled={saving}
+            onClick={() =>
+              onChange({ ...draft, env: [...draft.env, { key: "", value: "" }] })
+            }
+          >
+            Add variable
+          </button>
+        </div>
+        <p className={styles.note}>
+          Applies only to this instance&apos;s runs. Values are stored like
+          other provider keys and never logged.
+        </p>
+      </div>
+      <div className={styles.fieldRow}>
+        <button
+          type="button"
+          className={`${styles.btn} ${styles.btnPrimary}`}
+          disabled={saving}
+          onClick={onSubmit}
+        >
+          {draft.id ? "Update" : "Add"}
+        </button>
+        <button type="button" className={styles.btn} disabled={saving} onClick={onCancel}>
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /** One row per provider CLI: installed, signed in, and a Sign in button (#1501). */
 function ProviderStatusList({
   providers,
+  saving = false,
   onSignIn,
+  onEditInstance,
+  onDeleteInstance,
+  footer,
 }: {
   providers: ProviderInfo[];
+  saving?: boolean;
   onSignIn?: (providerId: string) => Promise<void>;
+  onEditInstance?: (instanceId: string) => void;
+  onDeleteInstance?: (instanceId: string) => void;
+  footer?: React.ReactNode;
 }) {
   const [pending, setPending] = useState<string | null>(null);
   const rows = providers.filter((p) => p.id !== "simulate");
@@ -597,7 +874,8 @@ function ProviderStatusList({
       <h3 className={styles.sectionLabel}>Providers</h3>
       <p className={styles.note}>
         Sign-in state comes from each CLI&apos;s own status command. Unknown
-        means the CLI has no way to ask.
+        means the CLI has no way to ask. An instance runs Claude Code or
+        Codex with its own config folder, for a second account.
       </p>
       {rows.map((p) => {
         const state = !p.available ? "missing" : (p.auth ?? "checking");
@@ -622,25 +900,50 @@ function ProviderStatusList({
                     : AUTH_LABELS[state]}
               </p>
             </div>
-            {canSignIn && (
+            {(canSignIn || p.instanceId) && (
               <div className={styles.fieldRow}>
-                <button
-                  type="button"
-                  className={styles.btn}
-                  data-provider-signin={p.id}
-                  disabled={pending != null}
-                  onClick={() => {
-                    setPending(p.id);
-                    void onSignIn(p.id).finally(() => setPending(null));
-                  }}
-                >
-                  Sign in
-                </button>
+                {canSignIn && (
+                  <button
+                    type="button"
+                    className={styles.btn}
+                    data-provider-signin={p.id}
+                    disabled={pending != null}
+                    onClick={() => {
+                      setPending(p.id);
+                      void onSignIn(p.id).finally(() => setPending(null));
+                    }}
+                  >
+                    Sign in
+                  </button>
+                )}
+                {p.instanceId && onEditInstance && (
+                  <button
+                    type="button"
+                    className={styles.btn}
+                    data-instance-edit={p.instanceId}
+                    disabled={saving}
+                    onClick={() => onEditInstance(p.instanceId!)}
+                  >
+                    Edit
+                  </button>
+                )}
+                {p.instanceId && onDeleteInstance && (
+                  <button
+                    type="button"
+                    className={styles.btn}
+                    data-instance-delete={p.instanceId}
+                    disabled={saving}
+                    onClick={() => onDeleteInstance(p.instanceId!)}
+                  >
+                    Delete
+                  </button>
+                )}
               </div>
             )}
           </div>
         );
       })}
+      {footer}
     </section>
   );
 }

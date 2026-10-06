@@ -160,6 +160,19 @@ export function shortModelName(model: string): string {
 }
 
 /** Provider display name from the registry; falls back to the raw id. */
+/**
+ * The picker id a thread is on: its provider, or `<provider>:<instance>`
+ * for a named instance (#453).
+ */
+export function threadProviderRef(thread: {
+  provider: string;
+  providerInstance?: string | null;
+}): string {
+  return thread.providerInstance
+    ? `${thread.provider}:${thread.providerInstance}`
+    : thread.provider;
+}
+
 export function providerDisplayName(
   providerId: string,
   providers: readonly ProviderInfo[],

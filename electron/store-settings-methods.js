@@ -3,6 +3,7 @@
 const { validateSubagentPool } = require("./subagentPool");
 const { clampUiScale } = require("./zoom.js");
 const { validateMcpServers, mergeMcpSettingsPatch } = require("./mcp.js");
+const { validateProviderInstances } = require("./providerInstances.js");
 const {
   isHttpUrl,
   validateAgentProfiles,
@@ -61,6 +62,7 @@ class StoreSettingsMethods {
       guardrailsEnabled: n.guardrailsEnabled,
       prDiffCapLines: n.prDiffCapLines,
       agentProfiles: n.agentProfiles,
+      providerInstances: n.providerInstances,
       defaultOrchestratorProfileId: n.defaultOrchestratorProfileId,
       subagentPool: n.subagentPool,
       otel: n.otel,
@@ -170,6 +172,11 @@ class StoreSettingsMethods {
       this.data.settings.defaultOrchestratorProfileId = matchingProfileId(
         this.data.settings.defaultOrchestratorProfileId,
         this.data.settings.agentProfiles,
+      );
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "providerInstances")) {
+      this.data.settings.providerInstances = validateProviderInstances(
+        patch.providerInstances,
       );
     }
     if (Object.prototype.hasOwnProperty.call(patch, "defaultOrchestratorProfileId")) {

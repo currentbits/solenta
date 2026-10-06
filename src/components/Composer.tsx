@@ -678,7 +678,15 @@ export const Composer = memo(function Composer({
       favourites: favOnly ? favouriteSet : null,
     });
   const modelRows = pickerRowsFor(modelQuery, favouritesOnly);
-  const triggerLabel = modelTriggerLabel(model, currentProviderInfo);
+  // On a named instance (#453) the pill says which account: "Opus (work)".
+  const baseName = currentProviderInfo?.baseProvider
+    ? providers.find((p) => p.id === currentProviderInfo.baseProvider)?.name
+    : undefined;
+  const instanceSuffix =
+    baseName && currentProviderInfo!.name.startsWith(baseName)
+      ? currentProviderInfo!.name.slice(baseName.length)
+      : "";
+  const triggerLabel = modelTriggerLabel(model, currentProviderInfo) + instanceSuffix;
   const hi = clampHighlightIndex(modelRows, highlightIndex);
   // The rail's diamond follows the highlighted row's provider.
   const railActive = favouritesOnly

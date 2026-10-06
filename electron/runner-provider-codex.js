@@ -13,6 +13,7 @@ const services = require("./services.js");
 const { codexWorkspaceWriteArgs } = require("./codexWorkspaceWrite.js");
 const { getCodexMcpArgs, getCodexMcpEnv } = require("./memory-sup.js");
 const { guardrailsEnabled } = require("./guardrails.js");
+const { threadInstanceEnv, threadProviderRef } = require("./providerInstances.js");
 const {
   deployCodexGuardrailOverlay,
   materializeCodexGuardrailHome,
@@ -151,7 +152,9 @@ function createCodexRun(ctx) {
     ];
     if (codexExecConfig.length) args.push(...codexExecConfig);
     /** @type {Record<string, string>} */
-    const codexMcpEnv = { ...getCodexMcpEnv() };
+    // Named instance (#453): its CODEX_HOME and env ride this child only.
+    const instEnv = threadInstanceEnv(store.getSettings(), thread) || {};
+    const codexMcpEnv = { ...instEnv, ...getCodexMcpEnv() };
     // #813: isolated CODEX_HOME PreToolUse. Local overlay stays on this
     // host. ssh/WSL deploys a remote overlay (#835) and prefixes
     // wrapCommand with env CODEX_HOME= via boundaryArgv.
@@ -178,6 +181,7 @@ function createCodexRun(ctx) {
       try {
         const dest = path.join(userDataPath, "codex-homes", threadId);
         const sourceHome =
+          instEnv.CODEX_HOME ||
           process.env.CODEX_HOME ||
           path.join(require("node:os").homedir(), ".codex");
         materializeCodexGuardrailHome({ dest, sourceHome });
@@ -357,7 +361,7 @@ function createCodexRun(ctx) {
         ? Math.max(0, outDelta - prev.outputTokens)
         : outDelta;
       store.recordUsage({
-        provider: thread.provider,
+        provider: threadProviderRef(thread),
         model: usageInfo.model || prev.model || thread.model || null,
         costUsd: costDelta,
         inputTokens: billedIn,

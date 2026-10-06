@@ -647,6 +647,25 @@ function defaultClipboardWrite(text) {
  *   spawn?: typeof import('node:child_process').spawn,
  * } | null | undefined} opts
  */
+/**
+ * Only the config-dir var of a thread's named instance (#453): the rest of
+ * its env may hold keys and must not land on the clipboard.
+ * @param {import('./store').Store} store
+ * @param {{ provider?: string, providerInstance?: string | null }} thread
+ * @returns {Record<string, string> | undefined}
+ */
+function instanceConfigEnv(store, thread) {
+  const { threadInstanceEnv, CONFIG_DIR_ENV } = require("./providerInstances.js");
+  let env;
+  try {
+    env = threadInstanceEnv(store.getSettings(), thread);
+  } catch {
+    return undefined;
+  }
+  const key = CONFIG_DIR_ENV[/** @type {"claude" | "codex"} */ (thread.provider)];
+  return env && key && env[key] ? { [key]: env[key] } : undefined;
+}
+
 function copyEjectCommand(store, thread, opts) {
   const project = store.getProject(thread.projectId);
   const cwd = thread.worktreePath || (project && project.path) || "";
@@ -656,6 +675,7 @@ function copyEjectCommand(store, thread, opts) {
     cwd,
     model: thread.model,
     sessionStartModel: thread.sessionStartModel,
+    configEnv: instanceConfigEnv(store, thread),
   });
   const writeText =
     opts && typeof opts.writeText === "function"
@@ -720,8 +740,10 @@ function setEjected(store, input, opts) {
     }
   } else {
     const { absorbSessionTurns } = require("./cli-sessions.js");
+    // An instance thread's session lives in the instance's dir (#453).
+    const instanceHome = Object.values(instanceConfigEnv(store, next) || {})[0];
     absorbSessionTurns(store, next, {
-      home: input && input.home,
+      home: (input && input.home) || instanceHome,
       cwd: specCwd(store, next),
     });
   }

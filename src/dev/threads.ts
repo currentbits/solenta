@@ -820,11 +820,16 @@ export function createThreads(ctx: DevCtx): Pick<CoderApi, "threads"> {
         // electron/services.js setProvider and are exercised by npm run dev.
         const patch: Partial<ThreadInfo> = {};
         if (Object.prototype.hasOwnProperty.call(input, "provider")) {
-          patch.provider = String(input.provider);
+          // A ref "claude:work" is base + named instance (#453).
+          const [base = "", instance = null] = String(input.provider).split(":");
+          patch.provider = base;
+          patch.providerInstance = instance;
           if (patch.provider !== thread.provider) {
-            patch.sessionId = null;
             patch.model = null;
             patch.reasoningEffort = null;
+          }
+          if (patch.provider !== thread.provider || instance !== (thread.providerInstance ?? null)) {
+            patch.sessionId = null;
           }
         }
         if (Object.prototype.hasOwnProperty.call(input, "model")) {

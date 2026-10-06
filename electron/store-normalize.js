@@ -4,6 +4,7 @@ const { normalizeSubagentPool } = require("./subagentPool");
 const { clampUiScale, UI_SCALE_DEFAULT } = require("./zoom.js");
 const { getProvider, honouredEfforts } = require("./providers.js");
 const { normalizeMcpServers } = require("./mcp.js");
+const { normalizeProviderInstances } = require("./providerInstances.js");
 
 /**
  * @param {unknown} u
@@ -75,7 +76,7 @@ function parseAgentProfile(item, strict) {
     );
   }
   if (effort !== null) {
-    const providerEntry = getProvider(provider);
+    const providerEntry = getProvider(provider.split(":")[0]);
     if (providerEntry) {
       const modelId = typeof model === "string" ? model : null;
       const allowed = honouredEfforts(providerEntry, modelId);
@@ -350,6 +351,7 @@ function normalizeSettings(raw) {
     guardrailsEnabled: true,
     prDiffCapLines: DEFAULT_PR_DIFF_CAP_LINES,
     agentProfiles: [],
+    providerInstances: [],
     defaultOrchestratorProfileId: null,
     subagentPool: { defaultAlias: null, force: false, entries: [] },
     otel: { endpoint: null, headers: {}, claudeMetrics: false },
@@ -415,6 +417,9 @@ function normalizeSettings(raw) {
   settings.mcpServers = normalizeMcpServers(obj.mcpServers);
   settings.agentProfiles = normalizeAgentProfiles(
     /** @type {{ agentProfiles?: unknown }} */ (obj).agentProfiles,
+  );
+  settings.providerInstances = normalizeProviderInstances(
+    /** @type {{ providerInstances?: unknown }} */ (obj).providerInstances,
   );
   settings.defaultOrchestratorProfileId = matchingProfileId(
     /** @type {{ defaultOrchestratorProfileId?: unknown }} */ (obj)

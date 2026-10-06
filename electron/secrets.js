@@ -295,6 +295,24 @@ function createSecrets(opts = {}) {
         nextWebhook = { ...settings.webhook, url: sealed };
       }
     }
+    // Provider instance env (#453): every value may be a key or token.
+    const instances = Array.isArray(settings.providerInstances)
+      ? settings.providerInstances
+      : [];
+    const nextInstances = instances.map((inst) => {
+      if (!inst || !inst.env || typeof inst.env !== "object") return inst;
+      /** @type {Record<string, string>} */
+      const out = {};
+      let rowChanged = false;
+      for (const [k, v] of Object.entries(inst.env)) {
+        const sealed = typeof v === "string" && v ? seal(v) : v;
+        if (sealed !== v) rowChanged = true;
+        out[k] = sealed;
+      }
+      if (!rowChanged) return inst;
+      changed = true;
+      return { ...inst, env: out };
+    });
     if (!changed) return settings;
     return {
       ...settings,
@@ -302,6 +320,7 @@ function createSecrets(opts = {}) {
       otel: nextOtel,
       linearApiKey: nextLinearKey,
       webhook: nextWebhook,
+      providerInstances: nextInstances,
     };
   }
 
@@ -459,6 +478,35 @@ function createSecrets(opts = {}) {
       }
     }
 
+    const instances = Array.isArray(settings.providerInstances)
+      ? settings.providerInstances
+      : [];
+    const nextInstances = instances.map((inst) => {
+      if (!inst || !inst.env || typeof inst.env !== "object") return inst;
+      /** @type {Record<string, string>} */
+      const out = {};
+      let envChanged = false;
+      for (const [k, v] of Object.entries(inst.env)) {
+        if (typeof v !== "string" || !v) {
+          out[k] = v;
+          continue;
+        }
+        hasSecret = true;
+        if (isSealed(v)) {
+          const plain = open(v, { key: `instance:${inst.id || "?"}:env:${k}` });
+          envChanged = true;
+          if (plain == null || plain === "") continue;
+          out[k] = plain;
+        } else {
+          if (available) migrated += 1;
+          out[k] = v;
+        }
+      }
+      if (!envChanged) return inst;
+      changed = true;
+      return { ...inst, env: out };
+    });
+
     if (!available && hasSecret) warnUnavailable();
 
     const next = changed
@@ -468,6 +516,7 @@ function createSecrets(opts = {}) {
           otel: nextOtel,
           linearApiKey: nextLinearKey,
           webhook: nextWebhook,
+          providerInstances: nextInstances,
         }
       : settings;
     return { settings: next, migrated };

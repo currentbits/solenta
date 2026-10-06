@@ -188,6 +188,31 @@ function writeOverlayConfigToml(dest, sourceHome, trustToml) {
   fs.writeFileSync(destCfg, body + String(trustToml || ""), "utf8");
 }
 
+/**
+ * @param {string} dest
+ * @param {string} sourceHome
+ */
+function unlinkForeignLinks(dest, sourceHome) {
+  let entries = [];
+  try {
+    entries = fs.readdirSync(dest, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  const home = sourceHome ? path.resolve(sourceHome) : "";
+  for (const ent of entries) {
+    if (!ent.isSymbolicLink()) continue;
+    const link = path.join(dest, ent.name);
+    try {
+      const target = path.resolve(dest, fs.readlinkSync(link));
+      if (home && path.dirname(target) === home) continue;
+      fs.unlinkSync(link);
+    } catch {
+      // best-effort; linkOrSkip below leaves an unreadable link alone
+    }
+  }
+}
+
 function linkOrSkip(src, dst) {
   if (!fs.existsSync(src) || fs.existsSync(dst)) return;
   try {
@@ -210,6 +235,10 @@ function materializeCodexGuardrailHome(opts) {
   fs.mkdirSync(dest, { recursive: true });
 
   const sourceHome = String((opts && opts.sourceHome) || "");
+  // The overlay is per thread, and a thread can move to another named
+  // instance (#453). A link left from the previous home would run the turn
+  // on that account (auth.json), so drop every link not into this home.
+  unlinkForeignLinks(dest, sourceHome);
   if (sourceHome && fs.existsSync(sourceHome)) {
     let names = [];
     try {

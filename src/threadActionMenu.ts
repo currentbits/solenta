@@ -7,6 +7,7 @@
 import type { ProjectInfo, ProviderInfo, ThreadInfo } from "./shared/ipc";
 import type { ContextMenuItem } from "./contextMenu";
 import type { SnoozePreset } from "./threadSnooze";
+import { threadProviderRef } from "./format";
 
 /** Why Move to project… is disabled; null when the move is allowed. */
 export function threadProjectMoveBlockReason(
@@ -104,7 +105,7 @@ export function buildThreadActionMenuItems(input: {
       separatorBefore: items.length > 0,
       attrs: { "data-fork-btn": thread.id },
     });
-    for (const p of input.providers.filter((x) => x.id !== thread.provider)) {
+    for (const p of input.providers.filter((x) => x.id !== threadProviderRef(thread))) {
       items.push({
         id: `handoff:${p.id}`,
         label: `Hand off · ${p.name}`,

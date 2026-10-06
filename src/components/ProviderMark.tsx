@@ -33,7 +33,8 @@ export function ProviderMark({
   decorative?: boolean;
 }) {
   const name = providerDisplayName(providerId, providers);
-  const glyph = markFor(providerId, size);
+  // A named instance ("claude:work", #453) wears its base provider's mark.
+  const glyph = markFor(providerId.split(":")[0]!, size);
   return (
     <span
       className={[styles.mark, className].filter(Boolean).join(" ")}

@@ -620,7 +620,8 @@ const DEFAULT_FETCHERS = {
 };
 
 /**
- * One row per real provider in electron/providers.js (not simulate).
+ * One row per real provider in electron/providers.js (not simulate), then
+ * one per named instance in `opts.instances`.
  * Failures are isolated: one provider error never rejects the list.
  *
  * @param {object} [opts]
@@ -643,7 +644,31 @@ async function fetchProviderLimits(opts = {}) {
       }
     }),
   );
-  return rows;
+  // Named instances (#453): the base fetcher under the instance's env (its
+  // config dir holds a different login), reported under the instance ref.
+  const env = opts.env || process.env;
+  const instanceRows = await Promise.all(
+    (opts.instances || []).map(async (inst) => {
+      const fn =
+        (opts.fetchers && opts.fetchers[inst.provider]) ||
+        DEFAULT_FETCHERS[inst.provider];
+      if (!fn) return unavailable(inst.ref, MSG_UNAVAILABLE);
+      try {
+        const row = await fn({
+          ...opts,
+          providerId: inst.provider,
+          env: { ...env, ...inst.env },
+        });
+        if (row && typeof row === "object" && row.provider) {
+          return { ...row, provider: inst.ref };
+        }
+        return errorUsage(inst.ref, MSG_FAILED);
+      } catch {
+        return errorUsage(inst.ref, MSG_FAILED);
+      }
+    }),
+  );
+  return [...rows, ...instanceRows];
 }
 
 module.exports = {

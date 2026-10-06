@@ -60,6 +60,7 @@ const {
 const {
   createThread,
   recordLastUsedDefaults,
+  instanceAuthProbes,
   setPermissionMode,
   setReasoningEffort,
   setWebSearch,
@@ -198,6 +199,7 @@ module.exports = {
   writeAgentConfig,
   createThread,
   recordLastUsedDefaults,
+  instanceAuthProbes,
   forkThread,
   savePlanFile,
   canHostWorktree,

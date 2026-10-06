@@ -80,6 +80,7 @@ import { collapseTimeline, type DisplayEntry } from "../toolGroups";
 import { RunArtifacts } from "./RunArtifacts";
 import { QuestionPrompt } from "./QuestionPrompt";
 import { InputPrompt } from "./InputPrompt";
+import { threadProviderRef } from "../format";
 import { formatQuestionAnswer } from "../questionAnswer";
 import { supportsImagesForModel } from "../modelPicker";
 import type { DiffViewMode } from "./TurnDiffPanel";
@@ -2906,7 +2907,7 @@ export const ThreadView = memo(function ThreadView({
             onPrMerge={onPrMerge}
             onStartRun={onStartRun}
             providerName={
-              providers.find((p) => p.id === thread.provider)?.name ??
+              providers.find((p) => p.id === threadProviderRef(thread))?.name ??
               thread.provider
             }
             onPushed={() => setSyncRefreshNonce((n) => n + 1)}
@@ -4423,7 +4424,7 @@ export const ThreadView = memo(function ThreadView({
         teach={thread.teach ?? null}
         ask={thread.ask === true}
         onPermissionModeChange={onSetPermissionMode}
-        provider={thread.provider}
+        provider={threadProviderRef(thread)}
         model={thread.model}
         reasoningEffort={thread.reasoningEffort}
         webSearch={thread.webSearch === true}

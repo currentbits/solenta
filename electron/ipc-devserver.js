@@ -8,6 +8,12 @@ const devservers = require("./devservers.js");
 const terminal = require("./terminal.js");
 const preview = require("./preview.js");
 const providerAuth = require("./providerAuth.js");
+const {
+  parseProviderRef,
+  findInstance,
+  instanceEnv,
+  CONFIG_DIR_ENV,
+} = require("./providerInstances.js");
 
 /** Mirrors SIGNIN_TERMINAL_ID in src/shared/ipc.ts. */
 const SIGNIN_TERMINAL_ID = "__signin__";
@@ -183,7 +189,17 @@ module.exports = {
   // command typed in. The command comes from a fixed table, never the caller.
   "terminal:signIn": async (ctx, input) => {
     const provider = String((input && input.provider) || "");
-    const command = providerAuth.loginCommand(provider);
+    // A named instance (#453) logs in under its own config dir.
+    const { provider: base, instance } = parseProviderRef(provider);
+    const inst = instance
+      ? findInstance(ctx.store.getSettings(), base, instance)
+      : null;
+    if (instance && !inst) throw new Error(`Unknown provider instance: ${provider}`);
+    const dirVar = CONFIG_DIR_ENV[/** @type {"claude" | "codex"} */ (base)];
+    const configEnv = inst ? instanceEnv(inst) : {};
+    const command = providerAuth.loginCommand(base, {
+      configEnv: inst && configEnv[dirVar] ? { [dirVar]: configEnv[dirVar] } : undefined,
+    });
     if (!command) throw new Error(`No sign-in command for ${provider || "this provider"}`);
     const threadId = (input && input.threadId) || SIGNIN_TERMINAL_ID;
     const { root, project, logDir } = terminalRoot(ctx, threadId);
