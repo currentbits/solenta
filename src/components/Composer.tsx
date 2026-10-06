@@ -133,6 +133,7 @@ import { useSlashMenu } from "./composer/useSlashMenu";
 import { useEscapeInterrupt } from "./composer/useEscapeInterrupt";
 import { useTranscriptViewShortcuts } from "./composer/useTranscriptViewShortcuts";
 import { usePasteCards } from "./composer/usePasteCards";
+import { matchesBinding } from "../keybindings";
 
 import styles from "./Composer.module.css";
 
@@ -1134,10 +1135,14 @@ export const Composer = memo(function Composer({
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if ((e.metaKey || e.ctrlKey) && !e.altKey && (e.key === "s" || e.key === "S")) {
+    if (matchesBinding(e, "composer.unstash")) {
       e.preventDefault();
-      if (e.shiftKey) restoreStash();
-      else stashCurrent();
+      restoreStash();
+      return;
+    }
+    if (matchesBinding(e, "composer.stash")) {
+      e.preventDefault();
+      stashCurrent();
       return;
     }
     if (mentionOpen) {
@@ -1219,18 +1224,12 @@ export const Composer = memo(function Composer({
       void onStopRun();
       return;
     }
-    if (
-      e.altKey &&
-      !e.metaKey &&
-      !e.ctrlKey &&
-      !e.shiftKey &&
-      e.key === "Enter"
-    ) {
+    if (matchesBinding(e, "composer.btw")) {
       e.preventDefault();
       submitBtw();
       return;
     }
-    if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === "Enter") {
+    if (matchesBinding(e, "composer.steer")) {
       e.preventDefault();
       if (canSteer) submitSteer();
       else submitSend();

@@ -189,6 +189,25 @@ describe("review comments (#1493)", () => {
     assert.equal(formatReviewCommentsPrompt([blank]), "");
   });
 
+  it("keeps note-less Files pane excerpts (#1506)", () => {
+    const pick = {
+      id: "f1",
+      path: "src/a.ts",
+      startLine: 3,
+      endLine: 4,
+      removed: false,
+      code: "const a = 1;\nconst b = 2;",
+      text: "",
+      excerpt: true,
+    };
+    assert.equal(
+      formatReviewCommentsPrompt([pick]),
+      "Selected code:\n\nsrc/a.ts:L3-4\n    const a = 1;\n    const b = 2;",
+    );
+    const noted = reviewCommentFromAnchors([add(1, "+x")], "why?", "n");
+    assert.match(formatReviewCommentsPrompt([pick, noted]), /^Review comments:\n/);
+  });
+
   it("caps the code excerpt", () => {
     const rows = Array.from({ length: 20 }, (_, i) => add(i + 1, `+l${i}`));
     const prompt = formatReviewCommentsPrompt([

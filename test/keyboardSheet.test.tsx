@@ -7,7 +7,14 @@ import { afterEach, describe, it } from "node:test";
 import { useState } from "react";
 import { mount } from "./support/dom.ts";
 import { KeyboardSheet } from "../src/components/KeyboardSheet";
-import { setComposerVimEnabled, setEnterSendsEnabled } from "../src/uiPrefs";
+import { setMacPlatformForTests } from "../src/keybindings";
+import {
+  setComposerVimEnabled,
+  setEnterSendsEnabled,
+  setKeybindingOverrides,
+} from "../src/uiPrefs";
+
+setMacPlatformForTests(true);
 
 const VIM_MOTION_KEYS = [
   "h / j / k / l",
@@ -51,7 +58,8 @@ describe("keyboard sheet vim Escape (#779)", () => {
     assert.match(text, /Search files in this project/);
     assert.match(text, /Search file contents/);
     assert.ok(kbds.includes("⌘ + K"), "⌘K is the palette");
-    assert.ok(kbds.includes("⌘ + J / ⇧J"), "previous thread moved off ⌘K");
+    assert.ok(kbds.includes("⌘ + J"), "next thread moved off ⌘K");
+    assert.ok(kbds.includes("⌘ + ⇧ + J"), "previous thread");
     assert.doesNotMatch(text, /leave insert/i);
     m.unmount();
   });
@@ -231,6 +239,30 @@ describe("keyboard sheet send key (#1493)", () => {
     assert.ok(kbds.includes("⇧ + Enter"));
     assert.ok(!kbds.includes("⌘ + Enter"));
     assert.match(text, /New line/);
+    m.unmount();
+  });
+});
+
+describe("keyboard sheet renders the keybinding table (#1506)", () => {
+  afterEach(() => {
+    setKeybindingOverrides({});
+    setMacPlatformForTests(true);
+  });
+
+  it("shows a remapped chord instead of the default", async () => {
+    setKeybindingOverrides({ "palette.command": "mod+e" });
+    const { m, kbds } = await openSheet();
+    assert.ok(kbds.includes("⌘ + E"));
+    assert.ok(!kbds.includes("⌘ + K"));
+    m.unmount();
+  });
+
+  it("uses Ctrl off mac", async () => {
+    setMacPlatformForTests(false);
+    const { m, kbds } = await openSheet();
+    assert.ok(kbds.includes("Ctrl + K"));
+    assert.ok(kbds.includes("Alt + ←"), "back is Alt+Left off mac");
+    assert.ok(!kbds.some((k) => k.includes("⌘")));
     m.unmount();
   });
 });

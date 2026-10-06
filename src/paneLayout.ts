@@ -52,7 +52,7 @@ export const PANE_REGISTRY: Record<
   terminal: { title: "Terminal", shipped: true, split: "horizontal" },
   browser: { title: "Browser", shipped: true, split: "horizontal" },
   simulator: { title: "iOS Simulator", shipped: true, split: "horizontal" },
-  files: { title: "Files", shipped: false, split: "horizontal" },
+  files: { title: "Files", shipped: true, split: "horizontal" },
   tasks: { title: "Tasks", shipped: false, split: "horizontal" },
   subagent: { title: "Subagent", shipped: false, split: "horizontal" },
 };

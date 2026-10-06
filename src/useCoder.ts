@@ -125,6 +125,7 @@ import { useCoderAgentTools } from "./coder/useCoderAgentTools";
 import { useCoderInsights } from "./coder/useCoderInsights";
 import { useCoderRepoTools } from "./coder/useCoderRepoTools";
 import type { TerminalApi } from "./components/TerminalPane";
+import type { FilesPaneApi } from "./components/FilesPane";
 import { useCoderProjects } from "./coder/useCoderProjects";
 import { useCoderUpdates } from "./coder/useCoderUpdates";
 import { useCoderWorkflows } from "./coder/useCoderWorkflows";
@@ -702,6 +703,8 @@ export interface UseCoderResult {
    * open/stream/close lifecycle.
    */
   terminal: TerminalApi;
+  /** Files pane (#1506): tree, preview and open-in. */
+  files: FilesPaneApi;
   /** Embedded Browser pane guest (issue #155). Desktop-only. */
   preview: CoderApi["preview"];
   /** Desktop-only iOS Simulator pane (#248). */
@@ -1819,6 +1822,16 @@ export function useCoder(): UseCoderResult {
     terminal,
   } = useCoderRepoTools({ api, setProjects });
 
+  const filesApi = useMemo<FilesPaneApi>(
+    () => ({
+      tree: api.files.tree,
+      read: api.files.read,
+      editors: api.shell.editors,
+      openIn: api.shell.openIn,
+    }),
+    [api],
+  );
+
   const setVerifyCommand = useCallback(
     async (threadId: string, command: string | null) => {
       const thread = await api.threads.setVerifyCommand({ threadId, command });
@@ -2133,6 +2146,7 @@ export function useCoder(): UseCoderResult {
     stopDevServer,
     devServerStatus,
     terminal,
+    files: filesApi,
     preview: api.preview,
     simulator: api.simulator,
     simulatorStatus,

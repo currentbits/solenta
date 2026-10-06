@@ -1030,6 +1030,10 @@
   text-decoration-color: var(--border-soft);
 }
 
+.reviewCommentHint {
+  color: var(--text-muted);
+}
+
 .reviewCommentInput {
   min-width: 200px;
   max-width: 360px;

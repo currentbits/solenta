@@ -21,6 +21,10 @@ import {
   inspectorContextKey,
 } from "../src/components/AgentsPanel";
 import type { ThreadDetail } from "../src/shared/ipc";
+import { setMacPlatformForTests } from "../src/keybindings";
+
+// The sheet prints ⌘ glyphs only on mac; pin it so CI on Linux agrees.
+setMacPlatformForTests(true);
 
 const LAST_KEY = "coder.agents.collapsed";
 

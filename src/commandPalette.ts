@@ -4,6 +4,7 @@
  * Keep this module free of React: the overlay imports it, and the unit
  * tests prove ranking without a DOM.
  */
+import { bindingLabel, matchesBinding } from "./keybindings";
 
 export type PaletteMode = "command" | "files" | "content";
 
@@ -29,7 +30,8 @@ export type PaletteAction = {
   id: string;
   title: string;
   subtitle?: string;
-  shortcut?: string;
+  /** Keybinding id whose (possibly remapped) chord is shown as the hint. */
+  binding?: string;
   keywords?: string;
 };
 
@@ -118,9 +120,9 @@ export function groupPaletteItems(
 }
 
 /**
- * Cmd/Ctrl+K command palette, Cmd/Ctrl+P files, Cmd/Ctrl+Shift+F content.
- * Alt chords are ignored. Works from inputs (the caller must not apply
- * isShortcutBlocked).
+ * Cmd/Ctrl+K command palette, Cmd/Ctrl+P files, Cmd/Ctrl+Shift+F content,
+ * or whatever the user remapped them to (src/keybindings.ts). Works from
+ * inputs (the caller must not apply isShortcutBlocked).
  */
 export function matchPaletteShortcut(e: {
   key: string;
@@ -129,12 +131,14 @@ export function matchPaletteShortcut(e: {
   altKey: boolean;
   shiftKey: boolean;
 }): PaletteMode | null {
-  if (!(e.metaKey || e.ctrlKey) || e.altKey) return null;
-  const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
-  if (key === "k" && !e.shiftKey) return "command";
-  if (key === "p" && !e.shiftKey) return "files";
-  if (key === "f" && e.shiftKey) return "content";
+  if (matchesBinding(e, "palette.command")) return "command";
+  if (matchesBinding(e, "palette.files")) return "files";
+  if (matchesBinding(e, "palette.content")) return "content";
   return null;
+}
+
+export function paletteActionShortcut(action: PaletteAction): string | undefined {
+  return action.binding ? (bindingLabel(action.binding, true) ?? undefined) : undefined;
 }
 
 export function palettePlaceholder(mode: PaletteMode): string {
@@ -153,7 +157,7 @@ export const PALETTE_ACTIONS: readonly PaletteAction[] = [
   {
     id: "new-thread",
     title: "New thread",
-    shortcut: "⌘N",
+    binding: "thread.new",
     keywords: "create",
   },
   {
@@ -164,13 +168,13 @@ export const PALETTE_ACTIONS: readonly PaletteAction[] = [
   {
     id: "search-files",
     title: "Search files",
-    shortcut: "⌘P",
+    binding: "palette.files",
     keywords: "open file picker",
   },
   {
     id: "search-content",
     title: "Search in files",
-    shortcut: "⌘⇧F",
+    binding: "palette.content",
     keywords: "grep content",
   },
   { id: "kanban", title: "Open kanban", keywords: "board" },
@@ -185,7 +189,7 @@ export const PALETTE_ACTIONS: readonly PaletteAction[] = [
   {
     id: "toggle-agents",
     title: "Toggle agents panel",
-    shortcut: "⌘.",
+    binding: "agents.toggle",
     keywords: "sidebar rail",
   },
 ];
