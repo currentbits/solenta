@@ -59,6 +59,38 @@
         Every notable change to Solenta, newest first.
       </p>
 
+      <h2 id="v0-24-0">0.24.0 <small>2026-10-06</small></h2>
+      <h3>Added</h3>
+      <ul>
+        <li><strong>Real terminal.</strong> The Terminal pane runs a real shell, so prompts, Ctrl-C and full-screen tools like vim and htop work. Up to four splits per thread, and scrollback survives a restart.</li>
+        <li><strong>Files pane.</strong> Browse the thread's checkout, preview code with syntax colour, markdown rendered and images inline, and send a selected line range to the agent.</li>
+        <li><strong>Review the whole branch.</strong> Changes shows Uncommitted, Whole branch or This turn, so work the agent already committed stays reviewable. Diffs have syntax colour, split, wrap and ignore whitespace, and large diffs load per file instead of being cut off.</li>
+        <li><strong>Review comments go out together.</strong> A comment on a diff line becomes a chip in the composer, and all of them are sent as one prompt. Shift-click to comment on a range.</li>
+        <li><strong>PRs that close their own loop.</strong> Generate a PR title and body, pick the merge method, or auto-merge when checks pass. A failing check, a collaborator's review or a merge conflict sends the thread one follow-up turn with the details, up to three times per PR.</li>
+        <li><strong>Native compaction.</strong> /compact and the Compact button shrink the context in place on Claude and Codex instead of forking, and automatic compaction now shows in the thread with an accurate context ring.</li>
+        <li><strong>Composer.</strong> Drafts, attachments and pastes survive a restart, ↑ recalls your last prompt, and Send with Enter is an option in Settings.</li>
+        <li><strong>Queue and plans.</strong> Queued messages run one turn at a time and pause if a turn fails. Steer now sends a queued message into the running turn, and you can drag to reorder. Plan cards take notes, can implement in a new thread, or save the plan to a file.</li>
+        <li><strong>Per-project defaults.</strong> Set the provider, model, effort and permission mode new threads start with, or let them follow what you last used.</li>
+        <li><strong>Sign-in status.</strong> Settings and the model picker show which agent CLIs are signed out, with a Sign in button that opens the login in a terminal. Onboarding finds the repos you have been working in and adds them in one step.</li>
+        <li><strong>Keyboard.</strong> Remap any shortcut in Settings › Keyboard. Type &gt; in the palette for actions only, ⌘[ and ⌘] go back and forward between threads, and ⌘Z undoes a settle, snooze or archive.</li>
+        <li><strong>Project setup.</strong> The agent can wait for your setup script. Setup and quick actions can live in a checked-in solenta.json, approved once and asked again when it changes. New worktrees init submodules, the branch prefix is configurable, and Add project can clone from a URL.</li>
+        <li><strong>Provider instances.</strong> Add "Claude (work)" or "Codex (personal)" with their own login and settings, and pick them like any provider.</li>
+        <li><strong>Solenta Web.</strong> One switch turns it on. Pair a phone with a QR code, revoke any device instantly, and optionally serve it over HTTPS on your tailnet.</li>
+        <li><strong>Resume after restart.</strong> An optional setting picks interrupted runs back up after a crash or quit, once each, with a Stop all.</li>
+        <li><strong>Also.</strong> A dock and taskbar badge for threads that need you, an optional attention sound, JetBrains IDEs, opening files at the exact line in your editor, and Mermaid diagrams in replies.</li>
+      </ul>
+      <h3>Fixed</h3>
+      <ul>
+        <li><strong>Streaming stays smooth.</strong> Streaming a reply wrote about 600 MB to disk every 30 seconds; now it is 48 MB. Typing next to a streaming reply no longer stutters (worst delay 102 ms down to 13 ms).</li>
+        <li><strong>Faster start.</strong> Launch to a usable sidebar is about 0.6 s instead of 1.3 s, and the first paint is 40% sooner.</li>
+        <li><strong>Long threads stay fast.</strong> The transcript stops growing without bound while you watch a stream, so memory stays flat. Switching to a big thread draws the visible part first.</li>
+        <li><strong>Agents panel.</strong> Opens in milliseconds instead of reading every transcript on disk first.</li>
+        <li><strong>Provider switch keeps context.</strong> Switching provider, or failing over when a quota runs out, no longer starts the agent with no memory of the thread.</li>
+        <li><strong>Transcript keeps following.</strong> The view no longer stops following a stream after old messages are trimmed.</li>
+        <li><strong>Memory leak.</strong> Every thread status change used to keep a removed sidebar row in memory for the whole session.</li>
+        <li><strong>Worker messages.</strong> A worker's message is no longer dropped when a queued message takes the turn first.</li>
+      </ul>
+
       <h2 id="v0-23-0">0.23.0 <small>2026-10-04</small></h2>
       <h3>Added</h3>
       <ul>
