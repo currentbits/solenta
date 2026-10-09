@@ -132,6 +132,52 @@ describe("secret_request (#1531)", () => {
     assert.equal(threadSecrets.withEnv(thread.id, undefined), undefined);
   });
 
+  it("an agent that prints the secret leaves only [secret:NAME] behind", async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-secret-echo-"));
+    const userData = path.join(tmpDir, "userData");
+    fs.mkdirSync(userData);
+    const agent = path.join(tmpDir, "agent.js");
+    // The leak the env-only design cannot stop by itself: `echo $DB_PASSWORD`.
+    fs.writeFileSync(
+      agent,
+      "process.stdout.write('the password is '+(process.env.DB_PASSWORD||'<unset>'));",
+    );
+    delete process.env.CODER_SIMULATE;
+    process.env.CODER_AGENT_CMD = `${process.execPath} ${agent}`;
+
+    const store = new Store(path.join(userData, "coder-store.json"));
+    const core = await import(
+      pathToFileURL(path.join(__dirname, "../../core/dist/index.js")).href
+    );
+    const pushed = [];
+    runner = createRunner({
+      store,
+      core,
+      pushFn: (channel, payload) => pushed.push(JSON.stringify(payload)),
+      tickMs: 15,
+    });
+    const repo = path.join(tmpDir, "app");
+    fs.mkdirSync(repo);
+    execFileSync("git", ["init"], { cwd: repo, stdio: "ignore" });
+    const project = await services.addProject(store, repo);
+    const thread = services.createThread(store, { projectId: project.id, title: "Echo" });
+    const h = createToolHandlers({ store, runner });
+    await h.secret_request({ threadId: thread.id, projectId: project.id, name: "DB_PASSWORD" });
+    const card = store.getThread(thread.id).pendingSecret;
+    runner.answerSecret({ threadId: thread.id, requestId: card.id, value: SECRET });
+
+    await waitFor(() => store.getThread(thread.id).status === "done");
+    const transcript = JSON.stringify(store.getMessages(thread.id));
+    assert.match(transcript, /the password is \[secret:DB_PASSWORD\]/, "agent output redacted");
+    assert.ok(!transcript.includes(SECRET), "transcript");
+    assert.ok(pushed.length > 0);
+    assert.ok(!pushed.some((p) => p.includes(SECRET)), "no detail push carries it");
+    await runner.flushTranscripts();
+    store.saveNow();
+    assert.deepEqual(filesContaining(userData, SECRET), [], "files under userData");
+    threadSecrets.clear(thread.id);
+  });
+
   it("declining drops the card without starting a turn", async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-secret-"));
     const store = new Store(path.join(tmpDir, "coder-store.json"));

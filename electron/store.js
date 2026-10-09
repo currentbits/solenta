@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { randomUUID } = require("node:crypto");
 const { getDefaultSecrets } = require("./secrets.js");
+const threadSecrets = require("./threadSecrets.js");
 const {
   splitMessagesByThread,
   stringifyStore,
@@ -2056,8 +2057,9 @@ class Store {
     this._lastAssistantByThread.delete(threadId);
     this._invalidateLazy(threadId);
     this._messagesRaw.delete(threadId);
+    // Provided secrets never reach the transcript, the file or a push (#1531).
     this._messagesHydrated[threadId] = capList(
-      messages,
+      threadSecrets.redact(threadId, messages),
       MAX_MESSAGES_PER_THREAD,
       MESSAGE_OVERFLOW_SLACK,
       `Older messages were dropped to cap this transcript at ${MAX_MESSAGES_PER_THREAD}.`,
@@ -2084,7 +2086,7 @@ class Store {
 
   setWorkLog(threadId, items) {
     this.data.workLogByThread[threadId] = capList(
-      items,
+      threadSecrets.redact(threadId, items),
       MAX_WORKLOG_ITEMS_PER_THREAD,
       WORKLOG_OVERFLOW_SLACK,
       null,
