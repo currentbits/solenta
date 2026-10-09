@@ -39,6 +39,9 @@ const DIFF_SCOPES = new Set(["uncommitted", "branch", "turn"]);
 const FILE_PATCH_CAP = 60_000;
 /** Ceiling for "Show anyway", so one generated file cannot wedge the renderer. */
 const FILE_PATCH_MAX = 1_000_000;
+/** Untracked files read for a line count per scan, and the size skipped (#1520). */
+const UNTRACKED_COUNT_MAX = 500;
+const UNTRACKED_COUNT_BYTES = 1024 * 1024;
 
 /**
  * Changes in the thread's cwd (worktree if set, else project).
@@ -271,13 +274,20 @@ async function diffOnce(store, thread, project, cwd, view) {
   }
 
   // Untracked: additions = line count. Remote trees are not on this disk.
+  // ponytail: only the first UNTRACKED_COUNT_MAX untracked files under
+  // UNTRACKED_COUNT_BYTES are read (#1520); the rest report 0, like binary
+  // numstat. Still sync reads; go async with a budget if this shows in lag.
+  let counted = 0;
   for (const entry of byPath.values()) {
     if (entry.status === "??") {
-      if (project.remoteHost) {
+      if (project.remoteHost || counted >= UNTRACKED_COUNT_MAX) {
         continue;
       }
+      counted++;
       try {
-        const text = fs.readFileSync(path.join(cwd, entry.path), "utf8");
+        const file = path.join(cwd, entry.path);
+        if (fs.statSync(file).size > UNTRACKED_COUNT_BYTES) continue;
+        const text = fs.readFileSync(file, "utf8");
         // "a\nb\n" splits into 3 parts with a trailing empty: count 2.
         entry.additions = text.length === 0 ? 0 : text.split(/\r?\n/).length;
         if (text.endsWith("\n") && entry.additions > 0) {

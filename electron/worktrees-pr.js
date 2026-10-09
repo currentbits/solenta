@@ -2,6 +2,9 @@
 
 // GitHub CLI helpers and pull requests: list, status, checks, update, merge, refresh and create.
 
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
 const { execFile } = require("node:child_process");
 const { GIT_MAX_BUFFER, gitTry, gitOutAsync, tailErr, gitTryAsync } = require("./worktrees-git.js");
 const {
@@ -23,6 +26,9 @@ const github = require("./github.js");
 
 /** Per-thread background PR refresh timeout. Hard kill; never block the main process. */
 const PR_REFRESH_TIMEOUT_MS = 8_000;
+const SETTLED_PR_POLL_MS = 10 * 60 * 1000;
+/** threadId -> when refreshPrStates last polled it while settled. */
+const settledPrPolledAt = new Map();
 
 /** MERGED/CLOSED are terminal — never re-query. */
 const TERMINAL_PR_STATES = new Set(["MERGED", "CLOSED"]);
@@ -38,18 +44,114 @@ function ghBin() {
 }
 
 /**
- * True when origin points at github.com (https, ssh, or git@).
- * Local bare paths, gitlab, and arbitrary ssh hosts return false.
+ * Host of a git remote URL, lowercased; ssh = may be an ~/.ssh/config alias.
+ * @param {string} url
+ * @returns {{ host: string, ssh: boolean } | null}
+ */
+function remoteHostOf(url) {
+  const s = String(url || "").trim();
+  let m = s.match(/^([a-z][a-z0-9+.-]*):\/\/(?:[^@/\s]+@)?([^/:\s]+)/i);
+  if (m) {
+    return { host: m[2].toLowerCase().replace(/^www\./, ""), ssh: /ssh/i.test(m[1]) };
+  }
+  // scp-style [user@]host:path; a one-letter host is a Windows drive.
+  m = s.match(/^(?:[^@/\s]+@)?([^:/\s]{2,}):(?!\/\/)/);
+  return m ? { host: m[1].toLowerCase(), ssh: true } : null;
+}
+
+const GH_HOSTS_TTL_MS = 60_000;
+/** @type {{ key: string, at: number, hosts: Set<string> } | null} */
+let ghHostsCache = null;
+
+/**
+ * Hosts gh is logged into: hosts.yml keys (what `gh auth status` reads,
+ * without spawning it), GH_HOST, and github.com.
+ * @returns {Set<string>}
+ */
+function ghHosts() {
+  const now = Date.now();
+  const ghHost = (process.env.GH_HOST || "").trim().toLowerCase();
+  const dir =
+    process.env.GH_CONFIG_DIR ||
+    (process.env.XDG_CONFIG_HOME && path.join(process.env.XDG_CONFIG_HOME, "gh")) ||
+    (process.platform === "win32" && process.env.AppData
+      ? path.join(process.env.AppData, "GitHub CLI")
+      : path.join(os.homedir(), ".config", "gh"));
+  const key = `${dir}\0${ghHost}`;
+  if (ghHostsCache && ghHostsCache.key === key && now - ghHostsCache.at < GH_HOSTS_TTL_MS) {
+    return ghHostsCache.hosts;
+  }
+  const hosts = new Set(["github.com"]);
+  if (ghHost) hosts.add(ghHost);
+  try {
+    for (const line of fs.readFileSync(path.join(dir, "hosts.yml"), "utf8").split(/\r?\n/)) {
+      const m = line.match(/^([^\s#:][^:]*):\s*$/);
+      if (m) hosts.add(m[1].trim().toLowerCase());
+    }
+  } catch {
+    // no gh config: github.com only
+  }
+  ghHostsCache = { key, at: now, hosts };
+  return hosts;
+}
+
+/** ssh Host alias -> real hostname, or the pending `ssh -G` lookup. */
+const sshHostnames = new Map();
+
+/**
+ * Resolve an ssh alias once via `ssh -G` (local config only, no network).
+ * @param {string} host
+ * @returns {Promise<string> | string}
+ */
+function resolveSshHost(host) {
+  const hit = sshHostnames.get(host);
+  if (hit !== undefined) return hit;
+  if (host.startsWith("-")) return host;
+  const pending = new Promise((resolve) => {
+    execFile(
+      process.env.CODER_SSH_BIN || "ssh",
+      ["-G", host],
+      { encoding: "utf8", timeout: 5_000 },
+      (err, stdout) => {
+        const m = !err && /^hostname\s+(\S+)/m.exec(String(stdout || ""));
+        const real = m ? m[1].toLowerCase() : host;
+        sshHostnames.set(host, real);
+        resolve(real);
+      },
+    );
+  });
+  sshHostnames.set(host, pending);
+  return pending;
+}
+
+/**
+ * True when origin is on a host gh is logged into: github.com, GitHub
+ * Enterprise, or an ssh alias for either (#1523). gh itself resolves the
+ * host from the repo's remotes (ssh aliases included), so gh calls run in
+ * the checkout already target it.
+ * Sync callers see an unresolved alias as false and start its lookup;
+ * isGitHubRemoteAsync waits for it.
  * @param {string} url
  * @returns {boolean}
  */
 function isGitHubRemote(url) {
-  const s = String(url || "").trim();
-  if (!s) return false;
-  if (/^git@github\.com:/i.test(s)) return true;
-  if (/^ssh:\/\/([^@/\s]+@)?github\.com\//i.test(s)) return true;
-  if (/^https?:\/\/(www\.)?github\.com\//i.test(s)) return true;
-  return false;
+  const r = remoteHostOf(url);
+  if (!r) return false;
+  const hosts = ghHosts();
+  if (hosts.has(r.host)) return true;
+  if (!r.ssh) return false;
+  const real = resolveSshHost(r.host);
+  return typeof real === "string" && hosts.has(real);
+}
+
+/**
+ * @param {string} url
+ * @returns {Promise<boolean>}
+ */
+async function isGitHubRemoteAsync(url) {
+  const r = remoteHostOf(url);
+  if (r && r.ssh && !ghHosts().has(r.host)) await resolveSshHost(r.host);
+  return isGitHubRemote(url);
 }
 
 /**
@@ -178,7 +280,7 @@ async function githubApiTarget(originUrl) {
  * @param {string} originUrl
  */
 async function isGitHubPrRemote(originUrl) {
-  return isGitHubRemote(originUrl) || (await githubApiTarget(originUrl)) != null;
+  return (await isGitHubRemoteAsync(originUrl)) || (await githubApiTarget(originUrl)) != null;
 }
 
 /**
@@ -187,8 +289,8 @@ async function isGitHubPrRemote(originUrl) {
  * there is no token, the argv is not translated, or the API throws — except:
  * a definitive "no such PR" is returned as gh's own not-found text; a timed
  * out write is returned as a failure (re-sending a comment/create/merge could
- * double it); and a non-github.com host never falls back (gh stays gated on
- * isGitHubRemote).
+ * double it); and a host gh is not logged into never falls back (gh stays
+ * gated on isGitHubRemote).
  * @param {string} cwd
  * @param {string[]} args
  * @param {{ env?: NodeJS.ProcessEnv, timeout?: number }} [opts]
@@ -216,7 +318,7 @@ async function ghApiTryAsync(cwd, args, opts) {
       if (err && err.status === 401) isGhAuthFailure("HTTP 401");
       const write = args[0] !== "api" && !["view", "list", "checks"].includes(args[1]);
       const timedOut = err && (err.name === "TimeoutError" || err.name === "AbortError");
-      if ((write && timedOut) || !isGitHubRemote(originUrl)) return fail;
+      if ((write && timedOut) || !(await isGitHubRemoteAsync(originUrl))) return fail;
     }
   }
   return ghTryAsync(cwd, args, opts);
@@ -1180,13 +1282,13 @@ async function mergeOptions(opts) {
       // PR list view: no bound thread, just the project checkout.
       const cwd = String(opts.projectPath);
       const remote = await gitTryAsync(cwd, ["remote", "get-url", "origin"]);
-      if (!remote.ok || !isGitHubRemote(remote.stdout.trim())) {
+      if (!remote.ok || !(await isGitHubRemoteAsync(remote.stdout.trim()))) {
         return { ok: false, reason: "not a GitHub repo" };
       }
       return await repoMergeOptions(cwd);
     }
     const { cwd, originUrl } = await resolveThreadGit(opts.store, opts.threadId);
-    if (!isGitHubRemote(originUrl)) return { ok: false, reason: "not a GitHub repo" };
+    if (!(await isGitHubRemoteAsync(originUrl))) return { ok: false, reason: "not a GitHub repo" };
     return await repoMergeOptions(cwd);
   } catch (err) {
     return { ok: false, reason: err && err.message ? String(err.message) : "no repo" };
@@ -1390,7 +1492,17 @@ async function refreshPrStates(store, opts) {
       ? opts.prWatch
       : null;
 
-  const candidates = store.getThreads().filter(isPrRefreshCandidate);
+  // Settled threads poll slowly, not never: merged-worktree reclaim rides
+  // this pass (#1523). ponytail: first pass ≥ SETTLED_PR_POLL_MS after the last.
+  const now = opts && typeof opts.now === "function" ? opts.now() : Date.now();
+  const candidates = store.getThreads().filter((t) => {
+    if (!isPrRefreshCandidate(t)) return false;
+    if (t.settledOverride !== "settled") return true;
+    const last = settledPrPolledAt.get(t.id);
+    if (last != null && now - last < SETTLED_PR_POLL_MS) return false;
+    settledPrPolledAt.set(t.id, now);
+    return true;
+  });
   if (candidates.length === 0) {
     return { examined: 0, changed: 0, spawned: 0 };
   }
@@ -1464,7 +1576,7 @@ async function refreshPrStates(store, opts) {
         // Unresolvable PR: skip, same as a failed gh view.
         if (!info) continue;
       } else {
-        if (!isGitHubRemote(originUrl)) {
+        if (!(await isGitHubRemoteAsync(originUrl))) {
           // Non-GitHub origin must never paint an error (ISSUES.md). Skip.
           continue;
         }
@@ -1959,6 +2071,7 @@ module.exports = {
   isGitHubPrRemote,
   setGithubApi,
   isGitHubRemote,
+  isGitHubRemoteAsync,
   ghTryAsync,
   parsePrJson,
   PR_LIST_FIELDS,

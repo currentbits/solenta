@@ -4,6 +4,7 @@
 
 const path = require("node:path");
 const { execCommandAsync } = require("./ssh.js");
+const { gitEnv } = require("./worktrees-git.js");
 
 /** Network git (fetch/pull) is legitimately slower than execCommand's local default. */
 const GIT_NETWORK_TIMEOUT_MS = 60_000;
@@ -21,6 +22,7 @@ async function gitOutAsync(cwd, args, project, opts) {
       cwd,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
+      env: gitEnv(args),
       ...(opts || {}),
     }),
   ).trim();
