@@ -437,6 +437,39 @@ async function main() {
     return;
   }
 
+  // #1522: between turns a background agent reports progress as system
+  // task_* events (shape from claude 2.1.283) plus its own parent-stamped
+  // messages, then settles via a structured task_notification.
+  if (scenario === "subagent-progress-after-result") {
+    emit({ type: "system", subtype: "init", session_id: "sess-sub-prog", model: "claude-opus-test" });
+    emit({
+      type: "assistant",
+      message: { content: [{ type: "tool_use", id: "toolu_prog_bg", name: "Agent", input: { description: "Progress research", subagent_type: "general-purpose" } }] },
+    });
+    emit({
+      type: "user",
+      message: { content: [{ type: "tool_result", tool_use_id: "toolu_prog_bg", content: [{ type: "text", text: "Async agent launched successfully. agentId: prog1" }], is_error: false }] },
+    });
+    emit({ type: "result", subtype: "success", result: "Launched.", usage: { input_tokens: 1, output_tokens: 1 }, total_cost_usd: 0, num_turns: 1 });
+    await delay(150);
+    emit({ type: "system", subtype: "task_started", task_id: "prog1", tool_use_id: "toolu_prog_bg", description: "Progress research", subagent_type: "general-purpose", task_type: "local_agent" });
+    emit({
+      type: "assistant",
+      parent_tool_use_id: "toolu_prog_bg",
+      message: { content: [{ type: "tool_use", id: "toolu_child_1", name: "Grep", input: { pattern: "x" } }] },
+    });
+    await delay(50);
+    // A stray event for an unknown agent must stay dropped.
+    emit({ type: "system", subtype: "task_progress", task_id: "nope", tool_use_id: "toolu_unknown", summary: "stray" });
+    emit({ type: "system", subtype: "task_progress", task_id: "prog1", tool_use_id: "toolu_prog_bg", description: "Progress research", usage: { total_tokens: 900, tool_uses: 3, duration_ms: 1200 }, last_tool_name: "Read", summary: "Reading the runner" });
+    const release = process.env.CODER_FAKE_CLAUDE_RELEASE_FILE;
+    while (release && !fs.existsSync(release)) await delay(20);
+    emit({ type: "system", subtype: "task_notification", task_id: "prog1", tool_use_id: "toolu_prog_bg", status: "completed", output_file: "", summary: "Found it" });
+    await delay(30000);
+    process.exit(0);
+    return;
+  }
+
   if (scenario === "subagents") {
     emit({
       type: "system",
@@ -2630,6 +2663,41 @@ describe("runner claude provider", () => {
       await waitFor(() => lateRow(thread.id).status !== "running");
       assert.equal(lateRow(thread.id).status, "failed");
     });
+  });
+
+  it("folds background subagent progress between turns onto its row (#1522)", async () => {
+    process.env.CODER_FAKE_CLAUDE_SCENARIO = "subagent-progress-after-result";
+    const release = path.join(tmpDir, "release");
+    process.env.CODER_FAKE_CLAUDE_RELEASE_FILE = release;
+    try {
+      const thread = store.getThreads()[0];
+      await runner.startRun({ threadId: thread.id, prompt: "launch one" });
+      const row = () => (store.getThread(thread.id).subagents || []).find((s) => s.id === "toolu_prog_bg");
+      await waitFor(() => row()?.activity?.text === "Reading the runner");
+      const t = store.getThread(thread.id);
+      assert.notEqual(t.status, "working", "progress lands between turns");
+      assert.equal(row().status, "running");
+      assert.equal(typeof row().activity.at, "number");
+      // The agent's own tool call never becomes a parent transcript row, and
+      // the stray event touched nothing.
+      assert.ok(!store.getMessages(thread.id).some((m) => m.tool && m.tool.id === "toolu_child_1"));
+      assert.equal(store.getThread(thread.id).subagents.length, 1);
+      // It reached the renderer on a thread:updated push.
+      assert.ok(
+        pushes.some(
+          (p) =>
+            p.channel === "thread:updated" &&
+            p.payload.thread?.id === thread.id &&
+            (p.payload.thread.subagents || []).some((s) => s.activity?.text === "Reading the runner"),
+        ),
+      );
+
+      fs.writeFileSync(release, "");
+      await waitFor(() => row().status !== "running");
+      assert.equal(row().status, "done");
+    } finally {
+      delete process.env.CODER_FAKE_CLAUDE_RELEASE_FILE;
+    }
   });
 
   it("settling or archiving a thread kills its kept-alive CLI (issue #48)", async () => {

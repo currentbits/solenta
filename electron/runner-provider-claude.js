@@ -72,6 +72,7 @@ function createClaudeRun(ctx) {
     active,
     scheduleClaudeIdleReap,
     ingestTaskNotifications,
+    ingestSubagentEvent,
     setSubagentStatus,
     noteToolSpan,
     lastAssistantText,
@@ -584,6 +585,9 @@ function createClaudeRun(ctx) {
         // Background-subagent task notifications can land between turns on a
         // kept-alive CLI (guard() is null then), so scan user text first.
         ingestTaskNotifications(threadId, ev, claudeState);
+        // Background-subagent progress lands there too: fold it onto its row
+        // before the guard drops it (#1522).
+        ingestSubagentEvent(threadId, ev, claudeState);
 
         if (!guard()) {
           // Kept-alive CLI, no active turn (settling/idle): never leave a
