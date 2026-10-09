@@ -190,6 +190,40 @@
   box-shadow: var(--focus-ring);
 }
 
+.teamItem {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+}
+
+/* Stop on a working worker row; carries the row divider so it lines up. */
+.teamStop {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  padding: 0;
+  border: none;
+  border-top: 1px solid var(--border-soft);
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.teamList > li:first-child .teamStop {
+  border-top: none;
+}
+
+.teamStop:hover {
+  color: var(--danger-fg);
+}
+
+.teamStop:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
 .teamRow .roleChip {
   margin-left: 0;
   flex-shrink: 0;

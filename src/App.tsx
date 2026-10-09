@@ -1284,6 +1284,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     previousWorktree,
     panelRosterKey,
     comparePeers,
+    threadTitles,
   } = useThreadRoster({
     threads,
     visibleDetail,
@@ -1989,6 +1990,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         comparePeers={comparePeers}
         onPeekThread={peekThread}
         onSelectThread={handleSelectThread}
+        threadTitles={threadTitles}
         onModelPickerOpen={handleModelPickerOpen}
         onNewThread={handleCreateThreadPlain}
         onSettleThread={selectedThreadId ? handleSettleOpenThread : undefined}
@@ -2063,6 +2065,9 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         tab={inspectorTab}
         onTabChange={rememberInspectorTab}
         onSelectThread={handleSelectThread}
+        onStopThread={(threadId) => {
+          void api.runs.stop({ threadId }).catch(() => {});
+        }}
         onViewChanges={openChanges}
         fetchDiff={fetchDiff}
         listCheckpoints={listCheckpoints}

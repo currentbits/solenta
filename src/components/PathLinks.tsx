@@ -197,6 +197,62 @@ function PathAnchor({
   );
 }
 
+/**
+ * Thread ids agents mention in replies (#1531): known ids in the open
+ * thread's project, mapped to their titles, plus how to open one.
+ */
+export interface ThreadLinkHandlers {
+  titles: Record<string, string>;
+  open: (threadId: string) => void;
+}
+
+export const ThreadLinkContext = createContext<ThreadLinkHandlers | null>(null);
+
+const THREAD_ID_RE =
+  /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
+
+/** `text` with known thread ids as links; unknown UUIDs stay plain. */
+function threadLinked(
+  text: string,
+  links: ThreadLinkHandlers | null,
+  keyPrefix: string,
+): ReactNode {
+  if (!links || !text.includes("-")) return text;
+  const nodes: ReactNode[] = [];
+  let cursor = 0;
+  for (const m of text.matchAll(THREAD_ID_RE)) {
+    const id = m[0].toLowerCase();
+    const title = links.titles[id];
+    if (title === undefined) continue;
+    if (m.index > cursor) nodes.push(text.slice(cursor, m.index));
+    const go = (e: MouseEvent | KeyboardEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      links.open(id);
+    };
+    nodes.push(
+      <span
+        key={`${keyPrefix}t${m.index}`}
+        role="link"
+        tabIndex={0}
+        className={styles.pathLink}
+        data-thread-link={id}
+        title={title || id}
+        onClick={go}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") go(e);
+        }}
+      >
+        {m[0]}
+      </span>,
+    );
+    cursor = m.index + m[0].length;
+  }
+  if (nodes.length === 0) return text;
+  if (cursor < text.length) nodes.push(text.slice(cursor));
+  return nodes;
+}
+
 /** Plain text with existing workspace paths turned into hover-underline links. */
 export function PathText({
   text,
@@ -206,6 +262,7 @@ export function PathText({
   className?: string;
 }) {
   const api = useContext(PathLinkContext);
+  const links = useContext(ThreadLinkContext);
   const hits = useMemo(() => findPathRefs(text), [text]);
   const paths = useMemo(
     () => [...new Set(hits.map((h) => h.path))],
@@ -214,13 +271,16 @@ export function PathText({
   const resolved = useResolvedMap(paths);
 
   if (!api || hits.length === 0) {
-    return className ? <span className={className}>{text}</span> : text;
+    const plain = threadLinked(text, links, "");
+    return className ? <span className={className}>{plain}</span> : plain;
   }
 
   const nodes: ReactNode[] = [];
   let cursor = 0;
   for (const hit of hits) {
-    if (hit.start > cursor) nodes.push(text.slice(cursor, hit.start));
+    if (hit.start > cursor) {
+      nodes.push(threadLinked(text.slice(cursor, hit.start), links, `${cursor}:`));
+    }
     const abs = resolved[hit.path];
     if (abs) {
       nodes.push(
@@ -236,7 +296,9 @@ export function PathText({
     }
     cursor = hit.end;
   }
-  if (cursor < text.length) nodes.push(text.slice(cursor));
+  if (cursor < text.length) {
+    nodes.push(threadLinked(text.slice(cursor), links, `${cursor}:`));
+  }
   return className ? <span className={className}>{nodes}</span> : nodes;
 }
 
