@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { randomUUID } = require("node:crypto");
 const { getDefaultSecrets } = require("./secrets.js");
+const threadSecrets = require("./threadSecrets.js");
 const {
   splitMessagesByThread,
   stringifyStore,
@@ -2073,7 +2074,10 @@ class Store {
    */
   appendMessage(threadId, message) {
     const list = this.getMessages(threadId).slice();
-    list.push(message);
+    // Every runner/adapter message write lands here or in updateMessage, and
+    // the renderer push, summaries and session transcript read back from the
+    // store, so redacting here covers them all (#1531 secret_request).
+    list.push(threadSecrets.redact(threadId, message));
     this.setMessages(threadId, list);
     this.updateThread(threadId, {}, { touch: true });
   }
@@ -2311,7 +2315,9 @@ class Store {
     const list = this.getMessages(threadId).slice();
     const idx = list.findIndex((m) => m.id === messageId);
     if (idx < 0) return null;
-    list[idx] = { ...list[idx], ...patch };
+    // Streams patch the whole accumulated text, so a value split across
+    // chunks is caught once both halves have arrived.
+    list[idx] = { ...list[idx], ...threadSecrets.redact(threadId, patch) };
     this.setMessages(threadId, list);
     return list[idx];
   }
