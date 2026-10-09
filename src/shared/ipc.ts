@@ -2607,6 +2607,29 @@ export interface SourceControlProvider {
   installHint: string;
   version: string | null;
   auth: SourceControlAuth;
+  /** GitHub only: every gh login per host, when gh can report them (2.81+). */
+  accounts?: GithubAccount[];
+}
+
+/**
+ * One row of Settings › Source control › GitHub (issue #1528).
+ * Saving: omit `token` to keep the saved one, null/"" clears it.
+ */
+export interface GithubHostSetting {
+  host: string;
+  /** gh login to use for this host; null = gh's active account. */
+  account: string | null;
+  /** Write-only: set to save a token that replaces gh for this host. */
+  token?: string | null;
+  /** Read-only: a token is saved for this host. */
+  hasToken?: boolean;
+}
+
+/** One `gh` login, from `gh auth status --json hosts`. */
+export interface GithubAccount {
+  host: string;
+  login: string;
+  active: boolean;
 }
 
 /** Result of `sourceControl:discover` (cached until Rescan or an auth miss). */
@@ -3012,6 +3035,11 @@ export interface AppSettings {
    * environment is the fallback. Never required for GitHub issues.
    */
   linearApiKey?: string | null;
+  /**
+   * GitHub account / saved token per host (issue #1528). Read back with
+   * `hasToken` only; the token itself never reaches the renderer.
+   */
+  githubHosts?: GithubHostSetting[];
   /**
    * Outbound webhook (issue #167). POSTs a small JSON payload when a thread
    * finishes or waits for permission. Independent of the desktop-notification

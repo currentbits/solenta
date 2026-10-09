@@ -362,6 +362,7 @@ function normalizeSettings(raw) {
     subagentPool: { defaultAlias: null, force: false, entries: [] },
     otel: { endpoint: null, headers: {}, claudeMetrics: false },
     linearApiKey: null,
+    githubHosts: [],
     webhook: { url: null, onDone: true, onFailed: true, onWaiting: true },
     modelPrices: {},
     worktreeRoot: null,
@@ -517,6 +518,10 @@ function normalizeSettings(raw) {
   settings.modelPrices = normalizeModelPrices(
     /** @type {{ modelPrices?: unknown }} */ (obj).modelPrices,
   );
+  settings.githubHosts = normalizeGithubHosts(
+    /** @type {{ githubHosts?: unknown }} */ (obj).githubHosts,
+    false,
+  );
   settings.webhook = normalizeWebhook(
     /** @type {{ webhook?: unknown }} */ (obj).webhook,
   );
@@ -572,6 +577,45 @@ function normalizeWebhook(raw) {
   return out;
 }
 
+/**
+ * Per-host GitHub account choice and saved token (#1528). `account` picks a
+ * `gh` login for the host; `token` is used instead of gh entirely. Rows with
+ * neither are dropped. strict (settings:set) throws; lenient (load) drops junk.
+ * @param {unknown} raw
+ * @param {boolean} strict
+ * @returns {Array<{ host: string, account: string | null, token: string | null }>}
+ */
+function normalizeGithubHosts(raw, strict) {
+  if (raw == null) return [];
+  if (!Array.isArray(raw)) {
+    if (strict) throw new Error("githubHosts must be an array");
+    return [];
+  }
+  /** @type {Map<string, { host: string, account: string | null, token: string | null }>} */
+  const byHost = new Map();
+  for (const row of raw) {
+    const r = /** @type {{ host?: unknown, account?: unknown, token?: unknown }} */ (row || {});
+    const host = typeof r.host === "string" ? r.host.trim().toLowerCase() : "";
+    if (!/^[a-z0-9.-]+(:\d+)?$/.test(host)) {
+      if (strict) throw new Error("githubHosts[].host must be a hostname like github.com");
+      continue;
+    }
+    const pick = (/** @type {unknown} */ v, /** @type {string} */ name) => {
+      if (v == null || v === "") return null;
+      if (typeof v !== "string") {
+        if (strict) throw new Error(`githubHosts[].${name} must be a string or null`);
+        return null;
+      }
+      return v.trim() || null;
+    };
+    const account = pick(r.account, "account");
+    const token = pick(r.token, "token");
+    if (!account && !token) continue;
+    byHost.set(host, { host, account, token });
+  }
+  return [...byHost.values()];
+}
+
 module.exports = {
   isHttpUrl,
   validateAgentProfiles,
@@ -583,4 +627,5 @@ module.exports = {
   normalizeSettings,
   normalizeOtel,
   normalizeWebhook,
+  normalizeGithubHosts,
 };

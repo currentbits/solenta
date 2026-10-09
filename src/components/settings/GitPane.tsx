@@ -65,6 +65,8 @@ export function GitPane({
       <SourceControlSection
         active
         onDiscover={onDiscoverSourceControl}
+        githubHosts={settings?.githubHosts}
+        onSaveGithubHosts={(rows) => onSaveSettings({ githubHosts: rows })}
       />
 
       <section className={styles.section}>

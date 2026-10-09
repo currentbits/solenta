@@ -154,6 +154,10 @@ module.exports = {
     if (ctx.runner && typeof ctx.runner.refreshAllQuotaWaits === "function") {
       ctx.runner.refreshAllQuotaWaits();
     }
+    if (patch && Object.prototype.hasOwnProperty.call(patch, "githubHosts")) {
+      // A new account or token per host must not wait out the 10-min cache.
+      require("./github.js").forgetToken();
+    }
     if (patch && Object.prototype.hasOwnProperty.call(patch, "uiScale")) {
       applyZoom(null, next.uiScale, ctx.store);
     }

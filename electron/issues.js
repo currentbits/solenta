@@ -3,11 +3,12 @@
 /**
  * Ticket ingestion: parse a pasted ref, then fetch GitHub (`gh issue view`)
  * or Linear (GraphQL). Never throws; failures come back as `{ ok: false, reason }`.
+ * GitHub calls use the API when a token exists, gh otherwise (#1534).
  */
 
 const {
   gitTry,
-  ghTryAsync,
+  ghApiTryAsync,
   GH_TIMEOUT_MS,
   isGitHubRemote,
   isGhAuthFailure,
@@ -232,7 +233,7 @@ async function fetchIssue(projectPath, ref, opts) {
       args.push("-R", `${owner}/${repo}`);
     }
 
-    const viewed = await ghTryAsync(cwd, args, GH_USER);
+    const viewed = await ghApiTryAsync(cwd, args, GH_USER);
     if (!viewed.ok) {
       if (viewed.enoent) {
         return { ok: false, reason: "gh missing" };
@@ -353,7 +354,7 @@ async function listIssuePage(projectPath, opts = {}) {
       "-f", `owner=${repo.owner}`, "-f", `repo=${repo.repo}`, "-F", `first=${limit}`,
       ...(cursor ? ["-f", `after=${cursor}`] : []),
       ...(state === "all" ? [] : ["-f", `state=${state.toUpperCase()}`])];
-  const listed = await ghTryAsync(cwd, args, GH_USER);
+  const listed = await ghApiTryAsync(cwd, args, GH_USER);
   if (!listed.ok) {
     if (listed.enoent) return { ok: false, reason: "gh missing" };
     if (isGhAuthFailure(listed.stderr || listed.combined || listed.stdout)) return { ok: false, reason: "auth" };
@@ -432,7 +433,7 @@ async function setPlanStatus(projectPath, number, status) {
   }
 
   const base = ["issue", "edit", String(issueNumber), "--add-label", label];
-  let edited = await ghTryAsync(
+  let edited = await ghApiTryAsync(
     cwd,
     [
       ...base,
@@ -443,7 +444,7 @@ async function setPlanStatus(projectPath, number, status) {
   );
   let errText = edited.stderr || edited.combined || edited.stdout || "";
   if (!edited.ok && !edited.enoent && /not found/i.test(errText)) {
-    edited = await ghTryAsync(cwd, base, GH_USER);
+    edited = await ghApiTryAsync(cwd, base, GH_USER);
     errText = edited.stderr || edited.combined || edited.stdout || "";
   }
   if (edited.ok) return { ok: true };
@@ -476,7 +477,7 @@ async function reopenIssue(projectPath, number, opts) {
     return { ok: false, reason: "not a GitHub repo" };
   }
 
-  const reopened = await ghTryAsync(
+  const reopened = await ghApiTryAsync(
     cwd,
     ["issue", "reopen", String(issueNumber)],
     GH_USER,
@@ -494,7 +495,7 @@ async function reopenIssue(projectPath, number, opts) {
 
   const comment = opts && typeof opts.comment === "string" ? opts.comment : "";
   if (comment) {
-    const posted = await ghTryAsync(
+    const posted = await ghApiTryAsync(
       cwd,
       ["issue", "comment", String(issueNumber), "--body", comment],
       GH_USER,
@@ -536,7 +537,7 @@ async function completeIssue(projectPath, number, opts) {
     return { ok: false, reason: "not a GitHub repo" };
   }
 
-  const viewed = await ghTryAsync(
+  const viewed = await ghApiTryAsync(
     cwd,
     ["issue", "view", String(issueNumber), "--json", "state,labels"],
     GH_USER,
@@ -569,7 +570,7 @@ async function completeIssue(projectPath, number, opts) {
   const comment = opts && typeof opts.comment === "string" ? opts.comment : "";
   const args = ["issue", "close", String(issueNumber)];
   if (comment) args.push("--comment", comment);
-  const closed = await ghTryAsync(cwd, args, GH_USER);
+  const closed = await ghApiTryAsync(cwd, args, GH_USER);
   if (closed.ok) return { ok: true };
   if (!moved.ok) return moved;
   const closeErr = closed.stderr || closed.combined || closed.stdout || "";
@@ -602,7 +603,7 @@ async function commentIssue(projectPath, number, body) {
     return { ok: false, reason: "not a GitHub repo" };
   }
 
-  const posted = await ghTryAsync(
+  const posted = await ghApiTryAsync(
     cwd,
     ["issue", "comment", String(issueNumber), "--body", text],
     GH_USER,
@@ -648,7 +649,7 @@ async function createIssue(projectPath, input) {
     return { ok: false, reason: "not a GitHub repo" };
   }
 
-  const created = await ghTryAsync(
+  const created = await ghApiTryAsync(
     cwd,
     ["issue", "create", "--title", title, "--body", body],
     GH_USER,

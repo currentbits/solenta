@@ -881,6 +881,8 @@ app.whenReady().then(async () => {
   // cannot freeze the main process (ISSUES.md prStatus hang) and non-GitHub
   // origins stay silent. Startup pass ~30s after boot; then every 5 min.
   // Zero qualifying threads → refreshPrStates spawns nothing.
+  // GitHub API tokens follow Settings › Source control per host (#1528).
+  require("./github.js").setHostSettings(() => store.getSettings().githubHosts);
   prStateRefresher = createPrStateRefresher({
     store,
     broadcast,
