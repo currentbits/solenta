@@ -11,7 +11,9 @@ import type { ChatMessage } from "./shared/ipc";
  * the reply itself, and anything unrecognized stay fully visible. The caller
  * still renders the original text unchanged.
  */
-const NOTICE_FOOTER = "Continue orchestrating; thread_status has full details.";
+const NOTICE_FOOTER = "Continue orchestrating. thread_status only repeats the reply line above, so do not call it for a finished worker; review its branch with git (log/diff against your branch) before reporting.";
+/** Pre-#1436 footer: transcripts saved before the wording change still fold. */
+const LEGACY_NOTICE_FOOTER = "Continue orchestrating; thread_status has full details.";
 
 /** Signals in the reply or crew note. Not applied to the landing paragraph. */
 const REAL_ACTION =
@@ -250,7 +252,8 @@ export function routineWorkerActivitySummary(
   if (message.fromThread || message.steer) return null;
   if (message.attachments && message.attachments.length > 0) return null;
   const lines = message.text.split(/\r?\n/);
-  if (lines.length < 2 || lines[lines.length - 1] !== NOTICE_FOOTER) return null;
+  const footer = lines[lines.length - 1];
+  if (lines.length < 2 || (footer !== NOTICE_FOOTER && footer !== LEGACY_NOTICE_FOOTER)) return null;
   const body = lines.slice(0, -1);
   if (body.length === 0 || body.some((line) => line.length === 0)) return null;
   const items = parseBody(body);
