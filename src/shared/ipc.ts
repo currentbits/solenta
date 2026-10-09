@@ -5092,6 +5092,14 @@ export interface CoderApi {
       auto?: boolean;
     }): Promise<PrDetailResult>;
     /**
+     * Revert a thread's MERGED PR (#1531): branch off the latest base in a
+     * temp worktree, revert the merge commit, push, and `gh pr create`
+     * `Revert "<title>"`. Nothing is left behind on failure. In-band.
+     */
+    prRevert(input: {
+      threadId: string;
+    }): Promise<{ ok: true; url: string; branch: string } | { ok: false; reason: string }>;
+    /**
      * Checkpoints: after each successful turn that changed files, the runner
      * auto-commits in the thread's WORKTREE ("coder-checkpoint: turn N").
      * Never fires on the main repo, never when the worktree is clean.

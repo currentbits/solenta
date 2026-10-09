@@ -949,6 +949,66 @@ function ScmNotice({ project }: { project: ProjectInfo | null }) {
 }
 
 /**
+ * "Open revert PR" on a merged PR (#1531). The main side does the git work in
+ * a temp worktree; the new PR opens in the browser.
+ */
+function RevertPrRow({ thread }: { thread: ThreadInfo }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const prRevert =
+    typeof window === "undefined"
+      ? undefined
+      : (
+          window as unknown as {
+            coder?: { git?: { prRevert?: CoderApi["git"]["prRevert"] } };
+          }
+        ).coder?.git?.prRevert;
+  if (thread.prState !== "MERGED" || thread.prNumber == null || !prRevert) {
+    return null;
+  }
+  const open = async () => {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await prRevert({ threadId: thread.id });
+      if (res.ok) {
+        if (res.url) window.open(res.url, "_blank");
+      } else {
+        setError(res.reason);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <>
+      <div className={inspector.row} data-pr-revert="">
+        <span className={inspector.action}>
+          <button
+            type="button"
+            className={styles.syncBtn}
+            data-pr-revert-btn=""
+            disabled={busy}
+            title={`Revert #${thread.prNumber} on a new branch off the base and open a pull request`}
+            onClick={() => void open()}
+          >
+            {busy ? "Opening revert PR…" : "Open revert PR"}
+          </button>
+        </span>
+      </div>
+      {error ? (
+        <p className={styles.pullError} data-pr-revert-error="" role="alert">
+          {error}
+        </p>
+      ) : null}
+    </>
+  );
+}
+
+/**
  * PR watch-and-wake status (#1493 D): what the watch has sent, and the
  * switch to stop or re-arm it. Nothing without an open PR.
  */
@@ -1838,6 +1898,7 @@ export function GitTab({
             ) : null}
           </div>
           {remote ? null : <PrWatchRow thread={thread} />}
+          {remote ? null : <RevertPrRow thread={thread} />}
           <p className={inspector.line} data-recap-activity="">
             {activity?.text ?? "No activity yet"}
           </p>
