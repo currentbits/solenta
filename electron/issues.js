@@ -9,7 +9,7 @@ const {
   gitTry,
   ghTryAsync,
   GH_TIMEOUT_MS,
-  isGitHubRemote,
+  isGitHubRemoteAsync,
   isGhAuthFailure,
   tailErr,
 } = require("./worktrees.js");
@@ -213,7 +213,7 @@ async function fetchIssue(projectPath, ref, opts) {
       return { ok: false, reason: "not a GitHub repo" };
     }
     const originUrl = String(remote.stdout || "").trim();
-    if (!isGitHubRemote(originUrl)) {
+    if (!(await isGitHubRemoteAsync(originUrl))) {
       return { ok: false, reason: "not a GitHub repo" };
     }
 
@@ -427,7 +427,7 @@ async function setPlanStatus(projectPath, number, status) {
   }
 
   const remote = gitTry(cwd, ["remote", "get-url", "origin"]);
-  if (!remote.ok || !isGitHubRemote(String(remote.stdout || "").trim())) {
+  if (!remote.ok || !(await isGitHubRemoteAsync(String(remote.stdout || "").trim()))) {
     return { ok: false, reason: "not a GitHub repo" };
   }
 
@@ -472,7 +472,7 @@ async function reopenIssue(projectPath, number, opts) {
   }
 
   const remote = gitTry(cwd, ["remote", "get-url", "origin"]);
-  if (!remote.ok || !isGitHubRemote(String(remote.stdout || "").trim())) {
+  if (!remote.ok || !(await isGitHubRemoteAsync(String(remote.stdout || "").trim()))) {
     return { ok: false, reason: "not a GitHub repo" };
   }
 
@@ -532,7 +532,7 @@ async function completeIssue(projectPath, number, opts) {
   }
 
   const remote = gitTry(cwd, ["remote", "get-url", "origin"]);
-  if (!remote.ok || !isGitHubRemote(String(remote.stdout || "").trim())) {
+  if (!remote.ok || !(await isGitHubRemoteAsync(String(remote.stdout || "").trim()))) {
     return { ok: false, reason: "not a GitHub repo" };
   }
 
@@ -598,7 +598,7 @@ async function commentIssue(projectPath, number, body) {
   if (!text) return { ok: false, reason: "empty comment" };
 
   const remote = gitTry(cwd, ["remote", "get-url", "origin"]);
-  if (!remote.ok || !isGitHubRemote(String(remote.stdout || "").trim())) {
+  if (!remote.ok || !(await isGitHubRemoteAsync(String(remote.stdout || "").trim()))) {
     return { ok: false, reason: "not a GitHub repo" };
   }
 
@@ -644,7 +644,7 @@ async function createIssue(projectPath, input) {
   if (!cwd) return { ok: false, reason: "not a GitHub repo" };
 
   const remote = gitTry(cwd, ["remote", "get-url", "origin"]);
-  if (!remote.ok || !isGitHubRemote(String(remote.stdout || "").trim())) {
+  if (!remote.ok || !(await isGitHubRemoteAsync(String(remote.stdout || "").trim()))) {
     return { ok: false, reason: "not a GitHub repo" };
   }
 
