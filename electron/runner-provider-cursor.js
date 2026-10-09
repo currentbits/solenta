@@ -19,6 +19,7 @@ const {
   guardrailNotice,
 } = require("./guardrail-hook-core.js");
 const path = require("node:path");
+const threadSecrets = require("./threadSecrets.js");
 const cursorParse = require("./cursor.js");
 const { materializeCursorHome, runCursor } = cursorParse;
 const {
@@ -339,7 +340,7 @@ function createCursorRun(ctx) {
       binary: spawn.binary,
       args: spawn.args,
       cwd: spawn.cwd,
-      env: cursorEnv,
+      env: threadSecrets.withEnv(threadId, cursorEnv),
       onEvent: (ev) => {
         // Cursor does not keep the CLI alive between turns, but a background
         // Task can finish via <task-notification> instead of tool_call/completed

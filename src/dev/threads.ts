@@ -333,6 +333,10 @@ export function createThreads(ctx: DevCtx): Pick<CoderApi, "threads"> {
         // in the dev provider (issue #647).
         patchThread(input.threadId, { pendingQuestion: null });
       },
+      async answerSecret(input) {
+        // Dev threads never spawn, so the value is simply dropped.
+        patchThread(input.threadId, { pendingSecret: null });
+      },
       // Bookkeeping setters below leave updatedAt alone: visiting, pinning and
       // settling are not activity. The rules they used to mirror (invalid
       // override, settle-while-working, pin/settle mutual exclusion, past

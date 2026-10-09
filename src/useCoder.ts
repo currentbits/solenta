@@ -325,6 +325,8 @@ export interface UseCoderResult {
   savePlan: (plan: string, threadId?: string) => Promise<string>;
   /** Dismiss the selected thread's persisted question card (issue #647). */
   clearQuestion: () => Promise<void>;
+  /** Answer (value) or dismiss (null) the secret card (issue #1531). */
+  answerSecret: (requestId: string, value: string | null) => Promise<void>;
   /**
    * Set provider and/or model. Defaults to the selected thread.
    * Pass threadId when applying a profile to a thread that is not selected
@@ -1529,6 +1531,7 @@ export function useCoder(): UseCoderResult {
     setPermissionMode,
     respondPermission,
     clearQuestion,
+    answerSecret,
     setProvider,
     setReasoningEffort,
     setWebSearch,
@@ -2067,6 +2070,7 @@ export function useCoder(): UseCoderResult {
     setPermissionMode,
     respondPermission,
     clearQuestion,
+    answerSecret,
     setProvider,
     setReasoningEffort,
     setWebSearch,

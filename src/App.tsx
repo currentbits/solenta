@@ -222,6 +222,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     setPermissionMode,
     respondPermission,
     clearQuestion,
+    answerSecret,
     setProvider,
     setReasoningEffort,
     setWebSearch,
@@ -1901,6 +1902,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onSetPermissionMode={setPermissionMode}
         onRespondPermission={respondPermission}
         onClearQuestion={clearQuestion}
+        onAnswerSecret={answerSecret}
         onSetProvider={setProvider}
         onSetReasoningEffort={setReasoningEffort}
         onSetWebSearch={setWebSearch}
