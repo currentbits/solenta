@@ -129,4 +129,20 @@ describe("diff scopes (#1493)", () => {
 
     await assert.rejects(diff({ store, threadId, path: "../escape" }), /escapes/);
   });
+
+  it("caps untracked line counting by count and size (#1520)", async () => {
+    fx = await fixture();
+    const { store, threadId, wt } = fx;
+    fs.writeFileSync(path.join(wt, "big.txt"), "x\n".repeat(600_000)); // > 1 MB
+    fs.mkdirSync(path.join(wt, "out"));
+    for (let i = 0; i < 510; i++) {
+      fs.writeFileSync(path.join(wt, "out", `f${String(i).padStart(3, "0")}.txt`), "a\nb\n");
+    }
+    const res = await diff({ store, threadId });
+    const untracked = res.files.filter((f) => f.status === "??");
+    assert.equal(untracked.length, 511);
+    assert.equal(untracked.find((f) => f.path === "big.txt").additions, 0);
+    const counted = untracked.filter((f) => f.additions === 2).length;
+    assert.equal(counted, 499); // 500 read, one of them big.txt
+  });
 });
