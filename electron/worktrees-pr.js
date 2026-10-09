@@ -1258,6 +1258,27 @@ function isPrRefreshCandidate(t) {
  *   runner hooks for watch-and-wake (electron/prWatch.js); absent = refresh only
  * @returns {Promise<{ examined: number, changed: number, spawned: number }>}
  */
+/**
+ * Does this PR state change settle the thread? Mirrors src/threadSettle.ts:
+ * CLOSED always, MERGED unless autoSettleOnMerge is off; never a working,
+ * pinned, already-settled or "active"-overridden thread.
+ * @param {import('./store').Store} store
+ * @param {object} prev thread before the change
+ * @param {string} nextState
+ */
+function prFlipSettles(store, prev, nextState) {
+  if (nextState !== "MERGED" && nextState !== "CLOSED") return false;
+  const settings = store.getSettings ? store.getSettings() : {};
+  if (nextState === "MERGED" && settings.autoSettleOnMerge === false) {
+    return false;
+  }
+  const was = String(prev.prState || "").toUpperCase();
+  if (was === "MERGED" || was === "CLOSED") return false;
+  if (prev.status === "working" || prev.status === "quota-wait") return false;
+  if (prev.pinnedAt != null && Number.isFinite(prev.pinnedAt)) return false;
+  return prev.settledOverride == null;
+}
+
 async function refreshPrStates(store, opts) {
   const broadcast = opts && opts.broadcast;
   const timeoutMs =
@@ -1375,6 +1396,18 @@ async function refreshPrStates(store, opts) {
         prState: nextState,
       });
       changed += 1;
+
+      if (prFlipSettles(store, current, nextState)) {
+        // solenta.json onSettle (#1531). A merge waits for it (bounded by
+        // its timeout) because the cleanup below deletes the checkout it
+        // runs in; a close does not.
+        const ran = require("./projectCommands.js").runOnSettle({
+          store,
+          threadId,
+          broadcast,
+        });
+        if (nextState === "MERGED") await ran;
+      }
 
       if (nextState === "MERGED") {
         // The PR path used to strand worktree+branch forever (t3 deep-dive).

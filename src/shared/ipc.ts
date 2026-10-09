@@ -182,6 +182,11 @@ export interface ProjectRepoConfig {
   setupCommand?: string;
   /** Ids are `repo:<index>`. */
   quickActions?: ProjectQuickAction[];
+  /**
+   * Runs in a worktree thread when it settles (#1531): an explicit settle,
+   * or its PR merging/closing. Also runnable as actionId "onSettle".
+   */
+  onSettleCommand?: string;
   hash?: string;
   trusted: boolean;
   error?: string;

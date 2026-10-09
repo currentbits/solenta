@@ -246,7 +246,9 @@ module.exports = {
     return updated;
   },
   "threads:setSettled": async (ctx, input) => {
-    const updated = services.setSettled(ctx.store, input);
+    const updated = services.setSettled(ctx.store, input, {
+      broadcast: ctx.broadcast,
+    });
     if (updated && updated.settledOverride === "settled") {
       retireAgent(ctx, updated.id);
     }
