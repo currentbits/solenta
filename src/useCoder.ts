@@ -518,7 +518,9 @@ export interface UseCoderResult {
   /** AppSnap window list. */
   listSnapWindows: () => Promise<Array<{ id: string; name: string }>>;
   /** AppSnap capture into the selected thread. */
-  captureSnapWindow: (sourceId: string) => Promise<AttachmentInfo | null>;
+  captureSnapWindow: (
+    sourceId: string,
+  ) => Promise<AttachmentInfo | AttachmentInfo[] | null>;
   /** Resolve transcript path tokens against the selected thread worktree. */
   resolvePaths: (
     paths: string[],

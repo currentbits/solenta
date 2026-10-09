@@ -5518,11 +5518,17 @@ export interface CoderApi {
     /**
      * Capture one window into userData/attachments/<threadId> and return
      * the image chip. null when the window disappeared or write failed.
+     * On macOS it also saves the window's flattened accessibility tree as a
+     * text file chip (#1531); textSkipped says why that chip is missing.
      */
     captureWindow(input: {
       threadId: string;
       sourceId: string;
-    }): Promise<{ attachment: AttachmentInfo | null }>;
+    }): Promise<{
+      attachment: AttachmentInfo | null;
+      textAttachment?: AttachmentInfo | null;
+      textSkipped?: string;
+    }>;
     /**
      * Electron-only (preload, webUtils.getPathForFile): absolute path of a
      * drag-dropped File, including Finder directories. Absent on web/dev

@@ -484,10 +484,10 @@ interface ThreadViewProps {
   onPickDirectory?: () => Promise<string | null>;
   /** AppSnap: on-screen windows the user can capture. */
   onListSnapWindows?: () => Promise<Array<{ id: string; name: string }>>;
-  /** AppSnap: capture one window into an attachment for this thread. */
+  /** AppSnap: capture one window (PNG, plus its accessibility text on macOS). */
   onCaptureSnapWindow?: (
     sourceId: string,
-  ) => Promise<AttachmentInfo | null>;
+  ) => Promise<AttachmentInfo | AttachmentInfo[] | null>;
   /** CLI skills and custom commands for the composer `/` palette (#606). */
   onListCliCommands?: (input?: {
     provider?: string;

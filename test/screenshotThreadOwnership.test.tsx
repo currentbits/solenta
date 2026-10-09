@@ -141,7 +141,9 @@ function view(props: {
     dataUrl: string,
   ) => Promise<AttachmentInfo | null>;
   onListSnapWindows?: () => Promise<Array<{ id: string; name: string }>>;
-  onCaptureSnapWindow?: (sourceId: string) => Promise<AttachmentInfo | null>;
+  onCaptureSnapWindow?: (
+    sourceId: string,
+  ) => Promise<AttachmentInfo | AttachmentInfo[] | null>;
 }) {
   return (
     <ThreadView
@@ -224,7 +226,9 @@ function Switcher(props: {
     dataUrl: string,
   ) => Promise<AttachmentInfo | null>;
   onListSnapWindows?: () => Promise<Array<{ id: string; name: string }>>;
-  onCaptureSnapWindow?: (sourceId: string) => Promise<AttachmentInfo | null>;
+  onCaptureSnapWindow?: (
+    sourceId: string,
+  ) => Promise<AttachmentInfo | AttachmentInfo[] | null>;
 }) {
   const [selected, setSelected] = useState<Selected>("t-a");
   const current =
@@ -589,6 +593,25 @@ describe("ThreadView screenshot ownership (issue #1206)", () => {
       (m.query("textarea") as HTMLTextAreaElement).value,
       "keep this draft",
     );
+    m.unmount();
+  });
+
+  it("app-window capture attaches the window text chip beside the PNG", async () => {
+    const m = await mount(
+      view({
+        onListSnapWindows: async () => [{ id: "win-a", name: "Alpha" }],
+        onCaptureSnapWindow: async () => [
+          imageAtt("snap.png"),
+          { kind: "file", path: "/tmp/window-text.txt", name: "window-text.txt" },
+        ],
+      }),
+    );
+    await openAppSnap(m);
+    await m.click(m.query('[data-appsnap-window="win-a"]') as HTMLElement);
+    await m.flush();
+    assert.ok(chip(m, "snap.png"));
+    assert.ok(chip(m, "window-text.txt"));
+    assert.equal(m.query("[data-appsnap]"), null);
     m.unmount();
   });
 });

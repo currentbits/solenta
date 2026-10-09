@@ -304,7 +304,10 @@ export function useCoderWorkspace({
         threadId: selectedThreadId,
         sourceId,
       });
-      return result.attachment;
+      if (!result.attachment) return null;
+      return result.textAttachment
+        ? [result.attachment, result.textAttachment]
+        : result.attachment;
     },
     [api, selectedThreadId],
   );

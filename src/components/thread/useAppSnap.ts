@@ -34,7 +34,7 @@ export function useAppSnap({
   onListSnapWindows?: () => Promise<Array<{ id: string; name: string }>>;
   onCaptureSnapWindow?: (
     sourceId: string,
-  ) => Promise<AttachmentInfo | null>;
+  ) => Promise<AttachmentInfo | AttachmentInfo[] | null>;
   onSaveAttachmentImage?: (dataUrl: string) => Promise<AttachmentInfo | null>;
   isArchived: boolean;
   snapOpen: boolean;
@@ -81,10 +81,13 @@ export function useAppSnap({
   const deliverIncomingAttachment = (
     originThreadId: string,
     generation: number,
-    att: AttachmentInfo,
+    att: AttachmentInfo | AttachmentInfo[],
   ) => {
     if (!isLiveScreenshotHandoff(originThreadId, generation)) return;
-    setIncomingHandoff({ threadId: originThreadId, items: [att] });
+    setIncomingHandoff({
+      threadId: originThreadId,
+      items: Array.isArray(att) ? att : [att],
+    });
   };
 
   const attachBrowserScreenshot = useCallback(
