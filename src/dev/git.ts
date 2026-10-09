@@ -261,6 +261,17 @@ export function createGit(ctx: DevCtx): Pick<CoderApi, "git" | "mergeQueue"> {
         if (!viewed.ok) return viewed;
         return { ok: true, pr: { ...viewed.pr, state: "MERGED", isDraft: false } };
       },
+      async prRevert(input: { threadId: string }) {
+        const t = ctx.threads.find((x) => x.id === input.threadId);
+        if (!t || t.prNumber == null || t.prState !== "MERGED") {
+          return { ok: false as const, reason: "Only a merged pull request can be reverted" };
+        }
+        return {
+          ok: true as const,
+          url: `https://github.com/acme/demo/pull/${t.prNumber + 1000}`,
+          branch: `revert-pr-${t.prNumber}`,
+        };
+      },
       async listCheckpoints(input: { threadId: string }) {
         const detail = details.get(input.threadId);
         if (!detail) throw new Error(`Unknown thread: ${input.threadId}`);

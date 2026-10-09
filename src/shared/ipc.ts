@@ -2805,6 +2805,11 @@ export interface AppSettings {
    */
   autoSettleOnMerge: boolean;
   /**
+   * Opt-in (default false): squash merges from the app drop
+   * `Co-authored-by:` trailers naming an AI agent; human co-authors stay.
+   */
+  stripAgentCoauthors: boolean;
+  /**
    * User-registered MCP servers (Skills tab). Built-ins coder-memory and
    * coder-threads are app-owned and never appear here. Enabled entries are
    * folded into every provider's MCP injection on the next turn.
@@ -5086,6 +5091,14 @@ export interface CoderApi {
       method?: MergeMethod;
       auto?: boolean;
     }): Promise<PrDetailResult>;
+    /**
+     * Revert a thread's MERGED PR (#1531): branch off the latest base in a
+     * temp worktree, revert the merge commit, push, and `gh pr create`
+     * `Revert "<title>"`. Nothing is left behind on failure. In-band.
+     */
+    prRevert(input: {
+      threadId: string;
+    }): Promise<{ ok: true; url: string; branch: string } | { ok: false; reason: string }>;
     /**
      * Checkpoints: after each successful turn that changed files, the runner
      * auto-commits in the thread's WORKTREE ("coder-checkpoint: turn N").

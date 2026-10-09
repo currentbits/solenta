@@ -40,6 +40,7 @@ class StoreSettingsMethods {
       orchestrationBudgetUsd: n.orchestrationBudgetUsd,
       autoSettleAfterDays: n.autoSettleAfterDays,
       autoSettleOnMerge: n.autoSettleOnMerge,
+      stripAgentCoauthors: n.stripAgentCoauthors,
       mcpServers: n.mcpServers,
       defaultWorktree: n.defaultWorktree,
       defaultOrchestrate: n.defaultOrchestrate,
@@ -154,6 +155,13 @@ class StoreSettingsMethods {
         throw new Error("autoSettleOnMerge must be a boolean");
       }
       this.data.settings.autoSettleOnMerge = v;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "stripAgentCoauthors")) {
+      const v = patch.stripAgentCoauthors;
+      if (typeof v !== "boolean") {
+        throw new Error("stripAgentCoauthors must be a boolean");
+      }
+      this.data.settings.stripAgentCoauthors = v;
     }
     if (Object.prototype.hasOwnProperty.call(patch, "mcpServers")) {
       this.data.settings.mcpServers = validateMcpServers(

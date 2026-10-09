@@ -1008,6 +1008,26 @@ function mergeFlags(opts) {
   return opts && opts.auto === true ? [`--${method}`, "--auto"] : [`--${method}`];
 }
 
+/**
+ * `--body` override for a squash merge when settings.stripAgentCoauthors is on
+ * (#1531); [] otherwise, so GitHub keeps its own message.
+ * @param {{ getSettings?: () => { stripAgentCoauthors?: boolean } } | null | undefined} store
+ * @param {string} cwd
+ * @param {number | string} number
+ * @param {{ method?: unknown } | null | undefined} opts
+ * @returns {Promise<string[]>}
+ */
+async function squashBodyArgs(store, cwd, number, opts) {
+  const method = opts && opts.method != null ? String(opts.method) : "squash";
+  if (method !== "squash") return [];
+  const settings = store && typeof store.getSettings === "function" ? store.getSettings() : null;
+  if (!settings || settings.stripAgentCoauthors !== true) return [];
+  const { strippedSquashBodyArgs } = require("./coauthors.js");
+  return strippedSquashBodyArgs(cwd, number, (c, args) =>
+    ghTryAsync(c, args, { timeout: GH_TIMEOUT_MS }),
+  );
+}
+
 const MERGE_OPTIONS_TTL_MS = 10 * 60 * 1000;
 /** @type {Map<string, { at: number, value: { ok: true, methods: string[], defaultMethod: string } }>} */
 const mergeOptionsCache = new Map();
@@ -1183,6 +1203,7 @@ async function mergePr(opts) {
     "merge",
     String(info.number),
     ...mergeFlags(opts),
+    ...(await squashBodyArgs(store, cwd, info.number, opts)),
   ]);
   if (!merged.ok) {
     throwGhFailure(merged, "gh pr merge failed");
@@ -1769,6 +1790,7 @@ module.exports = {
   prChecks,
   mergePr,
   mergeFlags,
+  squashBodyArgs,
   repoMergeOptions,
   mergeOptions,
   isPrRefreshCandidate,

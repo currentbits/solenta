@@ -36,6 +36,8 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
   let autoSettleAfterDays: number | null = 3;
   /** Default true = MERGED PRs auto-settle. */
   let autoSettleOnMerge = true;
+  /** Opt-in: strip agent Co-authored-by trailers from squash merges. */
+  let stripAgentCoauthors = false;
   /** PR size cap in lines (issue #402); default 400, null disables. */
   let prDiffCapLines: number | null = 400;
   /** Default new threads into a fake worktree (Settings toggle). */
@@ -132,6 +134,7 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           orchestrationBudgetUsd,
           autoSettleAfterDays,
           autoSettleOnMerge,
+          stripAgentCoauthors,
           prDiffCapLines,
           mcpServers: ctx.mcpServers,
           defaultWorktree,
@@ -173,6 +176,12 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
             throw new Error("autoSettleOnMerge must be a boolean");
           }
           autoSettleOnMerge = patch.autoSettleOnMerge;
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, "stripAgentCoauthors")) {
+          if (typeof patch.stripAgentCoauthors !== "boolean") {
+            throw new Error("stripAgentCoauthors must be a boolean");
+          }
+          stripAgentCoauthors = patch.stripAgentCoauthors;
         }
         if (Object.prototype.hasOwnProperty.call(patch, "prDiffCapLines")) {
           const v = patch.prDiffCapLines;
@@ -421,6 +430,7 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           orchestrationBudgetUsd,
           autoSettleAfterDays,
           autoSettleOnMerge,
+          stripAgentCoauthors,
           prDiffCapLines,
           mcpServers: ctx.mcpServers.map(redactDevMcp) as AppSettings["mcpServers"],
           defaultWorktree,

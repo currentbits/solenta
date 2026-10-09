@@ -356,6 +356,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
     orchestrationBudgetUsd: null,
     autoSettleAfterDays: 3,
     autoSettleOnMerge: true,
+    stripAgentCoauthors: false,
     mcpServers: [],
     defaultWorktree: false,
     updateChannel: null,
@@ -3203,6 +3204,12 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           } satisfies PrDetail,
         } as PrDetailResult);
       },
+      prRevert: (input: unknown) =>
+        rec("git.prRevert", [input], {
+          ok: true as const,
+          url: "https://github.com/acme/demo/pull/99",
+          branch: "revert-pr-1",
+        }),
       prMergeAt: (input: unknown) => {
         const i = input as { prNumber: number };
         return rec("git.prMergeAt", [input], {
