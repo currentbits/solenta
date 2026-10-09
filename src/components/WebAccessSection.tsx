@@ -6,6 +6,7 @@ import type {
   WebAccessStatus,
   WebDeviceCreated,
   WebDeviceInfo,
+  WebDeviceScope,
 } from "../shared/ipc";
 import styles from "./SettingsModal.module.css";
 
@@ -33,6 +34,42 @@ function seenLabel(d: WebDeviceInfo): string {
   if (d.lastSeenAt == null) return "Not used yet";
   const r = formatRelativeAge(d.lastSeenAt);
   return r === "now" ? "Seen just now" : `Seen ${r} ago`;
+}
+
+type Preset = "read" | "steer" | "full";
+type Grant = "files" | "git" | "preview" | "settings";
+type Terminal = "none" | "terminal:observe" | "terminal:type";
+
+const GRANTS: { id: Grant; label: string }[] = [
+  { id: "files", label: "Edit files" },
+  { id: "git", label: "Git: commit, push, merge" },
+  { id: "preview", label: "Control the preview" },
+  { id: "settings", label: "Change settings" },
+];
+
+/** What addDevice sends. The host checks these per channel, not the UI. */
+export function deviceScopes(preset: Preset, grants: Grant[], terminal: Terminal): WebDeviceScope[] {
+  if (preset === "full") return ["full"];
+  const out: WebDeviceScope[] = preset === "steer" ? ["read", "steer"] : ["read"];
+  out.push(...grants);
+  if (terminal !== "none") out.push(terminal);
+  return out;
+}
+
+const SCOPE_LABEL: Partial<Record<WebDeviceScope, string>> = {
+  files: "files",
+  git: "git",
+  "terminal:observe": "watch terminal",
+  "terminal:type": "terminal",
+  preview: "preview",
+  settings: "settings",
+};
+
+export function scopeSummary(scopes: WebDeviceScope[]): string {
+  if (scopes.includes("full")) return "Full access";
+  const base = scopes.includes("steer") ? "Steer threads" : "Read only";
+  const extra = scopes.map((s) => SCOPE_LABEL[s]).filter(Boolean);
+  return extra.length ? `${base} + ${extra.join(", ")}` : base;
 }
 
 /** The address a new device should open: tailnet HTTPS, then LAN, then local. */
@@ -77,6 +114,9 @@ export function WebAccessSection({ active }: { active: boolean }) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [name, setName] = useState("");
+  const [preset, setPreset] = useState<Preset>("steer");
+  const [grants, setGrants] = useState<Grant[]>([]);
+  const [terminal, setTerminal] = useState<Terminal>("none");
   const [created, setCreated] = useState<WebDeviceCreated | null>(null);
   const [base, setBase] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -189,6 +229,7 @@ export function WebAccessSection({ active }: { active: boolean }) {
       {created ? (
         <div className={styles.pairingReveal} data-web-reveal="">
           <p className={styles.pairingName}>Pair {created.device.name}</p>
+          <p className={styles.note} data-web-reveal-scopes="">{scopeSummary(created.device.scopes)}</p>
           <p className={styles.note}>
             Scan with the device's camera, or open the link on it. This token
             is shown once.
@@ -256,7 +297,10 @@ export function WebAccessSection({ active }: { active: boolean }) {
           disabled={busy || !name.trim()}
           onClick={() =>
             void run(async (web) => {
-              const result = await web.addDevice({ name: name.trim() });
+              const result = await web.addDevice({
+                name: name.trim(),
+                scopes: deviceScopes(preset, grants, terminal),
+              });
               setCreated(result);
               setName("");
               setStatus(await web.status());
@@ -266,6 +310,58 @@ export function WebAccessSection({ active }: { active: boolean }) {
           Add device
         </button>
       </div>
+      <div className={styles.fieldRow}>
+        <select
+          className={styles.input}
+          aria-label="Access for the new device"
+          data-web-preset=""
+          value={preset}
+          disabled={busy}
+          onChange={(e) => setPreset(e.target.value as Preset)}
+        >
+          <option value="read">Read only</option>
+          <option value="steer">Steer threads</option>
+          <option value="full">Full access</option>
+        </select>
+        {preset !== "full" ? (
+          <select
+            className={styles.input}
+            aria-label="Terminal access"
+            data-web-terminal=""
+            value={terminal}
+            disabled={busy}
+            onChange={(e) => setTerminal(e.target.value as Terminal)}
+          >
+            <option value="none">No terminal</option>
+            <option value="terminal:observe">Watch terminal</option>
+            <option value="terminal:type">Type in terminal</option>
+          </select>
+        ) : null}
+      </div>
+      {preset !== "full" ? (
+        <div className={styles.fieldRow} data-web-grants="">
+          {GRANTS.map((g) => (
+            <label key={g.id} className={styles.fieldRow}>
+              <input
+                type="checkbox"
+                data-web-grant={g.id}
+                checked={grants.includes(g.id)}
+                disabled={busy}
+                onChange={(e) =>
+                  setGrants((cur) =>
+                    e.target.checked ? cur.concat(g.id) : cur.filter((x) => x !== g.id),
+                  )
+                }
+              />
+              <span>{g.label}</span>
+            </label>
+          ))}
+        </div>
+      ) : null}
+      <p className={styles.note}>
+        Solenta checks every request against these. To change them later,
+        revoke the device and pair it again.
+      </p>
       {status.devices.length > 0 ? (
         <div className={styles.pairingList} data-web-devices="">
           {status.devices.map((d) => (
@@ -273,6 +369,8 @@ export function WebAccessSection({ active }: { active: boolean }) {
               <div className={styles.pairingRowBody}>
                 <p className={styles.pairingName}>{d.name}</p>
                 <p className={styles.note}>
+                  <span data-web-device-scopes="">{scopeSummary(d.scopes)}</span>
+                  {" · "}
                   {seenLabel(d)}
                   {d.legacy ? " · the token from before devices" : ""}
                 </p>

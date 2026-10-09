@@ -2216,6 +2216,7 @@ describe("SettingsModal integrations", () => {
       m.text().includes("tokentoken"),
       `expected token once, got: ${m.text()}`,
     );
+    assert.ok(m.query("[data-copy-mcp-url]"), "copy MCP URL");
     assert.ok(m.query("[data-copy-claude-json]"), "copy JSON");
     assert.ok(m.query("[data-copy-pairing-prompt]"), "copy prompt");
     m.unmount();
