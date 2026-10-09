@@ -2472,7 +2472,7 @@ export function AgentsContent({
                 status: s.status === "running" ? "working" : s.status,
                 handoffFrom: null,
                 runStartedAt: null,
-                lastActivity: null,
+                lastActivity: s.activity ?? null,
               }}
               role="Subagent"
               providers={providers}

@@ -1251,6 +1251,8 @@ export interface SubagentInfo {
   /** subagent_type from the tool input, e.g. "general-purpose"; null when absent. */
   agentType: string | null;
   status: "running" | "done" | "failed";
+  /** Latest progress the CLI reported for a running agent (#1522). */
+  activity?: { text: string; at: number };
 }
 
 /** Scope for threads:summaries (#1398). Omitted = every thread. */

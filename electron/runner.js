@@ -2632,6 +2632,7 @@ function createRunner(opts) {
     noteCursorSubagent,
     setSubagentStatus,
     ingestTaskNotifications,
+    ingestSubagentEvent,
     finishRunningSubagents,
   } = createSubagents(ctx);
   ctx.finishRunningSubagents = finishRunningSubagents;
@@ -2653,6 +2654,7 @@ function createRunner(opts) {
   // Provider runs (runner-provider-*.js) destructure these eagerly.
   Object.assign(ctx, {
     ingestTaskNotifications,
+    ingestSubagentEvent,
     noteCursorSubagent,
     handleCodexServerRequest,
     afterFailedTurn,
