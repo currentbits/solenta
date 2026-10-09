@@ -157,6 +157,7 @@ const BY_SCOPE = {
     "threads:setGoal",
     "threads:setProvider",
     "threads:setReasoningEffort",
+    "threads:setFast",
     "threads:setWebSearch",
     "threads:runVerify",
     "threads:delete",
@@ -296,6 +297,8 @@ const BY_SCOPE = {
     "threads:purge",
     // Bypass mode would let a steer device skip the terminal/files/git grants.
     "threads:setPermissionMode",
+    // Puts a secret into a run's env; a device would only need it to plant one.
+    "threads:answerSecret",
     "app:checkUpdate",
     "app:downloadUpdate",
     "app:applyUpdate",
