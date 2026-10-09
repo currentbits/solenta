@@ -363,6 +363,51 @@ describe("ThreadView empty states", () => {
   });
 });
 
+describe("ThreadView goal chip (#1531)", () => {
+  const started = (over: Partial<ThreadInfo>) =>
+    detail({
+      thread: thread(over),
+      messages: [msg({ id: "u1", role: "user", text: "go", createdAt: 1 })],
+    });
+
+  it("is absent without a goal", () => {
+    assert.ok(!render({ detail: started({}) }).includes("data-goal-chip"));
+  });
+
+  it("shows objective and status in the header; × sends /goal clear", async () => {
+    const sent: string[] = [];
+    const objective = "every flaky electron test fixed and green three runs in a row";
+    const m = await mount(
+      view({
+        detail: started({
+          goal: { objective, status: "complete", tokensUsed: 1200, setAt: 1 },
+        }),
+        onStartRun: (p) => {
+          sent.push(p);
+        },
+      }),
+    );
+    await m.flush();
+    const chip = m.query("[data-thread-header] [data-goal-chip]");
+    assert.ok(chip, "chip renders in the header");
+    assert.equal(chip!.getAttribute("data-goal-status"), "complete");
+    assert.match(chip!.textContent ?? "", /done/);
+    assert.match(chip!.getAttribute("title") ?? "", new RegExp(`${objective}$`));
+    assert.match(chip!.getAttribute("title") ?? "", /1,200 tokens/);
+    await m.click(m.query("[data-goal-clear]"));
+    assert.deepEqual(sent, ["/goal clear"]);
+    m.unmount();
+  });
+
+  it("reads active for providers without native status", () => {
+    const html = render({
+      detail: started({ goal: { objective: "ship", status: "active", setAt: 1 } }),
+    });
+    assert.ok(html.includes('data-goal-status="active"'));
+    assert.ok(html.includes(">active<"));
+  });
+});
+
 describe("ThreadView sandbox badge", () => {
   it("hides the badge when the thread has no computed sandbox", () => {
     const html = render();
@@ -3593,7 +3638,7 @@ describe("live turn activity (issue #751 / #752)", () => {
             id: "th1",
             role: "event",
             thinking: true,
-            text: "I should read ThreadView first.",
+            text: "**Planning**\n\nI should read ThreadView first.",
             createdAt: 20,
             runId: "run-1",
           }),
@@ -3611,13 +3656,13 @@ describe("live turn activity (issue #751 / #752)", () => {
     assert.ok(html.includes("data-thinking"), "thinking group landmark");
     assert.ok(html.includes("Thinking"), "thinking title");
     assert.ok(
-      !html.includes("I should read ThreadView first."),
+      !html.includes("**Planning**"),
       "thinking body stays collapsed on the live line",
     );
     assert.ok(html.includes("data-tool-group"), "thinking-only live group");
     assert.ok(
-      html.includes("Thinking…"),
-      "status strip names thinking, not a generic working label",
+      html.includes("I should read ThreadView first."),
+      "status strip shows the latest thought line (#1531)",
     );
     assert.ok(!html.includes("Agent working…"));
   });

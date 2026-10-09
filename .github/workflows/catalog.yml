@@ -1,0 +1,43 @@
+# Publishes the signed model catalog that installed apps fetch between
+# releases (#1529, electron/remoteCatalog.js). The `catalog` release is a
+# fixed, non-prerelease, never-"latest" tag, so the updater never sees it.
+name: catalog
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "electron/providers.js"
+      - "electron/remoteCatalog.js"
+      - "scripts/catalog-publish.js"
+      - ".github/workflows/catalog.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: catalog
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Sign catalog
+        env:
+          CATALOG_SIGNING_KEY: ${{ secrets.CATALOG_SIGNING_KEY }}
+        run: node scripts/catalog-publish.js out
+      - name: Upload to the catalog release
+        if: hashFiles('out/catalog.json') != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view catalog >/dev/null 2>&1 || gh release create catalog \
+            --title "Model catalog" --latest=false \
+            --notes "Signed model catalog that Solenta fetches between releases (#1529). Do not delete."
+          gh release upload catalog out/catalog.json out/catalog.json.sig --clobber

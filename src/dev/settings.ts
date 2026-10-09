@@ -11,6 +11,7 @@ import type {
   PairingList,
   SubagentPool,
   OtelSettings,
+  ModelPrice,
   WebhookSettings,
   ThreadInfo,
   WebAccessStatus,
@@ -36,6 +37,8 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
   let autoSettleAfterDays: number | null = 3;
   /** Default true = MERGED PRs auto-settle. */
   let autoSettleOnMerge = true;
+  /** Opt-in: strip agent Co-authored-by trailers from squash merges. */
+  let stripAgentCoauthors = false;
   /** PR size cap in lines (issue #402); default 400, null disables. */
   let prDiffCapLines: number | null = 400;
   /** Default new threads into a fake worktree (Settings toggle). */
@@ -59,8 +62,10 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
   let stayAwake: AppSettings["stayAwake"] = "agent";
   let confirmQuitWithActiveWork = true;
   let resumeInterruptedRuns = false;
+  let worktreeRoot: string | null = null;
   let guardrailsEnabled = true;
   let otel: OtelSettings = { endpoint: null, headers: {}, claudeMetrics: false };
+  let modelPrices: Record<string, ModelPrice> = {};
   let webhook: WebhookSettings = {
     url: null,
     onDone: true,
@@ -132,6 +137,7 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           orchestrationBudgetUsd,
           autoSettleAfterDays,
           autoSettleOnMerge,
+          stripAgentCoauthors,
           prDiffCapLines,
           mcpServers: ctx.mcpServers,
           defaultWorktree,
@@ -152,6 +158,7 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           quotaWaitAutoResume: ctx.quotaWaitAutoResume,
           confirmQuitWithActiveWork,
           resumeInterruptedRuns,
+          worktreeRoot,
           guardrailsEnabled,
           agentProfiles: agentProfiles.map((p) => ({ ...p })),
           providerInstances: providerInstances.map((p) => ({ ...p, env: { ...p.env } })),
@@ -162,6 +169,7 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           },
           otel: { ...otel, headers: { ...otel.headers } },
           webhook: { ...webhook },
+          modelPrices: { ...modelPrices },
         }) as AppSettings;
       },
       async set(patch: Partial<AppSettings>): Promise<AppSettings> {
@@ -173,6 +181,12 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
             throw new Error("autoSettleOnMerge must be a boolean");
           }
           autoSettleOnMerge = patch.autoSettleOnMerge;
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, "stripAgentCoauthors")) {
+          if (typeof patch.stripAgentCoauthors !== "boolean") {
+            throw new Error("stripAgentCoauthors must be a boolean");
+          }
+          stripAgentCoauthors = patch.stripAgentCoauthors;
         }
         if (Object.prototype.hasOwnProperty.call(patch, "prDiffCapLines")) {
           const v = patch.prDiffCapLines;
@@ -316,6 +330,13 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           }
           confirmQuitWithActiveWork = patch.confirmQuitWithActiveWork;
         }
+        if (Object.prototype.hasOwnProperty.call(patch, "worktreeRoot")) {
+          const v = typeof patch.worktreeRoot === "string" ? patch.worktreeRoot.trim() : "";
+          if (v && !v.startsWith("/")) {
+            throw new Error("Worktree location must be an absolute path");
+          }
+          worktreeRoot = v || null;
+        }
         if (Object.prototype.hasOwnProperty.call(patch, "resumeInterruptedRuns")) {
           if (typeof patch.resumeInterruptedRuns !== "boolean") {
             throw new Error("resumeInterruptedRuns must be a boolean");
@@ -416,11 +437,16 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
             onWaiting: v.onWaiting !== false,
           };
         }
+        if (Object.prototype.hasOwnProperty.call(patch, "modelPrices")) {
+          // ponytail: the desktop store validates; the dev twin trusts the editor.
+          modelPrices = { ...(patch.modelPrices ?? {}) };
+        }
         return {
           dailyBudgetUsd: ctx.dailyBudgetUsd,
           orchestrationBudgetUsd,
           autoSettleAfterDays,
           autoSettleOnMerge,
+          stripAgentCoauthors,
           prDiffCapLines,
           mcpServers: ctx.mcpServers.map(redactDevMcp) as AppSettings["mcpServers"],
           defaultWorktree,
@@ -441,6 +467,7 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           quotaWaitAutoResume: ctx.quotaWaitAutoResume,
           confirmQuitWithActiveWork,
           resumeInterruptedRuns,
+          worktreeRoot,
           guardrailsEnabled,
           agentProfiles: agentProfiles.map((p) => ({ ...p })),
           providerInstances: providerInstances.map((p) => ({ ...p, env: { ...p.env } })),
@@ -451,6 +478,7 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           },
           otel: { ...otel, headers: { ...otel.headers } },
           webhook: { ...webhook },
+          modelPrices: { ...modelPrices },
         };
       },
       async testWebhook() {
@@ -567,8 +595,8 @@ export function createWeb(): Pick<CoderApi, "web"> {
   let lan = false;
   let serving = false;
   let devices: WebDeviceInfo[] = [
-    { id: "dev-legacy", name: "Legacy device", createdAt: now - 40 * 864e5, lastSeenAt: now - 3 * 864e5, legacy: true },
-    { id: "dev-ipad", name: "iPad", createdAt: now - 9 * 864e5, lastSeenAt: now - 12 * 60e3, legacy: false },
+    { id: "dev-legacy", name: "Legacy device", createdAt: now - 40 * 864e5, lastSeenAt: now - 3 * 864e5, legacy: true, scopes: ["full"] },
+    { id: "dev-ipad", name: "iPad", createdAt: now - 9 * 864e5, lastSeenAt: now - 12 * 60e3, legacy: false, scopes: ["read", "steer", "terminal:observe"] },
   ];
   const status = async (): Promise<WebAccessStatus> => ({
     running,
@@ -605,6 +633,7 @@ export function createWeb(): Pick<CoderApi, "web"> {
           createdAt: Date.now(),
           lastSeenAt: null,
           legacy: false,
+          scopes: input.scopes ?? ["read"],
         };
         devices = devices.concat(device);
         return { device, token: "dEvT0kEn-scan-me-from-the-settings-pane-0123456789" };

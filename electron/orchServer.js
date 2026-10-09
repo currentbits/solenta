@@ -849,6 +849,26 @@ function createToolHandlers(deps) {
     };
   }
 
+  /**
+   * Ask the user for a secret (issue #1531). Non-blocking like ask_user; the
+   * value never comes back through here, only into the next runs' env.
+   */
+  async function secret_request(args) {
+    requireOwnThread(args);
+    const result = runner.requestSecret({
+      threadId: args.threadId,
+      name: args.name,
+      prompt: args.prompt,
+    });
+    return {
+      ...result,
+      note:
+        "The secret prompt is now on screen. End your turn here. When the " +
+        `user provides it, your next turn starts with $${result.name} set in ` +
+        "your environment. You will never see the value; do not ask for it in chat.",
+    };
+  }
+
   async function hypothesis_record(args) {
     const thread = store.getThread(args.threadId);
     if (!thread) {
@@ -1041,10 +1061,11 @@ function createToolHandlers(deps) {
 
   async function thread_settle(args) {
     requireOwnThread(args);
-    const updated = setSettled(store, {
-      threadId: args.threadId,
-      override: args.override,
-    });
+    const updated = setSettled(
+      store,
+      { threadId: args.threadId, override: args.override },
+      { broadcast },
+    );
     if (updated && updated.settledOverride === "settled") {
       retireAgent(updated.id);
     }
@@ -1191,6 +1212,7 @@ function createToolHandlers(deps) {
     thread_stop,
     thread_rename,
     ask_user,
+    secret_request,
     hypothesis_record,
     work_suggest,
     spec_submit,
@@ -1488,6 +1510,27 @@ function buildMcpServer(sdk, handlers, opts = {}) {
       },
     },
     async (args) => json(await handlers.ask_user(args)),
+  );
+
+  server.registerTool(
+    "secret_request",
+    {
+      description:
+        "Ask the user for a secret (API key, token, password) on YOUR OWN " +
+        "thread. threadId and projectId are your own. name is the env var it " +
+        "will be exposed as (e.g. STRIPE_API_KEY); prompt says what it is for. " +
+        "The user types it into a masked field. You never see the value: it " +
+        "is only set as $NAME in the environment of your next turns. Never " +
+        "ask for secrets in chat. This call RETURNS IMMEDIATELY: end your " +
+        "turn right after it; the user's answer starts your next turn.",
+      inputSchema: {
+        threadId: z.string().min(1),
+        projectId: z.string().min(1),
+        name: z.string().regex(/^[A-Z_][A-Z0-9_]*$/),
+        prompt: z.string().optional(),
+      },
+    },
+    async (args) => json(await handlers.secret_request(args)),
   );
 
   server.registerTool(

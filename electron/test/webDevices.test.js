@@ -36,7 +36,7 @@ describe("webDevices", () => {
     const a = devices.add({ name: "A" });
     const b = devices.add({ name: "B" });
     t = 5000;
-    assert.deepEqual(devices.authorize(b.token), { id: b.device.id, name: "B" });
+    assert.deepEqual(devices.authorize(b.token), { id: b.device.id, name: "B", scopes: ["read"] });
     assert.equal(devices.authorize("wrong"), null);
     assert.equal(devices.authorize(""), null);
     assert.equal(devices.authorize(undefined), null);

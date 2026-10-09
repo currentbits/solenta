@@ -156,6 +156,126 @@ function appBranchPrefixes(store) {
 }
 
 /**
+ * Every directory GC enumerates (#1531 / #1401). `worktreeBase` (userData)
+ * is app-owned: anything in it is ours, as before. The others are not: the
+ * user's chosen worktree location, the WSL roots resolveWorktreeDir uses,
+ * and the parent of every stored worktreePath (an older location the user
+ * since moved away from). In those, GC only ever looks at registered
+ * worktrees of known projects (see registeredWorktrees).
+ *
+ * @param {import('./store').Store} store
+ * @param {string} worktreeBase
+ * @param {NodeJS.Platform} [platform]
+ * @returns {{ dir: string, owned: boolean }[]}
+ */
+function worktreeRoots(store, worktreeBase, platform = process.platform) {
+  const { resolveWorktreeDir } = require("./worktrees-git.js");
+  /** @type {{ dir: string, owned: boolean }[]} */
+  const roots = [];
+  const seen = new Set();
+  const add = (/** @type {unknown} */ dir, owned = false) => {
+    if (typeof dir !== "string" || !dir) return;
+    const key = rootKey(dir);
+    if (seen.has(key)) return;
+    seen.add(key);
+    roots.push({ dir, owned });
+  };
+  add(worktreeBase, true);
+  const settings = store.getSettings ? store.getSettings() : {};
+  add(settings && settings.worktreeRoot);
+  for (const p of store.getProjects() || []) {
+    if (!p || !p.path || p.remoteHost) continue;
+    try {
+      const r = resolveWorktreeDir(p, worktreeBase, "x", platform);
+      if (r.dir !== r.addPath) add(path.win32.dirname(r.dir));
+    } catch {
+      // A WSL repo on a Windows mount refuses a dir; nothing to scan.
+    }
+  }
+  for (const t of store.getThreads() || []) {
+    const wt = t && t.worktreePath ? String(t.worktreePath) : "";
+    if (wt) add(/^\\\\/.test(wt) ? path.win32.dirname(wt) : path.dirname(wt));
+  }
+  return roots;
+}
+
+/** @param {string} p */
+function rootKey(p) {
+  return /^\\\\/.test(p) ? p.toLowerCase() : realpathOrResolve(p);
+}
+
+/**
+ * Linked worktrees git knows about, across every local project, keyed like
+ * rootKey. The main checkout (porcelain's first entry) and every project
+ * path are left out: a repo that happens to live in a scanned root is never
+ * a GC candidate.
+ *
+ * @param {import('./store').Store} store
+ * @returns {Promise<Set<string>>}
+ */
+async function registeredWorktrees(store) {
+  const { linuxPathToUnc } = require("./worktrees-git.js");
+  const projects = (store.getProjects() || []).filter(
+    (p) => p && p.path && !p.remoteHost,
+  );
+  const mains = new Set(projects.map((p) => rootKey(String(p.path))));
+  const out = new Set();
+  for (const p of projects) {
+    const res = await gitTryAsync(p.path, ["worktree", "list", "--porcelain"]);
+    if (!res.ok) continue;
+    const wsl = /^\\\\wsl/i.test(String(p.path));
+    const listed = String(res.stdout || "")
+      .split("\n")
+      .filter((l) => l.startsWith("worktree "))
+      .map((l) => l.slice("worktree ".length).trim());
+    for (const wt of listed.slice(1)) {
+      const key = rootKey(wsl ? linuxPathToUnc(p.path, wt) : wt);
+      if (!mains.has(key)) out.add(key);
+    }
+  }
+  return out;
+}
+
+const THREAD_ID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Candidate dirs across all roots. App-owned roots list every subdir, as
+ * before; other roots list only registered worktrees.
+ * @param {import('./store').Store} store
+ * @param {string} worktreeBase
+ * @returns {Promise<{ dir: string, name: string, owned: boolean }[]>}
+ */
+async function listRootDirs(store, worktreeBase) {
+  /** @type {{ dir: string, name: string, owned: boolean }[]} */
+  const out = [];
+  /** @type {Set<string> | null} */
+  let registered = null;
+  for (const root of worktreeRoots(store, worktreeBase)) {
+    /** @type {fs.Dirent[]} */
+    let entries = [];
+    try {
+      entries = fs.readdirSync(root.dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const dir = path.join(root.dir, entry.name);
+      if (!root.owned) {
+        // App worktrees are named by thread id; a user's own `git worktree
+        // add` in the same folder is registered too, so the name gates first.
+        if (!THREAD_ID_RE.test(entry.name)) continue;
+        registered = registered || (await registeredWorktrees(store));
+        if (!registered.has(rootKey(dir))) continue;
+      }
+      out.push({ dir, name: entry.name, owned: root.owned });
+    }
+  }
+  return out;
+}
+
+/**
  * Boot-time GC: remove worktree dirs under worktreeBase that no thread
  * references. A dirty orphan is first committed to `recovered/<name>`
  * (#1386) so its work survives as a branch; if that fails the dir is kept
@@ -175,13 +295,7 @@ async function sweepOrphanWorktrees(opts) {
   /** @type {{ removed: string[], kept: string[], recovered: { dir: string, branch: string }[] }} */
   const result = { removed: [], kept: [], recovered: [] };
 
-  /** @type {fs.Dirent[]} */
-  let entries = [];
-  try {
-    entries = fs.readdirSync(worktreeBase, { withFileTypes: true });
-  } catch {
-    return result;
-  }
+  const entries = await listRootDirs(store, worktreeBase);
 
   const referenced = new Set(
     store
@@ -192,9 +306,11 @@ async function sweepOrphanWorktrees(opts) {
   );
 
   for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-    const dir = path.join(worktreeBase, entry.name);
+    const dir = entry.dir;
     if (referenced.has(path.resolve(dir))) continue;
+    // Force-removing a dir git cannot read is only safe where we own every
+    // subdir; elsewhere (#1531) such a dir is kept.
+    const forceOk = entry.owned;
 
     try {
       // Owning repo: the worktree's common git dir is <repo>/.git.
@@ -204,7 +320,7 @@ async function sweepOrphanWorktrees(opts) {
         "--git-common-dir",
       ]);
       if (!common.ok || !common.stdout) {
-        if (gitSaysNotARepo(common)) {
+        if (forceOk && gitSaysNotARepo(common)) {
           const forced = await forceRemoveWorktreeDir(dir, null);
           if (forced.ok) result.removed.push(dir);
           else result.kept.push(dir);
@@ -221,7 +337,7 @@ async function sweepOrphanWorktrees(opts) {
         { raw: true },
       );
       if (!status.ok) {
-        if (!String(status.stdout || "").trim() && gitSaysNotARepo(status)) {
+        if (forceOk && !String(status.stdout || "").trim() && gitSaysNotARepo(status)) {
           const forced = await forceRemoveWorktreeDir(dir, repoPath);
           if (forced.ok) result.removed.push(dir);
           else result.kept.push(dir);
@@ -542,18 +658,8 @@ async function gcScanInner(opts) {
   const empty = { candidates: [], usage: [], totalBytes: 0 };
   if (!worktreeBase) return empty;
 
-  /** @type {fs.Dirent[]} */
-  let entries = [];
-  try {
-    entries = fs.readdirSync(worktreeBase, { withFileTypes: true });
-  } catch {
-    return empty;
-  }
-
-  const dirs = [];
-  for (const entry of entries) {
-    if (entry.isDirectory()) dirs.push(path.join(worktreeBase, entry.name));
-  }
+  const listed = await listRootDirs(store, worktreeBase);
+  const dirs = listed.map((e) => e.dir);
   if (dirs.length === 0) return empty;
 
   const threads = (store.getThreads() || []).filter(Boolean);
@@ -677,8 +783,13 @@ async function gcScanInner(opts) {
     // Orphans and transients (archived / fork) whose gitdir is gone are
     // reclaimable: `git worktree remove` cannot run, so GC force-deletes
     // the directory. Settled keep-N overflow stays blocked — the user
-    // may still reopen that thread (#642).
-    if (insp.notARepo && (!thread || isTransientWorktree(thread))) {
+    // may still reopen that thread (#642). Never outside an app-owned root
+    // (#1531): there the dir only stays blocked.
+    if (
+      insp.notARepo &&
+      listed[i].owned &&
+      (!thread || isTransientWorktree(thread))
+    ) {
       corrupt = true;
     } else if (!insp.readable) {
       blocked = "git could not read the directory";
@@ -1081,6 +1192,7 @@ module.exports = {
   RETENTION_SWEEP_STARTUP_MS,
   maybeCleanupMergedWorktree,
   sweepOrphanWorktrees,
+  worktreeRoots,
   gcScan,
   removeGcWorktree,
   gcClean,

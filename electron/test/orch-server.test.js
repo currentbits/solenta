@@ -1437,6 +1437,7 @@ describe("orch-server HTTP", () => {
       "peer_send",
       "preview",
       "refresh_worker_snapshot",
+      "secret_request",
       "spec_submit",
       "task_add",
       "task_claim",

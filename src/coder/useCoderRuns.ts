@@ -12,6 +12,7 @@ import type { CoderError } from "../useCoder";
 import { errorMessage } from "./errorMessage";
 import { parseBtwCommand } from "../btw";
 import { parseFeedbackCommand } from "../feedback";
+import { parseGoalCommand } from "../slashCommands";
 
 /** Thread create/fork and run start/rewind for the selected thread. */
 export function useCoderRuns({
@@ -184,6 +185,36 @@ export function useCoderRuns({
           // The confirmation message arrives on the `thread:updated` push the
           // handler broadcasts, so there is nothing to merge here.
           await api.app.feedback({ text: feedbackText, threadId });
+          setError(null);
+        } catch (err) {
+          setError({ scope: "run", message: errorMessage(err) });
+          throw err;
+        }
+        return;
+      }
+      // Goal (issue #1531): thread state, not a prompt. Safe mid-run; the
+      // next turn picks it up.
+      const goalCmd = parseGoalCommand(prompt);
+      if (goalCmd) {
+        const current = threadsRef.current.find((t) => t.id === threadId);
+        if (goalCmd.goal === null && !current?.goal) {
+          throw new Error("Add an objective: /goal <what done looks like>");
+        }
+        try {
+          const updated = await api.threads.setGoal({
+            threadId,
+            goal: goalCmd.goal,
+          });
+          applyThreads(
+            threadsRef.current.map((t) =>
+              t.id === updated.id ? updated : t,
+            ),
+          );
+          setDetail((prev) =>
+            prev && prev.thread.id === updated.id
+              ? { ...prev, thread: updated }
+              : prev,
+          );
           setError(null);
         } catch (err) {
           setError({ scope: "run", message: errorMessage(err) });

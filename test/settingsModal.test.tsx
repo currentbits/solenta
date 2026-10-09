@@ -10,7 +10,7 @@
  */
 import assert from "node:assert/strict";
 import { describe, it, afterEach } from "node:test";
-import { cloneElement, useState } from "react";
+import { act, cloneElement, useState } from "react";
 import { mount, unmountAll } from "./support/dom.ts";
 import { SettingsModal, type SettingsPane } from "../src/components/SettingsModal";
 import type { MemoryProjectToolsApi } from "../src/components/MemoryTab";
@@ -2216,6 +2216,7 @@ describe("SettingsModal integrations", () => {
       m.text().includes("tokentoken"),
       `expected token once, got: ${m.text()}`,
     );
+    assert.ok(m.query("[data-copy-mcp-url]"), "copy MCP URL");
     assert.ok(m.query("[data-copy-claude-json]"), "copy JSON");
     assert.ok(m.query("[data-copy-pairing-prompt]"), "copy prompt");
     m.unmount();
@@ -2670,5 +2671,84 @@ describe("SettingsModal Agents › named provider instances (#453)", () => {
 
     await m.click(m.query('[data-instance-delete="w1"]'));
     assert.deepEqual(saved.at(-1), { providerInstances: [] });
+  });
+});
+
+describe("SettingsModal model prices (#1531)", () => {
+  it("adds, validates, saves and clears a price override", async () => {
+    const patches: Partial<AppSettings>[] = [];
+    const m = await mount(
+      modal({
+        initialPane: "spending",
+        settings: {
+          dailyBudgetUsd: null,
+          autoSettleAfterDays: 3,
+          modelPrices: { "gpt-5": { input: 1.25, output: 10 } },
+        } as AppSettings,
+        onSaveSettings: async (patch) => {
+          patches.push(patch);
+          return { dailyBudgetUsd: null, autoSettleAfterDays: 3, ...patch } as AppSettings;
+        },
+      }),
+    );
+    const field = (row: number, key: string) =>
+      m.query(`[data-model-price-row="${row}"] [data-model-price-field="${key}"]`);
+    assert.equal((field(0, "model") as HTMLInputElement).value, "gpt-5");
+    assert.equal((field(0, "output") as HTMLInputElement).value, "10");
+
+    await m.click(m.query("[data-model-price-add]"));
+    await m.type(field(1, "model"), "o4");
+    await m.type(field(1, "input"), "-2");
+    await m.type(field(1, "output"), "8");
+    await m.click(m.query("[data-model-price-save]"));
+    assert.match(m.query("[data-model-price-error]")?.textContent ?? "", /o4: Input price must be a non-negative/);
+    assert.equal(patches.length, 0, "invalid rows never reach settings");
+
+    await m.type(field(1, "input"), "2");
+    await m.type(field(1, "cacheRead"), "0.5");
+    await m.click(m.query("[data-model-price-save]"));
+    assert.deepEqual(patches.at(-1), {
+      modelPrices: {
+        "gpt-5": { input: 1.25, output: 10 },
+        o4: { input: 2, output: 8, cacheRead: 0.5 },
+      },
+    });
+
+    await m.click(m.query('[data-model-price-row="0"] [data-model-price-remove]'));
+    await m.click(m.query("[data-model-price-save]"));
+    assert.deepEqual(patches.at(-1), {
+      modelPrices: { o4: { input: 2, output: 8, cacheRead: 0.5 } },
+    });
+    assert.match(m.text(), /never replaced/, "hint says reported cost wins");
+    m.unmount();
+  });
+});
+
+describe("SettingsModal worktree location (#1531)", () => {
+  it("saves a trimmed path on blur and clears to null", async () => {
+    const patches: Partial<AppSettings>[] = [];
+    const m = await mount(
+      modal({
+        initialPane: "threads",
+        settings: { dailyBudgetUsd: null, autoSettleAfterDays: 3 } as AppSettings,
+        onSaveSettings: async (patch) => {
+          patches.push(patch);
+          return { dailyBudgetUsd: null, autoSettleAfterDays: 3 } as AppSettings;
+        },
+      }),
+    );
+    const input = m.query("[data-worktree-root]") as HTMLInputElement;
+    assert.ok(input, "worktree location input");
+    assert.equal(input.value, "");
+    const blur = () =>
+      act(async () => {
+        input.dispatchEvent(new input.ownerDocument.defaultView!.FocusEvent("focusout", { bubbles: true }));
+      });
+    await blur();
+    assert.equal(patches.length, 0, "unchanged empty does not save");
+    await m.type(input, "  /Volumes/fast/wt ");
+    await blur();
+    assert.deepEqual(patches, [{ worktreeRoot: "/Volumes/fast/wt" }]);
+    m.unmount();
   });
 });

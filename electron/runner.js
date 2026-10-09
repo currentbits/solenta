@@ -1960,6 +1960,7 @@ function createRunner(opts) {
       ) +
       services.reviewItineraryNoteFor(dispatchThread) +
       services.teachNoteFor(dispatchThread) +
+      services.goalNoteFor(dispatchThread) +
       services.askNoteFor(dispatchThread) +
       services.codexComputerUseNoteFor(dispatchThread.provider) +
       services.crewTaskNoteFor(store, dispatchThread) +
@@ -2586,6 +2587,8 @@ function createRunner(opts) {
     handleCodexServerRequest,
     respondPermission,
     askUser,
+    requestSecret,
+    answerSecret,
     requestCiWorkflowSignOff,
     clearQuestion,
     maybePersistPlanApproval,
@@ -2629,6 +2632,7 @@ function createRunner(opts) {
     noteCursorSubagent,
     setSubagentStatus,
     ingestTaskNotifications,
+    ingestSubagentEvent,
     finishRunningSubagents,
   } = createSubagents(ctx);
   ctx.finishRunningSubagents = finishRunningSubagents;
@@ -2650,6 +2654,7 @@ function createRunner(opts) {
   // Provider runs (runner-provider-*.js) destructure these eagerly.
   Object.assign(ctx, {
     ingestTaskNotifications,
+    ingestSubagentEvent,
     noteCursorSubagent,
     handleCodexServerRequest,
     afterFailedTurn,
@@ -2724,6 +2729,8 @@ function createRunner(opts) {
     handleCodexServerRequest,
     respondPermission,
     askUser,
+    requestSecret,
+    answerSecret,
     clearQuestion,
     disposeClaudeSession,
     retireClaudeSession,

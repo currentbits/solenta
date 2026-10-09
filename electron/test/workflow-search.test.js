@@ -148,7 +148,7 @@ describe("workflow Codex phases get thread.webSearch (#792)", () => {
     );
   });
 
-  it("startWorkflowRun wires thread.webSearch into Codex -c web_search=live", async () => {
+  it("startWorkflowRun wires thread.webSearch (and fast, #1529) into Codex -c", async () => {
     const projectDir = path.join(tmpDir, "proj");
     fs.mkdirSync(projectDir);
     git(projectDir, ["init"]);
@@ -175,6 +175,7 @@ describe("workflow Codex phases get thread.webSearch (#792)", () => {
       });
       services.setProvider(store, { threadId: thread.id, provider: "codex" });
       services.setWebSearch(store, { threadId: thread.id, webSearch: true });
+      services.setFast(store, { threadId: thread.id, fast: true });
       const tmpl = services.saveTemplate(store, {
         name: "Codex only",
         phases: [
@@ -183,7 +184,7 @@ describe("workflow Codex phases get thread.webSearch (#792)", () => {
             agentCount: 1,
             instruction: "Codex plans briefly.",
             provider: "codex",
-            model: null,
+            model: "gpt-6.1-sol",
           },
         ],
       });
@@ -210,6 +211,7 @@ describe("workflow Codex phases get thread.webSearch (#792)", () => {
         `startWorkflowRun must pass -c web_search=live into Codex argv, got ${JSON.stringify(argv)}`,
       );
       assert.equal(argv[argv.indexOf("web_search=live") - 1], "-c");
+      assert.equal(argv[argv.indexOf("service_tier=priority") - 1], "-c");
     } finally {
       runner.stopAll();
     }

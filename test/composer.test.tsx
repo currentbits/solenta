@@ -153,6 +153,7 @@ interface Harness {
   providerSets: { provider?: string; model?: string | null }[];
   efforts: (ReasoningEffort | null)[];
   webSearches: boolean[];
+  fasts: boolean[];
   /**
    * Ordered log across BOTH callbacks, and the effective effort after
    * emulating the backend rule (setProvider clears effort on a provider
@@ -174,6 +175,7 @@ function makeHarness(provider = "claude"): Harness {
     providerSets: [],
     efforts: [],
     webSearches: [],
+    fasts: [],
     callOrder: [],
     effectiveEffort: null,
     harnessProvider: provider,
@@ -190,6 +192,7 @@ function composer(
     model?: string | null;
     reasoningEffort?: ReasoningEffort | null;
     webSearch?: boolean;
+    fast?: boolean;
     sessionId?: string | null;
     workspaceStrip?: ReactNode;
     disabled?: boolean;
@@ -223,6 +226,7 @@ function composer(
         over.reasoningEffort === undefined ? null : over.reasoningEffort
       }
       webSearch={over.webSearch === true}
+      fast={over.fast === true}
       providers={over.providers ?? PROVIDERS}
       onProviderSignIn={over.onProviderSignIn}
       ask={over.ask ?? false}
@@ -246,6 +250,9 @@ function composer(
       }}
       onSetWebSearch={(enabled) => {
         harness.webSearches.push(enabled);
+      }}
+      onSetFast={(enabled) => {
+        harness.fasts.push(enabled);
       }}
       onSaveWorkflow={async (t) => ({
         id: "saved",
@@ -2817,6 +2824,52 @@ describe("Composer web-search pill (issue #174)", () => {
     assert.ok(pill, "an enabled thread must render the on state");
     await m.click(pill);
     assert.deepEqual(h.webSearches, [false]);
+    m.unmount();
+  });
+});
+
+describe("Composer Fast trait (issue #1529)", () => {
+  const FAST_PROVIDERS = PROVIDERS.map((p) =>
+    p.id === "claude"
+      ? {
+          ...p,
+          modelInfo: p.modelInfo.map((m) =>
+            m.id === "claude-opus-4" ? { ...m, fast: true } : m,
+          ),
+        }
+      : p,
+  );
+
+  it("offers Fast in the picker only on a fast model and reports a toggle", async () => {
+    const h = makeHarness();
+    const m = await mount(
+      composer(h, { model: "claude-opus-4", providers: FAST_PROVIDERS }),
+    );
+    await m.click(m.query('button[aria-label^="Model:"]')!);
+    const chip = m.query("[data-picker-fast] button");
+    assert.ok(chip, "a fast-capable model shows the Speed group");
+    assert.equal(chip!.getAttribute("aria-pressed"), "false");
+    await m.click(chip!);
+    assert.deepEqual(h.fasts, [true]);
+    m.unmount();
+
+    const plain = await mount(
+      composer(makeHarness(), { model: "claude-sonnet-4", providers: FAST_PROVIDERS }),
+    );
+    await plain.click(plain.query('button[aria-label^="Model:"]')!);
+    assert.equal(plain.query("[data-picker-fast]"), null);
+    plain.unmount();
+  });
+
+  it("marks the trigger when fast is on", async () => {
+    const m = await mount(
+      composer(makeHarness(), {
+        model: "claude-opus-4",
+        fast: true,
+        providers: FAST_PROVIDERS,
+      }),
+    );
+    assert.ok(m.query('button[aria-label$=", fast"]'));
     m.unmount();
   });
 });

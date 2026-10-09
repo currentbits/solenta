@@ -150,4 +150,67 @@ describe("Settings Source Control (#608)", () => {
     assert.deepEqual(calls[1], { rescan: true });
     m.unmount();
   });
+
+  it("per-host GitHub account and saved token (#1528)", async () => {
+    const withAccounts: SourceControlDiscovery = {
+      probedAt: 1,
+      sourceControlProviders: [
+        {
+          ...discovery.sourceControlProviders[0],
+          accounts: [
+            { host: "github.com", login: "currentbits", active: true },
+            { host: "github.com", login: "work", active: false },
+          ],
+        },
+      ],
+    };
+    const patches: Array<Partial<AppSettings>> = [];
+    const m = await mount(
+      <SettingsModal
+        open
+        initialPane="git"
+        onClose={() => {}}
+        settings={
+          {
+            dailyBudgetUsd: 5,
+            autoSettleAfterDays: 3,
+            githubHosts: [{ host: "ghe.corp.example", account: null, hasToken: true }],
+          } as AppSettings
+        }
+        status={status()}
+        onSaveSettings={async (p) => {
+          patches.push(p);
+          return { dailyBudgetUsd: 5, autoSettleAfterDays: 3 } as AppSettings;
+        }}
+        onDiscoverSourceControl={async () => withAccounts}
+      />,
+    );
+    await m.flush();
+
+    const select = m.query('[data-github-account="github.com"]');
+    assert.ok(select, "account picker for github.com");
+    assert.match(select!.textContent || "", /gh active account \(currentbits\)/);
+    // GHE row exists from settings alone (token, no gh login) and shows it is saved.
+    const gheToken = m.query('[data-github-token="ghe.corp.example"]') as HTMLInputElement | null;
+    assert.equal(gheToken?.getAttribute("placeholder"), "Token saved");
+    assert.ok(m.query('[data-github-token-clear="ghe.corp.example"]'));
+
+    await m.change(select, "work");
+    // Saved GHE row is echoed WITHOUT a token key, so its token is kept.
+    assert.deepEqual(patches[0], {
+      githubHosts: [
+        { host: "ghe.corp.example", account: null },
+        { host: "github.com", account: "work" },
+      ],
+    });
+
+    await m.type(m.query('[data-github-token="github.com"]'), "ghp_new");
+    await m.click(m.query('[data-github-token-save="github.com"]'));
+    assert.deepEqual(patches[1].githubHosts?.[1], {
+      host: "github.com",
+      account: null,
+      token: "ghp_new",
+    });
+    m.unmount();
+  });
 });

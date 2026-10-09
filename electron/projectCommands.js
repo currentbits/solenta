@@ -21,6 +21,10 @@ const { effectiveCommands } = require("./repoConfig.js");
 
 /** Reserved actionId for the project's setupCommand. */
 const SETUP_ID = "setup";
+/** Reserved actionId for solenta.json `onSettle` (#1531). */
+const ON_SETTLE_ID = "onSettle";
+/** Teardown should be quick; the merged-PR cleanup waits on it. */
+const ON_SETTLE_TIMEOUT_MS = 2 * 60_000;
 const QUICK_ACTION_MAX = 8;
 const ACTION_NAME_MAX = 32;
 /** npm install on a cold cache is slower than a test suite. */
@@ -74,7 +78,7 @@ function normalizeQuickActions(raw) {
     const command = normalizeCommand(row.command);
     if (!name || !command) continue;
     let id = typeof row.id === "string" ? row.id.trim() : "";
-    if (!id || id === SETUP_ID || seen.has(id)) id = randomUUID();
+    if (!id || id === SETUP_ID || id === ON_SETTLE_ID || seen.has(id)) id = randomUUID();
     seen.add(id);
     out.push({ id, name, command });
     if (out.length >= QUICK_ACTION_MAX) break;
@@ -206,6 +210,17 @@ function resolveCommand(project, actionId) {
       ...trust,
     };
   }
+  if (actionId === ON_SETTLE_ID) {
+    if (!eff.onSettle) return null;
+    return {
+      id: ON_SETTLE_ID,
+      name: "onSettle",
+      command: eff.onSettle.command,
+      timeoutMs: ON_SETTLE_TIMEOUT_MS,
+      fromRepo: eff.onSettle.fromRepo,
+      ...trust,
+    };
+  }
   const row = eff.quickActions.find((a) => a && a.id === actionId);
   if (!row) return null;
   const command = normalizeCommand(row.command);
@@ -304,6 +319,57 @@ function kickWorktreeSetup(opts) {
   setupJobs.add(p);
   inflight.set(id, p);
   return p;
+}
+
+/**
+ * solenta.json `onSettle` (#1531): run once in a worktree thread's checkout
+ * when it settles. `onSettleAt` on the thread marks this settle as handled;
+ * new activity clears it (clearSettledOnActivity), so the next settle runs
+ * again. Unapproved → a skipped event, like setup. Never throws; the
+ * promise resolves when the command finishes (or times out), so callers
+ * that delete the worktree next can wait, and the rest ignore it.
+ *
+ * @param {{
+ *   store: import("./store").Store,
+ *   threadId: string,
+ *   broadcast?: (channel: string, payload: unknown) => void,
+ * }} opts
+ * @returns {Promise<import("../src/shared/ipc").CommandRunResult | null>}
+ */
+function runOnSettle(opts) {
+  try {
+    const { store, threadId, broadcast } = opts;
+    const thread = store.getThread(threadId);
+    if (!thread || !thread.worktreePath || thread.onSettleAt != null) {
+      return Promise.resolve(null);
+    }
+    if (!fs.existsSync(thread.worktreePath)) return Promise.resolve(null);
+    const project = store.getProject(thread.projectId);
+    const resolved = resolveCommand(project, ON_SETTLE_ID);
+    if (!resolved) return Promise.resolve(null);
+    store.updateThread(threadId, { onSettleAt: Date.now() });
+    if (resolved.fromRepo && !resolved.trusted) {
+      appendEvent(
+        store,
+        threadId,
+        "[onSettle] skipped: solenta.json commands need your approval. Press On settle in the thread details to review and run it.",
+      );
+      store.save();
+      pushCommandState(store, threadId, broadcast);
+      return Promise.resolve(null);
+    }
+    // Not joined to `inflight`: a settled thread has no run, and a quick
+    // action still going must not swallow the teardown.
+    return runOne(store, {
+      threadId: String(threadId),
+      cwd: thread.worktreePath,
+      project,
+      resolved,
+      broadcast,
+    }).catch(() => null);
+  } catch {
+    return Promise.resolve(null);
+  }
 }
 
 /** @param {string} cwd */
@@ -458,6 +524,8 @@ async function runCommand(store, input, deps) {
 
 module.exports = {
   SETUP_ID,
+  ON_SETTLE_ID,
+  ON_SETTLE_TIMEOUT_MS,
   QUICK_ACTION_MAX,
   ACTION_NAME_MAX,
   SETUP_TIMEOUT_MS,
@@ -468,6 +536,7 @@ module.exports = {
   REPO_CONFIG_UNTRUSTED,
   SUBMODULE_COMMAND,
   kickWorktreeSetup,
+  runOnSettle,
   waitForCommand,
   pendingSetup,
   runCommand,

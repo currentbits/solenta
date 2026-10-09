@@ -19,7 +19,9 @@ const {
   createPr,
   parseNumstat,
   PR_TOO_LARGE_PREFIX,
+  setGithubApi,
 } = require("../worktrees.js");
+const { fakeGithubApi } = require("./support/fakeGithubApi.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
 const { rmTree } = require("./support/rmTree.js");
 
@@ -138,6 +140,7 @@ describe("pr-size-cap (#402)", () => {
   });
 
   afterEach(async () => {
+    setGithubApi(null);
     delete process.env.CODER_GH_BIN;
     delete process.env.CODER_FAKE_GH_STATE;
     try {
@@ -261,6 +264,29 @@ describe("pr-size-cap (#402)", () => {
     });
     assert.equal(info.number, 42);
     assert.equal(info.created, true);
+  });
+
+  it("creates the PR over the API when a token exists (#1534)", async () => {
+    const setup = commitLines(50);
+    const api = fakeGithubApi({ prs: [] });
+    setGithubApi(api);
+    const info = await createPr({
+      store,
+      threadId: thread.id,
+      title: "Small",
+      body: "why",
+      draft: true,
+      broadcast: () => {},
+    });
+    assert.equal(info.number, 1);
+    assert.equal(info.created, true);
+    assert.equal(info.state, "OPEN");
+    assert.equal(store.getThread(thread.id).prUrl, "https://github.com/acme/demo/pull/1");
+    const post = api.state.calls.find((c) => c.url.endsWith("/pulls"));
+    assert.match(post.url, /^https:\/\/api\.github\.com\/repos\/acme\/demo\/pulls$/);
+    assert.deepEqual(post.body, { base: "main", head: setup.branch, title: "Small", body: "why", draft: true });
+    const ghCalls = JSON.parse(fs.readFileSync(statePath, "utf8")).calls;
+    assert.ok(!ghCalls.some((c) => c[0] === "pr"), "gh must not run when the API answers");
   });
 });
 

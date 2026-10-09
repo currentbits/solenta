@@ -1126,4 +1126,176 @@ if (scenario === "wedged") {
     assert.ok(interruptAt >= 0 && unsubAt > interruptAt);
     await rmTree(dir);
   });
+
+  describe("native goal (#1531)", () => {
+    // Goal RPCs on top of the turn fake. A second line listener answers
+    // thread/goal/*; activation either runs one continuation turn to
+    // completion ("chain") or leaves the goal active ("hold").
+    const GOAL_FAKE = `
+let goal = process.env.CODER_FAKE_CODEX_GOAL ? JSON.parse(process.env.CODER_FAKE_CODEX_GOAL) : null;
+const goalPlan = process.env.CODER_FAKE_CODEX_GOAL_PLAN || "chain";
+function goalNote() { notify("thread/goal/updated", { threadId, turnId: null, goal }); }
+rl.on("line", (line) => {
+  let msg; try { msg = JSON.parse(line); } catch { return; }
+  if (msg.method === "thread/goal/get") { reply(msg.id, { goal }); return; }
+  if (msg.method === "thread/goal/clear") { goal = null; reply(msg.id, { cleared: true }); return; }
+  if (msg.method !== "thread/goal/set") return;
+  const p = msg.params;
+  goal = {
+    threadId,
+    objective: p.objective || (goal && goal.objective),
+    status: p.status || "active",
+    tokenBudget: null,
+    tokensUsed: (goal && goal.tokensUsed) || 0,
+  };
+  reply(msg.id, { goal });
+  goalNote();
+  if (goal.status !== "active" || goalPlan !== "chain") return;
+  notify("turn/completed", { threadId, turn: { id: turnId, status: "completed" } });
+  turnId = "turn-2";
+  notify("turn/started", { threadId, turn: { id: turnId } });
+  notify("item/completed", { item: { type: "agentMessage", id: "m2", text: "continued" }, threadId, turnId });
+  goal = { ...goal, status: "complete", tokensUsed: 99 };
+  goalNote();
+  notify("turn/completed", { threadId, turn: { id: turnId, status: "completed" } });
+});
+`;
+
+    function writeGoalFake(dir) {
+      return writeTurnFake(dir, GOAL_FAKE);
+    }
+
+    function readRpc(rpcFile) {
+      return fs
+        .readFileSync(rpcFile, "utf8")
+        .trim()
+        .split("\n")
+        .map((l) => JSON.parse(l));
+    }
+
+    function runGoal(dir, rpcFile, env, goal, events, onExit) {
+      return runCodexAppServerTurn({
+        binary: writeGoalFake(dir),
+        args: ["app-server", "--listen", "stdio://"],
+        cwd: dir,
+        envExtra: { CODER_FAKE_CODEX_RPC_FILE: rpcFile, ...env },
+        prompt: "go",
+        goal,
+        onEvent: (ev) => events.push(ev),
+        onExit,
+      });
+    }
+
+    it("maps thread/goal/updated to goal.updated", () => {
+      const goal = { objective: "x", status: "complete", tokensUsed: 5 };
+      assert.deepEqual(
+        notificationToJsonl({ method: "thread/goal/updated", params: { threadId: "t", goal } }),
+        { type: "goal.updated", goal },
+      );
+    });
+
+    it("creates the goal paused, activates it once our turn runs, and follows continuation turns", async () => {
+      const dir = tmp();
+      const rpcFile = path.join(dir, "rpc.jsonl");
+      const events = [];
+      let exitInfo = null;
+      runGoal(
+        dir,
+        rpcFile,
+        { CODER_FAKE_CODEX_SCENARIO: "hang" },
+        { objective: "ship it", status: "active" },
+        events,
+        (info) => {
+          exitInfo = info;
+        },
+      );
+      await waitFor(() => exitInfo != null);
+      assert.equal(exitInfo.code, 0, exitInfo.stderr);
+      const rpc = readRpc(rpcFile);
+      const methods = rpc.map((m) => m.method);
+      const sets = rpc.filter((m) => m.method === "thread/goal/set");
+      assert.deepEqual(
+        sets.map((m) => m.params.status),
+        ["paused", "active"],
+        "no shutdown pause once the goal is complete",
+      );
+      assert.equal(sets[0].params.objective, "ship it");
+      assert.ok(methods.indexOf("thread/goal/get") < methods.indexOf("turn/start"));
+      assert.ok(methods.indexOf("turn/start") < rpc.indexOf(sets[1]));
+      assert.equal(events.filter((e) => e.type === "turn.completed").length, 2);
+      const goals = events.filter((e) => e.type === "goal.updated");
+      assert.ok(goals.length > 0);
+      assert.equal(
+        goals.some((e) => e.goal.status === "paused"),
+        false,
+        "our own pause never reaches the store",
+      );
+      assert.equal(goals[goals.length - 1].goal.status, "complete");
+      assert.equal(goals[goals.length - 1].goal.tokensUsed, 99);
+      await rmTree(dir);
+    });
+
+    it("pauses an active goal before interrupting on stop", async () => {
+      const dir = tmp();
+      const rpcFile = path.join(dir, "rpc.jsonl");
+      const events = [];
+      let exitInfo = null;
+      const handle = runGoal(
+        dir,
+        rpcFile,
+        { CODER_FAKE_CODEX_SCENARIO: "hang", CODER_FAKE_CODEX_GOAL_PLAN: "hold" },
+        { objective: "ship it", status: "active" },
+        events,
+        (info) => {
+          exitInfo = info;
+        },
+      );
+      await waitFor(() =>
+        events.some((e) => e.type === "goal.updated" && e.goal.status === "active"),
+      );
+      handle.kill();
+      await waitFor(() => exitInfo != null);
+      const rpc = readRpc(rpcFile);
+      const methods = rpc.map((m) => m.method);
+      const pauseAt = rpc.findIndex(
+        (m, i) => m.method === "thread/goal/set" && m.params.status === "paused" && i > methods.indexOf("turn/start"),
+      );
+      assert.ok(pauseAt >= 0, "stop must pause the goal");
+      assert.ok(pauseAt < methods.indexOf("turn/interrupt"));
+      await rmTree(dir);
+    });
+
+    it("clears a native goal the user cleared, and leaves an untouched thread alone", async () => {
+      const dir = tmp();
+      const rpcFile = path.join(dir, "rpc.jsonl");
+      let exitInfo = null;
+      runGoal(
+        dir,
+        rpcFile,
+        { CODER_FAKE_CODEX_GOAL: JSON.stringify({ objective: "old", status: "paused" }) },
+        null,
+        [],
+        (info) => {
+          exitInfo = info;
+        },
+      );
+      await waitFor(() => exitInfo != null);
+      assert.equal(exitInfo.code, 0, exitInfo.stderr);
+      assert.ok(readRpc(rpcFile).some((m) => m.method === "thread/goal/clear"));
+
+      const dir2 = tmp();
+      const rpcFile2 = path.join(dir2, "rpc.jsonl");
+      exitInfo = null;
+      runGoal(dir2, rpcFile2, {}, undefined, [], (info) => {
+        exitInfo = info;
+      });
+      await waitFor(() => exitInfo != null);
+      assert.equal(
+        readRpc(rpcFile2).some((m) => String(m.method).startsWith("thread/goal/")),
+        false,
+      );
+      await rmTree(dir);
+      await rmTree(dir2);
+    });
+  });
 });

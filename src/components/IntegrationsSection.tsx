@@ -208,6 +208,20 @@ export function IntegrationsSection({
             >
               {copied === "token" ? "Copied" : "Copy token"}
             </button>
+            {created.url ? (
+              <button
+                type="button"
+                className={styles.btn}
+                data-copy-mcp-url=""
+                onClick={() => {
+                  void copyText(created.url || "").then((ok) => {
+                    if (ok) flashCopied("url");
+                  });
+                }}
+              >
+                {copied === "url" ? "Copied" : "Copy MCP URL"}
+              </button>
+            ) : null}
             {created.claudeDesktopJson ? (
               <button
                 type="button"

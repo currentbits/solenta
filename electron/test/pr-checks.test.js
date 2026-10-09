@@ -18,7 +18,10 @@ const {
   prChecks,
   mergePr,
   setupWorktree,
+  prStatus,
+  setGithubApi,
 } = require("../worktrees.js");
+const { fakeGithubApi } = require("./support/fakeGithubApi.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
 const { rmTree } = require("./support/rmTree.js");
 
@@ -341,6 +344,7 @@ describe("prChecks / mergePr", () => {
   });
 
   afterEach(async () => {
+    setGithubApi(null);
     if (prevGh == null) delete process.env.CODER_GH_BIN;
     else process.env.CODER_GH_BIN = prevGh;
     if (prevState == null) delete process.env.CODER_FAKE_GH_STATE;
@@ -488,5 +492,88 @@ describe("prChecks / mergePr", () => {
       !state.calls.some((c) => c[0] === "pr" && c[1] === "merge"),
       "an empty unique tree must not squash-merge",
     );
+  });
+
+  describe("over the GitHub API (#1534)", () => {
+    function api(extra) {
+      const branch = Object.keys(JSON.parse(fs.readFileSync(statePath, "utf8")).prs)[0];
+      return fakeGithubApi({
+        prs: [
+          { number: 3, url: "https://github.com/acme/demo/pull/3", headRefName: branch, state: "MERGED" },
+          { number: 12, url: "https://github.com/acme/demo/pull/12", headRefName: branch, title: "Checks feature", mergeable: "CONFLICTING", additions: 4, deletions: 2, changedFiles: 1 },
+          { number: 13, url: "https://github.com/fork/demo/pull/13", headRefName: branch, isCrossRepository: true },
+        ],
+        checks: [
+          { __typename: "CheckRun", name: "test", status: "COMPLETED", conclusion: "SUCCESS", detailsUrl: "https://ci/1" },
+          { __typename: "CheckRun", name: "e2e", status: "COMPLETED", conclusion: "TIMED_OUT", detailsUrl: "https://ci/2" },
+          { __typename: "CheckRun", name: "lint", status: "IN_PROGRESS", conclusion: null, detailsUrl: null },
+          { __typename: "CheckRun", name: "docs", status: "COMPLETED", conclusion: "NEUTRAL", detailsUrl: null },
+          { __typename: "CheckRun", name: "deploy", status: "COMPLETED", conclusion: "CANCELLED", detailsUrl: null },
+          { __typename: "StatusContext", context: "ci/legacy", state: "SUCCESS", targetUrl: "https://ci/3" },
+        ],
+        ...extra,
+      });
+    }
+    const ghPrCalls = () =>
+      JSON.parse(fs.readFileSync(statePath, "utf8")).calls.filter((c) => c[0] === "pr");
+
+    it("prStatus picks the same-repo OPEN PR and persists mergeable", async () => {
+      setGithubApi(api());
+      const info = await prStatus({ store, threadId: thread.id });
+      assert.equal(info.number, 12);
+      assert.equal(info.state, "OPEN");
+      assert.equal(info.mergeable, "CONFLICTING");
+      assert.equal(info.additions, 4);
+      assert.equal(info.baseRefName, "main");
+      assert.equal(store.getThread(thread.id).prMergeable, "CONFLICTING");
+      assert.deepEqual(ghPrCalls(), []);
+    });
+
+    it("prChecks maps CheckRun/StatusContext onto gh's buckets", async () => {
+      setGithubApi(api());
+      const result = await prChecks({ store, threadId: thread.id });
+      assert.deepEqual(result, {
+        ok: true,
+        checks: [
+          { name: "test", bucket: "pass", link: "https://ci/1" },
+          { name: "e2e", bucket: "fail", link: "https://ci/2" },
+          { name: "lint", bucket: "pending" },
+          { name: "docs", bucket: "skipping" },
+          { name: "deploy", bucket: "cancel" },
+          { name: "ci/legacy", bucket: "pass", link: "https://ci/3" },
+        ],
+      });
+      assert.deepEqual(ghPrCalls(), []);
+    });
+
+    it("prChecks reports no PR from the API without running gh", async () => {
+      const a = api();
+      a.state.prs = [];
+      setGithubApi(a);
+      assert.deepEqual(await prChecks({ store, threadId: thread.id }), { ok: false, reason: "no PR" });
+      assert.equal(await prStatus({ store, threadId: thread.id }), null);
+      assert.deepEqual(ghPrCalls(), []);
+    });
+
+    it("mergePr squash-merges over REST", async () => {
+      const a = api();
+      setGithubApi(a);
+      const info = await mergePr({ store, threadId: thread.id });
+      assert.equal(info.state, "MERGED");
+      assert.equal(store.getThread(thread.id).prState, "MERGED");
+      const put = a.state.calls.find((c) => c.method === "PUT");
+      assert.match(put.url, /\/pulls\/12\/merge$/);
+      assert.deepEqual(ghPrCalls(), []);
+    });
+
+    it("falls back to gh when the API is down", async () => {
+      setGithubApi(api({ failWith: 502 }));
+      const info = await mergePr({ store, threadId: thread.id });
+      assert.equal(info.state, "MERGED");
+      assert.ok(ghPrCalls().some((c) => c[1] === "merge"));
+      const checks = await prChecks({ store, threadId: thread.id });
+      assert.equal(checks.ok, true);
+      assert.equal(checks.checks.length, 2);
+    });
   });
 });

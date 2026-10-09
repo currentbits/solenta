@@ -56,6 +56,9 @@ const {
   stopAsk,
   recordTeachReview,
   requestTeachReview,
+  goalNoteFor,
+  setGoal,
+  applyNativeGoal,
 } = require("./services-teach.js");
 const {
   createThread,
@@ -64,6 +67,7 @@ const {
   setPermissionMode,
   setReasoningEffort,
   setWebSearch,
+  setFast,
   forkThread,
   savePlanFile,
   forkWorkerThread,
@@ -207,6 +211,7 @@ module.exports = {
   setPermissionMode,
   setReasoningEffort,
   setWebSearch,
+  setFast,
   setProvider,
   // normalizeModelForProvider / isKnownProviderId / truncateThreadTitle stay
   // module-private (round-49 review A-n2: dead exports). Tests use
@@ -266,6 +271,9 @@ module.exports = {
   stopTeach,
   recordTeachReview,
   requestTeachReview,
+  goalNoteFor,
+  setGoal,
+  applyNativeGoal,
   codeIndexNoteFor,
   readProjectCodeMap,
   specStagePrompt,

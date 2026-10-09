@@ -356,6 +356,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
     orchestrationBudgetUsd: null,
     autoSettleAfterDays: 3,
     autoSettleOnMerge: true,
+    stripAgentCoauthors: false,
     mcpServers: [],
     defaultWorktree: false,
     updateChannel: null,
@@ -951,6 +952,16 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           }
           next.confirmQuitWithActiveWork = v;
         }
+        if (Object.prototype.hasOwnProperty.call(p, "worktreeRoot")) {
+          const v = typeof p.worktreeRoot === "string" ? p.worktreeRoot.trim() : "";
+          if (v && !v.startsWith("/")) {
+            calls.push({ channel: "settings.set", args: [patch] });
+            return Promise.reject(
+              new Error("Worktree location must be an absolute path"),
+            );
+          }
+          next.worktreeRoot = v || null;
+        }
         if (Object.prototype.hasOwnProperty.call(p, "resumeInterruptedRuns")) {
           const v = p.resumeInterruptedRuns;
           if (typeof v !== "boolean") {
@@ -1020,6 +1031,21 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           }
           const stepped = Math.round(v * 10) / 10;
           next.uiScale = Math.min(1.6, Math.max(0.8, stepped));
+        }
+        if (Object.prototype.hasOwnProperty.call(p, "modelPrices")) {
+          const rows = Object.values(p.modelPrices ?? {});
+          const bad = rows.some((row) =>
+            Object.values(row).some(
+              (v) => typeof v !== "number" || !Number.isFinite(v) || v < 0,
+            ),
+          );
+          if (bad) {
+            calls.push({ channel: "settings.set", args: [patch] });
+            return Promise.reject(
+              new Error("Model prices must be non-negative numbers"),
+            );
+          }
+          next.modelPrices = { ...p.modelPrices };
         }
         settingsState = next;
         return rec(
@@ -2327,6 +2353,21 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         threads = threads.map((t) => (t.id === i.threadId ? next : t));
         return Promise.resolve(next);
       },
+      setGoal: (input: unknown) => {
+        const i = input as { threadId: string; goal: string | null };
+        calls.push({ channel: "threads.setGoal", args: [input] });
+        const existing = threads.find((t) => t.id === i.threadId);
+        if (!existing) {
+          return Promise.reject(new Error(`Unknown thread: ${i.threadId}`));
+        }
+        const objective = (i.goal ?? "").trim();
+        const next: ThreadInfo = {
+          ...existing,
+          goal: objective ? { objective, status: "active", setAt: 0 } : null,
+        };
+        threads = threads.map((t) => (t.id === i.threadId ? next : t));
+        return Promise.resolve(next);
+      },
       startAsk: (input: unknown) => {
         const i = input as { threadId: string };
         calls.push({ channel: "threads.startAsk", args: [input] });
@@ -2611,6 +2652,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         rec("threads.setReasoningEffort", [input], thread()),
       setWebSearch: (input: unknown) =>
         rec("threads.setWebSearch", [input], thread()),
+      setFast: (input: unknown) => rec("threads.setFast", [input], thread()),
       /**
        * Honest fork (round 49 contract / electron forkThread): new thread
        * same project, copies provider/model/permissionMode unless overridden;
@@ -3203,6 +3245,12 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           } satisfies PrDetail,
         } as PrDetailResult);
       },
+      prRevert: (input: unknown) =>
+        rec("git.prRevert", [input], {
+          ok: true as const,
+          url: "https://github.com/acme/demo/pull/99",
+          branch: "revert-pr-1",
+        }),
       prMergeAt: (input: unknown) => {
         const i = input as { prNumber: number };
         return rec("git.prMergeAt", [input], {
@@ -3505,13 +3553,14 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         };
         return rec("web.setEnabled", [input], { ...web });
       },
-      addDevice: (input: { name: string }) => {
+      addDevice: (input: { name: string; scopes?: WebDeviceInfo["scopes"] }) => {
         const device: WebDeviceInfo = {
           id: `web-dev-${web.devices.length + 1}`,
           name: input.name,
           createdAt: 0,
           lastSeenAt: null,
           legacy: false,
+          scopes: input.scopes ?? ["read"],
         };
         web = { ...web, devices: web.devices.concat(device) };
         return rec("web.addDevice", [input], { device, token: "t".repeat(43) });

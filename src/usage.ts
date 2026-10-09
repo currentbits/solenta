@@ -233,6 +233,33 @@ function unwrapReport(raw: unknown): {
 }
 
 /**
+ * The report narrowed to one provider (#1531). Thread rows match on the
+ * thread's recorded provider, so a thread that switched providers mid-day
+ * counts under its last one.
+ */
+export function filterUsageReport(
+  report: UsageReport,
+  provider: string | null,
+): UsageReport {
+  if (!provider) return report;
+  const byDay: UsageByDay = {};
+  for (const [day, providers] of Object.entries(report.byDay)) {
+    const models = asRecord(providers)?.[provider];
+    if (models) byDay[day] = { [provider]: models } as UsageByDay[string];
+  }
+  const threadsByDay: UsageThreadsByDay = {};
+  for (const [day, threads] of Object.entries(report.threadsByDay)) {
+    const kept = Object.entries(asRecord(threads) ?? {}).filter(
+      ([, entry]) => asRecord(entry)?.provider === provider,
+    );
+    if (kept.length > 0) {
+      threadsByDay[day] = Object.fromEntries(kept) as UsageThreadsByDay[string];
+    }
+  }
+  return { byDay, threadsByDay };
+}
+
+/**
  * One bucket per local day in `range` (including empty days), plus provider,
  * model, project and thread totals. `today` is the inclusive end of the window.
  */

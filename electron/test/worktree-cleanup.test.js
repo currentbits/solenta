@@ -25,6 +25,7 @@ const {
   refreshPrStates,
   maybeCleanupMergedWorktree,
   sweepOrphanWorktrees,
+  gcScan,
   ensureWorktree,
   clearMissingWorktree,
   removeWorktree,
@@ -353,6 +354,125 @@ describe("sweepOrphanWorktrees", () => {
     assert.deepEqual(result.removed, [orphan.worktreePath]);
     assert.ok(!fs.existsSync(orphan.worktreePath));
     assert.ok(fs.existsSync(fx.worktreePath));
+  });
+});
+
+describe("custom worktree location (#1531)", () => {
+  let fx;
+
+  beforeEach(async () => {
+    fx = await makeFixture();
+  });
+
+  afterEach(async () => {
+    await rmTree(fx.tmpDir);
+  });
+
+  it("validates the setting: absolute, existing, writable; empty resets", () => {
+    assert.throws(
+      () => fx.store.setSettings({ worktreeRoot: "relative/dir" }),
+      /absolute/,
+    );
+    assert.throws(
+      () => fx.store.setSettings({ worktreeRoot: path.join(fx.tmpDir, "nope") }),
+      /writable directory/,
+    );
+    const file = path.join(fx.tmpDir, "file.txt");
+    fs.writeFileSync(file, "x");
+    assert.throws(() => fx.store.setSettings({ worktreeRoot: file }), /writable directory/);
+    fx.store.setSettings({ worktreeRoot: fx.tmpDir });
+    assert.equal(fx.store.getSettings().worktreeRoot, fx.tmpDir);
+    fx.store.setSettings({ worktreeRoot: "  " });
+    assert.equal(fx.store.getSettings().worktreeRoot, null);
+  });
+
+  it("puts new worktrees in the chosen root and leaves existing ones", () => {
+    const custom = path.join(fx.tmpDir, "custom");
+    fs.mkdirSync(custom);
+    fx.store.setSettings({ worktreeRoot: custom });
+    const t = services.createThread(fx.store, {
+      projectId: fx.project.id,
+      title: "Custom root",
+    });
+    const wt = setupWorktree({
+      store: fx.store,
+      threadId: t.id,
+      worktreeBase: fx.worktreeBase,
+      broadcast: () => {},
+    });
+    assert.equal(wt.worktreePath, path.join(custom, t.id));
+    assert.equal(fx.store.getThread(fx.threadId).worktreePath, fx.worktreePath);
+    assert.ok(fx.worktreePath.startsWith(fx.worktreeBase));
+  });
+
+  it("sweeps only registered app worktrees in a custom root", async () => {
+    // Worst case: the chosen root is the folder that also holds the repo,
+    // its bare remote and the default base.
+    const custom = fx.tmpDir;
+    fx.store.setSettings({ worktreeRoot: custom });
+    const t = services.createThread(fx.store, {
+      projectId: fx.project.id,
+      title: "Orphan in custom root",
+    });
+    const orphan = setupWorktree({
+      store: fx.store,
+      threadId: t.id,
+      worktreeBase: fx.worktreeBase,
+      broadcast: () => {},
+    });
+    fx.store.removeThread(t.id);
+    // Things that must survive: plain dirs (one even named like a thread
+    // id), and a user's own `git worktree add` of the same repo.
+    const notes = path.join(custom, "notes");
+    fs.mkdirSync(notes);
+    fs.writeFileSync(path.join(notes, "keep.txt"), "keep\n");
+    const uuidLike = path.join(custom, "11111111-2222-3333-4444-555555555555");
+    fs.mkdirSync(uuidLike);
+    fs.writeFileSync(path.join(uuidLike, "keep.txt"), "keep\n");
+    const manual = path.join(custom, "my-feature");
+    git(fx.repo, ["worktree", "add", "-b", "my-feature", manual]);
+    fx.store.saveNow();
+
+    const scan = await gcScan({ store: fx.store, worktreeBase: fx.worktreeBase });
+    assert.deepEqual(
+      scan.candidates.map((c) => c.path),
+      [orphan.worktreePath],
+    );
+
+    const result = await sweepOrphanWorktrees({
+      store: fx.store,
+      worktreeBase: fx.worktreeBase,
+    });
+    assert.deepEqual(result.removed, [orphan.worktreePath]);
+    assert.ok(!fs.existsSync(orphan.worktreePath));
+    assert.ok(fs.existsSync(path.join(notes, "keep.txt")));
+    assert.ok(fs.existsSync(path.join(uuidLike, "keep.txt")));
+    assert.ok(fs.existsSync(manual));
+    assert.ok(fs.existsSync(path.join(fx.repo, "README.md")));
+    assert.ok(fs.existsSync(fx.worktreePath));
+  });
+
+  it("still scans an old location after the setting moves away", async () => {
+    const old = path.join(fx.tmpDir, "old");
+    fs.mkdirSync(old);
+    fx.store.setSettings({ worktreeRoot: old });
+    const t = services.createThread(fx.store, {
+      projectId: fx.project.id,
+      title: "Archived in old root",
+    });
+    const wt = setupWorktree({
+      store: fx.store,
+      threadId: t.id,
+      worktreeBase: fx.worktreeBase,
+      broadcast: () => {},
+    });
+    fx.store.updateThread(t.id, { archived: true, updatedAt: 0 });
+    fx.store.setSettings({ worktreeRoot: null });
+
+    const scan = await gcScan({ store: fx.store, worktreeBase: fx.worktreeBase });
+    const cand = scan.candidates.find((c) => c.path === wt.worktreePath);
+    assert.ok(cand, "old-root worktree is a candidate");
+    assert.equal(cand.reason, "retention");
   });
 });
 

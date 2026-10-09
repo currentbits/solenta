@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  CLAUDE_CACHE_TTL_MS,
+  COLD_COMPACT_MIN_TOKENS,
   CONTEXT_WARN_FRACTION,
+  coldCompactTokens,
   contextRing,
   contextWindowFor,
   formatWindowSize,
@@ -152,5 +155,37 @@ describe("threadContextWindow", () => {
       threadContextWindow(null, providers, "kimi", "kimi-code/k3"),
       1_000_000,
     );
+  });
+});
+
+describe("coldCompactTokens", () => {
+  const now = 10 * CLAUDE_CACHE_TTL_MS;
+  const cold = now - CLAUDE_CACHE_TTL_MS - 1;
+  const base = {
+    provider: "claude",
+    contextTokens: 120_000,
+    lastActivityAt: cold,
+    now,
+  };
+
+  it("returns the context size for a cold, large claude thread", () => {
+    assert.equal(coldCompactTokens(base), 120_000);
+  });
+
+  it("stays quiet inside the cache TTL", () => {
+    const warm = { ...base, lastActivityAt: now - CLAUDE_CACHE_TTL_MS };
+    assert.equal(coldCompactTokens(warm), null);
+  });
+
+  it("stays quiet below the size cutoff or without a measurement", () => {
+    const small = { ...base, contextTokens: COLD_COMPACT_MIN_TOKENS - 1 };
+    assert.equal(coldCompactTokens(small), null);
+    assert.equal(coldCompactTokens({ ...base, contextTokens: undefined }), null);
+    const atCutoff = { ...base, contextTokens: COLD_COMPACT_MIN_TOKENS };
+    assert.equal(coldCompactTokens(atCutoff), COLD_COMPACT_MIN_TOKENS);
+  });
+
+  it("is claude only", () => {
+    assert.equal(coldCompactTokens({ ...base, provider: "codex" }), null);
   });
 });

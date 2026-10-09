@@ -493,6 +493,8 @@ app.whenReady().then(async () => {
   });
 
   const userData = app.getPath("userData");
+  // Cached signed catalog now, release refresh in the background (#1529).
+  void require("./remoteCatalog.js").initRemoteCatalog(userData);
   try {
     speech = createSpeechManager({
       userDataPath: userData,
@@ -881,6 +883,8 @@ app.whenReady().then(async () => {
   // cannot freeze the main process (ISSUES.md prStatus hang) and non-GitHub
   // origins stay silent. Startup pass ~30s after boot; then every 5 min.
   // Zero qualifying threads → refreshPrStates spawns nothing.
+  // GitHub API tokens follow Settings › Source control per host (#1528).
+  require("./github.js").setHostSettings(() => store.getSettings().githubHosts);
   prStateRefresher = createPrStateRefresher({
     store,
     broadcast,

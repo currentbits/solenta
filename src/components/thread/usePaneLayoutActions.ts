@@ -12,10 +12,14 @@ import {
   hasPaneType,
   leaves,
   openPane,
+  REOPEN_PANE_EVENT,
+  rememberClosedPanes,
   savePaneLayout,
+  takeClosedPane,
   type LayoutNode,
   type PaneType,
 } from "../../paneLayout";
+import { matchesBinding } from "../../keybindings";
 
 /** Persist the per-thread pane layout and the pane open/close/reset actions. */
 export function usePaneLayoutActions({
@@ -77,11 +81,12 @@ export function usePaneLayoutActions({
 
   const applyLayout = useCallback(
     (next: LayoutNode, focusId: string) => {
+      if (threadId) rememberClosedPanes(threadId, layout, next);
       setLayout(next);
       setFocusedId(findLeaf(next, focusId) ? focusId : firstLeafId(next));
       if (!hasPaneType(next, "diff")) onCloseChanges();
     },
-    [onCloseChanges],
+    [threadId, layout, onCloseChanges],
   );
 
   const handlePaneChange = useCallback(
@@ -112,6 +117,26 @@ export function usePaneLayoutActions({
     const next = closePane(layout, terminalLeaf.id);
     if (next.closed) applyLayout(next.layout, next.focusId);
   }, [terminalLeaf, layout, applyLayout, handleOpenPane]);
+
+  const handleReopenPane = useCallback(() => {
+    const type = threadId ? takeClosedPane(threadId, layout) : null;
+    if (type) handleOpenPane(type);
+  }, [threadId, layout, handleOpenPane]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!matchesBinding(e, "pane.reopen")) return;
+      if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
+      e.preventDefault();
+      handleReopenPane();
+    };
+    window.addEventListener("keydown", onKey);
+    window.addEventListener(REOPEN_PANE_EVENT, handleReopenPane);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener(REOPEN_PANE_EVENT, handleReopenPane);
+    };
+  }, [handleReopenPane]);
 
   const handleResetLayout = useCallback(() => {
     const next = defaultPaneLayout();

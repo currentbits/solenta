@@ -80,6 +80,21 @@
   box-shadow: var(--focus-ring);
 }
 
+.providerSelect {
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--card);
+  color: var(--text);
+  font-size: 12px;
+}
+
+.providerSelect:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
 .refresh {
   display: inline-flex;
   align-items: center;

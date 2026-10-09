@@ -1,6 +1,6 @@
 "use strict";
 
-// Teach mode and ask mode.
+// Teach mode, ask mode, and the thread goal.
 
 const {
   getProvider,
@@ -282,7 +282,99 @@ function requestTeachReview(store, input) {
   return { thread: { ...thread }, prompt: TEACH_REVIEW_PROMPT };
 }
 
+/* --------------------------------------------------------------------- goal */
+
+/** Providers with a native goal (Codex app-server thread/goal/*, #1531). */
+const NATIVE_GOAL_PROVIDERS = new Set(["codex"]);
+
+const GOAL_MAX_CHARS = 4000;
+
+/**
+ * Standing note for a thread goal on providers without a native one.
+ * Codex gets thread/goal/set instead (electron/codex-appserver.js), and a
+ * finished goal stops steering the agent.
+ *
+ * @param {{ provider?: string, goal?: { objective?: string, status?: string } | null } | null | undefined} thread
+ * @returns {string}
+ */
+function goalNoteFor(thread) {
+  const goal = thread && thread.goal;
+  if (!goal || !goal.objective || goal.status === "complete") return "";
+  if (NATIVE_GOAL_PROVIDERS.has(String(thread.provider || ""))) return "";
+  return (
+    "\n\n[Goal] The user set a standing goal for this thread: " +
+    `${goal.objective}\n` +
+    "Keep working toward it across turns. When it is fully achieved, say so plainly."
+  );
+}
+
+/**
+ * Set or clear (goal null/blank) the thread goal (`/goal`, #1531). A new
+ * objective starts active; re-setting a finished or blocked one restarts
+ * it. Never bumps updatedAt.
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string, goal?: string | null }} input
+ */
+function setGoal(store, input) {
+  const { threadId } = input || {};
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  const objective = String((input && input.goal) || "")
+    .trim()
+    .slice(0, GOAL_MAX_CHARS);
+  if (!objective) {
+    if (!thread.goal) return { ...thread };
+    const updated = store.updateThread(threadId, { goal: null });
+    store.save();
+    return updated ? { ...updated } : { ...thread, goal: null };
+  }
+  const cur = thread.goal;
+  if (cur && cur.objective === objective && cur.status === "active") {
+    return { ...thread };
+  }
+  const goal = { objective, status: "active", setAt: Date.now() };
+  const updated = store.updateThread(threadId, { goal });
+  store.save();
+  return updated ? { ...updated } : { ...thread, goal };
+}
+
+/**
+ * Fold a native goal report (Codex thread/goal/updated) into the stored
+ * goal. Adopts a goal the agent created itself; ignores a report for a
+ * different objective than the one the user set. Returns true on change.
+ *
+ * @param {import('./store').Store} store
+ * @param {string} threadId
+ * @param {{ objective?: string, status?: string, tokensUsed?: number } | null | undefined} native
+ */
+function applyNativeGoal(store, threadId, native) {
+  const thread = store.getThread(threadId);
+  if (!thread || !native || !native.objective) return false;
+  const cur = thread.goal;
+  if (cur && cur.objective !== native.objective) return false;
+  const status = String(native.status || "active");
+  const tokensUsed = Number(native.tokensUsed) || 0;
+  if (cur && cur.status === status && cur.tokensUsed === tokensUsed) {
+    return false;
+  }
+  store.updateThread(threadId, {
+    goal: {
+      ...(cur || { objective: native.objective, setAt: Date.now() }),
+      status,
+      tokensUsed,
+    },
+  });
+  return true;
+}
+
 module.exports = {
+  NATIVE_GOAL_PROVIDERS,
+  goalNoteFor,
+  setGoal,
+  applyNativeGoal,
   TEACH_REVIEW_THRESHOLDS,
   TEACH_REVIEW_PROMPT,
   teachAutonomyFor,

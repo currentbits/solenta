@@ -130,3 +130,38 @@ describe("resolveGitCommand", () => {
     assert.deepEqual(out, { bin: "git", args: ["status"], cwd: unc });
   });
 });
+
+describe("worktreeRoots (#1401)", () => {
+  const { worktreeRoots } = require("../worktrees-gc.js");
+  const store = (projects, settings = {}) => ({
+    getSettings: () => settings,
+    getProjects: () => projects,
+    getThreads: () => [],
+  });
+
+  it("adds the WSL roots resolveWorktreeDir uses, never as app-owned", () => {
+    const roots = worktreeRoots(
+      store([
+        { path: "\\\\wsl$\\Ubuntu\\home\\me\\code\\repo" },
+        { path: "\\\\wsl$\\Ubuntu\\mnt\\c\\src\\repo" },
+        { path: "C:\\repo" },
+        { path: "\\\\wsl$\\Ubuntu\\home\\me\\remote", remoteHost: "dev@box" },
+      ]),
+      BASE,
+      WIN,
+    );
+    assert.deepEqual(roots, [
+      { dir: BASE, owned: true },
+      { dir: "\\\\wsl$\\Ubuntu\\home\\me\\code\\.solenta\\worktrees", owned: false },
+      { dir: "\\\\wsl$\\Ubuntu\\tmp\\solenta-worktrees", owned: false },
+    ]);
+  });
+
+  it("adds the chosen worktree location, not app-owned", () => {
+    const roots = worktreeRoots(store([], { worktreeRoot: "/Volumes/fast/wt" }), "/ud/worktrees", "darwin");
+    assert.deepEqual(roots, [
+      { dir: "/ud/worktrees", owned: true },
+      { dir: "/Volumes/fast/wt", owned: false },
+    ]);
+  });
+});

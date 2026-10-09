@@ -8,6 +8,7 @@ const { execCommand } = require("./ssh.js");
 const {
   PATCH_TRUNCATE,
   resolveWorktreeDir,
+  effectiveWorktreeBase,
   gitOut,
   gitTry,
   gitFailureText,
@@ -168,6 +169,9 @@ function abandonCheckout(opts) {
  * >}
  */
 async function checkoutPr(opts) {
+  // ponytail: stays on gh (view/diff/checkout), not ghApiTryAsync: `gh pr
+  // checkout` does the fetch/fork-remote git plumbing. Move it when that is
+  // reimplemented on git directly.
   const { store, projectId, worktreeBase, broadcast } = opts || {};
   const prNumber = Number(opts && opts.prNumber);
   if (!Number.isFinite(prNumber) || prNumber <= 0) {
@@ -278,9 +282,10 @@ async function checkoutPr(opts) {
     created = true;
   }
 
-  const { dir, addPath } = resolveWorktreeDir(project, worktreeBase, thread.id);
+  const base = effectiveWorktreeBase(store, worktreeBase);
+  const { dir, addPath } = resolveWorktreeDir(project, base, thread.id);
   if (addPath === dir) {
-    fs.mkdirSync(worktreeBase, { recursive: true });
+    fs.mkdirSync(base, { recursive: true });
   } else {
     execCommand(project, "mkdir", ["-p", path.posix.dirname(addPath)]);
   }
