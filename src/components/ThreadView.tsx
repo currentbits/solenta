@@ -131,7 +131,7 @@ import {
 } from "../replyContext";
 import { waitWhatPrompt } from "../waitWhat";
 import { sessionImagePathsFromMessages } from "../sessionImages";
-import { PathLinkProvider } from "./PathLinks";
+import { PathLinkProvider, ThreadLinkContext } from "./PathLinks";
 import {
   SandboxBadge,
   ContextRingBadge,
@@ -637,6 +637,8 @@ interface ThreadViewProps {
   handoffSource?: ThreadInfo | null;
   /** Select another thread (provenance chip → source). */
   onSelectThread?: (id: string) => void;
+  /** Same-project thread id → title; those ids link in replies (#1531). */
+  threadTitles?: Record<string, string>;
   /**
    * Report/board the user left to open this thread (#942). Back restores
    * that view; omitted when the thread was opened from the sidebar.
@@ -823,6 +825,7 @@ export const ThreadView = memo(function ThreadView({
   onDismissSuggestion,
   handoffSource = null,
   onSelectThread,
+  threadTitles,
   returnToView = null,
   onReturnToView,
   comparePeers = EMPTY_COMPARE_PEERS,
@@ -1051,6 +1054,14 @@ export const ThreadView = memo(function ThreadView({
       return map;
     },
     [onResolvePaths, sessionImages],
+  );
+
+  const threadLinks = useMemo(
+    () =>
+      threadTitles && onSelectThread
+        ? { titles: threadTitles, open: onSelectThread }
+        : null,
+    [threadTitles, onSelectThread],
   );
 
   const handleOpenWorkspacePath = useCallback(
@@ -2548,6 +2559,7 @@ export const ThreadView = memo(function ThreadView({
       loadImage={onLoadAttachmentImage}
       sessionImages={sessionImages}
     >
+    <ThreadLinkContext.Provider value={threadLinks}>
     <main
       className={styles.main}
       ref={dropHostRef}
@@ -4738,6 +4750,7 @@ export const ThreadView = memo(function ThreadView({
         </div>
       )}
     </main>
+    </ThreadLinkContext.Provider>
     </PathLinkProvider>
   );
 });

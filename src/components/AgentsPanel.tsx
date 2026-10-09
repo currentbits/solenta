@@ -176,6 +176,8 @@ interface AgentsPanelProps {
   onLandLead?: () => Promise<void>;
   /** Select a thread (team row click). */
   onSelectThread?: (id: string) => void;
+  /** Stop a worker's run (team row; same host action as thread_stop). */
+  onStopThread?: (id: string) => void;
   /** Re-spawn a failed workflow phase agent (#825). */
   onRetryAgent?: (agentId: string) => void;
   /** Opens the Git pane (fresh load). */
@@ -1971,14 +1973,17 @@ function TeamRow({
   role,
   providers,
   onSelect,
+  onStop,
 }: {
   summary: ThreadSummaryInfo;
   role: string;
   providers: ProviderInfo[];
   onSelect?: (id: string) => void;
+  /** Stop this row's run (same host action as thread_stop). Shown while working. */
+  onStop?: (id: string) => void;
 }) {
   return (
-    <li>
+    <li className={styles.teamItem}>
       <button
         type="button"
         className={styles.teamRow}
@@ -2014,6 +2019,25 @@ function TeamRow({
           </span>
         )}
       </button>
+      {onStop && summary.status === "working" && (
+        <button
+          type="button"
+          className={styles.teamStop}
+          aria-label={`Stop ${summary.title}`}
+          title="Stop"
+          onClick={() => onStop(summary.id)}
+        >
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 16 16"
+            fill="currentColor"
+            aria-hidden="true"
+          >
+            <rect x="3.5" y="3.5" width="9" height="9" rx="1.5" />
+          </svg>
+        </button>
+      )}
     </li>
   );
 }
@@ -2150,6 +2174,7 @@ export function AgentsContent({
   onVerifyLead,
   onLandLead,
   onSelectThread,
+  onStopThread,
   onRetryAgent,
 }: {
   workflow: WorkflowView | null;
@@ -2167,6 +2192,7 @@ export function AgentsContent({
   onVerifyLead?: () => Promise<void>;
   onLandLead?: () => Promise<void>;
   onSelectThread?: (id: string) => void;
+  onStopThread?: (id: string) => void;
   onRetryAgent?: (agentId: string) => void;
 }) {
   /**
@@ -2468,6 +2494,7 @@ export function AgentsContent({
                   role="Worker"
                   providers={providers}
                   onSelect={onSelectThread}
+                  onStop={onStopThread}
                 />
               ))}
               {(showDoneWorkers || team.workers.length === 0) &&
@@ -2820,6 +2847,7 @@ export const AgentsPanel = memo(function AgentsPanel({
   onVerifyLead,
   onLandLead,
   onSelectThread,
+  onStopThread,
   onRetryAgent,
   onViewChanges,
   fetchDiff,
@@ -2984,6 +3012,7 @@ export const AgentsPanel = memo(function AgentsPanel({
           onVerifyLead={onVerifyLead}
           onLandLead={onLandLead}
           onSelectThread={onSelectThread}
+          onStopThread={onStopThread}
           onRetryAgent={onRetryAgent}
         />
       ) : tab === "git" ? (
