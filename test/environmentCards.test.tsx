@@ -650,3 +650,64 @@ describe("PR watch row (#1493 D)", () => {
     none.unmount();
   });
 });
+
+describe("Open revert PR (#1531)", () => {
+  async function withGit(git: unknown, run: () => Promise<void>) {
+    const shell = await mount(<div />);
+    const w = window as unknown as { coder?: unknown; open: typeof window.open };
+    const prev = w.coder;
+    const prevOpen = w.open;
+    w.coder = { git };
+    shell.unmount();
+    try {
+      await run();
+    } finally {
+      w.coder = prev;
+      w.open = prevOpen;
+    }
+  }
+
+  it("reverts a merged PR and opens the new PR", async () => {
+    const calls: unknown[] = [];
+    const opened: unknown[] = [];
+    await withGit(
+      {
+        prRevert: async (input: unknown) => {
+          calls.push(input);
+          return { ok: true, url: "https://github.com/o/r/pull/9", branch: "revert-pr-7" };
+        },
+      },
+      async () => {
+        (window as unknown as { open: unknown }).open = (url: unknown) => {
+          opened.push(url);
+          return null;
+        };
+        const m = await mount(tab({ thread: thread({ prNumber: 7, prState: "MERGED" }) }));
+        await m.flush();
+        await m.click(m.query("[data-pr-revert-btn]"));
+        await m.flush();
+        assert.deepEqual(calls, [{ threadId: "t1" }]);
+        assert.deepEqual(opened, ["https://github.com/o/r/pull/9"]);
+        m.unmount();
+      },
+    );
+  });
+
+  it("shows the failure reason, and no button unless merged", async () => {
+    await withGit(
+      { prRevert: async () => ({ ok: false, reason: "Reverting #7 conflicts" }) },
+      async () => {
+        const m = await mount(tab({ thread: thread({ prNumber: 7, prState: "MERGED" }) }));
+        await m.flush();
+        await m.click(m.query("[data-pr-revert-btn]"));
+        await m.flush();
+        assert.match(m.query("[data-pr-revert-error]")?.textContent || "", /conflicts/);
+        m.unmount();
+        const open = await mount(tab({ thread: thread({ prNumber: 7, prState: "OPEN" }) }));
+        await open.flush();
+        assert.equal(open.query("[data-pr-revert]"), null);
+        open.unmount();
+      },
+    );
+  });
+});

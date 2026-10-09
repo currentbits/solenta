@@ -1,9 +1,12 @@
 "use strict";
 
+const fs = require("node:fs");
+const path = require("node:path");
 const { validateSubagentPool } = require("./subagentPool");
 const { clampUiScale } = require("./zoom.js");
 const { validateMcpServers, mergeMcpSettingsPatch } = require("./mcp.js");
 const { validateProviderInstances } = require("./providerInstances.js");
+const { validateModelPrices } = require("./modelPrices.js");
 const {
   isHttpUrl,
   validateAgentProfiles,
@@ -15,7 +18,32 @@ const {
   normalizeSettings,
   normalizeOtel,
   normalizeWebhook,
+  normalizeGithubHosts,
 } = require("./store-normalize.js");
+
+/**
+ * Custom worktree root (#1531): null/empty = the default; otherwise an
+ * absolute, existing, writable directory.
+ * @param {unknown} v
+ * @returns {string | null}
+ */
+function validateWorktreeRoot(v) {
+  if (v == null || (typeof v === "string" && !v.trim())) return null;
+  if (typeof v !== "string") {
+    throw new Error("worktreeRoot must be a string or null");
+  }
+  const dir = v.trim();
+  if (!path.isAbsolute(dir)) {
+    throw new Error("Worktree location must be an absolute path");
+  }
+  try {
+    if (!fs.statSync(dir).isDirectory()) throw new Error("not a directory");
+    fs.accessSync(dir, fs.constants.W_OK);
+  } catch {
+    throw new Error(`Worktree location is not a writable directory: ${dir}`);
+  }
+  return dir;
+}
 
 /** Store settings read/patch methods; store.js copies them onto Store.prototype. */
 class StoreSettingsMethods {
@@ -40,6 +68,7 @@ class StoreSettingsMethods {
       orchestrationBudgetUsd: n.orchestrationBudgetUsd,
       autoSettleAfterDays: n.autoSettleAfterDays,
       autoSettleOnMerge: n.autoSettleOnMerge,
+      stripAgentCoauthors: n.stripAgentCoauthors,
       mcpServers: n.mcpServers,
       defaultWorktree: n.defaultWorktree,
       defaultOrchestrate: n.defaultOrchestrate,
@@ -67,7 +96,10 @@ class StoreSettingsMethods {
       subagentPool: n.subagentPool,
       otel: n.otel,
       linearApiKey: n.linearApiKey,
+      githubHosts: n.githubHosts,
       webhook: n.webhook,
+      modelPrices: n.modelPrices,
+      worktreeRoot: n.worktreeRoot,
     };
   }
 
@@ -154,6 +186,13 @@ class StoreSettingsMethods {
         throw new Error("autoSettleOnMerge must be a boolean");
       }
       this.data.settings.autoSettleOnMerge = v;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "stripAgentCoauthors")) {
+      const v = patch.stripAgentCoauthors;
+      if (typeof v !== "boolean") {
+        throw new Error("stripAgentCoauthors must be a boolean");
+      }
+      this.data.settings.stripAgentCoauthors = v;
     }
     if (Object.prototype.hasOwnProperty.call(patch, "mcpServers")) {
       this.data.settings.mcpServers = validateMcpServers(
@@ -329,6 +368,9 @@ class StoreSettingsMethods {
       }
       this.data.settings.confirmQuitWithActiveWork = v;
     }
+    if (Object.prototype.hasOwnProperty.call(patch, "worktreeRoot")) {
+      this.data.settings.worktreeRoot = validateWorktreeRoot(patch.worktreeRoot);
+    }
     if (Object.prototype.hasOwnProperty.call(patch, "resumeInterruptedRuns")) {
       const v = patch.resumeInterruptedRuns;
       if (typeof v !== "boolean") {
@@ -354,6 +396,21 @@ class StoreSettingsMethods {
         throw new Error("linearApiKey must be a string or null");
       }
     }
+    if (Object.prototype.hasOwnProperty.call(patch, "githubHosts")) {
+      // The renderer only sees hasToken, so a row without a `token` key keeps
+      // the saved one; null or "" clears it.
+      const prev = new Map(
+        (this.data.settings.githubHosts || []).map((r) => [r.host, r.token]),
+      );
+      const rows = Array.isArray(patch.githubHosts)
+        ? patch.githubHosts.map((r) => {
+            if (!r || typeof r !== "object" || "token" in r) return r;
+            const host = typeof r.host === "string" ? r.host.trim().toLowerCase() : "";
+            return { ...r, token: prev.get(host) ?? null };
+          })
+        : patch.githubHosts;
+      this.data.settings.githubHosts = normalizeGithubHosts(rows, true);
+    }
     if (Object.prototype.hasOwnProperty.call(patch, "webhook")) {
       const v = patch.webhook;
       if (!v || typeof v !== "object" || Array.isArray(v)) {
@@ -378,6 +435,10 @@ class StoreSettingsMethods {
         ...this.data.settings.webhook,
         ...v,
       });
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "modelPrices")) {
+      // Whole-map replace: the editor sends every row, so a dropped row clears.
+      this.data.settings.modelPrices = validateModelPrices(patch.modelPrices);
     }
     return this.getSettings();
   }

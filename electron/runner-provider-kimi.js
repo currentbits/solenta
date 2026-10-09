@@ -6,6 +6,7 @@
 const { resolveBin } = require("./providers.js");
 const { truncate } = require("./claude.js");
 const path = require("node:path");
+const threadSecrets = require("./threadSecrets.js");
 const kimiParse = require("./kimi.js");
 const { materializeKimiHome, deployKimiGuardrailOverlay, runKimi } = kimiParse;
 const { kimiMcpServersForRun } = require("./memory-sup.js");
@@ -120,6 +121,7 @@ function createKimiRun(ctx) {
       model: thread.model || null,
       reasoningEffort: thread.reasoningEffort || null,
       webSearch: thread.webSearch === true,
+      fast: thread.fast === true,
     });
 
     if (abortIfCancelled(threadId, runId)) return { runId };
@@ -356,7 +358,7 @@ function createKimiRun(ctx) {
       binary: spawn.binary,
       args: spawn.args,
       cwd: spawn.cwd,
-      env: kimiEnv,
+      env: threadSecrets.withEnv(threadId, kimiEnv),
       // No argv route for kimi effort; runKimi flips config.toml (effortVia).
       reasoningEffort: thread.reasoningEffort || null,
       onEvent: (ev) => {

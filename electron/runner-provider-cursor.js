@@ -19,6 +19,7 @@ const {
   guardrailNotice,
 } = require("./guardrail-hook-core.js");
 const path = require("node:path");
+const threadSecrets = require("./threadSecrets.js");
 const cursorParse = require("./cursor.js");
 const { materializeCursorHome, runCursor } = cursorParse;
 const {
@@ -123,6 +124,7 @@ function createCursorRun(ctx) {
       model: thread.model || null,
       reasoningEffort: thread.reasoningEffort || null,
       webSearch: thread.webSearch === true,
+      fast: thread.fast === true,
     });
     // #686: pin Task/Agent workers to the parent model. #813: classifyTool
     // preToolUse. Prompt stays last. Local plugins live here. ssh/WSL:
@@ -339,7 +341,7 @@ function createCursorRun(ctx) {
       binary: spawn.binary,
       args: spawn.args,
       cwd: spawn.cwd,
-      env: cursorEnv,
+      env: threadSecrets.withEnv(threadId, cursorEnv),
       onEvent: (ev) => {
         // Cursor does not keep the CLI alive between turns, but a background
         // Task can finish via <task-notification> instead of tool_call/completed
@@ -521,7 +523,7 @@ function createCursorRun(ctx) {
         if (e.kind !== "cursor") return;
 
         clearRun(threadId);
-        finishRunningSubagents(threadId);
+        finishRunningSubagents(threadId, "done");
         completeWorkLogStep(threadId, e.startingId);
         completeWorkLogStep(threadId, e.workingId);
 

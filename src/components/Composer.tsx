@@ -155,6 +155,8 @@ interface ComposerProps {
   reasoningEffort: ReasoningEffort | null;
   /** Codex live web search (`--search`). Hidden unless the provider advertises it. */
   webSearch?: boolean;
+  /** Fast / priority tier (#1529). Shown only on a model whose info lists `fast`. */
+  fast?: boolean;
   /** Registry from providers.list(). */
   providers: ProviderInfo[];
   /** Saved named profiles from settings. Empty hides the Profiles section. */
@@ -167,6 +169,7 @@ interface ComposerProps {
   }) => void | Promise<void>;
   onSetReasoningEffort: (effort: ReasoningEffort | null) => void | Promise<void>;
   onSetWebSearch?: (webSearch: boolean) => void | Promise<void>;
+  onSetFast?: (fast: boolean) => void | Promise<void>;
   onSaveWorkflow: (template: WorkflowSaveInput) => Promise<WorkflowTemplateInfo>;
   onRemoveWorkflow: (id: string) => Promise<void>;
   workflowListError?: string | null;
@@ -319,12 +322,14 @@ export const Composer = memo(function Composer({
   model,
   reasoningEffort,
   webSearch = false,
+  fast = false,
   providers,
   agentProfiles = [],
   workflows,
   onSetProvider,
   onSetReasoningEffort,
   onSetWebSearch,
+  onSetFast,
   onSaveWorkflow,
   onRemoveWorkflow,
   workflowListError = null,
@@ -701,6 +706,12 @@ export const Composer = memo(function Composer({
   const reasoningVisible = showReasoningControl(efforts);
   const effortUnavailable = currentProviderInfo?.available === false;
   const effortLabel = effortDisplayLabel(reasoningEffort);
+  const fastAvailable = Boolean(
+    onSetFast &&
+      currentProviderInfo?.available !== false &&
+      currentProviderInfo?.modelInfo?.find((m) => m.id === model)?.fast,
+  );
+  const fastOn = fast && fastAvailable;
   const honouredModes = providerPermissionModes(currentProviderInfo);
   const currentModeHonoured = permissionModeHonoured(
     permissionMode,
@@ -1502,6 +1513,17 @@ export const Composer = memo(function Composer({
     }
   };
 
+  const toggleFast = async () => {
+    if (!onSetFast || !fastAvailable || locked) return;
+    try {
+      await onSetFast(!fast);
+    } catch (err) {
+      setLocalError(
+        err instanceof Error && err.message ? err.message : "Failed to set fast mode",
+      );
+    }
+  };
+
   const toggleWebSearch = async () => {
     if (!onSetWebSearch) return;
     if (locked || currentProviderInfo?.available === false) return;
@@ -1751,8 +1773,8 @@ export const Composer = memo(function Composer({
                 aria-haspopup="dialog"
                 aria-expanded={modelOpen}
                 aria-controls={modelOpen ? modelListId : undefined}
-                aria-label={`Model: ${triggerLabel}`}
-                title={`Model: ${triggerLabel}`}
+                aria-label={`Model: ${triggerLabel}${fastOn ? ", fast" : ""}`}
+                title={`Model: ${triggerLabel}${fastOn ? " (fast)" : ""}`}
                 onClick={() => {
                   if (locked) return;
                   if (modelOpen) {
@@ -1784,6 +1806,7 @@ export const Composer = memo(function Composer({
                     text mid-frame. */}
                 <span key={triggerLabel} className={styles.pillLabel}>
                   {triggerLabel}
+                  {fastOn ? " · Fast" : null}
                 </span>
                 <span className={styles.caret}>
                   <svg
@@ -1980,7 +2003,9 @@ export const Composer = memo(function Composer({
                             : null;
                         const sub = row.profile
                           ? row.vendor
-                          : row.setup
+                          : row.updateHint
+                            ? row.updateHint
+                            : row.setup
                             ? "not installed · set up"
                             : row.id === CUSTOM_MODEL_ID
                               ? "type a model id"
@@ -2183,6 +2208,25 @@ export const Composer = memo(function Composer({
                             {effortDisplayLabel(level)}
                           </button>
                         ))}
+                      </div>
+                    ) : null}
+                    {fastAvailable ? (
+                      <div
+                        className={styles.pickerEffort}
+                        role="group"
+                        aria-label="Speed"
+                        data-picker-fast=""
+                      >
+                        <span className={styles.pickerEffortLabel}>Speed</span>
+                        <button
+                          type="button"
+                          className={styles.effortChip}
+                          aria-pressed={fastOn}
+                          title="Priority tier: faster replies, higher usage"
+                          onClick={() => void toggleFast()}
+                        >
+                          Fast
+                        </button>
                       </div>
                     ) : null}
                   </div>

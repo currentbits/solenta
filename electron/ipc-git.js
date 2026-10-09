@@ -285,6 +285,10 @@ module.exports = {
       { store: ctx.store, broadcast: ctx.broadcast },
     );
   },
+  "git:prRevert": async (ctx, input) => {
+    const { openRevertPr } = require("./revertPr.js");
+    return openRevertPr({ store: ctx.store, threadId: input && input.threadId });
+  },
   "issues:fetch": async (ctx, input) => {
     const projectPath = input && input.projectPath;
     const ref = input && input.ref;

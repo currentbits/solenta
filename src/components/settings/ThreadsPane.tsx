@@ -145,6 +145,39 @@ export function ThreadsPane({
             parallel agents never touch your checkout. Local projects
             only.
           </p>
+          <label className={styles.fieldLabel} htmlFor="worktree-root">
+            Worktree location
+          </label>
+          <input
+            id="worktree-root"
+            key={settings?.worktreeRoot ?? ""}
+            className={styles.input}
+            type="text"
+            spellCheck={false}
+            placeholder="Default (app data folder)"
+            defaultValue={settings?.worktreeRoot ?? ""}
+            disabled={saving || settings == null}
+            data-worktree-root=""
+            onBlur={(e) => {
+              const next = e.target.value.trim() || null;
+              if (next === (settings?.worktreeRoot ?? null)) return;
+              setError(null);
+              void onSaveSettings({ worktreeRoot: next }).catch((err) => {
+                setError(
+                  err instanceof Error && err.message
+                    ? err.message
+                    : "Failed to save settings",
+                );
+              });
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") e.currentTarget.blur();
+            }}
+          />
+          <p className={styles.note}>
+            Absolute path to a writable folder for new worktrees. Existing
+            worktrees stay where they are. Empty uses the default.
+          </p>
           <label className={styles.fieldRow}>
             <input
               type="checkbox"

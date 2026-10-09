@@ -6,6 +6,7 @@ import type {
   MemoryEntryInfo,
   ProjectInfo,
   ProviderInfo,
+  ThreadGoal,
   ThreadInfo,
 } from "../../shared/ipc";
 import { isDevBuild, resolveCoderApi } from "../../coderApi";
@@ -39,6 +40,50 @@ export function SandboxBadge({
       aria-label={`${label}: ${sandbox.reason}`}
     >
       {label}
+    </span>
+  );
+}
+
+const GOAL_STATUS_LABEL: Record<ThreadGoal["status"], string> = {
+  active: "active",
+  paused: "paused",
+  blocked: "blocked",
+  usageLimited: "usage limit",
+  budgetLimited: "budget hit",
+  complete: "done",
+};
+
+/** `/goal` status (#1531). Full objective on hover; × clears it. */
+export function GoalChip({
+  goal,
+  onClear,
+}: {
+  goal: ThreadGoal;
+  onClear: () => void;
+}) {
+  const status = GOAL_STATUS_LABEL[goal.status] ?? goal.status;
+  const spent = goal.tokensUsed
+    ? ` · ${goal.tokensUsed.toLocaleString()} tokens`
+    : "";
+  return (
+    <span
+      className={styles.goalChip}
+      data-goal-chip=""
+      data-goal-status={goal.status}
+      title={`Goal (${status}${spent}): ${goal.objective}`}
+    >
+      <span className={styles.goalText}>Goal: {goal.objective}</span>
+      <span className={styles.goalStatus}>{status}</span>
+      <button
+        type="button"
+        className={styles.goalClear}
+        data-goal-clear=""
+        aria-label="Clear goal"
+        title="Clear goal"
+        onClick={onClear}
+      >
+        ×
+      </button>
     </span>
   );
 }

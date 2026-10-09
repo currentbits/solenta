@@ -3,6 +3,7 @@
 /**
  * In-app PR workspace helpers (issue #154): repo pull-request templates and
  * project-scoped gh actions (view / edit / comment / close / ready / merge).
+ * They run over the GitHub API when a token exists, gh otherwise (#1534).
  *
  * Failures stay in-band (`{ ok: false, reason }`) like listPrs, so the UI
  * can retry without the global run-error banner. Never throws.
@@ -12,14 +13,15 @@ const fs = require("node:fs");
 const path = require("node:path");
 const {
   gitTryAsync,
-  ghTryAsync,
+  ghApiTryAsync,
   GH_TIMEOUT_MS,
-  isGitHubRemoteAsync,
+  isGitHubPrRemote,
   isGhAuthFailure,
   isUnknownJsonField,
   tailErr,
   assertNoOutboundSecrets,
   mergeFlags,
+  squashBodyArgs,
 } = require("./worktrees.js");
 
 const TEMPLATE_MAX_BYTES = 100 * 1024;
@@ -164,7 +166,7 @@ async function requireGitHubRepo(projectPath) {
   const cwd = String(projectPath || "");
   if (!cwd) return { ok: false, reason: "not a GitHub repo" };
   const remote = await gitTryAsync(cwd, ["remote", "get-url", "origin"]);
-  if (!remote.ok || !(await isGitHubRemoteAsync(String(remote.stdout || "").trim()))) {
+  if (!remote.ok || !(await isGitHubPrRemote(String(remote.stdout || "").trim()))) {
     return { ok: false, reason: "not a GitHub repo" };
   }
   return { ok: true, cwd };
@@ -308,7 +310,7 @@ async function viewRaw(cwd, prNumber) {
   const runs = [DETAIL_FIELDS, DETAIL_FIELDS_NO_COMMENTS, DETAIL_FIELDS_FALLBACK];
   let last = null;
   for (const fields of runs) {
-    const viewed = await ghTryAsync(
+    const viewed = await ghApiTryAsync(
       cwd,
       ["pr", "view", String(prNumber), "--json", fields],
       GH_USER,
@@ -409,7 +411,7 @@ async function editPr(projectPath, input, opts) {
   const args = ["pr", "edit", String(number)];
   if (title != null) args.push("--title", title);
   if (body != null) args.push("--body", body);
-  const edited = await ghTryAsync(repo.cwd, args, GH_USER);
+  const edited = await ghApiTryAsync(repo.cwd, args, GH_USER);
   if (!edited.ok) {
     return { ok: false, reason: ghReason(edited, "gh pr edit failed") };
   }
@@ -446,7 +448,7 @@ async function commentPr(projectPath, input) {
   const repo = await requireGitHubRepo(projectPath);
   if (!repo.ok) return repo;
 
-  const posted = await ghTryAsync(
+  const posted = await ghApiTryAsync(
     repo.cwd,
     ["pr", "comment", String(number), "--body", text],
     GH_USER,
@@ -471,7 +473,7 @@ async function closePr(projectPath, input, opts) {
   const repo = await requireGitHubRepo(projectPath);
   if (!repo.ok) return repo;
 
-  const closed = await ghTryAsync(
+  const closed = await ghApiTryAsync(
     repo.cwd,
     ["pr", "close", String(number)],
     GH_USER,
@@ -513,7 +515,7 @@ async function readyPr(projectPath, input, opts) {
 
   const args = ["pr", "ready", String(number)];
   if (input && input.undo) args.push("--undo");
-  const ready = await ghTryAsync(repo.cwd, args, GH_USER);
+  const ready = await ghApiTryAsync(repo.cwd, args, GH_USER);
   if (!ready.ok) {
     return { ok: false, reason: ghReason(ready, "gh pr ready failed") };
   }
@@ -542,9 +544,10 @@ async function mergePrAt(projectPath, input, opts) {
   const repo = await requireGitHubRepo(projectPath);
   if (!repo.ok) return repo;
 
-  const merged = await ghTryAsync(
+  const body = await squashBodyArgs(opts && opts.store, repo.cwd, number, input);
+  const merged = await ghApiTryAsync(
     repo.cwd,
-    ["pr", "merge", String(number), ...flags],
+    ["pr", "merge", String(number), ...flags, ...body],
     GH_USER,
   );
   if (!merged.ok) {

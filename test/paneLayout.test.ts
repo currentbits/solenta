@@ -17,6 +17,9 @@ import {
   leafByType,
   loadPaneLayout,
   prunePaneLayouts,
+  rememberClosedPanes,
+  resetClosedPanesForTests,
+  takeClosedPane,
   movePane,
   openPane,
   parsePaneLayout,
@@ -244,5 +247,31 @@ describe("persistence", () => {
     assert.equal(hasPaneType(layout, "chat"), true);
     assert.equal(hasPaneType(layout, "diff"), true);
     assert.equal(leafByType(layout, "diff")?.id, focusId);
+  });
+});
+
+describe("closed pane stack (#1531)", () => {
+  it("reopens newest first, per thread, skipping panes already open", () => {
+    resetClosedPanesForTests();
+    const chat = defaultPaneLayout();
+    const withDiff = openPane(chat, "diff", "pane-1").layout;
+    const withBoth = openPane(withDiff, "terminal", "pane-1").layout;
+    rememberClosedPanes("a", withBoth, withDiff);
+    rememberClosedPanes("b", withDiff, chat);
+    rememberClosedPanes("a", withDiff, chat);
+    assert.equal(takeClosedPane("a", chat), "diff");
+    assert.equal(takeClosedPane("a", withBoth), null, "terminal already open");
+    assert.equal(takeClosedPane("a", chat), null);
+    assert.equal(takeClosedPane("b", chat), "diff");
+  });
+
+  it("keeps only the last ten closes", () => {
+    resetClosedPanesForTests();
+    const chat = defaultPaneLayout();
+    const withDiff = openPane(chat, "diff", "pane-1").layout;
+    rememberClosedPanes("old", withDiff, chat);
+    for (let i = 0; i < 10; i++) rememberClosedPanes(`t${i}`, withDiff, chat);
+    assert.equal(takeClosedPane("old", chat), null, "aged out");
+    assert.equal(takeClosedPane("t0", chat), "diff");
   });
 });

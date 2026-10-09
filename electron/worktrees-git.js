@@ -2,6 +2,7 @@
 
 // Git exec seam (setExecFile), git read caches, WSL path wrapping and shared git helpers.
 
+const fs = require("node:fs");
 const path = require("node:path");
 const { execFile } = require("node:child_process");
 const { execCommand, wrapCommand, SYNC_TIMEOUT_MS } = require("./ssh.js");
@@ -83,8 +84,7 @@ function linuxPathToUnc(projectPath, linuxPath) {
  * `dir` is what we store as worktreePath (a UNC Windows can still see).
  * `addPath` is the argument `git worktree add` must receive (linux).
  *
- * ponytail: sweepOrphanWorktrees still only scans worktreeBase (userData).
- * WSL worktrees live next to the repo; thread-keyed cleanup uses worktreePath.
+ * GC enumerates these WSL roots too (worktreeRoots in worktrees-gc.js).
  *
  * @param {{ path?: string, remoteHost?: string } | null | undefined} project
  * @param {string} worktreeBase
@@ -113,6 +113,26 @@ function resolveWorktreeDir(project, worktreeBase, threadId, platform = process.
     );
   }
   return { dir: linuxPathToUnc(project.path, linuxDir), addPath: linuxDir };
+}
+
+/**
+ * Base for NEW non-WSL worktrees (#1531): settings.worktreeRoot when it is
+ * still a directory, else the default `worktreeBase`. Existing threads keep
+ * the worktreePath they were created with.
+ * @param {{ getSettings?: () => { worktreeRoot?: string | null } } | null | undefined} store
+ * @param {string} worktreeBase
+ * @returns {string}
+ */
+function effectiveWorktreeBase(store, worktreeBase) {
+  const root = store && store.getSettings ? store.getSettings().worktreeRoot : null;
+  if (!root) return worktreeBase;
+  try {
+    if (fs.statSync(root).isDirectory()) return root;
+  } catch {
+    // Unmounted volume or deleted folder: fall back rather than fail the run.
+  }
+  console.warn(`worktree location ${root} is unavailable; using ${worktreeBase}`);
+  return worktreeBase;
 }
 
 const GIT_MAX_BUFFER = 32 * 1024 * 1024;
@@ -484,6 +504,7 @@ module.exports = {
   resolveGitCommand,
   linuxPathToUnc,
   resolveWorktreeDir,
+  effectiveWorktreeBase,
   GIT_MAX_BUFFER,
   gitEnv,
   GIT_READ_TTL_MS,

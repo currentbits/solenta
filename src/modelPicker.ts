@@ -45,6 +45,8 @@ export interface ModelRow {
   profile?: ProfileRow;
   /** Stand-in row for a provider whose CLI is missing: picking opens setup. */
   setup?: boolean;
+  /** "Update Codex to use X" (#1529): the installed CLI is too old. */
+  updateHint?: string;
 }
 
 /** Stable key for React lists and selection compare. */
@@ -160,11 +162,13 @@ export function buildModelRows(
 
   if (infos.length > 0) {
     for (const info of infos) {
-      rows.push({
-        ...base,
-        ...rowFromInfo(info),
-        groupHeading: null,
-      });
+      const row: ModelRow = { ...base, ...rowFromInfo(info), groupHeading: null };
+      if (info.updateHint && !unavailable) {
+        row.disabled = true;
+        row.disabledReason = info.updateHint;
+        row.updateHint = info.updateHint;
+      }
+      rows.push(row);
     }
     rows.push(customRow(base, provider.name));
     return rows;

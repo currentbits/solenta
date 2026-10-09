@@ -723,6 +723,12 @@ export function EditProjectModal({
                 ? " Actions added here replace the list in solenta.json."
                 : ""}
             </p>
+            {repo?.onSettleCommand ? (
+              <p className={styles.note} data-repo-on-settle="">
+                When a worktree thread settles, solenta.json runs{" "}
+                <code>{repo.onSettleCommand}</code> in it.
+              </p>
+            ) : null}
             {repo?.error ? (
               <p className={styles.fieldError} data-repo-config-error="">
                 {repo.error}

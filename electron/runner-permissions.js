@@ -26,6 +26,7 @@ const {
   sessionAllowRule,
 } = require("./permissionCommand.js");
 const { normalizeQuestions } = require("./questions.js");
+const threadSecrets = require("./threadSecrets.js");
 const {
   PLAN_TRUNCATE,
   planText,
@@ -466,6 +467,73 @@ function createPermissions(ctx) {
     return { asked: true, questions: questions.length };
   }
 
+  /**
+   * Ask the user for a secret (issue #1531, #289). Non-blocking like askUser.
+   * Only the request (name + prompt) is persisted; the value never is.
+   * @param {{ threadId: string, name: string, prompt?: string }} input
+   */
+  function requestSecret(input) {
+    const threadId = String((input && input.threadId) || "");
+    if (!store.getThread(threadId)) {
+      throw new Error(`Unknown thread: ${threadId}`);
+    }
+    const name = String((input && input.name) || "");
+    if (!threadSecrets.NAME_RE.test(name)) {
+      throw new Error("name must match /^[A-Z_][A-Z0-9_]*$/");
+    }
+    store.updateThread(
+      threadId,
+      {
+        pendingSecret: {
+          id: randomUUID(),
+          name,
+          prompt: truncate(String((input && input.prompt) || ""), 500),
+          askedAt: Date.now(),
+        },
+        awaitingInput: true,
+      },
+      { touch: true },
+    );
+    store.save();
+    pushThreadsChanged();
+    refreshDetail(threadId);
+    return { requested: true, name };
+  }
+
+  /**
+   * Answer (value) or dismiss (value null) the secret card. The value goes to
+   * threadSecrets only; the transcript and the next turn see just the name.
+   * @param {{ threadId: string, requestId: string, value: string | null }} input
+   */
+  function answerSecret(input) {
+    const threadId = String((input && input.threadId) || "");
+    const thread = store.getThread(threadId);
+    const pending = thread && thread.pendingSecret;
+    if (!pending || pending.id !== (input && input.requestId)) {
+      throw new Error("No open secret request for this thread");
+    }
+    const value = input.value;
+    store.updateThread(threadId, {
+      pendingSecret: null,
+      awaitingInput: Boolean(thread.pendingQuestion || thread.pendingPlan),
+    });
+    if (typeof value === "string" && value) {
+      threadSecrets.set(threadId, pending.name, value);
+      appendMessage(threadId, "event", `Secret ${pending.name} provided`);
+      const note = `Secret ${pending.name} is now available as $${pending.name}`;
+      services.restoreQueuedHead(store, {
+        threadId,
+        taken: { prompt: note, items: [note] },
+      });
+    } else {
+      appendMessage(threadId, "event", `Secret ${pending.name} declined`);
+    }
+    store.save();
+    pushDetail(threadId);
+    pushThreadsChanged();
+    maybeDrainQueued(threadId);
+  }
+
   /** Called only by the host merge guard; renderer respondPermission grants it. */
   function requestCiWorkflowSignOff(threadId, review) {
     const key = JSON.stringify(review);
@@ -614,6 +682,8 @@ function createPermissions(ctx) {
     handleCodexServerRequest,
     respondPermission,
     askUser,
+    requestSecret,
+    answerSecret,
     requestCiWorkflowSignOff,
     clearQuestion,
     maybePersistPlanApproval,

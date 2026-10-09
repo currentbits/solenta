@@ -8,6 +8,8 @@ import { mount, unmountAll } from "./support/dom.ts";
 import { createFakeCoder } from "./support/fakeCoder.ts";
 import {
   WebAccessSection,
+  deviceScopes,
+  scopeSummary,
   pairingBases,
   pairingLink,
 } from "../src/components/WebAccessSection";
@@ -69,6 +71,40 @@ describe("WebAccessSection", () => {
     assert.ok(fake.calls.some((c) => c.channel === "web.revokeDevice"));
     assert.equal(m.query("[data-web-reveal]"), null, "revoking hides its one-time token");
     assert.equal(m.query("[data-web-devices]"), null);
+  });
+
+  it("pairs with chosen scopes (default Steer threads) and labels each device", async () => {
+    const fake = await install();
+    const m = await mount(<WebAccessSection active />);
+    await m.flush();
+
+    await m.type(m.query("[data-web-device-name]"), "Phone");
+    await m.click(m.query("[data-web-add-device]"));
+    await m.flush();
+    assert.deepEqual(fake.calls.find((c) => c.channel === "web.addDevice")?.args, [
+      { name: "Phone", scopes: ["read", "steer"] },
+    ]);
+    assert.equal(m.query("[data-web-device-scopes]")?.textContent, "Steer threads");
+
+    await m.change(m.query("[data-web-preset]"), "read");
+    await m.click(m.query("[data-web-grant=git]"));
+    await m.change(m.query("[data-web-terminal]"), "terminal:observe");
+    await m.type(m.query("[data-web-device-name]"), "Tablet");
+    await m.click(m.query("[data-web-add-device]"));
+    await m.flush();
+    const adds = fake.calls.filter((c) => c.channel === "web.addDevice");
+    assert.deepEqual(adds[1]?.args, [{ name: "Tablet", scopes: ["read", "git", "terminal:observe"] }]);
+
+    await m.change(m.query("[data-web-preset]"), "full");
+    assert.equal(m.query("[data-web-grants]"), null, "full hides the per-grant boxes");
+  });
+
+  it("scope helpers: full wins, grants stack, summary reads plainly", () => {
+    assert.deepEqual(deviceScopes("full", ["git"], "terminal:type"), ["full"]);
+    assert.deepEqual(deviceScopes("steer", ["files"], "terminal:type"), ["read", "steer", "files", "terminal:type"]);
+    assert.equal(scopeSummary(["full"]), "Full access");
+    assert.equal(scopeSummary(["read"]), "Read only");
+    assert.equal(scopeSummary(["read", "steer", "git", "terminal:observe"]), "Steer threads + git, watch terminal");
   });
 
   it("Tailscale: offered only once Web is on, explains the tailnet exposure, and stops", async () => {

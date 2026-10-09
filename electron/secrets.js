@@ -281,6 +281,16 @@ function createSecrets(opts = {}) {
         nextLinearKey = sealed;
       }
     }
+    let nextGithubHosts = settings.githubHosts;
+    if (Array.isArray(settings.githubHosts)) {
+      nextGithubHosts = settings.githubHosts.map((row) => {
+        if (!row || typeof row.token !== "string" || !row.token) return row;
+        const sealed = seal(row.token);
+        if (sealed === row.token) return row;
+        changed = true;
+        return { ...row, token: sealed };
+      });
+    }
     let nextWebhook = settings.webhook;
     const webhookUrl =
       settings.webhook &&
@@ -319,6 +329,7 @@ function createSecrets(opts = {}) {
       mcpServers: nextServers,
       otel: nextOtel,
       linearApiKey: nextLinearKey,
+      githubHosts: nextGithubHosts,
       webhook: nextWebhook,
       providerInstances: nextInstances,
     };
@@ -457,6 +468,21 @@ function createSecrets(opts = {}) {
       }
     }
 
+    let nextGithubHosts = settings.githubHosts;
+    if (Array.isArray(settings.githubHosts)) {
+      nextGithubHosts = settings.githubHosts.map((row) => {
+        if (!row || typeof row.token !== "string" || !row.token) return row;
+        hasSecret = true;
+        if (isSealed(row.token)) {
+          const plain = open(row.token, { key: `github:${row.host || "?"}` });
+          changed = true;
+          return { ...row, token: plain == null || plain === "" ? null : plain };
+        }
+        if (available) migrated += 1;
+        return row;
+      });
+    }
+
     let nextWebhook = settings.webhook;
     const webhookUrl =
       settings.webhook &&
@@ -515,6 +541,7 @@ function createSecrets(opts = {}) {
           mcpServers: nextServers,
           otel: nextOtel,
           linearApiKey: nextLinearKey,
+          githubHosts: nextGithubHosts,
           webhook: nextWebhook,
           providerInstances: nextInstances,
         }

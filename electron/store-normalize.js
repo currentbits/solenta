@@ -1,10 +1,12 @@
 "use strict";
 
+const path = require("node:path");
 const { normalizeSubagentPool } = require("./subagentPool");
 const { clampUiScale, UI_SCALE_DEFAULT } = require("./zoom.js");
 const { getProvider, honouredEfforts } = require("./providers.js");
 const { normalizeMcpServers } = require("./mcp.js");
 const { normalizeProviderInstances } = require("./providerInstances.js");
+const { normalizeModelPrices } = require("./modelPrices.js");
 
 /**
  * @param {unknown} u
@@ -315,6 +317,9 @@ function validateQuotaFailover(raw) {
  * autoSettleOnMerge: only an explicit false turns merge-settle off, so
  * absent/junk keeps the previous "MERGED = settled" behaviour.
  *
+ * worktreeRoot: where new thread worktrees go (#1531). Absent/junk/relative
+ * → null, the default userData/worktrees. Existence is checked on save.
+ *
  * webhook: absent/junk → { url: null, onDone/onFailed/onWaiting: true }.
  * A URL must be http(s); anything else collapses to null so a corrupt store
  * cannot POST somewhere unexpected. Only an explicit false turns an event
@@ -329,6 +334,7 @@ function normalizeSettings(raw) {
     orchestrationBudgetUsd: null,
     autoSettleAfterDays: DEFAULT_AUTO_SETTLE_AFTER_DAYS,
     autoSettleOnMerge: true,
+    stripAgentCoauthors: false,
     mcpServers: [],
     defaultWorktree: false,
     defaultOrchestrate: false,
@@ -356,7 +362,10 @@ function normalizeSettings(raw) {
     subagentPool: { defaultAlias: null, force: false, entries: [] },
     otel: { endpoint: null, headers: {}, claudeMetrics: false },
     linearApiKey: null,
+    githubHosts: [],
     webhook: { url: null, onDone: true, onFailed: true, onWaiting: true },
+    modelPrices: {},
+    worktreeRoot: null,
   };
   if (!raw || typeof raw !== "object") return settings;
   const obj = /** @type {{ dailyBudgetUsd?: unknown, orchestrationBudgetUsd?: unknown, autoSettleAfterDays?: unknown, mcpServers?: unknown }} */ (
@@ -496,6 +505,9 @@ function normalizeSettings(raw) {
   settings.autoSettleOnMerge =
     /** @type {{ autoSettleOnMerge?: unknown }} */ (obj).autoSettleOnMerge !==
     false;
+  settings.stripAgentCoauthors =
+    /** @type {{ stripAgentCoauthors?: unknown }} */ (obj).stripAgentCoauthors ===
+    true;
   settings.otel = normalizeOtel(/** @type {{ otel?: unknown }} */ (obj).otel);
   const linearKey = /** @type {{ linearApiKey?: unknown }} */ (obj).linearApiKey;
   if (typeof linearKey === "string" && linearKey.trim()) {
@@ -503,9 +515,19 @@ function normalizeSettings(raw) {
   } else {
     settings.linearApiKey = null;
   }
+  settings.modelPrices = normalizeModelPrices(
+    /** @type {{ modelPrices?: unknown }} */ (obj).modelPrices,
+  );
+  settings.githubHosts = normalizeGithubHosts(
+    /** @type {{ githubHosts?: unknown }} */ (obj).githubHosts,
+    false,
+  );
   settings.webhook = normalizeWebhook(
     /** @type {{ webhook?: unknown }} */ (obj).webhook,
   );
+  const root = /** @type {{ worktreeRoot?: unknown }} */ (obj).worktreeRoot;
+  settings.worktreeRoot =
+    typeof root === "string" && path.isAbsolute(root.trim()) ? root.trim() : null;
   return settings;
 }
 
@@ -555,6 +577,45 @@ function normalizeWebhook(raw) {
   return out;
 }
 
+/**
+ * Per-host GitHub account choice and saved token (#1528). `account` picks a
+ * `gh` login for the host; `token` is used instead of gh entirely. Rows with
+ * neither are dropped. strict (settings:set) throws; lenient (load) drops junk.
+ * @param {unknown} raw
+ * @param {boolean} strict
+ * @returns {Array<{ host: string, account: string | null, token: string | null }>}
+ */
+function normalizeGithubHosts(raw, strict) {
+  if (raw == null) return [];
+  if (!Array.isArray(raw)) {
+    if (strict) throw new Error("githubHosts must be an array");
+    return [];
+  }
+  /** @type {Map<string, { host: string, account: string | null, token: string | null }>} */
+  const byHost = new Map();
+  for (const row of raw) {
+    const r = /** @type {{ host?: unknown, account?: unknown, token?: unknown }} */ (row || {});
+    const host = typeof r.host === "string" ? r.host.trim().toLowerCase() : "";
+    if (!/^[a-z0-9.-]+(:\d+)?$/.test(host)) {
+      if (strict) throw new Error("githubHosts[].host must be a hostname like github.com");
+      continue;
+    }
+    const pick = (/** @type {unknown} */ v, /** @type {string} */ name) => {
+      if (v == null || v === "") return null;
+      if (typeof v !== "string") {
+        if (strict) throw new Error(`githubHosts[].${name} must be a string or null`);
+        return null;
+      }
+      return v.trim() || null;
+    };
+    const account = pick(r.account, "account");
+    const token = pick(r.token, "token");
+    if (!account && !token) continue;
+    byHost.set(host, { host, account, token });
+  }
+  return [...byHost.values()];
+}
+
 module.exports = {
   isHttpUrl,
   validateAgentProfiles,
@@ -566,4 +627,5 @@ module.exports = {
   normalizeSettings,
   normalizeOtel,
   normalizeWebhook,
+  normalizeGithubHosts,
 };

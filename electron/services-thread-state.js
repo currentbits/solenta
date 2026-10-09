@@ -72,10 +72,12 @@ const SETTLE_OVERRIDES = new Set(["settled", "active", null]);
  * @returns {{ settledOverride: null, settledAt: null } | {}}
  */
 function clearSettledOnActivity(thread) {
+  // onSettle (#1531) ran for the last settle; new work re-arms it.
+  const rearm = thread && thread.onSettleAt != null ? { onSettleAt: null } : {};
   if (thread && thread.settledOverride === "settled") {
-    return { settledOverride: null, settledAt: null };
+    return { settledOverride: null, settledAt: null, ...rearm };
   }
-  return {};
+  return rearm;
 }
 
 /**
@@ -89,8 +91,9 @@ function clearSettledOnActivity(thread) {
  *
  * @param {import('./store').Store} store
  * @param {{ threadId: string, override: "settled" | "active" | null }} input
+ * @param {{ broadcast?: (channel: string, payload: unknown) => void }} [opts]
  */
-function setSettled(store, input) {
+function setSettled(store, input, opts) {
   const { threadId, override } = input;
   const thread = store.getThread(threadId);
   if (!thread) {
@@ -122,6 +125,14 @@ function setSettled(store, input) {
   }
   const updated = store.updateThread(threadId, patch);
   store.save();
+  if (override === "settled" && thread.settledOverride !== "settled") {
+    // Fire-and-forget: the settle never waits on, or fails with, onSettle.
+    void require("./projectCommands.js").runOnSettle({
+      store,
+      threadId,
+      broadcast: opts && opts.broadcast,
+    });
+  }
   return updated ? { ...updated } : { ...thread, ...patch };
 }
 

@@ -10,7 +10,10 @@ import { describe, it } from "node:test";
 import { useState } from "react";
 import { mount, inAct } from "./support/dom.ts";
 import { Markdown } from "../src/components/Markdown";
-import { PathLinkProvider } from "../src/components/PathLinks";
+import {
+  PathLinkProvider,
+  ThreadLinkContext,
+} from "../src/components/PathLinks";
 
 describe("Markdown", () => {
   it("renders plain paragraphs", async () => {
@@ -339,3 +342,49 @@ describe("Markdown images", () => {
   });
 });
 
+
+describe("thread id links (#1531)", () => {
+  const KNOWN = "867b10fd-64ff-4d32-be3a-a30a194190b4";
+  const UNKNOWN = "11111111-2222-4333-8444-555555555555";
+
+  function threaded(text: string, opened: string[]) {
+    return (
+      <ThreadLinkContext.Provider
+        value={{ titles: { [KNOWN]: "Fix the race" }, open: (id) => opened.push(id) }}
+      >
+        <Markdown text={text} />
+      </ThreadLinkContext.Provider>
+    );
+  }
+
+  it("links a known thread id and opens it on click", async () => {
+    const opened: string[] = [];
+    const m = await mount(threaded(`Worker ${KNOWN} is done.`, opened));
+    const link = m.query(`[data-thread-link="${KNOWN}"]`);
+    assert.ok(link, "known id is a link");
+    assert.equal(link.getAttribute("role"), "link");
+    assert.equal(link.getAttribute("title"), "Fix the race");
+    assert.match(m.text(), /Worker 867b10fd-.* is done\./, "surrounding text kept");
+    await m.click(link);
+    assert.deepEqual(opened, [KNOWN]);
+  });
+
+  it("matches case-insensitively and inside inline code", async () => {
+    const m = await mount(threaded(`see \`${KNOWN.toUpperCase()}\``, []));
+    assert.ok(m.query("code [data-thread-link]"), "inline code id links");
+  });
+
+  it("leaves unknown UUIDs and fenced code blocks alone", async () => {
+    const m = await mount(
+      threaded(`${UNKNOWN}\n\n\`\`\`\n${KNOWN}\n\`\`\``, []),
+    );
+    assert.equal(m.query("[data-thread-link]"), null);
+    assert.match(m.text(), new RegExp(UNKNOWN));
+    assert.match(m.text(), new RegExp(KNOWN));
+  });
+
+  it("does nothing without a provider", async () => {
+    const m = await mount(<Markdown text={`id ${KNOWN}`} />);
+    assert.equal(m.query("[data-thread-link]"), null);
+  });
+});

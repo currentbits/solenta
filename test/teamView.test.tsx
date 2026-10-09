@@ -140,6 +140,46 @@ describe("Agents team view", () => {
     m.unmount();
   });
 
+  it("working worker rows carry a Stop button; idle and done rows do not (#1531)", async () => {
+    const stopped: string[] = [];
+    const selected: string[] = [];
+    const idle = summary({
+      id: "t-idle",
+      title: "Idle worker",
+      status: "idle",
+      handoffFrom: "t-orch",
+      orchWorker: true,
+      projectId: "p1",
+    });
+    const m = await mount(
+      <AgentsContent
+        workflow={null}
+        thread={thread()}
+        usage={null}
+        providers={PROVIDERS}
+        rosterKey="t-orch:idle"
+        listThreadSummaries={async () => [ORCHESTRATOR, WORKER, idle]}
+        onSelectThread={(id) => selected.push(id)}
+        onStopThread={(id) => stopped.push(id)}
+      />,
+    );
+    await m.flush();
+    const stop = m.query('[aria-label="Stop Fork: Plan the fix"]');
+    assert.ok(stop, "working worker has a Stop button");
+    assert.equal(m.query('[aria-label="Stop Idle worker"]'), null, "idle row has none");
+    await m.click(stop);
+    assert.deepEqual(stopped, ["t-work"]);
+    assert.deepEqual(selected, [], "Stop does not also select the row");
+    m.unmount();
+  });
+
+  it("no Stop button without an onStopThread handler", async () => {
+    const m = await mount(content(thread(), [ORCHESTRATOR, WORKER]));
+    await m.flush();
+    assert.equal(m.query('[aria-label^="Stop "]'), null);
+    m.unmount();
+  });
+
   it("worker: Worker chip and a Lead line back to the orchestrator; no Team section", async () => {
     const selected: string[] = [];
     const m = await mount(

@@ -35,6 +35,10 @@ function withTimeout(promise, ms) {
   });
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
+// Native goal (#1531): after a turn completes with the goal still active,
+// codex starts its own continuation turn within ~100 ms (measured on
+// 0.159.2). Wait this long for it before treating the run as finished.
+const GOAL_CONTINUE_GRACE_MS = 2_000;
 const THREAD_SOURCE = "solenta";
 // Interactive only (#1208). exec / workflow / ask / commitmsg stay never.
 const APPROVAL_POLICY = "on-request";
@@ -262,6 +266,11 @@ function notificationToJsonl(msg) {
     if (p.usage && typeof p.usage === "object") ev.usage = p.usage;
     return ev;
   }
+  if (method === "thread/goal/updated") {
+    return p.goal && typeof p.goal === "object"
+      ? { type: "goal.updated", goal: p.goal }
+      : null;
+  }
   if (method === "error") {
     return { type: "error", error: p };
   }
@@ -333,7 +342,15 @@ function threadParams(opts) {
  * Per-turn private app-server: handshake → start/resume → turn → completed
  * → unsubscribe → kill. `send` is `turn/steer` once expectedTurnId exists.
  *
+ * `goal` (#1531): undefined leaves the native goal alone, null clears it,
+ * `{ objective, status }` syncs it. An active goal on an idle thread makes
+ * codex start a turn by itself (also right after thread/resume), which
+ * races our turn/start. So the goal rests paused between runs, goes active
+ * once our turn has started, and the run follows codex's continuation
+ * turns until the goal leaves "active".
+ *
  * @param {object} opts
+ * @param {{ objective: string, status?: string } | null} [opts.goal]
  * @param {(req: { id: unknown, method: string, params: unknown }) => boolean | void} [opts.onServerRequest]
  * @returns {{
  *   kill: () => void,
@@ -361,6 +378,7 @@ function runCodexAppServerTurn(opts) {
     onExit,
     onServerRequest,
     compact = false,
+    goal,
   } = opts;
 
   let expectedTurnId = null;
@@ -370,6 +388,42 @@ function runCodexAppServerTurn(opts) {
   let turnCompleted = false;
   let terminalError = null;
   let client = null;
+  /** Set active once our turn/started arrives (see syncGoal). */
+  let activateGoal = false;
+  /** Latest native goal status this run, from thread/goal/updated. */
+  let goalStatus = null;
+  /** @type {ReturnType<typeof setTimeout> | null} */
+  let continueTimer = null;
+
+  /**
+   * Bring the native goal in line with `goal` before turn/start. Returns
+   * whether to activate it once the turn is running. Best-effort: a codex
+   * without goals just runs the turn.
+   */
+  async function syncGoal() {
+    try {
+      const got = await withTimeout(
+        client.send("thread/goal/get", { threadId }),
+        SHUTDOWN_RPC_TIMEOUT_MS,
+      );
+      const cur = got && got.goal;
+      if (!goal) {
+        if (cur) await client.send("thread/goal/clear", { threadId });
+        return false;
+      }
+      if (goal.status === "complete") return false;
+      if (!cur || cur.objective !== goal.objective) {
+        await client.send("thread/goal/set", {
+          threadId,
+          objective: goal.objective,
+          status: "paused",
+        });
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }
 
   function emitEvent(ev) {
     if (!ev || typeof onEvent !== "function") return;
@@ -398,6 +452,27 @@ function runCodexAppServerTurn(opts) {
       if (turn && typeof turn.id === "string" && turn.id) {
         expectedTurnId = turn.id;
       }
+      // A goal continuation turn: the run goes on.
+      if (continueTimer) {
+        clearTimeout(continueTimer);
+        continueTimer = null;
+        turnCompleted = false;
+      }
+      if (activateGoal) {
+        activateGoal = false;
+        // Before the echo arrives: a turn that ends first must still
+        // follow continuations and pause on shutdown.
+        goalStatus = "active";
+        client
+          .send("thread/goal/set", { threadId, status: "active" })
+          .catch(() => {});
+      }
+    }
+    if (msg.method === "thread/goal/updated") {
+      const g = msg.params && msg.params.goal;
+      if (g && typeof g.status === "string") goalStatus = g.status;
+      // Our own between-runs pause is bookkeeping, not a status change.
+      if (stopping || goalStatus === "paused") return;
     }
     if (msg.method === "turn/completed") {
       turnCompleted = true;
@@ -409,6 +484,13 @@ function runCodexAppServerTurn(opts) {
             ? `${mapped.error.code}: ${mapped.error.message}`
             : "turn failed";
       }
+      if (!terminalError && goalStatus === "active" && !stopping) {
+        continueTimer = setTimeout(() => {
+          continueTimer = null;
+          void shutdown(0);
+        }, GOAL_CONTINUE_GRACE_MS);
+        return;
+      }
       void shutdown(turnCompleted && !terminalError ? 0 : 1);
       return;
     }
@@ -419,11 +501,27 @@ function runCodexAppServerTurn(opts) {
   async function shutdown(code) {
     if (stopping) return;
     stopping = true;
+    if (continueTimer) {
+      clearTimeout(continueTimer);
+      continueTimer = null;
+    }
     // A wedged app-server may never answer these RPCs, and kill() below is
     // what arms killTree. Bound each one, and skip them during app quit so
     // the process is SIGKILLed before Electron exits (#1233).
     const graceful = !isShuttingDown();
     try {
+      // Pause before the interrupt: an idle thread with an active goal
+      // starts its own turn, here or on the next thread/resume.
+      if (graceful && client && threadId && goalStatus === "active") {
+        try {
+          await withTimeout(
+            client.send("thread/goal/set", { threadId, status: "paused" }),
+            SHUTDOWN_RPC_TIMEOUT_MS,
+          );
+        } catch {
+          // still interrupt
+        }
+      }
       if (graceful && client && threadId && expectedTurnId && !turnCompleted) {
         try {
           await withTimeout(
@@ -567,6 +665,7 @@ function runCodexAppServerTurn(opts) {
         await client.send("thread/compact/start", { threadId });
         return;
       }
+      if (goal !== undefined) activateGoal = await syncGoal();
       const startedTurn = await client.send(
         "turn/start",
         turnParams(

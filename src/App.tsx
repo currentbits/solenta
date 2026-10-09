@@ -13,6 +13,7 @@ import { demoProviderLimits } from "./providerUsageDemo";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Sidebar } from "./components/Sidebar";
 import { ThreadView } from "./components/ThreadView";
+import { REOPEN_PANE_EVENT } from "./paneLayout";
 import type { UsageReportControls } from "./components/UsageView";
 import {
   AgentsPanel,
@@ -222,9 +223,11 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     setPermissionMode,
     respondPermission,
     clearQuestion,
+    answerSecret,
     setProvider,
     setReasoningEffort,
     setWebSearch,
+    setFast,
     setArchived,
     setSettled,
     setPinned,
@@ -1284,6 +1287,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     previousWorktree,
     panelRosterKey,
     comparePeers,
+    threadTitles,
   } = useThreadRoster({
     threads,
     visibleDetail,
@@ -1352,6 +1356,9 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       else if (id === "digest") openDigest();
       else if (id === "add-project") handleAddProject();
       else if (id === "toggle-agents") toggleAgents();
+      else if (id === "reopen-pane") {
+        window.dispatchEvent(new Event(REOPEN_PANE_EVENT));
+      }
     },
     [
       handleCreateThreadPlain,
@@ -1900,9 +1907,11 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onSetPermissionMode={setPermissionMode}
         onRespondPermission={respondPermission}
         onClearQuestion={clearQuestion}
+        onAnswerSecret={answerSecret}
         onSetProvider={setProvider}
         onSetReasoningEffort={setReasoningEffort}
         onSetWebSearch={setWebSearch}
+        onSetFast={setFast}
         onSetArchived={handleSetArchivedUndoable}
         onSetCrossThreadInbound={
           selectedThreadId
@@ -1989,6 +1998,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         comparePeers={comparePeers}
         onPeekThread={peekThread}
         onSelectThread={handleSelectThread}
+        threadTitles={threadTitles}
         onModelPickerOpen={handleModelPickerOpen}
         onNewThread={handleCreateThreadPlain}
         onSettleThread={selectedThreadId ? handleSettleOpenThread : undefined}
@@ -2063,6 +2073,9 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         tab={inspectorTab}
         onTabChange={rememberInspectorTab}
         onSelectThread={handleSelectThread}
+        onStopThread={(threadId) => {
+          void api.runs.stop({ threadId }).catch(() => {});
+        }}
         onViewChanges={openChanges}
         fetchDiff={fetchDiff}
         listCheckpoints={listCheckpoints}

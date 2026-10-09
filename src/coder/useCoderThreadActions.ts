@@ -131,6 +131,18 @@ export function useCoderThreadActions({
     }
   }, [api, selectedThreadId]);
 
+  /**
+   * Answer (value) or dismiss (null) the secret card (issue #1531). Errors
+   * reach the card itself, which keeps the typed value for a retry.
+   */
+  const answerSecret = useCallback(
+    async (requestId: string, value: string | null) => {
+      if (!selectedThreadId) return;
+      await api.threads.answerSecret({ threadId: selectedThreadId, requestId, value });
+    },
+    [api, selectedThreadId],
+  );
+
   const setProvider = useCallback(
     async (input: {
       provider?: string;
@@ -200,6 +212,34 @@ export function useCoderThreadActions({
         const thread = await api.threads.setWebSearch({
           threadId,
           webSearch,
+        });
+        applyThreads(
+          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
+        );
+        if (selectedRef.current === threadId) {
+          setDetail((prev) =>
+            prev && prev.thread.id === thread.id
+              ? { ...prev, thread }
+              : prev,
+          );
+        }
+        setError(null);
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+        throw err;
+      }
+    },
+    [api, selectedThreadId, applyThreads],
+  );
+
+  const setFast = useCallback(
+    async (fast: boolean, threadIdArg?: string) => {
+      const threadId = threadIdArg ?? selectedThreadId;
+      if (!threadId) return;
+      try {
+        const thread = await api.threads.setFast({
+          threadId,
+          fast,
         });
         applyThreads(
           threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
@@ -864,9 +904,11 @@ export function useCoderThreadActions({
     setPermissionMode,
     respondPermission,
     clearQuestion,
+    answerSecret,
     setProvider,
     setReasoningEffort,
     setWebSearch,
+    setFast,
     setArchived,
     setSettled,
     setPinned,

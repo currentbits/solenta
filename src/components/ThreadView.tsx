@@ -74,12 +74,18 @@ import {
 import type { WorkflowSaveInput } from "../useCoder";
 import type { ReturnableView } from "../viewReturn";
 import { contextBreakdown } from "../contextBreakdown";
-import { contextRing, threadContextWindow } from "../contextRing";
+import {
+  coldCompactTokens,
+  contextRing,
+  formatWindowSize,
+  threadContextWindow,
+} from "../contextRing";
 import { buildTimeline, type TimelineEntry } from "../timeline";
 import { collapseTimeline, type DisplayEntry } from "../toolGroups";
 import { RunArtifacts } from "./RunArtifacts";
 import { QuestionPrompt } from "./QuestionPrompt";
 import { InputPrompt } from "./InputPrompt";
+import { SecretPrompt } from "./SecretPrompt";
 import { threadProviderRef } from "../format";
 import { formatQuestionAnswer } from "../questionAnswer";
 import { supportsImagesForModel } from "../modelPicker";
@@ -131,9 +137,10 @@ import {
 } from "../replyContext";
 import { waitWhatPrompt } from "../waitWhat";
 import { sessionImagePathsFromMessages } from "../sessionImages";
-import { PathLinkProvider } from "./PathLinks";
+import { PathLinkProvider, ThreadLinkContext } from "./PathLinks";
 import {
   SandboxBadge,
+  GoalChip,
   ContextRingBadge,
   SyncPill,
   ElapsedClock,
@@ -340,6 +347,8 @@ interface ThreadViewProps {
    * answering (issue #647). Answering goes through onStartRun instead.
    */
   onClearQuestion: () => void | Promise<void>;
+  /** Answer (value) or dismiss (null) thread.pendingSecret (issue #1531). */
+  onAnswerSecret?: (requestId: string, value: string | null) => void | Promise<void>;
   onSetProvider: (input: {
     provider?: string;
     model?: string | null;
@@ -349,6 +358,7 @@ interface ThreadViewProps {
     threadId?: string,
   ) => void | Promise<void>;
   onSetWebSearch?: (webSearch: boolean, threadId?: string) => void | Promise<void>;
+  onSetFast?: (fast: boolean, threadId?: string) => void | Promise<void>;
   /** Archive or unarchive the open thread. */
   onSetArchived: (archived: boolean) => void | Promise<void>;
   /** Per-thread inbound policy for messages from other threads (issue #551). */
@@ -637,6 +647,8 @@ interface ThreadViewProps {
   handoffSource?: ThreadInfo | null;
   /** Select another thread (provenance chip → source). */
   onSelectThread?: (id: string) => void;
+  /** Same-project thread id → title; those ids link in replies (#1531). */
+  threadTitles?: Record<string, string>;
   /**
    * Report/board the user left to open this thread (#942). Back restores
    * that view; omitted when the thread was opened from the sidebar.
@@ -720,9 +732,11 @@ export const ThreadView = memo(function ThreadView({
   onImplementPlan,
   onSavePlan,
   onClearQuestion,
+  onAnswerSecret,
   onSetProvider,
   onSetReasoningEffort,
   onSetWebSearch,
+  onSetFast,
   onSetArchived,
   onSetCrossThreadInbound,
   onRenameThread,
@@ -823,6 +837,7 @@ export const ThreadView = memo(function ThreadView({
   onDismissSuggestion,
   handoffSource = null,
   onSelectThread,
+  threadTitles,
   returnToView = null,
   onReturnToView,
   comparePeers = EMPTY_COMPARE_PEERS,
@@ -1051,6 +1066,14 @@ export const ThreadView = memo(function ThreadView({
       return map;
     },
     [onResolvePaths, sessionImages],
+  );
+
+  const threadLinks = useMemo(
+    () =>
+      threadTitles && onSelectThread
+        ? { titles: threadTitles, open: onSelectThread }
+        : null,
+    [threadTitles, onSelectThread],
   );
 
   const handleOpenWorkspacePath = useCallback(
@@ -2282,6 +2305,16 @@ export const ThreadView = memo(function ThreadView({
       : (repoConfig?.quickActions ?? []).map((a) => ({ ...a, fromRepo: true }))) {
       if (action && action.id && action.name) headerCommands.push(action);
     }
+    // Manual teardown, and the way to approve a file whose only command
+    // is onSettle (#1531).
+    if (repoConfig?.onSettleCommand && thread.worktreePath) {
+      headerCommands.push({
+        id: "onSettle",
+        name: "On settle",
+        command: repoConfig.onSettleCommand,
+        fromRepo: true,
+      });
+    }
   }
   // The approval covers every command in the file (its hash), so list them
   // all, including any a project setting currently overrides.
@@ -2290,6 +2323,9 @@ export const ThreadView = memo(function ThreadView({
       ? [{ id: "setup", name: "Setup", command: repoConfig.setupCommand }]
       : []),
     ...(repoConfig?.quickActions ?? []),
+    ...(repoConfig?.onSettleCommand
+      ? [{ id: "onSettle", name: "On settle", command: repoConfig.onSettleCommand }]
+      : []),
   ];
 
   const runHeaderCommand = (actionId: string, trust?: string) => {
@@ -2481,6 +2517,14 @@ export const ThreadView = memo(function ThreadView({
     />
   ) : null;
 
+  // ponytail: evaluated on render, so a thread left open across the TTL shows
+  // the chip on its next re-render, not the minute it goes cold.
+  const coldCompact = coldCompactTokens({
+    provider: detail.thread.provider,
+    contextTokens: detail.usage?.contextTokens,
+    lastActivityAt: detail.thread.updatedAt,
+    now: Date.now(),
+  });
   // Run status rides on the composer's top edge (#1429), not the transcript.
   const composerStatus =
     detail.thread.status === "quota-wait" ? (
@@ -2538,6 +2582,19 @@ export const ThreadView = memo(function ThreadView({
           Stop
         </button>
       </div>
+    ) : coldCompact != null && nativeCompact && !isArchived ? (
+      <div className={styles.statusStrip} data-cold-compact="">
+        <span className={styles.statusText}>
+          Prompt cache expired; the next send re-reads the whole context.
+        </span>
+        <button
+          type="button"
+          className={styles.statusAction}
+          onClick={handleCompact}
+        >
+          Compact first (≈{formatWindowSize(coldCompact)} tokens)
+        </button>
+      </div>
     ) : null;
 
   return (
@@ -2548,6 +2605,7 @@ export const ThreadView = memo(function ThreadView({
       loadImage={onLoadAttachmentImage}
       sessionImages={sessionImages}
     >
+    <ThreadLinkContext.Provider value={threadLinks}>
     <main
       className={styles.main}
       ref={dropHostRef}
@@ -2880,6 +2938,12 @@ export const ThreadView = memo(function ThreadView({
             >
               {workersLabel}
             </button>
+          ) : null}
+          {thread.goal ? (
+            <GoalChip
+              goal={thread.goal}
+              onClear={() => void onStartRun("/goal clear")}
+            />
           ) : null}
         </div>
         <div className={styles.headerTrail}>
@@ -4025,6 +4089,14 @@ export const ThreadView = memo(function ThreadView({
           />
         ) : null}
 
+        {thread.pendingSecret && onAnswerSecret ? (
+          <SecretPrompt
+            key={`${thread.id}:${thread.pendingSecret.id}`}
+            card={thread.pendingSecret}
+            onAnswer={(value) => onAnswerSecret(thread.pendingSecret!.id, value)}
+          />
+        ) : null}
+
         {detail.pendingPermission?.inputRequest ? (
           <InputPrompt
             key={`${thread.id}:${detail.pendingPermission.requestId}`}
@@ -4428,12 +4500,14 @@ export const ThreadView = memo(function ThreadView({
         model={thread.model}
         reasoningEffort={thread.reasoningEffort}
         webSearch={thread.webSearch === true}
+        fast={thread.fast === true}
         providers={providers}
         agentProfiles={agentProfiles}
         workflows={workflows}
         onSetProvider={onSetProvider}
         onSetReasoningEffort={onSetReasoningEffort}
         onSetWebSearch={onSetWebSearch}
+        onSetFast={onSetFast}
         onSaveWorkflow={onSaveWorkflow}
         onRemoveWorkflow={onRemoveWorkflow}
         workflowListError={workflowListError}
@@ -4738,6 +4812,7 @@ export const ThreadView = memo(function ThreadView({
         </div>
       )}
     </main>
+    </ThreadLinkContext.Provider>
     </PathLinkProvider>
   );
 });

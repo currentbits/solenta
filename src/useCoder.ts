@@ -325,6 +325,8 @@ export interface UseCoderResult {
   savePlan: (plan: string, threadId?: string) => Promise<string>;
   /** Dismiss the selected thread's persisted question card (issue #647). */
   clearQuestion: () => Promise<void>;
+  /** Answer (value) or dismiss (null) the secret card (issue #1531). */
+  answerSecret: (requestId: string, value: string | null) => Promise<void>;
   /**
    * Set provider and/or model. Defaults to the selected thread.
    * Pass threadId when applying a profile to a thread that is not selected
@@ -348,6 +350,7 @@ export interface UseCoderResult {
    * Pass threadId when applying to a fork that is not selected.
    */
   setWebSearch: (webSearch: boolean, threadId?: string) => Promise<void>;
+  setFast: (fast: boolean, threadId?: string) => Promise<void>;
   /**
    * Archive or unarchive a thread. Defaults to the selected thread.
    * Pass threadId when undoing archive after selection has already moved.
@@ -1529,9 +1532,11 @@ export function useCoder(): UseCoderResult {
     setPermissionMode,
     respondPermission,
     clearQuestion,
+    answerSecret,
     setProvider,
     setReasoningEffort,
     setWebSearch,
+    setFast,
     setArchived,
     setSettled,
     setPinned,
@@ -2067,9 +2072,11 @@ export function useCoder(): UseCoderResult {
     setPermissionMode,
     respondPermission,
     clearQuestion,
+    answerSecret,
     setProvider,
     setReasoningEffort,
     setWebSearch,
+    setFast,
     setArchived,
     setSettled,
     setPinned,

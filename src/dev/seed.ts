@@ -62,6 +62,8 @@ export function devProvider(
       description: `${name} model`,
       vendor: name,
       recommended: i === 0,
+      // Mirrors the real catalog's Fast trait (#1529).
+      ...(m === "claude-opus-5" ? { fast: true } : {}),
     })),
     efforts: ["low", "medium", "high"],
     permissionModes: [

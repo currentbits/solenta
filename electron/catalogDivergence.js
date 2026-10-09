@@ -272,8 +272,7 @@ function readLiveIds(providerId, opts = {}) {
   const cache = opts.cliCache;
 
   if (providerId === "codex") {
-    const dir = env.CODEX_HOME || path.join(home, ".codex");
-    return parseJsonFile(read(path.join(dir, "models_cache.json")), parseCodexCache);
+    return parseCodexCache(readCodexCacheJson(opts));
   }
 
   if (providerId === "grok") {
@@ -300,6 +299,87 @@ function readLiveIds(providerId, opts = {}) {
   }
 
   return null;
+}
+
+/**
+ * @param {{ env?: NodeJS.ProcessEnv, home?: string, readFile?: (filePath: string) => string | null }} [opts]
+ * @returns {unknown}
+ */
+function readCodexCacheJson(opts = {}) {
+  const env = opts.env || process.env;
+  const dir = env.CODEX_HOME || path.join(resolveHomedir(env, opts.home), ".codex");
+  const raw = (opts.readFile || defaultReadFile)(path.join(dir, "models_cache.json"));
+  return parseJsonFile(raw, (json) => json);
+}
+
+/**
+ * Codex models whose cache entry offers the priority ("Fast") tier, or null
+ * without a readable cache. The picker and the spawn both use this so the
+ * toggle and argv cannot disagree (#1529).
+ * @param {{ env?: NodeJS.ProcessEnv, home?: string, readFile?: (filePath: string) => string | null }} [opts]
+ * @returns {Set<string> | null}
+ */
+function codexLiveFastIds(opts = {}) {
+  const json = readCodexCacheJson(opts);
+  const models = json && typeof json === "object" ? /** @type {any} */ (json).models : null;
+  const entries = Array.isArray(models)
+    ? models
+    : models && typeof models === "object"
+      ? Object.values(models)
+      : null;
+  if (!entries) return null;
+  const ids = new Set();
+  for (const e of entries) {
+    if (
+      e &&
+      Array.isArray(e.service_tiers) &&
+      e.service_tiers.some((t) => t && t.id === "priority")
+    ) {
+      ids.add(e.slug);
+    }
+  }
+  return ids;
+}
+
+/** Dotted numeric compare; non-numeric parts count as 0. */
+function versionBelow(version, min) {
+  const a = String(version).split(".").map((n) => parseInt(n, 10) || 0);
+  const b = String(min).split(".").map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    if ((a[i] || 0) !== (b[i] || 0)) return (a[i] || 0) < (b[i] || 0);
+  }
+  return false;
+}
+
+/**
+ * Issue #1529: the Codex cache also says which models offer the priority
+ * ("Fast") tier and which CLI wrote it (`client_version`). Re-derive
+ * `fast` from service_tiers, and set `updateHint` on rows whose `minCli`
+ * is newer than that CLI. No cache = snapshot traits, no hint.
+ * ponytail: Codex only; Claude needs a `claude --version` probe first.
+ *
+ * @param {Array<{ id?: string, name?: string, modelInfo?: Array<{ id: string, label?: string, fast?: boolean, minCli?: string, updateHint?: string }> }>} providers
+ * @param {{ env?: NodeJS.ProcessEnv, home?: string, readFile?: (filePath: string) => string | null }} [opts]
+ */
+function applyCodexLiveTraits(providers, opts = {}) {
+  const codex = Array.isArray(providers)
+    ? providers.find((p) => p && p.id === "codex")
+    : null;
+  if (!codex || !Array.isArray(codex.modelInfo)) return providers;
+  const json = readCodexCacheJson(opts);
+  if (!json || typeof json !== "object") return providers;
+  const version = /** @type {any} */ (json).client_version;
+  const fastIds = codexLiveFastIds(opts);
+  for (const m of codex.modelInfo) {
+    if (fastIds) {
+      if (fastIds.has(m.id)) m.fast = true;
+      else delete m.fast;
+    }
+    if (typeof version === "string" && m.minCli && versionBelow(version, m.minCli)) {
+      m.updateHint = `Update ${codex.name || "Codex"} to use ${m.label || m.id}`;
+    }
+  }
+  return providers;
 }
 
 /**
@@ -432,5 +512,8 @@ module.exports = {
   readLiveIds,
   attachCatalogNotes,
   alignCatalogWithLive,
+  applyCodexLiveTraits,
+  codexLiveFastIds,
+  versionBelow,
   resolveHomedir,
 };

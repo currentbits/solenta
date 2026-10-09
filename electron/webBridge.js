@@ -12,11 +12,16 @@
  * Failed auth is rate-limited per remote address: past the limit the socket
  * is closed before the token is even compared. Each authed socket remembers
  * its device, so revoking a device drops its live sockets at once.
+ *
+ * Each invoke is checked against the device's scopes (webScopes.js) here,
+ * on the host, before the handler runs. A device with no scopes array gets
+ * nothing but read. Pushes the device cannot see are not sent to it.
  */
 
 const crypto = require("node:crypto");
 const { WebSocketServer, WebSocket } = require("ws");
 const { IPC_HANDLERS } = require("./ipc.js");
+const { PUSH_SCOPE, allows, argsAllowed, scopeForChannel } = require("./webScopes.js");
 
 const WS_PATH = "/ws";
 
@@ -70,15 +75,17 @@ function createAuthLimiter(opts = {}) {
 }
 
 /**
- * Accept either an authorize(token) → {id}|null function or one fixed token.
+ * Accept either an authorize(token) → {id, scopes}|null function or one
+ * fixed token. The fixed token is the owner's own (--serve-web) and is full.
  *
- * @param {{ authorize?: (token: string) => { id: string } | null, token?: string }} opts
+ * @param {{ authorize?: (token: string) => { id: string, scopes?: string[] } | null, token?: string }} opts
  */
 function resolveAuthorize(opts) {
   if (opts && typeof opts.authorize === "function") return opts.authorize;
   const token = opts && opts.token;
   if (!token) throw new Error("web auth requires a token or an authorize function");
-  return (presented) => (tokensEqual(presented, token) ? { id: "token" } : null);
+  return (presented) =>
+    tokensEqual(presented, token) ? { id: "token", scopes: ["full"] } : null;
 }
 
 /**
@@ -120,7 +127,7 @@ function attachWebBridge(httpServer, opts) {
   const pingIntervalMs = opts.pingIntervalMs ?? 30000;
   const maxBufferedBytes = opts.maxBufferedBytes ?? 4 * 1024 * 1024;
 
-  /** Authed socket → device id. @type {Map<import("ws").WebSocket, string>} */
+  /** Authed socket → device. @type {Map<import("ws").WebSocket, { id: string, scopes?: string[] }>} */
   const authed = new Map();
 
   const wss = new WebSocketServer({ server: httpServer, path });
@@ -146,6 +153,8 @@ function attachWebBridge(httpServer, opts) {
     const remote = (req && req.socket && req.socket.remoteAddress) || "unknown";
     let sawFirst = false;
     let isAuthed = false;
+    /** @type {string[] | undefined} */
+    let scopes;
     ws.isAlive = true;
     ws.on("pong", () => {
       ws.isAlive = true;
@@ -184,7 +193,8 @@ function attachWebBridge(httpServer, opts) {
           return;
         }
         isAuthed = true;
-        authed.set(ws, device.id);
+        scopes = device.scopes;
+        authed.set(ws, device);
         sendJson(ws, { kind: "auth-ok" });
         return;
       }
@@ -217,6 +227,13 @@ function attachWebBridge(httpServer, opts) {
         if (typeof fn !== "function") {
           throw new Error(`No handler registered for '${channel}'`);
         }
+        const need = scopeForChannel(channel);
+        if (!allows(scopes, need)) {
+          throw new Error(`This device is not allowed to do that (needs ${need} access).`);
+        }
+        if (!argsAllowed(scopes, channel, ctx, args)) {
+          throw new Error("This device is not allowed to do that (needs full access).");
+        }
         // Web has no solenta-media protocol; image handlers reply with
         // async data URLs instead of a custom-scheme src (issue #145).
         const result = await fn({ ...ctx, serveDataUrls: true, transport: "web" }, ...args);
@@ -241,8 +258,10 @@ function attachWebBridge(httpServer, opts) {
       return;
     }
     const frame = JSON.stringify({ kind: "push", channel, payload });
-    for (const client of authed.keys()) {
+    const need = PUSH_SCOPE.get(channel) || "read";
+    for (const [client, device] of authed) {
       if (client.readyState !== WebSocket.OPEN) continue;
+      if (!allows(device.scopes, need)) continue;
       if (client.bufferedAmount > maxBufferedBytes) {
         authed.delete(client);
         client.terminate();
@@ -255,8 +274,8 @@ function attachWebBridge(httpServer, opts) {
   /** Terminate every socket a device authed with. Returns how many. */
   function disconnect(deviceId) {
     let n = 0;
-    for (const [client, id] of authed) {
-      if (id !== deviceId) continue;
+    for (const [client, device] of authed) {
+      if (device.id !== deviceId) continue;
       authed.delete(client);
       client.terminate();
       n++;
