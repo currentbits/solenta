@@ -21,7 +21,7 @@
 const crypto = require("node:crypto");
 const { WebSocketServer, WebSocket } = require("ws");
 const { IPC_HANDLERS } = require("./ipc.js");
-const { PUSH_SCOPE, allows, scopeForChannel } = require("./webScopes.js");
+const { PUSH_SCOPE, allows, argsAllowed, scopeForChannel } = require("./webScopes.js");
 
 const WS_PATH = "/ws";
 
@@ -230,6 +230,9 @@ function attachWebBridge(httpServer, opts) {
         const need = scopeForChannel(channel);
         if (!allows(scopes, need)) {
           throw new Error(`This device is not allowed to do that (needs ${need} access).`);
+        }
+        if (!argsAllowed(scopes, channel, ctx, args)) {
+          throw new Error("This device is not allowed to do that (needs full access).");
         }
         // Web has no solenta-media protocol; image handlers reply with
         // async data URLs instead of a custom-scheme src (issue #145).

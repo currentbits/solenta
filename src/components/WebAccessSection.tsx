@@ -359,8 +359,10 @@ export function WebAccessSection({ active }: { active: boolean }) {
         </div>
       ) : null}
       <p className={styles.note}>
-        Solenta checks every request against these. To change them later,
-        revoke the device and pair it again.
+        Solenta checks every request against these. Steer threads can
+        approve the agent's tool requests, so the agent can run whatever
+        you approve. To change access later, revoke the device and pair it
+        again.
       </p>
       {status.devices.length > 0 ? (
         <div className={styles.pairingList} data-web-devices="">

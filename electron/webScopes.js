@@ -11,6 +11,9 @@
  * so a new handler fails closed until someone classifies it.
  */
 
+const fs = require("node:fs");
+const path = require("node:path");
+
 const SCOPES = Object.freeze([
   "read",
   "steer",
@@ -118,7 +121,6 @@ const BY_SCOPE = {
     "threads:rewind",
     "threads:respondPermission",
     "threads:clearQuestion",
-    "threads:setPermissionMode",
     "threads:setArchived",
     "threads:setSettled",
     "threads:setPinned",
@@ -292,6 +294,8 @@ const BY_SCOPE = {
     "web:revokeDevice",
     "web:setTailscale",
     "threads:purge",
+    // Bypass mode would let a steer device skip the terminal/files/git grants.
+    "threads:setPermissionMode",
     "app:checkUpdate",
     "app:downloadUpdate",
     "app:applyUpdate",
@@ -350,7 +354,50 @@ function allows(scopes, need) {
   return scopes.includes(need);
 }
 
+function realOrNull(p) {
+  try {
+    return fs.realpathSync(p);
+  } catch {
+    return null;
+  }
+}
+
+function within(file, root) {
+  return file === root || file.startsWith(root.endsWith(path.sep) ? root : root + path.sep);
+}
+
+/**
+ * readImage takes any absolute path. Short of full, only serve images under
+ * Solenta's attachments, its worktrees, or a known project checkout.
+ */
+function imagePathAllowed(ctx, input) {
+  const file = realOrNull(String((input && input.path) || ""));
+  if (!file) return false;
+  const roots = [];
+  if (ctx && ctx.userDataPath) {
+    roots.push(path.join(ctx.userDataPath, "attachments"), path.join(ctx.userDataPath, "worktrees"));
+  }
+  if (ctx && ctx.worktreeBase) roots.push(ctx.worktreeBase);
+  const projects = ctx && ctx.store && typeof ctx.store.getProjects === "function" ? ctx.store.getProjects() || [] : [];
+  for (const p of projects) if (p && p.path) roots.push(p.path);
+  return roots.some((r) => {
+    const real = realOrNull(r);
+    return real != null && within(file, real);
+  });
+}
+
+/** Per-channel argument checks for devices without full access. */
+const ARG_GUARDS = new Map([["attachments:readImage", imagePathAllowed]]);
+
+/** @returns {boolean} false → refuse the call */
+function argsAllowed(scopes, channel, ctx, args) {
+  const guard = ARG_GUARDS.get(channel);
+  if (!guard || allows(scopes, "full")) return true;
+  return guard(ctx, args[0]);
+}
+
 module.exports = {
+  argsAllowed,
   SCOPES,
   PRESETS,
   BY_SCOPE,

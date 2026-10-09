@@ -29,7 +29,7 @@ const { WebSocket } = require("ws");
 }
 
 const { IPC_HANDLERS } = require("../ipc.js");
-const { BY_SCOPE, SCOPES, PRESETS, allows, sanitizeScopes, scopeForChannel } = require("../webScopes.js");
+const { BY_SCOPE, SCOPES, PRESETS, allows, argsAllowed, sanitizeScopes, scopeForChannel } = require("../webScopes.js");
 const { attachWebBridge, WS_PATH } = require("../webBridge.js");
 const { createWebDevices } = require("../webDevices.js");
 
@@ -73,6 +73,32 @@ describe("scope table", () => {
     assert.deepEqual(sanitizeScopes(undefined), ["read"]);
     assert.deepEqual(sanitizeScopes(["steer", "root", "git"]), ["read", "steer", "git"]);
     assert.deepEqual(sanitizeScopes(["steer", "full"]), ["full"]);
+  });
+});
+
+describe("readImage path guard", () => {
+  it("short of full, serves only attachments, worktrees and project files", () => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "web-img-")));
+    const userData = path.join(root, "ud");
+    const proj = path.join(root, "proj");
+    const home = path.join(root, "home");
+    for (const d of [path.join(userData, "attachments", "t1"), proj, home]) fs.mkdirSync(d, { recursive: true });
+    const att = path.join(userData, "attachments", "t1", "a.png");
+    const inProj = path.join(proj, "shot.png");
+    const outside = path.join(home, "secret.png");
+    const sneaky = path.join(proj, "link.png");
+    for (const f of [att, inProj, outside]) fs.writeFileSync(f, "x");
+    fs.symlinkSync(outside, sneaky);
+    const ctx = { userDataPath: userData, store: { getProjects: () => [{ path: proj }] } };
+    const ok = (scopes, p) => argsAllowed(scopes, "attachments:readImage", ctx, [{ path: p }]);
+    assert.equal(ok(["read"], att), true);
+    assert.equal(ok(["read"], inProj), true);
+    assert.equal(ok(["read", "steer"], outside), false);
+    assert.equal(ok(["read"], sneaky), false, "symlink out of the project is refused");
+    assert.equal(ok(["read"], path.join(proj, "..", "home", "secret.png")), false);
+    assert.equal(ok(["full"], outside), true);
+    assert.equal(argsAllowed(["read"], "threads:list", ctx, []), true);
+    assert.equal(scopeForChannel("threads:setPermissionMode"), "full");
   });
 });
 
