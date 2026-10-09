@@ -15,6 +15,7 @@ const { createAskRuns } = require("./runner-ask-runs.js");
 const { createTurnSetup } = require("./runner-turn-setup.js");
 const { createSubagents } = require("./runner-subagents.js");
 const { createSessionRecording } = require("./runner-session-recording.js");
+const threadSecrets = require("./threadSecrets.js");
 const { createClaudeSessions } = require("./runner-claude-sessions.js");
 const { createVerifyGate } = require("./runner-verify-gate.js");
 const { createQuotaWait } = require("./runner-quota-wait.js");
@@ -1285,7 +1286,7 @@ function createRunner(opts) {
       }
     }
     // Session mirror: user + event immediately; assistant/tool at terminal.
-    recordSessionOnAppend(threadId, role, text);
+    recordSessionOnAppend(threadId, role, threadSecrets.redact(threadId, text));
     return msg.id;
   }
 

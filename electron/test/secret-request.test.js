@@ -9,6 +9,7 @@
 const { describe, it, afterEach } = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
+const http = require("node:http");
 const os = require("node:os");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
@@ -130,6 +131,117 @@ describe("secret_request (#1531)", () => {
     // Archive / settle / delete (retireAgent) drops it from later runs.
     threadSecrets.clear(thread.id);
     assert.equal(threadSecrets.withEnv(thread.id, undefined), undefined);
+  });
+
+  it("redacts a printed secret from messages, pushes, the store and the transcript", async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-secret-"));
+    const userData = path.join(tmpDir, "userData");
+    fs.mkdirSync(userData);
+    const VALUE = "sk_live_51HxTestSecretValue";
+    // The agent does what the issue warns about: `echo $STRIPE_API_KEY`.
+    const agent = path.join(tmpDir, "agent.js");
+    fs.writeFileSync(
+      agent,
+      "process.stdout.write('key is '+process.env.STRIPE_API_KEY+' ok');",
+    );
+    delete process.env.CODER_SIMULATE;
+    process.env.CODER_AGENT_CMD = `${process.execPath} ${agent}`;
+
+    // Fake memory server: captures what the session transcript queue sends.
+    const transcript = [];
+    const server = http.createServer((req, res) => {
+      let body = "";
+      req.on("data", (c) => (body += c));
+      req.on("end", () => {
+        transcript.push(body);
+        res.setHeader("content-type", "application/json");
+        res.end("{}");
+      });
+    });
+    await new Promise((r) => server.listen(0, "127.0.0.1", r));
+    const { port } = /** @type {import("node:net").AddressInfo} */ (server.address());
+    fs.writeFileSync(
+      path.join(userData, "memory-server.json"),
+      JSON.stringify({ port, token: "t" }),
+    );
+
+    let threadId = "";
+    try {
+      const store = new Store(path.join(userData, "coder-store.json"));
+      const core = await import(
+        pathToFileURL(path.join(__dirname, "../../core/dist/index.js")).href
+      );
+      const pushes = [];
+      runner = createRunner({
+        store,
+        core,
+        pushFn: (_ch, payload) => pushes.push(JSON.stringify(payload)),
+        tickMs: 15,
+        userDataPath: userData,
+        getMemoryStatus: () => ({ running: true, adopted: false, port }),
+      });
+      const repo = path.join(tmpDir, "app");
+      fs.mkdirSync(repo);
+      execFileSync("git", ["init"], { cwd: repo, stdio: "ignore" });
+      const project = await services.addProject(store, repo);
+      const thread = services.createThread(store, { projectId: project.id, title: "Redact" });
+      threadId = thread.id;
+
+      runner.requestSecret({ threadId: thread.id, name: "STRIPE_API_KEY" });
+      const card = store.getThread(thread.id).pendingSecret;
+      runner.answerSecret({ threadId: thread.id, requestId: card.id, value: VALUE });
+      await waitFor(() => store.getThread(thread.id).status === "done");
+
+      // A tool call whose result carries the value, written the way the
+      // adapters do: append, then patch the result in.
+      const toolId = "tool-msg-1";
+      store.appendMessage(thread.id, {
+        id: toolId,
+        role: "tool",
+        text: "",
+        createdAt: Date.now(),
+        tool: { id: "t1", name: "Bash", input: { command: `echo ${VALUE}` }, done: false },
+      });
+      store.updateMessage(thread.id, toolId, {
+        tool: { id: "t1", name: "Bash", input: { command: `echo ${VALUE}` }, output: `${VALUE}\n`, done: true },
+      });
+      runner.refreshDetail(thread.id);
+
+      await runner.flushTranscripts();
+      store.saveNow();
+
+      const msgs = JSON.stringify(store.getMessages(thread.id));
+      assert.ok(msgs.includes("key is [secret:STRIPE_API_KEY] ok"), "assistant text redacted");
+      assert.ok(msgs.includes('"output":"[secret:STRIPE_API_KEY]\\n"'), "tool output redacted");
+      assert.ok(!msgs.includes(VALUE), "messages");
+
+      const pushed = pushes.join("\n");
+      assert.ok(pushed.includes("[secret:STRIPE_API_KEY]"), "pushed detail redacted");
+      assert.ok(!pushed.includes(VALUE), "pushed detail");
+
+      const sent = transcript.join("\n");
+      assert.ok(sent.includes("[secret:STRIPE_API_KEY]"), "transcript redacted");
+      assert.ok(!sent.includes(VALUE), "transcript");
+
+      assert.deepEqual(filesContaining(userData, VALUE), [], "files under userData");
+      const storeFiles = filesContaining(userData, "[secret:STRIPE_API_KEY]");
+      assert.ok(storeFiles.length > 0, "store file holds the placeholder");
+    } finally {
+      threadSecrets.clear(threadId);
+      await new Promise((r) => server.close(r));
+    }
+  });
+
+  it("redact skips values shorter than 6 chars and leaves other threads alone", () => {
+    threadSecrets.set("redact-a", "SHORT", "abc12");
+    threadSecrets.set("redact-a", "LONG", "abcdef");
+    const msg = { text: "abc12 abcdef", tool: { output: ["xabcdefx"] } };
+    assert.deepEqual(threadSecrets.redact("redact-a", msg), {
+      text: "abc12 [secret:LONG]",
+      tool: { output: ["x[secret:LONG]x"] },
+    });
+    assert.equal(threadSecrets.redact("redact-b", msg), msg);
+    threadSecrets.clear("redact-a");
   });
 
   it("declining drops the card without starting a turn", async () => {
