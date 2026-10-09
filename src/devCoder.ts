@@ -531,4 +531,10 @@ function buildDevCoder(): CoderApi {
   return api;
 }
 
-export const devCoder: CoderApi = /* @__PURE__ */ buildDevCoder();
+// Built on first use, not at import: building starts the seeded working
+// threads' run intervals, which kept every importer (each renderer test
+// file) alive ~3.6 s after its work was done (#1439).
+let sharedDevCoder: CoderApi | null = null;
+export function devCoder(): CoderApi {
+  return (sharedDevCoder ??= buildDevCoder());
+}
