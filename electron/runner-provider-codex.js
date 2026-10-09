@@ -391,9 +391,26 @@ function createCodexRun(ctx) {
       reasoningEffort: thread.reasoningEffort || null,
       permissionMode: thread.permissionMode || "default",
       compact: isNativeCompactTurn("codex", prompt, resumeId),
+      // Native goal (#1531). undefined = never set, null = cleared since.
+      goal: thread.goal,
       onServerRequest: (req) => handleCodexServerRequest(threadId, req),
       onEvent: (ev) => {
         if (!guard()) return;
+
+        if (ev.type === "goal.updated") {
+          if (services.applyNativeGoal(store, threadId, ev.goal)) {
+            store.save();
+            pushDetail(threadId, codexState);
+            pushThreadsChanged();
+          }
+          return;
+        }
+        // A goal continuation turn writes a new assistant message instead
+        // of overwriting the previous turn's.
+        if (ev.type === "turn.started") {
+          assistantMsgId = null;
+          assistantText = "";
+        }
 
         // Native compaction (thread/compact/start or auto). Usage for the
         // compacted context lands between started and completed, so the

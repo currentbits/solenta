@@ -99,7 +99,7 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
   },
   {
     name: "/goal",
-    hint: "Set a persistent thread goal",
+    hint: "Set a standing thread goal (bare /goal clears it)",
     kind: "insert",
   },
   {
@@ -168,6 +168,18 @@ export function pickerVerb(
   const m = /^\s*\/(workflow|bestof)(?:\s+([\s\S]*))?$/.exec(text);
   if (!m) return null;
   return { picker: m[1] as "workflow" | "bestof", tail: (m[2] ?? "").trim() };
+}
+
+/**
+ * `/goal <objective>` sets the thread goal; bare `/goal` or `/goal clear`
+ * clears it (issue #1531). The send path intercepts it so it never reaches
+ * the model. `{ goal: null }` means clear; null means not a goal command.
+ */
+export function parseGoalCommand(text: string): { goal: string | null } | null {
+  const m = /^\s*\/goal(?:\s+([\s\S]*))?$/.exec(text);
+  if (!m) return null;
+  const tail = (m[1] ?? "").trim();
+  return { goal: tail && !/^(clear|off)$/i.test(tail) ? tail : null };
 }
 
 /**

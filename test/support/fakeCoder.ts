@@ -2327,6 +2327,21 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         threads = threads.map((t) => (t.id === i.threadId ? next : t));
         return Promise.resolve(next);
       },
+      setGoal: (input: unknown) => {
+        const i = input as { threadId: string; goal: string | null };
+        calls.push({ channel: "threads.setGoal", args: [input] });
+        const existing = threads.find((t) => t.id === i.threadId);
+        if (!existing) {
+          return Promise.reject(new Error(`Unknown thread: ${i.threadId}`));
+        }
+        const objective = (i.goal ?? "").trim();
+        const next: ThreadInfo = {
+          ...existing,
+          goal: objective ? { objective, status: "active", setAt: 0 } : null,
+        };
+        threads = threads.map((t) => (t.id === i.threadId ? next : t));
+        return Promise.resolve(next);
+      },
       startAsk: (input: unknown) => {
         const i = input as { threadId: string };
         calls.push({ channel: "threads.startAsk", args: [input] });

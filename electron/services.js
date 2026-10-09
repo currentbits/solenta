@@ -56,6 +56,9 @@ const {
   stopAsk,
   recordTeachReview,
   requestTeachReview,
+  goalNoteFor,
+  setGoal,
+  applyNativeGoal,
 } = require("./services-teach.js");
 const {
   createThread,
@@ -266,6 +269,9 @@ module.exports = {
   stopTeach,
   recordTeachReview,
   requestTeachReview,
+  goalNoteFor,
+  setGoal,
+  applyNativeGoal,
   codeIndexNoteFor,
   readProjectCodeMap,
   specStagePrompt,

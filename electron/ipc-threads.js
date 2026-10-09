@@ -467,6 +467,11 @@ module.exports = {
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
     return updated;
   },
+  "threads:setGoal": async (ctx, input) => {
+    const updated = services.setGoal(ctx.store, input);
+    ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+    return updated;
+  },
   "threads:requestTeachReview": async (ctx, input) => {
     const { thread, prompt } = services.requestTeachReview(ctx.store, input);
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));

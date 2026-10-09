@@ -157,6 +157,7 @@ export const IPC_CHANNELS = [
   { ns: "threads", method: "convergeSpec" },
   { ns: "threads", method: "startTeach" },
   { ns: "threads", method: "stopTeach" },
+  { ns: "threads", method: "setGoal" },
   { ns: "threads", method: "requestTeachReview" },
   { ns: "threads", method: "startAsk" },
   { ns: "threads", method: "stopAsk" },
