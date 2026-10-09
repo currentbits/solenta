@@ -19,6 +19,7 @@ const {
   prStatus,
   parsePrJson,
   isGitHubRemote,
+  isGitHubRemoteAsync,
   gitTry,
   gitTryAsync,
 } = require("../worktrees.js");
@@ -1677,6 +1678,35 @@ describe("worktrees", () => {
       assert.equal(isGitHubRemote("git@gitlab.com:acme/demo.git"), false);
       assert.equal(isGitHubRemote("/tmp/local-bare.git"), false);
       assert.equal(isGitHubRemote("ssh://git@git.example.com/acme/demo"), false);
+    });
+
+    it("isGitHubRemote accepts gh-authed GHE hosts and ssh aliases (#1523)", async () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-gh-hosts-"));
+      const prev = { GH_CONFIG_DIR: process.env.GH_CONFIG_DIR, GH_HOST: process.env.GH_HOST, CODER_SSH_BIN: process.env.CODER_SSH_BIN };
+      try {
+        fs.writeFileSync(path.join(dir, "hosts.yml"), "github.com:\n    user: a\nghe.corp.example:\n    git_protocol: ssh\n");
+        const fakeSsh = path.join(dir, "fake-ssh");
+        writeFakeBin(fakeSsh, `const h = process.argv[3]; process.stdout.write("user git\\nhostname " + (h === "gh-work" ? "github.com" : h) + "\\nport 22\\n");`);
+        process.env.GH_CONFIG_DIR = dir;
+        delete process.env.GH_HOST;
+        process.env.CODER_SSH_BIN = fakeSsh;
+
+        assert.equal(isGitHubRemote("https://ghe.corp.example/acme/demo.git"), true);
+        assert.equal(isGitHubRemote("git@ghe.corp.example:acme/demo.git"), true);
+        assert.equal(isGitHubRemote("https://other.example/acme/demo.git"), false);
+        assert.equal(await isGitHubRemoteAsync("gh-work:acme/demo.git"), true);
+        assert.equal(isGitHubRemote("git@gh-work:acme/demo.git"), true, "alias cached");
+        assert.equal(await isGitHubRemoteAsync("git@gitlab.com:acme/demo.git"), false);
+        process.env.GH_HOST = "ghe2.example";
+        assert.equal(isGitHubRemote("https://ghe2.example/acme/demo"), true);
+        assert.equal(services.slugFromRemoteUrl("gh-work:acme/demo.git"), "acme/demo");
+      } finally {
+        for (const [k, v] of Object.entries(prev)) {
+          if (v === undefined) delete process.env[k];
+          else process.env[k] = v;
+        }
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
     });
 
     it("happy path: creates PR, persists prNumber/prUrl, broadcasts", async () => {

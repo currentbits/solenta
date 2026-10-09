@@ -44,8 +44,8 @@ function slugFromRemoteUrl(url) {
   if (!url) return null;
   const cleaned = url.trim().replace(/\.git$/i, "");
 
-  // git@host:owner/repo
-  const ssh = cleaned.match(/^git@[^:]+:(.+)$/);
+  // [user@]host:owner/repo, host possibly an ssh alias (#1523)
+  const ssh = cleaned.match(/^(?:[^@/\s]+@)?[^:/\s]{2,}:(?!\/\/)(.+)$/);
   if (ssh) {
     const parts = ssh[1].replace(/^\/+/, "").split("/").filter(Boolean);
     if (parts.length >= 2) {

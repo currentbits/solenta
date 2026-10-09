@@ -14,7 +14,7 @@ const {
   gitTryAsync,
   ghTryAsync,
   GH_TIMEOUT_MS,
-  isGitHubRemote,
+  isGitHubRemoteAsync,
   isGhAuthFailure,
   isUnknownJsonField,
   tailErr,
@@ -164,7 +164,7 @@ async function requireGitHubRepo(projectPath) {
   const cwd = String(projectPath || "");
   if (!cwd) return { ok: false, reason: "not a GitHub repo" };
   const remote = await gitTryAsync(cwd, ["remote", "get-url", "origin"]);
-  if (!remote.ok || !isGitHubRemote(String(remote.stdout || "").trim())) {
+  if (!remote.ok || !(await isGitHubRemoteAsync(String(remote.stdout || "").trim()))) {
     return { ok: false, reason: "not a GitHub repo" };
   }
   return { ok: true, cwd };
