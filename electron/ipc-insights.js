@@ -11,10 +11,14 @@ module.exports = {
     return buildActivity(threads, ctx.store.data.workLogByThread, Date.now());
   },
   "usage:byDay": async (ctx) => {
-    return {
-      byDay: ctx.store.getUsageByDay(),
-      threadsByDay: ctx.store.getUsageThreadsByDay(),
-    };
+    const { applyModelPrices } = require("./modelPrices.js");
+    return applyModelPrices(
+      {
+        byDay: ctx.store.getUsageByDay(),
+        threadsByDay: ctx.store.getUsageThreadsByDay(),
+      },
+      ctx.store.getSettings().modelPrices,
+    );
   },
   "usage:providerLimits": async (ctx) => {
     const { fetchProviderLimits } = require("./providerUsage.js");

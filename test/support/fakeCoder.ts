@@ -1022,6 +1022,21 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           const stepped = Math.round(v * 10) / 10;
           next.uiScale = Math.min(1.6, Math.max(0.8, stepped));
         }
+        if (Object.prototype.hasOwnProperty.call(p, "modelPrices")) {
+          const rows = Object.values(p.modelPrices ?? {});
+          const bad = rows.some((row) =>
+            Object.values(row).some(
+              (v) => typeof v !== "number" || !Number.isFinite(v) || v < 0,
+            ),
+          );
+          if (bad) {
+            calls.push({ channel: "settings.set", args: [patch] });
+            return Promise.reject(
+              new Error("Model prices must be non-negative numbers"),
+            );
+          }
+          next.modelPrices = { ...p.modelPrices };
+        }
         settingsState = next;
         return rec(
           "settings.set",

@@ -5,6 +5,7 @@ const { clampUiScale, UI_SCALE_DEFAULT } = require("./zoom.js");
 const { getProvider, honouredEfforts } = require("./providers.js");
 const { normalizeMcpServers } = require("./mcp.js");
 const { normalizeProviderInstances } = require("./providerInstances.js");
+const { normalizeModelPrices } = require("./modelPrices.js");
 
 /**
  * @param {unknown} u
@@ -358,6 +359,7 @@ function normalizeSettings(raw) {
     otel: { endpoint: null, headers: {}, claudeMetrics: false },
     linearApiKey: null,
     webhook: { url: null, onDone: true, onFailed: true, onWaiting: true },
+    modelPrices: {},
   };
   if (!raw || typeof raw !== "object") return settings;
   const obj = /** @type {{ dailyBudgetUsd?: unknown, orchestrationBudgetUsd?: unknown, autoSettleAfterDays?: unknown, mcpServers?: unknown }} */ (
@@ -507,6 +509,9 @@ function normalizeSettings(raw) {
   } else {
     settings.linearApiKey = null;
   }
+  settings.modelPrices = normalizeModelPrices(
+    /** @type {{ modelPrices?: unknown }} */ (obj).modelPrices,
+  );
   settings.webhook = normalizeWebhook(
     /** @type {{ webhook?: unknown }} */ (obj).webhook,
   );
