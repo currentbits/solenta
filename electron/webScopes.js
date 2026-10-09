@@ -311,6 +311,7 @@ const BY_SCOPE = {
     "attachments:fromPaths",
     "attachments:listWindows",
     "attachments:captureWindow",
+    "attachments:captureWindowText",
     // Native dialogs on the host.
     "projects:pickDirectory",
     "projects:pickIcon",

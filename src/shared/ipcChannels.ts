@@ -264,6 +264,7 @@ export const IPC_CHANNELS = [
   { ns: "attachments", method: "readImage" },
   { ns: "attachments", method: "listWindows" },
   { ns: "attachments", method: "captureWindow" },
+  { ns: "attachments", method: "captureWindowText" },
   { ns: "servers", method: "list" },
   { ns: "shell", method: "reveal" },
   { ns: "shell", method: "openPath" },

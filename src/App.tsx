@@ -281,6 +281,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     pickDirectory,
     listSnapWindows,
     captureSnapWindow,
+    captureSnapWindowText,
     resolvePaths,
     openWorkspacePath,
     loadToolImage,
@@ -1965,6 +1966,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onPickDirectory={pickDirectory}
         onListSnapWindows={listSnapWindows}
         onCaptureSnapWindow={captureSnapWindow}
+        onCaptureSnapWindowText={captureSnapWindowText}
         onListCliCommands={listCliCommands}
         onResolvePaths={resolvePaths}
         onOpenWorkspacePath={openWorkspacePath}

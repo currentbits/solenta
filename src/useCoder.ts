@@ -519,6 +519,10 @@ export interface UseCoderResult {
   listSnapWindows: () => Promise<Array<{ id: string; name: string }>>;
   /** AppSnap capture into the selected thread. */
   captureSnapWindow: (sourceId: string) => Promise<AttachmentInfo | null>;
+  /** AppSnap window accessibility text, after the PNG (#1531). */
+  captureSnapWindowText: (
+    sourceId: string,
+  ) => Promise<{ attachment: AttachmentInfo | null; skipped?: string }>;
   /** Resolve transcript path tokens against the selected thread worktree. */
   resolvePaths: (
     paths: string[],
@@ -1634,6 +1638,7 @@ export function useCoder(): UseCoderResult {
     pickDirectory,
     listSnapWindows,
     captureSnapWindow,
+    captureSnapWindowText,
     pickAttachments,
     pickFolderAttachments,
     loadAttachmentImage,
@@ -2130,6 +2135,7 @@ export function useCoder(): UseCoderResult {
     pickDirectory,
     listSnapWindows,
     captureSnapWindow,
+    captureSnapWindowText,
     resolvePaths,
     openWorkspacePath,
     loadToolImage,

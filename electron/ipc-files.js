@@ -361,6 +361,22 @@ module.exports = {
       attachment: attachments.savePng(ctx.userDataPath, threadId, png),
     };
   },
+  "attachments:captureWindowText": async (ctx, input) => {
+    const threadId = input && input.threadId;
+    const shot = await appsnap.captureWindowText(input && input.sourceId);
+    if (!shot) return { attachment: null };
+    if ("skipped" in shot) return { attachment: null, skipped: shot.skipped };
+    return {
+      attachment: attachments.saveFile(
+        ctx.userDataPath,
+        threadId,
+        "window-text.txt",
+        `data:text/plain;base64,${Buffer.from(
+          `Window: ${shot.name}\n\n${shot.text}\n`,
+        ).toString("base64")}`,
+      ),
+    };
+  },
   "shell:reveal": async (ctx, input) => {
     const target = resolveAllowedShellPath(ctx.store, input);
     shell.showItemInFolder(target);
