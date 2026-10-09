@@ -120,7 +120,7 @@ describe("secret_request (#1531)", () => {
     assert.ok(texts.includes("Secret DB_PASSWORD provided"));
 
     await runner.flushTranscripts();
-    store.save();
+    store.saveNow();
     assert.ok(!JSON.stringify(out).includes(SECRET), "MCP result");
     assert.ok(!JSON.stringify(store.getMessages(thread.id)).includes(SECRET), "transcript");
     assert.ok(!JSON.stringify(store.getThread(thread.id)).includes(SECRET), "thread row");
