@@ -74,7 +74,12 @@ import {
 import type { WorkflowSaveInput } from "../useCoder";
 import type { ReturnableView } from "../viewReturn";
 import { contextBreakdown } from "../contextBreakdown";
-import { contextRing, threadContextWindow } from "../contextRing";
+import {
+  coldCompactTokens,
+  contextRing,
+  formatWindowSize,
+  threadContextWindow,
+} from "../contextRing";
 import { buildTimeline, type TimelineEntry } from "../timeline";
 import { collapseTimeline, type DisplayEntry } from "../toolGroups";
 import { RunArtifacts } from "./RunArtifacts";
@@ -2493,6 +2498,14 @@ export const ThreadView = memo(function ThreadView({
     />
   ) : null;
 
+  // ponytail: evaluated on render, so a thread left open across the TTL shows
+  // the chip on its next re-render, not the minute it goes cold.
+  const coldCompact = coldCompactTokens({
+    provider: detail.thread.provider,
+    contextTokens: detail.usage?.contextTokens,
+    lastActivityAt: detail.thread.updatedAt,
+    now: Date.now(),
+  });
   // Run status rides on the composer's top edge (#1429), not the transcript.
   const composerStatus =
     detail.thread.status === "quota-wait" ? (
@@ -2548,6 +2561,19 @@ export const ThreadView = memo(function ThreadView({
           onClick={() => void onStopRun()}
         >
           Stop
+        </button>
+      </div>
+    ) : coldCompact != null && nativeCompact && !isArchived ? (
+      <div className={styles.statusStrip} data-cold-compact="">
+        <span className={styles.statusText}>
+          Prompt cache expired; the next send re-reads the whole context.
+        </span>
+        <button
+          type="button"
+          className={styles.statusAction}
+          onClick={handleCompact}
+        >
+          Compact first (≈{formatWindowSize(coldCompact)} tokens)
         </button>
       </div>
     ) : null;

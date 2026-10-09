@@ -411,6 +411,36 @@ describe("ThreadView / palette actions", () => {
     );
   });
 
+  it("cold large claude thread offers Compact first on the composer", async () => {
+    const sent: string[] = [];
+    const cold = Date.now() - 2 * 60 * 60 * 1000;
+    const m = await mountView({
+      detail: detail({
+        thread: thread({ provider: "claude", sessionId: "s1", updatedAt: cold }),
+        usage: { ...USAGE, contextTokens: 180_000 },
+      }),
+      onStartRun: (p) => sent.push(p),
+    });
+    const chip = m.query("[data-cold-compact] button");
+    assert.ok(chip, "chip shows past the cache TTL");
+    assert.match(chip.textContent ?? "", /Compact first \(≈180k tokens\)/);
+    await m.click(chip as HTMLElement);
+    assert.deepEqual(sent, ["/compact"]);
+    m.unmount();
+
+    for (const over of [
+      { thread: thread({ provider: "claude", sessionId: "s1" }) },
+      { thread: thread({ provider: "codex", sessionId: "s1", updatedAt: cold }) },
+      { thread: thread({ provider: "claude", updatedAt: cold }) },
+    ]) {
+      const quiet = await mountView({
+        detail: detail({ ...over, usage: { ...USAGE, contextTokens: 180_000 } }),
+      });
+      assert.equal(quiet.query("[data-cold-compact]"), null);
+      quiet.unmount();
+    }
+  });
+
   it("/compact is inert while the thread is working", async () => {
     const forks: number[] = [];
     const m = await mountView({
