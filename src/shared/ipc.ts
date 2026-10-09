@@ -938,6 +938,13 @@ export interface ThreadInfo {
    */
   teach?: ThreadTeach | null;
   /**
+   * Standing goal (`/goal`, issue #1531). Set and cleared by
+   * threads.setGoal. Codex syncs it to its native thread goal and reports
+   * status back; other providers get it appended to each prompt and stay
+   * "active". Absent = never set, null = cleared.
+   */
+  goal?: ThreadGoal | null;
+  /**
    * Ask mode (issue #392): read-only repo Q&A from the code index and
    * memory. Never a worktree, never tools, never the daily budget.
    * Absent/false = off. Set by threads.startAsk or threads.create({ ask: true });
@@ -994,6 +1001,24 @@ export type TeachAutonomy = (typeof TEACH_AUTONOMY_LEVELS)[number];
  * 0..2 hint, 3..7 review, 8+ pair.
  */
 export const TEACH_REVIEW_THRESHOLDS = { review: 3, pair: 8 } as const;
+
+/** Codex native goal statuses; other providers only ever use "active". */
+export type ThreadGoalStatus =
+  | "active"
+  | "paused"
+  | "blocked"
+  | "usageLimited"
+  | "budgetLimited"
+  | "complete";
+
+/** A thread's standing goal (issue #1531). */
+export interface ThreadGoal {
+  objective: string;
+  status: ThreadGoalStatus;
+  /** Tokens spent on the goal, when the provider reports it (Codex). */
+  tokensUsed?: number;
+  setAt: number;
+}
 
 /** A thread's teach-mode state (issue #373). */
 export interface ThreadTeach {
@@ -4544,6 +4569,11 @@ export interface CoderApi {
      * Never bumps updatedAt.
      */
     stopTeach(input: { threadId: string }): Promise<ThreadInfo>;
+    /**
+     * Set the thread goal (issue #1531); null or blank clears it. A new
+     * objective starts active. Never bumps updatedAt.
+     */
+    setGoal(input: { threadId: string; goal: string | null }): Promise<ThreadInfo>;
     /**
      * Ask the agent to review the human's TODO(human) fills. Starts a run
      * with the review prompt. Rejects a thread that is not in teach mode.

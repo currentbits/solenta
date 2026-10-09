@@ -9,6 +9,7 @@ import {
   SLASH_COMMANDS,
   commandQuery,
   matchSlashCommands,
+  parseGoalCommand,
   pickerVerb,
 } from "../src/slashCommands.ts";
 
@@ -135,5 +136,24 @@ describe("pickerVerb (#1411)", () => {
     assert.equal(pickerVerb("/workflows later"), null);
     assert.equal(pickerVerb("please /bestof this"), null);
     assert.equal(pickerVerb("/btw what is this"), null);
+  });
+});
+
+describe("parseGoalCommand (#1531)", () => {
+  it("sets with an objective, clears bare or with clear/off", () => {
+    assert.deepEqual(parseGoalCommand("/goal ship v2\nwith docs"), { goal: "ship v2\nwith docs" });
+    assert.deepEqual(parseGoalCommand("  /goal   all green  "), { goal: "all green" });
+    assert.deepEqual(parseGoalCommand("/goal"), { goal: null });
+    assert.deepEqual(parseGoalCommand("/goal clear"), { goal: null });
+    assert.deepEqual(parseGoalCommand("/goal OFF"), { goal: null });
+  });
+
+  it("ignores everything else", () => {
+    assert.equal(parseGoalCommand("/goals later"), null);
+    assert.equal(parseGoalCommand("my /goal is x"), null);
+  });
+
+  it("only a lone clear/off clears; a longer objective starting with it sets", () => {
+    assert.deepEqual(parseGoalCommand("/goal clear the cache"), { goal: "clear the cache" });
   });
 });

@@ -639,6 +639,14 @@ export function createThreads(ctx: DevCtx): Pick<CoderApi, "threads"> {
       async stopTeach(input: { threadId: string }) {
         return patchThread(input.threadId, { teach: null });
       },
+      async setGoal(input: { threadId: string; goal: string | null }) {
+        const objective = (input.goal ?? "").trim();
+        return patchThread(input.threadId, {
+          goal: objective
+            ? { objective, status: "active" as const, setAt: Date.now() }
+            : null,
+        });
+      },
       async startAsk(input: { threadId: string }) {
         const existing = ctx.threads.find((t) => t.id === input.threadId);
         if (existing?.ask) return { ...existing };

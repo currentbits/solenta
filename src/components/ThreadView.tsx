@@ -134,6 +134,7 @@ import { sessionImagePathsFromMessages } from "../sessionImages";
 import { PathLinkProvider, ThreadLinkContext } from "./PathLinks";
 import {
   SandboxBadge,
+  GoalChip,
   ContextRingBadge,
   SyncPill,
   ElapsedClock,
@@ -2892,6 +2893,12 @@ export const ThreadView = memo(function ThreadView({
             >
               {workersLabel}
             </button>
+          ) : null}
+          {thread.goal ? (
+            <GoalChip
+              goal={thread.goal}
+              onClear={() => void onStartRun("/goal clear")}
+            />
           ) : null}
         </div>
         <div className={styles.headerTrail}>

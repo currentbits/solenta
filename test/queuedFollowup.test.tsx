@@ -1429,3 +1429,43 @@ describe("side question /btw during a run (issue #471)", () => {
     m.unmount();
   });
 });
+
+describe("/goal (issue #1531)", () => {
+  it("sets the thread goal instead of queueing or starting a run", async () => {
+    const { fake, m } = await bootOnBusyThread();
+
+    await m.type(m.query("textarea"), "/goal all tests green");
+    await m.click(m.query('button[aria-label="Send"]'));
+    await m.flush();
+
+    assert.equal(fake.of("runs.start").length, 0);
+    assert.equal(fake.of("threads.setQueued").length, 0);
+    const calls = fake.of("threads.setGoal");
+    assert.equal(calls.length, 1);
+    assert.deepEqual(calls[0]!.args[0], {
+      threadId: "t-busy",
+      goal: "all tests green",
+    });
+    assert.ok(m.query("[data-goal-chip]"), "the header chip must appear");
+
+    await m.click(m.query("[data-goal-clear]"));
+    await m.flush();
+    assert.deepEqual(fake.of("threads.setGoal")[1]!.args[0], {
+      threadId: "t-busy",
+      goal: null,
+    });
+    assert.equal(m.query("[data-goal-chip]"), null);
+    m.unmount();
+  });
+
+  it("bare /goal with no goal explains instead of sending", async () => {
+    const { fake, m } = await bootOnBusyThread();
+    await m.type(m.query("textarea"), "/goal");
+    await m.click(m.query('button[aria-label="Send"]'));
+    await m.flush();
+    assert.equal(fake.of("threads.setGoal").length, 0);
+    assert.equal(fake.of("threads.setQueued").length, 0);
+    assert.match(m.text(), /Add an objective/);
+    m.unmount();
+  });
+});

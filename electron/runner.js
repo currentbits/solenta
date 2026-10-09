@@ -1960,6 +1960,7 @@ function createRunner(opts) {
       ) +
       services.reviewItineraryNoteFor(dispatchThread) +
       services.teachNoteFor(dispatchThread) +
+      services.goalNoteFor(dispatchThread) +
       services.askNoteFor(dispatchThread) +
       services.codexComputerUseNoteFor(dispatchThread.provider) +
       services.crewTaskNoteFor(store, dispatchThread) +
