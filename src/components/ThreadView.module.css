@@ -60,6 +60,73 @@
   flex-shrink: 0;
 }
 
+/* /goal chip (#1531): truncates first so the title keeps its room. */
+.goalChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 280px;
+  height: 24px;
+  padding: 0 2px 0 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 12px;
+  flex: 0 1 auto;
+}
+
+.goalChip[data-goal-status="complete"] {
+  border-color: var(--green-border);
+  background: var(--green-soft);
+}
+
+.goalChip[data-goal-status="blocked"],
+.goalChip[data-goal-status="budgetLimited"],
+.goalChip[data-goal-status="usageLimited"] {
+  border-color: var(--amber-border);
+  background: var(--amber-soft);
+}
+
+.goalText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+.goalStatus {
+  flex-shrink: 0;
+  font-size: 11px;
+}
+
+.goalClear {
+  flex-shrink: 0;
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.goalClear:hover {
+  color: var(--text);
+  background: var(--card-hover);
+}
+
+.goalClear:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--focus-ring-color);
+}
+
 .headerTrail {
   display: flex;
   flex-wrap: wrap;

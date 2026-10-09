@@ -220,6 +220,10 @@ module.exports = {
     // clears the card in startRun / setQueued. Pushes its own detail.
     ctx.runner.clearQuestion(input);
   },
+  "threads:answerSecret": async (ctx, input) => {
+    // Value goes to threadSecrets only (issue #1531). Pushes its own detail.
+    ctx.runner.answerSecret(input);
+  },
   "threads:setPermissionMode": async (ctx, input) => {
     const updated = services.setPermissionMode(ctx.store, input);
     services.recordLastUsedDefaults(ctx.store, input.threadId);
@@ -242,7 +246,9 @@ module.exports = {
     return updated;
   },
   "threads:setSettled": async (ctx, input) => {
-    const updated = services.setSettled(ctx.store, input);
+    const updated = services.setSettled(ctx.store, input, {
+      broadcast: ctx.broadcast,
+    });
     if (updated && updated.settledOverride === "settled") {
       retireAgent(ctx, updated.id);
     }
@@ -467,6 +473,11 @@ module.exports = {
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
     return updated;
   },
+  "threads:setGoal": async (ctx, input) => {
+    const updated = services.setGoal(ctx.store, input);
+    ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+    return updated;
+  },
   "threads:requestTeachReview": async (ctx, input) => {
     const { thread, prompt } = services.requestTeachReview(ctx.store, input);
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
@@ -492,6 +503,11 @@ module.exports = {
   },
   "threads:setWebSearch": async (ctx, input) => {
     const updated = services.setWebSearch(ctx.store, input);
+    ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+    return updated;
+  },
+  "threads:setFast": async (ctx, input) => {
+    const updated = services.setFast(ctx.store, input);
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
     return updated;
   },

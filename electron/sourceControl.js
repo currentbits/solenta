@@ -29,6 +29,8 @@ function invalidateDiscoveryCache() {
   cache = null;
   inflight = null;
   generation += 1;
+  // A re-login or auth miss also invalidates the API transport's tokens.
+  require("./github.js").forgetToken();
 }
 
 /**
@@ -114,6 +116,32 @@ function parseGhAuthJson(stdout) {
     status: "unauthenticated",
     detail: "Not signed in. Run gh auth login.",
   };
+}
+
+/**
+ * Every signed-in gh login per host, for the per-host account picker (#1528).
+ * @param {string} stdout `gh auth status --json hosts`
+ * @returns {Array<{ host: string, login: string, active: boolean }>}
+ */
+function parseGhAccounts(stdout) {
+  let data;
+  try {
+    data = JSON.parse(String(stdout || "").trim());
+  } catch {
+    return [];
+  }
+  const hosts = data && data.hosts;
+  if (!hosts || typeof hosts !== "object") return [];
+  /** @type {Array<{ host: string, login: string, active: boolean }>} */
+  const out = [];
+  for (const [host, rows] of Object.entries(hosts)) {
+    if (!Array.isArray(rows)) continue;
+    for (const a of rows) {
+      if (!a || !a.login || String(a.state).toLowerCase() !== "success") continue;
+      out.push({ host: String(a.host || host), login: String(a.login), active: Boolean(a.active) });
+    }
+  }
+  return out;
 }
 
 /**
@@ -288,9 +316,12 @@ async function probeGithub(opts) {
     status: "unknown",
     detail: null,
   });
+  /** @type {Array<{ host: string, login: string, active: boolean }>} */
+  let accounts = [];
 
   if (canJson) {
     const jsonRun = await runCli(opts, bin, ["auth", "status", "--json", "hosts"]);
+    accounts = parseGhAccounts(jsonRun.stdout);
     if (jsonRun.timedOut) {
       auth = {
         status: "unknown",
@@ -352,6 +383,7 @@ async function probeGithub(opts) {
     installHint,
     version,
     auth,
+    accounts,
   };
 }
 
@@ -590,6 +622,7 @@ module.exports = {
   parseCliVersion,
   parseGhAuthText,
   parseGhAuthJson,
+  parseGhAccounts,
   parseGlabAuthText,
   parseAzAccountJson,
   installHintFor,

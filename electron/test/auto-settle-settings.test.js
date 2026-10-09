@@ -21,18 +21,20 @@ describe("normalizeSettings autoSettleAfterDays", () => {
       orchestrationBudgetUsd: null,
       autoSettleAfterDays: DEFAULT_AUTO_SETTLE_AFTER_DAYS,
       autoSettleOnMerge: true,
+      stripAgentCoauthors: false,
       prDiffCapLines: 400,
       mcpServers: [],
-      defaultWorktree: false, defaultOrchestrate: false, defaultProvider: null, defaultModel: null, quotaFailover: [], onboardingSeen: false, updateChannel: null, notifications: true, notificationSound: false, feltEstimatePrompt: false, theme: "dark", agentsPanelDefault: "closed", agentsPanelRememberLast: false, stayAwake: "agent", quotaWaitAutoResume: true, confirmQuitWithActiveWork: true, resumeInterruptedRuns: false, guardrailsEnabled: true, prDiffCapLines: 400, agentProfiles: [], providerInstances: [], defaultOrchestratorProfileId: null, subagentPool: { defaultAlias: null, force: false, entries: [] }, otel: { endpoint: null, headers: {}, claudeMetrics: false }, uiScale: 1, linearApiKey: null, webhook: { url: null, onDone: true, onFailed: true, onWaiting: true },
+      defaultWorktree: false, defaultOrchestrate: false, defaultProvider: null, defaultModel: null, quotaFailover: [], onboardingSeen: false, updateChannel: null, notifications: true, notificationSound: false, feltEstimatePrompt: false, theme: "dark", agentsPanelDefault: "closed", agentsPanelRememberLast: false, stayAwake: "agent", quotaWaitAutoResume: true, confirmQuitWithActiveWork: true, resumeInterruptedRuns: false, guardrailsEnabled: true, prDiffCapLines: 400, agentProfiles: [], providerInstances: [], defaultOrchestratorProfileId: null, subagentPool: { defaultAlias: null, force: false, entries: [] }, otel: { endpoint: null, headers: {}, claudeMetrics: false }, uiScale: 1, linearApiKey: null, githubHosts: [], webhook: { url: null, onDone: true, onFailed: true, onWaiting: true }, modelPrices: {}, worktreeRoot: null,
     });
     assert.deepEqual(normalizeSettings(null), {
       dailyBudgetUsd: null,
       orchestrationBudgetUsd: null,
       autoSettleAfterDays: 3,
       autoSettleOnMerge: true,
+      stripAgentCoauthors: false,
       prDiffCapLines: 400,
       mcpServers: [],
-      defaultWorktree: false, defaultOrchestrate: false, defaultProvider: null, defaultModel: null, quotaFailover: [], onboardingSeen: false, updateChannel: null, notifications: true, notificationSound: false, feltEstimatePrompt: false, theme: "dark", agentsPanelDefault: "closed", agentsPanelRememberLast: false, stayAwake: "agent", quotaWaitAutoResume: true, confirmQuitWithActiveWork: true, resumeInterruptedRuns: false, guardrailsEnabled: true, prDiffCapLines: 400, agentProfiles: [], providerInstances: [], defaultOrchestratorProfileId: null, subagentPool: { defaultAlias: null, force: false, entries: [] }, otel: { endpoint: null, headers: {}, claudeMetrics: false }, uiScale: 1, linearApiKey: null, webhook: { url: null, onDone: true, onFailed: true, onWaiting: true },
+      defaultWorktree: false, defaultOrchestrate: false, defaultProvider: null, defaultModel: null, quotaFailover: [], onboardingSeen: false, updateChannel: null, notifications: true, notificationSound: false, feltEstimatePrompt: false, theme: "dark", agentsPanelDefault: "closed", agentsPanelRememberLast: false, stayAwake: "agent", quotaWaitAutoResume: true, confirmQuitWithActiveWork: true, resumeInterruptedRuns: false, guardrailsEnabled: true, prDiffCapLines: 400, agentProfiles: [], providerInstances: [], defaultOrchestratorProfileId: null, subagentPool: { defaultAlias: null, force: false, entries: [] }, otel: { endpoint: null, headers: {}, claudeMetrics: false }, uiScale: 1, linearApiKey: null, githubHosts: [], webhook: { url: null, onDone: true, onFailed: true, onWaiting: true }, modelPrices: {}, worktreeRoot: null,
     });
     assert.equal(DEFAULT_AUTO_SETTLE_AFTER_DAYS, 3);
   });
@@ -94,13 +96,13 @@ describe("setSettings autoSettleAfterDays validation", () => {
 
     assert.deepEqual(
       services.setSettings(store, { autoSettleAfterDays: 7 }),
-      { dailyBudgetUsd: null, orchestrationBudgetUsd: null, autoSettleAfterDays: 7, autoSettleOnMerge: true, mcpServers: [], defaultWorktree: false, defaultOrchestrate: false, defaultProvider: null, defaultModel: null, quotaFailover: [], onboardingSeen: false, updateChannel: null, notifications: true, notificationSound: false, feltEstimatePrompt: false, theme: "dark", agentsPanelDefault: "closed", agentsPanelRememberLast: false, stayAwake: "agent", quotaWaitAutoResume: true, confirmQuitWithActiveWork: true, resumeInterruptedRuns: false, guardrailsEnabled: true, prDiffCapLines: 400, agentProfiles: [], providerInstances: [], defaultOrchestratorProfileId: null, subagentPool: { defaultAlias: null, force: false, entries: [] }, otel: { endpoint: null, headers: {}, claudeMetrics: false }, uiScale: 1, linearApiKey: null, webhook: { url: null, onDone: true, onFailed: true, onWaiting: true } },
+      { dailyBudgetUsd: null, orchestrationBudgetUsd: null, autoSettleAfterDays: 7, autoSettleOnMerge: true, stripAgentCoauthors: false, mcpServers: [], defaultWorktree: false, defaultOrchestrate: false, defaultProvider: null, defaultModel: null, quotaFailover: [], onboardingSeen: false, updateChannel: null, notifications: true, notificationSound: false, feltEstimatePrompt: false, theme: "dark", agentsPanelDefault: "closed", agentsPanelRememberLast: false, stayAwake: "agent", quotaWaitAutoResume: true, confirmQuitWithActiveWork: true, resumeInterruptedRuns: false, guardrailsEnabled: true, prDiffCapLines: 400, agentProfiles: [], providerInstances: [], defaultOrchestratorProfileId: null, subagentPool: { defaultAlias: null, force: false, entries: [] }, otel: { endpoint: null, headers: {}, claudeMetrics: false }, uiScale: 1, linearApiKey: null, githubHosts: [], webhook: { url: null, onDone: true, onFailed: true, onWaiting: true }, modelPrices: {}, worktreeRoot: null },
     );
     assert.equal(store.getSettings().autoSettleAfterDays, 7);
 
     assert.deepEqual(
       services.setSettings(store, { autoSettleAfterDays: null }),
-      { dailyBudgetUsd: null, orchestrationBudgetUsd: null, autoSettleAfterDays: null, autoSettleOnMerge: true, mcpServers: [], defaultWorktree: false, defaultOrchestrate: false, defaultProvider: null, defaultModel: null, quotaFailover: [], onboardingSeen: false, updateChannel: null, notifications: true, notificationSound: false, feltEstimatePrompt: false, theme: "dark", agentsPanelDefault: "closed", agentsPanelRememberLast: false, stayAwake: "agent", quotaWaitAutoResume: true, confirmQuitWithActiveWork: true, resumeInterruptedRuns: false, guardrailsEnabled: true, prDiffCapLines: 400, agentProfiles: [], providerInstances: [], defaultOrchestratorProfileId: null, subagentPool: { defaultAlias: null, force: false, entries: [] }, otel: { endpoint: null, headers: {}, claudeMetrics: false }, uiScale: 1, linearApiKey: null, webhook: { url: null, onDone: true, onFailed: true, onWaiting: true } },
+      { dailyBudgetUsd: null, orchestrationBudgetUsd: null, autoSettleAfterDays: null, autoSettleOnMerge: true, stripAgentCoauthors: false, mcpServers: [], defaultWorktree: false, defaultOrchestrate: false, defaultProvider: null, defaultModel: null, quotaFailover: [], onboardingSeen: false, updateChannel: null, notifications: true, notificationSound: false, feltEstimatePrompt: false, theme: "dark", agentsPanelDefault: "closed", agentsPanelRememberLast: false, stayAwake: "agent", quotaWaitAutoResume: true, confirmQuitWithActiveWork: true, resumeInterruptedRuns: false, guardrailsEnabled: true, prDiffCapLines: 400, agentProfiles: [], providerInstances: [], defaultOrchestratorProfileId: null, subagentPool: { defaultAlias: null, force: false, entries: [] }, otel: { endpoint: null, headers: {}, claudeMetrics: false }, uiScale: 1, linearApiKey: null, githubHosts: [], webhook: { url: null, onDone: true, onFailed: true, onWaiting: true }, modelPrices: {}, worktreeRoot: null },
     );
 
     assert.throws(
@@ -141,9 +143,10 @@ describe("setSettings autoSettleAfterDays validation", () => {
       orchestrationBudgetUsd: null,
       autoSettleAfterDays: 3,
       autoSettleOnMerge: true,
+      stripAgentCoauthors: false,
       prDiffCapLines: 400,
       mcpServers: [],
-      defaultWorktree: false, defaultOrchestrate: false, defaultProvider: null, defaultModel: null, quotaFailover: [], onboardingSeen: false, updateChannel: null, notifications: true, notificationSound: false, feltEstimatePrompt: false, theme: "dark", agentsPanelDefault: "closed", agentsPanelRememberLast: false, stayAwake: "agent", quotaWaitAutoResume: true, confirmQuitWithActiveWork: true, resumeInterruptedRuns: false, guardrailsEnabled: true, prDiffCapLines: 400, agentProfiles: [], providerInstances: [], defaultOrchestratorProfileId: null, subagentPool: { defaultAlias: null, force: false, entries: [] }, otel: { endpoint: null, headers: {}, claudeMetrics: false }, uiScale: 1, linearApiKey: null, webhook: { url: null, onDone: true, onFailed: true, onWaiting: true },
+      defaultWorktree: false, defaultOrchestrate: false, defaultProvider: null, defaultModel: null, quotaFailover: [], onboardingSeen: false, updateChannel: null, notifications: true, notificationSound: false, feltEstimatePrompt: false, theme: "dark", agentsPanelDefault: "closed", agentsPanelRememberLast: false, stayAwake: "agent", quotaWaitAutoResume: true, confirmQuitWithActiveWork: true, resumeInterruptedRuns: false, guardrailsEnabled: true, prDiffCapLines: 400, agentProfiles: [], providerInstances: [], defaultOrchestratorProfileId: null, subagentPool: { defaultAlias: null, force: false, entries: [] }, otel: { endpoint: null, headers: {}, claudeMetrics: false }, uiScale: 1, linearApiKey: null, githubHosts: [], webhook: { url: null, onDone: true, onFailed: true, onWaiting: true }, modelPrices: {}, worktreeRoot: null,
     });
   });
 

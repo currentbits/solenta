@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { describe, it, afterEach } from "node:test";
 import { useState } from "react";
-import { mount, unmountAll } from "./support/dom.ts";
+import { inAct, mount, unmountAll } from "./support/dom.ts";
 import { ThreadView } from "../src/components/ThreadView";
 import {
   defaultPaneLayout,
@@ -1399,6 +1399,31 @@ describe("Views menu pane workspace (issue #552)", () => {
     m.unmount();
   });
 
+  it("reopens the last closed pane with Mod+Shift+T (#1531)", async () => {
+    const m = await mount(view({}));
+    await m.flush();
+    await m.click(m.query("[data-terminal-toggle]"));
+    await m.click(m.query("[data-terminal-toggle]"));
+    assert.equal(m.query("[data-terminal-pane]"), null);
+    const press = () =>
+      inAct(() => {
+        window.dispatchEvent(
+          new KeyboardEvent("keydown", {
+            key: "T",
+            metaKey: true,
+            shiftKey: true,
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+      });
+    await press();
+    assert.ok(m.query("[data-terminal-pane]"), "terminal comes back");
+    await press();
+    assert.ok(m.query("[data-terminal-pane]"), "empty stack is a no-op");
+    m.unmount();
+  });
+
   it("opens Terminal as a pane beside chat, not a drawer", async () => {
     const m = await mount(view({}));
     await m.flush();
@@ -1757,6 +1782,33 @@ describe("solenta.json commands in Thread details (#1506)", () => {
     await m.flush();
     assert.ok(m.query("[data-repo-config-approve]"));
     assert.equal(m.query("[data-thread-command-error]"), null);
+    m.unmount();
+  });
+
+  it("an onSettle-only file gets an On settle button and lists it for approval (#1531)", async () => {
+    const calls: unknown[][] = [];
+    const m = await mount(
+      view({
+        project: {
+          ...project,
+          repoConfig: { onSettleCommand: "make down", hash: HASH, trusted: false },
+        },
+        onRunCommand: async (...args) => {
+          calls.push(args);
+        },
+      }),
+    );
+    await m.flush();
+    await m.click(m.query("[data-thread-details-btn]"));
+    const btn = m.query('[data-thread-command="onSettle"]');
+    assert.equal(btn?.textContent, "On settle");
+    await m.click(btn);
+    await m.flush();
+    assert.deepEqual(calls, []);
+    assert.match(m.query("[data-repo-config-approve]")?.textContent || "", /make down/);
+    await m.click(m.query("[data-repo-config-approve-run]"));
+    await m.flush();
+    assert.deepEqual(calls, [["t1", "onSettle", HASH]]);
     m.unmount();
   });
 });

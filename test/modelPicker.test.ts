@@ -523,3 +523,25 @@ describe("filterModelRows", () => {
     );
   });
 });
+
+describe("update hint rows (issue #1529)", () => {
+  it("disables a model the installed CLI is too old for and says why", () => {
+    const rows = buildModelRows(
+      provider({
+        modelInfo: [
+          {
+            id: "claude-opus-5",
+            label: "Opus",
+            description: "",
+            vendor: "Anthropic",
+            updateHint: "Update Claude Code to use Opus",
+          },
+        ],
+      }),
+    );
+    const row = rows.find((r) => r.id === "claude-opus-5")!;
+    assert.equal(row.disabled, true);
+    assert.equal(row.disabledReason, "Update Claude Code to use Opus");
+    assert.equal(row.updateHint, "Update Claude Code to use Opus");
+  });
+});

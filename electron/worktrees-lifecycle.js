@@ -7,6 +7,7 @@ const path = require("node:path");
 const { execCommand } = require("./ssh.js");
 const {
   resolveWorktreeDir,
+  effectiveWorktreeBase,
   invalidateGitReads,
   gitOut,
   gitTry,
@@ -751,10 +752,11 @@ function setupWorktree(opts) {
   const shortId = String(thread.id).slice(0, 6);
   const wanted = `${branchPrefixFor(project)}${slugify(thread.title)}-${shortId}`;
   const branch = uniqueCoderBranch(project.path, wanted) || wanted;
-  const { dir, addPath } = resolveWorktreeDir(project, worktreeBase, thread.id);
+  const base = effectiveWorktreeBase(store, worktreeBase);
+  const { dir, addPath } = resolveWorktreeDir(project, base, thread.id);
 
   if (addPath === dir) {
-    fs.mkdirSync(worktreeBase, { recursive: true });
+    fs.mkdirSync(base, { recursive: true });
   } else {
     // Parent of the linux worktree must exist inside the distro. The
     // Windows userData path is the wrong side and git worktree add will

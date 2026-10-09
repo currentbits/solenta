@@ -333,6 +333,10 @@ export function createThreads(ctx: DevCtx): Pick<CoderApi, "threads"> {
         // in the dev provider (issue #647).
         patchThread(input.threadId, { pendingQuestion: null });
       },
+      async answerSecret(input) {
+        // Dev threads never spawn, so the value is simply dropped.
+        patchThread(input.threadId, { pendingSecret: null });
+      },
       // Bookkeeping setters below leave updatedAt alone: visiting, pinning and
       // settling are not activity. The rules they used to mirror (invalid
       // override, settle-while-working, pin/settle mutual exclusion, past
@@ -639,6 +643,14 @@ export function createThreads(ctx: DevCtx): Pick<CoderApi, "threads"> {
       async stopTeach(input: { threadId: string }) {
         return patchThread(input.threadId, { teach: null });
       },
+      async setGoal(input: { threadId: string; goal: string | null }) {
+        const objective = (input.goal ?? "").trim();
+        return patchThread(input.threadId, {
+          goal: objective
+            ? { objective, status: "active" as const, setAt: Date.now() }
+            : null,
+        });
+      },
       async startAsk(input: { threadId: string }) {
         const existing = ctx.threads.find((t) => t.id === input.threadId);
         if (existing?.ask) return { ...existing };
@@ -742,6 +754,9 @@ export function createThreads(ctx: DevCtx): Pick<CoderApi, "threads"> {
         return patchThread(input.threadId, {
           webSearch: input.webSearch === true,
         });
+      },
+      async setFast(input: { threadId: string; fast: boolean }) {
+        return patchThread(input.threadId, { fast: input.fast === true });
       },
       async setVerifyCommand(input: {
         threadId: string;

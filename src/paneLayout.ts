@@ -428,3 +428,45 @@ function extract(
   }
   return null;
 }
+
+/**
+ * Recently closed panes, newest last (#1531). In-memory only: a restart
+ * starts empty. Scoped per thread on reopen, so entries for a deleted
+ * thread are never matched and just age out of the cap.
+ */
+const CLOSED_PANE_CAP = 10;
+/** The palette's "Reopen closed pane" action reaches the open thread here. */
+export const REOPEN_PANE_EVENT = "coder:reopen-pane";
+let closedPanes: Array<{ threadId: string; type: PaneType }> = [];
+
+/** Push every pane type `prev` had and `next` lost. */
+export function rememberClosedPanes(
+  threadId: string,
+  prev: LayoutNode,
+  next: LayoutNode,
+): void {
+  for (const leaf of leaves(prev)) {
+    if (!hasPaneType(next, leaf.type)) {
+      closedPanes.push({ threadId, type: leaf.type });
+    }
+  }
+  closedPanes = closedPanes.slice(-CLOSED_PANE_CAP);
+}
+
+/** Pop the newest closed pane of `threadId` that `layout` doesn't show. */
+export function takeClosedPane(
+  threadId: string,
+  layout: LayoutNode,
+): PaneType | null {
+  for (let i = closedPanes.length - 1; i >= 0; i--) {
+    const entry = closedPanes[i];
+    if (entry.threadId !== threadId) continue;
+    closedPanes.splice(i, 1);
+    if (!hasPaneType(layout, entry.type)) return entry.type;
+  }
+  return null;
+}
+
+export function resetClosedPanesForTests(): void {
+  closedPanes = [];
+}

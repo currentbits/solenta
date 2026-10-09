@@ -48,6 +48,7 @@ function spawnAgentCodex(opts) {
     onText,
     reasoningEffort,
     webSearch,
+    fast,
     permissionMode,
     sessionId,
     userDataPath,
@@ -82,6 +83,7 @@ function spawnAgentCodex(opts) {
     model: model || null,
     reasoningEffort: reasoningEffort || null,
     webSearch: webSearch === true,
+    fast: fast === true,
     permissionMode: permissionMode || "default",
   });
   // Same as runner.js: -c must sit after `exec` / `exec resume`, or

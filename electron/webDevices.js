@@ -12,11 +12,15 @@
  * "Legacy device". That file stays while the row is active: --serve-web
  * prints it and Remote Connections reads it over SSH. Revoking the legacy
  * row deletes the file.
+ *
+ * Each row carries scopes (#1530, see webScopes.js), fixed at pairing time.
+ * Rows from before scopes existed were issued as full access and stay so.
  */
 
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
+const { sanitizeScopes } = require("./webScopes.js");
 
 const FILE_NAME = "web-access.json";
 const LEGACY_TOKEN_FILE = "web-token";
@@ -59,7 +63,12 @@ function toPublic(row) {
     createdAt: Number.isFinite(row.createdAt) ? row.createdAt : 0,
     lastSeenAt: Number.isFinite(row.lastSeenAt) ? row.lastSeenAt : null,
     legacy: row.legacy === true,
+    scopes: rowScopes(row),
   };
+}
+
+function rowScopes(row) {
+  return Array.isArray(row.scopes) ? sanitizeScopes(row.scopes) : ["full"];
 }
 
 /**
@@ -97,6 +106,7 @@ function createWebDevices(userDataPath, opts = {}) {
       createdAt: now(),
       lastSeenAt: null,
       legacy: true,
+      scopes: ["full"],
     };
     state.devices.push(row);
     save();
@@ -128,7 +138,10 @@ function createWebDevices(userDataPath, opts = {}) {
 
     adoptLegacy,
 
-    /** @returns {{ device: ReturnType<typeof toPublic>, token: string }} */
+    /**
+     * Omitted scopes mean read only: a caller must ask for more.
+     * @returns {{ device: ReturnType<typeof toPublic>, token: string }}
+     */
     add(input) {
       const name = String((input && input.name) || "").trim();
       if (!name) throw new Error("Name the device first.");
@@ -145,6 +158,7 @@ function createWebDevices(userDataPath, opts = {}) {
         tokenHash: hashToken(token),
         createdAt: now(),
         lastSeenAt: null,
+        scopes: sanitizeScopes(input && input.scopes),
       };
       state.devices.push(row);
       save();
@@ -172,7 +186,7 @@ function createWebDevices(userDataPath, opts = {}) {
      * Compares fixed-length sha256 digests and never exits early, so the
      * timing says nothing about which row (if any) matched.
      *
-     * @returns {{ id: string, name: string } | null}
+     * @returns {{ id: string, name: string, scopes: string[] } | null}
      */
     authorize(token) {
       if (typeof token !== "string" || !token) return null;
@@ -193,7 +207,7 @@ function createWebDevices(userDataPath, opts = {}) {
           // a persist miss must not reject a valid device
         }
       }
-      return { id: found.id, name: found.name };
+      return { id: found.id, name: found.name, scopes: rowScopes(found) };
     },
   };
 }

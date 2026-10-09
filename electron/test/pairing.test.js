@@ -330,3 +330,43 @@ describe("external pairing handlers", () => {
     assert.equal(store.getThread("t2").pendingExternalPrompt, null);
   });
 });
+
+describe("external tools declare their capability (#1530)", () => {
+  function fakeSdk() {
+    const tools = new Map();
+    class McpServer {
+      registerTool(name, _meta, fn) {
+        tools.set(name, fn);
+      }
+    }
+    const z = new Proxy({}, { get: () => () => new Proxy({}, { get: (_t, _p, r) => () => r }) });
+    return { sdk: { McpServer, z }, tools };
+  }
+
+  it("every tool names a known capability and has a handler", () => {
+    const handlers = pairing.createExternalHandlers({ store: {}, runner: {}, pairing: {} });
+    for (const t of pairing.EXTERNAL_TOOLS) {
+      assert.ok(pairing.CAPABILITIES.includes(t.cap), t.name);
+      assert.equal(typeof handlers[t.name], "function", t.name);
+    }
+  });
+
+  it("registers only held tools and re-checks the capability on each call", async () => {
+    const held = { capabilities: ["read", "steer"] };
+    const handlers = Object.fromEntries(
+      pairing.EXTERNAL_TOOLS.map((t) => [t.name, async () => t.name]),
+    );
+    const { sdk, tools } = fakeSdk();
+    pairing.buildExternalMcpServer(sdk, handlers, held);
+    assert.deepEqual([...tools.keys()].sort(), [
+      "projects_list",
+      "task_list",
+      "task_send",
+      "task_status",
+      "task_stop",
+    ]);
+    held.capabilities = ["read"];
+    await assert.rejects(tools.get("task_send")({}), /does not allow steer/);
+    assert.match((await tools.get("task_list")({})).content[0].text, /task_list/);
+  });
+});

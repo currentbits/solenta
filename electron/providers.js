@@ -50,6 +50,12 @@ const { posixQuote } = require("./ssh.js");
  * @property {Array<"text"|"image">} [inputModalities] - vendor catalog
  *   input_modalities. Codex Spark is `["text"]` only. Absent means allow
  *   images; never invent image support for a text-only model.
+ * @property {boolean} [fast] - model has a priority/fast tier (#1529).
+ *   Claude: `--settings {"fastMode":true}` (CLI gates on Opus 4.8 / 5.x).
+ *   Codex: `-c service_tier=priority`; listProviders re-derives this from
+ *   the live models_cache.json service_tiers when the cache exists.
+ * @property {string} [minCli] - oldest CLI version that lists this model.
+ *   listProviders sets `updateHint` when the installed CLI is older.
  *
  * @typedef {object} ProviderEntry
  * @property {string} id
@@ -86,6 +92,7 @@ const { posixQuote } = require("./ssh.js");
  *   model?: string | null,
  *   reasoningEffort?: string | null,
  *   webSearch?: boolean,
+ *   fast?: boolean,
  *   images?: string[],
  *   files?: string[],
  * }) => string[]} buildArgs
@@ -172,6 +179,25 @@ function codexModelAcceptsImages(modelId) {
 }
 
 /**
+ * Whether the fast tier reaches the CLI for this model. Default / custom ids
+ * stay off: the toggle only shows on a model that lists `fast`. Codex
+ * follows the live models_cache.json when it exists, exactly like the
+ * picker (listProviders), so a hidden toggle can never still bill priority.
+ * @param {ProviderEntry | null | undefined} entry
+ * @param {string | null | undefined} modelId
+ * @param {{ env?: NodeJS.ProcessEnv, home?: string, readFile?: (filePath: string) => string | null }} [opts]
+ */
+function modelSupportsFast(entry, modelId, opts) {
+  if (!entry || !modelId) return false;
+  if (entry.id === "codex") {
+    const live = catalogDivergence.codexLiveFastIds(opts);
+    if (live) return live.has(String(modelId));
+  }
+  const info = (entry.modelInfo || []).find((m) => m.id === modelId);
+  return Boolean(info && info.fast);
+}
+
+/**
  * Modes this adapter actually honours. Missing field → all four (legacy);
  * empty array → none.
  * @param {ProviderEntry | null | undefined} entry
@@ -236,6 +262,14 @@ function opencodeAuto(permissionMode) {
   return mode === "bypassPermissions" || mode === "acceptEdits";
 }
 
+/**
+ * Revision of the models / modelInfo data below. Bump it with every catalog
+ * edit: .github/workflows/catalog.yml signs and publishes this data on push
+ * to main, and installed apps apply it only when it beats their own rev
+ * (electron/remoteCatalog.js, #1529).
+ */
+const CATALOG_REV = 1;
+
 /** @type {ProviderEntry[]} */
 const PROVIDERS = [
   {
@@ -274,6 +308,7 @@ const PROVIDERS = [
         recommended: true,
         contextTokens: 1_000_000,
         efforts: CLAUDE_EFFORTS.slice(),
+        fast: true,
       },
       {
         id: "claude-fable-5-1",
@@ -314,6 +349,7 @@ const PROVIDERS = [
         vendor: "Anthropic",
         contextTokens: 1_000_000,
         efforts: CLAUDE_EFFORTS.slice(),
+        fast: true,
       },
       {
         id: "claude-sonnet-5",
@@ -337,7 +373,7 @@ const PROVIDERS = [
     efforts: CLAUDE_EFFORTS.slice(),
     permissionModes: ALL_PERMISSION_MODES.slice(),
     kind: "claude-stream",
-    buildArgs({ sessionId, permissionMode, model, reasoningEffort }) {
+    buildArgs({ sessionId, permissionMode, model, reasoningEffort, fast }) {
       // NO trailing prompt: the runner delivers it on stdin (stream-json
       // input), which is what lets the CLI route permission prompts to us
       // as control_request/control_response instead of silently denying.
@@ -369,6 +405,11 @@ const PROVIDERS = [
           args.push("--effort", level);
         },
       );
+      // 2.1.283: init reports fast_mode_state; without this it is off with
+      // sdk_opt_in_required. Account limits can still refuse (runner notes it).
+      if (fast === true && modelSupportsFast(getProvider("claude"), model)) {
+        args.push("--settings", JSON.stringify({ fastMode: true }));
+      }
       return args;
     },
   },
@@ -414,9 +455,11 @@ const PROVIDERS = [
         description: "Latest workhorse model for coding and everyday work.",
         vendor: "OpenAI",
         recommended: true,
+        minCli: "0.159.0",
         contextTokens: 272_000,
         efforts: CODEX_SOL_TERRA_EFFORTS.slice(),
         inputModalities: CODEX_TEXT_IMAGE.slice(),
+        fast: true,
       },
       {
         id: "gpt-6-astra",
@@ -426,6 +469,7 @@ const PROVIDERS = [
         contextTokens: 272_000,
         efforts: CODEX_SOL_TERRA_EFFORTS.slice(),
         inputModalities: CODEX_TEXT_IMAGE.slice(),
+        fast: true,
       },
       {
         id: "gpt-6-sol",
@@ -435,6 +479,7 @@ const PROVIDERS = [
         contextTokens: 272_000,
         efforts: CODEX_SOL_TERRA_EFFORTS.slice(),
         inputModalities: CODEX_TEXT_IMAGE.slice(),
+        fast: true,
       },
       {
         id: "gpt-6-terra",
@@ -452,6 +497,7 @@ const PROVIDERS = [
         contextTokens: 272_000,
         efforts: CODEX_LUNA_EFFORTS.slice(),
         inputModalities: CODEX_TEXT_IMAGE.slice(),
+        fast: true,
       },
       {
         id: "gpt-5.6-sol",
@@ -461,6 +507,7 @@ const PROVIDERS = [
         contextTokens: 272_000,
         efforts: CODEX_SOL_TERRA_EFFORTS.slice(),
         inputModalities: CODEX_TEXT_IMAGE.slice(),
+        fast: true,
       },
       {
         id: "gpt-5.6-terra",
@@ -470,6 +517,7 @@ const PROVIDERS = [
         contextTokens: 272_000,
         efforts: CODEX_SOL_TERRA_EFFORTS.slice(),
         inputModalities: CODEX_TEXT_IMAGE.slice(),
+        fast: true,
       },
       {
         id: "gpt-5.6-luna",
@@ -479,6 +527,7 @@ const PROVIDERS = [
         contextTokens: 272_000,
         efforts: CODEX_LUNA_EFFORTS.slice(),
         inputModalities: CODEX_TEXT_IMAGE.slice(),
+        fast: true,
       },
       {
         id: "gpt-5.5",
@@ -488,6 +537,7 @@ const PROVIDERS = [
         contextTokens: 272_000,
         efforts: CODEX_55_EFFORTS.slice(),
         inputModalities: CODEX_TEXT_IMAGE.slice(),
+        fast: true,
       },
       {
         id: "gpt-5.3-codex-spark",
@@ -514,6 +564,7 @@ const PROVIDERS = [
       model,
       reasoningEffort,
       webSearch,
+      fast,
       permissionMode,
       images,
     }) {
@@ -548,6 +599,10 @@ const PROVIDERS = [
       // exec-mode equivalent and is legal on both paths.
       if (webSearch === true) {
         args.push("-c", "web_search=live");
+      }
+      // models_cache.json service_tiers id "priority" is the "Fast" tier.
+      if (fast === true && modelSupportsFast(getProvider("codex"), model)) {
+        args.push("-c", "service_tier=priority");
       }
       // Fresh `exec` defaults to read-only without --sandbox (issue #170).
       // `exec resume` on Codex 0.152.0 rejects --sandbox (issue #795); the
@@ -1927,12 +1982,14 @@ function listProviders(opts = {}) {
   };
   catalogDivergence.attachCatalogNotes(out, catalogOpts);
   catalogDivergence.alignCatalogWithLive(out, catalogOpts);
+  catalogDivergence.applyCodexLiveTraits(out, catalogOpts);
 
   return out;
 }
 
 module.exports = {
   PROVIDERS,
+  CATALOG_REV,
   SIMULATE_ENTRY,
   ALL_PERMISSION_MODES,
   getProvider,
@@ -1945,6 +2002,7 @@ module.exports = {
   clearWhichCache,
   listProviders,
   honouredEfforts,
+  modelSupportsFast,
   codexModelAcceptsImages,
   probeCatalogCli,
   catalogCliProbeStarted,

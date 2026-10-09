@@ -763,10 +763,20 @@ function mergeMcpSettingsPatch(current, incoming) {
  */
 function redactSettings(settings) {
   if (!settings || typeof settings !== "object") return settings;
-  return {
+  const out = {
     ...settings,
     mcpServers: redactMcpServers(settings.mcpServers),
   };
+  // GitHub tokens never leave main (#1528): the UI only needs to know one is
+  // set. No `token` key at all, so echoing a row back keeps the saved token.
+  if (Array.isArray(settings.githubHosts)) {
+    out.githubHosts = settings.githubHosts.map((r) => ({
+      host: r.host,
+      account: r.account,
+      hasToken: Boolean(r.token),
+    }));
+  }
+  return out;
 }
 
 function sanitizeMcpInput(input) {

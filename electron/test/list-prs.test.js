@@ -14,7 +14,9 @@ const {
   isUnknownJsonField,
   listPrs,
   listPrsRaw,
+  setGithubApi,
 } = require("../worktrees.js");
+const { fakeGithubApi } = require("./support/fakeGithubApi.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
 const { rmTree } = require("./support/rmTree.js");
 
@@ -146,9 +148,49 @@ process.exit(2);
   });
 
   afterEach(async () => {
+    setGithubApi(null);
     if (prevGh == null) delete process.env.CODER_GH_BIN;
     else process.env.CODER_GH_BIN = prevGh;
     await rmTree(tmp);
+  });
+
+  it("lists over the API, paging past 100 and keeping only OPEN by default (#1534)", async () => {
+    const prs = Array.from({ length: 160 }, (_, i) => ({
+      number: i + 1,
+      url: `https://github.com/acme/demo/pull/${i + 1}`,
+      title: `PR ${i + 1}`,
+      headRefName: `b${i + 1}`,
+      state: i >= 155 ? "MERGED" : "OPEN",
+      additions: 3,
+      deletions: 1,
+      updatedAt: "2026-10-01T00:00:00Z",
+    }));
+    const api = fakeGithubApi({ prs });
+    setGithubApi(api);
+    const result = await listPrs(repo, { limit: 150 });
+    assert.equal(result.ok, true);
+    assert.equal(result.prs.length, 150);
+    assert.equal(result.complete, false);
+    assert.deepEqual(result.prs[0], {
+      number: 155, title: "PR 155", url: "https://github.com/acme/demo/pull/155", state: "OPEN",
+      headRefName: "b155", isDraft: false, additions: 3, deletions: 1, updatedAt: "2026-10-01T00:00:00Z",
+    });
+    assert.deepEqual(api.state.calls.map((c) => c.body.variables.first), [100, 50]);
+
+    const raw = await listPrsRaw(repo, {
+      fields: "number,title,url,state,headRefName,createdAt,mergedAt,closedAt,additions,deletions,reviews",
+      extraArgs: ["--state", "all", "--limit", "100"],
+    });
+    assert.equal(raw.ok, true);
+    assert.ok(raw.prs.some((p) => p.state === "MERGED"));
+    assert.ok(Array.isArray(raw.prs[0].reviews));
+  });
+
+  it("falls back to gh when the API fails (#1534)", async () => {
+    setGithubApi(fakeGithubApi({ failWith: 503 }));
+    const result = await listPrs(repo);
+    assert.equal(result.ok, true);
+    assert.equal(result.prs[0].number, 7);
   });
 
   it("retries with the short field set when extras are unknown", async () => {

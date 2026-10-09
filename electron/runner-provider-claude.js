@@ -3,7 +3,7 @@
 // createRunner seam: Claude (and Grok) provider run (#1447, seam 11).
 // Follows the seam convention in the header of electron/runner-watchdogs.js.
 
-const { getProvider, resolveBin } = require("./providers.js");
+const { getProvider, resolveBin, modelSupportsFast } = require("./providers.js");
 const {
   truncate,
   INPUT_TRUNCATE,
@@ -27,6 +27,7 @@ const {
   materializeGrokHome,
 } = require("./grok.js");
 const path = require("node:path");
+const threadSecrets = require("./threadSecrets.js");
 const { classifyTool } = require("./guardrails.js");
 const { isMemoryConsolidateTool } = require("./memory-consolidate.js");
 const { saveToolImages, extractImages } = require("./tool-images.js");
@@ -72,6 +73,7 @@ function createClaudeRun(ctx) {
     active,
     scheduleClaudeIdleReap,
     ingestTaskNotifications,
+    ingestSubagentEvent,
     setSubagentStatus,
     noteToolSpan,
     lastAssistantText,
@@ -80,7 +82,10 @@ function createClaudeRun(ctx) {
     launchWasCancelled,
     CLAUDE_ACK_MS,
     disposeClaudeSession,
+    finishRunningSubagents,
   } = ctx;
+  /** Threads already told Claude refused fast mode (#1529). */
+  const fastRefusedNoted = new Set();
 
   /**
    * Start a Claude Code stream-json session turn.
@@ -417,6 +422,7 @@ function createClaudeRun(ctx) {
       model: thread.model || null,
       reasoningEffort: thread.reasoningEffort || null,
       webSearch: thread.webSearch === true,
+      fast: thread.fast === true,
     });
     // Claude runs interactively: prompt over stdin, permission prompts via
     // the control protocol. Other claude-stream providers (e.g. grok) keep
@@ -583,6 +589,9 @@ function createClaudeRun(ctx) {
         // Background-subagent task notifications can land between turns on a
         // kept-alive CLI (guard() is null then), so scan user text first.
         ingestTaskNotifications(threadId, ev, claudeState);
+        // Background-subagent progress lands there too: fold it onto its row
+        // before the guard drops it (#1522).
+        ingestSubagentEvent(threadId, ev, claudeState);
 
         if (!guard()) {
           // Kept-alive CLI, no active turn (settling/idle): never leave a
@@ -722,6 +731,21 @@ function createClaudeRun(ctx) {
           if (typeof ev.model === "string" && ev.model) {
             capturedModel = ev.model;
           }
+          // #1529: Fast was asked for but the CLI refused (e.g.
+          // extra_usage_disabled). Say so once per thread, not every turn.
+          if (
+            thread.fast === true &&
+            ev.fast_mode_state === "off" &&
+            modelSupportsFast(getProvider("claude"), thread.model) &&
+            !fastRefusedNoted.has(threadId)
+          ) {
+            fastRefusedNoted.add(threadId);
+            appendMessage(
+              threadId,
+              "event",
+              `Fast mode is off for this run (${String(ev.fast_mode_disabled_reason || "not available")}).`,
+            );
+          }
           completeWorkLogStep(threadId, startingId);
           store.save();
           pushDetail(threadId, claudeState);
@@ -743,6 +767,22 @@ function createClaudeRun(ctx) {
           store.save();
           pushDetail(threadId, claudeState);
           return;
+        }
+
+        // #1529: 2.1.283 answers an id it does not know with a synthetic
+        // assistant carrying error "model_not_found". When our catalog lists
+        // that id, the likely fix is a newer CLI, so say that.
+        if (type === "assistant" && ev.error === "model_not_found") {
+          const info = (getProvider("claude").modelInfo || []).find(
+            (m) => m.id === thread.model,
+          );
+          if (info) {
+            appendMessage(
+              threadId,
+              "event",
+              `Update Claude Code to use ${info.label} (run \`claude update\`). This CLI does not offer ${info.id}, or your account cannot use it.`,
+            );
+          }
         }
 
         if (type === "assistant" && ev.message && Array.isArray(ev.message.content)) {
@@ -1130,8 +1170,12 @@ function createClaudeRun(ctx) {
       entryDef.id === "grok"
         ? mergeGrokSpawnEnv({ ...(otelEnv || {}), ...(grokHomeEnv || {}) })
         : otelEnv;
-    const spawnEnv =
-      grokMerged && Object.keys(grokMerged).length > 0 ? grokMerged : undefined;
+    // Secret request values (#1531) also join the reuse key: a new secret
+    // respawns the warm CLI so the next turn sees it.
+    const spawnEnv = threadSecrets.withEnv(
+      threadId,
+      grokMerged && Object.keys(grokMerged).length > 0 ? grokMerged : undefined,
+    );
 
     // Reuse key: everything a spawn bakes into argv/env EXCEPT the session
     // id (--resume changes after turn one; the live process needs no resume).
@@ -1142,6 +1186,8 @@ function createClaudeRun(ctx) {
       model: thread.model || null,
       permissionMode: thread.permissionMode || "default",
       reasoningEffort: thread.reasoningEffort || null,
+      // --settings fastMode is argv: toggling Fast must respawn (#1529).
+      fast: thread.fast === true,
       mcp: interactive ? mcpArgs : [],
       // The config path is stable; a warm process has already read its contents.
       mcpHash: interactive
@@ -1189,6 +1235,8 @@ function createClaudeRun(ctx) {
             if (claudeSessions.get(threadId) === sess) {
               if (sess.idleTimer) clearTimeout(sess.idleTimer);
               claudeSessions.delete(threadId);
+              // A crashed CLI takes its background subagents with it.
+              finishRunningSubagents(threadId);
             }
             sess.dispatch.onExit(info);
           },

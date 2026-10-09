@@ -66,6 +66,22 @@ export function useThreadRoster({
       .join(",");
   }, [threads, visibleDetail?.thread.projectId]);
 
+  /** Thread ids in replies link to these (#1531): the open thread's project
+   *  only, id → title, rebuilt when an id or title moves, not on stream ticks. */
+  const titlesKey = useMemo(() => {
+    const pid = visibleDetail?.thread.projectId;
+    if (!pid) return "[]";
+    return JSON.stringify(
+      threads
+        .filter((t) => t.projectId === pid)
+        .map((t) => [t.id.toLowerCase(), t.title]),
+    );
+  }, [threads, visibleDetail?.thread.projectId]);
+  const threadTitles = useMemo(
+    () => Object.fromEntries(JSON.parse(titlesKey)) as Record<string, string>,
+    [titlesKey],
+  );
+
   /**
    * Same-task siblings for the divergence card. Keyed on roster + the open
    * thread so a 700ms stream tick on an unrelated row does not rebuild this.
@@ -88,5 +104,6 @@ export function useThreadRoster({
     previousWorktree,
     panelRosterKey,
     comparePeers,
+    threadTitles,
   };
 }

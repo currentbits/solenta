@@ -182,6 +182,11 @@ export interface ProjectRepoConfig {
   setupCommand?: string;
   /** Ids are `repo:<index>`. */
   quickActions?: ProjectQuickAction[];
+  /**
+   * Runs in a worktree thread when it settles (#1531): an explicit settle,
+   * or its PR merging/closing. Also runnable as actionId "onSettle".
+   */
+  onSettleCommand?: string;
   hash?: string;
   trusted: boolean;
   error?: string;
@@ -611,6 +616,12 @@ export interface ThreadInfo {
    */
   pendingQuestion?: PendingQuestionCard | null;
   /**
+   * An agent secret request (issue #1531), PERSISTED like pendingQuestion.
+   * Holds only the name and prompt: the value the user types goes to
+   * threads.answerSecret and lives in main-process memory, never here.
+   */
+  pendingSecret?: PendingSecretCard | null;
+  /**
    * A plan awaiting approval, PERSISTED (issue #707). Claude asks to leave
    * plan mode over the live permission channel (ExitPlanMode); other
    * providers finish the turn with the plan as assistant text, so the card
@@ -852,6 +863,11 @@ export interface ThreadInfo {
    * provider advertises `supportsSearch`.
    */
   webSearch?: boolean;
+  /**
+   * Fast / priority tier (#1529). Sent only for a model whose ModelInfo
+   * lists `fast`; absent on older store rows.
+   */
+  fast?: boolean;
   /** Absolute path of the thread's git worktree, when one was set up. */
   worktreePath: string | null;
   /** Numbered merge-queue lane (#346). Absent when the thread has no lane. */
@@ -938,6 +954,13 @@ export interface ThreadInfo {
    */
   teach?: ThreadTeach | null;
   /**
+   * Standing goal (`/goal`, issue #1531). Set and cleared by
+   * threads.setGoal. Codex syncs it to its native thread goal and reports
+   * status back; other providers get it appended to each prompt and stay
+   * "active". Absent = never set, null = cleared.
+   */
+  goal?: ThreadGoal | null;
+  /**
    * Ask mode (issue #392): read-only repo Q&A from the code index and
    * memory. Never a worktree, never tools, never the daily budget.
    * Absent/false = off. Set by threads.startAsk or threads.create({ ask: true });
@@ -994,6 +1017,24 @@ export type TeachAutonomy = (typeof TEACH_AUTONOMY_LEVELS)[number];
  * 0..2 hint, 3..7 review, 8+ pair.
  */
 export const TEACH_REVIEW_THRESHOLDS = { review: 3, pair: 8 } as const;
+
+/** Codex native goal statuses; other providers only ever use "active". */
+export type ThreadGoalStatus =
+  | "active"
+  | "paused"
+  | "blocked"
+  | "usageLimited"
+  | "budgetLimited"
+  | "complete";
+
+/** A thread's standing goal (issue #1531). */
+export interface ThreadGoal {
+  objective: string;
+  status: ThreadGoalStatus;
+  /** Tokens spent on the goal, when the provider reports it (Codex). */
+  tokensUsed?: number;
+  setAt: number;
+}
 
 /** A thread's teach-mode state (issue #373). */
 export interface ThreadTeach {
@@ -1210,6 +1251,8 @@ export interface SubagentInfo {
   /** subagent_type from the tool input, e.g. "general-purpose"; null when absent. */
   agentType: string | null;
   status: "running" | "done" | "failed";
+  /** Latest progress the CLI reported for a running agent (#1522). */
+  activity?: { text: string; at: number };
 }
 
 /** Scope for threads:summaries (#1398). Omitted = every thread. */
@@ -1801,6 +1844,15 @@ export interface PendingQuestionCard {
   id: string;
   questions: PendingQuestion[];
   /** Epoch ms the agent asked. */
+  askedAt: number;
+}
+
+/** A persisted secret request card (issue #1531): the coder-threads secret_request tool. */
+export interface PendingSecretCard {
+  id: string;
+  /** Env var name the value is exposed as, e.g. STRIPE_API_KEY. */
+  name: string;
+  prompt: string;
   askedAt: number;
 }
 
@@ -2525,6 +2577,18 @@ export interface ModelInfo {
    * Web pick is image-only, so the paperclip hides on text-only models.
    */
   inputModalities?: Array<"text" | "image">;
+  /**
+   * The installed CLI offers a priority/fast tier for this model (#1529):
+   * Claude fast mode, Codex `service_tier=priority`. Shows the Fast toggle.
+   */
+  fast?: boolean;
+  /** Oldest CLI version that serves this model. */
+  minCli?: string;
+  /**
+   * Set when the installed CLI is older than `minCli`, e.g. "Update Codex
+   * to use GPT-6.1-Sol". The picker shows it and disables the row.
+   */
+  updateHint?: string;
 }
 
 /**
@@ -2562,6 +2626,29 @@ export interface SourceControlProvider {
   installHint: string;
   version: string | null;
   auth: SourceControlAuth;
+  /** GitHub only: every gh login per host, when gh can report them (2.81+). */
+  accounts?: GithubAccount[];
+}
+
+/**
+ * One row of Settings › Source control › GitHub (issue #1528).
+ * Saving: omit `token` to keep the saved one, null/"" clears it.
+ */
+export interface GithubHostSetting {
+  host: string;
+  /** gh login to use for this host; null = gh's active account. */
+  account: string | null;
+  /** Write-only: set to save a token that replaces gh for this host. */
+  token?: string | null;
+  /** Read-only: a token is saved for this host. */
+  hasToken?: boolean;
+}
+
+/** One `gh` login, from `gh auth status --json hosts`. */
+export interface GithubAccount {
+  host: string;
+  login: string;
+  active: boolean;
 }
 
 /** Result of `sourceControl:discover` (cached until Rescan or an auth miss). */
@@ -2805,6 +2892,11 @@ export interface AppSettings {
    */
   autoSettleOnMerge: boolean;
   /**
+   * Opt-in (default false): squash merges from the app drop
+   * `Co-authored-by:` trailers naming an AI agent; human co-authors stay.
+   */
+  stripAgentCoauthors: boolean;
+  /**
    * User-registered MCP servers (Skills tab). Built-ins coder-memory and
    * coder-threads are app-owned and never appear here. Enabled entries are
    * folded into every provider's MCP injection on the next turn.
@@ -2823,6 +2915,12 @@ export interface AppSettings {
    * projects only; remote projects always get plain threads.
    */
   defaultOrchestrate: boolean;
+  /**
+   * Folder new local worktrees are created in (#1531). null/absent = the
+   * default userData/worktrees. Must be an absolute, writable directory.
+   * Existing worktrees stay where they were created.
+   */
+  worktreeRoot?: string | null;
   /**
    * Provider id for new threads that do not inherit from the selected
    * thread (issue #711). Autodispatch and issue-created threads use this.
@@ -2957,11 +3055,30 @@ export interface AppSettings {
    */
   linearApiKey?: string | null;
   /**
+   * GitHub account / saved token per host (issue #1528). Read back with
+   * `hasToken` only; the token itself never reaches the renderer.
+   */
+  githubHosts?: GithubHostSetting[];
+  /**
    * Outbound webhook (issue #167). POSTs a small JSON payload when a thread
    * finishes or waits for permission. Independent of the desktop-notification
    * switch and of window focus. null URL (the default) sends nothing.
    */
   webhook: WebhookSettings;
+  /**
+   * User model prices, model id → USD per million tokens (#1531). Only
+   * prices usage the provider reported tokens for but no cost; a provider's
+   * own cost (Claude's total_cost_usd) always wins. Whole-map replace on set.
+   */
+  modelPrices?: Record<string, ModelPrice>;
+}
+
+/** USD per million tokens. Cache reads/writes fall back to `input`. */
+export interface ModelPrice {
+  input: number;
+  output: number;
+  cacheRead?: number;
+  cacheWrite?: number;
 }
 
 /**
@@ -3208,6 +3325,22 @@ export interface PairingCreated {
 }
 
 /** A browser or phone allowed into Solenta Web (#1512 I2). Token never listed. */
+/**
+ * What a paired device may do, checked on the host per channel (#1530,
+ * electron/webScopes.js). "full" covers everything; terminal:type implies
+ * terminal:observe; read is always on.
+ */
+export type WebDeviceScope =
+  | "read"
+  | "steer"
+  | "files"
+  | "git"
+  | "terminal:observe"
+  | "terminal:type"
+  | "preview"
+  | "settings"
+  | "full";
+
 export interface WebDeviceInfo {
   id: string;
   name: string;
@@ -3216,6 +3349,8 @@ export interface WebDeviceInfo {
   lastSeenAt: number | null;
   /** The single pre-device token (userData/web-token). */
   legacy: boolean;
+  /** Fixed at pairing; revoke and re-pair to change. */
+  scopes: WebDeviceScope[];
 }
 
 /** Detected, never installed. `url` is set while Serve points at Solenta Web. */
@@ -4022,7 +4157,8 @@ export interface CoderApi {
   web: {
     status(): Promise<WebAccessStatus>;
     setEnabled(input: { enabled: boolean; lan?: boolean }): Promise<WebAccessStatus>;
-    addDevice(input: { name: string }): Promise<WebDeviceCreated>;
+    /** Omitted scopes mean read only. */
+    addDevice(input: { name: string; scopes?: WebDeviceScope[] }): Promise<WebDeviceCreated>;
     revokeDevice(input: { id: string }): Promise<WebDeviceInfo>;
     setTailscale(input: { on: boolean }): Promise<WebTailscaleStatus>;
   };
@@ -4328,6 +4464,16 @@ export interface CoderApi {
      * clear the card themselves. No-op when nothing is pending.
      */
     clearQuestion(input: { threadId: string }): Promise<void>;
+    /**
+     * Answer the secret card (ThreadInfo.pendingSecret), or dismiss it with
+     * value null (issue #1531). The value is set in the env of the thread's
+     * next runs only; it never reaches the store, transcript or agent text.
+     */
+    answerSecret(input: {
+      threadId: string;
+      requestId: string;
+      value: string | null;
+    }): Promise<void>;
     /** Archive or unarchive; archived threads are hidden by default but fully intact. */
     setArchived(input: { threadId: string; archived: boolean }): Promise<ThreadInfo>;
     /**
@@ -4540,6 +4686,11 @@ export interface CoderApi {
      */
     stopTeach(input: { threadId: string }): Promise<ThreadInfo>;
     /**
+     * Set the thread goal (issue #1531); null or blank clears it. A new
+     * objective starts active. Never bumps updatedAt.
+     */
+    setGoal(input: { threadId: string; goal: string | null }): Promise<ThreadInfo>;
+    /**
      * Ask the agent to review the human's TODO(human) fills. Starts a run
      * with the review prompt. Rejects a thread that is not in teach mode.
      */
@@ -4672,6 +4823,11 @@ export interface CoderApi {
       threadId: string;
       webSearch: boolean;
     }): Promise<ThreadInfo>;
+    /**
+     * Fast / priority tier toggle (#1529). Rejects `fast: true` when no
+     * model of the thread's provider has a fast tier.
+     */
+    setFast(input: { threadId: string; fast: boolean }): Promise<ThreadInfo>;
     /**
      * Sets the thread's verification command (issue #296). A non-empty
      * command arms the gate: from the next turn on, a run that would land
@@ -5086,6 +5242,14 @@ export interface CoderApi {
       method?: MergeMethod;
       auto?: boolean;
     }): Promise<PrDetailResult>;
+    /**
+     * Revert a thread's MERGED PR (#1531): branch off the latest base in a
+     * temp worktree, revert the merge commit, push, and `gh pr create`
+     * `Revert "<title>"`. Nothing is left behind on failure. In-band.
+     */
+    prRevert(input: {
+      threadId: string;
+    }): Promise<{ ok: true; url: string; branch: string } | { ok: false; reason: string }>;
     /**
      * Checkpoints: after each successful turn that changed files, the runner
      * auto-commits in the thread's WORKTREE ("coder-checkpoint: turn N").

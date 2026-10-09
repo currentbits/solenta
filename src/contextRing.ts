@@ -72,6 +72,29 @@ export function contextWindowFor(
   return byId?.contextTokens ?? fallback?.contextTokens ?? null;
 }
 
+/** Anthropic's extended prompt-cache TTL; past it the next send re-reads everything. */
+export const CLAUDE_CACHE_TTL_MS = 60 * 60 * 1000;
+// ponytail: fixed cutoff, make it a setting if 50k nags or misses in practice.
+export const COLD_COMPACT_MIN_TOKENS = 50_000;
+
+/**
+ * "Compact first" chip (issue #1531): a Claude thread idle past the cache TTL
+ * with a large context pays full price to re-read it on the next send.
+ * `contextTokens` is usage.contextTokens, which already sums cache_read +
+ * cache_creation. Returns the token count to show, or null for no chip.
+ */
+export function coldCompactTokens(input: {
+  provider: string;
+  contextTokens: number | null | undefined;
+  lastActivityAt: number;
+  now: number;
+}): number | null {
+  const { provider, contextTokens, lastActivityAt, now } = input;
+  if (provider !== "claude" || contextTokens == null) return null;
+  if (contextTokens < COLD_COMPACT_MIN_TOKENS) return null;
+  return now - lastActivityAt > CLAUDE_CACHE_TTL_MS ? contextTokens : null;
+}
+
 /**
  * Window for the ring: the CLI-reported figure when present, else the static
  * catalog. A model change leaves the catalog stale (issue #317).

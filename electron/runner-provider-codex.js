@@ -7,6 +7,7 @@ const {
   sessionIdForResume,
   resolveBin,
   honouredEfforts,
+  modelSupportsFast,
   codexModelAcceptsImages,
 } = require("./providers.js");
 const services = require("./services.js");
@@ -19,6 +20,7 @@ const {
   materializeCodexGuardrailHome,
 } = require("./codex-guardrail.js");
 const path = require("node:path");
+const threadSecrets = require("./threadSecrets.js");
 const { truncate, INPUT_TRUNCATE, OUTPUT_TRUNCATE } = require("./claude.js");
 const codexParse = require("./codex.js");
 const { isCodexChildThread } = require("./codex-appserver.js");
@@ -132,6 +134,9 @@ function createCodexRun(ctx) {
     }
     if (thread.webSearch === true) {
       args.push("-c", "web_search=live");
+    }
+    if (thread.fast === true && modelSupportsFast(providerEntry, thread.model)) {
+      args.push("-c", "service_tier=priority");
     }
     // MCP / Planboard -c sit after `app-server` (same values as exec).
     // Bearer tokens ride the child's env, never argv (issue #125).
@@ -383,7 +388,7 @@ function createCodexRun(ctx) {
       binary: spawn.binary,
       args: spawn.args,
       cwd: spawn.cwd,
-      envExtra: codexMcpEnv,
+      envExtra: threadSecrets.withEnv(threadId, codexMcpEnv),
       prompt,
       images: nativeImages,
       sessionId: resumeId,
@@ -391,9 +396,26 @@ function createCodexRun(ctx) {
       reasoningEffort: thread.reasoningEffort || null,
       permissionMode: thread.permissionMode || "default",
       compact: isNativeCompactTurn("codex", prompt, resumeId),
+      // Native goal (#1531). undefined = never set, null = cleared since.
+      goal: thread.goal,
       onServerRequest: (req) => handleCodexServerRequest(threadId, req),
       onEvent: (ev) => {
         if (!guard()) return;
+
+        if (ev.type === "goal.updated") {
+          if (services.applyNativeGoal(store, threadId, ev.goal)) {
+            store.save();
+            pushDetail(threadId, codexState);
+            pushThreadsChanged();
+          }
+          return;
+        }
+        // A goal continuation turn writes a new assistant message instead
+        // of overwriting the previous turn's.
+        if (ev.type === "turn.started") {
+          assistantMsgId = null;
+          assistantText = "";
+        }
 
         // Native compaction (thread/compact/start or auto). Usage for the
         // compacted context lands between started and completed, so the

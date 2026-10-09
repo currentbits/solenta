@@ -5,6 +5,7 @@
 
 const { parseAgentCommand } = require("./agent.js");
 const path = require("node:path");
+const threadSecrets = require("./threadSecrets.js");
 
 /**
  * @param {object} ctx - createRunner context (see runner-watchdogs.js header)
@@ -325,6 +326,7 @@ function createGenericRun(ctx) {
       prompt,
       appendPrompt: !crossing,
       cwd: spawn.cwd,
+      env: threadSecrets.withEnv(threadId, process.env),
       onChunk: (text) => {
         if (!guard()) return;
         realState.charCount = text.length;
