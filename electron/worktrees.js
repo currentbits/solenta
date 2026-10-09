@@ -60,6 +60,8 @@ const {
 } = require("./worktrees-gc.js");
 const {
   removeWorktreeDir,
+  branchLanded,
+  worktreeLanded,
   mergeWorktree,
   removeWorktree,
   setupWorktree,
@@ -145,6 +147,8 @@ module.exports = {
   listChangedPaths,
   listChangedPathsAsync,
   mergeWorktree,
+  branchLanded,
+  worktreeLanded,
   conflictContext,
   removeWorktree,
   push,

@@ -9,6 +9,7 @@ const {
   commit,
   revertFile,
   mergeWorktree,
+  worktreeLanded,
   conflictContext,
   removeWorktree,
   push,
@@ -353,7 +354,14 @@ module.exports = {
       // await, not a bare return: gitSyncInfo is async, and a returned
       // promise would settle outside this try — the catch below would never
       // see a rejection.
-      return await services.gitSyncInfo(root);
+      const info = await services.gitSyncInfo(root);
+      // #1556: every commit already on the base (local or origin) — the
+      // details card offers Clean up instead of Merge. Uncommitted files
+      // count as not landed.
+      if (thread.worktreePath && thread.branch && !project.remoteHost) {
+        info.landed = worktreeLanded(project, thread);
+      }
+      return info;
     } catch {
       return { hasUpstream: false };
     }

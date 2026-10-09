@@ -1963,9 +1963,16 @@ export interface GitStatus {
 /**
  * Ahead/behind vs @{upstream}. No repo or no upstream is in-band, not thrown.
  */
-export type GitSyncInfo =
+export type GitSyncInfo = (
   | { hasUpstream: false }
-  | { hasUpstream: true; ahead: number; behind: number };
+  | { hasUpstream: true; ahead: number; behind: number }
+) & {
+  /**
+   * Worktree threads (#1556): every commit on the branch is already on its
+   * base (local or origin/), so there is nothing to merge; Merge just cleans up.
+   */
+  landed?: boolean;
+};
 
 /**
  * Origin owner/repo plus an https web URL for the thread root. In-band

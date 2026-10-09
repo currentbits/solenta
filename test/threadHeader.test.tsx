@@ -623,6 +623,30 @@ describe("worktree in Thread details (#680)", () => {
     m.unmount();
   });
 
+  it("offers Clean up instead of Merge when the branch has already landed (#1556)", async () => {
+    const merges: number[] = [];
+    const m = await mount(
+      view({
+        onSetupWorktree: async () => {},
+        onMergeWorktree: async () => {
+          merges.push(1);
+        },
+        onRemoveWorktree: async () => {},
+        gitSyncInfo: async () => ({ hasUpstream: false, landed: true }),
+      }),
+    );
+    await m.flush();
+    await m.click(m.query("[data-thread-details-btn]"));
+    await m.flush();
+    const merge = m.query("[data-thread-header] [data-worktree-merge]");
+    assert.ok(merge);
+    assert.equal((merge!.textContent || "").trim(), "Clean up");
+    assert.match(merge!.getAttribute("title") || "", /nothing to merge/);
+    await m.click(merge);
+    assert.equal(merges.length, 1, "same merge action; the host only cleans up");
+    m.unmount();
+  });
+
   it("shows Set up worktree in Thread details when the thread has none", async () => {
     const m = await mount(
       view({
