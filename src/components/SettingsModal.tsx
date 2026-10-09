@@ -667,6 +667,7 @@ export function SettingsModal({
             setOrchBudgetText={setOrchBudgetText}
             dirtyDrafts={dirtyDrafts}
             save={save}
+            onSaveSettings={onSaveSettings}
           />
           )}
 

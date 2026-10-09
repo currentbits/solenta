@@ -3,6 +3,7 @@ import { formatUsd } from "../../digest";
 import type { AppSettings, AppStatus } from "../../shared/ipc";
 import styles from "../SettingsModal.module.css";
 import type { SettingsDraftKey } from "../SettingsModal";
+import { ModelPricesEditor } from "./ModelPricesEditor";
 
 export function SpendingPane({
   settings,
@@ -16,6 +17,7 @@ export function SpendingPane({
   setOrchBudgetText,
   dirtyDrafts,
   save,
+  onSaveSettings,
 }: {
   settings: AppSettings | null;
   status: AppStatus | null;
@@ -28,6 +30,7 @@ export function SpendingPane({
   setOrchBudgetText: (text: string) => void;
   dirtyDrafts: RefObject<Set<SettingsDraftKey>>;
   save: () => Promise<void>;
+  onSaveSettings: (patch: Partial<AppSettings>) => Promise<AppSettings>;
 }) {
   const spent = status?.spendTodayUsd;
   const spendCopy =
@@ -180,6 +183,11 @@ export function SpendingPane({
           reason. Raise or clear the cap, then Retry turn.
         </p>
       </div>
+      <ModelPricesEditor
+        key={settings ? "loaded" : "loading"}
+        settings={settings}
+        onSaveSettings={onSaveSettings}
+      />
     </section>
   );
 }

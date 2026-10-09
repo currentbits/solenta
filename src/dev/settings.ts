@@ -11,6 +11,7 @@ import type {
   PairingList,
   SubagentPool,
   OtelSettings,
+  ModelPrice,
   WebhookSettings,
   ThreadInfo,
   WebAccessStatus,
@@ -63,6 +64,7 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
   let resumeInterruptedRuns = false;
   let guardrailsEnabled = true;
   let otel: OtelSettings = { endpoint: null, headers: {}, claudeMetrics: false };
+  let modelPrices: Record<string, ModelPrice> = {};
   let webhook: WebhookSettings = {
     url: null,
     onDone: true,
@@ -165,6 +167,7 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           },
           otel: { ...otel, headers: { ...otel.headers } },
           webhook: { ...webhook },
+          modelPrices: { ...modelPrices },
         }) as AppSettings;
       },
       async set(patch: Partial<AppSettings>): Promise<AppSettings> {
@@ -425,6 +428,10 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
             onWaiting: v.onWaiting !== false,
           };
         }
+        if (Object.prototype.hasOwnProperty.call(patch, "modelPrices")) {
+          // ponytail: the desktop store validates; the dev twin trusts the editor.
+          modelPrices = { ...(patch.modelPrices ?? {}) };
+        }
         return {
           dailyBudgetUsd: ctx.dailyBudgetUsd,
           orchestrationBudgetUsd,
@@ -461,6 +468,7 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           },
           otel: { ...otel, headers: { ...otel.headers } },
           webhook: { ...webhook },
+          modelPrices: { ...modelPrices },
         };
       },
       async testWebhook() {

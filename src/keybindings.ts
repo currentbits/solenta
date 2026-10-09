@@ -187,6 +187,12 @@ export const KEYBINDINGS: readonly KeybindingDef[] = [
     chord: "mod+\\",
   },
   {
+    id: "pane.reopen",
+    label: "Reopen the last closed pane",
+    scope: "window",
+    chord: "mod+shift+t",
+  },
+  {
     id: "agents.toggle",
     label: "Toggle agents panel",
     scope: "window",

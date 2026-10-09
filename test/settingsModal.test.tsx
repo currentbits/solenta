@@ -2672,3 +2672,53 @@ describe("SettingsModal Agents › named provider instances (#453)", () => {
     assert.deepEqual(saved.at(-1), { providerInstances: [] });
   });
 });
+
+describe("SettingsModal model prices (#1531)", () => {
+  it("adds, validates, saves and clears a price override", async () => {
+    const patches: Partial<AppSettings>[] = [];
+    const m = await mount(
+      modal({
+        initialPane: "spending",
+        settings: {
+          dailyBudgetUsd: null,
+          autoSettleAfterDays: 3,
+          modelPrices: { "gpt-5": { input: 1.25, output: 10 } },
+        } as AppSettings,
+        onSaveSettings: async (patch) => {
+          patches.push(patch);
+          return { dailyBudgetUsd: null, autoSettleAfterDays: 3, ...patch } as AppSettings;
+        },
+      }),
+    );
+    const field = (row: number, key: string) =>
+      m.query(`[data-model-price-row="${row}"] [data-model-price-field="${key}"]`);
+    assert.equal((field(0, "model") as HTMLInputElement).value, "gpt-5");
+    assert.equal((field(0, "output") as HTMLInputElement).value, "10");
+
+    await m.click(m.query("[data-model-price-add]"));
+    await m.type(field(1, "model"), "o4");
+    await m.type(field(1, "input"), "-2");
+    await m.type(field(1, "output"), "8");
+    await m.click(m.query("[data-model-price-save]"));
+    assert.match(m.query("[data-model-price-error]")?.textContent ?? "", /o4: Input price must be a non-negative/);
+    assert.equal(patches.length, 0, "invalid rows never reach settings");
+
+    await m.type(field(1, "input"), "2");
+    await m.type(field(1, "cacheRead"), "0.5");
+    await m.click(m.query("[data-model-price-save]"));
+    assert.deepEqual(patches.at(-1), {
+      modelPrices: {
+        "gpt-5": { input: 1.25, output: 10 },
+        o4: { input: 2, output: 8, cacheRead: 0.5 },
+      },
+    });
+
+    await m.click(m.query('[data-model-price-row="0"] [data-model-price-remove]'));
+    await m.click(m.query("[data-model-price-save]"));
+    assert.deepEqual(patches.at(-1), {
+      modelPrices: { o4: { input: 2, output: 8, cacheRead: 0.5 } },
+    });
+    assert.match(m.text(), /never replaced/, "hint says reported cost wins");
+    m.unmount();
+  });
+});

@@ -4,6 +4,7 @@ const { validateSubagentPool } = require("./subagentPool");
 const { clampUiScale } = require("./zoom.js");
 const { validateMcpServers, mergeMcpSettingsPatch } = require("./mcp.js");
 const { validateProviderInstances } = require("./providerInstances.js");
+const { validateModelPrices } = require("./modelPrices.js");
 const {
   isHttpUrl,
   validateAgentProfiles,
@@ -69,6 +70,7 @@ class StoreSettingsMethods {
       otel: n.otel,
       linearApiKey: n.linearApiKey,
       webhook: n.webhook,
+      modelPrices: n.modelPrices,
     };
   }
 
@@ -386,6 +388,10 @@ class StoreSettingsMethods {
         ...this.data.settings.webhook,
         ...v,
       });
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "modelPrices")) {
+      // Whole-map replace: the editor sends every row, so a dropped row clears.
+      this.data.settings.modelPrices = validateModelPrices(patch.modelPrices);
     }
     return this.getSettings();
   }

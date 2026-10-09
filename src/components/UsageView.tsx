@@ -3,6 +3,7 @@ import { formatCostUsd, formatTokenCount, providerDisplayName } from "../format"
 import type { ProviderInfo, UsageReport } from "../shared/ipc";
 import {
   USAGE_RANGES,
+  filterUsageReport,
   processedTokens,
   summarizeUsage,
   type UsageBreakdownKind,
@@ -135,6 +136,8 @@ export function UsageView({
   );
   // ponytail: Limits tab is session-only; persist it in reportControls if people ask.
   const [limitsOpen, setLimitsOpen] = useState(false);
+  // ponytail: provider filter is session-only like the Limits tab.
+  const [providerFilter, setProviderFilter] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const loadGen = useRef(0);
 
@@ -206,10 +209,22 @@ export function UsageView({
     };
   }, [loadAll]);
 
-  const summary = useMemo(
+  const fullSummary = useMemo(
     () => summarizeUsage(report, range, new Date(now)),
     [report, range, now],
   );
+  const summary = useMemo(
+    () =>
+      providerFilter
+        ? summarizeUsage(filterUsageReport(report, providerFilter), range, new Date(now))
+        : fullSummary,
+    [fullSummary, report, providerFilter, range, now],
+  );
+  const providerOptions = useMemo(() => {
+    const ids = fullSummary.providers.map((p) => p.provider);
+    if (providerFilter && !ids.includes(providerFilter)) ids.push(providerFilter);
+    return ids.sort((a, b) => a.localeCompare(b));
+  }, [fullSummary.providers, providerFilter]);
   const rangeEmpty = summary.providers.length === 0;
   const showLoading = loading && !hasLastSuccess && !error;
   const initialError = Boolean(error && !hasLastSuccess);
@@ -335,6 +350,22 @@ export function UsageView({
           </div>
           {limitsOpen ? null : (
             <>
+              {providerOptions.length > 1 || providerFilter ? (
+                <select
+                  className={styles.providerSelect}
+                  aria-label="Provider"
+                  data-usage-provider-filter=""
+                  value={providerFilter ?? ""}
+                  onChange={(e) => setProviderFilter(e.target.value || null)}
+                >
+                  <option value="">All providers</option>
+                  {providerOptions.map((id) => (
+                    <option key={id} value={id}>
+                      {providerDisplayName(id, providers)}
+                    </option>
+                  ))}
+                </select>
+              ) : null}
               <div className={styles.segment} role="group" aria-label="Range">
                 {USAGE_RANGES.map((item) => (
                   <button

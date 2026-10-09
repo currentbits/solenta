@@ -192,4 +192,10 @@ export const PALETTE_ACTIONS: readonly PaletteAction[] = [
     binding: "agents.toggle",
     keywords: "sidebar rail",
   },
+  {
+    id: "reopen-pane",
+    title: "Reopen closed pane",
+    binding: "pane.reopen",
+    keywords: "restore undo close terminal git",
+  },
 ];

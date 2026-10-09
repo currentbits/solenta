@@ -177,6 +177,38 @@ describe("UsageView", () => {
     m.unmount();
   });
 
+  it("filters totals, chart and rows by provider (#1531)", async () => {
+    const m = await mount(<UsageView loadUsage={async () => richReport()} />);
+    await m.flush();
+    const select = m.query("[data-usage-provider-filter]");
+    assert.ok(select, "provider select shows with two providers");
+    const options = [...select!.querySelectorAll("option")].map((o) => o.getAttribute("value"));
+    assert.deepEqual(options, ["", "claude", "kimi"]);
+    await m.click(m.query('[data-usage-group-btn="thread"]'));
+    assert.ok(m.text().includes("Kimi research"));
+
+    await m.change(select, "claude");
+    assert.ok(m.query('[data-usage-provider="claude"]'));
+    assert.equal(m.query('[data-usage-provider="kimi"]'), null, "kimi row hidden");
+    assert.equal(m.query('[data-usage-series="kimi"]'), null);
+    assert.equal(m.query('[data-usage-totals]')?.textContent?.includes("4 turns"), true);
+    assert.ok(!m.text().includes("Kimi research"), "kimi thread hidden");
+    assert.ok(m.text().includes("Fix the cache"));
+
+    await m.change(m.query("[data-usage-provider-filter]"), "");
+    assert.ok(m.query('[data-usage-provider="kimi"]'), "All brings it back");
+    m.unmount();
+  });
+
+  it("hides the provider filter with a single provider", async () => {
+    const m = await mount(
+      <UsageView loadUsage={async () => ({ byDay: sampleData(), threadsByDay: {} })} />,
+    );
+    await m.flush();
+    assert.equal(m.query("[data-usage-provider-filter]"), null);
+    m.unmount();
+  });
+
   it("renders the empty state when there is no data", async () => {
     const m = await mount(<UsageView loadUsage={async () => ({ byDay: {}, threadsByDay: {} })} />);
     await m.flush();

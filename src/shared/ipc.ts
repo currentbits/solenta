@@ -3007,6 +3007,20 @@ export interface AppSettings {
    * switch and of window focus. null URL (the default) sends nothing.
    */
   webhook: WebhookSettings;
+  /**
+   * User model prices, model id → USD per million tokens (#1531). Only
+   * prices usage the provider reported tokens for but no cost; a provider's
+   * own cost (Claude's total_cost_usd) always wins. Whole-map replace on set.
+   */
+  modelPrices?: Record<string, ModelPrice>;
+}
+
+/** USD per million tokens. Cache reads/writes fall back to `input`. */
+export interface ModelPrice {
+  input: number;
+  output: number;
+  cacheRead?: number;
+  cacheWrite?: number;
 }
 
 /**
