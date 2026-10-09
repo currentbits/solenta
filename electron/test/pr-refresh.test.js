@@ -651,6 +651,54 @@ describe("refreshPrStates (round 47)", () => {
     );
   });
 
+  it("API path (#1528): one request per repo, zero gh spawns", async () => {
+    fx = await makeFixture();
+    const t2 = addSecondThread(fx, "Batched");
+    seedOpenPr(fx, fx.thread.id, 41, "OPEN");
+    seedOpenPr(fx, t2.id, 42, "OPEN");
+    const asked = [];
+    const result = await refreshPrStates(fx.store, {
+      broadcast: () => {},
+      fetchPrStatesFn: async (remote, numbers) => {
+        asked.push({ remote, numbers: numbers.slice().sort() });
+        return new Map([
+          [41, { number: 41, url: "https://github.com/acme/demo/pull/41", state: "CLOSED" }],
+          [42, { number: 42, url: "https://github.com/acme/demo/pull/42", state: "OPEN" }],
+        ]);
+      },
+    });
+    assert.deepEqual(asked, [
+      { remote: { host: "github.com", owner: "acme", repo: "demo" }, numbers: [41, 42] },
+    ]);
+    assert.equal(result.spawned, 0);
+    assert.equal(fx.store.getThread(fx.thread.id).prState, "CLOSED");
+    assert.equal(fx.store.getThread(t2.id).prUrl, "https://github.com/acme/demo/pull/42");
+  });
+
+  it("API failure falls back to per-thread gh for that repo", async () => {
+    fx = await makeFixture();
+    seedOpenPr(fx, fx.thread.id, 43, "OPEN");
+    const seen = [];
+    const result = await refreshPrStates(fx.store, {
+      broadcast: () => {},
+      fetchPrStatesFn: async () => {
+        throw new Error("No GitHub token for github.com");
+      },
+      ghTryAsyncFn: async (_cwd, args) => {
+        seen.push(args[2]);
+        return {
+          ok: true,
+          stdout: JSON.stringify({ number: 43, url: "https://github.com/acme/demo/pull/43", state: "MERGED" }),
+          stderr: "",
+          combined: "",
+        };
+      },
+    });
+    assert.deepEqual(seen, ["43"]);
+    assert.equal(result.spawned, 1);
+    assert.equal(fx.store.getThread(fx.thread.id).prState, "MERGED");
+  });
+
   it("timeout kill (real child): hanging fake is killed under short timeout", async () => {
     fx = await makeFixture();
     seedOpenPr(fx, fx.thread.id, 99, "OPEN");

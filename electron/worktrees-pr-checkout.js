@@ -169,6 +169,9 @@ function abandonCheckout(opts) {
  * >}
  */
 async function checkoutPr(opts) {
+  // ponytail: stays on gh (view/diff/checkout), not ghApiTryAsync: `gh pr
+  // checkout` does the fetch/fork-remote git plumbing. Move it when that is
+  // reimplemented on git directly.
   const { store, projectId, worktreeBase, broadcast } = opts || {};
   const prNumber = Number(opts && opts.prNumber);
   if (!Number.isFinite(prNumber) || prNumber <= 0) {

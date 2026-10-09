@@ -205,6 +205,17 @@ describe("createSecrets", () => {
     assert.equal(revealed.settings.linearApiKey, "lin_api_secret");
   });
 
+  it("seals and reveals a saved GitHub host token (#1528)", () => {
+    const s = createSecrets({ safeStorage: fakeSafeStorage() });
+    const sealed = s.concealSettings({
+      githubHosts: [{ host: "github.com", account: "me", token: "ghp_secret" }],
+    });
+    assert.ok(s.isSealed(sealed.githubHosts[0].token));
+    assert.equal(sealed.githubHosts[0].account, "me");
+    const revealed = s.revealSettings(sealed);
+    assert.equal(revealed.settings.githubHosts[0].token, "ghp_secret");
+  });
+
   it("seals and reveals MCP remote token, header values, and stdio env", () => {
     const s = createSecrets({ safeStorage: fakeSafeStorage() });
     const settings = {

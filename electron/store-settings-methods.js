@@ -18,6 +18,7 @@ const {
   normalizeSettings,
   normalizeOtel,
   normalizeWebhook,
+  normalizeGithubHosts,
 } = require("./store-normalize.js");
 
 /**
@@ -95,6 +96,7 @@ class StoreSettingsMethods {
       subagentPool: n.subagentPool,
       otel: n.otel,
       linearApiKey: n.linearApiKey,
+      githubHosts: n.githubHosts,
       webhook: n.webhook,
       modelPrices: n.modelPrices,
       worktreeRoot: n.worktreeRoot,
@@ -393,6 +395,21 @@ class StoreSettingsMethods {
       } else {
         throw new Error("linearApiKey must be a string or null");
       }
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "githubHosts")) {
+      // The renderer only sees hasToken, so a row without a `token` key keeps
+      // the saved one; null or "" clears it.
+      const prev = new Map(
+        (this.data.settings.githubHosts || []).map((r) => [r.host, r.token]),
+      );
+      const rows = Array.isArray(patch.githubHosts)
+        ? patch.githubHosts.map((r) => {
+            if (!r || typeof r !== "object" || "token" in r) return r;
+            const host = typeof r.host === "string" ? r.host.trim().toLowerCase() : "";
+            return { ...r, token: prev.get(host) ?? null };
+          })
+        : patch.githubHosts;
+      this.data.settings.githubHosts = normalizeGithubHosts(rows, true);
     }
     if (Object.prototype.hasOwnProperty.call(patch, "webhook")) {
       const v = patch.webhook;

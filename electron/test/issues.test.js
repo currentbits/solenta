@@ -994,3 +994,130 @@ process.exit(1);
     });
   });
 });
+
+describe("issues over the GitHub API (#1534)", () => {
+  const { setGithubApi } = require("../worktrees.js");
+  const { listIssuePage } = require("../issues.js");
+  let tmp;
+  let repo;
+  let ghLog;
+  let prevGh;
+  /** @type {Array<{ url: string, method: string, body: any }>} */
+  let calls;
+  let issue;
+  const repoLabels = { "plan:todo": "L1", "plan:doing": "L2", "plan:done": "L3" };
+
+  async function fetchFn(url, init) {
+    const body = init.body ? JSON.parse(init.body) : null;
+    calls.push({ url, method: init.method, body });
+    const reply = (status, json) => ({ ok: status < 300, status, json: async () => json });
+    if (url.endsWith("/graphql")) {
+      const q = body.query;
+      const v = body.variables;
+      if (/issueOrPullRequest/.test(q)) {
+        return reply(200, { data: { repository: { issueOrPullRequest: v.n === issue.number ? { ...issue, labels: { nodes: issue.labels.map((name) => ({ name })) } } : null } } });
+      }
+      if (/label\(name:/.test(q)) {
+        const repository = { issue: { id: "I_1" } };
+        Object.keys(v).filter((k) => /^l\d+$/.test(k)).forEach((k) => {
+          repository[k] = repoLabels[v[k]] ? { id: repoLabels[v[k]] } : null;
+        });
+        return reply(200, { data: { repository } });
+      }
+      if (/^mutation/.test(q)) {
+        const byId = (id) => Object.keys(repoLabels).find((n) => repoLabels[n] === id);
+        issue.labels = issue.labels.filter((l) => !v.remove.map(byId).includes(l)).concat(v.add.map(byId));
+        return reply(200, { data: {} });
+      }
+      if (/issues\(first:\$first/.test(q)) {
+        return reply(200, { data: { repository: { issues: { nodes: [{ ...issue, labels: { nodes: [] } }], pageInfo: { hasNextPage: false, endCursor: null } } } } });
+      }
+      return reply(200, { errors: [{ message: "unhandled" }] });
+    }
+    const p = new URL(url).pathname;
+    if (init.method === "POST" && p === "/repos/acme/demo/issues") {
+      return reply(201, { html_url: "https://github.com/acme/demo/issues/77" });
+    }
+    if (init.method === "POST" && p.endsWith("/comments")) {
+      return reply(201, { html_url: `https://github.com/acme/demo/issues/${issue.number}#issuecomment-1` });
+    }
+    if (init.method === "PATCH") {
+      issue.state = body.state === "closed" ? "CLOSED" : "OPEN";
+      return reply(200, {});
+    }
+    return reply(404, { message: "Not Found" });
+  }
+
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), "coder-issues-api-"));
+    repo = path.join(tmp, "repo");
+    fs.mkdirSync(repo);
+    git(repo, ["init", "-q"]);
+    git(repo, ["remote", "add", "origin", "https://github.com/acme/demo.git"]);
+    ghLog = path.join(tmp, "gh.log");
+    prevGh = process.env.CODER_GH_BIN;
+    process.env.CODER_GH_BIN = writeFakeBin(
+      path.join(tmp, "fake-gh"),
+      `require("fs").appendFileSync(${JSON.stringify(ghLog)}, process.argv.slice(2).join(" ") + "\\n");
+process.stdout.write("https://github.com/acme/demo/issues/5#issuecomment-gh\\n");
+`,
+    );
+    calls = [];
+    issue = { number: 5, title: "Fix it", body: "details", url: "https://github.com/acme/demo/issues/5", state: "OPEN", labels: ["plan:doing"] };
+    setGithubApi({ fetchFn, tokenFn: async () => "t0k" });
+  });
+
+  afterEach(async () => {
+    setGithubApi(null);
+    if (prevGh == null) delete process.env.CODER_GH_BIN;
+    else process.env.CODER_GH_BIN = prevGh;
+    await rmTree(tmp);
+  });
+
+  const ghCalls = () => (fs.existsSync(ghLog) ? fs.readFileSync(ghLog, "utf8").trim().split("\n") : []);
+
+  it("fetch, list, comment, create, plan moves and complete never spawn gh", async () => {
+    const fetched = await fetchIssue(repo, "5");
+    assert.equal(fetched.ok, true);
+    assert.equal(fetched.issue.title, "Fix it");
+    assert.deepEqual(await fetchIssue(repo, "acme/demo#9"), { ok: false, reason: "issue not found" });
+
+    const page = await listIssuePage(repo, { state: "open", limit: 10 });
+    assert.equal(page.ok, true);
+    assert.equal(page.issues[0].number, 5);
+    const listCall = calls.find((c) => /issues\(first/.test(c.body && c.body.query));
+    assert.deepEqual(listCall.body.variables, { owner: "acme", repo: "demo", first: 10, state: "OPEN" });
+
+    const commented = await commentIssue(repo, 5, "note");
+    assert.deepEqual(commented, { ok: true, url: "https://github.com/acme/demo/issues/5#issuecomment-1" });
+
+    assert.deepEqual(await completeIssue(repo, 5, { comment: "landed" }), { ok: true });
+    assert.equal(issue.state, "CLOSED");
+    assert.deepEqual(issue.labels, ["plan:done"]);
+
+    const created = await createIssue(repo, { title: "New", body: "b" });
+    assert.deepEqual(created, { ok: true, number: 77, url: "https://github.com/acme/demo/issues/77" });
+    assert.deepEqual(ghCalls(), []);
+  });
+
+  it("a plan label missing from the repo fails the edit like gh, then add-only retries", async () => {
+    delete repoLabels["plan:todo"];
+    try {
+      assert.deepEqual(await setPlanStatus(repo, 5, "done"), { ok: true });
+      const mutations = calls.filter((c) => /^mutation/.test(c.body && c.body.query));
+      assert.equal(mutations.length, 1);
+      assert.deepEqual(mutations[0].body.variables.remove, []);
+      assert.deepEqual(issue.labels, ["plan:doing", "plan:done"]);
+      assert.deepEqual(ghCalls(), []);
+    } finally {
+      repoLabels["plan:todo"] = "L1";
+    }
+  });
+
+  it("falls back to gh when the API is down", async () => {
+    setGithubApi({ fetchFn: async () => ({ ok: false, status: 503, json: async () => ({}) }), tokenFn: async () => "t0k" });
+    const commented = await commentIssue(repo, 5, "note");
+    assert.equal(commented.ok, true);
+    assert.deepEqual(ghCalls(), ["issue comment 5 --body note"]);
+  });
+});

@@ -19,6 +19,7 @@ const { push, assertNoOutboundSecrets, scanOutgoingPush } = require("./worktrees
 const { gateCiWorkflowMerge } = require("./worktrees-changes.js");
 const { maybeCleanupMergedWorktree } = require("./worktrees-gc.js");
 const prWatch = require("./prWatch.js");
+const github = require("./github.js");
 
 /** Per-thread background PR refresh timeout. Hard kill; never block the main process. */
 const PR_REFRESH_TIMEOUT_MS = 8_000;
@@ -134,6 +135,91 @@ function ghTryAsync(cwd, args, opts) {
       },
     );
   });
+}
+
+/** @type {{ fetchFn?: typeof fetch, tokenFn?: (host: string) => Promise<string | null> } | null} */
+let githubApiTestHook = null;
+
+/**
+ * Test hook: route interactive PR ops through an injected fetch/token even
+ * under a fake gh (CODER_GH_BIN). Pass null to restore.
+ * @param {{ fetchFn?: typeof fetch, tokenFn?: (host: string) => Promise<string | null> } | null} hook
+ */
+function setGithubApi(hook) {
+  githubApiTestHook = hook || null;
+}
+
+/**
+ * API path on/off, same rule as refreshPrStates: a fake gh turns it off
+ * unless a test injected fetch; CODER_GITHUB_API=0 forces gh.
+ */
+function githubApiEnabled() {
+  if (process.env.CODER_GITHUB_API === "0") return false;
+  return githubApiTestHook != null || !process.env.CODER_GH_BIN;
+}
+
+/**
+ * GitHub remote + token for the API path, or null (then only gh applies).
+ * Any host parseRemote accepts qualifies once a token exists (GHE).
+ * @param {string} originUrl
+ */
+async function githubApiTarget(originUrl) {
+  if (!githubApiEnabled()) return null;
+  const remote = github.parseRemote(originUrl);
+  if (!remote) return null;
+  const tokenFn = (githubApiTestHook && githubApiTestHook.tokenFn) || github.githubToken;
+  const token = await tokenFn(remote.host);
+  return token ? { remote, token } : null;
+}
+
+/**
+ * True when PR ops can run here: github.com (gh), or any host the API holds
+ * a token for.
+ * @param {string} originUrl
+ */
+async function isGitHubPrRemote(originUrl) {
+  return isGitHubRemote(originUrl) || (await githubApiTarget(originUrl)) != null;
+}
+
+/**
+ * `gh pr …`, `gh issue …` and `gh api graphql …` with the GitHub API first (#1534), same result shape as
+ * ghTryAsync so callers keep their gh parsing. Falls back to the real gh when
+ * there is no token, the argv is not translated, or the API throws — except:
+ * a definitive "no such PR" is returned as gh's own not-found text; a timed
+ * out write is returned as a failure (re-sending a comment/create/merge could
+ * double it); and a non-github.com host never falls back (gh stays gated on
+ * isGitHubRemote).
+ * @param {string} cwd
+ * @param {string[]} args
+ * @param {{ env?: NodeJS.ProcessEnv, timeout?: number }} [opts]
+ */
+async function ghApiTryAsync(cwd, args, opts) {
+  const origin = githubApiEnabled()
+    ? await gitTryAsync(cwd, ["remote", "get-url", "origin"])
+    : null;
+  const originUrl = origin && origin.ok ? String(origin.stdout || "").trim() : "";
+  const target = originUrl ? await githubApiTarget(originUrl) : null;
+  if (target) {
+    try {
+      const translate = args[0] === "pr" ? github.ghPr : github.ghIssue;
+      const out = await translate(target.remote, args, {
+        token: target.token,
+        fetchFn: githubApiTestHook && githubApiTestHook.fetchFn,
+        timeoutMs: opts && opts.timeout != null ? opts.timeout : GH_TIMEOUT_MS,
+      });
+      return { ok: true, stdout: out, stderr: "", combined: out };
+    } catch (err) {
+      const msg = err && err.message ? String(err.message) : String(err);
+      const fail = { ok: false, stdout: "", stderr: msg, combined: msg };
+      if (err && err.notFound) return fail;
+      // Same side effect as a gh auth failure: rescan the forge probe (#608).
+      if (err && err.status === 401) isGhAuthFailure("HTTP 401");
+      const write = args[0] !== "api" && !["view", "list", "checks"].includes(args[1]);
+      const timedOut = err && (err.name === "TimeoutError" || err.name === "AbortError");
+      if ((write && timedOut) || !isGitHubRemote(originUrl)) return fail;
+    }
+  }
+  return ghTryAsync(cwd, args, opts);
 }
 
 /**
@@ -368,7 +454,7 @@ async function listPrsRaw(projectPath, opts) {
     return { ok: false, reason: "not a GitHub repo" };
   }
   const originUrl = String(remote.stdout || "").trim();
-  if (!isGitHubRemote(originUrl)) {
+  if (!(await isGitHubPrRemote(originUrl))) {
     return { ok: false, reason: "not a GitHub repo" };
   }
 
@@ -376,7 +462,7 @@ async function listPrsRaw(projectPath, opts) {
   const fallback = (opts && opts.fallbackFields) || PR_LIST_FIELDS_FALLBACK;
   const extraArgs = (opts && opts.extraArgs) || ["--limit", "50"];
 
-  let listed = await ghTryAsync(
+  let listed = await ghApiTryAsync(
     cwd,
     ["pr", "list", "--json", fields, ...extraArgs],
     { timeout: GH_TIMEOUT_MS },
@@ -385,7 +471,7 @@ async function listPrsRaw(projectPath, opts) {
     !listed.ok &&
     isUnknownJsonField(listed.stderr || listed.combined || listed.stdout)
   ) {
-    listed = await ghTryAsync(
+    listed = await ghApiTryAsync(
       cwd,
       ["pr", "list", "--json", fallback, ...extraArgs],
       { timeout: GH_TIMEOUT_MS },
@@ -529,20 +615,20 @@ async function prStatus(opts) {
   const { store, threadId } = opts;
   const { cwd, branch, originUrl } = await resolveThreadGit(store, threadId);
 
-  if (!isGitHubRemote(originUrl)) {
+  if (!(await isGitHubPrRemote(originUrl))) {
     throw new Error(
       `Remote origin is not a GitHub repository (got: ${originUrl}). PR status requires github.com.`,
     );
   }
 
-  let viewed = await ghTryAsync(cwd, ["pr", "view", branch, "--json", PR_JSON_ENRICHED], {
+  let viewed = await ghApiTryAsync(cwd, ["pr", "view", branch, "--json", PR_JSON_ENRICHED], {
     timeout: GH_TIMEOUT_MS,
   });
   if (
     !viewed.ok &&
     isUnknownJsonField(viewed.stderr || viewed.combined || viewed.stdout)
   ) {
-    viewed = await ghTryAsync(cwd, ["pr", "view", branch, "--json", PR_JSON_MINIMAL], {
+    viewed = await ghApiTryAsync(cwd, ["pr", "view", branch, "--json", PR_JSON_MINIMAL], {
       timeout: GH_TIMEOUT_MS,
     });
   }
@@ -779,18 +865,18 @@ async function prChecks(opts) {
     };
   }
 
-  if (!isGitHubRemote(originUrl)) {
+  if (!(await isGitHubPrRemote(originUrl))) {
     return { ok: false, reason: "not a GitHub repo" };
   }
 
-  let viewed = await ghTryAsync(cwd, ["pr", "view", branch, "--json", PR_JSON_ENRICHED], {
+  let viewed = await ghApiTryAsync(cwd, ["pr", "view", branch, "--json", PR_JSON_ENRICHED], {
     timeout: GH_TIMEOUT_MS,
   });
   if (
     !viewed.ok &&
     isUnknownJsonField(viewed.stderr || viewed.combined || viewed.stdout)
   ) {
-    viewed = await ghTryAsync(cwd, ["pr", "view", branch, "--json", PR_JSON_MINIMAL], {
+    viewed = await ghApiTryAsync(cwd, ["pr", "view", branch, "--json", PR_JSON_MINIMAL], {
       timeout: GH_TIMEOUT_MS,
     });
   }
@@ -821,7 +907,7 @@ async function prChecks(opts) {
     };
   }
 
-  let checked = await ghTryAsync(cwd, [
+  let checked = await ghApiTryAsync(cwd, [
     "pr",
     "checks",
     String(info.number),
@@ -833,7 +919,7 @@ async function prChecks(opts) {
     !checked.ok &&
     isChecksJsonRejected(checked.stderr || checked.combined || checked.stdout)
   ) {
-    checked = await ghTryAsync(cwd, ["pr", "checks", String(info.number)], {
+    checked = await ghApiTryAsync(cwd, ["pr", "checks", String(info.number)], {
       timeout: GH_TIMEOUT_MS,
     });
     preferText = true;
@@ -1130,13 +1216,13 @@ async function mergePr(opts) {
     threadId,
   );
 
-  if (!isGitHubRemote(originUrl)) {
+  if (!(await isGitHubPrRemote(originUrl))) {
     throw new Error(
       `Remote origin is not a GitHub repository (got: ${originUrl}). Merging a PR requires github.com.`,
     );
   }
 
-  let viewed = await ghTryAsync(cwd, [
+  let viewed = await ghApiTryAsync(cwd, [
     "pr",
     "view",
     branch,
@@ -1147,7 +1233,7 @@ async function mergePr(opts) {
     !viewed.ok &&
     isUnknownJsonField(viewed.stderr || viewed.combined || viewed.stdout)
   ) {
-    viewed = await ghTryAsync(cwd, [
+    viewed = await ghApiTryAsync(cwd, [
       "pr",
       "view",
       branch,
@@ -1198,7 +1284,7 @@ async function mergePr(opts) {
     }
   }
 
-  const merged = await ghTryAsync(cwd, [
+  const merged = await ghApiTryAsync(cwd, [
     "pr",
     "merge",
     String(info.number),
@@ -1254,6 +1340,7 @@ function isPrRefreshCandidate(t) {
  * @param {(channel: string, payload: unknown) => void} [opts.broadcast]
  * @param {number} [opts.timeoutMs] default PR_REFRESH_TIMEOUT_MS
  * @param {(cwd: string, args: string[], opts?: object) => Promise<object>} [opts.ghTryAsyncFn] test inject
+ * @param {typeof import('./github.js').fetchPrStates} [opts.fetchPrStatesFn] test inject
  * @param {{ deliver: (input: { threadId: string, line: string }) => void, isRunning?: (threadId: string) => boolean }} [opts.prWatch]
  *   runner hooks for watch-and-wake (electron/prWatch.js); absent = refresh only
  * @returns {Promise<{ examined: number, changed: number, spawned: number }>}
@@ -1288,6 +1375,16 @@ async function refreshPrStates(store, opts) {
       ? opts.ghTryAsyncFn
       : ghTryAsync;
   // Watch-and-wake rides this pass instead of a second poller (#1493 D).
+  // API path (#1528). A fake gh (injected or CODER_GH_BIN) turns it off unless
+  // the test also injects fetchPrStatesFn, so gh-fake suites keep exercising
+  // the fallback and never reach the network. CODER_GITHUB_API=0 forces gh.
+  const injectedFetch =
+    opts && typeof opts.fetchPrStatesFn === "function" ? opts.fetchPrStatesFn : null;
+  const fetchStates = injectedFetch || github.fetchPrStates;
+  const apiEnabled =
+    process.env.CODER_GITHUB_API !== "0" &&
+    (injectedFetch != null ||
+      (!(opts && opts.ghTryAsyncFn) && !process.env.CODER_GH_BIN));
   const prWatchDeps =
     opts && opts.prWatch && typeof opts.prWatch.deliver === "function"
       ? opts.prWatch
@@ -1301,6 +1398,47 @@ async function refreshPrStates(store, opts) {
   let changed = 0;
   let spawned = 0;
 
+  // API pre-pass (#1528): one request per repo for every unwatched thread.
+  // Watched threads need gh's watch fields, so they keep the per-thread path.
+  /** @type {Map<string, { cwd: string, originUrl: string }>} */
+  const resolvedById = new Map();
+  /** @type {Map<string, { number: number, url: string, state: "OPEN" | "CLOSED" | "MERGED" } | null>} */
+  const batched = new Map();
+  if (apiEnabled) {
+    /** @type {Map<string, { remote: { host: string, owner: string, repo: string }, rows: typeof candidates }>} */
+    const groups = new Map();
+    for (const snapshot of candidates) {
+      if (prWatchDeps && prWatch.isWatched(snapshot)) continue;
+      let resolved;
+      try {
+        resolved = await resolveThreadGit(store, snapshot.id);
+      } catch {
+        continue;
+      }
+      resolvedById.set(snapshot.id, resolved);
+      const remote = github.parseRemote(resolved.originUrl);
+      if (!remote) continue;
+      const key = `${remote.host}/${remote.owner}/${remote.repo}`.toLowerCase();
+      if (!groups.has(key)) groups.set(key, { remote, rows: [] });
+      groups.get(key).rows.push(snapshot);
+    }
+    // Any host with a token qualifies (GHE); a GitLab origin costs one cached
+    // `gh auth token` miss, never a PR call. A failed repo falls back to gh below.
+    for (const group of groups.values()) {
+      let states;
+      try {
+        states = await fetchStates(
+          group.remote,
+          group.rows.map((t) => Number(t.prNumber)),
+          { timeoutMs },
+        );
+      } catch {
+        continue;
+      }
+      for (const t of group.rows) batched.set(t.id, states.get(Number(t.prNumber)) || null);
+    }
+  }
+
   // Strict serialization: await each call before starting the next.
   for (const snapshot of candidates) {
     const threadId = snapshot.id;
@@ -1308,57 +1446,68 @@ async function refreshPrStates(store, opts) {
       let cwd;
       let originUrl;
       try {
-        const resolved = await resolveThreadGit(store, threadId);
+        const resolved =
+          resolvedById.get(threadId) || (await resolveThreadGit(store, threadId));
         cwd = resolved.cwd;
         originUrl = resolved.originUrl;
       } catch {
         // Missing project/cwd/branch: not an event. Skip.
         continue;
       }
-      if (!isGitHubRemote(originUrl)) {
-        // Non-GitHub origin must never paint an error (ISSUES.md). Skip.
-        continue;
-      }
-
-      const prNumber = Number(snapshot.prNumber);
-      const watch = prWatchDeps && prWatch.isWatched(snapshot);
-      spawned += 1;
-      let viewed = await runGh(
-        cwd,
-        [
-          "pr",
-          "view",
-          String(prNumber),
-          "--json",
-          watch ? prWatch.PR_WATCH_FIELDS : "number,url,state",
-        ],
-        { timeout: timeoutMs },
-      );
-      let watching = watch;
-      if (
-        watch &&
-        viewed &&
-        !viewed.ok &&
-        isUnknownJsonField(viewed.stderr || viewed.combined || viewed.stdout)
-      ) {
-        // Older gh without latestReviews/headRefOid: plain refresh, no watch.
-        watching = false;
-        viewed = await runGh(
-          cwd,
-          ["pr", "view", String(prNumber), "--json", "number,url,state"],
-          { timeout: timeoutMs },
-        );
-      }
-      if (!viewed || !viewed.ok) {
-        // gh missing / network / timeout / no-PR: skip silently.
-        continue;
-      }
 
       let info;
-      try {
-        info = parsePrJson(viewed.stdout, "", false);
-      } catch {
-        continue;
+      let watching = false;
+      /** @type {any} */
+      let viewed = null;
+      if (batched.has(threadId)) {
+        info = batched.get(threadId);
+        // Unresolvable PR: skip, same as a failed gh view.
+        if (!info) continue;
+      } else {
+        if (!isGitHubRemote(originUrl)) {
+          // Non-GitHub origin must never paint an error (ISSUES.md). Skip.
+          continue;
+        }
+
+        const prNumber = Number(snapshot.prNumber);
+        const watch = prWatchDeps && prWatch.isWatched(snapshot);
+        spawned += 1;
+        viewed = await runGh(
+          cwd,
+          [
+            "pr",
+            "view",
+            String(prNumber),
+            "--json",
+            watch ? prWatch.PR_WATCH_FIELDS : "number,url,state",
+          ],
+          { timeout: timeoutMs },
+        );
+        watching = Boolean(watch);
+        if (
+          watch &&
+          viewed &&
+          !viewed.ok &&
+          isUnknownJsonField(viewed.stderr || viewed.combined || viewed.stdout)
+        ) {
+          // Older gh without latestReviews/headRefOid: plain refresh, no watch.
+          watching = false;
+          viewed = await runGh(
+            cwd,
+            ["pr", "view", String(prNumber), "--json", "number,url,state"],
+            { timeout: timeoutMs },
+          );
+        }
+        if (!viewed || !viewed.ok) {
+          // gh missing / network / timeout / no-PR: skip silently.
+          continue;
+        }
+
+        try {
+          info = parsePrJson(viewed.stdout, "", false);
+        } catch {
+          continue;
+        }
       }
 
       if (watching) {
@@ -1612,7 +1761,7 @@ async function createPr(opts) {
     threadId,
   );
 
-  if (!isGitHubRemote(originUrl)) {
+  if (!(await isGitHubPrRemote(originUrl))) {
     throw new Error(
       `Remote origin is not a GitHub repository (got: ${originUrl}). PR creation requires github.com.`,
     );
@@ -1651,7 +1800,7 @@ async function createPr(opts) {
   push({ store, threadId });
 
   // Idempotency: return the existing PR rather than erroring.
-  const existing = await ghTryAsync(cwd, [
+  const existing = await ghApiTryAsync(cwd, [
     "pr",
     "view",
     branch,
@@ -1712,11 +1861,11 @@ async function createPr(opts) {
     createArgs.push("--draft");
   }
 
-  const created = await ghTryAsync(cwd, createArgs);
+  const created = await ghApiTryAsync(cwd, createArgs);
   if (!created.ok) {
     // Race: PR appeared between view and create. Prefer idempotent return.
     if (!created.enoent && !created.timedOut) {
-      const raced = await ghTryAsync(cwd, [
+      const raced = await ghApiTryAsync(cwd, [
         "pr",
         "view",
         branch,
@@ -1748,7 +1897,7 @@ async function createPr(opts) {
   }
 
   // create prints a URL; re-view for number/state so we match PrInfo exactly.
-  const viewed = await ghTryAsync(cwd, [
+  const viewed = await ghApiTryAsync(cwd, [
     "pr",
     "view",
     branch,
@@ -1806,6 +1955,9 @@ async function createPr(opts) {
 module.exports = {
   PR_REFRESH_TIMEOUT_MS,
   GH_TIMEOUT_MS,
+  ghApiTryAsync,
+  isGitHubPrRemote,
+  setGithubApi,
   isGitHubRemote,
   ghTryAsync,
   parsePrJson,

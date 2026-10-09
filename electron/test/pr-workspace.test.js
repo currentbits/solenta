@@ -24,6 +24,8 @@ const {
   mergePrAt,
 } = require("../prWorkspace.js");
 const { rmTree } = require("./support/rmTree.js");
+const { setGithubApi } = require("../worktrees.js");
+const { fakeGithubApi } = require("./support/fakeGithubApi.js");
 
 function git(cwd, args) {
   return execFileSync("git", args, {
@@ -337,6 +339,7 @@ describe("gh PR workspace actions", () => {
   });
 
   afterEach(async () => {
+    setGithubApi(null);
     if (prevGhBin === undefined) delete process.env.CODER_GH_BIN;
     else process.env.CODER_GH_BIN = prevGhBin;
     if (prevGhState === undefined) delete process.env.CODER_FAKE_GH_STATE;
@@ -433,5 +436,101 @@ describe("gh PR workspace actions", () => {
     const result = await viewPrDetail(other, 12);
     assert.equal(result.ok, false);
     assert.equal(result.reason, "not a GitHub repo");
+  });
+
+  describe("over the GitHub API (#1534)", () => {
+    const seed = () => ({
+      prs: [{
+        number: 12,
+        url: "https://github.com/acme/demo/pull/12",
+        title: "Ship it",
+        body: "from template",
+        isDraft: true,
+        headRefName: "feat/ship",
+        mergeable: "MERGEABLE",
+      }],
+    });
+
+    it("view/comment/edit/ready/close run on the API with no gh call", async () => {
+      const api = fakeGithubApi(seed());
+      setGithubApi(api);
+      const viewed = await viewPrDetail(repo, 12);
+      assert.equal(viewed.ok, true);
+      assert.equal(viewed.pr.title, "Ship it");
+      assert.equal(viewed.pr.isDraft, true);
+      assert.equal(viewed.pr.author, "octocat");
+      assert.equal(viewed.pr.mergeable, "MERGEABLE");
+
+      const posted = await commentPr(repo, { prNumber: 12, body: "please ship" });
+      assert.equal(posted.ok, true);
+      assert.match(posted.url, /issuecomment/);
+
+      const edited = await editPr(repo, { prNumber: 12, title: "Ship it now", body: "edited" });
+      assert.equal(edited.pr.title, "Ship it now");
+      assert.equal(edited.pr.body, "edited");
+      assert.equal(edited.pr.comments.length, 1);
+
+      assert.equal((await readyPr(repo, { prNumber: 12 })).pr.isDraft, false);
+      assert.equal((await readyPr(repo, { prNumber: 12, undo: true })).pr.isDraft, true);
+      assert.equal((await closePr(repo, { prNumber: 12 })).pr.state, "CLOSED");
+      assert.deepEqual(calls(), [], "gh must not run when the API answers");
+    });
+
+    it("mergePrAt squash-merges over REST", async () => {
+      const api = fakeGithubApi(seed());
+      setGithubApi(api);
+      const result = await mergePrAt(repo, { prNumber: 12 });
+      assert.equal(result.pr.state, "MERGED");
+      const put = api.state.calls.find((c) => c.method === "PUT");
+      assert.match(put.url, /\/repos\/acme\/demo\/pulls\/12\/merge$/);
+      assert.deepEqual(put.body, { merge_method: "squash" });
+      assert.deepEqual(calls(), []);
+    });
+
+    it("a missing PR is answered by the API, not retried on gh", async () => {
+      setGithubApi(fakeGithubApi(seed()));
+      const result = await viewPrDetail(repo, 99);
+      assert.deepEqual(result, { ok: false, reason: "PR not found" });
+      assert.deepEqual(calls(), []);
+    });
+
+    it("falls back to gh when the API fails (5xx and 401)", async () => {
+      for (const status of [502, 401]) {
+        setGithubApi(fakeGithubApi({ ...seed(), failWith: status }));
+        const result = await commentPr(repo, { prNumber: 12, body: `via gh ${status}` });
+        assert.equal(result.ok, true);
+      }
+      assert.equal(calls().filter((c) => c[1] === "comment").length, 2);
+    });
+
+    it("blocks a secret before any request is sent", async () => {
+      const api = fakeGithubApi(seed());
+      setGithubApi(api);
+      const result = await commentPr(repo, {
+        prNumber: 12,
+        body: "key ghp_" + "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8",
+      });
+      assert.equal(result.ok, false);
+      assert.match(result.reason, /guardrails/);
+      assert.deepEqual(api.state.calls, []);
+      assert.deepEqual(calls(), []);
+    });
+
+    it("works on a GHE origin with a token, and never falls back to gh there", async () => {
+      git(repo, ["remote", "set-url", "origin", "https://ghe.corp.example/acme/demo.git"]);
+      const api = fakeGithubApi(seed());
+      setGithubApi(api);
+      const viewed = await viewPrDetail(repo, 12);
+      assert.equal(viewed.ok, true);
+      assert.equal(api.state.calls[0].url, "https://ghe.corp.example/api/graphql");
+
+      api.state.failWith = 502;
+      const failed = await viewPrDetail(repo, 12);
+      assert.equal(failed.ok, false);
+      assert.deepEqual(calls(), []);
+
+      setGithubApi({ ...api, tokenFn: async () => null });
+      assert.deepEqual(await viewPrDetail(repo, 12), { ok: false, reason: "not a GitHub repo" });
+    });
   });
 });
