@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { describe, it, afterEach } from "node:test";
 import { useState } from "react";
-import { mount, unmountAll } from "./support/dom.ts";
+import { inAct, mount, unmountAll } from "./support/dom.ts";
 import { ThreadView } from "../src/components/ThreadView";
 import {
   defaultPaneLayout,
@@ -1396,6 +1396,31 @@ describe("Views menu pane workspace (issue #552)", () => {
     assert.equal(m.query("[data-terminal-pane]"), null, "second click closes it");
     assert.equal(m.query("[data-terminal-toggle]")!.getAttribute("aria-pressed"), "false");
     assert.ok(m.query("[data-pane-chat]"), "chat stays");
+    m.unmount();
+  });
+
+  it("reopens the last closed pane with Mod+Shift+T (#1531)", async () => {
+    const m = await mount(view({}));
+    await m.flush();
+    await m.click(m.query("[data-terminal-toggle]"));
+    await m.click(m.query("[data-terminal-toggle]"));
+    assert.equal(m.query("[data-terminal-pane]"), null);
+    const press = () =>
+      inAct(() => {
+        window.dispatchEvent(
+          new KeyboardEvent("keydown", {
+            key: "T",
+            metaKey: true,
+            shiftKey: true,
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+      });
+    await press();
+    assert.ok(m.query("[data-terminal-pane]"), "terminal comes back");
+    await press();
+    assert.ok(m.query("[data-terminal-pane]"), "empty stack is a no-op");
     m.unmount();
   });
 

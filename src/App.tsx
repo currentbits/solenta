@@ -13,6 +13,7 @@ import { demoProviderLimits } from "./providerUsageDemo";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Sidebar } from "./components/Sidebar";
 import { ThreadView } from "./components/ThreadView";
+import { REOPEN_PANE_EVENT } from "./paneLayout";
 import type { UsageReportControls } from "./components/UsageView";
 import {
   AgentsPanel,
@@ -1353,6 +1354,9 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       else if (id === "digest") openDigest();
       else if (id === "add-project") handleAddProject();
       else if (id === "toggle-agents") toggleAgents();
+      else if (id === "reopen-pane") {
+        window.dispatchEvent(new Event(REOPEN_PANE_EVENT));
+      }
     },
     [
       handleCreateThreadPlain,
