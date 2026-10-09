@@ -22,6 +22,9 @@ const prWatch = require("./prWatch.js");
 
 /** Per-thread background PR refresh timeout. Hard kill; never block the main process. */
 const PR_REFRESH_TIMEOUT_MS = 8_000;
+const SETTLED_PR_POLL_MS = 10 * 60 * 1000;
+/** threadId -> when refreshPrStates last polled it while settled. */
+const settledPrPolledAt = new Map();
 
 /** MERGED/CLOSED are terminal — never re-query. */
 const TERMINAL_PR_STATES = new Set(["MERGED", "CLOSED"]);
@@ -1251,7 +1254,17 @@ async function refreshPrStates(store, opts) {
       ? opts.prWatch
       : null;
 
-  const candidates = store.getThreads().filter(isPrRefreshCandidate);
+  // Settled threads poll slowly, not never: merged-worktree reclaim rides
+  // this pass (#1523). ponytail: first pass ≥ SETTLED_PR_POLL_MS after the last.
+  const now = opts && typeof opts.now === "function" ? opts.now() : Date.now();
+  const candidates = store.getThreads().filter((t) => {
+    if (!isPrRefreshCandidate(t)) return false;
+    if (t.settledOverride !== "settled") return true;
+    const last = settledPrPolledAt.get(t.id);
+    if (last != null && now - last < SETTLED_PR_POLL_MS) return false;
+    settledPrPolledAt.set(t.id, now);
+    return true;
+  });
   if (candidates.length === 0) {
     return { examined: 0, changed: 0, spawned: 0 };
   }
