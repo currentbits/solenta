@@ -81,6 +81,9 @@ async function maybeCleanupMergedWorktree(store, threadId) {
     }
 
     const removed = await gitTryAsync(project.path, [
+      // #1519: git's clean check honours status.showUntrackedFiles=no.
+      "-c",
+      "status.showUntrackedFiles=normal",
       "worktree",
       "remove",
       wtPath,
@@ -248,7 +251,13 @@ async function sweepOrphanWorktrees(opts) {
       const br = await gitTryAsync(dir, ["branch", "--show-current"]);
       const branch = br.ok ? br.stdout.trim() : "";
 
-      const removed = await gitTryAsync(repoPath, ["worktree", "remove", dir]);
+      const removed = await gitTryAsync(repoPath, [
+        "-c",
+        "status.showUntrackedFiles=normal", // #1519
+        "worktree",
+        "remove",
+        dir,
+      ]);
       if (!removed.ok) {
         result.kept.push(dir);
         continue;
@@ -738,7 +747,13 @@ async function removeGcWorktree(store, cand) {
     return forced;
   }
   if (!repoPath) return { ok: false, error: "could not find owning repo" };
-  const removed = await gitTryAsync(repoPath, ["worktree", "remove", dir]);
+  const removed = await gitTryAsync(repoPath, [
+    "-c",
+    "status.showUntrackedFiles=normal", // #1519
+    "worktree",
+    "remove",
+    dir,
+  ]);
   if (removed.ok) {
     invalidateGitReads(dir);
     return { ok: true };

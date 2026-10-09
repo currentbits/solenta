@@ -29,6 +29,7 @@ const {
   clearMissingWorktree,
   removeWorktree,
   removeWorktreeDir,
+  removeGcWorktree,
 } = require("../worktrees.js");
 const { rmTree } = require("./support/rmTree.js");
 
@@ -726,5 +727,81 @@ describe("removeWorktreeDir: rename aside, prune, async delete (#1392)", () => {
       fs.readdirSync(path.dirname(fx.repo)).some((n) => n.startsWith(".trash-")),
       false,
     );
+  });
+});
+
+describe("status.showUntrackedFiles=no never hides work from removal (#1519)", () => {
+  let fx;
+
+  beforeEach(async () => {
+    fx = await makeFixture();
+    git(fx.repo, ["config", "status.showUntrackedFiles", "no"]);
+    fs.writeFileSync(path.join(fx.worktreePath, "wip.txt"), "wip\n");
+  });
+
+  afterEach(async () => {
+    await rmTree(fx.tmpDir);
+  });
+
+  const wip = () => path.join(fx.worktreePath, "wip.txt");
+
+  it("removeWorktreeDir fast path refuses", () => {
+    const res = removeWorktreeDir(fx.repo, fx.worktreePath, false);
+    assert.equal(res.ok, false);
+    assert.match(res.combined, /modified or untracked files/);
+    assert.ok(fs.existsSync(wip()));
+  });
+
+  it("removeWorktreeDir git fallback refuses", () => {
+    // A .gitmodules routes removal through git's own `worktree remove`.
+    fs.writeFileSync(path.join(fx.worktreePath, ".gitmodules"), "");
+    git(fx.worktreePath, ["add", ".gitmodules"]);
+    git(fx.worktreePath, ["commit", "-m", "gitmodules"]);
+    const res = removeWorktreeDir(fx.repo, fx.worktreePath, false);
+    assert.equal(res.ok, false);
+    assert.ok(fs.existsSync(wip()));
+  });
+
+  it("removeWorktree (archive/cleanup) refuses without force", () => {
+    assert.throws(() =>
+      removeWorktree({
+        store: fx.store,
+        threadId: fx.threadId,
+        broadcast: () => {},
+        force: false,
+      }),
+    );
+    assert.ok(fs.existsSync(wip()));
+  });
+
+  it("maybeCleanupMergedWorktree keeps the tree", async () => {
+    pushBranch(fx);
+    seedPr(fx, "MERGED");
+    const result = await maybeCleanupMergedWorktree(fx.store, fx.threadId);
+    assert.equal(result.cleaned, false);
+    assert.ok(fs.existsSync(wip()));
+  });
+
+  it("removeGcWorktree refuses", async () => {
+    const res = await removeGcWorktree(fx.store, {
+      path: fx.worktreePath,
+      threadId: fx.threadId,
+    });
+    assert.equal(res.ok, false);
+    assert.ok(fs.existsSync(wip()));
+  });
+
+  it("sweepOrphanWorktrees recovers the untracked file before removing", async () => {
+    const id = fx.threadId;
+    fx.store.removeThread(id);
+    fx.store.saveNow();
+    const result = await sweepOrphanWorktrees({
+      store: fx.store,
+      worktreeBase: fx.worktreeBase,
+    });
+    assert.deepEqual(result.recovered, [
+      { dir: fx.worktreePath, branch: `recovered/${id}` },
+    ]);
+    assert.equal(git(fx.repo, ["show", `recovered/${id}:wip.txt`]), "wip");
   });
 });
