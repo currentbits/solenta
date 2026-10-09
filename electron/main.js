@@ -493,6 +493,8 @@ app.whenReady().then(async () => {
   });
 
   const userData = app.getPath("userData");
+  // Cached signed catalog now, release refresh in the background (#1529).
+  void require("./remoteCatalog.js").initRemoteCatalog(userData);
   try {
     speech = createSpeechManager({
       userDataPath: userData,

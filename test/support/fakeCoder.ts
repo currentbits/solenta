@@ -2652,6 +2652,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         rec("threads.setReasoningEffort", [input], thread()),
       setWebSearch: (input: unknown) =>
         rec("threads.setWebSearch", [input], thread()),
+      setFast: (input: unknown) => rec("threads.setFast", [input], thread()),
       /**
        * Honest fork (round 49 contract / electron forkThread): new thread
        * same project, copies provider/model/permissionMode unless overridden;

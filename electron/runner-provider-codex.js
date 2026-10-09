@@ -7,6 +7,7 @@ const {
   sessionIdForResume,
   resolveBin,
   honouredEfforts,
+  modelSupportsFast,
   codexModelAcceptsImages,
 } = require("./providers.js");
 const services = require("./services.js");
@@ -133,6 +134,9 @@ function createCodexRun(ctx) {
     }
     if (thread.webSearch === true) {
       args.push("-c", "web_search=live");
+    }
+    if (thread.fast === true && modelSupportsFast(providerEntry, thread.model)) {
+      args.push("-c", "service_tier=priority");
     }
     // MCP / Planboard -c sit after `app-server` (same values as exec).
     // Bearer tokens ride the child's env, never argv (issue #125).

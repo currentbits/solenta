@@ -863,6 +863,11 @@ export interface ThreadInfo {
    * provider advertises `supportsSearch`.
    */
   webSearch?: boolean;
+  /**
+   * Fast / priority tier (#1529). Sent only for a model whose ModelInfo
+   * lists `fast`; absent on older store rows.
+   */
+  fast?: boolean;
   /** Absolute path of the thread's git worktree, when one was set up. */
   worktreePath: string | null;
   /** Numbered merge-queue lane (#346). Absent when the thread has no lane. */
@@ -2570,6 +2575,18 @@ export interface ModelInfo {
    * Web pick is image-only, so the paperclip hides on text-only models.
    */
   inputModalities?: Array<"text" | "image">;
+  /**
+   * The installed CLI offers a priority/fast tier for this model (#1529):
+   * Claude fast mode, Codex `service_tier=priority`. Shows the Fast toggle.
+   */
+  fast?: boolean;
+  /** Oldest CLI version that serves this model. */
+  minCli?: string;
+  /**
+   * Set when the installed CLI is older than `minCli`, e.g. "Update Codex
+   * to use GPT-6.1-Sol". The picker shows it and disables the row.
+   */
+  updateHint?: string;
 }
 
 /**
@@ -4785,6 +4802,11 @@ export interface CoderApi {
       threadId: string;
       webSearch: boolean;
     }): Promise<ThreadInfo>;
+    /**
+     * Fast / priority tier toggle (#1529). Rejects `fast: true` when no
+     * model of the thread's provider has a fast tier.
+     */
+    setFast(input: { threadId: string; fast: boolean }): Promise<ThreadInfo>;
     /**
      * Sets the thread's verification command (issue #296). A non-empty
      * command arms the gate: from the next turn on, a run that would land

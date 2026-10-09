@@ -54,6 +54,7 @@ function spawnPhaseAgent(opts) {
     onText,
     reasoningEffort,
     webSearch,
+    fast,
     userDataPath,
     threadId,
     projectId,
@@ -102,6 +103,7 @@ function spawnPhaseAgent(opts) {
       providerEntry: entry,
       onText,
       reasoningEffort,
+      fast,
       sessionId,
     });
   }
@@ -115,6 +117,7 @@ function spawnPhaseAgent(opts) {
       onText,
       reasoningEffort,
       webSearch,
+      fast,
       permissionMode,
       sessionId,
       userDataPath,
@@ -344,6 +347,7 @@ async function startWorkflowRun(deps) {
   const permissionMode = thread.permissionMode || "default";
   const reasoningEffort = thread.reasoningEffort || null;
   const webSearch = thread.webSearch === true;
+  const fast = thread.fast === true;
   // Overlay lives on this host; ssh/WSL phases inherit the remote kimi home.
   const skipKimiOverlay = Boolean(project.remoteHost || wslTarget(project));
 
@@ -619,6 +623,7 @@ async function startWorkflowRun(deps) {
         model,
         reasoningEffort,
         webSearch,
+        fast,
         userDataPath,
         threadId,
         projectId: thread.projectId,

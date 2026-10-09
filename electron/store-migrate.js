@@ -442,6 +442,8 @@ function migrateThread(t) {
       t.reasoningEffort !== undefined ? t.reasoningEffort : null,
     // Codex live web search (issue #174). Absent → off.
     webSearch: t.webSearch === true,
+    // Fast tier (#1529). Absent → off.
+    fast: t.fast === true,
     worktreePath: t.worktreePath !== undefined ? t.worktreePath : null,
     runStartedAt: t.runStartedAt !== undefined ? t.runStartedAt : null,
     // Issue #183: stamp of a user stop mid-run; null = never stopped / running again.

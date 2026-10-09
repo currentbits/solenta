@@ -112,6 +112,7 @@ function createOpencodeRun(ctx) {
       model: thread.model || null,
       reasoningEffort: thread.reasoningEffort || null,
       webSearch: thread.webSearch === true,
+      fast: thread.fast === true,
       files,
     });
     /** @type {NodeJS.ProcessEnv | undefined} */

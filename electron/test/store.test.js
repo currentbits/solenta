@@ -232,6 +232,7 @@ describe("Store", () => {
       permissionMode: "default",
       reasoningEffort: null,
       webSearch: false,
+      fast: false,
       worktreePath: null,
       handoffFrom: null,
       feltEstimate: null,
