@@ -137,15 +137,24 @@ function gitSubcommand(args) {
 
 /**
  * The one env for every local git spawn. Read-only subcommands get
- * GIT_OPTIONAL_LOCKS=0 (#1520).
+ * GIT_OPTIONAL_LOCKS=0 (#1520); win32 gets core.longpaths=true appended
+ * after any GIT_CONFIG_COUNT entries already set (#1523).
  * ponytail: not forwarded across ssh/WSL wraps; those gits run elsewhere.
  * @param {string[]} args
  * @param {NodeJS.ProcessEnv} [extra]
+ * @param {NodeJS.Platform} [platform]
  * @returns {NodeJS.ProcessEnv}
  */
-function gitEnv(args, extra) {
+function gitEnv(args, extra, platform = process.platform) {
   const env = { ...process.env, ...(extra || {}) };
   if (READ_ONLY_GIT.has(gitSubcommand(args))) env.GIT_OPTIONAL_LOCKS = "0";
+  if (platform === "win32") {
+    const n = parseInt(String(env.GIT_CONFIG_COUNT || ""), 10);
+    const i = Number.isInteger(n) && n > 0 ? n : 0;
+    env[`GIT_CONFIG_KEY_${i}`] = "core.longpaths";
+    env[`GIT_CONFIG_VALUE_${i}`] = "true";
+    env.GIT_CONFIG_COUNT = String(i + 1);
+  }
   return env;
 }
 

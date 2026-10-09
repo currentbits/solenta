@@ -16,6 +16,20 @@ describe("gitEnv (#1520 optional locks)", () => {
     }
   });
 
+  it("appends core.longpaths on win32 only, after existing GIT_CONFIG_COUNT (#1523)", () => {
+    const fresh = gitEnv(["status"], { GIT_CONFIG_COUNT: undefined }, "win32");
+    assert.equal(fresh.GIT_CONFIG_COUNT, "1");
+    assert.equal(fresh.GIT_CONFIG_KEY_0, "core.longpaths");
+    assert.equal(fresh.GIT_CONFIG_VALUE_0, "true");
+
+    const kept = gitEnv(["commit"], { GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "a.b", GIT_CONFIG_VALUE_0: "c" }, "win32");
+    assert.equal(kept.GIT_CONFIG_COUNT, "2");
+    assert.equal(kept.GIT_CONFIG_KEY_0, "a.b");
+    assert.equal(kept.GIT_CONFIG_KEY_1, "core.longpaths");
+
+    assert.equal(gitEnv(["status"], { GIT_CONFIG_COUNT: undefined }, "darwin").GIT_CONFIG_COUNT, undefined);
+  });
+
   it("reaches the spawn for async reads and not for writes", async () => {
     const seen = [];
     setExecFile((bin, args, opts, cb) => {
