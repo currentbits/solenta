@@ -358,6 +358,7 @@ interface ThreadViewProps {
     threadId?: string,
   ) => void | Promise<void>;
   onSetWebSearch?: (webSearch: boolean, threadId?: string) => void | Promise<void>;
+  onSetFast?: (fast: boolean, threadId?: string) => void | Promise<void>;
   /** Archive or unarchive the open thread. */
   onSetArchived: (archived: boolean) => void | Promise<void>;
   /** Per-thread inbound policy for messages from other threads (issue #551). */
@@ -735,6 +736,7 @@ export const ThreadView = memo(function ThreadView({
   onSetProvider,
   onSetReasoningEffort,
   onSetWebSearch,
+  onSetFast,
   onSetArchived,
   onSetCrossThreadInbound,
   onRenameThread,
@@ -4498,12 +4500,14 @@ export const ThreadView = memo(function ThreadView({
         model={thread.model}
         reasoningEffort={thread.reasoningEffort}
         webSearch={thread.webSearch === true}
+        fast={thread.fast === true}
         providers={providers}
         agentProfiles={agentProfiles}
         workflows={workflows}
         onSetProvider={onSetProvider}
         onSetReasoningEffort={onSetReasoningEffort}
         onSetWebSearch={onSetWebSearch}
+        onSetFast={onSetFast}
         onSaveWorkflow={onSaveWorkflow}
         onRemoveWorkflow={onRemoveWorkflow}
         workflowListError={workflowListError}

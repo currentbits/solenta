@@ -232,6 +232,34 @@ export function useCoderThreadActions({
     [api, selectedThreadId, applyThreads],
   );
 
+  const setFast = useCallback(
+    async (fast: boolean, threadIdArg?: string) => {
+      const threadId = threadIdArg ?? selectedThreadId;
+      if (!threadId) return;
+      try {
+        const thread = await api.threads.setFast({
+          threadId,
+          fast,
+        });
+        applyThreads(
+          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
+        );
+        if (selectedRef.current === threadId) {
+          setDetail((prev) =>
+            prev && prev.thread.id === thread.id
+              ? { ...prev, thread }
+              : prev,
+          );
+        }
+        setError(null);
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+        throw err;
+      }
+    },
+    [api, selectedThreadId, applyThreads],
+  );
+
   const setArchived = useCallback(
     async (archived: boolean, threadIdArg?: string) => {
       const threadId = threadIdArg ?? selectedThreadId;
@@ -880,6 +908,7 @@ export function useCoderThreadActions({
     setProvider,
     setReasoningEffort,
     setWebSearch,
+    setFast,
     setArchived,
     setSettled,
     setPinned,

@@ -34,6 +34,7 @@ function spawnAgentClaude(opts) {
     onText,
     providerEntry,
     reasoningEffort,
+    fast,
     sessionId,
   } = opts;
 
@@ -65,6 +66,7 @@ function spawnAgentClaude(opts) {
         permissionMode: permissionMode || "default",
         model: model || null,
         reasoningEffort: reasoningEffort || null,
+        fast: fast === true,
       })
     : [
         "-p",

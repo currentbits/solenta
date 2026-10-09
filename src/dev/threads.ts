@@ -755,6 +755,9 @@ export function createThreads(ctx: DevCtx): Pick<CoderApi, "threads"> {
           webSearch: input.webSearch === true,
         });
       },
+      async setFast(input: { threadId: string; fast: boolean }) {
+        return patchThread(input.threadId, { fast: input.fast === true });
+      },
       async setVerifyCommand(input: {
         threadId: string;
         command: string | null;

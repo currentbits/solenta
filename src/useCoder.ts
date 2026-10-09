@@ -350,6 +350,7 @@ export interface UseCoderResult {
    * Pass threadId when applying to a fork that is not selected.
    */
   setWebSearch: (webSearch: boolean, threadId?: string) => Promise<void>;
+  setFast: (fast: boolean, threadId?: string) => Promise<void>;
   /**
    * Archive or unarchive a thread. Defaults to the selected thread.
    * Pass threadId when undoing archive after selection has already moved.
@@ -1535,6 +1536,7 @@ export function useCoder(): UseCoderResult {
     setProvider,
     setReasoningEffort,
     setWebSearch,
+    setFast,
     setArchived,
     setSettled,
     setPinned,
@@ -2074,6 +2076,7 @@ export function useCoder(): UseCoderResult {
     setProvider,
     setReasoningEffort,
     setWebSearch,
+    setFast,
     setArchived,
     setSettled,
     setPinned,

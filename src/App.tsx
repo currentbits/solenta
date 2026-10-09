@@ -227,6 +227,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     setProvider,
     setReasoningEffort,
     setWebSearch,
+    setFast,
     setArchived,
     setSettled,
     setPinned,
@@ -1910,6 +1911,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onSetProvider={setProvider}
         onSetReasoningEffort={setReasoningEffort}
         onSetWebSearch={setWebSearch}
+        onSetFast={setFast}
         onSetArchived={handleSetArchivedUndoable}
         onSetCrossThreadInbound={
           selectedThreadId

@@ -286,6 +286,7 @@ function createThread(store, input) {
     permissionMode,
     reasoningEffort,
     webSearch: false,
+    fast: false,
     worktreePath: null,
     handoffFrom: null,
     automationId: input.automationId || null,
@@ -422,6 +423,34 @@ function setReasoningEffort(store, input) {
   const updated = store.updateThread(threadId, { reasoningEffort: level });
   store.save();
   return updated ? { ...updated } : { ...thread, reasoningEffort: level };
+}
+
+/**
+ * Fast tier toggle (#1529). Like effort it is a preference: it survives
+ * model and provider switches, and buildArgs only sends it for a model that
+ * lists `fast`. `true` is rejected when no model of the provider has it.
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string, fast: boolean }} input
+ */
+function setFast(store, input) {
+  const { threadId } = input;
+  const enabled = input.fast === true;
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  if (enabled) {
+    const entry = getProvider(thread.provider);
+    if (!entry || !(entry.modelInfo || []).some((m) => m.fast)) {
+      const providerName =
+        (entry && entry.name) || thread.provider || "provider";
+      throw new Error(`${providerName} has no fast tier`);
+    }
+  }
+  const updated = store.updateThread(threadId, { fast: enabled });
+  store.save();
+  return updated ? { ...updated } : { ...thread, fast: enabled };
 }
 
 /**
@@ -1492,6 +1521,7 @@ module.exports = {
   setPermissionMode,
   setReasoningEffort,
   setWebSearch,
+  setFast,
   forkThread,
   forkWorkerThread,
   setProvider,

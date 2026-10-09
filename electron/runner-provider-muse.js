@@ -110,6 +110,7 @@ function createMuseRun(ctx) {
       model: thread.model || null,
       reasoningEffort: thread.reasoningEffort || null,
       webSearch: thread.webSearch === true,
+      fast: thread.fast === true,
     });
 
     /** @type {NodeJS.ProcessEnv | undefined} */

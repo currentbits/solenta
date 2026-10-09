@@ -124,6 +124,7 @@ function createCursorRun(ctx) {
       model: thread.model || null,
       reasoningEffort: thread.reasoningEffort || null,
       webSearch: thread.webSearch === true,
+      fast: thread.fast === true,
     });
     // #686: pin Task/Agent workers to the parent model. #813: classifyTool
     // preToolUse. Prompt stays last. Local plugins live here. ssh/WSL:
