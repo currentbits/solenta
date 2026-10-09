@@ -3593,7 +3593,7 @@ describe("live turn activity (issue #751 / #752)", () => {
             id: "th1",
             role: "event",
             thinking: true,
-            text: "I should read ThreadView first.",
+            text: "**Planning**\n\nI should read ThreadView first.",
             createdAt: 20,
             runId: "run-1",
           }),
@@ -3611,13 +3611,13 @@ describe("live turn activity (issue #751 / #752)", () => {
     assert.ok(html.includes("data-thinking"), "thinking group landmark");
     assert.ok(html.includes("Thinking"), "thinking title");
     assert.ok(
-      !html.includes("I should read ThreadView first."),
+      !html.includes("**Planning**"),
       "thinking body stays collapsed on the live line",
     );
     assert.ok(html.includes("data-tool-group"), "thinking-only live group");
     assert.ok(
-      html.includes("Thinking…"),
-      "status strip names thinking, not a generic working label",
+      html.includes("I should read ThreadView first."),
+      "status strip shows the latest thought line (#1531)",
     );
     assert.ok(!html.includes("Agent working…"));
   });

@@ -149,6 +149,9 @@ export function useTranscriptAnnotations({
     return latest?.text ?? null;
   }, [detail, isWorking, latestWorkLogRunId]);
   const thinkingLive = Boolean(latestThinkingId);
+  const liveThought = latestThinkingId
+    ? (detail?.messages.find((m) => m.id === latestThinkingId)?.text ?? null)
+    : null;
   /**
    * The assistant message currently being written. While a tool runs the
    * last message is the tool call itself, so the caret correctly disappears.
@@ -167,6 +170,7 @@ export function useTranscriptAnnotations({
     workflowRunning: detail?.workflow ? runningAgents : null,
     toolSummary: runningToolSummary,
     thinking: thinkingLive,
+    thought: liveThought,
   });
   return {
     hiddenFocusActivity,
