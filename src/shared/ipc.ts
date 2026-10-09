@@ -2869,6 +2869,12 @@ export interface AppSettings {
    */
   defaultOrchestrate: boolean;
   /**
+   * Folder new local worktrees are created in (#1531). null/absent = the
+   * default userData/worktrees. Must be an absolute, writable directory.
+   * Existing worktrees stay where they were created.
+   */
+  worktreeRoot?: string | null;
+  /**
    * Provider id for new threads that do not inherit from the selected
    * thread (issue #711). Autodispatch and issue-created threads use this.
    * null = Claude Code (the historical hardcoded default).

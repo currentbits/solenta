@@ -62,6 +62,7 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
   let stayAwake: AppSettings["stayAwake"] = "agent";
   let confirmQuitWithActiveWork = true;
   let resumeInterruptedRuns = false;
+  let worktreeRoot: string | null = null;
   let guardrailsEnabled = true;
   let otel: OtelSettings = { endpoint: null, headers: {}, claudeMetrics: false };
   let modelPrices: Record<string, ModelPrice> = {};
@@ -157,6 +158,7 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           quotaWaitAutoResume: ctx.quotaWaitAutoResume,
           confirmQuitWithActiveWork,
           resumeInterruptedRuns,
+          worktreeRoot,
           guardrailsEnabled,
           agentProfiles: agentProfiles.map((p) => ({ ...p })),
           providerInstances: providerInstances.map((p) => ({ ...p, env: { ...p.env } })),
@@ -328,6 +330,13 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           }
           confirmQuitWithActiveWork = patch.confirmQuitWithActiveWork;
         }
+        if (Object.prototype.hasOwnProperty.call(patch, "worktreeRoot")) {
+          const v = typeof patch.worktreeRoot === "string" ? patch.worktreeRoot.trim() : "";
+          if (v && !v.startsWith("/")) {
+            throw new Error("Worktree location must be an absolute path");
+          }
+          worktreeRoot = v || null;
+        }
         if (Object.prototype.hasOwnProperty.call(patch, "resumeInterruptedRuns")) {
           if (typeof patch.resumeInterruptedRuns !== "boolean") {
             throw new Error("resumeInterruptedRuns must be a boolean");
@@ -458,6 +467,7 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           quotaWaitAutoResume: ctx.quotaWaitAutoResume,
           confirmQuitWithActiveWork,
           resumeInterruptedRuns,
+          worktreeRoot,
           guardrailsEnabled,
           agentProfiles: agentProfiles.map((p) => ({ ...p })),
           providerInstances: providerInstances.map((p) => ({ ...p, env: { ...p.env } })),

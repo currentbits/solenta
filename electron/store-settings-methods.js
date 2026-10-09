@@ -1,5 +1,7 @@
 "use strict";
 
+const fs = require("node:fs");
+const path = require("node:path");
 const { validateSubagentPool } = require("./subagentPool");
 const { clampUiScale } = require("./zoom.js");
 const { validateMcpServers, mergeMcpSettingsPatch } = require("./mcp.js");
@@ -17,6 +19,30 @@ const {
   normalizeOtel,
   normalizeWebhook,
 } = require("./store-normalize.js");
+
+/**
+ * Custom worktree root (#1531): null/empty = the default; otherwise an
+ * absolute, existing, writable directory.
+ * @param {unknown} v
+ * @returns {string | null}
+ */
+function validateWorktreeRoot(v) {
+  if (v == null || (typeof v === "string" && !v.trim())) return null;
+  if (typeof v !== "string") {
+    throw new Error("worktreeRoot must be a string or null");
+  }
+  const dir = v.trim();
+  if (!path.isAbsolute(dir)) {
+    throw new Error("Worktree location must be an absolute path");
+  }
+  try {
+    if (!fs.statSync(dir).isDirectory()) throw new Error("not a directory");
+    fs.accessSync(dir, fs.constants.W_OK);
+  } catch {
+    throw new Error(`Worktree location is not a writable directory: ${dir}`);
+  }
+  return dir;
+}
 
 /** Store settings read/patch methods; store.js copies them onto Store.prototype. */
 class StoreSettingsMethods {
@@ -71,6 +97,7 @@ class StoreSettingsMethods {
       linearApiKey: n.linearApiKey,
       webhook: n.webhook,
       modelPrices: n.modelPrices,
+      worktreeRoot: n.worktreeRoot,
     };
   }
 
@@ -338,6 +365,9 @@ class StoreSettingsMethods {
         throw new Error("confirmQuitWithActiveWork must be a boolean");
       }
       this.data.settings.confirmQuitWithActiveWork = v;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "worktreeRoot")) {
+      this.data.settings.worktreeRoot = validateWorktreeRoot(patch.worktreeRoot);
     }
     if (Object.prototype.hasOwnProperty.call(patch, "resumeInterruptedRuns")) {
       const v = patch.resumeInterruptedRuns;

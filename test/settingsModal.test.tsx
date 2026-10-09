@@ -10,7 +10,7 @@
  */
 import assert from "node:assert/strict";
 import { describe, it, afterEach } from "node:test";
-import { cloneElement, useState } from "react";
+import { act, cloneElement, useState } from "react";
 import { mount, unmountAll } from "./support/dom.ts";
 import { SettingsModal, type SettingsPane } from "../src/components/SettingsModal";
 import type { MemoryProjectToolsApi } from "../src/components/MemoryTab";
@@ -2719,6 +2719,35 @@ describe("SettingsModal model prices (#1531)", () => {
       modelPrices: { o4: { input: 2, output: 8, cacheRead: 0.5 } },
     });
     assert.match(m.text(), /never replaced/, "hint says reported cost wins");
+    m.unmount();
+  });
+});
+
+describe("SettingsModal worktree location (#1531)", () => {
+  it("saves a trimmed path on blur and clears to null", async () => {
+    const patches: Partial<AppSettings>[] = [];
+    const m = await mount(
+      modal({
+        initialPane: "threads",
+        settings: { dailyBudgetUsd: null, autoSettleAfterDays: 3 } as AppSettings,
+        onSaveSettings: async (patch) => {
+          patches.push(patch);
+          return { dailyBudgetUsd: null, autoSettleAfterDays: 3 } as AppSettings;
+        },
+      }),
+    );
+    const input = m.query("[data-worktree-root]") as HTMLInputElement;
+    assert.ok(input, "worktree location input");
+    assert.equal(input.value, "");
+    const blur = () =>
+      act(async () => {
+        input.dispatchEvent(new input.ownerDocument.defaultView!.FocusEvent("focusout", { bubbles: true }));
+      });
+    await blur();
+    assert.equal(patches.length, 0, "unchanged empty does not save");
+    await m.type(input, "  /Volumes/fast/wt ");
+    await blur();
+    assert.deepEqual(patches, [{ worktreeRoot: "/Volumes/fast/wt" }]);
     m.unmount();
   });
 });
