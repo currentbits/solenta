@@ -43,7 +43,9 @@ function noticePrompt(notes) {
   if (notes.every((n) => /^\[(pr watch|restart)\]/.test(String(n)))) {
     return headed;
   }
-  return headed + "\nContinue orchestrating; thread_status has full details.";
+  // #1436: thread_status only echoes the reply line; never invite polling.
+  // src/workerActivity.ts NOTICE_FOOTERS must include this exact line.
+  return headed + "\nContinue orchestrating. thread_status only repeats the reply line above, so do not call it for a finished worker; review its branch with git (log/diff against your branch) before reporting.";
 }
 
 function formatQueuedPrompt(queued) {

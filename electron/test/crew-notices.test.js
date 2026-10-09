@@ -111,7 +111,8 @@ describe("crew notices (issue #277)", () => {
     const text = users[0].text;
     assert.match(text, /\[peer from w1 \("backend"\)\]/);
     assert.match(text, /contract\.md/);
-    assert.match(text, /Continue orchestrating; thread_status has full details\./);
+    assert.match(text, /Continue orchestrating\. thread_status only repeats the reply line/);
+    assert.doesNotMatch(text, /full details/, "#1436: no false full-details claim");
     assert.doesNotMatch(text, /\[orchestration\] \[peer/);
     assert.equal(users[0].fromNotice, true);
     await waitFor(() => {
