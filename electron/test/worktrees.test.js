@@ -840,6 +840,93 @@ describe("worktrees", () => {
     );
   });
 
+  /**
+   * #1556: local main diverged from origin with a conflicting commit, so a
+   * real merge is refused. The worktree branch sits on origin/main, which
+   * local main never got: nothing of its own to land.
+   */
+  function landedOnOriginOnly() {
+    const setup = setupWorktree({
+      store,
+      threadId: thread.id,
+      worktreeBase,
+      broadcast: () => {},
+    });
+    const nightly = mainBehindOrigin({
+      originFile: "README.md",
+      originContent: "origin rewrote it\n",
+    });
+    fs.writeFileSync(path.join(nightly, "README.md"), "local rewrote it\n");
+    git(nightly, ["add", "README.md"]);
+    git(nightly, ["commit", "-m", "local main moves ahead"]);
+    git(setup.worktreePath, ["reset", "--hard", "origin/main"]);
+    return { wt: setup.worktreePath, nightly, mainHead: git(nightly, ["rev-parse", "main"]) };
+  }
+
+  it("mergeWorktree cleans up a branch already on origin even when local main is stale (#1556)", async () => {
+    const { wt, nightly, mainHead } = landedOnOriginOnly();
+    const branch = store.getThread(thread.id).branch;
+
+    const updated = mergeWorktree({ store, threadId: thread.id, broadcast: () => {} });
+
+    assert.equal(updated.worktreePath, null);
+    assert.ok(!fs.existsSync(wt), "worktree removed");
+    assert.equal(git(repo, ["branch", "--list", branch]), "", "branch deleted");
+    assert.equal(git(nightly, ["rev-parse", "main"]), mainHead, "local main untouched");
+  });
+
+  it("mergeWorktree treats a cherry-picked commit already upstream as landed (#1556)", async () => {
+    const { wt, nightly, mainHead } = landedOnOriginOnly();
+    fs.writeFileSync(path.join(wt, "picked-1556.txt"), "same patch\n");
+    git(wt, ["add", "picked-1556.txt"]);
+    git(wt, ["commit", "-m", "work that ships via another route"]);
+    const sha = git(wt, ["rev-parse", "HEAD"]);
+    const side = path.join(tmpDir, "side-1556");
+    git(repo, ["worktree", "add", "--detach", side, "origin/main"]);
+    git(side, ["cherry-pick", sha]);
+    git(side, ["push", "origin", "HEAD:main"]);
+    git(repo, ["fetch", "origin"]);
+
+    const updated = mergeWorktree({ store, threadId: thread.id, broadcast: () => {} });
+
+    assert.equal(updated.worktreePath, null);
+    assert.equal(git(nightly, ["rev-parse", "main"]), mainHead, "local main untouched");
+  });
+
+  it("mergeWorktree still refuses when the landed branch has uncommitted files (#1556)", async () => {
+    const { wt } = landedOnOriginOnly();
+    fs.writeFileSync(path.join(wt, "draft-1556.txt"), "not committed\n");
+
+    assert.throws(
+      () => mergeWorktree({ store, threadId: thread.id, broadcast: () => {} }),
+      /behind origin\/main/i,
+    );
+    assert.ok(fs.existsSync(path.join(wt, "draft-1556.txt")), "draft kept");
+  });
+
+  it("removeWorktree lists only commits origin lacks, not a stale local main's gap (#1556)", async () => {
+    const { wt } = landedOnOriginOnly();
+    // Nothing unique: no refusal, even though local main lacks origin's commit.
+    removeWorktree({ store, threadId: thread.id, broadcast: () => {} });
+    assert.ok(!fs.existsSync(wt), "removed without force");
+  });
+
+  it("removeWorktree still refuses a branch with its own unlanded commit (#1556)", async () => {
+    const { wt } = landedOnOriginOnly();
+    fs.writeFileSync(path.join(wt, "mine-1556.txt"), "only here\n");
+    git(wt, ["add", "mine-1556.txt"]);
+    git(wt, ["commit", "-m", "only on this branch"]);
+
+    assert.throws(
+      () => removeWorktree({ store, threadId: thread.id, broadcast: () => {} }),
+      (err) =>
+        /WORKTREE_DIRTY/.test(err.message) &&
+        /only on this branch/.test(err.message) &&
+        !/origin moves ahead/.test(err.message),
+    );
+    assert.ok(fs.existsSync(wt), "worktree kept");
+  });
+
   it("mergeWorktree with intoPath still lands on that checkout's branch (#770)", async () => {
     const setup = setupWorktree({
       store,

@@ -1383,7 +1383,15 @@ export const ThreadView = memo(function ThreadView({
   }, [isWorking, nativeCompact, onStartRun, handleForkFresh]);
   const hasTimeline = timeline.length > 0;
   const hasWorktree = Boolean(detail?.thread.worktreePath);
+  const { headerBehind, detailsGit, landed } = useHeaderGitStatus({
+    detail,
+    detailsOpen,
+    gitSyncInfo,
+    onFetchDiff,
+    syncRefreshNonce,
+  });
   const worktree = useWorktreeChrome({
+    landed,
     thread:
       onSetupWorktree && onMergeWorktree && onRemoveWorktree
         ? (detail?.thread ?? null)
@@ -2088,13 +2096,6 @@ export const ThreadView = memo(function ThreadView({
   }, [detailsOpen]);
   const closeDetails = useCallback(() => setDetailsOpen(false), []);
   const [prRequest, setPrRequest] = useState(0);
-  const { headerBehind, detailsGit } = useHeaderGitStatus({
-    detail,
-    detailsOpen,
-    gitSyncInfo,
-    onFetchDiff,
-    syncRefreshNonce,
-  });
   const ringWarn = ring?.view.warn === true;
   useEffect(() => {
     if (contextOpen && !ringWarn) setDetailsOpen(true);

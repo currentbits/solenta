@@ -267,6 +267,79 @@ function cleanupWorktree(opts) {
 }
 
 /**
+ * `base` and `origin/<base>`, whichever resolve: a branch is judged against
+ * both, so a stale local base cannot invent "unmerged" commits (#1556).
+ * @param {string} repo
+ * @param {string} base
+ * @returns {string[]}
+ */
+function landingRefs(repo, base) {
+  return [base, `origin/${base}`].filter(
+    (ref) => gitTry(repo, ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`]).ok,
+  );
+}
+
+/**
+ * Commits on `branch` that neither `base` nor `origin/<base>` has, as
+ * `git log --oneline` lines; [] when there are none (#1556).
+ * @param {string} repo
+ * @param {string} branch
+ * @param {string[]} refs - from landingRefs
+ * @returns {string[] | null} null when git cannot tell
+ */
+function commitsNotLanded(repo, branch, refs) {
+  if (!refs.length) return null;
+  const log = gitTry(repo, ["log", "--oneline", branch, "--not", ...refs]);
+  if (!log.ok) return null;
+  return log.stdout.split("\n").filter(Boolean);
+}
+
+/**
+ * Nothing on `branch` is missing from `base` / `origin/<base>` (#1556):
+ * every commit is an ancestor of one of them, or `git cherry` finds each
+ * patch already upstream (rebased or cherry-picked). Such a branch has
+ * nothing to merge. Squash-merged work is NOT provable here (new commits);
+ * the PR record covers that case (maybeCleanupMergedWorktree).
+ *
+ * @param {string} repo
+ * @param {string} branch
+ * @param {string} base
+ * @returns {boolean}
+ */
+function branchLanded(repo, branch, base) {
+  const refs = landingRefs(repo, base);
+  const missing = commitsNotLanded(repo, branch, refs);
+  if (missing === null) return false;
+  if (missing.length === 0) return true;
+  return refs.some((ref) => {
+    const cherry = gitTry(repo, ["cherry", ref, branch]);
+    // Empty output means git cherry skipped them all (merges): unproven.
+    return cherry.ok && cherry.stdout.trim() !== "" && !/^\+/m.test(cherry.stdout);
+  });
+}
+
+/**
+ * A worktree thread with nothing to merge (#1556): no uncommitted files and
+ * every commit already on its merge base (branchLanded). Never throws; a
+ * detached / jj base or a missing worktree is just "not landed".
+ * @param {{ path: string }} project
+ * @param {{ worktreePath?: string | null, branch?: string | null, baseBranch?: string | null }} thread
+ * @returns {boolean}
+ */
+function worktreeLanded(project, thread) {
+  if (!thread.worktreePath || !thread.branch) return false;
+  try {
+    const base = mergeBaseName(thread, project.path);
+    const dirty = gitOut(thread.worktreePath, ["status", "--porcelain", "-uall"], {
+      raw: true,
+    }).trim();
+    return !dirty && branchLanded(project.path, thread.branch, base);
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Squash-merge the thread worktree into the repo default branch
  * (origin/HEAD → main), then remove the worktree and branch. Commits any
  * uncommitted worktree changes first.
@@ -318,6 +391,14 @@ function mergeWorktree(opts) {
   const requested = intoPath || project.path;
   if (path.resolve(requested) === path.resolve(wtPath)) {
     throw new Error(`Cannot merge thread ${threadId} into its own worktree`);
+  }
+
+  // Nothing to land (#1556): a clean worktree whose every commit is already
+  // on the base (local or origin) just cleans up. Checked before
+  // checkoutForMerge / syncDefaultWithOrigin, so a stale local base no
+  // longer blocks finishing a thread whose work shipped another way.
+  if (!intoPath && worktreeLanded(project, thread)) {
+    return cleanupWorktree({ store, thread, project, broadcast, forceRemove: false });
   }
 
   // Blast-radius gate (issue #510) before auto-commit: a workflow file in
@@ -661,7 +742,13 @@ function removeWorktree(opts) {
     if (branch) {
       let base = null;
       try {
-        base = defaultBranch(project.path);
+        // The branch Merge would land on (#1556), not whatever the project
+        // checkout has checked out (#770); the old checkout branch otherwise.
+        try {
+          base = mergeBaseName(thread, project.path);
+        } catch {
+          base = defaultBranch(project.path);
+        }
       } catch {
         // Detached/unknown default branch: cannot prove the branch is merged.
         // List recent branch commits so the caller knows what would be lost.
@@ -685,16 +772,12 @@ function removeWorktree(opts) {
           );
         }
       }
-      if (base) {
-        const log = gitTry(project.path, [
-          "log",
-          `${base}..${branch}`,
-          "--oneline",
-        ]);
-        if (log.ok && log.stdout.trim()) {
-          for (const line of log.stdout.trim().split("\n")) {
-            if (line) lost.push(`unmerged: ${line}`);
-          }
+      // Only commits neither the local base nor origin/<base> has (#1556): a
+      // stale local base used to list every newer upstream commit as lost.
+      if (base && !branchLanded(project.path, branch, base)) {
+        const refs = landingRefs(project.path, base);
+        for (const line of commitsNotLanded(project.path, branch, refs) || []) {
+          lost.push(`unmerged: ${line}`);
         }
       }
     }
@@ -1023,6 +1106,8 @@ function clearMissingWorktree(opts) {
 
 module.exports = {
   removeWorktreeDir,
+  branchLanded,
+  worktreeLanded,
   mergeWorktree,
   removeWorktree,
   setupWorktree,

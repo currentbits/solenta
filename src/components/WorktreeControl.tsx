@@ -52,6 +52,11 @@ export interface WorktreeControlProps {
   onOpenCrewIntegration?: (leadThreadId: string) => void;
   /** Retarget this idle worker onto the lead's current committed HEAD. */
   onRefreshWorkerSnapshot?: () => Promise<unknown>;
+  /**
+   * Nothing to merge (#1556): clean worktree, every commit already on the
+   * base. Merge then only removes the worktree, so it reads "Clean up".
+   */
+  landed?: boolean;
 }
 
 export interface WorktreeChrome {
@@ -130,6 +135,7 @@ export function useWorktreeChrome(
     thread,
     project,
     isWorking,
+    landed = false,
     onSetupWorktree,
     onMergeWorktree,
     onOpenCrewLead,
@@ -442,6 +448,14 @@ export function useWorktreeChrome(
   const path = thread.worktreePath ?? null;
   const setupPending = gitAction === "setup";
   const mergePending = gitAction === "merge";
+  const mergeLabel = (base: string | null | undefined) =>
+    landed ? "Clean up" : mergeOntoLabel(base);
+  const mergeTitle = (base: string | null | undefined, handoff: boolean) =>
+    landed
+      ? `Already on ${base || "the repo default"}: nothing to merge. Removes the worktree and its branch.`
+      : handoff
+        ? `${mergeOntoLabel(base)}. Crew staging is on the lead Integration section.`
+        : mergeOntoLabel(base);
   const removePending = gitAction === "remove" && !dirtyMessage;
   const resolveLabel =
     pendingMergeRetry && isWorking ? "Resolving…" : "Starting…";
@@ -665,20 +679,16 @@ export function useWorktreeChrome(
         className={styles.merge}
         data-worktree-merge=""
         disabled={busy}
-        title={
-          thread.handoffFrom
-            ? `${mergeOntoLabel(thread.baseBranch)}. Crew staging is on the lead Integration section.`
-            : mergeOntoLabel(thread.baseBranch)
-        }
+        title={mergeTitle(thread.baseBranch, Boolean(thread.handoffFrom))}
         onClick={() => void runAction("merge", () => onMergeWorktree())}
       >
         {mergePending ? (
           <>
             <Spinner />
-            Merging…
+            {landed ? "Cleaning up…" : "Merging…"}
           </>
         ) : (
-          mergeOntoLabel(thread.baseBranch)
+          mergeLabel(thread.baseBranch)
         )}
       </button>
     </div>
@@ -1040,20 +1050,16 @@ export function useWorktreeChrome(
           className={styles.rowBtn}
           data-worktree-merge=""
           disabled={busy}
-          title={
-            thread.handoffFrom
-              ? `${mergeOntoLabel(thread.baseBranch)}. Crew staging is on the lead Integration section.`
-              : mergeOntoLabel(thread.baseBranch)
-          }
+          title={mergeTitle(thread.baseBranch, Boolean(thread.handoffFrom))}
           onClick={() => void runAction("merge", () => onMergeWorktree())}
         >
           {mergePending ? (
             <>
               <Spinner />
-              Merging…
+              {landed ? "Cleaning up…" : "Merging…"}
             </>
           ) : (
-            mergeOntoLabel(thread.baseBranch)
+            mergeLabel(thread.baseBranch)
           )}
         </button>
         {onSetBaseBranch && !thread.prNumber ? (

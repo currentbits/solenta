@@ -18,20 +18,29 @@ export function useHeaderGitStatus({
   /** Header attention (#1411): the branch is behind its upstream. Local read,
    *  no fetch; refreshed when the thread opens and when a run settles. */
   const [headerBehind, setHeaderBehind] = useState(0);
+  /** Nothing to merge (#1556), tagged with its thread so a switch never
+   *  shows the last thread's answer. */
+  const [landedFor, setLandedFor] = useState<string | null>(null);
   const attentionThreadId = detail?.thread.id ?? null;
   const attentionStatus = detail?.thread.status;
   useEffect(() => {
     if (!attentionThreadId || !gitSyncInfo || attentionStatus === "working") {
       if (!attentionThreadId) setHeaderBehind(0);
+      // A run may commit: re-check once it settles.
+      setLandedFor(null);
       return;
     }
     let live = true;
     gitSyncInfo(attentionThreadId).then(
       (info) => {
-        if (live) setHeaderBehind(info.hasUpstream ? info.behind ?? 0 : 0);
+        if (!live) return;
+        setHeaderBehind(info.hasUpstream ? info.behind ?? 0 : 0);
+        setLandedFor(info.landed ? attentionThreadId : null);
       },
       () => {
-        if (live) setHeaderBehind(0);
+        if (!live) return;
+        setHeaderBehind(0);
+        setLandedFor(null);
       },
     );
     return () => {
@@ -68,5 +77,6 @@ export function useHeaderGitStatus({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detailsOpen, detailsThreadId, syncRefreshNonce]);
-  return { headerBehind, detailsGit };
+  const landed = attentionThreadId != null && landedFor === attentionThreadId;
+  return { headerBehind, detailsGit, landed };
 }
