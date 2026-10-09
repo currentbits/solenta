@@ -356,24 +356,26 @@ module.exports = {
   "attachments:captureWindow": async (ctx, input) => {
     const threadId = input && input.threadId;
     const sourceId = input && input.sourceId;
-    const shot = await appsnap.captureWindow(sourceId);
-    const result = {
-      attachment: attachments.savePng(ctx.userDataPath, threadId, shot.png),
+    const png = await appsnap.captureWindowPng(sourceId);
+    return {
+      attachment: attachments.savePng(ctx.userDataPath, threadId, png),
     };
-    if (shot.text) {
-      result.textAttachment = attachments.saveFile(
+  },
+  "attachments:captureWindowText": async (ctx, input) => {
+    const threadId = input && input.threadId;
+    const shot = await appsnap.captureWindowText(input && input.sourceId);
+    if (!shot) return { attachment: null };
+    if ("skipped" in shot) return { attachment: null, skipped: shot.skipped };
+    return {
+      attachment: attachments.saveFile(
         ctx.userDataPath,
         threadId,
         "window-text.txt",
         `data:text/plain;base64,${Buffer.from(
           `Window: ${shot.name}\n\n${shot.text}\n`,
         ).toString("base64")}`,
-      );
-    } else if (shot.textSkipped) {
-      console.warn(`[appsnap] ${shot.textSkipped}`);
-      result.textSkipped = shot.textSkipped;
-    }
-    return result;
+      ),
+    };
   },
   "shell:reveal": async (ctx, input) => {
     const target = resolveAllowedShellPath(ctx.store, input);

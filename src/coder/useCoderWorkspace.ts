@@ -304,10 +304,23 @@ export function useCoderWorkspace({
         threadId: selectedThreadId,
         sourceId,
       });
-      if (!result.attachment) return null;
-      return result.textAttachment
-        ? [result.attachment, result.textAttachment]
-        : result.attachment;
+      return result.attachment;
+    },
+    [api, selectedThreadId],
+  );
+
+  /** The window's accessibility text (#1531); never throws. */
+  const captureSnapWindowText = useCallback(
+    async (sourceId: string) => {
+      if (!selectedThreadId) return { attachment: null };
+      try {
+        return await api.attachments.captureWindowText({
+          threadId: selectedThreadId,
+          sourceId,
+        });
+      } catch {
+        return { attachment: null, skipped: "Window text skipped: the read failed" };
+      }
     },
     [api, selectedThreadId],
   );
@@ -425,6 +438,7 @@ export function useCoderWorkspace({
     pickDirectory,
     listSnapWindows,
     captureSnapWindow,
+    captureSnapWindowText,
     pickAttachments,
     pickFolderAttachments,
     loadAttachmentImage,

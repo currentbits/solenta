@@ -242,24 +242,28 @@ async function readWindowText(sourceId, title, opts = {}) {
 }
 
 /**
- * PNG plus accessibility text of one window. The PNG never waits on or
- * fails with the text read.
+ * Accessibility text of one window, read separately from the PNG so the
+ * screenshot chip never waits on it. The window title (to pick the right AX
+ * window of a multi-window app) comes from the capturer's source list.
  * @param {string} sourceId
  * @param {{ platform?: string }} [opts]
- * @returns {Promise<{ png: Buffer, name: string, text?: string, textSkipped?: string }>}
+ * @returns {Promise<{ name: string, text: string } | { skipped: string } | null>}
  */
-async function captureWindow(sourceId, opts = {}) {
-  const { png, name } = await captureSource(sourceId);
-  const ax = await readWindowText(String(sourceId), name, opts);
-  if (!ax) return { png, name };
-  if ("skipped" in ax) return { png, name, textSkipped: ax.skipped };
-  return { png, name, text: ax.text };
+async function captureWindowText(sourceId, opts = {}) {
+  if ((opts.platform || process.platform) !== "darwin") return null;
+  const id = String(sourceId || "");
+  const { windows } = await listWindows();
+  const win = windows.find((w) => w.id === id);
+  if (!win) return { skipped: "Window text skipped: window not found" };
+  const ax = await readWindowText(id, win.name, opts);
+  if (!ax || "skipped" in ax) return ax;
+  return { name: win.name, text: ax.text };
 }
 
 module.exports = {
   listWindows,
   captureWindowPng,
-  captureWindow,
+  captureWindowText,
   readWindowText,
   flattenAxTree,
   setGetSources,

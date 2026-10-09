@@ -5518,17 +5518,21 @@ export interface CoderApi {
     /**
      * Capture one window into userData/attachments/<threadId> and return
      * the image chip. null when the window disappeared or write failed.
-     * On macOS it also saves the window's flattened accessibility tree as a
-     * text file chip (#1531); textSkipped says why that chip is missing.
      */
     captureWindow(input: {
       threadId: string;
       sourceId: string;
-    }): Promise<{
-      attachment: AttachmentInfo | null;
-      textAttachment?: AttachmentInfo | null;
-      textSkipped?: string;
-    }>;
+    }): Promise<{ attachment: AttachmentInfo | null }>;
+    /**
+     * macOS: the same window's flattened accessibility tree as a
+     * window-text.txt chip (#1531). Called after captureWindow so the PNG
+     * never waits on it. null attachment off macOS; `skipped` says why it is
+     * missing (most often no Accessibility permission).
+     */
+    captureWindowText(input: {
+      threadId: string;
+      sourceId: string;
+    }): Promise<{ attachment: AttachmentInfo | null; skipped?: string }>;
     /**
      * Electron-only (preload, webUtils.getPathForFile): absolute path of a
      * drag-dropped File, including Finder directories. Absent on web/dev

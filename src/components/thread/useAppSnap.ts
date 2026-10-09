@@ -18,12 +18,14 @@ import { useModalFocus } from "../../useModalFocus";
 export function useAppSnap({
   onListSnapWindows,
   onCaptureSnapWindow,
+  onCaptureSnapWindowText,
   onSaveAttachmentImage,
   isArchived,
   snapOpen,
   setSnapOpen,
   setSnapWindows,
   setSnapError,
+  setSnapNote,
   snapBusy,
   setSnapBusy,
   snapDialogRef,
@@ -34,13 +36,17 @@ export function useAppSnap({
   onListSnapWindows?: () => Promise<Array<{ id: string; name: string }>>;
   onCaptureSnapWindow?: (
     sourceId: string,
-  ) => Promise<AttachmentInfo | AttachmentInfo[] | null>;
+  ) => Promise<AttachmentInfo | null>;
+  onCaptureSnapWindowText?: (
+    sourceId: string,
+  ) => Promise<{ attachment: AttachmentInfo | null; skipped?: string }>;
   onSaveAttachmentImage?: (dataUrl: string) => Promise<AttachmentInfo | null>;
   isArchived: boolean;
   snapOpen: boolean;
   setSnapOpen: Dispatch<SetStateAction<boolean>>;
   setSnapWindows: Dispatch<SetStateAction<Array<{ id: string; name: string }>>>;
   setSnapError: Dispatch<SetStateAction<string | null>>;
+  setSnapNote: Dispatch<SetStateAction<string | null>>;
   snapBusy: boolean;
   setSnapBusy: Dispatch<SetStateAction<boolean>>;
   snapDialogRef: RefObject<HTMLDivElement | null>;
@@ -78,16 +84,19 @@ export function useAppSnap({
     originThreadId === screenshotHandoffThreadId.current &&
     generation === screenshotHandoffGen.current;
 
+  /** append: join a handoff the composer has not consumed yet (window text). */
   const deliverIncomingAttachment = (
     originThreadId: string,
     generation: number,
-    att: AttachmentInfo | AttachmentInfo[],
+    att: AttachmentInfo,
+    append = false,
   ) => {
     if (!isLiveScreenshotHandoff(originThreadId, generation)) return;
-    setIncomingHandoff({
-      threadId: originThreadId,
-      items: Array.isArray(att) ? att : [att],
-    });
+    setIncomingHandoff((prev) =>
+      append && prev && prev.threadId === originThreadId
+        ? { threadId: originThreadId, items: [...prev.items, att] }
+        : { threadId: originThreadId, items: [att] },
+    );
   };
 
   const attachBrowserScreenshot = useCallback(
@@ -114,6 +123,14 @@ export function useAppSnap({
         if (att && originThreadId) {
           deliverIncomingAttachment(originThreadId, generation, att);
           setSnapOpen(false);
+          // Window text (#1531) follows the PNG; the chip never waits on it.
+          void onCaptureSnapWindowText?.(sourceId).then((res) => {
+            if (!isLiveScreenshotHandoff(originThreadId, generation)) return;
+            setSnapNote(res.skipped ?? null);
+            if (res.attachment) {
+              deliverIncomingAttachment(originThreadId, generation, res.attachment, true);
+            }
+          });
         } else if (!att) {
           setSnapError("Could not capture that window");
         }
@@ -130,7 +147,7 @@ export function useAppSnap({
         }
       }
     },
-    [onCaptureSnapWindow],
+    [onCaptureSnapWindow, onCaptureSnapWindowText],
   );
 
   useEffect(() => {

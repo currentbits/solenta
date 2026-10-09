@@ -271,6 +271,10 @@ export interface FakeOptions {
   snapWindows?: Array<{ id: string; name: string }>;
   /** Override attachments.captureWindow. */
   captureWindow?: (input: unknown) => { attachment: AttachmentInfo | null };
+  /** Override attachments.captureWindowText (default: nothing, not skipped). */
+  captureWindowText?: (
+    input: unknown,
+  ) => { attachment: AttachmentInfo | null; skipped?: string };
   /** Electron-only path resolver for dropped Files. */
   droppedFilePath?: (file: File) => string;
   /** Override runs.distill result. */
@@ -3965,6 +3969,12 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           "attachments.captureWindow",
           [input],
           opts.captureWindow?.(input) ?? { attachment: null },
+        ),
+      captureWindowText: (input: unknown) =>
+        rec(
+          "attachments.captureWindowText",
+          [input],
+          opts.captureWindowText?.(input) ?? { attachment: null },
         ),
       ...(opts.droppedFilePath
         ? { droppedFilePath: opts.droppedFilePath }

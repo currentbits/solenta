@@ -484,10 +484,14 @@ interface ThreadViewProps {
   onPickDirectory?: () => Promise<string | null>;
   /** AppSnap: on-screen windows the user can capture. */
   onListSnapWindows?: () => Promise<Array<{ id: string; name: string }>>;
-  /** AppSnap: capture one window (PNG, plus its accessibility text on macOS). */
+  /** AppSnap: capture one window into an attachment for this thread. */
   onCaptureSnapWindow?: (
     sourceId: string,
-  ) => Promise<AttachmentInfo | AttachmentInfo[] | null>;
+  ) => Promise<AttachmentInfo | null>;
+  /** AppSnap: the same window's accessibility text, after the PNG (#1531). */
+  onCaptureSnapWindowText?: (
+    sourceId: string,
+  ) => Promise<{ attachment: AttachmentInfo | null; skipped?: string }>;
   /** CLI skills and custom commands for the composer `/` palette (#606). */
   onListCliCommands?: (input?: {
     provider?: string;
@@ -783,6 +787,7 @@ export const ThreadView = memo(function ThreadView({
   onPickDirectory,
   onListSnapWindows,
   onCaptureSnapWindow,
+  onCaptureSnapWindowText,
   onListCliCommands,
   onResolvePaths,
   onOpenWorkspacePath,
@@ -1027,6 +1032,8 @@ export const ThreadView = memo(function ThreadView({
     Array<{ id: string; name: string }>
   >([]);
   const [snapError, setSnapError] = useState<string | null>(null);
+  /** Why the last capture came without window text (#1531); shown in the picker. */
+  const [snapNote, setSnapNote] = useState<string | null>(null);
   const [snapBusy, setSnapBusy] = useState(false);
   const [layoutThreadId, setLayoutThreadId] = useState<string | null>(threadId);
   const [layout, setLayout] = useState<LayoutNode>(() =>
@@ -1643,12 +1650,14 @@ export const ThreadView = memo(function ThreadView({
   const { attachBrowserScreenshot, captureAppSnap } = useAppSnap({
     onListSnapWindows,
     onCaptureSnapWindow,
+    onCaptureSnapWindowText,
     onSaveAttachmentImage,
     isArchived,
     snapOpen,
     setSnapOpen,
     setSnapWindows,
     setSnapError,
+    setSnapNote,
     snapBusy,
     setSnapBusy,
     snapDialogRef,
@@ -1928,6 +1937,7 @@ export const ThreadView = memo(function ThreadView({
       setSnapOpen(false);
       setSnapBusy(false);
       setSnapError(null);
+      setSnapNote(null);
       if (copyFlashTimer.current != null) {
         clearTimeout(copyFlashTimer.current);
         copyFlashTimer.current = null;
@@ -4639,6 +4649,11 @@ export const ThreadView = memo(function ThreadView({
             {snapError && (
               <p className={styles.reviewError} role="alert">
                 {snapError}
+              </p>
+            )}
+            {snapNote && (
+              <p className={styles.confirmBody} data-appsnap-note="">
+                Last capture: {snapNote}
               </p>
             )}
             <ul className={styles.snapList}>

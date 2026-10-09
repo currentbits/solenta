@@ -102,14 +102,13 @@ describe("appsnap window text (#1531)", () => {
     );
   });
 
-  it("attaches the AX text with the PNG on macOS", async () => {
+  it("reads the window's AX text on macOS, titled from the source list", async () => {
     const seen = [];
     appsnap.setGetSources(async () => finder);
     appsnap.setExecFile(stubExec({ tree, truncated: false }, seen));
-    const shot = await appsnap.captureWindow("window:42:0", {
+    const shot = await appsnap.captureWindowText("window:42:0", {
       platform: "darwin",
     });
-    assert.equal(shot.png, png);
     assert.equal(shot.name, "Downloads");
     assert.match(shot.text, /^window "Downloads"\n {2}button "Back"/);
     assert.equal(seen[0].file, "/usr/bin/osascript");
@@ -117,43 +116,44 @@ describe("appsnap window text (#1531)", () => {
     assert.ok(seen[0].opts.timeout > 0);
   });
 
-  it("keeps the PNG and gives a reason without Accessibility", async () => {
+  it("gives a one-line reason without Accessibility", async () => {
     appsnap.setGetSources(async () => finder);
     appsnap.setExecFile(stubExec({ error: "untrusted" }));
-    const shot = await appsnap.captureWindow("window:42:0", {
+    const shot = await appsnap.captureWindowText("window:42:0", {
       platform: "darwin",
     });
-    assert.equal(shot.png, png);
-    assert.equal(shot.text, undefined);
-    assert.match(shot.textSkipped, /Accessibility/);
-    assert.doesNotMatch(shot.textSkipped, /\n/);
+    assert.match(shot.skipped, /Accessibility/);
+    assert.doesNotMatch(shot.skipped, /\n/);
   });
 
-  it("keeps the PNG when osascript fails or times out", async () => {
+  it("gives a reason when osascript fails, times out, or the window is gone", async () => {
     appsnap.setGetSources(async () => finder);
     const killed = Object.assign(new Error("timeout"), { killed: true });
     appsnap.setExecFile(stubExec(killed));
-    const shot = await appsnap.captureWindow("window:42:0", {
-      platform: "darwin",
-    });
-    assert.equal(shot.png, png);
-    assert.match(shot.textSkipped, /timed out/);
+    assert.match(
+      (await appsnap.captureWindowText("window:42:0", { platform: "darwin" })).skipped,
+      /timed out/,
+    );
     appsnap.setExecFile(stubExec(new Error("boom")));
     assert.match(
       (await appsnap.readWindowText("window:42:0", "x", { platform: "darwin" }))
         .skipped,
       /failed/,
     );
+    assert.match(
+      (await appsnap.captureWindowText("window:7:0", { platform: "darwin" })).skipped,
+      /not found/,
+    );
   });
 
-  it("skips silently off macOS without running osascript", async () => {
+  it("returns null off macOS without running osascript", async () => {
     const seen = [];
     appsnap.setGetSources(async () => finder);
     appsnap.setExecFile(stubExec({ tree }, seen));
-    const shot = await appsnap.captureWindow("window:42:0", {
-      platform: "win32",
-    });
-    assert.deepEqual(shot, { png, name: "Downloads" });
+    assert.equal(
+      await appsnap.captureWindowText("window:42:0", { platform: "win32" }),
+      null,
+    );
     assert.equal(seen.length, 0);
   });
 });
