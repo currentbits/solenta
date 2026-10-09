@@ -460,6 +460,9 @@ function runCodexAppServerTurn(opts) {
       }
       if (activateGoal) {
         activateGoal = false;
+        // Before the echo arrives: a turn that ends first must still
+        // follow continuations and pause on shutdown.
+        goalStatus = "active";
         client
           .send("thread/goal/set", { threadId, status: "active" })
           .catch(() => {});
