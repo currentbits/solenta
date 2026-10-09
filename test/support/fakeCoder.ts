@@ -3553,13 +3553,14 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         };
         return rec("web.setEnabled", [input], { ...web });
       },
-      addDevice: (input: { name: string }) => {
+      addDevice: (input: { name: string; scopes?: WebDeviceInfo["scopes"] }) => {
         const device: WebDeviceInfo = {
           id: `web-dev-${web.devices.length + 1}`,
           name: input.name,
           createdAt: 0,
           lastSeenAt: null,
           legacy: false,
+          scopes: input.scopes ?? ["read"],
         };
         web = { ...web, devices: web.devices.concat(device) };
         return rec("web.addDevice", [input], { device, token: "t".repeat(43) });

@@ -3323,6 +3323,22 @@ export interface PairingCreated {
 }
 
 /** A browser or phone allowed into Solenta Web (#1512 I2). Token never listed. */
+/**
+ * What a paired device may do, checked on the host per channel (#1530,
+ * electron/webScopes.js). "full" covers everything; terminal:type implies
+ * terminal:observe; read is always on.
+ */
+export type WebDeviceScope =
+  | "read"
+  | "steer"
+  | "files"
+  | "git"
+  | "terminal:observe"
+  | "terminal:type"
+  | "preview"
+  | "settings"
+  | "full";
+
 export interface WebDeviceInfo {
   id: string;
   name: string;
@@ -3331,6 +3347,8 @@ export interface WebDeviceInfo {
   lastSeenAt: number | null;
   /** The single pre-device token (userData/web-token). */
   legacy: boolean;
+  /** Fixed at pairing; revoke and re-pair to change. */
+  scopes: WebDeviceScope[];
 }
 
 /** Detected, never installed. `url` is set while Serve points at Solenta Web. */
@@ -4137,7 +4155,8 @@ export interface CoderApi {
   web: {
     status(): Promise<WebAccessStatus>;
     setEnabled(input: { enabled: boolean; lan?: boolean }): Promise<WebAccessStatus>;
-    addDevice(input: { name: string }): Promise<WebDeviceCreated>;
+    /** Omitted scopes mean read only. */
+    addDevice(input: { name: string; scopes?: WebDeviceScope[] }): Promise<WebDeviceCreated>;
     revokeDevice(input: { id: string }): Promise<WebDeviceInfo>;
     setTailscale(input: { on: boolean }): Promise<WebTailscaleStatus>;
   };

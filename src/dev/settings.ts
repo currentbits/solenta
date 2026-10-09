@@ -595,8 +595,8 @@ export function createWeb(): Pick<CoderApi, "web"> {
   let lan = false;
   let serving = false;
   let devices: WebDeviceInfo[] = [
-    { id: "dev-legacy", name: "Legacy device", createdAt: now - 40 * 864e5, lastSeenAt: now - 3 * 864e5, legacy: true },
-    { id: "dev-ipad", name: "iPad", createdAt: now - 9 * 864e5, lastSeenAt: now - 12 * 60e3, legacy: false },
+    { id: "dev-legacy", name: "Legacy device", createdAt: now - 40 * 864e5, lastSeenAt: now - 3 * 864e5, legacy: true, scopes: ["full"] },
+    { id: "dev-ipad", name: "iPad", createdAt: now - 9 * 864e5, lastSeenAt: now - 12 * 60e3, legacy: false, scopes: ["read", "steer", "terminal:observe"] },
   ];
   const status = async (): Promise<WebAccessStatus> => ({
     running,
@@ -633,6 +633,7 @@ export function createWeb(): Pick<CoderApi, "web"> {
           createdAt: Date.now(),
           lastSeenAt: null,
           legacy: false,
+          scopes: input.scopes ?? ["read"],
         };
         devices = devices.concat(device);
         return { device, token: "dEvT0kEn-scan-me-from-the-settings-pane-0123456789" };

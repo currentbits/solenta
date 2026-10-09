@@ -664,6 +664,68 @@ function createExternalHandlers(deps) {
   };
 }
 
+/**
+ * Every external tool declares the capability it needs (#1530). A pairing
+ * only sees the tools it holds, and each call re-checks before the handler
+ * runs, so a tool cannot be reached without its capability.
+ */
+const EXTERNAL_TOOLS = Object.freeze([
+  {
+    name: "projects_list",
+    cap: "read",
+    description:
+      "List projects this Solenta pairing can see (id, name, folder slug). " +
+      "Pass a projectId from this list to task_launch. Do not guess ids.",
+    input: () => ({}),
+  },
+  {
+    name: "task_list",
+    cap: "read",
+    description:
+      "List tasks this pairing can read. Default: only tasks this pairing " +
+      "launched. Status awaiting_approval means the user has not approved " +
+      "the run in Solenta yet.",
+    input: () => ({}),
+  },
+  {
+    name: "task_status",
+    cap: "read",
+    description:
+      "Status of one task: status, last assistant line, lastError, " +
+      "awaitingApproval. Poll this after task_launch; do not sit idle.",
+    input: (z) => ({ threadId: z.string().min(1) }),
+  },
+  {
+    name: "task_launch",
+    cap: "launch",
+    description:
+      "Create a Solenta task in a project from projects_list and start it " +
+      "(or queue it for in-app approval). prompt must be self-contained. " +
+      "Returns threadId and status (awaiting_approval or working).",
+    input: (z) => ({
+      projectId: z.string().min(1),
+      prompt: z.string().min(1),
+      title: z.string().min(1).optional(),
+      provider: z.string().min(1).optional(),
+    }),
+  },
+  {
+    name: "task_send",
+    cap: "steer",
+    description:
+      "Send a follow-up prompt to a task this pairing launched, once it is idle.",
+    input: (z) => ({ threadId: z.string().min(1), prompt: z.string().min(1) }),
+  },
+  {
+    name: "task_stop",
+    cap: "steer",
+    description:
+      "Stop a running task this pairing launched, or decline one still " +
+      "waiting for approval.",
+    input: (z) => ({ threadId: z.string().min(1) }),
+  },
+]);
+
 function buildExternalMcpServer(sdk, handlers, pairing) {
   const { McpServer, z } = sdk;
   const server = new McpServer(
@@ -675,81 +737,15 @@ function buildExternalMcpServer(sdk, handlers, pairing) {
     content: [{ type: "text", text: JSON.stringify(value, null, 2) }],
   });
 
-  server.registerTool(
-    "projects_list",
-    {
-      description:
-        "List projects this Solenta pairing can see (id, name, folder slug). " +
-        "Pass a projectId from this list to task_launch. Do not guess ids.",
-      inputSchema: {},
-    },
-    async () => json(await handlers.projects_list()),
-  );
-
-  server.registerTool(
-    "task_list",
-    {
-      description:
-        "List tasks this pairing can read. Default: only tasks this pairing " +
-        "launched. Status awaiting_approval means the user has not approved " +
-        "the run in Solenta yet.",
-      inputSchema: {},
-    },
-    async () => json(await handlers.task_list()),
-  );
-
-  server.registerTool(
-    "task_status",
-    {
-      description:
-        "Status of one task: status, last assistant line, lastError, " +
-        "awaitingApproval. Poll this after task_launch; do not sit idle.",
-      inputSchema: { threadId: z.string().min(1) },
-    },
-    async (args) => json(await handlers.task_status(args)),
-  );
-
-  if (hasCapability(pairing, "launch")) {
+  for (const tool of EXTERNAL_TOOLS) {
+    if (!hasCapability(pairing, tool.cap)) continue;
     server.registerTool(
-      "task_launch",
-      {
-        description:
-          "Create a Solenta task in a project from projects_list and start it " +
-          "(or queue it for in-app approval). prompt must be self-contained. " +
-          "Returns threadId and status (awaiting_approval or working).",
-        inputSchema: {
-          projectId: z.string().min(1),
-          prompt: z.string().min(1),
-          title: z.string().min(1).optional(),
-          provider: z.string().min(1).optional(),
-        },
+      tool.name,
+      { description: tool.description, inputSchema: tool.input(z) },
+      async (args) => {
+        requireCap(pairing, tool.cap);
+        return json(await handlers[tool.name](args));
       },
-      async (args) => json(await handlers.task_launch(args)),
-    );
-  }
-
-  if (hasCapability(pairing, "steer")) {
-    server.registerTool(
-      "task_send",
-      {
-        description:
-          "Send a follow-up prompt to a task this pairing launched, once it is idle.",
-        inputSchema: {
-          threadId: z.string().min(1),
-          prompt: z.string().min(1),
-        },
-      },
-      async (args) => json(await handlers.task_send(args)),
-    );
-    server.registerTool(
-      "task_stop",
-      {
-        description:
-          "Stop a running task this pairing launched, or decline one still " +
-          "waiting for approval.",
-        inputSchema: { threadId: z.string().min(1) },
-      },
-      async (args) => json(await handlers.task_stop(args)),
     );
   }
 
@@ -827,6 +823,7 @@ module.exports = {
   DEFAULT_READS_PER_MINUTE,
   EXTERNAL_SERVER_NAME,
   EXTERNAL_INSTRUCTIONS,
+  EXTERNAL_TOOLS,
   hashToken,
   toPublic,
   listPairings,
