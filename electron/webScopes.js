@@ -158,6 +158,7 @@ const BY_SCOPE = {
     "threads:setProvider",
     "threads:setReasoningEffort",
     "threads:setWebSearch",
+    "threads:setFast",
     "threads:runVerify",
     "threads:delete",
     "threads:restore",
@@ -280,6 +281,8 @@ const BY_SCOPE = {
   ],
   // Listed so the coverage test sees them classified; unlisted means full too.
   full: [
+    // Puts a secret value into a run's environment (#1531): never steer-level.
+    "threads:answerSecret",
     // mcp:save registers a command to spawn; pairing:* mints or approves tokens.
     "mcp:save",
     "mcp:installImport",
