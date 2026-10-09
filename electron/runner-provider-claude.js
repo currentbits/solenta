@@ -80,6 +80,7 @@ function createClaudeRun(ctx) {
     launchWasCancelled,
     CLAUDE_ACK_MS,
     disposeClaudeSession,
+    finishRunningSubagents,
   } = ctx;
 
   /**
@@ -1189,6 +1190,8 @@ function createClaudeRun(ctx) {
             if (claudeSessions.get(threadId) === sess) {
               if (sess.idleTimer) clearTimeout(sess.idleTimer);
               claudeSessions.delete(threadId);
+              // A crashed CLI takes its background subagents with it.
+              finishRunningSubagents(threadId);
             }
             sess.dispatch.onExit(info);
           },

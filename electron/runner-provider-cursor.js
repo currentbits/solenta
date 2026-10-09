@@ -521,7 +521,7 @@ function createCursorRun(ctx) {
         if (e.kind !== "cursor") return;
 
         clearRun(threadId);
-        finishRunningSubagents(threadId);
+        finishRunningSubagents(threadId, "done");
         completeWorkLogStep(threadId, e.startingId);
         completeWorkLogStep(threadId, e.workingId);
 

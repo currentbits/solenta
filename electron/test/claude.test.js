@@ -408,6 +408,14 @@ async function main() {
     await delay(20);
     emit({ type: "result", subtype: "success", result: "Launched.", usage: { input_tokens: 1, output_tokens: 1 }, total_cost_usd: 0, num_turns: 1 });
     await delay(150);
+    // #1443: hold the agent (and the CLI) until the test drops this file.
+    const release = process.env.CODER_FAKE_CLAUDE_RELEASE_FILE;
+    if (release) {
+      if (process.env.CODER_FAKE_CLAUDE_PID_FILE) {
+        fs.writeFileSync(process.env.CODER_FAKE_CLAUDE_PID_FILE, String(process.pid), "utf8");
+      }
+      while (!fs.existsSync(release)) await delay(20);
+    }
     emit({
       type: "user",
       message: {
@@ -423,7 +431,8 @@ async function main() {
         ],
       },
     });
-    await delay(50);
+    // A held CLI stays up after the notification, like the real one.
+    await delay(release ? 30000 : 50);
     process.exit(0);
     return;
   }
@@ -2530,6 +2539,97 @@ describe("runner claude provider", () => {
       [true, true, true],
       "the three newest idle CLIs must survive",
     );
+  });
+
+  describe("background subagents pin their idle CLI (#1443)", () => {
+    const keys = [
+      "CODER_FAKE_CLAUDE_RELEASE_FILE",
+      "CODER_FAKE_CLAUDE_PID_FILE",
+      "CODER_CLAUDE_IDLE_REAP_MS",
+      "CODER_CLAUDE_SUBAGENT_STALE_MS",
+    ];
+    afterEach(() => {
+      for (const k of keys) delete process.env[k];
+    });
+    const alive = (pid) => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    const lateRow = (id) =>
+      (store.getThread(id).subagents || []).find((s) => s.id === "toolu_late_bg");
+    /** Settled turn, background agent still running on the held CLI. */
+    async function startPinned(threadId) {
+      process.env.CODER_FAKE_CLAUDE_SCENARIO = "subagent-after-result";
+      await runner.startRun({ threadId, prompt: "launch one" });
+      await waitFor(() => {
+        const t = store.getThread(threadId);
+        return t.status !== "working" && lateRow(threadId)?.status === "running";
+      });
+      const pidFile = process.env.CODER_FAKE_CLAUDE_PID_FILE;
+      await waitFor(() => fs.existsSync(pidFile) && fs.readFileSync(pidFile, "utf8"));
+      return Number(fs.readFileSync(pidFile, "utf8"));
+    }
+
+    it("the idle cap skips a session with a running subagent and reaps an idle one", async () => {
+      process.env.CODER_FAKE_CLAUDE_RELEASE_FILE = path.join(tmpDir, "release");
+      process.env.CODER_FAKE_CLAUDE_PID_FILE = path.join(tmpDir, "pinned.pid");
+      const markerDir = path.join(tmpDir, "pin-markers");
+      process.env.CODER_FAKE_CLAUDE_MARKER_DIR = markerDir;
+      const project = store.getProjects()[0];
+      const pinned = store.getThreads()[0];
+      const pinnedPid = await startPinned(pinned.id);
+
+      // Pinned is the oldest idle; three more idle CLIs exceed the cap.
+      process.env.CODER_FAKE_CLAUDE_SCENARIO = "multi-turn";
+      for (let i = 1; i <= 3; i += 1) {
+        const t = services.createThread(store, { projectId: project.id, title: `M${i}` });
+        await runner.startRun({ threadId: t.id, prompt: "hi" });
+        await waitFor(() => store.getThread(t.id).status === "done");
+      }
+      const pids = fs
+        .readFileSync(path.join(markerDir, "spawns"), "utf8")
+        .trim()
+        .split("\n")
+        .map(Number);
+      await waitFor(() => !alive(pids[0]), { timeoutMs: 5000 });
+      await new Promise((r) => setTimeout(r, 200));
+      assert.equal(alive(pinnedPid), true, "a running subagent pins its CLI");
+      assert.equal(lateRow(pinned.id).status, "running");
+      assert.deepEqual(pids.slice(1).map(alive), [true, true]);
+    });
+
+    it("re-arms the reaper once the subagent's task-notification settles it", async () => {
+      const release = path.join(tmpDir, "release");
+      process.env.CODER_FAKE_CLAUDE_RELEASE_FILE = release;
+      process.env.CODER_FAKE_CLAUDE_PID_FILE = path.join(tmpDir, "pinned.pid");
+      process.env.CODER_CLAUDE_IDLE_REAP_MS = "100";
+      const thread = store.getThreads()[0];
+      const pid = await startPinned(thread.id);
+      // Well past the reap window: the running subagent holds it off.
+      await new Promise((r) => setTimeout(r, 400));
+      assert.equal(alive(pid), true, "no idle reap while a subagent runs");
+
+      fs.writeFileSync(release, "");
+      await waitFor(() => lateRow(thread.id).status === "done");
+      // The fake would idle 30s on its own; only the re-armed reaper kills it.
+      await waitFor(() => !alive(pid), { timeoutMs: 5000 });
+      assert.equal(lateRow(thread.id).status, "done");
+    });
+
+    it("a stale pin lapses and the killed subagent is failed, not done", async () => {
+      process.env.CODER_FAKE_CLAUDE_RELEASE_FILE = path.join(tmpDir, "release");
+      process.env.CODER_FAKE_CLAUDE_PID_FILE = path.join(tmpDir, "pinned.pid");
+      process.env.CODER_CLAUDE_SUBAGENT_STALE_MS = "300";
+      const thread = store.getThreads()[0];
+      const pid = await startPinned(thread.id);
+      await waitFor(() => !alive(pid), { timeoutMs: 5000 });
+      await waitFor(() => lateRow(thread.id).status !== "running");
+      assert.equal(lateRow(thread.id).status, "failed");
+    });
   });
 
   it("settling or archiving a thread kills its kept-alive CLI (issue #48)", async () => {

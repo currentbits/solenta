@@ -10,6 +10,10 @@
 function createSubagents(ctx) {
   const { store, pushDetail, pushThreadsChanged } = ctx;
 
+  function hasRunningSubagent(threadId) {
+    return subagentRows(threadId).some((r) => r.status === "running");
+  }
+
   /**
    * In-session subagents spawned via the Agent tool (issue #21). The CLI
    * runs them internally, so the only trace is its stream: the spawning
@@ -135,21 +139,28 @@ function createSubagents(ctx) {
       // Between turns nothing else pushes the list, and the sidebar files a
       // done thread with running subagents on Working until they settle.
       pushThreadsChanged();
+      // The last one settled: an idle Claude CLI it pinned is reapable again
+      // (#1443). Assigned onto ctx after this seam is built, so read lazily.
+      if (!hasRunningSubagent(threadId) && ctx.scheduleClaudeIdleReap) {
+        ctx.scheduleClaudeIdleReap(threadId);
+      }
     }
     return changed;
   }
 
   /**
-   * CLI death (idle reap, param change, thread delete, quit) takes its
+   * CLI death (idle reap, param change, thread delete, quit, crash) takes its
    * background subagents with it — settle any still-running rows so the
-   * panel never shows a live badge for a dead agent.
+   * panel never shows a live badge for a dead agent. Killed work is
+   * "failed", never "done" (#1443); a run that exits normally passes "done".
+   * @param {string} threadId
+   * @param {"done" | "failed"} [status]
    */
-  function finishRunningSubagents(threadId) {
-    const rows = subagentRows(threadId);
-    if (!rows.some((r) => r.status === "running")) return;
+  function finishRunningSubagents(threadId, status = "failed") {
+    if (!hasRunningSubagent(threadId)) return;
     store.updateThread(threadId, {
-      subagents: rows.map((r) =>
-        r.status === "running" ? { ...r, status: "done" } : r,
+      subagents: subagentRows(threadId).map((r) =>
+        r.status === "running" ? { ...r, status } : r,
       ),
     });
     store.save();

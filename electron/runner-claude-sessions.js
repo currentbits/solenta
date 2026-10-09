@@ -9,7 +9,7 @@
  * @param {object} ctx - createRunner context (see runner-watchdogs.js header)
  */
 function createClaudeSessions(ctx) {
-  const { active, finishRunningSubagents } = ctx;
+  const { active, store, finishRunningSubagents } = ctx;
 
   /**
    * Live interactive Claude CLI processes per thread, kept across turns so
@@ -32,6 +32,23 @@ function createClaudeSessions(ctx) {
   // ponytail: fixed LRU cap — an 8-worker fan-out otherwise leaves 8 idle CLIs
   // resident for the full half hour (issue #36). Make it a setting if 3 chafes.
   const CLAUDE_IDLE_MAX = 3;
+
+  // ponytail: an idle CLI running background subagents is never reaped
+  // (#1443), but a lost <task-notification> would pin it forever, so the
+  // exemption lapses this long after the session went idle. Read at arm
+  // time so a test can shorten it.
+  const CLAUDE_SUBAGENT_STALE_MS = 2 * 60 * 60 * 1000;
+
+  /** Idle session kept alive because its thread still runs a subagent. */
+  function pinnedBySubagent(threadId, sess) {
+    const thread = store.getThread(threadId);
+    if (!thread || !Array.isArray(thread.subagents)) return false;
+    if (!thread.subagents.some((r) => r.status === "running")) return false;
+    const staleMs =
+      Number(process.env.CODER_CLAUDE_SUBAGENT_STALE_MS) ||
+      CLAUDE_SUBAGENT_STALE_MS;
+    return Date.now() - sess.idleSince < staleMs;
+  }
 
   /** Kill and forget a thread's kept-alive Claude CLI (if any). */
   function disposeClaudeSession(threadId) {
@@ -65,31 +82,60 @@ function createClaudeSessions(ctx) {
     disposeClaudeSession(threadId);
   }
 
-  /** Arm the idle reaper after a turn settles; disarmed on reuse. */
+  /**
+   * Arm the idle reaper after a turn settles; disarmed on reuse. Also called
+   * when a background subagent settles between turns, so a session the
+   * subagent pinned becomes reapable again (#1443).
+   */
   function scheduleClaudeIdleReap(threadId) {
+    // Mid-turn sessions are never armed (a subagent can settle mid-turn).
+    if (active.has(threadId)) return;
     const sess = claudeSessions.get(threadId);
     if (sess && sess.retireAfterTurn) {
       disposeClaudeSession(threadId);
       return;
     }
-    if (!sess || sess.idleTimer) return;
-    sess.idleTimer = setTimeout(
-      () => disposeClaudeSession(threadId),
-      CLAUDE_IDLE_REAP_MS,
-    );
-    // Never hold the process open for a reap timer.
-    if (typeof sess.idleTimer.unref === "function") sess.idleTimer.unref();
+    if (!sess) return;
+    const fresh = !sess.idleTimer;
+    if (fresh) sess.idleSince = Date.now();
+    else clearTimeout(sess.idleTimer);
+    armIdleTimer(threadId, sess);
+    if (!fresh) return;
     // Re-insert so Map order reads least → most recently idled, then reap
     // everything past the cap. Sessions mid-turn have no timer: never counted,
-    // never killed.
+    // never killed. Subagent-pinned sessions count but are skipped.
     claudeSessions.delete(threadId);
     claudeSessions.set(threadId, sess);
-    const idle = [...claudeSessions]
-      .filter(([, s]) => s.idleTimer)
-      .map(([id]) => id);
-    for (const id of idle.slice(0, Math.max(0, idle.length - CLAUDE_IDLE_MAX))) {
+    const idle = [...claudeSessions].filter(([, s]) => s.idleTimer);
+    let excess = idle.length - CLAUDE_IDLE_MAX;
+    for (const [id, s] of idle) {
+      if (excess <= 0) break;
+      if (pinnedBySubagent(id, s)) continue;
       disposeClaudeSession(id);
+      excess -= 1;
     }
+  }
+
+  /**
+   * Idle reap after CLAUDE_IDLE_REAP_MS, or — while a subagent pins the
+   * session — a re-check at the staleness deadline.
+   */
+  function armIdleTimer(threadId, sess) {
+    const reapMs =
+      Number(process.env.CODER_CLAUDE_IDLE_REAP_MS) || CLAUDE_IDLE_REAP_MS;
+    const staleMs =
+      Number(process.env.CODER_CLAUDE_SUBAGENT_STALE_MS) ||
+      CLAUDE_SUBAGENT_STALE_MS;
+    const delay = pinnedBySubagent(threadId, sess)
+      ? sess.idleSince + staleMs - Date.now()
+      : reapMs;
+    sess.idleTimer = setTimeout(() => {
+      if (claudeSessions.get(threadId) !== sess) return;
+      if (pinnedBySubagent(threadId, sess)) armIdleTimer(threadId, sess);
+      else disposeClaudeSession(threadId);
+    }, Math.max(0, delay));
+    // Never hold the process open for a reap timer.
+    if (typeof sess.idleTimer.unref === "function") sess.idleTimer.unref();
   }
 
   return {
