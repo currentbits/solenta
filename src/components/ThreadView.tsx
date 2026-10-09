@@ -2303,6 +2303,16 @@ export const ThreadView = memo(function ThreadView({
       : (repoConfig?.quickActions ?? []).map((a) => ({ ...a, fromRepo: true }))) {
       if (action && action.id && action.name) headerCommands.push(action);
     }
+    // Manual teardown, and the way to approve a file whose only command
+    // is onSettle (#1531).
+    if (repoConfig?.onSettleCommand && thread.worktreePath) {
+      headerCommands.push({
+        id: "onSettle",
+        name: "On settle",
+        command: repoConfig.onSettleCommand,
+        fromRepo: true,
+      });
+    }
   }
   // The approval covers every command in the file (its hash), so list them
   // all, including any a project setting currently overrides.
@@ -2311,6 +2321,9 @@ export const ThreadView = memo(function ThreadView({
       ? [{ id: "setup", name: "Setup", command: repoConfig.setupCommand }]
       : []),
     ...(repoConfig?.quickActions ?? []),
+    ...(repoConfig?.onSettleCommand
+      ? [{ id: "onSettle", name: "On settle", command: repoConfig.onSettleCommand }]
+      : []),
   ];
 
   const runHeaderCommand = (actionId: string, trust?: string) => {

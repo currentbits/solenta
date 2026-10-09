@@ -1061,10 +1061,11 @@ function createToolHandlers(deps) {
 
   async function thread_settle(args) {
     requireOwnThread(args);
-    const updated = setSettled(store, {
-      threadId: args.threadId,
-      override: args.override,
-    });
+    const updated = setSettled(
+      store,
+      { threadId: args.threadId, override: args.override },
+      { broadcast },
+    );
     if (updated && updated.settledOverride === "settled") {
       retireAgent(updated.id);
     }

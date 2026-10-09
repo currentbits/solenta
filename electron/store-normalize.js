@@ -1,5 +1,6 @@
 "use strict";
 
+const path = require("node:path");
 const { normalizeSubagentPool } = require("./subagentPool");
 const { clampUiScale, UI_SCALE_DEFAULT } = require("./zoom.js");
 const { getProvider, honouredEfforts } = require("./providers.js");
@@ -316,6 +317,9 @@ function validateQuotaFailover(raw) {
  * autoSettleOnMerge: only an explicit false turns merge-settle off, so
  * absent/junk keeps the previous "MERGED = settled" behaviour.
  *
+ * worktreeRoot: where new thread worktrees go (#1531). Absent/junk/relative
+ * → null, the default userData/worktrees. Existence is checked on save.
+ *
  * webhook: absent/junk → { url: null, onDone/onFailed/onWaiting: true }.
  * A URL must be http(s); anything else collapses to null so a corrupt store
  * cannot POST somewhere unexpected. Only an explicit false turns an event
@@ -360,6 +364,7 @@ function normalizeSettings(raw) {
     linearApiKey: null,
     webhook: { url: null, onDone: true, onFailed: true, onWaiting: true },
     modelPrices: {},
+    worktreeRoot: null,
   };
   if (!raw || typeof raw !== "object") return settings;
   const obj = /** @type {{ dailyBudgetUsd?: unknown, orchestrationBudgetUsd?: unknown, autoSettleAfterDays?: unknown, mcpServers?: unknown }} */ (
@@ -515,6 +520,9 @@ function normalizeSettings(raw) {
   settings.webhook = normalizeWebhook(
     /** @type {{ webhook?: unknown }} */ (obj).webhook,
   );
+  const root = /** @type {{ worktreeRoot?: unknown }} */ (obj).worktreeRoot;
+  settings.worktreeRoot =
+    typeof root === "string" && path.isAbsolute(root.trim()) ? root.trim() : null;
   return settings;
 }
 

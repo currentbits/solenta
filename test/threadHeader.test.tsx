@@ -1784,6 +1784,33 @@ describe("solenta.json commands in Thread details (#1506)", () => {
     assert.equal(m.query("[data-thread-command-error]"), null);
     m.unmount();
   });
+
+  it("an onSettle-only file gets an On settle button and lists it for approval (#1531)", async () => {
+    const calls: unknown[][] = [];
+    const m = await mount(
+      view({
+        project: {
+          ...project,
+          repoConfig: { onSettleCommand: "make down", hash: HASH, trusted: false },
+        },
+        onRunCommand: async (...args) => {
+          calls.push(args);
+        },
+      }),
+    );
+    await m.flush();
+    await m.click(m.query("[data-thread-details-btn]"));
+    const btn = m.query('[data-thread-command="onSettle"]');
+    assert.equal(btn?.textContent, "On settle");
+    await m.click(btn);
+    await m.flush();
+    assert.deepEqual(calls, []);
+    assert.match(m.query("[data-repo-config-approve]")?.textContent || "", /make down/);
+    await m.click(m.query("[data-repo-config-approve-run]"));
+    await m.flush();
+    assert.deepEqual(calls, [["t1", "onSettle", HASH]]);
+    m.unmount();
+  });
 });
 
 describe("Workers header control and parent navigation", () => {

@@ -952,6 +952,16 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           }
           next.confirmQuitWithActiveWork = v;
         }
+        if (Object.prototype.hasOwnProperty.call(p, "worktreeRoot")) {
+          const v = typeof p.worktreeRoot === "string" ? p.worktreeRoot.trim() : "";
+          if (v && !v.startsWith("/")) {
+            calls.push({ channel: "settings.set", args: [patch] });
+            return Promise.reject(
+              new Error("Worktree location must be an absolute path"),
+            );
+          }
+          next.worktreeRoot = v || null;
+        }
         if (Object.prototype.hasOwnProperty.call(p, "resumeInterruptedRuns")) {
           const v = p.resumeInterruptedRuns;
           if (typeof v !== "boolean") {

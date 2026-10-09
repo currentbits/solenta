@@ -182,6 +182,11 @@ export interface ProjectRepoConfig {
   setupCommand?: string;
   /** Ids are `repo:<index>`. */
   quickActions?: ProjectQuickAction[];
+  /**
+   * Runs in a worktree thread when it settles (#1531): an explicit settle,
+   * or its PR merging/closing. Also runnable as actionId "onSettle".
+   */
+  onSettleCommand?: string;
   hash?: string;
   trusted: boolean;
   error?: string;
@@ -2868,6 +2873,12 @@ export interface AppSettings {
    * projects only; remote projects always get plain threads.
    */
   defaultOrchestrate: boolean;
+  /**
+   * Folder new local worktrees are created in (#1531). null/absent = the
+   * default userData/worktrees. Must be an absolute, writable directory.
+   * Existing worktrees stay where they were created.
+   */
+  worktreeRoot?: string | null;
   /**
    * Provider id for new threads that do not inherit from the selected
    * thread (issue #711). Autodispatch and issue-created threads use this.

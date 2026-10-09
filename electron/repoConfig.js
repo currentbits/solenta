@@ -6,6 +6,9 @@
  *
  *   { "setup": "npm ci", "quickActions": [{ "name": "Test", "command": "npm test" }] }
  *
+ * `onSettle` (#1531) runs in a worktree thread when it settles: a command
+ * string, or the name of one of the file's quickActions.
+ *
  * Project settings in the app win field by field: a stored setupCommand
  * hides the file's `setup`, a stored quickActions list hides the file's
  * list. Other keys (iconPath, ...) are ignored here.
@@ -33,6 +36,7 @@ const cache = new Map();
 /**
  * @typedef {{
  *   setup?: string,
+ *   onSettle?: string,
  *   quickActions?: Array<{ id: string, name: string, command: string }>,
  *   hash?: string,
  *   error?: string,
@@ -82,18 +86,29 @@ function parseRepoConfig(data) {
     }
     if (actions.length) out.quickActions = actions;
   }
-  if (!out.setup && !out.quickActions) return null;
+  if (d.onSettle !== undefined) {
+    const named = (out.quickActions || []).find((a) => a.name === d.onSettle);
+    const onSettle = named ? named.command : normalizeCommand(d.onSettle);
+    if (!onSettle) {
+      return { error: "solenta.json: onSettle must be a quickActions name or a non-empty command string" };
+    }
+    out.onSettle = onSettle;
+  }
+  if (!out.setup && !out.quickActions && !out.onSettle) return null;
   out.hash = commandsHash(out);
   return out;
 }
 
 /**
- * @param {{ setup?: string, quickActions?: Array<{ name: string, command: string }> }} cfg
+ * onSettle only joins the canonical form when set, so a file without it
+ * keeps the hash it was approved under.
+ * @param {{ setup?: string, onSettle?: string, quickActions?: Array<{ name: string, command: string }> }} cfg
  */
 function commandsHash(cfg) {
   const canonical = JSON.stringify({
     setup: cfg.setup || null,
     quickActions: (cfg.quickActions || []).map((a) => [a.name, a.command]),
+    ...(cfg.onSettle ? { onSettle: cfg.onSettle } : {}),
   });
   return createHash("sha256").update(canonical).digest("hex");
 }
@@ -174,6 +189,7 @@ function effectiveCommands(project) {
       : ok && ok.quickActions
         ? ok.quickActions.map((a) => ({ ...a, fromRepo: true }))
         : [],
+    onSettle: ok && ok.onSettle ? { command: ok.onSettle, fromRepo: true } : null,
     hash: ok ? ok.hash || null : null,
     trusted: isTrusted(project, ok),
   };
@@ -190,6 +206,7 @@ function presentRepoConfig(project) {
   return {
     ...(cfg.setup ? { setupCommand: cfg.setup } : {}),
     ...(cfg.quickActions ? { quickActions: cfg.quickActions } : {}),
+    ...(cfg.onSettle ? { onSettleCommand: cfg.onSettle } : {}),
     hash: cfg.hash,
     trusted: isTrusted(project, cfg),
   };
