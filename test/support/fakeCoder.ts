@@ -356,6 +356,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
     orchestrationBudgetUsd: null,
     autoSettleAfterDays: 3,
     autoSettleOnMerge: true,
+    stripAgentCoauthors: false,
     mcpServers: [],
     defaultWorktree: false,
     updateChannel: null,

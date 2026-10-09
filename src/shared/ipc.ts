@@ -2805,6 +2805,11 @@ export interface AppSettings {
    */
   autoSettleOnMerge: boolean;
   /**
+   * Opt-in (default false): squash merges from the app drop
+   * `Co-authored-by:` trailers naming an AI agent; human co-authors stay.
+   */
+  stripAgentCoauthors: boolean;
+  /**
    * User-registered MCP servers (Skills tab). Built-ins coder-memory and
    * coder-threads are app-owned and never appear here. Enabled entries are
    * folded into every provider's MCP injection on the next turn.

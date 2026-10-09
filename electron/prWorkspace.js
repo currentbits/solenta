@@ -20,6 +20,7 @@ const {
   tailErr,
   assertNoOutboundSecrets,
   mergeFlags,
+  squashBodyArgs,
 } = require("./worktrees.js");
 
 const TEMPLATE_MAX_BYTES = 100 * 1024;
@@ -542,9 +543,10 @@ async function mergePrAt(projectPath, input, opts) {
   const repo = await requireGitHubRepo(projectPath);
   if (!repo.ok) return repo;
 
+  const body = await squashBodyArgs(opts && opts.store, repo.cwd, number, input);
   const merged = await ghTryAsync(
     repo.cwd,
-    ["pr", "merge", String(number), ...flags],
+    ["pr", "merge", String(number), ...flags, ...body],
     GH_USER,
   );
   if (!merged.ok) {

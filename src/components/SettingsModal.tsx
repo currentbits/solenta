@@ -688,6 +688,7 @@ export function SettingsModal({
             onGcClean={onGcClean}
             onDiscoverSourceControl={onDiscoverSourceControl}
             onSetSpotlight={onSetSpotlight}
+            onSaveSettings={onSaveSettings}
             toolsProjectId={toolsProjectId}
             setToolsProjectId={setToolsProjectId}
           />

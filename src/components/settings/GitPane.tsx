@@ -23,6 +23,7 @@ export function GitPane({
   onGcClean,
   onDiscoverSourceControl,
   onSetSpotlight,
+  onSaveSettings,
   toolsProjectId,
   setToolsProjectId,
 }: {
@@ -42,6 +43,7 @@ export function GitPane({
   onGcClean: SettingsModalProps["onGcClean"];
   onDiscoverSourceControl: SettingsModalProps["onDiscoverSourceControl"];
   onSetSpotlight: SettingsModalProps["onSetSpotlight"];
+  onSaveSettings: SettingsModalProps["onSaveSettings"];
   toolsProjectId: string | null;
   setToolsProjectId: (projectId: string) => void;
 }) {
@@ -112,6 +114,31 @@ export function GitPane({
             human review affordable. Default 400; empty means no cap.
           </p>
         </div>
+        <label className={styles.fieldRow}>
+          <input
+            type="checkbox"
+            data-strip-agent-coauthors=""
+            checked={settings?.stripAgentCoauthors === true}
+            disabled={saving || settings == null}
+            onChange={(e) => {
+              setError(null);
+              void onSaveSettings({
+                stripAgentCoauthors: e.target.checked,
+              }).catch((err) => {
+                setError(
+                  err instanceof Error && err.message
+                    ? err.message
+                    : "Failed to save settings",
+                );
+              });
+            }}
+          />
+          <span>Strip agent Co-authored-by lines from squash merges</span>
+        </label>
+        <p className={styles.note}>
+          Squash merges from the app drop trailers that credit an AI agent
+          (Claude, Codex, Cursor, bots). Human co-authors are kept.
+        </p>
       </section>
 
       <section className={styles.section}>
