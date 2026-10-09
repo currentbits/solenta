@@ -75,7 +75,7 @@ export function devProvider(
 
 export const DEV_PROVIDERS: ProviderInfo[] = [
   {
-    ...devProvider("claude", "Claude Code", ["claude-opus-5", "claude-sonnet-5"]),
+    ...devProvider("claude", "Claude Code", ["claude-opus-5-5", "claude-sonnet-5-5"]),
     supportsSteer: true,
     auth: "signedIn",
   },

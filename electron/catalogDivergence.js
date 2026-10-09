@@ -12,9 +12,10 @@
  *   OpenCode `opencode models` (CLI cache; the models.json dump is every
  *            paid provider and must not be compared)
  *   Cursor `cursor-agent --list-models` (CLI cache)
- *   Claude skip: `claude --help` does not enumerate models
+ *   Claude ~/.claude/cache/model-catalog/<account>-cc.json, the CLI's own
+ *          picker catalog (`claude --help` does not enumerate models)
  *
- * Missing cache / failed parse / skipped Claude = no warning.
+ * Missing cache / failed parse = no warning.
  */
 
 const fs = require("node:fs");
@@ -211,6 +212,29 @@ function parseGrokModelsOutput(text) {
 }
 
 /**
+ * Claude Code's picker catalog (CLI 2.1.283, 2026-10-09). `section: "main"`
+ * is the current picker; "overflow" is legacy ids the CLI still accepts,
+ * some dated (claude-haiku-4-5-20251001), so the date suffix is dropped.
+ *
+ * @param {unknown} json
+ * @returns {{ main: string[], all: string[] } | null}
+ */
+function parseClaudeCatalog(json) {
+  const config = json && json.catalog && json.catalog.config;
+  const models = config && config.models;
+  if (!Array.isArray(models)) return null;
+  const main = [];
+  const all = [];
+  for (const m of models) {
+    if (!m || typeof m.id !== "string" || !m.id) continue;
+    const id = m.id.replace(/-\d{8}$/, "");
+    all.push(id);
+    if (m.section === "main") main.push(id);
+  }
+  return { main, all };
+}
+
+/**
  * @param {NodeJS.ProcessEnv | undefined} env
  * @param {string | undefined} homeOpt
  */
@@ -250,6 +274,57 @@ function parseJsonFile(raw, parse) {
   }
 }
 
+function defaultReadDir(dirPath) {
+  try {
+    return fs.readdirSync(dirPath);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Newest `*-cc.json` (one per signed-in account). API-key installs have
+ * none, so no warning.
+ *
+ * @param {{
+ *   env?: NodeJS.ProcessEnv,
+ *   home?: string,
+ *   readFile?: (filePath: string) => string | null,
+ *   readDir?: (dirPath: string) => string[],
+ * }} [opts]
+ * @returns {{ main: string[], all: string[] } | null}
+ */
+function readClaudeCatalog(opts = {}) {
+  const env = opts.env || process.env;
+  const home = resolveHomedir(env, opts.home);
+  const read = opts.readFile || defaultReadFile;
+  const dir = path.join(
+    env.CLAUDE_CONFIG_DIR || path.join(home, ".claude"),
+    "cache",
+    "model-catalog",
+  );
+  let best = null;
+  let bestAt = -Infinity;
+  for (const name of (opts.readDir || defaultReadDir)(dir)) {
+    if (!name.endsWith("-cc.json")) continue;
+    const raw = read(path.join(dir, name));
+    let json;
+    try {
+      json = JSON.parse(raw);
+    } catch {
+      continue;
+    }
+    const parsed = parseClaudeCatalog(json);
+    if (!parsed) continue;
+    const at = Number(json.fetchedAt) || 0;
+    if (at > bestAt) {
+      best = parsed;
+      bestAt = at;
+    }
+  }
+  return best;
+}
+
 /**
  * Cheap live ids for one harness. Null means "do not warn".
  *
@@ -258,13 +333,16 @@ function parseJsonFile(raw, parse) {
  *   env?: NodeJS.ProcessEnv,
  *   home?: string,
  *   readFile?: (filePath: string) => string | null,
+ *   readDir?: (dirPath: string) => string[],
  *   cliCache?: Map<string, string[] | null>,
  * }} [opts]
  * @returns {string[] | null}
  */
 function readLiveIds(providerId, opts = {}) {
-  if (!providerId || providerId === "claude" || providerId === "simulate") {
-    return null;
+  if (!providerId || providerId === "simulate") return null;
+  if (providerId === "claude") {
+    const c = readClaudeCatalog(opts);
+    return c ? c.main : null;
   }
   const env = opts.env || process.env;
   const home = resolveHomedir(env, opts.home);
@@ -335,6 +413,12 @@ function attachCatalogNotes(providers, opts = {}) {
     if (!live) continue;
     const diff = diffCatalog(p.models, live);
     if (!diff) continue;
+    if (p.id === "claude") {
+      // Legacy snapshot ids live in the CLI's overflow section: still
+      // accepted, so not "CLI does not list".
+      const known = new Set((readClaudeCatalog(opts) || { all: [] }).all);
+      diff.extraSnapshot = diff.extraSnapshot.filter((id) => !known.has(id));
+    }
     let note = formatCatalogNote({
       name: p.name || p.id,
       extraLive: diff.extraLive,
@@ -428,6 +512,7 @@ module.exports = {
   parseOpencodeModels,
   parseCursorListModels,
   parseGrokModelsOutput,
+  parseClaudeCatalog,
   parseCliCatalog,
   readLiveIds,
   attachCatalogNotes,

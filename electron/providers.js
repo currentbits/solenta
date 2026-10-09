@@ -249,33 +249,26 @@ const PROVIDERS = [
     // processing a request"). Codex exec --json and one-shot -p CLIs
     // have no equivalent, so they stay queue-only.
     supportsSteer: true,
+    // Current lineup = the `section: "main"` ids in the CLI's own catalog
+    // (~/.claude/cache/model-catalog/*-cc.json, CLI 2.1.283, 2026-10-09)
+    // and the platform.claude.com models overview (1M context each; Opus 5.5
+    // is the "start here" pick). CLI 2.1.283 warns unrecognized_model for
+    // sonnet-5-5 / haiku-5-5 but the API serves them. Previous-generation
+    // ids stay for existing threads; the CLI lists them under "overflow".
     models: [
-      "claude-fable-5",
       "claude-opus-5-5",
+      "claude-fable-5-1",
+      "claude-sonnet-5-5",
+      "claude-haiku-5-5",
+      "claude-fable-5",
       "claude-opus-5",
       "claude-sonnet-5",
       "claude-haiku-4-5",
     ],
     modelInfo: [
       {
-        id: "claude-fable-5",
-        label: "Fable",
-        description: "Fast everyday coding with strong defaults",
-        vendor: "Anthropic",
-        contextTokens: 1_000_000,
-        efforts: CLAUDE_EFFORTS.slice(),
-      },
-      {
         id: "claude-opus-5-5",
         label: "Opus 5.5",
-        description: "Claude Opus 5.5 for complex coding tasks",
-        vendor: "Anthropic",
-        contextTokens: 1_000_000,
-        efforts: CLAUDE_EFFORTS.slice(),
-      },
-      {
-        id: "claude-opus-5",
-        label: "Opus",
         description: "Best for hard multi-step work",
         vendor: "Anthropic",
         recommended: true,
@@ -283,24 +276,64 @@ const PROVIDERS = [
         efforts: CLAUDE_EFFORTS.slice(),
       },
       {
-        id: "claude-sonnet-5",
-        label: "Sonnet",
+        id: "claude-fable-5-1",
+        label: "Fable 5.1",
+        description: "Most capable; uses limits much faster than Opus",
+        vendor: "Anthropic",
+        contextTokens: 1_000_000,
+        efforts: CLAUDE_EFFORTS.slice(),
+      },
+      {
+        id: "claude-sonnet-5-5",
+        label: "Sonnet 5.5",
         description: "Balanced quality and speed",
         vendor: "Anthropic",
         contextTokens: 1_000_000,
         efforts: CLAUDE_EFFORTS.slice(),
       },
       {
-        id: "claude-haiku-4-5",
-        label: "Haiku",
+        id: "claude-haiku-5-5",
+        label: "Haiku 5.5",
         description: "Cheapest and fastest replies",
+        vendor: "Anthropic",
+        contextTokens: 1_000_000,
+        efforts: CLAUDE_EFFORTS.slice(),
+      },
+      {
+        id: "claude-fable-5",
+        label: "Fable 5",
+        description: "Previous generation Fable.",
+        vendor: "Anthropic",
+        contextTokens: 1_000_000,
+        efforts: CLAUDE_EFFORTS.slice(),
+      },
+      {
+        id: "claude-opus-5",
+        label: "Opus 5",
+        description: "Previous generation Opus.",
+        vendor: "Anthropic",
+        contextTokens: 1_000_000,
+        efforts: CLAUDE_EFFORTS.slice(),
+      },
+      {
+        id: "claude-sonnet-5",
+        label: "Sonnet 5",
+        description: "Previous generation Sonnet.",
+        vendor: "Anthropic",
+        contextTokens: 1_000_000,
+        efforts: CLAUDE_EFFORTS.slice(),
+      },
+      {
+        id: "claude-haiku-4-5",
+        label: "Haiku 4.5",
+        description: "Older fast model; no effort levels.",
         vendor: "Anthropic",
         contextTokens: 200_000,
         efforts: [],
       },
     ],
     // claude --help lists low..max; 2.1.219 also accepts ultracode (no
-    // unknown-value warning). Haiku is not effort-capable.
+    // unknown-value warning). Haiku 4.5 is not effort-capable; Haiku 5.5 is.
     efforts: CLAUDE_EFFORTS.slice(),
     permissionModes: ALL_PERMISSION_MODES.slice(),
     kind: "claude-stream",
@@ -1889,6 +1922,7 @@ function listProviders(opts = {}) {
     env,
     home: opts.home,
     readFile: opts.readFile,
+    readDir: opts.readDir,
     cliCache: opts.cliCache || catalogCliCache,
   };
   catalogDivergence.attachCatalogNotes(out, catalogOpts);
