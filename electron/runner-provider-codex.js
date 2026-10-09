@@ -19,6 +19,7 @@ const {
   materializeCodexGuardrailHome,
 } = require("./codex-guardrail.js");
 const path = require("node:path");
+const threadSecrets = require("./threadSecrets.js");
 const { truncate, INPUT_TRUNCATE, OUTPUT_TRUNCATE } = require("./claude.js");
 const codexParse = require("./codex.js");
 const { isCodexChildThread } = require("./codex-appserver.js");
@@ -383,7 +384,7 @@ function createCodexRun(ctx) {
       binary: spawn.binary,
       args: spawn.args,
       cwd: spawn.cwd,
-      envExtra: codexMcpEnv,
+      envExtra: threadSecrets.withEnv(threadId, codexMcpEnv),
       prompt,
       images: nativeImages,
       sessionId: resumeId,

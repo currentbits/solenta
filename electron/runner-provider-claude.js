@@ -27,6 +27,7 @@ const {
   materializeGrokHome,
 } = require("./grok.js");
 const path = require("node:path");
+const threadSecrets = require("./threadSecrets.js");
 const { classifyTool } = require("./guardrails.js");
 const { isMemoryConsolidateTool } = require("./memory-consolidate.js");
 const { saveToolImages, extractImages } = require("./tool-images.js");
@@ -1130,8 +1131,12 @@ function createClaudeRun(ctx) {
       entryDef.id === "grok"
         ? mergeGrokSpawnEnv({ ...(otelEnv || {}), ...(grokHomeEnv || {}) })
         : otelEnv;
-    const spawnEnv =
-      grokMerged && Object.keys(grokMerged).length > 0 ? grokMerged : undefined;
+    // Secret request values (#1531) also join the reuse key: a new secret
+    // respawns the warm CLI so the next turn sees it.
+    const spawnEnv = threadSecrets.withEnv(
+      threadId,
+      grokMerged && Object.keys(grokMerged).length > 0 ? grokMerged : undefined,
+    );
 
     // Reuse key: everything a spawn bakes into argv/env EXCEPT the session
     // id (--resume changes after turn one; the live process needs no resume).

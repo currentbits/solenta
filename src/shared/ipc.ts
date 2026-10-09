@@ -611,6 +611,12 @@ export interface ThreadInfo {
    */
   pendingQuestion?: PendingQuestionCard | null;
   /**
+   * An agent secret request (issue #1531), PERSISTED like pendingQuestion.
+   * Holds only the name and prompt: the value the user types goes to
+   * threads.answerSecret and lives in main-process memory, never here.
+   */
+  pendingSecret?: PendingSecretCard | null;
+  /**
    * A plan awaiting approval, PERSISTED (issue #707). Claude asks to leave
    * plan mode over the live permission channel (ExitPlanMode); other
    * providers finish the turn with the plan as assistant text, so the card
@@ -1801,6 +1807,15 @@ export interface PendingQuestionCard {
   id: string;
   questions: PendingQuestion[];
   /** Epoch ms the agent asked. */
+  askedAt: number;
+}
+
+/** A persisted secret request card (issue #1531): the coder-threads secret_request tool. */
+export interface PendingSecretCard {
+  id: string;
+  /** Env var name the value is exposed as, e.g. STRIPE_API_KEY. */
+  name: string;
+  prompt: string;
   askedAt: number;
 }
 
@@ -4328,6 +4343,16 @@ export interface CoderApi {
      * clear the card themselves. No-op when nothing is pending.
      */
     clearQuestion(input: { threadId: string }): Promise<void>;
+    /**
+     * Answer the secret card (ThreadInfo.pendingSecret), or dismiss it with
+     * value null (issue #1531). The value is set in the env of the thread's
+     * next runs only; it never reaches the store, transcript or agent text.
+     */
+    answerSecret(input: {
+      threadId: string;
+      requestId: string;
+      value: string | null;
+    }): Promise<void>;
     /** Archive or unarchive; archived threads are hidden by default but fully intact. */
     setArchived(input: { threadId: string; archived: boolean }): Promise<ThreadInfo>;
     /**

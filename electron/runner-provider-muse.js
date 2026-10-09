@@ -5,6 +5,7 @@
 
 const { resolveBin } = require("./providers.js");
 const path = require("node:path");
+const threadSecrets = require("./threadSecrets.js");
 const {
   materializeMuseHome,
   museChildEnv,
@@ -376,7 +377,7 @@ function createMuseRun(ctx) {
       binary: spawn.binary,
       args: spawn.args,
       cwd: spawn.cwd,
-      env: museEnv,
+      env: threadSecrets.withEnv(threadId, museEnv),
       onEvent: (ev) => {
         if (!guard()) return;
 

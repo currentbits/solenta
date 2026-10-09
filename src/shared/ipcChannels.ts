@@ -131,6 +131,7 @@ export const IPC_CHANNELS = [
   { ns: "threads", method: "setPermissionMode" },
   { ns: "threads", method: "respondPermission" },
   { ns: "threads", method: "clearQuestion" },
+  { ns: "threads", method: "answerSecret" },
   { ns: "threads", method: "setArchived" },
   { ns: "threads", method: "setSettled" },
   { ns: "threads", method: "setPinned" },

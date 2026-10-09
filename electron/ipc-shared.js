@@ -3,6 +3,7 @@
 const path = require("node:path");
 const { scheduleRetention } = require("./worktrees.js");
 const devservers = require("./devservers.js");
+const threadSecrets = require("./threadSecrets.js");
 
 /**
  * A thread the user pushed out of attention (settled, archived, deleted,
@@ -20,6 +21,8 @@ function retireAgent(ctx, threadId) {
   } else if (typeof ctx.runner.disposeClaudeSession === "function") {
     ctx.runner.disposeClaudeSession(threadId);
   }
+  // #1531: a secret request value lives until archive / settle / delete.
+  threadSecrets.clear(threadId);
   // #315: leftover npm run dev is its own process group, not the CLI's.
   try {
     devservers.stop(threadId);

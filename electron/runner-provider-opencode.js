@@ -10,6 +10,7 @@ const {
   materializeOpencodeGuardrailDir,
 } = require("./opencode-guardrail.js");
 const path = require("node:path");
+const threadSecrets = require("./threadSecrets.js");
 const opencodeParse = require("./opencode.js");
 const { runOpencode } = opencodeParse;
 const { guardrailNotice } = require("./guardrail-hook-core.js");
@@ -254,7 +255,7 @@ function createOpencodeRun(ctx) {
       binary: spawn.binary,
       args: spawn.args,
       cwd: spawn.cwd,
-      env: opencodeEnv,
+      env: threadSecrets.withEnv(threadId, opencodeEnv),
       onEvent: (ev) => {
         if (!guard()) return;
 

@@ -80,6 +80,7 @@ import { collapseTimeline, type DisplayEntry } from "../toolGroups";
 import { RunArtifacts } from "./RunArtifacts";
 import { QuestionPrompt } from "./QuestionPrompt";
 import { InputPrompt } from "./InputPrompt";
+import { SecretPrompt } from "./SecretPrompt";
 import { threadProviderRef } from "../format";
 import { formatQuestionAnswer } from "../questionAnswer";
 import { supportsImagesForModel } from "../modelPicker";
@@ -340,6 +341,8 @@ interface ThreadViewProps {
    * answering (issue #647). Answering goes through onStartRun instead.
    */
   onClearQuestion: () => void | Promise<void>;
+  /** Answer (value) or dismiss (null) thread.pendingSecret (issue #1531). */
+  onAnswerSecret?: (requestId: string, value: string | null) => void | Promise<void>;
   onSetProvider: (input: {
     provider?: string;
     model?: string | null;
@@ -720,6 +723,7 @@ export const ThreadView = memo(function ThreadView({
   onImplementPlan,
   onSavePlan,
   onClearQuestion,
+  onAnswerSecret,
   onSetProvider,
   onSetReasoningEffort,
   onSetWebSearch,
@@ -4022,6 +4026,14 @@ export const ThreadView = memo(function ThreadView({
             }}
             onDismiss={() => onClearQuestion()}
             {...questionAttach}
+          />
+        ) : null}
+
+        {thread.pendingSecret && onAnswerSecret ? (
+          <SecretPrompt
+            key={`${thread.id}:${thread.pendingSecret.id}`}
+            card={thread.pendingSecret}
+            onAnswer={(value) => onAnswerSecret(thread.pendingSecret!.id, value)}
           />
         ) : null}
 

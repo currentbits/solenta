@@ -220,6 +220,10 @@ module.exports = {
     // clears the card in startRun / setQueued. Pushes its own detail.
     ctx.runner.clearQuestion(input);
   },
+  "threads:answerSecret": async (ctx, input) => {
+    // Value goes to threadSecrets only (issue #1531). Pushes its own detail.
+    ctx.runner.answerSecret(input);
+  },
   "threads:setPermissionMode": async (ctx, input) => {
     const updated = services.setPermissionMode(ctx.store, input);
     services.recordLastUsedDefaults(ctx.store, input.threadId);
