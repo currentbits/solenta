@@ -607,6 +607,7 @@ async function startWorkflowRun(deps) {
     if (!agent) return null;
 
     agent.__attempted = true;
+    delete agent.__interrupted;
     agent.__prompt = agentPrompt;
     agent.status = "running";
     agent.tokensUsed = 0;
@@ -849,43 +850,57 @@ async function startWorkflowRun(deps) {
     const phaseView = view.phases[loc.phaseIndex];
     const phaseSpec = phaseSpecFromView(phaseView);
     const priorOutputs = collectPriorOutputs(view, loc.phaseIndex);
-    const agentPrompt = buildAgentPrompt({
-      userPrompt: prompt,
-      instruction: phaseSpec.instruction,
-      agentIndex: loc.agentIndex,
-      agentCount: phaseSpec.agentCount,
-      priorOutputs,
+    // Siblings cut off by a crash, quit, or stop rerun with the picked slot,
+    // so a resumed phase is whole again (#182). Settled phases are reused.
+    const slots = [];
+    phaseView.agents.forEach((a, i) => {
+      if (
+        i === loc.agentIndex ||
+        (a.__interrupted && a.status === "failed")
+      ) {
+        slots.push(i);
+      }
     });
 
     if (!guard()) return;
     beginPhase(phaseSpec.name);
     schedulePush(true);
-    const retryItemId = beginWorkLogStep(
-      threadId,
-      runId,
-      `${capitalize(phaseSpec.name)} agent ${loc.agentIndex + 1} retrying`,
+    const results = await Promise.all(
+      slots.map(async (i) => {
+        const retryItemId = beginWorkLogStep(
+          threadId,
+          runId,
+          `${capitalize(phaseSpec.name)} agent ${i + 1} retrying`,
+        );
+        schedulePush(true);
+        try {
+          return await runOneAgent({
+            agentId: phaseView.agents[i].id,
+            agentPrompt: buildAgentPrompt({
+              userPrompt: prompt,
+              instruction: phaseSpec.instruction,
+              agentIndex: i,
+              agentCount: phaseSpec.agentCount,
+              priorOutputs,
+            }),
+            providerId: phaseSpec.provider,
+            model: phaseSpec.model,
+            phaseName: phaseSpec.name,
+            agentIndex: i,
+          });
+        } finally {
+          completeWorkLogStep(threadId, retryItemId);
+          schedulePush(true);
+        }
+      }),
     );
-    schedulePush(true);
-    let result = null;
-    try {
-      result = await runOneAgent({
-        agentId,
-        agentPrompt,
-        providerId: phaseSpec.provider,
-        model: phaseSpec.model,
-        phaseName: phaseSpec.name,
-        agentIndex: loc.agentIndex,
-      });
-    } finally {
-      completeWorkLogStep(threadId, retryItemId);
-      schedulePush(true);
-    }
     if (!guard()) return;
     completePhase(phaseSpec.name);
 
     const phaseHasSettled = phaseView.agents.some((a) => a.status === "settled");
-    if ((!result || !result.ok) && !phaseHasSettled) {
-      failRun(agentId, (result && result.stderr) || "retry failed");
+    if (!phaseHasSettled) {
+      const failed = results.find((r) => r && r.stderr);
+      failRun(agentId, (failed && failed.stderr) || "retry failed");
       return;
     }
 
@@ -1085,6 +1100,8 @@ function stopWorkflowEntry(entry) {
       for (const agent of phase.agents) {
         if (agent.status === "running" || agent.status === "pending") {
           agent.status = "failed";
+          // Retry reruns the whole interrupted phase (#182).
+          agent.__interrupted = true;
         }
       }
     }
