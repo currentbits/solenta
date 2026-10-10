@@ -95,7 +95,7 @@ describe("planboardNoteFor", () => {
     fs.mkdirSync(plain);
     git(plain, ["init", "-q"]);
     assert.equal(planboardNoteFor(plain), "");
-    git(plain, ["remote", "add", "origin", "https://gitlab.com/a/b.git"]);
+    git(plain, ["remote", "add", "origin", "https://bitbucket.org/a/b.git"]);
     assert.equal(planboardNoteFor(plain), "");
   });
 
