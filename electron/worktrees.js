@@ -65,6 +65,7 @@ const {
   mergeWorktree,
   removeWorktree,
   setupWorktree,
+  copyWorktreeIncludes,
   retargetWorktreeBase,
   maybeRenameWorktreeBranch,
   ensureWorktree,
@@ -124,6 +125,7 @@ const {
 module.exports = {
   assertNoOutboundSecrets,
   setupWorktree,
+  copyWorktreeIncludes,
   retargetWorktreeBase,
   listBranches,
   listBranchesAsync,
