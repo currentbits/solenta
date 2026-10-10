@@ -286,6 +286,17 @@ describe("merge queue lanes (#346)", () => {
     );
   });
 
+  it("refuses a dirty main checkout even with status.showUntrackedFiles=no (#1519)", () => {
+    const a = makeThread("A");
+    claimLane({ store, threadId: a.id, worktreeBase, now: 1_000 });
+    git(project.path, ["config", "status.showUntrackedFiles", "no"]);
+    fs.writeFileSync(path.join(project.path, "dirty.txt"), "nope\n");
+    assert.throws(
+      () => previewLane({ store, projectId: project.id, lane: 1 }),
+      /dirty/i,
+    );
+  });
+
   it("recycles a wedged lane without closing issues or moving main", async () => {
     const a = makeThread("A");
     store.updateThread(a.id, { issueNumber: 123 });

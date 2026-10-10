@@ -160,12 +160,14 @@ function realOrResolved(p) {
  * @returns {{ ok: boolean, combined: string }}
  */
 function removeWorktreeDir(repoPath, wtPath, force) {
+  // #1519: git's own clean check honours status.showUntrackedFiles=no and
+  // would delete untracked files; force it back to normal.
   const fallback = () =>
     gitTry(
       repoPath,
       force
         ? ["worktree", "remove", "--force", wtPath]
-        : ["worktree", "remove", wtPath],
+        : ["-c", "status.showUntrackedFiles=normal", "worktree", "remove", wtPath],
     );
   const list = gitTry(repoPath, ["worktree", "list", "--porcelain"]);
   if (!list.ok) return fallback();
@@ -177,7 +179,16 @@ function removeWorktreeDir(repoPath, wtPath, force) {
     .map((l) => realOrResolved(l.slice("worktree ".length)));
   if (!linked.includes(target)) return fallback();
   if (!force) {
-    const st = gitTry(wtPath, ["status", "--porcelain"]);
+    // git refuses worktrees with submodules; let it say so (#1519).
+    if (fs.existsSync(path.join(target, ".gitmodules"))) return fallback();
+    // #1519: plain status honours status.showUntrackedFiles=no and
+    // submodule.*.ignore, so a dirty tree read as clean and was deleted.
+    const st = gitTry(wtPath, [
+      "status",
+      "--porcelain",
+      "--untracked-files=normal",
+      "--ignore-submodules=none",
+    ]);
     if (!st.ok) return fallback();
     if (st.stdout) {
       return {
