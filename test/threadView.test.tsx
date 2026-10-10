@@ -4445,7 +4445,7 @@ describe("ThreadView queued follow-up wrap (issue #903)", () => {
   });
 });
 
-const NOTICE_FOOTER = "Continue orchestrating; thread_status has full details.";
+const NOTICE_FOOTER = "Continue orchestrating. thread_status only repeats the reply line above, so do not call it for a finished worker; review its branch with git (log/diff against your branch) before reporting.";
 
 function landingSuffix(threadId: string, branch = "coder/feature"): string {
   return (
@@ -4510,7 +4510,7 @@ describe("routine worker activity", () => {
       /Worker (?:&quot;|")backend(?:&quot;|") finished\. API is in contract\.md/,
     );
     assert.ok(
-      html.includes("Continue orchestrating; thread_status has full details."),
+      html.includes(NOTICE_FOOTER),
       "original footer stays in the document",
     );
     assert.ok(html.includes("Worker thread w-1"), "original worker line stays");
@@ -4538,6 +4538,31 @@ describe("routine worker activity", () => {
     );
   });
 
+  it("folds with the footer the runner actually sends (#1436)", () => {
+    const helpersSrc = fs.readFileSync(
+      path.join(path.dirname(fileURLToPath(import.meta.url)), "../electron/runnerHelpers.js"),
+      "utf8",
+    );
+    assert.ok(
+      helpersSrc.includes(JSON.stringify("\n" + NOTICE_FOOTER)),
+      "noticePrompt footer matches the fold matcher",
+    );
+    assert.doesNotMatch(NOTICE_FOOTER, /full details/);
+  });
+
+  it("still folds notices stored with the pre-#1436 footer", () => {
+    const legacy = routine.replace(
+      NOTICE_FOOTER,
+      "Continue orchestrating; thread_status has full details.",
+    );
+    assert.equal(
+      routineWorkerActivitySummary(
+        msg({ id: "old", role: "user", text: legacy, fromNotice: true }),
+      ),
+      'Worker "backend" finished. API is in contract.md',
+    );
+  });
+
   it("opens and closes the original text from the summary", async () => {
     const m = await mount(
       view({
@@ -4560,7 +4585,7 @@ describe("routine worker activity", () => {
     assert.equal(activityDetails(m).open, true);
     assert.ok(
       activityDetails(m).querySelector("[data-worker-activity-body]")?.textContent?.includes(
-        "Continue orchestrating; thread_status has full details.",
+        NOTICE_FOOTER,
       ),
     );
     await m.click(activityDetails(m).querySelector("summary"));

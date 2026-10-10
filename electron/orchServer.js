@@ -92,13 +92,11 @@ const INSTRUCTIONS =
   "unattended/scheduled, unknown). Pass fromThreadId as YOUR OWN thread id so " +
   "the receiver sees a card attributed to you. Mid-run sends are held, not " +
   "injected. thread_status reports a thread's status and the first line of " +
-  "its last assistant reply. Runs are asynchronous: send work, then continue. " +
-  "When a worker you forked finishes (done or failed) you are woken on a new turn " +
-  "with a notice; do not sit idle waiting for the user to relay that. " +
-  "thread_status still has full details if you need them before the wake-up. " +
-  "A worker can also stall on a permission prompt only the user can answer: that " +
-  "sends no notice and stays \"working\", so if one goes quiet check thread_status " +
-  "for awaitingInput and tell the user what it is waiting on. " +
+  "its last assistant reply. Runs are asynchronous. After thread_fork or " +
+  "thread_send, end your turn: each worker's finish (done or failed) wakes you " +
+  "with a notice quoting its last reply. Do not poll thread_status, sleep, " +
+  "or start watchers while workers run. A worker blocked on a permission prompt shows as needing " +
+  "the user in the sidebar. " +
   "The shared task list is per-crew and self-claimed: task_list then task_claim " +
   "with no taskId takes the next unblocked task. Finish with task_complete and a " +
   "note; hand a task back with task_release rather than looping. Talk to a peer " +
@@ -1466,7 +1464,7 @@ function buildMcpServer(sdk, handlers, opts = {}) {
     "thread_status",
     {
       description:
-        "Status of one thread: status, title, provider, lastAssistantText (first line of the last assistant message, null when none), lastError (run error detail when status is failed, null otherwise), awaitingInput (true when the run is stalled on a permission prompt only the user can answer) and awaitingPermission (what it is asking for).",
+        "Status of one thread: status, title, provider, lastAssistantText (first line of the last assistant message, null when none), lastError (run error detail when status is failed, null otherwise), awaitingInput (true when the run is stalled on a permission prompt only the user can answer) and awaitingPermission (what it is asking for). Do not call it in a loop; finished workers wake you.",
       inputSchema: {
         threadId: z.string().min(1),
       },
