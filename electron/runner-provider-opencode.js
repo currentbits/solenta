@@ -4,6 +4,7 @@
 // Follows the seam convention in the header of electron/runner-watchdogs.js.
 
 const { resolveBin } = require("./providers.js");
+const { withProjectEnv } = require("./worktreeEnv.js");
 const { guardrailsEnabled } = require("./guardrails.js");
 const {
   deployOpencodeGuardrailOverlay,
@@ -256,7 +257,7 @@ function createOpencodeRun(ctx) {
       binary: spawn.binary,
       args: spawn.args,
       cwd: spawn.cwd,
-      env: threadSecrets.withEnv(threadId, opencodeEnv),
+      env: threadSecrets.withEnv(threadId, withProjectEnv(project, opencodeEnv)),
       onEvent: (ev) => {
         if (!guard()) return;
 

@@ -5,6 +5,7 @@ const {
   normalizePostMerge,
 } = require("./postmerge.js");
 const { normalizeAcceptedHunks } = require("./reviewItinerary.js");
+const { normalizeProjectEnv } = require("./worktreeEnv.js");
 const { normalizeBtwCards } = require("./btw.js");
 const { normalizePendingQuestion } = require("./questions.js");
 const { normalizeMessagePins } = require("./messagePins.js");
@@ -224,6 +225,9 @@ function migrateProject(p) {
   const quickActions = normalizeQuickActions(next.quickActions);
   if (quickActions) next.quickActions = quickActions;
   else delete next.quickActions;
+  const env = normalizeProjectEnv(next.env);
+  if (Object.keys(env).length) next.env = env;
+  else delete next.env;
   const threadDefaults = normalizeThreadDefaults(next.threadDefaults);
   if (threadDefaults) next.threadDefaults = threadDefaults;
   else delete next.threadDefaults;

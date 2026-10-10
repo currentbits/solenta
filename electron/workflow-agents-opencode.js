@@ -1,6 +1,7 @@
 "use strict";
 
 const path = require("node:path");
+const { withProjectEnv } = require("./worktreeEnv.js");
 const {
   getProvider,
   resolveBin,
@@ -122,7 +123,7 @@ function spawnAgentOpencode(opts) {
     binary: spawn.binary,
     args: spawn.args,
     cwd: spawn.cwd,
-    env: opencodeEnv,
+    env: withProjectEnv(project, opencodeEnv),
     onEvent: (ev) => {
       gotJson = true;
       if (!ev || typeof ev !== "object") return;

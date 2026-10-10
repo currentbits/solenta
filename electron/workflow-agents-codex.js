@@ -1,6 +1,7 @@
 "use strict";
 
 const os = require("node:os");
+const { withProjectEnv } = require("./worktreeEnv.js");
 const path = require("node:path");
 const {
   runCodex,
@@ -151,7 +152,7 @@ function spawnAgentCodex(opts) {
     binary: spawn.binary,
     args: spawn.args,
     cwd: spawn.cwd,
-    envExtra,
+    envExtra: withProjectEnv(project, envExtra),
     onEvent: (ev) => {
       if (!ev || typeof ev !== "object") return;
       const sid = realSessionId(codexExtractSessionId(ev));
