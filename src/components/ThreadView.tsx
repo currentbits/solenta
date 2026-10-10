@@ -976,7 +976,7 @@ export const ThreadView = memo(function ThreadView({
   /** Bumps after a successful push so the sync pill refetches. */
   const [syncRefreshNonce, setSyncRefreshNonce] = useState(0);
   /** Brief inline confirmation after copying the thread id. */
-  const [copiedThreadId, setCopiedThreadId] = useState(false);
+  const [copied, setCopied] = useState<"id" | "link" | null>(null);
   /** Header quick action currently in flight (issue #153). */
   const [commandRunningId, setCommandRunningId] = useState<string | null>(null);
   const [commandError, setCommandError] = useState<string | null>(null);
@@ -1943,7 +1943,7 @@ export const ThreadView = memo(function ThreadView({
       setRunStatList([]);
       setCollapsedRuns(new Set<string>());
       setSyncRefreshNonce(0);
-      setCopiedThreadId(false);
+      setCopied(null);
       setLightbox(null);
       setIncomingHandoff(null);
       setSnapOpen(false);
@@ -2449,18 +2449,20 @@ export const ThreadView = memo(function ThreadView({
   const workerNavLabel = handoffSource?.orchWorker ? "Parent worker" : "Task";
   const workersLabel = `Workers (${workerCount})`;
 
-  const handleCopyThreadId = async () => {
+  const handleCopy = async (what: "id" | "link") => {
     try {
-      await navigator.clipboard.writeText(thread.id);
+      await navigator.clipboard.writeText(
+        what === "id" ? thread.id : `solenta://thread/${thread.id}`,
+      );
     } catch {
       return;
     }
-    setCopiedThreadId(true);
+    setCopied(what);
     if (copyFlashTimer.current != null) {
       clearTimeout(copyFlashTimer.current);
     }
     copyFlashTimer.current = setTimeout(() => {
-      setCopiedThreadId(false);
+      setCopied(null);
       copyFlashTimer.current = null;
     }, COPY_FLASH_MS);
   };
@@ -2811,9 +2813,18 @@ export const ThreadView = memo(function ThreadView({
                         className={styles.menuItem}
                         role="menuitem"
                         data-copy-thread-id=""
-                        onClick={() => void handleCopyThreadId()}
+                        onClick={() => void handleCopy("id")}
                       >
-                        {copiedThreadId ? "Copied" : "Copy thread ID"}
+                        {copied === "id" ? "Copied" : "Copy thread ID"}
+                      </button>
+                      <button
+                        type="button"
+                        className={styles.menuItem}
+                        role="menuitem"
+                        data-copy-thread-link=""
+                        onClick={() => void handleCopy("link")}
+                      >
+                        {copied === "link" ? "Copied" : "Copy link"}
                       </button>
                       {onRenameThread && !isWorking && (
                         <button

@@ -137,6 +137,8 @@ export interface FakeCoder {
   only(channel: string): Call;
   /** Push a threads:changed event to whatever subscribed. */
   emitThreads(push: ThreadListPush): void;
+  /** Main-process select push (notification click or solenta:// link). */
+  emitSelect(channel: "thread:select" | "project:select", id: string): void;
   /** Push a thread:updated event (a full detail is a valid ThreadPatch). */
   emitThread(detail: ThreadPatch): void;
   /** Push boot:ready so useCoder refetches lists (#618). */
@@ -594,6 +596,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
   ];
 
   const threadSubs: Array<(t: ThreadListPush) => void> = [];
+  const selectSubs: Array<{ channel: string; cb: (id: string) => void }> = [];
   const detailSubs: Array<(d: ThreadPatch) => void> = [];
   const bootReadySubs: Array<() => void> = [];
   const stayAwakeSubs: Array<(s: StayAwakeStatus) => void> = [];
@@ -3989,8 +3992,13 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           if (i >= 0) threadSubs.splice(i, 1);
         };
       }
-      if (channel === "thread:select") {
-        return () => {};
+      if (channel === "thread:select" || channel === "project:select") {
+        const sub = { channel, cb: cb as (id: string) => void };
+        selectSubs.push(sub);
+        return () => {
+          const i = selectSubs.indexOf(sub);
+          if (i >= 0) selectSubs.splice(i, 1);
+        };
       }
       if (channel === "boot:ready") {
         bootReadySubs.push(cb as () => void);
@@ -4048,6 +4056,8 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       return hits[0];
     },
     emitThreads: (next) => threadSubs.forEach((cb) => cb(next)),
+    emitSelect: (channel, id) =>
+      selectSubs.filter((s) => s.channel === channel).forEach((s) => s.cb(id)),
     emitThread: (d) => detailSubs.forEach((cb) => cb(d)),
     emitBootReady: () => bootReadySubs.forEach((cb) => cb()),
     emitStayAwake: (s) => stayAwakeSubs.forEach((cb) => cb(s)),
@@ -4058,7 +4068,8 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       bootReadySubs.length +
       stayAwakeSubs.length +
       simulatorSubs.length +
-      speechSubs.length,
+      speechSubs.length +
+      selectSubs.length,
   };
 }
 

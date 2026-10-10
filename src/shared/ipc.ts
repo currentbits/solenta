@@ -5804,8 +5804,10 @@ export interface CoderApi {
   /** Returns an unsubscribe function. */
   on(channel: "threads:changed", cb: (push: ThreadListPush) => void): () => void;
   on(channel: "thread:updated", cb: (patch: ThreadPatch) => void): () => void;
-  /** Desktop notification click: select this thread. */
+  /** Notification click or solenta://thread/<id> link: open this thread. */
   on(channel: "thread:select", cb: (threadId: string) => void): () => void;
+  /** solenta://project/<id> deep link: scope the sidebar to it (#186). */
+  on(channel: "project:select", cb: (projectId: string) => void): () => void;
   /** Main-process store + IPC handlers are up; refetch boot lists (#618). */
   on(channel: "boot:ready", cb: () => void): () => void;
   /** Stay-awake derived state flipped (mode, blocking, battery) (#364). */

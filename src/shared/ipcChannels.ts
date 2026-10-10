@@ -22,6 +22,7 @@ export const PUSH_CHANNELS = [
   "threads:changed",
   "thread:updated",
   "thread:select",
+  "project:select",
   "boot:ready",
   "stayAwake:changed",
   "simulator:changed",

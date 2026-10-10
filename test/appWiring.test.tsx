@@ -370,6 +370,54 @@ describe("App thread selection wiring", () => {
   });
 });
 
+describe("App deep link wiring (#186)", () => {
+  it("thread:select opens the linked thread from another view", async () => {
+    const fake = createFakeCoder({
+      threads: [
+        thread({ id: "ta", title: "alpha thread" }),
+        thread({ id: "tb", title: "beta thread" }),
+      ],
+      details: {
+        tb: detail({ thread: thread({ id: "tb", title: "beta thread" }) }),
+      },
+    });
+    const m = await boot(fake);
+    await openAppDestination(m, "kanban");
+    assert.equal(m.query("[data-thread-view]"), null, "on the board");
+    await inAct(() => fake.emitSelect("thread:select", "tb"));
+    await m.flush();
+    const gets = fake.of("threads.get");
+    assert.equal(gets[gets.length - 1]?.args[0], "tb");
+    assert.ok(
+      m.query('[data-thread-card="tb"][data-active="true"]'),
+      "linked thread is the active row",
+    );
+    m.unmount();
+  });
+
+  it("project:select scopes the sidebar to the linked project", async () => {
+    const fake = createFakeCoder({
+      projects: [
+        project({ id: "p1", slug: "owner/one" }),
+        project({ id: "p2", slug: "owner/two" }),
+      ],
+      threads: [
+        thread({ id: "ta", title: "alpha thread", projectId: "p1" }),
+        thread({ id: "tb", title: "beta thread", projectId: "p2" }),
+      ],
+    });
+    const m = await boot(fake);
+    const scope = () => m.query('[aria-label="Filter threads by project"]');
+    assert.equal(scope()?.getAttribute("data-active"), null, "starts unscoped");
+    await inAct(() => fake.emitSelect("project:select", "p2"));
+    await m.flush();
+    assert.equal(scope()?.getAttribute("data-active"), "true");
+    assert.ok((scope()?.textContent || "").includes("owner/two"));
+    assert.ok(m.query('[data-thread-card="tb"]'), "p2 thread listed");
+    m.unmount();
+  });
+});
+
 describe("App memory wiring", () => {
   it("hands the Memory tab the RECENT channel, not search", async () => {
     // The two have compatible shapes, so swapping them typechecks and every
