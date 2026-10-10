@@ -11,6 +11,7 @@ const {
   isHttpUrl,
   validateAgentProfiles,
   matchingProfileId,
+  parsePromptSnippets,
   DEFAULT_AUTO_SETTLE_AFTER_DAYS,
   normalizeDefaultProvider,
   normalizeDefaultModel,
@@ -93,6 +94,7 @@ class StoreSettingsMethods {
       agentProfiles: n.agentProfiles,
       providerInstances: n.providerInstances,
       defaultOrchestratorProfileId: n.defaultOrchestratorProfileId,
+      promptSnippets: n.promptSnippets,
       subagentPool: n.subagentPool,
       otel: n.otel,
       linearApiKey: n.linearApiKey,
@@ -311,6 +313,12 @@ class StoreSettingsMethods {
         throw new Error("notificationSound must be a boolean");
       }
       this.data.settings.notificationSound = v;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "promptSnippets")) {
+      this.data.settings.promptSnippets = parsePromptSnippets(
+        patch.promptSnippets,
+        true,
+      );
     }
     if (Object.prototype.hasOwnProperty.call(patch, "feltEstimatePrompt")) {
       const v = patch.feltEstimatePrompt;

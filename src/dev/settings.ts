@@ -3,6 +3,7 @@ import type {
   AppSettings,
   CoderApi,
   AgentProfile,
+  PromptSnippet,
   ProviderInstance,
   McpServerInfo,
   PairingCreated,
@@ -77,6 +78,8 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
   let providerInstances: ProviderInstance[] = [];
   /** Planboard Orchestrator: Default (#725). */
   let defaultOrchestratorProfileId: string | null = null;
+  /** Prompt snippets (#189), in-memory. */
+  let promptSnippets: PromptSnippet[] = [];
   /** Described worker-model pool (Settings), in-memory. */
   let subagentPool: SubagentPool = {
     defaultAlias: null,
@@ -163,6 +166,7 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           agentProfiles: agentProfiles.map((p) => ({ ...p })),
           providerInstances: providerInstances.map((p) => ({ ...p, env: { ...p.env } })),
           defaultOrchestratorProfileId,
+          promptSnippets: promptSnippets.map((sn) => ({ ...sn })),
           subagentPool: {
             ...subagentPool,
             entries: subagentPool.entries.map((e) => ({ ...e })),
@@ -387,6 +391,13 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           }
           defaultOrchestratorProfileId = id || null;
         }
+        if (Object.prototype.hasOwnProperty.call(patch, "promptSnippets")) {
+          // ponytail: shape check only; the real store validates names/text.
+          if (!Array.isArray(patch.promptSnippets)) {
+            throw new Error("promptSnippets must be an array");
+          }
+          promptSnippets = patch.promptSnippets.map((sn) => ({ ...sn }));
+        }
         if (Object.prototype.hasOwnProperty.call(patch, "subagentPool")) {
           const v = patch.subagentPool;
           if (!v || typeof v !== "object" || Array.isArray(v)) {
@@ -472,6 +483,7 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           agentProfiles: agentProfiles.map((p) => ({ ...p })),
           providerInstances: providerInstances.map((p) => ({ ...p, env: { ...p.env } })),
           defaultOrchestratorProfileId,
+          promptSnippets: promptSnippets.map((sn) => ({ ...sn })),
           subagentPool: {
             ...subagentPool,
             entries: subagentPool.entries.map((e) => ({ ...e })),

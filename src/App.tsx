@@ -1963,6 +1963,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onRevertFile={revertFile}
         onSuggestCommitMessage={suggestCommitMessage}
         onListFiles={listFiles}
+        promptSnippets={settings?.promptSnippets}
         onPickDirectory={pickDirectory}
         onListSnapWindows={listSnapWindows}
         onCaptureSnapWindow={captureSnapWindow}

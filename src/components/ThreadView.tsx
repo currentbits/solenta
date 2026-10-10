@@ -57,6 +57,7 @@ import type {
   WorkflowTemplateInfo,
   EditorId,
   EditorOption,
+  PromptSnippet,
 } from "../shared/ipc";
 import {
   THREAD_NOTES_MAX,
@@ -480,6 +481,8 @@ interface ThreadViewProps {
   onSuggestCommitMessage: () => Promise<{ message: string }>;
   /** File lookup for the composer @-mention popup. */
   onListFiles?: (query: string) => Promise<string[]>;
+  /** Saved snippets offered in the @-mention popup (issue #189). */
+  promptSnippets?: readonly PromptSnippet[];
   /** Native folder picker; returns an absolute path or null. */
   onPickDirectory?: () => Promise<string | null>;
   /** AppSnap: on-screen windows the user can capture. */
@@ -784,6 +787,7 @@ export const ThreadView = memo(function ThreadView({
   onRevertFile,
   onSuggestCommitMessage,
   onListFiles,
+  promptSnippets,
   onPickDirectory,
   onListSnapWindows,
   onCaptureSnapWindow,
@@ -4586,6 +4590,7 @@ export const ThreadView = memo(function ThreadView({
         error={runError}
         onDismissError={onDismissRunError}
         onListFiles={onListFiles}
+        promptSnippets={promptSnippets}
         onPickMentionFolder={
           onPickDirectory ? pickMentionFolder : undefined
         }
