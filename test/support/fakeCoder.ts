@@ -233,6 +233,8 @@ export interface FakeOptions {
   spaces?: SpaceInfo[];
   threads?: ThreadInfo[];
   providers?: ProviderInfo[];
+  /** threads.listAgents rows (#172); empty by default. */
+  agents?: Array<{ name: string; description: string; source: "builtin" | "project" | "user" }>;
   workflows?: WorkflowTemplateInfo[];
   automations?: AutomationInfo[];
   /** Per-automation retained runs for automations.listRuns. */
@@ -2660,6 +2662,9 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       setWebSearch: (input: unknown) =>
         rec("threads.setWebSearch", [input], thread()),
       setFast: (input: unknown) => rec("threads.setFast", [input], thread()),
+      setAgent: (input: unknown) => rec("threads.setAgent", [input], thread()),
+      listAgents: (input: unknown) =>
+        rec("threads.listAgents", [input], opts.agents ?? []),
       /**
        * Honest fork (round 49 contract / electron forkThread): new thread
        * same project, copies provider/model/permissionMode unless overridden;

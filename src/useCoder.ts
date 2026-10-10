@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   ActivityItem,
+  CliAgentInfo,
   AppSettings,
   WebhookTestResult,
   AppStatus,
@@ -350,6 +351,12 @@ export interface UseCoderResult {
    * Pass threadId when applying to a fork that is not selected.
    */
   setWebSearch: (webSearch: boolean, threadId?: string) => Promise<void>;
+  /** Run the selected thread as a CLI custom agent (#172); null = default. */
+  setAgent: (agent: string | null, threadId?: string) => Promise<void>;
+  listAgents: (input: {
+    provider: string;
+    projectPath?: string | null;
+  }) => Promise<CliAgentInfo[]>;
   setFast: (fast: boolean, threadId?: string) => Promise<void>;
   /**
    * Archive or unarchive a thread. Defaults to the selected thread.
@@ -1533,6 +1540,8 @@ export function useCoder(): UseCoderResult {
     setProvider,
     setReasoningEffort,
     setWebSearch,
+    setAgent,
+    listAgents,
     setFast,
     setArchived,
     setSettled,
@@ -2074,6 +2083,8 @@ export function useCoder(): UseCoderResult {
     setProvider,
     setReasoningEffort,
     setWebSearch,
+    setAgent,
+    listAgents,
     setFast,
     setArchived,
     setSettled,

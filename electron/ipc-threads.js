@@ -501,6 +501,18 @@ module.exports = {
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
     return updated;
   },
+  "threads:setAgent": async (ctx, input) => {
+    const updated = services.setAgent(ctx.store, input);
+    ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+    return updated;
+  },
+  "threads:listAgents": async (ctx, input) => {
+    return require("./agents.js").listAgents({
+      provider: input && input.provider,
+      projectPath:
+        input && typeof input.projectPath === "string" ? input.projectPath : null,
+    });
+  },
   "threads:setWebSearch": async (ctx, input) => {
     const updated = services.setWebSearch(ctx.store, input);
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));

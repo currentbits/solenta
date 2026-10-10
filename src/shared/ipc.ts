@@ -873,6 +873,11 @@ export interface ThreadInfo {
    * lists `fast`; absent on older store rows.
    */
   fast?: boolean;
+  /**
+   * CLI custom agent the thread runs as (`--agent <name>`, issue #172), or
+   * null/absent for the CLI default. Cleared on provider switch.
+   */
+  agent?: string | null;
   /** Absolute path of the thread's git worktree, when one was set up. */
   worktreePath: string | null;
   /** Numbered merge-queue lane (#346). Absent when the thread has no lane. */
@@ -2714,6 +2719,11 @@ export interface ProviderInfo {
    */
   supportsSearch?: boolean;
   /**
+   * True when the CLI accepts `--agent <name>` (claude, opencode; #172).
+   * The composer hides the Agent picker when this is missing or false.
+   */
+  supportsAgents?: boolean;
+  /**
    * True when a live turn can take mid-run guidance on stdin (issue #156).
    * Claude stream-json does; one-shot `-p` / `exec --json` CLIs do not
    * (Codex: issue #1164). The composer hides Steer when this is missing
@@ -3496,6 +3506,13 @@ export interface McpInstallRequest {
 export interface McpInstallResult {
   /** Redacted installed definitions (main), or bare names from older twins. */
   installed: Array<McpServerDefinition | string>;
+}
+
+/** A CLI custom agent a thread can run as (#172). */
+export interface CliAgentInfo {
+  name: string;
+  description: string;
+  source: "builtin" | "project" | "user";
 }
 
 /**
@@ -4853,6 +4870,19 @@ export interface CoderApi {
      * model of the thread's provider has a fast tier.
      */
     setFast(input: { threadId: string; fast: boolean }): Promise<ThreadInfo>;
+    /**
+     * Runs the thread as a CLI custom agent (#172); null for the CLI
+     * default. Rejects when the provider does not advertise supportsAgents.
+     */
+    setAgent(input: { threadId: string; agent: string | null }): Promise<ThreadInfo>;
+    /**
+     * Custom agents the provider CLI would find for this project
+     * (.claude/agents, .opencode/agent, user dirs). Empty for other CLIs.
+     */
+    listAgents(input: {
+      provider: string;
+      projectPath?: string | null;
+    }): Promise<CliAgentInfo[]>;
     /**
      * Sets the thread's verification command (issue #296). A non-empty
      * command arms the gate: from the next turn on, a run that would land
