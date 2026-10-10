@@ -383,6 +383,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
     webhook: { url: null, onDone: true, onFailed: true, onWaiting: true },
     agentProfiles: [],
     defaultOrchestratorProfileId: null,
+    promptSnippets: [],
     ...(opts.settings ?? {}),
   };
   const ALL_SKILL_TARGETS: SkillTarget[] = [

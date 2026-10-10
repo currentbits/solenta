@@ -1208,6 +1208,15 @@
   font-weight: 550;
 }
 
+.mentionRow[data-mention-kind="snippet"] {
+  font-weight: 550;
+}
+
+.snippetPreview {
+  font-weight: 400;
+  color: var(--text-dim);
+}
+
 .replyChip {
   display: flex;
   align-items: center;

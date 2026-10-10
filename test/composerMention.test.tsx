@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { inAct, mount, type Mounted } from "./support/dom.ts";
 import { Composer } from "../src/components/Composer";
-import type { ProviderInfo } from "../src/shared/ipc";
+import type { PromptSnippet, ProviderInfo } from "../src/shared/ipc";
 
 const PROVIDERS: ProviderInfo[] = [
   {
@@ -24,7 +24,10 @@ const PROVIDERS: ProviderInfo[] = [
 
 const FILES = ["src/App.tsx", "src/main.tsx"];
 
-function mountComposer(onListFiles: (query: string) => Promise<string[]>) {
+function mountComposer(
+  onListFiles: (query: string) => Promise<string[]>,
+  promptSnippets?: PromptSnippet[],
+) {
   return mount(
     <Composer
       threadId="t1"
@@ -50,6 +53,7 @@ function mountComposer(onListFiles: (query: string) => Promise<string[]>) {
       onSend={() => {}}
       onBuild={() => {}}
       onListFiles={onListFiles}
+      promptSnippets={promptSnippets}
     />,
   );
 }
@@ -103,6 +107,46 @@ describe("Composer @-mention popup", () => {
       null,
       "popup closed after accept",
     );
+  });
+
+  it("lists matching snippets above files; Enter inserts the snippet text (#189)", async () => {
+    const m = await mountComposer(async () => FILES, [
+      { name: "tests", text: "Run the tests before committing." },
+      { name: "style", text: "House style." },
+    ]);
+    const el = textarea(m);
+    await m.type(el, "fix it. @te");
+    await caretToEnd(m);
+    await waitForPopup();
+    const rows = [
+      ...m.container.querySelectorAll('[aria-label="Mention a file or folder"] button'),
+    ];
+    assert.equal(rows[0]?.getAttribute("data-mention-kind"), "snippet");
+    assert.equal(
+      rows.filter((r) => r.getAttribute("data-mention-kind") === "snippet").length,
+      1,
+      "only the snippet whose name matches",
+    );
+    assert.equal(rows[1]?.textContent, "src/App.tsx", "files follow snippets");
+    await m.press(el, "Enter");
+    assert.equal(textarea(m).value, "fix it. Run the tests before committing.");
+    assert.equal(
+      m.container.querySelector('[aria-label="Mention a file or folder"]'),
+      null,
+    );
+  });
+
+  it("ArrowDown walks from snippets into files", async () => {
+    const m = await mountComposer(async () => FILES, [
+      { name: "tests", text: "Run the tests." },
+    ]);
+    const el = textarea(m);
+    await m.type(el, "@");
+    await caretToEnd(m);
+    await waitForPopup();
+    await m.press(el, "ArrowDown");
+    await m.press(el, "Enter");
+    assert.equal(textarea(m).value, "@src/App.tsx ");
   });
 
   it("filters as the token grows", async () => {

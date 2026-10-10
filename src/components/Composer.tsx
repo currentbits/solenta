@@ -105,7 +105,7 @@ import {
 } from "../dropFiles";
 import { scrollChildIntoNearestView } from "../scrollNearest";
 import { teachPermissionAllowed } from "../teach";
-import type { ThreadTeach } from "../shared/ipc";
+import type { ThreadTeach, PromptSnippet } from "../shared/ipc";
 import { useFileDrop } from "../useFileDrop";
 import { isWebMode } from "../shared/wire";
 import {
@@ -240,6 +240,11 @@ interface ComposerProps {
    */
   onListFiles?: (query: string) => Promise<string[]>;
   /**
+   * Saved snippets (issue #189). `@name` lists matches above files; accepting
+   * replaces the token with the snippet text.
+   */
+  promptSnippets?: readonly PromptSnippet[];
+  /**
    * Native folder picker for the mention popup's "Browse folder" row.
    * Returns a repo-relative token (trailing slash) or null if cancelled.
    */
@@ -360,6 +365,7 @@ export const Composer = memo(function Composer({
   error = null,
   onDismissError,
   onListFiles,
+  promptSnippets,
   onPickMentionFolder,
   replyTo = null,
   onClearReply,
@@ -574,16 +580,20 @@ export const Composer = memo(function Composer({
 
   const {
     mentionFiles,
-    mentionIndex,
+    snippetMatches,
+    mentionCount,
+    mentionActive,
     setMentionIndex,
     mentionOpen,
     closeMention,
     refreshMention,
     acceptMention,
+    acceptSnippet,
     browseMentionFolder,
   } = useMentionMenu({
     textareaRef,
     onListFiles,
+    promptSnippets,
     onPickMentionFolder,
     disabled,
     writeDraft,
@@ -1176,18 +1186,20 @@ export const Composer = memo(function Composer({
     if (mentionOpen) {
       if (e.key === "ArrowDown") {
         e.preventDefault();
-        setMentionIndex((i) => Math.min(i + 1, mentionFiles.length - 1));
+        setMentionIndex(Math.min(mentionActive + 1, mentionCount - 1));
         return;
       }
       if (e.key === "ArrowUp") {
         e.preventDefault();
-        setMentionIndex((i) => Math.max(i - 1, 0));
+        setMentionIndex(Math.max(mentionActive - 1, 0));
         return;
       }
       if (e.key === "Enter" || e.key === "Tab") {
         e.preventDefault();
-        const f = mentionFiles[mentionIndex];
-        if (f) acceptMention(f);
+        const sn = snippetMatches[mentionActive];
+        const f = mentionFiles[mentionActive - snippetMatches.length];
+        if (sn) acceptSnippet(sn);
+        else if (f) acceptMention(f);
         return;
       }
       if (e.key === "Escape") {
@@ -1657,8 +1669,10 @@ export const Composer = memo(function Composer({
       <div className={styles.card}>
         {mentionOpen && (
           <MentionList
+            snippetMatches={snippetMatches}
+            acceptSnippet={acceptSnippet}
             mentionFiles={mentionFiles}
-            mentionIndex={mentionIndex}
+            mentionIndex={mentionActive}
             setMentionIndex={setMentionIndex}
             acceptMention={acceptMention}
             onPickMentionFolder={onPickMentionFolder}

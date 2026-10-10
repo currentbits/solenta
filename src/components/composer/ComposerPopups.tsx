@@ -1,10 +1,13 @@
 import type { Dispatch, SetStateAction } from "react";
 import type { SlashCommand } from "../../slashCommands";
+import type { PromptSnippet } from "../../shared/ipc";
 import { scrollChildIntoNearestView } from "../../scrollNearest";
 import styles from "../Composer.module.css";
 
 /** The @-mention listbox above the textarea. */
 export function MentionList({
+  snippetMatches,
+  acceptSnippet,
   mentionFiles,
   mentionIndex,
   setMentionIndex,
@@ -12,6 +15,9 @@ export function MentionList({
   onPickMentionFolder,
   browseMentionFolder,
 }: {
+  /** Snippet rows (issue #189) come first; indices continue into files. */
+  snippetMatches: PromptSnippet[];
+  acceptSnippet: (snippet: PromptSnippet) => void;
   mentionFiles: string[];
   mentionIndex: number;
   setMentionIndex: Dispatch<SetStateAction<number>>;
@@ -25,7 +31,33 @@ export function MentionList({
       role="listbox"
       aria-label="Mention a file or folder"
     >
-      {mentionFiles.map((f, i) => (
+      {snippetMatches.map((sn, i) => (
+        <li key={`snippet:${sn.name}`} role="option" aria-selected={i === mentionIndex}>
+          <button
+            type="button"
+            className={styles.mentionRow}
+            ref={(el) => {
+              if (i === mentionIndex && el) {
+                scrollChildIntoNearestView(
+                  el.closest<HTMLElement>('[role="listbox"]'),
+                  el,
+                );
+              }
+            }}
+            data-highlighted={i === mentionIndex ? "true" : undefined}
+            data-mention-kind="snippet"
+            title={sn.text}
+            onMouseEnter={() => setMentionIndex(i)}
+            onClick={() => acceptSnippet(sn)}
+          >
+            {sn.name}{" "}
+            <span className={styles.snippetPreview}>{sn.text}</span>
+          </button>
+        </li>
+      ))}
+      {mentionFiles.map((f, fi) => {
+        const i = fi + snippetMatches.length;
+        return (
         <li key={f} role="option" aria-selected={i === mentionIndex}>
           <button
             type="button"
@@ -49,7 +81,8 @@ export function MentionList({
             {f}
           </button>
         </li>
-      ))}
+        );
+      })}
       {onPickMentionFolder && (
         <li role="option" aria-selected={false}>
           <button

@@ -3074,6 +3074,11 @@ export interface AppSettings {
    */
   defaultOrchestratorProfileId: string | null;
   /**
+   * Reusable prompt text (issue #189). Typing `@name` in the composer offers
+   * the snippet above file matches; accepting replaces the token with text.
+   */
+  promptSnippets: PromptSnippet[];
+  /**
    * Described worker-model pool (issue #467). Orchestration workers default
    * to `defaultAlias` (or inherit the lead when the pool is empty). The lead
    * picks per spawn by alias from the one-line descriptions, not a raw
@@ -3114,6 +3119,12 @@ export interface ModelPrice {
   output: number;
   cacheRead?: number;
   cacheWrite?: number;
+}
+
+/** One prompt snippet. `name` is one token: letters, digits, `.`, `-`, `_`. */
+export interface PromptSnippet {
+  name: string;
+  text: string;
 }
 
 /**
