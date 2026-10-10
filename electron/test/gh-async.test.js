@@ -140,7 +140,7 @@ process.exit(0);
   });
 
   it("in-band: non-GitHub origin never spawns gh", async () => {
-    git(repo, ["remote", "set-url", "origin", "https://gitlab.com/acme/demo.git"]);
+    git(repo, ["remote", "set-url", "origin", "https://bitbucket.org/acme/demo.git"]);
     const argsPath = path.join(tmp, "gh-ran");
     writeFakeGh(
       tmp,

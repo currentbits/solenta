@@ -140,14 +140,14 @@ const HANDOFF_TOTAL_MAX = 12000;
  * `gh issue list`.
  */
 const PLANBOARD_NOTE =
-  "\n\n[Planboard] This workspace tracks project plans as GitHub issues. " +
+  "\n\n[Planboard] This workspace tracks project plans as forge issues. " +
   "For multi-step work, record and maintain your plan/roadmap/issues as " +
-  "GitHub issues in this repo's origin using the coder-threads tools " +
+  "issues in this repo's origin (GitHub or GitLab) using the coder-threads tools " +
   "issue_create, issue_list, issue_set_plan, issue_complete, and " +
   "issue_comment (status labels plan:todo, plan:doing, plan:done). " +
   "issue_comment appends a comment without changing plan:* or closing. " +
-  "Do not use `gh` for these writes: host-side tools keep the board in " +
-  "sync even when a sandbox cannot authenticate to GitHub. " +
+  "Do not use `gh` or `glab` for these writes: host-side tools keep the board " +
+  "in sync even when a sandbox cannot authenticate to the forge. " +
   "Skip this for trivial tasks. Your own todo list is mirrored onto the " +
   "board as live steps, so keep it current instead of filing issues for " +
   "individual steps.";
@@ -169,7 +169,7 @@ const CODEX_COMPUTER_USE_NOTE =
   "toggle. Full-access permission mode is not desktop control.";
 
 /**
- * PLANBOARD_NOTE when the project checkout has a GitHub origin, else "".
+ * PLANBOARD_NOTE when the project checkout has a GitHub or GitLab origin, else "".
  * Keeps the note out of prompts where it isn't actionable.
  *
  * ponytail: checks the LOCAL path only, so remote-host projects never get
@@ -180,12 +180,12 @@ const CODEX_COMPUTER_USE_NOTE =
  */
 function planboardNoteFor(projectPath) {
   try {
-    const { gitTry, isGitHubRemote } = require("./worktrees.js");
+    const { gitTry, isForgeRemote } = require("./worktrees.js");
     const cwd = String(projectPath || "");
     if (!cwd) return "";
     const remote = gitTry(cwd, ["remote", "get-url", "origin"]);
     if (!remote.ok) return "";
-    if (!isGitHubRemote(String(remote.stdout || "").trim())) return "";
+    if (!isForgeRemote(String(remote.stdout || "").trim())) return "";
     return PLANBOARD_NOTE;
   } catch {
     return "";
