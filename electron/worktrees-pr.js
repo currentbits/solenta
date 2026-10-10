@@ -53,6 +53,20 @@ function isGitHubRemote(url) {
 }
 
 /**
+ * GitLab origin as `{ host, path }`, or null (issue #193). Lazy require:
+ * gitlab.js requires worktrees.js at load.
+ * @param {string} url
+ */
+function gitlabOrigin(url) {
+  return require("./gitlab.js").gitlabRemote(url);
+}
+
+/** True when origin is a forge Solenta can drive PRs/issues on (sync check). */
+function isForgeRemote(url) {
+  return isGitHubRemote(url) || gitlabOrigin(url) != null;
+}
+
+/**
  * Classify a failed execFileSync/execFile error into the shared ghTry shape.
  * @param {any} err
  * @returns {{ ok: false, enoent: boolean, stdout: string, stderr: string, combined: string, error: any, timedOut: boolean }}
@@ -99,7 +113,7 @@ function ghFailFromError(err) {
  * with a hard timeout that kills the child. Used by the PR-state refresher.
  * @param {string} cwd
  * @param {string[]} args
- * @param {{ env?: NodeJS.ProcessEnv, timeout?: number }} [opts]
+ * @param {{ env?: NodeJS.ProcessEnv, timeout?: number, bin?: string }} [opts] bin: glab for GitLab
  * @returns {Promise<{ ok: boolean, enoent?: boolean, stdout: string, stderr: string, combined: string, timedOut?: boolean, error?: any }>}
  */
 function ghTryAsync(cwd, args, opts) {
@@ -113,7 +127,7 @@ function ghTryAsync(cwd, args, opts) {
   };
   return new Promise((resolve) => {
     execFile(
-      ghBin(),
+      (opts && opts.bin) || ghBin(),
       args,
       {
         cwd,
@@ -603,21 +617,19 @@ async function resolveThreadGit(store, threadId) {
 }
 
 /**
- * Live PR for the thread's branch, or null when none exists.
- * Rejects on gh missing / not authenticated / non-GitHub remote.
- *
- * @param {object} opts
- * @param {import('./store').Store} opts.store
- * @param {string} opts.threadId
- * @returns {Promise<{ number: number, url: string, state: "OPEN" | "CLOSED" | "MERGED", branch: string, created: boolean } | null>}
+ * The branch's PR (GitHub) or MR (GitLab) as PrInfo, or null when none.
+ * Throws on a non-forge origin, missing CLI, auth, or network failure.
+ * @param {string} cwd
+ * @param {string} branch
+ * @param {string} originUrl
+ * @param {string} action error wording, e.g. "PR status"
  */
-async function prStatus(opts) {
-  const { store, threadId } = opts;
-  const { cwd, branch, originUrl } = await resolveThreadGit(store, threadId);
-
+async function viewBranchPr(cwd, branch, originUrl, action) {
+  const gl = gitlabOrigin(originUrl);
+  if (gl) return require("./gitlab.js").viewMr(cwd, gl, branch);
   if (!(await isGitHubPrRemote(originUrl))) {
     throw new Error(
-      `Remote origin is not a GitHub repository (got: ${originUrl}). PR status requires github.com.`,
+      `Remote origin is not a GitHub or GitLab repository (got: ${originUrl}). ${action} requires github.com or GitLab.`,
     );
   }
 
@@ -641,8 +653,24 @@ async function prStatus(opts) {
     }
     throwGhFailure(viewed, "gh pr view failed");
   }
+  return parsePrJson(viewed.stdout, branch, false);
+}
 
-  const info = parsePrJson(viewed.stdout, branch, false);
+/**
+ * Live PR for the thread's branch, or null when none exists.
+ * Rejects on gh missing / not authenticated / non-forge remote.
+ *
+ * @param {object} opts
+ * @param {import('./store').Store} opts.store
+ * @param {string} opts.threadId
+ * @returns {Promise<{ number: number, url: string, state: "OPEN" | "CLOSED" | "MERGED", branch: string, created: boolean } | null>}
+ */
+async function prStatus(opts) {
+  const { store, threadId } = opts;
+  const { cwd, branch, originUrl } = await resolveThreadGit(store, threadId);
+
+  const info = await viewBranchPr(cwd, branch, originUrl, "PR status");
+  if (!info) return null;
   // Persist last-known PR state (interactive path). Background freshness is
   // refreshPrStates — async, serialized, failure-silent, on a latch.
   store.updateThread(threadId, {
@@ -865,6 +893,8 @@ async function prChecks(opts) {
     };
   }
 
+  const gl = gitlabOrigin(originUrl);
+  if (gl) return require("./gitlab.js").mrChecks(cwd, gl, branch);
   if (!(await isGitHubPrRemote(originUrl))) {
     return { ok: false, reason: "not a GitHub repo" };
   }
@@ -1216,42 +1246,8 @@ async function mergePr(opts) {
     threadId,
   );
 
-  if (!(await isGitHubPrRemote(originUrl))) {
-    throw new Error(
-      `Remote origin is not a GitHub repository (got: ${originUrl}). Merging a PR requires github.com.`,
-    );
-  }
-
-  let viewed = await ghApiTryAsync(cwd, [
-    "pr",
-    "view",
-    branch,
-    "--json",
-    PR_JSON_ENRICHED,
-  ]);
-  if (
-    !viewed.ok &&
-    isUnknownJsonField(viewed.stderr || viewed.combined || viewed.stdout)
-  ) {
-    viewed = await ghApiTryAsync(cwd, [
-      "pr",
-      "view",
-      branch,
-      "--json",
-      PR_JSON_MINIMAL,
-    ]);
-  }
-  if (!viewed.ok) {
-    if (viewed.enoent || viewed.timedOut) {
-      throwGhFailure(viewed, "gh pr view failed");
-    }
-    if (isNoPrMessage(viewed.stderr || viewed.combined || viewed.stdout)) {
-      throw new Error("No pull request found for this branch");
-    }
-    throwGhFailure(viewed, "gh pr view failed");
-  }
-
-  const info = parsePrJson(viewed.stdout, branch, false);
+  const info = await viewBranchPr(cwd, branch, originUrl, "Merging a PR");
+  if (!info) throw new Error("No pull request found for this branch");
   const base =
     (info.baseRefName && String(info.baseRefName).trim()) ||
     (await defaultBranchAsync(project.path));
@@ -1284,15 +1280,21 @@ async function mergePr(opts) {
     }
   }
 
-  const merged = await ghApiTryAsync(cwd, [
-    "pr",
-    "merge",
-    String(info.number),
-    ...mergeFlags(opts),
-    ...(await squashBodyArgs(store, cwd, info.number, opts)),
-  ]);
-  if (!merged.ok) {
-    throwGhFailure(merged, "gh pr merge failed");
+  const gl = gitlabOrigin(originUrl);
+  if (gl) {
+    // ponytail: GitLab always squash-merges now; method/auto are gh-only.
+    await require("./gitlab.js").mergeMr(cwd, gl, info.number);
+  } else {
+    const merged = await ghApiTryAsync(cwd, [
+      "pr",
+      "merge",
+      String(info.number),
+      ...mergeFlags(opts),
+      ...(await squashBodyArgs(store, cwd, info.number, opts)),
+    ]);
+    if (!merged.ok) {
+      throwGhFailure(merged, "gh pr merge failed");
+    }
   }
 
   const live = await prStatus({ store, threadId });
@@ -1463,9 +1465,18 @@ async function refreshPrStates(store, opts) {
         info = batched.get(threadId);
         // Unresolvable PR: skip, same as a failed gh view.
         if (!info) continue;
+      } else if (gitlabOrigin(originUrl)) {
+        spawned += 1;
+        info = await require("./gitlab.js").viewMrByNumber(
+          cwd,
+          gitlabOrigin(originUrl),
+          Number(snapshot.prNumber),
+          timeoutMs,
+        );
+        if (!info) continue;
       } else {
         if (!isGitHubRemote(originUrl)) {
-          // Non-GitHub origin must never paint an error (ISSUES.md). Skip.
+          // Non-forge origin must never paint an error (ISSUES.md). Skip.
           continue;
         }
 
@@ -1761,9 +1772,10 @@ async function createPr(opts) {
     threadId,
   );
 
-  if (!(await isGitHubPrRemote(originUrl))) {
+  const gl = gitlabOrigin(originUrl);
+  if (!gl && !(await isGitHubPrRemote(originUrl))) {
     throw new Error(
-      `Remote origin is not a GitHub repository (got: ${originUrl}). PR creation requires github.com.`,
+      `Remote origin is not a GitHub or GitLab repository (got: ${originUrl}). PR creation requires github.com or GitLab.`,
     );
   }
 
@@ -1798,6 +1810,35 @@ async function createPr(opts) {
 
   // Reuse push for remote/branch/timeout/prompt discipline; no intermediate broadcast.
   push({ store, threadId });
+
+  if (gl) {
+    const gitlab = require("./gitlab.js");
+    // Same idempotency as gh below: only an OPEN MR short-circuits.
+    let info = await gitlab.viewMr(cwd, gl, branch);
+    if (!info || info.state !== "OPEN") {
+      const titleText = String(title ?? "");
+      const bodyText = body != null ? String(body) : "";
+      assertNoOutboundSecrets(`${titleText}\n${bodyText}`, "PR");
+      info = await gitlab.createMr(cwd, gl, {
+        branch,
+        baseBranch,
+        title: titleText,
+        body: bodyText,
+        draft,
+      });
+    }
+    store.updateThread(threadId, {
+      prNumber: info.number,
+      prUrl: info.url,
+      prState: info.state,
+    });
+    store.save();
+    if (typeof broadcast === "function") {
+      const { listThreads } = require("./services.js");
+      broadcast("threads:changed", listThreads(store));
+    }
+    return info;
+  }
 
   // Idempotency: return the existing PR rather than erroring.
   const existing = await ghApiTryAsync(cwd, [
@@ -1959,6 +2000,8 @@ module.exports = {
   isGitHubPrRemote,
   setGithubApi,
   isGitHubRemote,
+  isForgeRemote,
+  normalizeCheckBucket,
   ghTryAsync,
   parsePrJson,
   PR_LIST_FIELDS,
