@@ -92,9 +92,9 @@ const PANE_META: Record<
   },
   agents: {
     label: "Agents",
-    hint: "Named profiles for the composer, and the worker pool.",
+    hint: "Named profiles and prompt snippets for the composer, and the worker pool.",
     keywords:
-      "profile provider model effort permission pool worker alias candidate orchestrator default",
+      "profile provider model effort permission pool worker alias candidate orchestrator default snippet prompt text boilerplate template",
   },
   memory: {
     label: "Memory",

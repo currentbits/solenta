@@ -15,6 +15,7 @@ const {
 } = require("./verify.js");
 const { prepareVerifyRun } = require("./verifyEfficiency.js");
 const { maybeApplyFmTitle } = require("./fm-title.js");
+const { refreshRecap } = require("./recap.js");
 
 /**
  * @param {object} ctx - createRunner context (see runner-watchdogs.js header)
@@ -79,6 +80,8 @@ function createVerifyGate(ctx) {
         }
       })
       .catch(() => {});
+    // Recap (#239): rebuilt per finished turn, read on the next idle visit.
+    void refreshRecap(store, threadId);
 
     let gated = false;
     try {

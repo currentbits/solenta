@@ -137,6 +137,8 @@ export interface FakeCoder {
   only(channel: string): Call;
   /** Push a threads:changed event to whatever subscribed. */
   emitThreads(push: ThreadListPush): void;
+  /** Main-process select push (notification click or solenta:// link). */
+  emitSelect(channel: "thread:select" | "project:select", id: string): void;
   /** Push a thread:updated event (a full detail is a valid ThreadPatch). */
   emitThread(detail: ThreadPatch): void;
   /** Push boot:ready so useCoder refetches lists (#618). */
@@ -231,6 +233,8 @@ export interface FakeOptions {
   spaces?: SpaceInfo[];
   threads?: ThreadInfo[];
   providers?: ProviderInfo[];
+  /** threads.listAgents rows (#172); empty by default. */
+  agents?: Array<{ name: string; description: string; source: "builtin" | "project" | "user" }>;
   workflows?: WorkflowTemplateInfo[];
   automations?: AutomationInfo[];
   /** Per-automation retained runs for automations.listRuns. */
@@ -379,6 +383,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
     webhook: { url: null, onDone: true, onFailed: true, onWaiting: true },
     agentProfiles: [],
     defaultOrchestratorProfileId: null,
+    promptSnippets: [],
     ...(opts.settings ?? {}),
   };
   const ALL_SKILL_TARGETS: SkillTarget[] = [
@@ -594,6 +599,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
   ];
 
   const threadSubs: Array<(t: ThreadListPush) => void> = [];
+  const selectSubs: Array<{ channel: string; cb: (id: string) => void }> = [];
   const detailSubs: Array<(d: ThreadPatch) => void> = [];
   const bootReadySubs: Array<() => void> = [];
   const stayAwakeSubs: Array<(s: StayAwakeStatus) => void> = [];
@@ -2657,6 +2663,9 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       setWebSearch: (input: unknown) =>
         rec("threads.setWebSearch", [input], thread()),
       setFast: (input: unknown) => rec("threads.setFast", [input], thread()),
+      setAgent: (input: unknown) => rec("threads.setAgent", [input], thread()),
+      listAgents: (input: unknown) =>
+        rec("threads.listAgents", [input], opts.agents ?? []),
       /**
        * Honest fork (round 49 contract / electron forkThread): new thread
        * same project, copies provider/model/permissionMode unless overridden;
@@ -3989,8 +3998,13 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           if (i >= 0) threadSubs.splice(i, 1);
         };
       }
-      if (channel === "thread:select") {
-        return () => {};
+      if (channel === "thread:select" || channel === "project:select") {
+        const sub = { channel, cb: cb as (id: string) => void };
+        selectSubs.push(sub);
+        return () => {
+          const i = selectSubs.indexOf(sub);
+          if (i >= 0) selectSubs.splice(i, 1);
+        };
       }
       if (channel === "boot:ready") {
         bootReadySubs.push(cb as () => void);
@@ -4048,6 +4062,8 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       return hits[0];
     },
     emitThreads: (next) => threadSubs.forEach((cb) => cb(next)),
+    emitSelect: (channel, id) =>
+      selectSubs.filter((s) => s.channel === channel).forEach((s) => s.cb(id)),
     emitThread: (d) => detailSubs.forEach((cb) => cb(d)),
     emitBootReady: () => bootReadySubs.forEach((cb) => cb()),
     emitStayAwake: (s) => stayAwakeSubs.forEach((cb) => cb(s)),
@@ -4058,7 +4074,8 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       bootReadySubs.length +
       stayAwakeSubs.length +
       simulatorSubs.length +
-      speechSubs.length,
+      speechSubs.length +
+      selectSubs.length,
   };
 }
 

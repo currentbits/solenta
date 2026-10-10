@@ -42,6 +42,7 @@ import type {
   PermissionDecision,
   InputValues,
   PermissionMode,
+  CliAgentInfo,
   CliSlashCommand,
   ProjectInfo,
   SimulatorStatus,
@@ -52,11 +53,13 @@ import type {
   SpecArtifact,
   ThreadDetail,
   ThreadInfo,
+  ThreadRecap,
   ThreadMessagePin,
   WorkSuggestion,
   WorkflowTemplateInfo,
   EditorId,
   EditorOption,
+  PromptSnippet,
 } from "../shared/ipc";
 import {
   THREAD_NOTES_MAX,
@@ -359,6 +362,12 @@ interface ThreadViewProps {
   ) => void | Promise<void>;
   onSetWebSearch?: (webSearch: boolean, threadId?: string) => void | Promise<void>;
   onSetFast?: (fast: boolean, threadId?: string) => void | Promise<void>;
+  /** Run the thread as a CLI custom agent (#172); null = CLI default. */
+  onSetAgent?: (agent: string | null) => void | Promise<void>;
+  onListAgents?: (input: {
+    provider: string;
+    projectPath?: string | null;
+  }) => Promise<CliAgentInfo[]>;
   /** Archive or unarchive the open thread. */
   onSetArchived: (archived: boolean) => void | Promise<void>;
   /** Per-thread inbound policy for messages from other threads (issue #551). */
@@ -480,6 +489,8 @@ interface ThreadViewProps {
   onSuggestCommitMessage: () => Promise<{ message: string }>;
   /** File lookup for the composer @-mention popup. */
   onListFiles?: (query: string) => Promise<string[]>;
+  /** Saved snippets offered in the @-mention popup (issue #189). */
+  promptSnippets?: readonly PromptSnippet[];
   /** Native folder picker; returns an absolute path or null. */
   onPickDirectory?: () => Promise<string | null>;
   /** AppSnap: on-screen windows the user can capture. */
@@ -741,6 +752,8 @@ export const ThreadView = memo(function ThreadView({
   onSetReasoningEffort,
   onSetWebSearch,
   onSetFast,
+  onSetAgent,
+  onListAgents,
   onSetArchived,
   onSetCrossThreadInbound,
   onRenameThread,
@@ -784,6 +797,7 @@ export const ThreadView = memo(function ThreadView({
   onRevertFile,
   onSuggestCommitMessage,
   onListFiles,
+  promptSnippets,
   onPickDirectory,
   onListSnapWindows,
   onCaptureSnapWindow,
@@ -935,6 +949,8 @@ export const ThreadView = memo(function ThreadView({
    * open thread changes.
    */
   const [handoffBannerDismissed, setHandoffBannerDismissed] = useState(false);
+  /** Recap latched from threads.get (#239); pushes drop detail.recap. */
+  const [shownRecap, setShownRecap] = useState<ThreadRecap | null>(null);
   const [runStatList, setRunStatList] = useState<RunStatInfo[]>([]);
   const [openTurnSha, setOpenTurnSha] = useState<string | null>(null);
   // One split/unified choice for the turn panel and the Git pane (#1493).
@@ -973,7 +989,7 @@ export const ThreadView = memo(function ThreadView({
   /** Bumps after a successful push so the sync pill refetches. */
   const [syncRefreshNonce, setSyncRefreshNonce] = useState(0);
   /** Brief inline confirmation after copying the thread id. */
-  const [copiedThreadId, setCopiedThreadId] = useState(false);
+  const [copied, setCopied] = useState<"id" | "link" | null>(null);
   /** Header quick action currently in flight (issue #153). */
   const [commandRunningId, setCommandRunningId] = useState<string | null>(null);
   const [commandError, setCommandError] = useState<string | null>(null);
@@ -983,6 +999,7 @@ export const ThreadView = memo(function ThreadView({
   const [lightbox, setLightbox] = useState<{ src: string; alt: string } | null>(
     null,
   );
+  const [cliAgents, setCliAgents] = useState<CliAgentInfo[]>([]);
   const copyFlashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const threadId = detail?.thread.id ?? null;
   if (threadId !== focusThreadId) {
@@ -1004,6 +1021,26 @@ export const ThreadView = memo(function ThreadView({
     threadId,
     detail,
   });
+
+  const agentProvider = detail?.thread.provider;
+  const agentCwd = detail?.thread.worktreePath || project?.path || null;
+  useEffect(() => {
+    if (!onListAgents || !agentProvider) {
+      setCliAgents([]);
+      return;
+    }
+    let cancelled = false;
+    onListAgents({ provider: agentProvider, projectPath: agentCwd })
+      .then((rows) => {
+        if (!cancelled) setCliAgents(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setCliAgents([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [onListAgents, agentProvider, agentCwd, threadId]);
   const [incomingHandoff, setIncomingHandoff] = useState<{
     threadId: string;
     items: AttachmentInfo[];
@@ -1930,6 +1967,7 @@ export const ThreadView = memo(function ThreadView({
       setPinLabelDraft("");
       setJumpMessageId(null);
       setHandoffBannerDismissed(false);
+      setShownRecap(null);
       setRestoreConfirm(null);
       setRestorePending(false);
       setRestoreError(null);
@@ -1939,7 +1977,7 @@ export const ThreadView = memo(function ThreadView({
       setRunStatList([]);
       setCollapsedRuns(new Set<string>());
       setSyncRefreshNonce(0);
-      setCopiedThreadId(false);
+      setCopied(null);
       setLightbox(null);
       setIncomingHandoff(null);
       setSnapOpen(false);
@@ -1952,6 +1990,11 @@ export const ThreadView = memo(function ThreadView({
       }
     }
   }, [detail?.thread.id]);
+  // After the switch reset above, so a thread change clears then re-latches.
+  const dueRecap = detail?.recap ?? null;
+  useEffect(() => {
+    if (dueRecap) setShownRecap(dueRecap);
+  }, [dueRecap]);
 
   const {
     handlePaneChange,
@@ -2440,18 +2483,20 @@ export const ThreadView = memo(function ThreadView({
   const workerNavLabel = handoffSource?.orchWorker ? "Parent worker" : "Task";
   const workersLabel = `Workers (${workerCount})`;
 
-  const handleCopyThreadId = async () => {
+  const handleCopy = async (what: "id" | "link") => {
     try {
-      await navigator.clipboard.writeText(thread.id);
+      await navigator.clipboard.writeText(
+        what === "id" ? thread.id : `solenta://thread/${thread.id}`,
+      );
     } catch {
       return;
     }
-    setCopiedThreadId(true);
+    setCopied(what);
     if (copyFlashTimer.current != null) {
       clearTimeout(copyFlashTimer.current);
     }
     copyFlashTimer.current = setTimeout(() => {
-      setCopiedThreadId(false);
+      setCopied(null);
       copyFlashTimer.current = null;
     }, COPY_FLASH_MS);
   };
@@ -2802,9 +2847,18 @@ export const ThreadView = memo(function ThreadView({
                         className={styles.menuItem}
                         role="menuitem"
                         data-copy-thread-id=""
-                        onClick={() => void handleCopyThreadId()}
+                        onClick={() => void handleCopy("id")}
                       >
-                        {copiedThreadId ? "Copied" : "Copy thread ID"}
+                        {copied === "id" ? "Copied" : "Copy thread ID"}
+                      </button>
+                      <button
+                        type="button"
+                        className={styles.menuItem}
+                        role="menuitem"
+                        data-copy-thread-link=""
+                        onClick={() => void handleCopy("link")}
+                      >
+                        {copied === "link" ? "Copied" : "Copy link"}
                       </button>
                       {onRenameThread && !isWorking && (
                         <button
@@ -3655,6 +3709,24 @@ export const ThreadView = memo(function ThreadView({
             aria-label="Dismiss handoff banner"
             title="Dismiss handoff banner"
             onClick={() => setHandoffBannerDismissed(true)}
+          >
+            ×
+          </button>
+        </div>
+      )}
+
+      {shownRecap && (
+        <div className={styles.handoffBanner} data-thread-recap="">
+          <div className={styles.handoffBannerText}>
+            <strong>Recap</strong>
+            <div className={styles.recapText}>{shownRecap.text}</div>
+          </div>
+          <button
+            type="button"
+            className={styles.handoffDismiss}
+            aria-label="Dismiss recap"
+            title="Dismiss recap"
+            onClick={() => setShownRecap(null)}
           >
             ×
           </button>
@@ -4512,6 +4584,9 @@ export const ThreadView = memo(function ThreadView({
         reasoningEffort={thread.reasoningEffort}
         webSearch={thread.webSearch === true}
         fast={thread.fast === true}
+        agent={thread.agent ?? null}
+        agents={cliAgents}
+        onSetAgent={onSetAgent}
         providers={providers}
         agentProfiles={agentProfiles}
         workflows={workflows}
@@ -4586,6 +4661,7 @@ export const ThreadView = memo(function ThreadView({
         error={runError}
         onDismissError={onDismissRunError}
         onListFiles={onListFiles}
+        promptSnippets={promptSnippets}
         onPickMentionFolder={
           onPickDirectory ? pickMentionFolder : undefined
         }

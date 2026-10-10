@@ -263,7 +263,7 @@ process.exit(2);
   });
 
   it("returns not a GitHub repo for a non-github origin", async () => {
-    git(repo, ["remote", "set-url", "origin", "https://gitlab.com/acme/demo.git"]);
+    git(repo, ["remote", "set-url", "origin", "https://bitbucket.org/acme/demo.git"]);
     const result = await fetchIssue(repo, "1");
     assert.deepEqual(result, { ok: false, reason: "not a GitHub repo" });
     assert.equal(fs.existsSync(argsPath), false);
@@ -826,7 +826,7 @@ process.exit(1);
   });
 
   it("rejects a non-GitHub remote without spawning gh", async () => {
-    git(repo, ["remote", "set-url", "origin", "https://gitlab.com/acme/demo.git"]);
+    git(repo, ["remote", "set-url", "origin", "https://bitbucket.org/acme/demo.git"]);
     assert.deepEqual(await createIssue(repo, { title: "chip", body: "x" }), {
       ok: false,
       reason: "not a GitHub repo",
@@ -975,7 +975,7 @@ process.exit(1);
   });
 
   it("rejects a non-GitHub remote without spawning gh", async () => {
-    git(repo, ["remote", "set-url", "origin", "https://gitlab.com/acme/demo.git"]);
+    git(repo, ["remote", "set-url", "origin", "https://bitbucket.org/acme/demo.git"]);
     assert.deepEqual(await commentIssue(repo, 150, "x"), {
       ok: false,
       reason: "not a GitHub repo",

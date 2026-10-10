@@ -720,6 +720,11 @@ function createRunner(opts) {
   /** Last known workflow (core Workflow or real state) per thread. */
   /** @type {Map<string, object>} */
   const lastWorkflowByThread = new Map();
+  // Orchestrated views survive restarts so a crashed run can resume (#182).
+  for (const t of store.getThreads()) {
+    const saved = store.getWorkflowRun(t.id);
+    if (saved) lastWorkflowByThread.set(t.id, saved);
+  }
 
   /**
    * Arrays as last pushed per thread, for the tail diff in pushDetail, plus
@@ -1100,6 +1105,7 @@ function createRunner(opts) {
     }
     if (workflow) {
       lastWorkflowByThread.set(threadId, workflow);
+      if (workflow.__orchestrated) store.setWorkflowRun(threadId, workflow);
     }
     let view = null;
     if (workflow) {
@@ -1768,8 +1774,10 @@ function createRunner(opts) {
 
     // Prefix is CLI-only and must see the retained tail BEFORE this turn's
     // user message is appended (rewind replay would otherwise digest itself).
-    const prefix = services.buildHandoffPrefix(thread, (id) =>
-      store.getMessages(id),
+    const prefix = services.buildHandoffPrefix(
+      thread,
+      (id) => store.getMessages(id),
+      (id) => store.getThread(id),
     );
     // Start is accepted: a later undo must not resurrect the dropped tail
     // (#1202). Clear before append so a crash mid-turn cannot roll back a

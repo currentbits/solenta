@@ -11,7 +11,7 @@ const {
   gitTry,
   mergeWorktree,
   recordedBaseBranch,
-  isGitHubRemote,
+  isForgeRemote,
 } = require("./worktrees.js");
 const worktrees = require("./worktrees.js");
 
@@ -444,7 +444,7 @@ async function crewIntegration(store, input) {
       "get-url",
       "origin",
     ]);
-    github = origin.ok && isGitHubRemote(origin.stdout);
+    github = origin.ok && isForgeRemote(origin.stdout);
   }
   const finalAction =
     github && !lead.prNumber ? "pr" : "merge";

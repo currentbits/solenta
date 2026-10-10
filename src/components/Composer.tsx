@@ -16,6 +16,7 @@ import {
 import type {
   AgentProfile,
   AttachmentInfo,
+  CliAgentInfo,
   PermissionMode,
   ProviderInfo,
   ReasoningEffort,
@@ -104,7 +105,7 @@ import {
 } from "../dropFiles";
 import { scrollChildIntoNearestView } from "../scrollNearest";
 import { teachPermissionAllowed } from "../teach";
-import type { ThreadTeach } from "../shared/ipc";
+import type { ThreadTeach, PromptSnippet } from "../shared/ipc";
 import { useFileDrop } from "../useFileDrop";
 import { isWebMode } from "../shared/wire";
 import {
@@ -157,6 +158,11 @@ interface ComposerProps {
   webSearch?: boolean;
   /** Fast / priority tier (#1529). Shown only on a model whose info lists `fast`. */
   fast?: boolean;
+  /** CLI custom agent (`--agent`, #172); null = CLI default. */
+  agent?: string | null;
+  /** Agents the provider CLI finds for this thread's checkout. */
+  agents?: readonly CliAgentInfo[];
+  onSetAgent?: (agent: string | null) => void | Promise<void>;
   /** Registry from providers.list(). */
   providers: ProviderInfo[];
   /** Saved named profiles from settings. Empty hides the Profiles section. */
@@ -233,6 +239,11 @@ interface ComposerProps {
    * mock shells without a repo behind them).
    */
   onListFiles?: (query: string) => Promise<string[]>;
+  /**
+   * Saved snippets (issue #189). `@name` lists matches above files; accepting
+   * replaces the token with the snippet text.
+   */
+  promptSnippets?: readonly PromptSnippet[];
   /**
    * Native folder picker for the mention popup's "Browse folder" row.
    * Returns a repo-relative token (trailing slash) or null if cancelled.
@@ -323,6 +334,9 @@ export const Composer = memo(function Composer({
   reasoningEffort,
   webSearch = false,
   fast = false,
+  agent = null,
+  agents = [],
+  onSetAgent,
   providers,
   agentProfiles = [],
   workflows,
@@ -351,6 +365,7 @@ export const Composer = memo(function Composer({
   error = null,
   onDismissError,
   onListFiles,
+  promptSnippets,
   onPickMentionFolder,
   replyTo = null,
   onClearReply,
@@ -565,16 +580,20 @@ export const Composer = memo(function Composer({
 
   const {
     mentionFiles,
-    mentionIndex,
+    snippetMatches,
+    mentionCount,
+    mentionActive,
     setMentionIndex,
     mentionOpen,
     closeMention,
     refreshMention,
     acceptMention,
+    acceptSnippet,
     browseMentionFolder,
   } = useMentionMenu({
     textareaRef,
     onListFiles,
+    promptSnippets,
     onPickMentionFolder,
     disabled,
     writeDraft,
@@ -1167,18 +1186,20 @@ export const Composer = memo(function Composer({
     if (mentionOpen) {
       if (e.key === "ArrowDown") {
         e.preventDefault();
-        setMentionIndex((i) => Math.min(i + 1, mentionFiles.length - 1));
+        setMentionIndex(Math.min(mentionActive + 1, mentionCount - 1));
         return;
       }
       if (e.key === "ArrowUp") {
         e.preventDefault();
-        setMentionIndex((i) => Math.max(i - 1, 0));
+        setMentionIndex(Math.max(mentionActive - 1, 0));
         return;
       }
       if (e.key === "Enter" || e.key === "Tab") {
         e.preventDefault();
-        const f = mentionFiles[mentionIndex];
-        if (f) acceptMention(f);
+        const sn = snippetMatches[mentionActive];
+        const f = mentionFiles[mentionActive - snippetMatches.length];
+        if (sn) acceptSnippet(sn);
+        else if (f) acceptMention(f);
         return;
       }
       if (e.key === "Escape") {
@@ -1648,8 +1669,10 @@ export const Composer = memo(function Composer({
       <div className={styles.card}>
         {mentionOpen && (
           <MentionList
+            snippetMatches={snippetMatches}
+            acceptSnippet={acceptSnippet}
             mentionFiles={mentionFiles}
-            mentionIndex={mentionIndex}
+            mentionIndex={mentionActive}
             setMentionIndex={setMentionIndex}
             acceptMention={acceptMention}
             onPickMentionFolder={onPickMentionFolder}
@@ -2386,6 +2409,51 @@ export const Composer = memo(function Composer({
                 <span className={styles.pillLabel}>Search</span>
               </button>
             )}
+
+            {currentProviderInfo?.supportsAgents &&
+              onSetAgent &&
+              (agents.length > 0 || agent) && (
+                <>
+                  <span className={styles.sep} aria-hidden="true" />
+                  {/* ponytail: native select; a listbox menu like Effort if it needs descriptions inline */}
+                  <select
+                    className={
+                      agent
+                        ? `${styles.pill} ${styles.pillAccent} ${styles.agentSelect}`
+                        : `${styles.pill} ${styles.agentSelect}`
+                    }
+                    aria-label="Agent"
+                    title={
+                      agent
+                        ? (agents.find((a) => a.name === agent)?.description ||
+                          `Runs as --agent ${agent}`)
+                        : "Run this thread as a custom CLI agent"
+                    }
+                    disabled={locked || currentProviderInfo.available === false}
+                    value={agent ?? ""}
+                    onChange={(e) => {
+                      void Promise.resolve(onSetAgent(e.target.value || null)).catch(
+                        (err) =>
+                          setLocalError(
+                            err instanceof Error && err.message
+                              ? err.message
+                              : "Failed to set agent",
+                          ),
+                      );
+                    }}
+                  >
+                    <option value="">Default agent</option>
+                    {agent && !agents.some((a) => a.name === agent) && (
+                      <option value={agent}>{agent} (not found)</option>
+                    )}
+                    {agents.map((a) => (
+                      <option key={a.name} value={a.name} title={a.description}>
+                        {a.source === "user" ? `${a.name} (user)` : a.name}
+                      </option>
+                    ))}
+                  </select>
+                </>
+              )}
 
             {!ask && <span className={styles.sep} aria-hidden="true" />}
             {!ask && (
