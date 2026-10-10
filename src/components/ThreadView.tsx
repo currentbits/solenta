@@ -42,6 +42,7 @@ import type {
   PermissionDecision,
   InputValues,
   PermissionMode,
+  CliAgentInfo,
   CliSlashCommand,
   ProjectInfo,
   SimulatorStatus,
@@ -359,6 +360,12 @@ interface ThreadViewProps {
   ) => void | Promise<void>;
   onSetWebSearch?: (webSearch: boolean, threadId?: string) => void | Promise<void>;
   onSetFast?: (fast: boolean, threadId?: string) => void | Promise<void>;
+  /** Run the thread as a CLI custom agent (#172); null = CLI default. */
+  onSetAgent?: (agent: string | null) => void | Promise<void>;
+  onListAgents?: (input: {
+    provider: string;
+    projectPath?: string | null;
+  }) => Promise<CliAgentInfo[]>;
   /** Archive or unarchive the open thread. */
   onSetArchived: (archived: boolean) => void | Promise<void>;
   /** Per-thread inbound policy for messages from other threads (issue #551). */
@@ -741,6 +748,8 @@ export const ThreadView = memo(function ThreadView({
   onSetReasoningEffort,
   onSetWebSearch,
   onSetFast,
+  onSetAgent,
+  onListAgents,
   onSetArchived,
   onSetCrossThreadInbound,
   onRenameThread,
@@ -983,6 +992,7 @@ export const ThreadView = memo(function ThreadView({
   const [lightbox, setLightbox] = useState<{ src: string; alt: string } | null>(
     null,
   );
+  const [cliAgents, setCliAgents] = useState<CliAgentInfo[]>([]);
   const copyFlashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const threadId = detail?.thread.id ?? null;
   if (threadId !== focusThreadId) {
@@ -1004,6 +1014,26 @@ export const ThreadView = memo(function ThreadView({
     threadId,
     detail,
   });
+
+  const agentProvider = detail?.thread.provider;
+  const agentCwd = detail?.thread.worktreePath || project?.path || null;
+  useEffect(() => {
+    if (!onListAgents || !agentProvider) {
+      setCliAgents([]);
+      return;
+    }
+    let cancelled = false;
+    onListAgents({ provider: agentProvider, projectPath: agentCwd })
+      .then((rows) => {
+        if (!cancelled) setCliAgents(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setCliAgents([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [onListAgents, agentProvider, agentCwd, threadId]);
   const [incomingHandoff, setIncomingHandoff] = useState<{
     threadId: string;
     items: AttachmentInfo[];
@@ -4512,6 +4542,9 @@ export const ThreadView = memo(function ThreadView({
         reasoningEffort={thread.reasoningEffort}
         webSearch={thread.webSearch === true}
         fast={thread.fast === true}
+        agent={thread.agent ?? null}
+        agents={cliAgents}
+        onSetAgent={onSetAgent}
         providers={providers}
         agentProfiles={agentProfiles}
         workflows={workflows}

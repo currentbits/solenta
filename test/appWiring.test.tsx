@@ -777,6 +777,39 @@ describe("App reasoning-effort wiring", () => {
     );
     m.unmount();
   });
+
+  it("sends the picked CLI agent to setAgent, with the thread id (#172)", async () => {
+    const picked = thread({ provider: "claude", model: null });
+    const fake = createFakeCoder({
+      providers: [
+        {
+          id: "claude",
+          name: "Claude Code",
+          available: true,
+          supportsResume: true,
+          models: [],
+          modelInfo: [],
+          efforts: [],
+          supportsAgents: true,
+        } as unknown as ProviderInfo,
+      ],
+      agents: [{ name: "reviewer", description: "Reviews diffs", source: "project" }],
+      threads: [picked],
+      details: { t1: detail({ thread: picked }) },
+    });
+    const m = await boot(fake);
+    const card = m.query('button[aria-label="Select thread: first thread"]');
+    assert.ok(card, "the thread card must be present");
+    await m.click(card);
+
+    const select = m.query('select[aria-label="Agent"]');
+    assert.ok(select, "claude must show the Agent picker when agents exist");
+    await m.change(select, "reviewer");
+
+    const call = fake.only("threads.setAgent");
+    assert.deepEqual(call.args[0], { threadId: "t1", agent: "reviewer" });
+    m.unmount();
+  });
 });
 
 describe("App remove-project wiring (round 41)", () => {

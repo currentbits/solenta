@@ -485,6 +485,37 @@ function setWebSearch(store, input) {
 }
 
 /**
+ * Run the thread as a CLI custom agent (`--agent <name>`, #172). null means
+ * the CLI's default agent. Rejected unless the provider advertises
+ * supportsAgents; the name pattern guards argv that ssh/WSL wraps in a shell.
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string, agent: string | null }} input
+ */
+function setAgent(store, input) {
+  const { threadId } = input;
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  const agent = input.agent == null || input.agent === "" ? null : String(input.agent);
+  if (agent !== null) {
+    const entry = getProvider(thread.provider);
+    if (!entry || entry.supportsAgents !== true) {
+      const providerName =
+        (entry && entry.name) || thread.provider || "provider";
+      throw new Error(`${providerName} does not support custom agents`);
+    }
+    if (!require("./agents.js").AGENT_NAME_RE.test(agent)) {
+      throw new Error(`Invalid agent name: ${agent}`);
+    }
+  }
+  const updated = store.updateThread(threadId, { agent });
+  store.save();
+  return updated ? { ...updated } : { ...thread, agent };
+}
+
+/**
  * Fork / hand off: new thread in the source's project. Source is never modified.
  *
  * @param {import('./store').Store} store
@@ -840,6 +871,8 @@ function setProvider(store, input) {
       nextEntry && nextEntry.supportsSearch === true
         ? thread.webSearch === true
         : false;
+    // Agent names are per-CLI (.claude/agents vs .opencode/agent).
+    patch.agent = null;
     // Same rule as effort: a permission mode the new provider cannot honour
     // must not survive the switch (issue #177). Teach-mode caps still win.
     patch.permissionMode = snapPermissionModeForThread(
@@ -1521,6 +1554,7 @@ module.exports = {
   setPermissionMode,
   setReasoningEffort,
   setWebSearch,
+  setAgent,
   setFast,
   forkThread,
   forkWorkerThread,

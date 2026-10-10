@@ -67,6 +67,7 @@ const {
   setPermissionMode,
   setReasoningEffort,
   setWebSearch,
+  setAgent,
   setFast,
   forkThread,
   savePlanFile,
@@ -211,6 +212,7 @@ module.exports = {
   setPermissionMode,
   setReasoningEffort,
   setWebSearch,
+  setAgent,
   setFast,
   setProvider,
   // normalizeModelForProvider / isKnownProviderId / truncateThreadTitle stay

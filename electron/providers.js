@@ -81,6 +81,9 @@ const { posixQuote } = require("./ssh.js");
  *   user message as mid-turn guidance (Claude `--input-format stream-json`).
  *   Codex exec --json is explicit false (issue #1164). Absent/false keeps
  *   the composer queue-only while a run is active.
+ * @property {boolean} [supportsAgents] - CLI accepts `--agent <name>` to run
+ *   as a custom agent (#172; electron/agents.js lists them). Absent/false
+ *   hides the composer Agent picker and setAgent rejects names.
  * @property {Array<"default"|"acceptEdits"|"plan"|"bypassPermissions">} permissionModes
  *   Modes this adapter actually honours (changes argv / CLI behaviour).
  *   The composer only offers these; setPermissionMode rejects the rest.
@@ -91,6 +94,7 @@ const { posixQuote } = require("./ssh.js");
  *   permissionMode?: string,
  *   model?: string | null,
  *   reasoningEffort?: string | null,
+ *   agent?: string | null,
  *   webSearch?: boolean,
  *   fast?: boolean,
  *   images?: string[],
@@ -338,9 +342,10 @@ const PROVIDERS = [
     // claude --help lists low..max; 2.1.219 also accepts ultracode (no
     // unknown-value warning). Haiku is not effort-capable.
     efforts: CLAUDE_EFFORTS.slice(),
+    supportsAgents: true,
     permissionModes: ALL_PERMISSION_MODES.slice(),
     kind: "claude-stream",
-    buildArgs({ sessionId, permissionMode, model, reasoningEffort, fast }) {
+    buildArgs({ sessionId, permissionMode, model, reasoningEffort, fast, agent }) {
       // NO trailing prompt: the runner delivers it on stdin (stream-json
       // input), which is what lets the CLI route permission prompts to us
       // as control_request/control_response instead of silently denying.
@@ -359,6 +364,9 @@ const PROVIDERS = [
       ];
       if (model) {
         args.push("--model", String(model));
+      }
+      if (agent) {
+        args.push("--agent", String(agent));
       }
       if (sessionId) {
         args.push("--resume", String(sessionId));
@@ -782,6 +790,7 @@ const PROVIDERS = [
     // Fallback for Default / custom: hide the pill. Per-model variants
     // populate ModelInfo.efforts; buildArgs emits --variant from those.
     efforts: [],
+    supportsAgents: true,
     // `opencode run --auto` auto-approves non-denied permissions. No plan
     // flag. Accept-edits is the same lever as full access.
     permissionModes: ["default", "bypassPermissions"],
@@ -803,6 +812,7 @@ const PROVIDERS = [
       reasoningEffort,
       permissionMode,
       files,
+      agent,
     }) {
       const args = ["run"];
       const paths = [];
@@ -822,6 +832,9 @@ const PROVIDERS = [
       }
       if (model) {
         args.push("-m", String(model));
+      }
+      if (agent) {
+        args.push("--agent", String(agent));
       }
       maybeEmitEffort(
         honouredEfforts(getProvider("opencode"), model),
@@ -1920,6 +1933,7 @@ function listProviders(opts = {}) {
       efforts: (entry.efforts || []).slice(),
       supportsSearch: entry.supportsSearch === true,
       supportsSteer: entry.supportsSteer === true,
+      supportsAgents: entry.supportsAgents === true,
       permissionModes: honouredPermissionModes(entry),
     };
     out.push(info);
