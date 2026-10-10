@@ -3,7 +3,11 @@
 const os = require("node:os");
 const { listLocalServers } = require("./servers.js");
 const { spotlightEnv, spotlightLane } = require("./mergeQueue.js");
-const { spawnEnvForDevServer, laneEnvExtra } = require("./worktreeEnv.js");
+const {
+  spawnEnvForDevServer,
+  laneEnvExtra,
+  normalizeProjectEnv,
+} = require("./worktreeEnv.js");
 const devservers = require("./devservers.js");
 const terminal = require("./terminal.js");
 const preview = require("./preview.js");
@@ -152,6 +156,7 @@ module.exports = {
     const { root, project, logDir } = terminalRoot(ctx, threadId);
     return terminal.open(threadId, root, {
       project,
+      env: { ...process.env, ...normalizeProjectEnv(project && project.env) },
       termId: input && input.termId,
       cols: input && input.cols,
       rows: input && input.rows,

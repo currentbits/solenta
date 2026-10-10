@@ -4,6 +4,7 @@
 // Follows the seam convention in the header of electron/runner-watchdogs.js.
 
 const { getProvider, resolveBin, modelSupportsFast } = require("./providers.js");
+const { withProjectEnv } = require("./worktreeEnv.js");
 const {
   truncate,
   INPUT_TRUNCATE,
@@ -1186,7 +1187,10 @@ function createClaudeRun(ctx) {
     // respawns the warm CLI so the next turn sees it.
     const spawnEnv = threadSecrets.withEnv(
       threadId,
-      grokMerged && Object.keys(grokMerged).length > 0 ? grokMerged : undefined,
+      withProjectEnv(
+        project,
+        grokMerged && Object.keys(grokMerged).length > 0 ? grokMerged : undefined,
+      ),
     );
 
     // Reuse key: everything a spawn bakes into argv/env EXCEPT the session
