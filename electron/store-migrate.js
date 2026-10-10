@@ -172,6 +172,12 @@ function migrateAutomation(a) {
         ? a.nextRunAt
         : 0,
     lastError: a.lastError !== undefined ? a.lastError : null,
+    consecutiveFailures:
+      Number.isInteger(a.consecutiveFailures) && a.consecutiveFailures > 0
+        ? a.consecutiveFailures
+        : 0,
+    pendingRunThreadId:
+      typeof a.pendingRunThreadId === "string" ? a.pendingRunThreadId : null,
   };
 }
 

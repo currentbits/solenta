@@ -8,6 +8,11 @@ const PRESETS = new Set(["hourly", "daily", "weekly"]);
 // unfinished waits are not disposable history (#932).
 const MAX_THREADS_PER_AUTOMATION = 20;
 
+// Issue #160: auto-pause (enabled=false) after this many failed fires in a
+// row. Re-enabling from the UI resets the count (services.updateAutomation).
+// ponytail: fixed threshold, add a per-automation field if anyone asks.
+const MAX_CONSECUTIVE_FAILURES = 3;
+
 /**
  * Next fire time after `fromMs`.
  *
@@ -88,6 +93,68 @@ function patchAutomation(store, id, patch) {
   );
   store.setAutomations(list);
   return list.find((a) => a && a.id === id) || null;
+}
+
+/**
+ * Count one failed fire; pause the automation and notify once the streak
+ * reaches MAX_CONSECUTIVE_FAILURES. Does not save; caller saves.
+ *
+ * @param {{ store: import("./store").Store, notify?: Function }} ctx
+ * @param {string} id
+ * @param {string} message
+ */
+function recordFailure(ctx, id, message) {
+  const auto = ctx.store.getAutomation(id);
+  if (!auto) return;
+  const failures = (auto.consecutiveFailures || 0) + 1;
+  const pause = auto.enabled && failures >= MAX_CONSECUTIVE_FAILURES;
+  const lastError = pause
+    ? `Paused after ${failures} consecutive failures. Last: ${message}`
+    : message;
+  patchAutomation(ctx.store, id, {
+    consecutiveFailures: failures,
+    pendingRunThreadId: null,
+    lastError,
+    ...(pause ? { enabled: false } : {}),
+  });
+  if (pause && typeof ctx.notify === "function") {
+    try {
+      ctx.notify({ id, name: auto.name, message: lastError });
+    } catch {
+      // A notification failure must not undo the pause.
+    }
+  }
+}
+
+/**
+ * startRun resolves at launch, so a run that dies later only shows up as
+ * the thread's final status. Settle each automation's last fired thread:
+ * failed counts toward the breaker, any other finished status resets it,
+ * still-running threads wait for the next tick. Does not save.
+ *
+ * @param {{ store: import("./store").Store, notify?: Function }} ctx
+ * @returns {boolean} whether any automation changed
+ */
+function settleAutomationRuns(ctx) {
+  let changed = false;
+  for (const auto of ctx.store.getAutomations()) {
+    if (!auto || !auto.pendingRunThreadId) continue;
+    const t = ctx.store.getThread(auto.pendingRunThreadId);
+    if (t && (t.status === "working" || t.status === "quota-wait")) continue;
+    changed = true;
+    if (t && t.status === "failed") {
+      recordFailure(ctx, auto.id, `Run failed: ${t.title || auto.name}`);
+    } else if (t) {
+      patchAutomation(ctx.store, auto.id, {
+        pendingRunThreadId: null,
+        consecutiveFailures: 0,
+      });
+    } else {
+      // Thread deleted before it settled: no verdict either way.
+      patchAutomation(ctx.store, auto.id, { pendingRunThreadId: null });
+    }
+  }
+  return changed;
 }
 
 /**
@@ -180,11 +247,14 @@ async function runAutomation(ctx, auto, now, opts) {
       threadId: thread.id,
       prompt: auto.prompt,
     });
-    patchAutomation(ctx.store, auto.id, { lastError: null });
+    patchAutomation(ctx.store, auto.id, {
+      lastError: null,
+      pendingRunThreadId: thread.id,
+    });
     ctx.store.save();
   } catch (err) {
     runErr = err;
-    patchAutomation(ctx.store, auto.id, { lastError: errorText(err) });
+    recordFailure(ctx, auto.id, errorText(err));
     ctx.store.save();
   }
 
@@ -281,6 +351,12 @@ function startScheduler(ctx) {
   async function tick() {
     if (stopped) return;
     const now = nowFn();
+    // Before due: a pause from the last run's failure must stop this fire.
+    try {
+      if (settleAutomationRuns(ctx)) ctx.store.save();
+    } catch {
+      // Never let bookkeeping stall the scheduler.
+    }
     const due = dueAutomations(ctx.store.getAutomations(), now);
     for (const auto of due) {
       if (!auto || !auto.id || firing.has(auto.id)) continue;
@@ -307,7 +383,9 @@ function startScheduler(ctx) {
 
 module.exports = {
   MAX_THREADS_PER_AUTOMATION,
+  MAX_CONSECUTIVE_FAILURES,
   nextFire,
+  settleAutomationRuns,
   dueAutomations,
   listAutomationRuns,
   runAutomation,

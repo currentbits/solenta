@@ -309,6 +309,8 @@ function addAutomation(store, input) {
     lastRunAt: null,
     nextRunAt: nextFire(fields.preset, fields.hour, now),
     lastError: null,
+    consecutiveFailures: 0,
+    pendingRunThreadId: null,
   };
   const list = store.getAutomations().slice();
   list.push(created);
@@ -331,9 +333,12 @@ function updateAutomation(store, input) {
   const fields = normalizeAutomationInput(store, input, existing);
   const scheduleChanged =
     fields.preset !== existing.preset || fields.hour !== existing.hour;
+  // #160: turning it back on is the explicit re-enable after an auto-pause.
+  const reEnabled = fields.enabled && !existing.enabled;
   const updated = {
     ...existing,
     ...fields,
+    ...(reEnabled ? { consecutiveFailures: 0, lastError: null } : {}),
     nextRunAt: scheduleChanged
       ? nextFire(fields.preset, fields.hour, Date.now())
       : existing.nextRunAt,

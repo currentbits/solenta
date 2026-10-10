@@ -411,6 +411,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     removeAutomation,
     runAutomationNow,
     listAutomationRuns,
+    refreshAutomations,
   } = useCoder();
 
   useEffect(() => {
@@ -457,6 +458,11 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     const requested = new URLSearchParams(window.location.search).get("view");
     return requested === "usage" ? "usage" : "thread";
   });
+  // The scheduler can pause an automation in the background (#160); reload
+  // on open so the row shows Off and the reason instead of boot-time state.
+  useEffect(() => {
+    if (view === "automations") void refreshAutomations().catch(() => {});
+  }, [view, refreshAutomations]);
   const quotaDemo =
     isDevBuild() &&
     typeof window !== "undefined" &&
