@@ -41,6 +41,7 @@ const {
   listChangedPaths,
   commit,
   revertFile,
+  revertHunk,
   directoriesFromFiles,
   listFiles,
   lsFiles,
@@ -65,6 +66,9 @@ const {
   mergeWorktree,
   removeWorktree,
   setupWorktree,
+  setWorktreePoolSize,
+  refillWorktreePool,
+  worktreePoolDir,
   copyWorktreeIncludes,
   retargetWorktreeBase,
   maybeRenameWorktreeBranch,
@@ -125,6 +129,9 @@ const {
 } = require("./worktrees-pr-checkout.js");
 
 module.exports = {
+  setWorktreePoolSize,
+  refillWorktreePool,
+  worktreePoolDir,
   assertNoOutboundSecrets,
   setupWorktree,
   copyWorktreeIncludes,
@@ -144,6 +151,7 @@ module.exports = {
   diff,
   commit,
   revertFile,
+  revertHunk,
   listFiles,
   lsFiles,
   searchFiles,

@@ -484,11 +484,14 @@ interface ThreadViewProps {
   onCommitChanges: (
     message: string,
     paths?: string[],
+    patches?: Array<{ path: string; patch: string }>,
   ) => Promise<{ subject: string }>;
   /** Keep the Git-tab merge in sync with the pane's staged path list. */
   onStagedPathsChange?: (paths: string[] | null) => void;
   /** Discard one changed file (untracked deletes the file). */
   onRevertFile: (path: string, status: string) => Promise<{ path: string }>;
+  /** Discard one hunk; `patch` is the file header plus that hunk. */
+  onRevertHunk?: (path: string, patch: string) => Promise<{ path: string }>;
   /** Draft a commit message with the thread's provider. */
   onSuggestCommitMessage: () => Promise<{ message: string }>;
   /** File lookup for the composer @-mention popup. */
@@ -645,7 +648,7 @@ interface ThreadViewProps {
    * pass provider for hand-off.
    */
   onFork?: (
-    opts?: { provider?: string; model?: string | null },
+    opts?: { provider?: string; model?: string | null; messageId?: string },
   ) => void | Promise<void | ThreadInfo | null>;
   /**
    * Start a suggested-work chip as a new thread (issue #550). Caller forks
@@ -800,6 +803,7 @@ export const ThreadView = memo(function ThreadView({
   onCommitChanges,
   onStagedPathsChange,
   onRevertFile,
+  onRevertHunk,
   onSuggestCommitMessage,
   onListFiles,
   promptSnippets,
@@ -1413,6 +1417,15 @@ export const ThreadView = memo(function ThreadView({
     if (isWorking || !onFork) return;
     void onFork();
   }, [isWorking, onFork]);
+  const handleForkFrom = useMemo(
+    () =>
+      onFork
+        ? (messageId: string) => {
+            void onFork({ messageId });
+          }
+        : undefined,
+    [onFork],
+  );
   // Provider-native compaction needs a live session; otherwise /compact
   // falls back to the fresh-context fork.
   const nativeCompact =
@@ -3614,6 +3627,7 @@ export const ThreadView = memo(function ThreadView({
                 onCommit={onCommitChanges}
                 onStagedPathsChange={onStagedPathsChange}
                 onRevert={onRevertFile}
+                onRevertHunk={onRevertHunk}
                 onSuggest={onSuggestCommitMessage}
                 onComment={
                   isArchived || !detail
@@ -4031,6 +4045,11 @@ export const ThreadView = memo(function ThreadView({
                       onWaitWhat={
                         entry.message.role === "assistant"
                           ? handleWaitWhat
+                          : undefined
+                      }
+                      onForkFrom={
+                        entry.message.role === "assistant" && !isWorking
+                          ? handleForkFrom
                           : undefined
                       }
                     />

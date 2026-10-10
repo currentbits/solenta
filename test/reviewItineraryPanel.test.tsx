@@ -214,7 +214,7 @@ describe("review itinerary panel", () => {
   it("marking a hunk reviewed persists the hash", async () => {
     const { view, accepted } = await mountItinerary();
     const btn = view.container.querySelector<HTMLButtonElement>(
-      "[data-review-hunk] button",
+      "[data-review-hunk] button[aria-pressed]",
     );
     assert.ok(btn);
     assert.equal(btn.getAttribute("aria-pressed"), "false");

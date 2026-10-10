@@ -482,6 +482,12 @@ function migrateThread(t) {
     handoffFrom: t.handoffFrom !== undefined ? t.handoffFrom : null,
     // Issue #254 edit-and-resubmit: one-shot context replay after rewind.
     replayContext: t.replayContext === true,
+    // Issue #158 message-level fork: claude chain uuid to cut the resumed
+    // source session at (one-shot; cleared once the forked session id lands).
+    forkSessionAt:
+      typeof t.forkSessionAt === "string" && t.forkSessionAt
+        ? t.forkSessionAt
+        : null,
     // Per-thread desktop-notification mute (issue #87): absent → not muted.
     muted: t.muted === true,
     // Eject-to-terminal (#554): Solenta must not resume this sessionId.

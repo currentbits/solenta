@@ -131,7 +131,11 @@ export function useCoderWorkspace({
   );
 
   const commitChanges = useCallback(
-    async (message: string, paths?: string[]) => {
+    async (
+      message: string,
+      paths?: string[],
+      patches?: Array<{ path: string; patch: string }>,
+    ) => {
       if (!selectedThreadId) {
         throw new Error("No thread selected");
       }
@@ -141,6 +145,7 @@ export function useCoderWorkspace({
         threadId,
         message,
         ...(selected != null ? { paths: selected } : {}),
+        ...(patches?.length ? { patches } : {}),
       });
     },
     [api, selectedThreadId],
@@ -153,6 +158,16 @@ export function useCoderWorkspace({
       }
       const threadId = selectedThreadId;
       return api.git.revertFile({ threadId, path, status });
+    },
+    [api, selectedThreadId],
+  );
+
+  const revertHunk = useCallback(
+    async (path: string, patch: string) => {
+      if (!selectedThreadId) {
+        throw new Error("No thread selected");
+      }
+      return api.git.revertHunk({ threadId: selectedThreadId, path, patch });
     },
     [api, selectedThreadId],
   );
@@ -428,6 +443,7 @@ export function useCoderWorkspace({
     setReviewAccepted,
     commitChanges,
     revertFile,
+    revertHunk,
     suggestCommitMessage,
     listFiles,
     searchFileContents,

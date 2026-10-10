@@ -234,6 +234,7 @@ export interface UseCoderResult {
       worktree?: boolean;
       select?: boolean;
       leavePlan?: boolean;
+      messageId?: string;
     },
   ) => Promise<ThreadInfo | null>;
   /**
@@ -509,6 +510,7 @@ export interface UseCoderResult {
   commitChanges: (
     message: string,
     paths?: string[],
+    patches?: Array<{ path: string; patch: string }>,
   ) => Promise<{ subject: string }>;
   /**
    * Remember the Git pane's staged path list so mergeWorktree can stage
@@ -517,6 +519,8 @@ export interface UseCoderResult {
   setStagedPaths: (paths: string[] | null) => void;
   /** Discard one changed file in the selected thread's cwd. */
   revertFile: (path: string, status: string) => Promise<{ path: string }>;
+  /** Discard one hunk (file header + hunk patch) in the selected thread's cwd. */
+  revertHunk: (path: string, patch: string) => Promise<{ path: string }>;
   /** Draft a commit message with the thread's provider (never commits). */
   suggestCommitMessage: () => Promise<{ message: string }>;
   /** File paths for the composer @-mention popup and the file palette. */
@@ -1636,6 +1640,7 @@ export function useCoder(): UseCoderResult {
     setReviewAccepted,
     commitChanges,
     revertFile,
+    revertHunk,
     suggestCommitMessage,
     listFiles,
     searchFileContents,
@@ -2140,6 +2145,7 @@ export function useCoder(): UseCoderResult {
     commitChanges,
     setStagedPaths,
     revertFile,
+    revertHunk,
     suggestCommitMessage,
     listFiles,
     searchFileContents,

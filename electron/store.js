@@ -2409,7 +2409,10 @@ class Store {
       if (
         Object.prototype.hasOwnProperty.call(patch, "worktreePath") &&
         patch.worktreePath !== t.worktreePath &&
-        !Object.prototype.hasOwnProperty.call(patch, "sessionId")
+        !Object.prototype.hasOwnProperty.call(patch, "sessionId") &&
+        // An armed message-level fork (#158) resumes by id with
+        // --fork-session, which works from any cwd (claude 2.1.283).
+        !t.forkSessionAt
       ) {
         p = { ...patch, sessionId: null };
         // Same rule as setProvider (#1493): a dropped session replays the

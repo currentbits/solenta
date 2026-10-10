@@ -4064,6 +4064,12 @@ export interface SpeechStatus {
  */
 export type ThreadForkOpts = {
   provider?: string;
+  /**
+   * Message-level fork (#158): copy the transcript up to and including this
+   * message. Claude resumes a forked CLI session cut there; other providers
+   * get a fresh session seeded from the copied prefix.
+   */
+  messageId?: string;
   model?: string | null;
   worktree?: boolean;
   isolate?: boolean;
@@ -5101,13 +5107,25 @@ export interface CoderApi {
      * Commits changes in the thread's cwd. Omit `paths` to stage everything
      * (`git add -A`); pass a list to stage and commit only those files.
      * Rejects on an empty message, an empty `paths` list, or when there is
-     * nothing to commit.
+     * nothing to commit. `patches` (hunk-level staging, #191) commits only
+     * the given subset of a file's `git diff HEAD` hunks; each path must
+     * also be in `paths`.
      */
     commit(input: {
       threadId: string;
       message: string;
       paths?: string[];
+      patches?: Array<{ path: string; patch: string }>;
     }): Promise<{ subject: string }>;
+    /**
+     * Discards one hunk: reverse-applies `patch` (file header + one hunk
+     * from the diff) to the worktree. Other hunks in the file stay.
+     */
+    revertHunk(input: {
+      threadId: string;
+      path: string;
+      patch: string;
+    }): Promise<{ path: string }>;
     /**
      * Discards one file's changes: untracked files are deleted, staged-new
      * files are removed from index and disk, tracked files are restored from

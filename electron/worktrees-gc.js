@@ -257,7 +257,8 @@ async function listRootDirs(store, worktreeBase) {
       continue;
     }
     for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
+      // Pre-warmed pool (#192) holds idle worktrees no thread references yet.
+      if (!entry.isDirectory() || entry.name === ".pool") continue;
       const dir = path.join(root.dir, entry.name);
       if (!root.owned) {
         // App worktrees are named by thread id; a user's own `git worktree

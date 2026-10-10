@@ -1780,6 +1780,8 @@ button.diffLineGutter:focus-visible {
 }
 
 .hunkPath {
+  flex: 1;
+  min-width: 0;
   font-size: 11px;
   color: var(--text-dim);
   overflow: hidden;

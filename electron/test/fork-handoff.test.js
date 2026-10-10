@@ -231,6 +231,114 @@ describe("forkThread + handoff (services)", () => {
     const legacy = new Store(legacyPath);
     assert.equal(legacy.getThread("legacy").handoffFrom, null);
   });
+
+  describe("message-level fork (#158)", () => {
+    function seed(threadId) {
+      const msgs = [
+        { id: "u1", role: "user", text: "remember APPLE", createdAt: 1 },
+        { id: "a1", role: "assistant", text: "OK", createdAt: 2, claudeUuid: "uuid-a1" },
+        { id: "u2", role: "user", text: "now BANANA", createdAt: 3 },
+        { id: "a2", role: "assistant", text: "OK", createdAt: 4, claudeUuid: "uuid-a2" },
+      ];
+      store.setMessages(threadId, msgs);
+      return msgs;
+    }
+
+    it("claude: copies the prefix and arms a native fork cut at that message", () => {
+      services.setProvider(store, { threadId: source.id, provider: "claude" });
+      store.updateThread(source.id, { sessionId: "sess-src" });
+      seed(source.id);
+      const beforeMsgs = deepClone(store.getMessages(source.id));
+
+      const forked = services.forkThread(store, {
+        threadId: source.id,
+        messageId: "a1",
+      });
+      const copied = store.getMessages(forked.id);
+      assert.deepEqual(copied.map((m) => m.text), ["remember APPLE", "OK"]);
+      assert.ok(copied.every((m) => m.id !== "u1" && m.id !== "a1"));
+      assert.equal(forked.sessionId, "sess-src");
+      assert.equal(forked.forkSessionAt, "uuid-a1");
+      assert.equal(forked.replayContext, false);
+      assert.equal(forked.handoffFrom, source.id);
+      // Session present → no hand-off digest on the first turn.
+      assert.equal(
+        services.buildHandoffPrefix(store.getThread(forked.id), (id) =>
+          store.getMessages(id),
+        ),
+        "",
+      );
+      assert.equal(store.getThread(source.id).sessionId, "sess-src");
+      assert.equal(store.getThread(source.id).forkSessionAt, null);
+      assert.deepEqual(store.getMessages(source.id), beforeMsgs);
+    });
+
+    it("non-claude or no cut uuid: seeds a fresh session from the copied prefix", () => {
+      store.updateThread(source.id, { sessionId: "codex-sess" });
+      seed(source.id);
+      const forked = services.forkThread(store, {
+        threadId: source.id,
+        messageId: "u2",
+      });
+      assert.equal(store.getMessages(forked.id).length, 3);
+      assert.equal(forked.sessionId, null);
+      assert.equal(forked.forkSessionAt, null);
+      assert.equal(forked.replayContext, true);
+      const prefix = services.buildHandoffPrefix(
+        store.getThread(forked.id),
+        (id) => store.getMessages(id),
+      );
+      assert.match(prefix, /remember APPLE/);
+      assert.match(prefix, /now BANANA/);
+    });
+
+    it("hand-off away from claude never carries the claude session", () => {
+      services.setProvider(store, { threadId: source.id, provider: "claude" });
+      store.updateThread(source.id, { sessionId: "sess-src" });
+      seed(source.id);
+      const forked = services.forkThread(store, {
+        threadId: source.id,
+        messageId: "a1",
+        provider: "codex",
+      });
+      assert.equal(forked.sessionId, null);
+      assert.equal(forked.forkSessionAt, null);
+      assert.equal(forked.replayContext, true);
+    });
+
+    it("rejects an unknown message id without creating a thread", () => {
+      seed(source.id);
+      const count = store.getThreads().length;
+      assert.throws(
+        () => services.forkThread(store, { threadId: source.id, messageId: "nope" }),
+        /Unknown message: nope/,
+      );
+      assert.equal(store.getThreads().length, count);
+    });
+
+    it("claude buildArgs adds --fork-session --resume-session-at only with a session", () => {
+      const { getProvider } = require("../providers.js");
+      const claude = getProvider("claude");
+      const args = claude.buildArgs({
+        sessionId: "sess-src",
+        forkSessionAt: "uuid-a1",
+      });
+      const i = args.indexOf("--resume");
+      assert.deepEqual(args.slice(i, i + 5), [
+        "--resume",
+        "sess-src",
+        "--fork-session",
+        "--resume-session-at",
+        "uuid-a1",
+      ]);
+      assert.ok(
+        !claude.buildArgs({ sessionId: "s" }).includes("--fork-session"),
+      );
+      assert.ok(
+        !claude.buildArgs({ forkSessionAt: "x" }).includes("--fork-session"),
+      );
+    });
+  });
 });
 
 describe("buildHandoffPrefix", () => {
@@ -560,5 +668,108 @@ describe("IPC seam threads:fork", () => {
       delete require.cache[require.resolve("../ipc.js")];
       delete require.cache[require.resolve("../preload.js")];
     }
+  });
+});
+
+describe("runner native claude fork at a message (#158)", () => {
+  let tmpDir;
+  let store;
+  let runner;
+  let project;
+  let argvFile;
+  const saved = {};
+  const ENV = [
+    "CODER_SIMULATE",
+    "CODER_CLAUDE_BIN",
+    "CODER_FAKE_ARGV",
+    "CODER_FAKE_FAIL",
+  ];
+
+  beforeEach(async () => {
+    for (const k of ENV) saved[k] = process.env[k];
+    delete process.env.CODER_SIMULATE;
+    delete process.env.CODER_AGENT_CMD;
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-native-fork-"));
+    argvFile = path.join(tmpDir, "argv.json");
+    // Records argv + stdin prompt; emits a uuid-stamped assistant entry.
+    const body = `#!/usr/bin/env node
+"use strict";
+const fs = require("fs");
+function emit(o){process.stdout.write(JSON.stringify(o)+"\\n");}
+if (process.env.CODER_FAKE_FAIL) {
+  process.stderr.write("No message found with message.uuid\\n");
+  process.exit(1);
+}
+let buf = "";
+process.stdin.on("data", (c) => {
+  buf += c;
+  const nl = buf.indexOf("\\n");
+  if (nl < 0) return;
+  let prompt = "";
+  try { prompt = JSON.parse(buf.slice(0, nl)).message.content; } catch {}
+  fs.writeFileSync(process.env.CODER_FAKE_ARGV, JSON.stringify({ argv: process.argv.slice(2), prompt }));
+  emit({type:"system",subtype:"init",session_id:"sess-forked",model:"m"});
+  emit({type:"assistant",uuid:"chain-1",message:{content:[{type:"text",text:"forked reply"}]}});
+  emit({type:"result",subtype:"success",result:"ok",usage:{input_tokens:1,output_tokens:1},total_cost_usd:0,session_id:"sess-forked"});
+  process.exit(0);
+});
+`;
+    process.env.CODER_CLAUDE_BIN = writeFakeBin(path.join(tmpDir, "fake-claude"), body);
+    process.env.CODER_FAKE_ARGV = argvFile;
+    store = new Store(path.join(tmpDir, "store.json"));
+    runner = createRunner({ store, core: await loadCore(), pushFn: () => {}, tickMs: 15 });
+    const repo = path.join(tmpDir, "app");
+    fs.mkdirSync(repo);
+    git(repo, ["init"]);
+    project = await services.addProject(store, repo);
+  });
+
+  afterEach(async () => {
+    if (runner) runner.stopAll();
+    await rmTree(tmpDir);
+    for (const k of ENV) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+  });
+
+  function forkAtAnswer() {
+    const source = services.createThread(store, { projectId: project.id, title: "Src" });
+    services.setProvider(store, { threadId: source.id, provider: "claude" });
+    store.updateThread(source.id, { sessionId: "sess-src" });
+    store.setMessages(source.id, [
+      { id: "u1", role: "user", text: "q", createdAt: 1 },
+      { id: "a1", role: "assistant", text: "GOOD ANSWER", createdAt: 2, claudeUuid: "cut-1" },
+      { id: "u2", role: "user", text: "went wrong", createdAt: 3 },
+    ]);
+    return services.forkThread(store, { threadId: source.id, messageId: "a1" });
+  }
+
+  it("resumes the source session forked at the cut, then records its own session", async () => {
+    const forked = forkAtAnswer();
+    await runner.startRun({ threadId: forked.id, prompt: "try again" });
+    await waitFor(() => !runner.isRunning(forked.id) && store.getThread(forked.id).sessionId === "sess-forked");
+
+    const { argv, prompt } = JSON.parse(fs.readFileSync(argvFile, "utf8"));
+    const i = argv.indexOf("--resume");
+    assert.deepEqual(argv.slice(i, i + 5), [
+      "--resume", "sess-src", "--fork-session", "--resume-session-at", "cut-1",
+    ]);
+    assert.equal(prompt, "try again", "native fork needs no hand-off digest");
+    const t = store.getThread(forked.id);
+    assert.equal(t.forkSessionAt, null);
+    const reply = store.getMessages(forked.id).find((m) => m.text === "forked reply");
+    assert.equal(reply.claudeUuid, "chain-1", "assistant text carries its chain uuid");
+  });
+
+  it("a failed native fork falls back to a seeded fresh session, never the source", async () => {
+    process.env.CODER_FAKE_FAIL = "1";
+    const forked = forkAtAnswer();
+    await runner.startRun({ threadId: forked.id, prompt: "try again" }).catch(() => {});
+    await waitFor(() => !runner.isRunning(forked.id) && store.getThread(forked.id).status === "failed");
+    const t = store.getThread(forked.id);
+    assert.equal(t.sessionId, null);
+    assert.equal(t.forkSessionAt, null);
+    assert.equal(t.replayContext, true);
   });
 });
