@@ -191,7 +191,6 @@ function view(props: {
     restoreFiles?: boolean,
     attachments?: AttachmentInfo[],
   ) => void | Promise<void>;
-  onFork?: (opts?: { messageId?: string }) => void;
   onPickDirectory?: () => Promise<string | null>;
   onListSnapWindows?: () => Promise<Array<{ id: string; name: string }>>;
   onCaptureSnapWindow?: (
@@ -215,7 +214,6 @@ function view(props: {
       onAddProject={() => {}}
       onStartRun={props.onStartRun ?? (() => {})}
       onRewindAndResubmit={props.onRewindAndResubmit}
-      onFork={props.onFork}
       onStartWorkflow={() => {}}
       onSaveWorkflow={noopSave}
       onRemoveWorkflow={noopAsync}
@@ -3808,38 +3806,6 @@ describe("ThreadView reply-as-context and wait-what (#381)", () => {
     const chip = m.query("[data-reply-chip]");
     assert.ok(chip, "reply chip appears");
     assert.match(chip.textContent ?? "", /Prompt stash is not a draft/);
-  });
-});
-
-describe("ThreadView fork from a message (#158)", () => {
-  const messages = [
-    msg({ id: "u1", role: "user", text: "do it", createdAt: 10 }),
-    msg({ id: "a1", role: "assistant", text: "Done.", createdAt: 20 }),
-  ];
-
-  it("Fork from here forks at that assistant message", async () => {
-    const calls: unknown[] = [];
-    const m = await mount(
-      view({
-        onFork: (opts) => {
-          calls.push(opts);
-        },
-        detail: detail({ messages }),
-      }),
-    );
-    const buttons = m.queryAll("[data-msg-fork]");
-    assert.equal(buttons.length, 1, "assistant row only");
-    await m.click(buttons[0] as HTMLElement);
-    assert.deepEqual(calls, [{ messageId: "a1" }]);
-  });
-
-  it("hides Fork from here while a run is working", () => {
-    const html = render({
-      onFork: () => {},
-      detail: detail({ messages, thread: thread({ status: "working" }) }),
-    });
-    assert.ok(html.includes("Done."));
-    assert.ok(!html.includes("data-msg-fork"));
   });
 });
 
