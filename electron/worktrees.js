@@ -65,6 +65,9 @@ const {
   mergeWorktree,
   removeWorktree,
   setupWorktree,
+  setWorktreePoolSize,
+  refillWorktreePool,
+  worktreePoolDir,
   copyWorktreeIncludes,
   retargetWorktreeBase,
   maybeRenameWorktreeBranch,
@@ -125,6 +128,9 @@ const {
 } = require("./worktrees-pr-checkout.js");
 
 module.exports = {
+  setWorktreePoolSize,
+  refillWorktreePool,
+  worktreePoolDir,
   assertNoOutboundSecrets,
   setupWorktree,
   copyWorktreeIncludes,

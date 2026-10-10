@@ -958,6 +958,8 @@ app.whenReady().then(async () => {
   // refresher so startup stays fast and a short-lived process can exit.
   // Retention is owned by the periodic sweeper below (#641), not this timer.
   const worktreeBase = path.join(userData, "worktrees");
+  // #192: keep 2 idle worktrees per project so new threads skip `worktree add`.
+  require("./worktrees.js").setWorktreePoolSize(2);
   const sweepTimer = setTimeout(() => {
     const { sweepOrphanWorktrees } = require("./worktrees.js");
     void sweepOrphanWorktrees({ store, worktreeBase })
