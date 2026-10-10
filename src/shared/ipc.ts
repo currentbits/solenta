@@ -4018,6 +4018,12 @@ export interface SpeechStatus {
  */
 export type ThreadForkOpts = {
   provider?: string;
+  /**
+   * Message-level fork (#158): copy the transcript up to and including this
+   * message. Claude resumes a forked CLI session cut there; other providers
+   * get a fresh session seeded from the copied prefix.
+   */
+  messageId?: string;
   model?: string | null;
   worktree?: boolean;
   isolate?: boolean;

@@ -131,6 +131,7 @@ export function useCoderRuns({
         worktree?: boolean;
         select?: boolean;
         leavePlan?: boolean;
+        messageId?: string;
       },
     ) => {
       try {
@@ -140,8 +141,10 @@ export function useCoderRuns({
           model?: string | null;
           worktree?: boolean;
           leavePlan?: boolean;
+          messageId?: string;
         } = { threadId };
         if (opts?.leavePlan) input.leavePlan = true;
+        if (opts?.messageId) input.messageId = opts.messageId;
         if (opts && Object.prototype.hasOwnProperty.call(opts, "provider")) {
           input.provider = opts.provider;
         }

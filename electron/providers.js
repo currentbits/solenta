@@ -340,7 +340,7 @@ const PROVIDERS = [
     efforts: CLAUDE_EFFORTS.slice(),
     permissionModes: ALL_PERMISSION_MODES.slice(),
     kind: "claude-stream",
-    buildArgs({ sessionId, permissionMode, model, reasoningEffort, fast }) {
+    buildArgs({ sessionId, permissionMode, model, reasoningEffort, fast, forkSessionAt }) {
       // NO trailing prompt: the runner delivers it on stdin (stream-json
       // input), which is what lets the CLI route permission prompts to us
       // as control_request/control_response instead of silently denying.
@@ -362,6 +362,16 @@ const PROVIDERS = [
       }
       if (sessionId) {
         args.push("--resume", String(sessionId));
+        // Message-level fork (#158): a NEW session holding the source's
+        // chain up to and including that entry. The source is untouched.
+        // --resume-session-at is hidden in --help (live on 2.1.283).
+        if (forkSessionAt) {
+          args.push(
+            "--fork-session",
+            "--resume-session-at",
+            String(forkSessionAt),
+          );
+        }
       }
       // Takes exactly one value; kept away from other values so it cannot
       // swallow them (variadic flags have bitten this project twice).

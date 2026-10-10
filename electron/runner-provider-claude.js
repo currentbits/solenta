@@ -423,6 +423,7 @@ function createClaudeRun(ctx) {
       reasoningEffort: thread.reasoningEffort || null,
       webSearch: thread.webSearch === true,
       fast: thread.fast === true,
+      forkSessionAt: thread.forkSessionAt || null,
     });
     // Claude runs interactively: prompt over stdin, permission prompts via
     // the control protocol. Other claude-stream providers (e.g. grok) keep
@@ -726,7 +727,11 @@ function createClaudeRun(ctx) {
         if (type === "system" && ev.subtype === "init") {
           if (typeof ev.session_id === "string" && ev.session_id) {
             capturedSessionId = ev.session_id;
-            store.updateThread(threadId, { sessionId: ev.session_id });
+            // The forked session (#158) has its own id now: the cut is spent.
+            store.updateThread(threadId, {
+              sessionId: ev.session_id,
+              forkSessionAt: null,
+            });
           }
           if (typeof ev.model === "string" && ev.model) {
             capturedModel = ev.model;
@@ -804,6 +809,12 @@ function createClaudeRun(ctx) {
               if (block.text) markTurnContent();
               assistantText += block.text;
               upsertAssistantText();
+              // Chain entry a message-level fork resumes at (#158).
+              if (assistantMsgId && typeof ev.uuid === "string" && ev.uuid) {
+                store.updateMessage(threadId, assistantMsgId, {
+                  claudeUuid: ev.uuid,
+                });
+              }
             } else if (
               block.type === "thinking" ||
               block.type === "redacted_thinking"

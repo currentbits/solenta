@@ -240,8 +240,21 @@ export function createThreads(ctx: DevCtx): Pick<CoderApi, "threads"> {
           teach: source.teach ?? null,
           ask: source.ask === true,
           handoffFrom: source.id,
+          // Message-level fork (#158): dev has no CLI session, so always the
+          // seeded-fresh fallback.
+          ...(input.messageId ? { replayContext: true } : {}),
         });
-        return registerThread(created);
+        const registered = registerThread(created);
+        if (input.messageId) {
+          const at = sourceDetail.messages.findIndex(
+            (m) => m.id === input.messageId,
+          );
+          if (at < 0) throw new Error(`Unknown message: ${input.messageId}`);
+          details.get(created.id)!.messages = sourceDetail.messages
+            .slice(0, at + 1)
+            .map((m) => ({ ...m, id: `${m.id}-fork-${created.id}` }));
+        }
+        return registered;
       },
       /**
        * Edit-and-resubmit rewind (issue #254). Fixture twin of

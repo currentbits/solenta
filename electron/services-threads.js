@@ -488,7 +488,7 @@ function setWebSearch(store, input) {
  * Fork / hand off: new thread in the source's project. Source is never modified.
  *
  * @param {import('./store').Store} store
- * @param {{ threadId: string, provider?: string, model?: string | null, worktree?: boolean, title?: string, leavePlan?: boolean }} input
+ * @param {{ threadId: string, provider?: string, model?: string | null, worktree?: boolean, title?: string, leavePlan?: boolean, messageId?: string }} input
  * @returns {object}
  */
 function forkThread(store, input) {
@@ -532,6 +532,17 @@ function forkThread(store, input) {
     }
   } else if (modelProvided) {
     nextModel = normalizeModelForProvider(nextEntry, input.model);
+  }
+
+  // Message-level fork (#158): resolve the cut before creating anything.
+  let prefixMsgs = null;
+  if (input.messageId != null) {
+    const msgs = store.getMessages(source.id);
+    const at = msgs.findIndex((m) => m && m.id === input.messageId);
+    if (at < 0) {
+      throw new Error(`Unknown message: ${input.messageId}`);
+    }
+    prefixMsgs = msgs.slice(0, at + 1);
   }
 
   const sourceTitle =
@@ -593,6 +604,29 @@ function forkThread(store, input) {
     const sourceAsk = Boolean(source.ask) || Boolean(forkPatch.ask);
     if (!sourceAsk && canHostWorktree(project)) {
       forkPatch.pendingWorktree = true;
+    }
+  }
+  // Copy the transcript up to and including messageId. Claude resumes a
+  // forked CLI session cut at that message (forkSessionAt, one-shot); every
+  // other case seeds a fresh session from the copied prefix (replayContext,
+  // same as rewind).
+  if (prefixMsgs) {
+    store.setMessages(
+      created.id,
+      prefixMsgs.map((m) => ({ ...m, id: randomUUID() })),
+    );
+    const cut = prefixMsgs[prefixMsgs.length - 1].claudeUuid;
+    if (
+      cut &&
+      source.sessionId &&
+      source.provider === "claude" &&
+      nextProvider === "claude" &&
+      (source.providerInstance || null) === nextInstance
+    ) {
+      forkPatch.sessionId = source.sessionId;
+      forkPatch.forkSessionAt = String(cut);
+    } else {
+      forkPatch.replayContext = true;
     }
   }
   const updated = store.updateThread(created.id, forkPatch);

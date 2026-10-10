@@ -989,7 +989,11 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   );
 
   const handleForkOpen = useCallback(
-    async (opts?: { provider?: string; model?: string | null }) => {
+    async (opts?: {
+      provider?: string;
+      model?: string | null;
+      messageId?: string;
+    }) => {
       if (!selectedThreadId) return null;
       return forkThread(selectedThreadId, opts);
     },
