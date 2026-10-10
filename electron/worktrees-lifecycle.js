@@ -5,17 +5,20 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { execCommand } = require("./ssh.js");
+const { wslTarget } = require("./wsl.js");
 const {
   resolveWorktreeDir,
   effectiveWorktreeBase,
   invalidateGitReads,
   gitOut,
   gitTry,
+  gitOutAsync,
   splitLines,
   gitFailureText,
 } = require("./worktrees-git.js");
 const {
   repoDefaultBranch,
+  repoDefaultBranchAsync,
   recordedBaseBranch,
   mergeBaseName,
   resolveStartPoint,
@@ -804,6 +807,120 @@ function removeWorktree(opts) {
   });
 }
 
+// Pre-warmed worktree pool (#192). Idle detached worktrees live in
+// `<worktree base>/.pool/<projectId>/` (same filesystem, so `worktree move`
+// is a rename); worktrees-gc skips `.pool`. Off (0) unless main.js turns it on.
+// ponytail: fixed size per project, filled only after a project's first
+// setupWorktree; stale pools of removed projects are not reaped.
+let worktreePoolSize = 0;
+/** @type {Map<string, Promise<void>>} */
+const poolFilling = new Map();
+/** Pool dir currently being created by `worktree add`; never claimable. */
+const poolCreating = new Set();
+/** Projects whose pooled worktrees cannot be moved (e.g. submodules). */
+const poolBroken = new Set();
+
+/** @param {number} n */
+function setWorktreePoolSize(n) {
+  worktreePoolSize = Math.max(0, Math.floor(Number(n) || 0));
+}
+
+/**
+ * @param {string} base - effective worktree base
+ * @param {string} projectId
+ */
+function worktreePoolDir(base, projectId) {
+  return path.join(base, ".pool", projectId);
+}
+
+function poolUsable(project, base) {
+  return (
+    worktreePoolSize > 0 &&
+    Boolean(base) &&
+    !poolBroken.has(project.id) &&
+    !wslTarget(project, process.platform)
+  );
+}
+
+function dropPooled(repoPath, dir) {
+  gitTry(repoPath, ["worktree", "remove", "--force", dir]);
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+
+/**
+ * Move an idle pooled worktree to `dir` and put `branch` on it at `start`.
+ * Returns false (pool empty, or claim failed) so the caller falls back to
+ * `worktree add`; `dir` never exists after a false return.
+ */
+function claimPooledWorktree(project, base, dir, branch, start) {
+  if (!poolUsable(project, base)) return false;
+  const root = worktreePoolDir(base, project.id);
+  let names = [];
+  try {
+    names = fs.readdirSync(root);
+  } catch {
+    return false;
+  }
+  for (const name of names) {
+    const src = path.join(root, name);
+    if (poolCreating.has(src)) continue;
+    if (!gitTry(project.path, ["worktree", "move", src, dir]).ok) {
+      poolBroken.add(project.id);
+      dropPooled(project.path, src);
+      return false;
+    }
+    // Clean detached tree: checkout only touches files that differ from
+    // the start point, which is the whole win over a fresh `worktree add`.
+    if (gitTry(dir, ["checkout", "-q", "-b", branch, start]).ok) return true;
+    dropPooled(project.path, dir);
+    return false;
+  }
+  return false;
+}
+
+/**
+ * Background top-up of the project's pool to worktreePoolSize. One fill
+ * per project at a time; failures just leave the pool short.
+ * @param {{ id: string, path: string }} project
+ * @param {string} base - effective worktree base
+ */
+function refillWorktreePool(project, base) {
+  if (!poolUsable(project, base) || poolFilling.has(project.id)) {
+    return poolFilling.get(project.id) || Promise.resolve();
+  }
+  const root = worktreePoolDir(base, project.id);
+  const fill = (async () => {
+    fs.mkdirSync(root, { recursive: true });
+    const start = await repoDefaultBranchAsync(project.path);
+    while (
+      !poolBroken.has(project.id) &&
+      fs.readdirSync(root).length < worktreePoolSize
+    ) {
+      const dir = path.join(
+        root,
+        `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+      );
+      poolCreating.add(dir);
+      try {
+        await gitOutAsync(
+          project.path,
+          ["worktree", "add", "--detach", dir, start],
+          { timeout: 120_000 },
+        );
+      } catch (err) {
+        dropPooled(project.path, dir);
+        throw err;
+      } finally {
+        poolCreating.delete(dir);
+      }
+    }
+  })()
+    .catch(() => {})
+    .finally(() => poolFilling.delete(project.id));
+  poolFilling.set(project.id, fill);
+  return fill;
+}
+
 /**
  * Create a git worktree + branch for the thread.
  * Idempotent when worktreePath is already set.
@@ -852,7 +969,9 @@ function setupWorktree(opts) {
   const setupStartedAt = Date.now();
   try {
     const start = resolveWorktreeStart(thread, project.path);
-    gitOut(project.path, ["worktree", "add", "-b", branch, addPath, start]);
+    if (!claimPooledWorktree(project, base, dir, branch, start)) {
+      gitOut(project.path, ["worktree", "add", "-b", branch, addPath, start]);
+    }
   } catch (err) {
     // Verbatim git stderr (#511). Never first-line-only: the lock/disk/
     // submodule reason is almost always on a later line.
@@ -865,6 +984,7 @@ function setupWorktree(opts) {
     worktreeSetupMs: Math.max(0, Date.now() - setupStartedAt),
   });
   store.save();
+  void refillWorktreePool(project, base);
 
   if (typeof broadcast === "function") {
     const { listThreads } = require("./services.js");
@@ -1105,6 +1225,9 @@ function clearMissingWorktree(opts) {
 }
 
 module.exports = {
+  setWorktreePoolSize,
+  refillWorktreePool,
+  worktreePoolDir,
   removeWorktreeDir,
   branchLanded,
   worktreeLanded,
