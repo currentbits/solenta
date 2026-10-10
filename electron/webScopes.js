@@ -189,6 +189,7 @@ const BY_SCOPE = {
     "git:setupWorktree",
     "git:commit",
     "git:revertFile",
+    "git:revertHunk",
     "git:mergeWorktree",
     "git:integrateWorker",
     "git:removeWorktree",
