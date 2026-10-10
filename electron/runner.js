@@ -2629,6 +2629,7 @@ function createRunner(opts) {
   } = createTurnSetup(ctx);
 
   const {
+    hasRunningSubagent,
     addSubagentRow,
     noteCursorSubagent,
     setSubagentStatus,
@@ -2637,6 +2638,7 @@ function createRunner(opts) {
     finishRunningSubagents,
   } = createSubagents(ctx);
   ctx.finishRunningSubagents = finishRunningSubagents;
+  ctx.hasRunningSubagent = hasRunningSubagent;
 
   const {
     sessionRecorder,
