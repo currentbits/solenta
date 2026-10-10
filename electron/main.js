@@ -1017,7 +1017,18 @@ app.whenReady().then(async () => {
   wedgedLaneWatchdog = createWedgedLaneWatchdog({ store });
   wedgedLaneWatchdog.start();
 
-  automationScheduler = startScheduler({ store, runner, broadcast });
+  automationScheduler = startScheduler({
+    store,
+    runner,
+    broadcast,
+    notify: ({ name, message }) => {
+      if (typeof Notification !== "function") return;
+      if (Notification.isSupported && !Notification.isSupported()) return;
+      const n = new Notification({ title: `Automation paused: ${name}`, body: message });
+      n.on("click", () => focusMainWindow());
+      n.show();
+    },
+  });
   autoDispatch = startAutoDispatch({ store, runner, broadcast });
   postMergeScheduler = startPostMergeScheduler({ store, runner, broadcast });
   memoryConsolidateScheduler = startMemoryConsolidateScheduler({

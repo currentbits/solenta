@@ -2850,6 +2850,10 @@ export interface AutomationInfo {
   lastRunAt: number | null;
   nextRunAt: number;
   lastError: string | null;
+  /** Failed fires in a row; at 3 the scheduler sets enabled=false (#160). */
+  consecutiveFailures?: number;
+  /** Last fired thread whose outcome has not been counted yet. */
+  pendingRunThreadId?: string | null;
 }
 
 export interface AutomationWrite {
