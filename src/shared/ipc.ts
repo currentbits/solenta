@@ -4268,6 +4268,11 @@ export interface CoderApi {
     save(template: Omit<WorkflowTemplateInfo, "id" | "builtin"> & { id?: string }): Promise<WorkflowTemplateInfo>;
     /** Removes a non-builtin template. */
     remove(input: { id: string }): Promise<void>;
+    /**
+     * Writes a saved template into the thread's checkout as WORKFLOW.md
+     * (#164). An existing file is left alone (written:false) unless overwrite.
+     */
+    exportToRepo(input: { id: string; threadId: string; overwrite?: boolean }): Promise<{ written: boolean; path: string }>;
   };
   automations: {
     list(): Promise<AutomationInfo[]>;

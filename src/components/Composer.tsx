@@ -178,6 +178,10 @@ interface ComposerProps {
   onSetFast?: (fast: boolean) => void | Promise<void>;
   onSaveWorkflow: (template: WorkflowSaveInput) => Promise<WorkflowTemplateInfo>;
   onRemoveWorkflow: (id: string) => Promise<void>;
+  onExportWorkflow?: (
+    id: string,
+    overwrite: boolean,
+  ) => Promise<{ written: boolean; path: string }>;
   workflowListError?: string | null;
   onRetryWorkflows?: () => void | Promise<void>;
   /** Provider session id; a live session locks the provider picker. */
@@ -346,6 +350,7 @@ export const Composer = memo(function Composer({
   onSetFast,
   onSaveWorkflow,
   onRemoveWorkflow,
+  onExportWorkflow,
   workflowListError = null,
   onRetryWorkflows,
   sessionId,
@@ -2903,6 +2908,7 @@ export const Composer = memo(function Composer({
           return saved;
         }}
         onRemove={onRemoveWorkflow}
+        onExportToRepo={onExportWorkflow}
         listError={workflowListError}
         onRetryList={onRetryWorkflows}
       />

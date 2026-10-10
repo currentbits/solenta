@@ -1542,6 +1542,11 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           ...(t as object),
         } as WorkflowTemplateInfo),
       remove: (input: unknown) => rec("workflows.remove", [input], undefined),
+      exportToRepo: (input: unknown) =>
+        rec("workflows.exportToRepo", [input], {
+          written: true,
+          path: "/repo/WORKFLOW.md",
+        }),
     },
     automations: {
       list: () =>

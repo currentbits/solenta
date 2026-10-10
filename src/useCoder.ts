@@ -294,6 +294,11 @@ export interface UseCoderResult {
   saveWorkflow: (template: WorkflowSaveInput) => Promise<WorkflowTemplateInfo>;
   /** Remove a non-builtin template. Success stands even if list refresh fails. */
   removeWorkflow: (id: string) => Promise<void>;
+  /** Write a saved template into the selected thread's repo as WORKFLOW.md (#164). */
+  exportWorkflowToRepo: (
+    id: string,
+    overwrite: boolean,
+  ) => Promise<{ written: boolean; path: string }>;
   /** Reload workflows.list() into state. */
   refreshWorkflows: () => Promise<void>;
   /** Failed workflows.list after a successful save/remove, or a manual retry. */
@@ -1518,6 +1523,7 @@ export function useCoder(): UseCoderResult {
     retryWorkflowAgent,
     saveWorkflow,
     removeWorkflow,
+    exportWorkflowToRepo,
   } = useCoderWorkflows({
     api,
     selectedThreadId,
@@ -2068,6 +2074,7 @@ export function useCoder(): UseCoderResult {
     retryWorkflowAgent,
     saveWorkflow,
     removeWorkflow,
+    exportWorkflowToRepo,
     refreshWorkflows,
     refreshAutomations,
     addAutomation,

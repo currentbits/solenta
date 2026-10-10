@@ -34,6 +34,7 @@ const {
   grokConfigCorruptMessage,
 } = require("./memory-sup.js");
 const { wslTarget } = require("./wsl.js");
+const { loadRepoWorkflow } = require("./repoWorkflow.js");
 
 const PUSH_THROTTLE_MS = 250;
 const DOSSIER_INPUT_MAX = 800;
@@ -316,7 +317,18 @@ async function startWorkflowRun(deps) {
     });
   } else {
     const resolvedTemplateId = templateId || "standard";
-    template = store.getTemplate(resolvedTemplateId);
+    // #164: a committed WORKFLOW.md replaces the default template, read from
+    // the thread's own checkout so it versions with the branch. An explicitly
+    // picked store template still wins.
+    // ponytail: remote/WSL checkouts are not read; add a remote cat if asked.
+    if (
+      resolvedTemplateId === "standard" &&
+      !project.remoteHost &&
+      !wslTarget(project)
+    ) {
+      template = loadRepoWorkflow(thread.worktreePath || project.path);
+    }
+    template = template || store.getTemplate(resolvedTemplateId);
     if (!template) {
       throw new Error(`Unknown workflow template: ${resolvedTemplateId}`);
     }

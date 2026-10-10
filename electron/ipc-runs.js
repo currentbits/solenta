@@ -18,6 +18,9 @@ module.exports = {
   "workflows:remove": async (ctx, input) => {
     return services.removeTemplate(ctx.store, input);
   },
+  "workflows:exportToRepo": async (ctx, input) => {
+    return services.exportTemplateToRepo(ctx.store, input);
+  },
   "automations:list": async (ctx) => {
     return services.listAutomations(ctx.store);
   },

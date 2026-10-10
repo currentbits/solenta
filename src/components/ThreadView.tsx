@@ -291,6 +291,10 @@ interface ThreadViewProps {
   onRetryWorkflowAgent?: (agentId: string) => void | Promise<void>;
   onSaveWorkflow: (template: WorkflowSaveInput) => Promise<WorkflowTemplateInfo>;
   onRemoveWorkflow: (id: string) => Promise<void>;
+  onExportWorkflow?: (
+    id: string,
+    overwrite: boolean,
+  ) => Promise<{ written: boolean; path: string }>;
   workflowListError?: string | null;
   onRetryWorkflows?: () => void | Promise<void>;
   onStopRun: () => void | Promise<void>;
@@ -728,6 +732,7 @@ export const ThreadView = memo(function ThreadView({
   onRetryWorkflowAgent,
   onSaveWorkflow,
   onRemoveWorkflow,
+  onExportWorkflow,
   workflowListError = null,
   onRetryWorkflows,
   onStopRun,
@@ -4596,6 +4601,7 @@ export const ThreadView = memo(function ThreadView({
         onSetFast={onSetFast}
         onSaveWorkflow={onSaveWorkflow}
         onRemoveWorkflow={onRemoveWorkflow}
+        onExportWorkflow={onExportWorkflow}
         workflowListError={workflowListError}
         onRetryWorkflows={onRetryWorkflows}
         sessionId={thread.sessionId}

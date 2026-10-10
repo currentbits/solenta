@@ -294,7 +294,8 @@ function kickoffText(template) {
     total += n;
     lines.push(`${phase.name} ${n}`);
   }
-  return [`Kicked off ${total} subagents`, ...lines].join("\n");
+  const from = template.source ? ` from ${template.source}` : "";
+  return [`Kicked off ${total} subagents${from}`, ...lines].join("\n");
 }
 
 module.exports = {
