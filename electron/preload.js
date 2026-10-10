@@ -259,6 +259,7 @@ const IPC_CHANNELS = Object.freeze([
   { ns: "git", method: "setReviewAccepted" },
   { ns: "git", method: "commit" },
   { ns: "git", method: "revertFile" },
+  { ns: "git", method: "revertHunk" },
   { ns: "git", method: "suggestCommitMessage" },
   { ns: "git", method: "suggestPrText" },
   { ns: "git", method: "mergeWorktree" },

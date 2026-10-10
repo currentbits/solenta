@@ -8,6 +8,7 @@ const {
   diff,
   commit,
   revertFile,
+  revertHunk,
   mergeWorktree,
   worktreeLanded,
   conflictContext,
@@ -110,6 +111,15 @@ module.exports = {
       threadId: input.threadId,
       message: input.message,
       paths: Array.isArray(input.paths) ? input.paths : undefined,
+      patches: Array.isArray(input.patches) ? input.patches : undefined,
+    });
+  },
+  "git:revertHunk": async (ctx, input) => {
+    return revertHunk({
+      store: ctx.store,
+      threadId: input.threadId,
+      path: input.path,
+      patch: input.patch,
     });
   },
   "git:revertFile": async (ctx, input) => {

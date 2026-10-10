@@ -3,6 +3,7 @@
 // Working-tree changes: diff, changed paths, CI-workflow merge gate, commit, revert, file search.
 
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const { SYNC_TIMEOUT_MS } = require("./ssh.js");
 const {
@@ -648,6 +649,10 @@ function stageForCommit(cwd, paths) {
  * @param {string} opts.threadId
  * @param {string} opts.message
  * @param {string[]} [opts.paths]
+ * @param {Array<{ path: string, patch: string }>} [opts.patches] - hunk-level
+ *   staging (#191): for these paths commit only the given patch (a subset of
+ *   the file's `git diff HEAD` hunks) instead of the whole file. Each path
+ *   must also be in `paths`.
  * @returns {{ subject: string }}
  */
 function commit(opts) {
@@ -674,6 +679,12 @@ function commit(opts) {
       }
     }
   }
+  const patches = normalizeCommitPatches(cwd, opts.patches, paths);
+  if (patches.size > 0) {
+    commitPartial(cwd, message, /** @type {string[]} */ (paths), patches);
+    invalidateGitReads(cwd);
+    return { subject: message.split("\n")[0] };
+  }
   stageForCommit(cwd, paths);
   const commitArgs = paths
     ? ["commit", "-m", message, "--", ...paths]
@@ -684,6 +695,112 @@ function commit(opts) {
   }
   invalidateGitReads(cwd);
   return { subject: message.split("\n")[0] };
+}
+
+/**
+ * @param {string} cwd
+ * @param {unknown} patches
+ * @param {string[] | null} paths
+ * @returns {Map<string, string>} path -> patch text
+ */
+function normalizeCommitPatches(cwd, patches, paths) {
+  const out = new Map();
+  if (patches == null) return out;
+  if (!Array.isArray(patches)) throw new Error("patches must be an array");
+  for (const p of patches) {
+    const rel = assertRelPathInCwd(cwd, String((p && p.path) || ""));
+    if (!paths || !paths.includes(rel)) {
+      throw new Error(`Partial patch for an unselected file: ${rel}`);
+    }
+    const text = String((p && p.patch) || "");
+    if (!text.trim()) throw new Error(`Empty patch for ${rel}`);
+    out.set(rel, text);
+  }
+  return out;
+}
+
+/**
+ * `git apply` one patch from a temp file (gitTry has no stdin). --recount:
+ * gitOut trims the diff, so the last hunk can lose a blank context line.
+ * --include pins the patch to `relPath` so it cannot touch other files.
+ *
+ * @param {string} cwd
+ * @param {string[]} flags
+ * @param {string} relPath
+ * @param {string} patch
+ * @param {NodeJS.ProcessEnv} [env]
+ */
+function applyPatch(cwd, flags, relPath, patch, env) {
+  // ponytail: os.tmpdir() paths are invisible to git running inside WSL;
+  // hunk staging/revert on WSL repos needs the patch under the git dir.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "solenta-patch-"));
+  try {
+    const file = path.join(dir, "hunk.patch");
+    fs.writeFileSync(file, patch.endsWith("\n") ? patch : `${patch}\n`);
+    const res = gitTry(
+      cwd,
+      ["apply", ...flags, "--recount", `--include=${relPath}`, file],
+      env ? { env } : undefined,
+    );
+    if (!res.ok) {
+      throw new Error(tailErr(res.stderr || res.combined, "git apply failed"));
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Commit whole files plus hunk subsets through a throwaway index seeded
+ * from HEAD, so the user's real index (and anything already staged outside
+ * `paths`) is untouched. Afterwards the committed paths are reset to the
+ * new HEAD in the real index, matching `git commit --only` semantics; the
+ * unselected hunks stay as worktree changes.
+ *
+ * @param {string} cwd
+ * @param {string} message
+ * @param {string[]} paths
+ * @param {Map<string, string>} patches
+ */
+function commitPartial(cwd, message, paths, patches) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "solenta-index-"));
+  const env = { GIT_INDEX_FILE: path.join(dir, "index") };
+  const run = (/** @type {string[]} */ args, /** @type {string} */ fallback) => {
+    const res = gitTry(cwd, args, { env });
+    if (!res.ok) throw new Error(tailErr(res.stderr || res.combined, fallback));
+  };
+  try {
+    run(["read-tree", "HEAD"], "git read-tree failed");
+    const whole = paths.filter((p) => !patches.has(p));
+    if (whole.length) run(["add", "-A", "--", ...whole], "git add failed");
+    for (const [rel, text] of patches) applyPatch(cwd, ["--cached"], rel, text, env);
+    run(["commit", "-m", message], "git commit failed");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+  gitTry(cwd, ["reset", "-q", "--", ...paths]);
+}
+
+/**
+ * Discard one hunk (#191): reverse-apply a single-hunk patch from the
+ * `git diff HEAD` output to the worktree. Other hunks in the file stay.
+ *
+ * @param {object} opts
+ * @param {import('./store').Store} opts.store
+ * @param {string} opts.threadId
+ * @param {string} opts.path
+ * @param {string} opts.patch - file header + the one hunk
+ * @returns {{ path: string }}
+ */
+function revertHunk(opts) {
+  const { store, threadId } = opts;
+  const { cwd } = threadGitCwd(store, threadId);
+  const relPath = assertRelPathInCwd(cwd, String(opts.path || ""));
+  const patch = String(opts.patch || "");
+  if (!patch.trim()) throw new Error("Empty patch");
+  applyPatch(cwd, ["-R"], relPath, patch);
+  invalidateGitReads(cwd);
+  return { path: relPath };
 }
 
 /**
@@ -890,6 +1007,7 @@ module.exports = {
   stageForCommit,
   commit,
   revertFile,
+  revertHunk,
   directoriesFromFiles,
   listFiles,
   lsFiles,

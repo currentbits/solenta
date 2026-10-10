@@ -3095,6 +3095,8 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         rec("git.commit", [input], { subject: "test commit" }),
       revertFile: (input: unknown) =>
         rec("git.revertFile", [input], { path: "file.ts" }),
+      revertHunk: (input: unknown) =>
+        rec("git.revertHunk", [input], { path: "file.ts" }),
       suggestCommitMessage: (input: unknown) =>
         rec("git.suggestCommitMessage", [input], {
           message: "feat: suggested message",

@@ -6,7 +6,7 @@ const path = require("node:path");
 const { execFileSync } = require("node:child_process");
 const { Store } = require("../store.js");
 const services = require("../services.js");
-const { commit, revertFile } = require("../worktrees.js");
+const { commit, revertFile, revertHunk } = require("../worktrees.js");
 
 function git(cwd, args) {
   return execFileSync("git", args, {
@@ -187,6 +187,77 @@ describe("worktrees commit/revertFile", () => {
     assert.throws(
       () => commit({ store, threadId: thread.id, message: "x" }),
       /nothing to commit/i,
+    );
+  });
+
+  // Two far-apart edits in one file -> two hunks; returns [header+hunk1, header+hunk2].
+  function twoHunkFile() {
+    const lines = Array.from({ length: 30 }, (_, i) => `line ${i + 1}`);
+    fs.writeFileSync(path.join(repo, "big.txt"), `${lines.join("\n")}\n`);
+    git(repo, ["add", "big.txt"]);
+    git(repo, ["commit", "-m", "big"]);
+    lines[1] = "TOP";
+    lines[27] = "BOTTOM";
+    fs.writeFileSync(path.join(repo, "big.txt"), `${lines.join("\n")}\n`);
+    // Trimmed like gitOut, so the --recount path is exercised.
+    const patch = git(repo, ["diff", "HEAD"]);
+    const [head, ...hunks] = patch.split(/(?=^@@)/m);
+    assert.equal(hunks.length, 2);
+    return hunks.map((h) => head + h);
+  }
+
+  it("commit with patches commits only the selected hunks", () => {
+    const [top] = twoHunkFile();
+    fs.writeFileSync(path.join(repo, "a.txt"), "one\n");
+    git(repo, ["add", "a.txt"]); // pre-staged sibling must stay out
+    commit({
+      store,
+      threadId: thread.id,
+      message: "feat: top only",
+      paths: ["big.txt"],
+      patches: [{ path: "big.txt", patch: top }],
+    });
+    const shown = git(repo, ["show", "HEAD:big.txt"]);
+    assert.match(shown, /^TOP$/m);
+    assert.doesNotMatch(shown, /BOTTOM/);
+    assert.equal(git(repo, ["show", "--name-only", "--format=", "HEAD"]), "big.txt");
+    // Bottom hunk survives as an unstaged worktree change; a.txt still staged.
+    assert.match(fs.readFileSync(path.join(repo, "big.txt"), "utf8"), /BOTTOM/);
+    const status = git(repo, ["status", "--porcelain"]);
+    assert.match(status, /^ M big\.txt$/m);
+    assert.match(status, /^A {2}a\.txt$/m);
+  });
+
+  it("commit rejects a patch for a file outside paths", () => {
+    const [top] = twoHunkFile();
+    fs.writeFileSync(path.join(repo, "a.txt"), "one\n");
+    assert.throws(
+      () =>
+        commit({
+          store,
+          threadId: thread.id,
+          message: "x",
+          paths: ["a.txt"],
+          patches: [{ path: "big.txt", patch: top }],
+        }),
+      /unselected/i,
+    );
+    assert.equal(git(repo, ["log", "-1", "--format=%s"]), "big");
+  });
+
+  it("revertHunk discards one hunk and keeps the rest", () => {
+    const [, bottom] = twoHunkFile();
+    revertHunk({ store, threadId: thread.id, path: "big.txt", patch: bottom });
+    const text = fs.readFileSync(path.join(repo, "big.txt"), "utf8");
+    assert.match(text, /^TOP$/m);
+    assert.doesNotMatch(text, /BOTTOM/);
+    assert.match(text, /^line 28$/m);
+  });
+
+  it("revertHunk rejects paths escaping the working tree", () => {
+    assert.throws(
+      () => revertHunk({ store, threadId: thread.id, path: "../x", patch: "p" }),
+      /escapes|invalid/i,
     );
   });
 

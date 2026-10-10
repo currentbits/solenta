@@ -277,6 +277,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     commitChanges,
     setStagedPaths,
     revertFile,
+    revertHunk,
     suggestCommitMessage,
     listFiles,
     searchFileContents,
@@ -1993,6 +1994,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onCommitChanges={commitChanges}
         onStagedPathsChange={setStagedPaths}
         onRevertFile={revertFile}
+        onRevertHunk={revertHunk}
         onSuggestCommitMessage={suggestCommitMessage}
         onListFiles={listFiles}
         promptSnippets={settings?.promptSnippets}
