@@ -676,6 +676,11 @@ export interface ThreadInfo {
    */
   handoffFrom: string | null;
   /**
+   * Cached thread recap (#239), rebuilt after each successful turn. Detail
+   * only: stripped from sidebar rows. Absent before the first finished turn.
+   */
+  recap?: ThreadRecap | null;
+  /**
    * Epoch ms when the user pinned this thread; null = unpinned. Pinned
    * threads render first and NEVER auto-settle (t3's rule). Pin and an
    * explicit settle are mutually exclusive: setPinned(true) clears a
@@ -1910,6 +1915,13 @@ export interface PendingInputRequest {
   }>;
 }
 
+/** Short "asked / changed / now / open" summary of a thread (#239). */
+export interface ThreadRecap {
+  text: string;
+  /** Epoch ms when it was built. */
+  at: number;
+}
+
 export interface ThreadDetail {
   thread: ThreadInfo;
   messages: ChatMessage[];
@@ -1922,6 +1934,12 @@ export interface ThreadDetail {
   pendingPermission?: PendingPermissionInfo | null;
   /** Run-scoped evidence metadata; absent on old fixtures and wire clients. */
   artifacts?: RunArtifactInfo[];
+  /**
+   * Recap to show on this visit (#239): set by threads.get when the thread
+   * sat idle 30+ min, or for a fresh fork (the source's recap). Background
+   * pushes omit it; the view latches it until dismissed or switched away.
+   */
+  recap?: ThreadRecap | null;
 }
 
 /**
