@@ -922,6 +922,56 @@ function refillWorktreePool(project, base) {
 }
 
 /**
+ * Copy gitignored config (.env, certs, fixture DBs) into a fresh worktree
+ * (#185). A checked-in `.worktreeinclude` lists gitignore-style patterns;
+ * without one, root-level `.env*` files are copied. Only paths that are
+ * untracked AND gitignored are copied, and existing files are never
+ * overwritten. Best-effort: returns the copied relative paths.
+ * @param {string} repoPath
+ * @param {string} dir
+ * @returns {string[]}
+ */
+function copyWorktreeIncludes(repoPath, dir) {
+  let candidates;
+  if (fs.existsSync(path.join(repoPath, ".worktreeinclude"))) {
+    const listed = gitTry(
+      repoPath,
+      ["ls-files", "-z", "--others", "--ignored", "--exclude-from=.worktreeinclude"],
+      { raw: true },
+    );
+    // ponytail: node_modules is skipped by name so `.env*` doesn't pull
+    // package fixtures along; a real per-dir match needs a gitignore engine.
+    candidates = listed.stdout
+      .split("\0")
+      .filter((p) => p && !p.split("/").includes("node_modules"));
+  } else {
+    candidates = fs
+      .readdirSync(repoPath, { withFileTypes: true })
+      .filter((d) => d.isFile() && d.name.startsWith(".env"))
+      .map((d) => d.name);
+  }
+  if (!candidates.length) return [];
+  // check-ignore exits 1 when nothing matches; stdout is still the answer.
+  // (-z needs --stdin, which gitTry can't feed; quotePath keeps names raw.)
+  const ignoredSet = new Set(
+    gitTry(repoPath, ["-c", "core.quotePath=false", "check-ignore", "--", ...candidates])
+      .stdout.split("\n"),
+  );
+  const copied = [];
+  for (const rel of candidates.filter((p) => ignoredSet.has(p))) {
+    const dest = path.join(dir, rel);
+    try {
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      fs.copyFileSync(path.join(repoPath, rel), dest, fs.constants.COPYFILE_EXCL);
+      copied.push(rel);
+    } catch {
+      // Existing file, dangling link, or permission: skip, never fail setup.
+    }
+  }
+  return copied;
+}
+
+/**
  * Create a git worktree + branch for the thread.
  * Idempotent when worktreePath is already set.
  *
@@ -976,6 +1026,13 @@ function setupWorktree(opts) {
     // Verbatim git stderr (#511). Never first-line-only: the lock/disk/
     // submodule reason is almost always on a later line.
     throw new Error(`Failed to create worktree:\n${gitFailureText(err)}`);
+  }
+
+  // Before the setup script (#153), which may need .env to install/migrate.
+  try {
+    copyWorktreeIncludes(project.path, dir);
+  } catch {
+    // Best-effort: a missing .env must not undo the worktree.
   }
 
   const updated = store.updateThread(threadId, {
@@ -1234,6 +1291,7 @@ module.exports = {
   mergeWorktree,
   removeWorktree,
   setupWorktree,
+  copyWorktreeIncludes,
   retargetWorktreeBase,
   maybeRenameWorktreeBranch,
   ensureWorktree,
