@@ -223,6 +223,7 @@ function createSubagents(ctx) {
   }
 
   return {
+    hasRunningSubagent,
     addSubagentRow,
     noteCursorSubagent,
     setSubagentStatus,
