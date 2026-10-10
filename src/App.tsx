@@ -1317,6 +1317,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     workerCount,
     previousWorktree,
     panelRosterKey,
+    runQueueIds,
     comparePeers,
     threadTitles,
   } = useThreadRoster({
@@ -2102,6 +2103,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         providers={providers}
         project={project}
         rosterKey={panelRosterKey}
+        runQueueIds={runQueueIds}
+        onLeaveRunQueue={stopRun}
         listThreadSummaries={listThreadSummaries}
         listCrewTasks={listCrewTasks}
         crewIntegration={crewIntegration}

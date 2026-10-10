@@ -564,6 +564,11 @@ export interface ThreadInfo {
    */
   quotaWaitUntil?: number | null;
   /**
+   * Waiting for a run slot under settings.maxConcurrentRuns (issue #166).
+   * Queue order is `at` ascending across all threads; Stop leaves the queue.
+   */
+  runQueue?: { at: number } | null;
+  /**
    * One-shot: this thread already woke from a quota-wait. The next quota
    * error fails the turn instead of parking again. Cleared on a human turn.
    */
@@ -3053,6 +3058,12 @@ export interface AppSettings {
    * Oversized PRs can still be created via createPr's allowOversize override.
    */
   prDiffCapLines: number | null;
+  /**
+   * Max simultaneous agent runs across all projects (issue #166). Starts
+   * beyond it wait in a FIFO run queue (ThreadInfo.runQueue) and are admitted
+   * as runs settle. Default 4; null disables the cap.
+   */
+  maxConcurrentRuns: number | null;
   /**
    * Update channel override; null follows the channel stamped at package
    * time. Has no effect in an unstamped dev tree (updates stay disabled).

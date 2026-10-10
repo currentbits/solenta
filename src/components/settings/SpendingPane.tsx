@@ -15,6 +15,8 @@ export function SpendingPane({
   setBudgetText,
   orchBudgetText,
   setOrchBudgetText,
+  maxRunsText,
+  setMaxRunsText,
   dirtyDrafts,
   save,
   onSaveSettings,
@@ -28,6 +30,8 @@ export function SpendingPane({
   setBudgetText: (text: string) => void;
   orchBudgetText: string;
   setOrchBudgetText: (text: string) => void;
+  maxRunsText: string;
+  setMaxRunsText: (text: string) => void;
   dirtyDrafts: RefObject<Set<SettingsDraftKey>>;
   save: () => Promise<void>;
   onSaveSettings: (patch: Partial<AppSettings>) => Promise<AppSettings>;
@@ -73,6 +77,14 @@ export function SpendingPane({
         Number.isFinite(next) &&
         next === current &&
         orchBudgetText.trim() !== "");
+    if (same && error == null) return;
+    void save();
+  };
+
+  const onBlurMaxRuns = () => {
+    const current = settings?.maxConcurrentRuns ?? null;
+    const text = maxRunsText.trim();
+    const same = text === "" ? current == null : Number(text) === current;
     if (same && error == null) return;
     void save();
   };
@@ -181,6 +193,50 @@ export function SpendingPane({
           fan-out workers. When a crew reaches it, the next worker
           wake-up is refused and the thread lands failed with the
           reason. Raise or clear the cap, then Retry turn.
+        </p>
+      </div>
+      <div className={styles.field}>
+        <label className={styles.fieldLabel} htmlFor="max-concurrent-runs">
+          Max concurrent runs
+        </label>
+        <div className={styles.fieldRow}>
+          <input
+            id="max-concurrent-runs"
+            className={styles.input}
+            type="number"
+            inputMode="numeric"
+            min="1"
+            step="1"
+            placeholder="No cap"
+            value={maxRunsText}
+            disabled={saving}
+            data-max-concurrent-runs=""
+            onChange={(e) => {
+              dirtyDrafts.current.add("runs");
+              setMaxRunsText(e.target.value);
+              setError(null);
+            }}
+            onBlur={() => onBlurMaxRuns()}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                void save();
+              }
+            }}
+          />
+          <button
+            type="button"
+            className={`${styles.btn} ${styles.btnPrimary}`}
+            disabled={saving}
+            onClick={() => void save()}
+          >
+            {saving ? "Saving…" : "Save"}
+          </button>
+        </div>
+        <p className={styles.note}>
+          Agent runs allowed at once, across all projects. Further starts
+          wait in a queue (position shows in the Agents panel) and begin
+          as runs finish. Default 4; empty means no cap.
         </p>
       </div>
       <ModelPricesEditor
