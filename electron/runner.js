@@ -1011,6 +1011,108 @@ function createRunner(opts) {
     await drainQueued(threadId, { rethrow: true });
   }
 
+  /**
+   * Global run queue (issue #166). A start beyond settings.maxConcurrentRuns
+   * parks its fully-built input on the thread as `runQueue` and is admitted
+   * FIFO (by `runQueue.at`) as runs clear. Persisted, so a restart keeps it.
+   * ponytail: one global queue scanned off the store; per-project fairness if
+   * one project's fan-out starves the rest.
+   */
+  function runQueueOrder() {
+    return store
+      .getThreads()
+      .filter((t) => t && t.runQueue && !services.isTrashed(t))
+      .sort((a, b) => a.runQueue.at - b.runQueue.at);
+  }
+
+  function runSlotsFree() {
+    const cap = store.getSettings().maxConcurrentRuns;
+    return cap == null || active.size < cap;
+  }
+
+  function enqueueRun(threadId, input, prompt, attachments) {
+    const thread = store.getThread(threadId);
+    const prev = thread && thread.runQueue;
+    if (!isReplayTurn(input) && input.skipUserAppend !== true) {
+      appendMessage(
+        threadId,
+        "user",
+        input.displayPrompt != null ? input.displayPrompt : prompt,
+        null,
+        null,
+        attachments,
+        {
+          ...(input.fromThread ? { fromThread: input.fromThread } : {}),
+          ...(input.fromNotice === true ? { fromNotice: true } : {}),
+        },
+      );
+    }
+    // A second send while still queued joins the waiting turn.
+    const queuedInput = prev
+      ? {
+          ...prev.input,
+          prompt: `${prev.input.prompt}\n\n${prompt}`,
+          attachments: [...(prev.input.attachments || []), ...attachments],
+        }
+      : {
+          ...input,
+          prompt,
+          attachments,
+          skipUserAppend: true,
+          fromQueue: true,
+        };
+    store.updateThread(threadId, {
+      runQueue: { at: prev ? prev.at : Date.now(), input: queuedInput },
+    });
+    const cap = store.getSettings().maxConcurrentRuns;
+    const position = runQueueOrder().findIndex((t) => t.id === threadId) + 1;
+    appendMessage(
+      threadId,
+      "event",
+      `Queued #${position} for a run slot (${active.size} running, max ${cap ?? "unlimited"}). Stop leaves the queue.`,
+    );
+    store.save();
+    pushDetail(threadId);
+    pushThreadsChanged();
+    queueMicrotask(admitQueuedRuns);
+    return { runId: null, queued: true };
+  }
+
+  function dropQueuedRun(threadId) {
+    const thread = store.getThread(threadId);
+    if (!thread || !thread.runQueue) return false;
+    store.updateThread(threadId, { runQueue: null });
+    appendMessage(threadId, "event", "Removed from the run queue");
+    store.save();
+    pushDetail(threadId);
+    pushThreadsChanged();
+    return true;
+  }
+
+  /** Start queued turns oldest-first while slots are free. */
+  function admitQueuedRuns() {
+    for (const t of runQueueOrder()) {
+      if (!runSlotsFree()) return;
+      if (active.has(t.id)) continue;
+      const { input } = t.runQueue;
+      store.updateThread(t.id, { runQueue: null });
+      // startRun is synchronous up to claiming its `active` slot, so the
+      // next iteration already sees this one counted.
+      startRun({ ...input, threadId: t.id, fromRunQueue: true }).catch(
+        (err) => {
+          store.updateThread(t.id, {
+            status: "failed",
+            lastError: shortError(String((err && err.message) || err)),
+          });
+          store.save();
+          pushDetail(t.id);
+          pushThreadsChanged();
+        },
+      );
+    }
+  }
+
+
   function maybeDrainQueued(threadId) {
     const thread = store.getThread(threadId);
     if (!thread || thread.status === "working") return;
@@ -1450,6 +1552,8 @@ function createRunner(opts) {
       }
     }
     active.delete(threadId);
+    // After the caller finishes its terminal bookkeeping.
+    queueMicrotask(admitQueuedRuns);
     const thread = store.getThread(threadId);
     if (entry.kind === "codex") {
       if (entry.handle && entry.handle.pid) dropLiveCodexPid(entry.handle.pid);
@@ -1765,6 +1869,19 @@ function createRunner(opts) {
           throw new Error("Provider instances run on this machine only. Pick the base provider for remote projects.");
         }
       }
+    }
+
+    // Concurrency cap (#166): strict FIFO, so a fresh start also waits
+    // behind anything already queued. Consolidation is a system job and
+    // skips the line, like the budget.
+    if (
+      thread.memoryConsolidate !== true &&
+      !input.fromRunQueue &&
+      (thread.runQueue ||
+        (store.getSettings().maxConcurrentRuns != null &&
+          (!runSlotsFree() || runQueueOrder().length > 0)))
+    ) {
+      return enqueueRun(threadId, input, prompt, attachments);
     }
 
     // Lazy worktree (t3-style): pendingWorktree threads materialize their
@@ -2227,6 +2344,9 @@ function createRunner(opts) {
    */
   async function stopRun(input, seen = new Set()) {
     const { threadId } = input;
+    // Stop on a queued turn only leaves the run queue (#166); its crew, if
+    // any, keeps working.
+    if (!active.has(threadId) && dropQueuedRun(String(threadId))) return;
     cancelAutoResume(threadId);
     // Cascade first: a worker outliving its stopped orchestrator keeps
     // burning tokens and re-wakes the parent through queueOrchNotice. Doing
@@ -2725,6 +2845,8 @@ function createRunner(opts) {
   } = createWatchdogs(ctx);
 
   refreshAllQuotaWaits();
+  // Turns queued when the app quit (#166).
+  queueMicrotask(admitQueuedRuns);
 
   return {
     startRun,
@@ -2738,6 +2860,7 @@ function createRunner(opts) {
     resumeQuotaWait,
     refreshQuotaWait,
     refreshAllQuotaWaits,
+    admitQueuedRuns,
     getActiveWorkflow,
     isRunning,
     listActiveThreadIds,

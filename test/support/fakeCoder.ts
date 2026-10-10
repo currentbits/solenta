@@ -378,6 +378,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
     confirmQuitWithActiveWork: true,
     resumeInterruptedRuns: false,
     prDiffCapLines: 400,
+    maxConcurrentRuns: 4,
     onboardingSeen: true,
     uiScale: 1,
     webhook: { url: null, onDone: true, onFailed: true, onWaiting: true },
@@ -996,6 +997,9 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
             );
           }
           next.prDiffCapLines = v;
+        }
+        if (Object.prototype.hasOwnProperty.call(p, "maxConcurrentRuns")) {
+          next.maxConcurrentRuns = p.maxConcurrentRuns ?? null;
         }
         if (Object.prototype.hasOwnProperty.call(p, "agentProfiles")) {
           const v = p.agentProfiles;

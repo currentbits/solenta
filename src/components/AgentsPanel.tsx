@@ -158,6 +158,10 @@ interface AgentsPanelProps {
    * because the array's identity churns on every stream tick (issue #91).
    */
   rosterKey?: string;
+  /** Thread ids waiting for a run slot, oldest first (issue #166). */
+  runQueueIds?: readonly string[];
+  /** Stop on the selected thread, which also leaves the run queue. */
+  onLeaveRunQueue?: () => void | Promise<void>;
   /** threads:summaries passthrough powering the team view. */
   listThreadSummaries?: (input?: ThreadSummariesInput) => Promise<ThreadSummaryInfo[]>;
   /** Shared crew task list (issue #277). Read-only; absent = no fetch. */
@@ -2035,6 +2039,7 @@ function TeamRow({
   providers,
   onSelect,
   onStop,
+  runQueueIds = [],
 }: {
   summary: ThreadSummaryInfo;
   role: string;
@@ -2042,7 +2047,17 @@ function TeamRow({
   onSelect?: (id: string) => void;
   /** Stop this row's run (same host action as thread_stop). Shown while working. */
   onStop?: (id: string) => void;
+  runQueueIds?: readonly string[];
 }) {
+  const queuedAt = runQueueIds.indexOf(summary.id);
+  const status =
+    queuedAt >= 0
+      ? "queued"
+      : summary.status === "working" && summary.awaitingInput
+        ? "waiting"
+        : summary.status === "working" && summary.stalledAt
+          ? "stalled"
+          : summary.status;
   return (
     <li className={styles.teamItem}>
       <button
@@ -2058,21 +2073,8 @@ function TeamRow({
         <span className={styles.teamTitle}>{summary.title}</span>
         {/* A worker stalled on a permission prompt still reads "working"
             (issue #31) — call it out so a stuck fan-out is obvious here. */}
-        <span
-          className={styles.teamStatus}
-          data-status={
-            summary.status === "working" && summary.awaitingInput
-              ? "waiting"
-              : summary.status === "working" && summary.stalledAt
-                ? "stalled"
-                : summary.status
-          }
-        >
-          {summary.status === "working" && summary.awaitingInput
-            ? "waiting"
-            : summary.status === "working" && summary.stalledAt
-              ? "stalled"
-              : summary.status}
+        <span className={styles.teamStatus} data-status={status}>
+          {queuedAt >= 0 ? `queued #${queuedAt + 1}` : status}
         </span>
         {summary.lastActivity && (
           <span className={styles.teamActivity}>
@@ -2080,7 +2082,7 @@ function TeamRow({
           </span>
         )}
       </button>
-      {onStop && summary.status === "working" && (
+      {onStop && (summary.status === "working" || queuedAt >= 0) && (
         <button
           type="button"
           className={styles.teamStop}
@@ -2227,6 +2229,8 @@ export function AgentsContent({
   usage,
   providers,
   rosterKey = "",
+  runQueueIds = [],
+  onLeaveRunQueue,
   listThreadSummaries,
   listCrewTasks,
   crewIntegration,
@@ -2243,6 +2247,8 @@ export function AgentsContent({
   usage: SessionUsage | null;
   providers: ProviderInfo[];
   rosterKey?: string;
+  runQueueIds?: readonly string[];
+  onLeaveRunQueue?: () => void | Promise<void>;
   listThreadSummaries?: (input?: ThreadSummariesInput) => Promise<ThreadSummaryInfo[]>;
   listCrewTasks?: (
     threadId: string,
@@ -2456,6 +2462,26 @@ export function AgentsContent({
     );
     return buildWaitStates([...crew, thread]).get(thread.id) ?? null;
   }, [thread, summaries]);
+  const queuedAt = thread ? runQueueIds.indexOf(thread.id) : -1;
+  const queueLine =
+    queuedAt >= 0 ? (
+      <div className={styles.waitLine} data-run-queue-line="">
+        Queued for a run slot · #{queuedAt + 1} of {runQueueIds.length}
+        {onLeaveRunQueue ? (
+          <>
+            {" · "}
+            <button
+              type="button"
+              className={styles.doneToggle}
+              onClick={() => void onLeaveRunQueue()}
+              data-leave-run-queue=""
+            >
+              Leave queue
+            </button>
+          </>
+        ) : null}
+      </div>
+    ) : null;
   const subagentSection =
     subagents.length > 0 ? (
       <InspectorSection title="Subagents" count={subagents.length}>
@@ -2542,6 +2568,7 @@ export function AgentsContent({
             providers={providers}
             role="Orchestrator"
           />
+          {queueLine}
           <InspectorSection
             title="Team"
             count={team.workers.length + team.doneWorkers.length}
@@ -2556,6 +2583,7 @@ export function AgentsContent({
                   providers={providers}
                   onSelect={onSelectThread}
                   onStop={onStopThread}
+                  runQueueIds={runQueueIds}
                 />
               ))}
               {(showDoneWorkers || team.workers.length === 0) &&
@@ -2714,6 +2742,7 @@ export function AgentsContent({
             providers={providers}
             role="Worker"
           />
+          {queueLine}
           <section className={inspector.section} aria-label="Lead">
             <button
               type="button"
@@ -2734,6 +2763,7 @@ export function AgentsContent({
     return (
       <div className={pane}>
         <SessionLine thread={thread} usage={usage} providers={providers} />
+        {queueLine}
         <CrewTaskList tasks={crewTasks} ownerTitle={crewOwnerTitle} />
         {subagentSection}
         {hypothesisSection}
@@ -2949,6 +2979,8 @@ export const AgentsPanel = memo(function AgentsPanel({
   onCollapse,
   onOpenSettings,
   skillsRefreshKey,
+  runQueueIds,
+  onLeaveRunQueue,
 }: AgentsPanelProps) {
   const tabListRef = useRef<HTMLDivElement>(null);
   const focusRequest = useRef<PanelTab | null>(null);
@@ -3065,6 +3097,8 @@ export const AgentsPanel = memo(function AgentsPanel({
           usage={usage}
           providers={providers}
           rosterKey={rosterKey}
+          runQueueIds={runQueueIds}
+          onLeaveRunQueue={onLeaveRunQueue}
           listThreadSummaries={listThreadSummaries}
           listCrewTasks={listCrewTasks}
           crewIntegration={crewIntegration}

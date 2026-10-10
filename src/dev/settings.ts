@@ -42,6 +42,8 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
   let stripAgentCoauthors = false;
   /** PR size cap in lines (issue #402); default 400, null disables. */
   let prDiffCapLines: number | null = 400;
+  /** Run concurrency cap (issue #166); default 4, null disables. */
+  let maxConcurrentRuns: number | null = 4;
   /** Default new threads into a fake worktree (Settings toggle). */
   let defaultWorktree = false;
   /** Default new threads as orchestrators (Settings toggle). */
@@ -142,6 +144,7 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           autoSettleOnMerge,
           stripAgentCoauthors,
           prDiffCapLines,
+          maxConcurrentRuns,
           mcpServers: ctx.mcpServers,
           defaultWorktree,
           defaultOrchestrate,
@@ -201,6 +204,16 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
             throw new Error("PR diff cap must be a positive integer or null");
           }
           prDiffCapLines = v;
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, "maxConcurrentRuns")) {
+          const v = patch.maxConcurrentRuns;
+          if (
+            v !== null &&
+            (typeof v !== "number" || !Number.isInteger(v) || v <= 0)
+          ) {
+            throw new Error("Max concurrent runs must be a positive integer or null");
+          }
+          maxConcurrentRuns = v;
         }
         if (Object.prototype.hasOwnProperty.call(patch, "mcpServers")) {
           if (!Array.isArray(patch.mcpServers)) {
@@ -459,6 +472,7 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           autoSettleOnMerge,
           stripAgentCoauthors,
           prDiffCapLines,
+          maxConcurrentRuns,
           mcpServers: ctx.mcpServers.map(redactDevMcp) as AppSettings["mcpServers"],
           defaultWorktree,
           defaultOrchestrate,

@@ -91,6 +91,7 @@ class StoreSettingsMethods {
       resumeInterruptedRuns: n.resumeInterruptedRuns,
       guardrailsEnabled: n.guardrailsEnabled,
       prDiffCapLines: n.prDiffCapLines,
+      maxConcurrentRuns: n.maxConcurrentRuns,
       agentProfiles: n.agentProfiles,
       providerInstances: n.providerInstances,
       defaultOrchestratorProfileId: n.defaultOrchestratorProfileId,
@@ -182,6 +183,15 @@ class StoreSettingsMethods {
         }
       }
       this.data.settings.prDiffCapLines = v === null ? null : v;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "maxConcurrentRuns")) {
+      const v = patch.maxConcurrentRuns;
+      if (v !== null && !(Number.isInteger(v) && v > 0)) {
+        throw new Error(
+          `Max concurrent runs must be a positive integer or null (got ${String(v)})`,
+        );
+      }
+      this.data.settings.maxConcurrentRuns = v;
     }
     if (Object.prototype.hasOwnProperty.call(patch, "autoSettleOnMerge")) {      const v = patch.autoSettleOnMerge;
       if (typeof v !== "boolean") {

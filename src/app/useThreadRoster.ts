@@ -66,6 +66,21 @@ export function useThreadRoster({
       .join(",");
   }, [threads, visibleDetail?.thread.projectId]);
 
+  /** Global run queue order (issue #166), as a stable string key. */
+  const runQueueKey = useMemo(
+    () =>
+      threads
+        .filter((t) => t.runQueue)
+        .sort((a, b) => a.runQueue!.at - b.runQueue!.at)
+        .map((t) => t.id)
+        .join(","),
+    [threads],
+  );
+  const runQueueIds = useMemo(
+    () => (runQueueKey ? runQueueKey.split(",") : []),
+    [runQueueKey],
+  );
+
   /** Thread ids in replies link to these (#1531): the open thread's project
    *  only, id → title, rebuilt when an id or title moves, not on stream ticks. */
   const titlesKey = useMemo(() => {
@@ -103,6 +118,7 @@ export function useThreadRoster({
     workerCount,
     previousWorktree,
     panelRosterKey,
+    runQueueIds,
     comparePeers,
     threadTitles,
   };

@@ -218,6 +218,12 @@ const DEFAULT_AUTO_SETTLE_AFTER_DAYS = 3;
 const DEFAULT_PR_DIFF_CAP_LINES = 400;
 
 /**
+ * Default cap on simultaneous agent runs (issue #166). Starts beyond it wait
+ * in a FIFO run queue and are admitted as runs settle. null disables the cap.
+ */
+const DEFAULT_MAX_CONCURRENT_RUNS = 4;
+
+/**
  * Settings.defaultProvider (issue #711). Absent/junk → null (createThread
  * then uses "claude"). A non-empty string is kept; unknown ids are skipped
  * at create time so this file does not depend on the provider registry.
@@ -357,6 +363,9 @@ function validateQuotaFailover(raw) {
  * prDiffCapLines: absent/junk → DEFAULT_PR_DIFF_CAP_LINES (400); only an
  * explicit null disables the PR-size cap (issue #402).
  *
+ * maxConcurrentRuns: same tri-state as prDiffCapLines, default
+ * DEFAULT_MAX_CONCURRENT_RUNS (4); explicit null disables the cap (#166).
+ *
  * autoSettleOnMerge: only an explicit false turns merge-settle off, so
  * absent/junk keeps the previous "MERGED = settled" behaviour.
  *
@@ -399,6 +408,7 @@ function normalizeSettings(raw) {
     resumeInterruptedRuns: false,
     guardrailsEnabled: true,
     prDiffCapLines: DEFAULT_PR_DIFF_CAP_LINES,
+    maxConcurrentRuns: DEFAULT_MAX_CONCURRENT_RUNS,
     agentProfiles: [],
     providerInstances: [],
     defaultOrchestratorProfileId: null,
@@ -465,6 +475,16 @@ function normalizeSettings(raw) {
     } else {
       settings.prDiffCapLines = DEFAULT_PR_DIFF_CAP_LINES;
     }
+  }
+  if (Object.prototype.hasOwnProperty.call(obj, "maxConcurrentRuns")) {
+    const c = /** @type {{ maxConcurrentRuns?: unknown }} */ (obj)
+      .maxConcurrentRuns;
+    settings.maxConcurrentRuns =
+      c === null
+        ? null
+        : Number.isInteger(c) && /** @type {number} */ (c) > 0
+          ? /** @type {number} */ (c)
+          : DEFAULT_MAX_CONCURRENT_RUNS;
   }
 
   settings.mcpServers = normalizeMcpServers(obj.mcpServers);

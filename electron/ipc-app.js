@@ -157,6 +157,10 @@ module.exports = {
     if (ctx.runner && typeof ctx.runner.refreshAllQuotaWaits === "function") {
       ctx.runner.refreshAllQuotaWaits();
     }
+    // A raised or cleared concurrency cap admits waiting turns now (#166).
+    if (ctx.runner && typeof ctx.runner.admitQueuedRuns === "function") {
+      ctx.runner.admitQueuedRuns();
+    }
     if (patch && Object.prototype.hasOwnProperty.call(patch, "githubHosts")) {
       // A new account or token per host must not wait out the 10-min cache.
       require("./github.js").forgetToken();
