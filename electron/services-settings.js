@@ -376,6 +376,8 @@ async function appStatus(store, deps = {}) {
   let entries = null;
   let vectors = null;
   let lastError = null;
+  /** @type {{ root: string, key: string }[]} */
+  let collisions = [];
   if (base.running) {
     try {
       const health = deps.health ? await deps.health() : await fetchMemoryHealth(base.port);
@@ -387,6 +389,7 @@ async function appStatus(store, deps = {}) {
             : null;
         const je = health.janitor && health.janitor.lastError;
         lastError = je ? `${je.step}: ${je.message}` : null;
+        if (Array.isArray(health.projectCollisions)) collisions = health.projectCollisions;
       }
     } catch {
       // health unreachable: report nulls rather than failing status
@@ -409,7 +412,7 @@ async function appStatus(store, deps = {}) {
 
   return {
     spendTodayUsd,
-    memory: { ...base, entries, vectors, lastError },
+    memory: { ...base, entries, vectors, lastError, collisions },
     build: { version, sha, time, channel, platform: deps.platform || process.platform },
   };
 }
