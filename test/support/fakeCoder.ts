@@ -789,6 +789,8 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         } as MemoryMaintenanceReport),
       resolve: (input: unknown) =>
         rec("memory.resolve", [input], { ok: true, id: 0, resolution: "noop" }),
+      renameScope: (input: { root: string; key: string }) =>
+        rec("memory.renameScope", [input], { ...input, moved: 0 }),
     },
     settings: {
       get: () =>

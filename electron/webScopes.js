@@ -244,6 +244,7 @@ const BY_SCOPE = {
     "memory:update",
     "memory:remove",
     "memory:resolve",
+    "memory:renameScope",
     "mcp:remove",
     "mcp:setEnabled",
     "mcp:previewImport",

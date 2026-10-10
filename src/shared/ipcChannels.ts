@@ -49,6 +49,7 @@ export const IPC_CHANNELS = [
   { ns: "memory", method: "remove" },
   { ns: "memory", method: "maintenance" },
   { ns: "memory", method: "resolve" },
+  { ns: "memory", method: "renameScope" },
   { ns: "settings", method: "get" },
   { ns: "settings", method: "set" },
   { ns: "settings", method: "testWebhook" },

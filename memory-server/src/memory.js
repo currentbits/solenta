@@ -304,6 +304,69 @@ export class Memory {
   }
 
   /**
+   * Canonical key for a path or slug against this db's root registry (#179).
+   * @param {unknown} value
+   */
+  projectKey(value) {
+    return canonicalProject(value, this.db)
+  }
+
+  /**
+   * Registered roots that share a folder name with another root (#179), so
+   * Settings can show which repo owns the bare key and offer a rename.
+   * @returns {{ root: string, key: string }[]}
+   */
+  projectCollisions() {
+    const rows = this.db.prepare(`SELECT root, key FROM project_roots ORDER BY created_at, root`).all()
+    const base = (/** @type {string} */ root) => root.split(/[\\/]/).filter(Boolean).pop() || root
+    const counts = new Map()
+    for (const r of rows) counts.set(base(r.root), (counts.get(base(r.root)) ?? 0) + 1)
+    return rows
+      .filter((r) => counts.get(base(r.root)) > 1)
+      .map((r) => ({ root: String(r.root), key: String(r.key) }))
+  }
+
+  /**
+   * Move one root's memory scope to a new key, rows included. Rows merged
+   * under a shared key before #179 move with whichever root owns it.
+   * @param {{ root: string, key: string }} input
+   * @returns {{ root: string, key: string, moved: number }}
+   */
+  renameProjectScope(input) {
+    const next = String(input?.key ?? '').trim()
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(next) || next.toLowerCase() === 'global') {
+      throw new Error('Scope name must be letters, digits, ".", "_" or "-"')
+    }
+    // Resolve like every other read (worktree -> main root, symlinks via git).
+    const prev = this.projectKey(input?.root)
+    const row = prev && this.db.prepare(`SELECT root FROM project_roots WHERE key = ?`).get(prev)
+    if (!row) throw new Error(`Unknown project root: ${String(input?.root ?? '')}`)
+    const root = String(row.root)
+    if (prev === next) return { root, key: next, moved: 0 }
+    const taken =
+      this.db.prepare(`SELECT 1 FROM project_roots WHERE key = ?`).get(next) ||
+      this.db.prepare(`SELECT 1 FROM entries WHERE project = ? LIMIT 1`).get(next) ||
+      this.db.prepare(`SELECT 1 FROM session_messages WHERE project = ? LIMIT 1`).get(next)
+    if (taken) throw new Error(`Scope "${next}" is already in use`)
+    let moved = 0
+    this.db.exec('BEGIN')
+    try {
+      this.db.prepare(`UPDATE project_roots SET key = ? WHERE root = ?`).run(next, root)
+      for (const table of ['entries', 'session_messages', 'code_wiki']) {
+        const res = this.db
+          .prepare(`UPDATE OR REPLACE ${table} SET project = ? WHERE project = ?`)
+          .run(next, prev)
+        if (table !== 'code_wiki') moved += res.changes ?? 0
+      }
+      this.db.exec('COMMIT')
+    } catch (err) {
+      this.db.exec('ROLLBACK')
+      throw err
+    }
+    return { root, key: next, moved }
+  }
+
+  /**
    * Upsert extracted entities and write mentions + co-occurrence edges for an entry.
    * @param {string} entryId
    * @param {string} title
@@ -510,7 +573,7 @@ export class Memory {
     const project =
       input.project === undefined
         ? null
-        : canonicalProject(cleanText('project', input.project))
+        : canonicalProject(cleanText('project', input.project), this.db)
     const agent = cleanOptional(input.agent)
     const source = cleanOptional(input.source)
     const citations = serializeCitations(input.citations)
@@ -1043,7 +1106,7 @@ export class Memory {
     const query = cleanText('query', opts.query)
     const match = ftsQuery(query)
     const rawProject = cleanOptional(opts.project)
-    const project = canonicalProject(rawProject)
+    const project = canonicalProject(rawProject, this.db)
     const root = resolveVerifyRoot(rawProject)
     const agent = cleanOptional(opts.agent)
     const type = opts.type ? cleanText('type', opts.type) : null
@@ -1227,7 +1290,7 @@ export class Memory {
       fields.project !== undefined
         ? fields.project === null
           ? null
-          : canonicalProject(cleanText('project', fields.project))
+          : canonicalProject(cleanText('project', fields.project), this.db)
         : old.project
     const agent = fields.agent !== undefined ? cleanOptional(fields.agent) : old.agent
     const source = fields.source !== undefined ? cleanOptional(fields.source) : old.source
@@ -1300,7 +1363,7 @@ export class Memory {
    */
   bootstrap(opts = {}) {
     const rawProject = cleanOptional(opts.project)
-    const project = canonicalProject(rawProject)
+    const project = canonicalProject(rawProject, this.db)
     const root = resolveVerifyRoot(rawProject)
 
     const conventionsRaw = this.db
@@ -1465,7 +1528,7 @@ export class Memory {
    */
   setWiki(input) {
     const rawProject = cleanOptional(input && input.project)
-    const project = canonicalProject(rawProject)
+    const project = canonicalProject(rawProject, this.db)
     if (!project) throw new Error('project is required')
     const wiki = input && input.wiki
     if (!wiki || typeof wiki !== 'object' || Array.isArray(wiki)) {
@@ -1488,7 +1551,7 @@ export class Memory {
    * @returns {object | null}
    */
   getWiki(rawProject) {
-    const project = canonicalProject(cleanOptional(rawProject))
+    const project = canonicalProject(cleanOptional(rawProject), this.db)
     if (!project) return null
     const row = this.db
       .prepare(`SELECT payload FROM code_wiki WHERE project = ?`)
@@ -1512,7 +1575,7 @@ export class Memory {
     const limit = clampLimit(opts.limit, 20, RECENT_MAX)
     const offset = clampOffset(opts.offset)
     const rawProject = cleanOptional(opts.project)
-    const project = canonicalProject(rawProject)
+    const project = canonicalProject(rawProject, this.db)
     const root = resolveVerifyRoot(rawProject)
     const type = opts.type ? cleanText('type', opts.type) : null
     if (type && !ENTRY_TYPES.has(type)) {
@@ -1628,7 +1691,7 @@ export class Memory {
     if (content.length > SESSION_CONTENT_MAX) {
       content = content.slice(0, SESSION_CONTENT_MAX)
     }
-    const project = canonicalProject(cleanOptional(input.project))
+    const project = canonicalProject(cleanOptional(input.project), this.db)
     const threadTitle = cleanOptional(input.threadTitle)
     const agent = cleanOptional(input.agent)
     const now = new Date().toISOString()
@@ -1653,7 +1716,7 @@ export class Memory {
     const query = cleanText('query', opts.query)
     const match = ftsQuery(query)
     if (!match) return []
-    const project = canonicalProject(cleanOptional(opts.project))
+    const project = canonicalProject(cleanOptional(opts.project), this.db)
     const wantLimit = clampLimit(opts.limit, SESSION_SEARCH_DEFAULT, SESSION_SEARCH_MAX)
     const excerptTokens = Math.min(64, SEARCH_EXCERPT_TOKENS)
 
@@ -1792,7 +1855,7 @@ export class Memory {
    * @param {{ project?: string, now?: number, summary?: boolean }} [opts]
    */
   maintenance(opts = {}) {
-    const project = canonicalProject(cleanOptional(opts.project))
+    const project = canonicalProject(cleanOptional(opts.project), this.db)
     const now = opts.now ?? Date.now()
     const summary = opts.summary === true
     const agingCutoff = new Date(now - AGING_RUN_DAYS * 86_400_000).toISOString()
@@ -1987,7 +2050,7 @@ export class Memory {
    * @param {{ project?: string, now?: number }} [opts]
    */
   distill(opts = {}) {
-    const project = canonicalProject(cleanOptional(opts.project))
+    const project = canonicalProject(cleanOptional(opts.project), this.db)
     const now = opts.now ?? Date.now()
     const runCutoff = new Date(now - DISTILL_RUN_DAYS * 86_400_000).toISOString()
 

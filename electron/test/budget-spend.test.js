@@ -802,8 +802,10 @@ describe("spendByDay and settings", () => {
         entryCount: 42,
         vectors: { enabled: true, count: 40, model: "m" },
         janitor: { lastError: { step: "orphans", message: "no such table: mentions" } },
+        projectCollisions: [{ root: "/oss/app", key: "app-1a2b3c" }],
       }),
     });
+    assert.deepEqual(status.memory.collisions, [{ root: "/oss/app", key: "app-1a2b3c" }]);
     assert.equal(status.memory.running, true);
     assert.equal(status.memory.entries, 42);
     assert.equal(status.memory.vectors, 40);

@@ -3741,6 +3741,8 @@ export interface AppStatus {
     vectors: number | null;
     /** Last janitor step failure, or null when clean/unknown. */
     lastError: string | null;
+    /** Repo roots sharing a folder name, each with its own memory scope (#179). */
+    collisions?: { root: string; key: string }[];
   };
   /** Which build is running: a stale packaged bundle looks like a broken app. */
   build: {
@@ -4103,6 +4105,11 @@ export interface CoderApi {
       id: number;
       resolution: MemoryReviewResolution;
     }): Promise<{ ok: boolean; id: number; resolution: string }>;
+    /** Rename one repo root's memory scope, moving its rows (#179). */
+    renameScope(input: {
+      root: string;
+      key: string;
+    }): Promise<{ root: string; key: string; moved: number }>;
   };
   settings: {
     get(): Promise<AppSettings>;
