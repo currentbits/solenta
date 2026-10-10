@@ -160,6 +160,14 @@
   cursor: not-allowed;
 }
 
+.agentSelect {
+  appearance: none;
+  max-width: 16ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
 /* Square icon-only pill (Options, transcript view at Normal). */
 .pillIcon {
   width: 28px;
@@ -1198,6 +1206,15 @@
 
 .mentionRow[data-mention-kind="folder"] {
   font-weight: 550;
+}
+
+.mentionRow[data-mention-kind="snippet"] {
+  font-weight: 550;
+}
+
+.snippetPreview {
+  font-weight: 400;
+  color: var(--text-dim);
 }
 
 .replyChip {

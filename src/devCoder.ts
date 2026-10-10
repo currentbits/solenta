@@ -496,7 +496,7 @@ function buildDevCoder(): CoderApi {
           listeners["threads:changed"].delete(fn);
         };
       }
-      if (channel === "thread:select") {
+      if (channel === "thread:select" || channel === "project:select") {
         return () => {};
       }
       if (channel === "boot:ready") {

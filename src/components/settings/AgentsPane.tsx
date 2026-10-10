@@ -15,6 +15,7 @@ import type {
   AgentProfile,
   AppSettings,
   PermissionMode,
+  PromptSnippet,
   ProviderInfo,
   ProviderInstance,
   ReasoningEffort,
@@ -501,6 +502,25 @@ export function AgentsPane({
         </div>
       </section>
 
+      <PromptSnippetsSection
+        snippets={settings?.promptSnippets ?? []}
+        disabled={saving || settings == null}
+        onPersist={async (promptSnippets) => {
+          setError(null);
+          try {
+            await onSaveSettings({ promptSnippets });
+            return true;
+          } catch (err) {
+            setError(
+              err instanceof Error && err.message
+                ? err.message
+                : "Failed to save settings",
+            );
+            return false;
+          }
+        }}
+      />
+
       <section className={styles.section} data-subagent-pool="">
         <h3 className={styles.sectionLabel}>Worker model pool</h3>
         <p className={styles.note}>
@@ -944,6 +964,137 @@ function ProviderStatusList({
         );
       })}
       {footer}
+    </section>
+  );
+}
+
+/** Prompt snippets (issue #189): name + text, inserted in the composer via `@name`. */
+function PromptSnippetsSection({
+  snippets,
+  disabled,
+  onPersist,
+}: {
+  snippets: PromptSnippet[];
+  disabled: boolean;
+  onPersist: (next: PromptSnippet[]) => Promise<boolean>;
+}) {
+  /** `original` is the name being edited; null adds a new snippet. */
+  const [draft, setDraft] = useState<
+    { original: string | null; name: string; text: string } | null
+  >(null);
+
+  const submit = async () => {
+    if (!draft) return;
+    const row = { name: draft.name.trim(), text: draft.text };
+    const next =
+      draft.original == null
+        ? [...snippets, row]
+        : snippets.map((sn) => (sn.name === draft.original ? row : sn));
+    if (await onPersist(next)) setDraft(null);
+  };
+
+  return (
+    <section className={styles.section} data-prompt-snippets="">
+      <h3 className={styles.sectionLabel}>Prompt snippets</h3>
+      <p className={styles.note}>
+        Reusable text for the composer. Type <code>@name</code> and pick the
+        snippet to insert its text.
+      </p>
+      {snippets.length === 0 && draft == null && (
+        <p className={styles.note}>No snippets yet.</p>
+      )}
+      {snippets.map((sn) => (
+        <div key={sn.name} className={`${styles.memoryRow} ${styles.profileRow}`}>
+          <div className={styles.profileMeta}>
+            <div className={styles.profileName}>@{sn.name}</div>
+            <p className={styles.note}>
+              {sn.text.length > 80 ? `${sn.text.slice(0, 80)}…` : sn.text}
+            </p>
+          </div>
+          <div className={styles.fieldRow}>
+            <button
+              type="button"
+              className={styles.btn}
+              disabled={disabled}
+              onClick={() => setDraft({ original: sn.name, ...sn })}
+            >
+              Edit
+            </button>
+            <button
+              type="button"
+              className={styles.btn}
+              disabled={disabled}
+              onClick={() => {
+                if (draft?.original === sn.name) setDraft(null);
+                void onPersist(snippets.filter((x) => x.name !== sn.name));
+              }}
+            >
+              Delete
+            </button>
+          </div>
+        </div>
+      ))}
+      {draft ? (
+        <div className={styles.section}>
+          <div className={styles.field}>
+            <label className={styles.fieldLabel} htmlFor="snippet-name">
+              Name
+            </label>
+            <input
+              id="snippet-name"
+              className={styles.input}
+              value={draft.name}
+              disabled={disabled}
+              autoComplete="off"
+              placeholder="run-tests"
+              onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+            />
+          </div>
+          <div className={styles.field}>
+            <label className={styles.fieldLabel} htmlFor="snippet-text">
+              Text
+            </label>
+            <textarea
+              id="snippet-text"
+              className={styles.textarea}
+              rows={4}
+              value={draft.text}
+              disabled={disabled}
+              onChange={(e) => setDraft({ ...draft, text: e.target.value })}
+            />
+          </div>
+          <div className={styles.fieldRow}>
+            <button
+              type="button"
+              className={styles.btn}
+              disabled={disabled}
+              onClick={() => void submit()}
+            >
+              Save snippet
+            </button>
+            <button
+              type="button"
+              className={styles.btn}
+              disabled={disabled}
+              onClick={() => setDraft(null)}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className={styles.fieldRow}>
+          <button
+            type="button"
+            className={styles.btn}
+            data-add-snippet=""
+            disabled={disabled}
+            onClick={() => setDraft({ original: null, name: "", text: "" })}
+          >
+            Add snippet
+          </button>
+        </div>
+      )}
     </section>
   );
 }

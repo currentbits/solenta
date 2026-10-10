@@ -232,6 +232,37 @@ export function useCoderThreadActions({
     [api, selectedThreadId, applyThreads],
   );
 
+  const setAgent = useCallback(
+    async (agent: string | null, threadIdArg?: string) => {
+      const threadId = threadIdArg ?? selectedThreadId;
+      if (!threadId) return;
+      try {
+        const thread = await api.threads.setAgent({ threadId, agent });
+        applyThreads(
+          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
+        );
+        if (selectedRef.current === threadId) {
+          setDetail((prev) =>
+            prev && prev.thread.id === thread.id
+              ? { ...prev, thread }
+              : prev,
+          );
+        }
+        setError(null);
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+        throw err;
+      }
+    },
+    [api, selectedThreadId, applyThreads],
+  );
+
+  const listAgents = useCallback(
+    (input: { provider: string; projectPath?: string | null }) =>
+      api.threads.listAgents(input),
+    [api],
+  );
+
   const setFast = useCallback(
     async (fast: boolean, threadIdArg?: string) => {
       const threadId = threadIdArg ?? selectedThreadId;
@@ -908,6 +939,8 @@ export function useCoderThreadActions({
     setProvider,
     setReasoningEffort,
     setWebSearch,
+    setAgent,
+    listAgents,
     setFast,
     setArchived,
     setSettled,

@@ -34,6 +34,7 @@ const {
 } = require("./notify.js");
 const { recordSecretUse } = require("./secrets.js");
 const { windowOpenAction, navigateAction } = require("./links.js");
+const { DEEP_LINK_SCHEME, parseDeepLink, deepLinkFromArgv } = require("./deepLinks.js");
 const { guestWebviewPolicy, attachGuestPolicy } = require("./preview.js");
 const {
   createMemorySupervisor,
@@ -129,6 +130,28 @@ primeProcessPath({
 });
 
 const isDev = !app.isPackaged && !process.env.CODER_PROD;
+
+// solenta:// deep links (#186). macOS delivers them as open-url to the
+// running app; Windows/Linux launch a second process with the URL in argv,
+// so packaged builds there hold the single-instance lock and forward it.
+/** @type {{ kind: "thread" | "project", id: string } | null} */
+let pendingDeepLink = deepLinkFromArgv(process.argv);
+if (app.isPackaged) {
+  app.setAsDefaultProtocolClient(DEEP_LINK_SCHEME);
+  // exit, not quit: quit lets whenReady boot a second store writer first.
+  if (process.platform !== "darwin" && !app.requestSingleInstanceLock()) {
+    app.exit(0);
+  }
+}
+app.on("open-url", (event, url) => {
+  event.preventDefault();
+  openDeepLink(parseDeepLink(url));
+});
+app.on("second-instance", (_event, argv) => {
+  const link = deepLinkFromArgv(argv);
+  if (link) openDeepLink(link);
+  else focusMainWindow();
+});
 
 /** @type {ReturnType<typeof createMemorySupervisor> | null} */
 let memorySupervisor = null;
@@ -383,6 +406,31 @@ function focusMainWindow() {
   win.show();
   win.focus();
   return win;
+}
+
+/**
+ * Focus the window and select the linked thread or project scope. Links that
+ * arrive before the store and window are up wait for boot:ready; the preload
+ * holds the push until the renderer subscribes.
+ * @param {{ kind: "thread" | "project", id: string } | null} link
+ */
+function openDeepLink(link) {
+  if (!link) return;
+  if (!store) {
+    pendingDeepLink = link;
+    return;
+  }
+  const known =
+    link.kind === "thread" ? store.getThread(link.id) : store.getProject(link.id);
+  if (!known) {
+    console.warn(`solenta: deep link to unknown ${link.kind} ${link.id}`);
+    focusMainWindow();
+    return;
+  }
+  const win = focusMainWindow();
+  if (win && !win.webContents.isDestroyed()) {
+    win.webContents.send(`${link.kind}:select`, link.id);
+  }
 }
 
 /**
@@ -828,6 +876,8 @@ app.whenReady().then(async () => {
   // Renderer may already have mounted against empty state; this is the
   // signal that invoke channels will answer (#618).
   broadcast("boot:ready");
+  openDeepLink(pendingDeepLink);
+  pendingDeepLink = null;
 
   // Opt-in resume after restart (issue #1512 I3): only after first paint
   // and the login-shell PATH, so the notice can render and providers resolve.

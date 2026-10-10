@@ -44,6 +44,8 @@ function createKimiRun(ctx) {
     lastAssistantText,
     markRunFailed,
     appendDoneWorkLog,
+    addSubagentRow,
+    setSubagentStatus,
   } = ctx;
 
   /**
@@ -111,6 +113,30 @@ function createKimiRun(ctx) {
      * @type {string | null}
      */
     let capturedKimiSessionId = null;
+    /**
+     * Agent(run_in_background) tool ids launched by this run (#175). kimi -p
+     * stays alive until they finish (steer policy) and stream-json never
+     * reports a completion, so process exit is the only settle signal.
+     * @type {Set<string>}
+     */
+    const backgroundSubagents = new Set();
+
+    /**
+     * CLI exit ends every agent it was running: "done" on a clean exit,
+     * "failed" when it died (#1443). stopRun already failed them on Stop.
+     * @param {"done" | "failed"} status
+     */
+    function settleBackgroundSubagents(status) {
+      let changed = false;
+      for (const id of backgroundSubagents) {
+        changed = setSubagentStatus(threadId, id, status) || changed;
+      }
+      backgroundSubagents.clear();
+      if (!changed) return;
+      store.save();
+      pushDetail(threadId, null);
+      pushThreadsChanged();
+    }
 
     const localCwd = thread.worktreePath || project.path;
     const binary = resolveBin(providerEntry);
@@ -422,6 +448,15 @@ function createKimiRun(ctx) {
                 toolMeta,
               );
               toolMsgById.set(tool.id, msgId);
+              if (tool.subagent) {
+                addSubagentRow(threadId, {
+                  id: tool.id,
+                  description: tool.subagent.description,
+                  agentType: tool.subagent.agentType,
+                  status: "running",
+                });
+                if (tool.subagent.background) backgroundSubagents.add(tool.id);
+              }
               const notice = guardrailNotice(
                 tool.name,
                 tool.input,
@@ -470,6 +505,17 @@ function createKimiRun(ctx) {
               });
               noteToolSpan(threadId, runId, tool.id, tool.name, tool.isError);
             }
+            // A background launch acks at once; its row stays running until
+            // the CLI exits (settleBackgroundSubagents). A failed launch or a
+            // foreground agent settles here.
+            if (tool.isError || !backgroundSubagents.has(tool.id)) {
+              backgroundSubagents.delete(tool.id);
+              setSubagentStatus(
+                threadId,
+                tool.id,
+                tool.isError ? "failed" : "done",
+              );
+            }
           } else {
             // single fire-and-complete
             const toolMeta = {
@@ -500,6 +546,7 @@ function createKimiRun(ctx) {
           clearTimeout(pushTimer);
           pushTimer = null;
         }
+        settleBackgroundSubagents(code === 0 ? "done" : "failed");
         const e = active.get(threadId);
         if (!e || e.stopping || e.runId !== runId) return;
         if (e.kind !== "kimi") return;
@@ -561,6 +608,7 @@ function createKimiRun(ctx) {
           clearTimeout(pushTimer);
           pushTimer = null;
         }
+        settleBackgroundSubagents("failed");
         const e = active.get(threadId);
         if (!e || e.stopping || e.runId !== runId) return;
         if (e.kind !== "kimi") return;

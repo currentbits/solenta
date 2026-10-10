@@ -228,6 +228,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     setReasoningEffort,
     setWebSearch,
     setFast,
+    setAgent,
+    listAgents,
     setArchived,
     setSettled,
     setPinned,
@@ -701,6 +703,28 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     setChangesNonce((n) => n + 1);
   }, []);
   const clearReveal = useCallback(() => setRevealThreadId(null), []);
+  /** solenta://project/<id> link waiting for the Sidebar to scope to it. */
+  const [scopeRequest, setScopeRequest] = useState<string | null>(null);
+  const clearScopeRequest = useCallback(() => setScopeRequest(null), []);
+
+  // Notification clicks and solenta:// deep links (#186) from main.
+  useEffect(() => {
+    const offThread = api.on("thread:select", (id) => {
+      if (typeof id !== "string" || !id) return;
+      handleSelectThread(id);
+      setRevealThreadId(id);
+    });
+    const offProject = api.on("project:select", (id) => {
+      if (typeof id !== "string" || !id) return;
+      setView("thread");
+      setDrawer(null);
+      setScopeRequest(id);
+    });
+    return () => {
+      offThread();
+      offProject();
+    };
+  }, [api, handleSelectThread]);
 
   const handleCreateThread = useCallback(
     (projectId?: string, opts?: { worktree?: boolean; orchestrate?: boolean; teach?: boolean; ask?: boolean; issueNumber?: number | null; baseBranch?: string | null }) => {
@@ -1645,6 +1669,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         defaultWorktree={settings?.defaultWorktree ?? false}
         revealThreadId={revealThreadId}
         onRevealHandled={clearReveal}
+        scopeRequest={scopeRequest}
+        onScopeRequestHandled={clearScopeRequest}
         onCreateThreadFromIssue={handleCreateThreadFromIssue}
         listCliSessions={listCliSessions}
         importCliSession={handleImportCliSession}
@@ -1917,6 +1943,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onSetReasoningEffort={setReasoningEffort}
         onSetWebSearch={setWebSearch}
         onSetFast={setFast}
+        onSetAgent={setAgent}
+        onListAgents={listAgents}
         onSetArchived={handleSetArchivedUndoable}
         onSetCrossThreadInbound={
           selectedThreadId
@@ -1967,6 +1995,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onRevertFile={revertFile}
         onSuggestCommitMessage={suggestCommitMessage}
         onListFiles={listFiles}
+        promptSnippets={settings?.promptSnippets}
         onPickDirectory={pickDirectory}
         onListSnapWindows={listSnapWindows}
         onCaptureSnapWindow={captureSnapWindow}

@@ -290,6 +290,12 @@
   min-width: 0;
 }
 
+.recapText {
+  margin-top: 2px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .handoffLink {
   border: none;
   background: none;

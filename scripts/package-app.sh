@@ -249,6 +249,15 @@ if [[ -f "$PLIST" ]]; then
     || /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string Solenta" "$PLIST"
   /usr/libexec/PlistBuddy -c "Set :NSMicrophoneUsageDescription Solenta uses the microphone to dictate into the composer." "$PLIST" 2>/dev/null \
     || /usr/libexec/PlistBuddy -c "Add :NSMicrophoneUsageDescription string Solenta uses the microphone to dictate into the composer." "$PLIST"
+  # solenta:// deep links (#186): LaunchServices only routes declared schemes.
+  /usr/libexec/PlistBuddy -c "Delete :CFBundleURLTypes" "$PLIST" 2>/dev/null || true
+  /usr/libexec/PlistBuddy \
+    -c "Add :CFBundleURLTypes array" \
+    -c "Add :CFBundleURLTypes:0 dict" \
+    -c "Add :CFBundleURLTypes:0:CFBundleURLName string ${BUNDLE_ID}" \
+    -c "Add :CFBundleURLTypes:0:CFBundleURLSchemes array" \
+    -c "Add :CFBundleURLTypes:0:CFBundleURLSchemes:0 string solenta" \
+    "$PLIST"
 else
   echo "WARNING: Info.plist missing at $PLIST" >&2
 fi

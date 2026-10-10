@@ -23,6 +23,7 @@ const {
   instanceDisplayName,
 } = require("./providerInstances.js");
 const { resolveSandbox } = require("./sandbox.js");
+const { dueRecap } = require("./recap.js");
 const {
   messagesInMemory,
   stampLastActivity,
@@ -485,6 +486,37 @@ function setWebSearch(store, input) {
 }
 
 /**
+ * Run the thread as a CLI custom agent (`--agent <name>`, #172). null means
+ * the CLI's default agent. Rejected unless the provider advertises
+ * supportsAgents; the name pattern guards argv that ssh/WSL wraps in a shell.
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string, agent: string | null }} input
+ */
+function setAgent(store, input) {
+  const { threadId } = input;
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  const agent = input.agent == null || input.agent === "" ? null : String(input.agent);
+  if (agent !== null) {
+    const entry = getProvider(thread.provider);
+    if (!entry || entry.supportsAgents !== true) {
+      const providerName =
+        (entry && entry.name) || thread.provider || "provider";
+      throw new Error(`${providerName} does not support custom agents`);
+    }
+    if (!require("./agents.js").AGENT_NAME_RE.test(agent)) {
+      throw new Error(`Invalid agent name: ${agent}`);
+    }
+  }
+  const updated = store.updateThread(threadId, { agent });
+  store.save();
+  return updated ? { ...updated } : { ...thread, agent };
+}
+
+/**
  * Fork / hand off: new thread in the source's project. Source is never modified.
  *
  * @param {import('./store').Store} store
@@ -874,6 +906,8 @@ function setProvider(store, input) {
       nextEntry && nextEntry.supportsSearch === true
         ? thread.webSearch === true
         : false;
+    // Agent names are per-CLI (.claude/agents vs .opencode/agent).
+    patch.agent = null;
     // Same rule as effort: a permission mode the new provider cannot honour
     // must not survive the switch (issue #177). Teach-mode caps still win.
     patch.permissionMode = snapPermissionModeForThread(
@@ -1391,7 +1425,7 @@ const listThreadsCache = new WeakMap();
  */
 function listRow(row) {
   // lastActivity is threads:summaries-only; keep it off the full-list push.
-  const { hypotheses, suggestions, lastActivity, ...rest } = row;
+  const { hypotheses, suggestions, lastActivity, recap, ...rest } = row;
   return rest;
 }
 
@@ -1528,6 +1562,8 @@ function getThreadDetail(store, threadId, workflow = null, opts) {
   if (!thread || isTrashed(thread)) {
     throw new Error(`Unknown thread: ${threadId}`);
   }
+  // Before the stamp below: "due" means idle since the PREVIOUS visit.
+  const recap = markVisited ? dueRecap(store, thread) : null;
   if (markVisited) {
     // No updatedAt bump: visiting must not re-unread or re-sort the thread.
     store.updateThread(threadId, { lastVisitedAt: Date.now() });
@@ -1543,6 +1579,8 @@ function getThreadDetail(store, threadId, workflow = null, opts) {
     artifacts: store.getRunArtifacts(threadId).slice(),
     // Live permission prompt (runner-ephemeral, never persisted).
     pendingPermission: (opts && opts.pendingPermission) || null,
+    // Only on a user visit that should show it; background pushes omit it.
+    ...(recap ? { recap } : {}),
   };
 }
 
@@ -1555,6 +1593,7 @@ module.exports = {
   setPermissionMode,
   setReasoningEffort,
   setWebSearch,
+  setAgent,
   setFast,
   forkThread,
   forkWorkerThread,

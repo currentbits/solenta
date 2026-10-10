@@ -7,6 +7,7 @@ const PUSH_CHANNELS = new Set([
   "threads:changed",
   "thread:updated",
   "thread:select",
+  "project:select",
   "boot:ready",
   "stayAwake:changed",
   "simulator:changed",
@@ -42,6 +43,19 @@ function invoke(channel, ...args) {
 }
 
 /**
+ * A deep link on cold launch (#186) can be pushed before React subscribes,
+ * and ipcRenderer drops a push nobody listens to. Hold the latest select
+ * until the first subscriber takes it.
+ */
+const HELD_SELECTS = new Map();
+const subscribers = new Map();
+for (const channel of ["thread:select", "project:select"]) {
+  ipcRenderer.on(channel, (_event, payload) => {
+    if (!subscribers.get(channel)) HELD_SELECTS.set(channel, payload);
+  });
+}
+
+/**
  * @param {string} channel
  * @param {(payload: unknown) => void} cb
  * @returns {() => void}
@@ -54,8 +68,15 @@ function on(channel, cb) {
     cb(payload);
   };
   ipcRenderer.on(channel, listener);
+  subscribers.set(channel, (subscribers.get(channel) || 0) + 1);
+  if (HELD_SELECTS.has(channel)) {
+    const payload = HELD_SELECTS.get(channel);
+    HELD_SELECTS.delete(channel);
+    queueMicrotask(() => cb(payload));
+  }
   return () => {
     ipcRenderer.removeListener(channel, listener);
+    subscribers.set(channel, subscribers.get(channel) - 1);
   };
 }
 
@@ -205,6 +226,8 @@ const IPC_CHANNELS = Object.freeze([
   { ns: "threads", method: "setProvider" },
   { ns: "threads", method: "setReasoningEffort" },
   { ns: "threads", method: "setWebSearch" },
+  { ns: "threads", method: "setAgent" },
+  { ns: "threads", method: "listAgents" },
   { ns: "threads", method: "setFast" },
   { ns: "threads", method: "setVerifyCommand" },
   { ns: "threads", method: "runVerify" },
