@@ -91,6 +91,6 @@ export function resolveCoderApi(isDev: boolean = isDevBuild()): CoderApi {
   // BootApp renders the gate before this is reached.
   // The MODE check is a build-time constant, so production bundles drop
   // devCoder and its fake-data modules (~100 kB) entirely (#1475).
-  if (isDev && import.meta.env?.MODE !== "production") return devCoder;
+  if (isDev && import.meta.env?.MODE !== "production") return devCoder();
   throw new Error("Missing web token");
 }
