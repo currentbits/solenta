@@ -337,6 +337,103 @@ describe("automation CRUD + scheduler", () => {
     assert.ok(after.lastRunAt);
   });
 
+  it("pauses after consecutive failures, notifies once, re-enable resets", async () => {
+    const created = services.addAutomation(store, {
+      projectId: "p1",
+      name: "Flaky",
+      prompt: "go",
+      provider: "claude",
+      preset: "hourly",
+    });
+    const notes = [];
+    let launchThrows = true;
+    let lastThreadId = null;
+    const sched = startScheduler({
+      store,
+      notify: (n) => notes.push(n),
+      intervalMs: 60 * 60 * 1000,
+      runner: {
+        startRun: async (input) => {
+          lastThreadId = input.threadId;
+          if (launchThrows) throw new Error("CLI missing");
+          store.updateThread(input.threadId, { status: "working" });
+          return { runId: "r" };
+        },
+      },
+    });
+    const due = () =>
+      store.setAutomations([
+        { ...store.getAutomation(created.id), nextRunAt: Date.now() - 1000 },
+      ]);
+    try {
+      // Launch failure counts immediately.
+      due();
+      await sched.tick();
+      assert.equal(store.getAutomation(created.id).consecutiveFailures, 1);
+
+      // Run that launches then ends failed counts on the next tick.
+      launchThrows = false;
+      due();
+      await sched.tick();
+      assert.equal(store.getAutomation(created.id).pendingRunThreadId, lastThreadId);
+      store.updateThread(lastThreadId, { status: "failed" });
+      due();
+      await sched.tick(); // settles failure #2, fires #3
+      assert.equal(store.getAutomation(created.id).consecutiveFailures, 2);
+      store.updateThread(lastThreadId, { status: "failed" });
+      const firedBefore = lastThreadId;
+      due();
+      await sched.tick(); // settles #3 -> paused, must not fire
+
+      const paused = store.getAutomation(created.id);
+      assert.equal(paused.enabled, false);
+      assert.equal(paused.consecutiveFailures, 3);
+      assert.match(paused.lastError, /Paused after 3 consecutive failures/);
+      assert.equal(lastThreadId, firedBefore);
+      assert.equal(notes.length, 1);
+      assert.equal(notes[0].name, "Flaky");
+
+      const back = services.updateAutomation(store, { id: created.id, enabled: true });
+      assert.equal(back.consecutiveFailures, 0);
+      assert.equal(back.lastError, null);
+    } finally {
+      sched.stop();
+    }
+  });
+
+  it("a finished run resets the failure streak", async () => {
+    const created = services.addAutomation(store, {
+      projectId: "p1",
+      name: "Recovers",
+      prompt: "go",
+      provider: "claude",
+      preset: "hourly",
+    });
+    store.setAutomations([
+      { ...store.getAutomation(created.id), consecutiveFailures: 2 },
+    ]);
+    let threadId = null;
+    await runNow(
+      {
+        store,
+        runner: {
+          startRun: async (input) => {
+            threadId = input.threadId;
+            return { runId: "r" };
+          },
+        },
+      },
+      created.id,
+    );
+    store.updateThread(threadId, { status: "done" });
+    const { settleAutomationRuns } = require("../automations.js");
+    assert.equal(settleAutomationRuns({ store }), true);
+    const after = store.getAutomation(created.id);
+    assert.equal(after.consecutiveFailures, 0);
+    assert.equal(after.pendingRunThreadId, null);
+    assert.equal(settleAutomationRuns({ store }), false);
+  });
+
   async function fireAuto(autoId) {
     let threadId = null;
     await runNow(

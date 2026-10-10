@@ -13,6 +13,7 @@ const {
   resolveBin,
 } = require("./providers.js");
 const { guardrailsEnabled } = require("./guardrails.js");
+const { withProjectEnv } = require("./worktreeEnv.js");
 const { insertBeforeLast } = require("./guardrail-hook-core.js");
 const {
   materializeCursorPinPlugin,
@@ -134,6 +135,7 @@ function spawnAgentCursor(opts) {
     binary: spawn.binary,
     args: spawn.args,
     cwd: spawn.cwd,
+    env: withProjectEnv(project, undefined),
     onEvent: (ev) => {
       gotJson = true;
       if (!ev || typeof ev !== "object") return;

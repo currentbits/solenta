@@ -86,6 +86,10 @@ interface Stubs {
   onCheckUpdate?: () => Promise<void>;
   onTestWebhook?: () => Promise<WebhookTestResult>;
   onClose?: () => void;
+  onRenameMemoryScope?: (input: {
+    root: string;
+    key: string;
+  }) => Promise<{ root: string; key: string; moved: number }>;
   projects?: ProjectInfo[];
   currentProjectId?: string | null;
   onSetSpotlight?: (input: {
@@ -111,6 +115,7 @@ function modal(stubs: Stubs = {}) {
       status={stubs.status === undefined ? status() : stubs.status}
       onCheckUpdate={stubs.onCheckUpdate}
       onTestWebhook={stubs.onTestWebhook}
+      onRenameMemoryScope={stubs.onRenameMemoryScope}
       projects={stubs.projects}
       currentProjectId={stubs.currentProjectId}
       onSetSpotlight={stubs.onSetSpotlight}
@@ -192,6 +197,57 @@ describe("SettingsModal memory section", () => {
     );
     const alert = m.query('[role="alert"]');
     assert.ok(alert, "janitor error must use role=alert");
+    m.unmount();
+  });
+});
+
+describe("SettingsModal memory scope collisions (#179)", () => {
+  const collisions = [
+    { root: "/work/app", key: "app" },
+    { root: "/oss/app", key: "app-1a2b3c" },
+  ];
+
+  it("lists same-named repos and renames one scope", async () => {
+    const calls: { root: string; key: string }[] = [];
+    const m = await mount(
+      modal({
+        initialPane: "memory",
+        status: status({ memory: { collisions } }),
+        onRenameMemoryScope: async (input) => {
+          calls.push(input);
+          return { ...input, moved: 4 };
+        },
+      }),
+    );
+    assert.ok(m.text().includes("/oss/app"), m.text());
+    const input = m.query('input[id="scope-/oss/app"]') as HTMLInputElement;
+    assert.equal(input.placeholder, "app-1a2b3c");
+    await m.type(input, "app-oss");
+    await m.click(m.queryAll("[data-memory-collisions] button")[1]);
+    assert.deepEqual(calls, [{ root: "/oss/app", key: "app-oss" }]);
+    assert.equal(input.placeholder, "app-oss");
+    m.unmount();
+  });
+
+  it("shows a rename refusal", async () => {
+    const m = await mount(
+      modal({
+        initialPane: "memory",
+        status: status({ memory: { collisions } }),
+        onRenameMemoryScope: async () => {
+          throw new Error('Scope "app" is already in use');
+        },
+      }),
+    );
+    await m.type(m.query('input[id="scope-/oss/app"]'), "app");
+    await m.click(m.queryAll("[data-memory-collisions] button")[1]);
+    assert.ok(m.query('[data-memory-collisions] [role="alert"]')?.textContent?.includes("already in use"));
+    m.unmount();
+  });
+
+  it("renders nothing without collisions", async () => {
+    const m = await mount(modal({ initialPane: "memory" }));
+    assert.equal(m.query("[data-memory-collisions]"), null);
     m.unmount();
   });
 });

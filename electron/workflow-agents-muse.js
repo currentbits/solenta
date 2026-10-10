@@ -1,6 +1,7 @@
 "use strict";
 
 const os = require("node:os");
+const { withProjectEnv } = require("./worktreeEnv.js");
 const path = require("node:path");
 const {
   getProvider,
@@ -159,7 +160,7 @@ function spawnAgentMuse(opts) {
     binary: spawn.binary,
     args: spawn.args,
     cwd: spawn.cwd,
-    env: museEnv,
+    env: withProjectEnv(project, museEnv),
     onEvent: (ev) => {
       gotJson = true;
       if (!ev || typeof ev !== "object") return;

@@ -4,6 +4,7 @@
 // Follows the seam convention in the header of electron/runner-watchdogs.js.
 
 const { getProvider, resolveBin, modelSupportsFast } = require("./providers.js");
+const { withProjectEnv } = require("./worktreeEnv.js");
 const {
   truncate,
   INPUT_TRUNCATE,
@@ -29,6 +30,8 @@ const {
 const path = require("node:path");
 const threadSecrets = require("./threadSecrets.js");
 const { classifyTool } = require("./guardrails.js");
+const { pendingFromInput } = require("./codexInput.js");
+const { METHOD_ELICITATION } = require("./codexApprovals.js");
 const { isMemoryConsolidateTool } = require("./memory-consolidate.js");
 const { saveToolImages, extractImages } = require("./tool-images.js");
 const fs = require("node:fs");
@@ -715,6 +718,39 @@ function createClaudeRun(ctx) {
               pushThreadsChanged();
             }
             pushDetail(threadId, claudeState);
+          } else if (request.subtype === "elicitation" && requestId) {
+            // #173: an MCP server asking the user mid-run. Same typed-input
+            // card and schema checks as Codex elicitation.
+            const e = guard();
+            if (!e) return;
+            let pending;
+            try {
+              pending = pendingFromInput(requestId, METHOD_ELICITATION, {
+                serverName: request.mcp_server_name,
+                message: request.message,
+                mode: request.mode,
+                url: request.url,
+                elicitationId: request.elicitation_id,
+                requestedSchema: request.requested_schema,
+              });
+            } catch {
+              handle.respondError(
+                requestId,
+                "Unsupported elicitation: Solenta cannot render this form or URL",
+              );
+              return;
+            }
+            markTurnContent();
+            e.pendingPermissions.push(pending);
+            if (e.pendingPermissions.length === 1) {
+              store.updateThread(
+                threadId,
+                { awaitingInput: true },
+                { touch: true },
+              );
+              pushThreadsChanged();
+            }
+            pushDetail(threadId, claudeState);
           } else if (requestId) {
             // Unknown control request: answer so the CLI never hangs on us.
             handle.respondError(
@@ -1186,7 +1222,10 @@ function createClaudeRun(ctx) {
     // respawns the warm CLI so the next turn sees it.
     const spawnEnv = threadSecrets.withEnv(
       threadId,
-      grokMerged && Object.keys(grokMerged).length > 0 ? grokMerged : undefined,
+      withProjectEnv(
+        project,
+        grokMerged && Object.keys(grokMerged).length > 0 ? grokMerged : undefined,
+      ),
     );
 
     // Reuse key: everything a spawn bakes into argv/env EXCEPT the session

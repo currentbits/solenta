@@ -4,6 +4,7 @@
 // Follows the seam convention in the header of electron/runner-watchdogs.js.
 
 const { resolveBin } = require("./providers.js");
+const { withProjectEnv } = require("./worktreeEnv.js");
 const { truncate } = require("./claude.js");
 const path = require("node:path");
 const threadSecrets = require("./threadSecrets.js");
@@ -384,7 +385,7 @@ function createKimiRun(ctx) {
       binary: spawn.binary,
       args: spawn.args,
       cwd: spawn.cwd,
-      env: threadSecrets.withEnv(threadId, kimiEnv),
+      env: threadSecrets.withEnv(threadId, withProjectEnv(project, kimiEnv)),
       // No argv route for kimi effort; runKimi flips config.toml (effortVia).
       reasoningEffort: thread.reasoningEffort || null,
       onEvent: (ev) => {

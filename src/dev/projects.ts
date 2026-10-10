@@ -211,6 +211,7 @@ export function createProjects(ctx: DevCtx): Pick<CoderApi, "projects" | "spaces
         iconPath?: string | null;
         setupCommand?: string | null;
         quickActions?: ProjectInfo["quickActions"];
+        env?: ProjectInfo["env"] | null;
         threadDefaults?: ProjectInfo["threadDefaults"] | null;
         waitForSetup?: boolean | null;
         branchPrefix?: string | null;
@@ -275,6 +276,11 @@ export function createProjects(ctx: DevCtx): Pick<CoderApi, "projects" | "spaces
             : [];
           if (rows.length) project.quickActions = rows;
           else delete project.quickActions;
+        }
+        if (Object.prototype.hasOwnProperty.call(input, "env")) {
+          if (input.env && Object.keys(input.env).length) {
+            project.env = { ...input.env };
+          } else delete project.env;
         }
         if (Object.prototype.hasOwnProperty.call(input, "threadDefaults")) {
           if (input.threadDefaults) project.threadDefaults = input.threadDefaults;

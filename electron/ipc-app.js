@@ -108,6 +108,9 @@ module.exports = {
   "memory:remove": async (ctx, input) => {
     return ctx.memory.remove(input);
   },
+  "memory:renameScope": async (ctx, input) => {
+    return ctx.memory.renameScope(input);
+  },
   "memory:maintenance": async (ctx, input) => {
     return ctx.memory.maintenance(input || {});
   },

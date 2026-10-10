@@ -114,6 +114,11 @@ export interface ProjectInfo {
    * Absent/empty = none. Cap 8.
    */
   quickActions?: ProjectQuickAction[];
+  /**
+   * Env vars layered into agent runs, dev servers, terminals, verify and
+   * quick actions in this project (#188). PATH is dropped. Absent = none.
+   */
+  env?: Record<string, string>;
   /** Checked-in solenta.json commands (#1506). Never persisted. */
   repoConfig?: ProjectRepoConfig;
   /**
@@ -373,6 +378,8 @@ export interface ProjectUpdateInput {
    * Named header actions (issue #153). Empty array clears them.
    */
   quickActions?: ProjectQuickAction[];
+  /** Per-project env map (#188). Empty / null clears it. */
+  env?: Record<string, string> | null;
   /** #1506. false / null clears it. */
   waitForSetup?: boolean | null;
   /** #1506. Empty / null restores "coder/"; an invalid prefix rejects. */
@@ -2848,6 +2855,10 @@ export interface AutomationInfo {
   lastRunAt: number | null;
   nextRunAt: number;
   lastError: string | null;
+  /** Failed fires in a row; at 3 the scheduler sets enabled=false (#160). */
+  consecutiveFailures?: number;
+  /** Last fired thread whose outcome has not been counted yet. */
+  pendingRunThreadId?: string | null;
 }
 
 export interface AutomationWrite {
@@ -3798,6 +3809,8 @@ export interface AppStatus {
     vectors: number | null;
     /** Last janitor step failure, or null when clean/unknown. */
     lastError: string | null;
+    /** Repo roots sharing a folder name, each with its own memory scope (#179). */
+    collisions?: { root: string; key: string }[];
   };
   /** Which build is running: a stale packaged bundle looks like a broken app. */
   build: {
@@ -4166,6 +4179,11 @@ export interface CoderApi {
       id: number;
       resolution: MemoryReviewResolution;
     }): Promise<{ ok: boolean; id: number; resolution: string }>;
+    /** Rename one repo root's memory scope, moving its rows (#179). */
+    renameScope(input: {
+      root: string;
+      key: string;
+    }): Promise<{ root: string; key: string; moved: number }>;
   };
   settings: {
     get(): Promise<AppSettings>;

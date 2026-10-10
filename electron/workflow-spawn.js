@@ -1,6 +1,7 @@
 "use strict";
 
 const { wslTarget } = require("./wsl.js");
+const { withProjectEnv } = require("./worktreeEnv.js");
 const { wrapCommand } = require("./ssh.js");
 const { guardrailNotice } = require("./guardrail-hook-core.js");
 
@@ -26,7 +27,13 @@ function resolveWorkflowSpawn(project, binary, args, localCwd, env) {
   if (!crossesBoundary(project)) {
     return { binary, args, cwd: localCwd };
   }
-  const wrapped = wrapCommand(project, binary, args, undefined, env);
+  const wrapped = wrapCommand(
+    project,
+    binary,
+    args,
+    undefined,
+    withProjectEnv(project, env),
+  );
   return { binary: wrapped.bin, args: wrapped.args, cwd: process.cwd() };
 }
 

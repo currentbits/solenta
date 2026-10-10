@@ -15,6 +15,7 @@ const { killTree } = require("./proc.js");
 const { wrapCommand } = require("./ssh.js");
 const { wslTarget } = require("./wsl.js");
 const { mergeCacheEnv } = require("./verifyEfficiency.js");
+const { normalizeProjectEnv } = require("./worktreeEnv.js");
 
 /**
  * Shell that runs the user's verify command string.
@@ -122,7 +123,10 @@ function runVerifyCommand(input) {
       child = spawnFn(wrapped.bin, wrapped.args, {
         cwd: wsl ? undefined : input.cwd,
         detached: true,
-        env: mergeCacheEnv(input.cwd, input.env, {
+        env: mergeCacheEnv(input.cwd, {
+          ...(input.env || process.env),
+          ...normalizeProjectEnv(project.env),
+        }, {
           repoRoot: project && project.path,
         }),
         stdio: ["ignore", "pipe", "pipe"],

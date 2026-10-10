@@ -309,6 +309,8 @@ function addAutomation(store, input) {
     lastRunAt: null,
     nextRunAt: nextFire(fields.preset, fields.hour, now),
     lastError: null,
+    consecutiveFailures: 0,
+    pendingRunThreadId: null,
   };
   const list = store.getAutomations().slice();
   list.push(created);
@@ -331,9 +333,12 @@ function updateAutomation(store, input) {
   const fields = normalizeAutomationInput(store, input, existing);
   const scheduleChanged =
     fields.preset !== existing.preset || fields.hour !== existing.hour;
+  // #160: turning it back on is the explicit re-enable after an auto-pause.
+  const reEnabled = fields.enabled && !existing.enabled;
   const updated = {
     ...existing,
     ...fields,
+    ...(reEnabled ? { consecutiveFailures: 0, lastError: null } : {}),
     nextRunAt: scheduleChanged
       ? nextFire(fields.preset, fields.hour, Date.now())
       : existing.nextRunAt,
@@ -376,6 +381,8 @@ async function appStatus(store, deps = {}) {
   let entries = null;
   let vectors = null;
   let lastError = null;
+  /** @type {{ root: string, key: string }[]} */
+  let collisions = [];
   if (base.running) {
     try {
       const health = deps.health ? await deps.health() : await fetchMemoryHealth(base.port);
@@ -387,6 +394,7 @@ async function appStatus(store, deps = {}) {
             : null;
         const je = health.janitor && health.janitor.lastError;
         lastError = je ? `${je.step}: ${je.message}` : null;
+        if (Array.isArray(health.projectCollisions)) collisions = health.projectCollisions;
       }
     } catch {
       // health unreachable: report nulls rather than failing status
@@ -409,7 +417,7 @@ async function appStatus(store, deps = {}) {
 
   return {
     spendTodayUsd,
-    memory: { ...base, entries, vectors, lastError },
+    memory: { ...base, entries, vectors, lastError, collisions },
     build: { version, sha, time, channel, platform: deps.platform || process.platform },
   };
 }

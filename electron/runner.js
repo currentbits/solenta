@@ -1,6 +1,7 @@
 "use strict";
 
 const path = require("node:path");
+const { withProjectEnv } = require("./worktreeEnv.js");
 const { randomUUID } = require("node:crypto");
 const services = require("./services.js");
 const { runAgent } = require("./agent.js");
@@ -607,7 +608,13 @@ function resolveSpawn(project, binary, args, localCwd, env) {
   if (!crossesBoundary(project)) {
     return { binary, args, cwd: localCwd };
   }
-  const wrapped = wrapCommand(project, binary, args, undefined, env);
+  const wrapped = wrapCommand(
+    project,
+    binary,
+    args,
+    undefined,
+    withProjectEnv(project, env),
+  );
   return { binary: wrapped.bin, args: wrapped.args, cwd: process.cwd() };
 }
 

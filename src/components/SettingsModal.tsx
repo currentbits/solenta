@@ -169,6 +169,8 @@ export interface SettingsModalProps {
   onShowOnboarding?: () => void;
   onOpenConnection?: CoderApi["app"]["openRemoteConnection"];
   onForgetConnection?: CoderApi["app"]["forgetRemoteConnection"];
+  /** Optional memory-scope rename seam (#179). When omitted reads window.coder. */
+  onRenameMemoryScope?: CoderApi["memory"]["renameScope"];
   /** Project picker default for Spotlight and Project tools: the selected thread's project. */
   currentProjectId?: string | null;
   /** Per-project Spotlight opt-in (moved from the Environment Lanes card). */
@@ -265,6 +267,7 @@ export function SettingsModal({
   onShowOnboarding,
   onOpenConnection,
   onForgetConnection,
+  onRenameMemoryScope,
   currentProjectId = null,
   onSetSpotlight,
   projectTools,
@@ -778,6 +781,7 @@ export function SettingsModal({
             projectTools={projectTools}
             toolsProjectId={toolsProjectId}
             setToolsProjectId={setToolsProjectId}
+            onRenameScope={onRenameMemoryScope}
           />
           )}
 
