@@ -296,4 +296,24 @@ describe("join: Settings token drives interactive PR ops (#1533 × #1534)", () =
     assert.ok(auth.length > 0);
     assert.ok(auth.every((a) => /ghp_from_settings$/.test(a)), auth.join(","));
   });
+
+  it("ghApiTryAsync takes opts.originUrl when cwd is no checkout (ssh remote, #180)", async () => {
+    const fake = fakeGithubApi({
+      prs: [{ number: 5, url: "https://github.com/acme/remote/pull/5", headRefName: "feat/x" }],
+    });
+    const urls = [];
+    setGithubApi({
+      fetchFn: async (url, init) => {
+        urls.push(`${url} ${init && init.body ? init.body : ""}`);
+        return fake.fetchFn(url, init);
+      },
+      tokenFn: async () => "ghp_test",
+    });
+    const out = await ghApiTryAsync(os.tmpdir(), ["pr", "view", "5", "--json", "number,url,state"], {
+      originUrl: "git@github.com:acme/remote.git",
+    });
+    assert.equal(out.ok, true, out.stderr);
+    assert.equal(JSON.parse(out.stdout).number, 5);
+    assert.ok(urls.some((u) => /acme\/remote|"owner":"acme","name":"remote"|"repo":"remote"/.test(u)), urls.join(","));
+  });
 });

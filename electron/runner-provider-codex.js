@@ -141,7 +141,7 @@ function createCodexRun(ctx) {
     }
     // MCP / Planboard -c sit after `app-server` (same values as exec).
     // Bearer tokens ride the child's env, never argv (issue #125).
-    const planboardNote = services.planboardNoteFor(localCwd, {
+    const planboardNote = services.planboardNoteFor(project, {
       provider: thread.provider,
       permissionMode: thread.permissionMode || "default",
     });

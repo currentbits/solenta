@@ -135,7 +135,19 @@ function extractToolEvent(obj) {
   const type = String(obj.type || "");
   if (!/tool/i.test(type)) return null;
 
-  const part = obj.part && typeof obj.part === "object" ? obj.part : null;
+  let part = obj.part && typeof obj.part === "object" ? obj.part : null;
+  // Real `run --format json` tool_use parts: {tool, callID, state:{status,
+  // input, output|error}}. Flatten onto the generic name/input/output keys.
+  if (part && typeof part.tool === "string" && part.state && typeof part.state === "object") {
+    const st = part.state;
+    part = {
+      ...part,
+      name: part.tool,
+      input: st.input,
+      output: st.output != null ? st.output : st.error,
+      is_error: st.status === "error",
+    };
+  }
   const name =
     (part && typeof part.name === "string" && part.name) ||
     (typeof obj.name === "string" && obj.name) ||
@@ -228,6 +240,10 @@ function extractToolEvent(obj) {
     phase,
     isError,
     ...(images.length ? { images } : {}),
+    // Untruncated todo list for the planboard (inputStr is capped).
+    ...(name === "todowrite" && inputRaw && Array.isArray(inputRaw.todos)
+      ? { todos: inputRaw.todos }
+      : {}),
   };
 }
 

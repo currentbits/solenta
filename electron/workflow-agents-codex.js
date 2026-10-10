@@ -89,7 +89,7 @@ function spawnAgentCodex(opts) {
   });
   // Same as runner.js: -c must sit after `exec` / `exec resume`, or
   // resume drops MCP auto-approve and thread_send dies under never.
-  const planboardNote = planboardNoteFor(cwd, {
+  const planboardNote = planboardNoteFor(project || cwd, {
     provider: "codex",
     permissionMode: permissionMode || "default",
   });

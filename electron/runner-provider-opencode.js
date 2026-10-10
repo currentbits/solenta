@@ -46,6 +46,7 @@ function createOpencodeRun(ctx) {
     notifyRunTerminal,
     markRunFailed,
     appendDoneWorkLog,
+    savePlanSteps,
   } = ctx;
 
   /**
@@ -333,6 +334,7 @@ function createOpencodeRun(ctx) {
 
         const tool = opencodeParse.extractToolEvent(ev);
         if (tool) {
+          if (tool.todos) savePlanSteps(threadId, tool.todos);
           if (tool.phase === "start") {
             thinking.id = null;
             thinking.text = "";

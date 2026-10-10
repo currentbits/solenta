@@ -19,14 +19,87 @@ const {
   fetchLinearIssue,
 } = require("./linear.js");
 const gitlab = require("./gitlab.js");
+const os = require("node:os");
+const { execCommand } = require("./ssh.js");
 
 /**
- * GitLab origin of a checkout as `{ host, path }`, or null.
- * @param {string} cwd
+ * Where issue calls point: a checkout path, or a stored project. Pass the
+ * project for ssh remotes; their project.path is not a local checkout (#180).
+ * @typedef {string | { path?: string, remoteHost?: string, remotePath?: string } | null | undefined} IssueTarget
  */
-function gitlabOriginOf(cwd) {
+
+/** origin URL per ssh remote (host + path). Successes only. */
+const remoteOrigins = new Map();
+
+/** @param {IssueTarget} target */
+function remoteProjectOf(target) {
+  return target && typeof target === "object" && target.remoteHost ? target : null;
+}
+
+/**
+ * A project or checkout path's origin URL, or "" when there is none.
+ * ssh remotes read origin on the far side.
+ *
+ * ponytail: remote origins are cached for the app's lifetime, so pointing
+ * a remote checkout at a new origin needs a restart; failures are not
+ * cached and retry on the next call.
+ *
+ * @param {IssueTarget} target
+ * @returns {string}
+ */
+function originUrlOf(target) {
+  const project = remoteProjectOf(target);
+  if (project) {
+    const key = `${project.remoteHost}\0${project.remotePath || ""}`;
+    const hit = remoteOrigins.get(key);
+    if (hit) return hit;
+    try {
+      const out = String(
+        execCommand(project, "git", ["remote", "get-url", "origin"], {
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "pipe"],
+        }) || "",
+      ).trim();
+      if (out) remoteOrigins.set(key, out);
+      return out;
+    } catch {
+      return "";
+    }
+  }
+  const cwd = cwdOf(target);
   const remote = cwd && gitTry(cwd, ["remote", "get-url", "origin"]);
-  return remote && remote.ok ? gitlab.gitlabRemote(remote.stdout) : null;
+  return remote && remote.ok ? String(remote.stdout || "").trim() : "";
+}
+
+/**
+ * Local directory gh/glab run in: the checkout, or the home dir for an ssh
+ * remote (those calls then name the repo explicitly). "" when unset.
+ * @param {IssueTarget} target
+ */
+function cwdOf(target) {
+  if (remoteProjectOf(target)) return os.homedir();
+  const p = target && typeof target === "object" ? target.path : target;
+  return String(p || "");
+}
+
+/**
+ * ghApiTryAsync options. ssh remotes hand over their origin (no local
+ * checkout to read it from) and the -R repo for the gh fallback.
+ * @param {IssueTarget} target
+ */
+function ghOptsOf(target) {
+  if (!remoteProjectOf(target)) return GH_USER;
+  const originUrl = originUrlOf(target);
+  const repo = ownerRepoFromRemote(originUrl);
+  return { ...GH_USER, originUrl, ghRepo: repo ? `${repo.owner}/${repo.repo}` : "" };
+}
+
+/**
+ * GitLab origin of a project or checkout as `{ host, path }`, or null.
+ * @param {IssueTarget} target
+ */
+function gitlabOriginOf(target) {
+  return gitlab.gitlabRemote(originUrlOf(target));
 }
 
 /** Fail-open: a missing scanner must not break issue fetch. */
@@ -217,16 +290,15 @@ async function fetchIssue(projectPath, ref, opts) {
       return { ok: false, reason: "invalid issue reference" };
     }
 
-    const cwd = String(projectPath || "");
+    const cwd = cwdOf(projectPath);
     if (!cwd) {
       return { ok: false, reason: "not a GitHub repo" };
     }
 
-    const remote = gitTry(cwd, ["remote", "get-url", "origin"]);
-    if (!remote.ok) {
+    const originUrl = originUrlOf(projectPath);
+    if (!originUrl) {
       return { ok: false, reason: "not a GitHub repo" };
     }
-    const originUrl = String(remote.stdout || "").trim();
     const gl = gitlab.gitlabRemote(originUrl);
     if (gl) {
       const fetched = await gitlab.fetchIssue(cwd, gl, parsed);
@@ -255,7 +327,7 @@ async function fetchIssue(projectPath, ref, opts) {
       args.push("-R", `${owner}/${repo}`);
     }
 
-    const viewed = await ghApiTryAsync(cwd, args, GH_USER);
+    const viewed = await ghApiTryAsync(cwd, args, ghOptsOf(projectPath));
     if (!viewed.ok) {
       if (viewed.enoent) {
         return { ok: false, reason: "gh missing" };
@@ -356,8 +428,8 @@ async function listIssuePage(projectPath, opts = {}) {
       (number !== null && (!Number.isSafeInteger(number) || number <= 0))) {
     return { ok: false, reason: "Invalid issue list options" };
   }
-  const cwd = String(projectPath || "");
-  const gl = gitlabOriginOf(cwd);
+  const cwd = cwdOf(projectPath);
+  const gl = cwd ? gitlabOriginOf(projectPath) : null;
   if (gl) {
     const page = await gitlab.listIssuePage(cwd, gl, { state, limit, cursor, number });
     if (!page.ok) return page;
@@ -367,8 +439,7 @@ async function listIssuePage(projectPath, opts = {}) {
       return { ok: false, reason: err.message };
     }
   }
-  const remote = cwd && gitTry(cwd, ["remote", "get-url", "origin"]);
-  const repo = remote?.ok && ownerRepoFromRemote(remote.stdout);
+  const repo = cwd && ownerRepoFromRemote(originUrlOf(projectPath));
   if (!repo) return { ok: false, reason: "not a GitHub repo" };
   const fields = "number,title,labels,state,url,updatedAt,createdAt";
   const query = `query($owner:String!, $repo:String!, $first:Int!, $after:String, $state:IssueState!) {
@@ -386,7 +457,7 @@ async function listIssuePage(projectPath, opts = {}) {
       "-f", `owner=${repo.owner}`, "-f", `repo=${repo.repo}`, "-F", `first=${limit}`,
       ...(cursor ? ["-f", `after=${cursor}`] : []),
       ...(state === "all" ? [] : ["-f", `state=${state.toUpperCase()}`])];
-  const listed = await ghApiTryAsync(cwd, args, GH_USER);
+  const listed = await ghApiTryAsync(cwd, args, ghOptsOf(projectPath));
   if (!listed.ok) {
     if (listed.enoent) return { ok: false, reason: "gh missing" };
     if (isGhAuthFailure(listed.stderr || listed.combined || listed.stdout)) return { ok: false, reason: "auth" };
@@ -448,7 +519,7 @@ const PLAN_LABELS = ["plan:todo", "plan:doing", "plan:done"];
  * @returns {Promise<{ ok: true } | { ok: false, reason: string }>}
  */
 async function setPlanStatus(projectPath, number, status) {
-  const cwd = String(projectPath || "");
+  const cwd = cwdOf(projectPath);
   const issueNumber = Number(number);
   const label = `plan:${String(status || "")}`;
   if (!cwd) return { ok: false, reason: "not a GitHub repo" };
@@ -459,13 +530,13 @@ async function setPlanStatus(projectPath, number, status) {
     return { ok: false, reason: `unknown plan status: ${status}` };
   }
 
-  const gl = gitlabOriginOf(cwd);
+  const gl = gitlabOriginOf(projectPath);
   if (gl) return gitlab.setPlanLabel(cwd, gl, issueNumber, label, PLAN_LABELS);
 
-  const remote = gitTry(cwd, ["remote", "get-url", "origin"]);
-  if (!remote.ok || !isGitHubRemote(String(remote.stdout || "").trim())) {
+  if (!isGitHubRemote(originUrlOf(projectPath))) {
     return { ok: false, reason: "not a GitHub repo" };
   }
+  const ghOpts = ghOptsOf(projectPath);
 
   const base = ["issue", "edit", String(issueNumber), "--add-label", label];
   let edited = await ghApiTryAsync(
@@ -475,11 +546,11 @@ async function setPlanStatus(projectPath, number, status) {
       "--remove-label",
       PLAN_LABELS.filter((l) => l !== label).join(","),
     ],
-    GH_USER,
+    ghOpts,
   );
   let errText = edited.stderr || edited.combined || edited.stdout || "";
   if (!edited.ok && !edited.enoent && /not found/i.test(errText)) {
-    edited = await ghApiTryAsync(cwd, base, GH_USER);
+    edited = await ghApiTryAsync(cwd, base, ghOpts);
     errText = edited.stderr || edited.combined || edited.stdout || "";
   }
   if (edited.ok) return { ok: true };
@@ -500,28 +571,28 @@ async function setPlanStatus(projectPath, number, status) {
  * @returns {Promise<{ ok: true } | { ok: false, reason: string }>}
  */
 async function reopenIssue(projectPath, number, opts) {
-  const cwd = String(projectPath || "");
+  const cwd = cwdOf(projectPath);
   const issueNumber = Number(number);
   if (!cwd) return { ok: false, reason: "not a GitHub repo" };
   if (!Number.isInteger(issueNumber) || issueNumber <= 0) {
     return { ok: false, reason: "invalid issue reference" };
   }
 
-  const gl = gitlabOriginOf(cwd);
+  const gl = gitlabOriginOf(projectPath);
   if (gl) {
     const comment = opts && typeof opts.comment === "string" ? opts.comment : "";
     return gitlab.reopenIssue(cwd, gl, issueNumber, comment, PLAN_LABELS);
   }
 
-  const remote = gitTry(cwd, ["remote", "get-url", "origin"]);
-  if (!remote.ok || !isGitHubRemote(String(remote.stdout || "").trim())) {
+  if (!isGitHubRemote(originUrlOf(projectPath))) {
     return { ok: false, reason: "not a GitHub repo" };
   }
+  const ghOpts = ghOptsOf(projectPath);
 
   const reopened = await ghApiTryAsync(
     cwd,
     ["issue", "reopen", String(issueNumber)],
-    GH_USER,
+    ghOpts,
   );
   const reopenErr = reopened.stderr || reopened.combined || reopened.stdout || "";
   // Already-open is success: we still want the comment + plan:todo.
@@ -539,14 +610,14 @@ async function reopenIssue(projectPath, number, opts) {
     const posted = await ghApiTryAsync(
       cwd,
       ["issue", "comment", String(issueNumber), "--body", comment],
-      GH_USER,
+      ghOpts,
     );
     if (!posted.ok && !posted.enoent) {
       // Comment is evidence, not the action. Keep going to plan:todo.
     }
   }
 
-  const moved = await setPlanStatus(cwd, issueNumber, "todo");
+  const moved = await setPlanStatus(projectPath, issueNumber, "todo");
   if (!moved.ok) return moved;
   return { ok: true };
 }
@@ -566,28 +637,28 @@ async function reopenIssue(projectPath, number, opts) {
  * @returns {Promise<{ ok: true, skipped?: string } | { ok: false, reason: string }>}
  */
 async function completeIssue(projectPath, number, opts) {
-  const cwd = String(projectPath || "");
+  const cwd = cwdOf(projectPath);
   const issueNumber = Number(number);
   if (!cwd) return { ok: false, reason: "not a GitHub repo" };
   if (!Number.isInteger(issueNumber) || issueNumber <= 0) {
     return { ok: false, reason: "invalid issue reference" };
   }
 
-  const gl = gitlabOriginOf(cwd);
+  const gl = gitlabOriginOf(projectPath);
   if (gl) {
     const comment = opts && typeof opts.comment === "string" ? opts.comment : "";
     return gitlab.completeIssue(cwd, gl, issueNumber, comment, PLAN_LABELS);
   }
 
-  const remote = gitTry(cwd, ["remote", "get-url", "origin"]);
-  if (!remote.ok || !isGitHubRemote(String(remote.stdout || "").trim())) {
+  if (!isGitHubRemote(originUrlOf(projectPath))) {
     return { ok: false, reason: "not a GitHub repo" };
   }
+  const ghOpts = ghOptsOf(projectPath);
 
   const viewed = await ghApiTryAsync(
     cwd,
     ["issue", "view", String(issueNumber), "--json", "state,labels"],
-    GH_USER,
+    ghOpts,
   );
   const viewErr = viewed.stderr || viewed.combined || viewed.stdout || "";
   if (!viewed.ok) {
@@ -613,11 +684,11 @@ async function completeIssue(projectPath, number, opts) {
     return { ok: true, skipped: "not in progress" };
   }
 
-  const moved = await setPlanStatus(cwd, issueNumber, "done");
+  const moved = await setPlanStatus(projectPath, issueNumber, "done");
   const comment = opts && typeof opts.comment === "string" ? opts.comment : "";
   const args = ["issue", "close", String(issueNumber)];
   if (comment) args.push("--comment", comment);
-  const closed = await ghApiTryAsync(cwd, args, GH_USER);
+  const closed = await ghApiTryAsync(cwd, args, ghOpts);
   if (closed.ok) return { ok: true };
   if (!moved.ok) return moved;
   const closeErr = closed.stderr || closed.combined || closed.stdout || "";
@@ -636,7 +707,7 @@ async function completeIssue(projectPath, number, opts) {
  * @returns {Promise<{ ok: true, url: string } | { ok: false, reason: string }>}
  */
 async function commentIssue(projectPath, number, body) {
-  const cwd = String(projectPath || "");
+  const cwd = cwdOf(projectPath);
   const issueNumber = Number(number);
   const text = body == null ? "" : String(body).trim();
   if (!cwd) return { ok: false, reason: "not a GitHub repo" };
@@ -645,18 +716,18 @@ async function commentIssue(projectPath, number, body) {
   }
   if (!text) return { ok: false, reason: "empty comment" };
 
-  const gl = gitlabOriginOf(cwd);
+  const gl = gitlabOriginOf(projectPath);
   if (gl) return gitlab.addNote(cwd, gl, issueNumber, text);
 
-  const remote = gitTry(cwd, ["remote", "get-url", "origin"]);
-  if (!remote.ok || !isGitHubRemote(String(remote.stdout || "").trim())) {
+  if (!isGitHubRemote(originUrlOf(projectPath))) {
     return { ok: false, reason: "not a GitHub repo" };
   }
+  const ghOpts = ghOptsOf(projectPath);
 
   const posted = await ghApiTryAsync(
     cwd,
     ["issue", "comment", String(issueNumber), "--body", text],
-    GH_USER,
+    ghOpts,
   );
   const errText = posted.stderr || posted.combined || posted.stdout || "";
   if (!posted.ok) {
@@ -689,23 +760,23 @@ async function commentIssue(projectPath, number, body) {
  * @returns {Promise<{ ok: true, number: number, url: string } | { ok: false, reason: string }>}
  */
 async function createIssue(projectPath, input) {
-  const cwd = String(projectPath || "");
+  const cwd = cwdOf(projectPath);
   const title = input && input.title != null ? String(input.title) : "";
   const body = input && input.body != null ? String(input.body) : "";
   if (!cwd) return { ok: false, reason: "not a GitHub repo" };
 
-  const gl = gitlabOriginOf(cwd);
+  const gl = gitlabOriginOf(projectPath);
   if (gl) return gitlab.createIssue(cwd, gl, title, body);
 
-  const remote = gitTry(cwd, ["remote", "get-url", "origin"]);
-  if (!remote.ok || !isGitHubRemote(String(remote.stdout || "").trim())) {
+  if (!isGitHubRemote(originUrlOf(projectPath))) {
     return { ok: false, reason: "not a GitHub repo" };
   }
+  const ghOpts = ghOptsOf(projectPath);
 
   const created = await ghApiTryAsync(
     cwd,
     ["issue", "create", "--title", title, "--body", body],
-    GH_USER,
+    ghOpts,
   );
   const errText = created.stderr || created.combined || created.stdout || "";
   if (!created.ok) {
@@ -723,7 +794,7 @@ async function createIssue(projectPath, input) {
     return { ok: false, reason: tailErr(stdout, "gh issue create failed") };
   }
 
-  await setPlanStatus(cwd, number, "todo");
+  await setPlanStatus(projectPath, number, "todo");
   return { ok: true, number, url };
 }
 
@@ -743,4 +814,5 @@ module.exports = {
   createIssue,
   parseIssueListJson,
   ownerRepoFromRemote,
+  originUrlOf,
 };

@@ -143,5 +143,16 @@ describe("planboardNoteFor", () => {
     );
     assert.equal(big.length, 50);
     assert.equal(big[0].step.length, 200);
+    // kimi TodoList shape: title + done.
+    assert.deepEqual(
+      planStepsFrom([
+        { title: "Ship", status: "done" },
+        { title: "Test", status: "in_progress" },
+      ]),
+      [
+        { step: "Ship", status: "done" },
+        { step: "Test", status: "doing" },
+      ],
+    );
   });
 });

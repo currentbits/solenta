@@ -1096,18 +1096,19 @@ function createToolHandlers(deps) {
   /**
    * Project checkout whose origin these Planboard writes hit. Never a
    * caller-supplied repo: that would let a thread mint issues on some
-   * other GitHub remote (#849).
+   * other GitHub remote (#849). Returns the project itself so issues.js can
+   * resolve an ssh remote's origin on the far side (#180).
    * @param {{ projectId?: string }} thread
    */
-  function originPathOf(thread) {
+  function issueTargetOf(thread) {
     const project = projectOf(thread);
-    return project && project.path ? String(project.path) : "";
+    return project && project.path ? project : "";
   }
 
   async function issue_create(args) {
     const thread = requireOwnThread(args);
     const { createIssue } = require("./issues.js");
-    return createIssue(originPathOf(thread), {
+    return createIssue(issueTargetOf(thread), {
       title: args && args.title,
       body: args && args.body,
     });
@@ -1117,7 +1118,7 @@ function createToolHandlers(deps) {
     const thread = requireOwnThread(args);
     const { setPlanStatus } = require("./issues.js");
     return setPlanStatus(
-      originPathOf(thread),
+      issueTargetOf(thread),
       args && args.number,
       args && args.status,
     );
@@ -1126,7 +1127,7 @@ function createToolHandlers(deps) {
   async function issue_complete(args) {
     const thread = requireOwnThread(args);
     const { completeIssue } = require("./issues.js");
-    return completeIssue(originPathOf(thread), args && args.number, {
+    return completeIssue(issueTargetOf(thread), args && args.number, {
       comment: args && args.comment,
     });
   }
@@ -1135,7 +1136,7 @@ function createToolHandlers(deps) {
     const thread = requireOwnThread(args);
     const { commentIssue } = require("./issues.js");
     return commentIssue(
-      originPathOf(thread),
+      issueTargetOf(thread),
       args && args.number,
       args && args.body,
     );
@@ -1144,7 +1145,7 @@ function createToolHandlers(deps) {
   async function issue_list(args) {
     const thread = requireOwnThread(args);
     const { listIssuePage } = require("./issues.js");
-    return listIssuePage(originPathOf(thread), args);
+    return listIssuePage(issueTargetOf(thread), args);
   }
 
   /**
@@ -2015,7 +2016,7 @@ function createOrchServer(opts) {
               : null;
           mcp = buildMcpServer(sdk, handlers, {
             planboard: Boolean(
-              boundProject && planboardNoteFor(boundProject.path),
+              boundProject && planboardNoteFor(boundProject),
             ),
           });
         }

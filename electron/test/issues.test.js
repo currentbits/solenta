@@ -489,6 +489,35 @@ ${body}
     await rmTree(tmp);
   });
 
+  it("ssh-remote projects read origin over ssh and pass gh -R (#180)", async () => {
+    const ssh = require("../ssh.js");
+    const real = require("node:child_process").execFileSync;
+    let sshCalls = 0;
+    ssh.setExecFileSync((bin, args, opts) => {
+      if (bin !== "ssh") return real(bin, args, opts);
+      sshCalls += 1;
+      assert.match(args.at(-1), /cd '\/srv\/app' && 'git' 'remote' 'get-url' 'origin'/);
+      return "git@github.com:acme/remote-app.git\n";
+    });
+    try {
+      // project.path does not exist locally; only the ssh side has a checkout.
+      const project = {
+        path: path.join(tmp, "nope"),
+        remoteHost: "dev@box",
+        remotePath: "/srv/app",
+      };
+      assert.deepEqual(await setPlanStatus(project, 5, "doing"), { ok: true });
+      assert.deepEqual(calls()[0].slice(-2), ["-R", "acme/remote-app"]);
+      await commentIssue(project, 5, "hi");
+      assert.deepEqual(calls()[1].slice(-2), ["-R", "acme/remote-app"]);
+      const { planboardNoteFor, PLANBOARD_NOTE } = require("../services.js");
+      assert.equal(planboardNoteFor(project), PLANBOARD_NOTE);
+      assert.equal(sshCalls, 1, "origin is cached per remote");
+    } finally {
+      ssh.setExecFileSync(null);
+    }
+  });
+
   it("adds the new plan label and removes the other two", async () => {
     assert.deepEqual(await setPlanStatus(repo, 5, "doing"), { ok: true });
     assert.deepEqual(calls(), [
