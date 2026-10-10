@@ -472,6 +472,47 @@ describe("workflow orchestration", () => {
     else process.env.CODER_WF_TRAP_SIGTERM = prevTrap;
   });
 
+  it("#164: repo WORKFLOW.md replaces the default template, not an explicit pick", async () => {
+    const thread = store.getThreads()[0];
+    const wf = path.join(tmpDir, "app", "WORKFLOW.md");
+    fs.writeFileSync(
+      wf,
+      "# Repo flow\n\nNotes for humans.\n\n## build\nprovider: claude\nagents: 2\n\nShip it.\n",
+    );
+    await runner.startWorkflowRun({ threadId: thread.id, prompt: "repo run" });
+    const kick = store
+      .getMessages(thread.id)
+      .find((m) => m.role === "event" && /Kicked off/.test(m.text));
+    assert.match(kick.text, /Kicked off 2 subagents from WORKFLOW\.md\nbuild 2/);
+    await runner.stopRun({ threadId: thread.id });
+    await waitFor(() => store.getThread(thread.id).status !== "working");
+
+    const custom = services.saveTemplate(store, {
+      name: "Mine",
+      phases: [
+        { name: "solo", agentCount: 1, instruction: "x", provider: "claude", model: null },
+      ],
+    });
+    await runner.startWorkflowRun({
+      threadId: thread.id,
+      prompt: "picked run",
+      templateId: custom.id,
+    });
+    const kicks = store
+      .getMessages(thread.id)
+      .filter((m) => m.role === "event" && /Kicked off/.test(m.text));
+    assert.equal(kicks.at(-1).text, "Kicked off 1 subagents\nsolo 1");
+    await runner.stopRun({ threadId: thread.id });
+    await waitFor(() => store.getThread(thread.id).status !== "working");
+
+    // Invalid file is a start-time error, never a silent fallback.
+    fs.writeFileSync(wf, "# Broken\n\n## build\nprovider: claude\nagents: 9\n\nx\n");
+    await assert.rejects(
+      runner.startWorkflowRun({ threadId: thread.id, prompt: "bad" }),
+      /^Error: WORKFLOW\.md: Phase "build": agentCount/,
+    );
+  });
+
   it("startWorkflowRun clears a settled override but preserves an active pin", async () => {
     const thread = store.getThreads()[0];
     services.setSettled(store, {

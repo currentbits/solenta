@@ -148,6 +148,39 @@ function removeTemplate(store, input) {
 }
 
 /**
+ * #164: write a saved template into the thread's checkout as WORKFLOW.md (or
+ * over the repo's existing .solenta/workflow.md). An existing file is only
+ * replaced with `overwrite`; otherwise returns written:false so the UI can ask.
+ * @param {import('./store').Store} store
+ * @param {{ id: string, threadId: string, overwrite?: boolean }} input
+ * @returns {{ written: boolean, path: string }}
+ */
+function exportTemplateToRepo(store, input) {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const repoWorkflow = require("./repoWorkflow.js");
+  const template = store.getTemplate(String((input && input.id) || ""));
+  if (!template) throw new Error("Unknown workflow template");
+  const thread = store.getThread(String((input && input.threadId) || ""));
+  if (!thread) throw new Error("Pick a thread to export into its repo");
+  const project = store.getProject(thread.projectId);
+  if (!project) throw new Error(`Unknown project: ${thread.projectId}`);
+  if (project.remoteHost || require("./wsl.js").wslTarget(project)) {
+    throw new Error("Export to repo is not supported for remote projects");
+  }
+  const dir = thread.worktreePath || project.path;
+  const rel =
+    repoWorkflow.findRepoWorkflow(dir) || repoWorkflow.REPO_WORKFLOW_FILES[0];
+  const file = path.join(dir, rel);
+  if (fs.existsSync(file) && !(input && input.overwrite)) {
+    return { written: false, path: file };
+  }
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, repoWorkflow.serializeRepoWorkflow(template));
+  return { written: true, path: file };
+}
+
+/**
  * @param {import('./store').Store} store
  * @returns {{ dailyBudgetUsd: number | null, orchestrationBudgetUsd: number | null, autoSettleAfterDays: number | null }}
  */
@@ -436,6 +469,7 @@ module.exports = {
   listTemplates,
   saveTemplate,
   removeTemplate,
+  exportTemplateToRepo,
   getSettings,
   setSettings,
   listAutomations,

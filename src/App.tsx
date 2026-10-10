@@ -217,6 +217,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     retryWorkflowAgent,
     saveWorkflow,
     removeWorkflow,
+    exportWorkflowToRepo,
     refreshWorkflows,
     workflowListError,
     stopRun,
@@ -1905,6 +1906,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onRetryWorkflowAgent={retryWorkflowAgent}
         onSaveWorkflow={saveWorkflow}
         onRemoveWorkflow={removeWorkflow}
+        onExportWorkflow={exportWorkflowToRepo}
         workflowListError={workflowListError}
         onRetryWorkflows={refreshWorkflows}
         onStopRun={stopRun}
@@ -2161,6 +2163,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
           initialDraft={workflowDraft}
           onSave={saveWorkflow}
           onRemove={removeWorkflow}
+          onExportToRepo={selectedThreadId ? exportWorkflowToRepo : undefined}
           listError={workflowListError}
           onRetryList={refreshWorkflows}
         />

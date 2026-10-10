@@ -92,6 +92,7 @@ export const IPC_CHANNELS = [
   { ns: "workflows", method: "list" },
   { ns: "workflows", method: "save" },
   { ns: "workflows", method: "remove" },
+  { ns: "workflows", method: "exportToRepo" },
   { ns: "automations", method: "list" },
   { ns: "automations", method: "add" },
   { ns: "automations", method: "update" },
