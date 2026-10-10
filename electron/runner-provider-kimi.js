@@ -47,6 +47,7 @@ function createKimiRun(ctx) {
     appendDoneWorkLog,
     addSubagentRow,
     setSubagentStatus,
+    savePlanSteps,
   } = ctx;
 
   /**
@@ -411,6 +412,7 @@ function createKimiRun(ctx) {
         }
 
         for (const tool of kimiParse.extractToolEvents(ev)) {
+          if (tool.todos) savePlanSteps(threadId, tool.todos);
           if (tool.phase === "start") {
             const summary = tool.input
               ? `${tool.name}: ${tool.input.length > 80 ? `${tool.input.slice(0, 80)}…` : tool.input}`

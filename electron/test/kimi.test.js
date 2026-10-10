@@ -587,6 +587,24 @@ describe("kimi extract helpers: REAL recorded stream lines", () => {
     );
   });
 
+  it("TodoList / SetTodoList calls carry the parsed todos for the planboard (#180)", () => {
+    const todos = [{ title: "Read", status: "done" }];
+    for (const name of ["TodoList", "SetTodoList"]) {
+      const [ev] = extractToolEvents({
+        role: "assistant",
+        tool_calls: [
+          { id: "t", function: { name, arguments: JSON.stringify({ todos }) } },
+        ],
+      });
+      assert.deepEqual(ev.todos, todos, name);
+    }
+    const [garbled] = extractToolEvents({
+      role: "assistant",
+      tool_calls: [{ id: "g", function: { name: "TodoList", arguments: "{" } }],
+    });
+    assert.equal(garbled.todos, undefined);
+  });
+
   it("role tool lines are end events paired by tool_call_id", () => {
     const events = extractToolEvents(REAL_RESULT);
     assert.equal(events.length, 1);

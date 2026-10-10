@@ -562,6 +562,17 @@ function extractToolEvents(obj) {
           input = String(rawArgs);
         }
       }
+      // Untruncated todo list for the planboard (input is capped).
+      // kimi-code names it TodoList, older kimi-cli SetTodoList.
+      let todos = null;
+      if (name === "TodoList" || name === "SetTodoList") {
+        try {
+          const parsed = typeof rawArgs === "string" ? JSON.parse(rawArgs) : rawArgs;
+          if (parsed && Array.isArray(parsed.todos)) todos = parsed.todos;
+        } catch {
+          // Partial/garbled args: the tool card still renders.
+        }
+      }
       out.push({
         id: String(tc.id || ""),
         name,
@@ -570,6 +581,7 @@ function extractToolEvents(obj) {
         phase: "start",
         isError: false,
         ...(name === "Agent" ? { subagent: agentCallInfo(input) } : {}),
+        ...(todos ? { todos } : {}),
       });
     }
     return out;

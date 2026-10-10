@@ -1963,7 +1963,7 @@ function createRunner(opts) {
       (leadSlash ? cliPrompt : prefix + cliPrompt) +
       attachmentPromptSection(promptAttachments) +
       (leadSlash ? prefix : "") +
-      services.planboardNoteFor(projectForGate && projectForGate.path) +
+      services.planboardNoteFor(projectForGate) +
       services.selfIdNoteFor(
         dispatchThread,
         projectForGate,

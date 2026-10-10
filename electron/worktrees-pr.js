@@ -203,14 +203,21 @@ async function isGitHubPrRemote(originUrl) {
  * out write is returned as a failure (re-sending a comment/create/merge could
  * double it); and a non-github.com host never falls back (gh stays gated on
  * isGitHubRemote).
+ *
+ * `originUrl` stands in for reading origin from cwd, and `ghRepo` adds
+ * `-R owner/repo` to the gh fallback: an ssh-remote project has no local
+ * checkout to infer either from (#180).
  * @param {string} cwd
  * @param {string[]} args
- * @param {{ env?: NodeJS.ProcessEnv, timeout?: number }} [opts]
+ * @param {{ env?: NodeJS.ProcessEnv, timeout?: number, originUrl?: string, ghRepo?: string }} [opts]
  */
 async function ghApiTryAsync(cwd, args, opts) {
-  const origin = githubApiEnabled()
-    ? await gitTryAsync(cwd, ["remote", "get-url", "origin"])
-    : null;
+  const origin =
+    opts && opts.originUrl
+      ? { ok: true, stdout: opts.originUrl }
+      : githubApiEnabled()
+        ? await gitTryAsync(cwd, ["remote", "get-url", "origin"])
+        : null;
   const originUrl = origin && origin.ok ? String(origin.stdout || "").trim() : "";
   const target = originUrl ? await githubApiTarget(originUrl) : null;
   if (target) {
@@ -233,7 +240,11 @@ async function ghApiTryAsync(cwd, args, opts) {
       if ((write && timedOut) || !isGitHubRemote(originUrl)) return fail;
     }
   }
-  return ghTryAsync(cwd, args, opts);
+  const ghArgs =
+    opts && opts.ghRepo && args[0] !== "api" && !args.includes("-R")
+      ? [...args, "-R", opts.ghRepo]
+      : args;
+  return ghTryAsync(cwd, ghArgs, opts);
 }
 
 /**
