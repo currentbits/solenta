@@ -979,6 +979,7 @@ export const MessageBlock = memo(function MessageBlock({
   onReply,
   onCiteSelection,
   onWaitWhat,
+  onForkFrom,
   pinned = false,
   onTogglePin,
   threadId = null,
@@ -1011,6 +1012,8 @@ export const MessageBlock = memo(function MessageBlock({
   onReply?: (message: ChatMessage) => void;
   onCiteSelection?: (target: ReplyTarget) => void;
   onWaitWhat?: (message: ChatMessage) => void;
+  /** Fork a new thread holding the transcript up to this message (#158). */
+  onForkFrom?: (messageId: string) => void;
   pinned?: boolean;
   onTogglePin?: () => void;
   threadId?: string | null;
@@ -1131,7 +1134,7 @@ export const MessageBlock = memo(function MessageBlock({
         {(onTogglePin ||
           (!streaming &&
             message.text.trim() &&
-            (onReply || onCiteSelection || onWaitWhat))) && (
+            (onReply || onCiteSelection || onWaitWhat || onForkFrom))) && (
           <span className={styles.msgActions}>
             {!streaming && message.text.trim() && (
               <button
@@ -1212,6 +1215,18 @@ export const MessageBlock = memo(function MessageBlock({
                 onClick={() => onWaitWhat(message)}
               >
                 <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="5.75" /><path d="M6.4 6.3a1.7 1.7 0 0 1 3.2.6c0 1.1-1.6 1.4-1.6 2.4M8 11.2h.01" /></svg>
+              </button>
+            )}
+            {!streaming && onForkFrom && message.text.trim() && (
+              <button
+                type="button"
+                className={styles.msgAction}
+                data-msg-fork=""
+                aria-label="Fork from here"
+                title="Fork from here: new thread with the conversation up to this message"
+                onClick={() => onForkFrom(message.id)}
+              >
+                <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="4.5" cy="3.5" r="1.5" /><circle cx="4.5" cy="12.5" r="1.5" /><circle cx="11.5" cy="5.5" r="1.5" /><path d="M4.5 5v6M11.5 7c0 2.5-7 1.5-7 4" /></svg>
               </button>
             )}
           </span>

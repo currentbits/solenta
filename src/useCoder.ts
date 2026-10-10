@@ -234,6 +234,7 @@ export interface UseCoderResult {
       worktree?: boolean;
       select?: boolean;
       leavePlan?: boolean;
+      messageId?: string;
     },
   ) => Promise<ThreadInfo | null>;
   /**

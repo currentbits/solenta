@@ -1396,10 +1396,18 @@ function createRunner(opts) {
       scheduleQuotaWake(threadId, park.until);
       return { parked: true, until: park.until, text, kind: null };
     }
+    // A native fork (#158) that never got its own session id must not
+    // retry --resume on the SOURCE session: fall back to a seeded fresh one.
+    const failedThread = store.getThread(threadId);
+    const forkFallback =
+      failedThread && failedThread.forkSessionAt
+        ? { sessionId: null, forkSessionAt: null, replayContext: true }
+        : {};
     store.updateThread(
       threadId,
       {
         ...(extraPatch || {}),
+        ...forkFallback,
         status: "failed",
         runStartedAt: null,
         lastError: shortError(text),
