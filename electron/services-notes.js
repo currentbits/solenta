@@ -377,7 +377,7 @@ function planStepsFrom(todos) {
  * @param {(sourceId: string) => Array<{ role?: string, text?: string }> | null | undefined} getMessages
  * @returns {string}
  */
-function buildHandoffPrefix(thread, getMessages) {
+function buildHandoffPrefix(thread, getMessages, getThread) {
   if (!thread) return "";
   if (thread.sessionId != null && thread.sessionId !== "") {
     return "";
@@ -423,9 +423,23 @@ function buildHandoffPrefix(thread, getMessages) {
   }
   picked.reverse();
 
+  // Cached recap (#239) of the source, when it has one: the tail alone
+  // loses what was originally asked.
+  let source = null;
+  try {
+    source = getThread ? getThread(String(sourceId)) : null;
+  } catch {
+    // tail digest still applies
+  }
+  const recap =
+    source && source.recap && source.recap.text
+      ? `Recap:\n${source.recap.text}\n\n`
+      : "";
+
   return (
     "[Hand-off context: the last messages of the source thread, truncated — " +
     "not the full transcript]\n" +
+    recap +
     picked.join("\n\n") +
     "\n[End context]\n\n"
   );

@@ -52,6 +52,7 @@ import type {
   SpecArtifact,
   ThreadDetail,
   ThreadInfo,
+  ThreadRecap,
   ThreadMessagePin,
   WorkSuggestion,
   WorkflowTemplateInfo,
@@ -935,6 +936,8 @@ export const ThreadView = memo(function ThreadView({
    * open thread changes.
    */
   const [handoffBannerDismissed, setHandoffBannerDismissed] = useState(false);
+  /** Recap latched from threads.get (#239); pushes drop detail.recap. */
+  const [shownRecap, setShownRecap] = useState<ThreadRecap | null>(null);
   const [runStatList, setRunStatList] = useState<RunStatInfo[]>([]);
   const [openTurnSha, setOpenTurnSha] = useState<string | null>(null);
   // One split/unified choice for the turn panel and the Git pane (#1493).
@@ -1930,6 +1933,7 @@ export const ThreadView = memo(function ThreadView({
       setPinLabelDraft("");
       setJumpMessageId(null);
       setHandoffBannerDismissed(false);
+      setShownRecap(null);
       setRestoreConfirm(null);
       setRestorePending(false);
       setRestoreError(null);
@@ -1952,6 +1956,11 @@ export const ThreadView = memo(function ThreadView({
       }
     }
   }, [detail?.thread.id]);
+  // After the switch reset above, so a thread change clears then re-latches.
+  const dueRecap = detail?.recap ?? null;
+  useEffect(() => {
+    if (dueRecap) setShownRecap(dueRecap);
+  }, [dueRecap]);
 
   const {
     handlePaneChange,
@@ -3655,6 +3664,24 @@ export const ThreadView = memo(function ThreadView({
             aria-label="Dismiss handoff banner"
             title="Dismiss handoff banner"
             onClick={() => setHandoffBannerDismissed(true)}
+          >
+            ×
+          </button>
+        </div>
+      )}
+
+      {shownRecap && (
+        <div className={styles.handoffBanner} data-thread-recap="">
+          <div className={styles.handoffBannerText}>
+            <strong>Recap</strong>
+            <div className={styles.recapText}>{shownRecap.text}</div>
+          </div>
+          <button
+            type="button"
+            className={styles.handoffDismiss}
+            aria-label="Dismiss recap"
+            title="Dismiss recap"
+            onClick={() => setShownRecap(null)}
           >
             ×
           </button>
