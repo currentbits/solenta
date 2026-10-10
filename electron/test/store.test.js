@@ -993,6 +993,7 @@ describe("Store", () => {
       headSha: null,
       retainedCount: store.getMessages("t1").length,
     });
+    store.setWorkflowRun("t1", { __orchestrated: true, phases: [] });
 
     // Sanity: every known ByThread map currently holds t1.
     const byThreadKeys = Object.keys(store.data).filter((k) =>
