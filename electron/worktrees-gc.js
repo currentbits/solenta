@@ -609,11 +609,16 @@ async function inspectWorktreeDirUncached(dir, baseCache) {
 async function unmergedCount(dir, branch, repoPath, baseCache) {
   const base = await baseBranchOf(repoPath, baseCache);
   if (!base || (branch && branch === base)) return 0;
+  // origin/<base> too (#1556): a stale local base must not pin a worktree
+  // whose commits are all upstream as "unmerged" forever. --ignore-missing
+  // drops a ref this repo lacks (no origin) instead of failing the count.
   const res = await gitTryAsync(dir, [
     "rev-list",
     "--count",
+    "--ignore-missing",
     "HEAD",
     `^${base}`,
+    `^origin/${base}`,
   ]);
   if (!res.ok) return 0;
   const n = parseInt(res.stdout.trim(), 10);
