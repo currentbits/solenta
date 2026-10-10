@@ -2454,7 +2454,7 @@ describe("worktrees", () => {
             title: "X",
             broadcast: () => {},
           }),
-        /not a GitHub repository/i,
+        /not a GitHub or GitLab repository/i,
       );
 
       const state = JSON.parse(fs.readFileSync(statePath, "utf8"));

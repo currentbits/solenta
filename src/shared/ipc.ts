@@ -676,6 +676,11 @@ export interface ThreadInfo {
    */
   handoffFrom: string | null;
   /**
+   * Cached thread recap (#239), rebuilt after each successful turn. Detail
+   * only: stripped from sidebar rows. Absent before the first finished turn.
+   */
+  recap?: ThreadRecap | null;
+  /**
    * Epoch ms when the user pinned this thread; null = unpinned. Pinned
    * threads render first and NEVER auto-settle (t3's rule). Pin and an
    * explicit settle are mutually exclusive: setPinned(true) clears a
@@ -868,6 +873,11 @@ export interface ThreadInfo {
    * lists `fast`; absent on older store rows.
    */
   fast?: boolean;
+  /**
+   * CLI custom agent the thread runs as (`--agent <name>`, issue #172), or
+   * null/absent for the CLI default. Cleared on provider switch.
+   */
+  agent?: string | null;
   /** Absolute path of the thread's git worktree, when one was set up. */
   worktreePath: string | null;
   /** Numbered merge-queue lane (#346). Absent when the thread has no lane. */
@@ -1910,6 +1920,13 @@ export interface PendingInputRequest {
   }>;
 }
 
+/** Short "asked / changed / now / open" summary of a thread (#239). */
+export interface ThreadRecap {
+  text: string;
+  /** Epoch ms when it was built. */
+  at: number;
+}
+
 export interface ThreadDetail {
   thread: ThreadInfo;
   messages: ChatMessage[];
@@ -1922,6 +1939,12 @@ export interface ThreadDetail {
   pendingPermission?: PendingPermissionInfo | null;
   /** Run-scoped evidence metadata; absent on old fixtures and wire clients. */
   artifacts?: RunArtifactInfo[];
+  /**
+   * Recap to show on this visit (#239): set by threads.get when the thread
+   * sat idle 30+ min, or for a fresh fork (the source's recap). Background
+   * pushes omit it; the view latches it until dismissed or switched away.
+   */
+  recap?: ThreadRecap | null;
 }
 
 /**
@@ -2695,6 +2718,11 @@ export interface ProviderInfo {
    * The composer hides the Search pill when this is missing or false.
    */
   supportsSearch?: boolean;
+  /**
+   * True when the CLI accepts `--agent <name>` (claude, opencode; #172).
+   * The composer hides the Agent picker when this is missing or false.
+   */
+  supportsAgents?: boolean;
   /**
    * True when a live turn can take mid-run guidance on stdin (issue #156).
    * Claude stream-json does; one-shot `-p` / `exec --json` CLIs do not
@@ -3489,6 +3517,13 @@ export interface McpInstallRequest {
 export interface McpInstallResult {
   /** Redacted installed definitions (main), or bare names from older twins. */
   installed: Array<McpServerDefinition | string>;
+}
+
+/** A CLI custom agent a thread can run as (#172). */
+export interface CliAgentInfo {
+  name: string;
+  description: string;
+  source: "builtin" | "project" | "user";
 }
 
 /**
@@ -4847,6 +4882,19 @@ export interface CoderApi {
      */
     setFast(input: { threadId: string; fast: boolean }): Promise<ThreadInfo>;
     /**
+     * Runs the thread as a CLI custom agent (#172); null for the CLI
+     * default. Rejects when the provider does not advertise supportsAgents.
+     */
+    setAgent(input: { threadId: string; agent: string | null }): Promise<ThreadInfo>;
+    /**
+     * Custom agents the provider CLI would find for this project
+     * (.claude/agents, .opencode/agent, user dirs). Empty for other CLIs.
+     */
+    listAgents(input: {
+      provider: string;
+      projectPath?: string | null;
+    }): Promise<CliAgentInfo[]>;
+    /**
      * Sets the thread's verification command (issue #296). A non-empty
      * command arms the gate: from the next turn on, a run that would land
      * "done" instead runs this command and only goes green when it exits 0.
@@ -5797,8 +5845,10 @@ export interface CoderApi {
   /** Returns an unsubscribe function. */
   on(channel: "threads:changed", cb: (push: ThreadListPush) => void): () => void;
   on(channel: "thread:updated", cb: (patch: ThreadPatch) => void): () => void;
-  /** Desktop notification click: select this thread. */
+  /** Notification click or solenta://thread/<id> link: open this thread. */
   on(channel: "thread:select", cb: (threadId: string) => void): () => void;
+  /** solenta://project/<id> deep link: scope the sidebar to it (#186). */
+  on(channel: "project:select", cb: (projectId: string) => void): () => void;
   /** Main-process store + IPC handlers are up; refetch boot lists (#618). */
   on(channel: "boot:ready", cb: () => void): () => void;
   /** Stay-awake derived state flipped (mode, blocking, battery) (#364). */

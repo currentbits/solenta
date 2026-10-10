@@ -755,6 +755,17 @@ export function createThreads(ctx: DevCtx): Pick<CoderApi, "threads"> {
           webSearch: input.webSearch === true,
         });
       },
+      async setAgent(input: { threadId: string; agent: string | null }) {
+        return patchThread(input.threadId, { agent: input.agent || null });
+      },
+      async listAgents(input: { provider: string }) {
+        return input.provider === "claude"
+          ? [
+              { name: "reviewer", description: "Reviews diffs for bugs", source: "project" as const },
+              { name: "scout", description: "Read-only codebase explorer", source: "user" as const },
+            ]
+          : [];
+      },
       async setFast(input: { threadId: string; fast: boolean }) {
         return patchThread(input.threadId, { fast: input.fast === true });
       },

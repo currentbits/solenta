@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   ActivityItem,
+  CliAgentInfo,
   AppSettings,
   WebhookTestResult,
   AppStatus,
@@ -350,6 +351,12 @@ export interface UseCoderResult {
    * Pass threadId when applying to a fork that is not selected.
    */
   setWebSearch: (webSearch: boolean, threadId?: string) => Promise<void>;
+  /** Run the selected thread as a CLI custom agent (#172); null = default. */
+  setAgent: (agent: string | null, threadId?: string) => Promise<void>;
+  listAgents: (input: {
+    provider: string;
+    projectPath?: string | null;
+  }) => Promise<CliAgentInfo[]>;
   setFast: (fast: boolean, threadId?: string) => Promise<void>;
   /**
    * Archive or unarchive a thread. Defaults to the selected thread.
@@ -1200,7 +1207,6 @@ export function useCoder(): UseCoderResult {
     let cancelled = false;
     let unsubChanged: (() => void) | undefined;
     let unsubUpdated: (() => void) | undefined;
-    let unsubSelect: (() => void) | undefined;
     let unsubBoot: (() => void) | undefined;
     let unsubSimulator: (() => void) | undefined;
 
@@ -1330,12 +1336,6 @@ export function useCoder(): UseCoderResult {
       }
     });
 
-    unsubSelect = api.on("thread:select", (id) => {
-      if (typeof id === "string" && id) {
-        setSelectedThreadId(id);
-      }
-    });
-
     unsubUpdated = api.on("thread:updated", (next) => {
       const prev = prevStatusRef.current.get(next.thread.id);
       const held = threadsRef.current.find((t) => t.id === next.thread.id);
@@ -1403,7 +1403,6 @@ export function useCoder(): UseCoderResult {
       cancelled = true;
       unsubChanged?.();
       unsubUpdated?.();
-      unsubSelect?.();
       unsubBoot?.();
       unsubStayAwake();
       unsubSimulator?.();
@@ -1430,7 +1429,8 @@ export function useCoder(): UseCoderResult {
       detailCacheRef.current.get(selectedThreadId) ??
       loadCachedThreadDetail(selectedThreadId);
     if (cached && detailRef.current?.thread.id !== selectedThreadId) {
-      setDetail(cached);
+      // A cached recap was due LAST visit; only threads.get decides this one.
+      setDetail({ ...cached, recap: undefined });
     }
     (async () => {
       try {
@@ -1540,6 +1540,8 @@ export function useCoder(): UseCoderResult {
     setProvider,
     setReasoningEffort,
     setWebSearch,
+    setAgent,
+    listAgents,
     setFast,
     setArchived,
     setSettled,
@@ -2081,6 +2083,8 @@ export function useCoder(): UseCoderResult {
     setProvider,
     setReasoningEffort,
     setWebSearch,
+    setAgent,
+    listAgents,
     setFast,
     setArchived,
     setSettled,

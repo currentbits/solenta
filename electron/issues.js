@@ -1,8 +1,8 @@
 "use strict";
 
 /**
- * Ticket ingestion: parse a pasted ref, then fetch GitHub (`gh issue view`)
- * or Linear (GraphQL). Never throws; failures come back as `{ ok: false, reason }`.
+ * Ticket ingestion: parse a pasted ref, then fetch GitHub (`gh issue view`),
+ * GitLab (`glab api`, see gitlab.js) or Linear (GraphQL). Never throws; failures come back as `{ ok: false, reason }`.
  * GitHub calls use the API when a token exists, gh otherwise (#1534).
  */
 
@@ -18,6 +18,16 @@ const {
   parseLinearIssueRef,
   fetchLinearIssue,
 } = require("./linear.js");
+const gitlab = require("./gitlab.js");
+
+/**
+ * GitLab origin of a checkout as `{ host, path }`, or null.
+ * @param {string} cwd
+ */
+function gitlabOriginOf(cwd) {
+  const remote = cwd && gitTry(cwd, ["remote", "get-url", "origin"]);
+  return remote && remote.ok ? gitlab.gitlabRemote(remote.stdout) : null;
+}
 
 /** Fail-open: a missing scanner must not break issue fetch. */
 function loadScanInjection() {
@@ -73,6 +83,9 @@ const GH_USER = { timeout: GH_TIMEOUT_MS };
 function parseIssueRef(text) {
   const s = String(text || "").trim();
   if (!s) return null;
+
+  const gitlabUrl = gitlab.parseGitlabIssueUrl(s);
+  if (gitlabUrl) return gitlabUrl;
 
   const url = s.match(
     /^https?:\/\/(?:www\.)?github\.com\/([^/#?\s]+)\/([^/#?\s]+)\/issues\/(\d+)(?:[/?#].*)?$/i,
@@ -214,6 +227,15 @@ async function fetchIssue(projectPath, ref, opts) {
       return { ok: false, reason: "not a GitHub repo" };
     }
     const originUrl = String(remote.stdout || "").trim();
+    const gl = gitlab.gitlabRemote(originUrl);
+    if (gl) {
+      const fetched = await gitlab.fetchIssue(cwd, gl, parsed);
+      if (!fetched.ok) return fetched;
+      return {
+        ok: true,
+        issue: { ...fetched.issue, body: bannerUntrustedBody(fetched.issue.body) },
+      };
+    }
     if (!isGitHubRemote(originUrl)) {
       return { ok: false, reason: "not a GitHub repo" };
     }
@@ -335,6 +357,16 @@ async function listIssuePage(projectPath, opts = {}) {
     return { ok: false, reason: "Invalid issue list options" };
   }
   const cwd = String(projectPath || "");
+  const gl = gitlabOriginOf(cwd);
+  if (gl) {
+    const page = await gitlab.listIssuePage(cwd, gl, { state, limit, cursor, number });
+    if (!page.ok) return page;
+    try {
+      return { ok: true, issues: parseIssueListJson(JSON.stringify(page.rows)), nextCursor: page.nextCursor };
+    } catch (err) {
+      return { ok: false, reason: err.message };
+    }
+  }
   const remote = cwd && gitTry(cwd, ["remote", "get-url", "origin"]);
   const repo = remote?.ok && ownerRepoFromRemote(remote.stdout);
   if (!repo) return { ok: false, reason: "not a GitHub repo" };
@@ -427,6 +459,9 @@ async function setPlanStatus(projectPath, number, status) {
     return { ok: false, reason: `unknown plan status: ${status}` };
   }
 
+  const gl = gitlabOriginOf(cwd);
+  if (gl) return gitlab.setPlanLabel(cwd, gl, issueNumber, label, PLAN_LABELS);
+
   const remote = gitTry(cwd, ["remote", "get-url", "origin"]);
   if (!remote.ok || !isGitHubRemote(String(remote.stdout || "").trim())) {
     return { ok: false, reason: "not a GitHub repo" };
@@ -470,6 +505,12 @@ async function reopenIssue(projectPath, number, opts) {
   if (!cwd) return { ok: false, reason: "not a GitHub repo" };
   if (!Number.isInteger(issueNumber) || issueNumber <= 0) {
     return { ok: false, reason: "invalid issue reference" };
+  }
+
+  const gl = gitlabOriginOf(cwd);
+  if (gl) {
+    const comment = opts && typeof opts.comment === "string" ? opts.comment : "";
+    return gitlab.reopenIssue(cwd, gl, issueNumber, comment, PLAN_LABELS);
   }
 
   const remote = gitTry(cwd, ["remote", "get-url", "origin"]);
@@ -530,6 +571,12 @@ async function completeIssue(projectPath, number, opts) {
   if (!cwd) return { ok: false, reason: "not a GitHub repo" };
   if (!Number.isInteger(issueNumber) || issueNumber <= 0) {
     return { ok: false, reason: "invalid issue reference" };
+  }
+
+  const gl = gitlabOriginOf(cwd);
+  if (gl) {
+    const comment = opts && typeof opts.comment === "string" ? opts.comment : "";
+    return gitlab.completeIssue(cwd, gl, issueNumber, comment, PLAN_LABELS);
   }
 
   const remote = gitTry(cwd, ["remote", "get-url", "origin"]);
@@ -598,6 +645,9 @@ async function commentIssue(projectPath, number, body) {
   }
   if (!text) return { ok: false, reason: "empty comment" };
 
+  const gl = gitlabOriginOf(cwd);
+  if (gl) return gitlab.addNote(cwd, gl, issueNumber, text);
+
   const remote = gitTry(cwd, ["remote", "get-url", "origin"]);
   if (!remote.ok || !isGitHubRemote(String(remote.stdout || "").trim())) {
     return { ok: false, reason: "not a GitHub repo" };
@@ -643,6 +693,9 @@ async function createIssue(projectPath, input) {
   const title = input && input.title != null ? String(input.title) : "";
   const body = input && input.body != null ? String(input.body) : "";
   if (!cwd) return { ok: false, reason: "not a GitHub repo" };
+
+  const gl = gitlabOriginOf(cwd);
+  if (gl) return gitlab.createIssue(cwd, gl, title, body);
 
   const remote = gitTry(cwd, ["remote", "get-url", "origin"]);
   if (!remote.ok || !isGitHubRemote(String(remote.stdout || "").trim())) {

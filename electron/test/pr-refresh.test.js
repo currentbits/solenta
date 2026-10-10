@@ -724,7 +724,7 @@ describe("refreshPrStates (round 47)", () => {
   it("non-GitHub origin skips silently (no error surface, no persist)", async () => {
     fx = await makeFixture();
     seedOpenPr(fx, fx.thread.id, 55, "OPEN");
-    // Point origin at gitlab on the thread cwd (worktree) — refresh must skip
+    // Point origin at bitbucket (no forge backend) on the thread cwd (worktree) — refresh must skip
     // without throwing or saving change (ISSUES.md permanent-error regression).
     const cwd =
       fx.store.getThread(fx.thread.id).worktreePath ||
@@ -733,7 +733,7 @@ describe("refreshPrStates (round 47)", () => {
       "remote",
       "set-url",
       "origin",
-      "https://gitlab.com/acme/demo.git",
+      "https://bitbucket.org/acme/demo.git",
     ]);
 
     const broadcasts = [];

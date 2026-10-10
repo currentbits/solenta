@@ -160,6 +160,14 @@
   cursor: not-allowed;
 }
 
+.agentSelect {
+  appearance: none;
+  max-width: 16ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
 /* Square icon-only pill (Options, transcript view at Normal). */
 .pillIcon {
   width: 28px;
