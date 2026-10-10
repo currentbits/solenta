@@ -23,6 +23,7 @@ const {
   instanceDisplayName,
 } = require("./providerInstances.js");
 const { resolveSandbox } = require("./sandbox.js");
+const { dueRecap } = require("./recap.js");
 const {
   messagesInMemory,
   stampLastActivity,
@@ -1357,7 +1358,7 @@ const listThreadsCache = new WeakMap();
  */
 function listRow(row) {
   // lastActivity is threads:summaries-only; keep it off the full-list push.
-  const { hypotheses, suggestions, lastActivity, ...rest } = row;
+  const { hypotheses, suggestions, lastActivity, recap, ...rest } = row;
   return rest;
 }
 
@@ -1494,6 +1495,8 @@ function getThreadDetail(store, threadId, workflow = null, opts) {
   if (!thread || isTrashed(thread)) {
     throw new Error(`Unknown thread: ${threadId}`);
   }
+  // Before the stamp below: "due" means idle since the PREVIOUS visit.
+  const recap = markVisited ? dueRecap(store, thread) : null;
   if (markVisited) {
     // No updatedAt bump: visiting must not re-unread or re-sort the thread.
     store.updateThread(threadId, { lastVisitedAt: Date.now() });
@@ -1509,6 +1512,8 @@ function getThreadDetail(store, threadId, workflow = null, opts) {
     artifacts: store.getRunArtifacts(threadId).slice(),
     // Live permission prompt (runner-ephemeral, never persisted).
     pendingPermission: (opts && opts.pendingPermission) || null,
+    // Only on a user visit that should show it; background pushes omit it.
+    ...(recap ? { recap } : {}),
   };
 }
 

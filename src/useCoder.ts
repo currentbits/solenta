@@ -1430,7 +1430,8 @@ export function useCoder(): UseCoderResult {
       detailCacheRef.current.get(selectedThreadId) ??
       loadCachedThreadDetail(selectedThreadId);
     if (cached && detailRef.current?.thread.id !== selectedThreadId) {
-      setDetail(cached);
+      // A cached recap was due LAST visit; only threads.get decides this one.
+      setDetail({ ...cached, recap: undefined });
     }
     (async () => {
       try {
