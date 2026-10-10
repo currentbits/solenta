@@ -16,6 +16,7 @@ const { normalizeBtwCards } = require("./btw.js");
 const { normalizePendingQuestion } = require("./questions.js");
 const { normalizeMessagePins } = require("./messagePins.js");
 const { getDefaultSecrets } = require("./secrets.js");
+const { normalizeProjectEnv } = require("./worktreeEnv.js");
 const {
   splitMessagesByThread,
   stringifyStore,
@@ -1061,6 +1062,9 @@ function migrateProject(p) {
   const quickActions = normalizeQuickActions(next.quickActions);
   if (quickActions) next.quickActions = quickActions;
   else delete next.quickActions;
+  const env = normalizeProjectEnv(next.env);
+  if (Object.keys(env).length) next.env = env;
+  else delete next.env;
   return next;
 }
 

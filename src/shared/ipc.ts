@@ -83,6 +83,11 @@ export interface ProjectInfo {
    */
   quickActions?: ProjectQuickAction[];
   /**
+   * Env vars layered into agent runs, dev servers, terminals, verify and
+   * quick actions in this project (#188). PATH is dropped. Absent = none.
+   */
+  env?: Record<string, string>;
+  /**
    * Conductor Spotlight (#250 stretch). When true, one heavy app instance
    * at the project checkout hot-swaps which claimed lane it serves.
    * Absent = off.
@@ -274,6 +279,8 @@ export interface ProjectUpdateInput {
    * Named header actions (issue #153). Empty array clears them.
    */
   quickActions?: ProjectQuickAction[];
+  /** Per-project env map (#188). Empty / null clears it. */
+  env?: Record<string, string> | null;
 }
 
 /**

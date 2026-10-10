@@ -48,6 +48,7 @@ const {
 } = require("./memory-sup.js");
 const { wslTarget } = require("./wsl.js");
 const { wrapCommand } = require("./ssh.js");
+const { withProjectEnv } = require("./worktreeEnv.js");
 const { guardrailsEnabled } = require("./guardrails.js");
 const { insertBeforeLast, guardrailNotice } = require("./guardrail-hook-core.js");
 const {
@@ -137,7 +138,13 @@ function resolveWorkflowSpawn(project, binary, args, localCwd, env) {
   if (!crossesBoundary(project)) {
     return { binary, args, cwd: localCwd };
   }
-  const wrapped = wrapCommand(project, binary, args, undefined, env);
+  const wrapped = wrapCommand(
+    project,
+    binary,
+    args,
+    undefined,
+    withProjectEnv(project, env),
+  );
   return { binary: wrapped.bin, args: wrapped.args, cwd: process.cwd() };
 }
 
@@ -507,8 +514,10 @@ function spawnAgentClaude(opts) {
     sessionId: resumeId,
     model: model || null,
     interactive,
-    envExtra:
+    envExtra: withProjectEnv(
+      opts.project,
       entry && entry.id === "grok" ? mergeGrokSpawnEnv(wrapEnv) : undefined,
+    ),
     onEvent: (ev) => {
       if (!ev || typeof ev !== "object") return;
       const sid = realSessionId(claudeStreamSessionId(ev));
@@ -703,7 +712,7 @@ function spawnAgentCodex(opts) {
     binary: spawn.binary,
     args: spawn.args,
     cwd: spawn.cwd,
-    envExtra,
+    envExtra: withProjectEnv(project, envExtra),
     onEvent: (ev) => {
       if (!ev || typeof ev !== "object") return;
       const sid = realSessionId(codexExtractSessionId(ev));
@@ -867,7 +876,7 @@ function spawnAgentKimi(opts) {
     binary: spawn.binary,
     args: spawn.args,
     cwd: spawn.cwd,
-    env: kimiEnv,
+    env: withProjectEnv(project, kimiEnv),
     reasoningEffort: reasoningEffort || null,
     onEvent: (ev) => {
       gotJson = true;
@@ -1056,7 +1065,7 @@ function spawnAgentMuse(opts) {
     binary: spawn.binary,
     args: spawn.args,
     cwd: spawn.cwd,
-    env: museEnv,
+    env: withProjectEnv(project, museEnv),
     onEvent: (ev) => {
       gotJson = true;
       if (!ev || typeof ev !== "object") return;
@@ -1225,6 +1234,7 @@ function spawnAgentCursor(opts) {
     binary: spawn.binary,
     args: spawn.args,
     cwd: spawn.cwd,
+    env: withProjectEnv(project, undefined),
     onEvent: (ev) => {
       gotJson = true;
       if (!ev || typeof ev !== "object") return;
@@ -1386,7 +1396,7 @@ function spawnAgentOpencode(opts) {
     binary: spawn.binary,
     args: spawn.args,
     cwd: spawn.cwd,
-    env: opencodeEnv,
+    env: withProjectEnv(project, opencodeEnv),
     onEvent: (ev) => {
       gotJson = true;
       if (!ev || typeof ev !== "object") return;

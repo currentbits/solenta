@@ -28,6 +28,7 @@ const STDERR_TAIL_CHARS = 64 * 1024;
  * @param {string} [opts.prompt]
  * @param {boolean} [opts.appendPrompt=true]
  * @param {string} opts.cwd
+ * @param {Record<string, string>} [opts.env] - layered over process.env
  * @param {(text: string) => void} opts.onChunk
  * @param {(exitCode: number | null, fullText: string, stderrText: string) => void} opts.onDone
  * @param {(err: Error) => void} [opts.onError]
@@ -40,6 +41,7 @@ function runAgent(opts) {
     prompt,
     appendPrompt = true,
     cwd,
+    env,
     onChunk,
     onDone,
     onError,
@@ -110,6 +112,7 @@ function runAgent(opts) {
       agentSpawnOptions({
         cwd,
         stdio: ["ignore", "pipe", "pipe"],
+        env: env ? { ...process.env, ...env } : undefined,
       }),
     );
   } catch (err) {

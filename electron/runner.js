@@ -82,6 +82,7 @@ const {
 const workflowEngine = require("./workflow.js");
 const { wrapCommand } = require("./ssh.js");
 const { wslTarget } = require("./wsl.js");
+const { withProjectEnv } = require("./worktreeEnv.js");
 const { resolveSandbox } = require("./sandbox.js");
 const { killTree } = require("./proc.js");
 const { stop: stopDevServer } = require("./devservers.js");
@@ -695,7 +696,13 @@ function resolveSpawn(project, binary, args, localCwd, env) {
   if (!crossesBoundary(project)) {
     return { binary, args, cwd: localCwd };
   }
-  const wrapped = wrapCommand(project, binary, args, undefined, env);
+  const wrapped = wrapCommand(
+    project,
+    binary,
+    args,
+    undefined,
+    withProjectEnv(project, env),
+  );
   return { binary: wrapped.bin, args: wrapped.args, cwd: process.cwd() };
 }
 
@@ -3764,6 +3771,7 @@ function createRunner(opts) {
       prompt,
       appendPrompt: !crossing,
       cwd: spawn.cwd,
+      env: withProjectEnv(project, undefined),
       onChunk: (text) => {
         if (!guard()) return;
         realState.charCount = text.length;
@@ -4876,8 +4884,10 @@ function createRunner(opts) {
       entryDef.id === "grok"
         ? mergeGrokSpawnEnv({ ...(otelEnv || {}), ...(grokHomeEnv || {}) })
         : otelEnv;
-    const spawnEnv =
-      grokMerged && Object.keys(grokMerged).length > 0 ? grokMerged : undefined;
+    const spawnEnv = withProjectEnv(
+      project,
+      grokMerged && Object.keys(grokMerged).length > 0 ? grokMerged : undefined,
+    );
 
     // Reuse key: everything a spawn bakes into argv/env EXCEPT the session
     // id (--resume changes after turn one; the live process needs no resume).
@@ -5328,7 +5338,7 @@ function createRunner(opts) {
       binary: spawn.binary,
       args: spawn.args,
       cwd: spawn.cwd,
-      envExtra: codexMcpEnv,
+      envExtra: withProjectEnv(project, codexMcpEnv),
       prompt,
       images: nativeImages,
       sessionId: resumeId,
@@ -5912,7 +5922,7 @@ function createRunner(opts) {
       binary: spawn.binary,
       args: spawn.args,
       cwd: spawn.cwd,
-      env: kimiEnv,
+      env: withProjectEnv(project, kimiEnv),
       // No argv route for kimi effort; runKimi flips config.toml (effortVia).
       reasoningEffort: thread.reasoningEffort || null,
       onEvent: (ev) => {
@@ -6348,7 +6358,7 @@ function createRunner(opts) {
       binary: spawn.binary,
       args: spawn.args,
       cwd: spawn.cwd,
-      env: opencodeEnv,
+      env: withProjectEnv(project, opencodeEnv),
       onEvent: (ev) => {
         if (!guard()) return;
 
@@ -6896,7 +6906,7 @@ function createRunner(opts) {
       binary: spawn.binary,
       args: spawn.args,
       cwd: spawn.cwd,
-      env: cursorEnv,
+      env: withProjectEnv(project, cursorEnv),
       onEvent: (ev) => {
         // Cursor does not keep the CLI alive between turns, but a background
         // Task can finish via <task-notification> instead of tool_call/completed
@@ -7476,7 +7486,7 @@ function createRunner(opts) {
       binary: spawn.binary,
       args: spawn.args,
       cwd: spawn.cwd,
-      env: museEnv,
+      env: withProjectEnv(project, museEnv),
       onEvent: (ev) => {
         if (!guard()) return;
 

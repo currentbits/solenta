@@ -46,7 +46,11 @@ const {
   spotlightLane,
   heartbeatLane,
 } = require("./mergeQueue.js");
-const { spawnEnvForDevServer, laneEnvExtra } = require("./worktreeEnv.js");
+const {
+  spawnEnvForDevServer,
+  laneEnvExtra,
+  withProjectEnv,
+} = require("./worktreeEnv.js");
 const devservers = require("./devservers.js");
 const terminal = require("./terminal.js");
 const preview = require("./preview.js");
@@ -2168,7 +2172,10 @@ const IPC_HANDLERS = {
   "terminal:open": async (ctx, input) => {
     const threadId = input && input.threadId;
     const { root, project } = resolveDevServerRoot(ctx, threadId);
-    return terminal.open(threadId, root, { project });
+    return terminal.open(threadId, root, {
+      project,
+      env: withProjectEnv(project, process.env),
+    });
   },
   "terminal:write": async (ctx, input) => {
     const threadId = input && input.threadId;

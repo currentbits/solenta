@@ -22,6 +22,7 @@ const { runWindowsDoctor } = require("./doctor.js");
 const configDoctor = require("./configDoctor.js");
 const { normalizeCommand, runVerifyCommand } = require("./verify.js");
 const { prepareVerifyRun } = require("./verifyEfficiency.js");
+const { normalizeProjectEnv } = require("./worktreeEnv.js");
 const {
   normalizeSetupCommand,
   normalizeQuickActions,
@@ -437,13 +438,13 @@ async function createProject(store, input) {
  * Patch an existing project. Today: display name, SSH remote fields,
  * space membership (issue #159), the autoDispatch opt-in (issue #165),
  * worktree retention (#316), a per-project iconPath override (#610), and
- * setupCommand / quickActions (issue #153).
+ * setupCommand / quickActions (issue #153), and the env map (#188).
  * Remote validation mirrors addProject: a non-empty host requires an
  * absolute remotePath; an empty host clears both keys, turning the
  * project local again. The local checkout path is never edited here.
  * @param {import('./store').Store} store
  * @param {string} projectId
- * @param {{ name?: string, remoteHost?: string, remotePath?: string, spaceId?: string, autoDispatch?: boolean, worktreeRetention?: number, iconPath?: string | null, setupCommand?: string | null, quickActions?: Array<{ id?: string, name?: string, command?: string }> }} patch
+ * @param {{ name?: string, remoteHost?: string, remotePath?: string, spaceId?: string, autoDispatch?: boolean, worktreeRetention?: number, iconPath?: string | null, setupCommand?: string | null, quickActions?: Array<{ id?: string, name?: string, command?: string }>, env?: Record<string, string> | null }} patch
  */
 function updateProject(store, projectId, patch) {
   const projects = store.getProjects().slice();
@@ -525,6 +526,12 @@ function updateProject(store, projectId, patch) {
     const quickActions = normalizeQuickActions(input.quickActions);
     if (quickActions) next.quickActions = quickActions;
     else delete next.quickActions;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(input, "env")) {
+    const env = normalizeProjectEnv(input.env);
+    if (Object.keys(env).length) next.env = env;
+    else delete next.env;
   }
 
   projects[idx] = next;

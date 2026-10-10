@@ -3601,6 +3601,7 @@ function buildDevCoder(): CoderApi {
         iconPath?: string | null;
         setupCommand?: string | null;
         quickActions?: ProjectInfo["quickActions"];
+        env?: ProjectInfo["env"] | null;
       }) {
         const project = projects.find((p) => p.id === input.projectId);
         if (!project) {
@@ -3662,6 +3663,11 @@ function buildDevCoder(): CoderApi {
             : [];
           if (rows.length) project.quickActions = rows;
           else delete project.quickActions;
+        }
+        if (Object.prototype.hasOwnProperty.call(input, "env")) {
+          if (input.env && Object.keys(input.env).length) {
+            project.env = { ...input.env };
+          } else delete project.env;
         }
         return { ...project };
       },

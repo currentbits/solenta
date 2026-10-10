@@ -9,6 +9,26 @@ import type {
 import { ProjectIcon } from "./ProjectIcon";
 import styles from "./SettingsModal.module.css";
 
+/**
+ * `KEY=value` lines to an env map (#188). Blank and `#` lines are skipped.
+ * Returns an error message for the first bad line.
+ */
+export function parseEnvText(text: string): Record<string, string> | string {
+  const env: Record<string, string> = {};
+  for (const raw of text.split("\n")) {
+    const line = raw.trim();
+    if (!line || line.startsWith("#")) continue;
+    const eq = line.indexOf("=");
+    const key = eq > 0 ? line.slice(0, eq).trim() : "";
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+      return `Invalid environment line: ${line}`;
+    }
+    if (key === "PATH") return "PATH cannot be set per project.";
+    env[key] = line.slice(eq + 1);
+  }
+  return env;
+}
+
 interface EditProjectModalProps {
   project: ProjectInfo;
   onClose: () => void;
@@ -53,6 +73,11 @@ export function EditProjectModal({
   const [quickActions, setQuickActions] = useState<ProjectQuickAction[]>(
     () => (project.quickActions ?? []).map((a) => ({ ...a })),
   );
+  const [envText, setEnvText] = useState(() =>
+    Object.entries(project.env ?? {})
+      .map(([k, v]) => `${k}=${v}`)
+      .join("\n"),
+  );
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -87,6 +112,11 @@ export function EditProjectModal({
       }
       worktreeRetention = n;
     }
+    const env = parseEnvText(envText);
+    if (typeof env === "string") {
+      setError(env);
+      return;
+    }
 
     setPending(true);
     setError(null);
@@ -106,6 +136,7 @@ export function EditProjectModal({
             command: a.command.trim(),
           }))
           .filter((a) => a.name && a.command),
+        env,
       };
       if (iconDirty) payload.iconPath = iconPath;
       const updated = await onSubmit(payload);
@@ -462,6 +493,27 @@ export function EditProjectModal({
             <p className={styles.note}>
               Named buttons in the thread header. Run from the worktree when
               one exists.
+            </p>
+          </div>
+          <div className={styles.field}>
+            <label className={styles.fieldLabel} htmlFor="edit-project-env">
+              Environment variables
+            </label>
+            <textarea
+              id="edit-project-env"
+              className={`${styles.textarea} ${styles.monoInput}`}
+              data-edit-project-env=""
+              value={envText}
+              onChange={(e) => setEnvText(e.target.value)}
+              placeholder={"AWS_PROFILE=bedrock-prod\nPORT=3001"}
+              rows={4}
+              autoComplete="off"
+              spellCheck={false}
+              disabled={pending}
+            />
+            <p className={styles.note}>
+              One KEY=value per line. Applied to agent runs, dev servers,
+              terminals and commands in this project. Stored in plain text.
             </p>
           </div>
           <div className={styles.field}>
