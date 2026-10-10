@@ -1200,7 +1200,6 @@ export function useCoder(): UseCoderResult {
     let cancelled = false;
     let unsubChanged: (() => void) | undefined;
     let unsubUpdated: (() => void) | undefined;
-    let unsubSelect: (() => void) | undefined;
     let unsubBoot: (() => void) | undefined;
     let unsubSimulator: (() => void) | undefined;
 
@@ -1330,12 +1329,6 @@ export function useCoder(): UseCoderResult {
       }
     });
 
-    unsubSelect = api.on("thread:select", (id) => {
-      if (typeof id === "string" && id) {
-        setSelectedThreadId(id);
-      }
-    });
-
     unsubUpdated = api.on("thread:updated", (next) => {
       const prev = prevStatusRef.current.get(next.thread.id);
       const held = threadsRef.current.find((t) => t.id === next.thread.id);
@@ -1403,7 +1396,6 @@ export function useCoder(): UseCoderResult {
       cancelled = true;
       unsubChanged?.();
       unsubUpdated?.();
-      unsubSelect?.();
       unsubBoot?.();
       unsubStayAwake();
       unsubSimulator?.();
