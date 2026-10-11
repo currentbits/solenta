@@ -2880,6 +2880,27 @@ export interface DistilledMemory {
 
 export type AutomationPreset = "hourly" | "daily" | "weekly";
 
+/** GitHub events an automation can fire on (issue #242). Polled, not webhooks. */
+export type AutomationTriggerEvent =
+  | "pr_opened"
+  | "pr_merged"
+  | "pr_labeled"
+  | "review_submitted"
+  | "push"
+  | "ci_completed";
+
+/**
+ * Event trigger. Filters apply only where they make sense: branch for push
+ * and ci_completed, label for pr_labeled, conclusion for ci_completed.
+ */
+export interface AutomationTrigger {
+  type: "github";
+  event: AutomationTriggerEvent;
+  branch?: string | null;
+  label?: string | null;
+  conclusion?: "success" | "failure" | "cancelled" | "timed_out" | null;
+}
+
 /** A scheduled agent run (Synara-style automation). */
 export interface AutomationInfo {
   id: string;
@@ -2899,6 +2920,12 @@ export interface AutomationInfo {
   consecutiveFailures?: number;
   /** Last fired thread whose outcome has not been counted yet. */
   pendingRunThreadId?: string | null;
+  /** Set: fires on GitHub events, preset/hour are ignored. Null: schedule. */
+  trigger?: AutomationTrigger | null;
+  /** Highest event already handled; null until the first poll baselines. */
+  triggerCursor?: number | string | null;
+  /** Notes the automation keeps between runs (its <automation-memory> block). */
+  memory?: string;
   /** Routing tier (#246); provider/model is the fallback. null = off. */
   tier?: ModelRoute | null;
 }
@@ -2912,6 +2939,8 @@ export interface AutomationWrite {
   preset: AutomationPreset;
   hour?: number | null;
   enabled?: boolean;
+  trigger?: AutomationTrigger | null;
+  memory?: string;
   tier?: ModelRoute | null;
 }
 

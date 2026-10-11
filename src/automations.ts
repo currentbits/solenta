@@ -1,4 +1,32 @@
-import type { AutomationPreset, ThreadStatus } from "./shared/ipc";
+import type {
+  AutomationPreset,
+  AutomationTrigger,
+  AutomationTriggerEvent,
+  ThreadStatus,
+} from "./shared/ipc";
+
+/** "When" picker rows for GitHub events (issue #242). */
+export const TRIGGER_EVENT_LABELS: Record<AutomationTriggerEvent, string> = {
+  pr_opened: "PR opened",
+  pr_merged: "PR merged",
+  pr_labeled: "Label added",
+  review_submitted: "Review submitted",
+  push: "Push",
+  ci_completed: "CI completed",
+};
+
+export function isTriggerEvent(value: string): value is AutomationTriggerEvent {
+  return Object.prototype.hasOwnProperty.call(TRIGGER_EVENT_LABELS, value);
+}
+
+/** Row label for an event automation: "on PR labeled \"bug\"", "on Push to main". */
+export function triggerLabel(trigger: AutomationTrigger): string {
+  let label = `on ${TRIGGER_EVENT_LABELS[trigger.event]}`;
+  if (trigger.label) label += ` "${trigger.label}"`;
+  if (trigger.conclusion) label += ` (${trigger.conclusion})`;
+  if (trigger.branch) label += ` on ${trigger.branch}`;
+  return label;
+}
 
 export type AutomationRunDisplayStatus =
   | "working"
