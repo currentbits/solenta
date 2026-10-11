@@ -176,7 +176,7 @@ function view(props: {
   onStartSuggestion?: (s: WorkSuggestion) => void | Promise<void>;
   onFileSuggestion?: (s: WorkSuggestion) => void | Promise<void>;
   onDismissSuggestion?: (s: WorkSuggestion) => void | Promise<void>;
-  onOpenAutomations?: () => void;
+  onOpenAutomations?: (automationId?: string) => void;
   revealMessageId?: string | null;
   onSelectThread?: (id: string) => void;
   returnToView?: "planboard" | "kanban" | "activity" | "digest" | "prs" | "insights";
@@ -621,6 +621,44 @@ describe("ThreadView message roles", () => {
         html.includes("data-automation-card="),
       "result is a dedicated card, not only the raw tool name",
     );
+  });
+
+  it("Open in Automations passes the created id (#1599)", async () => {
+    let opened: string | undefined;
+    const m = await mount(
+      view({
+        detail: detail({
+          messages: [
+            msg({
+              id: "ac",
+              role: "tool",
+              text: "automation_create",
+              createdAt: 16,
+              runId: "run-1",
+              tool: {
+                id: "tc-ac",
+                name: "mcp__coder-threads__automation_create",
+                input: '{"name":"Triage CI"}',
+                output: JSON.stringify({
+                  ok: true,
+                  id: "auto-1",
+                  name: "Triage CI",
+                  preset: "hourly",
+                }),
+                done: true,
+                isError: false,
+              },
+            }),
+          ],
+        }),
+        onOpenAutomations: (id?: string) => {
+          opened = id;
+        },
+      }),
+    );
+    await m.click(m.query("[data-automation-card] button"));
+    assert.equal(opened, "auto-1");
+    m.unmount();
   });
 
   it("renders a single tool as a group, not a boxed tool card", () => {

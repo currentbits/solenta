@@ -670,8 +670,8 @@ interface ThreadViewProps {
   onFileSuggestion?: (s: WorkSuggestion) => void | Promise<void>;
   /** Dismiss a suggested-work chip for this thread. Permanent. */
   onDismissSuggestion?: (s: WorkSuggestion) => void | Promise<void>;
-  /** Open the Automations view (automation_create card, #1589). */
-  onOpenAutomations?: () => void;
+  /** Open Automations, optionally focusing a created row (#1599). */
+  onOpenAutomations?: (automationId?: string) => void;
   /**
    * The thread this one was handed off from (handoffFrom), already resolved.
    * Resolved by App rather than passing the whole list: the list gets a new

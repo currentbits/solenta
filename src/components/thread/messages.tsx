@@ -244,7 +244,7 @@ function AutomationCreatedCard({
   onOpen,
 }: {
   message: ChatMessage;
-  onOpen?: () => void;
+  onOpen?: (automationId?: string) => void;
 }) {
   const running = Boolean(message.tool && !message.tool.done);
   const parsed = parseAutomationCreateResult(message.tool?.output ?? "");
@@ -268,7 +268,7 @@ function AutomationCreatedCard({
           <button
             type="button"
             className={styles.permissionAllow}
-            onClick={onOpen}
+            onClick={() => onOpen(parsed?.id)}
           >
             Open in Automations
           </button>
@@ -1082,7 +1082,7 @@ export const MessageBlock = memo(function MessageBlock({
   pinned?: boolean;
   onTogglePin?: () => void;
   threadId?: string | null;
-  onOpenAutomations?: () => void;
+  onOpenAutomations?: (automationId?: string) => void;
 }) {
   // Latch at mount; see ToolCallCard for why.
   const [entered] = useState(Boolean(animateIn));
