@@ -114,7 +114,7 @@ import type { SlashAction } from "../slashCommands";
 import { NATIVE_COMPACT_PROVIDERS } from "../slashCommands";
 import { ProviderQuotaDialog } from "./ProviderQuota";
 import type { ProviderLimitsLoader } from "../providerUsage";
-import { buildBestOfNEntries } from "../bestOfN";
+import { buildBestOfNEntries, providerCanPlan } from "../bestOfN";
 import { formatQuotaWaitLabel } from "../quotaWait";
 import type { ReviewSymbol } from "../reviewItinerary";
 import { useEscapeClose } from "../useEscapeClose";
@@ -347,7 +347,7 @@ interface ThreadViewProps {
     feedback?: string,
   ) => void | Promise<void>;
   /** "Implement in a new thread" from the plan prompt (#1501). */
-  onImplementPlan?: (plan: string) => void | Promise<void>;
+  onImplementPlan?: (plan: string, provider?: string) => void | Promise<void>;
   /** "Save plan to file" from the plan prompt; resolves the path (#1501). */
   onSavePlan?: (plan: string) => Promise<string>;
   /**
@@ -1740,16 +1740,18 @@ export const ThreadView = memo(function ThreadView({
    * prompt on each new fork. Sequential: a run cannot start until its fork
    * exists. Failures throw so Composer and the run-error banner both surface
    * them. Profile forks set effort then permission on the new thread before
-   * the run, same order as pickProfile.
+   * the run, same order as pickProfile. planOnly (#241) starts every fork in
+   * plan mode and drops providers that cannot plan; the user then builds the
+   * winning plan from its card ("Implement in a new thread").
    */
   const runBestOfN = useCallback(
-    async (selectedIds: string[], prompt: string) => {
+    async (selectedIds: string[], prompt: string, planOnly = false) => {
       const current = detail?.thread;
       if (!current || !onFork) {
         throw new Error("Failed to start Best of N");
       }
       const availableIds = providers
-        .filter((p) => p.available)
+        .filter((p) => p.available && (!planOnly || providerCanPlan(p)))
         .map((p) => p.id);
       const plan = buildBestOfNEntries(availableIds, selectedIds, agentProfiles);
       if (typeof plan === "string") throw new Error(plan);
@@ -1768,6 +1770,9 @@ export const ThreadView = memo(function ThreadView({
         created.push(forked.id);
         if (entry.kind === "profile") {
           await onSetReasoningEffort(entry.reasoningEffort, forked.id);
+        }
+        if (planOnly) await onSetPermissionMode("plan", forked.id);
+        else if (entry.kind === "profile") {
           await onSetPermissionMode(entry.permissionMode, forked.id);
         }
         await onStartRun(prompt, forked.id);
@@ -4256,6 +4261,7 @@ export const ThreadView = memo(function ThreadView({
             onRespond={onRespondPermission}
             onImplement={onImplementPlan}
             onSave={onSavePlan}
+            providers={providers}
           />
         ) : detail.pendingPermission ? (
           <PermissionPrompt
