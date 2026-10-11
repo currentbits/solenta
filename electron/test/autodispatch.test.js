@@ -161,6 +161,32 @@ describe("auto-dispatch", () => {
     assert.equal(store.getThreads().length, 0);
   });
 
+  it("skips a blocked issue until its blockers land (#251)", async () => {
+    let issues = [{ ...TODO_ISSUE, blockedBy: [12] }];
+    installIssuesMock({
+      listIssues: async () => ({ ok: true, issues }),
+      fetchIssue: async () => ({ ok: true, issue: FETCHED }),
+    });
+
+    const started = [];
+    const { sched } = start({
+      startRun: async (input) => {
+        started.push(input);
+        return { runId: "r1" };
+      },
+    });
+    try {
+      await sched.tick();
+      assert.equal(started.length, 0);
+      issues = [TODO_ISSUE];
+      await sched.tick();
+    } finally {
+      sched.stop();
+    }
+
+    assert.equal(started.length, 1);
+  });
+
   it("dispatches a still-todo issue only once across ticks", async () => {
     installIssuesMock({
       listIssues: async () => ({ ok: true, issues: [TODO_ISSUE] }),

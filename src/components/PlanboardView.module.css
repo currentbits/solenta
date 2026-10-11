@@ -266,6 +266,12 @@
   color: var(--text-muted);
 }
 
+.blocked {
+  border-color: var(--amber-border);
+  background: var(--amber-soft);
+  color: var(--amber);
+}
+
 .age {
   font-size: 11px;
   color: var(--text-dim);

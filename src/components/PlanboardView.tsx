@@ -535,6 +535,15 @@ export function PlanboardView({
                         <span className={styles.cardTitle}>{issue.title}</span>
                       </span>
                       <span className={styles.cardMeta}>
+                        {issue.blockedBy ? (
+                          <span
+                            className={`${styles.badge} ${styles.blocked}`}
+                            data-plan-blocked={issue.blockedBy.join(",")}
+                          >
+                            Blocked by{" "}
+                            {issue.blockedBy.map((n) => `#${n}`).join(", ")}
+                          </span>
+                        ) : null}
                         {badgeLabels(issue).map((label) => (
                           <span key={label} className={styles.badge}>
                             {label}
