@@ -1,3 +1,4 @@
+import { isAutomationCreateMessage } from "./automationCard";
 import type { ChatMessage } from "./shared/ipc";
 import type { TimelineEntry } from "./timeline";
 
@@ -22,6 +23,7 @@ export type DisplayEntry =
   | Extract<TimelineEntry, { kind: "artifacts" }>;
 
 export function isGroupable(message: ChatMessage): boolean {
+  if (isAutomationCreateMessage(message)) return false;
   return message.role === "tool" || message.thinking === true;
 }
 

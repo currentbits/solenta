@@ -244,6 +244,18 @@ describe("secret_request (#1531)", () => {
     threadSecrets.clear("redact-a");
   });
 
+  it("redacts work-log items on append and patch", () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-secret-"));
+    const store = new Store(path.join(tmpDir, "coder-store.json"));
+    threadSecrets.set("wl", "DB_PASSWORD", "hunter2hunter2");
+    store.appendWorkLog("wl", { id: "w1", title: "echo hunter2hunter2" });
+    store.updateWorkLogItem("wl", "w1", { output: "pw=hunter2hunter2" });
+    assert.deepEqual(store.getWorkLog("wl"), [
+      { id: "w1", title: "echo [secret:DB_PASSWORD]", output: "pw=[secret:DB_PASSWORD]" },
+    ]);
+    threadSecrets.clear("wl");
+  });
+
   it("declining drops the card without starting a turn", async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-secret-"));
     const store = new Store(path.join(tmpDir, "coder-store.json"));

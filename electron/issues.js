@@ -10,7 +10,7 @@ const {
   gitTry,
   ghApiTryAsync,
   GH_TIMEOUT_MS,
-  isGitHubRemote,
+  isGitHubPrRemote,
   isGhAuthFailure,
   tailErr,
 } = require("./worktrees.js");
@@ -308,7 +308,7 @@ async function fetchIssue(projectPath, ref, opts) {
         issue: { ...fetched.issue, body: bannerUntrustedBody(fetched.issue.body) },
       };
     }
-    if (!isGitHubRemote(originUrl)) {
+    if (!(await isGitHubPrRemote(originUrl))) {
       return { ok: false, reason: "not a GitHub repo" };
     }
 
@@ -567,7 +567,7 @@ async function setPlanStatus(projectPath, number, status) {
   const gl = gitlabOriginOf(projectPath);
   if (gl) return gitlab.setPlanLabel(cwd, gl, issueNumber, label, PLAN_LABELS);
 
-  if (!isGitHubRemote(originUrlOf(projectPath))) {
+  if (!(await isGitHubPrRemote(originUrlOf(projectPath)))) {
     return { ok: false, reason: "not a GitHub repo" };
   }
   const ghOpts = ghOptsOf(projectPath);
@@ -618,7 +618,7 @@ async function reopenIssue(projectPath, number, opts) {
     return gitlab.reopenIssue(cwd, gl, issueNumber, comment, PLAN_LABELS);
   }
 
-  if (!isGitHubRemote(originUrlOf(projectPath))) {
+  if (!(await isGitHubPrRemote(originUrlOf(projectPath)))) {
     return { ok: false, reason: "not a GitHub repo" };
   }
   const ghOpts = ghOptsOf(projectPath);
@@ -684,7 +684,7 @@ async function completeIssue(projectPath, number, opts) {
     return gitlab.completeIssue(cwd, gl, issueNumber, comment, PLAN_LABELS);
   }
 
-  if (!isGitHubRemote(originUrlOf(projectPath))) {
+  if (!(await isGitHubPrRemote(originUrlOf(projectPath)))) {
     return { ok: false, reason: "not a GitHub repo" };
   }
   const ghOpts = ghOptsOf(projectPath);
@@ -753,7 +753,7 @@ async function commentIssue(projectPath, number, body) {
   const gl = gitlabOriginOf(projectPath);
   if (gl) return gitlab.addNote(cwd, gl, issueNumber, text);
 
-  if (!isGitHubRemote(originUrlOf(projectPath))) {
+  if (!(await isGitHubPrRemote(originUrlOf(projectPath)))) {
     return { ok: false, reason: "not a GitHub repo" };
   }
   const ghOpts = ghOptsOf(projectPath);
@@ -802,7 +802,7 @@ async function createIssue(projectPath, input) {
   const gl = gitlabOriginOf(projectPath);
   if (gl) return gitlab.createIssue(cwd, gl, title, body);
 
-  if (!isGitHubRemote(originUrlOf(projectPath))) {
+  if (!(await isGitHubPrRemote(originUrlOf(projectPath)))) {
     return { ok: false, reason: "not a GitHub repo" };
   }
   const ghOpts = ghOptsOf(projectPath);

@@ -18,7 +18,7 @@ const {
 const { diff } = require("./worktrees-changes.js");
 const {
   GH_TIMEOUT_MS,
-  isGitHubRemote,
+  isGitHubRemoteAsync,
   gitlabOrigin,
   ghTryAsync,
   isUnknownJsonField,
@@ -209,7 +209,7 @@ async function checkoutPr(opts) {
   }
   const originUrl = String(origin.stdout || "").trim();
   const gl = gitlabOrigin(originUrl);
-  if (!gl && !isGitHubRemote(originUrl)) {
+  if (!gl && !(await isGitHubRemoteAsync(originUrl))) {
     return { ok: false, reason: "not a GitHub repo" };
   }
 
