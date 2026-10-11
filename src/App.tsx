@@ -2072,6 +2072,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onStartSuggestion={handleStartSuggestion}
         onFileSuggestion={handleFileSuggestion}
         onDismissSuggestion={handleDismissSuggestion}
+        onOpenAutomations={openAutomations}
         handoffSource={handoffSource}
         comparePeers={comparePeers}
         onPeekThread={peekThread}

@@ -30,6 +30,7 @@ const {
   listThreads,
   planboardNoteFor,
   refreshWorkerSnapshot,
+  addAutomation,
 } = require("./services.js");
 const { stop: stopDevServer } = require("./devservers.js");
 const {
@@ -52,6 +53,10 @@ const INSTRUCTIONS =
   "distinct approach as soon as you know how it turned out. " +
   "When you notice work worth doing that is out of scope, call work_suggest with a " +
   "short title and a self-contained prompt; do not start the work yourself. " +
+  "When the user describes a scheduled or GitHub-triggered workflow they want to keep " +
+  "running, call automation_create with name, prompt, and either a schedule " +
+  "(hourly/daily/weekly) or a GitHub trigger; the result appears as a card with an " +
+  "Open in Automations link. " +
   "ask_user puts a real multiple-choice question in front of the user on your own " +
   "thread — it is the ONLY question channel that reaches them here, so use it " +
   "instead of your CLI's own question tool and instead of guessing when a wrong " +
@@ -917,6 +922,42 @@ function createToolHandlers(deps) {
     return { recorded: true, total };
   }
 
+  async function automation_create(args) {
+    const thread = requireOwnThread(args);
+    const triggerRaw = args && args.trigger;
+    const hasTrigger = triggerRaw != null && typeof triggerRaw === "object";
+    const presetRaw = args && args.preset != null ? String(args.preset) : "";
+    if (!hasTrigger && !presetRaw) {
+      throw new Error(
+        "Pass a schedule (preset hourly, daily, or weekly) or a GitHub trigger.",
+      );
+    }
+    const created = addAutomation(store, {
+      projectId: thread.projectId,
+      name: args && args.name,
+      prompt: args && args.prompt,
+      provider: (args && args.provider) || thread.provider,
+      model: args && args.model,
+      preset: presetRaw || "hourly",
+      hour: args && args.hour,
+      enabled: args && args.enabled,
+      trigger: hasTrigger ? { type: "github", ...triggerRaw } : null,
+      tier: args && args.tier,
+    });
+    return {
+      ok: true,
+      id: created.id,
+      name: created.name,
+      projectId: created.projectId,
+      provider: created.provider,
+      preset: created.preset,
+      hour: created.hour,
+      trigger: created.trigger || null,
+      enabled: created.enabled,
+      nextRunAt: created.nextRunAt,
+    };
+  }
+
   async function spec_submit(args) {
     const thread = store.getThread(args.threadId);
     if (!thread) {
@@ -1220,6 +1261,7 @@ function createToolHandlers(deps) {
     secret_request,
     hypothesis_record,
     work_suggest,
+    automation_create,
     spec_submit,
     teach_review,
     task_add,
@@ -1580,6 +1622,52 @@ function buildMcpServer(sdk, handlers, opts = {}) {
       },
     },
     async (args) => json(await handlers.work_suggest(args)),
+  );
+
+  server.registerTool(
+    "automation_create",
+    {
+      description:
+        "Create a Solenta automation on THIS thread's project. The user " +
+        "describes a workflow in chat; you fill name, prompt, provider, and " +
+        "either a schedule (hourly/daily/weekly, plus hour 0–23 for daily/" +
+        "weekly) or a GitHub trigger (pr_opened, pr_merged, pr_labeled, " +
+        "review_submitted, push, ci_completed — optional branch/label/" +
+        "conclusion filters). Validation rejects bad presets and triggers. " +
+        "The result appears as a card with an Open in Automations link. " +
+        "threadId and projectId are YOUR OWN (stated at the end of your " +
+        "prompt). Provider defaults to this thread's provider.",
+      inputSchema: {
+        threadId: z.string().min(1),
+        projectId: z.string().min(1),
+        name: z.string().min(1),
+        prompt: z.string().min(1),
+        provider: z.string().min(1).optional(),
+        model: z.string().optional(),
+        preset: z.enum(["hourly", "daily", "weekly"]).optional(),
+        hour: z.number().int().min(0).max(23).optional(),
+        enabled: z.boolean().optional(),
+        tier: z.enum(["auto", "fast", "balanced", "strong"]).optional(),
+        trigger: z
+          .object({
+            event: z.enum([
+              "pr_opened",
+              "pr_merged",
+              "pr_labeled",
+              "review_submitted",
+              "push",
+              "ci_completed",
+            ]),
+            branch: z.string().optional(),
+            label: z.string().optional(),
+            conclusion: z
+              .enum(["success", "failure", "cancelled", "timed_out"])
+              .optional(),
+          })
+          .optional(),
+      },
+    },
+    async (args) => json(await handlers.automation_create(args)),
   );
 
   server.registerTool(

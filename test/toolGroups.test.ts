@@ -70,6 +70,11 @@ describe("isGroupable", () => {
       }),
       false,
     );
+    assert.equal(
+      isGroupable(tool({ id: "ac", name: "mcp__coder-threads__automation_create" })),
+      false,
+      "automation_create stays a standalone card (#1589)",
+    );
   });
 });
 

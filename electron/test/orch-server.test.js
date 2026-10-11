@@ -1435,6 +1435,7 @@ describe("orch-server HTTP", () => {
     const names = list.body.result.tools.map((t) => t.name).sort();
     assert.deepEqual(names, [
       "ask_user",
+      "automation_create",
       "hypothesis_record",
       "peer_send",
       "preview",

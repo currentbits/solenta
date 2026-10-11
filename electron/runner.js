@@ -2098,6 +2098,7 @@ function createRunner(opts) {
           null,
       ) +
       services.suggestedWorkNoteFor() +
+      services.automationNoteFor() +
       services.subagentPoolNoteFor(
         store.getSettings && store.getSettings().subagentPool,
       ) +
