@@ -581,6 +581,19 @@ async function listPrsRaw(projectPath, opts) {
     return { ok: false, reason: "not a GitHub repo" };
   }
   const originUrl = String(remote.stdout || "").trim();
+  const gl = gitlabOrigin(originUrl);
+  if (gl) {
+    const extraArgs = (opts && opts.extraArgs) || ["--limit", "50"];
+    const limitIdx = extraArgs.lastIndexOf("--limit");
+    const stateIdx = extraArgs.lastIndexOf("--state");
+    const limit = Number(limitIdx >= 0 ? extraArgs[limitIdx + 1] : 50);
+    const stateRaw = stateIdx >= 0 ? String(extraArgs[stateIdx + 1] || "") : "opened";
+    const state =
+      stateRaw === "all" || stateRaw === "closed" || stateRaw === "merged"
+        ? stateRaw
+        : "opened";
+    return require("./gitlab.js").listMrs(cwd, gl, { limit, state });
+  }
   if (!(await isGitHubPrRemote(originUrl))) {
     return { ok: false, reason: "not a GitHub repo" };
   }
@@ -2124,6 +2137,7 @@ module.exports = {
   setGithubApi,
   isGitHubRemote,
   isGitHubRemoteAsync,
+  gitlabOrigin,
   isForgeRemote,
   normalizeCheckBucket,
   ghTryAsync,
