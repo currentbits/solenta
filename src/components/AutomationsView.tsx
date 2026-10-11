@@ -49,6 +49,33 @@ export interface AutomationsViewProps {
   onTrustFile?: (projectId: string, hash: string) => Promise<void> | void;
 }
 
+/** Same keys `updateAutomation` uses to decide whether to rewrite solenta.json. */
+function definitionChanged(
+  fields: {
+    name: string;
+    prompt: string;
+    provider: string;
+    model: string | null;
+    preset: AutomationPreset;
+    hour: number | null;
+    trigger: AutomationTrigger | null;
+    tier: ModelRoute | null;
+  },
+  existing: AutomationInfo,
+): boolean {
+  return (
+    fields.name !== existing.name ||
+    fields.prompt !== existing.prompt ||
+    fields.provider !== existing.provider ||
+    fields.model !== (existing.model ?? null) ||
+    fields.preset !== existing.preset ||
+    fields.hour !== (existing.hour ?? null) ||
+    JSON.stringify(fields.trigger) !==
+      JSON.stringify(existing.trigger || null) ||
+    fields.tier !== (existing.tier ?? null)
+  );
+}
+
 function liveThreadKey(
   threads: AutomationsViewProps["liveThreads"],
 ): string {
@@ -401,20 +428,36 @@ export function AutomationsView({
       if (editingId) {
         const editing = automations.find((a) => a.id === editingId);
         const hadTier = editing?.tier;
-        await onUpdate({
-          id: editingId,
+        const nextDef = {
           name: name.trim(),
           prompt,
           provider,
           model: model.trim() || null,
-          // Event mode ignores the schedule; hourly needs no hour.
-          preset: event ? "hourly" : preset,
+          preset: event ? ("hourly" as const) : preset,
           hour: needsHour ? Number(hour) : null,
           trigger,
+          tier: (tier || null) as ModelRoute | null,
+        };
+        await onUpdate({
+          id: editingId,
+          name: nextDef.name,
+          prompt: nextDef.prompt,
+          provider: nextDef.provider,
+          model: nextDef.model,
+          // Event mode ignores the schedule; hourly needs no hour.
+          preset: nextDef.preset,
+          hour: nextDef.hour,
+          trigger: nextDef.trigger,
           memory,
-          ...(tier || hadTier ? { tier: tier || null } : {}),
+          ...(tier || hadTier ? { tier: nextDef.tier } : {}),
         });
-        setWroteFile(editing?.scope === "project");
+        setWroteFile(
+          Boolean(
+            editing?.scope === "project" &&
+              editing &&
+              definitionChanged(nextDef, editing),
+          ),
+        );
         clearEdit();
       } else {
         const writeScope = projectScopeBlocked ? "private" : scope;

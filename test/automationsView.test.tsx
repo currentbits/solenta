@@ -1225,6 +1225,41 @@ describe("AutomationsView", () => {
     m.unmount();
   });
 
+  it("after a project-scope memory-only save, does not show the write-and-commit note", async () => {
+    const updates: Array<Record<string, unknown>> = [];
+    const m = await mount(
+      <AutomationsView
+        automations={[
+          auto({
+            id: "shared:p1:pr-triage",
+            scope: "project",
+            name: "PR triage",
+            memory: "old notes",
+          }),
+        ]}
+        projects={[p1]}
+        providers={providers}
+        onCreate={async () => {}}
+        onUpdate={async (input) => {
+          updates.push(input);
+        }}
+        onRemove={async () => {}}
+        onRunNow={async () => {}}
+      />,
+    );
+    await m.click(m.query('[data-automation-edit=""]'));
+    await m.type(m.query("[data-automation-memory]"), "new notes");
+    await m.click(m.query("[data-automation-create] button[type=submit]"));
+    assert.equal(updates.length, 1);
+    assert.equal(updates[0].memory, "new notes");
+    assert.equal(
+      m.query("[data-automation-wrote]")?.textContent ?? null,
+      null,
+      "memory is not a definition field; solenta.json was not written",
+    );
+    m.unmount();
+  });
+
   it("untrusted project row disables the toggle and Run now passes the file hash", async () => {
     const runs: Array<[string, string?]> = [];
     const updates: unknown[] = [];
