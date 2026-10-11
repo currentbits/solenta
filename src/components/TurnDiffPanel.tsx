@@ -14,6 +14,7 @@ import {
   splitRowIndices,
   type DiffViewMode,
 } from "../turnDiff";
+import { useDiffFind } from "./thread/useDiffFind";
 import styles from "./TurnDiffPanel.module.css";
 
 export type { DiffViewMode };
@@ -231,17 +232,25 @@ export function TurnDiffPanel({
   const visible = selectedPath
     ? patches.filter((p) => p.path === selectedPath)
     : patches;
+  const find = useDiffFind(
+    diff?.files ?? [],
+    patches,
+    setSelectedPath,
+    sha,
+  );
 
   const empty = !loading && !error && diff != null && isEmptyDiff(diff);
 
   return (
     <section
+      ref={find.rootRef}
       className={styles.panel}
       data-turn-diff=""
       data-turn-diff-sha={sha}
       data-turn-diff-mode={mode}
       aria-label={`Turn ${turn} diff`}
     >
+      {find.bar}
       <header className={styles.head}>
         <span className={styles.title}>
           Turn {turn} · {sha.slice(0, 7)}

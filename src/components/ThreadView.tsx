@@ -101,6 +101,11 @@ import {
   ensureVisibleStart,
   tailWindowStart,
 } from "../transcriptWindow";
+import {
+  revealTranscriptHit,
+  useScrollFindHit,
+  useTranscriptFind,
+} from "./thread/useTranscriptFind";
 import { lastUserMessage } from "../retryTurn";
 import { isParsed, preparseMarkdown } from "./Markdown";
 import {
@@ -1020,9 +1025,12 @@ export const ThreadView = memo(function ThreadView({
   const [cliAgents, setCliAgents] = useState<CliAgentInfo[]>([]);
   const copyFlashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const threadId = detail?.thread.id ?? null;
+  const find = useTranscriptFind(detail, threadId);
+  const [revealPlan, setRevealPlan] = useState(false);
   if (threadId !== focusThreadId) {
     setFocusThreadId(threadId);
     setExpandedFocusTurns(new Set());
+    setRevealPlan(false);
   }
 
   useEffect(() => {
@@ -1395,6 +1403,43 @@ export const ThreadView = memo(function ThreadView({
     expandedFocusTurns,
     runningAgents,
   });
+  useEffect(() => {
+    if (!find.open || !find.current) return;
+    stickToBottom.current = false;
+    forceStick.current = false;
+    revealTranscriptHit(find.current, detail, displayTimeline, {
+      setJumpMessageId,
+      setRevealPlan,
+      setCollapsedRuns,
+      setExpandedGroups,
+      expandFocusFor: (messageId) => {
+        for (const turn of focusTurnByFirstId.values()) {
+          if (
+            turn.firstActivityId !== messageId &&
+            !turn.activityIds.includes(messageId)
+          ) {
+            continue;
+          }
+          setExpandedFocusTurns((prev) => {
+            if (prev.has(turn.key)) return prev;
+            const next = new Set(prev);
+            next.add(turn.key);
+            return next;
+          });
+        }
+      },
+    });
+  }, [find.open, find.current, detail, displayTimeline, focusTurnByFirstId]);
+
+  useScrollFindHit(bodyRef, find.open, find.current, [
+    start,
+    displayTimeline,
+    expandedGroups,
+    collapsedRuns,
+    expandedFocusTurns,
+    revealPlan,
+  ]);
+
   const isArchived = Boolean(detail?.thread.archived);
   const emptyMessages = detail != null && detail.messages.length === 0;
 
@@ -3780,6 +3825,8 @@ export const ThreadView = memo(function ThreadView({
         </div>
       )}
 
+      {find.bar}
+
       {detail && (
         <DivergenceCard
           key={detail.thread.id}
@@ -4199,7 +4246,7 @@ export const ThreadView = memo(function ThreadView({
         {/* A pending plan prompt already shows the plan — don't show it twice. */}
         {(thread.planSteps?.length || thread.plan) &&
         !detail.pendingPermission?.plan ? (
-          <PlanCard thread={thread} />
+          <PlanCard thread={thread} forceOpen={revealPlan} />
         ) : null}
 
         {/*
