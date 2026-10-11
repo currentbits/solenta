@@ -37,6 +37,69 @@ const CI_CONCLUSIONS = new Set(["success", "failure", "cancelled", "timed_out"])
 /** lastError prefix for poll failures, so a good poll clears only its own. */
 const POLL_ERROR = "GitHub trigger: ";
 
+function pollErrorPrefix(type) {
+  if (type === "linear") return "Linear trigger: ";
+  if (type === "sentry") return "Sentry trigger: ";
+  return POLL_ERROR;
+}
+
+/** @param {{ type: string, event: string, org?: string | null, project?: string | null }} trigger */
+function triggerNoteTitle(trigger, remote) {
+  if (trigger.type === "linear") {
+    return trigger.event === "linear_status_changed" ? "Linear status changed" : "Linear issue created";
+  }
+  if (trigger.type === "sentry") {
+    return `Sentry issue on ${trigger.org}/${trigger.project}`;
+  }
+  return `GitHub ${trigger.event} on ${remote.owner}/${remote.repo}`;
+}
+
+/**
+ * Linear/Sentry rows for one tick. One fetch per cache key, shared across
+ * automations. GitHub stays inline in pollTriggers.
+ */
+function loadRows(trigger, deps, store, cache) {
+  if (trigger.type === "linear") {
+    const linear = require("./linear.js");
+    const settings = store.getSettings();
+    const source = trigger.event === "linear_status_changed" ? "status" : "created";
+    const cacheKey = `linear|${source}`;
+    if (!cache.has(cacheKey)) {
+      cache.set(
+        cacheKey,
+        linear.fetchTriggerIssues(source, {
+          linearApiKey: settings && settings.linearApiKey,
+          linearGraphql: deps.linearGraphql,
+        }),
+      );
+    }
+    return cache.get(cacheKey);
+  }
+  if (trigger.type === "sentry") {
+    const sentry = require("./sentry.js");
+    const settings = store.getSettings();
+    const token = sentry.resolveSentryAuthToken({
+      sentryAuthToken: settings && settings.sentryAuthToken,
+    });
+    const env = trigger.environment || "";
+    const cacheKey = `sentry|${trigger.org}|${trigger.project}|${env}`;
+    if (!cache.has(cacheKey)) {
+      cache.set(
+        cacheKey,
+        sentry.fetchProjectIssues({
+          org: trigger.org,
+          project: trigger.project,
+          environment: env,
+          token,
+          sentryIssues: deps.sentryIssues,
+        }),
+      );
+    }
+    return cache.get(cacheKey);
+  }
+  return null;
+}
+
 /** Events listed in one run's prompt; the rest are counted, not dropped. */
 const MAX_EVENTS_IN_PROMPT = 20;
 
@@ -323,30 +386,41 @@ async function pollTriggers(ctx, firing) {
     if (!project || !project.path) continue;
     const trigger = auto.trigger;
     try {
-      const remote = await remoteFor(project.path);
-      if (!remote) throw new Error("project origin is not a GitHub repo");
-      const source = sourceFor(trigger.event);
-      const cacheKey = `${remote.host}/${remote.owner}/${remote.repo}|${source}`;
-      if (!cache.has(cacheKey)) {
-        cache.set(
-          cacheKey,
-          (async () => {
-            const token = await tokenFor(remote.host);
-            if (!token) throw new Error(`no token for ${remote.host} (run gh auth login)`);
-            return fetchSource(remote, source, rest, token);
-          })(),
-        );
+      let remote = null;
+      let rows;
+      if (trigger.type === "linear" || trigger.type === "sentry") {
+        rows = await loadRows(trigger, deps, ctx.store, cache);
+      } else {
+        remote = await remoteFor(project.path);
+        if (!remote) throw new Error("project origin is not a GitHub repo");
+        const source = sourceFor(trigger.event);
+        const cacheKey = `${remote.host}/${remote.owner}/${remote.repo}|${source}`;
+        if (!cache.has(cacheKey)) {
+          cache.set(
+            cacheKey,
+            (async () => {
+              const token = await tokenFor(remote.host);
+              if (!token) throw new Error(`no token for ${remote.host} (run gh auth login)`);
+              return fetchSource(remote, source, rest, token);
+            })(),
+          );
+        }
+        rows = await cache.get(cacheKey);
       }
-      const rows = await cache.get(cacheKey);
-      const { all, matched } = matchRows(trigger, rows, remote);
-      if (auto.lastError && auto.lastError.startsWith(POLL_ERROR)) {
+      const { all, matched } = matchRows(trigger, rows, remote || { host: "", owner: "", repo: "" });
+      const prefix = pollErrorPrefix(trigger.type);
+      if (auto.lastError && auto.lastError.startsWith(prefix)) {
         patchAutomation(ctx.store, auto.id, { lastError: null });
         ctx.store.save();
       }
       const cursor = auto.triggerCursor;
       if (cursor == null) {
         // Baseline: an empty repo starts at the zero of its key type.
-        const zero = trigger.event === "ci_completed" ? "" : 0;
+        // Linear/Sentry and ci_completed key on ISO timestamps (string `>`).
+        const zero =
+          trigger.event === "ci_completed" || trigger.type === "linear" || trigger.type === "sentry"
+            ? ""
+            : 0;
         patchAutomation(ctx.store, auto.id, { triggerCursor: maxKey(all, zero) });
         ctx.store.save();
         continue;
@@ -362,13 +436,13 @@ async function pollTriggers(ctx, firing) {
       try {
         await ctx.fireRun(
           ctx.store.getAutomation(auto.id),
-          formatTriggerNote(`GitHub ${trigger.event} on ${remote.owner}/${remote.repo}`, fresh),
+          formatTriggerNote(triggerNoteTitle(trigger, remote), fresh),
         );
       } finally {
         firing.delete(auto.id);
       }
     } catch (err) {
-      const msg = POLL_ERROR + (err && err.message ? String(err.message) : String(err));
+      const msg = pollErrorPrefix(trigger.type) + (err && err.message ? String(err.message) : String(err));
       if (auto.lastError !== msg) {
         patchAutomation(ctx.store, auto.id, { lastError: msg });
         ctx.store.save();

@@ -414,3 +414,136 @@ describe("event-triggered automations", () => {
     }
   });
 });
+
+describe("Linear and Sentry pollTriggers (#1588)", () => {
+  let tmpDir;
+  let store;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-trig-"));
+    store = new Store(path.join(tmpDir, "store.json"));
+    store.setProjects([{ id: "p1", slug: "acme/app", name: "app", path: tmpDir }]);
+    store.saveNow();
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("baselines Linear created, then batches, and records a missing-key error without the breaker", async () => {
+    const auto = services.addAutomation(store, {
+      projectId: "p1",
+      name: "Lin",
+      prompt: "triage",
+      provider: "claude",
+      preset: "hourly",
+      trigger: { event: "linear_issue_created" },
+    });
+    let nodes = [{ identifier: "ENG-1", title: "old", url: "u1", createdAt: "2026-10-11T01:00:00Z", team: { key: "ENG" } }];
+    const started = [];
+    const sched = startScheduler({
+      store,
+      runner: { startRun: async (input) => { started.push(input); return { runId: "r" }; } },
+      intervalMs: 60 * 60 * 1000,
+      triggerDeps: {
+        linearGraphql: async () => nodes,
+      },
+    });
+    store.setSettings({ linearApiKey: "k" });
+    try {
+      await sched.tick();
+      assert.equal(started.length, 0);
+      assert.equal(store.getAutomation(auto.id).triggerCursor, "2026-10-11T01:00:00Z");
+      nodes = [
+        { identifier: "ENG-3", title: "c", url: "u3", createdAt: "2026-10-11T03:00:00Z", team: { key: "ENG" } },
+        { identifier: "ENG-2", title: "b", url: "u2", createdAt: "2026-10-11T02:00:00Z", team: { key: "ENG" } },
+        nodes[0],
+      ];
+      await sched.tick();
+      assert.equal(started.length, 1);
+      assert.match(started[0].prompt, /\[Trigger\] Linear issue created \(2 new events\)/);
+      assert.ok(started[0].prompt.indexOf("ENG-2") < started[0].prompt.indexOf("ENG-3"));
+      assert.equal(store.getAutomation(auto.id).triggerCursor, "2026-10-11T03:00:00Z");
+    } finally {
+      sched.stop();
+    }
+
+    const missing = services.addAutomation(store, {
+      projectId: "p1",
+      name: "Lin2",
+      prompt: "x",
+      provider: "claude",
+      preset: "hourly",
+      trigger: { event: "linear_issue_created" },
+    });
+    store.setSettings({ linearApiKey: null });
+    const prev = process.env.LINEAR_API_KEY;
+    delete process.env.LINEAR_API_KEY;
+    const errSched = startScheduler({
+      store,
+      runner: { startRun: async () => ({}) },
+      intervalMs: 60 * 60 * 1000,
+      triggerDeps: { linearGraphql: async () => { throw new Error("should not fetch"); } },
+    });
+    try {
+      await errSched.tick();
+    } finally {
+      errSched.stop();
+      if (prev != null) process.env.LINEAR_API_KEY = prev;
+    }
+    const after = store.getAutomation(missing.id);
+    assert.match(after.lastError, /^Linear trigger: no api key/);
+    assert.equal(after.consecutiveFailures, 0);
+    assert.equal(after.enabled, true);
+  });
+
+  it("Sentry missing token is a poll error; happy path notes org/project", async () => {
+    const auto = services.addAutomation(store, {
+      projectId: "p1",
+      name: "Sen",
+      prompt: "fix",
+      provider: "claude",
+      preset: "hourly",
+      trigger: { event: "sentry_issue", org: "acme", project: "pump" },
+    });
+    const errSched = startScheduler({
+      store,
+      runner: { startRun: async () => ({}) },
+      intervalMs: 60 * 60 * 1000,
+      triggerDeps: { sentryIssues: async () => [] },
+    });
+    try {
+      await errSched.tick();
+    } finally {
+      errSched.stop();
+    }
+    assert.match(store.getAutomation(auto.id).lastError, /^Sentry trigger: no auth token/);
+    assert.equal(store.getAutomation(auto.id).enabled, true);
+
+    const prevSentry = process.env.SENTRY_AUTH_TOKEN;
+    process.env.SENTRY_AUTH_TOKEN = "st";
+    let rows = [{ firstSeen: "2026-10-11T01:00:00Z", shortId: "P-1", title: "old", permalink: "p" }];
+    const started = [];
+    const ok = startScheduler({
+      store,
+      runner: { startRun: async (input) => { started.push(input); return { runId: "r" }; } },
+      intervalMs: 60 * 60 * 1000,
+      triggerDeps: { sentryIssues: async () => rows },
+    });
+    try {
+      await ok.tick();
+      assert.equal(started.length, 0);
+      rows = [
+        { firstSeen: "2026-10-11T02:00:00Z", shortId: "P-2", title: "new", permalink: "p2" },
+        rows[0],
+      ];
+      await ok.tick();
+      assert.equal(started.length, 1);
+      assert.match(started[0].prompt, /\[Trigger\] Sentry issue on acme\/pump \(1 new event\)/);
+    } finally {
+      ok.stop();
+      if (prevSentry == null) delete process.env.SENTRY_AUTH_TOKEN;
+      else process.env.SENTRY_AUTH_TOKEN = prevSentry;
+    }
+  });
+});
