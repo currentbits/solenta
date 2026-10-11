@@ -338,7 +338,8 @@ async function runAutomation(ctx, auto, now, opts) {
  */
 function listAutomationRuns(store, automationId) {
   const id = automationId != null ? String(automationId) : "";
-  const auto = store.getAutomation(id);
+  const { mergeAutomations } = require("./automations-file.js");
+  const auto = mergeAutomations(store, Date.now()).find((a) => a.id === id);
   if (!auto) {
     throw new Error(`Unknown automation: ${id}`);
   }
@@ -398,7 +399,7 @@ async function runNow(ctx, input) {
     }
   }
   ensureOverlay(ctx.store, auto);
-  await runAutomation(ctx, ctx.store.getAutomation(id) || auto, Date.now(), { rethrow: true });
+  await runAutomation(ctx, auto, Date.now(), { rethrow: true });
   return mergeAutomations(ctx.store, Date.now()).find((a) => a.id === id);
 }
 

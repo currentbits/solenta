@@ -7,6 +7,8 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import * as React from "react";
 import { inAct, mount } from "./support/dom.ts";
+import { createFakeCoder } from "./support/fakeCoder.ts";
+import { useCoderWorkflows } from "../src/coder/useCoderWorkflows";
 import { AutomationsView } from "../src/components/AutomationsView";
 import type {
   AutomationInfo,
@@ -1347,6 +1349,52 @@ describe("AutomationsView", () => {
     assert.equal(m.query("[data-automations-approve]"), null);
     await m.click(m.query("[data-automation-run]"));
     assert.deepEqual(runs, [["shared:p1:pr-triage", undefined]]);
+    m.unmount();
+  });
+});
+
+describe("useCoderWorkflows approve-and-run", () => {
+  it("refreshes projects after runNow with a hash", async () => {
+    const fake = createFakeCoder({
+      automations: [auto({ id: "shared:p1:nightly", scope: "project" })],
+      projects: [
+        {
+          ...p1,
+          automationsFile: { hash: "a".repeat(64), trusted: false, count: 1 },
+        },
+      ],
+    });
+    const seen: ProjectInfo[][] = [];
+    let runNow:
+      | ((id: string, hash?: string) => Promise<AutomationInfo>)
+      | null = null;
+    function Harness() {
+      const selectedRef = React.useRef<string | null>(null);
+      const threadsRef = React.useRef([]);
+      const hook = useCoderWorkflows({
+        api: fake.api,
+        selectedThreadId: null,
+        setWorkflows: () => {},
+        setWorkflowListError: () => {},
+        setAutomations: () => {},
+        setProjects: (next) => {
+          seen.push(typeof next === "function" ? next([]) : next);
+        },
+        setDetail: () => {},
+        setError: () => {},
+        selectedRef,
+        threadsRef,
+        applyThreads: () => {},
+      });
+      runNow = hook.runAutomationNow;
+      return null;
+    }
+    const m = await mount(<Harness />);
+    await runNow!("shared:p1:nightly", "a".repeat(64));
+    assert.equal(fake.of("automations.runNow").length, 1);
+    assert.equal(fake.of("projects.list").length, 1);
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0][0].id, "p1");
     m.unmount();
   });
 });

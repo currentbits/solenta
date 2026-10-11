@@ -105,11 +105,13 @@ export function useCoderWorkflows({
       } finally {
         // runNow rethrows the agent failure AFTER the main process has already
         // written lastError, so the row only shows it if we resync on the
-        // throwing path too (issue #85).
+        // throwing path too (issue #85). Approve-and-run also trusts the file,
+        // so refresh projects the same way trustAutomationsFile does.
         await refreshAutomations();
+        await api.projects.list().then(setProjects);
       }
     },
-    [api, refreshAutomations],
+    [api, refreshAutomations, setProjects],
   );
 
   const trustAutomationsFile = useCallback(
