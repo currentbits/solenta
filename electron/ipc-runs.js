@@ -2,7 +2,7 @@
 
 const services = require("./services.js");
 const automations = require("./automations.js");
-const { distillThread } = require("./distill.js");
+const { distillThread, distillMemory } = require("./distill.js");
 
 /** IPC_HANDLERS rows for workflows:*, runs:*, automations:*; ipc.js spreads them in. */
 module.exports = {
@@ -14,6 +14,9 @@ module.exports = {
   },
   "runs:distill": async (ctx, input) => {
     return distillThread(ctx.store, input && input.threadId);
+  },
+  "runs:distillMemory": async (ctx, input) => {
+    return distillMemory(ctx.store, input && input.threadId);
   },
   "workflows:remove": async (ctx, input) => {
     return services.removeTemplate(ctx.store, input);

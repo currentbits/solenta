@@ -484,6 +484,36 @@ describe("MemoryTab wiring the reviewer's mutations exposed", () => {
     m.unmount();
   });
 
+  it("opens a distilled thread draft for review and saves it with its thread citation", async () => {
+    const calls = newCalls();
+    let applied = 0;
+    const draft = {
+      type: "convention" as const,
+      title: "Retarget stacked PRs first",
+      body: "Retarget the next PR to main before deleting its base.",
+      citations: [{ kind: "thread" as const, id: "t-9" }],
+    };
+    const m = await mount(
+      cloneElement(tab({}, calls), {
+        memoryDraft: draft,
+        onMemoryDraftApplied: () => applied++,
+      }),
+    );
+    assert.equal(applied, 1, "the draft is consumed once");
+    assert.equal(calls.store.length, 0, "nothing lands before the user saves");
+    const title = m.query('input[placeholder="Title"]') as HTMLInputElement;
+    assert.equal(title.value, draft.title);
+    await m.click(m.byText("Save"));
+    assert.deepEqual(calls.store[0], {
+      type: "convention",
+      title: draft.title,
+      body: draft.body,
+      project: "coder",
+      citations: draft.citations,
+    });
+    m.unmount();
+  });
+
   it("scopes a newly stored memory to the current project", async () => {
     const calls = newCalls();
     const m = await mount(tab({}, calls));

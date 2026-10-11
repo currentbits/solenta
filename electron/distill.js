@@ -264,6 +264,114 @@ async function distillThread(store, threadId, opts = {}) {
   return fallback;
 }
 
+const MEMORY_TYPES = ["knowledge", "convention", "strategy"];
+const MEMORY_TITLE_MAX = 120;
+const MEMORY_BODY_MAX = 2000;
+
+/**
+ * @param {Array<{ role?: string, text?: string }>} messages
+ * @returns {string}
+ */
+function lastAssistantText(messages) {
+  const list = messages || [];
+  for (let i = list.length - 1; i >= 0; i--) {
+    const m = list[i];
+    if (!m || m.role !== "assistant") continue;
+    const text = String(m.text || "").trim();
+    if (text) return text;
+  }
+  return "";
+}
+
+/**
+ * Deterministic memory draft when fm is missing or returns junk: the thread
+ * title plus its closing summary, for the user to trim before saving.
+ *
+ * @param {object} thread
+ * @param {Array<{ role?: string, text?: string }>} messages
+ * @returns {{ type: string, title: string, body: string, citations: object[] }}
+ */
+function fallbackMemory(thread, messages) {
+  const title = thread && thread.title != null ? String(thread.title).trim() : "";
+  const prompt = firstUserText(messages);
+  return {
+    type: "knowledge",
+    title: clip(
+      title && title !== "New Thread" ? title : prompt.split(/\r?\n/)[0] || "Lesson from a thread",
+      MEMORY_TITLE_MAX,
+    ),
+    body: clip(lastAssistantText(messages) || prompt, MEMORY_BODY_MAX),
+    citations: [{ kind: "thread", id: String(thread.id) }],
+  };
+}
+
+/**
+ * @param {object} thread
+ * @param {Array<{ role?: string, text?: string }>} messages
+ * @returns {string}
+ */
+function buildMemoryPrompt(thread, messages) {
+  return [
+    "Distill the durable lesson from this finished agent thread into one shared-memory entry for future agents on this project.",
+    "Reply with ONLY JSON (no markdown fences, no explanation) matching:",
+    '{"type":"knowledge","title":"...","body":"..."}',
+    "",
+    "Rules:",
+    '- type is "convention" for a standing rule to follow, "strategy" for a reusable approach, otherwise "knowledge"',
+    "- title is one specific sentence, at most 120 characters",
+    "- body keeps only non-obvious decisions, gotchas and their reasons; no play-by-play of the work",
+    "- body is at most 1500 characters",
+    "",
+    buildTranscript(thread, messages) || "(empty thread)",
+  ].join("\n");
+}
+
+/**
+ * @param {string | null} raw
+ * @param {object} thread
+ * @returns {{ type: string, title: string, body: string, citations: object[] } | null}
+ */
+function parseDistilledMemory(raw, thread) {
+  const obj = extractJsonObject(raw);
+  if (!obj) return null;
+  const title = clip(obj.title, MEMORY_TITLE_MAX);
+  const body = clip(obj.body, MEMORY_BODY_MAX);
+  if (!title || !body) return null;
+  return {
+    type: MEMORY_TYPES.includes(obj.type) ? obj.type : "knowledge",
+    title,
+    body,
+    citations: [{ kind: "thread", id: String(thread.id) }],
+  };
+}
+
+/**
+ * Distill a finished thread into a shared-memory draft (#247). Nothing is
+ * stored: the renderer opens it in the Memory tab for review. Same fm
+ * best-effort contract as distillThread.
+ *
+ * @param {object} store
+ * @param {string} threadId
+ * @param {{ env?: NodeJS.ProcessEnv, fmRun?: (prompt: string, opts?: object) => Promise<string | null> }} [opts]
+ */
+async function distillMemory(store, threadId, opts = {}) {
+  const id = threadId != null ? String(threadId) : "";
+  const thread = store.getThread(id);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${id}`);
+  }
+  const messages = store.getMessages(id) || [];
+  try {
+    const run = opts.fmRun || fmRun;
+    const raw = await run(buildMemoryPrompt(thread, messages), { env: opts.env });
+    const parsed = parseDistilledMemory(raw, thread);
+    if (parsed) return parsed;
+  } catch {
+    // Missing fm, timeout, or a thrown parser: same as junk.
+  }
+  return fallbackMemory(thread, messages);
+}
+
 module.exports = {
   DISTILL_PROMPT_LIMIT,
   PHASE_NAME_MAX,
@@ -272,4 +380,7 @@ module.exports = {
   fallbackDistill,
   buildDistillPrompt,
   parseDistilled,
+  distillMemory,
+  fallbackMemory,
+  parseDistilledMemory,
 };
