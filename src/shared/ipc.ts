@@ -2558,6 +2558,12 @@ export interface PlanIssue {
   updatedAt?: string;
   /** ISO creation timestamp from gh, when present. */
   createdAt?: string;
+  /**
+   * Open blocker issue numbers (GitHub blocked-by or `blocked-by:#N` labels).
+   * listIssues drops blockers that already landed; absent when unblocked.
+   * Auto-dispatch skips cards that carry it.
+   */
+  blockedBy?: number[];
 }
 
 /** Per-project listIssues result. Failures stay in-band so the UI can retry. */
