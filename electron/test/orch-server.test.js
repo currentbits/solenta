@@ -859,6 +859,45 @@ describe("orch-server tool handlers", () => {
     assert.deepEqual(deps.stopped, [{ threadId: "t2" }]);
   });
 
+  // Issue #1432: omitting fromThreadId used to skip the cross-thread gate
+  // because assertCrossThreadApproved treated an empty caller as self.
+  it("thread_stop of another thread without fromThreadId is refused (#1432)", async () => {
+    const deps = makeDeps();
+    deps.boundThreadId = "t2";
+    const h = createToolHandlers(deps);
+    await assert.rejects(
+      () => h.thread_stop({ threadId: "t1", projectId: "p1" }),
+      /user's decision/,
+    );
+    assert.equal(deps.stopped.length, 0);
+  });
+
+  it("thread_stop of self still works without fromThreadId (#1432)", async () => {
+    const deps = makeDeps();
+    deps.boundThreadId = "t2";
+    const h = createToolHandlers(deps);
+    const out = await h.thread_stop({ threadId: "t2", projectId: "p1" });
+    assert.deepEqual(out, { threadId: "t2" });
+    assert.deepEqual(deps.stopped, [{ threadId: "t2" }]);
+  });
+
+  it("thread_stop rejects a conflicting claimed fromThreadId (#1432)", async () => {
+    const deps = makeDeps();
+    deps.boundThreadId = "t2";
+    const h = createToolHandlers(deps);
+    await assert.rejects(
+      () =>
+        h.thread_stop({
+          threadId: "t1",
+          projectId: "p1",
+          fromThreadId: "t1",
+          approved: true,
+        }),
+      /fromThreadId/,
+    );
+    assert.equal(deps.stopped.length, 0);
+  });
+
   // Issue #109: an agent in one project forked a thread it picked off
   // threads_list by title, spawning workers on another project's repo.
   it("thread_fork and thread_send reject a thread in another project", async () => {
@@ -892,6 +931,7 @@ describe("orch-server tool handlers", () => {
       threadId: "t1",
       projectId: "p1",
       archived: true,
+      fromThreadId: "t1",
     });
     assert.deepEqual(out, { threadId: "t1", archived: true });
     assert.equal(deps.store.getThread("t1").archived, true);
@@ -916,6 +956,7 @@ describe("orch-server tool handlers", () => {
       threadId: "t1",
       projectId: "p1",
       archived: true,
+      fromThreadId: "t1",
     });
     assert.equal(deps.store.getThread("t1").archived, true);
     assert.deepEqual(deps.retired, ["t1"]);
@@ -946,6 +987,7 @@ describe("orch-server tool handlers", () => {
       threadId: "t1",
       projectId: "p1",
       archived: true,
+      fromThreadId: "t1",
     });
     assert.deepEqual(out, { threadId: "t1", archived: true });
     assert.equal(deps.store.getThread("t1").archived, true);
@@ -963,6 +1005,7 @@ describe("orch-server tool handlers", () => {
       threadId: "t2",
       projectId: "p1",
       archived: true,
+      fromThreadId: "t2",
     });
     assert.equal(out.archived, true);
     assert.equal(deps.store.getThread("t2").archived, true);
@@ -1068,7 +1111,11 @@ describe("orch-server tool handlers", () => {
   it("thread_stop stops a run; rejects unknown and other-project threads", async () => {
     const deps = makeDeps();
     const h = createToolHandlers(deps);
-    const out = await h.thread_stop({ threadId: "t2", projectId: "p1" });
+    const out = await h.thread_stop({
+      threadId: "t2",
+      projectId: "p1",
+      fromThreadId: "t2",
+    });
     assert.deepEqual(out, { threadId: "t2" });
     assert.deepEqual(deps.stopped, [{ threadId: "t2" }]);
     await assert.rejects(
@@ -1531,15 +1578,20 @@ describe("orch-server HTTP", () => {
     const cfg = JSON.parse(
       fs.readFileSync(path.join(tmpDir, "orch-server.json"), "utf8"),
     );
-    const res = await mcpPost(st.port, cfg.token, {
-      jsonrpc: "2.0",
-      id: 4,
-      method: "tools/call",
-      params: {
-        name: "thread_archive",
-        arguments: { threadId: "t1", projectId: "p1", archived: true },
+    const res = await mcpPost(
+      st.port,
+      cfg.token,
+      {
+        jsonrpc: "2.0",
+        id: 4,
+        method: "tools/call",
+        params: {
+          name: "thread_archive",
+          arguments: { threadId: "t1", projectId: "p1", archived: true },
+        },
       },
-    });
+      { query: "threadId=t1" },
+    );
     assert.equal(res.status, 200);
     const payload = JSON.parse(res.body.result.content[0].text);
     assert.deepEqual(payload, { threadId: "t1", archived: true });
@@ -1838,6 +1890,17 @@ describe("orch-server provider injection", () => {
           `mcp_servers.coder-threads.url="http://127.0.0.1:${orchPort}/mcp?projectId=proj-1"`,
         ),
         `threads url must bind ?projectId= (#927), got ${JSON.stringify(bound)}`,
+      );
+      const boundCaller = getCodexMcpArgs({
+        projectPath: "/tmp/solenta",
+        projectId: "proj-1",
+        threadId: "thr-1",
+      });
+      assert.ok(
+        boundCaller.includes(
+          `mcp_servers.coder-threads.url="http://127.0.0.1:${orchPort}/mcp?projectId=proj-1&threadId=thr-1"`,
+        ),
+        `threads url must bind ?threadId= (#1432), got ${JSON.stringify(boundCaller)}`,
       );
     } finally {
       sup.stop();

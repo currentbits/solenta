@@ -131,6 +131,7 @@ function createMuseRun(ctx) {
           mcpServers: kimiMcpServersForRun({
             projectId: thread.projectId,
             projectPath: localCwd || project.path,
+            threadId,
           }),
           hookCommand: museGuardrailHookCommand({
             hookPath: path.join(dest, "muse-guardrail-hook.js"),

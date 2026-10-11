@@ -102,6 +102,7 @@ function spawnAgentKimi(opts) {
         mcpServers: kimiMcpServersForRun({
           projectId,
           projectPath: cwd,
+          threadId,
         }),
       });
       kimiEnv = { KIMI_CODE_HOME: dest };

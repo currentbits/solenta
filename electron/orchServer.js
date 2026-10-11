@@ -304,6 +304,9 @@ async function loadOrCreateConfig(file) {
  * @param {string | null} [deps.boundProjectId] - caller identity from the MCP
  *   URL (?projectId=). When set, it wins over a claimed args.projectId so a
  *   kimi/grok session cannot name another project (issue #671).
+ * @param {string | null} [deps.boundThreadId] - caller thread from the MCP
+ *   URL (?threadId=). When set, it is the caller for fromThreadId / merge
+ *   self; a conflicting claim is rejected (issue #1432).
  */
 function createToolHandlers(deps) {
   const { store, runner, forkThread, getProvider, broadcast, userDataPath } =
@@ -314,6 +317,9 @@ function createToolHandlers(deps) {
   const previewApi = deps.preview || require("./preview.js");
   const boundProjectId = deps.boundProjectId
     ? String(deps.boundProjectId)
+    : "";
+  const boundThreadId = deps.boundThreadId
+    ? String(deps.boundThreadId)
     : "";
 
   /**
@@ -466,7 +472,7 @@ function createToolHandlers(deps) {
    * @returns {{ self: any, worker: any }}
    */
   function requireLandableWorker(args) {
-    const self = store.getThread(args.threadId);
+    const self = store.getThread(resolveBoundCaller(args.threadId));
     if (!self) {
       throw new Error(`Unknown thread: ${args.threadId}`);
     }
@@ -535,24 +541,62 @@ function createToolHandlers(deps) {
   }
 
   /**
+   * Caller id for fromThreadId: the bound MCP session wins. A conflicting
+   * claim is rejected so a worker cannot impersonate its lead (#1432).
+   * @param {{ fromThreadId?: unknown }} args
+   */
+  function resolveCallerId(args) {
+    const claimed =
+      args.fromThreadId != null && String(args.fromThreadId) !== ""
+        ? String(args.fromThreadId)
+        : "";
+    if (boundThreadId && claimed && claimed !== boundThreadId) {
+      throw new Error(
+        `fromThreadId ${claimed} does not match the bound caller ` +
+          `${boundThreadId}. The caller identity comes from the MCP session, ` +
+          `not the tool arguments.`,
+      );
+    }
+    return claimed || boundThreadId;
+  }
+
+  /**
+   * Caller id when the tool uses threadId as self (merge / PR).
+   * @param {unknown} claimed
+   */
+  function resolveBoundCaller(claimed) {
+    const id = claimed != null && String(claimed) !== "" ? String(claimed) : "";
+    if (boundThreadId && id && id !== boundThreadId) {
+      throw new Error(
+        `threadId ${id} does not match the bound caller ${boundThreadId}. ` +
+          `The caller identity comes from the MCP session, not the tool arguments.`,
+      );
+    }
+    return boundThreadId || id;
+  }
+
+  /**
    * Cross-thread archive/stop stay human-gated in every permission mode
-   * (issue #551 / #322). Self-archive (no fromThreadId, or from === target)
-   * keeps the existing ungated path so a thread can still fold itself.
+   * (issue #551 / #322). Self is only when the resolved caller equals the
+   * target: omitting fromThreadId is not proof of self (#1432).
    *
    * @param {{ fromThreadId?: unknown, threadId?: unknown, projectId?: unknown, approved?: unknown }} args
    * @param {string} action
    */
   function assertCrossThreadApproved(args, action) {
-    const fromId = args.fromThreadId != null ? String(args.fromThreadId) : "";
+    const fromId = resolveCallerId(args);
     const targetId = String(args.threadId || "");
-    if (!fromId || fromId === targetId) return;
-    const self = store.getThread(fromId);
-    if (!self) {
-      throw new Error(`Unknown thread: ${fromId}`);
+    if (fromId && fromId === targetId) return;
+    let auto = false;
+    if (fromId) {
+      const self = store.getThread(fromId);
+      if (!self) {
+        throw new Error(`Unknown thread: ${fromId}`);
+      }
+      assertSameProject(self, args.projectId);
+      auto =
+        typeof runner.isAutoTurn === "function" && runner.isAutoTurn(self.id);
     }
-    assertSameProject(self, args.projectId);
-    const auto =
-      typeof runner.isAutoTurn === "function" && runner.isAutoTurn(self.id);
     if (args.approved === true && !auto) return;
     throw new Error(
       `${action} is the user's decision in every permission mode, including ` +
@@ -703,15 +747,15 @@ function createToolHandlers(deps) {
     assertSameProject(thread, args.projectId);
 
     let from = null;
-    if (args.fromThreadId) {
-      from = store.getThread(args.fromThreadId);
+    const fromId = resolveCallerId(args);
+    if (fromId && fromId !== String(thread.id)) {
+      from = store.getThread(fromId);
       if (!from) {
-        throw new Error(`Unknown thread: ${args.fromThreadId}`);
+        throw new Error(`Unknown thread: ${fromId}`);
       }
       assertSameProject(from, args.projectId);
-      if (String(from.id) === String(thread.id)) {
-        throw new Error("Cannot thread_send to yourself.");
-      }
+    } else if (args.fromThreadId && String(args.fromThreadId) === String(thread.id)) {
+      throw new Error("Cannot thread_send to yourself.");
     }
 
     const running =
@@ -2102,9 +2146,11 @@ function createOrchServer(opts) {
           mcp = pairing.buildExternalMcpServer(sdk, handlers, pairingAuth.pairing);
         } else {
           const boundProjectId = url.searchParams.get("projectId") || "";
+          const boundThreadId = url.searchParams.get("threadId") || "";
           const handlers = createToolHandlers({
             ...handlerDeps,
             boundProjectId: boundProjectId || null,
+            boundThreadId: boundThreadId || null,
           });
           const boundProject =
             boundProjectId && typeof store.getProject === "function"

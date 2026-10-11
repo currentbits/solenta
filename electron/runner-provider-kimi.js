@@ -366,6 +366,7 @@ function createKimiRun(ctx) {
           mcpServers: kimiMcpServersForRun({
             projectId: thread.projectId,
             projectPath: localCwd || project.path,
+            threadId,
           }),
         });
         kimiEnv = { KIMI_CODE_HOME: dest };

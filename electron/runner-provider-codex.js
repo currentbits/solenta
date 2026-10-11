@@ -155,6 +155,7 @@ function createCodexRun(ctx) {
       ...getCodexMcpArgs({
         projectPath: localCwd,
         projectId: thread.projectId,
+        threadId,
       }),
     ];
     if (codexExecConfig.length) args.push(...codexExecConfig);
