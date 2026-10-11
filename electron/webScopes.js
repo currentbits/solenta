@@ -294,6 +294,10 @@ const BY_SCOPE = {
     "pairing:revoke",
     "pairing:approve",
     "pairing:reject",
+    "pairing:setPublic",
+    "pairing:listConsents",
+    "pairing:approveConsent",
+    "pairing:denyConsent",
     // Desktop-only already (ipc-web.js); a device must not mint or revoke devices.
     "web:status",
     "web:setEnabled",

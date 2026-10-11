@@ -8,6 +8,7 @@ const { createRequire } = require("node:module");
 
 const { registerMcpServer, unregisterMcpServer } = require("./memory-sup.js");
 const pairing = require("./pairing.js");
+const oauth = require("./mcpOauth.js");
 const { startWithPoolFailover, poolFromStore } = require("./subagentPool.js");
 const { resolveBin, isBinAvailable } = require("./providers.js");
 const {
@@ -2107,9 +2108,17 @@ function createOrchServer(opts) {
         return;
       }
 
+      const handled = await oauth.handleRequest(req, res, url, {
+        userDataPath,
+        port: config.port,
+        notifyConsent: opts.notifyConsent,
+      });
+      if (handled) return;
+
       if (url.pathname === "/mcp") {
         const presented = pairing.presentedTokenFromRequest(req, url);
-        const sessionOk = authorized(req, config.token, url);
+        const loopback = oauth.isLoopbackHost(req.headers.host);
+        const sessionOk = loopback && authorized(req, config.token, url);
         let pairingAuth = null;
         if (!sessionOk) {
           pairingAuth = pairing.authorizeToken(userDataPath, presented, {
@@ -2117,7 +2126,13 @@ function createOrchServer(opts) {
           });
           if (!pairingAuth.ok) {
             const status = pairingAuth.reason === "rate_limited" ? 429 : 401;
-            res.writeHead(status).end();
+            const issuer = oauth.issuerFromHost(req.headers.host, config.port);
+            res.writeHead(status, {
+              "www-authenticate": oauth.wwwAuthenticate(
+                `${issuer}/.well-known/oauth-protected-resource`,
+              ),
+            });
+            res.end();
             return;
           }
         }

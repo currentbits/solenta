@@ -2216,11 +2216,12 @@ describe("SettingsModal focus trap", () => {
 
 describe("SettingsModal integrations", () => {
   afterEach(() => {
-    delete (window as unknown as { coder?: unknown }).coder;
+    if (typeof window !== "undefined") delete (window as unknown as { coder?: unknown }).coder;
   });
 
   it("shows the MCP URL and mints a pairing with copy-ready JSON", async () => {
     const created: unknown[] = [];
+    (await mount(<div />)).unmount();
     (window as unknown as { coder: { pairing: unknown } }).coder = {
       pairing: {
         list: async () => ({
@@ -2229,6 +2230,15 @@ describe("SettingsModal integrations", () => {
             running: true,
             port: 7422,
             url: "http://127.0.0.1:7422/mcp",
+            publicUrl: "https://mac.tail1.ts.net:8443/mcp",
+            publicEnabled: true,
+            funnel: {
+              installed: true,
+              loggedIn: true,
+              host: "mac.tail1.ts.net",
+              serving: true,
+              url: "https://mac.tail1.ts.net:8443",
+            },
           },
         }),
         create: async (input: unknown) => {
@@ -2275,6 +2285,10 @@ describe("SettingsModal integrations", () => {
     assert.ok(m.query("[data-copy-mcp-url]"), "copy MCP URL");
     assert.ok(m.query("[data-copy-claude-json]"), "copy JSON");
     assert.ok(m.query("[data-copy-pairing-prompt]"), "copy prompt");
+    assert.ok(m.query("[data-mcp-public-url]"), "public URL");
+    assert.ok(m.query("[data-copy-mcp-public-url]"), "copy public URL");
+    assert.match(m.text(), /Tailscale Funnel/);
+    assert.match(m.text(), /public internet/);
     m.unmount();
   });
 });

@@ -3435,12 +3435,42 @@ export interface PairingInfo {
   launchesPerHour: number;
   readsPerMinute: number;
   expired?: boolean;
+  kind?: "token" | "oauth";
+  clientId?: string | null;
+}
+
+export interface PairingFunnelStatus {
+  installed: boolean;
+  loggedIn: boolean;
+  host: string | null;
+  serving: boolean;
+  url: string | null;
+  error?: string;
 }
 
 export interface PairingServerInfo {
   running: boolean;
   port: number | null;
   url: string | null;
+  publicUrl?: string | null;
+  publicEnabled?: boolean;
+  funnel?: PairingFunnelStatus;
+}
+
+export interface OauthConsentInfo {
+  id: string;
+  clientName: string;
+  redirectUri: string;
+  createdAt: number;
+}
+
+export interface OauthConsentApproveInput {
+  id: string;
+  capabilities?: PairingCapability[];
+  projectIds?: string[] | null;
+  ttlMs?: number | null;
+  requireApproval?: boolean;
+  managedWorktree?: boolean;
 }
 
 export interface PairingList {
@@ -4313,6 +4343,11 @@ export interface CoderApi {
     revoke(input: { id: string }): Promise<PairingInfo>;
     approve(input: { threadId: string }): Promise<unknown>;
     reject(input: { threadId: string }): Promise<ThreadInfo>;
+    /** Opt-in Tailscale Funnel for /mcp (#1541). Desktop only. */
+    setPublic(input: { on: boolean }): Promise<PairingList>;
+    listConsents(): Promise<OauthConsentInfo[]>;
+    approveConsent(input: OauthConsentApproveInput): Promise<{ pairing: PairingInfo; redirect: string }>;
+    denyConsent(input: { id: string }): Promise<{ redirect: string }>;
   };
   /**
    * Solenta Web (#1512 I2): the in-app server switch, per-device tokens and
@@ -6008,6 +6043,8 @@ export interface CoderApi {
   on(channel: "terminal:data", cb: (push: TerminalDataPush) => void): () => void;
   /** Add project from URL: git clone progress (#1506). */
   on(channel: "clone:progress", cb: (push: CloneProgressPush) => void): () => void;
+  /** Desktop: a hosted agent is waiting on the in-app OAuth consent screen (#1541). */
+  on(channel: "pairing:consent", cb: (pending: OauthConsentInfo) => void): () => void;
 }
 
 declare global {

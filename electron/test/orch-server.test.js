@@ -1706,6 +1706,109 @@ describe("orch-server HTTP", () => {
     const parsed = JSON.parse(text);
     assert.deepEqual(parsed.map((p) => p.id), ["p1"]);
   });
+
+  it("publishes protected-resource and AS metadata, with a public Host as HTTPS", async () => {
+    const { orch } = await startOrch();
+    const port = orch.getStatus().port;
+    const local = await httpReq(port, { path: "/.well-known/oauth-protected-resource" });
+    assert.equal(local.status, 200);
+    assert.equal(local.json.resource, `http://127.0.0.1:${port}/mcp`);
+    assert.deepEqual(local.json.authorization_servers, [`http://127.0.0.1:${port}`]);
+
+    const pub = await httpReq(port, {
+      path: "/.well-known/oauth-authorization-server",
+      host: "mac.tail1.ts.net:8443",
+    });
+    assert.equal(pub.status, 200);
+    assert.equal(pub.json.issuer, "https://mac.tail1.ts.net:8443");
+    assert.equal(pub.json.authorization_endpoint, "https://mac.tail1.ts.net:8443/authorize");
+    assert.deepEqual(pub.json.code_challenge_methods_supported, ["S256"]);
+  });
+
+  it("rejects the session token on a public Host and advertises resource metadata", async () => {
+    const { orch } = await startOrch();
+    const port = orch.getStatus().port;
+    const cfg = JSON.parse(fs.readFileSync(path.join(tmpDir, "orch-server.json"), "utf8"));
+    const denied = await httpReq(port, {
+      method: "POST",
+      path: "/mcp",
+      host: "mac.tail1.ts.net:8443",
+      headers: {
+        authorization: `Bearer ${cfg.token}`,
+        "content-type": "application/json",
+      },
+      body: { jsonrpc: "2.0", id: 1, method: "initialize", params: {} },
+    });
+    assert.equal(denied.status, 401);
+    assert.match(String(denied.headers["www-authenticate"] || ""), /resource_metadata=/);
+    assert.match(String(denied.headers["www-authenticate"] || ""), /mac\.tail1\.ts\.net/);
+  });
+
+  it("lets an OAuth grant call /mcp, and revoke cuts it off", async () => {
+    const oauth = require("../mcpOauth.js");
+    oauth.resetForTests();
+    const { orch } = await startOrch();
+    const port = orch.getStatus().port;
+    const registered = await httpReq(port, {
+      method: "POST",
+      path: "/register",
+      headers: { "content-type": "application/json" },
+      body: {
+        client_name: "ChatGPT",
+        redirect_uris: ["https://chatgpt.com/connector/oauth/callback"],
+      },
+    });
+    assert.equal(registered.status, 201);
+    const clientId = registered.json.client_id;
+    const v = crypto.randomBytes(32).toString("base64url");
+    const challenge = crypto.createHash("sha256").update(v).digest("base64url");
+    const authorize = await httpReq(port, {
+      path:
+        `/authorize?client_id=${clientId}` +
+        `&redirect_uri=${encodeURIComponent("https://chatgpt.com/connector/oauth/callback")}` +
+        `&code_challenge=${challenge}&code_challenge_method=S256&state=s1`,
+    });
+    assert.equal(authorize.status, 200);
+    const pending = oauth.listConsents()[0];
+    assert.ok(pending);
+    const approved = oauth.approveConsent(tmpDir, pending.id, { capabilities: ["read"] });
+    const code = new URL(approved.redirect).searchParams.get("code");
+    const tokenRes = await httpReq(port, {
+      method: "POST",
+      path: "/token",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "authorization_code",
+        code,
+        redirect_uri: "https://chatgpt.com/connector/oauth/callback",
+        client_id: clientId,
+        code_verifier: v,
+      }).toString(),
+    });
+    assert.equal(tokenRes.status, 200);
+    const access = tokenRes.json.access_token;
+    const ok = await mcpPost(port, access, {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: {
+        protocolVersion: "2025-03-26",
+        capabilities: {},
+        clientInfo: { name: "test", version: "0" },
+      },
+    });
+    assert.equal(ok.status, 200);
+
+    const pairingMod = require("../pairing.js");
+    pairingMod.revokePairing(tmpDir, pairingMod.listPairings(tmpDir).pairings[0].id);
+    const cut = await mcpPost(port, access, {
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/list",
+      params: {},
+    });
+    assert.equal(cut.status, 401);
+  });
 });
 
 describe("orch-server provider injection", () => {
@@ -2058,3 +2161,37 @@ process.exit(0);
     assert.equal(getCodexMcpArgs().length, 0);
   });
 });
+
+function httpReq(port, { method = "GET", path: p = "/", host, headers = {}, body }) {
+  return new Promise((resolve, reject) => {
+    const req = http.request(
+      {
+        hostname: "127.0.0.1",
+        port,
+        path: p,
+        method,
+        headers: {
+          ...(host ? { host } : {}),
+          ...headers,
+        },
+      },
+      (res) => {
+        const chunks = [];
+        res.on("data", (c) => chunks.push(c));
+        res.on("end", () => {
+          const text = Buffer.concat(chunks).toString("utf8");
+          let json = null;
+          try {
+            json = text ? JSON.parse(text) : null;
+          } catch {
+            json = null;
+          }
+          resolve({ status: res.statusCode, headers: res.headers, text, json });
+        });
+      },
+    );
+    req.on("error", reject);
+    if (body != null) req.end(typeof body === "string" ? body : JSON.stringify(body));
+    else req.end();
+  });
+}
