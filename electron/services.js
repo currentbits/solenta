@@ -190,6 +190,7 @@ const {
   addAutomation,
   updateAutomation,
   removeAutomation,
+  trustFile,
   appStatus,
 } = require("./services-settings.js");
 
@@ -366,6 +367,7 @@ module.exports = {
   addAutomation,
   updateAutomation,
   removeAutomation,
+  trustFile,
   appStatus,
   assertUnderDailyBudget,
   assertUnderOrchestrationBudget,

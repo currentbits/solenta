@@ -246,9 +246,10 @@ async function pollTriggers(ctx, firing) {
   /** @type {Map<string, Promise<any[]>>} */
   const cache = new Map();
   const { patchAutomation } = require("./automations.js");
+  const { mergeAutomations, canAutoFire } = require("./automations-file.js");
 
-  for (const auto of ctx.store.getAutomations()) {
-    if (!auto || !auto.enabled || !auto.trigger || firing.has(auto.id)) continue;
+  for (const auto of mergeAutomations(ctx.store, Date.now())) {
+    if (!canAutoFire(ctx.store, auto) || !auto.trigger || firing.has(auto.id)) continue;
     // A run is still going: leave the cursor alone so its events batch into
     // the next run instead of piling up parallel ones.
     if (auto.pendingRunThreadId) continue;

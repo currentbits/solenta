@@ -20,6 +20,7 @@ const {
 const { parseRepoConfig } = require("../repoConfig.js");
 const { Store } = require("../store.js");
 const services = require("../services.js");
+const { dueAutomations } = require("../automations.js");
 
 function tempRepo(automations) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-auto-"));
@@ -412,5 +413,55 @@ describe("project-scope writes", () => {
     assert.equal(file.setup, "npm ci");
     assert.equal(file.extra, true);
     assert.equal(file.automations[0].id, "pr-triage");
+  });
+});
+
+describe("fire gates", () => {
+  it("untrusted shared is never due", () => {
+    const now = Date.now();
+    const auto = {
+      id: "shared:p1:pr-triage",
+      scope: "project",
+      enabled: true,
+      nextRunAt: now - 1,
+    };
+    assert.equal(dueAutomations([auto], now).length, 1);
+
+    const dir = tempRepo([ROW]);
+    const store = new Store(path.join(dir, "store.json"));
+    store.setProjects([
+      { id: "p1", name: "p", path: dir, automationsTrust: "dead".repeat(16) },
+    ]);
+    store.setAutomations([
+      {
+        id: "shared:p1:pr-triage",
+        projectId: "p1",
+        scope: "project",
+        name: "PR triage",
+        prompt: ROW.prompt,
+        provider: "claude",
+        preset: "hourly",
+        hour: null,
+        enabled: true,
+        lastRunAt: null,
+        nextRunAt: now - 1,
+        lastError: null,
+      },
+    ]);
+    const shared = mergeAutomations(store, now).find((a) => a.scope === "project");
+    assert.equal(canAutoFire(store, shared), false);
+  });
+
+  it("trustFile persists a matching hash and rejects a stale one", () => {
+    const dir = tempRepo([ROW]);
+    const store = new Store(path.join(dir, "store.json"));
+    store.setProjects([{ id: "p1", name: "p", path: dir }]);
+    const hash = readAutomations(dir).hash;
+    assert.throws(
+      () => services.trustFile(store, { projectId: "p1", hash: "a".repeat(64) }),
+      /hash/,
+    );
+    services.trustFile(store, { projectId: "p1", hash });
+    assert.equal(store.getProject("p1").automationsTrust, hash);
   });
 });

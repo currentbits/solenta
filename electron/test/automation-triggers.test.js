@@ -251,4 +251,51 @@ describe("event-triggered automations", () => {
       sched.stop();
     }
   });
+
+  it("does not fire an enabled untrusted shared trigger", async () => {
+    const row = {
+      id: "pr-triage",
+      name: "PR triage",
+      prompt: "review new PRs",
+      provider: "claude",
+      model: null,
+      preset: "hourly",
+      hour: null,
+      trigger: { type: "github", event: "pr_opened" },
+    };
+    fs.writeFileSync(
+      path.join(tmpDir, "solenta.json"),
+      JSON.stringify({ automations: [row] }, null, 2),
+    );
+    store.setAutomations([
+      {
+        id: "shared:p1:pr-triage",
+        projectId: "p1",
+        scope: "project",
+        name: row.name,
+        prompt: row.prompt,
+        provider: "claude",
+        preset: "hourly",
+        hour: null,
+        trigger: { event: "pr_opened" },
+        enabled: true,
+        triggerCursor: 10,
+        lastRunAt: null,
+        nextRunAt: Date.now() + 99 * 86_400_000,
+        lastError: null,
+      },
+    ]);
+    rows = [
+      { number: 12, title: "second", user: { login: "y" } },
+      { number: 10, title: "old", user: { login: "x" } },
+    ];
+    const started = [];
+    const sched = scheduler(started);
+    try {
+      await sched.tick();
+      assert.equal(started.length, 0);
+    } finally {
+      sched.stop();
+    }
+  });
 });

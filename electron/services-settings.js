@@ -373,6 +373,26 @@ function assertLocalWritable(project) {
 }
 
 /**
+ * Trust the project's automations file when `hash` matches the current
+ * solenta.json automations section. Saves.
+ *
+ * @param {import('./store').Store} store
+ * @param {{ projectId: string, hash: string }} input
+ */
+function trustFile(store, input) {
+  const projectId = String((input && input.projectId) || "");
+  const hash = input && input.hash;
+  const project = store.getProject(projectId);
+  if (!project) throw new Error(`Unknown project: ${projectId}`);
+  const { readAutomations } = require("./automations-file.js");
+  const section = readAutomations(project.path);
+  if (!section.hash) throw new Error("No automations in solenta.json");
+  if (hash !== section.hash) throw new Error("Automations file hash does not match");
+  persistAutomationsTrust(store, projectId, hash);
+  store.save();
+}
+
+/**
  * Persist automationsTrust via setProjects (same path as repoConfigTrust).
  * Does not save.
  *
@@ -748,5 +768,6 @@ module.exports = {
   addAutomation,
   updateAutomation,
   removeAutomation,
+  trustFile,
   appStatus,
 };

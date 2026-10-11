@@ -370,17 +370,36 @@ function listAutomationRuns(store, automationId) {
 
 /**
  * Fire one automation immediately, even if nextRunAt is in the future.
+ * Accepts a string id (existing tests) or `{ id, hash? }` from IPC.
+ * Manual run is allowed while enabled is false; shared rows must be trusted
+ * or supply a matching hash (approve-and-run does not flip enabled).
  *
  * @param {{ store: import("./store").Store, runner: { startRun: Function }, broadcast?: Function }} ctx
- * @param {string} id
+ * @param {string | { id: string, hash?: string }} input
  */
-async function runNow(ctx, id) {
-  const auto = ctx.store.getAutomation(id);
-  if (!auto) {
-    throw new Error(`Unknown automation: ${id}`);
+async function runNow(ctx, input) {
+  const id = typeof input === "string" ? input : String((input && input.id) || "");
+  const hash = typeof input === "object" && input ? input.hash : undefined;
+  const {
+    mergeAutomations,
+    presentAutomationsFile,
+    ensureOverlay,
+  } = require("./automations-file.js");
+  const auto = mergeAutomations(ctx.store, Date.now()).find((a) => a.id === id);
+  if (!auto) throw new Error(`Unknown automation: ${id}`);
+  if (auto.scope === "project") {
+    const project = ctx.store.getProject(auto.projectId);
+    const file = presentAutomationsFile(project);
+    if (!file || !file.trusted) {
+      if (!hash || hash !== file?.hash) {
+        throw new Error("Automations file is not trusted");
+      }
+      require("./services.js").trustFile(ctx.store, { projectId: auto.projectId, hash });
+    }
   }
-  await runAutomation(ctx, auto, Date.now(), { rethrow: true });
-  return ctx.store.getAutomation(id);
+  ensureOverlay(ctx.store, auto);
+  await runAutomation(ctx, ctx.store.getAutomation(id) || auto, Date.now(), { rethrow: true });
+  return mergeAutomations(ctx.store, Date.now()).find((a) => a.id === id);
 }
 
 /**
@@ -407,7 +426,14 @@ function startScheduler(ctx) {
     } catch {
       // Never let bookkeeping stall the scheduler.
     }
-    const due = dueAutomations(ctx.store.getAutomations(), now);
+    const {
+      mergeAutomations,
+      gcOrphanOverlays,
+      canAutoFire,
+    } = require("./automations-file.js");
+    if (gcOrphanOverlays(ctx.store)) ctx.store.save();
+    const due = dueAutomations(mergeAutomations(ctx.store, now), now)
+      .filter((a) => canAutoFire(ctx.store, a));
     for (const auto of due) {
       if (!auto || !auto.id || firing.has(auto.id)) continue;
       firing.add(auto.id);
