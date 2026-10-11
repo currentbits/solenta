@@ -1,8 +1,9 @@
 "use strict";
 
 /**
- * Shared automations section of solenta.json (#1590). Parse, hash, and
- * present only — writes, merge, and fire gates land in later tasks.
+ * Shared automations section of solenta.json (#1590). Parse, hash, present,
+ * and merge file definitions with local overlays. Writes and ticker/poller
+ * changes land in later tasks.
  *
  * The hash is independent of commandsHash / repoConfigTrust so approving
  * a setup command does not approve an agent prompt.
@@ -263,6 +264,118 @@ function presentAutomationsFile(project) {
   };
 }
 
+/**
+ * Local project: on-disk path, not a remote host.
+ * @param {any} project
+ */
+function isLocalProject(project) {
+  return Boolean(project && project.path && !project.remoteHost);
+}
+
+/**
+ * Merge private store rows with file definitions + local overlays.
+ * Definition fields always come from the file. Does not save.
+ *
+ * @param {import("./store").Store} store
+ * @param {number} nowMs
+ * @returns {object[]}
+ */
+function mergeAutomations(store, nowMs) {
+  const { nextFire } = require("./automations.js");
+  const privates = (store.getAutomations() || []).filter(
+    (a) => a && a.scope !== "project",
+  );
+  const overlayById = new Map();
+  for (const a of store.getAutomations() || []) {
+    if (a && a.id) overlayById.set(a.id, a);
+  }
+  const shared = [];
+  for (const project of store.getProjects() || []) {
+    if (!isLocalProject(project)) continue;
+    const section = readAutomations(project.path);
+    if (section.error || !section.automations.length) continue;
+    for (const row of section.automations) {
+      const id = sharedId(project.id, row.id);
+      const overlay = overlayById.get(id);
+      const runtime = overlay
+        ? {
+            enabled: overlay.enabled,
+            memory: overlay.memory,
+            triggerCursor: overlay.triggerCursor,
+            lastRunAt: overlay.lastRunAt,
+            lastError: overlay.lastError,
+            consecutiveFailures: overlay.consecutiveFailures,
+            pendingRunThreadId: overlay.pendingRunThreadId,
+            nextRunAt: overlay.nextRunAt,
+          }
+        : {
+            enabled: false,
+            memory: "",
+            triggerCursor: null,
+            lastRunAt: null,
+            lastError: null,
+            consecutiveFailures: 0,
+            pendingRunThreadId: null,
+            nextRunAt: nextFire(row.preset, row.hour, nowMs),
+          };
+      shared.push({
+        ...runtime,
+        id,
+        projectId: project.id,
+        name: row.name,
+        prompt: row.prompt,
+        provider: row.provider,
+        model: row.model,
+        preset: row.preset,
+        hour: row.hour,
+        trigger: row.trigger,
+        tier: row.tier,
+        scope: "project",
+      });
+    }
+  }
+  return [...privates, ...shared];
+}
+
+/**
+ * Auto-fire gate: enabled, and trusted when the row is project-scoped.
+ * Private enabled rows return true.
+ *
+ * @param {import("./store").Store} store
+ * @param {object} auto
+ * @returns {boolean}
+ */
+function canAutoFire(store, auto) {
+  if (!auto || !auto.enabled) return false;
+  if (auto.scope !== "project") return true;
+  const project = store.getProject(auto.projectId);
+  return Boolean(presentAutomationsFile(project)?.trusted);
+}
+
+/**
+ * Drop store overlays whose slug is no longer in any local file.
+ * Mutates the store list; does not save.
+ *
+ * @param {import("./store").Store} store
+ * @returns {boolean} true if the list changed
+ */
+function gcOrphanOverlays(store) {
+  const valid = new Set();
+  for (const project of store.getProjects() || []) {
+    if (!isLocalProject(project)) continue;
+    const section = readAutomations(project.path);
+    if (section.error) continue;
+    for (const row of section.automations) {
+      valid.add(sharedId(project.id, row.id));
+    }
+  }
+  const list = store.getAutomations() || [];
+  const next = list.filter((a) => !a || a.scope !== "project" || valid.has(a.id));
+  if (next.length === list.length) return false;
+  store.setAutomations(next);
+  return true;
+}
+
 module.exports = {
   SLUG_RE,
   MAX_SHARED_AUTOMATIONS,
@@ -273,4 +386,7 @@ module.exports = {
   automationsHash,
   readAutomations,
   presentAutomationsFile,
+  mergeAutomations,
+  gcOrphanOverlays,
+  canAutoFire,
 };

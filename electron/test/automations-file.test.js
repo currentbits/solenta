@@ -13,8 +13,22 @@ const {
   slugFromName,
   sharedId,
   MAX_SHARED_AUTOMATIONS,
+  mergeAutomations,
+  gcOrphanOverlays,
+  canAutoFire,
 } = require("../automations-file.js");
 const { parseRepoConfig } = require("../repoConfig.js");
+const { Store } = require("../store.js");
+const services = require("../services.js");
+
+function tempRepo(automations) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-auto-"));
+  fs.writeFileSync(
+    path.join(dir, "solenta.json"),
+    JSON.stringify({ automations }, null, 2),
+  );
+  return dir;
+}
 
 const ROW = {
   id: "pr-triage",
@@ -107,5 +121,121 @@ describe("slugFromName", () => {
 describe("sharedId", () => {
   it("is shared:project:slug", () => {
     assert.equal(sharedId("p1", "pr-triage"), "shared:p1:pr-triage");
+  });
+});
+
+describe("mergeAutomations", () => {
+  it("lists private store rows plus file rows with overlay defaults", () => {
+    const dir = tempRepo([ROW]);
+    const store = new Store(path.join(dir, "store.json"));
+    store.setProjects([{ id: "p1", name: "p", path: dir }]);
+    store.setAutomations([
+      {
+        id: "uuid-1",
+        projectId: "p1",
+        name: "Local",
+        prompt: "x",
+        provider: "claude",
+        preset: "hourly",
+        hour: null,
+        enabled: true,
+        scope: "private",
+        lastRunAt: null,
+        nextRunAt: 1,
+        lastError: null,
+      },
+    ]);
+    const listed = mergeAutomations(store, Date.now());
+    assert.equal(listed.length, 2);
+    const shared = listed.find((a) => a.scope === "project");
+    assert.equal(shared.id, "shared:p1:pr-triage");
+    assert.equal(shared.enabled, false);
+    assert.equal(shared.prompt, ROW.prompt);
+    assert.equal(shared.memory, "");
+    assert.equal(shared.triggerCursor, null);
+    assert.equal(canAutoFire(store, shared), false);
+  });
+
+  it("file definition wins; overlay keeps enabled/cursor/memory", () => {
+    const dir = tempRepo([{ ...ROW, prompt: "From file" }]);
+    const store = new Store(path.join(dir, "store.json"));
+    store.setProjects([{ id: "p1", name: "p", path: dir, automationsTrust: "dead".repeat(16) }]);
+    store.setAutomations([
+      {
+        id: "shared:p1:pr-triage",
+        projectId: "p1",
+        scope: "project",
+        name: "Stale",
+        prompt: "Stale",
+        provider: "claude",
+        preset: "hourly",
+        hour: null,
+        enabled: true,
+        memory: "keep me",
+        triggerCursor: 9,
+        lastRunAt: 1,
+        nextRunAt: 2,
+        lastError: null,
+      },
+    ]);
+    const shared = mergeAutomations(store, Date.now()).find((a) => a.scope === "project");
+    assert.equal(shared.prompt, "From file");
+    assert.equal(shared.name, "PR triage");
+    assert.equal(shared.enabled, true);
+    assert.equal(shared.memory, "keep me");
+    assert.equal(shared.triggerCursor, 9);
+    assert.equal(canAutoFire(store, shared), false); // trust mismatch
+  });
+
+  it("gc drops overlays whose slug left the file", () => {
+    const dir = tempRepo([]);
+    const store = new Store(path.join(dir, "store.json"));
+    store.setProjects([{ id: "p1", name: "p", path: dir }]);
+    store.setAutomations([
+      {
+        id: "shared:p1:gone",
+        projectId: "p1",
+        scope: "project",
+        name: "Gone",
+        prompt: "x",
+        provider: "claude",
+        preset: "hourly",
+        hour: null,
+        enabled: true,
+        lastRunAt: null,
+        nextRunAt: 0,
+        lastError: null,
+      },
+    ]);
+    assert.equal(gcOrphanOverlays(store), true);
+    assert.equal(store.getAutomations().length, 0);
+  });
+
+  it("listAutomations returns the merge (same ids)", () => {
+    const dir = tempRepo([ROW]);
+    const store = new Store(path.join(dir, "store.json"));
+    store.setProjects([{ id: "p1", name: "p", path: dir }]);
+    store.setAutomations([
+      {
+        id: "uuid-1",
+        projectId: "p1",
+        name: "Local",
+        prompt: "x",
+        provider: "claude",
+        preset: "hourly",
+        hour: null,
+        enabled: true,
+        scope: "private",
+        lastRunAt: null,
+        nextRunAt: 1,
+        lastError: null,
+      },
+    ]);
+    const merged = mergeAutomations(store, Date.now());
+    const listed = services.listAutomations(store);
+    assert.deepEqual(
+      listed.map((a) => a.id).sort(),
+      merged.map((a) => a.id).sort(),
+    );
   });
 });

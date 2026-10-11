@@ -325,7 +325,8 @@ function normalizeAutomationInput(store, input, existing) {
  * @param {import('./store').Store} store
  */
 function listAutomations(store) {
-  return store.getAutomations().map((a) => ({ ...a }));
+  const { mergeAutomations } = require("./automations-file.js");
+  return mergeAutomations(store, Date.now()).map((a) => ({ ...a }));
 }
 
 /**
