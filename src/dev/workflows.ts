@@ -133,6 +133,10 @@ export function createWorkflows(ctx: DevCtx): Pick<CoderApi, "workflows"> {
         }
         ctx.templates = ctx.templates.filter((t) => t.id !== tid);
       },
+      // Browser dev has no repo checkout to write into.
+      async exportToRepo() {
+        return { written: true, path: "WORKFLOW.md" };
+      },
     },
   };
 }

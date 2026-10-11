@@ -517,6 +517,37 @@ describe("App fork / hand-off wiring (round 49)", () => {
   });
 });
 
+
+describe("thread recap card (#239)", () => {
+  it("shows the recap threads.get marks due, and dismisses", async () => {
+    const d = decoy();
+    const s = source();
+    const fake = createFakeCoder({
+      projects: [project({ id: "p1", slug: "acme/one", name: "one", path: "/tmp/one" })],
+      providers,
+      threads: [d, s],
+      details: {
+        "t-decoy": detail({ thread: d }),
+        "t-source-fork": {
+          ...detail({ thread: s }),
+          recap: { text: "Asked: fix login\nNow: tests pass", at: NOW },
+        },
+      },
+    });
+    const m = await boot(fake);
+    await selectThread(m, "decoy first thread");
+    assert.equal(m.query("[data-thread-recap]"), null);
+
+    await selectThread(m, "source handoff thread");
+    const card = m.query("[data-thread-recap]");
+    assert.ok(card, "due recap must render");
+    assert.ok((card!.textContent || "").includes("Now: tests pass"));
+
+    await m.click(m.query("[aria-label='Dismiss recap']") as HTMLElement);
+    await m.flush();
+    assert.equal(m.query("[data-thread-recap]"), null);
+  });
+});
 afterEach(() => {
   dismissContextMenu();
 });

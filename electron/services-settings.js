@@ -5,6 +5,7 @@
 const { randomUUID } = require("node:crypto");
 const { getProvider } = require("./providers.js");
 const { getMemoryStatus } = require("./memory-sup.js");
+const { normalizeRoute } = require("./routing.js");
 const {
   normalizeModelForProvider,
   isKnownProviderId,
@@ -148,6 +149,39 @@ function removeTemplate(store, input) {
 }
 
 /**
+ * #164: write a saved template into the thread's checkout as WORKFLOW.md (or
+ * over the repo's existing .solenta/workflow.md). An existing file is only
+ * replaced with `overwrite`; otherwise returns written:false so the UI can ask.
+ * @param {import('./store').Store} store
+ * @param {{ id: string, threadId: string, overwrite?: boolean }} input
+ * @returns {{ written: boolean, path: string }}
+ */
+function exportTemplateToRepo(store, input) {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const repoWorkflow = require("./repoWorkflow.js");
+  const template = store.getTemplate(String((input && input.id) || ""));
+  if (!template) throw new Error("Unknown workflow template");
+  const thread = store.getThread(String((input && input.threadId) || ""));
+  if (!thread) throw new Error("Pick a thread to export into its repo");
+  const project = store.getProject(thread.projectId);
+  if (!project) throw new Error(`Unknown project: ${thread.projectId}`);
+  if (project.remoteHost || require("./wsl.js").wslTarget(project)) {
+    throw new Error("Export to repo is not supported for remote projects");
+  }
+  const dir = thread.worktreePath || project.path;
+  const rel =
+    repoWorkflow.findRepoWorkflow(dir) || repoWorkflow.REPO_WORKFLOW_FILES[0];
+  const file = path.join(dir, rel);
+  if (fs.existsSync(file) && !(input && input.overwrite)) {
+    return { written: false, path: file };
+  }
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, repoWorkflow.serializeRepoWorkflow(template));
+  return { written: true, path: file };
+}
+
+/**
  * @param {import('./store').Store} store
  * @returns {{ dailyBudgetUsd: number | null, orchestrationBudgetUsd: number | null, autoSettleAfterDays: number | null }}
  */
@@ -252,7 +286,39 @@ function normalizeAutomationInput(store, input, existing) {
     enabled = Boolean(src.enabled);
   }
 
-  return { name, projectId, prompt, provider, model, preset, hour, enabled };
+  // #246: optional routing tier; the provider/model above is the fallback.
+  const tierRaw = Object.prototype.hasOwnProperty.call(src, "tier")
+    ? src.tier
+    : base.tier;
+  const tier = tierRaw == null || tierRaw === "" ? null : normalizeRoute(tierRaw);
+  if (tierRaw != null && tierRaw !== "" && !tier) {
+    throw new Error(`Invalid tier: ${tierRaw}. Expected auto, fast, balanced, or strong`);
+  }
+
+  const { parseTriggerInput } = require("./automation-triggers.js");
+  const trigger = Object.prototype.hasOwnProperty.call(src, "trigger")
+    ? parseTriggerInput(src.trigger)
+    : base.trigger || null;
+
+  const { MAX_MEMORY_CHARS } = require("./automations.js");
+  const memoryRaw = Object.prototype.hasOwnProperty.call(src, "memory")
+    ? src.memory
+    : base.memory;
+  const memory = memoryRaw != null ? String(memoryRaw).slice(0, MAX_MEMORY_CHARS) : "";
+
+  return {
+    name,
+    projectId,
+    prompt,
+    provider,
+    model,
+    preset,
+    hour,
+    enabled,
+    trigger,
+    memory,
+    tier,
+  };
 }
 
 /**
@@ -276,6 +342,9 @@ function addAutomation(store, input) {
     lastRunAt: null,
     nextRunAt: nextFire(fields.preset, fields.hour, now),
     lastError: null,
+    consecutiveFailures: 0,
+    pendingRunThreadId: null,
+    triggerCursor: null,
   };
   const list = store.getAutomations().slice();
   list.push(created);
@@ -298,9 +367,17 @@ function updateAutomation(store, input) {
   const fields = normalizeAutomationInput(store, input, existing);
   const scheduleChanged =
     fields.preset !== existing.preset || fields.hour !== existing.hour;
+  // #160: turning it back on is the explicit re-enable after an auto-pause.
+  const reEnabled = fields.enabled && !existing.enabled;
+  // #242: a different event (or filter) is a new cursor space; re-baseline
+  // so it never fires on history.
+  const triggerChanged =
+    JSON.stringify(fields.trigger) !== JSON.stringify(existing.trigger || null);
   const updated = {
     ...existing,
     ...fields,
+    ...(reEnabled ? { consecutiveFailures: 0, lastError: null } : {}),
+    ...(triggerChanged ? { triggerCursor: null } : {}),
     nextRunAt: scheduleChanged
       ? nextFire(fields.preset, fields.hour, Date.now())
       : existing.nextRunAt,
@@ -343,6 +420,8 @@ async function appStatus(store, deps = {}) {
   let entries = null;
   let vectors = null;
   let lastError = null;
+  /** @type {{ root: string, key: string }[]} */
+  let collisions = [];
   if (base.running) {
     try {
       const health = deps.health ? await deps.health() : await fetchMemoryHealth(base.port);
@@ -354,6 +433,7 @@ async function appStatus(store, deps = {}) {
             : null;
         const je = health.janitor && health.janitor.lastError;
         lastError = je ? `${je.step}: ${je.message}` : null;
+        if (Array.isArray(health.projectCollisions)) collisions = health.projectCollisions;
       }
     } catch {
       // health unreachable: report nulls rather than failing status
@@ -376,7 +456,7 @@ async function appStatus(store, deps = {}) {
 
   return {
     spendTodayUsd,
-    memory: { ...base, entries, vectors, lastError },
+    memory: { ...base, entries, vectors, lastError, collisions },
     build: { version, sha, time, channel, platform: deps.platform || process.platform },
   };
 }
@@ -436,6 +516,7 @@ module.exports = {
   listTemplates,
   saveTemplate,
   removeTemplate,
+  exportTemplateToRepo,
   getSettings,
   setSettings,
   listAutomations,

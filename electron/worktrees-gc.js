@@ -81,6 +81,9 @@ async function maybeCleanupMergedWorktree(store, threadId) {
     }
 
     const removed = await gitTryAsync(project.path, [
+      // #1519: git's clean check honours status.showUntrackedFiles=no.
+      "-c",
+      "status.showUntrackedFiles=normal",
       "worktree",
       "remove",
       wtPath,
@@ -257,7 +260,8 @@ async function listRootDirs(store, worktreeBase) {
       continue;
     }
     for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
+      // Pre-warmed pool (#192) holds idle worktrees no thread references yet.
+      if (!entry.isDirectory() || entry.name === ".pool") continue;
       const dir = path.join(root.dir, entry.name);
       if (!root.owned) {
         // App worktrees are named by thread id; a user's own `git worktree
@@ -364,7 +368,13 @@ async function sweepOrphanWorktrees(opts) {
       const br = await gitTryAsync(dir, ["branch", "--show-current"]);
       const branch = br.ok ? br.stdout.trim() : "";
 
-      const removed = await gitTryAsync(repoPath, ["worktree", "remove", dir]);
+      const removed = await gitTryAsync(repoPath, [
+        "-c",
+        "status.showUntrackedFiles=normal", // #1519
+        "worktree",
+        "remove",
+        dir,
+      ]);
       if (!removed.ok) {
         result.kept.push(dir);
         continue;
@@ -608,11 +618,16 @@ async function inspectWorktreeDirUncached(dir, baseCache) {
 async function unmergedCount(dir, branch, repoPath, baseCache) {
   const base = await baseBranchOf(repoPath, baseCache);
   if (!base || (branch && branch === base)) return 0;
+  // origin/<base> too (#1556): a stale local base must not pin a worktree
+  // whose commits are all upstream as "unmerged" forever. --ignore-missing
+  // drops a ref this repo lacks (no origin) instead of failing the count.
   const res = await gitTryAsync(dir, [
     "rev-list",
     "--count",
+    "--ignore-missing",
     "HEAD",
     `^${base}`,
+    `^origin/${base}`,
   ]);
   if (!res.ok) return 0;
   const n = parseInt(res.stdout.trim(), 10);
@@ -849,7 +864,13 @@ async function removeGcWorktree(store, cand) {
     return forced;
   }
   if (!repoPath) return { ok: false, error: "could not find owning repo" };
-  const removed = await gitTryAsync(repoPath, ["worktree", "remove", dir]);
+  const removed = await gitTryAsync(repoPath, [
+    "-c",
+    "status.showUntrackedFiles=normal", // #1519
+    "worktree",
+    "remove",
+    dir,
+  ]);
   if (removed.ok) {
     invalidateGitReads(dir);
     return { ok: true };

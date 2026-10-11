@@ -237,6 +237,7 @@ describe("Store", () => {
       handoffFrom: null,
       feltEstimate: null,
       replayContext: false,
+      forkSessionAt: null,
       muted: false,
       ejected: false,
       notes: "",
@@ -986,6 +987,7 @@ describe("Store", () => {
       artifacts: store.getRunArtifacts("t1"),
       sessionId: null,
       replayContext: false,
+      forkSessionAt: null,
       status: "idle",
       lastError: null,
       lastErrorKind: null,
@@ -993,6 +995,7 @@ describe("Store", () => {
       headSha: null,
       retainedCount: store.getMessages("t1").length,
     });
+    store.setWorkflowRun("t1", { __orchestrated: true, phases: [] });
 
     // Sanity: every known ByThread map currently holds t1.
     const byThreadKeys = Object.keys(store.data).filter((k) =>
@@ -3130,6 +3133,7 @@ describe("Store", () => {
       handoffFrom: null,
       feltEstimate: null,
       replayContext: false,
+      forkSessionAt: null,
       muted: false,
       ejected: false,
       notes: "",
@@ -3206,6 +3210,7 @@ describe("Store", () => {
       handoffFrom: null,
       feltEstimate: null,
       replayContext: false,
+      forkSessionAt: null,
       muted: false,
       ejected: false,
       notes: "",
@@ -3305,6 +3310,7 @@ describe("Store", () => {
       handoffFrom: null,
       feltEstimate: null,
       replayContext: false,
+      forkSessionAt: null,
       muted: false,
       ejected: false,
       notes: "",
@@ -3387,6 +3393,7 @@ describe("Store", () => {
       handoffFrom: null,
       feltEstimate: null,
       replayContext: false,
+      forkSessionAt: null,
       muted: false,
       ejected: false,
       notes: "",

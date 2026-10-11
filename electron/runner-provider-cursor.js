@@ -4,6 +4,7 @@
 // Follows the seam convention in the header of electron/runner-watchdogs.js.
 
 const { resolveBin } = require("./providers.js");
+const { withProjectEnv } = require("./worktreeEnv.js");
 const {
   materializeCursorPinPlugin,
   cursorPinPluginDir,
@@ -341,7 +342,7 @@ function createCursorRun(ctx) {
       binary: spawn.binary,
       args: spawn.args,
       cwd: spawn.cwd,
-      env: threadSecrets.withEnv(threadId, cursorEnv),
+      env: threadSecrets.withEnv(threadId, withProjectEnv(project, cursorEnv)),
       onEvent: (ev) => {
         // Cursor does not keep the CLI alive between turns, but a background
         // Task can finish via <task-notification> instead of tool_call/completed

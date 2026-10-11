@@ -96,7 +96,28 @@ function detail(): ThreadDetail {
 interface CommitCall {
   message: string;
   paths?: string[];
+  patches?: Array<{ path: string; patch: string }>;
 }
+
+const TWO_HUNKS: DiffResult = {
+  files: [{ path: "src/a.ts", status: "M", additions: 2, deletions: 2 }],
+  patch: [
+    "diff --git a/src/a.ts b/src/a.ts",
+    "--- a/src/a.ts",
+    "+++ b/src/a.ts",
+    "@@ -1,3 +1,3 @@",
+    " keep",
+    "-old",
+    "+new",
+    " context",
+    "@@ -20,3 +20,3 @@",
+    " far",
+    "-before",
+    "+after",
+    " end",
+  ].join("\n"),
+  truncated: false,
+};
 
 interface RevertCall {
   path: string;
@@ -106,6 +127,7 @@ interface RevertCall {
 interface Spies {
   commits: CommitCall[];
   reverts: RevertCall[];
+  hunkReverts: Array<{ path: string; patch: string }>;
   suggests: number;
   diffLoads: number;
   comments: string[];
@@ -114,10 +136,12 @@ interface Spies {
 function mountPanel(opts?: {
   archived?: boolean;
   working?: boolean;
+  diff?: DiffResult;
 }): { m: Promise<Mounted>; spies: Spies } {
   const spies: Spies = {
     commits: [],
     reverts: [],
+    hunkReverts: [],
     suggests: 0,
     diffLoads: 0,
     comments: [],
@@ -150,14 +174,18 @@ function mountPanel(opts?: {
       onCloseChanges={() => {}}
       onFetchDiff={async () => {
         spies.diffLoads += 1;
-        return DIFF;
+        return opts?.diff ?? DIFF;
       }}
-      onCommitChanges={async (message, paths) => {
-        spies.commits.push({ message, paths });
+      onCommitChanges={async (message, paths, patches) => {
+        spies.commits.push({ message, paths, patches });
         return { subject: message };
       }}
       onRevertFile={async (path, status) => {
         spies.reverts.push({ path, status });
+        return { path };
+      }}
+      onRevertHunk={async (path, patch) => {
+        spies.hunkReverts.push({ path, patch });
         return { path };
       }}
       onSuggestCommitMessage={async () => {
@@ -270,6 +298,55 @@ describe("ChangesPanel commit flow", () => {
     await view.click(commitBtn);
     assert.equal(spies.commits.length, 1);
     assert.deepEqual(spies.commits[0]?.paths, ["src/a.ts"]);
+  });
+
+  it("unchecking a hunk commits only the kept hunk as a patch", async () => {
+    const { m, spies } = mountPanel({ diff: TWO_HUNKS });
+    const view = await m;
+    await view.flush();
+    const hunks = [...view.container.querySelectorAll("[data-stage-hunk]")];
+    assert.equal(hunks.length, 2);
+    await view.click(hunks[1]!);
+    assert.equal(
+      view.query('[data-stage-file="src/a.ts"]')?.getAttribute("aria-checked"),
+      "mixed",
+    );
+
+    await view.click(view.byText("Generate"));
+    await view.click(panelCommit(view)!);
+    const call = spies.commits[0];
+    assert.deepEqual(call?.paths, ["src/a.ts"]);
+    assert.equal(call?.patches?.length, 1);
+    const patch = call!.patches![0]!.patch;
+    assert.match(patch, /^diff --git a\/src\/a\.ts/);
+    assert.match(patch, /\+new/);
+    assert.doesNotMatch(patch, /after/);
+  });
+
+  it("unchecking every hunk unstages the file", async () => {
+    const { m } = mountPanel({ diff: TWO_HUNKS });
+    const view = await m;
+    await view.flush();
+    for (const box of view.container.querySelectorAll("[data-stage-hunk]")) {
+      await view.click(box);
+    }
+    assert.equal(
+      view.query('[data-stage-file="src/a.ts"]')?.getAttribute("aria-checked"),
+      "false",
+    );
+  });
+
+  it("discarding a hunk sends only that hunk", async () => {
+    const { m, spies } = mountPanel({ diff: TWO_HUNKS });
+    const view = await m;
+    await view.flush();
+    const btns = [...view.container.querySelectorAll("[data-revert-hunk]")];
+    await view.click(btns[1]!);
+    assert.equal(spies.hunkReverts.length, 1);
+    const { path, patch } = spies.hunkReverts[0]!;
+    assert.equal(path, "src/a.ts");
+    assert.match(patch, /\+after/);
+    assert.doesNotMatch(patch, /\+new/);
   });
 
   it("unchecking every file disables Commit", async () => {

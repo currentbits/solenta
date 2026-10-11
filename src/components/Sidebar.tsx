@@ -300,6 +300,10 @@ export interface SidebarProps {
   revealThreadId?: string | null;
   /** Clears revealThreadId once the reveal ran (or the thread is gone). */
   onRevealHandled?: () => void;
+  /** solenta://project/<id> link: scope the list to this project (#186). */
+  scopeRequest?: string | null;
+  /** Clears scopeRequest once the scope is applied. */
+  onScopeRequestHandled?: () => void;
   /** Overlapping-edit forecast for the selected project (issue #249). */
   conflictForecast?: ConflictForecast | null;
 }
@@ -367,6 +371,8 @@ export const Sidebar = memo(function Sidebar({
   onOpenActivity,
   revealThreadId = null,
   onRevealHandled,
+  scopeRequest = null,
+  onScopeRequestHandled,
   conflictForecast = null,
 }: SidebarProps) {
   // Memoised: re-render when a chord is remapped so the ⌘K hint follows.
@@ -1026,6 +1032,13 @@ export const Sidebar = memo(function Sidebar({
     setScopeMenuOpen(false);
     setFilterMenu(null);
   };
+
+  useEffect(() => {
+    if (!scopeRequest) return;
+    setProjectScope(scopeRequest);
+    saveStored(SCOPE_KEY, scopeRequest);
+    onScopeRequestHandled?.();
+  }, [scopeRequest, onScopeRequestHandled]);
 
   const applyStatusFilter = (id: StatusFilter | null) => {
     setStatusFilter(id);

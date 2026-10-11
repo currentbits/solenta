@@ -290,6 +290,9 @@ export const ThreadCard = memo(function ThreadCard({
       void onFork?.(thread.id, { provider: id.slice("handoff:".length) });
     } else if (id === "rename") startRename();
     else if (id === "tags") startTagEdit();
+    else if (id === "copyLink") {
+      void navigator.clipboard?.writeText(`solenta://thread/${thread.id}`).catch(() => {});
+    }
     else if (id.startsWith("project:")) {
       void onSetThreadProject?.(thread.id, id.slice("project:".length));
     } else if (id === "mute") void onSetMuted?.(thread.id, true);
@@ -312,6 +315,7 @@ export const ThreadCard = memo(function ThreadCard({
       showFork: Boolean(onFork),
       showRename: Boolean(onRenameThread),
       showTags: Boolean(onSetTags),
+      showCopyLink: true,
       showMove: Boolean(onSetThreadProject),
       projects: listMoveProjects?.() ?? [],
       showMute: Boolean(onSetMuted),

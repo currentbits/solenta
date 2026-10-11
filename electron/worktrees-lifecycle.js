@@ -5,17 +5,20 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { execCommand } = require("./ssh.js");
+const { wslTarget } = require("./wsl.js");
 const {
   resolveWorktreeDir,
   effectiveWorktreeBase,
   invalidateGitReads,
   gitOut,
   gitTry,
+  gitOutAsync,
   splitLines,
   gitFailureText,
 } = require("./worktrees-git.js");
 const {
   repoDefaultBranch,
+  repoDefaultBranchAsync,
   recordedBaseBranch,
   mergeBaseName,
   resolveStartPoint,
@@ -157,12 +160,14 @@ function realOrResolved(p) {
  * @returns {{ ok: boolean, combined: string }}
  */
 function removeWorktreeDir(repoPath, wtPath, force) {
+  // #1519: git's own clean check honours status.showUntrackedFiles=no and
+  // would delete untracked files; force it back to normal.
   const fallback = () =>
     gitTry(
       repoPath,
       force
         ? ["worktree", "remove", "--force", wtPath]
-        : ["worktree", "remove", wtPath],
+        : ["-c", "status.showUntrackedFiles=normal", "worktree", "remove", wtPath],
     );
   const list = gitTry(repoPath, ["worktree", "list", "--porcelain"]);
   if (!list.ok) return fallback();
@@ -174,7 +179,16 @@ function removeWorktreeDir(repoPath, wtPath, force) {
     .map((l) => realOrResolved(l.slice("worktree ".length)));
   if (!linked.includes(target)) return fallback();
   if (!force) {
-    const st = gitTry(wtPath, ["status", "--porcelain"]);
+    // git refuses worktrees with submodules; let it say so (#1519).
+    if (fs.existsSync(path.join(target, ".gitmodules"))) return fallback();
+    // #1519: plain status honours status.showUntrackedFiles=no and
+    // submodule.*.ignore, so a dirty tree read as clean and was deleted.
+    const st = gitTry(wtPath, [
+      "status",
+      "--porcelain",
+      "--untracked-files=normal",
+      "--ignore-submodules=none",
+    ]);
     if (!st.ok) return fallback();
     if (st.stdout) {
       return {
@@ -267,6 +281,79 @@ function cleanupWorktree(opts) {
 }
 
 /**
+ * `base` and `origin/<base>`, whichever resolve: a branch is judged against
+ * both, so a stale local base cannot invent "unmerged" commits (#1556).
+ * @param {string} repo
+ * @param {string} base
+ * @returns {string[]}
+ */
+function landingRefs(repo, base) {
+  return [base, `origin/${base}`].filter(
+    (ref) => gitTry(repo, ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`]).ok,
+  );
+}
+
+/**
+ * Commits on `branch` that neither `base` nor `origin/<base>` has, as
+ * `git log --oneline` lines; [] when there are none (#1556).
+ * @param {string} repo
+ * @param {string} branch
+ * @param {string[]} refs - from landingRefs
+ * @returns {string[] | null} null when git cannot tell
+ */
+function commitsNotLanded(repo, branch, refs) {
+  if (!refs.length) return null;
+  const log = gitTry(repo, ["log", "--oneline", branch, "--not", ...refs]);
+  if (!log.ok) return null;
+  return log.stdout.split("\n").filter(Boolean);
+}
+
+/**
+ * Nothing on `branch` is missing from `base` / `origin/<base>` (#1556):
+ * every commit is an ancestor of one of them, or `git cherry` finds each
+ * patch already upstream (rebased or cherry-picked). Such a branch has
+ * nothing to merge. Squash-merged work is NOT provable here (new commits);
+ * the PR record covers that case (maybeCleanupMergedWorktree).
+ *
+ * @param {string} repo
+ * @param {string} branch
+ * @param {string} base
+ * @returns {boolean}
+ */
+function branchLanded(repo, branch, base) {
+  const refs = landingRefs(repo, base);
+  const missing = commitsNotLanded(repo, branch, refs);
+  if (missing === null) return false;
+  if (missing.length === 0) return true;
+  return refs.some((ref) => {
+    const cherry = gitTry(repo, ["cherry", ref, branch]);
+    // Empty output means git cherry skipped them all (merges): unproven.
+    return cherry.ok && cherry.stdout.trim() !== "" && !/^\+/m.test(cherry.stdout);
+  });
+}
+
+/**
+ * A worktree thread with nothing to merge (#1556): no uncommitted files and
+ * every commit already on its merge base (branchLanded). Never throws; a
+ * detached / jj base or a missing worktree is just "not landed".
+ * @param {{ path: string }} project
+ * @param {{ worktreePath?: string | null, branch?: string | null, baseBranch?: string | null }} thread
+ * @returns {boolean}
+ */
+function worktreeLanded(project, thread) {
+  if (!thread.worktreePath || !thread.branch) return false;
+  try {
+    const base = mergeBaseName(thread, project.path);
+    const dirty = gitOut(thread.worktreePath, ["status", "--porcelain", "-uall"], {
+      raw: true,
+    }).trim();
+    return !dirty && branchLanded(project.path, thread.branch, base);
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Squash-merge the thread worktree into the repo default branch
  * (origin/HEAD → main), then remove the worktree and branch. Commits any
  * uncommitted worktree changes first.
@@ -318,6 +405,14 @@ function mergeWorktree(opts) {
   const requested = intoPath || project.path;
   if (path.resolve(requested) === path.resolve(wtPath)) {
     throw new Error(`Cannot merge thread ${threadId} into its own worktree`);
+  }
+
+  // Nothing to land (#1556): a clean worktree whose every commit is already
+  // on the base (local or origin) just cleans up. Checked before
+  // checkoutForMerge / syncDefaultWithOrigin, so a stale local base no
+  // longer blocks finishing a thread whose work shipped another way.
+  if (!intoPath && worktreeLanded(project, thread)) {
+    return cleanupWorktree({ store, thread, project, broadcast, forceRemove: false });
   }
 
   // Blast-radius gate (issue #510) before auto-commit: a workflow file in
@@ -661,7 +756,13 @@ function removeWorktree(opts) {
     if (branch) {
       let base = null;
       try {
-        base = defaultBranch(project.path);
+        // The branch Merge would land on (#1556), not whatever the project
+        // checkout has checked out (#770); the old checkout branch otherwise.
+        try {
+          base = mergeBaseName(thread, project.path);
+        } catch {
+          base = defaultBranch(project.path);
+        }
       } catch {
         // Detached/unknown default branch: cannot prove the branch is merged.
         // List recent branch commits so the caller knows what would be lost.
@@ -685,16 +786,12 @@ function removeWorktree(opts) {
           );
         }
       }
-      if (base) {
-        const log = gitTry(project.path, [
-          "log",
-          `${base}..${branch}`,
-          "--oneline",
-        ]);
-        if (log.ok && log.stdout.trim()) {
-          for (const line of log.stdout.trim().split("\n")) {
-            if (line) lost.push(`unmerged: ${line}`);
-          }
+      // Only commits neither the local base nor origin/<base> has (#1556): a
+      // stale local base used to list every newer upstream commit as lost.
+      if (base && !branchLanded(project.path, branch, base)) {
+        const refs = landingRefs(project.path, base);
+        for (const line of commitsNotLanded(project.path, branch, refs) || []) {
+          lost.push(`unmerged: ${line}`);
         }
       }
     }
@@ -719,6 +816,170 @@ function removeWorktree(opts) {
     broadcast,
     forceRemove: true,
   });
+}
+
+// Pre-warmed worktree pool (#192). Idle detached worktrees live in
+// `<worktree base>/.pool/<projectId>/` (same filesystem, so `worktree move`
+// is a rename); worktrees-gc skips `.pool`. Off (0) unless main.js turns it on.
+// ponytail: fixed size per project, filled only after a project's first
+// setupWorktree; stale pools of removed projects are not reaped.
+let worktreePoolSize = 0;
+/** @type {Map<string, Promise<void>>} */
+const poolFilling = new Map();
+/** Pool dir currently being created by `worktree add`; never claimable. */
+const poolCreating = new Set();
+/** Projects whose pooled worktrees cannot be moved (e.g. submodules). */
+const poolBroken = new Set();
+
+/** @param {number} n */
+function setWorktreePoolSize(n) {
+  worktreePoolSize = Math.max(0, Math.floor(Number(n) || 0));
+}
+
+/**
+ * @param {string} base - effective worktree base
+ * @param {string} projectId
+ */
+function worktreePoolDir(base, projectId) {
+  return path.join(base, ".pool", projectId);
+}
+
+function poolUsable(project, base) {
+  return (
+    worktreePoolSize > 0 &&
+    Boolean(base) &&
+    !poolBroken.has(project.id) &&
+    !wslTarget(project, process.platform)
+  );
+}
+
+function dropPooled(repoPath, dir) {
+  gitTry(repoPath, ["worktree", "remove", "--force", dir]);
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+
+/**
+ * Move an idle pooled worktree to `dir` and put `branch` on it at `start`.
+ * Returns false (pool empty, or claim failed) so the caller falls back to
+ * `worktree add`; `dir` never exists after a false return.
+ */
+function claimPooledWorktree(project, base, dir, branch, start) {
+  if (!poolUsable(project, base)) return false;
+  const root = worktreePoolDir(base, project.id);
+  let names = [];
+  try {
+    names = fs.readdirSync(root);
+  } catch {
+    return false;
+  }
+  for (const name of names) {
+    const src = path.join(root, name);
+    if (poolCreating.has(src)) continue;
+    if (!gitTry(project.path, ["worktree", "move", src, dir]).ok) {
+      poolBroken.add(project.id);
+      dropPooled(project.path, src);
+      return false;
+    }
+    // Clean detached tree: checkout only touches files that differ from
+    // the start point, which is the whole win over a fresh `worktree add`.
+    if (gitTry(dir, ["checkout", "-q", "-b", branch, start]).ok) return true;
+    dropPooled(project.path, dir);
+    return false;
+  }
+  return false;
+}
+
+/**
+ * Background top-up of the project's pool to worktreePoolSize. One fill
+ * per project at a time; failures just leave the pool short.
+ * @param {{ id: string, path: string }} project
+ * @param {string} base - effective worktree base
+ */
+function refillWorktreePool(project, base) {
+  if (!poolUsable(project, base) || poolFilling.has(project.id)) {
+    return poolFilling.get(project.id) || Promise.resolve();
+  }
+  const root = worktreePoolDir(base, project.id);
+  const fill = (async () => {
+    fs.mkdirSync(root, { recursive: true });
+    const start = await repoDefaultBranchAsync(project.path);
+    while (
+      !poolBroken.has(project.id) &&
+      fs.readdirSync(root).length < worktreePoolSize
+    ) {
+      const dir = path.join(
+        root,
+        `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+      );
+      poolCreating.add(dir);
+      try {
+        await gitOutAsync(
+          project.path,
+          ["worktree", "add", "--detach", dir, start],
+          { timeout: 120_000 },
+        );
+      } catch (err) {
+        dropPooled(project.path, dir);
+        throw err;
+      } finally {
+        poolCreating.delete(dir);
+      }
+    }
+  })()
+    .catch(() => {})
+    .finally(() => poolFilling.delete(project.id));
+  poolFilling.set(project.id, fill);
+  return fill;
+}
+
+/**
+ * Copy gitignored config (.env, certs, fixture DBs) into a fresh worktree
+ * (#185). A checked-in `.worktreeinclude` lists gitignore-style patterns;
+ * without one, root-level `.env*` files are copied. Only paths that are
+ * untracked AND gitignored are copied, and existing files are never
+ * overwritten. Best-effort: returns the copied relative paths.
+ * @param {string} repoPath
+ * @param {string} dir
+ * @returns {string[]}
+ */
+function copyWorktreeIncludes(repoPath, dir) {
+  let candidates;
+  if (fs.existsSync(path.join(repoPath, ".worktreeinclude"))) {
+    const listed = gitTry(
+      repoPath,
+      ["ls-files", "-z", "--others", "--ignored", "--exclude-from=.worktreeinclude"],
+      { raw: true },
+    );
+    // ponytail: node_modules is skipped by name so `.env*` doesn't pull
+    // package fixtures along; a real per-dir match needs a gitignore engine.
+    candidates = listed.stdout
+      .split("\0")
+      .filter((p) => p && !p.split("/").includes("node_modules"));
+  } else {
+    candidates = fs
+      .readdirSync(repoPath, { withFileTypes: true })
+      .filter((d) => d.isFile() && d.name.startsWith(".env"))
+      .map((d) => d.name);
+  }
+  if (!candidates.length) return [];
+  // check-ignore exits 1 when nothing matches; stdout is still the answer.
+  // (-z needs --stdin, which gitTry can't feed; quotePath keeps names raw.)
+  const ignoredSet = new Set(
+    gitTry(repoPath, ["-c", "core.quotePath=false", "check-ignore", "--", ...candidates])
+      .stdout.split("\n"),
+  );
+  const copied = [];
+  for (const rel of candidates.filter((p) => ignoredSet.has(p))) {
+    const dest = path.join(dir, rel);
+    try {
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      fs.copyFileSync(path.join(repoPath, rel), dest, fs.constants.COPYFILE_EXCL);
+      copied.push(rel);
+    } catch {
+      // Existing file, dangling link, or permission: skip, never fail setup.
+    }
+  }
+  return copied;
 }
 
 /**
@@ -769,11 +1030,20 @@ function setupWorktree(opts) {
   const setupStartedAt = Date.now();
   try {
     const start = resolveWorktreeStart(thread, project.path);
-    gitOut(project.path, ["worktree", "add", "-b", branch, addPath, start]);
+    if (!claimPooledWorktree(project, base, dir, branch, start)) {
+      gitOut(project.path, ["worktree", "add", "-b", branch, addPath, start]);
+    }
   } catch (err) {
     // Verbatim git stderr (#511). Never first-line-only: the lock/disk/
     // submodule reason is almost always on a later line.
     throw new Error(`Failed to create worktree:\n${gitFailureText(err)}`);
+  }
+
+  // Before the setup script (#153), which may need .env to install/migrate.
+  try {
+    copyWorktreeIncludes(project.path, dir);
+  } catch {
+    // Best-effort: a missing .env must not undo the worktree.
   }
 
   const updated = store.updateThread(threadId, {
@@ -782,6 +1052,7 @@ function setupWorktree(opts) {
     worktreeSetupMs: Math.max(0, Date.now() - setupStartedAt),
   });
   store.save();
+  void refillWorktreePool(project, base);
 
   if (typeof broadcast === "function") {
     const { listThreads } = require("./services.js");
@@ -1022,10 +1293,16 @@ function clearMissingWorktree(opts) {
 }
 
 module.exports = {
+  setWorktreePoolSize,
+  refillWorktreePool,
+  worktreePoolDir,
   removeWorktreeDir,
+  branchLanded,
+  worktreeLanded,
   mergeWorktree,
   removeWorktree,
   setupWorktree,
+  copyWorktreeIncludes,
   retargetWorktreeBase,
   maybeRenameWorktreeBranch,
   ensureWorktree,

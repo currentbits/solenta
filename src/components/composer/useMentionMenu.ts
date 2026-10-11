@@ -7,6 +7,7 @@ import {
   type SetStateAction,
 } from "react";
 import { applyMention, getMentionQuery, type MentionQuery } from "../../mention";
+import type { PromptSnippet } from "../../shared/ipc";
 
 /**
  * The @-mention popup: the token under the caret, a debounced file lookup,
@@ -16,6 +17,7 @@ import { applyMention, getMentionQuery, type MentionQuery } from "../../mention"
 export function useMentionMenu({
   textareaRef,
   onListFiles,
+  promptSnippets,
   onPickMentionFolder,
   disabled,
   writeDraft,
@@ -23,6 +25,8 @@ export function useMentionMenu({
 }: {
   textareaRef: RefObject<HTMLTextAreaElement | null>;
   onListFiles?: (query: string) => Promise<string[]>;
+  /** Saved snippets (issue #189), listed above files when `@name` matches. */
+  promptSnippets?: readonly PromptSnippet[];
   onPickMentionFolder?: () => Promise<string | null>;
   disabled: boolean;
   writeDraft: (text: string, caret?: number) => void;
@@ -35,9 +39,18 @@ export function useMentionMenu({
   const mentionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Stale-response guard: only the latest lookup may paint the popup. */
   const mentionSeq = useRef(0);
+  const snippetMatches = mention
+    ? (promptSnippets ?? []).filter((sn) =>
+        sn.name.toLowerCase().startsWith(mention.query.toLowerCase()),
+      )
+    : [];
+  /** Snippets first, then files; one index walks both. */
+  const mentionCount = snippetMatches.length + mentionFiles.length;
+  // Files land 150ms after the query changes; clamp so a shorter snippet
+  // list never leaves the highlight past the end in between.
+  const mentionActive = Math.max(0, Math.min(mentionIndex, mentionCount - 1));
   const mentionOpen =
-    mention != null &&
-    (mentionFiles.length > 0 || Boolean(onPickMentionFolder));
+    mention != null && (mentionCount > 0 || Boolean(onPickMentionFolder));
 
   const closeMention = useCallback(() => {
     if (mentionTimer.current) {
@@ -52,7 +65,7 @@ export function useMentionMenu({
   /** Recompute the active @token from the live textarea and (re)fetch files. */
   const refreshMention = useCallback(() => {
     const el = textareaRef.current;
-    if (!el || !onListFiles || disabled) {
+    if (!el || (!onListFiles && !promptSnippets?.length) || disabled) {
       closeMention();
       return;
     }
@@ -65,6 +78,7 @@ export function useMentionMenu({
       prev && prev.start === q.start && prev.query === q.query ? prev : q,
     );
     if (mentionTimer.current) clearTimeout(mentionTimer.current);
+    if (!onListFiles) return;
     const seq = ++mentionSeq.current;
     mentionTimer.current = setTimeout(() => {
       onListFiles(q.query)
@@ -78,7 +92,7 @@ export function useMentionMenu({
           setMentionFiles([]);
         });
     }, 150);
-  }, [onListFiles, disabled, closeMention]);
+  }, [onListFiles, promptSnippets, disabled, closeMention]);
 
   const acceptMention = useCallback(
     (path: string) => {
@@ -91,6 +105,19 @@ export function useMentionMenu({
         path,
       );
       writeDraft(next.text, next.caret);
+      closeMention();
+    },
+    [mention, closeMention, writeDraft],
+  );
+
+  /** Replace the `@query` token with the snippet's text, caret after it. */
+  const acceptSnippet = useCallback(
+    (snippet: PromptSnippet) => {
+      const el = textareaRef.current;
+      if (!el || !mention) return;
+      const caret = el.selectionStart ?? el.value.length;
+      const head = el.value.slice(0, mention.start) + snippet.text;
+      writeDraft(head + el.value.slice(caret), head.length);
       closeMention();
     },
     [mention, closeMention, writeDraft],
@@ -112,12 +139,15 @@ export function useMentionMenu({
   }, [onPickMentionFolder, disabled, acceptMention]);
   return {
     mentionFiles,
-    mentionIndex,
+    snippetMatches,
+    mentionCount,
+    mentionActive,
     setMentionIndex,
     mentionOpen,
     closeMention,
     refreshMention,
     acceptMention,
+    acceptSnippet,
     browseMentionFolder,
   };
 }

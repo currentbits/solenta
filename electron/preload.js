@@ -7,6 +7,7 @@ const PUSH_CHANNELS = new Set([
   "threads:changed",
   "thread:updated",
   "thread:select",
+  "project:select",
   "boot:ready",
   "stayAwake:changed",
   "simulator:changed",
@@ -42,6 +43,19 @@ function invoke(channel, ...args) {
 }
 
 /**
+ * A deep link on cold launch (#186) can be pushed before React subscribes,
+ * and ipcRenderer drops a push nobody listens to. Hold the latest select
+ * until the first subscriber takes it.
+ */
+const HELD_SELECTS = new Map();
+const subscribers = new Map();
+for (const channel of ["thread:select", "project:select"]) {
+  ipcRenderer.on(channel, (_event, payload) => {
+    if (!subscribers.get(channel)) HELD_SELECTS.set(channel, payload);
+  });
+}
+
+/**
  * @param {string} channel
  * @param {(payload: unknown) => void} cb
  * @returns {() => void}
@@ -54,8 +68,15 @@ function on(channel, cb) {
     cb(payload);
   };
   ipcRenderer.on(channel, listener);
+  subscribers.set(channel, (subscribers.get(channel) || 0) + 1);
+  if (HELD_SELECTS.has(channel)) {
+    const payload = HELD_SELECTS.get(channel);
+    HELD_SELECTS.delete(channel);
+    queueMicrotask(() => cb(payload));
+  }
   return () => {
     ipcRenderer.removeListener(channel, listener);
+    subscribers.set(channel, subscribers.get(channel) - 1);
   };
 }
 
@@ -81,6 +102,7 @@ const IPC_CHANNELS = Object.freeze([
   { ns: "memory", method: "remove" },
   { ns: "memory", method: "maintenance" },
   { ns: "memory", method: "resolve" },
+  { ns: "memory", method: "renameScope" },
   { ns: "settings", method: "get" },
   { ns: "settings", method: "set" },
   { ns: "settings", method: "testWebhook" },
@@ -123,6 +145,7 @@ const IPC_CHANNELS = Object.freeze([
   { ns: "workflows", method: "list" },
   { ns: "workflows", method: "save" },
   { ns: "workflows", method: "remove" },
+  { ns: "workflows", method: "exportToRepo" },
   { ns: "automations", method: "list" },
   { ns: "automations", method: "add" },
   { ns: "automations", method: "update" },
@@ -205,7 +228,10 @@ const IPC_CHANNELS = Object.freeze([
   { ns: "threads", method: "setProvider" },
   { ns: "threads", method: "setReasoningEffort" },
   { ns: "threads", method: "setWebSearch" },
+  { ns: "threads", method: "setAgent" },
+  { ns: "threads", method: "listAgents" },
   { ns: "threads", method: "setFast" },
+  { ns: "threads", method: "setRoute" },
   { ns: "threads", method: "setVerifyCommand" },
   { ns: "threads", method: "runVerify" },
   { ns: "threads", method: "runCommand" },
@@ -226,6 +252,7 @@ const IPC_CHANNELS = Object.freeze([
   { ns: "runs", method: "startWorkflow" },
   { ns: "runs", method: "retryWorkflowAgent" },
   { ns: "runs", method: "distill" },
+  { ns: "runs", method: "distillMemory" },
   { ns: "runs", method: "stop" },
   { ns: "runs", method: "resumeQuotaWait" },
   { ns: "git", method: "status" },
@@ -236,6 +263,7 @@ const IPC_CHANNELS = Object.freeze([
   { ns: "git", method: "setReviewAccepted" },
   { ns: "git", method: "commit" },
   { ns: "git", method: "revertFile" },
+  { ns: "git", method: "revertHunk" },
   { ns: "git", method: "suggestCommitMessage" },
   { ns: "git", method: "suggestPrText" },
   { ns: "git", method: "mergeWorktree" },
@@ -296,6 +324,7 @@ const IPC_CHANNELS = Object.freeze([
   { ns: "attachments", method: "readImage" },
   { ns: "attachments", method: "listWindows" },
   { ns: "attachments", method: "captureWindow" },
+  { ns: "attachments", method: "captureWindowText" },
   { ns: "servers", method: "list" },
   { ns: "shell", method: "reveal" },
   { ns: "shell", method: "openPath" },

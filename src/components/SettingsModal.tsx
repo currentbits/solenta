@@ -82,7 +82,7 @@ const PANE_META: Record<
   spending: {
     label: "Spending",
     hint: "Caps that stop a runaway day or a runaway crew.",
-    keywords: "budget daily orchestration spend usd cap money cost unmetered kimi cursor",
+    keywords: "budget daily orchestration spend usd cap money cost unmetered kimi cursor concurrent concurrency parallel runs queue",
   },
   git: {
     label: "Git",
@@ -92,9 +92,9 @@ const PANE_META: Record<
   },
   agents: {
     label: "Agents",
-    hint: "Named profiles for the composer, and the worker pool.",
+    hint: "Named profiles and prompt snippets for the composer, and the worker pool.",
     keywords:
-      "profile provider model effort permission pool worker alias candidate orchestrator default",
+      "profile provider model effort permission pool worker alias candidate orchestrator default snippet prompt text boilerplate template",
   },
   memory: {
     label: "Memory",
@@ -169,6 +169,8 @@ export interface SettingsModalProps {
   onShowOnboarding?: () => void;
   onOpenConnection?: CoderApi["app"]["openRemoteConnection"];
   onForgetConnection?: CoderApi["app"]["forgetRemoteConnection"];
+  /** Optional memory-scope rename seam (#179). When omitted reads window.coder. */
+  onRenameMemoryScope?: CoderApi["memory"]["renameScope"];
   /** Project picker default for Spotlight and Project tools: the selected thread's project. */
   currentProjectId?: string | null;
   /** Per-project Spotlight opt-in (moved from the Environment Lanes card). */
@@ -203,6 +205,7 @@ export type SettingsDraftKey =
   | "orch"
   | "settle"
   | "pr"
+  | "runs"
   | "uiScale"
   | "linear"
   | "otel"
@@ -229,6 +232,7 @@ function settingsDraftSnapshot(settings: AppSettings | null) {
     orch: budgetToInput(settings?.orchestrationBudgetUsd ?? null),
     settle: settleDaysToInput(settings?.autoSettleAfterDays ?? null),
     pr: budgetToInput(settings?.prDiffCapLines ?? null),
+    runs: budgetToInput(settings?.maxConcurrentRuns ?? null),
     uiScale: settings?.uiScale ?? 1,
     linear: settings?.linearApiKey ?? "",
     otelEndpoint: otel.endpoint ?? "",
@@ -263,6 +267,7 @@ export function SettingsModal({
   onShowOnboarding,
   onOpenConnection,
   onForgetConnection,
+  onRenameMemoryScope,
   currentProjectId = null,
   onSetSpotlight,
   projectTools,
@@ -275,6 +280,7 @@ export function SettingsModal({
   const [orchBudgetText, setOrchBudgetText] = useState("");
   const [settleDaysText, setSettleDaysText] = useState("");
   const [prCapText, setPrCapText] = useState("");
+  const [maxRunsText, setMaxRunsText] = useState("");
   const [linearKeyText, setLinearKeyText] = useState("");
   const [otelEndpoint, setOtelEndpoint] = useState("");
   const [otelHeadersText, setOtelHeadersText] = useState("");
@@ -319,6 +325,7 @@ export function SettingsModal({
       if (!skip("orch")) setOrchBudgetText(snap.orch);
       if (!skip("settle")) setSettleDaysText(snap.settle);
       if (!skip("pr")) setPrCapText(snap.pr);
+      if (!skip("runs")) setMaxRunsText(snap.runs);
       if (!skip("uiScale")) setUiScale(snap.uiScale);
       if (!skip("linear")) setLinearKeyText(snap.linear);
       if (!skip("otel")) {
@@ -395,7 +402,8 @@ export function SettingsModal({
         | "dailyBudgetUsd"
         | "orchestrationBudgetUsd"
         | "autoSettleAfterDays"
-        | "prDiffCapLines",
+        | "prDiffCapLines"
+        | "maxConcurrentRuns",
       text: string,
       draftKey: SettingsDraftKey,
     ) => {
@@ -407,6 +415,7 @@ export function SettingsModal({
     putNumeric("orchestrationBudgetUsd", orchBudgetText, "orch");
     putNumeric("autoSettleAfterDays", settleDaysText, "settle");
     putNumeric("prDiffCapLines", prCapText, "pr");
+    putNumeric("maxConcurrentRuns", maxRunsText, "runs");
     if (Object.keys(patch).length === 0) return;
 
     savingRef.current = true;
@@ -418,6 +427,7 @@ export function SettingsModal({
       setOrchBudgetText(budgetToInput(saved.orchestrationBudgetUsd));
       setSettleDaysText(settleDaysToInput(saved.autoSettleAfterDays));
       setPrCapText(budgetToInput(saved.prDiffCapLines));
+      setMaxRunsText(budgetToInput(saved.maxConcurrentRuns));
       if (saved.linearApiKey !== undefined) {
         setLinearKeyText(saved.linearApiKey ?? "");
       }
@@ -426,6 +436,7 @@ export function SettingsModal({
       dirtyDrafts.current.delete("orch");
       dirtyDrafts.current.delete("settle");
       dirtyDrafts.current.delete("pr");
+      dirtyDrafts.current.delete("runs");
     } catch (err) {
       const msg =
         err instanceof Error && err.message
@@ -665,6 +676,8 @@ export function SettingsModal({
             setBudgetText={setBudgetText}
             orchBudgetText={orchBudgetText}
             setOrchBudgetText={setOrchBudgetText}
+            maxRunsText={maxRunsText}
+            setMaxRunsText={setMaxRunsText}
             dirtyDrafts={dirtyDrafts}
             save={save}
             onSaveSettings={onSaveSettings}
@@ -768,6 +781,7 @@ export function SettingsModal({
             projectTools={projectTools}
             toolsProjectId={toolsProjectId}
             setToolsProjectId={setToolsProjectId}
+            onRenameScope={onRenameMemoryScope}
           />
           )}
 

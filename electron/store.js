@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { randomUUID } = require("node:crypto");
 const { getDefaultSecrets } = require("./secrets.js");
+const threadSecrets = require("./threadSecrets.js");
 const {
   splitMessagesByThread,
   stringifyStore,
@@ -61,6 +62,7 @@ const EMPTY = {
   usageByThread: {},
   runArtifactsByThread: {},
   rewindRestoreByThread: {},
+  workflowRunByThread: {},
   workflowTemplates: [],
   spendByDay: {},
   usageByDay: {},
@@ -193,6 +195,28 @@ const MAX_WORKLOG_ITEMS_PER_THREAD = 500;
 const WORKLOG_OVERFLOW_SLACK = 50;
 
 /**
+ * A crashed orchestrated workflow view still has running/pending agents.
+ * Mark them failed + __interrupted so Retry reruns the whole interrupted
+ * phase and reuses settled phase outputs (#182).
+ * @param {object | undefined} view
+ * @returns {boolean} true if any agent was interrupted
+ */
+function healInterruptedWorkflow(view) {
+  if (!view || !Array.isArray(view.phases)) return false;
+  let healed = false;
+  for (const phase of view.phases) {
+    for (const agent of (phase && phase.agents) || []) {
+      if (agent && (agent.status === "running" || agent.status === "pending")) {
+        agent.status = "failed";
+        agent.__interrupted = true;
+        healed = true;
+      }
+    }
+  }
+  return healed;
+}
+
+/**
  * CRASH / force-quit path only: threads still "working" on disk when the
  * process loads mean the previous process died mid-run (clean quits mark idle
  * via runner.stopAll first). A crash IS a failure of the run — stamp failed.
@@ -209,6 +233,9 @@ function recoverInterruptedRuns(store, data) {
   let recovered = false;
   for (const t of data.threads) {
     if (t.status !== "working") continue;
+    const resumable = healInterruptedWorkflow(
+      data.workflowRunByThread && data.workflowRunByThread[t.id],
+    );
     t.status = "failed";
     t.runStartedAt = null;
     t.lastError = "Run error: app quit while the run was in flight";
@@ -219,7 +246,9 @@ function recoverInterruptedRuns(store, data) {
     store._appendLazyMessage(t.id, {
       id: randomUUID(),
       role: "event",
-      text: "Run interrupted: the app crashed or was force-quit mid-run",
+      text: resumable
+        ? "Run interrupted: the app crashed or was force-quit mid-run. Retry a failed workflow agent to resume; finished phases are kept."
+        : "Run interrupted: the app crashed or was force-quit mid-run",
       createdAt: Date.now(),
     });
     // Fail-closed work-log: a mid-retry (or any other) beginWorkLogStep
@@ -1481,6 +1510,12 @@ class Store {
         !Array.isArray(parsed.rewindRestoreByThread)
           ? parsed.rewindRestoreByThread
           : {},
+      workflowRunByThread:
+        parsed.workflowRunByThread &&
+        typeof parsed.workflowRunByThread === "object" &&
+        !Array.isArray(parsed.workflowRunByThread)
+          ? parsed.workflowRunByThread
+          : {},
       workflowTemplates: Array.isArray(parsed.workflowTemplates)
         ? parsed.workflowTemplates.map(migrateTemplateKimiModels)
         : [],
@@ -2073,7 +2108,10 @@ class Store {
    */
   appendMessage(threadId, message) {
     const list = this.getMessages(threadId).slice();
-    list.push(message);
+    // Every runner/adapter message write lands here or in updateMessage, and
+    // the renderer push, summaries and session transcript read back from the
+    // store, so redacting here covers them all (#1531 secret_request).
+    list.push(threadSecrets.redact(threadId, message));
     this.setMessages(threadId, list);
     this.updateThread(threadId, {}, { touch: true });
   }
@@ -2161,6 +2199,24 @@ class Store {
       ),
     );
     return dropped.length;
+  }
+
+  /**
+   * Last orchestrated workflow view (internal shape, incl. agent outputs).
+   * Persisted so a crash or restart can resume finished phases (#182).
+   * @param {string} threadId
+   * @returns {object | null}
+   */
+  getWorkflowRun(threadId) {
+    return this.data.workflowRunByThread[threadId] || null;
+  }
+
+  /**
+   * @param {string} threadId
+   * @param {object} view
+   */
+  setWorkflowRun(threadId, view) {
+    this.data.workflowRunByThread[threadId] = view;
   }
 
   /**
@@ -2311,7 +2367,9 @@ class Store {
     const list = this.getMessages(threadId).slice();
     const idx = list.findIndex((m) => m.id === messageId);
     if (idx < 0) return null;
-    list[idx] = { ...list[idx], ...patch };
+    // Streams patch the whole accumulated text, so a value split across
+    // chunks is caught once both halves have arrived.
+    list[idx] = { ...list[idx], ...threadSecrets.redact(threadId, patch) };
     this.setMessages(threadId, list);
     return list[idx];
   }
@@ -2351,7 +2409,10 @@ class Store {
       if (
         Object.prototype.hasOwnProperty.call(patch, "worktreePath") &&
         patch.worktreePath !== t.worktreePath &&
-        !Object.prototype.hasOwnProperty.call(patch, "sessionId")
+        !Object.prototype.hasOwnProperty.call(patch, "sessionId") &&
+        // An armed message-level fork (#158) resumes by id with
+        // --fork-session, which works from any cwd (claude 2.1.283).
+        !t.forkSessionAt
       ) {
         p = { ...patch, sessionId: null };
         // Same rule as setProvider (#1493): a dropped session replays the
@@ -2502,6 +2563,7 @@ function cloneEmpty() {
     usageByThread: {},
     runArtifactsByThread: {},
     rewindRestoreByThread: {},
+    workflowRunByThread: {},
     workflowTemplates: [],
     spendByDay: {},
     usageByDay: {},

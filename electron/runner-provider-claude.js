@@ -4,6 +4,7 @@
 // Follows the seam convention in the header of electron/runner-watchdogs.js.
 
 const { getProvider, resolveBin, modelSupportsFast } = require("./providers.js");
+const { withProjectEnv } = require("./worktreeEnv.js");
 const {
   truncate,
   INPUT_TRUNCATE,
@@ -29,6 +30,8 @@ const {
 const path = require("node:path");
 const threadSecrets = require("./threadSecrets.js");
 const { classifyTool } = require("./guardrails.js");
+const { pendingFromInput } = require("./codexInput.js");
+const { METHOD_ELICITATION } = require("./codexApprovals.js");
 const { isMemoryConsolidateTool } = require("./memory-consolidate.js");
 const { saveToolImages, extractImages } = require("./tool-images.js");
 const fs = require("node:fs");
@@ -422,7 +425,9 @@ function createClaudeRun(ctx) {
       model: thread.model || null,
       reasoningEffort: thread.reasoningEffort || null,
       webSearch: thread.webSearch === true,
+      agent: thread.agent || null,
       fast: thread.fast === true,
+      forkSessionAt: thread.forkSessionAt || null,
     });
     // Claude runs interactively: prompt over stdin, permission prompts via
     // the control protocol. Other claude-stream providers (e.g. grok) keep
@@ -713,6 +718,39 @@ function createClaudeRun(ctx) {
               pushThreadsChanged();
             }
             pushDetail(threadId, claudeState);
+          } else if (request.subtype === "elicitation" && requestId) {
+            // #173: an MCP server asking the user mid-run. Same typed-input
+            // card and schema checks as Codex elicitation.
+            const e = guard();
+            if (!e) return;
+            let pending;
+            try {
+              pending = pendingFromInput(requestId, METHOD_ELICITATION, {
+                serverName: request.mcp_server_name,
+                message: request.message,
+                mode: request.mode,
+                url: request.url,
+                elicitationId: request.elicitation_id,
+                requestedSchema: request.requested_schema,
+              });
+            } catch {
+              handle.respondError(
+                requestId,
+                "Unsupported elicitation: Solenta cannot render this form or URL",
+              );
+              return;
+            }
+            markTurnContent();
+            e.pendingPermissions.push(pending);
+            if (e.pendingPermissions.length === 1) {
+              store.updateThread(
+                threadId,
+                { awaitingInput: true },
+                { touch: true },
+              );
+              pushThreadsChanged();
+            }
+            pushDetail(threadId, claudeState);
           } else if (requestId) {
             // Unknown control request: answer so the CLI never hangs on us.
             handle.respondError(
@@ -726,7 +764,11 @@ function createClaudeRun(ctx) {
         if (type === "system" && ev.subtype === "init") {
           if (typeof ev.session_id === "string" && ev.session_id) {
             capturedSessionId = ev.session_id;
-            store.updateThread(threadId, { sessionId: ev.session_id });
+            // The forked session (#158) has its own id now: the cut is spent.
+            store.updateThread(threadId, {
+              sessionId: ev.session_id,
+              forkSessionAt: null,
+            });
           }
           if (typeof ev.model === "string" && ev.model) {
             capturedModel = ev.model;
@@ -804,6 +846,12 @@ function createClaudeRun(ctx) {
               if (block.text) markTurnContent();
               assistantText += block.text;
               upsertAssistantText();
+              // Chain entry a message-level fork resumes at (#158).
+              if (assistantMsgId && typeof ev.uuid === "string" && ev.uuid) {
+                store.updateMessage(threadId, assistantMsgId, {
+                  claudeUuid: ev.uuid,
+                });
+              }
             } else if (
               block.type === "thinking" ||
               block.type === "redacted_thinking"
@@ -925,7 +973,13 @@ function createClaudeRun(ctx) {
           const usage = ev.usage || {};
           const turnIn = Number(usage.input_tokens) || 0;
           const turnOut = Number(usage.output_tokens) || 0;
-          const costDelta = Number(ev.total_cost_usd) || 0;
+          // total_cost_usd is the process's running total, and a warm process
+          // serves many turns (#1435): bill only the growth since its last
+          // result. A fresh handle starts at 0, so one-shot runs bill the total.
+          const totalCost = Number(ev.total_cost_usd) || 0;
+          const prevTotalCost = (handle && handle.lastTotalCostUsd) || 0;
+          const costDelta = Math.max(0, totalCost - prevTotalCost);
+          if (handle) handle.lastTotalCostUsd = Math.max(prevTotalCost, totalCost);
           runUsage.tokensIn += turnIn;
           runUsage.tokensOut += turnOut;
           runUsage.costUsd += costDelta;
@@ -1174,7 +1228,10 @@ function createClaudeRun(ctx) {
     // respawns the warm CLI so the next turn sees it.
     const spawnEnv = threadSecrets.withEnv(
       threadId,
-      grokMerged && Object.keys(grokMerged).length > 0 ? grokMerged : undefined,
+      withProjectEnv(
+        project,
+        grokMerged && Object.keys(grokMerged).length > 0 ? grokMerged : undefined,
+      ),
     );
 
     // Reuse key: everything a spawn bakes into argv/env EXCEPT the session

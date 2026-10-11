@@ -42,6 +42,7 @@ import type {
   PermissionDecision,
   InputValues,
   PermissionMode,
+  CliAgentInfo,
   CliSlashCommand,
   ProjectInfo,
   SimulatorStatus,
@@ -52,11 +53,14 @@ import type {
   SpecArtifact,
   ThreadDetail,
   ThreadInfo,
+  ThreadRecap,
   ThreadMessagePin,
   WorkSuggestion,
   WorkflowTemplateInfo,
   EditorId,
   EditorOption,
+  PromptSnippet,
+  ModelRoute,
 } from "../shared/ipc";
 import {
   THREAD_NOTES_MAX,
@@ -110,7 +114,7 @@ import type { SlashAction } from "../slashCommands";
 import { NATIVE_COMPACT_PROVIDERS } from "../slashCommands";
 import { ProviderQuotaDialog } from "./ProviderQuota";
 import type { ProviderLimitsLoader } from "../providerUsage";
-import { buildBestOfNEntries } from "../bestOfN";
+import { buildBestOfNEntries, providerCanPlan } from "../bestOfN";
 import { formatQuotaWaitLabel } from "../quotaWait";
 import type { ReviewSymbol } from "../reviewItinerary";
 import { useEscapeClose } from "../useEscapeClose";
@@ -288,6 +292,10 @@ interface ThreadViewProps {
   onRetryWorkflowAgent?: (agentId: string) => void | Promise<void>;
   onSaveWorkflow: (template: WorkflowSaveInput) => Promise<WorkflowTemplateInfo>;
   onRemoveWorkflow: (id: string) => Promise<void>;
+  onExportWorkflow?: (
+    id: string,
+    overwrite: boolean,
+  ) => Promise<{ written: boolean; path: string }>;
   workflowListError?: string | null;
   onRetryWorkflows?: () => void | Promise<void>;
   onStopRun: () => void | Promise<void>;
@@ -339,7 +347,7 @@ interface ThreadViewProps {
     feedback?: string,
   ) => void | Promise<void>;
   /** "Implement in a new thread" from the plan prompt (#1501). */
-  onImplementPlan?: (plan: string) => void | Promise<void>;
+  onImplementPlan?: (plan: string, provider?: string) => void | Promise<void>;
   /** "Save plan to file" from the plan prompt; resolves the path (#1501). */
   onSavePlan?: (plan: string) => Promise<string>;
   /**
@@ -359,6 +367,13 @@ interface ThreadViewProps {
   ) => void | Promise<void>;
   onSetWebSearch?: (webSearch: boolean, threadId?: string) => void | Promise<void>;
   onSetFast?: (fast: boolean, threadId?: string) => void | Promise<void>;
+  onSetRoute?: (route: ModelRoute | null, threadId?: string) => void | Promise<void>;
+  /** Run the thread as a CLI custom agent (#172); null = CLI default. */
+  onSetAgent?: (agent: string | null) => void | Promise<void>;
+  onListAgents?: (input: {
+    provider: string;
+    projectPath?: string | null;
+  }) => Promise<CliAgentInfo[]>;
   /** Archive or unarchive the open thread. */
   onSetArchived: (archived: boolean) => void | Promise<void>;
   /** Per-thread inbound policy for messages from other threads (issue #551). */
@@ -379,6 +394,8 @@ interface ThreadViewProps {
   onRepeatSchedule?: () => void;
   /** Distill this thread into a workflow draft for review (#285). */
   onDistillWorkflow?: () => void;
+  /** Distill this thread into a shared-memory draft for review (#247). */
+  onDistillMemory?: () => void;
   /** Save scratch notes for a thread (header notes editor, issues #194 / #935). */
   onSetNotes?: (threadId: string, notes: string) => void | Promise<void>;
   /** Replace the per-thread transcript bookmark list (issue #1217). */
@@ -471,15 +488,20 @@ interface ThreadViewProps {
   onCommitChanges: (
     message: string,
     paths?: string[],
+    patches?: Array<{ path: string; patch: string }>,
   ) => Promise<{ subject: string }>;
   /** Keep the Git-tab merge in sync with the pane's staged path list. */
   onStagedPathsChange?: (paths: string[] | null) => void;
   /** Discard one changed file (untracked deletes the file). */
   onRevertFile: (path: string, status: string) => Promise<{ path: string }>;
+  /** Discard one hunk; `patch` is the file header plus that hunk. */
+  onRevertHunk?: (path: string, patch: string) => Promise<{ path: string }>;
   /** Draft a commit message with the thread's provider. */
   onSuggestCommitMessage: () => Promise<{ message: string }>;
   /** File lookup for the composer @-mention popup. */
   onListFiles?: (query: string) => Promise<string[]>;
+  /** Saved snippets offered in the @-mention popup (issue #189). */
+  promptSnippets?: readonly PromptSnippet[];
   /** Native folder picker; returns an absolute path or null. */
   onPickDirectory?: () => Promise<string | null>;
   /** AppSnap: on-screen windows the user can capture. */
@@ -488,6 +510,10 @@ interface ThreadViewProps {
   onCaptureSnapWindow?: (
     sourceId: string,
   ) => Promise<AttachmentInfo | null>;
+  /** AppSnap: the same window's accessibility text, after the PNG (#1531). */
+  onCaptureSnapWindowText?: (
+    sourceId: string,
+  ) => Promise<{ attachment: AttachmentInfo | null; skipped?: string }>;
   /** CLI skills and custom commands for the composer `/` palette (#606). */
   onListCliCommands?: (input?: {
     provider?: string;
@@ -626,7 +652,7 @@ interface ThreadViewProps {
    * pass provider for hand-off.
    */
   onFork?: (
-    opts?: { provider?: string; model?: string | null },
+    opts?: { provider?: string; model?: string | null; messageId?: string },
   ) => void | Promise<void | ThreadInfo | null>;
   /**
    * Start a suggested-work chip as a new thread (issue #550). Caller forks
@@ -713,6 +739,7 @@ export const ThreadView = memo(function ThreadView({
   onRetryWorkflowAgent,
   onSaveWorkflow,
   onRemoveWorkflow,
+  onExportWorkflow,
   workflowListError = null,
   onRetryWorkflows,
   onStopRun,
@@ -737,12 +764,16 @@ export const ThreadView = memo(function ThreadView({
   onSetReasoningEffort,
   onSetWebSearch,
   onSetFast,
+  onSetRoute,
+  onSetAgent,
+  onListAgents,
   onSetArchived,
   onSetCrossThreadInbound,
   onRenameThread,
   onCreateThread,
   onRepeatSchedule,
   onDistillWorkflow,
+  onDistillMemory,
   onSetNotes,
   onSetMessagePins,
   onStartSpec,
@@ -778,11 +809,14 @@ export const ThreadView = memo(function ThreadView({
   onCommitChanges,
   onStagedPathsChange,
   onRevertFile,
+  onRevertHunk,
   onSuggestCommitMessage,
   onListFiles,
+  promptSnippets,
   onPickDirectory,
   onListSnapWindows,
   onCaptureSnapWindow,
+  onCaptureSnapWindowText,
   onListCliCommands,
   onResolvePaths,
   onOpenWorkspacePath,
@@ -930,6 +964,8 @@ export const ThreadView = memo(function ThreadView({
    * open thread changes.
    */
   const [handoffBannerDismissed, setHandoffBannerDismissed] = useState(false);
+  /** Recap latched from threads.get (#239); pushes drop detail.recap. */
+  const [shownRecap, setShownRecap] = useState<ThreadRecap | null>(null);
   const [runStatList, setRunStatList] = useState<RunStatInfo[]>([]);
   const [openTurnSha, setOpenTurnSha] = useState<string | null>(null);
   // One split/unified choice for the turn panel and the Git pane (#1493).
@@ -968,7 +1004,7 @@ export const ThreadView = memo(function ThreadView({
   /** Bumps after a successful push so the sync pill refetches. */
   const [syncRefreshNonce, setSyncRefreshNonce] = useState(0);
   /** Brief inline confirmation after copying the thread id. */
-  const [copiedThreadId, setCopiedThreadId] = useState(false);
+  const [copied, setCopied] = useState<"id" | "link" | null>(null);
   /** Header quick action currently in flight (issue #153). */
   const [commandRunningId, setCommandRunningId] = useState<string | null>(null);
   const [commandError, setCommandError] = useState<string | null>(null);
@@ -978,6 +1014,7 @@ export const ThreadView = memo(function ThreadView({
   const [lightbox, setLightbox] = useState<{ src: string; alt: string } | null>(
     null,
   );
+  const [cliAgents, setCliAgents] = useState<CliAgentInfo[]>([]);
   const copyFlashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const threadId = detail?.thread.id ?? null;
   if (threadId !== focusThreadId) {
@@ -999,6 +1036,26 @@ export const ThreadView = memo(function ThreadView({
     threadId,
     detail,
   });
+
+  const agentProvider = detail?.thread.provider;
+  const agentCwd = detail?.thread.worktreePath || project?.path || null;
+  useEffect(() => {
+    if (!onListAgents || !agentProvider) {
+      setCliAgents([]);
+      return;
+    }
+    let cancelled = false;
+    onListAgents({ provider: agentProvider, projectPath: agentCwd })
+      .then((rows) => {
+        if (!cancelled) setCliAgents(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setCliAgents([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [onListAgents, agentProvider, agentCwd, threadId]);
   const [incomingHandoff, setIncomingHandoff] = useState<{
     threadId: string;
     items: AttachmentInfo[];
@@ -1027,6 +1084,8 @@ export const ThreadView = memo(function ThreadView({
     Array<{ id: string; name: string }>
   >([]);
   const [snapError, setSnapError] = useState<string | null>(null);
+  /** Why the last capture came without window text (#1531); shown in the picker. */
+  const [snapNote, setSnapNote] = useState<string | null>(null);
   const [snapBusy, setSnapBusy] = useState(false);
   const [layoutThreadId, setLayoutThreadId] = useState<string | null>(threadId);
   const [layout, setLayout] = useState<LayoutNode>(() =>
@@ -1364,6 +1423,15 @@ export const ThreadView = memo(function ThreadView({
     if (isWorking || !onFork) return;
     void onFork();
   }, [isWorking, onFork]);
+  const handleForkFrom = useMemo(
+    () =>
+      onFork
+        ? (messageId: string) => {
+            void onFork({ messageId });
+          }
+        : undefined,
+    [onFork],
+  );
   // Provider-native compaction needs a live session; otherwise /compact
   // falls back to the fresh-context fork.
   const nativeCompact =
@@ -1376,7 +1444,15 @@ export const ThreadView = memo(function ThreadView({
   }, [isWorking, nativeCompact, onStartRun, handleForkFresh]);
   const hasTimeline = timeline.length > 0;
   const hasWorktree = Boolean(detail?.thread.worktreePath);
+  const { headerBehind, detailsGit, landed } = useHeaderGitStatus({
+    detail,
+    detailsOpen,
+    gitSyncInfo,
+    onFetchDiff,
+    syncRefreshNonce,
+  });
   const worktree = useWorktreeChrome({
+    landed,
     thread:
       onSetupWorktree && onMergeWorktree && onRemoveWorktree
         ? (detail?.thread ?? null)
@@ -1643,12 +1719,14 @@ export const ThreadView = memo(function ThreadView({
   const { attachBrowserScreenshot, captureAppSnap } = useAppSnap({
     onListSnapWindows,
     onCaptureSnapWindow,
+    onCaptureSnapWindowText,
     onSaveAttachmentImage,
     isArchived,
     snapOpen,
     setSnapOpen,
     setSnapWindows,
     setSnapError,
+    setSnapNote,
     snapBusy,
     setSnapBusy,
     snapDialogRef,
@@ -1662,16 +1740,18 @@ export const ThreadView = memo(function ThreadView({
    * prompt on each new fork. Sequential: a run cannot start until its fork
    * exists. Failures throw so Composer and the run-error banner both surface
    * them. Profile forks set effort then permission on the new thread before
-   * the run, same order as pickProfile.
+   * the run, same order as pickProfile. planOnly (#241) starts every fork in
+   * plan mode and drops providers that cannot plan; the user then builds the
+   * winning plan from its card ("Implement in a new thread").
    */
   const runBestOfN = useCallback(
-    async (selectedIds: string[], prompt: string) => {
+    async (selectedIds: string[], prompt: string, planOnly = false) => {
       const current = detail?.thread;
       if (!current || !onFork) {
         throw new Error("Failed to start Best of N");
       }
       const availableIds = providers
-        .filter((p) => p.available)
+        .filter((p) => p.available && (!planOnly || providerCanPlan(p)))
         .map((p) => p.id);
       const plan = buildBestOfNEntries(availableIds, selectedIds, agentProfiles);
       if (typeof plan === "string") throw new Error(plan);
@@ -1690,6 +1770,9 @@ export const ThreadView = memo(function ThreadView({
         created.push(forked.id);
         if (entry.kind === "profile") {
           await onSetReasoningEffort(entry.reasoningEffort, forked.id);
+        }
+        if (planOnly) await onSetPermissionMode("plan", forked.id);
+        else if (entry.kind === "profile") {
           await onSetPermissionMode(entry.permissionMode, forked.id);
         }
         await onStartRun(prompt, forked.id);
@@ -1913,6 +1996,7 @@ export const ThreadView = memo(function ThreadView({
       setPinLabelDraft("");
       setJumpMessageId(null);
       setHandoffBannerDismissed(false);
+      setShownRecap(null);
       setRestoreConfirm(null);
       setRestorePending(false);
       setRestoreError(null);
@@ -1922,18 +2006,24 @@ export const ThreadView = memo(function ThreadView({
       setRunStatList([]);
       setCollapsedRuns(new Set<string>());
       setSyncRefreshNonce(0);
-      setCopiedThreadId(false);
+      setCopied(null);
       setLightbox(null);
       setIncomingHandoff(null);
       setSnapOpen(false);
       setSnapBusy(false);
       setSnapError(null);
+      setSnapNote(null);
       if (copyFlashTimer.current != null) {
         clearTimeout(copyFlashTimer.current);
         copyFlashTimer.current = null;
       }
     }
   }, [detail?.thread.id]);
+  // After the switch reset above, so a thread change clears then re-latches.
+  const dueRecap = detail?.recap ?? null;
+  useEffect(() => {
+    if (dueRecap) setShownRecap(dueRecap);
+  }, [dueRecap]);
 
   const {
     handlePaneChange,
@@ -2078,13 +2168,6 @@ export const ThreadView = memo(function ThreadView({
   }, [detailsOpen]);
   const closeDetails = useCallback(() => setDetailsOpen(false), []);
   const [prRequest, setPrRequest] = useState(0);
-  const { headerBehind, detailsGit } = useHeaderGitStatus({
-    detail,
-    detailsOpen,
-    gitSyncInfo,
-    onFetchDiff,
-    syncRefreshNonce,
-  });
   const ringWarn = ring?.view.warn === true;
   useEffect(() => {
     if (contextOpen && !ringWarn) setDetailsOpen(true);
@@ -2429,18 +2512,20 @@ export const ThreadView = memo(function ThreadView({
   const workerNavLabel = handoffSource?.orchWorker ? "Parent worker" : "Task";
   const workersLabel = `Workers (${workerCount})`;
 
-  const handleCopyThreadId = async () => {
+  const handleCopy = async (what: "id" | "link") => {
     try {
-      await navigator.clipboard.writeText(thread.id);
+      await navigator.clipboard.writeText(
+        what === "id" ? thread.id : `solenta://thread/${thread.id}`,
+      );
     } catch {
       return;
     }
-    setCopiedThreadId(true);
+    setCopied(what);
     if (copyFlashTimer.current != null) {
       clearTimeout(copyFlashTimer.current);
     }
     copyFlashTimer.current = setTimeout(() => {
-      setCopiedThreadId(false);
+      setCopied(null);
       copyFlashTimer.current = null;
     }, COPY_FLASH_MS);
   };
@@ -2791,9 +2876,18 @@ export const ThreadView = memo(function ThreadView({
                         className={styles.menuItem}
                         role="menuitem"
                         data-copy-thread-id=""
-                        onClick={() => void handleCopyThreadId()}
+                        onClick={() => void handleCopy("id")}
                       >
-                        {copiedThreadId ? "Copied" : "Copy thread ID"}
+                        {copied === "id" ? "Copied" : "Copy thread ID"}
+                      </button>
+                      <button
+                        type="button"
+                        className={styles.menuItem}
+                        role="menuitem"
+                        data-copy-thread-link=""
+                        onClick={() => void handleCopy("link")}
+                      >
+                        {copied === "link" ? "Copied" : "Copy link"}
                       </button>
                       {onRenameThread && !isWorking && (
                         <button
@@ -2895,6 +2989,20 @@ export const ThreadView = memo(function ThreadView({
                           }}
                         >
                           Distill into workflow…
+                        </button>
+                      )}
+                      {!isWorking && onDistillMemory && (
+                        <button
+                          type="button"
+                          className={styles.menuItem}
+                          role="menuitem"
+                          data-distill-memory=""
+                          onClick={() => {
+                            setMenuOpen(false);
+                            onDistillMemory();
+                          }}
+                        >
+                          Save as memory…
                         </button>
                       )}
                       {!isWorking && (
@@ -3544,6 +3652,7 @@ export const ThreadView = memo(function ThreadView({
                 onCommit={onCommitChanges}
                 onStagedPathsChange={onStagedPathsChange}
                 onRevert={onRevertFile}
+                onRevertHunk={onRevertHunk}
                 onSuggest={onSuggestCommitMessage}
                 onComment={
                   isArchived || !detail
@@ -3644,6 +3753,24 @@ export const ThreadView = memo(function ThreadView({
             aria-label="Dismiss handoff banner"
             title="Dismiss handoff banner"
             onClick={() => setHandoffBannerDismissed(true)}
+          >
+            ×
+          </button>
+        </div>
+      )}
+
+      {shownRecap && (
+        <div className={styles.handoffBanner} data-thread-recap="">
+          <div className={styles.handoffBannerText}>
+            <strong>Recap</strong>
+            <div className={styles.recapText}>{shownRecap.text}</div>
+          </div>
+          <button
+            type="button"
+            className={styles.handoffDismiss}
+            aria-label="Dismiss recap"
+            title="Dismiss recap"
+            onClick={() => setShownRecap(null)}
           >
             ×
           </button>
@@ -3945,6 +4072,11 @@ export const ThreadView = memo(function ThreadView({
                           ? handleWaitWhat
                           : undefined
                       }
+                      onForkFrom={
+                        entry.message.role === "assistant" && !isWorking
+                          ? handleForkFrom
+                          : undefined
+                      }
                     />
                     </div>
                     {bar && (
@@ -4129,6 +4261,7 @@ export const ThreadView = memo(function ThreadView({
             onRespond={onRespondPermission}
             onImplement={onImplementPlan}
             onSave={onSavePlan}
+            providers={providers}
           />
         ) : detail.pendingPermission ? (
           <PermissionPrompt
@@ -4501,6 +4634,10 @@ export const ThreadView = memo(function ThreadView({
         reasoningEffort={thread.reasoningEffort}
         webSearch={thread.webSearch === true}
         fast={thread.fast === true}
+        route={thread.route ?? null}
+        agent={thread.agent ?? null}
+        agents={cliAgents}
+        onSetAgent={onSetAgent}
         providers={providers}
         agentProfiles={agentProfiles}
         workflows={workflows}
@@ -4508,8 +4645,10 @@ export const ThreadView = memo(function ThreadView({
         onSetReasoningEffort={onSetReasoningEffort}
         onSetWebSearch={onSetWebSearch}
         onSetFast={onSetFast}
+        onSetRoute={onSetRoute}
         onSaveWorkflow={onSaveWorkflow}
         onRemoveWorkflow={onRemoveWorkflow}
+        onExportWorkflow={onExportWorkflow}
         workflowListError={workflowListError}
         onRetryWorkflows={onRetryWorkflows}
         sessionId={thread.sessionId}
@@ -4575,6 +4714,7 @@ export const ThreadView = memo(function ThreadView({
         error={runError}
         onDismissError={onDismissRunError}
         onListFiles={onListFiles}
+        promptSnippets={promptSnippets}
         onPickMentionFolder={
           onPickDirectory ? pickMentionFolder : undefined
         }
@@ -4639,6 +4779,11 @@ export const ThreadView = memo(function ThreadView({
             {snapError && (
               <p className={styles.reviewError} role="alert">
                 {snapError}
+              </p>
+            )}
+            {snapNote && (
+              <p className={styles.confirmBody} data-appsnap-note="">
+                Last capture: {snapNote}
               </p>
             )}
             <ul className={styles.snapList}>

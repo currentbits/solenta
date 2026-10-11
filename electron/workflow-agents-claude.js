@@ -1,6 +1,7 @@
 "use strict";
 
 const { runClaude } = require("./claude.js");
+const { withProjectEnv } = require("./worktreeEnv.js");
 const { deployGrokGuardrailOverlay } = require("./grok.js");
 const { grokGuardrailNotice } = require("./grok-guardrail-hook.js");
 const {
@@ -113,8 +114,10 @@ function spawnAgentClaude(opts) {
     sessionId: resumeId,
     model: model || null,
     interactive,
-    envExtra:
+    envExtra: withProjectEnv(
+      opts.project,
       entry && entry.id === "grok" ? mergeGrokSpawnEnv(wrapEnv) : undefined,
+    ),
     onEvent: (ev) => {
       if (!ev || typeof ev !== "object") return;
       const sid = realSessionId(claudeStreamSessionId(ev));

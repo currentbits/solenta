@@ -8,11 +8,12 @@ const { createRequire } = require("node:module");
 
 const { registerMcpServer, unregisterMcpServer } = require("./memory-sup.js");
 const pairing = require("./pairing.js");
-const { startWithPoolFailover } = require("./subagentPool.js");
+const { startWithPoolFailover, poolFromStore } = require("./subagentPool.js");
 const { resolveBin, isBinAvailable } = require("./providers.js");
 const {
   forkWorkerThread,
   setProvider,
+  setRoute,
   recordHypothesis,
   recordSuggestion,
   submitSpec,
@@ -92,13 +93,11 @@ const INSTRUCTIONS =
   "unattended/scheduled, unknown). Pass fromThreadId as YOUR OWN thread id so " +
   "the receiver sees a card attributed to you. Mid-run sends are held, not " +
   "injected. thread_status reports a thread's status and the first line of " +
-  "its last assistant reply. Runs are asynchronous: send work, then continue. " +
-  "When a worker you forked finishes (done or failed) you are woken on a new turn " +
-  "with a notice; do not sit idle waiting for the user to relay that. " +
-  "thread_status still has full details if you need them before the wake-up. " +
-  "A worker can also stall on a permission prompt only the user can answer: that " +
-  "sends no notice and stays \"working\", so if one goes quiet check thread_status " +
-  "for awaitingInput and tell the user what it is waiting on. " +
+  "its last assistant reply. Runs are asynchronous. After thread_fork or " +
+  "thread_send, end your turn: each worker's finish (done or failed) wakes you " +
+  "with a notice quoting its last reply. Do not poll thread_status, sleep, " +
+  "or start watchers while workers run. A worker blocked on a permission prompt shows as needing " +
+  "the user in the sidebar. " +
   "The shared task list is per-crew and self-claimed: task_list then task_claim " +
   "with no taskId takes the next unblocked task. Finish with task_complete and a " +
   "note; hand a task back with task_release rather than looping. Talk to a peer " +
@@ -435,7 +434,12 @@ function createToolHandlers(deps) {
     if (args.title != null) input.title = String(args.title);
     // orchWorker + lazy worktree live in services.forkWorkerThread, shared
     // with the runner's pendingFork dispatch.
-    const fork = forkWorkerThread(store, input, forkThread);
+    let fork = forkWorkerThread(store, input, forkThread);
+    // #246: a declared tier routes the worker's first turn through the
+    // project's tier → profile map. A pinned pool still wins.
+    if (args.tier != null && !poolFromStore(store).force) {
+      fork = setRoute(store, { threadId: fork.id, route: String(args.tier) });
+    }
     await startWithPoolFailover({
       store,
       worker: fork,
@@ -1096,18 +1100,19 @@ function createToolHandlers(deps) {
   /**
    * Project checkout whose origin these Planboard writes hit. Never a
    * caller-supplied repo: that would let a thread mint issues on some
-   * other GitHub remote (#849).
+   * other GitHub remote (#849). Returns the project itself so issues.js can
+   * resolve an ssh remote's origin on the far side (#180).
    * @param {{ projectId?: string }} thread
    */
-  function originPathOf(thread) {
+  function issueTargetOf(thread) {
     const project = projectOf(thread);
-    return project && project.path ? String(project.path) : "";
+    return project && project.path ? project : "";
   }
 
   async function issue_create(args) {
     const thread = requireOwnThread(args);
     const { createIssue } = require("./issues.js");
-    return createIssue(originPathOf(thread), {
+    return createIssue(issueTargetOf(thread), {
       title: args && args.title,
       body: args && args.body,
     });
@@ -1117,7 +1122,7 @@ function createToolHandlers(deps) {
     const thread = requireOwnThread(args);
     const { setPlanStatus } = require("./issues.js");
     return setPlanStatus(
-      originPathOf(thread),
+      issueTargetOf(thread),
       args && args.number,
       args && args.status,
     );
@@ -1126,7 +1131,7 @@ function createToolHandlers(deps) {
   async function issue_complete(args) {
     const thread = requireOwnThread(args);
     const { completeIssue } = require("./issues.js");
-    return completeIssue(originPathOf(thread), args && args.number, {
+    return completeIssue(issueTargetOf(thread), args && args.number, {
       comment: args && args.comment,
     });
   }
@@ -1135,7 +1140,7 @@ function createToolHandlers(deps) {
     const thread = requireOwnThread(args);
     const { commentIssue } = require("./issues.js");
     return commentIssue(
-      originPathOf(thread),
+      issueTargetOf(thread),
       args && args.number,
       args && args.body,
     );
@@ -1144,7 +1149,7 @@ function createToolHandlers(deps) {
   async function issue_list(args) {
     const thread = requireOwnThread(args);
     const { listIssuePage } = require("./issues.js");
-    return listIssuePage(originPathOf(thread), args);
+    return listIssuePage(issueTargetOf(thread), args);
   }
 
   /**
@@ -1278,12 +1283,16 @@ function buildMcpServer(sdk, handlers, opts = {}) {
         "pass worktree:false to run it in the project checkout instead. " +
         "Optionally pass pool (an alias from the worker pool listed in your prompt) instead of " +
         "provider. Omit both to use the pool default. When the pool is pinned (force), pool and " +
-        "provider are ignored. Returns the new threadId.",
+        "provider are ignored. Optionally pass tier (fast, balanced, strong, or auto to classify " +
+        "the prompt) to pick the worker's model through the project's routing preferences: fast " +
+        "for triage/reformat chores, strong for architecture and hard debugging. A tier with no " +
+        "profile configured keeps the default worker model. Returns the new threadId.",
       inputSchema: {
         threadId: z.string().min(1),
         projectId: z.string().min(1),
         provider: z.string().min(1).optional(),
         pool: z.string().min(1).optional(),
+        tier: z.enum(["auto", "fast", "balanced", "strong"]).optional(),
         prompt: z.string().min(1),
         title: z.string().min(1).optional(),
         worktree: z.boolean().optional(),
@@ -1465,7 +1474,7 @@ function buildMcpServer(sdk, handlers, opts = {}) {
     "thread_status",
     {
       description:
-        "Status of one thread: status, title, provider, lastAssistantText (first line of the last assistant message, null when none), lastError (run error detail when status is failed, null otherwise), awaitingInput (true when the run is stalled on a permission prompt only the user can answer) and awaitingPermission (what it is asking for).",
+        "Status of one thread: status, title, provider, lastAssistantText (first line of the last assistant message, null when none), lastError (run error detail when status is failed, null otherwise), awaitingInput (true when the run is stalled on a permission prompt only the user can answer) and awaitingPermission (what it is asking for). Do not call it in a loop; finished workers wake you.",
       inputSchema: {
         threadId: z.string().min(1),
       },
@@ -2015,7 +2024,7 @@ function createOrchServer(opts) {
               : null;
           mcp = buildMcpServer(sdk, handlers, {
             planboard: Boolean(
-              boundProject && planboardNoteFor(boundProject.path),
+              boundProject && planboardNoteFor(boundProject),
             ),
           });
         }

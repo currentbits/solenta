@@ -138,7 +138,7 @@ describe("planboard MCP tools (issue #849)", () => {
   beforeEach(() => {
     tmp = fs.mkdtempSync(path.join(os.tmpdir(), "coder-orch-planboard-"));
     repo = makeRepo(tmp, "gh-repo", "https://github.com/acme/demo.git");
-    gitlab = makeRepo(tmp, "gl-repo", "https://gitlab.com/acme/demo.git");
+    gitlab = makeRepo(tmp, "gl-repo", "https://bitbucket.org/acme/demo.git");
     callsPath = path.join(tmp, "gh-calls.json");
     prevGh = process.env.CODER_GH_BIN;
     writeFakeGh(
@@ -466,7 +466,7 @@ describe("planboard MCP tools/list gate (issue #849)", () => {
     const gitlab = makeRepo(
       tmpDir,
       "gl",
-      "https://gitlab.com/acme/demo.git",
+      "https://bitbucket.org/acme/demo.git",
     );
     const { port, token } = await startOrch(
       makeStore(

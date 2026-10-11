@@ -382,6 +382,45 @@ async function main() {
     return;
   }
 
+  if (scenario === "background-agent") {
+    // kimi >= 0.24.2 "steer" print policy (#175): the Agent launch acks at
+    // once, the process stays alive and silent while the task runs, then the
+    // completion steers a new main turn on the same stream.
+    emit({
+      role: "assistant",
+      tool_calls: [
+        {
+          type: "function",
+          id: "Agent:bg",
+          function: {
+            name: "Agent",
+            arguments: JSON.stringify({
+              prompt: "x".repeat(5000),
+              description: "survey repo",
+              subagent_type: "explore",
+              run_in_background: true,
+            }),
+          },
+        },
+        {
+          type: "function",
+          id: "Agent:fg",
+          function: {
+            name: "Agent",
+            arguments: JSON.stringify({ prompt: "p", description: "quick look" }),
+          },
+        },
+      ],
+    });
+    emit({ role: "tool", tool_call_id: "Agent:bg", content: "task_id: t1 launched" });
+    emit({ role: "tool", tool_call_id: "Agent:fg", content: "done" });
+    emit({ role: "assistant", content: "launched" });
+    await delay(Number(process.env.CODER_FAKE_KIMI_BG_MS) || 600);
+    emit({ role: "assistant", content: "got: PONG" });
+    process.exit(0);
+    return;
+  }
+
   process.stderr.write("unknown scenario\\n");
   process.exit(1);
 }
@@ -546,6 +585,24 @@ describe("kimi extract helpers: REAL recorded stream lines", () => {
       ["Read", "Bash"],
       "one stream line can carry several calls; none may be dropped",
     );
+  });
+
+  it("TodoList / SetTodoList calls carry the parsed todos for the planboard (#180)", () => {
+    const todos = [{ title: "Read", status: "done" }];
+    for (const name of ["TodoList", "SetTodoList"]) {
+      const [ev] = extractToolEvents({
+        role: "assistant",
+        tool_calls: [
+          { id: "t", function: { name, arguments: JSON.stringify({ todos }) } },
+        ],
+      });
+      assert.deepEqual(ev.todos, todos, name);
+    }
+    const [garbled] = extractToolEvents({
+      role: "assistant",
+      tool_calls: [{ id: "g", function: { name: "TodoList", arguments: "{" } }],
+    });
+    assert.equal(garbled.todos, undefined);
   });
 
   it("role tool lines are end events paired by tool_call_id", () => {
@@ -1289,6 +1346,60 @@ describe("kimi runner integration", () => {
           m.runId === runId,
       ),
     );
+  });
+
+  it("background Agent rows stay running, skip the stall sweep, and settle at exit (#175)", async () => {
+    process.env.CODER_FAKE_KIMI_SCENARIO = "background-agent";
+    const prevStall = process.env.CODER_STALL_MS;
+    process.env.CODER_STALL_MS = "1";
+    try {
+      const thread = store.getThreads()[0];
+      await runner.startRun({ threadId: thread.id, prompt: "fan out" });
+      const row = (id) =>
+        (store.getThread(thread.id).subagents || []).find((r) => r.id === id);
+      await waitFor(() => row("Agent:fg")?.status === "done");
+
+      assert.deepEqual(row("Agent:bg"), {
+        id: "Agent:bg",
+        description: "survey repo",
+        agentType: "explore",
+        status: "running",
+      });
+      assert.equal(store.getThread(thread.id).status, "working");
+      store.updateThread(thread.id, { lastEventAt: Date.now() - 60_000 });
+      runner.checkStalls();
+      assert.equal(store.getThread(thread.id).stalledAt ?? null, null);
+
+      await waitFor(() => store.getThread(thread.id).status === "done");
+      assert.equal(row("Agent:bg").status, "done");
+      assert.ok(
+        store
+          .getMessages(thread.id)
+          .some((m) => m.role === "assistant" && /got: PONG/.test(m.text)),
+      );
+    } finally {
+      if (prevStall === undefined) delete process.env.CODER_STALL_MS;
+      else process.env.CODER_STALL_MS = prevStall;
+    }
+  });
+
+  it("stopRun settles running background Agent rows (#175)", async () => {
+    process.env.CODER_FAKE_KIMI_SCENARIO = "background-agent";
+    process.env.CODER_FAKE_KIMI_BG_MS = "60000";
+    try {
+      const thread = store.getThreads()[0];
+      await runner.startRun({ threadId: thread.id, prompt: "fan out" });
+      const row = () =>
+        (store.getThread(thread.id).subagents || []).find(
+          (r) => r.id === "Agent:bg",
+        );
+      await waitFor(() => row()?.status === "running");
+      await runner.stopRun({ threadId: thread.id });
+      // Killed work is failed, never done (#1443).
+      await waitFor(() => row().status === "failed");
+    } finally {
+      delete process.env.CODER_FAKE_KIMI_BG_MS;
+    }
   });
 
   it("stopRun kills kimi process and leaves idle", async () => {

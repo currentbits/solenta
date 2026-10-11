@@ -629,4 +629,72 @@ describe("Best of N submit sequence", () => {
     ]);
     m.unmount();
   });
+
+  it("Plan only forks every pick in plan mode and skips providers without one (#241)", async () => {
+    const calls: string[] = [];
+    const noPlanCodex: ProviderInfo = {
+      ...CODEX,
+      permissionModes: ["default", "bypassPermissions"],
+    };
+    const m = await mount(
+      <ThreadView
+        detail={detail()}
+        project={project}
+        providers={[CLAUDE, noPlanCodex, KIMI]}
+        workflows={WORKFLOWS}
+        hasProjects={true}
+        onAddProject={() => {}}
+        onStartRun={async (prompt, threadId) => {
+          calls.push(`run:${threadId}:${prompt}`);
+        }}
+        onStartWorkflow={() => {}}
+        onSaveWorkflow={noopSave}
+        onRemoveWorkflow={async () => {}}
+        onStopRun={() => {}}
+        onSetPermissionMode={(mode, threadId) => {
+          calls.push(`perm:${threadId ?? ""}:${mode}`);
+        }}
+        onSetProvider={() => {}}
+        onSetReasoningEffort={() => {}}
+        onSetArchived={() => {}}
+        onDeleteThread={() => {}}
+        changesOpen={false}
+        changesNonce={0}
+        onCloseChanges={() => {}}
+        onFetchDiff={async () => ({ files: [], patch: "", truncated: false })}
+        onCommitChanges={async () => ({ subject: "x" })}
+        onRevertFile={async (path) => ({ path })}
+        onSuggestCommitMessage={async () => ({ message: "feat: x" })}
+        onPush={async () => ({ remote: "origin", branch: "main" })}
+        onFork={async (opts) => {
+          calls.push(`fork:${opts?.provider ?? ""}`);
+          return { id: `fork-${opts?.provider}` } as ThreadInfo;
+        }}
+        onSelectThread={(id) => {
+          calls.push(`select:${id}`);
+        }}
+      />,
+    );
+
+    await openBestOfN(m, "plan this");
+    await m.click(m.query('input[data-best-of-n-provider="claude"]'));
+    await m.click(m.query('input[data-best-of-n-provider="kimi"]'));
+    await m.click(m.query("input[data-best-of-n-plan-only]"));
+    const codex = m.query(
+      'input[data-best-of-n-provider="codex"]',
+    ) as HTMLInputElement;
+    assert.equal(codex.disabled, true, "a CLI without plan mode would build");
+    await m.click(m.query("[data-best-of-n-run]"));
+
+    assert.deepEqual(calls, [
+      "fork:claude",
+      "perm:fork-claude:plan",
+      "run:fork-claude:plan this",
+      "fork:kimi",
+      "perm:fork-kimi:plan",
+      "run:fork-kimi:plan this",
+      "select:fork-claude",
+    ]);
+    m.unmount();
+  });
 });

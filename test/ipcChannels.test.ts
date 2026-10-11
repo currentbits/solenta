@@ -29,6 +29,7 @@ describe("ipcChannels table", () => {
       "threads:changed",
       "thread:updated",
       "thread:select",
+      "project:select",
       "boot:ready",
       "terminal:data",
       "clone:progress",

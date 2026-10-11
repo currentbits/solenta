@@ -83,7 +83,9 @@ async function main() {
   emit({
     type: "control_request",
     request_id: "req-gr-1",
-    request: { subtype: "can_use_tool", tool_name: toolName, input },
+    request: process.env.CODER_FAKE_CLAUDE_REQUEST
+      ? JSON.parse(process.env.CODER_FAKE_CLAUDE_REQUEST)
+      : { subtype: "can_use_tool", tool_name: toolName, input },
   });
   let buf = "";
   process.stdin.on("data", (c) => {
@@ -146,6 +148,7 @@ describe("runner × guardrails (issue #409)", () => {
     prevTool = process.env.CODER_FAKE_CLAUDE_TOOL;
     prevInput = process.env.CODER_FAKE_CLAUDE_INPUT;
     prevCtrl = process.env.CODER_FAKE_CLAUDE_CTRL_FILE;
+    delete process.env.CODER_FAKE_CLAUDE_REQUEST;
     prevGuardrails = process.env.CODER_GUARDRAILS;
     prevGrokMcpDisable = process.env.CODER_GROK_MCP_DISABLE;
     prevGrokBin = process.env.CODER_GROK_BIN;
@@ -196,6 +199,7 @@ describe("runner × guardrails (issue #409)", () => {
     else process.env.CODER_FAKE_CLAUDE_INPUT = prevInput;
     if (prevCtrl === undefined) delete process.env.CODER_FAKE_CLAUDE_CTRL_FILE;
     else process.env.CODER_FAKE_CLAUDE_CTRL_FILE = prevCtrl;
+    delete process.env.CODER_FAKE_CLAUDE_REQUEST;
     if (prevGuardrails === undefined) delete process.env.CODER_GUARDRAILS;
     else process.env.CODER_GUARDRAILS = prevGuardrails;
     if (prevGrokMcpDisable === undefined) delete process.env.CODER_GROK_MCP_DISABLE;
@@ -318,5 +322,76 @@ describe("runner × guardrails (issue #409)", () => {
       decision: "deny",
     });
     await waitFor(() => store.getThread(thread.id).status === "done");
+  });
+  // #173: MCP elicitation rides the same awaiting-input channel.
+  const elicit = (extra) => {
+    process.env.CODER_FAKE_CLAUDE_REQUEST = JSON.stringify({
+      subtype: "elicitation",
+      mcp_server_name: "coder-memory",
+      message: "Which scope?",
+      mode: "form",
+      requested_schema: {
+        type: "object",
+        properties: { scope: { type: "string", enum: ["project", "global"] } },
+        required: ["scope"],
+      },
+      ...extra,
+    });
+  };
+
+  it("routes an MCP elicitation to the input prompt and answers with content", async () => {
+    elicit();
+    const thread = store.getThreads()[0];
+    await runner.startRun({ threadId: thread.id, prompt: "remember it" });
+
+    await waitFor(() => runner.getPendingPermission(thread.id) != null);
+    const pending = runner.getPendingPermission(thread.id);
+    assert.equal(pending.inputRequest.source, "coder-memory");
+    assert.equal(pending.inputRequest.message, "Which scope?");
+    assert.deepEqual(pending.inputRequest.fields.map((f) => f.name), ["scope"]);
+    assert.equal(store.getThread(thread.id).awaitingInput, true);
+
+    // Schema violation keeps the prompt pending and sends nothing.
+    assert.throws(() => runner.respondPermission({
+      threadId: thread.id, requestId: pending.requestId, decision: "allow",
+      inputValues: { scope: "nope" },
+    }), /Invalid input/);
+    assert.equal(fs.existsSync(ctrlFile), false);
+
+    runner.respondPermission({
+      threadId: thread.id, requestId: pending.requestId, decision: "allow",
+      inputValues: { scope: "global" },
+    });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+    const ctrl = JSON.parse(fs.readFileSync(ctrlFile, "utf8"));
+    assert.equal(ctrl.response.subtype, "success");
+    assert.deepEqual(ctrl.response.response, { action: "accept", content: { scope: "global" } });
+    assert.notEqual(store.getThread(thread.id).awaitingInput, true);
+  });
+
+  it("deny declines an MCP elicitation", async () => {
+    elicit();
+    const thread = store.getThreads()[0];
+    await runner.startRun({ threadId: thread.id, prompt: "remember it" });
+    await waitFor(() => runner.getPendingPermission(thread.id) != null);
+    runner.respondPermission({
+      threadId: thread.id,
+      requestId: runner.getPendingPermission(thread.id).requestId,
+      decision: "deny",
+    });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+    const ctrl = JSON.parse(fs.readFileSync(ctrlFile, "utf8"));
+    assert.deepEqual(ctrl.response.response, { action: "decline" });
+  });
+
+  it("errors an elicitation whose form cannot be rendered", async () => {
+    elicit({ requested_schema: { type: "object", properties: { a: { type: "object" } } } });
+    const thread = store.getThreads()[0];
+    await runner.startRun({ threadId: thread.id, prompt: "remember it" });
+    let ctrl;
+    await waitFor(() => (ctrl = readJsonIfComplete(ctrlFile)) !== undefined);
+    assert.equal(ctrl.response.subtype, "error");
+    assert.match(ctrl.response.error, /Unsupported elicitation/);
+    assert.equal(runner.getPendingPermission(thread.id), null);
   });
 });

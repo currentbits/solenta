@@ -23,6 +23,8 @@ const {
   instanceDisplayName,
 } = require("./providerInstances.js");
 const { resolveSandbox } = require("./sandbox.js");
+const { normalizeRoute } = require("./routing.js");
+const { dueRecap } = require("./recap.js");
 const {
   messagesInMemory,
   stampLastActivity,
@@ -292,6 +294,19 @@ function createThread(store, input) {
     automationId: input.automationId || null,
     queued: null,
     ask: input.ask === true,
+    // #246: route the first turn. Explicit input wins; else the project's
+    // Auto opt-in, under the same skips as project defaults.
+    ...(normalizeRoute(input.route)
+      ? { route: normalizeRoute(input.route) }
+      : project.modelRouting &&
+          project.modelRouting.auto === true &&
+          input.projectDefaults !== false &&
+          !input.automationId &&
+          !input.memoryConsolidate &&
+          input.ask !== true &&
+          !Object.prototype.hasOwnProperty.call(input, "provider")
+        ? { route: "auto" }
+        : {}),
     ...(input.memoryConsolidate === true
       ? { memoryConsolidate: true }
       : {}),
@@ -342,6 +357,29 @@ function recordLastUsedDefaults(store, threadId) {
   );
   store.save();
   return true;
+}
+
+/**
+ * Pending first-turn route (#246): "auto", a tier, or null for manual.
+ * A thread that already has a session cannot be routed.
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string, route: string | null }} input
+ */
+function setRoute(store, input) {
+  const thread = store.getThread(input.threadId);
+  if (!thread) throw new Error(`Unknown thread: ${input.threadId}`);
+  const route = normalizeRoute(input.route);
+  if (input.route != null && !route) {
+    throw new Error(`Invalid route: ${input.route}`);
+  }
+  if (route && thread.sessionId) {
+    throw new Error("Auto routing only applies before a thread's first turn");
+  }
+  if ((thread.route || null) === route) return decorateThread(store, thread);
+  const updated = store.updateThread(input.threadId, { route });
+  store.save();
+  return decorateThread(store, updated || { ...thread, route });
 }
 
 /**
@@ -485,10 +523,41 @@ function setWebSearch(store, input) {
 }
 
 /**
+ * Run the thread as a CLI custom agent (`--agent <name>`, #172). null means
+ * the CLI's default agent. Rejected unless the provider advertises
+ * supportsAgents; the name pattern guards argv that ssh/WSL wraps in a shell.
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string, agent: string | null }} input
+ */
+function setAgent(store, input) {
+  const { threadId } = input;
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  const agent = input.agent == null || input.agent === "" ? null : String(input.agent);
+  if (agent !== null) {
+    const entry = getProvider(thread.provider);
+    if (!entry || entry.supportsAgents !== true) {
+      const providerName =
+        (entry && entry.name) || thread.provider || "provider";
+      throw new Error(`${providerName} does not support custom agents`);
+    }
+    if (!require("./agents.js").AGENT_NAME_RE.test(agent)) {
+      throw new Error(`Invalid agent name: ${agent}`);
+    }
+  }
+  const updated = store.updateThread(threadId, { agent });
+  store.save();
+  return updated ? { ...updated } : { ...thread, agent };
+}
+
+/**
  * Fork / hand off: new thread in the source's project. Source is never modified.
  *
  * @param {import('./store').Store} store
- * @param {{ threadId: string, provider?: string, model?: string | null, worktree?: boolean, title?: string, leavePlan?: boolean }} input
+ * @param {{ threadId: string, provider?: string, model?: string | null, worktree?: boolean, title?: string, leavePlan?: boolean, messageId?: string }} input
  * @returns {object}
  */
 function forkThread(store, input) {
@@ -532,6 +601,17 @@ function forkThread(store, input) {
     }
   } else if (modelProvided) {
     nextModel = normalizeModelForProvider(nextEntry, input.model);
+  }
+
+  // Message-level fork (#158): resolve the cut before creating anything.
+  let prefixMsgs = null;
+  if (input.messageId != null) {
+    const msgs = store.getMessages(source.id);
+    const at = msgs.findIndex((m) => m && m.id === input.messageId);
+    if (at < 0) {
+      throw new Error(`Unknown message: ${input.messageId}`);
+    }
+    prefixMsgs = msgs.slice(0, at + 1);
   }
 
   const sourceTitle =
@@ -593,6 +673,29 @@ function forkThread(store, input) {
     const sourceAsk = Boolean(source.ask) || Boolean(forkPatch.ask);
     if (!sourceAsk && canHostWorktree(project)) {
       forkPatch.pendingWorktree = true;
+    }
+  }
+  // Copy the transcript up to and including messageId. Claude resumes a
+  // forked CLI session cut at that message (forkSessionAt, one-shot); every
+  // other case seeds a fresh session from the copied prefix (replayContext,
+  // same as rewind).
+  if (prefixMsgs) {
+    store.setMessages(
+      created.id,
+      prefixMsgs.map((m) => ({ ...m, id: randomUUID() })),
+    );
+    const cut = prefixMsgs[prefixMsgs.length - 1].claudeUuid;
+    if (
+      cut &&
+      source.sessionId &&
+      source.provider === "claude" &&
+      nextProvider === "claude" &&
+      (source.providerInstance || null) === nextInstance
+    ) {
+      forkPatch.sessionId = source.sessionId;
+      forkPatch.forkSessionAt = String(cut);
+    } else {
+      forkPatch.replayContext = true;
     }
   }
   const updated = store.updateThread(created.id, forkPatch);
@@ -840,6 +943,8 @@ function setProvider(store, input) {
       nextEntry && nextEntry.supportsSearch === true
         ? thread.webSearch === true
         : false;
+    // Agent names are per-CLI (.claude/agents vs .opencode/agent).
+    patch.agent = null;
     // Same rule as effort: a permission mode the new provider cannot honour
     // must not survive the switch (issue #177). Teach-mode caps still win.
     patch.permissionMode = snapPermissionModeForThread(
@@ -1357,7 +1462,7 @@ const listThreadsCache = new WeakMap();
  */
 function listRow(row) {
   // lastActivity is threads:summaries-only; keep it off the full-list push.
-  const { hypotheses, suggestions, lastActivity, ...rest } = row;
+  const { hypotheses, suggestions, lastActivity, recap, ...rest } = row;
   return rest;
 }
 
@@ -1494,6 +1599,8 @@ function getThreadDetail(store, threadId, workflow = null, opts) {
   if (!thread || isTrashed(thread)) {
     throw new Error(`Unknown thread: ${threadId}`);
   }
+  // Before the stamp below: "due" means idle since the PREVIOUS visit.
+  const recap = markVisited ? dueRecap(store, thread) : null;
   if (markVisited) {
     // No updatedAt bump: visiting must not re-unread or re-sort the thread.
     store.updateThread(threadId, { lastVisitedAt: Date.now() });
@@ -1509,6 +1616,8 @@ function getThreadDetail(store, threadId, workflow = null, opts) {
     artifacts: store.getRunArtifacts(threadId).slice(),
     // Live permission prompt (runner-ephemeral, never persisted).
     pendingPermission: (opts && opts.pendingPermission) || null,
+    // Only on a user visit that should show it; background pushes omit it.
+    ...(recap ? { recap } : {}),
   };
 }
 
@@ -1517,10 +1626,13 @@ module.exports = {
   normalizeBaseBranch,
   createThread,
   recordLastUsedDefaults,
+  providerInstalledFor,
+  setRoute,
   instanceAuthProbes,
   setPermissionMode,
   setReasoningEffort,
   setWebSearch,
+  setAgent,
   setFast,
   forkThread,
   forkWorkerThread,

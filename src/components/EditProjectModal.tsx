@@ -2,8 +2,11 @@ import { useCallback, useRef, useState } from "react";
 import { useEscapeClose } from "../useEscapeClose";
 import { useModalFocus } from "../useModalFocus";
 import type {
+  AgentProfile,
+  ModelTier,
   PermissionMode,
   ProjectInfo,
+  ProjectModelRouting,
   ProjectQuickAction,
   ProjectThreadDefaults,
   ProjectUpdateInput,
@@ -19,6 +22,26 @@ import { effortDisplayLabel, effortsForModel } from "../modelPicker";
 import { ProjectIcon } from "./ProjectIcon";
 import styles from "./SettingsModal.module.css";
 
+/**
+ * `KEY=value` lines to an env map (#188). Blank and `#` lines are skipped.
+ * Returns an error message for the first bad line.
+ */
+export function parseEnvText(text: string): Record<string, string> | string {
+  const env: Record<string, string> = {};
+  for (const raw of text.split("\n")) {
+    const line = raw.trim();
+    if (!line || line.startsWith("#")) continue;
+    const eq = line.indexOf("=");
+    const key = eq > 0 ? line.slice(0, eq).trim() : "";
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+      return `Invalid environment line: ${line}`;
+    }
+    if (key === "PATH") return "PATH cannot be set per project.";
+    env[key] = line.slice(eq + 1);
+  }
+  return env;
+}
+
 interface EditProjectModalProps {
   project: ProjectInfo;
   onClose: () => void;
@@ -32,7 +55,15 @@ interface EditProjectModalProps {
   providers?: ProviderInfo[];
   /** settings.defaultProvider; null = the built-in Claude Code default. */
   globalProvider?: string | null;
+  /** Profiles the model routing tiers map to (#246). */
+  agentProfiles?: AgentProfile[];
 }
+
+const ROUTING_TIERS: { tier: ModelTier; label: string }[] = [
+  { tier: "fast", label: "Fast (triage, reformat)" },
+  { tier: "balanced", label: "Balanced" },
+  { tier: "strong", label: "Strong (architecture, hard bugs)" },
+];
 
 /**
  * Edit an existing project: display name, appearance (#610), and SSH remote
@@ -48,6 +79,7 @@ export function EditProjectModal({
   onPreviewIcon,
   providers = [],
   globalProvider = null,
+  agentProfiles = [],
 }: EditProjectModalProps) {
   const [name, setName] = useState(project.name);
   const [remoteHost, setRemoteHost] = useState(project.remoteHost ?? "");
@@ -89,6 +121,19 @@ export function EditProjectModal({
   const defaultModes = defaults.provider
     ? providerPermissionModes(defaultProvider)
     : providerPermissionModes(null);
+  const [routing, setRouting] = useState<ProjectModelRouting>(() => ({
+    ...project.modelRouting,
+  }));
+  const [routingDirty, setRoutingDirty] = useState(false);
+  const patchRouting = (patch: ProjectModelRouting) => {
+    setRouting((r) => ({ ...r, ...patch }));
+    setRoutingDirty(true);
+  };
+  const [envText, setEnvText] = useState(() =>
+    Object.entries(project.env ?? {})
+      .map(([k, v]) => `${k}=${v}`)
+      .join("\n"),
+  );
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -123,6 +168,11 @@ export function EditProjectModal({
       }
       worktreeRetention = n;
     }
+    const env = parseEnvText(envText);
+    if (typeof env === "string") {
+      setError(env);
+      return;
+    }
 
     setPending(true);
     setError(null);
@@ -144,11 +194,17 @@ export function EditProjectModal({
             command: a.command.trim(),
           }))
           .filter((a) => a.name && a.command),
+        env,
       };
       if (iconDirty) payload.iconPath = iconPath;
       if (defaultsDirty) {
         payload.threadDefaults = Object.fromEntries(
           Object.entries(defaults).filter(([, v]) => v !== undefined),
+        );
+      }
+      if (routingDirty) {
+        payload.modelRouting = Object.fromEntries(
+          Object.entries(routing).filter(([, v]) => v !== undefined),
         );
       }
       const updated = await onSubmit(payload);
@@ -459,6 +515,55 @@ export function EditProjectModal({
                 : ""}
             </p>
           </div>
+          <div className={styles.field} data-edit-project-routing="">
+            <span className={styles.fieldLabel}>Model routing</span>
+            {ROUTING_TIERS.map(({ tier, label }) => (
+              <select
+                key={tier}
+                className={styles.input}
+                aria-label={`${label} profile`}
+                data-edit-project-routing-tier={tier}
+                value={routing[tier] ?? ""}
+                disabled={pending}
+                onChange={(e) =>
+                  patchRouting({ [tier]: e.target.value || undefined })
+                }
+              >
+                <option value="">{label}: keep the thread's model</option>
+                {agentProfiles.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {label}: {p.name}
+                  </option>
+                ))}
+                {routing[tier] &&
+                !agentProfiles.some((p) => p.id === routing[tier]) ? (
+                  <option value={routing[tier]}>{label}: missing profile</option>
+                ) : null}
+              </select>
+            ))}
+            <label className={styles.fieldRow} htmlFor="edit-project-auto-route">
+              <input
+                id="edit-project-auto-route"
+                type="checkbox"
+                data-edit-project-auto-route=""
+                checked={routing.auto === true}
+                disabled={pending}
+                onChange={(e) =>
+                  patchRouting({ auto: e.target.checked ? true : undefined })
+                }
+              />
+              <span>Start new threads on Auto</span>
+            </label>
+            <p className={styles.note}>
+              Auto picks a tier from the first message and applies that
+              profile's model and effort, never its permissions. Automations
+              and orchestrator workers can declare a tier instead. The
+              transcript notes what was picked and why.
+              {agentProfiles.length === 0
+                ? " Add agent profiles in Settings → Agents to map tiers."
+                : ""}
+            </p>
+          </div>
           <div className={styles.field}>
             <label className={styles.fieldLabel} htmlFor="edit-project-path">
               Local path
@@ -740,6 +845,27 @@ export function EditProjectModal({
                   : "Commands from solenta.json ask for your approval before they first run, and again whenever they change."}
               </p>
             ) : null}
+          </div>
+          <div className={styles.field}>
+            <label className={styles.fieldLabel} htmlFor="edit-project-env">
+              Environment variables
+            </label>
+            <textarea
+              id="edit-project-env"
+              className={`${styles.textarea} ${styles.monoInput}`}
+              data-edit-project-env=""
+              value={envText}
+              onChange={(e) => setEnvText(e.target.value)}
+              placeholder={"AWS_PROFILE=bedrock-prod\nPORT=3001"}
+              rows={4}
+              autoComplete="off"
+              spellCheck={false}
+              disabled={pending}
+            />
+            <p className={styles.note}>
+              One KEY=value per line. Applied to agent runs, dev servers,
+              terminals and commands in this project. Stored in plain text.
+            </p>
           </div>
           <div className={styles.field}>
             <label className={styles.fieldRow} htmlFor="edit-project-auto-dispatch">

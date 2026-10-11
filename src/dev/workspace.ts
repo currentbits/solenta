@@ -425,6 +425,9 @@ export function createWorkspace(): Pick<CoderApi, "servers" | "simulator" | "pre
       async captureWindow(_input: { threadId: string; sourceId: string }) {
         return { attachment: null };
       },
+      async captureWindowText(_input: { threadId: string; sourceId: string }) {
+        return { attachment: null };
+      },
     },
     shell: {
       async reveal(_input: { threadId: string; path: string }) {

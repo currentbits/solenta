@@ -140,14 +140,14 @@ const HANDOFF_TOTAL_MAX = 12000;
  * `gh issue list`.
  */
 const PLANBOARD_NOTE =
-  "\n\n[Planboard] This workspace tracks project plans as GitHub issues. " +
+  "\n\n[Planboard] This workspace tracks project plans as forge issues. " +
   "For multi-step work, record and maintain your plan/roadmap/issues as " +
-  "GitHub issues in this repo's origin using the coder-threads tools " +
+  "issues in this repo's origin (GitHub or GitLab) using the coder-threads tools " +
   "issue_create, issue_list, issue_set_plan, issue_complete, and " +
   "issue_comment (status labels plan:todo, plan:doing, plan:done). " +
   "issue_comment appends a comment without changing plan:* or closing. " +
-  "Do not use `gh` for these writes: host-side tools keep the board in " +
-  "sync even when a sandbox cannot authenticate to GitHub. " +
+  "Do not use `gh` or `glab` for these writes: host-side tools keep the board " +
+  "in sync even when a sandbox cannot authenticate to the forge. " +
   "Skip this for trivial tasks. Your own todo list is mirrored onto the " +
   "board as live steps, so keep it current instead of filing issues for " +
   "individual steps.";
@@ -169,23 +169,19 @@ const CODEX_COMPUTER_USE_NOTE =
   "toggle. Full-access permission mode is not desktop control.";
 
 /**
- * PLANBOARD_NOTE when the project checkout has a GitHub origin, else "".
- * Keeps the note out of prompts where it isn't actionable.
+ * PLANBOARD_NOTE when the project has a GitHub or GitLab origin, else "".
+ * Keeps the note out of prompts where it isn't actionable. Pass the project
+ * (not its path) so ssh remotes resolve origin on the far side, the same
+ * way the issue tools do (#180).
  *
- * ponytail: checks the LOCAL path only, so remote-host projects never get
- * the note; route the check over ssh if remote planboards matter.
- *
- * @param {string | null | undefined} projectPath
+ * @param {string | { path?: string, remoteHost?: string, remotePath?: string } | null | undefined} projectOrPath
  * @returns {string}
  */
-function planboardNoteFor(projectPath) {
+function planboardNoteFor(projectOrPath) {
   try {
-    const { gitTry, isGitHubRemote } = require("./worktrees.js");
-    const cwd = String(projectPath || "");
-    if (!cwd) return "";
-    const remote = gitTry(cwd, ["remote", "get-url", "origin"]);
-    if (!remote.ok) return "";
-    if (!isGitHubRemote(String(remote.stdout || "").trim())) return "";
+    const { isForgeRemote } = require("./worktrees.js");
+    const { originUrlOf } = require("./issues.js");
+    if (!isForgeRemote(originUrlOf(projectOrPath))) return "";
     return PLANBOARD_NOTE;
   } catch {
     return "";
@@ -330,8 +326,9 @@ const PLAN_STEPS_MAX = 50;
  * nothing usable (caller then keeps the thread's previous plan). The agent's
  * live plan is already its todo list, so the board costs the agent nothing.
  *
- * ponytail: TodoWrite (claude) only — codex/opencode carry their own plan
- * shapes; map them onto this same {step,status} list when one matters.
+ * Shapes: claude TodoWrite / opencode todowrite / codex todo_list (parsed
+ * to {content,status}) and kimi TodoList / SetTodoList ({title, status
+ * pending|in_progress|done}).
  *
  * @param {unknown} todos
  * @returns {{ step: string, status: "todo" | "doing" | "done" }[] | null}
@@ -341,13 +338,19 @@ function planStepsFrom(todos) {
   const steps = [];
   for (const t of todos) {
     if (!t || typeof t !== "object") continue;
-    const step = typeof t.content === "string" ? t.content.trim() : "";
+    const text =
+      typeof t.content === "string"
+        ? t.content
+        : typeof t.title === "string"
+          ? t.title
+          : "";
+    const step = text.trim();
     if (!step) continue;
     const status = String(t.status || "");
     steps.push({
       step: step.slice(0, PLAN_STEP_MAX),
       status:
-        status === "completed"
+        status === "completed" || status === "done"
           ? "done"
           : status === "in_progress"
             ? "doing"
@@ -377,7 +380,7 @@ function planStepsFrom(todos) {
  * @param {(sourceId: string) => Array<{ role?: string, text?: string }> | null | undefined} getMessages
  * @returns {string}
  */
-function buildHandoffPrefix(thread, getMessages) {
+function buildHandoffPrefix(thread, getMessages, getThread) {
   if (!thread) return "";
   if (thread.sessionId != null && thread.sessionId !== "") {
     return "";
@@ -423,9 +426,23 @@ function buildHandoffPrefix(thread, getMessages) {
   }
   picked.reverse();
 
+  // Cached recap (#239) of the source, when it has one: the tail alone
+  // loses what was originally asked.
+  let source = null;
+  try {
+    source = getThread ? getThread(String(sourceId)) : null;
+  } catch {
+    // tail digest still applies
+  }
+  const recap =
+    source && source.recap && source.recap.text
+      ? `Recap:\n${source.recap.text}\n\n`
+      : "";
+
   return (
     "[Hand-off context: the last messages of the source thread, truncated — " +
     "not the full transcript]\n" +
+    recap +
     picked.join("\n\n") +
     "\n[End context]\n\n"
   );

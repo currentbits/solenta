@@ -52,6 +52,21 @@ function normalizeProjectEnv(raw) {
 }
 
 /**
+ * Layer project.env (#188) UNDER a spawn's own env overlay, so provider
+ * overlays (CODEX_HOME, KIMI_CODE_HOME, ...) still win. Returns `env`
+ * untouched when the project sets nothing.
+ *
+ * @param {{ env?: unknown } | null | undefined} project
+ * @param {Record<string, string> | null | undefined} env
+ * @returns {Record<string, string> | null | undefined}
+ */
+function withProjectEnv(project, env) {
+  const projectEnv = normalizeProjectEnv(project && project.env);
+  if (!Object.keys(projectEnv).length) return env;
+  return { ...projectEnv, ...(env || {}) };
+}
+
+/**
  * Data-dir (+ optional identity) overlay for a thread's dev server.
  * Does not set PORT — that is mergeQueue.laneEnv (#346).
  *
@@ -583,6 +598,7 @@ function spawnEnvForDevServer(opts = {}) {
 module.exports = {
   safeId,
   normalizeProjectEnv,
+  withProjectEnv,
   isolationEnv,
   mergeDevServerEnv,
   ensureIsolationDirs,

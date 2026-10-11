@@ -120,6 +120,30 @@ function content(
 }
 
 describe("Agents team view", () => {
+  it("run queue (#166): selected thread shows its place; queued workers badge", async () => {
+    let left = 0;
+    const m = await mount(
+      <AgentsContent
+        workflow={null}
+        thread={thread({ runQueue: { at: 5 } })}
+        usage={null}
+        providers={PROVIDERS}
+        rosterKey="t-orch:idle"
+        runQueueIds={["t-other", "t-work", "t-orch"]}
+        onLeaveRunQueue={() => {
+          left++;
+        }}
+        listThreadSummaries={async () => [ORCHESTRATOR, WORKER]}
+      />,
+    );
+    await m.flush();
+    assert.match(m.text(), /Queued for a run slot · #3 of 3/);
+    assert.match(m.text(), /queued #2/, "worker row shows its queue place");
+    await m.click(m.byText("Leave queue"));
+    assert.equal(left, 1);
+    m.unmount();
+  });
+
   it("orchestrator: chips the session card and lists worker rows", async () => {
     const selected: string[] = [];
     const m = await mount(

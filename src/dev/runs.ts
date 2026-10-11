@@ -1170,6 +1170,14 @@ export function createRuns(ctx: DevCtx): Pick<CoderApi, "runs"> {
           ],
         };
       },
+      async distillMemory(input: { threadId: string }) {
+        return {
+          type: "knowledge" as const,
+          title: "Distilled lesson",
+          body: "What future sessions should know.",
+          citations: [{ kind: "thread" as const, id: input.threadId }],
+        };
+      },
     },
   };
   return api;

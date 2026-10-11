@@ -330,3 +330,81 @@ describe('memory is project-scoped (no global leakage)', () => {
     )
   })
 })
+
+describe('same-named repos get distinct scopes (#179)', () => {
+  let dir
+  let memory
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'coder-projcollide-'))
+    memory = new Memory(path.join(dir, 'm.db'), { embedder: fakeEmbedder() })
+  })
+  afterEach(() => {
+    memory.close()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
+  function repoAt(...parts) {
+    const repo = path.join(dir, ...parts)
+    fs.mkdirSync(repo, { recursive: true })
+    git(repo, ['init', '-q'])
+    return repo
+  }
+
+  it('first root keeps the bare key; a second same-named root is suffixed and isolated', async () => {
+    const work = repoAt('work', 'app')
+    const oss = repoAt('oss', 'app')
+    assert.equal(memory.projectKey(work), 'app')
+    const ossKey = memory.projectKey(oss)
+    assert.match(ossKey, /^app-[0-9a-f]{6}$/)
+    // Stable across calls and across a server restart.
+    assert.equal(memory.projectKey(oss), ossKey)
+
+    memory.store({ type: 'convention', title: 'Work rule pangolin', body: 'pangolin only at work', project: work })
+    assert.equal((await memory.search({ query: 'pangolin', project: oss })).length, 0)
+    assert.equal((await memory.search({ query: 'pangolin', project: work })).length, 1)
+
+    assert.deepEqual(
+      memory.projectCollisions().map((c) => c.key).sort(),
+      ['app', ossKey].sort(),
+    )
+  })
+
+  it('renameProjectScope moves rows and refuses a taken name', async () => {
+    const work = repoAt('work', 'app')
+    const oss = repoAt('oss', 'app')
+    memory.store({ type: 'knowledge', title: 'Merged legacy fact okapi', body: 'okapi row under the bare key', project: work })
+    memory.projectKey(oss)
+
+    assert.throws(() => memory.renameProjectScope({ root: work, key: memory.projectKey(oss) }), /already in use/)
+    assert.throws(() => memory.renameProjectScope({ root: work, key: 'a b' }), /Scope name/)
+
+    const res = memory.renameProjectScope({ root: work, key: 'app-work' })
+    assert.equal(res.moved, 1)
+    assert.equal(memory.projectKey(work), 'app-work')
+    assert.equal((await memory.search({ query: 'okapi', project: work })).length, 1)
+    // The freed bare key does not pull the other root back onto it.
+    assert.match(memory.projectKey(oss), /^app-[0-9a-f]{6}$/)
+  })
+
+  it('migration splits rows that still hold a live path; bare rows stay put', () => {
+    const work = repoAt('work', 'app')
+    const oss = repoAt('oss', 'app')
+    const db = memory.db
+    const now = new Date().toISOString()
+    const insert = db.prepare(
+      `INSERT INTO entries (id, type, title, body, project, importance, created_at, updated_at)
+       VALUES (?, 'knowledge', ?, ?, ?, 3, ?, ?)`,
+    )
+    insert.run('w', 'work path row', 'w', work, now, now)
+    insert.run('o', 'oss path row', 'o', oss, now, now)
+    insert.run('m', 'merged bare row', 'm', 'app', now, now)
+    normalizeProjectKeys(db)
+    const rows = Object.fromEntries(
+      db.prepare(`SELECT id, project FROM entries`).all().map((r) => [r.id, r.project]),
+    )
+    assert.notEqual(rows.w, rows.o)
+    assert.ok([rows.w, rows.o].includes('app'))
+    assert.equal(rows.m, 'app')
+  })
+})

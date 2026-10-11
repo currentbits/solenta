@@ -147,6 +147,29 @@ describe("PlanboardView", () => {
     m.unmount();
   });
 
+  it("marks blocked cards and hides the blocked-by label (#251)", async () => {
+    const blocked: ListIssuesResult = {
+      ok: true,
+      issues: [
+        {
+          number: 4,
+          title: "after A",
+          url: "https://github.com/acme/ledger/issues/4",
+          state: "OPEN",
+          labels: ["plan:todo", "blocked-by:#2"],
+          blockedBy: [2],
+        },
+      ],
+    };
+    const m = await mount(
+      <PlanboardView projects={projects} listIssues={async () => blocked} />,
+    );
+    const badge = m.query('[data-plan-issue="4"] [data-plan-blocked="2"]');
+    assert.equal(badge?.textContent, "Blocked by #2");
+    assert.ok(!m.query('[data-plan-issue="4"]')?.textContent?.includes("blocked-by:"));
+    m.unmount();
+  });
+
   it("switching project refetches that project's issues", async () => {
     const asked: string[] = [];
     const m = await mount(

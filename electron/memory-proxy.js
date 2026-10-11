@@ -438,6 +438,20 @@ function createMemoryProxy(opts) {
     },
 
     /**
+     * Rename one repo root's memory scope (#179).
+     * @param {{ root: string, key: string }} input
+     * @returns {Promise<{ root: string, key: string, moved: number }>}
+     */
+    async renameScope(input) {
+      const raw = await request("POST", "/api/project-scope", {
+        root: input && input.root,
+        key: input && input.key,
+      });
+      const o = raw && typeof raw === "object" ? raw : {};
+      return { root: String(o.root ?? ""), key: String(o.key ?? ""), moved: Number(o.moved) || 0 };
+    },
+
+    /**
      * One-call startup context (conventions, strategies, knowledge, tasks).
      * @param {{ project?: string }} [input]
      * @returns {Promise<object>}

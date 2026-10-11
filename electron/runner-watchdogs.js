@@ -33,6 +33,7 @@ function createWatchdogs(ctx) {
     appendMessage,
     pushDetail,
     pushThreadsChanged,
+    hasRunningSubagent,
   } = ctx;
 
   /**
@@ -48,6 +49,9 @@ function createWatchdogs(ctx) {
       if (thread.status !== "working") continue;
       if (thread.awaitingInput) continue;
       if (thread.stalledAt) continue;
+      // Background subagents run silently in the parent CLI (kimi -p stays
+      // alive for them, #175); "may be hung, Stop" would kill their results.
+      if (hasRunningSubagent(thread.id)) continue;
       const last = thread.lastEventAt ?? thread.runStartedAt ?? now;
       if (now - last <= stallMs) continue;
       store.updateThread(thread.id, { stalledAt: now });

@@ -59,6 +59,24 @@ export function ScopeMenu({
               </span>
             ) : null}
           </button>
+          <button
+            type="button"
+            className={styles.iconBtn}
+            data-copy-project-link={p.id}
+            aria-label={`Copy link to project ${p.slug || p.name}`}
+            title="Copy link"
+            onClick={(e) => {
+              e.stopPropagation();
+              setScopeMenuOpen(false);
+              void navigator.clipboard
+                ?.writeText(`solenta://project/${p.id}`)
+                .catch(() => {});
+            }}
+          >
+            <Icon size={12}>
+              <path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" />
+            </Icon>
+          </button>
           {onEditProject && (
             <button
               type="button"

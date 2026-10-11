@@ -142,6 +142,9 @@ function view(props: {
   ) => Promise<AttachmentInfo | null>;
   onListSnapWindows?: () => Promise<Array<{ id: string; name: string }>>;
   onCaptureSnapWindow?: (sourceId: string) => Promise<AttachmentInfo | null>;
+  onCaptureSnapWindowText?: (
+    sourceId: string,
+  ) => Promise<{ attachment: AttachmentInfo | null; skipped?: string }>;
 }) {
   return (
     <ThreadView
@@ -174,6 +177,7 @@ function view(props: {
       onSaveAttachmentImage={props.onSaveAttachmentImage}
       onListSnapWindows={props.onListSnapWindows}
       onCaptureSnapWindow={props.onCaptureSnapWindow}
+      onCaptureSnapWindowText={props.onCaptureSnapWindowText}
     />
   );
 }
@@ -590,5 +594,51 @@ describe("ThreadView screenshot ownership (issue #1206)", () => {
       "keep this draft",
     );
     m.unmount();
+  });
+
+  it("window text (#1531) follows the PNG without holding it, and a skip shows in the picker", async () => {
+    const text = deferred<{ attachment: AttachmentInfo | null; skipped?: string }>();
+    const m = await mount(
+      view({
+        onListSnapWindows: async () => [{ id: "win-a", name: "Alpha" }],
+        onCaptureSnapWindow: async () => imageAtt("snap.png"),
+        onCaptureSnapWindowText: () => text.promise,
+      }),
+    );
+    await openAppSnap(m);
+    await m.click(m.query('[data-appsnap-window="win-a"]') as HTMLElement);
+    await m.flush();
+    assert.ok(chip(m, "snap.png"), "PNG lands while the text read is pending");
+    assert.equal(m.query("[data-appsnap]"), null);
+    await inAct(async () => {
+      text.resolve({
+        attachment: { kind: "file", path: "/tmp/window-text.txt", name: "window-text.txt" },
+      });
+    });
+    await m.flush();
+    assert.ok(chip(m, "snap.png"), "PNG kept");
+    assert.ok(chip(m, "window-text.txt"), "text chip joins it");
+    m.unmount();
+
+    const m2 = await mount(
+      view({
+        onListSnapWindows: async () => [{ id: "win-a", name: "Alpha" }],
+        onCaptureSnapWindow: async () => imageAtt("snap2.png"),
+        onCaptureSnapWindowText: async () => ({
+          attachment: null,
+          skipped: "Window text skipped: allow Solenta in Accessibility",
+        }),
+      }),
+    );
+    await openAppSnap(m2);
+    await m2.click(m2.query('[data-appsnap-window="win-a"]') as HTMLElement);
+    await m2.flush();
+    assert.ok(chip(m2, "snap2.png"));
+    await openAppSnap(m2);
+    assert.match(
+      m2.query("[data-appsnap-note]")?.textContent ?? "",
+      /Last capture: Window text skipped: allow Solenta in Accessibility/,
+    );
+    m2.unmount();
   });
 });

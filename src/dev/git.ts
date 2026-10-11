@@ -509,6 +509,11 @@ export function createGit(ctx: DevCtx): Pick<CoderApi, "git" | "mergeQueue"> {
         if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
         return { path: input.path };
       },
+      async revertHunk(input) {
+        const detail = details.get(input.threadId);
+        if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
+        return { path: input.path };
+      },
       async suggestCommitMessage(input) {
         const detail = details.get(input.threadId);
         if (!detail) throw new Error(`Thread not found: ${input.threadId}`);

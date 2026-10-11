@@ -198,7 +198,20 @@ export function useCoderWorkflows({
     [api, refreshWorkflows],
   );
 
+  const exportWorkflowToRepo = useCallback(
+    async (workflowId: string, overwrite: boolean) => {
+      if (!selectedThreadId) throw new Error("Select a thread first");
+      return api.workflows.exportToRepo({
+        id: workflowId,
+        threadId: selectedThreadId,
+        overwrite,
+      });
+    },
+    [api, selectedThreadId],
+  );
+
   return {
+    exportWorkflowToRepo,
     refreshWorkflows,
     refreshAutomations,
     addAutomation,

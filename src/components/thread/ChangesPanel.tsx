@@ -49,6 +49,7 @@ import {
 import { blastRadiusTitle, isCiWorkflowPath } from "../../blastRadius";
 import {
   buildReviewItinerary,
+  hunkPatch,
   orderedPatches,
   parseReviewAnnotation,
   type ReviewFilePatch,
@@ -211,7 +212,8 @@ function FileRow({
   /** Uncommitted scope: stage and discard apply. */
   editable: boolean;
   selected: boolean;
-  staged: boolean;
+  /** "mixed" = some hunks left out (#191). */
+  staged: boolean | "mixed";
   confirmRevert: string | null;
   reverting: string | null;
   onSelect: (path: string) => void;
@@ -230,10 +232,10 @@ function FileRow({
         aria-label={`Stage ${file.path}`}
         onClick={(e) => {
           e.stopPropagation();
-          onToggleStage(file.path, !staged);
+          onToggleStage(file.path, staged !== true);
         }}
       >
-        {staged ? "✓" : ""}
+        {staged === true ? "✓" : staged ? "–" : ""}
       </button>
       ) : null}
       <button
@@ -306,17 +308,27 @@ type HunkLayout = {
   offset: number;
 };
 
+/** Per-hunk stage checkbox and discard (#191); absent = view only. */
+interface HunkStaging {
+  staged: (hunk: ReviewHunk) => boolean;
+  onToggle: (hunk: ReviewHunk) => void;
+  onDiscard: ((hunk: ReviewHunk) => void) | null;
+  reverting: string | null;
+}
+
 /** One file's hunks, unified or side by side, with syntax colour. */
 function FilePatch({
   patch,
   split,
   comments,
   onToggleHunk,
+  stage,
 }: {
   patch: ReviewFilePatch;
   split: boolean;
   comments: CommentWiring;
   onToggleHunk: (hunk: ReviewHunk) => void;
+  stage: HunkStaging | null;
 }) {
   // Keyed on the text, not the object: "Mark reviewed" rebuilds the
   // itinerary and must not restart highlighting.
@@ -373,7 +385,33 @@ function FilePatch({
         data-review-hunk-accepted={hunk.accepted ? "" : undefined}
       >
         <div className={styles.hunkBar}>
+          {stage ? (
+            <button
+              type="button"
+              className={styles.fileStage}
+              data-stage-hunk={hunk.id}
+              role="checkbox"
+              aria-checked={stage.staged(hunk)}
+              aria-label={`Stage hunk ${hunk.header}`}
+              onClick={() => stage.onToggle(hunk)}
+            >
+              {stage.staged(hunk) ? "✓" : ""}
+            </button>
+          ) : null}
           <span className={styles.hunkPath}>{patch.path}</span>
+          {stage?.onDiscard ? (
+            <button
+              type="button"
+              className={styles.fileRevert}
+              data-revert-hunk={hunk.id}
+              title="Discard this hunk"
+              aria-label={`Discard hunk ${hunk.header}`}
+              disabled={stage.reverting != null}
+              onClick={() => stage.onDiscard?.(hunk)}
+            >
+              {stage.reverting === hunk.id ? "…" : "↩"}
+            </button>
+          ) : null}
           <button
             type="button"
             className={styles.hunkSeen}
@@ -499,6 +537,7 @@ export function ChangesPanel({
   onCommit,
   onStagedPathsChange,
   onRevert,
+  onRevertHunk,
   onSuggest,
   onComment,
 }: {
@@ -519,9 +558,15 @@ export function ChangesPanel({
     acceptedHunks: string[];
   }>;
   onSetReviewAccepted?: (hashes: string[]) => Promise<void>;
-  onCommit: (message: string, paths?: string[]) => Promise<{ subject: string }>;
+  onCommit: (
+    message: string,
+    paths?: string[],
+    patches?: Array<{ path: string; patch: string }>,
+  ) => Promise<{ subject: string }>;
   onStagedPathsChange?: (paths: string[] | null) => void;
   onRevert: (path: string, status: string) => Promise<{ path: string }>;
+  /** Discard one hunk; `patch` is the file header plus that hunk. */
+  onRevertHunk?: (path: string, patch: string) => Promise<{ path: string }>;
   onSuggest: () => Promise<{ message: string }>;
   /**
    * Hand a line or range comment to the composer draft (issue #162, #1493).
@@ -558,6 +603,10 @@ export function ChangesPanel({
   } | null>(null);
   const [commentDraft, setCommentDraft] = useState("");
   const [stagedPaths, setStagedPaths] = useState<Set<string>>(() => new Set());
+  /** Hunk ids left out of a staged file (#191); empty = whole files. */
+  const [unstagedHunks, setUnstagedHunks] = useState<Set<string>>(
+    () => new Set(),
+  );
   const knownFilesRef = useRef<Set<string>>(new Set());
   const threadIdRef = useRef(threadId);
   threadIdRef.current = threadId;
@@ -669,6 +718,7 @@ export function ChangesPanel({
     setCommentTarget(null);
     setCommentDraft("");
     setStagedPaths(new Set());
+    setUnstagedHunks(new Set());
     setFilePatches({});
     knownFilesRef.current = new Set();
     onStagedPathsChange?.(null);
@@ -693,10 +743,6 @@ export function ChangesPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- diff is the trigger
   }, [diff]);
 
-  useEffect(() => {
-    if (!diff || isEmptyDiff(diff) || !editable) return;
-    onStagedPathsChange?.([...stagedPaths]);
-  }, [diff, stagedPaths, onStagedPathsChange, editable]);
 
   useEffect(() => {
     if (!diff || diff.files.length === 0) {
@@ -743,6 +789,33 @@ export function ChangesPanel({
     () => (selectedPath ? patches.filter((p) => p.path === selectedPath) : patches),
     [patches, selectedPath],
   );
+
+  // Hunks only apply back to the worktree from the plain Uncommitted diff:
+  // -w hunks and branch/turn ranges do not match it, and lazily fetched or
+  // truncated patches can stop mid-hunk.
+  const hunkable = (path: string) =>
+    editable &&
+    !ignoreWhitespace &&
+    diff != null &&
+    !diff.truncated &&
+    diff.files.some((f) => f.path === path && !f.patchOmitted);
+  /** Staged files with some hunks left out, mapped to their kept-hunk patch. */
+  const partialPatches = patches.flatMap((p) => {
+    if (!stagedPaths.has(p.path) || !hunkable(p.path)) return [];
+    const kept = p.hunks.filter((h) => !unstagedHunks.has(h.id));
+    return kept.length < p.hunks.length
+      ? [{ path: p.path, patch: hunkPatch(p, kept) }]
+      : [];
+  });
+  const partialKey = partialPatches.map((p) => p.path).join("\0");
+
+  // Merge squashes whole files, so partial files stay out; the merge then
+  // refuses on the leftover instead of landing hunks the user unticked.
+  useEffect(() => {
+    if (!diff || isEmptyDiff(diff) || !editable) return;
+    const partial = new Set(partialKey ? partialKey.split("\0") : []);
+    onStagedPathsChange?.([...stagedPaths].filter((p) => !partial.has(p)));
+  }, [diff, stagedPaths, partialKey, onStagedPathsChange, editable]);
 
   if (!open) return null;
 
@@ -795,6 +868,7 @@ export function ChangesPanel({
     }
   };
 
+  /** File checkbox: always all-or-nothing, so it clears hunk exclusions. */
   const toggleStage = (path: string, next: boolean) => {
     setStagedPaths((prev) => {
       const copy = new Set(prev);
@@ -802,6 +876,55 @@ export function ChangesPanel({
       else copy.delete(path);
       return copy;
     });
+    const ids = patches.find((p) => p.path === path)?.hunks.map((h) => h.id);
+    if (ids?.length) {
+      setUnstagedHunks((prev) => {
+        const copy = new Set(prev);
+        for (const id of ids) copy.delete(id);
+        return copy;
+      });
+    }
+  };
+
+  const hunkStaged = (path: string, id: string) =>
+    stagedPaths.has(path) && !unstagedHunks.has(id);
+
+  const toggleHunkStage = (p: ReviewFilePatch, id: string) => {
+    const ids = p.hunks.map((h) => h.id);
+    const excluded = new Set(unstagedHunks);
+    const staged = new Set(stagedPaths);
+    if (!staged.has(p.path)) {
+      // Ticking one hunk of an unstaged file stages just that hunk.
+      for (const h of ids) {
+        if (h === id) excluded.delete(h);
+        else excluded.add(h);
+      }
+      staged.add(p.path);
+    } else if (excluded.has(id)) {
+      excluded.delete(id);
+    } else {
+      excluded.add(id);
+      if (ids.every((h) => excluded.has(h))) {
+        for (const h of ids) excluded.delete(h);
+        staged.delete(p.path);
+      }
+    }
+    setUnstagedHunks(excluded);
+    setStagedPaths(staged);
+  };
+
+  const revertHunk = async (p: ReviewFilePatch, hunk: ReviewHunk) => {
+    if (!onRevertHunk) return;
+    setReverting(hunk.id);
+    setError(null);
+    try {
+      await onRevertHunk(p.path, hunkPatch(p, [hunk]));
+      await load();
+    } catch (err) {
+      setError(failMessage(err, "Failed to discard hunk"));
+    } finally {
+      setReverting(null);
+    }
   };
 
   const doCommit = async () => {
@@ -812,7 +935,11 @@ export function ChangesPanel({
     setBusy("commit");
     setError(null);
     try {
-      await onCommit(msg, paths);
+      await onCommit(
+        msg,
+        paths,
+        partialPatches.length ? partialPatches : undefined,
+      );
       setMessage("");
       await load();
     } catch (err) {
@@ -1007,6 +1134,7 @@ export function ChangesPanel({
                         : "mixed"
                   }
                   onClick={() => {
+                    setUnstagedHunks(new Set());
                     if (stagedPaths.size === diff.files.length) {
                       setStagedPaths(new Set());
                     } else {
@@ -1034,7 +1162,11 @@ export function ChangesPanel({
                         file={f}
                         editable={editable}
                         selected={selectedPath === f.path}
-                        staged={stagedPaths.has(f.path)}
+                        staged={
+                          partialPatches.some((p) => p.path === f.path)
+                            ? "mixed"
+                            : stagedPaths.has(f.path)
+                        }
                         confirmRevert={confirmRevert}
                         reverting={reverting}
                         onSelect={setSelectedPath}
@@ -1130,6 +1262,18 @@ export function ChangesPanel({
                         split={split}
                         comments={commentWiring}
                         onToggleHunk={(hunk) => toggleHunk(hunk.id, !hunk.accepted)}
+                        stage={
+                          hunkable(p.path)
+                            ? {
+                                staged: (hunk) => hunkStaged(p.path, hunk.id),
+                                onToggle: (hunk) => toggleHunkStage(p, hunk.id),
+                                onDiscard: onRevertHunk
+                                  ? (hunk) => void revertHunk(p, hunk)
+                                  : null,
+                                reverting,
+                              }
+                            : null
+                        }
                       />
                     </Fragment>
                   ))}
@@ -1178,7 +1322,8 @@ export function ChangesPanel({
                 {busy === "commit"
                   ? "Committing…"
                   : stagedPaths.size === 0 ||
-                      stagedPaths.size === (diff?.files.length ?? 0)
+                      (stagedPaths.size === (diff?.files.length ?? 0) &&
+                        partialPatches.length === 0)
                     ? "Commit"
                     : stagedPaths.size === 1
                       ? "Commit 1 file"

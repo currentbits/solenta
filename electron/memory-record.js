@@ -2,6 +2,7 @@
 
 
 const { createMemoryProxy } = require("./memory-proxy.js");
+const threadSecrets = require("./threadSecrets.js");
 
 const TITLE_MAX = 80;
 const BODY_TEXT_MAX = 1200;
@@ -121,7 +122,8 @@ async function recordRunOutcome(args, deps = {}) {
       });
     }
 
-    await proxy.store(payload);
+    // The body quotes the run's final text, which may echo a secret (#1531).
+    await proxy.store(threadSecrets.redact(String(thread.id || ""), payload));
   } catch {
     // Silent no-op: memory down, network error, bad payload — never affect runs.
   }

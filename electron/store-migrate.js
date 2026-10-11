@@ -5,10 +5,12 @@ const {
   normalizePostMerge,
 } = require("./postmerge.js");
 const { normalizeAcceptedHunks } = require("./reviewItinerary.js");
+const { normalizeProjectEnv } = require("./worktreeEnv.js");
 const { normalizeBtwCards } = require("./btw.js");
 const { normalizePendingQuestion } = require("./questions.js");
 const { normalizeMessagePins } = require("./messagePins.js");
 const { normalizeQueued } = require("./queued.js");
+const { normalizeTrigger } = require("./automation-triggers.js");
 const { branchPrefixError } = require("./worktrees-branches.js");
 const { normalizeTrustHash } = require("./repoConfig.js");
 const {
@@ -171,6 +173,19 @@ function migrateAutomation(a) {
         ? a.nextRunAt
         : 0,
     lastError: a.lastError !== undefined ? a.lastError : null,
+    consecutiveFailures:
+      Number.isInteger(a.consecutiveFailures) && a.consecutiveFailures > 0
+        ? a.consecutiveFailures
+        : 0,
+    pendingRunThreadId:
+      typeof a.pendingRunThreadId === "string" ? a.pendingRunThreadId : null,
+    // #242: null = schedule mode. Cursor is a PR number, event id, or ISO time.
+    trigger: normalizeTrigger(a.trigger),
+    triggerCursor:
+      typeof a.triggerCursor === "number" || typeof a.triggerCursor === "string"
+        ? a.triggerCursor
+        : null,
+    memory: typeof a.memory === "string" ? a.memory : "",
   };
 }
 
@@ -224,6 +239,9 @@ function migrateProject(p) {
   const quickActions = normalizeQuickActions(next.quickActions);
   if (quickActions) next.quickActions = quickActions;
   else delete next.quickActions;
+  const env = normalizeProjectEnv(next.env);
+  if (Object.keys(env).length) next.env = env;
+  else delete next.env;
   const threadDefaults = normalizeThreadDefaults(next.threadDefaults);
   if (threadDefaults) next.threadDefaults = threadDefaults;
   else delete next.threadDefaults;
@@ -482,6 +500,12 @@ function migrateThread(t) {
     handoffFrom: t.handoffFrom !== undefined ? t.handoffFrom : null,
     // Issue #254 edit-and-resubmit: one-shot context replay after rewind.
     replayContext: t.replayContext === true,
+    // Issue #158 message-level fork: claude chain uuid to cut the resumed
+    // source session at (one-shot; cleared once the forked session id lands).
+    forkSessionAt:
+      typeof t.forkSessionAt === "string" && t.forkSessionAt
+        ? t.forkSessionAt
+        : null,
     // Per-thread desktop-notification mute (issue #87): absent → not muted.
     muted: t.muted === true,
     // Eject-to-terminal (#554): Solenta must not resume this sessionId.

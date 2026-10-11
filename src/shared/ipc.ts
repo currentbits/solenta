@@ -114,6 +114,11 @@ export interface ProjectInfo {
    * Absent/empty = none. Cap 8.
    */
   quickActions?: ProjectQuickAction[];
+  /**
+   * Env vars layered into agent runs, dev servers, terminals, verify and
+   * quick actions in this project (#188). PATH is dropped. Absent = none.
+   */
+  env?: Record<string, string>;
   /** Checked-in solenta.json commands (#1506). Never persisted. */
   repoConfig?: ProjectRepoConfig;
   /**
@@ -125,6 +130,8 @@ export interface ProjectInfo {
   branchPrefix?: string;
   /** Defaults for new threads in this project (#1501). Absent = global defaults. */
   threadDefaults?: ProjectThreadDefaults;
+  /** Model routing preferences (#246). Absent = no routing. */
+  modelRouting?: ProjectModelRouting;
   /**
    * Conductor Spotlight (#250 stretch). When true, one heavy app instance
    * at the project checkout hot-swaps which claimed lane it serves.
@@ -373,12 +380,33 @@ export interface ProjectUpdateInput {
    * Named header actions (issue #153). Empty array clears them.
    */
   quickActions?: ProjectQuickAction[];
+  /** Per-project env map (#188). Empty / null clears it. */
+  env?: Record<string, string> | null;
   /** #1506. false / null clears it. */
   waitForSetup?: boolean | null;
   /** #1506. Empty / null restores "coder/"; an invalid prefix rejects. */
   branchPrefix?: string | null;
   /** New-thread defaults (#1501). Replaces the whole object; null clears. */
   threadDefaults?: ProjectThreadDefaults | null;
+  /** Model routing (#246). Replaces the whole object; null clears. */
+  modelRouting?: ProjectModelRouting | null;
+}
+
+/** Routing tiers (#246): cost/intelligence buckets mapped to agent profiles. */
+export type ModelTier = "fast" | "balanced" | "strong";
+/** "auto" classifies the first prompt; a tier is declared up front. */
+export type ModelRoute = "auto" | ModelTier;
+
+/**
+ * Per-project routing (#246). Each tier names an AgentProfile id; a tier
+ * with no profile keeps the thread's model. `auto` stamps new threads
+ * with route "auto". Permission mode is never routed.
+ */
+export interface ProjectModelRouting {
+  auto?: boolean;
+  fast?: string;
+  balanced?: string;
+  strong?: string;
 }
 
 /**
@@ -564,6 +592,11 @@ export interface ThreadInfo {
    */
   quotaWaitUntil?: number | null;
   /**
+   * Waiting for a run slot under settings.maxConcurrentRuns (issue #166).
+   * Queue order is `at` ascending across all threads; Stop leaves the queue.
+   */
+  runQueue?: { at: number } | null;
+  /**
    * One-shot: this thread already woke from a quota-wait. The next quota
    * error fails the turn instead of parking again. Cleared on a human turn.
    */
@@ -675,6 +708,11 @@ export interface ThreadInfo {
    * After that first turn the session carries its own context.
    */
   handoffFrom: string | null;
+  /**
+   * Cached thread recap (#239), rebuilt after each successful turn. Detail
+   * only: stripped from sidebar rows. Absent before the first finished turn.
+   */
+  recap?: ThreadRecap | null;
   /**
    * Epoch ms when the user pinned this thread; null = unpinned. Pinned
    * threads render first and NEVER auto-settle (t3's rule). Pin and an
@@ -868,6 +906,16 @@ export interface ThreadInfo {
    * lists `fast`; absent on older store rows.
    */
   fast?: boolean;
+  /**
+   * Pending model route (#246), consumed by the first turn: "auto"
+   * classifies the prompt, a tier is declared. Absent/null = manual pick.
+   */
+  route?: ModelRoute | null;
+  /**
+   * CLI custom agent the thread runs as (`--agent <name>`, issue #172), or
+   * null/absent for the CLI default. Cleared on provider switch.
+   */
+  agent?: string | null;
   /** Absolute path of the thread's git worktree, when one was set up. */
   worktreePath: string | null;
   /** Numbered merge-queue lane (#346). Absent when the thread has no lane. */
@@ -1910,6 +1958,13 @@ export interface PendingInputRequest {
   }>;
 }
 
+/** Short "asked / changed / now / open" summary of a thread (#239). */
+export interface ThreadRecap {
+  text: string;
+  /** Epoch ms when it was built. */
+  at: number;
+}
+
 export interface ThreadDetail {
   thread: ThreadInfo;
   messages: ChatMessage[];
@@ -1922,6 +1977,12 @@ export interface ThreadDetail {
   pendingPermission?: PendingPermissionInfo | null;
   /** Run-scoped evidence metadata; absent on old fixtures and wire clients. */
   artifacts?: RunArtifactInfo[];
+  /**
+   * Recap to show on this visit (#239): set by threads.get when the thread
+   * sat idle 30+ min, or for a fresh fork (the source's recap). Background
+   * pushes omit it; the view latches it until dismissed or switched away.
+   */
+  recap?: ThreadRecap | null;
 }
 
 /**
@@ -1963,9 +2024,16 @@ export interface GitStatus {
 /**
  * Ahead/behind vs @{upstream}. No repo or no upstream is in-band, not thrown.
  */
-export type GitSyncInfo =
+export type GitSyncInfo = (
   | { hasUpstream: false }
-  | { hasUpstream: true; ahead: number; behind: number };
+  | { hasUpstream: true; ahead: number; behind: number }
+) & {
+  /**
+   * Worktree threads (#1556): every commit on the branch is already on its
+   * base (local or origin/), so there is nothing to merge; Merge just cleans up.
+   */
+  landed?: boolean;
+};
 
 /**
  * Origin owner/repo plus an https web URL for the thread root. In-band
@@ -2490,6 +2558,12 @@ export interface PlanIssue {
   updatedAt?: string;
   /** ISO creation timestamp from gh, when present. */
   createdAt?: string;
+  /**
+   * Open blocker issue numbers (GitHub blocked-by or `blocked-by:#N` labels).
+   * listIssues drops blockers that already landed; absent when unblocked.
+   * Auto-dispatch skips cards that carry it.
+   */
+  blockedBy?: number[];
 }
 
 /** Per-project listIssues result. Failures stay in-band so the UI can retry. */
@@ -2689,6 +2763,11 @@ export interface ProviderInfo {
    */
   supportsSearch?: boolean;
   /**
+   * True when the CLI accepts `--agent <name>` (claude, opencode; #172).
+   * The composer hides the Agent picker when this is missing or false.
+   */
+  supportsAgents?: boolean;
+  /**
    * True when a live turn can take mid-run guidance on stdin (issue #156).
    * Claude stream-json does; one-shot `-p` / `exec --json` CLIs do not
    * (Codex: issue #1164). The composer hides Steer when this is missing
@@ -2791,7 +2870,36 @@ export interface DistilledWorkflow {
   phases: WorkflowPhaseSpec[];
 }
 
+/** Issue #247: a memory entry distilled from a finished thread, pre-review. */
+export interface DistilledMemory {
+  type: "knowledge" | "convention" | "strategy";
+  title: string;
+  body: string;
+  citations: MemoryCitation[];
+}
+
 export type AutomationPreset = "hourly" | "daily" | "weekly";
+
+/** GitHub events an automation can fire on (issue #242). Polled, not webhooks. */
+export type AutomationTriggerEvent =
+  | "pr_opened"
+  | "pr_merged"
+  | "pr_labeled"
+  | "review_submitted"
+  | "push"
+  | "ci_completed";
+
+/**
+ * Event trigger. Filters apply only where they make sense: branch for push
+ * and ci_completed, label for pr_labeled, conclusion for ci_completed.
+ */
+export interface AutomationTrigger {
+  type: "github";
+  event: AutomationTriggerEvent;
+  branch?: string | null;
+  label?: string | null;
+  conclusion?: "success" | "failure" | "cancelled" | "timed_out" | null;
+}
 
 /** A scheduled agent run (Synara-style automation). */
 export interface AutomationInfo {
@@ -2808,6 +2916,18 @@ export interface AutomationInfo {
   lastRunAt: number | null;
   nextRunAt: number;
   lastError: string | null;
+  /** Failed fires in a row; at 3 the scheduler sets enabled=false (#160). */
+  consecutiveFailures?: number;
+  /** Last fired thread whose outcome has not been counted yet. */
+  pendingRunThreadId?: string | null;
+  /** Set: fires on GitHub events, preset/hour are ignored. Null: schedule. */
+  trigger?: AutomationTrigger | null;
+  /** Highest event already handled; null until the first poll baselines. */
+  triggerCursor?: number | string | null;
+  /** Notes the automation keeps between runs (its <automation-memory> block). */
+  memory?: string;
+  /** Routing tier (#246); provider/model is the fallback. null = off. */
+  tier?: ModelRoute | null;
 }
 
 export interface AutomationWrite {
@@ -2819,6 +2939,9 @@ export interface AutomationWrite {
   preset: AutomationPreset;
   hour?: number | null;
   enabled?: boolean;
+  trigger?: AutomationTrigger | null;
+  memory?: string;
+  tier?: ModelRoute | null;
 }
 
 /**
@@ -3019,6 +3142,12 @@ export interface AppSettings {
    */
   prDiffCapLines: number | null;
   /**
+   * Max simultaneous agent runs across all projects (issue #166). Starts
+   * beyond it wait in a FIFO run queue (ThreadInfo.runQueue) and are admitted
+   * as runs settle. Default 4; null disables the cap.
+   */
+  maxConcurrentRuns: number | null;
+  /**
    * Update channel override; null follows the channel stamped at package
    * time. Has no effect in an unstamped dev tree (updates stay disabled).
    */
@@ -3038,6 +3167,11 @@ export interface AppSettings {
    * what Default did before this field existed. Unknown ids heal to null.
    */
   defaultOrchestratorProfileId: string | null;
+  /**
+   * Reusable prompt text (issue #189). Typing `@name` in the composer offers
+   * the snippet above file matches; accepting replaces the token with text.
+   */
+  promptSnippets: PromptSnippet[];
   /**
    * Described worker-model pool (issue #467). Orchestration workers default
    * to `defaultAlias` (or inherit the lead when the pool is empty). The lead
@@ -3079,6 +3213,12 @@ export interface ModelPrice {
   output: number;
   cacheRead?: number;
   cacheWrite?: number;
+}
+
+/** One prompt snippet. `name` is one token: letters, digits, `.`, `-`, `_`. */
+export interface PromptSnippet {
+  name: string;
+  text: string;
 }
 
 /**
@@ -3473,6 +3613,13 @@ export interface McpInstallResult {
   installed: Array<McpServerDefinition | string>;
 }
 
+/** A CLI custom agent a thread can run as (#172). */
+export interface CliAgentInfo {
+  name: string;
+  description: string;
+  source: "builtin" | "project" | "user";
+}
+
 /**
  * A writable skills directory we fan a skill out to: one per provider that
  * reads SKILL.md, plus the cross-agent ~/.agents/skills convention.
@@ -3734,6 +3881,8 @@ export interface AppStatus {
     vectors: number | null;
     /** Last janitor step failure, or null when clean/unknown. */
     lastError: string | null;
+    /** Repo roots sharing a folder name, each with its own memory scope (#179). */
+    collisions?: { root: string; key: string }[];
   };
   /** Which build is running: a stale packaged bundle looks like a broken app. */
   build: {
@@ -4011,6 +4160,12 @@ export interface SpeechStatus {
  */
 export type ThreadForkOpts = {
   provider?: string;
+  /**
+   * Message-level fork (#158): copy the transcript up to and including this
+   * message. Claude resumes a forked CLI session cut there; other providers
+   * get a fresh session seeded from the copied prefix.
+   */
+  messageId?: string;
   model?: string | null;
   worktree?: boolean;
   isolate?: boolean;
@@ -4096,6 +4251,11 @@ export interface CoderApi {
       id: number;
       resolution: MemoryReviewResolution;
     }): Promise<{ ok: boolean; id: number; resolution: string }>;
+    /** Rename one repo root's memory scope, moving its rows (#179). */
+    renameScope(input: {
+      root: string;
+      key: string;
+    }): Promise<{ root: string; key: string; moved: number }>;
   };
   settings: {
     get(): Promise<AppSettings>;
@@ -4215,6 +4375,11 @@ export interface CoderApi {
     save(template: Omit<WorkflowTemplateInfo, "id" | "builtin"> & { id?: string }): Promise<WorkflowTemplateInfo>;
     /** Removes a non-builtin template. */
     remove(input: { id: string }): Promise<void>;
+    /**
+     * Writes a saved template into the thread's checkout as WORKFLOW.md
+     * (#164). An existing file is left alone (written:false) unless overwrite.
+     */
+    exportToRepo(input: { id: string; threadId: string; overwrite?: boolean }): Promise<{ written: boolean; path: string }>;
   };
   automations: {
     list(): Promise<AutomationInfo[]>;
@@ -4829,6 +4994,27 @@ export interface CoderApi {
      */
     setFast(input: { threadId: string; fast: boolean }): Promise<ThreadInfo>;
     /**
+     * Pending first-turn route (#246); null = manual. Rejects once the
+     * thread has a session. threads.setProvider clears it.
+     */
+    setRoute(input: {
+      threadId: string;
+      route: ModelRoute | null;
+    }): Promise<ThreadInfo>;
+    /**
+     * Runs the thread as a CLI custom agent (#172); null for the CLI
+     * default. Rejects when the provider does not advertise supportsAgents.
+     */
+    setAgent(input: { threadId: string; agent: string | null }): Promise<ThreadInfo>;
+    /**
+     * Custom agents the provider CLI would find for this project
+     * (.claude/agents, .opencode/agent, user dirs). Empty for other CLIs.
+     */
+    listAgents(input: {
+      provider: string;
+      projectPath?: string | null;
+    }): Promise<CliAgentInfo[]>;
+    /**
      * Sets the thread's verification command (issue #296). A non-empty
      * command arms the gate: from the next turn on, a run that would land
      * "done" instead runs this command and only goes green when it exits 0.
@@ -4994,6 +5180,11 @@ export interface CoderApi {
      * the draft for review and saves it through workflows.save.
      */
     distill(input: { threadId: string }): Promise<DistilledWorkflow>;
+    /**
+     * #247: distills a finished thread into a shared-memory entry draft.
+     * Nothing is stored — the Memory tab opens it for review first.
+     */
+    distillMemory(input: { threadId: string }): Promise<DistilledMemory>;
     stop(input: { threadId: string }): Promise<void>;
     /**
      * Resume a parked quota-wait thread now (#462). Resends the last user
@@ -5030,13 +5221,25 @@ export interface CoderApi {
      * Commits changes in the thread's cwd. Omit `paths` to stage everything
      * (`git add -A`); pass a list to stage and commit only those files.
      * Rejects on an empty message, an empty `paths` list, or when there is
-     * nothing to commit.
+     * nothing to commit. `patches` (hunk-level staging, #191) commits only
+     * the given subset of a file's `git diff HEAD` hunks; each path must
+     * also be in `paths`.
      */
     commit(input: {
       threadId: string;
       message: string;
       paths?: string[];
+      patches?: Array<{ path: string; patch: string }>;
     }): Promise<{ subject: string }>;
+    /**
+     * Discards one hunk: reverse-applies `patch` (file header + one hunk
+     * from the diff) to the worktree. Other hunks in the file stay.
+     */
+    revertHunk(input: {
+      threadId: string;
+      path: string;
+      patch: string;
+    }): Promise<{ path: string }>;
     /**
      * Discards one file's changes: untracked files are deleted, staged-new
      * files are removed from index and disk, tracked files are restored from
@@ -5524,6 +5727,16 @@ export interface CoderApi {
       sourceId: string;
     }): Promise<{ attachment: AttachmentInfo | null }>;
     /**
+     * macOS: the same window's flattened accessibility tree as a
+     * window-text.txt chip (#1531). Called after captureWindow so the PNG
+     * never waits on it. null attachment off macOS; `skipped` says why it is
+     * missing (most often no Accessibility permission).
+     */
+    captureWindowText(input: {
+      threadId: string;
+      sourceId: string;
+    }): Promise<{ attachment: AttachmentInfo | null; skipped?: string }>;
+    /**
      * Electron-only (preload, webUtils.getPathForFile): absolute path of a
      * drag-dropped File, including Finder directories. Absent on web/dev
      * bridges, which persist bytes via saveImage / saveFile / saveFolder.
@@ -5769,8 +5982,10 @@ export interface CoderApi {
   /** Returns an unsubscribe function. */
   on(channel: "threads:changed", cb: (push: ThreadListPush) => void): () => void;
   on(channel: "thread:updated", cb: (patch: ThreadPatch) => void): () => void;
-  /** Desktop notification click: select this thread. */
+  /** Notification click or solenta://thread/<id> link: open this thread. */
   on(channel: "thread:select", cb: (threadId: string) => void): () => void;
+  /** solenta://project/<id> deep link: scope the sidebar to it (#186). */
+  on(channel: "project:select", cb: (projectId: string) => void): () => void;
   /** Main-process store + IPC handlers are up; refetch boot lists (#618). */
   on(channel: "boot:ready", cb: () => void): () => void;
   /** Stay-awake derived state flipped (mode, blocking, battery) (#364). */

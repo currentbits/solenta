@@ -161,6 +161,47 @@ function matchingProfileId(raw, profiles) {
   return list.some((p) => p.id === id) ? id : null;
 }
 
+const SNIPPET_NAME_RE = /^[\w.-]{1,40}$/;
+const SNIPPET_TEXT_MAX = 8000;
+
+/**
+ * Prompt snippets (issue #189): named text the composer inserts via `@name`.
+ * strict (settings:set) throws on the first problem; lenient (disk read)
+ * drops bad entries and duplicate names. Names stay one token so the
+ * @-mention query can match them.
+ * @param {unknown} raw
+ * @param {boolean} strict
+ * @returns {Array<{ name: string, text: string }>}
+ */
+function parsePromptSnippets(raw, strict) {
+  if (!Array.isArray(raw)) {
+    if (strict) throw new Error("promptSnippets must be an array");
+    return [];
+  }
+  /** @type {Array<{ name: string, text: string }>} */
+  const out = [];
+  const seen = new Set();
+  for (const item of raw) {
+    const name = typeof item?.name === "string" ? item.name.trim() : "";
+    const text = typeof item?.text === "string" ? item.text : "";
+    let problem = null;
+    if (!SNIPPET_NAME_RE.test(name)) {
+      problem = `Snippet name "${name}" must be 1-40 letters, digits, ".", "-" or "_"`;
+    } else if (!text.trim() || text.length > SNIPPET_TEXT_MAX) {
+      problem = `Snippet "${name}" text must be 1-${SNIPPET_TEXT_MAX} characters`;
+    } else if (seen.has(name)) {
+      problem = `Duplicate snippet name: ${name}`;
+    }
+    if (problem) {
+      if (strict) throw new Error(problem);
+      continue;
+    }
+    seen.add(name);
+    out.push({ name, text });
+  }
+  return out;
+}
+
 /**
  * Default inactivity window (days). Must match src/threadSettle.ts
  * AUTO_SETTLE_AFTER_DAYS — old stores without the key heal here so null
@@ -175,6 +216,12 @@ const DEFAULT_AUTO_SETTLE_AFTER_DAYS = 3;
  * settings disables the cap.
  */
 const DEFAULT_PR_DIFF_CAP_LINES = 400;
+
+/**
+ * Default cap on simultaneous agent runs (issue #166). Starts beyond it wait
+ * in a FIFO run queue and are admitted as runs settle. null disables the cap.
+ */
+const DEFAULT_MAX_CONCURRENT_RUNS = 4;
 
 /**
  * Settings.defaultProvider (issue #711). Absent/junk → null (createThread
@@ -288,6 +335,8 @@ function validateQuotaFailover(raw) {
  * notificationSound: absent/junk → false. The focused-window alert sound
  * (#1506) is opt-in; only an explicit true plays it.
  *
+ * promptSnippets: absent/junk → []; bad entries and duplicate names drop.
+ *
  * feltEstimatePrompt: absent/junk → false. The "how much time did this save
  * you?" card is opt-in; only an explicit true asks.
  *
@@ -313,6 +362,9 @@ function validateQuotaFailover(raw) {
  *
  * prDiffCapLines: absent/junk → DEFAULT_PR_DIFF_CAP_LINES (400); only an
  * explicit null disables the PR-size cap (issue #402).
+ *
+ * maxConcurrentRuns: same tri-state as prDiffCapLines, default
+ * DEFAULT_MAX_CONCURRENT_RUNS (4); explicit null disables the cap (#166).
  *
  * autoSettleOnMerge: only an explicit false turns merge-settle off, so
  * absent/junk keeps the previous "MERGED = settled" behaviour.
@@ -356,9 +408,11 @@ function normalizeSettings(raw) {
     resumeInterruptedRuns: false,
     guardrailsEnabled: true,
     prDiffCapLines: DEFAULT_PR_DIFF_CAP_LINES,
+    maxConcurrentRuns: DEFAULT_MAX_CONCURRENT_RUNS,
     agentProfiles: [],
     providerInstances: [],
     defaultOrchestratorProfileId: null,
+    promptSnippets: [],
     subagentPool: { defaultAlias: null, force: false, entries: [] },
     otel: { endpoint: null, headers: {}, claudeMetrics: false },
     linearApiKey: null,
@@ -422,6 +476,16 @@ function normalizeSettings(raw) {
       settings.prDiffCapLines = DEFAULT_PR_DIFF_CAP_LINES;
     }
   }
+  if (Object.prototype.hasOwnProperty.call(obj, "maxConcurrentRuns")) {
+    const c = /** @type {{ maxConcurrentRuns?: unknown }} */ (obj)
+      .maxConcurrentRuns;
+    settings.maxConcurrentRuns =
+      c === null
+        ? null
+        : Number.isInteger(c) && /** @type {number} */ (c) > 0
+          ? /** @type {number} */ (c)
+          : DEFAULT_MAX_CONCURRENT_RUNS;
+  }
 
   settings.mcpServers = normalizeMcpServers(obj.mcpServers);
   settings.agentProfiles = normalizeAgentProfiles(
@@ -434,6 +498,10 @@ function normalizeSettings(raw) {
     /** @type {{ defaultOrchestratorProfileId?: unknown }} */ (obj)
       .defaultOrchestratorProfileId,
     settings.agentProfiles,
+  );
+  settings.promptSnippets = parsePromptSnippets(
+    /** @type {{ promptSnippets?: unknown }} */ (obj).promptSnippets,
+    false,
   );
   settings.subagentPool = normalizeSubagentPool(
     /** @type {{ subagentPool?: unknown }} */ (obj).subagentPool,
@@ -620,6 +688,7 @@ module.exports = {
   isHttpUrl,
   validateAgentProfiles,
   matchingProfileId,
+  parsePromptSnippets,
   DEFAULT_AUTO_SETTLE_AFTER_DAYS,
   normalizeDefaultProvider,
   normalizeDefaultModel,

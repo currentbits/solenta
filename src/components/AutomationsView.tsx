@@ -3,7 +3,10 @@ import {
   automationRunStatusLabel,
   createFormError,
   formatNextRun,
+  isTriggerEvent,
   scheduleLabel,
+  TRIGGER_EVENT_LABELS,
+  triggerLabel,
 } from "../automations";
 import { formatRelativeAge } from "../format";
 import type { RepeatDraft } from "../repeatThread";
@@ -11,7 +14,10 @@ import type {
   AutomationInfo,
   AutomationPreset,
   AutomationRunsResult,
+  AutomationTrigger,
+  AutomationTriggerEvent,
   AutomationWrite,
+  ModelRoute,
   ProjectInfo,
   ProviderInfo,
   ThreadStatus,
@@ -242,7 +248,15 @@ export function AutomationsView({
   );
   const [model, setModel] = useState(draft?.model ?? "");
   const [preset, setPreset] = useState<AutomationPreset>("hourly");
+  // #246: "" = run on the provider/model above.
+  const [tier, setTier] = useState<ModelRoute | "">("");
   const [hour, setHour] = useState("9");
+  // #242: "" = schedule mode, else the GitHub event this automation fires on.
+  const [event, setEvent] = useState<AutomationTriggerEvent | "">("");
+  const [branch, setBranch] = useState("");
+  const [label, setLabel] = useState("");
+  const [conclusion, setConclusion] = useState("");
+  const [memory, setMemory] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -272,7 +286,13 @@ export function AutomationsView({
     setProvider(auto.provider);
     setModel(auto.model ?? "");
     setPreset(auto.preset);
+    setTier(auto.tier ?? "");
     setHour(auto.hour != null ? String(auto.hour) : "9");
+    setEvent(auto.trigger?.event ?? "");
+    setBranch(auto.trigger?.branch ?? "");
+    setLabel(auto.trigger?.label ?? "");
+    setConclusion(auto.trigger?.conclusion ?? "");
+    setMemory(auto.memory ?? "");
     setFormError(null);
   };
 
@@ -282,7 +302,13 @@ export function AutomationsView({
     setPrompt("");
     setModel("");
     setPreset("hourly");
+    setTier("");
     setHour("9");
+    setEvent("");
+    setBranch("");
+    setLabel("");
+    setConclusion("");
+    setMemory("");
     setFormError(null);
   };
 
@@ -310,7 +336,16 @@ export function AutomationsView({
     [projects],
   );
 
-  const needsHour = preset === "daily" || preset === "weekly";
+  const needsHour = !event && (preset === "daily" || preset === "weekly");
+  const trigger: AutomationTrigger | null = event
+    ? {
+        type: "github",
+        event,
+        branch: branch.trim() || null,
+        label: label.trim() || null,
+        conclusion: (conclusion || null) as AutomationTrigger["conclusion"],
+      }
+    : null;
   const providerModels =
     providers.find((p) => p.id === provider)?.models ?? [];
 
@@ -326,7 +361,7 @@ export function AutomationsView({
       projectId,
       prompt,
       provider,
-      preset,
+      preset: event ? "hourly" : preset,
       hour,
     });
     if (error) {
@@ -338,14 +373,19 @@ export function AutomationsView({
     setFormError(null);
     try {
       if (editingId) {
+        const hadTier = automations.find((a) => a.id === editingId)?.tier;
         await onUpdate({
           id: editingId,
           name: name.trim(),
           prompt,
           provider,
           model: model.trim() || null,
-          preset,
+          // Event mode ignores the schedule; hourly needs no hour.
+          preset: event ? "hourly" : preset,
           hour: needsHour ? Number(hour) : null,
+          trigger,
+          memory,
+          ...(tier || hadTier ? { tier: tier || null } : {}),
         });
         clearEdit();
       } else {
@@ -355,13 +395,17 @@ export function AutomationsView({
           prompt,
           provider,
           model: model.trim() || null,
-          preset,
+          // Event mode ignores the schedule; hourly needs no hour.
+          preset: event ? "hourly" : preset,
           hour: needsHour ? Number(hour) : null,
+          trigger,
           enabled: true,
+          ...(tier ? { tier } : {}),
         });
         setName("");
         setPrompt("");
         setModel("");
+        setTier("");
       }
     } catch (err) {
       setFormError(
@@ -479,19 +523,103 @@ export function AutomationsView({
             )}
           </label>
           <label className={styles.field}>
-            <span className={styles.label}>Schedule</span>
+            <span className={styles.label}>Routing</span>
             <select
               className={styles.select}
-              value={preset}
-              onChange={(e) => setPreset(e.target.value as AutomationPreset)}
-              name="preset"
-              aria-label="Schedule"
+              value={tier}
+              onChange={(e) => setTier(e.target.value as ModelRoute | "")}
+              name="tier"
+              aria-label="Routing"
+              title="Pick the model through the project's routing; the provider and model are the fallback"
+              data-automation-tier=""
             >
-              <option value="hourly">hourly</option>
-              <option value="daily">daily</option>
-              <option value="weekly">weekly</option>
+              <option value="">Off</option>
+              <option value="auto">Auto</option>
+              <option value="fast">Fast</option>
+              <option value="balanced">Balanced</option>
+              <option value="strong">Strong</option>
             </select>
           </label>
+          <label className={styles.field}>
+            <span className={styles.label}>When</span>
+            <select
+              className={styles.select}
+              value={event || preset}
+              onChange={(e) => {
+                const v = e.target.value;
+                if (isTriggerEvent(v)) {
+                  setEvent(v);
+                } else {
+                  setEvent("");
+                  setPreset(v as AutomationPreset);
+                }
+              }}
+              name="preset"
+              aria-label="When"
+            >
+              <optgroup label="Schedule">
+                <option value="hourly">hourly</option>
+                <option value="daily">daily</option>
+                <option value="weekly">weekly</option>
+              </optgroup>
+              <optgroup label="GitHub event (polled every minute)">
+                {(
+                  Object.keys(TRIGGER_EVENT_LABELS) as AutomationTriggerEvent[]
+                ).map((ev) => (
+                  <option key={ev} value={ev}>
+                    {TRIGGER_EVENT_LABELS[ev]}
+                  </option>
+                ))}
+              </optgroup>
+            </select>
+          </label>
+          {event === "pr_labeled" ? (
+            <label className={styles.field}>
+              <span className={styles.label}>Label</span>
+              <input
+                className={styles.input}
+                value={label}
+                onChange={(e) => setLabel(e.target.value)}
+                name="label"
+                aria-label="Label"
+                placeholder="Any label"
+                autoComplete="off"
+              />
+            </label>
+          ) : null}
+          {event === "push" || event === "ci_completed" ? (
+            <label className={styles.field}>
+              <span className={styles.label}>Branch</span>
+              <input
+                className={styles.input}
+                value={branch}
+                onChange={(e) => setBranch(e.target.value)}
+                name="branch"
+                aria-label="Branch"
+                placeholder="Any branch"
+                autoComplete="off"
+                spellCheck={false}
+              />
+            </label>
+          ) : null}
+          {event === "ci_completed" ? (
+            <label className={styles.field}>
+              <span className={styles.label}>Result</span>
+              <select
+                className={styles.select}
+                value={conclusion}
+                onChange={(e) => setConclusion(e.target.value)}
+                name="conclusion"
+                aria-label="Result"
+              >
+                <option value="">Any</option>
+                <option value="success">success</option>
+                <option value="failure">failure</option>
+                <option value="cancelled">cancelled</option>
+                <option value="timed_out">timed out</option>
+              </select>
+            </label>
+          ) : null}
           {needsHour ? (
             <label className={styles.field}>
               <span className={styles.label}>Hour</span>
@@ -518,6 +646,20 @@ export function AutomationsView({
             aria-label="Prompt"
           />
         </label>
+        {editingId ? (
+          <label className={styles.field}>
+            <span className={styles.label}>Memory</span>
+            <textarea
+              className={styles.textarea}
+              value={memory}
+              onChange={(e) => setMemory(e.target.value)}
+              name="memory"
+              aria-label="Memory"
+              placeholder="Notes this automation keeps between runs. Runs replace them by ending with an <automation-memory> block."
+              data-automation-memory=""
+            />
+          </label>
+        ) : null}
         {formError ? (
           <p className={styles.formError} data-form-error="">
             {formError}
@@ -559,7 +701,8 @@ export function AutomationsView({
         <div className={styles.empty}>
           <p className={styles.emptyTitle}>No automations yet</p>
           <p className={styles.emptyHint}>
-            Use the form above to run a prompt on a schedule.
+            Use the form above to run a prompt on a schedule or on a GitHub
+            event.
           </p>
         </div>
       ) : (
@@ -584,14 +727,18 @@ export function AutomationsView({
                 </div>
                 <div className={styles.rowMeta}>
                   <span className={styles.schedule}>
-                    {scheduleLabel(auto.preset, auto.hour, auto.nextRunAt)}
+                    {auto.trigger
+                      ? triggerLabel(auto.trigger)
+                      : scheduleLabel(auto.preset, auto.hour, auto.nextRunAt)}
                   </span>
                   {auto.model ? (
                     <span className={styles.schedule}>{auto.model}</span>
                   ) : null}
-                  <span className={styles.next}>
-                    {formatNextRun(auto.nextRunAt, now)}
-                  </span>
+                  {auto.trigger ? null : (
+                    <span className={styles.next}>
+                      {formatNextRun(auto.nextRunAt, now)}
+                    </span>
+                  )}
                   {error ? (
                     <span className={styles.error} data-automation-error="">
                       {error}

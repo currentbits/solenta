@@ -4,6 +4,7 @@
 // Follows the seam convention in the header of electron/runner-watchdogs.js.
 
 const { resolveBin } = require("./providers.js");
+const { withProjectEnv } = require("./worktreeEnv.js");
 const path = require("node:path");
 const threadSecrets = require("./threadSecrets.js");
 const {
@@ -378,7 +379,7 @@ function createMuseRun(ctx) {
       binary: spawn.binary,
       args: spawn.args,
       cwd: spawn.cwd,
-      env: threadSecrets.withEnv(threadId, museEnv),
+      env: threadSecrets.withEnv(threadId, withProjectEnv(project, museEnv)),
       onEvent: (ev) => {
         if (!guard()) return;
 

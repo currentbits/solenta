@@ -27,9 +27,14 @@ export function planColumnFor(issue: PlanIssue): PlanColumnId {
   return "todo";
 }
 
-/** Labels worth badging on a card: everything except the plan:* status. */
+/**
+ * Labels worth badging on a card: everything except the plan:* status and
+ * blocked-by:* (the card shows its open blockers instead).
+ */
 export function badgeLabels(issue: PlanIssue): string[] {
-  return issue.labels.filter((l) => !l.startsWith("plan:"));
+  return issue.labels.filter(
+    (l) => !l.startsWith("plan:") && !/^blocked-by:/i.test(l),
+  );
 }
 
 /** Parse gh's ISO updatedAt; null when missing or malformed. */

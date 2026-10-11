@@ -11,6 +11,7 @@ const {
   isHttpUrl,
   validateAgentProfiles,
   matchingProfileId,
+  parsePromptSnippets,
   DEFAULT_AUTO_SETTLE_AFTER_DAYS,
   normalizeDefaultProvider,
   normalizeDefaultModel,
@@ -90,9 +91,11 @@ class StoreSettingsMethods {
       resumeInterruptedRuns: n.resumeInterruptedRuns,
       guardrailsEnabled: n.guardrailsEnabled,
       prDiffCapLines: n.prDiffCapLines,
+      maxConcurrentRuns: n.maxConcurrentRuns,
       agentProfiles: n.agentProfiles,
       providerInstances: n.providerInstances,
       defaultOrchestratorProfileId: n.defaultOrchestratorProfileId,
+      promptSnippets: n.promptSnippets,
       subagentPool: n.subagentPool,
       otel: n.otel,
       linearApiKey: n.linearApiKey,
@@ -180,6 +183,15 @@ class StoreSettingsMethods {
         }
       }
       this.data.settings.prDiffCapLines = v === null ? null : v;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "maxConcurrentRuns")) {
+      const v = patch.maxConcurrentRuns;
+      if (v !== null && !(Number.isInteger(v) && v > 0)) {
+        throw new Error(
+          `Max concurrent runs must be a positive integer or null (got ${String(v)})`,
+        );
+      }
+      this.data.settings.maxConcurrentRuns = v;
     }
     if (Object.prototype.hasOwnProperty.call(patch, "autoSettleOnMerge")) {      const v = patch.autoSettleOnMerge;
       if (typeof v !== "boolean") {
@@ -311,6 +323,12 @@ class StoreSettingsMethods {
         throw new Error("notificationSound must be a boolean");
       }
       this.data.settings.notificationSound = v;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "promptSnippets")) {
+      this.data.settings.promptSnippets = parsePromptSnippets(
+        patch.promptSnippets,
+        true,
+      );
     }
     if (Object.prototype.hasOwnProperty.call(patch, "feltEstimatePrompt")) {
       const v = patch.feltEstimatePrompt;

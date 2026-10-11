@@ -458,6 +458,16 @@ export function parsePatch(patch: string): ReviewFilePatch[] {
   return out;
 }
 
+/**
+ * A git-apply-able patch for some of a file's hunks (#191): the file's
+ * `diff --git` header plus only the given hunks. Feeds hunk-level commit
+ * (`git apply --cached`) and per-hunk discard (`git apply -R`).
+ */
+export function hunkPatch(p: ReviewFilePatch, hunks: ReviewHunk[]): string {
+  const head = p.text.slice(0, p.text.indexOf("\n@@") + 1);
+  return `${head}${hunks.map((h) => `${h.header}\n${h.body}`).join("\n")}\n`;
+}
+
 function symbolOnLine(line: string, ext: string): string {
   const trimmed = line.replace(/^\s+/, "");
   if (ext === ".py") {

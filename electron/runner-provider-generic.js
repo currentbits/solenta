@@ -4,6 +4,7 @@
 // Follows the seam convention in the header of electron/runner-watchdogs.js.
 
 const { parseAgentCommand } = require("./agent.js");
+const { normalizeProjectEnv } = require("./worktreeEnv.js");
 const path = require("node:path");
 const threadSecrets = require("./threadSecrets.js");
 
@@ -326,7 +327,10 @@ function createGenericRun(ctx) {
       prompt,
       appendPrompt: !crossing,
       cwd: spawn.cwd,
-      env: threadSecrets.withEnv(threadId, process.env),
+      env: threadSecrets.withEnv(threadId, {
+        ...process.env,
+        ...normalizeProjectEnv(project && project.env),
+      }),
       onChunk: (text) => {
         if (!guard()) return;
         realState.charCount = text.length;

@@ -81,6 +81,9 @@ const { posixQuote } = require("./ssh.js");
  *   user message as mid-turn guidance (Claude `--input-format stream-json`).
  *   Codex exec --json is explicit false (issue #1164). Absent/false keeps
  *   the composer queue-only while a run is active.
+ * @property {boolean} [supportsAgents] - CLI accepts `--agent <name>` to run
+ *   as a custom agent (#172; electron/agents.js lists them). Absent/false
+ *   hides the composer Agent picker and setAgent rejects names.
  * @property {Array<"default"|"acceptEdits"|"plan"|"bypassPermissions">} permissionModes
  *   Modes this adapter actually honours (changes argv / CLI behaviour).
  *   The composer only offers these; setPermissionMode rejects the rest.
@@ -91,6 +94,7 @@ const { posixQuote } = require("./ssh.js");
  *   permissionMode?: string,
  *   model?: string | null,
  *   reasoningEffort?: string | null,
+ *   agent?: string | null,
  *   webSearch?: boolean,
  *   fast?: boolean,
  *   images?: string[],
@@ -283,34 +287,26 @@ const PROVIDERS = [
     // processing a request"). Codex exec --json and one-shot -p CLIs
     // have no equivalent, so they stay queue-only.
     supportsSteer: true,
+    // Current lineup = the `section: "main"` ids in the CLI's own catalog
+    // (~/.claude/cache/model-catalog/*-cc.json, CLI 2.1.283, 2026-10-09)
+    // and the platform.claude.com models overview (1M context each; Opus 5.5
+    // is the "start here" pick). CLI 2.1.283 warns unrecognized_model for
+    // sonnet-5-5 / haiku-5-5 but the API serves them. Previous-generation
+    // ids stay for existing threads; the CLI lists them under "overflow".
     models: [
-      "claude-fable-5",
       "claude-opus-5-5",
+      "claude-fable-5-1",
+      "claude-sonnet-5-5",
+      "claude-haiku-5-5",
+      "claude-fable-5",
       "claude-opus-5",
       "claude-sonnet-5",
       "claude-haiku-4-5",
     ],
     modelInfo: [
       {
-        id: "claude-fable-5",
-        label: "Fable",
-        description: "Fast everyday coding with strong defaults",
-        vendor: "Anthropic",
-        contextTokens: 1_000_000,
-        efforts: CLAUDE_EFFORTS.slice(),
-      },
-      {
         id: "claude-opus-5-5",
         label: "Opus 5.5",
-        description: "Claude Opus 5.5 for complex coding tasks",
-        vendor: "Anthropic",
-        contextTokens: 1_000_000,
-        efforts: CLAUDE_EFFORTS.slice(),
-        fast: true,
-      },
-      {
-        id: "claude-opus-5",
-        label: "Opus",
         description: "Best for hard multi-step work",
         vendor: "Anthropic",
         recommended: true,
@@ -319,28 +315,78 @@ const PROVIDERS = [
         fast: true,
       },
       {
-        id: "claude-sonnet-5",
-        label: "Sonnet",
+        id: "claude-fable-5-1",
+        label: "Fable 5.1",
+        description: "Most capable; uses limits much faster than Opus",
+        vendor: "Anthropic",
+        contextTokens: 1_000_000,
+        efforts: CLAUDE_EFFORTS.slice(),
+      },
+      {
+        id: "claude-sonnet-5-5",
+        label: "Sonnet 5.5",
         description: "Balanced quality and speed",
         vendor: "Anthropic",
         contextTokens: 1_000_000,
         efforts: CLAUDE_EFFORTS.slice(),
       },
       {
-        id: "claude-haiku-4-5",
-        label: "Haiku",
+        id: "claude-haiku-5-5",
+        label: "Haiku 5.5",
         description: "Cheapest and fastest replies",
+        vendor: "Anthropic",
+        contextTokens: 1_000_000,
+        efforts: CLAUDE_EFFORTS.slice(),
+      },
+      {
+        id: "claude-fable-5",
+        label: "Fable 5",
+        description: "Previous generation Fable.",
+        vendor: "Anthropic",
+        contextTokens: 1_000_000,
+        efforts: CLAUDE_EFFORTS.slice(),
+      },
+      {
+        id: "claude-opus-5",
+        label: "Opus 5",
+        description: "Previous generation Opus.",
+        vendor: "Anthropic",
+        contextTokens: 1_000_000,
+        efforts: CLAUDE_EFFORTS.slice(),
+        fast: true,
+      },
+      {
+        id: "claude-sonnet-5",
+        label: "Sonnet 5",
+        description: "Previous generation Sonnet.",
+        vendor: "Anthropic",
+        contextTokens: 1_000_000,
+        efforts: CLAUDE_EFFORTS.slice(),
+      },
+      {
+        id: "claude-haiku-4-5",
+        label: "Haiku 4.5",
+        description: "Older fast model; no effort levels.",
         vendor: "Anthropic",
         contextTokens: 200_000,
         efforts: [],
       },
     ],
     // claude --help lists low..max; 2.1.219 also accepts ultracode (no
-    // unknown-value warning). Haiku is not effort-capable.
+    // unknown-value warning). Haiku 4.5 is not effort-capable; Haiku 5.5 is.
     efforts: CLAUDE_EFFORTS.slice(),
+    supportsAgents: true,
     permissionModes: ALL_PERMISSION_MODES.slice(),
     kind: "claude-stream",
-    buildArgs({ sessionId, permissionMode, model, reasoningEffort, fast }) {
+    buildArgs({
+      sessionId,
+      permissionMode,
+      model,
+      reasoningEffort,
+      fast,
+      agent,
+      forkSessionAt,
+    }) {
       // NO trailing prompt: the runner delivers it on stdin (stream-json
       // input), which is what lets the CLI route permission prompts to us
       // as control_request/control_response instead of silently denying.
@@ -360,8 +406,21 @@ const PROVIDERS = [
       if (model) {
         args.push("--model", String(model));
       }
+      if (agent) {
+        args.push("--agent", String(agent));
+      }
       if (sessionId) {
         args.push("--resume", String(sessionId));
+        // Message-level fork (#158): a NEW session holding the source's
+        // chain up to and including that entry. The source is untouched.
+        // --resume-session-at is hidden in --help (live on 2.1.283).
+        if (forkSessionAt) {
+          args.push(
+            "--fork-session",
+            "--resume-session-at",
+            String(forkSessionAt),
+          );
+        }
       }
       // Takes exactly one value; kept away from other values so it cannot
       // swallow them (variadic flags have bitten this project twice).
@@ -782,6 +841,7 @@ const PROVIDERS = [
     // Fallback for Default / custom: hide the pill. Per-model variants
     // populate ModelInfo.efforts; buildArgs emits --variant from those.
     efforts: [],
+    supportsAgents: true,
     // `opencode run --auto` auto-approves non-denied permissions. No plan
     // flag. Accept-edits is the same lever as full access.
     permissionModes: ["default", "bypassPermissions"],
@@ -803,6 +863,7 @@ const PROVIDERS = [
       reasoningEffort,
       permissionMode,
       files,
+      agent,
     }) {
       const args = ["run"];
       const paths = [];
@@ -822,6 +883,9 @@ const PROVIDERS = [
       }
       if (model) {
         args.push("-m", String(model));
+      }
+      if (agent) {
+        args.push("--agent", String(agent));
       }
       maybeEmitEffort(
         honouredEfforts(getProvider("opencode"), model),
@@ -1920,6 +1984,7 @@ function listProviders(opts = {}) {
       efforts: (entry.efforts || []).slice(),
       supportsSearch: entry.supportsSearch === true,
       supportsSteer: entry.supportsSteer === true,
+      supportsAgents: entry.supportsAgents === true,
       permissionModes: honouredPermissionModes(entry),
     };
     out.push(info);
@@ -1944,6 +2009,7 @@ function listProviders(opts = {}) {
     env,
     home: opts.home,
     readFile: opts.readFile,
+    readDir: opts.readDir,
     cliCache: opts.cliCache || catalogCliCache,
   };
   catalogDivergence.attachCatalogNotes(out, catalogOpts);

@@ -52,6 +52,7 @@ import type {
   CloneProgressPush,
   AgentProfile,
   ConflictForecast,
+  DistilledMemory,
   DistilledWorkflow,
   ProjectUpdateInput,
 } from "./shared/ipc";
@@ -217,6 +218,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     retryWorkflowAgent,
     saveWorkflow,
     removeWorkflow,
+    exportWorkflowToRepo,
     refreshWorkflows,
     workflowListError,
     stopRun,
@@ -228,6 +230,9 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     setReasoningEffort,
     setWebSearch,
     setFast,
+    setRoute,
+    setAgent,
+    listAgents,
     setArchived,
     setSettled,
     setPinned,
@@ -275,12 +280,14 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     commitChanges,
     setStagedPaths,
     revertFile,
+    revertHunk,
     suggestCommitMessage,
     listFiles,
     searchFileContents,
     pickDirectory,
     listSnapWindows,
     captureSnapWindow,
+    captureSnapWindowText,
     resolvePaths,
     openWorkspacePath,
     loadToolImage,
@@ -406,6 +413,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     removeAutomation,
     runAutomationNow,
     listAutomationRuns,
+    refreshAutomations,
   } = useCoder();
 
   useEffect(() => {
@@ -452,6 +460,11 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     const requested = new URLSearchParams(window.location.search).get("view");
     return requested === "usage" ? "usage" : "thread";
   });
+  // The scheduler can pause an automation in the background (#160); reload
+  // on open so the row shows Off and the reason instead of boot-time state.
+  useEffect(() => {
+    if (view === "automations") void refreshAutomations().catch(() => {});
+  }, [view, refreshAutomations]);
   const quotaDemo =
     isDevBuild() &&
     typeof window !== "undefined" &&
@@ -470,6 +483,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   );
   const [workflowsOpen, setWorkflowsOpen] = useState(false);
   const [distillError, setDistillError] = useState<string | null>(null);
+  const [memoryDraft, setMemoryDraft] = useState<DistilledMemory | null>(null);
+  const clearMemoryDraft = useCallback(() => setMemoryDraft(null), []);
   const [chipError, setChipError] = useState<string | null>(null);
   /** Discarded queued follow-up, handed back to the composer draft (#364). */
   const [queuedDraftRestore, setQueuedDraftRestore] = useState<{
@@ -700,6 +715,28 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     setChangesNonce((n) => n + 1);
   }, []);
   const clearReveal = useCallback(() => setRevealThreadId(null), []);
+  /** solenta://project/<id> link waiting for the Sidebar to scope to it. */
+  const [scopeRequest, setScopeRequest] = useState<string | null>(null);
+  const clearScopeRequest = useCallback(() => setScopeRequest(null), []);
+
+  // Notification clicks and solenta:// deep links (#186) from main.
+  useEffect(() => {
+    const offThread = api.on("thread:select", (id) => {
+      if (typeof id !== "string" || !id) return;
+      handleSelectThread(id);
+      setRevealThreadId(id);
+    });
+    const offProject = api.on("project:select", (id) => {
+      if (typeof id !== "string" || !id) return;
+      setView("thread");
+      setDrawer(null);
+      setScopeRequest(id);
+    });
+    return () => {
+      offThread();
+      offProject();
+    };
+  }, [api, handleSelectThread]);
 
   const handleCreateThread = useCallback(
     (projectId?: string, opts?: { worktree?: boolean; orchestrate?: boolean; teach?: boolean; ask?: boolean; issueNumber?: number | null; baseBranch?: string | null }) => {
@@ -855,6 +892,28 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     })();
   }, [api, selectedThreadId]);
 
+  // #247: the draft lands in the Memory tab's add form; nothing is stored
+  // until the user saves it there.
+  const handleDistillMemory = useCallback(() => {
+    if (!selectedThreadId) return;
+    void (async () => {
+      try {
+        const draft = await api.runs.distillMemory({
+          threadId: selectedThreadId,
+        });
+        setDistillError(null);
+        setMemoryDraft(draft);
+        if (narrow) setDrawer("agents");
+        else setAgentsCollapsed(false);
+        rememberInspectorTab("memory");
+      } catch (err) {
+        setDistillError(
+          err instanceof Error && err.message ? err.message : String(err),
+        );
+      }
+    })();
+  }, [api, selectedThreadId, narrow, rememberInspectorTab]);
+
   const closeWorkflows = useCallback(() => {
     setWorkflowsOpen(false);
     setWorkflowDraft(null);
@@ -988,7 +1047,11 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   );
 
   const handleForkOpen = useCallback(
-    async (opts?: { provider?: string; model?: string | null }) => {
+    async (opts?: {
+      provider?: string;
+      model?: string | null;
+      messageId?: string;
+    }) => {
       if (!selectedThreadId) return null;
       return forkThread(selectedThreadId, opts);
     },
@@ -1023,11 +1086,15 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   }, [retryQueued]);
 
   // "Implement in a new thread" (#1501): the ordinary fork path, out of
-  // plan mode, with the plan as its first prompt.
+  // plan mode, with the plan as its first prompt. A provider builds the plan
+  // somewhere else (#241: plan with one model, build with another).
   const handleImplementPlan = useCallback(
-    async (plan: string) => {
+    async (plan: string, provider?: string) => {
       if (!selectedThreadId) return;
-      const t = await forkThread(selectedThreadId, { leavePlan: true });
+      const t = await forkThread(
+        selectedThreadId,
+        provider ? { leavePlan: true, provider } : { leavePlan: true },
+      );
       if (!t) return;
       await startRun(`Implement this plan:\n\n${plan}`, t.id);
     },
@@ -1286,6 +1353,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     workerCount,
     previousWorktree,
     panelRosterKey,
+    runQueueIds,
     comparePeers,
     threadTitles,
   } = useThreadRoster({
@@ -1640,6 +1708,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         defaultWorktree={settings?.defaultWorktree ?? false}
         revealThreadId={revealThreadId}
         onRevealHandled={clearReveal}
+        scopeRequest={scopeRequest}
+        onScopeRequestHandled={clearScopeRequest}
         onCreateThreadFromIssue={handleCreateThreadFromIssue}
         listCliSessions={listCliSessions}
         importCliSession={handleImportCliSession}
@@ -1873,6 +1943,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onRetryWorkflowAgent={retryWorkflowAgent}
         onSaveWorkflow={saveWorkflow}
         onRemoveWorkflow={removeWorkflow}
+        onExportWorkflow={exportWorkflowToRepo}
         workflowListError={workflowListError}
         onRetryWorkflows={refreshWorkflows}
         onStopRun={stopRun}
@@ -1912,6 +1983,9 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onSetReasoningEffort={setReasoningEffort}
         onSetWebSearch={setWebSearch}
         onSetFast={setFast}
+        onSetRoute={setRoute}
+        onSetAgent={setAgent}
+        onListAgents={listAgents}
         onSetArchived={handleSetArchivedUndoable}
         onSetCrossThreadInbound={
           selectedThreadId
@@ -1921,6 +1995,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onRenameThread={handleRenameOpenThread}
         onRepeatSchedule={handleRepeatSchedule}
         onDistillWorkflow={handleDistillWorkflow}
+        onDistillMemory={handleDistillMemory}
         onSetNotes={handleSetNotes}
         onSetMessagePins={handleSetMessagePins}
         onSetFeltEstimate={
@@ -1960,11 +2035,14 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onCommitChanges={commitChanges}
         onStagedPathsChange={setStagedPaths}
         onRevertFile={revertFile}
+        onRevertHunk={revertHunk}
         onSuggestCommitMessage={suggestCommitMessage}
         onListFiles={listFiles}
+        promptSnippets={settings?.promptSnippets}
         onPickDirectory={pickDirectory}
         onListSnapWindows={listSnapWindows}
         onCaptureSnapWindow={captureSnapWindow}
+        onCaptureSnapWindowText={captureSnapWindowText}
         onListCliCommands={listCliCommands}
         onResolvePaths={resolvePaths}
         onOpenWorkspacePath={openWorkspacePath}
@@ -2063,6 +2141,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         providers={providers}
         project={project}
         rosterKey={panelRosterKey}
+        runQueueIds={runQueueIds}
+        onLeaveRunQueue={stopRun}
         listThreadSummaries={listThreadSummaries}
         listCrewTasks={listCrewTasks}
         crewIntegration={crewIntegration}
@@ -2105,6 +2185,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         updateMemory={updateMemory}
         removeMemory={removeMemory}
         storeMemory={storeMemory}
+        memoryDraft={memoryDraft}
+        onMemoryDraftApplied={clearMemoryDraft}
         maintenanceMemory={maintenanceMemory}
         resolveMemory={resolveMemory}
         listSkills={listSkills}
@@ -2124,6 +2206,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
           initialDraft={workflowDraft}
           onSave={saveWorkflow}
           onRemove={removeWorkflow}
+          onExportToRepo={selectedThreadId ? exportWorkflowToRepo : undefined}
           listError={workflowListError}
           onRetryList={refreshWorkflows}
         />
@@ -2320,6 +2403,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
             onSubmit={submitEditProject}
             providers={providers}
             globalProvider={settings?.defaultProvider ?? null}
+            agentProfiles={settings?.agentProfiles ?? EMPTY_AGENT_PROFILES}
             onPickIcon={
               isWebMode()
                 ? undefined

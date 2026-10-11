@@ -80,6 +80,17 @@ export function buildBestOfNEntries(
   return plan;
 }
 
+/**
+ * Plan-only Best of N (#241) needs a real plan mode: main snaps "plan" to
+ * default on CLIs without one, and that fork would build instead of plan.
+ * Missing permissionModes means the legacy full set.
+ */
+export function providerCanPlan(
+  provider: Pick<ProviderInfo, "permissionModes">,
+): boolean {
+  return !provider.permissionModes || provider.permissionModes.includes("plan");
+}
+
 /** First advertised vendor line, or empty when the registry has none. */
 export function providerVendor(provider: ProviderInfo): string {
   const info = provider.modelInfo[0];

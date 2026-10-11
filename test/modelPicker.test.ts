@@ -9,6 +9,8 @@ import { REASONING_EFFORTS } from "../src/shared/ipc";
 import {
   CUSTOM_MODEL_ID,
   buildModelRows,
+  buildPickerRows,
+  canFavourite,
   buildUnifiedModelRows,
   clampHighlightIndex,
   detailModelRow,
@@ -543,5 +545,27 @@ describe("update hint rows (issue #1529)", () => {
     assert.equal(row.disabled, true);
     assert.equal(row.disabledReason, "Update Claude Code to use Opus");
     assert.equal(row.updateHint, "Update Claude Code to use Opus");
+  });
+});
+
+describe("Auto row (#246)", () => {
+  const base = {
+    providers: MULTI,
+    currentProviderId: "claude",
+    sessionLocked: false,
+    profiles: [],
+    query: "",
+    favourites: null,
+  };
+  it("leads the list only when offered, and cannot be starred", () => {
+    assert.equal(buildPickerRows(base).some((r) => r.auto), false);
+    const rows = buildPickerRows({ ...base, auto: true });
+    assert.equal(rows[0].auto, true);
+    assert.equal(rows[0].label, "Auto");
+    assert.equal(canFavourite(rows[0]), false);
+    assert.equal(
+      buildPickerRows({ ...base, auto: true, favourites: new Set() }).some((r) => r.auto),
+      false,
+    );
   });
 });

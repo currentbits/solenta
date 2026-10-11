@@ -290,6 +290,12 @@
   min-width: 0;
 }
 
+.recapText {
+  margin-top: 2px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .handoffLink {
   border: none;
   background: none;
@@ -1774,6 +1780,8 @@ button.diffLineGutter:focus-visible {
 }
 
 .hunkPath {
+  flex: 1;
+  min-width: 0;
   font-size: 11px;
   color: var(--text-dim);
   overflow: hidden;

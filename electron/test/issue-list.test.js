@@ -95,7 +95,7 @@ describe("planboardNoteFor", () => {
     fs.mkdirSync(plain);
     git(plain, ["init", "-q"]);
     assert.equal(planboardNoteFor(plain), "");
-    git(plain, ["remote", "add", "origin", "https://gitlab.com/a/b.git"]);
+    git(plain, ["remote", "add", "origin", "https://bitbucket.org/a/b.git"]);
     assert.equal(planboardNoteFor(plain), "");
   });
 
@@ -143,5 +143,16 @@ describe("planboardNoteFor", () => {
     );
     assert.equal(big.length, 50);
     assert.equal(big[0].step.length, 200);
+    // kimi TodoList shape: title + done.
+    assert.deepEqual(
+      planStepsFrom([
+        { title: "Ship", status: "done" },
+        { title: "Test", status: "in_progress" },
+      ]),
+      [
+        { step: "Ship", status: "done" },
+        { step: "Test", status: "doing" },
+      ],
+    );
   });
 });

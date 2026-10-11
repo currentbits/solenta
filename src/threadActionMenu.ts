@@ -37,6 +37,7 @@ export type ThreadActionMenuId =
   | `handoff:${string}`
   | "rename"
   | "tags"
+  | "copyLink"
   | "move"
   | `project:${string}`
   | "mute"
@@ -56,6 +57,8 @@ export function buildThreadActionMenuItems(input: {
   showFork: boolean;
   showRename: boolean;
   showTags?: boolean;
+  /** Copy solenta://thread/<id> (#186). */
+  showCopyLink?: boolean;
   /** Recategorize onto another project (issue #737). */
   showMove?: boolean;
   projects?: ReadonlyArray<ProjectInfo>;
@@ -133,6 +136,15 @@ export function buildThreadActionMenuItems(input: {
     });
   }
 
+  if (input.showCopyLink) {
+    items.push({
+      id: "copyLink",
+      label: "Copy link",
+      separatorBefore: !input.showRename && !input.showTags && items.length > 0,
+      attrs: { "data-copy-thread-link": thread.id },
+    });
+  }
+
   if (input.showMove) {
     const dests = (input.projects ?? []).filter(
       (p) => p.id !== thread.projectId,
@@ -144,7 +156,8 @@ export function buildThreadActionMenuItems(input: {
         label: "Move to project…",
         disabled: Boolean(block),
         whenLabel: block ?? undefined,
-        separatorBefore: !input.showRename && !input.showTags && items.length > 0,
+        separatorBefore:
+          !input.showRename && !input.showTags && !input.showCopyLink && items.length > 0,
         attrs: { "data-move-project": thread.id },
         children: block
           ? undefined
@@ -161,7 +174,7 @@ export function buildThreadActionMenuItems(input: {
     items.push({
       id: thread.muted ? "unmute" : "mute",
       label: thread.muted ? "Unmute notifications" : "Mute notifications",
-      separatorBefore: !input.showRename && items.length > 0,
+      separatorBefore: !input.showRename && !input.showCopyLink && items.length > 0,
       attrs: { "data-mute-toggle": thread.id },
     });
   }

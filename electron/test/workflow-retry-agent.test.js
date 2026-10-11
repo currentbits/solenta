@@ -165,6 +165,11 @@ function readPromptFromStdin() {
     await failExit("retry-first-boom");
     return;
   }
+  if (mode === "hang-after-first" && n > 1) {
+    await delay(60000);
+    process.exit(0);
+    return;
+  }
   if (mode === "fail-agent-2" && /You are agent 2 of 2/i.test(prompt)) {
     await failExit("retry-sibling-boom");
     return;
@@ -489,6 +494,61 @@ describe("workflow user-facing retry (#825)", () => {
     assert.ok(
       store.getMessages(thread.id).some((m) => m.role === "assistant"),
       "original assistant answer must remain",
+    );
+  });
+
+  it("resumes a crashed run from the interrupted phase, reusing finished ones (#182)", async () => {
+    const threePhase = services.saveTemplate(store, {
+      name: "Plan, analyze, finish",
+      phases: [
+        { name: "plan", agentCount: 1, instruction: "Plan.", provider: "claude", model: null },
+        { name: "analyze", agentCount: 2, instruction: "Analyze.", provider: "claude", model: null },
+        { name: "finish", agentCount: 1, instruction: "Finish.", provider: "claude", model: null },
+      ],
+    }).id;
+    fs.writeFileSync(modeFile, "hang-after-first", "utf8");
+    const threadId = store.getThreads()[0].id;
+    await startPlan("crash mid analyze", threePhase);
+    // Spawn counts race between parallel slots; watch the view instead.
+    await waitFor(() => {
+      const wf = store.getWorkflowRun(threadId);
+      return wf && wf.phases[1].agents.every((a) => a.status === "running");
+    });
+    // Crash: the disk still says "working"; the next boot loads it.
+    store.saveNow();
+    const crashed = new Store(path.join(tmpDir, "store.json"));
+    await runner.stopRun({ threadId });
+
+    assert.equal(crashed.getThread(threadId).status, "failed");
+    const healed = crashed.getWorkflowRun(threadId);
+    assert.equal(healed.phases[0].agents[0].status, "settled");
+    assert.deepEqual(
+      healed.phases[1].agents.map((a) => [a.status, a.__interrupted]),
+      [["failed", true], ["failed", true]],
+    );
+    assert.ok(
+      crashed
+        .getMessages(threadId)
+        .some((m) => m.role === "event" && /resume/i.test(m.text)),
+    );
+
+    fs.writeFileSync(modeFile, "happy", "utf8");
+    store = crashed;
+    runner = createRunner({
+      store,
+      core,
+      pushFn: (channel, payload) => pushes.push({ channel, payload }),
+      tickMs: 15,
+    });
+    await runner.retryWorkflowAgent({ threadId, agentId: "1:analyze:0" });
+    await waitFor(() => store.getThread(threadId).status === "done");
+
+    // Both interrupted analyze slots reran; plan kept its first output.
+    const wf = lastWorkflow(pushes).payload.workflow;
+    assert.ok(wf.complete);
+    assert.equal(store.getWorkflowRun(threadId).phases[0].agents[0].__text, "PLAN_OK");
+    assert.ok(
+      store.getMessages(threadId).some((m) => m.role === "assistant"),
     );
   });
 

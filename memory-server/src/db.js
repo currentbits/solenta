@@ -368,6 +368,13 @@ export function createSchema(db) {
     CREATE INDEX IF NOT EXISTS session_messages_project_idx
       ON session_messages(project, id);
 
+    -- Repo root -> memory project key (#179): disambiguates same-named repos.
+    CREATE TABLE IF NOT EXISTS project_roots (
+      root       TEXT PRIMARY KEY,
+      key        TEXT NOT NULL UNIQUE,
+      created_at TEXT NOT NULL
+    );
+
     -- Regenerated repo wiki (#268). Not an entry: it describes the code,
     -- not a learning, and is overwritten wholesale when main moves.
     CREATE TABLE IF NOT EXISTS code_wiki (
@@ -439,6 +446,11 @@ export function createSchema(db) {
  * plain slugs. Nothing matched anything, so project-scoped retrieval silently
  * degraded to global-only. Rewrite every row to the canonical key.
  * Idempotent: canonical values map to themselves.
+ *
+ * Rows already collapsed to a bare basename carry no root, so same-named
+ * repos merged before #179 cannot be split here; only rows still holding a
+ * live path land in their own (possibly suffixed) scope. Settings exposes
+ * renameProjectScope for the rest.
  * @param {import('node:sqlite').DatabaseSync} db
  * @returns {number} rows rewritten
  */
@@ -459,7 +471,7 @@ export function normalizeProjectKeys(db) {
       // freeze a bogus per-worktree project forever. Leave it; a live path
       // will migrate on a later boot.
       if (isAbsoluteProjectPath(project) && !fs.existsSync(project)) continue
-      const canon = canonicalProject(project)
+      const canon = canonicalProject(project, db)
       if (canon === project) continue
       const res = db
         .prepare(`UPDATE ${table} SET project = ? WHERE project = ?`)

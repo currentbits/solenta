@@ -8,6 +8,19 @@ const PRESETS = new Set(["hourly", "daily", "weekly"]);
 // unfinished waits are not disposable history (#932).
 const MAX_THREADS_PER_AUTOMATION = 20;
 
+// Issue #160: auto-pause (enabled=false) after this many failed fires in a
+// row. Re-enabling from the UI resets the count (services.updateAutomation).
+// ponytail: fixed threshold, add a per-automation field if anyone asks.
+const MAX_CONSECUTIVE_FAILURES = 3;
+
+// Issue #242: per-automation memory. The run ends its reply with this tag
+// holding the full replacement notes; settle stores them on the automation
+// and the next run gets them back in its prompt. Lives in the store, not the
+// memory-server: runs bind coder-memory to the project scope (#671), so a
+// second namespace would be rejected by the server.
+const MEMORY_TAG = "automation-memory";
+const MAX_MEMORY_CHARS = 4000;
+
 /**
  * Next fire time after `fromMs`.
  *
@@ -58,6 +71,7 @@ function dueAutomations(automations, nowMs) {
     (a) =>
       a &&
       a.enabled &&
+      !a.trigger &&
       typeof a.nextRunAt === "number" &&
       Number.isFinite(a.nextRunAt) &&
       a.nextRunAt <= nowMs,
@@ -76,6 +90,38 @@ function errorText(err) {
 }
 
 /**
+ * Notes inside the last <automation-memory> block, capped. Null when the
+ * reply has none (keep the old notes).
+ * @param {unknown} text
+ * @returns {string | null}
+ */
+function extractMemory(text) {
+  const re = new RegExp(`<${MEMORY_TAG}>([\\s\\S]*?)</${MEMORY_TAG}>`, "g");
+  let last = null;
+  for (const m of String(text || "").matchAll(re)) last = m[1];
+  return last == null ? null : last.trim().slice(0, MAX_MEMORY_CHARS);
+}
+
+/**
+ * The prompt one fire sends: the automation's prompt, what triggered it, and
+ * its memory plus how to update it.
+ * @param {{ prompt: string, memory?: string | null }} auto
+ * @param {string} [triggerNote]
+ */
+function buildRunPrompt(auto, triggerNote) {
+  const parts = [String(auto.prompt || "")];
+  if (triggerNote) parts.push(triggerNote);
+  const memory = typeof auto.memory === "string" ? auto.memory.trim() : "";
+  if (memory) {
+    parts.push(`[Automation memory] Notes this automation kept from earlier runs:\n${memory}`);
+  }
+  parts.push(
+    `[Automation memory] To keep notes for the next run of this automation, end your final reply with <${MEMORY_TAG}>...</${MEMORY_TAG}> holding the complete replacement notes (under ${MAX_MEMORY_CHARS} characters). Leave it out to keep the current notes.`,
+  );
+  return parts.join("\n\n");
+}
+
+/**
  * Persist a patch on one automation. Does not save; caller saves.
  *
  * @param {import("./store").Store} store
@@ -88,6 +134,73 @@ function patchAutomation(store, id, patch) {
   );
   store.setAutomations(list);
   return list.find((a) => a && a.id === id) || null;
+}
+
+/**
+ * Count one failed fire; pause the automation and notify once the streak
+ * reaches MAX_CONSECUTIVE_FAILURES. Does not save; caller saves.
+ *
+ * @param {{ store: import("./store").Store, notify?: Function }} ctx
+ * @param {string} id
+ * @param {string} message
+ */
+function recordFailure(ctx, id, message) {
+  const auto = ctx.store.getAutomation(id);
+  if (!auto) return;
+  const failures = (auto.consecutiveFailures || 0) + 1;
+  const pause = auto.enabled && failures >= MAX_CONSECUTIVE_FAILURES;
+  const lastError = pause
+    ? `Paused after ${failures} consecutive failures. Last: ${message}`
+    : message;
+  patchAutomation(ctx.store, id, {
+    consecutiveFailures: failures,
+    pendingRunThreadId: null,
+    lastError,
+    ...(pause ? { enabled: false } : {}),
+  });
+  if (pause && typeof ctx.notify === "function") {
+    try {
+      ctx.notify({ id, name: auto.name, message: lastError });
+    } catch {
+      // A notification failure must not undo the pause.
+    }
+  }
+}
+
+/**
+ * startRun resolves at launch, so a run that dies later only shows up as
+ * the thread's final status. Settle each automation's last fired thread:
+ * failed counts toward the breaker, any other finished status resets it,
+ * still-running threads wait for the next tick. Does not save.
+ *
+ * @param {{ store: import("./store").Store, notify?: Function }} ctx
+ * @returns {boolean} whether any automation changed
+ */
+function settleAutomationRuns(ctx) {
+  let changed = false;
+  for (const auto of ctx.store.getAutomations()) {
+    if (!auto || !auto.pendingRunThreadId) continue;
+    const t = ctx.store.getThread(auto.pendingRunThreadId);
+    if (t && (t.status === "working" || t.status === "quota-wait")) continue;
+    changed = true;
+    if (t) {
+      const last = ctx.store.getLastAssistantMessage(t.id);
+      const memory = extractMemory(last && last.text);
+      if (memory != null) patchAutomation(ctx.store, auto.id, { memory });
+    }
+    if (t && t.status === "failed") {
+      recordFailure(ctx, auto.id, `Run failed: ${t.title || auto.name}`);
+    } else if (t) {
+      patchAutomation(ctx.store, auto.id, {
+        pendingRunThreadId: null,
+        consecutiveFailures: 0,
+      });
+    } else {
+      // Thread deleted before it settled: no verdict either way.
+      patchAutomation(ctx.store, auto.id, { pendingRunThreadId: null });
+    }
+  }
+  return changed;
 }
 
 /**
@@ -147,7 +260,7 @@ function pruneAutomationThreads(store, automationId) {
  * @param {{ store: import("./store").Store, runner: { startRun: Function }, broadcast?: Function }} ctx
  * @param {object} auto
  * @param {number} now
- * @param {{ rethrow?: boolean }} [opts]
+ * @param {{ rethrow?: boolean, triggerNote?: string }} [opts]
  */
 async function runAutomation(ctx, auto, now, opts) {
   const services = require("./services.js");
@@ -165,6 +278,7 @@ async function runAutomation(ctx, auto, now, opts) {
       projectId: auto.projectId,
       title: auto.name,
       automationId: auto.id,
+      route: auto.tier || null,
     });
     services.setProvider(ctx.store, {
       threadId: thread.id,
@@ -178,13 +292,16 @@ async function runAutomation(ctx, auto, now, opts) {
     }
     await ctx.runner.startRun({
       threadId: thread.id,
-      prompt: auto.prompt,
+      prompt: buildRunPrompt(auto, opts && opts.triggerNote),
     });
-    patchAutomation(ctx.store, auto.id, { lastError: null });
+    patchAutomation(ctx.store, auto.id, {
+      lastError: null,
+      pendingRunThreadId: thread.id,
+    });
     ctx.store.save();
   } catch (err) {
     runErr = err;
-    patchAutomation(ctx.store, auto.id, { lastError: errorText(err) });
+    recordFailure(ctx, auto.id, errorText(err));
     ctx.store.save();
   }
 
@@ -269,9 +386,12 @@ async function runNow(ctx, id) {
 /**
  * Minute ticker. Finds due automations and fires them.
  *
- * @param {{ store: import("./store").Store, runner: { startRun: Function }, broadcast?: Function, intervalMs?: number, now?: () => number }} ctx
+ * Also polls GitHub for event-triggered automations (#242).
+ *
+ * @param {{ store: import("./store").Store, runner: { startRun: Function }, broadcast?: Function, intervalMs?: number, now?: () => number, triggerDeps?: object }} ctx
  */
 function startScheduler(ctx) {
+  const { pollTriggers } = require("./automation-triggers.js");
   const intervalMs = ctx.intervalMs == null ? 60_000 : ctx.intervalMs;
   const nowFn = typeof ctx.now === "function" ? ctx.now : Date.now;
   /** @type {Set<string>} */
@@ -281,6 +401,12 @@ function startScheduler(ctx) {
   async function tick() {
     if (stopped) return;
     const now = nowFn();
+    // Before due: a pause from the last run's failure must stop this fire.
+    try {
+      if (settleAutomationRuns(ctx)) ctx.store.save();
+    } catch {
+      // Never let bookkeeping stall the scheduler.
+    }
     const due = dueAutomations(ctx.store.getAutomations(), now);
     for (const auto of due) {
       if (!auto || !auto.id || firing.has(auto.id)) continue;
@@ -290,6 +416,18 @@ function startScheduler(ctx) {
       } finally {
         firing.delete(auto.id);
       }
+    }
+    try {
+      await pollTriggers(
+        {
+          store: ctx.store,
+          deps: ctx.triggerDeps,
+          fireRun: (a, triggerNote) => runAutomation(ctx, a, nowFn(), { triggerNote }),
+        },
+        firing,
+      );
+    } catch {
+      // Per-automation poll errors land in lastError; nothing else may stall the tick.
     }
   }
 
@@ -307,7 +445,13 @@ function startScheduler(ctx) {
 
 module.exports = {
   MAX_THREADS_PER_AUTOMATION,
+  MAX_CONSECUTIVE_FAILURES,
+  MAX_MEMORY_CHARS,
   nextFire,
+  extractMemory,
+  buildRunPrompt,
+  patchAutomation,
+  settleAutomationRuns,
   dueAutomations,
   listAutomationRuns,
   runAutomation,

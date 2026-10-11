@@ -157,3 +157,28 @@ describe("repeat-thread distill wiring", () => {
     m.unmount();
   });
 });
+
+describe("save-as-memory wiring (#247)", () => {
+  it("calls runs.distillMemory and opens the Memory tab with the draft, unsaved", async () => {
+    const { fake } = finishedThread();
+    const m = await boot(fake);
+    await openThreadMenu(m);
+
+    const item = m.query("[data-distill-memory]");
+    assert.ok(item, "Save as memory… must be in the overflow");
+    await m.click(item);
+
+    const calls = fake.of("runs.distillMemory");
+    assert.equal(calls.length, 1, "must call runs.distillMemory once");
+    assert.deepEqual(calls[0]!.args[0], { threadId: "t-done" });
+
+    let title: HTMLInputElement | null = null;
+    for (let i = 0; i < 50 && !title?.value; i++) {
+      await m.flush();
+      title = m.query('input[aria-label="Memory title"]') as HTMLInputElement | null;
+    }
+    assert.equal(title?.value, "Distilled lesson", "Memory tab form must be prefilled");
+    assert.equal(fake.of("memory.store").length, 0, "nothing stored before review");
+    m.unmount();
+  });
+});

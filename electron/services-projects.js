@@ -3,6 +3,7 @@
 // Projects, spaces, project icons and agent-config files.
 
 const fs = require("node:fs");
+const { normalizeProjectEnv } = require("./worktreeEnv.js");
 const path = require("node:path");
 const { randomUUID } = require("node:crypto");
 const { expandUserPath } = require("./fsBrowse.js");
@@ -376,7 +377,7 @@ async function createProject(store, input) {
  * project local again. The local checkout path is never edited here.
  * @param {import('./store').Store} store
  * @param {string} projectId
- * @param {{ name?: string, remoteHost?: string, remotePath?: string, spaceId?: string, autoDispatch?: boolean, worktreeRetention?: number, iconPath?: string | null, setupCommand?: string | null, quickActions?: Array<{ id?: string, name?: string, command?: string }> }} patch
+ * @param {{ name?: string, remoteHost?: string, remotePath?: string, spaceId?: string, autoDispatch?: boolean, worktreeRetention?: number, iconPath?: string | null, setupCommand?: string | null, quickActions?: Array<{ id?: string, name?: string, command?: string }>, env?: Record<string, string> | null }} patch
  */
 function updateProject(store, projectId, patch) {
   const projects = store.getProjects().slice();
@@ -460,6 +461,13 @@ function updateProject(store, projectId, patch) {
     else delete next.quickActions;
   }
 
+  // #188. Empty / null clears it.
+  if (Object.prototype.hasOwnProperty.call(input, "env")) {
+    const env = normalizeProjectEnv(input.env);
+    if (Object.keys(env).length) next.env = env;
+    else delete next.env;
+  }
+
   // #1506. false / null deletes the key so old stores stay clean.
   if (input.waitForSetup === true) next.waitForSetup = true;
   else if (input.waitForSetup === false || input.waitForSetup === null) {
@@ -485,6 +493,14 @@ function updateProject(store, projectId, patch) {
     const threadDefaults = normalizeThreadDefaults(input.threadDefaults);
     if (threadDefaults) next.threadDefaults = threadDefaults;
     else delete next.threadDefaults;
+  }
+
+  // #246. Replaces the whole object; null / empty clears it.
+  if (Object.prototype.hasOwnProperty.call(input, "modelRouting")) {
+    const { normalizeModelRouting } = require("./routing.js");
+    const modelRouting = normalizeModelRouting(input.modelRouting);
+    if (modelRouting) next.modelRouting = modelRouting;
+    else delete next.modelRouting;
   }
 
   projects[idx] = next;

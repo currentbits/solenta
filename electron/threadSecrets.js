@@ -39,4 +39,38 @@ function withEnv(threadId, base) {
   return s ? /** @type {T} */ ({ ...(base || {}), ...s }) : base;
 }
 
-module.exports = { NAME_RE, set, clear, withEnv };
+/** Shorter values would redact ordinary words ("true", "admin"). */
+const MIN_REDACT_LEN = 6;
+
+/**
+ * Replace this thread's secret values with `[secret:NAME]` in every string of
+ * a JSON-shaped value (message, patch, text). Returns `value` itself when the
+ * thread has no redactable secrets, so the common path allocates nothing.
+ * @template T
+ * @param {string} threadId
+ * @param {T} value
+ * @returns {T}
+ */
+function redact(threadId, value) {
+  const s = byThread.get(threadId);
+  if (!s) return value;
+  // Longest first, so a secret containing another redacts whole.
+  const pairs = Object.entries(s)
+    .filter(([, v]) => typeof v === "string" && v.length >= MIN_REDACT_LEN)
+    .sort((a, b) => b[1].length - a[1].length);
+  if (!pairs.length) return value;
+  /** @param {unknown} v @returns {unknown} */
+  const walk = (v) => {
+    if (typeof v === "string") {
+      return pairs.reduce((t, [name, secret]) => t.replaceAll(secret, `[secret:${name}]`), v);
+    }
+    if (Array.isArray(v)) return v.map(walk);
+    if (v && typeof v === "object") {
+      return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(x)]));
+    }
+    return v;
+  };
+  return /** @type {T} */ (walk(value));
+}
+
+module.exports = { NAME_RE, set, clear, withEnv, redact };

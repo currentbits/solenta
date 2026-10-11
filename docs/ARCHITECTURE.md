@@ -57,6 +57,12 @@ mutate a newer run. Work log steps and messages carry `runId` so the renderer
   calls, dossier tool messages, `ThreadDetail.workflow` progress)
 - Templates: store-backed list + builtin `standard` ("Plan and Verify"); CRUD via
   `workflows:*` IPC; UI in `src/components/WorkflowsModal.tsx`
+- Repo workflows (#164): a committed `WORKFLOW.md` (or `.solenta/workflow.md`)
+  in the thread's checkout replaces the default `standard` template on run;
+  an explicitly picked store template still wins. Format and parser:
+  `electron/repoWorkflow.js`; validated with the store-template rules, and an
+  invalid file fails the start instead of falling back. The editor's "Export
+  to repo" writes a saved template there (`workflows:exportToRepo`).
 
 ## Worktrees
 

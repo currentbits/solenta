@@ -4,6 +4,7 @@
 // Follows the seam convention in the header of electron/runner-watchdogs.js.
 
 const { resolveBin } = require("./providers.js");
+const { withProjectEnv } = require("./worktreeEnv.js");
 const { guardrailsEnabled } = require("./guardrails.js");
 const {
   deployOpencodeGuardrailOverlay,
@@ -45,6 +46,7 @@ function createOpencodeRun(ctx) {
     notifyRunTerminal,
     markRunFailed,
     appendDoneWorkLog,
+    savePlanSteps,
   } = ctx;
 
   /**
@@ -112,6 +114,7 @@ function createOpencodeRun(ctx) {
       model: thread.model || null,
       reasoningEffort: thread.reasoningEffort || null,
       webSearch: thread.webSearch === true,
+      agent: thread.agent || null,
       fast: thread.fast === true,
       files,
     });
@@ -256,7 +259,7 @@ function createOpencodeRun(ctx) {
       binary: spawn.binary,
       args: spawn.args,
       cwd: spawn.cwd,
-      env: threadSecrets.withEnv(threadId, opencodeEnv),
+      env: threadSecrets.withEnv(threadId, withProjectEnv(project, opencodeEnv)),
       onEvent: (ev) => {
         if (!guard()) return;
 
@@ -331,6 +334,7 @@ function createOpencodeRun(ctx) {
 
         const tool = opencodeParse.extractToolEvent(ev);
         if (tool) {
+          if (tool.todos) savePlanSteps(threadId, tool.todos);
           if (tool.phase === "start") {
             thinking.id = null;
             thinking.text = "";

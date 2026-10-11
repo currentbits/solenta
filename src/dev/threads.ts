@@ -13,6 +13,7 @@ import type {
   TrashedThreadInfo,
   CrewTaskView,
   CrewIntegration,
+  ModelRoute,
 } from "../shared/ipc";
 import { SPEC_ARTIFACTS, SPEC_DIR } from "../shared/ipc";
 import { normalizeMessagePins } from "../messagePins";
@@ -240,8 +241,21 @@ export function createThreads(ctx: DevCtx): Pick<CoderApi, "threads"> {
           teach: source.teach ?? null,
           ask: source.ask === true,
           handoffFrom: source.id,
+          // Message-level fork (#158): dev has no CLI session, so always the
+          // seeded-fresh fallback.
+          ...(input.messageId ? { replayContext: true } : {}),
         });
-        return registerThread(created);
+        const registered = registerThread(created);
+        if (input.messageId) {
+          const at = sourceDetail.messages.findIndex(
+            (m) => m.id === input.messageId,
+          );
+          if (at < 0) throw new Error(`Unknown message: ${input.messageId}`);
+          details.get(created.id)!.messages = sourceDetail.messages
+            .slice(0, at + 1)
+            .map((m) => ({ ...m, id: `${m.id}-fork-${created.id}` }));
+        }
+        return registered;
       },
       /**
        * Edit-and-resubmit rewind (issue #254). Fixture twin of
@@ -755,8 +769,22 @@ export function createThreads(ctx: DevCtx): Pick<CoderApi, "threads"> {
           webSearch: input.webSearch === true,
         });
       },
+      async setAgent(input: { threadId: string; agent: string | null }) {
+        return patchThread(input.threadId, { agent: input.agent || null });
+      },
+      async listAgents(input: { provider: string }) {
+        return input.provider === "claude"
+          ? [
+              { name: "reviewer", description: "Reviews diffs for bugs", source: "project" as const },
+              { name: "scout", description: "Read-only codebase explorer", source: "user" as const },
+            ]
+          : [];
+      },
       async setFast(input: { threadId: string; fast: boolean }) {
         return patchThread(input.threadId, { fast: input.fast === true });
+      },
+      async setRoute(input: { threadId: string; route: ModelRoute | null }) {
+        return patchThread(input.threadId, { route: input.route });
       },
       async setVerifyCommand(input: {
         threadId: string;
@@ -833,7 +861,8 @@ export function createThreads(ctx: DevCtx): Pick<CoderApi, "threads"> {
         // Fixture: assign what the picker sends. The rules (unknown provider,
         // run-active refusal, session drop, effort reset) live in
         // electron/services.js setProvider and are exercised by npm run dev.
-        const patch: Partial<ThreadInfo> = {};
+        // A manual pick clears a pending Auto route (#246).
+        const patch: Partial<ThreadInfo> = { route: null };
         if (Object.prototype.hasOwnProperty.call(input, "provider")) {
           // A ref "claude:work" is base + named instance (#453).
           const [base = "", instance = null] = String(input.provider).split(":");

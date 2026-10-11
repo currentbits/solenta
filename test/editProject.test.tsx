@@ -75,6 +75,7 @@ describe("edit project", () => {
       waitForSetup: false,
       branchPrefix: null,
       quickActions: [],
+      env: {},
     });
     assert.equal(
       m.query("[data-edit-project]"),
@@ -602,6 +603,44 @@ describe("worktree setup options (#1506)", () => {
       m.query("[data-repo-config-error]")?.textContent || "",
       /quickActions must be an array/,
     );
+    m.unmount();
+  });
+});
+
+describe("project env (#188)", () => {
+  it("prefills and saves the env map, rejecting bad lines", async () => {
+    const p1 = project({
+      id: "p1",
+      name: "ledger",
+      path: "/tmp/ledger",
+      env: { AWS_PROFILE: "bedrock-prod" },
+    });
+    const t1 = thread({ id: "t1", projectId: "p1" });
+    const fake = createFakeCoder({
+      projects: [p1],
+      threads: [t1],
+      details: { t1: detail({ thread: t1 }) },
+    });
+    const m = await boot(fake);
+    await m.click(m.query("[data-scope-trigger]"));
+    await m.click(m.query('[data-scope-edit="p1"]'));
+    const box = m.query("[data-edit-project-env]") as HTMLTextAreaElement | null;
+    assert.ok(box, "env field");
+    assert.equal(box.value, "AWS_PROFILE=bedrock-prod");
+
+    await m.type(box, "not a var");
+    await m.click(m.query("[data-edit-project-submit]"));
+    await m.flush();
+    assert.equal(fake.of("projects.update").length, 0, "bad line blocks save");
+
+    await m.type(box, "# comment\nAWS_PROFILE=x\n\nAPI_URL=https://a/?b=c\n");
+    await m.click(m.query("[data-edit-project-submit]"));
+    await m.flush();
+    const payload = fake.of("projects.update")[0]!.args[0] as ProjectUpdateInput;
+    assert.deepEqual(payload.env, {
+      AWS_PROFILE: "x",
+      API_URL: "https://a/?b=c",
+    });
     m.unmount();
   });
 });

@@ -77,6 +77,10 @@ interface Stubs {
   onSave?: (t: WorkflowSaveInput) => Promise<WorkflowTemplateInfo>;
   onRemove?: (id: string) => Promise<void>;
   onClose?: () => void;
+  onExportToRepo?: (
+    id: string,
+    overwrite: boolean,
+  ) => Promise<{ written: boolean; path: string }>;
   initialSelectedId?: string | null;
   initialDraft?: {
     name: string;
@@ -104,6 +108,7 @@ function modal(stubs: Stubs = {}) {
           }))
       }
       onRemove={stubs.onRemove ?? (async () => {})}
+      onExportToRepo={stubs.onExportToRepo}
     />
   );
 }
@@ -856,6 +861,33 @@ describe("WorkflowsModal close and session lifetime", () => {
       inputValues(m).includes("Builtin ship"),
       "editor must show the saved copy",
     );
+    m.unmount();
+  });
+});
+
+describe("WorkflowsModal export to repo (#164)", () => {
+  it("exports the saved template and asks before overwriting an existing file", async () => {
+    const calls: Array<[string, boolean]> = [];
+    const m = await mount(
+      modal({
+        onExportToRepo: async (id, overwrite) => {
+          calls.push([id, overwrite]);
+          return { written: overwrite, path: "/repo/WORKFLOW.md" };
+        },
+      }),
+    );
+    await m.click(m.byText("Export to repo"));
+    assert.deepEqual(calls, [["wf-1", false]]);
+    assert.ok(m.text().includes("/repo/WORKFLOW.md already exists"));
+    await m.click(m.byText("Overwrite"));
+    assert.deepEqual(calls.at(-1), ["wf-1", true]);
+    assert.ok(m.text().includes("Exported to /repo/WORKFLOW.md"));
+    m.unmount();
+  });
+
+  it("hides the action without a repo target", async () => {
+    const m = await mount(modal());
+    assert.equal(m.query("[data-wf-export]"), null);
     m.unmount();
   });
 });

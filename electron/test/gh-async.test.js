@@ -103,6 +103,37 @@ process.exit(0);
     assert.deepEqual(result, { ok: true, issues: [] });
   });
 
+  it("listIssues keeps only unlanded blockers (#251)", async () => {
+    const node = (number, state, labels, blockedBy = []) => ({
+      number, title: `T${number}`, url: `https://github.com/acme/demo/issues/${number}`, state,
+      labels: { nodes: labels.map((name) => ({ name })) },
+      blockedBy: { nodes: blockedBy },
+    });
+    const open = [
+      node(1, "OPEN", ["plan:doing"]),
+      node(2, "OPEN", ["plan:done"]),
+      // native open blocker #1, native blocker #2 (open but plan:done)
+      node(3, "OPEN", ["plan:todo"], [{ number: 1, state: "OPEN" }, { number: 2, state: "OPEN" }]),
+      // label blockers: #4 closed (landed), #99 not listed (landed)
+      node(5, "OPEN", ["plan:todo", "blocked-by:#4", "Blocked-By: 99"]),
+      // native closed blocker is dropped at parse time
+      node(6, "OPEN", ["plan:todo"], [{ number: 4, state: "CLOSED" }]),
+      node(7, "OPEN", ["plan:todo", "blocked-by:1"], [{ number: 1, state: "OPEN" }]),
+    ];
+    const closed = [node(4, "CLOSED", [])];
+    writeFakeGh(tmp, `#!/usr/bin/env node
+const closed = process.argv.includes("state=CLOSED");
+const nodes = closed ? ${JSON.stringify(closed)} : ${JSON.stringify(open)};
+process.stdout.write(JSON.stringify({data:{repository:{issues:{nodes,pageInfo:{hasNextPage:false,endCursor:null}}}}}));
+`);
+    const result = await listIssues(repo);
+    assert.equal(result.ok, true);
+    const blocked = Object.fromEntries(result.issues.map((i) => [i.number, i.blockedBy]));
+    assert.deepEqual(blocked, {
+      1: undefined, 2: undefined, 3: [1], 4: undefined, 5: undefined, 6: undefined, 7: [1],
+    });
+  });
+
   it("listPrs does not block the event loop", async () => {
     sleepGh(`process.stdout.write("[]\\n"); process.exit(0);`);
     const result = await assertEventLoopFree(() => listPrs(repo));
@@ -140,7 +171,7 @@ process.exit(0);
   });
 
   it("in-band: non-GitHub origin never spawns gh", async () => {
-    git(repo, ["remote", "set-url", "origin", "https://gitlab.com/acme/demo.git"]);
+    git(repo, ["remote", "set-url", "origin", "https://bitbucket.org/acme/demo.git"]);
     const argsPath = path.join(tmp, "gh-ran");
     writeFakeGh(
       tmp,

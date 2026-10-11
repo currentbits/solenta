@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   ActivityItem,
+  CliAgentInfo,
   AppSettings,
   WebhookTestResult,
   AppStatus,
@@ -100,6 +101,7 @@ import type {
   CommandRunResult,
   WorkflowTemplateInfo,
   WorkSuggestionStatus,
+  ModelRoute,
 } from "./shared/ipc";
 import { resolveCoderApi } from "./coderApi";
 import {
@@ -233,6 +235,7 @@ export interface UseCoderResult {
       worktree?: boolean;
       select?: boolean;
       leavePlan?: boolean;
+      messageId?: string;
     },
   ) => Promise<ThreadInfo | null>;
   /**
@@ -293,6 +296,11 @@ export interface UseCoderResult {
   saveWorkflow: (template: WorkflowSaveInput) => Promise<WorkflowTemplateInfo>;
   /** Remove a non-builtin template. Success stands even if list refresh fails. */
   removeWorkflow: (id: string) => Promise<void>;
+  /** Write a saved template into the selected thread's repo as WORKFLOW.md (#164). */
+  exportWorkflowToRepo: (
+    id: string,
+    overwrite: boolean,
+  ) => Promise<{ written: boolean; path: string }>;
   /** Reload workflows.list() into state. */
   refreshWorkflows: () => Promise<void>;
   /** Failed workflows.list after a successful save/remove, or a manual retry. */
@@ -350,7 +358,15 @@ export interface UseCoderResult {
    * Pass threadId when applying to a fork that is not selected.
    */
   setWebSearch: (webSearch: boolean, threadId?: string) => Promise<void>;
+  /** Run the selected thread as a CLI custom agent (#172); null = default. */
+  setAgent: (agent: string | null, threadId?: string) => Promise<void>;
+  listAgents: (input: {
+    provider: string;
+    projectPath?: string | null;
+  }) => Promise<CliAgentInfo[]>;
   setFast: (fast: boolean, threadId?: string) => Promise<void>;
+  /** Pending first-turn model route (#246); null = manual pick. */
+  setRoute: (route: ModelRoute | null, threadId?: string) => Promise<void>;
   /**
    * Archive or unarchive a thread. Defaults to the selected thread.
    * Pass threadId when undoing archive after selection has already moved.
@@ -497,6 +513,7 @@ export interface UseCoderResult {
   commitChanges: (
     message: string,
     paths?: string[],
+    patches?: Array<{ path: string; patch: string }>,
   ) => Promise<{ subject: string }>;
   /**
    * Remember the Git pane's staged path list so mergeWorktree can stage
@@ -505,6 +522,8 @@ export interface UseCoderResult {
   setStagedPaths: (paths: string[] | null) => void;
   /** Discard one changed file in the selected thread's cwd. */
   revertFile: (path: string, status: string) => Promise<{ path: string }>;
+  /** Discard one hunk (file header + hunk patch) in the selected thread's cwd. */
+  revertHunk: (path: string, patch: string) => Promise<{ path: string }>;
   /** Draft a commit message with the thread's provider (never commits). */
   suggestCommitMessage: () => Promise<{ message: string }>;
   /** File paths for the composer @-mention popup and the file palette. */
@@ -519,6 +538,10 @@ export interface UseCoderResult {
   listSnapWindows: () => Promise<Array<{ id: string; name: string }>>;
   /** AppSnap capture into the selected thread. */
   captureSnapWindow: (sourceId: string) => Promise<AttachmentInfo | null>;
+  /** AppSnap window accessibility text, after the PNG (#1531). */
+  captureSnapWindowText: (
+    sourceId: string,
+  ) => Promise<{ attachment: AttachmentInfo | null; skipped?: string }>;
   /** Resolve transcript path tokens against the selected thread worktree. */
   resolvePaths: (
     paths: string[],
@@ -1196,7 +1219,6 @@ export function useCoder(): UseCoderResult {
     let cancelled = false;
     let unsubChanged: (() => void) | undefined;
     let unsubUpdated: (() => void) | undefined;
-    let unsubSelect: (() => void) | undefined;
     let unsubBoot: (() => void) | undefined;
     let unsubSimulator: (() => void) | undefined;
 
@@ -1326,12 +1348,6 @@ export function useCoder(): UseCoderResult {
       }
     });
 
-    unsubSelect = api.on("thread:select", (id) => {
-      if (typeof id === "string" && id) {
-        setSelectedThreadId(id);
-      }
-    });
-
     unsubUpdated = api.on("thread:updated", (next) => {
       const prev = prevStatusRef.current.get(next.thread.id);
       const held = threadsRef.current.find((t) => t.id === next.thread.id);
@@ -1399,7 +1415,6 @@ export function useCoder(): UseCoderResult {
       cancelled = true;
       unsubChanged?.();
       unsubUpdated?.();
-      unsubSelect?.();
       unsubBoot?.();
       unsubStayAwake();
       unsubSimulator?.();
@@ -1426,7 +1441,8 @@ export function useCoder(): UseCoderResult {
       detailCacheRef.current.get(selectedThreadId) ??
       loadCachedThreadDetail(selectedThreadId);
     if (cached && detailRef.current?.thread.id !== selectedThreadId) {
-      setDetail(cached);
+      // A cached recap was due LAST visit; only threads.get decides this one.
+      setDetail({ ...cached, recap: undefined });
     }
     (async () => {
       try {
@@ -1514,6 +1530,7 @@ export function useCoder(): UseCoderResult {
     retryWorkflowAgent,
     saveWorkflow,
     removeWorkflow,
+    exportWorkflowToRepo,
   } = useCoderWorkflows({
     api,
     selectedThreadId,
@@ -1536,7 +1553,10 @@ export function useCoder(): UseCoderResult {
     setProvider,
     setReasoningEffort,
     setWebSearch,
+    setAgent,
+    listAgents,
     setFast,
+    setRoute,
     setArchived,
     setSettled,
     setPinned,
@@ -1624,6 +1644,7 @@ export function useCoder(): UseCoderResult {
     setReviewAccepted,
     commitChanges,
     revertFile,
+    revertHunk,
     suggestCommitMessage,
     listFiles,
     searchFileContents,
@@ -1634,6 +1655,7 @@ export function useCoder(): UseCoderResult {
     pickDirectory,
     listSnapWindows,
     captureSnapWindow,
+    captureSnapWindowText,
     pickAttachments,
     pickFolderAttachments,
     loadAttachmentImage,
@@ -2061,6 +2083,7 @@ export function useCoder(): UseCoderResult {
     retryWorkflowAgent,
     saveWorkflow,
     removeWorkflow,
+    exportWorkflowToRepo,
     refreshWorkflows,
     refreshAutomations,
     addAutomation,
@@ -2076,7 +2099,10 @@ export function useCoder(): UseCoderResult {
     setProvider,
     setReasoningEffort,
     setWebSearch,
+    setAgent,
+    listAgents,
     setFast,
+    setRoute,
     setArchived,
     setSettled,
     setPinned,
@@ -2124,12 +2150,14 @@ export function useCoder(): UseCoderResult {
     commitChanges,
     setStagedPaths,
     revertFile,
+    revertHunk,
     suggestCommitMessage,
     listFiles,
     searchFileContents,
     pickDirectory,
     listSnapWindows,
     captureSnapWindow,
+    captureSnapWindowText,
     resolvePaths,
     openWorkspacePath,
     loadToolImage,

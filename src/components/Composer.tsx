@@ -16,10 +16,12 @@ import {
 import type {
   AgentProfile,
   AttachmentInfo,
+  CliAgentInfo,
   PermissionMode,
   ProviderInfo,
   ReasoningEffort,
   WorkflowTemplateInfo,
+  ModelRoute,
 } from "../shared/ipc";
 import type { WorkflowSaveInput } from "../useCoder";
 import {
@@ -80,7 +82,11 @@ import {
 } from "../promptStash";
 import { parseDelegate } from "../delegate";
 import { asBtwPrompt } from "../btw";
-import { buildBestOfNEntries, providerVendor } from "../bestOfN";
+import {
+  buildBestOfNEntries,
+  providerCanPlan,
+  providerVendor,
+} from "../bestOfN";
 import {
   getReviewComments,
   keptDrafts,
@@ -104,7 +110,7 @@ import {
 } from "../dropFiles";
 import { scrollChildIntoNearestView } from "../scrollNearest";
 import { teachPermissionAllowed } from "../teach";
-import type { ThreadTeach } from "../shared/ipc";
+import type { ThreadTeach, PromptSnippet } from "../shared/ipc";
 import { useFileDrop } from "../useFileDrop";
 import { isWebMode } from "../shared/wire";
 import {
@@ -157,6 +163,11 @@ interface ComposerProps {
   webSearch?: boolean;
   /** Fast / priority tier (#1529). Shown only on a model whose info lists `fast`. */
   fast?: boolean;
+  /** CLI custom agent (`--agent`, #172); null = CLI default. */
+  agent?: string | null;
+  /** Agents the provider CLI finds for this thread's checkout. */
+  agents?: readonly CliAgentInfo[];
+  onSetAgent?: (agent: string | null) => void | Promise<void>;
   /** Registry from providers.list(). */
   providers: ProviderInfo[];
   /** Saved named profiles from settings. Empty hides the Profiles section. */
@@ -170,8 +181,16 @@ interface ComposerProps {
   onSetReasoningEffort: (effort: ReasoningEffort | null) => void | Promise<void>;
   onSetWebSearch?: (webSearch: boolean) => void | Promise<void>;
   onSetFast?: (fast: boolean) => void | Promise<void>;
+  /** Pending first-turn route (#246); "auto" shows the pill as Auto. */
+  route?: ModelRoute | null;
+  /** Absent hides the Auto row. */
+  onSetRoute?: (route: ModelRoute | null) => void | Promise<void>;
   onSaveWorkflow: (template: WorkflowSaveInput) => Promise<WorkflowTemplateInfo>;
   onRemoveWorkflow: (id: string) => Promise<void>;
+  onExportWorkflow?: (
+    id: string,
+    overwrite: boolean,
+  ) => Promise<{ written: boolean; path: string }>;
   workflowListError?: string | null;
   onRetryWorkflows?: () => void | Promise<void>;
   /** Provider session id; a live session locks the provider picker. */
@@ -211,9 +230,14 @@ interface ComposerProps {
   onBuild: (prompt: string, templateId: string) => void | Promise<void>;
   /**
    * Best of N: run this prompt on each selected provider or profile as a
-   * forked thread. Absent hides that section inside Options.
+   * forked thread. Absent hides that section inside Options. planOnly (#241)
+   * starts each fork in plan mode.
    */
-  onBestOfN?: (selectedIds: string[], prompt: string) => void | Promise<void>;
+  onBestOfN?: (
+    selectedIds: string[],
+    prompt: string,
+    planOnly?: boolean,
+  ) => void | Promise<void>;
   /**
    * Delegation command: a prompt whose first token is `@<installed provider>`
    * forks this thread onto that provider and runs the remainder there.
@@ -233,6 +257,11 @@ interface ComposerProps {
    * mock shells without a repo behind them).
    */
   onListFiles?: (query: string) => Promise<string[]>;
+  /**
+   * Saved snippets (issue #189). `@name` lists matches above files; accepting
+   * replaces the token with the snippet text.
+   */
+  promptSnippets?: readonly PromptSnippet[];
   /**
    * Native folder picker for the mention popup's "Browse folder" row.
    * Returns a repo-relative token (trailing slash) or null if cancelled.
@@ -308,6 +337,7 @@ const STATIC = {
 };
 
 const DEFAULT_TEMPLATE_ID = "standard";
+const NO_PLAN_MODE = "This provider has no plan mode";
 
 /** Capped cascade index: row 30 shouldn't wait half a second to appear. */
 const rowEnterStyle = (index: number): CSSProperties =>
@@ -323,6 +353,9 @@ export const Composer = memo(function Composer({
   reasoningEffort,
   webSearch = false,
   fast = false,
+  agent = null,
+  agents = [],
+  onSetAgent,
   providers,
   agentProfiles = [],
   workflows,
@@ -330,8 +363,11 @@ export const Composer = memo(function Composer({
   onSetReasoningEffort,
   onSetWebSearch,
   onSetFast,
+  route = null,
+  onSetRoute,
   onSaveWorkflow,
   onRemoveWorkflow,
+  onExportWorkflow,
   workflowListError = null,
   onRetryWorkflows,
   sessionId,
@@ -351,6 +387,7 @@ export const Composer = memo(function Composer({
   error = null,
   onDismissError,
   onListFiles,
+  promptSnippets,
   onPickMentionFolder,
   replyTo = null,
   onClearReply,
@@ -531,6 +568,7 @@ export const Composer = memo(function Composer({
   const bestOfFocusRef = useRef(false);
   const [attachOpen, setAttachOpen] = useState(false);
   const [bestIds, setBestIds] = useState<string[]>([]);
+  const [bestPlanOnly, setBestPlanOnly] = useState(false);
   const [manageOpen, setManageOpen] = useState(false);
   // Close a stale Options or workflow editor when the thread, lock, or Ask
   // mode changes. Adjusting during render drops it before paint, so the
@@ -565,16 +603,20 @@ export const Composer = memo(function Composer({
 
   const {
     mentionFiles,
-    mentionIndex,
+    snippetMatches,
+    mentionCount,
+    mentionActive,
     setMentionIndex,
     mentionOpen,
     closeMention,
     refreshMention,
     acceptMention,
+    acceptSnippet,
     browseMentionFolder,
   } = useMentionMenu({
     textareaRef,
     onListFiles,
+    promptSnippets,
     onPickMentionFolder,
     disabled,
     writeDraft,
@@ -681,6 +723,7 @@ export const Composer = memo(function Composer({
       profiles: profileRows,
       query,
       favourites: favOnly ? favouriteSet : null,
+      auto: Boolean(onSetRoute) && !sessionLocked,
     });
   const modelRows = pickerRowsFor(modelQuery, favouritesOnly);
   // On a named instance (#453) the pill says which account: "Opus (work)".
@@ -691,7 +734,11 @@ export const Composer = memo(function Composer({
     baseName && currentProviderInfo!.name.startsWith(baseName)
       ? currentProviderInfo!.name.slice(baseName.length)
       : "";
-  const triggerLabel = modelTriggerLabel(model, currentProviderInfo) + instanceSuffix;
+  const triggerLabel = route
+    ? route === "auto"
+      ? "Auto"
+      : `Auto: ${route}`
+    : modelTriggerLabel(model, currentProviderInfo) + instanceSuffix;
   const hi = clampHighlightIndex(modelRows, highlightIndex);
   // The rail's diamond follows the highlighted row's provider.
   const railActive = favouritesOnly
@@ -1053,7 +1100,9 @@ export const Composer = memo(function Composer({
 
   const submitBestOfN = () => {
     if (!canBestOfN || !onBestOfN) return;
-    const availableIds = installedProviders.map((p) => p.id);
+    const availableIds = installedProviders
+      .filter((p) => !bestPlanOnly || providerCanPlan(p))
+      .map((p) => p.id);
     const plan = buildBestOfNEntries(availableIds, bestIds, agentProfiles);
     if (typeof plan === "string") {
       setLocalError(plan);
@@ -1063,6 +1112,7 @@ export const Composer = memo(function Composer({
       await onBestOfN(
         plan.map((e) => e.id),
         prompt,
+        bestPlanOnly,
       );
       setOptionsOpen(false);
     }, "Failed to start Best of N");
@@ -1167,18 +1217,20 @@ export const Composer = memo(function Composer({
     if (mentionOpen) {
       if (e.key === "ArrowDown") {
         e.preventDefault();
-        setMentionIndex((i) => Math.min(i + 1, mentionFiles.length - 1));
+        setMentionIndex(Math.min(mentionActive + 1, mentionCount - 1));
         return;
       }
       if (e.key === "ArrowUp") {
         e.preventDefault();
-        setMentionIndex((i) => Math.max(i - 1, 0));
+        setMentionIndex(Math.max(mentionActive - 1, 0));
         return;
       }
       if (e.key === "Enter" || e.key === "Tab") {
         e.preventDefault();
-        const f = mentionFiles[mentionIndex];
-        if (f) acceptMention(f);
+        const sn = snippetMatches[mentionActive];
+        const f = mentionFiles[mentionActive - snippetMatches.length];
+        if (sn) acceptSnippet(sn);
+        else if (f) acceptMention(f);
         return;
       }
       if (e.key === "Escape") {
@@ -1469,6 +1521,15 @@ export const Composer = memo(function Composer({
       void pickProfile(row.profile);
       return;
     }
+    if (row.auto) {
+      closeModelPicker(true);
+      try {
+        await onSetRoute?.("auto");
+      } catch (err) {
+        setLocalError(err instanceof Error ? err.message : "Failed to set Auto");
+      }
+      return;
+    }
     if (row.id === CUSTOM_MODEL_ID) {
       // Swap the popover for a free-text field rather than selecting a model.
       setCustomFor(row.providerId);
@@ -1478,7 +1539,9 @@ export const Composer = memo(function Composer({
     closeModelPicker(true);
     const same =
       row.providerId === provider && row.id === model;
-    if (same) return;
+    // Under Auto, re-picking the fallback model is a manual pick: it must
+    // still reach setProvider, which clears the route.
+    if (same && route == null) return;
     try {
       // Always send both so a cross-provider pick switches harness and model
       // in one setProvider call (no contract change).
@@ -1648,8 +1711,10 @@ export const Composer = memo(function Composer({
       <div className={styles.card}>
         {mentionOpen && (
           <MentionList
+            snippetMatches={snippetMatches}
+            acceptSnippet={acceptSnippet}
             mentionFiles={mentionFiles}
-            mentionIndex={mentionIndex}
+            mentionIndex={mentionActive}
             setMentionIndex={setMentionIndex}
             acceptMention={acceptMention}
             onPickMentionFolder={onPickMentionFolder}
@@ -1987,7 +2052,10 @@ export const Composer = memo(function Composer({
                         </li>
                       ) : null}
                       {modelRows.map((row, index) => {
-                        const selected = isRowSelected(row, provider, model);
+                        const selected = row.auto
+                          ? route != null
+                          : route == null &&
+                            isRowSelected(row, provider, model);
                         const highlighted = index === hi;
                         const starrable = canFavourite(row);
                         const starred =
@@ -2001,7 +2069,7 @@ export const Composer = memo(function Composer({
                           row.setup && setupFor === row.providerId
                             ? hintFor(row.providerId)
                             : null;
-                        const sub = row.profile
+                        const sub = row.profile || row.auto
                           ? row.vendor
                           : row.updateHint
                             ? row.updateHint
@@ -2016,7 +2084,7 @@ export const Composer = memo(function Composer({
                                   : row.id;
                         return (
                           <li
-                            key={row.profile ? row.id : rowKey(row)}
+                            key={row.profile || row.auto ? row.id : rowKey(row)}
                             role="option"
                             aria-selected={selected}
                             aria-disabled={row.disabled ? true : undefined}
@@ -2387,6 +2455,51 @@ export const Composer = memo(function Composer({
               </button>
             )}
 
+            {currentProviderInfo?.supportsAgents &&
+              onSetAgent &&
+              (agents.length > 0 || agent) && (
+                <>
+                  <span className={styles.sep} aria-hidden="true" />
+                  {/* ponytail: native select; a listbox menu like Effort if it needs descriptions inline */}
+                  <select
+                    className={
+                      agent
+                        ? `${styles.pill} ${styles.pillAccent} ${styles.agentSelect}`
+                        : `${styles.pill} ${styles.agentSelect}`
+                    }
+                    aria-label="Agent"
+                    title={
+                      agent
+                        ? (agents.find((a) => a.name === agent)?.description ||
+                          `Runs as --agent ${agent}`)
+                        : "Run this thread as a custom CLI agent"
+                    }
+                    disabled={locked || currentProviderInfo.available === false}
+                    value={agent ?? ""}
+                    onChange={(e) => {
+                      void Promise.resolve(onSetAgent(e.target.value || null)).catch(
+                        (err) =>
+                          setLocalError(
+                            err instanceof Error && err.message
+                              ? err.message
+                              : "Failed to set agent",
+                          ),
+                      );
+                    }}
+                  >
+                    <option value="">Default agent</option>
+                    {agent && !agents.some((a) => a.name === agent) && (
+                      <option value={agent}>{agent} (not found)</option>
+                    )}
+                    {agents.map((a) => (
+                      <option key={a.name} value={a.name} title={a.description}>
+                        {a.source === "user" ? `${a.name} (user)` : a.name}
+                      </option>
+                    ))}
+                  </select>
+                </>
+              )}
+
             {!ask && <span className={styles.sep} aria-hidden="true" />}
             {!ask && (
             <div className={styles.modeWrap} ref={modeWrapRef}>
@@ -2567,9 +2680,30 @@ export const Composer = memo(function Composer({
                     <p className={styles.bestOfNHint}>
                       Each selection forks a new thread
                     </p>
+                    <label
+                      className={styles.bestOfNRow}
+                      title="Each fork only plans; build the plan you pick from its card"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={bestPlanOnly}
+                        data-best-of-n-plan-only=""
+                        onChange={() => setBestPlanOnly((v) => !v)}
+                      />
+                      <span className={styles.bestOfNRowText}>
+                        <span className={styles.modelRowLabel}>Plan only</span>
+                      </span>
+                    </label>
                     <ul className={styles.bestOfNList}>
                       {profileRows.map((row, index) => {
                         const checked = bestIds.includes(row.id);
+                        const rowProvider = providers.find(
+                          (p) => p.id === row.provider,
+                        );
+                        const noPlan =
+                          bestPlanOnly &&
+                          !!rowProvider &&
+                          !providerCanPlan(rowProvider);
                         return (
                           <li key={`profile:${row.id}`}>
                             {index === 0 ? (
@@ -2582,12 +2716,16 @@ export const Composer = memo(function Composer({
                             ) : null}
                             <label
                               className={styles.bestOfNRow}
-                              title={row.disabledReason ?? undefined}
+                              title={
+                                noPlan
+                                  ? NO_PLAN_MODE
+                                  : (row.disabledReason ?? undefined)
+                              }
                             >
                               <input
                                 type="checkbox"
                                 checked={checked}
-                                disabled={row.disabled}
+                                disabled={row.disabled || noPlan}
                                 data-best-of-n-profile={row.id}
                                 onChange={() => toggleBestId(row.id)}
                               />
@@ -2613,12 +2751,17 @@ export const Composer = memo(function Composer({
                       {installedProviders.map((p) => {
                         const vendor = providerVendor(p);
                         const checked = bestIds.includes(p.id);
+                        const noPlan = bestPlanOnly && !providerCanPlan(p);
                         return (
                           <li key={p.id}>
-                            <label className={styles.bestOfNRow}>
+                            <label
+                              className={styles.bestOfNRow}
+                              title={noPlan ? NO_PLAN_MODE : undefined}
+                            >
                               <input
                                 type="checkbox"
                                 checked={checked}
+                                disabled={noPlan}
                                 data-best-of-n-provider={p.id}
                                 onChange={() => toggleBestId(p.id)}
                               />
@@ -2835,6 +2978,7 @@ export const Composer = memo(function Composer({
           return saved;
         }}
         onRemove={onRemoveWorkflow}
+        onExportToRepo={onExportWorkflow}
         listError={workflowListError}
         onRetryList={onRetryWorkflows}
       />

@@ -409,6 +409,35 @@ describe("gcScan / gcClean", { concurrency: 1 }, () => {
     assert.ok(fs.existsSync(drop.worktreePath));
   });
 
+  it("a worktree whose commits are on origin but not a stale local main is reclaimable (#1556)", async () => {
+    services.updateProject(fx.store, fx.project.id, { worktreeRetention: 1 });
+    const bare = path.join(fx.tmpDir, "origin-1556.git");
+    git(fx.tmpDir, ["init", "--bare", bare]);
+    git(fx.repo, ["remote", "add", "origin", bare]);
+    git(fx.repo, ["push", "-q", "origin", "main"]);
+    const keep = addWorktree(fx, "Keep");
+    const drop = addWorktree(fx, "Landed upstream");
+    fs.writeFileSync(path.join(drop.worktreePath, "work.txt"), "mine\n");
+    git(drop.worktreePath, ["add", "work.txt"]);
+    git(drop.worktreePath, ["commit", "-m", "shipped via a PR"]);
+    git(drop.worktreePath, ["push", "-q", "origin", "HEAD:main"]);
+    git(fx.repo, ["fetch", "-q", "origin"]);
+    fx.store.updateThread(keep.id, { settledOverride: "settled", updatedAt: 2_000 });
+    fx.store.updateThread(drop.id, { settledOverride: "settled", updatedAt: 1_000 });
+    fx.store.saveNow();
+
+    const result = await enforceRetention({
+      store: fx.store,
+      worktreeBase: fx.worktreeBase,
+    });
+    assert.ok(
+      result.removed.some((p) => fs.realpathSync(path.dirname(p)) === fs.realpathSync(path.dirname(drop.worktreePath)) && path.basename(p) === path.basename(drop.worktreePath)),
+      "landed worktree past the keep limit is reclaimed",
+    );
+    assert.ok(!fs.existsSync(drop.worktreePath));
+    assert.ok(fs.existsSync(keep.worktreePath), "newest settled worktree kept");
+  });
+
   it("gcClean never deletes the branch", async () => {
     const orphanThread = services.createThread(fx.store, {
       projectId: fx.project.id,

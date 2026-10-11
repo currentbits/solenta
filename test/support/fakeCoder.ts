@@ -24,6 +24,7 @@ import type {
   CheckpointInfo,
   CoderApi,
   DistilledWorkflow,
+  DistilledMemory,
   RunStatInfo,
   DevServerState,
   TerminalState,
@@ -137,6 +138,8 @@ export interface FakeCoder {
   only(channel: string): Call;
   /** Push a threads:changed event to whatever subscribed. */
   emitThreads(push: ThreadListPush): void;
+  /** Main-process select push (notification click or solenta:// link). */
+  emitSelect(channel: "thread:select" | "project:select", id: string): void;
   /** Push a thread:updated event (a full detail is a valid ThreadPatch). */
   emitThread(detail: ThreadPatch): void;
   /** Push boot:ready so useCoder refetches lists (#618). */
@@ -231,6 +234,8 @@ export interface FakeOptions {
   spaces?: SpaceInfo[];
   threads?: ThreadInfo[];
   providers?: ProviderInfo[];
+  /** threads.listAgents rows (#172); empty by default. */
+  agents?: Array<{ name: string; description: string; source: "builtin" | "project" | "user" }>;
   workflows?: WorkflowTemplateInfo[];
   automations?: AutomationInfo[];
   /** Per-automation retained runs for automations.listRuns. */
@@ -271,10 +276,16 @@ export interface FakeOptions {
   snapWindows?: Array<{ id: string; name: string }>;
   /** Override attachments.captureWindow. */
   captureWindow?: (input: unknown) => { attachment: AttachmentInfo | null };
+  /** Override attachments.captureWindowText (default: nothing, not skipped). */
+  captureWindowText?: (
+    input: unknown,
+  ) => { attachment: AttachmentInfo | null; skipped?: string };
   /** Electron-only path resolver for dropped Files. */
   droppedFilePath?: (file: File) => string;
   /** Override runs.distill result. */
   distill?: DistilledWorkflow;
+  /** Override runs.distillMemory result. */
+  distillMemory?: DistilledMemory;
   /** Override git.gcScan result (default: empty). */
   gcScan?: GcScanResult;
   /** Override settings.testWebhook result (default: HTTP 200). */
@@ -370,11 +381,13 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
     confirmQuitWithActiveWork: true,
     resumeInterruptedRuns: false,
     prDiffCapLines: 400,
+    maxConcurrentRuns: 4,
     onboardingSeen: true,
     uiScale: 1,
     webhook: { url: null, onDone: true, onFailed: true, onWaiting: true },
     agentProfiles: [],
     defaultOrchestratorProfileId: null,
+    promptSnippets: [],
     ...(opts.settings ?? {}),
   };
   const ALL_SKILL_TARGETS: SkillTarget[] = [
@@ -590,6 +603,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
   ];
 
   const threadSubs: Array<(t: ThreadListPush) => void> = [];
+  const selectSubs: Array<{ channel: string; cb: (id: string) => void }> = [];
   const detailSubs: Array<(d: ThreadPatch) => void> = [];
   const bootReadySubs: Array<() => void> = [];
   const stayAwakeSubs: Array<(s: StayAwakeStatus) => void> = [];
@@ -785,6 +799,8 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         } as MemoryMaintenanceReport),
       resolve: (input: unknown) =>
         rec("memory.resolve", [input], { ok: true, id: 0, resolution: "noop" }),
+      renameScope: (input: { root: string; key: string }) =>
+        rec("memory.renameScope", [input], { ...input, moved: 0 }),
     },
     settings: {
       get: () =>
@@ -984,6 +1000,9 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
             );
           }
           next.prDiffCapLines = v;
+        }
+        if (Object.prototype.hasOwnProperty.call(p, "maxConcurrentRuns")) {
+          next.maxConcurrentRuns = p.maxConcurrentRuns ?? null;
         }
         if (Object.prototype.hasOwnProperty.call(p, "agentProfiles")) {
           const v = p.agentProfiles;
@@ -1532,6 +1551,11 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           ...(t as object),
         } as WorkflowTemplateInfo),
       remove: (input: unknown) => rec("workflows.remove", [input], undefined),
+      exportToRepo: (input: unknown) =>
+        rec("workflows.exportToRepo", [input], {
+          written: true,
+          path: "/repo/WORKFLOW.md",
+        }),
     },
     automations: {
       list: () =>
@@ -2653,6 +2677,10 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       setWebSearch: (input: unknown) =>
         rec("threads.setWebSearch", [input], thread()),
       setFast: (input: unknown) => rec("threads.setFast", [input], thread()),
+      setRoute: (input: unknown) => rec("threads.setRoute", [input], thread()),
+      setAgent: (input: unknown) => rec("threads.setAgent", [input], thread()),
+      listAgents: (input: unknown) =>
+        rec("threads.listAgents", [input], opts.agents ?? []),
       /**
        * Honest fork (round 49 contract / electron forkThread): new thread
        * same project, copies provider/model/permissionMode unless overridden;
@@ -3042,6 +3070,17 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
             ],
           },
         ),
+      distillMemory: (input: unknown) =>
+        rec(
+          "runs.distillMemory",
+          [input],
+          opts.distillMemory ?? {
+            type: "knowledge",
+            title: "Distilled lesson",
+            body: "What future sessions should know.",
+            citations: [{ kind: "thread", id: "t1" }],
+          },
+        ),
       stop: (input: unknown) => rec("runs.stop", [input], undefined),
       resumeQuotaWait: (input: unknown) =>
         rec("runs.resumeQuotaWait", [input], { runId: "r-quota" }),
@@ -3082,6 +3121,8 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         rec("git.commit", [input], { subject: "test commit" }),
       revertFile: (input: unknown) =>
         rec("git.revertFile", [input], { path: "file.ts" }),
+      revertHunk: (input: unknown) =>
+        rec("git.revertHunk", [input], { path: "file.ts" }),
       suggestCommitMessage: (input: unknown) =>
         rec("git.suggestCommitMessage", [input], {
           message: "feat: suggested message",
@@ -3966,6 +4007,12 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           [input],
           opts.captureWindow?.(input) ?? { attachment: null },
         ),
+      captureWindowText: (input: unknown) =>
+        rec(
+          "attachments.captureWindowText",
+          [input],
+          opts.captureWindowText?.(input) ?? { attachment: null },
+        ),
       ...(opts.droppedFilePath
         ? { droppedFilePath: opts.droppedFilePath }
         : {}),
@@ -3979,8 +4026,13 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           if (i >= 0) threadSubs.splice(i, 1);
         };
       }
-      if (channel === "thread:select") {
-        return () => {};
+      if (channel === "thread:select" || channel === "project:select") {
+        const sub = { channel, cb: cb as (id: string) => void };
+        selectSubs.push(sub);
+        return () => {
+          const i = selectSubs.indexOf(sub);
+          if (i >= 0) selectSubs.splice(i, 1);
+        };
       }
       if (channel === "boot:ready") {
         bootReadySubs.push(cb as () => void);
@@ -4038,6 +4090,8 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       return hits[0];
     },
     emitThreads: (next) => threadSubs.forEach((cb) => cb(next)),
+    emitSelect: (channel, id) =>
+      selectSubs.filter((s) => s.channel === channel).forEach((s) => s.cb(id)),
     emitThread: (d) => detailSubs.forEach((cb) => cb(d)),
     emitBootReady: () => bootReadySubs.forEach((cb) => cb()),
     emitStayAwake: (s) => stayAwakeSubs.forEach((cb) => cb(s)),
@@ -4048,7 +4102,8 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       bootReadySubs.length +
       stayAwakeSubs.length +
       simulatorSubs.length +
-      speechSubs.length,
+      speechSubs.length +
+      selectSubs.length,
   };
 }
 

@@ -284,6 +284,9 @@ export function createMemory(ctx: DevCtx): Pick<CoderApi, "memory"> {
       }): Promise<{ ok: boolean; id: number; resolution: string }> {
         return { ok: true, id: input.id, resolution: input.resolution };
       },
+      async renameScope(input: { root: string; key: string }) {
+        return { root: input.root, key: input.key, moved: 0 };
+      },
     },
   };
 }

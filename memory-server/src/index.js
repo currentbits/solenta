@@ -170,7 +170,9 @@ export function buildServer(memory, opts = {}) {
     if (!bindProject) return
     const row = memory.get(id)
     if (!row) return
-    const want = canonicalProject(bindProject)
+    // Rows hold registry keys ("app-1a2b3c"), so resolve the bound path the
+    // same way; a bare basename would reject the suffixed repo's own rows.
+    const want = memory.projectKey?.(bindProject) ?? canonicalProject(bindProject)
     const got = row.project ? canonicalProject(row.project) : null
     if (row.invalidated || row.superseded_by) {
       if (got && want && got !== want) {
@@ -642,6 +644,24 @@ async function handleApi(req, res, url, memory) {
       return true
     }
 
+    if (req.method === 'POST' && url.pathname === '/api/project-scope') {
+      let body
+      try {
+        const raw = await readBody(req)
+        body = raw.length ? JSON.parse(raw.toString('utf8')) : {}
+      } catch {
+        sendJson(res, 400, { error: 'valid JSON required' })
+        return true
+      }
+      try {
+        sendJson(res, 200, memory.renameProjectScope(body))
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        sendJson(res, /already in use/.test(msg) ? 409 : 400, { error: msg })
+      }
+      return true
+    }
+
     if (req.method === 'PUT' && url.pathname === '/api/wiki') {
       let body
       try {
@@ -724,6 +744,7 @@ export function startServer(memory, config, host = '127.0.0.1', configFile) {
         entryCount: memory.entryCount(),
         janitor: memory.janitorSnapshot?.() ?? readJanitorSnapshot(memory.db),
         vectors: memory.vectorsHealth?.() ?? { enabled: false, count: 0, model: null },
+        projectCollisions: memory.projectCollisions?.() ?? [],
       }
       // Proof that we know the shared secret, without echoing the token.
       // A client sends a nonce; we never require the secret on this open endpoint.

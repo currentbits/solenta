@@ -1,6 +1,7 @@
 "use strict";
 
 const os = require("node:os");
+const { withProjectEnv } = require("./worktreeEnv.js");
 const path = require("node:path");
 const {
   runKimi,
@@ -122,7 +123,7 @@ function spawnAgentKimi(opts) {
     binary: spawn.binary,
     args: spawn.args,
     cwd: spawn.cwd,
-    env: kimiEnv,
+    env: withProjectEnv(project, kimiEnv),
     reasoningEffort: reasoningEffort || null,
     onEvent: (ev) => {
       gotJson = true;

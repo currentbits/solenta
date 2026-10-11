@@ -1,6 +1,7 @@
 "use strict";
 
 const path = require("node:path");
+const { withProjectEnv } = require("./worktreeEnv.js");
 const { randomUUID } = require("node:crypto");
 const services = require("./services.js");
 const { runAgent } = require("./agent.js");
@@ -15,6 +16,7 @@ const { createAskRuns } = require("./runner-ask-runs.js");
 const { createTurnSetup } = require("./runner-turn-setup.js");
 const { createSubagents } = require("./runner-subagents.js");
 const { createSessionRecording } = require("./runner-session-recording.js");
+const threadSecrets = require("./threadSecrets.js");
 const { createClaudeSessions } = require("./runner-claude-sessions.js");
 const { createVerifyGate } = require("./runner-verify-gate.js");
 const { createQuotaWait } = require("./runner-quota-wait.js");
@@ -43,6 +45,7 @@ const orchcommands = require("./orchcommands.js");
 const cliCommands = require("./cliCommands.js");
 const ask = require("./ask.js");
 const btw = require("./btw.js");
+const { applyRoute } = require("./routing.js");
 const {
   getMemoryStatus,
   looksGrokConfigCorrupt,
@@ -606,7 +609,13 @@ function resolveSpawn(project, binary, args, localCwd, env) {
   if (!crossesBoundary(project)) {
     return { binary, args, cwd: localCwd };
   }
-  const wrapped = wrapCommand(project, binary, args, undefined, env);
+  const wrapped = wrapCommand(
+    project,
+    binary,
+    args,
+    undefined,
+    withProjectEnv(project, env),
+  );
   return { binary: wrapped.bin, args: wrapped.args, cwd: process.cwd() };
 }
 
@@ -719,6 +728,11 @@ function createRunner(opts) {
   /** Last known workflow (core Workflow or real state) per thread. */
   /** @type {Map<string, object>} */
   const lastWorkflowByThread = new Map();
+  // Orchestrated views survive restarts so a crashed run can resume (#182).
+  for (const t of store.getThreads()) {
+    const saved = store.getWorkflowRun(t.id);
+    if (saved) lastWorkflowByThread.set(t.id, saved);
+  }
 
   /**
    * Arrays as last pushed per thread, for the tail diff in pushDetail, plus
@@ -998,6 +1012,108 @@ function createRunner(opts) {
     await drainQueued(threadId, { rethrow: true });
   }
 
+  /**
+   * Global run queue (issue #166). A start beyond settings.maxConcurrentRuns
+   * parks its fully-built input on the thread as `runQueue` and is admitted
+   * FIFO (by `runQueue.at`) as runs clear. Persisted, so a restart keeps it.
+   * ponytail: one global queue scanned off the store; per-project fairness if
+   * one project's fan-out starves the rest.
+   */
+  function runQueueOrder() {
+    return store
+      .getThreads()
+      .filter((t) => t && t.runQueue && !services.isTrashed(t))
+      .sort((a, b) => a.runQueue.at - b.runQueue.at);
+  }
+
+  function runSlotsFree() {
+    const cap = store.getSettings().maxConcurrentRuns;
+    return cap == null || active.size < cap;
+  }
+
+  function enqueueRun(threadId, input, prompt, attachments) {
+    const thread = store.getThread(threadId);
+    const prev = thread && thread.runQueue;
+    if (!isReplayTurn(input) && input.skipUserAppend !== true) {
+      appendMessage(
+        threadId,
+        "user",
+        input.displayPrompt != null ? input.displayPrompt : prompt,
+        null,
+        null,
+        attachments,
+        {
+          ...(input.fromThread ? { fromThread: input.fromThread } : {}),
+          ...(input.fromNotice === true ? { fromNotice: true } : {}),
+        },
+      );
+    }
+    // A second send while still queued joins the waiting turn.
+    const queuedInput = prev
+      ? {
+          ...prev.input,
+          prompt: `${prev.input.prompt}\n\n${prompt}`,
+          attachments: [...(prev.input.attachments || []), ...attachments],
+        }
+      : {
+          ...input,
+          prompt,
+          attachments,
+          skipUserAppend: true,
+          fromQueue: true,
+        };
+    store.updateThread(threadId, {
+      runQueue: { at: prev ? prev.at : Date.now(), input: queuedInput },
+    });
+    const cap = store.getSettings().maxConcurrentRuns;
+    const position = runQueueOrder().findIndex((t) => t.id === threadId) + 1;
+    appendMessage(
+      threadId,
+      "event",
+      `Queued #${position} for a run slot (${active.size} running, max ${cap ?? "unlimited"}). Stop leaves the queue.`,
+    );
+    store.save();
+    pushDetail(threadId);
+    pushThreadsChanged();
+    queueMicrotask(admitQueuedRuns);
+    return { runId: null, queued: true };
+  }
+
+  function dropQueuedRun(threadId) {
+    const thread = store.getThread(threadId);
+    if (!thread || !thread.runQueue) return false;
+    store.updateThread(threadId, { runQueue: null });
+    appendMessage(threadId, "event", "Removed from the run queue");
+    store.save();
+    pushDetail(threadId);
+    pushThreadsChanged();
+    return true;
+  }
+
+  /** Start queued turns oldest-first while slots are free. */
+  function admitQueuedRuns() {
+    for (const t of runQueueOrder()) {
+      if (!runSlotsFree()) return;
+      if (active.has(t.id)) continue;
+      const { input } = t.runQueue;
+      store.updateThread(t.id, { runQueue: null });
+      // startRun is synchronous up to claiming its `active` slot, so the
+      // next iteration already sees this one counted.
+      startRun({ ...input, threadId: t.id, fromRunQueue: true }).catch(
+        (err) => {
+          store.updateThread(t.id, {
+            status: "failed",
+            lastError: shortError(String((err && err.message) || err)),
+          });
+          store.save();
+          pushDetail(t.id);
+          pushThreadsChanged();
+        },
+      );
+    }
+  }
+
+
   function maybeDrainQueued(threadId) {
     const thread = store.getThread(threadId);
     if (!thread || thread.status === "working") return;
@@ -1099,6 +1215,7 @@ function createRunner(opts) {
     }
     if (workflow) {
       lastWorkflowByThread.set(threadId, workflow);
+      if (workflow.__orchestrated) store.setWorkflowRun(threadId, workflow);
     }
     let view = null;
     if (workflow) {
@@ -1285,7 +1402,7 @@ function createRunner(opts) {
       }
     }
     // Session mirror: user + event immediately; assistant/tool at terminal.
-    recordSessionOnAppend(threadId, role, text);
+    recordSessionOnAppend(threadId, role, threadSecrets.redact(threadId, text));
     return msg.id;
   }
 
@@ -1389,10 +1506,18 @@ function createRunner(opts) {
       scheduleQuotaWake(threadId, park.until);
       return { parked: true, until: park.until, text, kind: null };
     }
+    // A native fork (#158) that never got its own session id must not
+    // retry --resume on the SOURCE session: fall back to a seeded fresh one.
+    const failedThread = store.getThread(threadId);
+    const forkFallback =
+      failedThread && failedThread.forkSessionAt
+        ? { sessionId: null, forkSessionAt: null, replayContext: true }
+        : {};
     store.updateThread(
       threadId,
       {
         ...(extraPatch || {}),
+        ...forkFallback,
         status: "failed",
         runStartedAt: null,
         lastError: shortError(text),
@@ -1428,6 +1553,8 @@ function createRunner(opts) {
       }
     }
     active.delete(threadId);
+    // After the caller finishes its terminal bookkeeping.
+    queueMicrotask(admitQueuedRuns);
     const thread = store.getThread(threadId);
     if (entry.kind === "codex") {
       if (entry.handle && entry.handle.pid) dropLiveCodexPid(entry.handle.pid);
@@ -1632,6 +1759,14 @@ function createRunner(opts) {
       }
     }
 
+    // Model routing (#246): a pending route picks provider/model from this
+    // first prompt before anything reads thread.provider.
+    if (thread.route != null) {
+      const routed = applyRoute(store, threadId, prompt);
+      if (routed) appendMessage(threadId, "event", routed);
+      Object.assign(thread, store.getThread(threadId));
+    }
+
     // Orchestrator thread (issue #202): the first prompt is not run here. It
     // is forked to a worker that holds the worktree and does the work; from
     // the second prompt on the flag is gone and this thread runs its own LLM,
@@ -1745,6 +1880,19 @@ function createRunner(opts) {
       }
     }
 
+    // Concurrency cap (#166): strict FIFO, so a fresh start also waits
+    // behind anything already queued. Consolidation is a system job and
+    // skips the line, like the budget.
+    if (
+      thread.memoryConsolidate !== true &&
+      !input.fromRunQueue &&
+      (thread.runQueue ||
+        (store.getSettings().maxConcurrentRuns != null &&
+          (!runSlotsFree() || runQueueOrder().length > 0)))
+    ) {
+      return enqueueRun(threadId, input, prompt, attachments);
+    }
+
     // Lazy worktree (t3-style): pendingWorktree threads materialize their
     // worktree + branch at first run, so never-run threads leave nothing.
     // A missing folder rematerializes. Failure is recorded in-thread and
@@ -1767,8 +1915,10 @@ function createRunner(opts) {
 
     // Prefix is CLI-only and must see the retained tail BEFORE this turn's
     // user message is appended (rewind replay would otherwise digest itself).
-    const prefix = services.buildHandoffPrefix(thread, (id) =>
-      store.getMessages(id),
+    const prefix = services.buildHandoffPrefix(
+      thread,
+      (id) => store.getMessages(id),
+      (id) => store.getThread(id),
     );
     // Start is accepted: a later undo must not resurrect the dropped tail
     // (#1202). Clear before append so a crash mid-turn cannot roll back a
@@ -1939,7 +2089,7 @@ function createRunner(opts) {
       (leadSlash ? cliPrompt : prefix + cliPrompt) +
       attachmentPromptSection(promptAttachments) +
       (leadSlash ? prefix : "") +
-      services.planboardNoteFor(projectForGate && projectForGate.path) +
+      services.planboardNoteFor(projectForGate) +
       services.selfIdNoteFor(
         dispatchThread,
         projectForGate,
@@ -2203,6 +2353,9 @@ function createRunner(opts) {
    */
   async function stopRun(input, seen = new Set()) {
     const { threadId } = input;
+    // Stop on a queued turn only leaves the run queue (#166); its crew, if
+    // any, keeps working.
+    if (!active.has(threadId) && dropQueuedRun(String(threadId))) return;
     cancelAutoResume(threadId);
     // Cascade first: a worker outliving its stopped orchestrator keeps
     // burning tokens and re-wakes the parent through queueOrchNotice. Doing
@@ -2628,6 +2781,7 @@ function createRunner(opts) {
   } = createTurnSetup(ctx);
 
   const {
+    hasRunningSubagent,
     addSubagentRow,
     noteCursorSubagent,
     setSubagentStatus,
@@ -2636,6 +2790,7 @@ function createRunner(opts) {
     finishRunningSubagents,
   } = createSubagents(ctx);
   ctx.finishRunningSubagents = finishRunningSubagents;
+  ctx.hasRunningSubagent = hasRunningSubagent;
 
   const {
     sessionRecorder,
@@ -2699,6 +2854,8 @@ function createRunner(opts) {
   } = createWatchdogs(ctx);
 
   refreshAllQuotaWaits();
+  // Turns queued when the app quit (#166).
+  queueMicrotask(admitQueuedRuns);
 
   return {
     startRun,
@@ -2712,6 +2869,7 @@ function createRunner(opts) {
     resumeQuotaWait,
     refreshQuotaWait,
     refreshAllQuotaWaits,
+    admitQueuedRuns,
     getActiveWorkflow,
     isRunning,
     listActiveThreadIds,

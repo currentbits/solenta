@@ -312,6 +312,33 @@ describe("opencode extract helpers", () => {
     assert.equal(extractTextPart({ type: "reasoning", part: { text: "x" } }), null);
   });
 
+  it("parses real run --format json tool_use parts (tool/callID/state) and todowrite todos (#180)", () => {
+    const todos = [{ content: "Wire it", status: "in_progress", priority: "high", id: "1" }];
+    const ev = extractToolEvent({
+      type: "tool_use",
+      part: {
+        id: "prt_1",
+        type: "tool",
+        tool: "todowrite",
+        callID: "call_1",
+        state: { status: "completed", input: { todos }, output: "[]" },
+      },
+    });
+    assert.ok(ev);
+    assert.equal(ev.name, "todowrite");
+    assert.equal(ev.phase, "end");
+    assert.equal(ev.output, "[]");
+    assert.deepEqual(ev.todos, todos);
+
+    const err = extractToolEvent({
+      type: "tool_use",
+      part: { id: "prt_2", tool: "bash", state: { status: "error", input: {}, error: "boom" } },
+    });
+    assert.equal(err.isError, true);
+    assert.equal(err.output, "boom");
+    assert.equal(err.todos, undefined);
+  });
+
   it("extracts tool-ish events when type contains tool and name is set", () => {
     const start = extractToolEvent({
       type: "tool_call",

@@ -8,7 +8,9 @@ const {
   diff,
   commit,
   revertFile,
+  revertHunk,
   mergeWorktree,
+  worktreeLanded,
   conflictContext,
   removeWorktree,
   push,
@@ -52,6 +54,22 @@ const {
 const { integrateWorker } = require("./crewIntegration.js");
 const vibeKanban = require("./vibeKanban.js");
 const { runRetention, resolveThreadRoot } = require("./ipc-shared.js");
+
+/**
+ * The renderer names a project by path. An ssh remote's path is not a local
+ * checkout, so hand issues.js the project itself and it resolves origin over
+ * ssh (#180). Local projects keep the plain path.
+ * @param {{ getProjects?: () => any[] } | null | undefined} store
+ * @param {unknown} projectPath
+ */
+function issueTargetFor(store, projectPath) {
+  const projects =
+    store && typeof store.getProjects === "function" ? store.getProjects() : [];
+  const remote = projects.find(
+    (p) => p && p.remoteHost && projectPath && p.path === projectPath,
+  );
+  return remote || projectPath;
+}
 
 /** IPC_HANDLERS rows for git:*, issues:*, mergeQueue:*, vibeKanban:*; ipc.js spreads them in. */
 module.exports = {
@@ -109,6 +127,15 @@ module.exports = {
       threadId: input.threadId,
       message: input.message,
       paths: Array.isArray(input.paths) ? input.paths : undefined,
+      patches: Array.isArray(input.patches) ? input.patches : undefined,
+    });
+  },
+  "git:revertHunk": async (ctx, input) => {
+    return revertHunk({
+      store: ctx.store,
+      threadId: input.threadId,
+      path: input.path,
+      patch: input.patch,
     });
   },
   "git:revertFile": async (ctx, input) => {
@@ -296,22 +323,22 @@ module.exports = {
       ctx.store && typeof ctx.store.getSettings === "function"
         ? ctx.store.getSettings()
         : null;
-    return fetchIssue(projectPath, ref, {
+    return fetchIssue(issueTargetFor(ctx.store, projectPath), ref, {
       linearApiKey: settings && settings.linearApiKey,
     });
   },
-  "issues:list": async (_ctx, projectPath) => {
-    return listIssues(projectPath);
+  "issues:list": async (ctx, projectPath) => {
+    return listIssues(issueTargetFor(ctx.store, projectPath));
   },
-  "issues:setPlanStatus": async (_ctx, input) => {
+  "issues:setPlanStatus": async (ctx, input) => {
     return setPlanStatus(
-      input && input.projectPath,
+      issueTargetFor(ctx.store, input && input.projectPath),
       input && input.number,
       input && input.status,
     );
   },
-  "issues:create": async (_ctx, input) => {
-    return createIssue(input && input.projectPath, {
+  "issues:create": async (ctx, input) => {
+    return createIssue(issueTargetFor(ctx.store, input && input.projectPath), {
       title: input && input.title,
       body: input && input.body,
     });
@@ -353,7 +380,14 @@ module.exports = {
       // await, not a bare return: gitSyncInfo is async, and a returned
       // promise would settle outside this try — the catch below would never
       // see a rejection.
-      return await services.gitSyncInfo(root);
+      const info = await services.gitSyncInfo(root);
+      // #1556: every commit already on the base (local or origin) — the
+      // details card offers Clean up instead of Merge. Uncommitted files
+      // count as not landed.
+      if (thread.worktreePath && thread.branch && !project.remoteHost) {
+        info.landed = worktreeLanded(project, thread);
+      }
+      return info;
     } catch {
       return { hasUpstream: false };
     }

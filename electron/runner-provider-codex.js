@@ -11,6 +11,7 @@ const {
   codexModelAcceptsImages,
 } = require("./providers.js");
 const services = require("./services.js");
+const { withProjectEnv } = require("./worktreeEnv.js");
 const { codexWorkspaceWriteArgs } = require("./codexWorkspaceWrite.js");
 const { getCodexMcpArgs, getCodexMcpEnv } = require("./memory-sup.js");
 const { guardrailsEnabled } = require("./guardrails.js");
@@ -140,7 +141,7 @@ function createCodexRun(ctx) {
     }
     // MCP / Planboard -c sit after `app-server` (same values as exec).
     // Bearer tokens ride the child's env, never argv (issue #125).
-    const planboardNote = services.planboardNoteFor(localCwd, {
+    const planboardNote = services.planboardNoteFor(project, {
       provider: thread.provider,
       permissionMode: thread.permissionMode || "default",
     });
@@ -388,7 +389,7 @@ function createCodexRun(ctx) {
       binary: spawn.binary,
       args: spawn.args,
       cwd: spawn.cwd,
-      envExtra: threadSecrets.withEnv(threadId, codexMcpEnv),
+      envExtra: threadSecrets.withEnv(threadId, withProjectEnv(project, codexMcpEnv)),
       prompt,
       images: nativeImages,
       sessionId: resumeId,

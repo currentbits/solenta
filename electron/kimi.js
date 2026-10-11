@@ -475,7 +475,7 @@ function createStderrThinkingParser() {
 }
 
 /**
- * @typedef {{ id: string, name: string, input: string, output: string | null, phase: "start" | "end" | "single", isError: boolean, images?: { mediaType: string, data: string }[] }} ToolEvent
+ * @typedef {{ id: string, name: string, input: string, output: string | null, phase: "start" | "end" | "single", isError: boolean, images?: { mediaType: string, data: string }[], subagent?: { description: string, agentType: string | null, background: boolean } | null }} ToolEvent
  */
 
 /**
@@ -498,6 +498,34 @@ function outputAndImages(value) {
     }
   }
   return { output: truncate(text, OUTPUT_TRUNCATE), images: harvested.images };
+}
+
+/**
+ * Subagent fields from kimi's Agent tool args, parsed BEFORE input is
+ * truncated (a long prompt would cut the JSON). Since 0.24.2 a
+ * run_in_background launch returns at once and `kimi -p` stays alive
+ * ("steer" print policy) until the task finishes and steers a new turn —
+ * stream-json emits no completion event, so the run's exit settles it.
+ * @param {string} input
+ * @returns {{ description: string, agentType: string | null, background: boolean } | null}
+ */
+function agentCallInfo(input) {
+  let args;
+  try {
+    args = JSON.parse(input);
+  } catch {
+    return null;
+  }
+  if (!args || typeof args !== "object") return null;
+  return {
+    description:
+      typeof args.description === "string" && args.description
+        ? args.description
+        : "Agent",
+    agentType:
+      typeof args.subagent_type === "string" ? args.subagent_type : null,
+    background: args.run_in_background === true,
+  };
 }
 
 /**
@@ -534,6 +562,17 @@ function extractToolEvents(obj) {
           input = String(rawArgs);
         }
       }
+      // Untruncated todo list for the planboard (input is capped).
+      // kimi-code names it TodoList, older kimi-cli SetTodoList.
+      let todos = null;
+      if (name === "TodoList" || name === "SetTodoList") {
+        try {
+          const parsed = typeof rawArgs === "string" ? JSON.parse(rawArgs) : rawArgs;
+          if (parsed && Array.isArray(parsed.todos)) todos = parsed.todos;
+        } catch {
+          // Partial/garbled args: the tool card still renders.
+        }
+      }
       out.push({
         id: String(tc.id || ""),
         name,
@@ -541,6 +580,8 @@ function extractToolEvents(obj) {
         output: null,
         phase: "start",
         isError: false,
+        ...(name === "Agent" ? { subagent: agentCallInfo(input) } : {}),
+        ...(todos ? { todos } : {}),
       });
     }
     return out;

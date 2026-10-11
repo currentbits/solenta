@@ -336,6 +336,29 @@ function createPermissions(ctx) {
       throw new Error("Permission request no longer pending");
     }
     const pending = e.pendingPermissions[idx];
+    if (pending.inputRequest) {
+      // #173 MCP elicitation: the CLI expects { action, content? }.
+      const action =
+        decision === "cancel" ? "cancel" : decision === "deny" ? "decline" : "accept";
+      // Throws (prompt stays pending) when the values fail the schema.
+      const content =
+        action === "accept" ? pending.validateInput(input.inputValues) : null;
+      e.pendingPermissions.splice(idx, 1);
+      e.handle.respond(pending.id, content ? { action, content } : { action });
+      appendMessage(
+        threadId,
+        "event",
+        `${action === "accept" ? "Answered" : action === "cancel" ? "Cancelled" : "Declined"}: ${pending.summary}`,
+        e.runId,
+      );
+      if (e.pendingPermissions.length === 0) {
+        store.updateThread(threadId, { awaitingInput: false });
+      }
+      store.save();
+      pushDetail(threadId, e.claudeState);
+      pushThreadsChanged();
+      return;
+    }
     const resolved = resolveEditedCommand(pending.rawInput, updatedCommand);
     if (
       (decision === "allow" || decision === "allowAlways") &&

@@ -28,6 +28,11 @@ interface WorkflowsModalProps {
   initialDraft?: DistilledWorkflow | null;
   onSave: (template: WorkflowSaveInput) => Promise<WorkflowTemplateInfo>;
   onRemove: (id: string) => Promise<void>;
+  /** Write the saved template into the thread's repo (#164); hidden when absent. */
+  onExportToRepo?: (
+    id: string,
+    overwrite: boolean,
+  ) => Promise<{ written: boolean; path: string }>;
   /** Successful write, failed workflows.list. Distinct from a save/remove error. */
   listError?: string | null;
   /** Retry the list read only; must not replay the acknowledged write. */
@@ -127,6 +132,7 @@ export function WorkflowsModal({
   initialDraft = null,
   onSave,
   onRemove,
+  onExportToRepo,
   listError = null,
   onRetryList,
 }: WorkflowsModalProps) {
@@ -136,6 +142,8 @@ export function WorkflowsModal({
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const [confirmExport, setConfirmExport] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
   const [isNew, setIsNew] = useState(false);
   const wasOpen = useRef(false);
   const sessionRef = useRef(0);
@@ -191,7 +199,9 @@ export function WorkflowsModal({
     wasOpen.current = true;
     sessionRef.current += 1;
     setError(null);
+    setNotice(null);
     setConfirmDelete(false);
+    setConfirmExport(false);
     setConfirmDiscard(false);
     setSaving(false);
     if (initialDraft) {
@@ -265,7 +275,9 @@ export function WorkflowsModal({
     setDraft(draftsByKey.current.get(t.id) ?? draftFromTemplate(t));
     setIsNew(false);
     setError(null);
+    setNotice(null);
     setConfirmDelete(false);
+    setConfirmExport(false);
     setConfirmDiscard(false);
   };
 
@@ -277,7 +289,9 @@ export function WorkflowsModal({
     setDraft(draftsByKey.current.get(NEW_DRAFT_KEY) ?? emptyDraft(providers));
     setIsNew(true);
     setError(null);
+    setNotice(null);
     setConfirmDelete(false);
+    setConfirmExport(false);
     setConfirmDiscard(false);
   };
 
@@ -329,6 +343,8 @@ export function WorkflowsModal({
     const startedKey = draftKey(draft, isNew);
     setSaving(true);
     setError(null);
+    setNotice(null);
+    setConfirmExport(false);
     setConfirmDiscard(false);
     try {
       const payload: WorkflowSaveInput = {
@@ -354,6 +370,34 @@ export function WorkflowsModal({
           ? err.message
           : "Failed to save workflow";
       setError(msg);
+    } finally {
+      if (sessionRef.current === started) setSaving(false);
+    }
+  };
+
+  const exportSelected = async () => {
+    if (!selected || !onExportToRepo || saving) return;
+    const started = sessionRef.current;
+    setSaving(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await onExportToRepo(selected.id, confirmExport);
+      if (sessionRef.current !== started) return;
+      setConfirmExport(!res.written);
+      setNotice(
+        res.written
+          ? `Exported to ${res.path}`
+          : `${res.path} already exists. Overwrite it?`,
+      );
+    } catch (err) {
+      if (sessionRef.current !== started) return;
+      setConfirmExport(false);
+      setError(
+        err instanceof Error && err.message
+          ? err.message
+          : "Failed to export workflow",
+      );
     } finally {
       if (sessionRef.current === started) setSaving(false);
     }
@@ -737,6 +781,10 @@ export function WorkflowsModal({
                     <div className={styles.errorInline} role="alert">
                       {error}
                     </div>
+                  ) : notice ? (
+                    <div className={styles.errorInline} role="status">
+                      {notice}
+                    </div>
                   ) : (
                     <div className={styles.errorInline} />
                   )}
@@ -771,6 +819,18 @@ export function WorkflowsModal({
                       </div>
                     ) : (
                       <>
+                        {onExportToRepo && !isNew && selected ? (
+                          <button
+                            type="button"
+                            className={styles.btn}
+                            data-wf-export=""
+                            title="Write the saved template to WORKFLOW.md in this thread's repo"
+                            onClick={() => void exportSelected()}
+                            disabled={saving || currentDirty()}
+                          >
+                            {confirmExport ? "Overwrite" : "Export to repo"}
+                          </button>
+                        ) : null}
                         <button
                           type="button"
                           className={styles.btn}
