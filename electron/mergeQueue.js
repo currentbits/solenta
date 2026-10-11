@@ -516,7 +516,11 @@ function previewLane(opts) {
   if (!row || !row.path) throw new Error(`Lane ${n} is not claimed`);
   const current = project.mergePreview;
   const already = current && Number(current.lane) === n;
-  const porcelain = gitOk(project.path, ["status", "--porcelain"]);
+  const porcelain = gitOk(project.path, [
+    "status",
+    "--porcelain",
+    "--untracked-files=normal", // #1519: config could hide files we overwrite
+  ]);
   if (porcelain && !already) {
     throw new Error("Main checkout is dirty; restore or commit before preview");
   }
