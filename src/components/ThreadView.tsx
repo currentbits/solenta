@@ -392,6 +392,8 @@ interface ThreadViewProps {
   onRepeatSchedule?: () => void;
   /** Distill this thread into a workflow draft for review (#285). */
   onDistillWorkflow?: () => void;
+  /** Distill this thread into a shared-memory draft for review (#247). */
+  onDistillMemory?: () => void;
   /** Save scratch notes for a thread (header notes editor, issues #194 / #935). */
   onSetNotes?: (threadId: string, notes: string) => void | Promise<void>;
   /** Replace the per-thread transcript bookmark list (issue #1217). */
@@ -768,6 +770,7 @@ export const ThreadView = memo(function ThreadView({
   onCreateThread,
   onRepeatSchedule,
   onDistillWorkflow,
+  onDistillMemory,
   onSetNotes,
   onSetMessagePins,
   onStartSpec,
@@ -2983,6 +2986,20 @@ export const ThreadView = memo(function ThreadView({
                           }}
                         >
                           Distill into workflow…
+                        </button>
+                      )}
+                      {!isWorking && onDistillMemory && (
+                        <button
+                          type="button"
+                          className={styles.menuItem}
+                          role="menuitem"
+                          data-distill-memory=""
+                          onClick={() => {
+                            setMenuOpen(false);
+                            onDistillMemory();
+                          }}
+                        >
+                          Save as memory…
                         </button>
                       )}
                       {!isWorking && (

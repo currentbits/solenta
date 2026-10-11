@@ -52,6 +52,7 @@ import type {
   CloneProgressPush,
   AgentProfile,
   ConflictForecast,
+  DistilledMemory,
   DistilledWorkflow,
   ProjectUpdateInput,
 } from "./shared/ipc";
@@ -481,6 +482,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   );
   const [workflowsOpen, setWorkflowsOpen] = useState(false);
   const [distillError, setDistillError] = useState<string | null>(null);
+  const [memoryDraft, setMemoryDraft] = useState<DistilledMemory | null>(null);
+  const clearMemoryDraft = useCallback(() => setMemoryDraft(null), []);
   const [chipError, setChipError] = useState<string | null>(null);
   /** Discarded queued follow-up, handed back to the composer draft (#364). */
   const [queuedDraftRestore, setQueuedDraftRestore] = useState<{
@@ -887,6 +890,28 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       }
     })();
   }, [api, selectedThreadId]);
+
+  // #247: the draft lands in the Memory tab's add form; nothing is stored
+  // until the user saves it there.
+  const handleDistillMemory = useCallback(() => {
+    if (!selectedThreadId) return;
+    void (async () => {
+      try {
+        const draft = await api.runs.distillMemory({
+          threadId: selectedThreadId,
+        });
+        setDistillError(null);
+        setMemoryDraft(draft);
+        if (narrow) setDrawer("agents");
+        else setAgentsCollapsed(false);
+        rememberInspectorTab("memory");
+      } catch (err) {
+        setDistillError(
+          err instanceof Error && err.message ? err.message : String(err),
+        );
+      }
+    })();
+  }, [api, selectedThreadId, narrow, rememberInspectorTab]);
 
   const closeWorkflows = useCallback(() => {
     setWorkflowsOpen(false);
@@ -1968,6 +1993,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onRenameThread={handleRenameOpenThread}
         onRepeatSchedule={handleRepeatSchedule}
         onDistillWorkflow={handleDistillWorkflow}
+        onDistillMemory={handleDistillMemory}
         onSetNotes={handleSetNotes}
         onSetMessagePins={handleSetMessagePins}
         onSetFeltEstimate={
@@ -2157,6 +2183,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         updateMemory={updateMemory}
         removeMemory={removeMemory}
         storeMemory={storeMemory}
+        memoryDraft={memoryDraft}
+        onMemoryDraftApplied={clearMemoryDraft}
         maintenanceMemory={maintenanceMemory}
         resolveMemory={resolveMemory}
         listSkills={listSkills}

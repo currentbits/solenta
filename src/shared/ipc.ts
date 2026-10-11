@@ -2844,7 +2844,36 @@ export interface DistilledWorkflow {
   phases: WorkflowPhaseSpec[];
 }
 
+/** Issue #247: a memory entry distilled from a finished thread, pre-review. */
+export interface DistilledMemory {
+  type: "knowledge" | "convention" | "strategy";
+  title: string;
+  body: string;
+  citations: MemoryCitation[];
+}
+
 export type AutomationPreset = "hourly" | "daily" | "weekly";
+
+/** GitHub events an automation can fire on (issue #242). Polled, not webhooks. */
+export type AutomationTriggerEvent =
+  | "pr_opened"
+  | "pr_merged"
+  | "pr_labeled"
+  | "review_submitted"
+  | "push"
+  | "ci_completed";
+
+/**
+ * Event trigger. Filters apply only where they make sense: branch for push
+ * and ci_completed, label for pr_labeled, conclusion for ci_completed.
+ */
+export interface AutomationTrigger {
+  type: "github";
+  event: AutomationTriggerEvent;
+  branch?: string | null;
+  label?: string | null;
+  conclusion?: "success" | "failure" | "cancelled" | "timed_out" | null;
+}
 
 /** A scheduled agent run (Synara-style automation). */
 export interface AutomationInfo {
@@ -2865,6 +2894,12 @@ export interface AutomationInfo {
   consecutiveFailures?: number;
   /** Last fired thread whose outcome has not been counted yet. */
   pendingRunThreadId?: string | null;
+  /** Set: fires on GitHub events, preset/hour are ignored. Null: schedule. */
+  trigger?: AutomationTrigger | null;
+  /** Highest event already handled; null until the first poll baselines. */
+  triggerCursor?: number | string | null;
+  /** Notes the automation keeps between runs (its <automation-memory> block). */
+  memory?: string;
 }
 
 export interface AutomationWrite {
@@ -2876,6 +2911,8 @@ export interface AutomationWrite {
   preset: AutomationPreset;
   hour?: number | null;
   enabled?: boolean;
+  trigger?: AutomationTrigger | null;
+  memory?: string;
 }
 
 /**
@@ -5106,6 +5143,11 @@ export interface CoderApi {
      * the draft for review and saves it through workflows.save.
      */
     distill(input: { threadId: string }): Promise<DistilledWorkflow>;
+    /**
+     * #247: distills a finished thread into a shared-memory entry draft.
+     * Nothing is stored — the Memory tab opens it for review first.
+     */
+    distillMemory(input: { threadId: string }): Promise<DistilledMemory>;
     stop(input: { threadId: string }): Promise<void>;
     /**
      * Resume a parked quota-wait thread now (#462). Resends the last user

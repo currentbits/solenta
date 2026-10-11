@@ -86,7 +86,24 @@ export function normalizeDevAutomation(
     : existing
       ? existing.enabled
       : true;
-  return { name, projectId, prompt, provider, model, preset, hour, enabled };
+  const trigger = Object.prototype.hasOwnProperty.call(input, "trigger")
+    ? (input.trigger ?? null)
+    : (existing?.trigger ?? null);
+  const memory = Object.prototype.hasOwnProperty.call(input, "memory")
+    ? String(input.memory ?? "")
+    : (existing?.memory ?? "");
+  return {
+    name,
+    projectId,
+    prompt,
+    provider,
+    model,
+    preset,
+    hour,
+    enabled,
+    trigger,
+    memory,
+  };
 }
 
 export function createAutomations(ctx: DevCtx): Pick<CoderApi, "automations"> {
