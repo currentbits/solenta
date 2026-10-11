@@ -1012,4 +1012,8 @@ module.exports = {
   listFiles,
   lsFiles,
   searchFiles,
+  budgetPatch,
+  FILE_PATCH_CAP,
+  FILE_PATCH_MAX,
+  chunkPath,
 };

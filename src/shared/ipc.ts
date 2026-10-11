@@ -552,6 +552,15 @@ export interface TrashedThreadInfo {
   expiresAt: number;
 }
 
+/** One PR linked to a thread (#1527). `repo` is owner/name when not this project. */
+export interface PrLink {
+  number: number;
+  repo?: string | null;
+  url?: string | null;
+  state?: "OPEN" | "CLOSED" | "MERGED" | null;
+  title?: string | null;
+}
+
 export interface ThreadInfo {
   id: string;
   projectId: string;
@@ -580,6 +589,12 @@ export interface ThreadInfo {
   prNumber: number | null;
   /** Set alongside prNumber so the badge can link out without calling gh. */
   prUrl: string | null;
+  /**
+   * Linked PRs for this thread (#1527). Includes the primary (`prNumber`)
+   * and extras, including PRs in other repos. Absent on older rows;
+   * readers treat `[prNumber]` as the list.
+   */
+  prLinks?: PrLink[];
   status: ThreadStatus;
   /** Short reason a run failed ("Run error: ..."), null otherwise. Set when status becomes "failed" or "quota-wait", cleared when a run starts. */
   lastError: string | null;
@@ -1472,6 +1487,10 @@ export interface FileChange {
    * fit the list budget (fetch it when the file is opened).
    */
   patchOmitted?: "large" | "lazy";
+  /** Blob SHA when the host knows it (PR files API). */
+  blobSha?: string;
+  /** Review mark for the PR Code tab (#1527). */
+  viewed?: "unseen" | "viewed" | "changed";
 }
 
 /** Which changes the Git pane reviews (#1493). */
@@ -2524,6 +2543,45 @@ export type PrDetailResult =
 
 export type PrCommentResult =
   | { ok: true; url?: string }
+  | { ok: false; reason: string };
+
+/** One commit on a PR, for the Code tab picker (#1527). */
+export interface PrCommit {
+  sha: string;
+  title: string;
+}
+
+export type PrDiffResult =
+  | {
+      ok: true;
+      headSha: string;
+      commits: PrCommit[];
+      files: FileChange[];
+      patch: string;
+      truncated: boolean;
+    }
+  | { ok: false; reason: string };
+
+export interface PrViewedMark {
+  blobSha?: string;
+  headSha: string;
+}
+
+export type PrViewedResult =
+  | { ok: true; marks: Record<string, PrViewedMark> }
+  | { ok: false; reason: string };
+
+export interface PrStackEntry {
+  number: number;
+  title?: string;
+  headRefName: string;
+  baseRefName: string;
+  state: "OPEN" | "CLOSED" | "MERGED";
+  url?: string;
+}
+
+export type PrStackResult =
+  | { ok: true; stack: PrStackEntry[]; defaultBase: string }
   | { ok: false; reason: string };
 
 /** A GitHub or Linear issue fetched for thread start. */
@@ -4744,6 +4802,16 @@ export interface CoderApi {
      */
     setPrWatch(input: { threadId: string; enabled: boolean }): Promise<ThreadInfo>;
     /**
+     * Link a pull request to this thread (#1527), including PRs in
+     * another repo. First link becomes `prNumber`. Never bumps updatedAt.
+     */
+    linkPullRequest(input: {
+      threadId: string;
+      number: number;
+      repo?: string;
+      url?: string;
+    }): Promise<ThreadInfo>;
+    /**
      * Set or clear the per-thread scratch pad. Trims, caps at
      * THREAD_NOTES_MAX, empty string clears. Never bumps updatedAt.
      */
@@ -5402,6 +5470,7 @@ export interface CoderApi {
     prDetail(input: {
       projectPath: string;
       prNumber: number;
+      repo?: string;
     }): Promise<PrDetailResult>;
     /**
      * Rewrite a PR title and/or body via `gh pr edit`. Failures in-band.
@@ -5445,6 +5514,48 @@ export interface CoderApi {
       method?: MergeMethod;
       auto?: boolean;
     }): Promise<PrDetailResult>;
+    /**
+     * PR file list + lazy/capped patch for the Code tab (#1527).
+     * `commit` scopes to one SHA; `path` fetches that file only.
+     */
+    prDiff(input: {
+      projectPath: string;
+      prNumber: number;
+      repo?: string;
+      commit?: string;
+      path?: string;
+      full?: boolean;
+    }): Promise<PrDiffResult>;
+    prViewed(input: {
+      projectPath: string;
+      prNumber: number;
+      repo?: string;
+    }): Promise<PrViewedResult>;
+    prMarkViewed(input: {
+      projectPath: string;
+      prNumber: number;
+      repo?: string;
+      path: string;
+      headSha: string;
+      blobSha?: string;
+      viewed?: boolean;
+    }): Promise<PrViewedResult>;
+    prStack(input: {
+      projectPath: string;
+      prNumber: number;
+      repo?: string;
+    }): Promise<PrStackResult>;
+    prRebaseStack(input: {
+      projectPath: string;
+      prNumber: number;
+      repo?: string;
+    }): Promise<PrStackResult>;
+    prMergeStack(input: {
+      projectPath: string;
+      prNumber: number;
+      repo?: string;
+      method?: MergeMethod;
+    }): Promise<PrStackResult | PrDetailResult>;
     /**
      * Revert a thread's MERGED PR (#1531): branch off the latest base in a
      * temp worktree, revert the merge commit, push, and `gh pr create`

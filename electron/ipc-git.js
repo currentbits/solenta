@@ -265,13 +265,16 @@ module.exports = {
     return readPrTemplate(input && input.projectPath);
   },
   "git:prDetail": async (_ctx, input) => {
-    return viewPrDetail(input && input.projectPath, input && input.prNumber);
+    return viewPrDetail(input && input.projectPath, input && input.prNumber, {
+      repo: input && input.repo,
+    });
   },
   "git:prEdit": async (ctx, input) => {
     return editPr(
       input && input.projectPath,
       {
         prNumber: input && input.prNumber,
+        repo: input && input.repo,
         title: input && input.title,
         body: input && input.body,
       },
@@ -281,13 +284,14 @@ module.exports = {
   "git:prComment": async (_ctx, input) => {
     return commentPr(input && input.projectPath, {
       prNumber: input && input.prNumber,
+      repo: input && input.repo,
       body: input && input.body,
     });
   },
   "git:prClose": async (ctx, input) => {
     return closePr(
       input && input.projectPath,
-      { prNumber: input && input.prNumber },
+      { prNumber: input && input.prNumber, repo: input && input.repo },
       { store: ctx.store, broadcast: ctx.broadcast },
     );
   },
@@ -296,6 +300,7 @@ module.exports = {
       input && input.projectPath,
       {
         prNumber: input && input.prNumber,
+        repo: input && input.repo,
         undo: Boolean(input && input.undo),
       },
       { store: ctx.store, broadcast: ctx.broadcast },
@@ -306,11 +311,39 @@ module.exports = {
       input && input.projectPath,
       {
         prNumber: input && input.prNumber,
+        repo: input && input.repo,
         method: input && input.method,
         auto: Boolean(input && input.auto),
       },
       { store: ctx.store, broadcast: ctx.broadcast },
     );
+  },
+  "git:prDiff": async (ctx, input) => {
+    const { prDiff } = require("./prWorkspace.js");
+    return prDiff(input && input.projectPath, input, { store: ctx.store });
+  },
+  "git:prViewed": async (ctx, input) => {
+    const { prViewed } = require("./prWorkspace.js");
+    return prViewed(ctx.store, input);
+  },
+  "git:prMarkViewed": async (ctx, input) => {
+    const { prMarkViewed } = require("./prWorkspace.js");
+    return prMarkViewed(ctx.store, input);
+  },
+  "git:prStack": async (_ctx, input) => {
+    const { prStack } = require("./prWorkspace.js");
+    return prStack(input && input.projectPath, input);
+  },
+  "git:prRebaseStack": async (_ctx, input) => {
+    const { rebasePrStack } = require("./prWorkspace.js");
+    return rebasePrStack(input && input.projectPath, input);
+  },
+  "git:prMergeStack": async (ctx, input) => {
+    const { mergePrStack } = require("./prWorkspace.js");
+    return mergePrStack(input && input.projectPath, input, {
+      store: ctx.store,
+      broadcast: ctx.broadcast,
+    });
   },
   "git:prRevert": async (ctx, input) => {
     const { openRevertPr } = require("./revertPr.js");

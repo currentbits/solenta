@@ -1436,6 +1436,7 @@ describe("orch-server HTTP", () => {
     assert.deepEqual(names, [
       "ask_user",
       "hypothesis_record",
+      "link_pull_request",
       "peer_send",
       "preview",
       "refresh_worker_snapshot",

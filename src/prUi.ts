@@ -18,11 +18,23 @@ export interface SidebarPrBadge {
 export function sidebarPrBadge(input: {
   prNumber: number | null;
   prUrl: string | null;
+  prLinks?: Array<{ number: number; url?: string | null; repo?: string | null }> | null;
 }): SidebarPrBadge | null {
-  if (input.prNumber == null) return null;
+  const extras = Array.isArray(input.prLinks)
+    ? input.prLinks.filter((l) => l && l.number > 0)
+    : [];
+  const numbers = extras.map((l) => l.number);
+  if (input.prNumber != null && !numbers.includes(input.prNumber)) {
+    numbers.unshift(input.prNumber);
+  }
+  if (numbers.length === 0) return null;
   const href =
-    input.prUrl != null && input.prUrl.trim() !== "" ? input.prUrl : null;
-  return { label: `PR #${input.prNumber}`, href };
+    extras.find((l) => l.url && l.url.trim())?.url ||
+    (input.prUrl != null && input.prUrl.trim() !== "" ? input.prUrl : null);
+  return {
+    label: numbers.length > 1 ? `PRs ${numbers.map((n) => `#${n}`).join(" · ")}` : `PR #${numbers[0]}`,
+    href,
+  };
 }
 
 /** Prompt sent to the agent when the user clicks Create PR. */

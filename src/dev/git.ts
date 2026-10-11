@@ -261,6 +261,47 @@ export function createGit(ctx: DevCtx): Pick<CoderApi, "git" | "mergeQueue"> {
         if (!viewed.ok) return viewed;
         return { ok: true, pr: { ...viewed.pr, state: "MERGED", isDraft: false } };
       },
+      async prDiff(input: {
+        projectPath: string;
+        prNumber: number;
+        path?: string;
+      }) {
+        return {
+          ok: true as const,
+          headSha: "abc1234",
+          commits: [{ sha: "abc1234", title: `PR #${input.prNumber}` }],
+          files: input.path
+            ? []
+            : [
+                {
+                  path: "src/app.ts",
+                  status: "M",
+                  additions: 1,
+                  deletions: 0,
+                  viewed: "unseen" as const,
+                },
+              ],
+          patch: input.path
+            ? "diff --git a/src/app.ts b/src/app.ts\n--- a/src/app.ts\n+++ b/src/app.ts\n@@ -1 +1,2 @@\n keep\n+add\n"
+            : "",
+          truncated: false,
+        };
+      },
+      async prViewed() {
+        return { ok: true as const, marks: {} };
+      },
+      async prMarkViewed() {
+        return { ok: true as const, marks: {} };
+      },
+      async prStack() {
+        return { ok: true as const, stack: [], defaultBase: "main" };
+      },
+      async prRebaseStack() {
+        return { ok: true as const, stack: [], defaultBase: "main" };
+      },
+      async prMergeStack() {
+        return { ok: true as const, stack: [], defaultBase: "main" };
+      },
       async prRevert(input: { threadId: string }) {
         const t = ctx.threads.find((x) => x.id === input.threadId);
         if (!t || t.prNumber == null || t.prState !== "MERGED") {

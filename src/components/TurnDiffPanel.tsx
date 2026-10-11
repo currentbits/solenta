@@ -66,7 +66,7 @@ function PatchLine({
 }
 
 /** One file's hunks, unified or split, with syntax colour (#1493). */
-function FileHunks({ patch, mode }: { patch: ReviewFilePatch; mode: DiffViewMode }) {
+export function FileHunks({ patch, mode }: { patch: ReviewFilePatch; mode: DiffViewMode }) {
   const layout = useMemo(() => {
     let offset = 0;
     return patch.hunks.map((hunk) => {

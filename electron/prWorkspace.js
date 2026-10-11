@@ -23,6 +23,21 @@ const {
   mergeFlags,
   squashBodyArgs,
 } = require("./worktrees.js");
+const {
+  budgetPatch,
+  FILE_PATCH_CAP,
+  FILE_PATCH_MAX,
+  chunkPath,
+} = require("./worktrees-changes.js");
+const {
+  viewedKey,
+  viewedStatus,
+  detectPrStacks,
+  stackContaining,
+  parseRepoSlug,
+  normalizePrLinks,
+  upsertPrLink,
+} = require("./prLinks.js");
 
 const TEMPLATE_MAX_BYTES = 100 * 1024;
 const GH_USER = { timeout: GH_TIMEOUT_MS };
@@ -302,18 +317,23 @@ function parsePrDetailJson(stdout) {
   return info;
 }
 
+function ghOpts(repo) {
+  return repo ? { ...GH_USER, ghRepo: repo } : GH_USER;
+}
+
 /**
  * @param {string} cwd
  * @param {number} prNumber
+ * @param {string} [repo]
  */
-async function viewRaw(cwd, prNumber) {
+async function viewRaw(cwd, prNumber, repo) {
   const runs = [DETAIL_FIELDS, DETAIL_FIELDS_NO_COMMENTS, DETAIL_FIELDS_FALLBACK];
   let last = null;
   for (const fields of runs) {
     const viewed = await ghApiTryAsync(
       cwd,
       ["pr", "view", String(prNumber), "--json", fields],
-      GH_USER,
+      ghOpts(repo),
     );
     last = viewed;
     if (viewed.ok) return viewed;
@@ -331,13 +351,14 @@ async function viewRaw(cwd, prNumber) {
  * @param {string} projectPath
  * @param {unknown} prNumber
  */
-async function viewPrDetail(projectPath, prNumber) {
+async function viewPrDetail(projectPath, prNumber, opts) {
   const number = parsePrNumber(prNumber);
   if (number == null) return { ok: false, reason: "invalid PR number" };
   const repo = await requireGitHubRepo(projectPath);
   if (!repo.ok) return repo;
+  const other = parseRepoSlug(opts && opts.repo);
 
-  const viewed = await viewRaw(repo.cwd, number);
+  const viewed = await viewRaw(repo.cwd, number, other);
   if (!viewed.ok) {
     return { ok: false, reason: ghReason(viewed, "gh pr view failed") };
   }
@@ -360,6 +381,11 @@ function scanOutbound(text, where) {
   }
 }
 
+function threadHasPr(thread, num) {
+  if (thread && thread.prNumber === num) return true;
+  return normalizePrLinks(thread).some((l) => l.number === num && !l.repo);
+}
+
 function stampMatchingThreads(store, projectPath, prNumber, patch) {
   if (!store || typeof store.getThreads !== "function") return;
   if (typeof store.updateThread !== "function") return;
@@ -376,9 +402,14 @@ function stampMatchingThreads(store, projectPath, prNumber, patch) {
   }
   let changed = false;
   for (const t of store.getThreads()) {
-    if (!t || t.prNumber !== num) continue;
+    if (!t || !threadHasPr(t, num)) continue;
     if (projectId && t.projectId && t.projectId !== projectId) continue;
-    store.updateThread(t.id, patch);
+    const links = upsertPrLink(normalizePrLinks(t), {
+      number: num,
+      url: patch.prUrl,
+      state: patch.prState,
+    });
+    store.updateThread(t.id, { ...patch, prLinks: links });
     changed = true;
   }
   if (changed && typeof store.save === "function") store.save();
@@ -406,16 +437,17 @@ async function editPr(projectPath, input, opts) {
 
   const repo = await requireGitHubRepo(projectPath);
   if (!repo.ok) return repo;
+  const other = parseRepoSlug(input && input.repo);
 
   /** @type {string[]} */
   const args = ["pr", "edit", String(number)];
   if (title != null) args.push("--title", title);
   if (body != null) args.push("--body", body);
-  const edited = await ghApiTryAsync(repo.cwd, args, GH_USER);
+  const edited = await ghApiTryAsync(repo.cwd, args, ghOpts(other));
   if (!edited.ok) {
     return { ok: false, reason: ghReason(edited, "gh pr edit failed") };
   }
-  const viewed = await viewPrDetail(projectPath, number);
+  const viewed = await viewPrDetail(projectPath, number, { repo: other });
   if (viewed.ok && opts && opts.store) {
     stampMatchingThreads(opts.store, projectPath, number, {
       prUrl: viewed.pr.url,
@@ -451,7 +483,7 @@ async function commentPr(projectPath, input) {
   const posted = await ghApiTryAsync(
     repo.cwd,
     ["pr", "comment", String(number), "--body", text],
-    GH_USER,
+    ghOpts(parseRepoSlug(input && input.repo)),
   );
   if (!posted.ok) {
     return { ok: false, reason: ghReason(posted, "gh pr comment failed") };
@@ -473,15 +505,16 @@ async function closePr(projectPath, input, opts) {
   const repo = await requireGitHubRepo(projectPath);
   if (!repo.ok) return repo;
 
+  const other = parseRepoSlug(input && input.repo);
   const closed = await ghApiTryAsync(
     repo.cwd,
     ["pr", "close", String(number)],
-    GH_USER,
+    ghOpts(other),
   );
   if (!closed.ok) {
     return { ok: false, reason: ghReason(closed, "gh pr close failed") };
   }
-  const viewed = await viewPrDetail(projectPath, number);
+  const viewed = await viewPrDetail(projectPath, number, { repo: other });
   if (viewed.ok && opts && opts.store) {
     stampMatchingThreads(opts.store, projectPath, number, {
       prUrl: viewed.pr.url,
@@ -515,11 +548,15 @@ async function readyPr(projectPath, input, opts) {
 
   const args = ["pr", "ready", String(number)];
   if (input && input.undo) args.push("--undo");
-  const ready = await ghApiTryAsync(repo.cwd, args, GH_USER);
+  const ready = await ghApiTryAsync(
+    repo.cwd,
+    args,
+    ghOpts(parseRepoSlug(input && input.repo)),
+  );
   if (!ready.ok) {
     return { ok: false, reason: ghReason(ready, "gh pr ready failed") };
   }
-  return viewPrDetail(projectPath, number);
+  return viewPrDetail(projectPath, number, { repo: input && input.repo });
 }
 
 /**
@@ -543,17 +580,18 @@ async function mergePrAt(projectPath, input, opts) {
   }
   const repo = await requireGitHubRepo(projectPath);
   if (!repo.ok) return repo;
+  const other = parseRepoSlug(input && input.repo);
 
   const body = await squashBodyArgs(opts && opts.store, repo.cwd, number, input);
   const merged = await ghApiTryAsync(
     repo.cwd,
     ["pr", "merge", String(number), ...flags, ...body],
-    GH_USER,
+    ghOpts(other),
   );
   if (!merged.ok) {
     return { ok: false, reason: ghReason(merged, "gh pr merge failed") };
   }
-  const viewed = await viewPrDetail(projectPath, number);
+  const viewed = await viewPrDetail(projectPath, number, { repo: other });
   if (viewed.ok && opts && opts.store) {
     stampMatchingThreads(opts.store, projectPath, number, {
       prUrl: viewed.pr.url,
@@ -571,6 +609,405 @@ async function mergePrAt(projectPath, input, opts) {
   return viewed;
 }
 
+async function originSlug(cwd) {
+  const remote = await gitTryAsync(cwd, ["remote", "get-url", "origin"]);
+  if (!remote.ok) return null;
+  return parseRepoSlug(String(remote.stdout || "").trim());
+}
+
+function wrapGithubPatch(filePath, patch) {
+  const body = String(patch || "");
+  if (!body.trim()) return "";
+  if (/^diff --git /m.test(body)) return body.endsWith("\n") ? body : `${body}\n`;
+  return `diff --git a/${filePath} b/${filePath}\n--- a/${filePath}\n+++ b/${filePath}\n${body.endsWith("\n") ? body : `${body}\n`}`;
+}
+
+function parseFilesJson(raw) {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  for (const row of raw) {
+    if (!row || typeof row !== "object") continue;
+    const filePath = String(row.path || row.filename || "").trim();
+    if (!filePath) continue;
+    const status = String(row.status || "M").charAt(0).toUpperCase() || "M";
+    out.push({
+      path: filePath,
+      status: status === "R" ? "R" : status,
+      additions: optionalCount(row.additions) || 0,
+      deletions: optionalCount(row.deletions) || 0,
+      ...(row.sha || row.blobSha ? { blobSha: String(row.sha || row.blobSha) } : {}),
+    });
+  }
+  return out;
+}
+
+function parseCommitsJson(raw) {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  for (const row of raw) {
+    if (!row || typeof row !== "object") continue;
+    const sha = String(row.oid || row.sha || row.commit || "").trim();
+    if (!sha) continue;
+    const title = String(
+      row.messageHeadline ||
+        row.title ||
+        (row.commit && row.commit.message) ||
+        "",
+    ).split("\n")[0];
+    out.push({ sha, title });
+  }
+  return out;
+}
+
+function filesFromPatch(patch) {
+  const out = [];
+  for (const chunk of String(patch || "").split(/(?=^diff --git )/m)) {
+    const filePath = chunkPath(chunk);
+    if (!filePath) continue;
+    let additions = 0;
+    let deletions = 0;
+    for (const line of chunk.split("\n")) {
+      if (line.startsWith("+++") || line.startsWith("---")) continue;
+      if (line.startsWith("+")) additions += 1;
+      else if (line.startsWith("-")) deletions += 1;
+    }
+    out.push({ path: filePath, status: "M", additions, deletions });
+  }
+  return out;
+}
+
+function applyViewed(files, marks, headSha) {
+  return files.map((file) => ({
+    ...file,
+    viewed: viewedStatus(marks[file.path], {
+      blobSha: file.blobSha,
+      headSha,
+    }),
+  }));
+}
+
+function readViewedMarks(store, key) {
+  if (!store || typeof store.getPrViewedMarks !== "function") return {};
+  return store.getPrViewedMarks(key) || {};
+}
+
+/**
+ * PR file list + lazy/capped patch (#1527). Same budget as git.diff.
+ */
+async function prDiff(projectPath, input, opts) {
+  const number = parsePrNumber(input && input.prNumber);
+  if (number == null) return { ok: false, reason: "invalid PR number" };
+  const repo = await requireGitHubRepo(projectPath);
+  if (!repo.ok) return repo;
+  const other = parseRepoSlug(input && input.repo);
+  const slug = other || (await originSlug(repo.cwd));
+  const commit = input && input.commit ? String(input.commit).trim() : "";
+  const only = input && input.path ? String(input.path).trim() : "";
+  const full = Boolean(input && input.full);
+  const key = viewedKey(slug, number);
+  const marks = readViewedMarks(opts && opts.store, key);
+
+  const meta = await ghApiTryAsync(
+    repo.cwd,
+    ["pr", "view", String(number), "--json", "commits,headRefOid,files,url"],
+    ghOpts(other),
+  );
+  let headSha = "";
+  let commits = [];
+  let files = [];
+  if (meta.ok) {
+    try {
+      const data = JSON.parse(String(meta.stdout || "").trim());
+      headSha = String((data && data.headRefOid) || "").trim();
+      commits = parseCommitsJson(data && data.commits);
+      files = parseFilesJson(data && data.files);
+    } catch {
+      /* fall through to the patch */
+    }
+  }
+
+  if (commit && slug) {
+    const one = await ghApiTryAsync(
+      repo.cwd,
+      ["api", `repos/${slug}/commits/${commit}`],
+      GH_USER,
+    );
+    if (!one.ok) return { ok: false, reason: ghReason(one, "commit diff failed") };
+    let data;
+    try {
+      data = JSON.parse(String(one.stdout || "").trim());
+    } catch {
+      return { ok: false, reason: "gh returned unparseable commit JSON" };
+    }
+    const commitFiles = Array.isArray(data && data.files) ? data.files : [];
+    files = parseFilesJson(
+      commitFiles.map((f) => ({
+        path: f.filename,
+        filename: f.filename,
+        additions: f.additions,
+        deletions: f.deletions,
+        status: f.status,
+        sha: f.sha,
+      })),
+    );
+    if (only) {
+      const row = commitFiles.find((f) => f.filename === only);
+      const patch = wrapGithubPatch(only, row && row.patch);
+      const cap = full ? FILE_PATCH_MAX : FILE_PATCH_CAP;
+      return {
+        ok: true,
+        headSha: headSha || commit,
+        commits,
+        files: [],
+        patch: patch.length > cap ? patch.slice(0, cap) : patch,
+        truncated: patch.length > cap,
+      };
+    }
+    const raw = commitFiles.map((f) => wrapGithubPatch(f.filename, f.patch)).join("");
+    const budgeted = budgetPatch(raw);
+    for (const [file, why] of budgeted.omitted) {
+      const entry = files.find((f) => f.path === file);
+      if (entry) entry.patchOmitted = why;
+    }
+    return {
+      ok: true,
+      headSha: headSha || commit,
+      commits,
+      files: applyViewed(files, marks, headSha || commit),
+      patch: budgeted.patch,
+      truncated: false,
+    };
+  }
+
+  const diffArgs = ["pr", "diff", String(number)];
+  if (only) diffArgs.push("--", only);
+  const diffed = await ghApiTryAsync(repo.cwd, diffArgs, ghOpts(other));
+  if (!diffed.ok) return { ok: false, reason: ghReason(diffed, "gh pr diff failed") };
+  const rawPatch = String(diffed.stdout || "");
+
+  if (only) {
+    const cap = full ? FILE_PATCH_MAX : FILE_PATCH_CAP;
+    return {
+      ok: true,
+      headSha,
+      commits,
+      files: [],
+      patch: rawPatch.length > cap ? rawPatch.slice(0, cap) : rawPatch,
+      truncated: rawPatch.length > cap,
+    };
+  }
+
+  if (files.length === 0) files = filesFromPatch(rawPatch);
+  const budgeted = budgetPatch(rawPatch);
+  for (const [file, why] of budgeted.omitted) {
+    const entry = files.find((f) => f.path === file);
+    if (entry) entry.patchOmitted = why;
+  }
+  return {
+    ok: true,
+    headSha,
+    commits,
+    files: applyViewed(files, marks, headSha),
+    patch: budgeted.patch,
+    truncated: false,
+  };
+}
+
+function prViewed(store, input) {
+  const number = parsePrNumber(input && input.prNumber);
+  if (number == null) return { ok: false, reason: "invalid PR number" };
+  const key = viewedKey(parseRepoSlug(input && input.repo), number);
+  return { ok: true, marks: readViewedMarks(store, key) };
+}
+
+function prMarkViewed(store, input) {
+  const number = parsePrNumber(input && input.prNumber);
+  if (number == null) return { ok: false, reason: "invalid PR number" };
+  const filePath = String((input && input.path) || "").trim();
+  if (!filePath) return { ok: false, reason: "missing path" };
+  const headSha = String((input && input.headSha) || "").trim();
+  if (!headSha) return { ok: false, reason: "missing head SHA" };
+  if (!store || typeof store.setPrViewedMark !== "function") {
+    return { ok: false, reason: "store unavailable" };
+  }
+  const key = viewedKey(parseRepoSlug(input && input.repo), number);
+  const viewed = input && input.viewed === false
+    ? null
+    : {
+        headSha,
+        ...(input && input.blobSha ? { blobSha: String(input.blobSha) } : {}),
+      };
+  store.setPrViewedMark(key, filePath, viewed);
+  return { ok: true, marks: readViewedMarks(store, key) };
+}
+
+function defaultBaseName(name) {
+  const raw = refKey(name);
+  return raw || "main";
+}
+
+function refKey(name) {
+  return String(name || "").trim().replace(/^refs\/heads\//, "");
+}
+
+/**
+ * Stack containing this PR, or empty when it is not in a chain.
+ */
+async function prStack(projectPath, input) {
+  const number = parsePrNumber(input && input.prNumber);
+  if (number == null) return { ok: false, reason: "invalid PR number" };
+  const repo = await requireGitHubRepo(projectPath);
+  if (!repo.ok) return repo;
+  const other = parseRepoSlug(input && input.repo);
+  const listed = await ghApiTryAsync(
+    repo.cwd,
+    [
+      "pr",
+      "list",
+      "--state",
+      "all",
+      "--limit",
+      "100",
+      "--json",
+      "number,title,url,state,headRefName,baseRefName",
+    ],
+    ghOpts(other),
+  );
+  if (!listed.ok) return { ok: false, reason: ghReason(listed, "gh pr list failed") };
+  let rows = [];
+  try {
+    const data = JSON.parse(String(listed.stdout || "").trim());
+    rows = (Array.isArray(data) ? data : []).map((row) => ({
+      number: Number(row.number),
+      title: row.title != null ? String(row.title) : "",
+      url: row.url != null ? String(row.url) : "",
+      state: normalizeState(row.state),
+      headRefName: String(row.headRefName || ""),
+      baseRefName: String(row.baseRefName || ""),
+    }));
+  } catch {
+    return { ok: false, reason: "gh returned unparseable PR JSON" };
+  }
+  const current = rows.find((p) => p.number === number);
+  const stack = stackContaining(detectPrStacks(rows), number) || [];
+  // The stack's landing base is the BOTTOM PR's base (usually main), not
+  // the viewed PR's. Using the top PR's base here would retarget the next
+  // PR onto a sibling branch after merge deletes the old head.
+  const bottom = stack[0] || current;
+  const defaultBase = defaultBaseName(bottom && bottom.baseRefName);
+  return { ok: true, stack, defaultBase: defaultBase || "main" };
+}
+
+async function retargetPrBase(cwd, prNumber, base, repo) {
+  const edited = await ghApiTryAsync(
+    cwd,
+    ["pr", "edit", String(prNumber), "--base", base],
+    ghOpts(repo),
+  );
+  if (!edited.ok) return { ok: false, reason: ghReason(edited, "gh pr edit --base failed") };
+  return { ok: true };
+}
+
+/**
+ * Merge the stack bottom-up. After each merge, retarget the next PR onto
+ * the default base before GitHub deletes the old head branch.
+ */
+async function mergePrStack(projectPath, input, opts) {
+  const stacked = await prStack(projectPath, input);
+  if (!stacked.ok) return stacked;
+  if (stacked.stack.length < 2) {
+    return { ok: false, reason: "not a stacked pull request" };
+  }
+  const open = stacked.stack.filter((p) => p.state === "OPEN");
+  if (open.length === 0) return { ok: false, reason: "stack already merged" };
+  const repo = await requireGitHubRepo(projectPath);
+  if (!repo.ok) return repo;
+  const other = parseRepoSlug(input && input.repo);
+  const base = stacked.defaultBase || "main";
+  for (let i = 0; i < open.length; i += 1) {
+    const current = open[i];
+    const merged = await mergePrAt(
+      projectPath,
+      { prNumber: current.number, method: input && input.method },
+      opts,
+    );
+    if (!merged.ok) return merged;
+    const next = open[i + 1];
+    if (next) {
+      const retarget = await retargetPrBase(repo.cwd, next.number, base, other);
+      if (!retarget.ok) return retarget;
+    }
+  }
+  return { ok: true, stack: open, defaultBase: base };
+}
+
+function rmTree(dir) {
+  try {
+    fs.rmSync(dir, { recursive: true, force: true });
+  } catch {
+    /* best-effort */
+  }
+}
+
+/**
+ * Rebase each PR onto the previous head (bottom onto the default base)
+ * and force-push with lease.
+ */
+async function rebasePrStack(projectPath, input) {
+  const stacked = await prStack(projectPath, input);
+  if (!stacked.ok) return stacked;
+  if (stacked.stack.length < 2) {
+    return { ok: false, reason: "not a stacked pull request" };
+  }
+  const repo = await requireGitHubRepo(projectPath);
+  if (!repo.ok) return repo;
+  const fetched = await gitTryAsync(repo.cwd, ["fetch", "origin"]);
+  if (!fetched.ok) {
+    return { ok: false, reason: tailErr(fetched.stderr || fetched.combined, "git fetch failed") };
+  }
+  const base = stacked.defaultBase || "main";
+  const open = stacked.stack.filter((p) => p.state === "OPEN");
+  for (let i = 0; i < open.length; i += 1) {
+    const current = open[i];
+    const onto = i === 0 ? `origin/${base}` : `origin/${open[i - 1].headRefName}`;
+    const tmp = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "solenta-stack-"));
+    const ref = `refs/solenta-stack/${current.number}`;
+    try {
+      const got = await gitTryAsync(repo.cwd, [
+        "fetch",
+        "origin",
+        `pull/${current.number}/head:${ref}`,
+      ]);
+      if (!got.ok) {
+        return { ok: false, reason: tailErr(got.stderr || got.combined, `fetch #${current.number} failed`) };
+      }
+      const added = await gitTryAsync(repo.cwd, ["worktree", "add", "--detach", tmp, ref]);
+      if (!added.ok) {
+        return { ok: false, reason: tailErr(added.stderr || added.combined, `worktree #${current.number} failed`) };
+      }
+      const rebased = await gitTryAsync(tmp, ["rebase", onto]);
+      if (!rebased.ok) {
+        await gitTryAsync(tmp, ["rebase", "--abort"]);
+        return { ok: false, reason: `Rebase of #${current.number} onto ${onto} failed` };
+      }
+      const pushed = await gitTryAsync(tmp, [
+        "push",
+        "--force-with-lease",
+        "origin",
+        `HEAD:refs/heads/${current.headRefName}`,
+      ]);
+      if (!pushed.ok) {
+        return { ok: false, reason: tailErr(pushed.stderr || pushed.combined, `push #${current.number} failed`) };
+      }
+    } finally {
+      await gitTryAsync(repo.cwd, ["worktree", "remove", "--force", tmp]);
+      await gitTryAsync(repo.cwd, ["update-ref", "-d", ref]);
+      rmTree(tmp);
+    }
+  }
+  return { ok: true, stack: open, defaultBase: base };
+}
+
 module.exports = {
   TEMPLATE_MAX_BYTES,
   collectPrTemplates,
@@ -583,4 +1020,10 @@ module.exports = {
   closePr,
   readyPr,
   mergePrAt,
+  prDiff,
+  prViewed,
+  prMarkViewed,
+  prStack,
+  mergePrStack,
+  rebasePrStack,
 };
