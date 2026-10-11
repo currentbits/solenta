@@ -167,6 +167,7 @@ const BY_SCOPE = {
     "threads:restore",
     "digest:markSeen",
     "runs:distill",
+    "runs:distillMemory",
     "runs:start",
     "runs:steer",
     "runs:sendQueued",

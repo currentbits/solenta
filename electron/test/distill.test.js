@@ -12,6 +12,7 @@ const {
   distillThread,
   fallbackDistill,
   parseDistilled,
+  distillMemory,
 } = require("../distill.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
 const { rmTree } = require("./support/rmTree.js");
@@ -289,6 +290,92 @@ describe("runs:distill IPC", () => {
       if (prevDisable === undefined) delete process.env.CODER_FM_DISABLE;
       else process.env.CODER_FM_DISABLE = prevDisable;
       await rmTree(tmpDir);
+    }
+  });
+});
+
+describe("distillMemory", () => {
+  let tmpDir;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-distill-mem-"));
+  });
+
+  afterEach(async () => {
+    await rmTree(tmpDir);
+  });
+
+  it("parses fm JSON, keeps a valid type and cites the thread", async () => {
+    const th = thread();
+    const store = makeStore(th, firstUser("Fix the flaky login test"));
+    const out = {
+      type: "convention",
+      title: "Freeze the clock in login specs",
+      body: "The flake was a real-clock race; inject the clock.",
+    };
+    const bin = writeFakeFm(
+      tmpDir,
+      `console.log(${JSON.stringify("```json\n" + JSON.stringify(out) + "\n```")});`,
+    );
+    const draft = await distillMemory(store, th.id, {
+      env: { ...process.env, CODER_FM_BIN: bin },
+    });
+    assert.deepEqual(draft, {
+      ...out,
+      citations: [{ kind: "thread", id: "t1" }],
+    });
+  });
+
+  it("coerces an unknown type to knowledge", async () => {
+    const th = thread();
+    const store = makeStore(th, firstUser("x"));
+    const draft = await distillMemory(store, th.id, {
+      fmRun: async () => JSON.stringify({ type: "run", title: "T", body: "B" }),
+    });
+    assert.equal(draft.type, "knowledge");
+  });
+
+  it("falls back to title + closing assistant text when fm is unavailable", async () => {
+    const th = thread();
+    const store = makeStore(th, firstUser("Fix the flaky login test"));
+    const draft = await distillMemory(store, th.id, {
+      env: { ...process.env, CODER_FM_BIN: "/nope/fm" },
+    });
+    assert.equal(draft.type, "knowledge");
+    assert.equal(draft.title, th.title);
+    assert.equal(draft.body, "I'll look at the failing spec.");
+    assert.deepEqual(draft.citations, [{ kind: "thread", id: "t1" }]);
+  });
+
+  it("falls back when fm omits the body", async () => {
+    const th = thread();
+    const store = makeStore(th, firstUser("x"));
+    const draft = await distillMemory(store, th.id, {
+      fmRun: async () => JSON.stringify({ title: "only a title" }),
+    });
+    assert.equal(draft.title, th.title);
+  });
+
+  it("rejects an unknown thread", async () => {
+    await assert.rejects(
+      () => distillMemory(makeStore(thread(), []), "missing"),
+      /Unknown thread/,
+    );
+  });
+
+  it("is reachable over runs:distillMemory", async () => {
+    const prevDisable = process.env.CODER_FM_DISABLE;
+    process.env.CODER_FM_DISABLE = "1";
+    try {
+      const th = thread();
+      const draft = await IPC_HANDLERS["runs:distillMemory"](
+        { store: makeStore(th, firstUser("x")) },
+        { threadId: th.id },
+      );
+      assert.equal(draft.title, th.title);
+    } finally {
+      if (prevDisable === undefined) delete process.env.CODER_FM_DISABLE;
+      else process.env.CODER_FM_DISABLE = prevDisable;
     }
   });
 });

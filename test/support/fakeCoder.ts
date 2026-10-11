@@ -24,6 +24,7 @@ import type {
   CheckpointInfo,
   CoderApi,
   DistilledWorkflow,
+  DistilledMemory,
   RunStatInfo,
   DevServerState,
   TerminalState,
@@ -283,6 +284,8 @@ export interface FakeOptions {
   droppedFilePath?: (file: File) => string;
   /** Override runs.distill result. */
   distill?: DistilledWorkflow;
+  /** Override runs.distillMemory result. */
+  distillMemory?: DistilledMemory;
   /** Override git.gcScan result (default: empty). */
   gcScan?: GcScanResult;
   /** Override settings.testWebhook result (default: HTTP 200). */
@@ -3065,6 +3068,17 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
                 model: null,
               },
             ],
+          },
+        ),
+      distillMemory: (input: unknown) =>
+        rec(
+          "runs.distillMemory",
+          [input],
+          opts.distillMemory ?? {
+            type: "knowledge",
+            title: "Distilled lesson",
+            body: "What future sessions should know.",
+            citations: [{ kind: "thread", id: "t1" }],
           },
         ),
       stop: (input: unknown) => rec("runs.stop", [input], undefined),
