@@ -393,10 +393,19 @@ export function ExternalApprovalCard({ thread }: { thread: ThreadInfo }) {
   );
 }
 
-export function PlanCard({ thread }: { thread: ThreadInfo }) {
+export function PlanCard({
+  thread,
+  forceOpen = false,
+}: {
+  thread: ThreadInfo;
+  forceOpen?: boolean;
+}) {
   const steps = thread.planSteps ?? [];
   // No steps yet means the prose IS the overview, so it starts expanded.
   const [open, setOpen] = useState(steps.length === 0);
+  useEffect(() => {
+    if (forceOpen) setOpen(true);
+  }, [forceOpen]);
   const done = steps.filter((s) => s.status === "done").length;
   return (
     <div className={styles.planCard} data-plan-card="" data-page-block="">

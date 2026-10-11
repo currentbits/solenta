@@ -130,6 +130,7 @@ function ToolCallCard({
     return (
       <article
         className={`${styles.message}${entered ? ` ${styles.streamIn}` : ""}`}
+        data-message-id={message.id}
         data-stream-in={entered ? "" : undefined}
       >
         <p>{message.text}</p>
@@ -146,6 +147,7 @@ function ToolCallCard({
   return (
     <section
       className={`${bare ? styles.toolBare : `${styles.card} ${styles.toolCard}`}${entered ? ` ${styles.streamIn}` : ""}`}
+      data-message-id={message.id}
       data-stream-in={entered ? "" : undefined}
     >
       <div
@@ -236,6 +238,7 @@ function ThinkingCard({
     <section
       className={`${bare ? styles.toolBare : `${styles.card} ${styles.toolCard}`}${entered ? ` ${styles.streamIn}` : ""}`}
       data-thinking=""
+      data-message-id={message.id}
       data-stream-in={entered ? "" : undefined}
     >
       <div className={styles.toolHeader} onClick={() => setManual(!open)}>
