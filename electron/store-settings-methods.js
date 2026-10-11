@@ -99,6 +99,7 @@ class StoreSettingsMethods {
       subagentPool: n.subagentPool,
       otel: n.otel,
       linearApiKey: n.linearApiKey,
+      sentryAuthToken: n.sentryAuthToken,
       githubHosts: n.githubHosts,
       webhook: n.webhook,
       modelPrices: n.modelPrices,
@@ -412,6 +413,17 @@ class StoreSettingsMethods {
         this.data.settings.linearApiKey = t || null;
       } else {
         throw new Error("linearApiKey must be a string or null");
+      }
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "sentryAuthToken")) {
+      const v = patch.sentryAuthToken;
+      if (v === null || v === "") {
+        this.data.settings.sentryAuthToken = null;
+      } else if (typeof v === "string") {
+        const t = v.trim();
+        this.data.settings.sentryAuthToken = t || null;
+      } else {
+        throw new Error("sentryAuthToken must be a string or null");
       }
     }
     if (Object.prototype.hasOwnProperty.call(patch, "githubHosts")) {
