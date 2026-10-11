@@ -267,7 +267,7 @@ describe("automation CRUD + scheduler", () => {
     }
 
     assert.equal(started.length, 1);
-    assert.equal(started[0].prompt, "do the thing");
+    assert.match(started[0].prompt, /^do the thing\n\n\[Automation memory\]/);
     const thread = store.getThreads()[0];
     assert.ok(thread);
     assert.equal(thread.title, "Hourly sweep");

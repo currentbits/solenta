@@ -10,6 +10,7 @@ const { normalizeBtwCards } = require("./btw.js");
 const { normalizePendingQuestion } = require("./questions.js");
 const { normalizeMessagePins } = require("./messagePins.js");
 const { normalizeQueued } = require("./queued.js");
+const { normalizeTrigger } = require("./automation-triggers.js");
 const { branchPrefixError } = require("./worktrees-branches.js");
 const { normalizeTrustHash } = require("./repoConfig.js");
 const {
@@ -178,6 +179,13 @@ function migrateAutomation(a) {
         : 0,
     pendingRunThreadId:
       typeof a.pendingRunThreadId === "string" ? a.pendingRunThreadId : null,
+    // #242: null = schedule mode. Cursor is a PR number, event id, or ISO time.
+    trigger: normalizeTrigger(a.trigger),
+    triggerCursor:
+      typeof a.triggerCursor === "number" || typeof a.triggerCursor === "string"
+        ? a.triggerCursor
+        : null,
+    memory: typeof a.memory === "string" ? a.memory : "",
   };
 }
 

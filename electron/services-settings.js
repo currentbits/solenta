@@ -285,7 +285,29 @@ function normalizeAutomationInput(store, input, existing) {
     enabled = Boolean(src.enabled);
   }
 
-  return { name, projectId, prompt, provider, model, preset, hour, enabled };
+  const { parseTriggerInput } = require("./automation-triggers.js");
+  const trigger = Object.prototype.hasOwnProperty.call(src, "trigger")
+    ? parseTriggerInput(src.trigger)
+    : base.trigger || null;
+
+  const { MAX_MEMORY_CHARS } = require("./automations.js");
+  const memoryRaw = Object.prototype.hasOwnProperty.call(src, "memory")
+    ? src.memory
+    : base.memory;
+  const memory = memoryRaw != null ? String(memoryRaw).slice(0, MAX_MEMORY_CHARS) : "";
+
+  return {
+    name,
+    projectId,
+    prompt,
+    provider,
+    model,
+    preset,
+    hour,
+    enabled,
+    trigger,
+    memory,
+  };
 }
 
 /**
@@ -311,6 +333,7 @@ function addAutomation(store, input) {
     lastError: null,
     consecutiveFailures: 0,
     pendingRunThreadId: null,
+    triggerCursor: null,
   };
   const list = store.getAutomations().slice();
   list.push(created);
@@ -335,10 +358,15 @@ function updateAutomation(store, input) {
     fields.preset !== existing.preset || fields.hour !== existing.hour;
   // #160: turning it back on is the explicit re-enable after an auto-pause.
   const reEnabled = fields.enabled && !existing.enabled;
+  // #242: a different event (or filter) is a new cursor space; re-baseline
+  // so it never fires on history.
+  const triggerChanged =
+    JSON.stringify(fields.trigger) !== JSON.stringify(existing.trigger || null);
   const updated = {
     ...existing,
     ...fields,
     ...(reEnabled ? { consecutiveFailures: 0, lastError: null } : {}),
+    ...(triggerChanged ? { triggerCursor: null } : {}),
     nextRunAt: scheduleChanged
       ? nextFire(fields.preset, fields.hour, Date.now())
       : existing.nextRunAt,
