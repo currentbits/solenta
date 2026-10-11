@@ -211,6 +211,52 @@ describe("mergeAutomations", () => {
     assert.equal(store.getAutomations().length, 0);
   });
 
+  it("keeps overlays when solenta.json is invalid; still GCs empty successful parse", () => {
+    const brokenDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-auto-"));
+    fs.writeFileSync(path.join(brokenDir, "solenta.json"), "{ not json");
+    const emptyDir = tempRepo([]);
+    const store = new Store(path.join(emptyDir, "store.json"));
+    store.setProjects([
+      { id: "broken", name: "broken", path: brokenDir },
+      { id: "empty", name: "empty", path: emptyDir },
+    ]);
+    store.setAutomations([
+      {
+        id: "shared:broken:keep-me",
+        projectId: "broken",
+        scope: "project",
+        name: "Keep",
+        prompt: "x",
+        provider: "claude",
+        preset: "hourly",
+        hour: null,
+        enabled: true,
+        lastRunAt: null,
+        nextRunAt: 0,
+        lastError: null,
+      },
+      {
+        id: "shared:empty:gone",
+        projectId: "empty",
+        scope: "project",
+        name: "Gone",
+        prompt: "x",
+        provider: "claude",
+        preset: "hourly",
+        hour: null,
+        enabled: true,
+        lastRunAt: null,
+        nextRunAt: 0,
+        lastError: null,
+      },
+    ]);
+    assert.equal(readAutomations(brokenDir).error != null, true);
+    assert.equal(gcOrphanOverlays(store), true);
+    const left = store.getAutomations();
+    assert.equal(left.length, 1);
+    assert.equal(left[0].id, "shared:broken:keep-me");
+  });
+
   it("listAutomations returns the merge (same ids)", () => {
     const dir = tempRepo([ROW]);
     const store = new Store(path.join(dir, "store.json"));

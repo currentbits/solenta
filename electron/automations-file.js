@@ -354,22 +354,31 @@ function canAutoFire(store, auto) {
 
 /**
  * Drop store overlays whose slug is no longer in any local file.
- * Mutates the store list; does not save.
+ * A parse-error file keeps that project's existing overlays (invalid
+ * JSON is not treated as an empty list). Mutates the store list; does
+ * not save.
  *
  * @param {import("./store").Store} store
  * @returns {boolean} true if the list changed
  */
 function gcOrphanOverlays(store) {
+  const list = store.getAutomations() || [];
   const valid = new Set();
   for (const project of store.getProjects() || []) {
     if (!isLocalProject(project)) continue;
     const section = readAutomations(project.path);
-    if (section.error) continue;
+    if (section.error) {
+      for (const a of list) {
+        if (a && a.scope === "project" && a.projectId === project.id) {
+          valid.add(a.id);
+        }
+      }
+      continue;
+    }
     for (const row of section.automations) {
       valid.add(sharedId(project.id, row.id));
     }
   }
-  const list = store.getAutomations() || [];
   const next = list.filter((a) => !a || a.scope !== "project" || valid.has(a.id));
   if (next.length === list.length) return false;
   store.setAutomations(next);
