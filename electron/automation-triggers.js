@@ -129,7 +129,9 @@ async function fetchSource(remote, source, rest, token) {
  * @returns {{ all: Array<string | number>, matched: Array<{ key: string | number, text: string }> }}
  */
 function matchRows(trigger, rows, remote) {
-  const web = `https://${remote.host}/${remote.owner}/${remote.repo}`;
+  const web = remote
+    ? `https://${remote.host}/${remote.owner}/${remote.repo}`
+    : "";
   /** @type {Array<string | number>} */
   const all = [];
   /** @type {Array<{ key: string | number, text: string }>} */
@@ -179,6 +181,55 @@ function matchRows(trigger, rows, remote) {
         });
         break;
       }
+      case "linear_issue_created": {
+        const key = typeof r.createdAt === "string" ? r.createdAt : "";
+        if (!key) continue;
+        all.push(key);
+        const teamKey = r.team && r.team.key != null ? String(r.team.key) : "";
+        if (trigger.team && teamKey.toLowerCase() !== trigger.team.toLowerCase()) continue;
+        const id = r.identifier || "?";
+        matched.push({
+          key,
+          text: `${id} created: ${r.title || ""} (${r.url || ""})`,
+        });
+        break;
+      }
+      case "linear_status_changed": {
+        const createdAt = typeof r.createdAt === "string" ? r.createdAt : "";
+        const spans = (r.stateHistory && Array.isArray(r.stateHistory.nodes)
+          ? r.stateHistory.nodes
+          : []);
+        if (spans.length === 0) {
+          if (createdAt) all.push(createdAt);
+          break;
+        }
+        const teamKey = r.team && r.team.key != null ? String(r.team.key) : "";
+        for (const span of spans) {
+          const key = span && typeof span.startedAt === "string" ? span.startedAt : "";
+          if (!key) continue;
+          all.push(key);
+          if (createdAt && !(key > createdAt)) continue;
+          const name = span.state && span.state.name != null ? String(span.state.name) : "";
+          if (trigger.status && name.toLowerCase() !== trigger.status.toLowerCase()) continue;
+          if (trigger.team && teamKey.toLowerCase() !== trigger.team.toLowerCase()) continue;
+          const id = r.identifier || "?";
+          matched.push({
+            key,
+            text: `${id} moved to ${name || "?"}: ${r.title || ""} (${r.url || ""})`,
+          });
+        }
+        break;
+      }
+      case "sentry_issue": {
+        const key = typeof r.firstSeen === "string" ? r.firstSeen : "";
+        if (!key) continue;
+        all.push(key);
+        matched.push({
+          key,
+          text: `${r.shortId || r.id || "?"} first seen: ${r.title || ""} (${r.permalink || ""})`,
+        });
+        break;
+      }
       default: {
         // Activity events API. Payloads were trimmed in 2025; only ids,
         // numbers, refs and states are relied on here.
@@ -218,14 +269,13 @@ function maxKey(keys, fallback) {
 
 /**
  * Prompt section describing the events that fired this run.
- * @param {string} event
- * @param {{ owner: string, repo: string }} remote
+ * @param {string} title text after `[Trigger] ` and before the event count
  * @param {Array<{ text: string }>} items oldest first
  */
-function formatTriggerNote(event, remote, items) {
+function formatTriggerNote(title, items) {
   const shown = items.slice(-MAX_EVENTS_IN_PROMPT);
   const lines = [
-    `[Trigger] GitHub ${event} on ${remote.owner}/${remote.repo} (${items.length} new event${items.length === 1 ? "" : "s"}):`,
+    `[Trigger] ${title} (${items.length} new event${items.length === 1 ? "" : "s"}):`,
     ...shown.map((i) => `- ${i.text}`),
   ];
   if (items.length > shown.length) {
@@ -312,7 +362,7 @@ async function pollTriggers(ctx, firing) {
       try {
         await ctx.fireRun(
           ctx.store.getAutomation(auto.id),
-          formatTriggerNote(trigger.event, remote, fresh),
+          formatTriggerNote(`GitHub ${trigger.event} on ${remote.owner}/${remote.repo}`, fresh),
         );
       } finally {
         firing.delete(auto.id);

@@ -154,6 +154,82 @@ describe("normalizeTrigger / matchRows", () => {
   });
 });
 
+describe("Linear and Sentry matchRows (#1588)", () => {
+  it("linear_issue_created keys on createdAt and filters team case-insensitively", () => {
+    const rows = [
+      { identifier: "ENG-3", title: "c", url: "u3", createdAt: "2026-10-11T03:00:00Z", team: { key: "ENG" } },
+      { identifier: "DOC-1", title: "d", url: "u1", createdAt: "2026-10-11T02:00:00Z", team: { key: "DOC" } },
+      { identifier: "eng-2", title: "b", url: "u2", createdAt: "2026-10-11T01:00:00Z", team: { key: "eng" } },
+    ];
+    const { all, matched } = matchRows(
+      { event: "linear_issue_created", team: "eng" },
+      rows,
+    );
+    assert.deepEqual(all, [
+      "2026-10-11T03:00:00Z",
+      "2026-10-11T02:00:00Z",
+      "2026-10-11T01:00:00Z",
+    ]);
+    assert.deepEqual(matched.map((m) => m.key), ["2026-10-11T03:00:00Z", "2026-10-11T01:00:00Z"]);
+    assert.match(matched[0].text, /^ENG-3 created: c \(u3\)$/);
+  });
+
+  it("linear_status_changed skips the birth span and filters status + team", () => {
+    const rows = [
+      {
+        identifier: "ENG-9",
+        title: "Fix login",
+        url: "u9",
+        createdAt: "2026-10-11T00:00:00Z",
+        team: { key: "ENG" },
+        stateHistory: {
+          nodes: [
+            { startedAt: "2026-10-11T00:00:00Z", state: { name: "Todo" } },
+            { startedAt: "2026-10-11T04:00:00Z", state: { name: "Done" } },
+          ],
+        },
+      },
+      {
+        identifier: "DOC-1",
+        title: "docs",
+        url: "ud",
+        createdAt: "2026-10-11T00:00:00Z",
+        team: { key: "DOC" },
+        stateHistory: { nodes: [{ startedAt: "2026-10-11T05:00:00Z", state: { name: "Done" } }] },
+      },
+    ];
+    const { all, matched } = matchRows(
+      { event: "linear_status_changed", team: "eng", status: "done" },
+      rows,
+    );
+    assert.ok(all.includes("2026-10-11T00:00:00Z"));
+    assert.ok(all.includes("2026-10-11T04:00:00Z"));
+    assert.deepEqual(matched.map((m) => m.key), ["2026-10-11T04:00:00Z"]);
+    assert.equal(matched[0].text, "ENG-9 moved to Done: Fix login (u9)");
+  });
+
+  it("sentry_issue keys on firstSeen and skips rows without it", () => {
+    const rows = [
+      { firstSeen: "2026-10-11T06:00:00Z", shortId: "PUMP-1", title: "boom", permalink: "p1" },
+      { title: "no date" },
+    ];
+    const { all, matched } = matchRows({ event: "sentry_issue" }, rows);
+    assert.deepEqual(all, ["2026-10-11T06:00:00Z"]);
+    assert.equal(matched[0].text, "PUMP-1 first seen: boom (p1)");
+  });
+});
+
+describe("formatTriggerNote (#1588)", () => {
+  const { formatTriggerNote } = require("../automation-triggers.js");
+  it("uses the title string and the same 20-event cap", () => {
+    const items = [{ text: "a" }, { text: "b" }];
+    assert.equal(
+      formatTriggerNote("Linear issue created", items),
+      "[Trigger] Linear issue created (2 new events):\n- a\n- b",
+    );
+  });
+});
+
 describe("extractMemory", () => {
   it("takes the last block, trims and caps it, null when absent", () => {
     assert.equal(extractMemory("no tag"), null);
