@@ -62,8 +62,21 @@ describe("providers registry", () => {
     assert.equal(claude.kind, "claude-stream");
     assert.equal(claude.supportsResume, true);
     assert.equal(claude.supportsSteer, true);
+    // #1521: current lineup first, previous generation kept for old threads.
+    assert.deepEqual(claude.models.slice(0, 4), [
+      "claude-opus-5-5",
+      "claude-fable-5-1",
+      "claude-sonnet-5-5",
+      "claude-haiku-5-5",
+    ]);
     assert.ok(claude.models.includes("claude-opus-5"));
     assert.ok(claude.models.includes("claude-haiku-4-5"));
+    assert.deepEqual(
+      claude.modelInfo.filter((m) => m.recommended).map((m) => m.id),
+      ["claude-opus-5-5"],
+    );
+    const haiku55 = claude.modelInfo.find((m) => m.id === "claude-haiku-5-5");
+    assert.ok(haiku55.efforts.includes("max"));
 
     const codex = getProvider("codex");
     assert.equal(codex.kind, "codex-json");

@@ -210,6 +210,55 @@ describe("readLiveIds / attachCatalogNotes", () => {
     );
   });
 
+  it("claude reads the CLI picker catalog; overflow ids are not stale", () => {
+    const home = tmpHome();
+    const dir = path.join(home, ".claude", "cache", "model-catalog");
+    const cc = (fetchedAt, models) =>
+      JSON.stringify({ fetchedAt, catalog: { config: { models } } });
+    try {
+      // Older account file must lose to the newest fetchedAt.
+      write(path.join(dir, "old-acct-cc.json"), cc(1, [{ id: "x", section: "main" }]));
+      write(
+        path.join(dir, "acct-org-cc.json"),
+        cc(2, [
+          { id: "claude-opus-5-5", section: "main" },
+          { id: "claude-new-6", section: "main" },
+          { id: "claude-haiku-4-5-20251001", section: "overflow" },
+          { id: "claude-opus-4-8", section: "overflow" },
+        ]),
+      );
+      write(path.join(dir, "published-floor.json"), "{}");
+      assert.deepEqual(catalog.readLiveIds("claude", { home, env: {} }), [
+        "claude-opus-5-5",
+        "claude-new-6",
+      ]);
+      const rows = [
+        {
+          id: "claude",
+          name: "Claude Code",
+          models: ["claude-opus-5-5", "claude-haiku-4-5", "claude-gone-1"],
+        },
+      ];
+      catalog.attachCatalogNotes(rows, { home, env: {} });
+      assert.equal(
+        rows[0].catalogNote,
+        "Claude Code CLI lists claude-new-6; snapshot does not. " +
+          "Snapshot lists claude-gone-1; CLI does not. " +
+          "Use Custom... for unlisted ids.",
+      );
+      // CLAUDE_CONFIG_DIR moves the cache.
+      assert.equal(
+        catalog.readLiveIds("claude", {
+          home,
+          env: { CLAUDE_CONFIG_DIR: path.join(home, "elsewhere") },
+        }),
+        null,
+      );
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it("codex note uses visibility=list only and does not merge into models", () => {
     const home = tmpHome();
     try {
