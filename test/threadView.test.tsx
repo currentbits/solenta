@@ -1309,6 +1309,46 @@ describe("ThreadView mounted interactions", () => {
     m.unmount();
   });
 
+  it("renders a sandboxed page from tool.html once the card is open (#1525)", async () => {
+    const m = await mount(
+      view({
+        detail: detail({
+          messages: [
+            msg({
+              id: "t1",
+              role: "tool",
+              text: "mcp__charts__show",
+              createdAt: 1,
+              runId: "run-1",
+              tool: {
+                id: "tc1",
+                name: "mcp__charts__show",
+                input: "{}",
+                output: "[html]",
+                done: true,
+                isError: false,
+                html: "<h1>Sales</h1>",
+              },
+            }),
+          ],
+          workLog: [],
+        }),
+      }),
+    );
+    assert.equal(m.query("[data-html-page]"), null, "collapsed card shows no page");
+    const group = toolGroupToggle(m);
+    assert.ok(group, "html tool is grouped");
+    await m.click(group);
+    await m.click(m.query("button.toolToggle"));
+    for (let i = 0; i < 3; i++) await m.flush();
+    const frame = m.query("[data-html-page] iframe");
+    assert.ok(frame, "expanded card mounts the sandboxed page");
+    assert.equal(frame!.getAttribute("sandbox"), "allow-scripts");
+    assert.match(frame!.getAttribute("srcdoc") ?? "", /<h1>Sales<\/h1>/);
+    assert.match(frame!.getAttribute("srcdoc") ?? "", /connect-src 'none'/);
+    m.unmount();
+  });
+
   it("opens a clicked image full size and closes it with Escape", async () => {
     const dataUrl = "data:image/png;base64,AAAA";
     const m = await mount(

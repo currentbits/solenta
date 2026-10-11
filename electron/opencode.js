@@ -193,12 +193,15 @@ function extractToolEvent(obj) {
   let output = null;
   /** @type {{ mediaType: string, data: string }[]} */
   let images = [];
+  /** @type {string | null} */
+  let html = null;
   if (hasOutput) {
     const o =
       (part && (part.output != null ? part.output : part.result)) ??
       (obj.output != null ? obj.output : obj.result);
     const harvested = harvestToolResult(o);
     images = harvested.images;
+    html = harvested.html;
     const redacted = harvested.redacted;
     output = truncate(
       typeof redacted === "string"
@@ -240,6 +243,7 @@ function extractToolEvent(obj) {
     phase,
     isError,
     ...(images.length ? { images } : {}),
+    ...(html ? { html } : {}),
     // Untruncated todo list for the planboard (inputStr is capped).
     ...(name === "todowrite" && inputRaw && Array.isArray(inputRaw.todos)
       ? { todos: inputRaw.todos }

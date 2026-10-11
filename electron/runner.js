@@ -1420,6 +1420,10 @@ function createRunner(opts) {
     return images.length ? { images } : {};
   }
 
+  function persistToolHtml(html) {
+    return typeof html === "string" && html ? { html } : {};
+  }
+
   /**
    * Record one provider failure event, then park quota failures or mark failed.
    * @param {string} threadId
@@ -2701,6 +2705,7 @@ function createRunner(opts) {
     stampPreparingSteps,
     upsertThinkingCard,
     persistToolImages,
+    persistToolHtml,
     THINKING_TRUNCATE,
     assignContextUsage,
     cursorToolCardSummary,

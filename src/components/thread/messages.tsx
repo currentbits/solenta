@@ -1,4 +1,12 @@
-import { memo, useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  lazy,
+  memo,
+  Suspense,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import type {
   AttachmentInfo,
   ChatMessage,
@@ -23,7 +31,10 @@ import { useModalFocus } from "../../useModalFocus";
 import type { FocusTurnSummary } from "../../focusView";
 import { routineWorkerActivitySummary } from "../../workerActivity";
 import { captureCiteFromSelection, type ReplyTarget } from "../../replyContext";
+import { htmlFromToolOutput } from "../../htmlPage";
 import { Markdown } from "../Markdown";
+
+const HtmlPage = lazy(() => import("../HtmlPage"));
 import { PathText } from "../PathLinks";
 import { provenanceVisible, type MessageProvenance } from "../../provenance";
 import {
@@ -148,6 +159,7 @@ function ToolCallCard({
     : tool.isError
       ? "error"
       : "done";
+  const page = tool.html || htmlFromToolOutput(tool.output);
 
   return (
     <section
@@ -205,6 +217,11 @@ function ToolCallCard({
                 <PathText text={tool.output} />
               </pre>
             </>
+          )}
+          {page && (
+            <Suspense fallback={null}>
+              <HtmlPage html={page} bridge />
+            </Suspense>
           )}
           {imageUrls.map((url) => (
             <img

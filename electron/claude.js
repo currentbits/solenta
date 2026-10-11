@@ -2,6 +2,7 @@
 
 const { getClaudeMcpArgs } = require("./memory-sup.js");
 const { runJsonLines, SIGKILL_AFTER_MS } = require("./agent.js");
+const { flattenLooksHtml } = require("./tool-html.js");
 
 const INPUT_TRUNCATE = 2000;
 const OUTPUT_TRUNCATE = 4000;
@@ -68,6 +69,7 @@ function flattenContent(content) {
           // Images are rendered from tool.images; stringifying the block here
           // would fill the output pane with truncated base64.
           if (b.type === "image") return "[image]";
+          if (flattenLooksHtml(b)) return "[html]";
           try {
             return JSON.stringify(block);
           } catch {
