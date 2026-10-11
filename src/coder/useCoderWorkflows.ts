@@ -4,6 +4,7 @@ import type {
   AutomationInfo,
   AutomationWrite,
   CoderApi,
+  ProjectInfo,
   ThreadDetail,
   ThreadInfo,
   WorkflowTemplateInfo,
@@ -31,6 +32,7 @@ export function useCoderWorkflows({
   setWorkflows,
   setWorkflowListError,
   setAutomations,
+  setProjects,
   setDetail,
   setError,
   selectedRef,
@@ -42,6 +44,7 @@ export function useCoderWorkflows({
   setWorkflows: Dispatch<SetStateAction<WorkflowTemplateInfo[]>>;
   setWorkflowListError: Dispatch<SetStateAction<string | null>>;
   setAutomations: Dispatch<SetStateAction<AutomationInfo[]>>;
+  setProjects: Dispatch<SetStateAction<ProjectInfo[]>>;
   setDetail: Dispatch<SetStateAction<ThreadDetail | null>>;
   setError: Dispatch<SetStateAction<CoderError | null>>;
   selectedRef: RefObject<string | null>;
@@ -93,9 +96,12 @@ export function useCoderWorkflows({
   );
 
   const runAutomationNow = useCallback(
-    async (automationId: string) => {
+    async (automationId: string, hash?: string) => {
       try {
-        return await api.automations.runNow({ id: automationId });
+        return await api.automations.runNow({
+          id: automationId,
+          ...(hash ? { hash } : {}),
+        });
       } finally {
         // runNow rethrows the agent failure AFTER the main process has already
         // written lastError, so the row only shows it if we resync on the
@@ -104,6 +110,14 @@ export function useCoderWorkflows({
       }
     },
     [api, refreshAutomations],
+  );
+
+  const trustAutomationsFile = useCallback(
+    async (projectId: string, hash: string) => {
+      await api.automations.trustFile({ projectId, hash });
+      await api.projects.list().then(setProjects);
+    },
+    [api, setProjects],
   );
 
   const listAutomationRuns = useCallback(
@@ -218,6 +232,7 @@ export function useCoderWorkflows({
     updateAutomation,
     removeAutomation,
     runAutomationNow,
+    trustAutomationsFile,
     listAutomationRuns,
     startWorkflowRun,
     retryWorkflowAgent,

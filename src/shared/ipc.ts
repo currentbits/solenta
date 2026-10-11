@@ -149,6 +149,16 @@ export interface ProjectInfo {
   memoryConsolidateProvider?: string | null;
   /** When the last consolidation pass ended; null while one is running (#1384). */
   memoryConsolidateDoneAt?: number | null;
+  /**
+   * Derived at list time (#1590). Never persisted. Absent on remotes, on
+   * pathless projects, and when solenta.json has no automations section.
+   */
+  automationsFile?: {
+    hash: string;
+    trusted: boolean;
+    error?: string;
+    count: number;
+  };
 }
 
 /**
@@ -2901,10 +2911,15 @@ export interface AutomationTrigger {
   conclusion?: "success" | "failure" | "cancelled" | "timed_out" | null;
 }
 
+/** Where an automation lives: this machine only, or the project's solenta.json. */
+export type AutomationScope = "private" | "project";
+
 /** A scheduled agent run (Synara-style automation). */
 export interface AutomationInfo {
   id: string;
   projectId: string;
+  /** Private rows stay on this machine; project rows come from solenta.json. */
+  scope: AutomationScope;
   name: string;
   prompt: string;
   provider: string;
@@ -2942,6 +2957,10 @@ export interface AutomationWrite {
   trigger?: AutomationTrigger | null;
   memory?: string;
   tier?: ModelRoute | null;
+  /** Defaults to private. */
+  scope?: AutomationScope;
+  /** Slug, project-scope create only. */
+  id?: string;
 }
 
 /**
@@ -4386,8 +4405,14 @@ export interface CoderApi {
     add(input: AutomationWrite): Promise<AutomationInfo>;
     update(input: Partial<AutomationWrite> & { id: string }): Promise<AutomationInfo>;
     remove(input: { id: string }): Promise<void>;
-    /** Fire one immediately and recompute nextRunAt. */
-    runNow(input: { id: string }): Promise<AutomationInfo>;
+    /** Fire one immediately and recompute nextRunAt. hash is approve-and-run. */
+    runNow(input: { id: string; hash?: string }): Promise<AutomationInfo>;
+    /**
+     * Persist automationsTrust for a project's solenta.json (#1590).
+     * Rejects an unknown project, a stale hash, or a project with no
+     * automations section.
+     */
+    trustFile(input: { projectId: string; hash: string }): Promise<void>;
     /**
      * Retained run threads for one automation, newest first (issue #938).
      * Does not start a run. Unknown id rejects.

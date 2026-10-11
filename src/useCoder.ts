@@ -311,7 +311,9 @@ export interface UseCoderResult {
     input: Partial<AutomationWrite> & { id: string },
   ) => Promise<AutomationInfo>;
   removeAutomation: (id: string) => Promise<void>;
-  runAutomationNow: (id: string) => Promise<AutomationInfo>;
+  runAutomationNow: (id: string, hash?: string) => Promise<AutomationInfo>;
+  /** Persist automationsTrust for a project's solenta.json, then re-list projects. */
+  trustAutomationsFile: (projectId: string, hash: string) => Promise<void>;
   /** Retained run threads for one automation; does not start a run. */
   listAutomationRuns: (id: string) => Promise<AutomationRunsResult>;
   stopRun: () => Promise<void>;
@@ -1525,6 +1527,7 @@ export function useCoder(): UseCoderResult {
     updateAutomation,
     removeAutomation,
     runAutomationNow,
+    trustAutomationsFile,
     listAutomationRuns,
     startWorkflowRun,
     retryWorkflowAgent,
@@ -1537,6 +1540,7 @@ export function useCoder(): UseCoderResult {
     setWorkflows,
     setWorkflowListError,
     setAutomations,
+    setProjects,
     setDetail,
     setError,
     selectedRef,
@@ -2090,6 +2094,7 @@ export function useCoder(): UseCoderResult {
     updateAutomation,
     removeAutomation,
     runAutomationNow,
+    trustAutomationsFile,
     listAutomationRuns,
     stopRun,
     setPermissionMode,

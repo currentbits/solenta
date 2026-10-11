@@ -1569,6 +1569,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           lastRunAt: null,
           nextRunAt: Date.now() + 3600_000,
           lastError: null,
+          scope: "private" as const,
           ...(input as object),
         } as AutomationInfo;
         automations = [...automations, created];
@@ -1588,6 +1589,8 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         automations = automations.filter((a) => a.id !== id);
         return rec("automations.remove", [input], undefined);
       },
+      trustFile: (input: unknown) =>
+        rec("automations.trustFile", [input], undefined),
       runNow: (input: unknown) => {
         const id = String((input as { id?: string } | null)?.id ?? "");
         const existing = automations.find((a) => a.id === id);

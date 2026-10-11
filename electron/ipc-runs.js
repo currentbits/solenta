@@ -36,9 +36,11 @@ module.exports = {
   "automations:remove": async (ctx, input) => {
     services.removeAutomation(ctx.store, input);
   },
+  "automations:trustFile": async (ctx, input) => {
+    services.trustFile(ctx.store, input);
+  },
   "automations:runNow": async (ctx, input) => {
-    const id = input && input.id != null ? String(input.id) : "";
-    return automations.runNow(ctx, id);
+    return automations.runNow(ctx, input);
   },
   "automations:listRuns": async (ctx, input) => {
     const id = input && input.id != null ? String(input.id) : "";

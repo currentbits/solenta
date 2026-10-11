@@ -51,6 +51,7 @@ function auto(
     lastRunAt: null,
     nextRunAt: Date.now() + 60 * 60 * 1000,
     lastError: null,
+    scope: "private",
     ...over,
   };
 }
