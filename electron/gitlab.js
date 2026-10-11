@@ -91,6 +91,86 @@ function fail(res, what) {
 
 const MR_STATE = { opened: "OPEN", merged: "MERGED", closed: "CLOSED", locked: "CLOSED" };
 
+/** GitLab MR JSON → `listPrs` / `parsePrListItem` row. */
+function prListItemFromMr(mr) {
+  const number = Number(mr && mr.iid);
+  const url = mr && mr.web_url ? String(mr.web_url) : "";
+  if (!Number.isInteger(number) || number <= 0 || !url) {
+    throw new Error("glab returned incomplete merge request JSON");
+  }
+  const item = {
+    number,
+    title: mr.title != null ? String(mr.title) : "",
+    url,
+    state: MR_STATE[String(mr.state)] || "OPEN",
+    headRefName: mr.source_branch != null ? String(mr.source_branch) : "",
+    isDraft: Boolean(mr.draft || mr.work_in_progress),
+  };
+  if (mr.updated_at) item.updatedAt = String(mr.updated_at);
+  if (mr.created_at) item.createdAt = String(mr.created_at);
+  if (mr.merged_at) item.mergedAt = String(mr.merged_at);
+  if (mr.closed_at) item.closedAt = String(mr.closed_at);
+  return item;
+}
+
+/** GitLab MR JSON → `parsePrCheckoutView` shape. */
+function prCheckoutViewFromMr(mr) {
+  const number = Number(mr && mr.iid);
+  const url = mr && mr.web_url ? String(mr.web_url) : "";
+  if (!Number.isInteger(number) || number <= 0 || !url) {
+    throw new Error("glab returned incomplete merge request JSON");
+  }
+  const src = Number(mr.source_project_id);
+  const tgt = Number(mr.target_project_id);
+  return {
+    number,
+    title: mr.title != null ? String(mr.title) : "",
+    body: mr.description != null ? String(mr.description) : "",
+    url,
+    headRefName: mr.source_branch != null ? String(mr.source_branch) : "",
+    isCrossRepository: Number.isFinite(src) && Number.isFinite(tgt) && src !== tgt,
+    state: MR_STATE[String(mr.state)] || "OPEN",
+  };
+}
+
+/**
+ * Open (or filtered) MRs as `listPrsRaw` rows. GitLab `per_page` max is 100,
+ * so this pages until `limit` (capped at 200, same as listPrs).
+ * @param {string} cwd
+ * @param {{ host: string, path: string }} remote
+ * @param {{ limit?: number, state?: string }} [opts]
+ */
+async function listMrs(cwd, remote, opts) {
+  const want = Math.min(Math.max(Number(opts && opts.limit) || 50, 1), 200);
+  const state = (opts && opts.state) || "opened";
+  // Keep per_page stable: GitLab page N is items (N-1)*per_page, so shrinking
+  // the page size on the next request would overlap the previous page.
+  const perPage = Math.min(100, want);
+  const prs = [];
+  let page = 1;
+  while (prs.length < want) {
+    const res = await glabApi(
+      cwd,
+      remote,
+      "GET",
+      `/merge_requests?state=${encodeURIComponent(state)}&per_page=${perPage}&page=${page}&order_by=updated_at&sort=desc`,
+    );
+    if (!res.ok) return { ok: false, reason: res.reason };
+    const rows = Array.isArray(res.data) ? res.data : [];
+    try {
+      for (const row of rows) prs.push(prListItemFromMr(row));
+    } catch (err) {
+      return {
+        ok: false,
+        reason: err && err.message ? String(err.message) : "glab returned incomplete merge request JSON",
+      };
+    }
+    if (rows.length < perPage) break;
+    page += 1;
+  }
+  return { ok: true, prs: prs.slice(0, want) };
+}
+
 /**
  * GitLab MR JSON → worktrees.js PrInfo shape.
  * @param {any} mr
@@ -352,6 +432,9 @@ async function createIssue(cwd, remote, title, body) {
 module.exports = {
   gitlabRemote,
   glabApi,
+  prListItemFromMr,
+  prCheckoutViewFromMr,
+  listMrs,
   prInfoFromMr,
   viewMr,
   viewMrByNumber,
