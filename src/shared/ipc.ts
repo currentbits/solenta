@@ -1358,6 +1358,11 @@ export interface ToolCallInfo {
    * builds stored a bare basename. Load one with files.image({ name }).
    */
   images?: string[];
+  /**
+   * HTML from an MCP `ui://` / text/html resource, extracted before output
+   * truncate (#1525). Rendered in a sandboxed iframe.
+   */
+  html?: string;
 }
 
 /** App-owned evidence from simulator, verification, browser, or manual capture. */

@@ -482,7 +482,7 @@ function createStderrThinkingParser() {
  * Transcript text plus any screenshot blobs, harvested before truncate so
  * base64 never occupies the 4000-char output window.
  * @param {unknown} value
- * @returns {{ output: string, images: { mediaType: string, data: string }[] }}
+ * @returns {{ output: string, images: { mediaType: string, data: string }[], html: string | null }}
  */
 function outputAndImages(value) {
   const harvested = harvestToolResult(value);
@@ -497,7 +497,11 @@ function outputAndImages(value) {
       text = String(redacted);
     }
   }
-  return { output: truncate(text, OUTPUT_TRUNCATE), images: harvested.images };
+  return {
+    output: truncate(text, OUTPUT_TRUNCATE),
+    images: harvested.images,
+    html: harvested.html,
+  };
 }
 
 /**
@@ -598,6 +602,7 @@ function extractToolEvents(obj) {
         phase: "end",
         isError: Boolean(obj.is_error || obj.error),
         ...(harvested.images.length ? { images: harvested.images } : {}),
+        ...(harvested.html ? { html: harvested.html } : {}),
       },
     ];
   }
@@ -664,6 +669,8 @@ function extractToolEvent(obj) {
   let output = null;
   /** @type {{ mediaType: string, data: string }[]} */
   let images = [];
+  /** @type {string | null} */
+  let html = null;
   if (hasOutput) {
     const o =
       obj.output != null
@@ -676,6 +683,7 @@ function extractToolEvent(obj) {
     const harvested = outputAndImages(o);
     output = harvested.output;
     images = harvested.images;
+    html = harvested.html;
   }
 
   const isError = Boolean(obj.is_error || obj.isError || obj.error);
@@ -699,6 +707,7 @@ function extractToolEvent(obj) {
     phase,
     isError,
     ...(images.length ? { images } : {}),
+    ...(html ? { html } : {}),
   };
 }
 

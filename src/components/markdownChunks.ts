@@ -15,10 +15,11 @@
  *   last line may belong to a container the scan doesn't model, and what
  *   follows (`3. z`) parses differently there;
  * - the whole text stays one chunk if it has a link reference or footnote
- *   definition (it can resolve `[x]` in ANY chunk, even earlier ones) or any
- *   line starting with raw HTML. An HTML block swallows lines up to the next
- *   blank one, fence markers included, and an HTML-only chunk renders nothing.
- *   Few replies have one (3 of 600 sampled).
+ *   definition (it can resolve `[x]` in ANY chunk, even earlier ones) or a
+ *   raw HTML line *outside* a fence. An HTML block swallows lines up to the
+ *   next blank one, fence markers included, and an HTML-only chunk renders
+ *   nothing. A `<` line inside ```html is just source (#1525). Few replies
+ *   have raw HTML (3 of 600 sampled).
  *
  * ponytail: fence tracking strips list/quote prefixes and doesn't model
  * indented code, so a fence-like line inside indented code can desync it.
@@ -32,8 +33,32 @@ const LIST_ITEM = /^ {0,3}(?:[-+*]|\d{1,9}[.)])(?:[ \t]|$)/;
 const CONTAINER_PREFIX = /^[ \t]*(?:(?:>|[-+*]|\d{1,9}[.)])[ \t]*)*/;
 const FENCE = /^(`{3,}|~{3,})(.*)$/;
 
+function fenceMarker(line: string): RegExpExecArray | null {
+  return FENCE.exec(line.replace(CONTAINER_PREFIX, ""));
+}
+
+/** Raw HTML at document level; `<` inside a fence is source, not a block. */
+function hasRawHtmlOutsideFence(text: string): boolean {
+  let fence: string | null = null;
+  for (const line of text.split("\n")) {
+    if (fence === null && HTML_LINE.test(line)) return true;
+    const f = fenceMarker(line);
+    if (!f) continue;
+    if (fence === null) {
+      if (!(f[1][0] === "`" && f[2].includes("`"))) fence = f[1];
+    } else if (
+      f[1][0] === fence[0] &&
+      f[1].length >= fence.length &&
+      !f[2].trim()
+    ) {
+      fence = null;
+    }
+  }
+  return false;
+}
+
 export function markdownChunks(text: string): string[] {
-  if (DEFINITION.test(text) || HTML_LINE.test(text)) return [text];
+  if (DEFINITION.test(text) || hasRawHtmlOutsideFence(text)) return [text];
   const chunks: string[] = [];
   let start = 0;
   let fence: string | null = null;
@@ -54,7 +79,7 @@ export function markdownChunks(text: string): string[] {
       hasList = false;
     }
     if (LIST_ITEM.test(line)) hasList = true;
-    const f = FENCE.exec(line.replace(CONTAINER_PREFIX, ""));
+    const f = fenceMarker(line);
     if (f) {
       if (fence === null) {
         // A backtick fence's info string can't contain a backtick.
