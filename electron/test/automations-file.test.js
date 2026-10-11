@@ -285,3 +285,132 @@ describe("mergeAutomations", () => {
     );
   });
 });
+
+describe("project-scope writes", () => {
+  it("add writes solenta.json, trusts, and enables", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-auto-"));
+    const store = new Store(path.join(dir, "store.json"));
+    store.setProjects([{ id: "p1", name: "p", path: dir }]);
+    const created = services.addAutomation(store, {
+      projectId: "p1",
+      name: "PR triage",
+      prompt: "Triage",
+      provider: "claude",
+      preset: "hourly",
+      scope: "project",
+    });
+    assert.equal(created.scope, "project");
+    assert.equal(created.id, "shared:p1:pr-triage");
+    assert.equal(created.enabled, true);
+    const file = JSON.parse(fs.readFileSync(path.join(dir, "solenta.json"), "utf8"));
+    assert.equal(file.automations[0].id, "pr-triage");
+    assert.equal(file.automations[0].enabled, undefined);
+    const hash = parseAutomations(file).hash;
+    assert.equal(store.getProject("p1").automationsTrust, hash);
+    assert.equal(canAutoFire(store, created), true);
+  });
+
+  it("teammate overlay defaults disabled; memory update does not rewrite prompt", () => {
+    const dir = tempRepo([ROW]);
+    const store = new Store(path.join(dir, "store.json"));
+    store.setProjects([{ id: "p1", name: "p", path: dir }]);
+    const listed = services.listAutomations(store).find((a) => a.scope === "project");
+    assert.equal(listed.enabled, false);
+    services.updateAutomation(store, { id: listed.id, memory: "notes" });
+    const file = JSON.parse(fs.readFileSync(path.join(dir, "solenta.json"), "utf8"));
+    assert.equal(file.automations[0].prompt, ROW.prompt);
+    assert.equal(services.listAutomations(store)[0].memory, "notes");
+  });
+
+  it("remove drops the slug; invalid JSON is not clobbered; remote is rejected", () => {
+    const dir = tempRepo([ROW]);
+    const store = new Store(path.join(dir, "store.json"));
+    store.setProjects([{ id: "p1", name: "p", path: dir }]);
+    const id = "shared:p1:pr-triage";
+    services.removeAutomation(store, { id });
+    const file = JSON.parse(fs.readFileSync(path.join(dir, "solenta.json"), "utf8"));
+    assert.deepEqual(file.automations, []);
+
+    fs.writeFileSync(path.join(dir, "solenta.json"), "{ nope");
+    store.setProjects([{ id: "p1", name: "p", path: dir }]);
+    assert.throws(
+      () =>
+        services.addAutomation(store, {
+          projectId: "p1",
+          name: "X",
+          prompt: "x",
+          provider: "claude",
+          preset: "hourly",
+          scope: "project",
+        }),
+      /not valid JSON/,
+    );
+    assert.equal(fs.readFileSync(path.join(dir, "solenta.json"), "utf8"), "{ nope");
+
+    store.setProjects([{ id: "r1", name: "r", path: dir, remoteHost: "h" }]);
+    assert.throws(
+      () =>
+        services.addAutomation(store, {
+          projectId: "r1",
+          name: "X",
+          prompt: "x",
+          provider: "claude",
+          preset: "hourly",
+          scope: "project",
+        }),
+      /remote/i,
+    );
+  });
+
+  it("rejects changing scope and a private id that starts with shared:", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-auto-"));
+    const store = new Store(path.join(dir, "store.json"));
+    store.setProjects([{ id: "p1", name: "p", path: dir }]);
+    const priv = services.addAutomation(store, {
+      projectId: "p1",
+      name: "Local",
+      prompt: "x",
+      provider: "claude",
+      preset: "hourly",
+    });
+    assert.equal(priv.scope, "private");
+    assert.throws(
+      () => services.updateAutomation(store, { id: priv.id, scope: "project" }),
+      /scope/,
+    );
+    assert.throws(
+      () =>
+        services.addAutomation(store, {
+          projectId: "p1",
+          name: "Local",
+          prompt: "x",
+          provider: "claude",
+          preset: "hourly",
+          id: "shared:nope",
+        }),
+      /shared:/,
+    );
+  });
+
+  it("preserves unknown solenta.json keys", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-auto-"));
+    fs.writeFileSync(
+      path.join(dir, "solenta.json"),
+      JSON.stringify({ setup: "npm ci", extra: true }),
+    );
+    const store = new Store(path.join(dir, "store.json"));
+    store.setProjects([{ id: "p1", name: "p", path: dir }]);
+    services.addAutomation(store, {
+      projectId: "p1",
+      name: "PR triage",
+      prompt: "Triage",
+      provider: "claude",
+      preset: "hourly",
+      scope: "project",
+    });
+    const file = JSON.parse(fs.readFileSync(path.join(dir, "solenta.json"), "utf8"));
+    assert.equal(file.setup, "npm ci");
+    assert.equal(file.extra, true);
+    assert.equal(file.automations[0].id, "pr-triage");
+  });
+});

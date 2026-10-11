@@ -2,18 +2,22 @@
 
 /**
  * Shared automations section of solenta.json (#1590). Parse, hash, present,
- * and merge file definitions with local overlays. Writes and ticker/poller
- * changes land in later tasks.
+ * merge file definitions with local overlays, and write project-scoped rows.
+ * Ticker/poller/trustFile changes land in a later task.
  *
  * The hash is independent of commandsHash / repoConfigTrust so approving
  * a setup command does not approve an agent prompt.
  */
 
+const fs = require("node:fs");
+const path = require("node:path");
 const { createHash } = require("node:crypto");
 const { normalizeTrigger, parseTriggerInput } = require("./automation-triggers.js");
 const { normalizeRoute } = require("./routing.js");
 const { isKnownProviderId } = require("./services-notes.js");
-const { readRepoJson } = require("./repoConfig.js");
+const { readRepoJson, invalidateRepoConfigCache } = require("./repoConfig.js");
+
+const REPO_CONFIG_FILE = "solenta.json";
 
 const SLUG_RE = /^[a-z][a-z0-9-]{0,47}$/;
 const MAX_SHARED_AUTOMATIONS = 16;
@@ -385,6 +389,78 @@ function gcOrphanOverlays(store) {
   return true;
 }
 
+/**
+ * Replace `automations` in `<projectPath>/solenta.json`. Missing file →
+ * `{}`. Existing invalid JSON → throw. Empty `rows` writes `automations: []`
+ * (does not delete the key). Unknown sibling keys are preserved.
+ *
+ * @param {string} projectPath
+ * @param {object[]} rows
+ * @returns {{ automations: object[], hash: string | null, error?: string }}
+ */
+function writeAutomations(projectPath, rows) {
+  const file = path.join(projectPath, REPO_CONFIG_FILE);
+  let doc = {};
+  const raw = readRepoJson(projectPath);
+  if (raw) {
+    if (raw.error) throw new Error(raw.error);
+    if (raw.json && typeof raw.json === "object" && !Array.isArray(raw.json)) {
+      doc = { ...raw.json };
+    }
+  }
+  doc.automations = (rows || []).map((row) => canonical(row));
+  const parsed = parseAutomations(doc);
+  if (parsed.error) throw new Error(parsed.error);
+  fs.writeFileSync(file, `${JSON.stringify(doc, null, 2)}\n`);
+  invalidateRepoConfigCache(projectPath);
+  return parsed;
+}
+
+/**
+ * Ensure a store overlay exists for a merged project-scoped row.
+ * Does not save.
+ *
+ * @param {import("./store").Store} store
+ * @param {object} auto
+ * @returns {object}
+ */
+function ensureOverlay(store, auto) {
+  if (!auto || !auto.id) {
+    throw new Error("Automation id is required");
+  }
+  const existing = store.getAutomation(auto.id);
+  if (existing) return existing;
+  const { nextFire } = require("./automations.js");
+  const overlay = {
+    id: auto.id,
+    projectId: auto.projectId,
+    scope: "project",
+    name: auto.name,
+    prompt: auto.prompt,
+    provider: auto.provider,
+    model: auto.model,
+    preset: auto.preset,
+    hour: auto.hour,
+    trigger: auto.trigger || null,
+    tier: auto.tier || null,
+    enabled: auto.enabled,
+    memory: auto.memory || "",
+    triggerCursor: auto.triggerCursor ?? null,
+    lastRunAt: auto.lastRunAt ?? null,
+    lastError: auto.lastError ?? null,
+    consecutiveFailures: auto.consecutiveFailures || 0,
+    pendingRunThreadId: auto.pendingRunThreadId ?? null,
+    nextRunAt:
+      typeof auto.nextRunAt === "number" && Number.isFinite(auto.nextRunAt)
+        ? auto.nextRunAt
+        : nextFire(auto.preset, auto.hour, Date.now()),
+  };
+  const list = (store.getAutomations() || []).slice();
+  list.push(overlay);
+  store.setAutomations(list);
+  return store.getAutomation(auto.id);
+}
+
 module.exports = {
   SLUG_RE,
   MAX_SHARED_AUTOMATIONS,
@@ -394,8 +470,10 @@ module.exports = {
   parseAutomations,
   automationsHash,
   readAutomations,
+  writeAutomations,
   presentAutomationsFile,
   mergeAutomations,
   gcOrphanOverlays,
   canAutoFire,
+  ensureOverlay,
 };

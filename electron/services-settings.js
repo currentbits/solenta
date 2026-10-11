@@ -202,6 +202,7 @@ function setSettings(store, patch, opts) {
 }
 
 const AUTOMATION_PRESETS = new Set(["hourly", "daily", "weekly"]);
+const AUTOMATION_SCOPES = new Set(["private", "project"]);
 
 /**
  * @param {unknown} hour
@@ -306,6 +307,26 @@ function normalizeAutomationInput(store, input, existing) {
     : base.memory;
   const memory = memoryRaw != null ? String(memoryRaw).slice(0, MAX_MEMORY_CHARS) : "";
 
+  let scope;
+  if (existing) {
+    scope = existing.scope === "project" ? "project" : "private";
+    if (
+      Object.prototype.hasOwnProperty.call(src, "scope") &&
+      src.scope != null &&
+      src.scope !== "" &&
+      String(src.scope) !== scope
+    ) {
+      throw new Error("Automation scope cannot be changed");
+    }
+  } else if (Object.prototype.hasOwnProperty.call(src, "scope") && src.scope != null && src.scope !== "") {
+    scope = String(src.scope);
+    if (!AUTOMATION_SCOPES.has(scope)) {
+      throw new Error(`Invalid scope: ${scope}. Expected private or project`);
+    }
+  } else {
+    scope = "private";
+  }
+
   return {
     name,
     projectId,
@@ -318,6 +339,7 @@ function normalizeAutomationInput(store, input, existing) {
     trigger,
     memory,
     tier,
+    scope,
   };
 }
 
@@ -331,11 +353,171 @@ function listAutomations(store) {
 
 /**
  * @param {import('./store').Store} store
+ * @param {string} id
+ */
+function findAutomation(store, id) {
+  const listed = listAutomations(store).find((a) => a && a.id === id);
+  return listed || null;
+}
+
+/**
+ * @param {any} project
+ */
+function assertLocalWritable(project) {
+  if (project && project.remoteHost) {
+    throw new Error("Cannot write project automations on a remote project");
+  }
+  if (!project || !project.path) {
+    throw new Error("Cannot write project automations without a local path");
+  }
+}
+
+/**
+ * Persist automationsTrust via setProjects (same path as repoConfigTrust).
+ * Does not save.
+ *
+ * @param {import('./store').Store} store
+ * @param {string} projectId
+ * @param {string | null} hash
+ */
+function persistAutomationsTrust(store, projectId, hash) {
+  const projects = store.getProjects().slice();
+  const idx = projects.findIndex((p) => p.id === projectId);
+  if (idx === -1) throw new Error(`Unknown project: ${projectId}`);
+  const next = { ...projects[idx] };
+  if (hash) next.automationsTrust = hash;
+  else delete next.automationsTrust;
+  projects[idx] = next;
+  store.setProjects(projects);
+}
+
+/**
+ * @param {object} auto
+ * @returns {string}
+ */
+function sharedSlug(auto) {
+  const prefix = `shared:${auto.projectId}:`;
+  if (typeof auto.id === "string" && auto.id.startsWith(prefix)) {
+    return auto.id.slice(prefix.length);
+  }
+  return String(auto.id || "");
+}
+
+const DEFINITION_KEYS = [
+  "name",
+  "prompt",
+  "provider",
+  "model",
+  "preset",
+  "hour",
+  "trigger",
+  "tier",
+];
+
+/**
+ * @param {object} fields
+ * @param {object} existing
+ */
+function definitionChanged(fields, existing) {
+  return DEFINITION_KEYS.some((key) => {
+    if (key === "trigger") {
+      return JSON.stringify(fields.trigger) !== JSON.stringify(existing.trigger || null);
+    }
+    return fields[key] !== existing[key];
+  });
+}
+
+/**
+ * @param {object} fields
+ * @param {string} slug
+ */
+function definitionRow(fields, slug) {
+  return {
+    id: slug,
+    name: fields.name,
+    prompt: fields.prompt,
+    provider: fields.provider,
+    model: fields.model,
+    preset: fields.preset,
+    hour: fields.hour,
+    trigger: fields.trigger || null,
+    tier: fields.tier || null,
+  };
+}
+
+/**
+ * @param {import('./store').Store} store
  * @param {object} input
  */
 function addAutomation(store, input) {
   const { nextFire } = require("./automations.js");
+  const {
+    writeAutomations,
+    readAutomations,
+    sharedId,
+    slugFromName,
+    SLUG_RE,
+    gcOrphanOverlays,
+  } = require("./automations-file.js");
   const fields = normalizeAutomationInput(store, input, null);
+  const src = input && typeof input === "object" ? input : {};
+
+  if (fields.scope === "project") {
+    const project = store.getProject(fields.projectId);
+    assertLocalWritable(project);
+    if (src.id != null && src.id !== "" && !SLUG_RE.test(String(src.id))) {
+      throw new Error(`Automation id must be a slug matching ${SLUG_RE}`);
+    }
+    const section = readAutomations(project.path);
+    if (section.error) throw new Error(section.error);
+    const existingIds = section.automations.map((row) => row.id);
+    const slug =
+      src.id != null && src.id !== ""
+        ? String(src.id)
+        : slugFromName(fields.name, existingIds);
+    if (existingIds.includes(slug)) {
+      throw new Error(`Duplicate automation id "${slug}"`);
+    }
+    const written = writeAutomations(project.path, [
+      ...section.automations,
+      definitionRow(fields, slug),
+    ]);
+    persistAutomationsTrust(store, project.id, written.hash);
+    const id = sharedId(project.id, slug);
+    const now = Date.now();
+    const overlay = {
+      id,
+      projectId: project.id,
+      scope: "project",
+      name: fields.name,
+      prompt: fields.prompt,
+      provider: fields.provider,
+      model: fields.model,
+      preset: fields.preset,
+      hour: fields.hour,
+      trigger: fields.trigger || null,
+      tier: fields.tier || null,
+      enabled: src.enabled !== false,
+      memory: fields.memory,
+      lastRunAt: null,
+      nextRunAt: nextFire(fields.preset, fields.hour, now),
+      lastError: null,
+      consecutiveFailures: 0,
+      pendingRunThreadId: null,
+      triggerCursor: null,
+    };
+    const list = store.getAutomations().slice();
+    list.push(overlay);
+    store.setAutomations(list);
+    gcOrphanOverlays(store);
+    store.save();
+    return findAutomation(store, id) || { ...overlay };
+  }
+
+  if (src.id != null && String(src.id).startsWith("shared:")) {
+    throw new Error("Private automation id cannot start with shared:");
+  }
+
   const now = Date.now();
   const created = {
     id: randomUUID(),
@@ -350,6 +532,7 @@ function addAutomation(store, input) {
   const list = store.getAutomations().slice();
   list.push(created);
   store.setAutomations(list);
+  gcOrphanOverlays(store);
   store.save();
   return { ...created };
 }
@@ -360,8 +543,14 @@ function addAutomation(store, input) {
  */
 function updateAutomation(store, input) {
   const { nextFire } = require("./automations.js");
+  const {
+    writeAutomations,
+    readAutomations,
+    ensureOverlay,
+    gcOrphanOverlays,
+  } = require("./automations-file.js");
   const id = input && input.id != null ? String(input.id) : "";
-  const existing = store.getAutomation(id);
+  const existing = findAutomation(store, id);
   if (!existing) {
     throw new Error(`Unknown automation: ${id}`);
   }
@@ -374,20 +563,39 @@ function updateAutomation(store, input) {
   // so it never fires on history.
   const triggerChanged =
     JSON.stringify(fields.trigger) !== JSON.stringify(existing.trigger || null);
+
+  if (existing.scope === "project") {
+    const project = store.getProject(existing.projectId);
+    assertLocalWritable(project);
+    if (definitionChanged(fields, existing)) {
+      const section = readAutomations(project.path);
+      if (section.error) throw new Error(section.error);
+      const slug = sharedSlug(existing);
+      const rows = section.automations.map((row) =>
+        row.id === slug ? definitionRow(fields, slug) : row,
+      );
+      const written = writeAutomations(project.path, rows);
+      persistAutomationsTrust(store, project.id, written.hash);
+    }
+    ensureOverlay(store, existing);
+  }
+
+  const base = store.getAutomation(id) || existing;
   const updated = {
-    ...existing,
+    ...base,
     ...fields,
     ...(reEnabled ? { consecutiveFailures: 0, lastError: null } : {}),
     ...(triggerChanged ? { triggerCursor: null } : {}),
     nextRunAt: scheduleChanged
       ? nextFire(fields.preset, fields.hour, Date.now())
-      : existing.nextRunAt,
+      : base.nextRunAt,
   };
   store.setAutomations(
     store.getAutomations().map((a) => (a && a.id === id ? updated : a)),
   );
+  gcOrphanOverlays(store);
   store.save();
-  return { ...updated };
+  return findAutomation(store, id) || { ...updated };
 }
 
 /**
@@ -395,15 +603,31 @@ function updateAutomation(store, input) {
  * @param {{ id: string }} input
  */
 function removeAutomation(store, input) {
+  const { writeAutomations, readAutomations, gcOrphanOverlays } = require(
+    "./automations-file.js",
+  );
   const id = input && input.id != null ? String(input.id) : "";
   if (!id) {
     throw new Error("Automation id is required");
   }
-  const existing = store.getAutomation(id);
+  const existing = findAutomation(store, id);
   if (!existing) {
     throw new Error(`Unknown automation: ${id}`);
   }
+  if (existing.scope === "project") {
+    const project = store.getProject(existing.projectId);
+    assertLocalWritable(project);
+    const section = readAutomations(project.path);
+    if (section.error) throw new Error(section.error);
+    const slug = sharedSlug(existing);
+    const written = writeAutomations(
+      project.path,
+      section.automations.filter((row) => row.id !== slug),
+    );
+    persistAutomationsTrust(store, project.id, written.hash);
+  }
   store.setAutomations(store.getAutomations().filter((a) => !a || a.id !== id));
+  gcOrphanOverlays(store);
   store.save();
 }
 
