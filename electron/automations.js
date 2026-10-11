@@ -232,6 +232,7 @@ async function runAutomation(ctx, auto, now, opts) {
       projectId: auto.projectId,
       title: auto.name,
       automationId: auto.id,
+      route: auto.tier || null,
     });
     services.setProvider(ctx.store, {
       threadId: thread.id,

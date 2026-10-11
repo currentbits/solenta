@@ -231,6 +231,7 @@ const IPC_CHANNELS = Object.freeze([
   { ns: "threads", method: "setAgent" },
   { ns: "threads", method: "listAgents" },
   { ns: "threads", method: "setFast" },
+  { ns: "threads", method: "setRoute" },
   { ns: "threads", method: "setVerifyCommand" },
   { ns: "threads", method: "runVerify" },
   { ns: "threads", method: "runCommand" },

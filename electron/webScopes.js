@@ -159,6 +159,7 @@ const BY_SCOPE = {
     "threads:setProvider",
     "threads:setReasoningEffort",
     "threads:setFast",
+    "threads:setRoute",
     "threads:setWebSearch",
     "threads:setAgent",
     "threads:runVerify",

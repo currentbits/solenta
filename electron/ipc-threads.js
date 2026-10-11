@@ -490,6 +490,8 @@ module.exports = {
     return updated;
   },
   "threads:setProvider": async (ctx, input) => {
+    // A manual pick beats a pending Auto route (#246).
+    services.setRoute(ctx.store, { threadId: input.threadId, route: null });
     const updated = services.setProvider(ctx.store, input);
     services.recordLastUsedDefaults(ctx.store, input.threadId);
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
@@ -515,6 +517,11 @@ module.exports = {
   },
   "threads:setWebSearch": async (ctx, input) => {
     const updated = services.setWebSearch(ctx.store, input);
+    ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+    return updated;
+  },
+  "threads:setRoute": async (ctx, input) => {
+    const updated = services.setRoute(ctx.store, input);
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
     return updated;
   },

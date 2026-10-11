@@ -101,6 +101,7 @@ import type {
   CommandRunResult,
   WorkflowTemplateInfo,
   WorkSuggestionStatus,
+  ModelRoute,
 } from "./shared/ipc";
 import { resolveCoderApi } from "./coderApi";
 import {
@@ -364,6 +365,8 @@ export interface UseCoderResult {
     projectPath?: string | null;
   }) => Promise<CliAgentInfo[]>;
   setFast: (fast: boolean, threadId?: string) => Promise<void>;
+  /** Pending first-turn model route (#246); null = manual pick. */
+  setRoute: (route: ModelRoute | null, threadId?: string) => Promise<void>;
   /**
    * Archive or unarchive a thread. Defaults to the selected thread.
    * Pass threadId when undoing archive after selection has already moved.
@@ -1553,6 +1556,7 @@ export function useCoder(): UseCoderResult {
     setAgent,
     listAgents,
     setFast,
+    setRoute,
     setArchived,
     setSettled,
     setPinned,
@@ -2098,6 +2102,7 @@ export function useCoder(): UseCoderResult {
     setAgent,
     listAgents,
     setFast,
+    setRoute,
     setArchived,
     setSettled,
     setPinned,

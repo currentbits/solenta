@@ -13,6 +13,7 @@ import type {
   TrashedThreadInfo,
   CrewTaskView,
   CrewIntegration,
+  ModelRoute,
 } from "../shared/ipc";
 import { SPEC_ARTIFACTS, SPEC_DIR } from "../shared/ipc";
 import { normalizeMessagePins } from "../messagePins";
@@ -782,6 +783,9 @@ export function createThreads(ctx: DevCtx): Pick<CoderApi, "threads"> {
       async setFast(input: { threadId: string; fast: boolean }) {
         return patchThread(input.threadId, { fast: input.fast === true });
       },
+      async setRoute(input: { threadId: string; route: ModelRoute | null }) {
+        return patchThread(input.threadId, { route: input.route });
+      },
       async setVerifyCommand(input: {
         threadId: string;
         command: string | null;
@@ -857,7 +861,8 @@ export function createThreads(ctx: DevCtx): Pick<CoderApi, "threads"> {
         // Fixture: assign what the picker sends. The rules (unknown provider,
         // run-active refusal, session drop, effort reset) live in
         // electron/services.js setProvider and are exercised by npm run dev.
-        const patch: Partial<ThreadInfo> = {};
+        // A manual pick clears a pending Auto route (#246).
+        const patch: Partial<ThreadInfo> = { route: null };
         if (Object.prototype.hasOwnProperty.call(input, "provider")) {
           // A ref "claude:work" is base + named instance (#453).
           const [base = "", instance = null] = String(input.provider).split(":");

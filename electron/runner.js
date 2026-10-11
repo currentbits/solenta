@@ -45,6 +45,7 @@ const orchcommands = require("./orchcommands.js");
 const cliCommands = require("./cliCommands.js");
 const ask = require("./ask.js");
 const btw = require("./btw.js");
+const { applyRoute } = require("./routing.js");
 const {
   getMemoryStatus,
   looksGrokConfigCorrupt,
@@ -1756,6 +1757,14 @@ function createRunner(opts) {
           ...attachments,
         ];
       }
+    }
+
+    // Model routing (#246): a pending route picks provider/model from this
+    // first prompt before anything reads thread.provider.
+    if (thread.route != null) {
+      const routed = applyRoute(store, threadId, prompt);
+      if (routed) appendMessage(threadId, "event", routed);
+      Object.assign(thread, store.getThread(threadId));
     }
 
     // Orchestrator thread (issue #202): the first prompt is not run here. It

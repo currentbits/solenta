@@ -8,11 +8,12 @@ const { createRequire } = require("node:module");
 
 const { registerMcpServer, unregisterMcpServer } = require("./memory-sup.js");
 const pairing = require("./pairing.js");
-const { startWithPoolFailover } = require("./subagentPool.js");
+const { startWithPoolFailover, poolFromStore } = require("./subagentPool.js");
 const { resolveBin, isBinAvailable } = require("./providers.js");
 const {
   forkWorkerThread,
   setProvider,
+  setRoute,
   recordHypothesis,
   recordSuggestion,
   submitSpec,
@@ -433,7 +434,12 @@ function createToolHandlers(deps) {
     if (args.title != null) input.title = String(args.title);
     // orchWorker + lazy worktree live in services.forkWorkerThread, shared
     // with the runner's pendingFork dispatch.
-    const fork = forkWorkerThread(store, input, forkThread);
+    let fork = forkWorkerThread(store, input, forkThread);
+    // #246: a declared tier routes the worker's first turn through the
+    // project's tier → profile map. A pinned pool still wins.
+    if (args.tier != null && !poolFromStore(store).force) {
+      fork = setRoute(store, { threadId: fork.id, route: String(args.tier) });
+    }
     await startWithPoolFailover({
       store,
       worker: fork,
@@ -1277,12 +1283,16 @@ function buildMcpServer(sdk, handlers, opts = {}) {
         "pass worktree:false to run it in the project checkout instead. " +
         "Optionally pass pool (an alias from the worker pool listed in your prompt) instead of " +
         "provider. Omit both to use the pool default. When the pool is pinned (force), pool and " +
-        "provider are ignored. Returns the new threadId.",
+        "provider are ignored. Optionally pass tier (fast, balanced, strong, or auto to classify " +
+        "the prompt) to pick the worker's model through the project's routing preferences: fast " +
+        "for triage/reformat chores, strong for architecture and hard debugging. A tier with no " +
+        "profile configured keeps the default worker model. Returns the new threadId.",
       inputSchema: {
         threadId: z.string().min(1),
         projectId: z.string().min(1),
         provider: z.string().min(1).optional(),
         pool: z.string().min(1).optional(),
+        tier: z.enum(["auto", "fast", "balanced", "strong"]).optional(),
         prompt: z.string().min(1),
         title: z.string().min(1).optional(),
         worktree: z.boolean().optional(),
