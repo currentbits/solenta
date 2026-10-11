@@ -40,6 +40,7 @@ import {
   type PaletteMode,
 } from "./commandPalette";
 import { WebTokenGate } from "./components/WebTokenGate";
+import { OauthConsentDialog } from "./components/OauthConsentDialog";
 import { isWebMode } from "./shared/wire";
 import { isBuildMismatch } from "./buildMismatch";
 import { BuildMismatchScreen } from "./components/BuildMismatchScreen";
@@ -2313,6 +2314,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         />
         )}
         </Suspense>
+        <OauthConsentDialog projects={projects} />
         <ResumeNotice
           threads={threads}
           onStopAll={(ids) => {

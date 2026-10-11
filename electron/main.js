@@ -69,7 +69,8 @@ const {
   DEFAULT_PORT: WEB_DEFAULT_PORT,
 } = require("./webServer.js");
 const { createWebDevices } = require("./webDevices.js");
-const { createWebAccess } = require("./webAccess.js");
+const { createWebAccess, createMcpFunnel } = require("./webAccess.js");
+const pairingMod = require("./pairing.js");
 const { migrateLegacyUserData } = require("./legacy-migration.js");
 const { configureDefaultSecrets } = require("./secrets.js");
 const { installCrashGuard } = require("./crash-guard.js");
@@ -195,6 +196,10 @@ let memoryConsolidateScheduler = null;
 /** Solenta Web: Settings switch, devices, Tailscale (#1512 I2). */
 /** @type {ReturnType<typeof createWebAccess> | null} */
 let webAccess = null;
+
+/** Opt-in Tailscale Funnel for /mcp (#1541). */
+/** @type {ReturnType<typeof createMcpFunnel> | null} */
+let mcpFunnel = null;
 
 /** @type {InstanceType<typeof Store> | null} */
 let store = null;
@@ -862,6 +867,7 @@ app.whenReady().then(async () => {
     },
     getOrchStatus: () =>
       orchServer ? orchServer.getStatus() : { running: false, port: null },
+    getMcpFunnel: () => mcpFunnel,
     openRemoteConnection,
     forgetRemoteConnection,
   });
@@ -1050,6 +1056,7 @@ app.whenReady().then(async () => {
     log: (msg) => console.warn(msg),
     getIosSimulator: currentIosSimulator,
     notify: notifyPairingLaunch,
+    notifyConsent: (pending) => broadcast("pairing:consent", pending),
   });
   try {
     await orchServer.start();
@@ -1058,6 +1065,21 @@ app.whenReady().then(async () => {
       "orch-server: start error; continuing without thread tools:",
       err && err.message ? err.message : err,
     );
+  }
+
+  mcpFunnel = createMcpFunnel({ log: (msg) => console.warn(msg) });
+  if (pairingMod.getPublicEnabled(userData)) {
+    const st = orchServer.getStatus();
+    if (st.running && st.port) {
+      try {
+        await mcpFunnel.set({ on: true, port: st.port });
+      } catch (err) {
+        console.warn(
+          "mcp-funnel: cannot restore Tailscale Funnel:",
+          err && err.message ? err.message : err,
+        );
+      }
+    }
   }
 
   // User MCP servers from settings: fold every enabled entry into the four
@@ -1186,6 +1208,14 @@ function teardownServices() {
       // ignore
     }
     orchServer = null;
+  }
+  if (mcpFunnel) {
+    try {
+      void mcpFunnel.set({ on: false, port: null });
+    } catch {
+      // ignore
+    }
+    mcpFunnel = null;
   }
   if (speech) {
     try {

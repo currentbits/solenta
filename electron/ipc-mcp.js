@@ -11,6 +11,32 @@ const {
 const mcpCatalog = require("./mcpCatalog.js");
 const mcpImports = require("./mcpImports.js");
 const pairing = require("./pairing.js");
+const oauth = require("./mcpOauth.js");
+
+function requireDesktopPairing(ctx) {
+  if (ctx.transport !== "desktop") {
+    throw new Error("MCP public access and OAuth consent require the desktop app.");
+  }
+}
+
+function emptyFunnel() {
+  return { installed: false, loggedIn: false, host: null, serving: false, url: null };
+}
+
+async function listWithPublic(ctx) {
+  const listed = pairing.listPairings(ctx.userDataPath, {
+    getOrchStatus: ctx.getOrchStatus,
+  });
+  const funnelFn = ctx.getMcpFunnel && ctx.getMcpFunnel();
+  const port = listed.server.port;
+  const funnel = funnelFn && typeof funnelFn.status === "function"
+    ? await funnelFn.status(port)
+    : emptyFunnel();
+  listed.server.publicEnabled = pairing.getPublicEnabled(ctx.userDataPath);
+  listed.server.publicUrl = funnel.serving && funnel.url ? `${String(funnel.url).replace(/\/$/, "")}/mcp` : null;
+  listed.server.funnel = funnel;
+  return listed;
+}
 
 /** IPC_HANDLERS rows for mcp:*, pairing:*; ipc.js spreads them in. */
 module.exports = {
@@ -142,9 +168,7 @@ module.exports = {
     });
   },
   "pairing:list": async (ctx) => {
-    return pairing.listPairings(ctx.userDataPath, {
-      getOrchStatus: ctx.getOrchStatus,
-    });
+    return listWithPublic(ctx);
   },
   "pairing:create": async (ctx, input) => {
     return pairing.createPairing(ctx.userDataPath, input || {}, {
@@ -177,5 +201,41 @@ module.exports = {
       },
       threadId,
     );
+  },
+  "pairing:setPublic": async (ctx, input) => {
+    requireDesktopPairing(ctx);
+    const on = Boolean(input && input.on);
+    const listed = pairing.listPairings(ctx.userDataPath, {
+      getOrchStatus: ctx.getOrchStatus,
+    });
+    const funnelFn = ctx.getMcpFunnel && ctx.getMcpFunnel();
+    if (!funnelFn) throw new Error("MCP public access is not available.");
+    if (on && !(listed.server && listed.server.running && listed.server.port)) {
+      throw new Error("Solenta is not serving MCP right now. Keep the app open.");
+    }
+    pairing.setPublicEnabled(ctx.userDataPath, on);
+    try {
+      await funnelFn.set({ on, port: listed.server.port });
+    } catch (err) {
+      pairing.setPublicEnabled(ctx.userDataPath, false);
+      throw err;
+    }
+    return listWithPublic(ctx);
+  },
+  "pairing:listConsents": async (ctx) => {
+    requireDesktopPairing(ctx);
+    return oauth.listConsents();
+  },
+  "pairing:approveConsent": async (ctx, input) => {
+    requireDesktopPairing(ctx);
+    const id = input && typeof input.id === "string" ? input.id : "";
+    return oauth.approveConsent(ctx.userDataPath, id, input || {}, {
+      getOrchStatus: ctx.getOrchStatus,
+    });
+  },
+  "pairing:denyConsent": async (ctx, input) => {
+    requireDesktopPairing(ctx);
+    const id = input && typeof input.id === "string" ? input.id : "";
+    return oauth.denyConsent(id);
   },
 };

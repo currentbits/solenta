@@ -77,4 +77,21 @@ describe("pairing IPC", () => {
     assert.ok(revoked.revokedAt);
     assert.equal((await IPC_HANDLERS["pairing:list"](ctx)).pairings.length, 0);
   });
+
+  it("lists public funnel fields and refuses setPublic from the web", async () => {
+    const ctx = makeCtx({
+      userDataPath: tmp,
+      store: { getThread: () => null, getThreads: () => [], getProjects: () => [] },
+      getOrchStatus: () => ({ running: true, port: 7422 }),
+    });
+    const listed = await IPC_HANDLERS["pairing:list"](ctx);
+    assert.equal(listed.server.publicEnabled, false);
+    assert.equal(listed.server.publicUrl, null);
+    assert.equal(listed.server.funnel.installed, false);
+
+    await assert.rejects(
+      IPC_HANDLERS["pairing:setPublic"]({ ...ctx, transport: "web" }, { on: true }),
+      /desktop app/,
+    );
+  });
 });
