@@ -1433,6 +1433,39 @@ describe("SettingsModal Linear API key (issue #169)", () => {
   });
 });
 
+describe("SettingsModal Sentry auth token (issue #1588)", () => {
+  it("saves the key from the Git pane without sending budget fields", async () => {
+    const patches: Partial<AppSettings>[] = [];
+    const m = await mount(
+      modal({
+        initialPane: "git",
+        settings: {
+          dailyBudgetUsd: null,
+          autoSettleAfterDays: 3,
+          sentryAuthToken: null,
+        } as AppSettings,
+        onSaveSettings: async (patch) => {
+          patches.push(patch);
+          return {
+            dailyBudgetUsd: null,
+            autoSettleAfterDays: 3,
+            sentryAuthToken: patch.sentryAuthToken ?? null,
+          } as AppSettings;
+        },
+      }),
+    );
+    const input = m.query("[data-sentry-auth-token]") as HTMLInputElement | null;
+    assert.ok(input, "Sentry auth token field on Git pane");
+    await m.type(input!, "sntrys_test");
+    const save = m.query("[data-sentry-auth-token-save]");
+    assert.ok(save, "Sentry save button");
+    await m.click(save!);
+    assert.equal(patches.length, 1);
+    assert.deepEqual(patches[0], { sentryAuthToken: "sntrys_test" });
+    m.unmount();
+  });
+});
+
 describe("SettingsModal default provider and quota failover (#711)", () => {
   const CLAUDE: ProviderInfo = {
     id: "claude",
