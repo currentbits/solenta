@@ -19,6 +19,7 @@ import {
   resetComposerSession,
   sentHistory,
   serializeDrafts,
+  setContextChips,
   setReviewComments,
 } from "../src/composerSession";
 import { makePasteCard } from "../src/pasteCards";
@@ -83,7 +84,10 @@ function restart() {
   hydrateComposerSession();
 }
 
-afterEach(unmountAll);
+afterEach(() => {
+  unmountAll();
+  resetComposerSession();
+});
 
 describe("composer drafts survive restart", () => {
   it("restores typed text, attachments and paste cards after a relaunch", async () => {
@@ -97,6 +101,42 @@ describe("composer drafts survive restart", () => {
     assert.equal(textarea(again).value, "half a thought");
     assert.ok(again.container.querySelector('[data-attachment-kind="file"]'));
     assert.equal(keptPasteCards.t1?.length, 1);
+  });
+
+  it("restores typed context chips after a relaunch", async () => {
+    setContextChips("t1", () => [
+      {
+        id: "th1",
+        kind: "thread",
+        threadId: "t-other",
+        title: "Fix the login",
+      },
+    ]);
+    restart();
+    const m = await mountComposer();
+    const chip = m.container.querySelector("[data-context-chip]");
+    assert.match(chip?.textContent || "", /Fix the login/);
+  });
+
+  it("send expands a quote chip and clears it", async () => {
+    const sends: string[] = [];
+    setContextChips("t1", () => [
+      {
+        id: "q1",
+        kind: "quote",
+        messageId: "m1",
+        threadId: "t1",
+        text: "agent said this",
+        comment: "this part is wrong",
+        quoteKind: "selection",
+      },
+    ]);
+    const m = await mountComposer({ sends });
+    await m.press(textarea(m), "Enter", { metaKey: true });
+    assert.equal(sends.length, 1);
+    assert.match(sends[0]!, /<reply-context message="m1">/);
+    assert.match(sends[0]!, /this part is wrong/);
+    assert.equal(m.container.querySelector("[data-context-chip]"), null);
   });
 
   it("restores pending review comment chips after a relaunch", async () => {

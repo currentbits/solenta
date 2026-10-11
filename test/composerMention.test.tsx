@@ -27,6 +27,11 @@ const FILES = ["src/App.tsx", "src/main.tsx"];
 function mountComposer(
   onListFiles: (query: string) => Promise<string[]>,
   promptSnippets?: PromptSnippet[],
+  extras?: {
+    mentionThreads?: { id: string; title: string }[];
+    mentionPrs?: { number: number; title: string }[];
+    mentionSkills?: { name: string; description: string }[];
+  },
 ) {
   return mount(
     <Composer
@@ -54,6 +59,9 @@ function mountComposer(
       onBuild={() => {}}
       onListFiles={onListFiles}
       promptSnippets={promptSnippets}
+      mentionThreads={extras?.mentionThreads}
+      mentionPrs={extras?.mentionPrs}
+      mentionSkills={extras?.mentionSkills}
     />,
   );
 }
@@ -238,5 +246,33 @@ describe("Composer @-mention popup", () => {
     assert.equal(intoView, 0, "scrollIntoView scrolls chatSlot");
     assert.equal(list.querySelector('[data-highlighted="true"]')?.textContent, files[8]);
     assert.ok(list.scrollTop > 0, "the mention list itself must scroll");
+  });
+
+  it("lists matching threads, PRs and skills; Enter inserts a chip (#1526)", async () => {
+    const m = await mountComposer(
+      async () => FILES,
+      undefined,
+      {
+        mentionThreads: [{ id: "t-other", title: "Login bug" }],
+        mentionPrs: [{ number: 12, title: "Add chips" }],
+        mentionSkills: [{ name: "review-pr", description: "Review a PR" }],
+      },
+    );
+    const el = textarea(m);
+    await m.type(el, "look at @login");
+    await caretToEnd(m);
+    await waitForPopup();
+    const rows = [
+      ...m.container.querySelectorAll(
+        '[aria-label="Mention a file or folder"] button',
+      ),
+    ];
+    assert.equal(rows[0]?.getAttribute("data-mention-kind"), "thread");
+    assert.match(rows[0]?.textContent || "", /Login bug/);
+    await m.press(el, "Enter");
+    assert.equal(el.value, "look at ");
+    const chip = m.container.querySelector("[data-context-chip]");
+    assert.equal(chip?.getAttribute("data-context-kind"), "thread");
+    assert.match(chip?.textContent || "", /Login bug/);
   });
 });

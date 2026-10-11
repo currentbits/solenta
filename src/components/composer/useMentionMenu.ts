@@ -7,6 +7,11 @@ import {
   type SetStateAction,
 } from "react";
 import { applyMention, getMentionQuery, type MentionQuery } from "../../mention";
+import {
+  filterMentionExtras,
+  type ContextChip,
+  type MentionExtra,
+} from "../../contextChips";
 import type { PromptSnippet } from "../../shared/ipc";
 
 /**
@@ -18,6 +23,8 @@ export function useMentionMenu({
   textareaRef,
   onListFiles,
   promptSnippets,
+  mentionExtras,
+  onAcceptExtra,
   onPickMentionFolder,
   disabled,
   writeDraft,
@@ -27,6 +34,8 @@ export function useMentionMenu({
   onListFiles?: (query: string) => Promise<string[]>;
   /** Saved snippets (issue #189), listed above files when `@name` matches. */
   promptSnippets?: readonly PromptSnippet[];
+  mentionExtras?: readonly MentionExtra[];
+  onAcceptExtra?: (chip: ContextChip) => void;
   onPickMentionFolder?: () => Promise<string | null>;
   disabled: boolean;
   writeDraft: (text: string, caret?: number) => void;
@@ -44,8 +53,12 @@ export function useMentionMenu({
         sn.name.toLowerCase().startsWith(mention.query.toLowerCase()),
       )
     : [];
-  /** Snippets first, then files; one index walks both. */
-  const mentionCount = snippetMatches.length + mentionFiles.length;
+  const extraMatches = mention
+    ? filterMentionExtras([...(mentionExtras ?? [])], mention.query)
+    : [];
+  /** Snippets, then threads/PRs/skills, then files. */
+  const mentionCount =
+    snippetMatches.length + extraMatches.length + mentionFiles.length;
   // Files land 150ms after the query changes; clamp so a shorter snippet
   // list never leaves the highlight past the end in between.
   const mentionActive = Math.max(0, Math.min(mentionIndex, mentionCount - 1));
@@ -65,7 +78,11 @@ export function useMentionMenu({
   /** Recompute the active @token from the live textarea and (re)fetch files. */
   const refreshMention = useCallback(() => {
     const el = textareaRef.current;
-    if (!el || (!onListFiles && !promptSnippets?.length) || disabled) {
+    if (
+      !el ||
+      (!onListFiles && !promptSnippets?.length && !mentionExtras?.length) ||
+      disabled
+    ) {
       closeMention();
       return;
     }
@@ -92,7 +109,7 @@ export function useMentionMenu({
           setMentionFiles([]);
         });
     }, 150);
-  }, [onListFiles, promptSnippets, disabled, closeMention]);
+  }, [onListFiles, promptSnippets, mentionExtras, disabled, closeMention]);
 
   const acceptMention = useCallback(
     (path: string) => {
@@ -123,6 +140,43 @@ export function useMentionMenu({
     [mention, closeMention, writeDraft],
   );
 
+  const acceptExtra = useCallback(
+    (extra: MentionExtra) => {
+      const el = textareaRef.current;
+      if (!el || !mention || !onAcceptExtra) return;
+      const caret = el.selectionStart ?? el.value.length;
+      writeDraft(el.value.slice(0, mention.start) + el.value.slice(caret), mention.start);
+      const id =
+        typeof crypto !== "undefined" && crypto.randomUUID
+          ? crypto.randomUUID()
+          : `chip-${Date.now()}`;
+      if (extra.kind === "thread") {
+        onAcceptExtra({
+          id,
+          kind: "thread",
+          threadId: extra.id,
+          title: extra.title,
+        });
+      } else if (extra.kind === "pr") {
+        onAcceptExtra({
+          id,
+          kind: "pr",
+          number: extra.number,
+          title: extra.title,
+        });
+      } else {
+        onAcceptExtra({
+          id,
+          kind: "skill",
+          name: extra.name,
+          description: extra.description,
+        });
+      }
+      closeMention();
+    },
+    [mention, closeMention, writeDraft, onAcceptExtra],
+  );
+
   const browseMentionFolder = useCallback(() => {
     if (!onPickMentionFolder || disabled) return;
     void onPickMentionFolder()
@@ -140,6 +194,7 @@ export function useMentionMenu({
   return {
     mentionFiles,
     snippetMatches,
+    extraMatches,
     mentionCount,
     mentionActive,
     setMentionIndex,
@@ -148,6 +203,7 @@ export function useMentionMenu({
     refreshMention,
     acceptMention,
     acceptSnippet,
+    acceptExtra,
     browseMentionFolder,
   };
 }
