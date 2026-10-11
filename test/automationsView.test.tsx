@@ -901,6 +901,67 @@ describe("AutomationsView", () => {
     m.unmount();
   });
 
+  it("event triggers: picks a GitHub event, sends its filter, edits memory (#242)", async () => {
+    const created: Array<Record<string, unknown>> = [];
+    const updates: Array<Record<string, unknown>> = [];
+    const triage = auto({
+      id: "a1",
+      name: "Triage",
+      preset: "hourly",
+      trigger: { type: "github", event: "ci_completed", branch: "main", label: null, conclusion: "failure" },
+      memory: "flaky: web-integration",
+    });
+    const m = await mount(
+      <AutomationsView
+        automations={[triage]}
+        projects={[p1]}
+        providers={providers}
+        onCreate={(input) => {
+          created.push(input as unknown as Record<string, unknown>);
+        }}
+        onUpdate={(input) => {
+          updates.push(input);
+        }}
+        onRemove={() => {}}
+        onRunNow={() => {}}
+      />,
+    );
+    assert.ok(m.text().includes("on CI completed (failure) on main"));
+    assert.equal(m.query("[data-automation-memory]"), null, "memory is edit-only");
+
+    // A hidden daily preset must not leak an hour requirement into event mode.
+    await m.change(m.query('[data-automation-create] [name="preset"]'), "daily");
+    await m.change(m.query('[data-automation-create] [name="preset"]'), "pr_labeled");
+    assert.equal(m.query('[data-automation-create] [name="hour"]'), null);
+    await m.type(m.query('[data-automation-create] [name="name"]'), "Bug triage");
+    await m.type(m.query('[data-automation-create] [name="prompt"]'), "triage it");
+    await m.type(m.query('[data-automation-create] [name="label"]'), "bug");
+    await m.click(m.query("[data-automation-create] button[type=submit]"));
+    assert.equal(created.length, 1);
+    assert.equal(created[0].preset, "hourly");
+    assert.equal(created[0].hour, null);
+    assert.deepEqual(created[0].trigger, {
+      type: "github",
+      event: "pr_labeled",
+      branch: null,
+      label: "bug",
+      conclusion: null,
+    });
+
+    await m.click(m.query('[data-automation-edit=""]'));
+    const memory = m.query("[data-automation-memory]") as HTMLTextAreaElement | null;
+    assert.ok(memory);
+    assert.equal(memory.value, "flaky: web-integration");
+    assert.equal((m.query('[data-automation-create] [name="branch"]') as HTMLInputElement).value, "main");
+    await m.change(m.query('[data-automation-create] [name="preset"]'), "weekly");
+    await m.click(m.query("[data-automation-create] button[type=submit]"));
+    assert.equal(updates.length, 1);
+    assert.equal(updates[0].trigger, null, "back to schedule mode");
+    assert.equal(updates[0].preset, "weekly");
+    assert.equal(updates[0].memory, "flaky: web-integration");
+    m.unmount();
+  });
+
   it("does not submit a pending save twice", async () => {
     const updates: unknown[] = [];
     let release!: () => void;
