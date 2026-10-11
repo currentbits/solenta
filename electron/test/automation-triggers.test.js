@@ -298,4 +298,63 @@ describe("event-triggered automations", () => {
       sched.stop();
     }
   });
+
+  it("fires a trusted shared trigger with the merged file prompt, not the overlay", async () => {
+    const {
+      presentAutomationsFile,
+      automationsHash,
+      readAutomations,
+    } = require("../automations-file.js");
+    const row = {
+      id: "pr-triage",
+      name: "PR triage",
+      prompt: "From file",
+      provider: "claude",
+      model: null,
+      preset: "hourly",
+      hour: null,
+      trigger: { type: "github", event: "pr_opened" },
+    };
+    fs.writeFileSync(
+      path.join(tmpDir, "solenta.json"),
+      JSON.stringify({ automations: [row] }, null, 2),
+    );
+    store.setAutomations([
+      {
+        id: "shared:p1:pr-triage",
+        projectId: "p1",
+        scope: "project",
+        name: row.name,
+        prompt: "Stale",
+        provider: "claude",
+        preset: "hourly",
+        hour: null,
+        trigger: { event: "pr_opened" },
+        enabled: true,
+        triggerCursor: 10,
+        lastRunAt: null,
+        nextRunAt: Date.now() + 99 * 86_400_000,
+        lastError: null,
+      },
+    ]);
+    const section = readAutomations(tmpDir);
+    const hash = automationsHash(section.automations);
+    const project = store.getProject("p1");
+    store.setProjects([{ ...project, automationsTrust: hash }]);
+    assert.equal(presentAutomationsFile(store.getProject("p1")).trusted, true);
+    rows = [
+      { number: 12, title: "second", user: { login: "y" } },
+      { number: 10, title: "old", user: { login: "x" } },
+    ];
+    const started = [];
+    const sched = scheduler(started);
+    try {
+      await sched.tick();
+      assert.equal(started.length, 1);
+      assert.match(started[0].prompt, /^From file/);
+      assert.equal(store.getAutomation("shared:p1:pr-triage").prompt, "Stale");
+    } finally {
+      sched.stop();
+    }
+  });
 });

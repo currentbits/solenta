@@ -295,7 +295,7 @@ async function pollTriggers(ctx, firing) {
       firing.add(auto.id);
       try {
         await ctx.fireRun(
-          ctx.store.getAutomation(auto.id),
+          auto,
           formatTriggerNote(trigger.event, remote, fresh),
         );
       } finally {
