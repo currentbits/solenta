@@ -2,8 +2,11 @@ import { useCallback, useRef, useState } from "react";
 import { useEscapeClose } from "../useEscapeClose";
 import { useModalFocus } from "../useModalFocus";
 import type {
+  AgentProfile,
+  ModelTier,
   PermissionMode,
   ProjectInfo,
+  ProjectModelRouting,
   ProjectQuickAction,
   ProjectThreadDefaults,
   ProjectUpdateInput,
@@ -52,7 +55,15 @@ interface EditProjectModalProps {
   providers?: ProviderInfo[];
   /** settings.defaultProvider; null = the built-in Claude Code default. */
   globalProvider?: string | null;
+  /** Profiles the model routing tiers map to (#246). */
+  agentProfiles?: AgentProfile[];
 }
+
+const ROUTING_TIERS: { tier: ModelTier; label: string }[] = [
+  { tier: "fast", label: "Fast (triage, reformat)" },
+  { tier: "balanced", label: "Balanced" },
+  { tier: "strong", label: "Strong (architecture, hard bugs)" },
+];
 
 /**
  * Edit an existing project: display name, appearance (#610), and SSH remote
@@ -68,6 +79,7 @@ export function EditProjectModal({
   onPreviewIcon,
   providers = [],
   globalProvider = null,
+  agentProfiles = [],
 }: EditProjectModalProps) {
   const [name, setName] = useState(project.name);
   const [remoteHost, setRemoteHost] = useState(project.remoteHost ?? "");
@@ -109,6 +121,14 @@ export function EditProjectModal({
   const defaultModes = defaults.provider
     ? providerPermissionModes(defaultProvider)
     : providerPermissionModes(null);
+  const [routing, setRouting] = useState<ProjectModelRouting>(() => ({
+    ...project.modelRouting,
+  }));
+  const [routingDirty, setRoutingDirty] = useState(false);
+  const patchRouting = (patch: ProjectModelRouting) => {
+    setRouting((r) => ({ ...r, ...patch }));
+    setRoutingDirty(true);
+  };
   const [envText, setEnvText] = useState(() =>
     Object.entries(project.env ?? {})
       .map(([k, v]) => `${k}=${v}`)
@@ -180,6 +200,11 @@ export function EditProjectModal({
       if (defaultsDirty) {
         payload.threadDefaults = Object.fromEntries(
           Object.entries(defaults).filter(([, v]) => v !== undefined),
+        );
+      }
+      if (routingDirty) {
+        payload.modelRouting = Object.fromEntries(
+          Object.entries(routing).filter(([, v]) => v !== undefined),
         );
       }
       const updated = await onSubmit(payload);
@@ -487,6 +512,55 @@ export function EditProjectModal({
               their settings, and an agent profile or worker pool still wins.
               {defaults.lastUsed
                 ? " These update to whatever you pick on a new thread before its first message."
+                : ""}
+            </p>
+          </div>
+          <div className={styles.field} data-edit-project-routing="">
+            <span className={styles.fieldLabel}>Model routing</span>
+            {ROUTING_TIERS.map(({ tier, label }) => (
+              <select
+                key={tier}
+                className={styles.input}
+                aria-label={`${label} profile`}
+                data-edit-project-routing-tier={tier}
+                value={routing[tier] ?? ""}
+                disabled={pending}
+                onChange={(e) =>
+                  patchRouting({ [tier]: e.target.value || undefined })
+                }
+              >
+                <option value="">{label}: keep the thread's model</option>
+                {agentProfiles.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {label}: {p.name}
+                  </option>
+                ))}
+                {routing[tier] &&
+                !agentProfiles.some((p) => p.id === routing[tier]) ? (
+                  <option value={routing[tier]}>{label}: missing profile</option>
+                ) : null}
+              </select>
+            ))}
+            <label className={styles.fieldRow} htmlFor="edit-project-auto-route">
+              <input
+                id="edit-project-auto-route"
+                type="checkbox"
+                data-edit-project-auto-route=""
+                checked={routing.auto === true}
+                disabled={pending}
+                onChange={(e) =>
+                  patchRouting({ auto: e.target.checked ? true : undefined })
+                }
+              />
+              <span>Start new threads on Auto</span>
+            </label>
+            <p className={styles.note}>
+              Auto picks a tier from the first message and applies that
+              profile's model and effort, never its permissions. Automations
+              and orchestrator workers can declare a tier instead. The
+              transcript notes what was picked and why.
+              {agentProfiles.length === 0
+                ? " Add agent profiles in Settings → Agents to map tiers."
                 : ""}
             </p>
           </div>

@@ -495,6 +495,14 @@ function updateProject(store, projectId, patch) {
     else delete next.threadDefaults;
   }
 
+  // #246. Replaces the whole object; null / empty clears it.
+  if (Object.prototype.hasOwnProperty.call(input, "modelRouting")) {
+    const { normalizeModelRouting } = require("./routing.js");
+    const modelRouting = normalizeModelRouting(input.modelRouting);
+    if (modelRouting) next.modelRouting = modelRouting;
+    else delete next.modelRouting;
+  }
+
   projects[idx] = next;
   store.setProjects(projects);
   store.save();

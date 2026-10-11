@@ -11,6 +11,7 @@ import type {
   ThreadInfo,
   ThreadMessagePin,
   WorkSuggestionStatus,
+  ModelRoute,
 } from "../shared/ipc";
 import type { CoderError } from "../useCoder";
 import { errorMessage } from "./errorMessage";
@@ -271,6 +272,34 @@ export function useCoderThreadActions({
         const thread = await api.threads.setFast({
           threadId,
           fast,
+        });
+        applyThreads(
+          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
+        );
+        if (selectedRef.current === threadId) {
+          setDetail((prev) =>
+            prev && prev.thread.id === thread.id
+              ? { ...prev, thread }
+              : prev,
+          );
+        }
+        setError(null);
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+        throw err;
+      }
+    },
+    [api, selectedThreadId, applyThreads],
+  );
+
+  const setRoute = useCallback(
+    async (route: ModelRoute | null, threadIdArg?: string) => {
+      const threadId = threadIdArg ?? selectedThreadId;
+      if (!threadId) return;
+      try {
+        const thread = await api.threads.setRoute({
+          threadId,
+          route,
         });
         applyThreads(
           threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
@@ -942,6 +971,7 @@ export function useCoderThreadActions({
     setAgent,
     listAgents,
     setFast,
+    setRoute,
     setArchived,
     setSettled,
     setPinned,

@@ -69,6 +69,7 @@ const {
   setWebSearch,
   setAgent,
   setFast,
+  setRoute,
   forkThread,
   savePlanFile,
   forkWorkerThread,
@@ -215,6 +216,7 @@ module.exports = {
   setWebSearch,
   setAgent,
   setFast,
+  setRoute,
   setProvider,
   // normalizeModelForProvider / isKnownProviderId / truncateThreadTitle stay
   // module-private (round-49 review A-n2: dead exports). Tests use

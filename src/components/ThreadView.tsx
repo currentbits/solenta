@@ -60,6 +60,7 @@ import type {
   EditorId,
   EditorOption,
   PromptSnippet,
+  ModelRoute,
 } from "../shared/ipc";
 import {
   THREAD_NOTES_MAX,
@@ -366,6 +367,7 @@ interface ThreadViewProps {
   ) => void | Promise<void>;
   onSetWebSearch?: (webSearch: boolean, threadId?: string) => void | Promise<void>;
   onSetFast?: (fast: boolean, threadId?: string) => void | Promise<void>;
+  onSetRoute?: (route: ModelRoute | null, threadId?: string) => void | Promise<void>;
   /** Run the thread as a CLI custom agent (#172); null = CLI default. */
   onSetAgent?: (agent: string | null) => void | Promise<void>;
   onListAgents?: (input: {
@@ -762,6 +764,7 @@ export const ThreadView = memo(function ThreadView({
   onSetReasoningEffort,
   onSetWebSearch,
   onSetFast,
+  onSetRoute,
   onSetAgent,
   onListAgents,
   onSetArchived,
@@ -4631,6 +4634,7 @@ export const ThreadView = memo(function ThreadView({
         reasoningEffort={thread.reasoningEffort}
         webSearch={thread.webSearch === true}
         fast={thread.fast === true}
+        route={thread.route ?? null}
         agent={thread.agent ?? null}
         agents={cliAgents}
         onSetAgent={onSetAgent}
@@ -4641,6 +4645,7 @@ export const ThreadView = memo(function ThreadView({
         onSetReasoningEffort={onSetReasoningEffort}
         onSetWebSearch={onSetWebSearch}
         onSetFast={onSetFast}
+        onSetRoute={onSetRoute}
         onSaveWorkflow={onSaveWorkflow}
         onRemoveWorkflow={onRemoveWorkflow}
         onExportWorkflow={onExportWorkflow}

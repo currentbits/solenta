@@ -17,6 +17,7 @@ import type {
   AutomationTrigger,
   AutomationTriggerEvent,
   AutomationWrite,
+  ModelRoute,
   ProjectInfo,
   ProviderInfo,
   ThreadStatus,
@@ -247,6 +248,8 @@ export function AutomationsView({
   );
   const [model, setModel] = useState(draft?.model ?? "");
   const [preset, setPreset] = useState<AutomationPreset>("hourly");
+  // #246: "" = run on the provider/model above.
+  const [tier, setTier] = useState<ModelRoute | "">("");
   const [hour, setHour] = useState("9");
   // #242: "" = schedule mode, else the GitHub event this automation fires on.
   const [event, setEvent] = useState<AutomationTriggerEvent | "">("");
@@ -283,6 +286,7 @@ export function AutomationsView({
     setProvider(auto.provider);
     setModel(auto.model ?? "");
     setPreset(auto.preset);
+    setTier(auto.tier ?? "");
     setHour(auto.hour != null ? String(auto.hour) : "9");
     setEvent(auto.trigger?.event ?? "");
     setBranch(auto.trigger?.branch ?? "");
@@ -298,6 +302,7 @@ export function AutomationsView({
     setPrompt("");
     setModel("");
     setPreset("hourly");
+    setTier("");
     setHour("9");
     setEvent("");
     setBranch("");
@@ -368,6 +373,7 @@ export function AutomationsView({
     setFormError(null);
     try {
       if (editingId) {
+        const hadTier = automations.find((a) => a.id === editingId)?.tier;
         await onUpdate({
           id: editingId,
           name: name.trim(),
@@ -379,6 +385,7 @@ export function AutomationsView({
           hour: needsHour ? Number(hour) : null,
           trigger,
           memory,
+          ...(tier || hadTier ? { tier: tier || null } : {}),
         });
         clearEdit();
       } else {
@@ -393,10 +400,12 @@ export function AutomationsView({
           hour: needsHour ? Number(hour) : null,
           trigger,
           enabled: true,
+          ...(tier ? { tier } : {}),
         });
         setName("");
         setPrompt("");
         setModel("");
+        setTier("");
       }
     } catch (err) {
       setFormError(
@@ -512,6 +521,24 @@ export function AutomationsView({
                 data-automation-model=""
               />
             )}
+          </label>
+          <label className={styles.field}>
+            <span className={styles.label}>Routing</span>
+            <select
+              className={styles.select}
+              value={tier}
+              onChange={(e) => setTier(e.target.value as ModelRoute | "")}
+              name="tier"
+              aria-label="Routing"
+              title="Pick the model through the project's routing; the provider and model are the fallback"
+              data-automation-tier=""
+            >
+              <option value="">Off</option>
+              <option value="auto">Auto</option>
+              <option value="fast">Fast</option>
+              <option value="balanced">Balanced</option>
+              <option value="strong">Strong</option>
+            </select>
           </label>
           <label className={styles.field}>
             <span className={styles.label}>When</span>

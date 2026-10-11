@@ -5,6 +5,7 @@
 const { randomUUID } = require("node:crypto");
 const { getProvider } = require("./providers.js");
 const { getMemoryStatus } = require("./memory-sup.js");
+const { normalizeRoute } = require("./routing.js");
 const {
   normalizeModelForProvider,
   isKnownProviderId,
@@ -285,6 +286,15 @@ function normalizeAutomationInput(store, input, existing) {
     enabled = Boolean(src.enabled);
   }
 
+  // #246: optional routing tier; the provider/model above is the fallback.
+  const tierRaw = Object.prototype.hasOwnProperty.call(src, "tier")
+    ? src.tier
+    : base.tier;
+  const tier = tierRaw == null || tierRaw === "" ? null : normalizeRoute(tierRaw);
+  if (tierRaw != null && tierRaw !== "" && !tier) {
+    throw new Error(`Invalid tier: ${tierRaw}. Expected auto, fast, balanced, or strong`);
+  }
+
   const { parseTriggerInput } = require("./automation-triggers.js");
   const trigger = Object.prototype.hasOwnProperty.call(src, "trigger")
     ? parseTriggerInput(src.trigger)
@@ -307,6 +317,7 @@ function normalizeAutomationInput(store, input, existing) {
     enabled,
     trigger,
     memory,
+    tier,
   };
 }
 
