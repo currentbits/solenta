@@ -78,6 +78,31 @@ describe("Store", () => {
     assert.equal(auto.lastError, null);
   });
 
+  it("migrates missing automation scope to private", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-store-"));
+    const file = path.join(dir, "store.json");
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        projects: [],
+        threads: [],
+        automations: [
+          {
+            id: "a1",
+            projectId: "p",
+            name: "Old",
+            prompt: "x",
+            provider: "claude",
+            preset: "hourly",
+          },
+        ],
+      }),
+    );
+    const store = new Store(file);
+    const [auto] = store.getAutomations();
+    assert.equal(auto.scope, "private");
+  });
+
   it("normalizes lastErrorKind and rejects unknown persisted kinds", () => {
     fs.writeFileSync(
       filePath,
