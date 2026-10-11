@@ -2053,6 +2053,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onSuggestCommitMessage={suggestCommitMessage}
         onListFiles={listFiles}
         promptSnippets={settings?.promptSnippets}
+        mentionThreads={threads.map((t) => ({ id: t.id, title: t.title }))}
         onPickDirectory={pickDirectory}
         onListSnapWindows={listSnapWindows}
         onCaptureSnapWindow={captureSnapWindow}

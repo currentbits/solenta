@@ -1,13 +1,28 @@
 import type { Dispatch, SetStateAction } from "react";
 import type { SlashCommand } from "../../slashCommands";
 import type { PromptSnippet } from "../../shared/ipc";
+import type { MentionExtra } from "../../contextChips";
 import { scrollChildIntoNearestView } from "../../scrollNearest";
 import styles from "../Composer.module.css";
+
+function extraLabel(extra: MentionExtra): string {
+  if (extra.kind === "thread") return extra.title;
+  if (extra.kind === "pr") return `#${extra.number} ${extra.title}`;
+  return extra.name;
+}
+
+function extraKindPrefix(kind: MentionExtra["kind"]): string {
+  if (kind === "thread") return "Thread";
+  if (kind === "pr") return "PR";
+  return "Skill";
+}
 
 /** The @-mention listbox above the textarea. */
 export function MentionList({
   snippetMatches,
   acceptSnippet,
+  extraMatches,
+  acceptExtra,
   mentionFiles,
   mentionIndex,
   setMentionIndex,
@@ -15,9 +30,11 @@ export function MentionList({
   onPickMentionFolder,
   browseMentionFolder,
 }: {
-  /** Snippet rows (issue #189) come first; indices continue into files. */
+  /** Snippet rows (issue #189) come first; indices continue into extras then files. */
   snippetMatches: PromptSnippet[];
   acceptSnippet: (snippet: PromptSnippet) => void;
+  extraMatches?: MentionExtra[];
+  acceptExtra?: (extra: MentionExtra) => void;
   mentionFiles: string[];
   mentionIndex: number;
   setMentionIndex: Dispatch<SetStateAction<number>>;
@@ -55,8 +72,36 @@ export function MentionList({
           </button>
         </li>
       ))}
+      {(extraMatches ?? []).map((extra, ei) => {
+        const i = ei + snippetMatches.length;
+        return (
+        <li key={`${extra.kind}:${extra.kind === "pr" ? extra.number : extra.kind === "thread" ? extra.id : extra.name}`} role="option" aria-selected={i === mentionIndex}>
+          <button
+            type="button"
+            className={styles.mentionRow}
+            ref={(el) => {
+              if (i === mentionIndex && el) {
+                scrollChildIntoNearestView(
+                  el.closest<HTMLElement>('[role="listbox"]'),
+                  el,
+                );
+              }
+            }}
+            data-highlighted={i === mentionIndex ? "true" : undefined}
+            data-mention-kind={extra.kind}
+            onMouseEnter={() => setMentionIndex(i)}
+            onClick={() => acceptExtra?.(extra)}
+          >
+            <span className={styles.providerRowText}>
+              <span className={styles.modelRowVendor}>{extraKindPrefix(extra.kind)}</span>
+              <span className={styles.modelRowLabel}>{extraLabel(extra)}</span>
+            </span>
+          </button>
+        </li>
+        );
+      })}
       {mentionFiles.map((f, fi) => {
-        const i = fi + snippetMatches.length;
+        const i = fi + snippetMatches.length + (extraMatches?.length ?? 0);
         return (
         <li key={f} role="option" aria-selected={i === mentionIndex}>
           <button

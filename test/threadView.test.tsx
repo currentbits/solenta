@@ -17,6 +17,7 @@ import { useState } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { inAct, mount, unmountAll } from "./support/dom.ts";
 import { setTranscriptViewMode } from "../src/uiPrefs";
+import { resetComposerSession } from "../src/composerSession";
 import { ThreadView } from "../src/components/ThreadView";
 import styles from "../src/components/ThreadView.module.css";
 import { routineWorkerActivitySummary } from "../src/workerActivity";
@@ -303,6 +304,7 @@ function assertNoNestedInteractive(html: string): void {
 afterEach(() => {
   unmountAll();
   setTranscriptViewMode("normal");
+  resetComposerSession();
 });
 
 describe("ThreadView empty states", () => {

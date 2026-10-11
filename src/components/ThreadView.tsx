@@ -144,6 +144,7 @@ import {
   replySourceUnavailable,
   type ReplyTarget,
 } from "../replyContext";
+import { quoteChipAsReply } from "../contextChips";
 import { waitWhatPrompt } from "../waitWhat";
 import { sessionImagePathsFromMessages } from "../sessionImages";
 import { PathLinkProvider, ThreadLinkContext } from "./PathLinks";
@@ -181,7 +182,7 @@ import {
   FeltEstimateCard,
   DivergenceCard,
 } from "./thread/cards";
-import { setReviewComments } from "../composerSession";
+import { setContextChips, setReviewComments } from "../composerSession";
 import { useRetryAnchors } from "./thread/useRetryAnchors";
 import { useTranscriptAnnotations } from "./thread/useTranscriptAnnotations";
 import { useCliCommands } from "./thread/useCliCommands";
@@ -507,6 +508,8 @@ interface ThreadViewProps {
   onListFiles?: (query: string) => Promise<string[]>;
   /** Saved snippets offered in the @-mention popup (issue #189). */
   promptSnippets?: readonly PromptSnippet[];
+  /** Other threads for the mixed @ menu (#1526). */
+  mentionThreads?: ReadonlyArray<{ id: string; title: string }>;
   /** Native folder picker; returns an absolute path or null. */
   onPickDirectory?: () => Promise<string | null>;
   /** AppSnap: on-screen windows the user can capture. */
@@ -820,6 +823,7 @@ export const ThreadView = memo(function ThreadView({
   onSuggestCommitMessage,
   onListFiles,
   promptSnippets,
+  mentionThreads,
   onPickDirectory,
   onListSnapWindows,
   onCaptureSnapWindow,
@@ -1723,7 +1727,24 @@ export const ThreadView = memo(function ThreadView({
   const storeReply = useCallback((target: ReplyTarget) => {
     const tid = target.threadId;
     if (!tid) return;
-    setReplyByThread((prev) => ({ ...prev, [tid]: target }));
+    const id =
+      typeof crypto !== "undefined" && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `quote-${Date.now()}`;
+    setContextChips(tid, (prev) => [
+      ...prev,
+      {
+        id,
+        kind: "quote",
+        messageId: target.messageId,
+        threadId: tid,
+        text: target.text,
+        comment: "",
+        truncated: target.truncated,
+        sourceText: target.sourceText,
+        quoteKind: target.kind,
+      },
+    ]);
   }, []);
 
   const handleReply = useCallback(
@@ -4766,6 +4787,7 @@ export const ThreadView = memo(function ThreadView({
         onDismissError={onDismissRunError}
         onListFiles={onListFiles}
         promptSnippets={promptSnippets}
+        mentionThreads={mentionThreads}
         onPickMentionFolder={
           onPickDirectory ? pickMentionFolder : undefined
         }
@@ -4782,6 +4804,17 @@ export const ThreadView = memo(function ThreadView({
         onRevealReply={() => {
           if (!replyTo || replySourceGone) return;
           setJumpMessageId(replyTo.messageId);
+        }}
+        onRevealContextChip={(chip) => {
+          if (chip.kind !== "quote") return;
+          const message = detail?.messages.find((m) => m.id === chip.messageId);
+          if (replySourceUnavailable(quoteChipAsReply(chip), message)) return;
+          setJumpMessageId(chip.messageId);
+        }}
+        onContextChipUnavailable={(chip) => {
+          if (chip.kind !== "quote") return false;
+          const message = detail?.messages.find((m) => m.id === chip.messageId);
+          return replySourceUnavailable(quoteChipAsReply(chip), message);
         }}
         replySourceUnavailable={replySourceGone}
         onPickAttachments={onPickAttachments}
