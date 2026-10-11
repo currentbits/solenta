@@ -665,6 +665,8 @@ interface ThreadViewProps {
   onFileSuggestion?: (s: WorkSuggestion) => void | Promise<void>;
   /** Dismiss a suggested-work chip for this thread. Permanent. */
   onDismissSuggestion?: (s: WorkSuggestion) => void | Promise<void>;
+  /** Open the Automations view (automation_create card, #1589). */
+  onOpenAutomations?: () => void;
   /**
    * The thread this one was handed off from (handoffFrom), already resolved.
    * Resolved by App rather than passing the whole list: the list gets a new
@@ -869,6 +871,7 @@ export const ThreadView = memo(function ThreadView({
   onStartSuggestion,
   onFileSuggestion,
   onDismissSuggestion,
+  onOpenAutomations,
   handoffSource = null,
   onSelectThread,
   threadTitles,
@@ -3993,6 +3996,7 @@ export const ThreadView = memo(function ThreadView({
                       onLoadImage={onLoadImage}
                       onLoadAttachmentImage={onLoadAttachmentImage}
                       onSelectThread={onSelectThread}
+                      onOpenAutomations={onOpenAutomations}
                       pinned={pinnedIds.has(entry.message.id)}
                       onTogglePin={
                         onSetMessagePins &&

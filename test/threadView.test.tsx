@@ -176,6 +176,7 @@ function view(props: {
   onStartSuggestion?: (s: WorkSuggestion) => void | Promise<void>;
   onFileSuggestion?: (s: WorkSuggestion) => void | Promise<void>;
   onDismissSuggestion?: (s: WorkSuggestion) => void | Promise<void>;
+  onOpenAutomations?: () => void;
   revealMessageId?: string | null;
   onSelectThread?: (id: string) => void;
   returnToView?: "planboard" | "kanban" | "activity" | "digest" | "prs" | "insights";
@@ -253,6 +254,7 @@ function view(props: {
       onStartSuggestion={props.onStartSuggestion}
       onFileSuggestion={props.onFileSuggestion}
       onDismissSuggestion={props.onDismissSuggestion}
+      onOpenAutomations={props.onOpenAutomations}
       revealMessageId={props.revealMessageId}
       onSelectThread={props.onSelectThread}
       returnToView={props.returnToView}
@@ -560,6 +562,65 @@ describe("ThreadView message roles", () => {
     assert.ok(html.includes("data-tool-group"), "group landmark");
     assert.ok(!html.includes("toolCard"), "collapsed group is not a tool tile");
     assert.ok(!html.includes("a.ts"), "paths stay inside the collapsed group");
+  });
+
+  it("renders automation_create as a card with Open in Automations (#1589)", () => {
+    const html = render({
+      detail: detail({
+        messages: [
+          msg({
+            id: "t1",
+            role: "tool",
+            text: "Read: a.ts",
+            createdAt: 15,
+            runId: "run-1",
+            tool: {
+              id: "tc1",
+              name: "Read",
+              input: "a.ts",
+              output: "ok",
+              done: true,
+              isError: false,
+            },
+          }),
+          msg({
+            id: "ac",
+            role: "tool",
+            text: "automation_create",
+            createdAt: 16,
+            runId: "run-1",
+            tool: {
+              id: "tc-ac",
+              name: "mcp__coder-threads__automation_create",
+              input: '{"name":"Triage CI"}',
+              output: JSON.stringify({
+                ok: true,
+                id: "auto-1",
+                name: "Triage CI",
+                preset: "hourly",
+                trigger: {
+                  type: "github",
+                  event: "ci_completed",
+                  branch: "main",
+                  conclusion: "failure",
+                },
+              }),
+              done: true,
+              isError: false,
+            },
+          }),
+        ],
+      }),
+      onOpenAutomations: () => {},
+    });
+    assert.ok(html.includes("Triage CI"));
+    assert.ok(html.includes("Open in Automations"));
+    assert.ok(html.includes("data-automation-card="));
+    assert.ok(
+      !html.includes("mcp__coder-threads__automation_create") ||
+        html.includes("data-automation-card="),
+      "result is a dedicated card, not only the raw tool name",
+    );
   });
 
   it("renders a single tool as a group, not a boxed tool card", () => {
