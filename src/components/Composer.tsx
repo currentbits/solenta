@@ -21,6 +21,7 @@ import type {
   ProviderInfo,
   ReasoningEffort,
   WorkflowTemplateInfo,
+  ModelRoute,
 } from "../shared/ipc";
 import type { WorkflowSaveInput } from "../useCoder";
 import {
@@ -176,6 +177,10 @@ interface ComposerProps {
   onSetReasoningEffort: (effort: ReasoningEffort | null) => void | Promise<void>;
   onSetWebSearch?: (webSearch: boolean) => void | Promise<void>;
   onSetFast?: (fast: boolean) => void | Promise<void>;
+  /** Pending first-turn route (#246); "auto" shows the pill as Auto. */
+  route?: ModelRoute | null;
+  /** Absent hides the Auto row. */
+  onSetRoute?: (route: ModelRoute | null) => void | Promise<void>;
   onSaveWorkflow: (template: WorkflowSaveInput) => Promise<WorkflowTemplateInfo>;
   onRemoveWorkflow: (id: string) => Promise<void>;
   onExportWorkflow?: (
@@ -348,6 +353,8 @@ export const Composer = memo(function Composer({
   onSetReasoningEffort,
   onSetWebSearch,
   onSetFast,
+  route = null,
+  onSetRoute,
   onSaveWorkflow,
   onRemoveWorkflow,
   onExportWorkflow,
@@ -705,6 +712,7 @@ export const Composer = memo(function Composer({
       profiles: profileRows,
       query,
       favourites: favOnly ? favouriteSet : null,
+      auto: Boolean(onSetRoute) && !sessionLocked,
     });
   const modelRows = pickerRowsFor(modelQuery, favouritesOnly);
   // On a named instance (#453) the pill says which account: "Opus (work)".
@@ -715,7 +723,11 @@ export const Composer = memo(function Composer({
     baseName && currentProviderInfo!.name.startsWith(baseName)
       ? currentProviderInfo!.name.slice(baseName.length)
       : "";
-  const triggerLabel = modelTriggerLabel(model, currentProviderInfo) + instanceSuffix;
+  const triggerLabel = route
+    ? route === "auto"
+      ? "Auto"
+      : `Auto: ${route}`
+    : modelTriggerLabel(model, currentProviderInfo) + instanceSuffix;
   const hi = clampHighlightIndex(modelRows, highlightIndex);
   // The rail's diamond follows the highlighted row's provider.
   const railActive = favouritesOnly
@@ -1495,6 +1507,15 @@ export const Composer = memo(function Composer({
       void pickProfile(row.profile);
       return;
     }
+    if (row.auto) {
+      closeModelPicker(true);
+      try {
+        await onSetRoute?.("auto");
+      } catch (err) {
+        setLocalError(err instanceof Error ? err.message : "Failed to set Auto");
+      }
+      return;
+    }
     if (row.id === CUSTOM_MODEL_ID) {
       // Swap the popover for a free-text field rather than selecting a model.
       setCustomFor(row.providerId);
@@ -1504,7 +1525,9 @@ export const Composer = memo(function Composer({
     closeModelPicker(true);
     const same =
       row.providerId === provider && row.id === model;
-    if (same) return;
+    // Under Auto, re-picking the fallback model is a manual pick: it must
+    // still reach setProvider, which clears the route.
+    if (same && route == null) return;
     try {
       // Always send both so a cross-provider pick switches harness and model
       // in one setProvider call (no contract change).
@@ -2015,7 +2038,10 @@ export const Composer = memo(function Composer({
                         </li>
                       ) : null}
                       {modelRows.map((row, index) => {
-                        const selected = isRowSelected(row, provider, model);
+                        const selected = row.auto
+                          ? route != null
+                          : route == null &&
+                            isRowSelected(row, provider, model);
                         const highlighted = index === hi;
                         const starrable = canFavourite(row);
                         const starred =
@@ -2029,7 +2055,7 @@ export const Composer = memo(function Composer({
                           row.setup && setupFor === row.providerId
                             ? hintFor(row.providerId)
                             : null;
-                        const sub = row.profile
+                        const sub = row.profile || row.auto
                           ? row.vendor
                           : row.updateHint
                             ? row.updateHint
@@ -2044,7 +2070,7 @@ export const Composer = memo(function Composer({
                                   : row.id;
                         return (
                           <li
-                            key={row.profile ? row.id : rowKey(row)}
+                            key={row.profile || row.auto ? row.id : rowKey(row)}
                             role="option"
                             aria-selected={selected}
                             aria-disabled={row.disabled ? true : undefined}

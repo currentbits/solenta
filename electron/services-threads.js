@@ -23,6 +23,7 @@ const {
   instanceDisplayName,
 } = require("./providerInstances.js");
 const { resolveSandbox } = require("./sandbox.js");
+const { normalizeRoute } = require("./routing.js");
 const { dueRecap } = require("./recap.js");
 const {
   messagesInMemory,
@@ -293,6 +294,19 @@ function createThread(store, input) {
     automationId: input.automationId || null,
     queued: null,
     ask: input.ask === true,
+    // #246: route the first turn. Explicit input wins; else the project's
+    // Auto opt-in, under the same skips as project defaults.
+    ...(normalizeRoute(input.route)
+      ? { route: normalizeRoute(input.route) }
+      : project.modelRouting &&
+          project.modelRouting.auto === true &&
+          input.projectDefaults !== false &&
+          !input.automationId &&
+          !input.memoryConsolidate &&
+          input.ask !== true &&
+          !Object.prototype.hasOwnProperty.call(input, "provider")
+        ? { route: "auto" }
+        : {}),
     ...(input.memoryConsolidate === true
       ? { memoryConsolidate: true }
       : {}),
@@ -343,6 +357,29 @@ function recordLastUsedDefaults(store, threadId) {
   );
   store.save();
   return true;
+}
+
+/**
+ * Pending first-turn route (#246): "auto", a tier, or null for manual.
+ * A thread that already has a session cannot be routed.
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string, route: string | null }} input
+ */
+function setRoute(store, input) {
+  const thread = store.getThread(input.threadId);
+  if (!thread) throw new Error(`Unknown thread: ${input.threadId}`);
+  const route = normalizeRoute(input.route);
+  if (input.route != null && !route) {
+    throw new Error(`Invalid route: ${input.route}`);
+  }
+  if (route && thread.sessionId) {
+    throw new Error("Auto routing only applies before a thread's first turn");
+  }
+  if ((thread.route || null) === route) return decorateThread(store, thread);
+  const updated = store.updateThread(input.threadId, { route });
+  store.save();
+  return decorateThread(store, updated || { ...thread, route });
 }
 
 /**
@@ -1589,6 +1626,8 @@ module.exports = {
   normalizeBaseBranch,
   createThread,
   recordLastUsedDefaults,
+  providerInstalledFor,
+  setRoute,
   instanceAuthProbes,
   setPermissionMode,
   setReasoningEffort,

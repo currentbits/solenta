@@ -43,6 +43,8 @@ export interface ModelRow {
   groupHeading: string | null;
   /** Set on a saved-profile row: picking applies the whole profile. */
   profile?: ProfileRow;
+  /** The Auto row (#246): picking routes the first turn by task. */
+  auto?: boolean;
   /** Stand-in row for a provider whose CLI is missing: picking opens setup. */
   setup?: boolean;
   /** "Update Codex to use X" (#1529): the installed CLI is too old. */
@@ -726,13 +728,14 @@ export function writeModelFavourites(keys: readonly string[]): void {
 
 /** Rows a ★ can go on: real models and Default, not profiles/setup/Custom. */
 export function canFavourite(row: ModelRow): boolean {
-  return !row.profile && !row.setup && row.id !== CUSTOM_MODEL_ID;
+  return !row.profile && !row.auto && !row.setup && row.id !== CUSTOM_MODEL_ID;
 }
 
 /**
  * The picker's one flat list (#1429), grouped by provider in registry order.
  *
- * - Profiles first (filtered by the query like any row).
+ * - Auto (#246) first when `auto` is set, then profiles (filtered by the
+ *   query like any row).
  * - A missing CLI collapses to one setup row; hidden while searching or
  *   showing favourites, since none of its models can run.
  * - Custom stays at the end of each installed provider's group; while
@@ -748,12 +751,30 @@ export function buildPickerRows(input: {
   profiles: readonly ProfileRow[];
   query: string;
   favourites: ReadonlySet<string> | null;
+  /** Offer the Auto row: the thread has not run yet. */
+  auto?: boolean;
 }): ModelRow[] {
   const q = input.query.trim().toLowerCase();
   const favs = input.favourites;
   const out: ModelRow[] = [];
 
   if (!favs) {
+    if (input.auto) {
+      const row: ModelRow = {
+        id: "auto",
+        label: "Auto",
+        vendor: "pick by task · project routing",
+        description: "pick by task · project routing",
+        providerId: input.currentProviderId,
+        providerName: "Profiles",
+        unavailable: false,
+        disabled: false,
+        disabledReason: null,
+        groupHeading: null,
+        auto: true,
+      };
+      if (!q || rowMatchesQuery(row, q)) out.push(row);
+    }
     for (const p of input.profiles) {
       const row: ModelRow = {
         id: `profile:${p.id}`,

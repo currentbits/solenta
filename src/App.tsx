@@ -230,6 +230,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     setReasoningEffort,
     setWebSearch,
     setFast,
+    setRoute,
     setAgent,
     listAgents,
     setArchived,
@@ -1978,6 +1979,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onSetReasoningEffort={setReasoningEffort}
         onSetWebSearch={setWebSearch}
         onSetFast={setFast}
+        onSetRoute={setRoute}
         onSetAgent={setAgent}
         onListAgents={listAgents}
         onSetArchived={handleSetArchivedUndoable}
@@ -2397,6 +2399,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
             onSubmit={submitEditProject}
             providers={providers}
             globalProvider={settings?.defaultProvider ?? null}
+            agentProfiles={settings?.agentProfiles ?? EMPTY_AGENT_PROFILES}
             onPickIcon={
               isWebMode()
                 ? undefined

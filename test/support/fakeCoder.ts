@@ -2677,6 +2677,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       setWebSearch: (input: unknown) =>
         rec("threads.setWebSearch", [input], thread()),
       setFast: (input: unknown) => rec("threads.setFast", [input], thread()),
+      setRoute: (input: unknown) => rec("threads.setRoute", [input], thread()),
       setAgent: (input: unknown) => rec("threads.setAgent", [input], thread()),
       listAgents: (input: unknown) =>
         rec("threads.listAgents", [input], opts.agents ?? []),

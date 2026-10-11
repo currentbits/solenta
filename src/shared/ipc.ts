@@ -130,6 +130,8 @@ export interface ProjectInfo {
   branchPrefix?: string;
   /** Defaults for new threads in this project (#1501). Absent = global defaults. */
   threadDefaults?: ProjectThreadDefaults;
+  /** Model routing preferences (#246). Absent = no routing. */
+  modelRouting?: ProjectModelRouting;
   /**
    * Conductor Spotlight (#250 stretch). When true, one heavy app instance
    * at the project checkout hot-swaps which claimed lane it serves.
@@ -386,6 +388,25 @@ export interface ProjectUpdateInput {
   branchPrefix?: string | null;
   /** New-thread defaults (#1501). Replaces the whole object; null clears. */
   threadDefaults?: ProjectThreadDefaults | null;
+  /** Model routing (#246). Replaces the whole object; null clears. */
+  modelRouting?: ProjectModelRouting | null;
+}
+
+/** Routing tiers (#246): cost/intelligence buckets mapped to agent profiles. */
+export type ModelTier = "fast" | "balanced" | "strong";
+/** "auto" classifies the first prompt; a tier is declared up front. */
+export type ModelRoute = "auto" | ModelTier;
+
+/**
+ * Per-project routing (#246). Each tier names an AgentProfile id; a tier
+ * with no profile keeps the thread's model. `auto` stamps new threads
+ * with route "auto". Permission mode is never routed.
+ */
+export interface ProjectModelRouting {
+  auto?: boolean;
+  fast?: string;
+  balanced?: string;
+  strong?: string;
 }
 
 /**
@@ -885,6 +906,11 @@ export interface ThreadInfo {
    * lists `fast`; absent on older store rows.
    */
   fast?: boolean;
+  /**
+   * Pending model route (#246), consumed by the first turn: "auto"
+   * classifies the prompt, a tier is declared. Absent/null = manual pick.
+   */
+  route?: ModelRoute | null;
   /**
    * CLI custom agent the thread runs as (`--agent <name>`, issue #172), or
    * null/absent for the CLI default. Cleared on provider switch.
@@ -2900,6 +2926,8 @@ export interface AutomationInfo {
   triggerCursor?: number | string | null;
   /** Notes the automation keeps between runs (its <automation-memory> block). */
   memory?: string;
+  /** Routing tier (#246); provider/model is the fallback. null = off. */
+  tier?: ModelRoute | null;
 }
 
 export interface AutomationWrite {
@@ -2913,6 +2941,7 @@ export interface AutomationWrite {
   enabled?: boolean;
   trigger?: AutomationTrigger | null;
   memory?: string;
+  tier?: ModelRoute | null;
 }
 
 /**
@@ -4964,6 +4993,14 @@ export interface CoderApi {
      * model of the thread's provider has a fast tier.
      */
     setFast(input: { threadId: string; fast: boolean }): Promise<ThreadInfo>;
+    /**
+     * Pending first-turn route (#246); null = manual. Rejects once the
+     * thread has a session. threads.setProvider clears it.
+     */
+    setRoute(input: {
+      threadId: string;
+      route: ModelRoute | null;
+    }): Promise<ThreadInfo>;
     /**
      * Runs the thread as a CLI custom agent (#172); null for the CLI
      * default. Rejects when the provider does not advertise supportsAgents.
