@@ -1699,8 +1699,21 @@ function createRunner(opts) {
     }
 
     // Machine-delivered turns increment autoTurns in flushOrchNotices.
-    // Anything else (user send, retry, verify fix) is a human in the loop.
-    if (!input.fromNotice && !isReplayTurn(input)) autoTurns.set(threadId, 0);
+    // fromInbound (thread_send / queued inbound drain) is also machine-
+    // delivered: increment here, not in flushOrchNotices, so one inbound
+    // is not double-counted or capped twice. User send, retry, and
+    // verify-fix still reset to 0.
+    if (input.fromInbound) {
+      const n = autoTurns.get(threadId) || 0;
+      if (n >= services.CREW_AUTO_TURN_CAP) {
+        throw new Error(
+          `Crew auto-turn cap reached (${services.CREW_AUTO_TURN_CAP} consecutive machine-delivered turns). A human turn resets it.`,
+        );
+      }
+      autoTurns.set(threadId, n + 1);
+    } else if (!input.fromNotice && !isReplayTurn(input)) {
+      autoTurns.set(threadId, 0);
+    }
     cancelQuotaWake(threadId);
 
     // Ask mode (issue #392): cheap no-tools Q&A. Intercept BEFORE orch
