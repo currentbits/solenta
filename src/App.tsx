@@ -462,9 +462,15 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   });
   // The scheduler can pause an automation in the background (#160); reload
   // on open so the row shows Off and the reason instead of boot-time state.
+  const [focusAutomationId, setFocusAutomationId] = useState<string | null>(
+    null,
+  );
   useEffect(() => {
     if (view === "automations") void refreshAutomations().catch(() => {});
   }, [view, refreshAutomations]);
+  useEffect(() => {
+    if (view !== "automations") setFocusAutomationId(null);
+  }, [view]);
   const quotaDemo =
     isDevBuild() &&
     typeof window !== "undefined" &&
@@ -701,6 +707,13 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     setPlanboardProjectId,
     setActivityProjectId,
   });
+  const handleOpenAutomation = useCallback(
+    (automationId?: string) => {
+      setFocusAutomationId(automationId ?? null);
+      openAutomations();
+    },
+    [openAutomations],
+  );
   const openSettings = useCallback((pane?: SettingsPane) => {
     setSettingsPane(pane ?? "general");
     setSettingsOpen(true);
@@ -1859,6 +1872,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
               onRunNow={async (id) => {
                 await runAutomationNow(id);
               }}
+              focusId={focusAutomationId}
             />
           ) : view === "planboard" ? (
             <PlanboardView
@@ -2072,7 +2086,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onStartSuggestion={handleStartSuggestion}
         onFileSuggestion={handleFileSuggestion}
         onDismissSuggestion={handleDismissSuggestion}
-        onOpenAutomations={openAutomations}
+        onOpenAutomations={handleOpenAutomation}
         handoffSource={handoffSource}
         comparePeers={comparePeers}
         onPeekThread={peekThread}

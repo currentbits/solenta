@@ -83,8 +83,10 @@ describe("automation_create MCP tool", () => {
     assert.equal(out.hour, 9);
     assert.equal(out.trigger, null);
     assert.ok(out.id);
+    assert.equal(out.enabled, true);
     assert.equal(store.getAutomations().length, 1);
     assert.equal(store.getAutomation(out.id).prompt, "review the repo");
+    assert.equal(store.getAutomation(out.id).enabled, true);
   });
 
   it("creates a GitHub trigger automation and defaults preset to hourly", async () => {

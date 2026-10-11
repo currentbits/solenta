@@ -984,7 +984,9 @@ function createToolHandlers(deps) {
       model: args && args.model,
       preset: presetRaw || "hourly",
       hour: args && args.hour,
-      enabled: args && args.enabled,
+      ...(typeof (args && args.enabled) === "boolean"
+        ? { enabled: args.enabled }
+        : {}),
       trigger: hasTrigger ? { type: "github", ...triggerRaw } : null,
       tier: args && args.tier,
     });
