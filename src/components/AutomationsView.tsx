@@ -14,6 +14,7 @@ import type {
   AutomationInfo,
   AutomationPreset,
   AutomationRunsResult,
+  AutomationScope,
   AutomationTrigger,
   AutomationTriggerEvent,
   AutomationWrite,
@@ -44,7 +45,8 @@ export interface AutomationsViewProps {
     input: Partial<AutomationWrite> & { id: string },
   ) => Promise<void> | void;
   onRemove: (id: string) => Promise<void> | void;
-  onRunNow: (id: string) => Promise<void> | void;
+  onRunNow: (id: string, hash?: string) => Promise<void> | void;
+  onTrustFile?: (projectId: string, hash: string) => Promise<void> | void;
 }
 
 function liveThreadKey(
@@ -237,6 +239,7 @@ export function AutomationsView({
   onUpdate,
   onRemove,
   onRunNow,
+  onTrustFile,
 }: AutomationsViewProps) {
   const [name, setName] = useState(draft?.name ?? "");
   const [projectId, setProjectId] = useState(
@@ -257,6 +260,11 @@ export function AutomationsView({
   const [label, setLabel] = useState("");
   const [conclusion, setConclusion] = useState("");
   const [memory, setMemory] = useState("");
+  const [scope, setScope] = useState<AutomationScope>("private");
+  const [wroteFile, setWroteFile] = useState(false);
+  const [dismissedApprove, setDismissedApprove] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [formError, setFormError] = useState<string | null>(null);
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -293,6 +301,7 @@ export function AutomationsView({
     setLabel(auto.trigger?.label ?? "");
     setConclusion(auto.trigger?.conclusion ?? "");
     setMemory(auto.memory ?? "");
+    setScope(auto.scope ?? "private");
     setFormError(null);
   };
 
@@ -309,6 +318,7 @@ export function AutomationsView({
     setLabel("");
     setConclusion("");
     setMemory("");
+    setScope("private");
     setFormError(null);
   };
 
@@ -335,6 +345,22 @@ export function AutomationsView({
     () => new Map(projects.map((p) => [p.id, p])),
     [projects],
   );
+  const selectedProject = projectById.get(projectId);
+  const projectScopeBlocked = Boolean(
+    !selectedProject || selectedProject.remoteHost || !selectedProject.path,
+  );
+  const approveProjects = projects.filter((p) => {
+    const file = p.automationsFile;
+    if (!file || dismissedApprove.has(p.id)) return false;
+    if (file.error) return true;
+    return !file.trusted && file.count > 0;
+  });
+
+  useEffect(() => {
+    if (projectScopeBlocked && scope === "project" && !editingId) {
+      setScope("private");
+    }
+  }, [projectScopeBlocked, scope, editingId]);
 
   const needsHour = !event && (preset === "daily" || preset === "weekly");
   const trigger: AutomationTrigger | null = event
@@ -373,7 +399,8 @@ export function AutomationsView({
     setFormError(null);
     try {
       if (editingId) {
-        const hadTier = automations.find((a) => a.id === editingId)?.tier;
+        const editing = automations.find((a) => a.id === editingId);
+        const hadTier = editing?.tier;
         await onUpdate({
           id: editingId,
           name: name.trim(),
@@ -387,8 +414,10 @@ export function AutomationsView({
           memory,
           ...(tier || hadTier ? { tier: tier || null } : {}),
         });
+        setWroteFile(editing?.scope === "project");
         clearEdit();
       } else {
+        const writeScope = projectScopeBlocked ? "private" : scope;
         await onCreate({
           name: name.trim(),
           projectId,
@@ -400,12 +429,15 @@ export function AutomationsView({
           hour: needsHour ? Number(hour) : null,
           trigger,
           enabled: true,
+          scope: writeScope,
           ...(tier ? { tier } : {}),
         });
+        setWroteFile(writeScope === "project");
         setName("");
         setPrompt("");
         setModel("");
         setTier("");
+        setScope("private");
       }
     } catch (err) {
       setFormError(
@@ -447,7 +479,14 @@ export function AutomationsView({
             <select
               className={styles.select}
               value={projectId}
-              onChange={(e) => setProjectId(e.target.value)}
+              onChange={(e) => {
+                const next = e.target.value;
+                setProjectId(next);
+                const project = projectById.get(next);
+                if (project && (project.remoteHost || !project.path)) {
+                  setScope("private");
+                }
+              }}
               name="projectId"
               aria-label="Project"
               disabled={Boolean(editingId)}
@@ -466,6 +505,30 @@ export function AutomationsView({
                   </option>
                 ))
               )}
+            </select>
+          </label>
+          <label className={styles.field}>
+            <span className={styles.label}>Scope</span>
+            <select
+              className={styles.select}
+              value={scope}
+              onChange={(e) =>
+                setScope(e.target.value as AutomationScope)
+              }
+              name="scope"
+              aria-label="Scope"
+              data-automation-scope=""
+              disabled={Boolean(editingId)}
+              title={
+                editingId
+                  ? "Scope stays with this automation"
+                  : undefined
+              }
+            >
+              <option value="private">Private (this machine)</option>
+              <option value="project" disabled={projectScopeBlocked}>
+                Project (solenta.json)
+              </option>
             </select>
           </label>
           <label className={styles.field}>
@@ -695,7 +758,72 @@ export function AutomationsView({
                 : "Add automation"}
           </button>
         </div>
+        {wroteFile ? (
+          <p className={styles.wrote} data-automation-wrote="">
+            Wrote solenta.json — commit it to share.
+          </p>
+        ) : null}
       </form>
+
+      {approveProjects.length > 0 ? (
+        <div className={styles.approveList}>
+          {approveProjects.map((project) => {
+            const file = project.automationsFile;
+            if (!file) return null;
+            return (
+              <div
+                key={project.id}
+                className={styles.approveCard}
+                role="alertdialog"
+                aria-label="Approve solenta.json automations"
+                data-automations-approve=""
+                data-project={project.id}
+              >
+                <div className={styles.approveHead}>
+                  Run automations from this repo’s solenta.json?
+                </div>
+                <p className={styles.approveNote}>
+                  These come from a checked-in file, so anyone who can
+                  push to the repo can change them. You will be asked
+                  again if they change.
+                </p>
+                {file.error ? (
+                  <p className={styles.error}>{file.error}</p>
+                ) : null}
+                <div className={styles.approveActions}>
+                  <button
+                    type="button"
+                    className={styles.approveRun}
+                    data-automations-approve-run=""
+                    disabled={!onTrustFile || !file.hash}
+                    onClick={() => {
+                      if (!onTrustFile) return;
+                      runRowAction(project.id, () =>
+                        onTrustFile(project.id, file.hash),
+                      );
+                    }}
+                  >
+                    Approve
+                  </button>
+                  <button
+                    type="button"
+                    className={styles.approveCancel}
+                    onClick={() => {
+                      setDismissedApprove((prev) => {
+                        const next = new Set(prev);
+                        next.add(project.id);
+                        return next;
+                      });
+                    }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
 
       {automations.length === 0 ? (
         <div className={styles.empty}>
@@ -709,6 +837,11 @@ export function AutomationsView({
         <div className={styles.list}>
           {automations.map((auto) => {
             const project = projectById.get(auto.projectId);
+            const fileUntrusted = Boolean(
+              auto.scope === "project" &&
+                project?.automationsFile &&
+                !project.automationsFile.trusted,
+            );
             const error =
               rowError && rowError.id === auto.id
                 ? rowError.message
@@ -723,6 +856,12 @@ export function AutomationsView({
                   <span className={styles.name}>{auto.name}</span>
                   <span className={styles.slug}>
                     {project?.slug ?? auto.projectId}
+                  </span>
+                  <span
+                    className={styles.scopeBadge}
+                    data-automation-scope-badge=""
+                  >
+                    {auto.scope === "project" ? "Project" : "Private"}
                   </span>
                 </div>
                 <div className={styles.rowMeta}>
@@ -765,9 +904,27 @@ export function AutomationsView({
                       type="checkbox"
                       checked={auto.enabled}
                       data-automation-toggle=""
-                      title={auto.enabled ? "Disable" : "Enable"}
-                      aria-label={auto.enabled ? "Disable" : "Enable"}
+                      disabled={fileUntrusted}
+                      title={
+                        auto.scope === "project"
+                          ? auto.enabled
+                            ? "Stop running on this machine"
+                            : "Run on this machine"
+                          : auto.enabled
+                            ? "Disable"
+                            : "Enable"
+                      }
+                      aria-label={
+                        auto.scope === "project"
+                          ? auto.enabled
+                            ? "Stop running on this machine"
+                            : "Run on this machine"
+                          : auto.enabled
+                            ? "Disable"
+                            : "Enable"
+                      }
                       onChange={() => {
+                        if (fileUntrusted) return;
                         runRowAction(auto.id, () =>
                           onUpdate({ id: auto.id, enabled: !auto.enabled }),
                         );
@@ -781,7 +938,15 @@ export function AutomationsView({
                     data-automation-run=""
                     title="Run now"
                     onClick={() => {
-                      runRowAction(auto.id, () => onRunNow(auto.id));
+                      runRowAction(auto.id, () => {
+                        if (fileUntrusted && project?.automationsFile) {
+                          return onRunNow(
+                            auto.id,
+                            project.automationsFile.hash,
+                          );
+                        }
+                        return onRunNow(auto.id);
+                      });
                     }}
                   >
                     Run now
