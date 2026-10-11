@@ -32,12 +32,14 @@ import styles from "../ThreadView.module.css";
  * Plan approval (ExitPlanMode): the plan rendered as markdown in the prompt
  * panel, approve or send the agent back to planning (with optional notes),
  * or take the plan elsewhere: a new thread, or a file in the checkout.
+ * With providers, the new thread can build on another provider (#241).
  */
 export function PlanPrompt({
   pending,
   onRespond,
   onImplement,
   onSave,
+  providers,
 }: {
   pending: PendingPermissionInfo;
   onRespond: (
@@ -48,10 +50,13 @@ export function PlanPrompt({
     inputValues?: undefined,
     feedback?: string,
   ) => void | Promise<void>;
-  onImplement?: (plan: string) => void | Promise<void>;
+  onImplement?: (plan: string, provider?: string) => void | Promise<void>;
   onSave?: (plan: string) => Promise<string>;
+  providers?: ProviderInfo[];
 }) {
   const [sent, setSent] = useState(false);
+  const [buildWith, setBuildWith] = useState("");
+  const installed = (providers ?? []).filter((p) => p.available);
   const [feedback, setFeedback] = useState("");
   const [saved, setSaved] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -87,7 +92,7 @@ export function PlanPrompt({
     if (!onImplement || implementing) return;
     setImplementing(true);
     try {
-      await onImplement(plan);
+      await (buildWith ? onImplement(plan, buildWith) : onImplement(plan));
     } finally {
       setImplementing(false);
     }
@@ -140,6 +145,22 @@ export function PlanPrompt({
           >
             Implement in a new thread
           </button>
+        ) : null}
+        {onImplement && installed.length > 1 ? (
+          <select
+            value={buildWith}
+            disabled={implementing}
+            aria-label="Build with provider"
+            data-implement-provider=""
+            onChange={(e) => setBuildWith(e.target.value)}
+          >
+            <option value="">Same provider</option>
+            {installed.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
         ) : null}
         {onSave ? (
           <button

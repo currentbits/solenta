@@ -259,4 +259,47 @@ describe("Implement in a new thread, through App (#1501)", () => {
     assert.match(input.prompt, /^Implement this plan:\n\n## Steps/);
     view.unmount();
   });
+
+  it("builds on the provider picked on the card (#241)", async () => {
+    const src = fakeThread({
+      id: "t-plan",
+      title: "plan source",
+      status: "working",
+      permissionMode: "plan",
+    });
+    const fake = createFakeCoder({
+      projects: [fakeProject()],
+      threads: [src],
+      providers: [
+        ...providers,
+        { ...providers[0]!, id: "codex", name: "Codex", supportsResume: false },
+      ],
+      details: {
+        "t-plan": fakeDetail({ thread: src, pendingPermission: pending }),
+      },
+    });
+    const shell = await mount(<div />);
+    installFakeCoder(fake);
+    shell.unmount();
+    const view = await mount(<App />);
+    await view.flush();
+    const row = view.query('button[aria-label^="Select thread: plan source"]');
+    if (row) {
+      await view.click(row);
+      await view.flush();
+    }
+    await view.change(view.query("select[data-implement-provider]"), "codex");
+    await view.click(view.query("button[data-implement-plan]"));
+    await view.flush();
+
+    const forks = fake.of("threads.fork");
+    assert.equal(forks.length, 1);
+    assert.deepEqual(forks[0]!.args[0], {
+      threadId: "t-plan",
+      leavePlan: true,
+      provider: "codex",
+    });
+    assert.equal(fake.of("runs.start").length, 1);
+    view.unmount();
+  });
 });

@@ -1060,11 +1060,15 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   }, [retryQueued]);
 
   // "Implement in a new thread" (#1501): the ordinary fork path, out of
-  // plan mode, with the plan as its first prompt.
+  // plan mode, with the plan as its first prompt. A provider builds the plan
+  // somewhere else (#241: plan with one model, build with another).
   const handleImplementPlan = useCallback(
-    async (plan: string) => {
+    async (plan: string, provider?: string) => {
       if (!selectedThreadId) return;
-      const t = await forkThread(selectedThreadId, { leavePlan: true });
+      const t = await forkThread(
+        selectedThreadId,
+        provider ? { leavePlan: true, provider } : { leavePlan: true },
+      );
       if (!t) return;
       await startRun(`Implement this plan:\n\n${plan}`, t.id);
     },

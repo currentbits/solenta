@@ -81,7 +81,11 @@ import {
 } from "../promptStash";
 import { parseDelegate } from "../delegate";
 import { asBtwPrompt } from "../btw";
-import { buildBestOfNEntries, providerVendor } from "../bestOfN";
+import {
+  buildBestOfNEntries,
+  providerCanPlan,
+  providerVendor,
+} from "../bestOfN";
 import {
   getReviewComments,
   keptDrafts,
@@ -221,9 +225,14 @@ interface ComposerProps {
   onBuild: (prompt: string, templateId: string) => void | Promise<void>;
   /**
    * Best of N: run this prompt on each selected provider or profile as a
-   * forked thread. Absent hides that section inside Options.
+   * forked thread. Absent hides that section inside Options. planOnly (#241)
+   * starts each fork in plan mode.
    */
-  onBestOfN?: (selectedIds: string[], prompt: string) => void | Promise<void>;
+  onBestOfN?: (
+    selectedIds: string[],
+    prompt: string,
+    planOnly?: boolean,
+  ) => void | Promise<void>;
   /**
    * Delegation command: a prompt whose first token is `@<installed provider>`
    * forks this thread onto that provider and runs the remainder there.
@@ -323,6 +332,7 @@ const STATIC = {
 };
 
 const DEFAULT_TEMPLATE_ID = "standard";
+const NO_PLAN_MODE = "This provider has no plan mode";
 
 /** Capped cascade index: row 30 shouldn't wait half a second to appear. */
 const rowEnterStyle = (index: number): CSSProperties =>
@@ -551,6 +561,7 @@ export const Composer = memo(function Composer({
   const bestOfFocusRef = useRef(false);
   const [attachOpen, setAttachOpen] = useState(false);
   const [bestIds, setBestIds] = useState<string[]>([]);
+  const [bestPlanOnly, setBestPlanOnly] = useState(false);
   const [manageOpen, setManageOpen] = useState(false);
   // Close a stale Options or workflow editor when the thread, lock, or Ask
   // mode changes. Adjusting during render drops it before paint, so the
@@ -1077,7 +1088,9 @@ export const Composer = memo(function Composer({
 
   const submitBestOfN = () => {
     if (!canBestOfN || !onBestOfN) return;
-    const availableIds = installedProviders.map((p) => p.id);
+    const availableIds = installedProviders
+      .filter((p) => !bestPlanOnly || providerCanPlan(p))
+      .map((p) => p.id);
     const plan = buildBestOfNEntries(availableIds, bestIds, agentProfiles);
     if (typeof plan === "string") {
       setLocalError(plan);
@@ -1087,6 +1100,7 @@ export const Composer = memo(function Composer({
       await onBestOfN(
         plan.map((e) => e.id),
         prompt,
+        bestPlanOnly,
       );
       setOptionsOpen(false);
     }, "Failed to start Best of N");
@@ -2640,9 +2654,30 @@ export const Composer = memo(function Composer({
                     <p className={styles.bestOfNHint}>
                       Each selection forks a new thread
                     </p>
+                    <label
+                      className={styles.bestOfNRow}
+                      title="Each fork only plans; build the plan you pick from its card"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={bestPlanOnly}
+                        data-best-of-n-plan-only=""
+                        onChange={() => setBestPlanOnly((v) => !v)}
+                      />
+                      <span className={styles.bestOfNRowText}>
+                        <span className={styles.modelRowLabel}>Plan only</span>
+                      </span>
+                    </label>
                     <ul className={styles.bestOfNList}>
                       {profileRows.map((row, index) => {
                         const checked = bestIds.includes(row.id);
+                        const rowProvider = providers.find(
+                          (p) => p.id === row.provider,
+                        );
+                        const noPlan =
+                          bestPlanOnly &&
+                          !!rowProvider &&
+                          !providerCanPlan(rowProvider);
                         return (
                           <li key={`profile:${row.id}`}>
                             {index === 0 ? (
@@ -2655,12 +2690,16 @@ export const Composer = memo(function Composer({
                             ) : null}
                             <label
                               className={styles.bestOfNRow}
-                              title={row.disabledReason ?? undefined}
+                              title={
+                                noPlan
+                                  ? NO_PLAN_MODE
+                                  : (row.disabledReason ?? undefined)
+                              }
                             >
                               <input
                                 type="checkbox"
                                 checked={checked}
-                                disabled={row.disabled}
+                                disabled={row.disabled || noPlan}
                                 data-best-of-n-profile={row.id}
                                 onChange={() => toggleBestId(row.id)}
                               />
@@ -2686,12 +2725,17 @@ export const Composer = memo(function Composer({
                       {installedProviders.map((p) => {
                         const vendor = providerVendor(p);
                         const checked = bestIds.includes(p.id);
+                        const noPlan = bestPlanOnly && !providerCanPlan(p);
                         return (
                           <li key={p.id}>
-                            <label className={styles.bestOfNRow}>
+                            <label
+                              className={styles.bestOfNRow}
+                              title={noPlan ? NO_PLAN_MODE : undefined}
+                            >
                               <input
                                 type="checkbox"
                                 checked={checked}
+                                disabled={noPlan}
                                 data-best-of-n-provider={p.id}
                                 onChange={() => toggleBestId(p.id)}
                               />
