@@ -13,7 +13,7 @@ const {
   settleAutomationRuns,
   MAX_MEMORY_CHARS,
 } = require("../automations.js");
-const { matchRows, normalizeTrigger } = require("../automation-triggers.js");
+const { matchRows, normalizeTrigger, parseTriggerInput } = require("../automation-triggers.js");
 
 const remote = { host: "github.com", owner: "acme", repo: "app" };
 
@@ -27,8 +27,94 @@ describe("normalizeTrigger / matchRows", () => {
       branch: null,
       label: null,
       conclusion: null,
+      team: null,
+      status: null,
+      org: null,
+      project: null,
+      environment: null,
     });
     assert.equal(normalizeTrigger({ event: "ci_completed", conclusion: "bogus" }).conclusion, null);
+  });
+
+  it("normalizes Linear and Sentry events and drops filters that do not apply", () => {
+    assert.deepEqual(
+      normalizeTrigger({
+        event: "linear_issue_created",
+        team: "eng",
+        status: "Done",
+        org: "acme",
+        branch: "main",
+      }),
+      {
+        type: "linear",
+        event: "linear_issue_created",
+        branch: null,
+        label: null,
+        conclusion: null,
+        team: "eng",
+        status: null,
+        org: null,
+        project: null,
+        environment: null,
+      },
+    );
+    assert.deepEqual(
+      normalizeTrigger({
+        event: "linear_status_changed",
+        team: "ENG",
+        status: "Done",
+      }),
+      {
+        type: "linear",
+        event: "linear_status_changed",
+        branch: null,
+        label: null,
+        conclusion: null,
+        team: "ENG",
+        status: "Done",
+        org: null,
+        project: null,
+        environment: null,
+      },
+    );
+    assert.deepEqual(
+      normalizeTrigger({
+        event: "sentry_issue",
+        org: "acme",
+        project: "pump",
+        environment: "prod",
+        team: "ENG",
+      }),
+      {
+        type: "sentry",
+        event: "sentry_issue",
+        branch: null,
+        label: null,
+        conclusion: null,
+        team: null,
+        status: null,
+        org: "acme",
+        project: "pump",
+        environment: "prod",
+      },
+    );
+    assert.equal(normalizeTrigger({ event: "pr_opened" }).type, "github");
+    assert.equal(normalizeTrigger({ event: "nope" }), null);
+  });
+
+  it("parseTriggerInput rejects sentry_issue without org or project", () => {
+    assert.throws(
+      () => parseTriggerInput({ event: "sentry_issue", org: "acme" }),
+      /Sentry trigger requires org and project/,
+    );
+    assert.throws(
+      () => parseTriggerInput({ event: "sentry_issue", project: "pump" }),
+      /Sentry trigger requires org and project/,
+    );
+    assert.deepEqual(
+      parseTriggerInput({ event: "sentry_issue", org: "acme", project: "pump" }).event,
+      "sentry_issue",
+    );
   });
 
   it("labeled matches the label name case-insensitively, issues and PRs", () => {

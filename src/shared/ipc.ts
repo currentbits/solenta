@@ -2880,25 +2880,28 @@ export interface DistilledMemory {
 
 export type AutomationPreset = "hourly" | "daily" | "weekly";
 
-/** GitHub events an automation can fire on (issue #242). Polled, not webhooks. */
 export type AutomationTriggerEvent =
   | "pr_opened"
   | "pr_merged"
   | "pr_labeled"
   | "review_submitted"
   | "push"
-  | "ci_completed";
+  | "ci_completed"
+  | "linear_issue_created"
+  | "linear_status_changed"
+  | "sentry_issue";
 
-/**
- * Event trigger. Filters apply only where they make sense: branch for push
- * and ci_completed, label for pr_labeled, conclusion for ci_completed.
- */
 export interface AutomationTrigger {
-  type: "github";
+  type: "github" | "linear" | "sentry";
   event: AutomationTriggerEvent;
   branch?: string | null;
   label?: string | null;
   conclusion?: "success" | "failure" | "cancelled" | "timed_out" | null;
+  team?: string | null;
+  status?: string | null;
+  org?: string | null;
+  project?: string | null;
+  environment?: string | null;
 }
 
 /** A scheduled agent run (Synara-style automation). */
@@ -3188,6 +3191,7 @@ export interface AppSettings {
    * environment is the fallback. Never required for GitHub issues.
    */
   linearApiKey?: string | null;
+  sentryAuthToken?: string | null;
   /**
    * GitHub account / saved token per host (issue #1528). Read back with
    * `hasToken` only; the token itself never reaches the renderer.

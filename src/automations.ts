@@ -5,7 +5,6 @@ import type {
   ThreadStatus,
 } from "./shared/ipc";
 
-/** "When" picker rows for GitHub events (issue #242). */
 export const TRIGGER_EVENT_LABELS: Record<AutomationTriggerEvent, string> = {
   pr_opened: "PR opened",
   pr_merged: "PR merged",
@@ -13,15 +12,30 @@ export const TRIGGER_EVENT_LABELS: Record<AutomationTriggerEvent, string> = {
   review_submitted: "Review submitted",
   push: "Push",
   ci_completed: "CI completed",
+  linear_issue_created: "Linear issue created",
+  linear_status_changed: "Linear status changed",
+  sentry_issue: "Sentry issue",
 };
 
 export function isTriggerEvent(value: string): value is AutomationTriggerEvent {
   return Object.prototype.hasOwnProperty.call(TRIGGER_EVENT_LABELS, value);
 }
 
-/** Row label for an event automation: "on PR labeled \"bug\"", "on Push to main". */
 export function triggerLabel(trigger: AutomationTrigger): string {
   let label = `on ${TRIGGER_EVENT_LABELS[trigger.event]}`;
+  if (trigger.event === "linear_issue_created" && trigger.team) {
+    return `${label} in ${trigger.team}`;
+  }
+  if (trigger.event === "linear_status_changed") {
+    if (trigger.status) label += ` to ${trigger.status}`;
+    if (trigger.team) label += ` in ${trigger.team}`;
+    return label;
+  }
+  if (trigger.event === "sentry_issue" && trigger.org && trigger.project) {
+    label += ` ${trigger.org}/${trigger.project}`;
+    if (trigger.environment) label += ` (${trigger.environment})`;
+    return label;
+  }
   if (trigger.label) label += ` "${trigger.label}"`;
   if (trigger.conclusion) label += ` (${trigger.conclusion})`;
   if (trigger.branch) label += ` on ${trigger.branch}`;
@@ -91,11 +105,18 @@ export function createFormError(input: {
   provider: string;
   preset: AutomationPreset;
   hour: string;
+  event?: string;
+  org?: string;
+  project?: string;
 }): string | null {
   if (!input.name.trim()) return "Name is required";
   if (!input.projectId) return "Project is required";
   if (!input.prompt.trim()) return "Prompt is required";
   if (!input.provider) return "Provider is required";
+  if (input.event === "sentry_issue") {
+    if (!String(input.org || "").trim()) return "Sentry org is required";
+    if (!String(input.project || "").trim()) return "Sentry project is required";
+  }
   if (input.preset === "daily" || input.preset === "weekly") {
     if (input.hour === "") return "Hour is required";
     const n = Number(input.hour);

@@ -14,7 +14,7 @@
 
 const github = require("./github.js");
 
-const TRIGGER_EVENTS = new Set([
+const GITHUB_EVENTS = new Set([
   "pr_opened",
   "pr_merged",
   "pr_labeled",
@@ -22,6 +22,15 @@ const TRIGGER_EVENTS = new Set([
   "push",
   "ci_completed",
 ]);
+const LINEAR_EVENTS = new Set(["linear_issue_created", "linear_status_changed"]);
+const SENTRY_EVENTS = new Set(["sentry_issue"]);
+const TRIGGER_EVENTS = new Set([...GITHUB_EVENTS, ...LINEAR_EVENTS, ...SENTRY_EVENTS]);
+
+function typeForEvent(event) {
+  if (LINEAR_EVENTS.has(event)) return "linear";
+  if (SENTRY_EVENTS.has(event)) return "sentry";
+  return "github";
+}
 
 const CI_CONCLUSIONS = new Set(["success", "failure", "cancelled", "timed_out"]);
 
@@ -34,27 +43,32 @@ const MAX_EVENTS_IN_PROMPT = 20;
 /**
  * Store shape for `automation.trigger`. null means schedule mode.
  * @param {unknown} raw
- * @returns {{ type: "github", event: string, branch: string | null, label: string | null, conclusion: string | null } | null}
  */
 function normalizeTrigger(raw) {
   if (!raw || typeof raw !== "object") return null;
   const t = /** @type {Record<string, unknown>} */ (raw);
   const event = String(t.event || "");
   if (!TRIGGER_EVENTS.has(event)) return null;
+  const type = typeForEvent(event);
   const str = (v) => {
     const s = v == null ? "" : String(v).trim();
     return s || null;
   };
   const conclusion = str(t.conclusion);
   return {
-    type: "github",
+    type,
     event,
-    branch: event === "push" || event === "ci_completed" ? str(t.branch) : null,
-    label: event === "pr_labeled" ? str(t.label) : null,
+    branch: type === "github" && (event === "push" || event === "ci_completed") ? str(t.branch) : null,
+    label: type === "github" && event === "pr_labeled" ? str(t.label) : null,
     conclusion:
-      event === "ci_completed" && conclusion && CI_CONCLUSIONS.has(conclusion)
+      type === "github" && event === "ci_completed" && conclusion && CI_CONCLUSIONS.has(conclusion)
         ? conclusion
         : null,
+    team: type === "linear" ? str(t.team) : null,
+    status: event === "linear_status_changed" ? str(t.status) : null,
+    org: type === "sentry" ? str(t.org) : null,
+    project: type === "sentry" ? str(t.project) : null,
+    environment: type === "sentry" ? str(t.environment) : null,
   };
 }
 
@@ -66,8 +80,11 @@ function parseTriggerInput(raw) {
   if (raw == null) return null;
   const t = normalizeTrigger(raw);
   if (!t) {
-    const ev = raw && typeof raw === "object" ? /** @type {any} */ (raw).event : raw;
+    const ev = raw && typeof raw !== "object" ? raw : /** @type {any} */ (raw).event;
     throw new Error(`Unknown trigger event: ${ev || "(empty)"}`);
+  }
+  if (t.event === "sentry_issue" && (!t.org || !t.project)) {
+    throw new Error("Sentry trigger requires org and project");
   }
   return t;
 }
