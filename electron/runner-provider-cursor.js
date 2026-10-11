@@ -184,6 +184,7 @@ function createCursorRun(ctx) {
           mcpServers: kimiMcpServersForRun({
             projectId: thread.projectId,
             projectPath: localCwd || project.path,
+            threadId,
           }),
         });
         cursorEnv = { HOME: dest, SOLENTA_WORKTREE: localCwd };
@@ -193,6 +194,7 @@ function createCursorRun(ctx) {
           ensureCursorMcpConfig({
             projectPath: localCwd || project.path,
             projectId: thread.projectId,
+            threadId,
           });
         } catch {
           // ignore
@@ -203,6 +205,7 @@ function createCursorRun(ctx) {
         ensureCursorMcpConfig({
           projectPath: localCwd || project.path,
           projectId: thread.projectId,
+          threadId,
         });
       } catch {
         // Overlay is the Solenta-run path; a bind miss on ssh/WSL must

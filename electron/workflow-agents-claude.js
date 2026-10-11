@@ -84,7 +84,7 @@ function spawnAgentClaude(opts) {
   const interactive = Boolean(entry && entry.id === "claude");
   let args = baseArgs;
   if (interactive) {
-    args = [...baseArgs, ...getClaudeMcpArgs({ projectPath: cwd, projectId: opts.projectId || opts.project?.id })];
+    args = [...baseArgs, ...getClaudeMcpArgs({ projectPath: cwd, projectId: opts.projectId || opts.project?.id, threadId: opts.threadId })];
   }
 
   let wrapEnv;

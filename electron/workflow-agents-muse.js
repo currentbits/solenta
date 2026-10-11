@@ -129,6 +129,7 @@ function spawnAgentMuse(opts) {
         mcpServers: kimiMcpServersForRun({
           projectId,
           projectPath: cwd,
+          threadId,
         }),
         hookCommand: museGuardrailHookCommand({
           hookPath: path.join(dest, "muse-guardrail-hook.js"),

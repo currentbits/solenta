@@ -436,6 +436,7 @@ function createClaudeRun(ctx) {
     const mcpArgs = getClaudeMcpArgs({
       projectPath: localCwd,
       projectId: thread.projectId,
+      threadId,
       memoryOnly: thread.memoryConsolidate === true,
     });
     if (interactive) {
@@ -468,6 +469,7 @@ function createClaudeRun(ctx) {
               mcpServers: kimiMcpServersForRun({
                 projectId: thread.projectId,
                 projectPath: localCwd || project.path,
+                threadId,
               }),
             });
           }
@@ -496,6 +498,7 @@ function createClaudeRun(ctx) {
           ensureGrokMcpConfig({
             projectPath: localCwd,
             projectId: thread.projectId,
+            threadId,
           });
           await whenGrokMcpIdle();
         } catch {
