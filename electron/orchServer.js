@@ -31,6 +31,7 @@ const {
   listThreads,
   planboardNoteFor,
   refreshWorkerSnapshot,
+  linkPullRequest,
   addAutomation,
 } = require("./services.js");
 const { stop: stopDevServer } = require("./devservers.js");
@@ -132,7 +133,10 @@ const INSTRUCTIONS =
   "not through sandboxed gh, and there is no repo argument: writes stay on " +
   "this thread's origin. issue_comment posts a comment without changing " +
   "labels or closing the issue. The tools are omitted when the origin is " +
-  "not GitHub.";
+  "not GitHub. " +
+  "link_pull_request attaches a GitHub PR to this thread (including a PR " +
+  "in another repo via repo=owner/name). The first link becomes the " +
+  "thread's primary PR.";
 
 function timingSafeEqualString(a, b) {
   const bufferA = Buffer.from(a);
@@ -1240,6 +1244,16 @@ function createToolHandlers(deps) {
     return listIssuePage(issueTargetOf(thread), args);
   }
 
+  async function link_pull_request(args) {
+    requireOwnThread(args);
+    return linkPullRequest(store, {
+      threadId: args.threadId,
+      number: args.number,
+      repo: args.repo,
+      url: args.url,
+    });
+  }
+
   /**
    * Explicit lead-driven refresh onto the current committed snapshot (#1112).
    * Ownership matches git.integrateWorker: caller must be the worker's
@@ -1324,6 +1338,7 @@ function createToolHandlers(deps) {
     issue_complete,
     issue_comment,
     issue_list,
+    link_pull_request,
   };
 }
 
@@ -1920,6 +1935,25 @@ function buildMcpServer(sdk, handlers, opts = {}) {
       },
     },
     async (args) => json(await handlers.peer_send(args)),
+  );
+
+  server.registerTool(
+    "link_pull_request",
+    {
+      description:
+        "Link a GitHub pull request to this thread, including a PR in " +
+        "another repo. The first linked PR becomes the thread's primary " +
+        "PR number. projectId is YOUR OWN project id; the thread must " +
+        "belong to it.",
+      inputSchema: {
+        threadId: z.string().min(1),
+        projectId: z.string().min(1),
+        number: z.number().int().positive(),
+        repo: z.string().min(1).optional(),
+        url: z.string().min(1).optional(),
+      },
+    },
+    async (args) => json(await handlers.link_pull_request(args)),
   );
 
   if (opts.planboard) {

@@ -480,6 +480,24 @@ export function createThreads(ctx: DevCtx): Pick<CoderApi, "threads"> {
           prWatchState: null,
         });
       },
+      async linkPullRequest(input: {
+        threadId: string;
+        number: number;
+        repo?: string;
+        url?: string;
+      }) {
+        const t = ctx.threads.find((x) => x.id === input.threadId);
+        const link = {
+          number: input.number,
+          repo: input.repo ?? null,
+          url: input.url ?? `https://github.com/example/repo/pull/${input.number}`,
+        };
+        return patchThread(input.threadId, {
+          prLinks: [...(t?.prLinks || []), link],
+          prNumber: t?.prNumber ?? input.number,
+          prUrl: t?.prUrl ?? link.url,
+        });
+      },
       async setNotes(input: { threadId: string; notes: string }) {
         return patchThread(input.threadId, {
           notes: String(input.notes ?? "").trim().slice(0, 2000),

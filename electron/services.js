@@ -3,6 +3,7 @@
 // Public entry point: re-exports the services-*.js domain modules.
 
 const { runCommand } = require("./projectCommands.js");
+const { linkPullRequest } = require("./prLinks.js");
 const {
   PERMISSION_MODES,
   scheduleSimulatorRelease,
@@ -314,6 +315,7 @@ module.exports = {
   setCrossThreadInbound,
   setQuotaWaitAutoResume,
   setPrWatch,
+  linkPullRequest,
   setNotes,
   setMessagePins,
   setBaseBranch,

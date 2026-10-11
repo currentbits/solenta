@@ -1484,6 +1484,7 @@ describe("orch-server HTTP", () => {
       "ask_user",
       "automation_create",
       "hypothesis_record",
+      "link_pull_request",
       "peer_send",
       "preview",
       "refresh_worker_snapshot",

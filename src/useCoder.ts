@@ -611,30 +611,36 @@ export interface UseCoderResult {
   prDetail: (input: {
     projectPath: string;
     prNumber: number;
+    repo?: string;
   }) => Promise<PrDetailResult>;
   prEdit: (input: {
     projectPath: string;
     prNumber: number;
+    repo?: string;
     title?: string;
     body?: string;
   }) => Promise<PrDetailResult>;
   prComment: (input: {
     projectPath: string;
     prNumber: number;
+    repo?: string;
     body: string;
   }) => Promise<PrCommentResult>;
   prClose: (input: {
     projectPath: string;
     prNumber: number;
+    repo?: string;
   }) => Promise<PrDetailResult>;
   prReady: (input: {
     projectPath: string;
     prNumber: number;
+    repo?: string;
     undo?: boolean;
   }) => Promise<PrDetailResult>;
   prMergeAt: (input: {
     projectPath: string;
     prNumber: number;
+    repo?: string;
     method?: MergeMethod;
   }) => Promise<PrDetailResult>;
   /** Issues for a project checkout (`gh issue list`). Failures are in-band. */

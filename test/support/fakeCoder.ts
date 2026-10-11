@@ -2302,6 +2302,28 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         threads = threads.map((t) => (t.id === i.threadId ? next : t));
         return Promise.resolve(next);
       },
+      linkPullRequest: (input: unknown) => {
+        const i = input as { threadId: string; number: number; repo?: string; url?: string };
+        calls.push({ channel: "threads.linkPullRequest", args: [input] });
+        const existing = threads.find((t) => t.id === i.threadId);
+        if (!existing) {
+          return Promise.reject(new Error(`Unknown thread: ${i.threadId}`));
+        }
+        const link = {
+          number: i.number,
+          repo: i.repo ?? null,
+          url: i.url ?? `https://github.com/acme/demo/pull/${i.number}`,
+        };
+        const prLinks = [...(existing.prLinks || []), link];
+        const next: ThreadInfo = {
+          ...existing,
+          prLinks,
+          prNumber: existing.prNumber ?? i.number,
+          prUrl: existing.prUrl ?? link.url,
+        };
+        threads = threads.map((t) => (t.id === i.threadId ? next : t));
+        return Promise.resolve(next);
+      },
       /** Honest mute: flips the flag in place, never bumps updatedAt. */
       setMuted: (input: unknown) => {
         const i = input as { threadId: string; muted: boolean };
@@ -3308,6 +3330,25 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           } satisfies PrDetail,
         } as PrDetailResult);
       },
+      prDiff: (input: unknown) =>
+        rec("git.prDiff", [input], {
+          ok: true as const,
+          headSha: "abc1234",
+          commits: [],
+          files: [],
+          patch: "",
+          truncated: false,
+        }),
+      prViewed: (input: unknown) =>
+        rec("git.prViewed", [input], { ok: true as const, marks: {} }),
+      prMarkViewed: (input: unknown) =>
+        rec("git.prMarkViewed", [input], { ok: true as const, marks: {} }),
+      prStack: (input: unknown) =>
+        rec("git.prStack", [input], { ok: true as const, stack: [], defaultBase: "main" }),
+      prRebaseStack: (input: unknown) =>
+        rec("git.prRebaseStack", [input], { ok: true as const, stack: [], defaultBase: "main" }),
+      prMergeStack: (input: unknown) =>
+        rec("git.prMergeStack", [input], { ok: true as const, stack: [], defaultBase: "main" }),
       /**
        * Round 50 contract: newest-first; empty without a worktree.
        * SOURCE list is never mutated by list.

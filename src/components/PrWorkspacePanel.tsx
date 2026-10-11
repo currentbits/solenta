@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { formatRelativeAge } from "../format";
+import { normalizePrLinks } from "../prLinks";
 import { canSubmitComment, canSubmitPr } from "../prUi";
 import type {
   CoderApi,
@@ -8,9 +9,11 @@ import type {
   PrCommentResult,
   PrDetail,
   PrDetailResult,
+  PrStackEntry,
   ThreadInfo,
 } from "../shared/ipc";
 import { Markdown } from "./Markdown";
+import { PrCodeTab } from "./PrCodeTab";
 import styles from "./PrWorkspacePanel.module.css";
 
 const MERGE_LABEL: Record<MergeMethod, string> = {
@@ -30,30 +33,36 @@ export interface PrWorkspacePanelProps {
   prDetail: (input: {
     projectPath: string;
     prNumber: number;
+    repo?: string;
   }) => Promise<PrDetailResult>;
   prEdit: (input: {
     projectPath: string;
     prNumber: number;
+    repo?: string;
     title?: string;
     body?: string;
   }) => Promise<PrDetailResult>;
   prComment: (input: {
     projectPath: string;
     prNumber: number;
+    repo?: string;
     body: string;
   }) => Promise<PrCommentResult>;
   prClose: (input: {
     projectPath: string;
     prNumber: number;
+    repo?: string;
   }) => Promise<PrDetailResult>;
   prReady: (input: {
     projectPath: string;
     prNumber: number;
+    repo?: string;
     undo?: boolean;
   }) => Promise<PrDetailResult>;
   prMergeAt: (input: {
     projectPath: string;
     prNumber: number;
+    repo?: string;
     method?: MergeMethod;
   }) => Promise<PrDetailResult>;
   onSelectThread: (id: string) => void;
@@ -102,11 +111,27 @@ export function PrWorkspacePanel({
   const methods = mergeOpts?.ok ? mergeOpts.methods : null;
   const chosen = method ?? (mergeOpts?.ok ? mergeOpts.defaultMethod : "squash");
   const [now] = useState(() => Date.now());
+  const [tab, setTab] = useState<"conversation" | "code">("conversation");
+  const [activePr, setActivePr] = useState(prNumber);
+  const [activeRepo, setActiveRepo] = useState<string | undefined>(undefined);
+  const [stack, setStack] = useState<PrStackEntry[]>([]);
+  const [stackBusy, setStackBusy] = useState<string | null>(null);
+  const links = normalizePrLinks(matchedThread || { prNumber, prUrl: null, prState: null });
+
+  useEffect(() => {
+    setActivePr(prNumber);
+    setActiveRepo(undefined);
+    setTab("conversation");
+  }, [prNumber]);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const result = await prDetail({ projectPath, prNumber });
+      const result = await prDetail({
+        projectPath,
+        prNumber: activePr,
+        ...(activeRepo ? { repo: activeRepo } : {}),
+      });
       if (!result.ok) {
         setError(result.reason);
         setPr(null);
@@ -122,11 +147,64 @@ export function PrWorkspacePanel({
     } finally {
       setLoading(false);
     }
-  }, [prDetail, projectPath, prNumber]);
+  }, [prDetail, projectPath, activePr, activeRepo]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    const git =
+      typeof window === "undefined"
+        ? undefined
+        : (window as unknown as { coder?: CoderApi }).coder?.git;
+    if (typeof git?.prStack !== "function") return;
+    let live = true;
+    git
+      .prStack({
+        projectPath,
+        prNumber: activePr,
+        ...(activeRepo ? { repo: activeRepo } : {}),
+      })
+      .then((out) => {
+        if (live && out.ok) setStack(out.stack);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [projectPath, activePr, activeRepo]);
+
+  const runStack = async (kind: "rebase" | "merge") => {
+    const git =
+      typeof window === "undefined"
+        ? undefined
+        : (window as unknown as { coder?: CoderApi }).coder?.git;
+    const fn = kind === "rebase" ? git?.prRebaseStack : git?.prMergeStack;
+    if (!fn || stackBusy) return;
+    setStackBusy(kind);
+    try {
+      const out = await fn({
+        projectPath,
+        prNumber: activePr,
+        ...(activeRepo ? { repo: activeRepo } : {}),
+        ...(kind === "merge" ? { method: chosen } : {}),
+      });
+      if (!out.ok) {
+        setError(out.reason);
+        return;
+      }
+      setError(null);
+      if (out.ok && "stack" in out) setStack(out.stack);
+      await load();
+    } catch (err) {
+      setError(rejectReason(err, "Stack action failed"));
+    } finally {
+      setStackBusy(null);
+    }
+  };
+
+  const prArgs = { projectPath, prNumber: activePr, ...(activeRepo ? { repo: activeRepo } : {}) };
 
   const runAction = async (
     kind: string,
@@ -163,9 +241,29 @@ export function PrWorkspacePanel({
   const titleOk = canSubmitPr(title);
 
   return (
-    <aside className={styles.panel} data-pr-workspace="">
+    <aside className={styles.panel} data-pr-workspace="" data-pr-tab={tab}>
       <header className={styles.header}>
-        <h2 className={styles.heading}>#{prNumber}</h2>
+        {links.length > 1 ? (
+          <select
+            className={styles.prPicker}
+            data-pr-link=""
+            aria-label="Linked pull requests"
+            value={`${activeRepo || ""}#${activePr}`}
+            onChange={(event) => {
+              const [repo, num] = event.target.value.split("#");
+              setActivePr(Number(num));
+              setActiveRepo(repo || undefined);
+            }}
+          >
+            {links.map((link) => (
+              <option key={`${link.repo || ""}#${link.number}`} value={`${link.repo || ""}#${link.number}`}>
+                {link.repo ? `${link.repo}#${link.number}` : `#${link.number}`}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <h2 className={styles.heading}>#{activePr}</h2>
+        )}
         <button
           type="button"
           className={styles.icon}
@@ -176,6 +274,28 @@ export function PrWorkspacePanel({
           ×
         </button>
       </header>
+      <div className={styles.tabs} role="tablist" aria-label="Pull request">
+        <button
+          type="button"
+          role="tab"
+          className={styles.tab}
+          data-pr-tab="conversation"
+          aria-selected={tab === "conversation"}
+          onClick={() => setTab("conversation")}
+        >
+          Conversation
+        </button>
+        <button
+          type="button"
+          role="tab"
+          className={styles.tab}
+          data-pr-tab="code"
+          aria-selected={tab === "code"}
+          onClick={() => setTab("code")}
+        >
+          Code
+        </button>
+      </div>
 
       {loading && !pr ? (
         <p className={styles.hint}>Loading pull request…</p>
@@ -185,6 +305,14 @@ export function PrWorkspacePanel({
           <button type="button" className={styles.ghost} onClick={() => void load()}>
             Retry
           </button>
+        </div>
+      ) : pr && tab === "code" ? (
+        <div className={styles.scroll}>
+          <PrCodeTab
+            projectPath={projectPath}
+            prNumber={activePr}
+            repo={activeRepo}
+          />
         </div>
       ) : pr ? (
         <div className={styles.scroll}>
@@ -254,8 +382,7 @@ export function PrWorkspacePanel({
               onClick={() =>
                 void runAction("edit", () =>
                   prEdit({
-                    projectPath,
-                    prNumber,
+                    ...prArgs,
                     title: title.trim(),
                     body,
                   }),
@@ -275,7 +402,7 @@ export function PrWorkspacePanel({
                 disabled={pending != null}
                 onClick={() =>
                   void runAction("ready", () =>
-                    prReady({ projectPath, prNumber }),
+                    prReady(prArgs),
                   )
                 }
               >
@@ -290,7 +417,7 @@ export function PrWorkspacePanel({
                 disabled={pending != null}
                 onClick={() =>
                   void runAction("draft", () =>
-                    prReady({ projectPath, prNumber, undo: true }),
+                    prReady({ ...prArgs, undo: true }),
                   )
                 }
               >
@@ -337,6 +464,28 @@ export function PrWorkspacePanel({
                 Open thread
               </button>
             ) : null}
+            {stack.length >= 2 ? (
+              <>
+                <button
+                  type="button"
+                  className={styles.ghost}
+                  data-pr-rebase-stack=""
+                  disabled={stackBusy != null || pending != null}
+                  onClick={() => void runStack("rebase")}
+                >
+                  {stackBusy === "rebase" ? "Rebasing…" : "Rebase stack"}
+                </button>
+                <button
+                  type="button"
+                  className={styles.primary}
+                  data-pr-merge-stack=""
+                  disabled={stackBusy != null || pending != null}
+                  onClick={() => void runStack("merge")}
+                >
+                  {stackBusy === "merge" ? "Merging…" : "Merge stack"}
+                </button>
+              </>
+            ) : null}
           </div>
 
           {confirm ? (
@@ -369,8 +518,8 @@ export function PrWorkspacePanel({
                 onClick={() =>
                   void runAction(confirm, () =>
                     confirm === "merge"
-                      ? prMergeAt({ projectPath, prNumber, method: chosen })
-                      : prClose({ projectPath, prNumber }),
+                      ? prMergeAt({ ...prArgs, method: chosen })
+                      : prClose(prArgs),
                   )
                 }
               >
@@ -431,8 +580,7 @@ export function PrWorkspacePanel({
                   if (!canSubmitComment(comment) || pending) return;
                   void runAction("comment", () =>
                     prComment({
-                      projectPath,
-                      prNumber,
+                      ...prArgs,
                       body: comment.trim(),
                     }),
                   );
