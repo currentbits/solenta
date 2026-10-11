@@ -507,6 +507,8 @@ function presentProject(project) {
   // #1506: checked-in solenta.json commands, derived at list time.
   const repoConfig = require("./repoConfig.js").presentRepoConfig(next);
   if (repoConfig) next = { ...next, repoConfig };
+  const automationsFile = require("./automations-file.js").presentAutomationsFile(next);
+  if (automationsFile) next = { ...next, automationsFile };
   return attachScm(next);
 }
 

@@ -26,11 +26,11 @@ const { normalizeCommand } = require("./verify.js");
 const REPO_CONFIG_FILE = "solenta.json";
 const QUICK_ACTION_MAX = 8;
 const ACTION_NAME_MAX = 32;
-const MAX_BYTES = 64 * 1024;
+const MAX_BYTES = 256 * 1024;
 /** Stable ids so a header button keeps its identity across reads. */
 const REPO_ACTION_ID_PREFIX = "repo:";
 
-/** @type {Map<string, { key: string, value: RepoConfig | null }>} */
+/** @type {Map<string, { key: string, json?: unknown, error?: string }>} */
 const cache = new Map();
 
 /**
@@ -114,11 +114,14 @@ function commandsHash(cfg) {
 }
 
 /**
- * Read `<root>/solenta.json`, cached on mtime+size. Missing file → null.
+ * Read `<root>/solenta.json` as JSON, cached on mtime+size. Shared with
+ * automations-file.js so commands and automations see one cache.
+ * Missing file → null. Oversize / invalid JSON → `{ error }`.
+ *
  * @param {string | null | undefined} root
- * @returns {RepoConfig | null}
+ * @returns {{ json?: unknown, error?: string } | null}
  */
-function readRepoConfig(root) {
+function readRepoJson(root) {
   if (!root || typeof root !== "string") return null;
   const abs = path.join(root, REPO_CONFIG_FILE);
   let st;
@@ -131,20 +134,45 @@ function readRepoConfig(root) {
   if (!st.isFile()) return null;
   const key = `${st.mtimeMs}:${st.size}`;
   const hit = cache.get(abs);
-  if (hit && hit.key === key) return hit.value;
-  /** @type {RepoConfig | null} */
-  let value;
+  if (hit && hit.key === key) return hit;
+  /** @type {{ key: string, json?: unknown, error?: string }} */
+  let entry;
   if (st.size > MAX_BYTES) {
-    value = { error: "solenta.json is larger than 64 KB" };
+    entry = { key, error: "solenta.json is larger than 256 KB" };
   } else {
     try {
-      value = parseRepoConfig(JSON.parse(fs.readFileSync(abs, "utf8")));
+      entry = { key, json: JSON.parse(fs.readFileSync(abs, "utf8")) };
     } catch {
-      value = { error: "solenta.json is not valid JSON" };
+      entry = { key, error: "solenta.json is not valid JSON" };
     }
   }
-  cache.set(abs, { key, value });
-  return value;
+  cache.set(abs, entry);
+  return entry;
+}
+
+/**
+ * Drop the cached parse for `<root>/solenta.json` (or the file itself).
+ * @param {string | null | undefined} absFileOrRoot
+ */
+function invalidateRepoConfigCache(absFileOrRoot) {
+  if (!absFileOrRoot || typeof absFileOrRoot !== "string") return;
+  const abs =
+    path.basename(absFileOrRoot) === REPO_CONFIG_FILE
+      ? absFileOrRoot
+      : path.join(absFileOrRoot, REPO_CONFIG_FILE);
+  cache.delete(abs);
+}
+
+/**
+ * Read `<root>/solenta.json`, cached on mtime+size. Missing file → null.
+ * @param {string | null | undefined} root
+ * @returns {RepoConfig | null}
+ */
+function readRepoConfig(root) {
+  const raw = readRepoJson(root);
+  if (!raw) return null;
+  if (raw.error) return { error: raw.error };
+  return parseRepoConfig(raw.json);
 }
 
 /**
@@ -224,7 +252,9 @@ module.exports = {
   REPO_CONFIG_FILE,
   REPO_ACTION_ID_PREFIX,
   parseRepoConfig,
+  readRepoJson,
   readRepoConfig,
+  invalidateRepoConfigCache,
   effectiveCommands,
   presentRepoConfig,
   normalizeTrustHash,
