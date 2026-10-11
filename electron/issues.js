@@ -371,6 +371,26 @@ async function fetchIssue(projectPath, ref, opts) {
 }
 
 /**
+ * Blocker numbers (#251): GitHub's native blocked-by (closed ones already
+ * landed, so dropped) plus the `blocked-by:#N` label convention, which also
+ * works on GitLab.
+ * ponytail: native cross-repo blockers are matched by number only, so a
+ * same-numbered issue here stands in for them; add nameWithOwner if that bites.
+ */
+function blockersOf(nodes, labels) {
+  const out = new Set();
+  for (const n of Array.isArray(nodes) ? nodes : []) {
+    const number = Number(n && n.number);
+    if (Number.isInteger(number) && number > 0 && n.state !== "CLOSED") out.add(number);
+  }
+  for (const label of labels) {
+    const m = /^blocked-by:\s*#?(\d+)$/i.exec(label);
+    if (m) out.add(Number(m[1]));
+  }
+  return [...out].sort((a, b) => a - b);
+}
+
+/**
  * Parse `gh issue list --json ...` stdout into PlanIssue rows.
  * Rows missing a positive number, title, or url are dropped.
  *
@@ -415,6 +435,8 @@ function parseIssueListJson(stdout) {
     if (row.createdAt != null && String(row.createdAt).trim() !== "") {
       issue.createdAt = String(row.createdAt);
     }
+    const blockedBy = blockersOf(row.blockedBy, labels);
+    if (blockedBy.length) issue.blockedBy = blockedBy;
     issues.push(issue);
   }
   return issues;
@@ -445,7 +467,7 @@ async function listIssuePage(projectPath, opts = {}) {
   const query = `query($owner:String!, $repo:String!, $first:Int!, $after:String, $state:IssueState!) {
     repository(owner:$owner, name:$repo) {
       issues(first:$first, after:$after, states:${state === "all" ? "null" : "[$state]"}, orderBy:{field:UPDATED_AT,direction:DESC}) {
-        nodes { number title url state updatedAt createdAt labels(first:100) { nodes { name } } }
+        nodes { number title url state updatedAt createdAt labels(first:100) { nodes { name } } blockedBy(first:20) { nodes { number state } } }
         pageInfo { hasNextPage endCursor }
       }
     }
@@ -478,7 +500,7 @@ async function listIssuePage(projectPath, opts = {}) {
     }
     return {
       ok: true,
-      issues: parseIssueListJson(JSON.stringify(page.nodes.map((row) => ({ ...row, labels: row.labels?.nodes })))),
+      issues: parseIssueListJson(JSON.stringify(page.nodes.map((row) => ({ ...row, labels: row.labels?.nodes, blockedBy: row.blockedBy?.nodes })))),
       nextCursor: page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null,
     };
   } catch (err) {
@@ -499,7 +521,19 @@ async function listIssues(projectPath) {
   const closed = await listIssuePage(projectPath, { state: "closed", limit: 100 });
   if (!closed.ok) return closed;
   // An issue can close between page requests; keep its latest state.
-  return { ok: true, issues: [...new Map([...issues, ...closed.issues].map((i) => [i.number, i])).values()] };
+  const byNumber = new Map([...issues, ...closed.issues].map((i) => [i.number, i]));
+  // Narrow blockedBy to blockers that have not landed. Every open issue is
+  // listed, so a blocker missing here is closed (or gone).
+  for (const issue of byNumber.values()) {
+    if (!issue.blockedBy) continue;
+    const open = issue.blockedBy.filter((n) => {
+      const b = byNumber.get(n);
+      return b && b.state === "OPEN" && !b.labels.includes("plan:done");
+    });
+    if (open.length) issue.blockedBy = open;
+    else delete issue.blockedBy;
+  }
+  return { ok: true, issues: [...byNumber.values()] };
 }
 
 const PLAN_LABELS = ["plan:todo", "plan:doing", "plan:done"];

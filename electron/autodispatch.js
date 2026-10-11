@@ -85,7 +85,10 @@ function startAutoDispatch(ctx) {
             issue &&
             issue.state === "OPEN" &&
             Array.isArray(issue.labels) &&
-            issue.labels.includes("plan:todo"),
+            issue.labels.includes("plan:todo") &&
+            // listIssues narrows blockedBy to unlanded blockers (#251); the
+            // next tick after they land dispatches this one.
+            !issue.blockedBy,
         )
         .sort((a, b) => a.number - b.number);
       for (const issue of candidates) {
