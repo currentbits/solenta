@@ -7,6 +7,7 @@
 import type { AttachmentInfo } from "./shared/ipc";
 import type { PasteCard } from "./pasteCards";
 import type { ReviewComment } from "./diffView";
+import { parseContextChips, type ContextChip } from "./contextChips";
 
 export const keptDrafts: Record<string, string> = {};
 export const keptAttachments: Record<string, AttachmentInfo[]> = {};
@@ -16,6 +17,8 @@ export const sentHistory: Record<string, string[]> = {};
 export const SENT_HISTORY_CAP = 20;
 /** Diff comments waiting in the draft, sent together with the next prompt. */
 export const keptReviewComments: Record<string, ReviewComment[]> = {};
+/** Typed context chips (#1526): threads, PRs, skills, terminal, quotes. */
+export const keptContextChips: Record<string, ContextChip[]> = {};
 
 export const DRAFTS_STORAGE_KEY = "coder.composerDrafts";
 export const DRAFTS_SAVE_MS = 400;
@@ -31,6 +34,7 @@ interface SavedDraft {
   pasteCards?: PasteCard[];
   sent?: string[];
   comments?: ReviewComment[];
+  chips?: ContextChip[];
 }
 
 function clearRecord<T>(store: Record<string, T>): void {
@@ -77,6 +81,9 @@ function snapshot(): Record<string, SavedDraft> {
   }
   for (const [id, list] of Object.entries(keptReviewComments)) {
     if (list.length) row(id).comments = list;
+  }
+  for (const [id, list] of Object.entries(keptContextChips)) {
+    if (list.length) row(id).chips = list;
   }
   for (const [id, list] of Object.entries(sentHistory)) {
     if (list.length) row(id).sent = list;
@@ -147,6 +154,10 @@ export function hydrateComposerSession(): void {
     if (Array.isArray(r.pasteCards)) keptPasteCards[id] = r.pasteCards;
     if (Array.isArray(r.sent)) sentHistory[id] = r.sent;
     if (Array.isArray(r.comments)) keptReviewComments[id] = r.comments;
+    if (Array.isArray(r.chips)) {
+      const chips = parseContextChips(r.chips);
+      if (chips.length) keptContextChips[id] = chips;
+    }
   }
 }
 
@@ -188,6 +199,33 @@ export function setReviewComments(
   notifyReviewComments();
 }
 
+const chipListeners = new Set<() => void>();
+const NO_CHIPS: ContextChip[] = [];
+
+function notifyContextChips(): void {
+  for (const l of chipListeners) l();
+}
+
+export function subscribeContextChips(listener: () => void): () => void {
+  chipListeners.add(listener);
+  return () => chipListeners.delete(listener);
+}
+
+export function getContextChips(threadId: string): ContextChip[] {
+  return keptContextChips[threadId] ?? NO_CHIPS;
+}
+
+export function setContextChips(
+  threadId: string,
+  update: (prev: ContextChip[]) => ContextChip[],
+): void {
+  const next = update(getContextChips(threadId));
+  if (next.length) keptContextChips[threadId] = next;
+  else delete keptContextChips[threadId];
+  scheduleDraftSave();
+  notifyContextChips();
+}
+
 /** Drop drafts of threads that no longer exist (deleted, not archived). */
 export function pruneComposerDrafts(threadIds: Iterable<string>): number {
   const known = new Set(threadIds);
@@ -198,6 +236,7 @@ export function pruneComposerDrafts(threadIds: Iterable<string>): number {
     keptPasteCards,
     sentHistory,
     keptReviewComments,
+    keptContextChips,
   ]) {
     for (const id of Object.keys(store)) {
       if (known.has(id)) continue;
@@ -217,7 +256,9 @@ export function resetComposerSession(): void {
   clearRecord(keptPasteCards);
   clearRecord(sentHistory);
   clearRecord(keptReviewComments);
+  clearRecord(keptContextChips);
   notifyReviewComments();
+  notifyContextChips();
   try {
     storage()?.removeItem(DRAFTS_STORAGE_KEY);
   } catch {

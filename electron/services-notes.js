@@ -249,6 +249,24 @@ function suggestedWorkNoteFor() {
 }
 
 /**
+ * Standing note so the agent knows it can author an automation from chat
+ * (#1589). Same coder-threads gate as suggestedWorkNoteFor.
+ *
+ * @returns {string}
+ */
+function automationNoteFor() {
+  try {
+    const { activeServers } = require("./memory-sup.js");
+    if (!activeServers().some((s) => s.name === "coder-threads")) return "";
+  } catch {
+    return "";
+  }
+  return (
+    "\n\n[Automations] When the user asks you to create a scheduled or GitHub-triggered automation, call the coder-threads tool automation_create (with your own threadId/projectId) — name, prompt, provider (omit to use this thread's), and either a schedule (preset hourly/daily/weekly, plus hour 0–23 for daily/weekly) or a GitHub trigger (event pr_opened/pr_merged/pr_labeled/review_submitted/push/ci_completed, plus optional branch/label/conclusion). The result appears as a card with an Open in Automations link. Do not invent webhook or Slack triggers."
+  );
+}
+
+/**
  * Standing note appended to every Codex dispatch (CLI-only, never stored
  * in the transcript) so the model does not invent a Solenta Computer Use
  * toggle (issue #800). Silent for every other provider.
@@ -558,6 +576,7 @@ module.exports = {
   planboardNoteFor,
   selfIdNoteFor,
   suggestedWorkNoteFor,
+  automationNoteFor,
   codexComputerUseNoteFor,
   hypothesisNoteFor,
   planStepsFrom,

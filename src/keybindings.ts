@@ -91,6 +91,18 @@ export const KEYBINDINGS: readonly KeybindingDef[] = [
     chord: "mod+shift+f",
   },
   {
+    id: "transcript.find",
+    label: "Find in thread",
+    scope: "window",
+    chord: "mod+f",
+  },
+  {
+    id: "diff.find",
+    label: "Find in diffs",
+    scope: "window",
+    chord: "mod+f",
+  },
+  {
     id: "composer.send",
     label: "Send message",
     scope: "composer",
@@ -360,6 +372,14 @@ function conflictKey(chord: Chord): string {
   return `${mod ? "mod+" : ""}${chord.alt ? "alt+" : ""}${shift ? "shift+" : ""}${chord.key}`;
 }
 
+function defaultChordKey(id: string): string | null {
+  const def = BY_ID.get(id);
+  if (!def?.chord) return null;
+  return typeof def.chord === "string"
+    ? def.chord
+    : `${def.chord.mac}|${def.chord.other}`;
+}
+
 /** Groups of ids that would fire on the same keys, e.g. [["undo", "thread.new"]]. */
 export function findConflicts(chords: Map<string, string>): string[][] {
   const groups = new Map<string, string[]>();
@@ -369,7 +389,12 @@ export function findConflicts(chords: Map<string, string>): string[][] {
     const k = conflictKey(chord);
     groups.set(k, [...(groups.get(k) ?? []), id]);
   }
-  return [...groups.values()].filter((ids) => ids.length > 1);
+  return [...groups.values()].filter((ids) => {
+    if (ids.length < 2) return false;
+    // Same shipped default (transcript.find + diff.find both ⌘F) is intentional.
+    const first = defaultChordKey(ids[0]!);
+    return !(first && ids.every((id) => defaultChordKey(id) === first));
+  });
 }
 
 /**

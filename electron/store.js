@@ -2138,7 +2138,8 @@ class Store {
 
   appendWorkLog(threadId, item) {
     const list = this.getWorkLog(threadId).slice();
-    list.push(item);
+    // Work-log items carry tool commands and output too (#1531).
+    list.push(threadSecrets.redact(threadId, item));
     this.setWorkLog(threadId, list);
   }
 
@@ -2391,7 +2392,7 @@ class Store {
     const list = this.getWorkLog(threadId).slice();
     const idx = list.findIndex((w) => w.id === itemId);
     if (idx < 0) return null;
-    list[idx] = { ...list[idx], ...patch };
+    list[idx] = { ...list[idx], ...threadSecrets.redact(threadId, patch) };
     this.setWorkLog(threadId, list);
     return list[idx];
   }

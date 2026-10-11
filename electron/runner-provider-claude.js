@@ -34,6 +34,7 @@ const { pendingFromInput } = require("./codexInput.js");
 const { METHOD_ELICITATION } = require("./codexApprovals.js");
 const { isMemoryConsolidateTool } = require("./memory-consolidate.js");
 const { saveToolImages, extractImages } = require("./tool-images.js");
+const { extractHtml } = require("./tool-html.js");
 const fs = require("node:fs");
 const { recordCompaction } = require("./compaction.js");
 
@@ -436,6 +437,7 @@ function createClaudeRun(ctx) {
     const mcpArgs = getClaudeMcpArgs({
       projectPath: localCwd,
       projectId: thread.projectId,
+      threadId,
       memoryOnly: thread.memoryConsolidate === true,
     });
     if (interactive) {
@@ -468,6 +470,7 @@ function createClaudeRun(ctx) {
               mcpServers: kimiMcpServersForRun({
                 projectId: thread.projectId,
                 projectPath: localCwd || project.path,
+                threadId,
               }),
             });
           }
@@ -496,6 +499,7 @@ function createClaudeRun(ctx) {
           ensureGrokMcpConfig({
             projectPath: localCwd,
             projectId: thread.projectId,
+            threadId,
           });
           await whenGrokMcpIdle();
         } catch {
@@ -911,6 +915,7 @@ function createClaudeRun(ctx) {
               extractImages(block.content),
               threadId,
             );
+            const html = extractHtml(block.content);
             store.updateMessage(threadId, existing.id, {
               tool: {
                 ...existing.tool,
@@ -918,6 +923,7 @@ function createClaudeRun(ctx) {
                 isError: Boolean(block.is_error),
                 done: true,
                 ...(images.length ? { images } : {}),
+                ...(html ? { html } : {}),
               },
             });
             noteToolSpan(

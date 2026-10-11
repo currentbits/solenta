@@ -39,6 +39,8 @@ export interface AutomationsViewProps {
    * list is still loading — treat runs as openable.
    */
   liveThreads?: Array<{ id: string; status: ThreadStatus }>;
+  /** Open this row in the form (automation_create card, #1599). */
+  focusId?: string | null;
   onCreate: (input: AutomationWrite) => Promise<void> | void;
   onUpdate: (
     input: Partial<AutomationWrite> & { id: string },
@@ -233,6 +235,7 @@ export function AutomationsView({
   loadRuns,
   onSelectThread,
   liveThreads,
+  focusId,
   onCreate,
   onUpdate,
   onRemove,
@@ -295,6 +298,15 @@ export function AutomationsView({
     setMemory(auto.memory ?? "");
     setFormError(null);
   };
+
+  const focusedIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!focusId || focusedIdRef.current === focusId) return;
+    const found = automations.find((a) => a.id === focusId);
+    if (!found) return;
+    focusedIdRef.current = focusId;
+    fillFrom(found);
+  }, [focusId, automations]);
 
   const clearEdit = () => {
     setEditingId(null);

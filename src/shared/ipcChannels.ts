@@ -30,6 +30,7 @@ export const PUSH_CHANNELS = [
   "speech:changed",
   "terminal:data",
   "clone:progress",
+  "pairing:consent",
 ] as const;
 
 export type PushChannel = (typeof PUSH_CHANNELS)[number];
@@ -69,6 +70,10 @@ export const IPC_CHANNELS = [
   { ns: "pairing", method: "revoke" },
   { ns: "pairing", method: "approve" },
   { ns: "pairing", method: "reject" },
+  { ns: "pairing", method: "setPublic" },
+  { ns: "pairing", method: "listConsents" },
+  { ns: "pairing", method: "approveConsent" },
+  { ns: "pairing", method: "denyConsent" },
   { ns: "web", method: "status" },
   { ns: "web", method: "setEnabled" },
   { ns: "web", method: "addDevice" },

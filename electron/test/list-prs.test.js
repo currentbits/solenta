@@ -203,9 +203,157 @@ process.exit(2);
   });
 
   it("returns not a GitHub repo without throwing", async () => {
-    git(repo, ["remote", "set-url", "origin", "https://gitlab.com/acme/demo.git"]);
+    git(repo, ["remote", "set-url", "origin", "https://bitbucket.org/acme/demo.git"]);
     const result = await listPrs(repo);
     assert.deepEqual(result, { ok: false, reason: "not a GitHub repo" });
+  });
+});
+
+describe("listPrs GitLab", { skip: process.platform === "win32" }, () => {
+  let tmp;
+  let repo;
+  let callsPath;
+  let prevGh;
+  let prevGlab;
+
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), "coder-listprs-gl-"));
+    repo = path.join(tmp, "repo");
+    fs.mkdirSync(repo);
+    git(repo, ["init", "-q", "-b", "main"]);
+    git(repo, ["config", "user.email", "t@example.com"]);
+    git(repo, ["config", "user.name", "t"]);
+    fs.writeFileSync(path.join(repo, "a.txt"), "1");
+    git(repo, ["add", "."]);
+    git(repo, ["commit", "-qm", "init"]);
+    git(repo, ["remote", "add", "origin", "https://gitlab.com/acme/demo.git"]);
+
+    callsPath = path.join(tmp, "glab-calls.json");
+    fs.writeFileSync(callsPath, "[]");
+    const mrs = [
+      {
+        iid: 12,
+        title: "Add list view",
+        web_url: "https://gitlab.com/acme/demo/-/merge_requests/12",
+        state: "opened",
+        source_branch: "feat/list",
+        draft: true,
+        updated_at: "2026-08-12T18:00:00Z",
+        created_at: "2026-08-10T18:00:00Z",
+      },
+      {
+        iid: 7,
+        title: "Ready MR",
+        web_url: "https://gitlab.com/acme/demo/-/merge_requests/7",
+        state: "opened",
+        source_branch: "feat/ready",
+        draft: false,
+        updated_at: "2026-08-11T18:00:00Z",
+      },
+    ];
+    prevGh = process.env.CODER_GH_BIN;
+    prevGlab = process.env.CODER_GLAB_BIN;
+    process.env.CODER_GLAB_BIN = writeFakeBin(
+      path.join(tmp, "fake-glab"),
+      `const fs = require("fs");
+const args = process.argv.slice(2);
+const calls = JSON.parse(fs.readFileSync(${JSON.stringify(callsPath)}, "utf8"));
+calls.push(args);
+fs.writeFileSync(${JSON.stringify(callsPath)}, JSON.stringify(calls));
+const method = args[args.indexOf("-X") + 1];
+const endpoint = args[args.indexOf("-X") + 2].split("?")[0];
+if (method === "GET" && endpoint === "projects/acme%2Fdemo/merge_requests") {
+  process.stdout.write(${JSON.stringify(JSON.stringify(mrs))});
+  process.exit(0);
+}
+process.stderr.write("glab: 404 Not Found (HTTP 404)");
+process.exit(1);
+`,
+    );
+  });
+
+  afterEach(async () => {
+    if (prevGh == null) delete process.env.CODER_GH_BIN;
+    else process.env.CODER_GH_BIN = prevGh;
+    if (prevGlab == null) delete process.env.CODER_GLAB_BIN;
+    else process.env.CODER_GLAB_BIN = prevGlab;
+    await rmTree(tmp);
+  });
+
+  it("lists open MRs through glab with GitHub-shaped fields", async () => {
+    const result = await listPrs(repo);
+    assert.equal(result.ok, true);
+    assert.equal(result.prs.length, 2);
+    assert.deepEqual(result.prs[0], {
+      number: 12,
+      title: "Add list view",
+      url: "https://gitlab.com/acme/demo/-/merge_requests/12",
+      state: "OPEN",
+      headRefName: "feat/list",
+      isDraft: true,
+      updatedAt: "2026-08-12T18:00:00Z",
+    });
+    assert.equal(result.prs[1].number, 7);
+    assert.equal(result.prs[1].isDraft, false);
+    const [call] = JSON.parse(fs.readFileSync(callsPath, "utf8"));
+    assert.deepEqual(call.slice(0, 5), ["api", "--hostname", "gitlab.com", "-X", "GET"]);
+    assert.match(call[5], /merge_requests\?/);
+    assert.match(call[5], /state=opened/);
+  });
+
+  it("listPrsRaw uses the same GitLab mapping", async () => {
+    const raw = await listPrsRaw(repo);
+    assert.equal(raw.ok, true);
+    assert.equal(raw.prs[0].number, 12);
+    assert.equal(raw.prs[0].headRefName, "feat/list");
+    assert.equal(raw.prs[0].isDraft, true);
+    assert.equal(raw.prs[0].updatedAt, "2026-08-12T18:00:00Z");
+    assert.equal(raw.prs[0].createdAt, "2026-08-10T18:00:00Z");
+  });
+
+  it("returns glab missing when the CLI is absent", async () => {
+    process.env.CODER_GLAB_BIN = path.join(tmp, "no-such-glab");
+    const result = await listPrs(repo);
+    assert.deepEqual(result, { ok: false, reason: "glab missing" });
+  });
+
+  it("returns auth when glab is unauthenticated", async () => {
+    process.env.CODER_GLAB_BIN = writeFakeBin(
+      path.join(tmp, "glab-auth"),
+      `process.stderr.write("glab: 401 Unauthorized\\n"); process.exit(1);\n`,
+    );
+    const result = await listPrs(repo);
+    assert.deepEqual(result, { ok: false, reason: "auth" });
+  });
+
+  it("pages past GitLab per_page 100 so complete matches the asked limit", async () => {
+    const rows = Array.from({ length: 101 }, (_, i) => ({
+      iid: i + 1,
+      title: "MR " + (i + 1),
+      web_url: "https://gitlab.com/acme/demo/-/merge_requests/" + (i + 1),
+      state: "opened",
+      source_branch: "b" + (i + 1),
+      draft: false,
+      updated_at: "2026-08-12T18:00:00Z",
+      created_at: "2026-08-10T18:00:00Z",
+    }));
+    process.env.CODER_GLAB_BIN = writeFakeBin(
+      path.join(tmp, "glab-page"),
+      `const args = process.argv.slice(2);
+const endpoint = args[args.indexOf("-X") + 2];
+const q = new URLSearchParams((endpoint.split("?")[1] || ""));
+const perPage = Number(q.get("per_page") || 50);
+const page = Number(q.get("page") || 1);
+const all = ${JSON.stringify(rows)};
+const start = (page - 1) * perPage;
+process.stdout.write(JSON.stringify(all.slice(start, start + perPage)));
+`,
+    );
+    const result = await listPrs(repo, { limit: 150 });
+    assert.equal(result.ok, true);
+    assert.equal(result.prs.length, 101);
+    assert.equal(result.complete, true);
+    assert.equal(result.limit, 150);
   });
 });
 

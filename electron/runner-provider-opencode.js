@@ -40,6 +40,7 @@ function createOpencodeRun(ctx) {
     active,
     appendMessage,
     persistToolImages,
+    persistToolHtml,
     noteToolSpan,
     clearRun,
     lastAssistantText,
@@ -405,6 +406,7 @@ function createOpencodeRun(ctx) {
                   isError: tool.isError,
                   done: true,
                   ...persistToolImages(threadId, tool.images),
+                  ...persistToolHtml(tool.html),
                 },
               });
               noteToolSpan(threadId, runId, tool.id, tool.name, tool.isError);
@@ -418,6 +420,7 @@ function createOpencodeRun(ctx) {
               isError: tool.isError,
               done: true,
               ...persistToolImages(threadId, tool.images),
+              ...persistToolHtml(tool.html),
             };
             appendMessage(threadId, "tool", tool.name, runId, toolMeta);
             // Post-tool text starts a fresh message below the tool call.

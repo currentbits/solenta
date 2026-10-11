@@ -15,6 +15,7 @@ const PUSH_CHANNELS = new Set([
   "speech:changed",
   "terminal:data",
   "clone:progress",
+  "pairing:consent",
 ]);
 /* </ipc-push> */
 
@@ -121,6 +122,10 @@ const IPC_CHANNELS = Object.freeze([
   { ns: "pairing", method: "revoke" },
   { ns: "pairing", method: "approve" },
   { ns: "pairing", method: "reject" },
+  { ns: "pairing", method: "setPublic" },
+  { ns: "pairing", method: "listConsents" },
+  { ns: "pairing", method: "approveConsent" },
+  { ns: "pairing", method: "denyConsent" },
   { ns: "web", method: "status" },
   { ns: "web", method: "setEnabled" },
   { ns: "web", method: "addDevice" },

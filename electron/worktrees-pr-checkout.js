@@ -1,6 +1,6 @@
 "use strict";
 
-// Check out a GitHub PR into its own thread worktree.
+// Check out a GitHub PR or GitLab MR into its own thread worktree.
 
 const fs = require("node:fs");
 const path = require("node:path");
@@ -18,7 +18,8 @@ const {
 const { diff } = require("./worktrees-changes.js");
 const {
   GH_TIMEOUT_MS,
-  isGitHubRemote,
+  isGitHubRemoteAsync,
+  gitlabOrigin,
   ghTryAsync,
   isUnknownJsonField,
   isGhAuthFailure,
@@ -81,8 +82,9 @@ function parsePrCheckoutView(stdout) {
  * @returns {string}
  */
 function buildPrCheckoutPrompt(pr, opts) {
+  const kind = (opts && opts.kind) || "GitHub pull request";
   const lines = [
-    `GitHub pull request #${pr.number}: ${pr.title || ""}`.trimEnd(),
+    `${kind} #${pr.number}: ${pr.title || ""}`.trimEnd(),
     pr.url || "",
     "",
   ];
@@ -151,10 +153,11 @@ function abandonCheckout(opts) {
 }
 
 /**
- * Check out a GitHub PR into a fresh worktree thread (issue #611).
- * Same-repo: `gh pr checkout` inside a new worktree. Fork (or a branch
- * already checked out elsewhere): fetch `pull/N/head` and detach, with a
- * read-only note. Never throws: missing gh / auth / non-GitHub remotes
+ * Check out a GitHub PR or GitLab MR into a fresh worktree thread (#611, #1567).
+ * GitHub same-repo: `gh pr checkout` inside a new worktree. GitLab: fetch
+ * `refs/merge-requests/<iid>/head` and create the source branch. Fork (or a
+ * branch already checked out elsewhere): fetch the forge head ref and detach,
+ * with a read-only note. Never throws: missing CLI / auth / unknown remotes
  * come back `{ ok: false, reason }`.
  *
  * @param {object} opts
@@ -204,47 +207,75 @@ async function checkoutPr(opts) {
   if (!origin.ok) {
     return { ok: false, reason: "not a GitHub repo" };
   }
-  if (!isGitHubRemote(String(origin.stdout || "").trim())) {
+  const originUrl = String(origin.stdout || "").trim();
+  const gl = gitlabOrigin(originUrl);
+  if (!gl && !(await isGitHubRemoteAsync(originUrl))) {
     return { ok: false, reason: "not a GitHub repo" };
   }
 
-  let viewed = await ghTryAsync(
-    project.path,
-    ["pr", "view", String(prNumber), "--json", PR_CHECKOUT_VIEW_FIELDS],
-    { timeout: GH_TIMEOUT_MS },
-  );
-  if (
-    !viewed.ok &&
-    isUnknownJsonField(viewed.stderr || viewed.combined || viewed.stdout)
-  ) {
-    viewed = await ghTryAsync(
+  let pr;
+  if (gl) {
+    const gitlab = require("./gitlab.js");
+    const viewed = await gitlab.glabApi(
       project.path,
-      ["pr", "view", String(prNumber), "--json", PR_CHECKOUT_VIEW_FIELDS_FALLBACK],
+      gl,
+      "GET",
+      `/merge_requests/${prNumber}`,
+    );
+    if (!viewed.ok) {
+      if (viewed.reason === "glab missing") return { ok: false, reason: "glab missing" };
+      if (viewed.reason === "auth") return { ok: false, reason: "auth" };
+      return { ok: false, reason: viewed.reason };
+    }
+    try {
+      pr = gitlab.prCheckoutViewFromMr(viewed.data);
+    } catch (err) {
+      return {
+        ok: false,
+        reason:
+          err && err.message
+            ? String(err.message)
+            : "glab returned incomplete merge request JSON",
+      };
+    }
+  } else {
+    let viewed = await ghTryAsync(
+      project.path,
+      ["pr", "view", String(prNumber), "--json", PR_CHECKOUT_VIEW_FIELDS],
       { timeout: GH_TIMEOUT_MS },
     );
-  }
-  if (!viewed.ok) {
-    if (viewed.enoent) return { ok: false, reason: "gh missing" };
-    if (isGhAuthFailure(viewed.stderr || viewed.combined || viewed.stdout)) {
-      return { ok: false, reason: "auth" };
+    if (
+      !viewed.ok &&
+      isUnknownJsonField(viewed.stderr || viewed.combined || viewed.stdout)
+    ) {
+      viewed = await ghTryAsync(
+        project.path,
+        ["pr", "view", String(prNumber), "--json", PR_CHECKOUT_VIEW_FIELDS_FALLBACK],
+        { timeout: GH_TIMEOUT_MS },
+      );
     }
-    return {
-      ok: false,
-      reason: tailErr(viewed.stderr || viewed.combined, "gh pr view failed"),
-    };
-  }
+    if (!viewed.ok) {
+      if (viewed.enoent) return { ok: false, reason: "gh missing" };
+      if (isGhAuthFailure(viewed.stderr || viewed.combined || viewed.stdout)) {
+        return { ok: false, reason: "auth" };
+      }
+      return {
+        ok: false,
+        reason: tailErr(viewed.stderr || viewed.combined, "gh pr view failed"),
+      };
+    }
 
-  let pr;
-  try {
-    pr = parsePrCheckoutView(viewed.stdout);
-  } catch (err) {
-    return {
-      ok: false,
-      reason:
-        err && err.message
-          ? String(err.message)
-          : "gh returned unparseable PR view JSON",
-    };
+    try {
+      pr = parsePrCheckoutView(viewed.stdout);
+    } catch (err) {
+      return {
+        ok: false,
+        reason:
+          err && err.message
+            ? String(err.message)
+            : "gh returned unparseable PR view JSON",
+      };
+    }
   }
 
   const existing = findExistingPrThread(
@@ -253,18 +284,22 @@ async function checkoutPr(opts) {
     pr.number,
     pr.headRefName,
   );
+  const promptKind = gl ? "GitLab merge request" : "GitHub pull request";
   if (existing && existing.worktreePath && fs.existsSync(existing.worktreePath)) {
-    const diffed = await ghTryAsync(
-      project.path,
-      ["pr", "diff", String(pr.number)],
-      { timeout: GH_TIMEOUT_MS },
-    );
+    const diffed = gl
+      ? { ok: false, stdout: "" }
+      : await ghTryAsync(
+          project.path,
+          ["pr", "diff", String(pr.number)],
+          { timeout: GH_TIMEOUT_MS },
+        );
     return {
       ok: true,
       created: false,
       readOnly: !existing.branch,
       thread: { ...existing },
       prompt: buildPrCheckoutPrompt(pr, {
+        kind: promptKind,
         diff: diffed.ok ? diffed.stdout : "",
         readOnlyNote: existing.branch ? null : FORK_READONLY_NOTE,
       }),
@@ -306,9 +341,12 @@ async function checkoutPr(opts) {
   };
 
   const fetchPrHead = async () => {
+    const ref = gl
+      ? `refs/merge-requests/${pr.number}/head`
+      : `pull/${pr.number}/head`;
     const fetched = await gitTryAsync(
       project.path,
-      ["fetch", "origin", `pull/${pr.number}/head`],
+      ["fetch", "origin", ref],
       { timeout: PR_CHECKOUT_FETCH_TIMEOUT_MS },
     );
     if (!fetched.ok) {
@@ -325,16 +363,31 @@ async function checkoutPr(opts) {
     return { ok: true, sha };
   };
 
-  if (pr.isCrossRepository) {
+  if (pr.isCrossRepository || gl) {
     const head = await fetchPrHead();
     if (!head.ok) return fail(head.reason);
-    try {
-      gitOut(project.path, ["worktree", "add", "--detach", addPath, head.sha]);
-    } catch (err) {
-      return fail(`Failed to create worktree:\n${gitFailureText(err)}`);
+    if (!pr.isCrossRepository && pr.headRefName) {
+      try {
+        gitOut(project.path, ["worktree", "add", "-B", pr.headRefName, addPath, head.sha]);
+        branch = pr.headRefName;
+      } catch {
+        try {
+          gitOut(project.path, ["worktree", "add", "--detach", addPath, head.sha]);
+        } catch (err) {
+          return fail(`Failed to create worktree:\n${gitFailureText(err)}`);
+        }
+        readOnly = true;
+        readOnlyNote = DETACHED_READONLY_NOTE;
+      }
+    } else {
+      try {
+        gitOut(project.path, ["worktree", "add", "--detach", addPath, head.sha]);
+      } catch (err) {
+        return fail(`Failed to create worktree:\n${gitFailureText(err)}`);
+      }
+      readOnly = true;
+      readOnlyNote = FORK_READONLY_NOTE;
     }
-    readOnly = true;
-    readOnlyNote = FORK_READONLY_NOTE;
   } else {
     try {
       gitOut(project.path, ["worktree", "add", "--detach", addPath]);
@@ -377,12 +430,15 @@ async function checkoutPr(opts) {
     }
   }
 
-  const diffed = await ghTryAsync(
-    project.path,
-    ["pr", "diff", String(pr.number)],
-    { timeout: GH_TIMEOUT_MS },
-  );
+  const diffed = gl
+    ? { ok: false, stdout: "" }
+    : await ghTryAsync(
+        project.path,
+        ["pr", "diff", String(pr.number)],
+        { timeout: GH_TIMEOUT_MS },
+      );
   const prompt = buildPrCheckoutPrompt(pr, {
+    kind: promptKind,
     diff: diffed.ok ? diffed.stdout : "",
     readOnlyNote,
   });

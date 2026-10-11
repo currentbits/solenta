@@ -76,6 +76,10 @@ function makeCtx(deps) {
     openRemoteConnection: deps.openRemoteConnection,
     forgetRemoteConnection: deps.forgetRemoteConnection,
     webAccess: deps.webAccess || null,
+    getMcpFunnel:
+      typeof deps.getMcpFunnel === "function"
+        ? deps.getMcpFunnel
+        : () => deps.mcpFunnel || null,
     transport: "desktop",
   };
 }

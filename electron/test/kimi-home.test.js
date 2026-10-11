@@ -178,6 +178,14 @@ describe("kimiMcpServersForRun binds project on the URL", () => {
       "http://127.0.0.1:4321/mcp?projectId=proj-1",
     );
     assert.equal(
+      kimiMcpServersForRun({
+        projectId: "proj-1",
+        projectPath: "/tmp/alpha",
+        threadId: "thr-1",
+      })["coder-threads"].url,
+      "http://127.0.0.1:4321/mcp?projectId=proj-1&threadId=thr-1",
+    );
+    assert.equal(
       servers["coder-threads"].headers.Authorization,
       "Bearer tok-threads",
     );

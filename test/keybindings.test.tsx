@@ -95,6 +95,15 @@ describe("keybinding table", () => {
     assert.deepEqual(findConflicts(chords), [["thread.new", "palette.command"]]);
   });
 
+  it("lets transcript.find and diff.find share ⌘F until something else lands on it", () => {
+    assert.deepEqual(findConflicts(effectiveChords({}, true)), []);
+    const clash = findConflicts(effectiveChords({ "palette.command": "mod+f" }, true));
+    assert.equal(clash.length, 1);
+    assert.ok(clash[0]!.includes("palette.command"));
+    assert.ok(clash[0]!.includes("transcript.find"));
+    assert.ok(clash[0]!.includes("diff.find"));
+  });
+
   it("validates the JSON and keeps the good entries", () => {
     const { overrides, errors } = parseOverrides(
       '{"palette.command": "Mod+E", "nope": "mod+x", "thread.jump": "mod+1", "undo": "mod+"}',

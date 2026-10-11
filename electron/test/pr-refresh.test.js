@@ -392,6 +392,16 @@ describe("refreshPrStates (round 47)", () => {
     assert.equal(readGhState(fx).calls.length, 0);
   });
 
+  it("settled thread polls at most every 10 min, not never (#1523)", async () => {
+    fx = await makeFixture();
+    seedOpenPr(fx, fx.thread.id, 9, "OPEN");
+    fx.store.updateThread(fx.thread.id, { settledOverride: "settled" });
+    const at = (ms) => ({ broadcast: () => {}, now: () => 1_000_000 + ms });
+    assert.equal((await refreshPrStates(fx.store, at(0))).examined, 1);
+    assert.equal((await refreshPrStates(fx.store, at(5 * 60_000))).examined, 0);
+    assert.equal((await refreshPrStates(fx.store, at(10 * 60_000))).examined, 1);
+  });
+
   it("change → persist + save once + push once", async () => {
     fx = await makeFixture();
     seedOpenPr(fx, fx.thread.id, 42, "OPEN");

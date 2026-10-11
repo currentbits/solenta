@@ -707,6 +707,47 @@ describe("AutomationsView", () => {
     m.unmount();
   });
 
+  it("focusId opens the matching row in the form", async () => {
+    const m = await mount(
+      <AutomationsView
+        automations={[
+          auto({
+            id: "a1",
+            name: "Nightly review",
+            prompt: "Review the ledger",
+            provider: "claude",
+            model: "opus",
+            preset: "daily",
+            hour: 9,
+          }),
+          auto({ id: "a2", name: "Other" }),
+        ]}
+        projects={[p1]}
+        providers={providers}
+        focusId="a1"
+        onCreate={() => {}}
+        onUpdate={() => {}}
+        onRemove={() => {}}
+        onRunNow={() => {}}
+      />,
+    );
+    const name = m.query(
+      '[data-automation-create] [name="name"]',
+    ) as HTMLInputElement | null;
+    const prompt = m.query(
+      '[data-automation-create] [name="prompt"]',
+    ) as HTMLTextAreaElement | null;
+    assert.ok(name && prompt);
+    assert.equal(name.value, "Nightly review");
+    assert.equal(prompt.value, "Review the ledger");
+    const submit = m.query(
+      "[data-automation-create] button[type=submit]",
+    ) as HTMLButtonElement | null;
+    assert.ok(submit);
+    assert.equal(submit.textContent, "Save");
+    m.unmount();
+  });
+
   it("Save updates the same automation and omits enabled and projectId", async () => {
     const created: unknown[] = [];
     const updates: Array<Record<string, unknown>> = [];

@@ -122,6 +122,7 @@ const LiveChunkContext = createContext(false);
  * DOMPurify are all one lazy chunk; the code block is the Suspense fallback.
  */
 const MermaidDiagram = lazy(() => import("./MermaidDiagram"));
+const HtmlPage = lazy(() => import("./HtmlPage"));
 
 /**
  * Fenced code block with a header bar: language label + Copy.
@@ -180,6 +181,10 @@ function CodeBlock({ children }: { children?: ReactNode }) {
       {lang === "mermaid" && !live ? (
         <Suspense fallback={pre}>
           <MermaidDiagram code={code} fallback={pre} />
+        </Suspense>
+      ) : (lang === "html" || lang === "htm") && !live ? (
+        <Suspense fallback={pre}>
+          <HtmlPage html={code} fallback={pre} />
         </Suspense>
       ) : (
         pre
@@ -357,7 +362,7 @@ export function MarkdownBody({
 /**
  * Assistant-message markdown. react-markdown renders to React elements (no
  * dangerouslySetInnerHTML), so raw HTML in agent output is dropped, not
- * executed.
+ * executed. An ```html fence is the opt-in: HtmlPage, sandboxed (#1525).
  *
  * memo: parsing is the expensive part of a streamed update, and only the
  * message being written has new text. `streaming` marks that message.

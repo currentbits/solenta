@@ -137,6 +137,47 @@ function effectiveWorktreeBase(store, worktreeBase) {
 
 const GIT_MAX_BUFFER = 32 * 1024 * 1024;
 
+// Subcommands that only read. status/diff otherwise refresh the index and
+// take index.lock, which can fail the agent's own commit mid-run (#1520).
+const READ_ONLY_GIT = new Set([
+  "status", "diff", "log", "rev-parse", "show", "ls-files", "rev-list",
+  "merge-base", "cat-file", "for-each-ref", "show-ref", "ls-tree", "diff-tree",
+]);
+
+/** First non-option argv entry; `-c k=v` / `-C dir` take a value. */
+function gitSubcommand(args) {
+  const argv = Array.isArray(args) ? args : [];
+  for (let i = 0; i < argv.length; i++) {
+    const a = String(argv[i]);
+    if (a === "-c" || a === "-C") i++;
+    else if (!a.startsWith("-")) return a;
+  }
+  return "";
+}
+
+/**
+ * The one env for every local git spawn. Read-only subcommands get
+ * GIT_OPTIONAL_LOCKS=0 (#1520); win32 gets core.longpaths=true appended
+ * after any GIT_CONFIG_COUNT entries already set (#1523).
+ * ponytail: not forwarded across ssh/WSL wraps; those gits run elsewhere.
+ * @param {string[]} args
+ * @param {NodeJS.ProcessEnv} [extra]
+ * @param {NodeJS.Platform} [platform]
+ * @returns {NodeJS.ProcessEnv}
+ */
+function gitEnv(args, extra, platform = process.platform) {
+  const env = { ...process.env, ...(extra || {}) };
+  if (READ_ONLY_GIT.has(gitSubcommand(args))) env.GIT_OPTIONAL_LOCKS = "0";
+  if (platform === "win32") {
+    const n = parseInt(String(env.GIT_CONFIG_COUNT || ""), 10);
+    const i = Number.isInteger(n) && n > 0 ? n : 0;
+    env[`GIT_CONFIG_KEY_${i}`] = "core.longpaths";
+    env[`GIT_CONFIG_VALUE_${i}`] = "true";
+    env.GIT_CONFIG_COUNT = String(i + 1);
+  }
+  return env;
+}
+
 /**
  * Idle git-status coalescing (#688). A completion-callback re-arm (header
  * git.diff, overlapping gcScan) was spawning ~65 `git status --porcelain
@@ -215,6 +256,7 @@ function gitOut(cwd, args, opts) {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
     maxBuffer: GIT_MAX_BUFFER,
+    env: gitEnv(args),
   };
   if (cmd.cwd) execOpts.cwd = cmd.cwd;
   const raw = execCommand(null, cmd.bin, cmd.args, execOpts);
@@ -236,10 +278,8 @@ function gitTry(cwd, args, opts) {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
       maxBuffer: GIT_MAX_BUFFER,
+      env: gitEnv(args, opts && opts.env),
     };
-    if (opts && opts.env) {
-      execOpts.env = { ...process.env, ...opts.env };
-    }
     if (opts && opts.timeout != null) {
       execOpts.timeout = opts.timeout;
     }
@@ -316,6 +356,7 @@ function gitExecThrowAsync(project, cwd, args, opts) {
     maxBuffer: GIT_MAX_BUFFER,
     timeout,
     stdio: ["ignore", "pipe", "pipe"],
+    env: gitEnv(args),
   };
   let cmd;
   if (project && project.remoteHost) {
@@ -389,11 +430,7 @@ const CHECKPOINT_GIT_TIMEOUT_MS = 30_000;
 function gitTryAsync(cwd, args, opts) {
   const timeout =
     opts && opts.timeout != null ? opts.timeout : CHECKPOINT_GIT_TIMEOUT_MS;
-  const env = {
-    ...process.env,
-    ...(opts && opts.env ? opts.env : {}),
-    GIT_TERMINAL_PROMPT: "0",
-  };
+  const env = gitEnv(args, { ...(opts && opts.env), GIT_TERMINAL_PROMPT: "0" });
   const cmd = resolveGitCommand(cwd, args);
   /** @type {import("node:child_process").ExecFileOptionsWithStringEncoding} */
   const execOpts = {
@@ -469,6 +506,7 @@ module.exports = {
   resolveWorktreeDir,
   effectiveWorktreeBase,
   GIT_MAX_BUFFER,
+  gitEnv,
   GIT_READ_TTL_MS,
   diffByCwd,
   inspectByDir,

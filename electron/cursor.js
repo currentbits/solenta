@@ -237,9 +237,12 @@ function extractToolEvents(obj) {
   let output = null;
   /** @type {{ mediaType: string, data: string }[]} */
   let images = [];
+  /** @type {string | null} */
+  let html = null;
   if (outputRaw != null) {
     const harvested = harvestToolResult(outputRaw);
     images = harvested.images;
+    html = harvested.html;
     output = truncate(asJson(harvested.redacted), OUTPUT_TRUNCATE);
   }
 
@@ -252,6 +255,7 @@ function extractToolEvents(obj) {
       phase: "end",
       isError,
       ...(images.length ? { images } : {}),
+      ...(html ? { html } : {}),
     },
   ];
 }

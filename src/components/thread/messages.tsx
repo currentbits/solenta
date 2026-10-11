@@ -1,4 +1,12 @@
-import { memo, useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  lazy,
+  memo,
+  Suspense,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import type {
   AttachmentInfo,
   ChatMessage,
@@ -23,9 +31,17 @@ import { useModalFocus } from "../../useModalFocus";
 import type { FocusTurnSummary } from "../../focusView";
 import { routineWorkerActivitySummary } from "../../workerActivity";
 import { captureCiteFromSelection, type ReplyTarget } from "../../replyContext";
+import { htmlFromToolOutput } from "../../htmlPage";
 import { Markdown } from "../Markdown";
+
+const HtmlPage = lazy(() => import("../HtmlPage"));
 import { PathText } from "../PathLinks";
 import { provenanceVisible, type MessageProvenance } from "../../provenance";
+import {
+  isAutomationCreateMessage,
+  parseAutomationCreateResult,
+} from "../../automationCard";
+import { scheduleLabel, triggerLabel } from "../../automations";
 import styles from "../ThreadView.module.css";
 
 /** Byte-equal to electron/worktrees.js restoreCheckpoint run-active guard. */
@@ -130,6 +146,7 @@ function ToolCallCard({
     return (
       <article
         className={`${styles.message}${entered ? ` ${styles.streamIn}` : ""}`}
+        data-message-id={message.id}
         data-stream-in={entered ? "" : undefined}
       >
         <p>{message.text}</p>
@@ -142,10 +159,12 @@ function ToolCallCard({
     : tool.isError
       ? "error"
       : "done";
+  const page = tool.html || htmlFromToolOutput(tool.output);
 
   return (
     <section
       className={`${bare ? styles.toolBare : `${styles.card} ${styles.toolCard}`}${entered ? ` ${styles.streamIn}` : ""}`}
+      data-message-id={message.id}
       data-stream-in={entered ? "" : undefined}
     >
       <div
@@ -199,6 +218,11 @@ function ToolCallCard({
               </pre>
             </>
           )}
+          {page && (
+            <Suspense fallback={null}>
+              <HtmlPage html={page} bridge />
+            </Suspense>
+          )}
           {imageUrls.map((url) => (
             <img
               key={url.slice(-32)}
@@ -212,6 +236,45 @@ function ToolCallCard({
         </div>
       )}
     </section>
+  );
+}
+
+function AutomationCreatedCard({
+  message,
+  onOpen,
+}: {
+  message: ChatMessage;
+  onOpen?: (automationId?: string) => void;
+}) {
+  const running = Boolean(message.tool && !message.tool.done);
+  const parsed = parseAutomationCreateResult(message.tool?.output ?? "");
+  const name = parsed?.name || "Automation";
+  const when =
+    parsed?.trigger
+      ? triggerLabel(parsed.trigger)
+      : parsed?.preset
+        ? scheduleLabel(parsed.preset, parsed.hour ?? null, parsed.nextRunAt ?? Date.now())
+        : "";
+  return (
+    <div className={styles.specCard} data-automation-card="">
+      <div className={styles.specCardHead}>
+        <span className={styles.specCardTitle}>
+          {running ? "Creating automation…" : name}
+        </span>
+      </div>
+      {when && !running ? <p className={styles.specStatus}>{when}</p> : null}
+      {onOpen && !running ? (
+        <div className={styles.permissionActions}>
+          <button
+            type="button"
+            className={styles.permissionAllow}
+            onClick={() => onOpen(parsed?.id)}
+          >
+            Open in Automations
+          </button>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -236,6 +299,7 @@ function ThinkingCard({
     <section
       className={`${bare ? styles.toolBare : `${styles.card} ${styles.toolCard}`}${entered ? ` ${styles.streamIn}` : ""}`}
       data-thinking=""
+      data-message-id={message.id}
       data-stream-in={entered ? "" : undefined}
     >
       <div className={styles.toolHeader} onClick={() => setManual(!open)}>
@@ -983,6 +1047,7 @@ export const MessageBlock = memo(function MessageBlock({
   pinned = false,
   onTogglePin,
   threadId = null,
+  onOpenAutomations,
 }: {
   message: ChatMessage;
   autoExpandTool: boolean;
@@ -1017,6 +1082,7 @@ export const MessageBlock = memo(function MessageBlock({
   pinned?: boolean;
   onTogglePin?: () => void;
   threadId?: string | null;
+  onOpenAutomations?: (automationId?: string) => void;
 }) {
   // Latch at mount; see ToolCallCard for why.
   const [entered] = useState(Boolean(animateIn));
@@ -1033,6 +1099,14 @@ export const MessageBlock = memo(function MessageBlock({
   }
   if (isMemoryToolMessage(message)) {
     return <MemoryStepRow message={message} />;
+  }
+  if (isAutomationCreateMessage(message) && !message.tool?.isError) {
+    return (
+      <AutomationCreatedCard
+        message={message}
+        onOpen={onOpenAutomations}
+      />
+    );
   }
   if (message.role === "tool") {
     return (
