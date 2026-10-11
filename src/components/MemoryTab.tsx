@@ -3,6 +3,7 @@ import type {
   AgentConfigDoctorReport,
   AgentConfigPreview,
   AgentConfigWriteResult,
+  DistilledMemory,
   ProjectCodeMap,
   MemoryAutoResolved,
   MemoryCitation,
@@ -52,6 +53,8 @@ type SessionSnap = {
   formType: StoreType;
   formTitle: string;
   formBody: string;
+  /** Thread citation carried from a distilled draft (#247). */
+  formCitations: MemoryCitation[];
   adding: boolean;
   cardActions: CardActionsById;
   expandedId: string | null;
@@ -151,7 +154,12 @@ export interface MemoryTabProps {
     title: string;
     body: string;
     project?: string;
+    citations?: MemoryCitation[];
   }) => Promise<{ id: string }>;
+  /** A thread distilled into a memory draft (#247): opens the add form prefilled. */
+  memoryDraft?: DistilledMemory | null;
+  /** Called once memoryDraft is in the form, so a remount does not reapply it. */
+  onMemoryDraftApplied?: () => void;
   /** Opens Settings → Memory → Project tools (code map + config doctor). */
   onOpenProjectTools?: () => void;
   maintenanceMemory?: (input?: {
@@ -856,6 +864,8 @@ export function MemoryTab({
   maintenanceMemory,
   resolveMemory,
   onOpenProjectTools,
+  memoryDraft,
+  onMemoryDraftApplied,
 }: MemoryTabProps) {
   const snap = sessionSnap;
   const [entries, setEntries] = useState<MemoryEntryInfo[]>([]);
@@ -888,6 +898,9 @@ export function MemoryTab({
   );
   const [formTitle, setFormTitle] = useState(() => snap?.formTitle ?? "");
   const [formBody, setFormBody] = useState(() => snap?.formBody ?? "");
+  const [formCitations, setFormCitations] = useState<MemoryCitation[]>(
+    () => snap?.formCitations ?? [],
+  );
   const [adding, setAdding] = useState(() => snap?.adding ?? false);
   const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -918,6 +931,7 @@ export function MemoryTab({
     formType,
     formTitle,
     formBody,
+    formCitations,
     adding,
     cardActions,
     expandedId,
@@ -951,6 +965,7 @@ export function MemoryTab({
       formType,
       formTitle,
       formBody,
+      formCitations,
       adding,
       cardActions,
       expandedId,
@@ -962,6 +977,7 @@ export function MemoryTab({
     formType,
     formTitle,
     formBody,
+    formCitations,
     adding,
     cardActions,
     expandedId,
@@ -979,6 +995,17 @@ export function MemoryTab({
     // Restore once on mount; persist on unmount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!memoryDraft) return;
+    setFormType(memoryDraft.type);
+    setFormTitle(memoryDraft.title);
+    setFormBody(memoryDraft.body);
+    setFormCitations(memoryDraft.citations);
+    setFormError(null);
+    setAdding(true);
+    onMemoryDraftApplied?.();
+  }, [memoryDraft, onMemoryDraftApplied]);
 
   useEffect(() => {
     const handle = window.setInterval(() => setNow(Date.now()), 60_000);
@@ -1007,6 +1034,7 @@ export function MemoryTab({
     setCardActions(clearAllCardActions());
     setFormTitle("");
     setFormBody("");
+    setFormCitations([]);
     setAdding(false);
     setExpandedId(null);
     setFullBodies({});
@@ -1181,10 +1209,12 @@ export function MemoryTab({
         body,
         // Always belongs to the current project when there is one.
         ...(projectSlug ? { project: projectSlug } : {}),
+        ...(formCitations.length ? { citations: formCitations } : {}),
       });
       if (!mountedRef.current) return;
       setFormTitle("");
       setFormBody("");
+      setFormCitations([]);
       setFormType("knowledge");
       setAdding(false);
       setServerDown(false);

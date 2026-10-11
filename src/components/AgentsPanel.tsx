@@ -24,6 +24,8 @@ import type {
   MergeLanePreview,
   MergeLaneRecycle,
   MergeLaneRestore,
+  DistilledMemory,
+  MemoryCitation,
   MemoryEntryInfo,
   MemoryMaintenanceReport,
   MemoryReviewResolution,
@@ -229,7 +231,11 @@ interface AgentsPanelProps {
     title: string;
     body: string;
     project?: string;
+    citations?: MemoryCitation[];
   }) => Promise<{ id: string }>;
+  /** Thread distilled into a memory draft (#247), forwarded to MemoryTab. */
+  memoryDraft?: DistilledMemory | null;
+  onMemoryDraftApplied?: () => void;
   maintenanceMemory?: (input?: {
     project?: string;
     summary?: boolean;
@@ -2965,6 +2971,8 @@ export const AgentsPanel = memo(function AgentsPanel({
   updateMemory,
   removeMemory,
   storeMemory,
+  memoryDraft,
+  onMemoryDraftApplied,
   maintenanceMemory,
   resolveMemory,
   listSkills,
@@ -3150,6 +3158,8 @@ export const AgentsPanel = memo(function AgentsPanel({
           updateMemory={updateMemory}
           removeMemory={removeMemory}
           storeMemory={storeMemory}
+          memoryDraft={memoryDraft}
+          onMemoryDraftApplied={onMemoryDraftApplied}
           maintenanceMemory={maintenanceMemory}
           resolveMemory={resolveMemory}
           onOpenProjectTools={

@@ -2844,6 +2844,14 @@ export interface DistilledWorkflow {
   phases: WorkflowPhaseSpec[];
 }
 
+/** Issue #247: a memory entry distilled from a finished thread, pre-review. */
+export interface DistilledMemory {
+  type: "knowledge" | "convention" | "strategy";
+  title: string;
+  body: string;
+  citations: MemoryCitation[];
+}
+
 export type AutomationPreset = "hourly" | "daily" | "weekly";
 
 /** A scheduled agent run (Synara-style automation). */
@@ -5106,6 +5114,11 @@ export interface CoderApi {
      * the draft for review and saves it through workflows.save.
      */
     distill(input: { threadId: string }): Promise<DistilledWorkflow>;
+    /**
+     * #247: distills a finished thread into a shared-memory entry draft.
+     * Nothing is stored — the Memory tab opens it for review first.
+     */
+    distillMemory(input: { threadId: string }): Promise<DistilledMemory>;
     stop(input: { threadId: string }): Promise<void>;
     /**
      * Resume a parked quota-wait thread now (#462). Resends the last user
