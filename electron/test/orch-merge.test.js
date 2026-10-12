@@ -501,6 +501,8 @@ describe("thread_merge", () => {
     });
     assert.equal(res.merged, false);
     assert.match(res.reason, /already there/);
+    // #1402: a no-worktree worker may not have asked for worktree:false.
+    assert.doesNotMatch(res.reason, /worktree:false/);
   });
 });
 
