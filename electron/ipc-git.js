@@ -6,6 +6,7 @@ const {
   setupWorktree,
   listBranchesAsync,
   diff,
+  imageDiff,
   commit,
   revertFile,
   revertHunk,
@@ -123,6 +124,15 @@ module.exports = {
       ignoreWhitespace: input.ignoreWhitespace,
       path: input.path,
       full: input.full,
+    });
+  },
+  "git:imageDiff": async (ctx, input) => {
+    return imageDiff({
+      store: ctx.store,
+      threadId: input.threadId,
+      scope: input.scope,
+      path: input.path,
+      oldPath: input.oldPath,
     });
   },
   "git:reviewContext": async (ctx, input) => {
