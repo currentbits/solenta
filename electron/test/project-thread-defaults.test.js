@@ -156,7 +156,7 @@ describe("project thread defaults (#1501)", () => {
       subagentPool: {
         defaultAlias: null,
         force: false,
-        entries: [{ alias: "k", provider: "kimi", model: "kimi-code/k3", description: "kimi" }],
+        entries: [{ alias: "k", provider: "kimi", model: "kimi-code/k3", description: "kimi", allowEscalation: true }],
       },
     });
     const worker = services.forkWorkerThread(store, {

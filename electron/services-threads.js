@@ -12,6 +12,7 @@ const {
   probeCatalogCli,
   catalogCliProbeStarted,
   honouredPermissionModes,
+  snapPermissionMode,
 } = require("./providers.js");
 const providerAuth = require("./providerAuth.js");
 const {
@@ -760,6 +761,41 @@ function savePlanFile(store, input) {
   return { path: rel };
 }
 
+const PERMISSION_RANK = { plan: 0, default: 1, acceptEdits: 2, bypassPermissions: 3 };
+
+/**
+ * Privilege narrowing for agent-spawned workers (#1425): a worker's snapped
+ * permission mode must not rank above its lead's. Snapping is what escalates
+ * — a "default" lead on claude becomes bypassPermissions on grok or kimi.
+ * The only override is `allowEscalation` on a pool alias, which the user sets
+ * in Settings; no tool argument can grant it. User forks (forkThread) are not
+ * gated: the user can set any mode on any thread anyway.
+ *
+ * ponytail: ignores Teach caps, which only ever lower the worker's mode.
+ *
+ * @param {{ id: string, provider?: string, permissionMode?: string }} lead
+ * @param {string | null | undefined} providerRef - worker provider; null = lead's
+ * @param {{ allowEscalation?: boolean } | null | undefined} poolEntry
+ */
+function assertWorkerNarrows(lead, providerRef, poolEntry) {
+  if (poolEntry && poolEntry.allowEscalation === true) return;
+  const provider = providerRef
+    ? parseProviderRef(String(providerRef)).provider
+    : lead.provider;
+  const leadMode = snapPermissionMode(getProvider(lead.provider), lead.permissionMode);
+  const workerMode = snapPermissionMode(getProvider(provider), lead.permissionMode);
+  if ((PERMISSION_RANK[workerMode] ?? 3) <= (PERMISSION_RANK[leadMode] ?? 3)) return;
+  const err = new Error(
+    `A ${provider} worker would run in ${workerMode}, above its lead's ` +
+      `${leadMode}; a worker cannot get more permissions than the thread that ` +
+      `forks it. Pick a worker that honours ${leadMode}, or ask the user to ` +
+      `raise this thread's permission mode or allow escalation on a pool alias ` +
+      `in Settings.`,
+  );
+  /** @type {any} */ (err).code = "runtime_mode_escalation_denied";
+  throw err;
+}
+
 /**
  * Fork a thread into an orchestration WORKER: flagged orchWorker (the runner
  * auto-archives it when its run lands, issue #14) and isolated in its own
@@ -809,6 +845,13 @@ function forkWorkerThread(store, input, forkImpl = forkThread) {
     forkInput.model = input.model;
   }
   const source = store.getThread(input.threadId);
+  if (source && input.userPicked !== true) {
+    const poolEntry =
+      resolved && resolved.fromPool
+        ? poolFromStore(store).entries.find((e) => e.alias === resolved.alias)
+        : null;
+    assertWorkerNarrows(source, forkInput.provider, poolEntry);
+  }
   const projectId = source ? source.projectId : null;
   const project =
     typeof store.getProject === "function" && projectId != null
@@ -1637,6 +1680,7 @@ module.exports = {
   setFast,
   forkThread,
   forkWorkerThread,
+  assertWorkerNarrows,
   setProvider,
   listProvidersForApi,
   renameThread,

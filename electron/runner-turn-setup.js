@@ -132,6 +132,9 @@ function createTurnSetup(ctx) {
         provider,
         worktree: cmd.kind === "handoff",
         title: cmd.task,
+        // The user typed `@provider` in the composer (never inbound/notice
+        // turns), so a mode jump is their call, like a sidebar fork (#1425).
+        userPicked: true,
       }),
     );
     const ids = workers.map((w) => w.id);

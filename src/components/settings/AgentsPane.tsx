@@ -52,6 +52,7 @@ export interface PoolDraft {
   model: string | null;
   description: string;
   customModel: boolean;
+  allowEscalation: boolean;
 }
 
 function emptyPoolDraft(providers: readonly ProviderInfo[]): PoolDraft {
@@ -62,6 +63,7 @@ function emptyPoolDraft(providers: readonly ProviderInfo[]): PoolDraft {
     model: null,
     description: "",
     customModel: false,
+    allowEscalation: false,
   };
 }
 
@@ -80,6 +82,7 @@ function draftFromPoolEntry(
     model: entry.model,
     description: entry.description,
     customModel: entry.model != null && !known,
+    allowEscalation: entry.allowEscalation === true,
   };
 }
 
@@ -269,6 +272,7 @@ export function AgentsPane({
       provider: poolDraft.provider,
       model,
       description,
+      ...(poolDraft.allowEscalation ? { allowEscalation: true } : {}),
     };
     const current = settings?.subagentPool ?? EMPTY_POOL;
     const withoutOld = poolDraft.originalAlias
@@ -550,6 +554,7 @@ export function AgentsPane({
                 </div>
                 <p className={styles.note}>
                   {item.description} ({item.provider} / {item.model ?? "default"})
+                  {item.allowEscalation ? " · may exceed the lead's permissions" : ""}
                 </p>
               </div>
               <div className={styles.fieldRow}>
@@ -1480,6 +1485,25 @@ function PoolForm({
             />
           </>
         )}
+      </div>
+      <div className={styles.field}>
+        <label className={styles.fieldRow}>
+          <input
+            type="checkbox"
+            data-pool-allow-escalation=""
+            checked={draft.allowEscalation}
+            disabled={saving}
+            onChange={(e) =>
+              onChange({ ...draft, allowEscalation: e.target.checked })
+            }
+          />
+          <span>Allow more permissions than the lead</span>
+        </label>
+        <p className={styles.note}>
+          Workers can never run in a higher permission mode than the thread
+          that forks them. Headless CLIs such as Grok and Kimi only run in
+          full access, so they need this to work under a lead that asks first.
+        </p>
       </div>
       <div className={styles.fieldRow}>
         <button

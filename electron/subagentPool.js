@@ -10,7 +10,7 @@
  * Does not route the user-facing thread (that is issue #246).
  */
 
-/** @typedef {{ alias: string, provider: string, model: string | null, description: string }} SubagentPoolEntry */
+/** @typedef {{ alias: string, provider: string, model: string | null, description: string, allowEscalation?: boolean }} SubagentPoolEntry */
 /** @typedef {{ defaultAlias: string | null, force: boolean, entries: SubagentPoolEntry[] }} SubagentPool */
 /** @typedef {{ provider: string, model?: string | null, alias?: string, fromPool: boolean }} SubagentPoolResolution */
 
@@ -63,11 +63,16 @@ function parseEntry(item, strict) {
       `subagentPool entry description must be at most ${DESC_MAX} characters`,
     );
   }
+  if (rec.allowEscalation != null && typeof rec.allowEscalation !== "boolean") {
+    return fail("subagentPool entry allowEscalation must be a boolean");
+  }
   return {
     alias,
     provider,
     model: typeof model === "string" ? (model.trim() || null) : null,
     description,
+    // #1425: user-set only; lets this alias run above its lead's mode.
+    ...(rec.allowEscalation === true ? { allowEscalation: true } : {}),
   };
 }
 
@@ -378,6 +383,14 @@ async function startWithPoolFailover(opts) {
         isAvailable: opts.isAvailable,
       });
       if (!next) throw err;
+      // #1425: failover must not hand the worker more permissions than its lead.
+      const lead =
+        worker && worker.handoffFrom && typeof opts.store.getThread === "function"
+          ? opts.store.getThread(worker.handoffFrom)
+          : null;
+      if (lead) {
+        require("./services-threads.js").assertWorkerNarrows(lead, next.provider, next);
+      }
       opts.setProvider(opts.store, {
         threadId: worker.id,
         provider: next.provider,

@@ -450,3 +450,102 @@ describe("poolFromStore", () => {
     });
   });
 });
+
+describe("worker privilege narrowing (#1425)", () => {
+  let dir;
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-narrow-"));
+  });
+  afterEach(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  function leadStore(leadOver = {}, poolOver = {}) {
+    const threads = [
+      {
+        id: "lead",
+        projectId: "p1",
+        title: "Lead",
+        status: "idle",
+        provider: "claude",
+        permissionMode: "default",
+        model: null,
+        sessionId: null,
+        ...leadOver,
+      },
+    ];
+    const project = { id: "p1", path: dir };
+    return {
+      getThread: (id) => threads.find((t) => t.id === id) || null,
+      getProject: (id) => (id === "p1" ? project : null),
+      getThreads: () => threads,
+      setThreads: (next) => threads.splice(0, threads.length, ...next),
+      setMessages: () => {},
+      setWorkLog: () => {},
+      updateThread: (id, patch) => {
+        const t = threads.find((x) => x.id === id);
+        if (!t) return null;
+        Object.assign(t, patch);
+        return t;
+      },
+      save: () => {},
+      getSettings: () => ({ subagentPool: pool({ defaultAlias: null, ...poolOver }) }),
+      threads,
+    };
+  }
+
+  it("refuses a worker whose snapped mode ranks above its lead's", () => {
+    // kimi only honours bypassPermissions; the lead asks first.
+    const store = leadStore();
+    assert.throws(
+      () => services.forkWorkerThread(store, { threadId: "lead", pool: "fast" }),
+      (err) => err.code === "runtime_mode_escalation_denied" && /above its lead/.test(err.message),
+    );
+    assert.equal(store.threads.length, 1, "no worker thread is created");
+    // A legacy provider argument cannot escalate either.
+    assert.throws(
+      () => services.forkWorkerThread(store, { threadId: "lead", provider: "grok" }),
+      { code: "runtime_mode_escalation_denied" },
+    );
+  });
+
+  it("allows same-or-lower modes and a user-flagged pool alias", () => {
+    const store = leadStore();
+    const same = services.forkWorkerThread(store, { threadId: "lead", pool: "strong" });
+    assert.equal(same.permissionMode, "default");
+    const bypassLead = leadStore({ permissionMode: "bypassPermissions" });
+    services.forkWorkerThread(bypassLead, { threadId: "lead", pool: "fast" });
+    const flagged = leadStore({}, { entries: [entry({ allowEscalation: true }), strong()] });
+    const w = services.forkWorkerThread(flagged, { threadId: "lead", pool: "fast" });
+    assert.equal(w.permissionMode, "bypassPermissions");
+  });
+
+  it("pool failover does not switch a worker onto an escalating entry", async () => {
+    const store = leadStore({}, { entries: [strong(), entry()] });
+    const worker = { id: "w1", provider: "claude", poolAlias: "strong", handoffFrom: "lead" };
+    await assert.rejects(
+      () =>
+        startWithPoolFailover({
+          store,
+          worker,
+          prompt: "go",
+          startRun: async () => {
+            throw new Error("Provider binary not found: claude.");
+          },
+          setProvider: () => {
+            throw new Error("should not switch");
+          },
+        }),
+      { code: "runtime_mode_escalation_denied" },
+    );
+  });
+
+  it("allowEscalation must be a boolean and survives normalize", () => {
+    assert.throws(
+      () => validateSubagentPool({ entries: [entry({ allowEscalation: "yes" })] }),
+      /allowEscalation must be a boolean/,
+    );
+    const n = normalizeSubagentPool({ entries: [entry({ allowEscalation: true })] });
+    assert.equal(n.entries[0].allowEscalation, true);
+  });
+});

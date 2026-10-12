@@ -3414,6 +3414,11 @@ export interface SubagentPoolEntry {
   model: string | null;
   /** One-line scenario. 1-160 chars after trim. */
   description: string;
+  /**
+   * User-set: workers on this alias may run in a higher permission mode than
+   * their lead (e.g. headless grok/kimi need bypass). Absent = never (#1425).
+   */
+  allowEscalation?: boolean;
 }
 
 /**
