@@ -416,6 +416,7 @@ function normalizeSettings(raw) {
     subagentPool: { defaultAlias: null, force: false, entries: [] },
     otel: { endpoint: null, headers: {}, claudeMetrics: false },
     linearApiKey: null,
+    sentryAuthToken: null,
     githubHosts: [],
     webhook: { url: null, onDone: true, onFailed: true, onWaiting: true },
     modelPrices: {},
@@ -582,6 +583,12 @@ function normalizeSettings(raw) {
     settings.linearApiKey = linearKey.trim();
   } else {
     settings.linearApiKey = null;
+  }
+  const sentryTok = /** @type {{ sentryAuthToken?: unknown }} */ (obj).sentryAuthToken;
+  if (typeof sentryTok === "string" && sentryTok.trim()) {
+    settings.sentryAuthToken = sentryTok.trim();
+  } else {
+    settings.sentryAuthToken = null;
   }
   settings.modelPrices = normalizeModelPrices(
     /** @type {{ modelPrices?: unknown }} */ (obj).modelPrices,

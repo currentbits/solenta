@@ -987,6 +987,11 @@ describe("AutomationsView", () => {
       branch: null,
       label: "bug",
       conclusion: null,
+      team: null,
+      status: null,
+      org: null,
+      project: null,
+      environment: null,
     });
 
     await m.click(m.query('[data-automation-edit=""]'));
@@ -1000,6 +1005,67 @@ describe("AutomationsView", () => {
     assert.equal(updates[0].trigger, null, "back to schedule mode");
     assert.equal(updates[0].preset, "weekly");
     assert.equal(updates[0].memory, "flaky: web-integration");
+    m.unmount();
+  });
+
+  it("event triggers: Linear and Sentry fields (#1588)", async () => {
+    const created: Array<Record<string, unknown>> = [];
+    const m = await mount(
+      <AutomationsView
+        automations={[]}
+        projects={[p1]}
+        providers={providers}
+        onCreate={(input) => {
+          created.push(input as unknown as Record<string, unknown>);
+        }}
+        onUpdate={() => {}}
+        onRemove={() => {}}
+        onRunNow={() => {}}
+      />,
+    );
+    await m.change(m.query('[data-automation-create] [name="preset"]'), "linear_status_changed");
+    await m.type(m.query('[data-automation-create] [name="name"]'), "Lin");
+    await m.type(m.query('[data-automation-create] [name="prompt"]'), "triage");
+    await m.type(m.query('[data-automation-create] [name="team"]'), "ENG");
+    await m.type(m.query('[data-automation-create] [name="status"]'), "Done");
+    await m.click(m.query("[data-automation-create] button[type=submit]"));
+    assert.equal(created.length, 1);
+    assert.deepEqual(created[0].trigger, {
+      type: "linear",
+      event: "linear_status_changed",
+      branch: null,
+      label: null,
+      conclusion: null,
+      team: "ENG",
+      status: "Done",
+      org: null,
+      project: null,
+      environment: null,
+    });
+
+    await m.change(m.query('[data-automation-create] [name="preset"]'), "sentry_issue");
+    await m.type(m.query('[data-automation-create] [name="name"]'), "Sen");
+    await m.type(m.query('[data-automation-create] [name="prompt"]'), "fix");
+    await m.click(m.query("[data-automation-create] button[type=submit]"));
+    assert.equal(created.length, 1, "blank Sentry org/project must not create");
+    assert.match(m.text(), /Sentry org is required/);
+    await m.type(m.query('[data-automation-create] [name="org"]'), "acme");
+    await m.type(m.query('[data-automation-create] [name="project"]'), "pump");
+    await m.type(m.query('[data-automation-create] [name="environment"]'), "prod");
+    await m.click(m.query("[data-automation-create] button[type=submit]"));
+    assert.equal(created.length, 2);
+    assert.deepEqual(created[1].trigger, {
+      type: "sentry",
+      event: "sentry_issue",
+      branch: null,
+      label: null,
+      conclusion: null,
+      team: null,
+      status: null,
+      org: "acme",
+      project: "pump",
+      environment: "prod",
+    });
     m.unmount();
   });
 

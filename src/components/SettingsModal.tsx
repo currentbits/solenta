@@ -88,7 +88,7 @@ const PANE_META: Record<
     label: "Git",
     hint: "Source control, Linear tickets, PR size, worktree disk, and Spotlight.",
     keywords:
-      "github gitlab bitbucket azure source control pr pull request worktree gc disk cleanup linear ticket api key spotlight lanes preview",
+      "github gitlab bitbucket azure source control pr pull request worktree gc disk cleanup linear ticket api key sentry spotlight lanes preview",
   },
   agents: {
     label: "Agents",
@@ -208,6 +208,7 @@ export type SettingsDraftKey =
   | "runs"
   | "uiScale"
   | "linear"
+  | "sentry"
   | "otel"
   | "webhook";
 
@@ -235,6 +236,7 @@ function settingsDraftSnapshot(settings: AppSettings | null) {
     runs: budgetToInput(settings?.maxConcurrentRuns ?? null),
     uiScale: settings?.uiScale ?? 1,
     linear: settings?.linearApiKey ?? "",
+    sentry: settings?.sentryAuthToken ?? "",
     otelEndpoint: otel.endpoint ?? "",
     otelHeadersText: formatOtelHeaders(otel.headers),
     otelClaudeMetrics: otel.claudeMetrics,
@@ -282,6 +284,7 @@ export function SettingsModal({
   const [prCapText, setPrCapText] = useState("");
   const [maxRunsText, setMaxRunsText] = useState("");
   const [linearKeyText, setLinearKeyText] = useState("");
+  const [sentryKeyText, setSentryKeyText] = useState("");
   const [otelEndpoint, setOtelEndpoint] = useState("");
   const [otelHeadersText, setOtelHeadersText] = useState("");
   const [otelClaudeMetrics, setOtelClaudeMetrics] = useState(false);
@@ -328,6 +331,7 @@ export function SettingsModal({
       if (!skip("runs")) setMaxRunsText(snap.runs);
       if (!skip("uiScale")) setUiScale(snap.uiScale);
       if (!skip("linear")) setLinearKeyText(snap.linear);
+      if (!skip("sentry")) setSentryKeyText(snap.sentry);
       if (!skip("otel")) {
         setOtelEndpoint(snap.otelEndpoint);
         setOtelHeadersText(snap.otelHeadersText);
@@ -458,6 +462,27 @@ export function SettingsModal({
       const linearApiKey = linearKeyText.trim() || null;
       const saved = await onSaveSettings({ linearApiKey });
       setLinearKeyText(saved.linearApiKey ?? "");
+    } catch (err) {
+      const msg =
+        err instanceof Error && err.message
+          ? err.message
+          : "Failed to save settings";
+      setError(msg);
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
+    }
+  };
+
+  const saveSentryKey = async () => {
+    if (savingRef.current) return;
+    savingRef.current = true;
+    setSaving(true);
+    setError(null);
+    try {
+      const sentryAuthToken = sentryKeyText.trim() || null;
+      const saved = await onSaveSettings({ sentryAuthToken });
+      setSentryKeyText(saved.sentryAuthToken ?? "");
     } catch (err) {
       const msg =
         err instanceof Error && err.message
@@ -694,9 +719,12 @@ export function SettingsModal({
             setPrCapText={setPrCapText}
             linearKeyText={linearKeyText}
             setLinearKeyText={setLinearKeyText}
+            sentryKeyText={sentryKeyText}
+            setSentryKeyText={setSentryKeyText}
             dirtyDrafts={dirtyDrafts}
             save={save}
             saveLinearKey={saveLinearKey}
+            saveSentryKey={saveSentryKey}
             projects={projects}
             onGcScan={onGcScan}
             onGcClean={onGcClean}

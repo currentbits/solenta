@@ -23,6 +23,36 @@ const ISSUE_QUERY = `query Issue($id: String!) {
   }
 }`;
 
+const ISSUES_CREATED_QUERY = `query TriggerIssuesCreated($first: Int!) {
+  issues(first: $first, orderBy: createdAt) {
+    nodes {
+      identifier
+      title
+      url
+      createdAt
+      team { key }
+    }
+  }
+}`;
+
+const ISSUES_STATUS_QUERY = `query TriggerIssuesStatus($first: Int!) {
+  issues(first: $first, orderBy: updatedAt) {
+    nodes {
+      identifier
+      title
+      url
+      createdAt
+      team { key }
+      stateHistory(last: 5) {
+        nodes {
+          startedAt
+          state { name }
+        }
+      }
+    }
+  }
+}`;
+
 /**
  * Team-key + number, e.g. ENG-123. Linear team keys are letters then
  * optional alphanumerics; the number is a positive integer.
@@ -96,26 +126,25 @@ function linearErr(text, fallback) {
 }
 
 /**
- * POST the issue query. `opts.linearGraphql` short-circuits the network
+ * POST a GraphQL query. `opts.linearGraphql` short-circuits the network
  * (tests). `opts.fetch` swaps the HTTP client.
  *
  * @param {string} apiKey
- * @param {string} identifier
+ * @param {string} query
+ * @param {Record<string, unknown>} variables
  * @param {{ linearGraphql?: Function, fetch?: typeof fetch, timeoutMs?: number }} [opts]
  * @returns {Promise<unknown>}
  */
-async function postIssueQuery(apiKey, identifier, opts) {
+async function postGraphql(apiKey, query, variables, opts) {
   if (opts && typeof opts.linearGraphql === "function") {
-    return opts.linearGraphql({ apiKey, identifier });
+    return opts.linearGraphql({ apiKey, query, variables });
   }
   const fetchFn = (opts && opts.fetch) || globalThis.fetch;
   if (typeof fetchFn !== "function") {
     throw new Error("fetch is not available");
   }
   const timeoutMs =
-    opts && Number.isFinite(opts.timeoutMs)
-      ? Number(opts.timeoutMs)
-      : LINEAR_TIMEOUT_MS;
+    opts && Number.isFinite(opts.timeoutMs) ? opts.timeoutMs : LINEAR_TIMEOUT_MS;
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
@@ -125,10 +154,7 @@ async function postIssueQuery(apiKey, identifier, opts) {
         "Content-Type": "application/json",
         Authorization: apiKey,
       },
-      body: JSON.stringify({
-        query: ISSUE_QUERY,
-        variables: { id: identifier },
-      }),
+      body: JSON.stringify({ query, variables }),
       signal: ctrl.signal,
     });
     const raw = await res.text();
@@ -146,8 +172,7 @@ async function postIssueQuery(apiKey, identifier, opts) {
     if (!res.ok) {
       throw new Error(
         linearErr(
-          (json && json.errors && json.errors[0] && json.errors[0].message) ||
-            raw,
+          (json && json.errors && json.errors[0] && json.errors[0].message) || raw,
           `linear HTTP ${res.status}`,
         ),
       );
@@ -156,6 +181,52 @@ async function postIssueQuery(apiKey, identifier, opts) {
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * POST the issue query. `opts.linearGraphql` short-circuits the network
+ * (tests). `opts.fetch` swaps the HTTP client.
+ *
+ * @param {string} apiKey
+ * @param {string} identifier
+ * @param {{ linearGraphql?: Function, fetch?: typeof fetch, timeoutMs?: number }} [opts]
+ * @returns {Promise<unknown>}
+ */
+async function postIssueQuery(apiKey, identifier, opts) {
+  if (opts && typeof opts.linearGraphql === "function") {
+    return opts.linearGraphql({ apiKey, identifier });
+  }
+  return postGraphql(apiKey, ISSUE_QUERY, { id: identifier }, opts);
+}
+
+/**
+ * Fetch issues for Linear webhook-style triggers (created or status lists).
+ *
+ * @param {"created" | "status"} source
+ * @param {{ linearApiKey?: unknown, linearGraphql?: Function, fetch?: typeof fetch, timeoutMs?: number }} [opts]
+ * @returns {Promise<unknown[]>}
+ */
+async function fetchTriggerIssues(source, opts) {
+  const apiKey = resolveLinearApiKey(opts);
+  if (!apiKey) throw new Error("no api key (Settings → Git)");
+  const query = source === "status" ? ISSUES_STATUS_QUERY : ISSUES_CREATED_QUERY;
+  const variables = { first: 50 };
+  if (opts && typeof opts.linearGraphql === "function") {
+    const out = await opts.linearGraphql({ apiKey, source, query, variables });
+    return Array.isArray(out) ? out : [];
+  }
+  const payload = await postGraphql(apiKey, query, variables, opts);
+  const errors = payload && Array.isArray(payload.errors) ? payload.errors : [];
+  if (errors.length > 0) {
+    throw new Error(
+      linearErr(
+        errors.map((e) => (e && e.message != null ? String(e.message) : "")).filter(Boolean).join("; "),
+        "linear request failed",
+      ),
+    );
+  }
+  const nodes = payload && payload.data && payload.data.issues && payload.data.issues.nodes;
+  return Array.isArray(nodes) ? nodes : [];
 }
 
 /**
@@ -248,4 +319,8 @@ module.exports = {
   LINEAR_GRAPHQL_URL,
   LINEAR_TIMEOUT_MS,
   ISSUE_QUERY,
+  ISSUES_CREATED_QUERY,
+  ISSUES_STATUS_QUERY,
+  fetchTriggerIssues,
+  postGraphql,
 };
