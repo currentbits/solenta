@@ -9,6 +9,86 @@
 
 const services = require("./services.js");
 const { noticePrompt } = require("./runnerHelpers.js");
+const { gitTry } = require("./worktrees.js");
+const { normalizeCommand } = require("./verify.js");
+const { readAnnotation } = require("./reviewItinerary.js");
+
+/** Body cap for the structured worker result in a wake notice (#1427). */
+const WORKER_RESULT_MAX = 2000;
+const WORKER_RESULT_END = "[/worker result]";
+
+/**
+ * Structured result for a finished worker (#1427), built from data Solenta
+ * already stores: diffstat vs the lead snapshot, the verify verdict, the
+ * worker's ruled-out hypotheses, and its review-itinerary risks. The body
+ * is capped at WORKER_RESULT_MAX; "" when there is nothing to report.
+ * src/workerResult.ts parses the `[worker result <id>]` fence.
+ * @param {object} thread - the worker
+ * @returns {string}
+ */
+function workerResultBlock(thread) {
+  const lines = [];
+  const command = normalizeCommand(thread.verifyCommand);
+  const v = thread.verify;
+  // The gate runs after every turn while a command is set, so thread.verify
+  // is the last turn's verdict. A cleared command leaves a stale one: skip.
+  if (command && v) {
+    const how = v.ok
+      ? `passed in ${Math.round((Number(v.durationMs) || 0) / 1000)}s`
+      : v.timedOut
+        ? "failed (timed out)"
+        : `failed (exit ${v.exitCode == null ? "?" : v.exitCode})`;
+    lines.push(`Verify: ${how}: ${v.command || command}`);
+  }
+  const base =
+    typeof thread.leadSnapshotSha === "string" ? thread.leadSnapshotSha.trim() : "";
+  if (base && thread.worktreePath) {
+    // ponytail: sync, but commit-to-commit (no worktree scan) and once per
+    // finished worker. Keeps notice order and stop-is-sacred (#32) intact.
+    const tip = thread.branch ? String(thread.branch) : "HEAD";
+    const res = gitTry(
+      thread.worktreePath,
+      ["diff", "--stat=100", "--stat-count=40", "--summary", `${base}..${tip}`],
+      { raw: true, timeout: 5000 },
+    );
+    const out = res.ok ? res.stdout.split("\n").filter((l) => l.trim()) : [];
+    if (out.length) {
+      // A symlink replacing a directory (core/dist, #1427) must survive the cap.
+      const links = out.filter((l) => / mode 120000 /.test(l));
+      lines.push(`Changes since lead snapshot ${base.slice(0, 7)}:`);
+      lines.push(...links, ...out.filter((l) => !links.includes(l)));
+    } else if (res.ok) {
+      lines.push(`Changes since lead snapshot ${base.slice(0, 7)}: none`);
+    }
+  }
+  const ruled = (Array.isArray(thread.hypotheses) ? thread.hypotheses : [])
+    .filter((h) => h && h.status === "invalidated" && String(h.claim || "").trim())
+    .map((h) => {
+      const reason = String(h.reason || "").trim();
+      return `- ${String(h.claim).trim()}${reason ? ` — ${reason}` : ""}`;
+    });
+  if (ruled.length) lines.push("Ruled out:", ...ruled);
+  const note = thread.worktreePath ? readAnnotation(thread.worktreePath, thread.id) : null;
+  const open = [];
+  if (note) {
+    for (const c of Array.isArray(note.chunks) ? note.chunks : []) {
+      for (const r of c && Array.isArray(c.risks) ? c.risks : []) {
+        if (String(r || "").trim()) open.push(`- ${c.area ? `${c.area}: ` : ""}${String(r).trim()}`);
+      }
+    }
+    for (const r of Array.isArray(note.risks) ? note.risks : []) {
+      if (String(r || "").trim()) open.push(`- ${String(r).trim()}`);
+    }
+  }
+  if (open.length) lines.push("Open review items:", ...open);
+  if (!lines.length) return "";
+  let body = lines.join("\n");
+  if (body.length > WORKER_RESULT_MAX) {
+    const cut = body.slice(0, WORKER_RESULT_MAX);
+    body = `${cut.slice(0, Math.max(cut.lastIndexOf("\n"), 0))}\n… (truncated)`;
+  }
+  return `\n[worker result ${thread.id}]\n${body}\n${WORKER_RESULT_END}`;
+}
 
 // Issue #213: keep only the newest N worker threads per orchestrator so
 // fan-out cannot grow the store without bound. No settings knob; skipped
@@ -218,7 +298,8 @@ function createOrchNotices(ctx) {
       parentId,
       `Worker thread ${threadId}${title} finished with status ${status}.` +
         (line ? ` Last reply: ${line}` : "") +
-        merge,
+        merge +
+        safeWorkerResultBlock(thread),
     );
     flushOrchNotices(parentId);
   }
@@ -487,4 +568,13 @@ function createOrchNotices(ctx) {
   };
 }
 
-module.exports = { createOrchNotices };
+/** queueOrchNotice never throws; a broken block just drops out. */
+function safeWorkerResultBlock(thread) {
+  try {
+    return workerResultBlock(thread);
+  } catch {
+    return "";
+  }
+}
+
+module.exports = { createOrchNotices, workerResultBlock, WORKER_RESULT_MAX };

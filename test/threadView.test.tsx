@@ -10,6 +10,7 @@
  */
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { describe, it, afterEach, beforeEach } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -21,6 +22,7 @@ import { resetComposerSession } from "../src/composerSession";
 import { ThreadView } from "../src/components/ThreadView";
 import styles from "../src/components/ThreadView.module.css";
 import { routineWorkerActivitySummary } from "../src/workerActivity";
+import { noticeRest, workerResults } from "../src/workerResult";
 import { TRANSCRIPT_WINDOW } from "../src/transcriptWindow";
 import type {
   AttachmentInfo,
@@ -178,6 +180,7 @@ function view(props: {
   onFileSuggestion?: (s: WorkSuggestion) => void | Promise<void>;
   onDismissSuggestion?: (s: WorkSuggestion) => void | Promise<void>;
   onOpenAutomations?: (automationId?: string) => void;
+  onIntegrateWorker?: (workerThreadId: string) => Promise<void>;
   revealMessageId?: string | null;
   onSelectThread?: (id: string) => void;
   returnToView?: "planboard" | "kanban" | "activity" | "digest" | "prs" | "insights";
@@ -256,6 +259,7 @@ function view(props: {
       onFileSuggestion={props.onFileSuggestion}
       onDismissSuggestion={props.onDismissSuggestion}
       onOpenAutomations={props.onOpenAutomations}
+      onIntegrateWorker={props.onIntegrateWorker}
       revealMessageId={props.revealMessageId}
       onSelectThread={props.onSelectThread}
       returnToView={props.returnToView}
@@ -5286,5 +5290,59 @@ describe("routine worker activity", () => {
       "Show earlier must not replay the entrance",
     );
     m.unmount();
+  });
+
+  it("renders a worker result as a card whose button integrates (#1427)", async () => {
+    const text = orchNotice([
+      workerDoneLine("w-9", "infra", "Swapped dist", { landing: true }) +
+        "\n[worker result w-9]\nChanges since lead snapshot abc1234:\n create mode 120000 core/dist\nVerify: passed in 3s: npm test\n[/worker result]",
+    ]);
+    const calls: string[] = [];
+    const m = await mount(
+      view({
+        detail: detail({
+          messages: [msg({ id: "r1", role: "user", text, createdAt: 1, fromNotice: true })],
+        }),
+        onIntegrateWorker: async (id) => {
+          calls.push(id);
+        },
+      }),
+    );
+    const card = m.query("[data-worker-result=\"w-9\"]");
+    assert.ok(card, "card renders on arrival");
+    assert.match(card.textContent ?? "", /create mode 120000 core\/dist/);
+    assert.match(card.textContent ?? "", /Swapped dist/);
+    assert.ok(!m.html().includes("userBubble"), "not a plain user bubble");
+    await m.click(m.query("[data-worker-result-integrate=\"w-9\"]"));
+    assert.deepEqual(calls, ["w-9"]);
+    assert.match(card.textContent ?? "", /Integrated/);
+    m.unmount();
+  });
+
+  it("parses the block the runner actually writes (#1427)", () => {
+    const { workerResultBlock } = createRequire(import.meta.url)(
+      "../electron/runner-orch-notices.js",
+    );
+    const block = workerResultBlock({
+      id: "w-7",
+      verifyCommand: "npm test",
+      verify: { ok: true, durationMs: 2000, command: "npm test" },
+    });
+    const text = orchNotice([
+      workerDoneLine("w-7", 'Fix "quotes"', "done", { landing: true }) + block,
+      workerDoneLine("w-8", "plain", "no block"),
+    ]);
+    const parsed = workerResults({ role: "user", text, fromNotice: true });
+    assert.deepEqual(parsed, [
+      {
+        workerId: "w-7",
+        title: 'Fix "quotes"',
+        status: "done",
+        lastReply: "done",
+        body: "Verify: passed in 2s: npm test",
+      },
+    ]);
+    // Lines outside the fence (here a second worker) stay visible.
+    assert.equal(noticeRest(text), workerDoneLine("w-8", "plain", "no block"));
   });
 });
