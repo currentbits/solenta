@@ -228,6 +228,40 @@ describe("refreshPrStates merged-PR cleanup", () => {
     assert.equal(thread.worktreePath, fx.worktreePath);
     assert.ok(fs.existsSync(fx.worktreePath));
   });
+
+  it("defers cleanup while the thread runs; the next pass reclaims it (#1431)", async () => {
+    pushBranch(fx);
+    seedPr(fx, "OPEN");
+    fx.store.updateThread(fx.threadId, { status: "working" });
+
+    const ghTryAsyncFn = async () => ({
+      ok: true,
+      stdout: JSON.stringify({
+        number: 7,
+        url: "https://github.com/acme/demo/pull/7",
+        state: "MERGED",
+      }),
+      stderr: "",
+      combined: "",
+    });
+    await refreshPrStates(fx.store, { ghTryAsyncFn });
+    let thread = fx.store.getThread(fx.threadId);
+    assert.equal(thread.prState, "MERGED");
+    assert.equal(thread.worktreePath, fx.worktreePath, "a running agent keeps its cwd");
+    assert.ok(fs.existsSync(fx.worktreePath));
+
+    // Still running: held again, no gh needed (MERGED left the candidate set).
+    const noGh = async () => assert.fail("retry must not call gh");
+    assert.equal((await refreshPrStates(fx.store, { ghTryAsyncFn: noGh })).changed, 0);
+    assert.ok(fs.existsSync(fx.worktreePath));
+
+    fx.store.updateThread(fx.threadId, { status: "done" });
+    const again = await refreshPrStates(fx.store, { ghTryAsyncFn: noGh });
+    assert.equal(again.changed, 1);
+    thread = fx.store.getThread(fx.threadId);
+    assert.equal(thread.worktreePath, null);
+    assert.ok(!fs.existsSync(fx.worktreePath));
+  });
 });
 
 describe("sweepOrphanWorktrees", () => {

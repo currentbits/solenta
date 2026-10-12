@@ -34,6 +34,8 @@ const RETENTION_SWEEP_STARTUP_MS = 15_000;
  *   the refresh candidate set, so this cannot re-fire)
  * - the worktree has no uncommitted changes
  * - local HEAD equals origin/<branch> (everything local was in the PR)
+ * - the thread is not running (#1431): a clean tree mid-run is still the
+ *   agent's cwd. Deferred instead; retryDeferredMergedCleanups picks it up.
  * Does NOT save or broadcast; callers own durability (refresher saves once).
  *
  * @param {import('./store').Store} store
@@ -48,6 +50,12 @@ async function maybeCleanupMergedWorktree(store, threadId) {
     }
     if (String(thread.prState || "").toUpperCase() !== "MERGED") {
       return { cleaned: false, reason: "PR not merged" };
+    }
+    // ponytail: persisted status, not the runner; boot recovery clears a
+    // crash-stale "working", so it cannot pin a worktree forever.
+    if (thread.status === "working" || thread.status === "quota-wait") {
+      deferredMergedCleanups.add(threadId);
+      return { cleaned: false, reason: "running" };
     }
     const project = store.getProject(thread.projectId);
     if (!project || project.remoteHost) {
@@ -99,6 +107,29 @@ async function maybeCleanupMergedWorktree(store, threadId) {
   } catch {
     return { cleaned: false, reason: "error" };
   }
+}
+
+/**
+ * Merged threads whose cleanup waited on a live run. A MERGED thread leaves
+ * the refresh candidate set, so nothing else would ever retry it.
+ * ponytail: in-memory; after a restart the worktree is left for retention/manual cleanup.
+ * @type {Set<string>}
+ */
+const deferredMergedCleanups = new Set();
+
+/**
+ * Retry deferred merged cleanups whose run has ended. Does not save.
+ * @param {import('./store').Store} store
+ * @returns {Promise<number>} how many were cleaned
+ */
+async function retryDeferredMergedCleanups(store) {
+  let cleaned = 0;
+  for (const id of [...deferredMergedCleanups]) {
+    deferredMergedCleanups.delete(id);
+    // Still running re-adds itself; any other outcome is final.
+    if ((await maybeCleanupMergedWorktree(store, id)).cleaned) cleaned += 1;
+  }
+  return cleaned;
 }
 
 /**
@@ -1197,6 +1228,7 @@ module.exports = {
   RETENTION_SWEEP_INTERVAL_MS,
   RETENTION_SWEEP_STARTUP_MS,
   maybeCleanupMergedWorktree,
+  retryDeferredMergedCleanups,
   sweepOrphanWorktrees,
   worktreeRoots,
   gcScan,
