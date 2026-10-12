@@ -973,9 +973,12 @@ async function gcClean(opts) {
       if (cand.threadId) {
         const thread = store.getThread(cand.threadId);
         if (thread) {
+          // The ref survives GC; keep its name so the crew cap cannot
+          // purge the only link to unlanded commits (#1404).
           store.updateThread(cand.threadId, {
             worktreePath: null,
             branch: null,
+            ...(thread.branch ? { retainedBranch: thread.branch } : {}),
           });
           touchedThread = true;
         }

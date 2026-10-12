@@ -12,6 +12,7 @@ const { execFileSync } = require("node:child_process");
 const { Store } = require("../store.js");
 const services = require("../services.js");
 const { createRunner } = require("../runner.js");
+const { setupWorktree, gcClean } = require("../worktrees.js");
 const { rmTree } = require("./support/rmTree.js");
 
 function git(cwd, args) {
@@ -295,6 +296,63 @@ describe("orchestrator threads", () => {
       workersOf(thread.id).length,
       MAX_WORKERS_PER_ORCHESTRATOR + 3,
     );
+  });
+
+  /**
+   * Oldest worker gets a real worktree (optionally with a unique commit),
+   * GC reclaims it, then MAX newer workers push it past the cap (#1404).
+   */
+  async function gcOldestWorker(withCommit) {
+    const base = Date.now() - 60_000;
+    const repo = path.join(tmpDir, "app");
+    const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo })
+      .toString()
+      .trim();
+    const old = mintWorker(thread.id, {
+      status: "done",
+      createdAt: base,
+      leadSnapshotSha: head,
+    });
+    const worktreeBase = path.join(tmpDir, "worktrees");
+    const wt = setupWorktree({ store, threadId: old.id, worktreeBase });
+    if (withCommit) {
+      fs.writeFileSync(path.join(wt.worktreePath, "unique.txt"), "work\n");
+      git(wt.worktreePath, ["add", "unique.txt"]);
+      git(wt.worktreePath, ["commit", "-m", "unique"]);
+    }
+    // Quiet past the unmerged-commit grace period.
+    store.updateThread(old.id, { updatedAt: 1_000, lastActivityAt: 1_000 });
+    const res = await gcClean({ store, worktreeBase, paths: [wt.worktreePath] });
+    assert.deepEqual(res.removed, [wt.worktreePath]);
+    assert.equal(store.getThread(old.id).worktreePath, null);
+    for (let i = 0; i < MAX_WORKERS_PER_ORCHESTRATOR; i++) {
+      mintWorker(thread.id, { status: "done", createdAt: base + 1 + i });
+    }
+    return { id: old.id, branch: wt.branch };
+  }
+
+  it("keeps a GC'd worker whose branch has unlanded commits past the cap (#1404)", async () => {
+    const { id, branch } = await gcOldestWorker(true);
+
+    makeRunner(tmpDir);
+
+    const kept = store.getThread(id);
+    assert.ok(kept, "worker record survives the cap");
+    assert.equal(kept.handoffFrom, thread.id);
+    assert.equal(kept.retainedBranch, branch);
+    git(path.join(tmpDir, "app"), ["rev-parse", "--verify", branch]);
+    assert.equal(workersOf(thread.id).length, MAX_WORKERS_PER_ORCHESTRATOR + 1);
+  });
+
+  it("still purges a GC'd worker whose branch already landed (#1404)", async () => {
+    const { id, branch } = await gcOldestWorker(false);
+
+    makeRunner(tmpDir);
+
+    assert.equal(store.getThread(id), null);
+    assert.equal(workersOf(thread.id).length, MAX_WORKERS_PER_ORCHESTRATOR);
+    // Retention drops the record, never the ref.
+    git(path.join(tmpDir, "app"), ["rev-parse", "--verify", branch]);
   });
 
   it("leaves a non-worker and another orchestrator's crew untouched", () => {
