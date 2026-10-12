@@ -5,7 +5,7 @@
  *
  * Structural gates this suite enforces:
  * - gh is async + strictly serialized (timestamps prove no overlap)
- * - terminal MERGED/CLOSED and archived threads never spawn gh
+ * - terminal MERGED/CLOSED threads never spawn gh; archived ones still refresh (#1431)
  * - zero qualifying threads → zero spawns
  * - change → one save + one threads:changed; no-change → neither
  * - per-thread failure/timeout is silent and does not block the next thread
@@ -305,7 +305,7 @@ describe("refreshPrStates (round 47)", () => {
     }
   });
 
-  it("isPrRefreshCandidate: archived and terminal states excluded", () => {
+  it("isPrRefreshCandidate: terminal states excluded, archived kept (#1431)", () => {
     assert.equal(
       isPrRefreshCandidate({
         archived: false,
@@ -328,7 +328,7 @@ describe("refreshPrStates (round 47)", () => {
         prNumber: 1,
         prState: "OPEN",
       }),
-      false,
+      true,
     );
     assert.equal(
       isPrRefreshCandidate({
@@ -381,15 +381,25 @@ describe("refreshPrStates (round 47)", () => {
     assert.equal(readGhState(fx).calls.length, 0);
   });
 
-  it("archived thread is skipped even with OPEN pr", async () => {
+  it("archived thread still refreshes to MERGED, but a non-worker is never watched (#1431)", async () => {
     fx = await makeFixture();
     seedOpenPr(fx, fx.thread.id, 8, "OPEN");
+    setGhState(fx, {
+      prsByNumber: {
+        "8": { number: 8, url: "https://github.com/acme/demo/pull/8", state: "MERGED" },
+      },
+    });
     fx.store.updateThread(fx.thread.id, { archived: true });
     fx.store.saveNow();
-    const result = await refreshPrStates(fx.store, { broadcast: () => {} });
-    assert.equal(result.examined, 0);
-    assert.equal(result.spawned, 0);
-    assert.equal(readGhState(fx).calls.length, 0);
+    const delivered = [];
+    const result = await refreshPrStates(fx.store, {
+      broadcast: () => {},
+      prWatch: { deliver: (input) => delivered.push(input), isRunning: () => false },
+    });
+    assert.equal(result.examined, 1);
+    assert.deepEqual(readGhState(fx).calls[0].slice(-2), ["--json", "number,url,state"]);
+    assert.equal(fx.store.getThread(fx.thread.id).prState, "MERGED");
+    assert.equal(delivered.length, 0);
   });
 
   it("settled thread polls at most every 10 min, not never (#1523)", async () => {

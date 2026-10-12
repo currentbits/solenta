@@ -220,6 +220,29 @@ describe("prWatch.observePr", () => {
     assert.equal(store.getThread(thread.id).prWatchState.pr, 7);
   });
 
+  it("an archived worker's wake goes to its live lead, never the worker (#1431)", async () => {
+    const lead = services.createThread(store, { projectId: thread.projectId, title: "Lead" });
+    store.updateThread(thread.id, { archived: true, orchWorker: true, handoffFrom: lead.id });
+    assert.equal(prWatch.wakeTarget(store, store.getThread(thread.id)), lead.id);
+
+    scenario.checks = [FAIL];
+    await observe({ now: 0, relayTo: lead.id });
+    assert.equal(delivered.length, 1);
+    assert.equal(delivered[0].threadId, lead.id);
+    assert.ok(delivered[0].line.startsWith(`[pr watch] Worker ${thread.id} ("T") PR #7 needs attention.`));
+    assert.match(delivered[0].line, /Send it the fix with thread_send \(threadId [^)]+\); merging stays with the user\./);
+    assert.doesNotMatch(delivered[0].line, /on this branch and push/);
+    assert.equal(store.getThread(thread.id).prWatchState.wakes, 1, "state stays on the worker");
+
+    store.updateThread(lead.id, { archived: true });
+    assert.equal(prWatch.wakeTarget(store, store.getThread(thread.id)), null, "archived lead");
+    store.updateThread(lead.id, { archived: false });
+    store.updateThread(thread.id, { orchWorker: false });
+    assert.equal(prWatch.wakeTarget(store, store.getThread(thread.id)), null, "archived non-worker");
+    store.updateThread(thread.id, { archived: false });
+    assert.equal(prWatch.wakeTarget(store, store.getThread(thread.id)), thread.id);
+  });
+
   it("checked-out PRs (prWatch false) are never watched", async () => {
     store.updateThread(thread.id, { prWatch: false });
     scenario.checks = [FAIL];
@@ -268,6 +291,53 @@ describe("PR watch wake-ups through the refresher are machine turns", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
     if (prevSimulate === undefined) delete process.env.CODER_SIMULATE;
     else process.env.CODER_SIMULATE = prevSimulate;
+  });
+
+  it("the refresher polls an archived worker's PR and wakes its lead (#1431)", async () => {
+    const repo = path.join(tmpDir, "app");
+    fs.mkdirSync(repo);
+    git(repo, ["init", "-b", "main"]);
+    git(repo, ["config", "user.email", "test@example.com"]);
+    git(repo, ["config", "user.name", "Test"]);
+    fs.writeFileSync(path.join(repo, "README.md"), "hello\n");
+    git(repo, ["add", "README.md"]);
+    git(repo, ["commit", "-m", "init"]);
+    git(repo, ["remote", "add", "origin", "https://github.com/acme/app.git"]);
+    const project = await services.addProject(store, repo);
+    const lead = services.createThread(store, { projectId: project.id, title: "Lead" });
+    setupWorktree({ store, threadId: lead.id, worktreeBase: path.join(tmpDir, "worktrees") });
+    const worker = services.forkWorkerThread(store, { threadId: lead.id });
+    setupWorktree({ store, threadId: worker.id, worktreeBase: path.join(tmpDir, "worktrees") });
+    // What sweepCrew leaves behind: a finished, archived worker with an open PR.
+    store.updateThread(worker.id, {
+      status: "done",
+      archived: true,
+      prNumber: 9,
+      prUrl: "https://github.com/acme/app/pull/9",
+      prState: "OPEN",
+      prWatchState: prWatch.freshState(9),
+    });
+
+    const { runGh, calls } = fakeGh({
+      view: {
+        number: 9,
+        url: "https://github.com/acme/app/pull/9",
+        state: "OPEN",
+        mergeable: "MERGEABLE",
+        headRefOid: "aaa",
+        latestReviews: [],
+      },
+      checks: [FAIL],
+    });
+    const delivered = [];
+    await refreshPrStates(store, {
+      ghTryAsyncFn: runGh,
+      prWatch: { deliver: (input) => delivered.push(input), isRunning: () => false },
+    });
+    assert.deepEqual(calls[0].slice(-1), [prWatch.PR_WATCH_FIELDS]);
+    assert.equal(delivered.length, 1);
+    assert.equal(delivered[0].threadId, lead.id);
+    assert.match(delivered[0].line, new RegExp(`Worker ${worker.id}`));
   });
 
   it("a wake-up turn never counts as the user's approval to land a worker", async () => {

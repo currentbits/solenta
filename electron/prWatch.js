@@ -59,6 +59,22 @@ function isWatched(thread) {
 }
 
 /**
+ * Thread a watched PR's wake-up goes to, or null when nobody should be woken.
+ * An archived thread stays asleep. sweepCrew archives finished workers whose
+ * PRs are still open, so their live lead relays instead (#1431).
+ * @param {import('./store').Store} store
+ * @param {any} thread
+ * @returns {string | null}
+ */
+function wakeTarget(store, thread) {
+  if (!isWatched(thread)) return null;
+  if (!thread.archived) return thread.id;
+  if (!thread.orchWorker || !thread.handoffFrom) return null;
+  const lead = store.getThread(String(thread.handoffFrom));
+  return lead && !lead.archived && !lead.trashedAt ? lead.id : null;
+}
+
+/**
  * Fresh state for a PR the app just opened: no baseline, so the first
  * failure already wakes. Threads first seen by the refresher get a silent
  * baseline instead (see observePr), so an upgrade never wakes every old PR.
@@ -154,6 +170,7 @@ async function failedLogTail(cwd, checks, runGh, timeout) {
  * @param {Function} opts.runGh ghTryAsync-shaped
  * @param {(input: { threadId: string, line: string }) => void} opts.deliver
  * @param {(threadId: string) => boolean} [opts.isRunning]
+ * @param {string} [opts.relayTo] lead to wake instead (archived worker, #1431)
  * @param {number} [opts.now]
  * @param {number} [opts.timeoutMs]
  * @returns {Promise<boolean>}
@@ -218,8 +235,14 @@ async function observePr(opts) {
     return false;
   }
 
+  const relayTo = opts.relayTo && opts.relayTo !== threadId ? opts.relayTo : null;
+  const title = thread.title ? ` ("${thread.title}")` : "";
   const reasons = [];
-  const lines = [`[pr watch] PR #${number} needs attention.`];
+  const lines = [
+    relayTo
+      ? `[pr watch] Worker ${threadId}${title} PR #${number} needs attention.`
+      : `[pr watch] PR #${number} needs attention.`,
+  ];
   if (newChecks && checks) {
     reasons.push("checks failed");
     lines.push(
@@ -254,7 +277,11 @@ async function observePr(opts) {
   }
   const wakes = prev.wakes + 1;
   lines.push(
-    `Fix what you can on this branch and push. This is an automatic follow-up ` +
+    (relayTo
+      ? `The worker is archived. Send it the fix with thread_send (threadId ` +
+        `${threadId}); merging stays with the user. `
+      : `Fix what you can on this branch and push. `) +
+      `This is an automatic follow-up ` +
       `(${wakes} of ${WAKE_CAP} for this PR), not a message from the user.`,
   );
 
@@ -266,7 +293,7 @@ async function observePr(opts) {
       lastReason: reasons.join(", "),
     },
   });
-  deliver({ threadId, line: lines.join("\n") });
+  deliver({ threadId: relayTo || threadId, line: lines.join("\n") });
   return true;
 }
 
@@ -276,6 +303,7 @@ module.exports = {
   LOG_TAIL_CHARS,
   PR_WATCH_FIELDS,
   isWatched,
+  wakeTarget,
   freshState,
   failingChecks,
   latestChangesRequested,
