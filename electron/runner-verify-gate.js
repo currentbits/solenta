@@ -90,6 +90,22 @@ function createVerifyGate(ctx) {
       gated = false;
     }
     if (gated) {
+      // Verify owns the thread like a run (#1430 R2): a start queues behind
+      // it, Stop kills the command, and only the owner writes status.
+      const abort = new AbortController();
+      const entry = {
+        kind: "verify",
+        runId: lastRunIdFor(threadId),
+        stopping: false,
+        abort,
+        handle: {
+          kill() {
+            entry.stopping = true;
+            abort.abort();
+          },
+        },
+      };
+      active.set(threadId, entry);
       try {
         // runStartedAt was cleared at the terminal; restamp it or the
         // sidebar shows "Working" with no elapsed time for however many
@@ -114,9 +130,13 @@ function createVerifyGate(ctx) {
           // silent
         }
         if (!sha) sha = await worktreeHeadSha(threadId);
-        await runVerifyGate(threadId, sha);
+        await runVerifyGate(threadId, sha, entry);
       })().catch((err) => {
         try {
+          // Stop already settled the thread; a newer run owns its status.
+          if (entry.stopping) return;
+          if (active.get(threadId) === entry) ctx.clearRun(threadId);
+          else if (active.has(threadId)) return;
           settleVerifyCrash(threadId, err);
         } catch {
           // silent
@@ -124,13 +144,29 @@ function createVerifyGate(ctx) {
       });
       return;
     }
-    try {
-      const { maybeCreateCheckpoint } = require("./worktrees.js");
-      void maybeCreateCheckpoint(store, threadId);
-    } catch {
-      // silent
-    }
-    finishSuccessfulTurn(threadId);
+    // Commit this turn's edits before the next queued turn can start, or
+    // they land under its message id (#1430 R3).
+    void (async () => {
+      try {
+        const { maybeCreateCheckpoint } = require("./worktrees.js");
+        await maybeCreateCheckpoint(store, threadId);
+      } catch {
+        // silent
+      }
+      finishSuccessfulTurn(threadId);
+    })().catch(() => {});
+  }
+
+  /**
+   * Drop the verify entry if it is still this gate's. False means Stop or a
+   * newer run owns the thread now, so the gate must not touch its status.
+   * @param {string} threadId
+   * @param {object} entry
+   */
+  function releaseVerify(threadId, entry) {
+    if (active.get(threadId) !== entry || entry.stopping) return false;
+    ctx.clearRun(threadId);
+    return true;
   }
 
   /**
@@ -229,13 +265,20 @@ function createVerifyGate(ctx) {
    * Never rejects to the caller: spawn failures become an ok:false result.
    * @param {string} threadId
    * @param {string | null} sha
+   * @param {{ abort: AbortController }} entry - this gate's `active` entry
    */
-  async function runVerifyGate(threadId, sha) {
+  async function runVerifyGate(threadId, sha, entry) {
+    // Stopped during the checkpoint: run nothing.
+    if (active.get(threadId) !== entry || entry.stopping) return;
     const thread = store.getThread(threadId);
-    if (!thread) return;
+    if (!thread) {
+      releaseVerify(threadId, entry);
+      return;
+    }
     const command = normalizeCommand(thread.verifyCommand);
     // Cleared mid-flight: settle as if the gate was never armed.
     if (!command) {
+      if (!releaseVerify(threadId, entry)) return;
       store.updateThread(
         threadId,
         { status: "done", runStartedAt: null },
@@ -258,6 +301,7 @@ function createVerifyGate(ctx) {
         cwd,
         project,
         env: prepared.env,
+        signal: entry.abort.signal,
       });
     } catch (err) {
       raw = {
@@ -268,6 +312,7 @@ function createVerifyGate(ctx) {
         durationMs: 0,
       };
     }
+    if (!releaseVerify(threadId, entry)) return;
     const latest = store.getThread(threadId);
     if (!latest || !normalizeCommand(latest.verifyCommand)) {
       if (latest) {

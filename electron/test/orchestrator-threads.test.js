@@ -65,14 +65,18 @@ describe("orchestrator threads", () => {
     else process.env.CODER_SIMULATE = prevSimulate;
   });
 
-  /** @param {string} [userDataPath] omit to make the worker's worktree fail */
-  function makeRunner(userDataPath) {
+  /**
+   * @param {string} [userDataPath] omit to make the worker's worktree fail
+   * @param {object} [extra] more createRunner options
+   */
+  function makeRunner(userDataPath, extra) {
     runner = createRunner({
       store,
       core,
       pushFn: () => {},
       tickMs: 15,
       userDataPath: userDataPath ?? "",
+      ...extra,
     });
     return runner;
   }
@@ -173,6 +177,59 @@ describe("orchestrator threads", () => {
     );
     assert.equal(store.getThread(thread.id).pendingFork, true);
     assert.equal(workersOf(thread.id).length, 0);
+  });
+
+  it("two concurrent sends create one worker (#1430 R1)", async () => {
+    const r = makeRunner(tmpDir);
+    const first = r.startRun({ threadId: thread.id, prompt: "build the thing" });
+    await assert.rejects(
+      r.startRun({ threadId: thread.id, prompt: "build it again" }),
+      /already active/,
+    );
+    await first;
+    assert.equal(workersOf(thread.id).length, 1);
+    assert.equal(r.isRunning(thread.id), false);
+  });
+
+  it("never forks a notice: it wakes the orchestrator itself (#1430 R1)", async () => {
+    const r = makeRunner(tmpDir);
+    await r.startRun({
+      threadId: thread.id,
+      prompt: "Worker thread x finished with status failed.",
+      fromNotice: true,
+    });
+    assert.equal(workersOf(thread.id).length, 0);
+    assert.equal(store.getThread(thread.id).pendingFork, true);
+    assert.equal(store.getThread(thread.id).status, "working");
+  });
+
+  it("Stop during the fork hop lands and takes the worker down (#1430 R1)", async () => {
+    let releaseBoot = () => {};
+    const boot = new Promise((resolve) => {
+      releaseBoot = resolve;
+    });
+    const r = makeRunner(tmpDir, { bootstrapMemory: () => boot });
+    const started = r.startRun({ threadId: thread.id, prompt: "build the thing" });
+    // The worker is parked on its first-turn memory prefetch; the lead
+    // holds the hop.
+    const deadline = Date.now() + 5000;
+    while (!(workersOf(thread.id).length === 1 && r.isRunning(workersOf(thread.id)[0].id))) {
+      if (Date.now() > deadline) throw new Error("worker never parked");
+      await new Promise((res) => setTimeout(res, 10));
+    }
+    const worker = workersOf(thread.id)[0];
+    assert.equal(r.isRunning(thread.id), true);
+
+    await r.stopRun({ threadId: thread.id });
+    assert.equal(r.isRunning(thread.id), false);
+    assert.equal(r.isRunning(worker.id), false);
+
+    releaseBoot({});
+    await started;
+    assert.equal(r.isRunning(thread.id), false);
+    assert.equal(r.isRunning(worker.id), false);
+    assert.notEqual(store.getThread(worker.id).status, "working");
+    assert.equal(store.getThread(thread.id).status, "idle");
   });
 
   it("retains only the newest MAX workers per orchestrator and drops their messages", () => {

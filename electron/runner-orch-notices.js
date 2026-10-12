@@ -188,9 +188,15 @@ function createOrchNotices(ctx) {
     if (!sid) return false;
     for (const [id, entry] of active) {
       if (id === exceptThreadId) continue;
-      if (!entry || entry.kind !== "codex") continue;
-      if (entry.sessionId && String(entry.sessionId) === sid) return true;
+      if (!entry) continue;
       const t = store.getThread(id);
+      // A preparing Codex launch is about to open this session (#1430 R6).
+      if (entry.kind === "preparing") {
+        if (!t || resolveProvider(t) !== "codex") continue;
+      } else if (entry.kind !== "codex") {
+        continue;
+      }
+      if (entry.sessionId && String(entry.sessionId) === sid) return true;
       if (t && t.sessionId && String(t.sessionId) === sid) return true;
     }
     return false;

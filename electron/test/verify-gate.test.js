@@ -204,6 +204,36 @@ describe("runner verification gate", () => {
     assert.match(prompt, /verify-boom/);
   });
 
+  it("verify owns the thread: a start is refused, Stop kills it, and it never writes over the next run (#1430 R2)", async () => {
+    const marker = path.join(fx.tmpDir, "verify-started");
+    fx.store.updateThread(fx.thread.id, {
+      verifyCommand: `touch '${marker}'; sleep 30`,
+    });
+    await runner.startRun({ threadId: fx.thread.id, prompt: "do work" });
+    await waitFor(() => fs.existsSync(marker));
+    assert.equal(runner.isRunning(fx.thread.id), true);
+    await assert.rejects(
+      runner.startRun({ threadId: fx.thread.id, prompt: "barge in" }),
+      /already active/,
+    );
+
+    await runner.stopRun({ threadId: fx.thread.id });
+    assert.equal(runner.isRunning(fx.thread.id), false);
+    assert.equal(fx.store.getThread(fx.thread.id).status, "idle");
+
+    fx.store.updateThread(fx.thread.id, { verifyCommand: "echo second" });
+    await runner.startRun({ threadId: fx.thread.id, prompt: "next turn" });
+    await waitFor(() => {
+      const t = fx.store.getThread(fx.thread.id);
+      return t.status === "done" && !runner.isRunning(fx.thread.id);
+    });
+    const t = fx.store.getThread(fx.thread.id);
+    assert.equal(t.verify.command, "echo second");
+    assert.equal(t.verify.ok, true);
+    const texts = (fx.store.getMessages(fx.thread.id) || []).map((m) => String(m.text));
+    assert.equal(texts.some((x) => /sleep 30/.test(x)), false);
+  });
+
   it("exhausted attempts land failed with lastError and start no further fix", async () => {
     fx.store.updateThread(fx.thread.id, {
       verifyCommand: "echo still-failing; exit 1",
