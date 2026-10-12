@@ -1158,6 +1158,29 @@ describe("runner codex provider", () => {
     );
   });
 
+  it("steerRun files no row when the run ends during the send (#1430 R8)", async () => {
+    process.env.CODER_FAKE_CODEX_SCENARIO = "steer-wait";
+    process.env.CODER_FAKE_CODEX_TURN_DELAY_MS = "100";
+    const thread = store.getThreads()[0];
+    await runner.startRun({ threadId: thread.id, prompt: "work" });
+    await waitFor(() => runner.isRunning(thread.id));
+    await waitFor(() => codexHandle.canSteer());
+    const send = codexHandle.send.bind(codexHandle);
+    codexHandle.send = async (text) => {
+      const sent = await send(text);
+      await runner.stopRun({ threadId: thread.id });
+      return sent;
+    };
+    await assert.rejects(
+      () => runner.steerRun({ threadId: thread.id, prompt: "too late" }),
+      /run ended before the steer landed/,
+    );
+    assert.equal(
+      store.getMessages(thread.id).some((m) => m.steer === true),
+      false,
+    );
+  });
+
   it("steerRun before turn/start returns no steer row", async () => {
     process.env.CODER_FAKE_CODEX_SCENARIO = "hang";
     process.env.CODER_FAKE_CODEX_TURN_DELAY_MS = "400";

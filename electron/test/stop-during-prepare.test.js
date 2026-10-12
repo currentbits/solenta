@@ -338,6 +338,22 @@ describe("stop during first-turn prepare (#1228)", () => {
     await waitFor(() => store.getThread(thread.id).status === "done");
   });
 
+  it("a throw after the preparing entry is registered leaves no entry behind (#1430 R5)", async () => {
+    const { boot, spawns, thread } = makeRunner();
+    const started = runner.startRun({
+      threadId: thread.id,
+      prompt: "first turn",
+    });
+    await waitFor(() => runner.isRunning(thread.id));
+    // startGenericRun throws before claiming the slot.
+    store.getProject = () => null;
+    boot.resolve({});
+    await assert.rejects(started, /Unknown project/);
+    assert.equal(spawns(), 0);
+    assert.equal(runner.isRunning(thread.id), false);
+    assert.equal(store.getThread(thread.id).status, "failed");
+  });
+
   it("archive during prepare skips spawn without changing a later working archive policy", async () => {
     const { boot, spawns, thread } = makeRunner();
     const started = runner.startRun({

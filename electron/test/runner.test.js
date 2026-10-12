@@ -490,6 +490,8 @@ describe("runner simulated mode", () => {
       await manual.startRun({ threadId: worker.id, prompt: "worker task" });
       drive(2, () => store.getThread(worker.id).status === "done");
       assert.equal(store.getThread(worker.id).status, "done");
+      // The sweep runs once the turn's checkpoint settles (#1430 R3).
+      await new Promise((r) => setTimeout(r, 50));
       assert.equal(
         store.getThread(worker.id).archived,
         false,
@@ -498,7 +500,7 @@ describe("runner simulated mode", () => {
 
       drive(1, () => store.getThread(busy.id).status === "done");
       assert.equal(store.getThread(busy.id).status, "done");
-      assert.equal(store.getThread(worker.id).archived, true);
+      await waitFor(() => store.getThread(worker.id).archived === true);
       assert.equal(store.getThread(busy.id).archived, true);
     } finally {
       manual.stopAll();

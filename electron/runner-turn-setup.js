@@ -114,6 +114,7 @@ function createTurnSetup(ctx) {
    * @param {import('./orchcommands.js').OrchCommand} cmd
    * @param {string} prompt - the raw prompt, kept verbatim in the transcript
    * @param {{ kind: string, path: string, name: string }[]} attachments
+   * @param {() => boolean} [cancelled] - true once Stop hit the lead
    */
   async function dispatchOrchCommand(
     threadId,
@@ -121,6 +122,7 @@ function createTurnSetup(ctx) {
     cmd,
     prompt,
     attachments,
+    cancelled,
   ) {
     // Fork every worker BEFORE starting any: committee members argue with
     // each other directly, so each one's prompt needs its peers' ids.
@@ -151,7 +153,18 @@ function createTurnSetup(ctx) {
     let started = null;
     /** @type {string[]} */
     const failures = [];
+    let stopped = false;
     for (let i = 0; i < workers.length; i++) {
+      // Stop mid-dispatch (#1430 R1): start no more; drop the never-run.
+      if (stopped || (cancelled && cancelled())) {
+        stopped = true;
+        try {
+          services.deleteThread(store, { threadId: workers[i].id });
+        } catch {
+          /* best effort */
+        }
+        continue;
+      }
       const workerPrompt =
         orchcommands.workerPrompt(cmd.kind, cmd.task, {
           index: i,
@@ -169,6 +182,10 @@ function createTurnSetup(ctx) {
           isAvailable: providerBinAvailable,
         });
         started = started || run;
+        // stopCrew misses a worker that had not claimed its slot yet.
+        if (cancelled && cancelled()) {
+          await ctx.stopRun({ threadId: workers[i].id });
+        }
       } catch (err) {
         // A worker that never started is an orphan: drop it, same contract
         // as the pendingFork path. Peers that DID start keep running — they
@@ -186,6 +203,11 @@ function createTurnSetup(ctx) {
       }
     }
 
+    if (!started && stopped) {
+      otel.endRun({ threadId, runId: forkRunId, status: "stopped" });
+      pushThreadsChanged();
+      return { runId: forkRunId };
+    }
     if (!started) {
       otel.endRun({
         threadId,
