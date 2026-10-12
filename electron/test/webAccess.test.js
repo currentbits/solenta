@@ -36,7 +36,7 @@ const { WebSocket } = require("ws");
 const { startWebServer } = require("../webServer.js");
 const { WS_PATH, CLOSE_RATE_LIMITED, createAuthLimiter } = require("../webBridge.js");
 const { createWebDevices } = require("../webDevices.js");
-const { createWebAccess, listenUrls } = require("../webAccess.js");
+const { createWebAccess, createMcpFunnel, listenUrls, MCP_FUNNEL_HTTPS_PORT } = require("../webAccess.js");
 
 const IFACES = {
   lo0: [{ address: "127.0.0.1", family: "IPv4", internal: true }],
@@ -314,5 +314,92 @@ describe("webAccess", () => {
     }
     const st = await handlers["web:status"]({ transport: "desktop", webAccess: access });
     assert.equal(st.running, false);
+  });
+});
+
+describe("mcp funnel", () => {
+  it("funnels the orch loopback port on a dedicated HTTPS port, then stops", async () => {
+    const calls = [];
+    const tsState = { installed: true, backend: "Running", funnel: {} };
+    const funnel = createMcpFunnel({
+      exec: async (bin, args) => {
+        calls.push([bin, ...args]);
+        if (!tsState.installed) throw Object.assign(new Error("spawn ENOENT"), { code: "ENOENT" });
+        if (args[0] === "version") return { stdout: "1.0", stderr: "" };
+        if (args[0] === "status") {
+          return {
+            stdout: JSON.stringify({
+              BackendState: tsState.backend,
+              Self: { DNSName: "mac.tail1.ts.net." },
+            }),
+            stderr: "",
+          };
+        }
+        if (args[0] === "funnel" && args[1] === "status") {
+          return { stdout: JSON.stringify(tsState.funnel), stderr: "" };
+        }
+        if (args[0] === "funnel" && args.includes("off")) {
+          tsState.funnel = {};
+          return { stdout: "", stderr: "" };
+        }
+        if (args[0] === "funnel") {
+          tsState.funnel = {
+            Web: {
+              [`mac.tail1.ts.net:${MCP_FUNNEL_HTTPS_PORT}`]: {
+                Handlers: { "/": { Proxy: args.at(-1) } },
+              },
+            },
+          };
+          return { stdout: "", stderr: "" };
+        }
+        throw new Error(`unexpected ${args.join(" ")}`);
+      },
+    });
+
+    const off = await funnel.status(7422);
+    assert.equal(off.installed, true);
+    assert.equal(off.serving, false);
+
+    const on = await funnel.set({ on: true, port: 7422 });
+    assert.deepEqual(
+      calls.find((c) => c.includes("--bg")).slice(1),
+      ["funnel", "--bg", "--yes", `--https=${MCP_FUNNEL_HTTPS_PORT}`, "http://127.0.0.1:7422"],
+    );
+    assert.equal(on.serving, true);
+    assert.equal(on.url, `https://mac.tail1.ts.net:${MCP_FUNNEL_HTTPS_PORT}`);
+
+    const stopped = await funnel.set({ on: false, port: 7422 });
+    assert.equal(stopped.serving, false);
+  });
+
+  it("refuses to replace another Funnel on the same HTTPS port", async () => {
+    const funnel = createMcpFunnel({
+      exec: async (_bin, args) => {
+        if (args[0] === "version") return { stdout: "1.0", stderr: "" };
+        if (args[0] === "status") {
+          return {
+            stdout: JSON.stringify({
+              BackendState: "Running",
+              Self: { DNSName: "mac.tail1.ts.net." },
+            }),
+            stderr: "",
+          };
+        }
+        if (args[0] === "funnel" && args[1] === "status") {
+          return {
+            stdout: JSON.stringify({
+              Web: {
+                [`mac.tail1.ts.net:${MCP_FUNNEL_HTTPS_PORT}`]: {
+                  Handlers: { "/": { Proxy: "http://127.0.0.1:3000" } },
+                },
+              },
+            }),
+            stderr: "",
+          };
+        }
+        throw new Error(`unexpected ${args.join(" ")}`);
+      },
+    });
+    await assert.rejects(funnel.set({ on: true, port: 7422 }), /already sends HTTPS/);
   });
 });

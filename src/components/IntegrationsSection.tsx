@@ -87,6 +87,7 @@ export function IntegrationsSection({
   const [managedWorktree, setManagedWorktree] = useState(true);
   const [created, setCreated] = useState<PairingCreated | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
+  const [funnelBusy, setFunnelBusy] = useState(false);
 
   const load = useCallback(async () => {
     const api = resolveApi();
@@ -157,8 +158,24 @@ export function IntegrationsSection({
     }
   };
 
+  const onSetPublic = async (on: boolean) => {
+    const api = resolveApi();
+    if (!api?.pairing.setPublic) return;
+    setFunnelBusy(true);
+    setError(null);
+    try {
+      setList(await api.pairing.setPublic({ on }));
+    } catch (err) {
+      setError(err instanceof Error && err.message ? err.message : String(err));
+    } finally {
+      setFunnelBusy(false);
+    }
+  };
+
   const server = list?.server;
   const running = Boolean(server?.running && server.url);
+  const funnel = server?.funnel;
+  const publicUrl = server?.publicUrl || null;
 
   return (
     <section className={styles.section} data-integrations="">
@@ -174,12 +191,76 @@ export function IntegrationsSection({
             : "Solenta is not serving MCP right now. Keep the app open to pair."}
         </span>
       </div>
+      {publicUrl ? (
+        <div className={styles.fieldRow}>
+          <code className={styles.webUrl} data-mcp-public-url="">
+            {publicUrl}
+          </code>
+          <button
+            type="button"
+            className={styles.btn}
+            data-copy-mcp-public-url=""
+            onClick={() => {
+              void copyText(publicUrl).then((ok) => {
+                if (ok) flashCopied("public");
+              });
+            }}
+          >
+            {copied === "public" ? "Copied" : "Copy public URL"}
+          </button>
+        </div>
+      ) : null}
       <p className={styles.note}>
         Pair Claude Desktop, Claude Code, or another MCP client so it can
         launch and track Solenta tasks. Tokens are scoped, expiring, and
         revocable. New work starts in a managed worktree and waits for your
         approval unless you turn that off.
       </p>
+      {funnel?.installed ? (
+        <div
+          className={styles.field}
+          data-mcp-funnel={funnel.serving ? "serving" : funnel.loggedIn ? "ready" : "offline"}
+        >
+          <span className={styles.fieldLabel}>Public URL (Tailscale Funnel)</span>
+          {!funnel.loggedIn ? (
+            <p className={styles.note}>
+              Tailscale is installed but not running or not logged in.
+            </p>
+          ) : funnel.serving && publicUrl ? (
+            <div className={styles.fieldRow}>
+              <button
+                type="button"
+                className={styles.btn}
+                data-mcp-funnel-stop=""
+                disabled={funnelBusy}
+                onClick={() => void onSetPublic(false)}
+              >
+                Stop
+              </button>
+            </div>
+          ) : (
+            <div className={styles.fieldRow}>
+              <button
+                type="button"
+                className={styles.btn}
+                data-mcp-funnel-start=""
+                disabled={funnelBusy || !running}
+                onClick={() => void onSetPublic(true)}
+              >
+                Expose /mcp on the public internet
+              </button>
+            </div>
+          )}
+          <p className={styles.note}>
+            This runs Tailscale Funnel, which publishes the MCP endpoint to
+            the public internet
+            {funnel.host ? ` at ${funnel.host}` : ""} so hosted agents
+            (ChatGPT, claude.ai) can reach it. Off by default. Anyone who
+            can guess the URL still needs an OAuth grant or pairing token.
+            The in-app session token is not accepted on this URL.
+          </p>
+        </div>
+      ) : null}
 
       {error ? (
         <p className={styles.fieldError} role="alert">
@@ -220,6 +301,20 @@ export function IntegrationsSection({
                 }}
               >
                 {copied === "url" ? "Copied" : "Copy MCP URL"}
+              </button>
+            ) : null}
+            {publicUrl ? (
+              <button
+                type="button"
+                className={styles.btn}
+                data-copy-created-public-url=""
+                onClick={() => {
+                  void copyText(publicUrl).then((ok) => {
+                    if (ok) flashCopied("created-public");
+                  });
+                }}
+              >
+                {copied === "created-public" ? "Copied" : "Copy public URL"}
               </button>
             ) : null}
             {created.claudeDesktopJson ? (

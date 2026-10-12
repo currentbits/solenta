@@ -53,6 +53,7 @@ function createCodexRun(ctx) {
     active,
     appendMessage,
     persistToolImages,
+    persistToolHtml,
     noteToolSpan,
     runCodexFn,
     handleCodexServerRequest,
@@ -154,6 +155,7 @@ function createCodexRun(ctx) {
       ...getCodexMcpArgs({
         projectPath: localCwd,
         projectId: thread.projectId,
+        threadId,
       }),
     ];
     if (codexExecConfig.length) args.push(...codexExecConfig);
@@ -290,6 +292,7 @@ function createCodexRun(ctx) {
               isError: Boolean(live.isError),
               done: Boolean(live.done),
               ...persistToolImages(threadId, live.images),
+              ...persistToolHtml(live.html),
             },
           });
           if (live.done) {
@@ -312,6 +315,7 @@ function createCodexRun(ctx) {
         isError: Boolean(live.isError),
         done: Boolean(live.done),
         ...persistToolImages(threadId, live.images),
+        ...persistToolHtml(live.html),
       };
       const msgId = appendMessage(threadId, "tool", summary, runId, tool);
       toolMsgById.set(id, msgId);

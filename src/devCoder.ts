@@ -513,6 +513,9 @@ function buildDevCoder(): CoderApi {
           devCloneProgress.delete(fn);
         };
       }
+      if (channel === "pairing:consent") {
+        return () => {};
+      }
       if (channel === "speech:changed") {
         const fn = cb as (status: SpeechStatus) => void;
         listeners["speech:changed"].add(fn);

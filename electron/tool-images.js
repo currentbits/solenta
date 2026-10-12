@@ -3,6 +3,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { randomUUID } = require("node:crypto");
+const { extractHtml, redactHtml } = require("./tool-html.js");
 
 /** Under userData; per-thread subdirs, plus leftover flat files from older builds. */
 const DIR_NAME = "tool-images";
@@ -160,15 +161,18 @@ function redactImages(value) {
 }
 
 /**
- * Pull screenshots out of a raw tool result and return a copy safe to
- * store as `ToolCallInfo.output`.
+ * Pull screenshots and MCP ui:// HTML out of a raw tool result and return
+ * a copy safe to store as `ToolCallInfo.output`.
  * @param {unknown} value
- * @returns {{ images: { mediaType: string, data: string }[], redacted: unknown }}
+ * @returns {{ images: { mediaType: string, data: string }[], html: string | null, redacted: unknown }}
  */
 function harvestToolResult(value) {
   const images = extractImages(value);
-  if (!images.length) return { images, redacted: value };
-  return { images, redacted: redactImages(value) };
+  const html = extractHtml(value);
+  let redacted = value;
+  if (images.length) redacted = redactImages(redacted);
+  if (html) redacted = redactHtml(redacted);
+  return { images, html, redacted };
 }
 
 /**

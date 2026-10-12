@@ -1,4 +1,9 @@
 import type { ThreadInfo } from "./shared/ipc";
+import {
+  allLinkedPrsSettled,
+  anyLinkedPrOpen,
+  normalizePrLinks,
+} from "./prLinks";
 
 /**
  * Default inactivity window (days) before a quiet thread auto-settles.
@@ -68,11 +73,15 @@ export function effectiveSettled(
   if (thread.settledOverride === "active") return false;
 
   // Terminal PR states: CLOSED always folds. MERGED folds when the
-  // settle-on-merge toggle is on (default). An explicit "active" override
+  // settle-on-merge toggle is on (default). Several linked PRs (#1527)
+  // settle only when every one is terminal. An explicit "active" override
   // already returned above, so this is the no-override path.
-  if (
-    changeRequestAutoSettles(thread.prState, opts.autoSettleOnMerge !== false)
-  ) {
+  const links = normalizePrLinks(thread);
+  const settleOnMerge = opts.autoSettleOnMerge !== false;
+  if (links.length > 0) {
+    if (allLinkedPrsSettled(links, settleOnMerge)) return true;
+    if (anyLinkedPrOpen(links)) return false;
+  } else if (changeRequestAutoSettles(thread.prState, settleOnMerge)) {
     return true;
   }
 

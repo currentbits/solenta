@@ -15,9 +15,12 @@ export function GitPane({
   setPrCapText,
   linearKeyText,
   setLinearKeyText,
+  sentryKeyText,
+  setSentryKeyText,
   dirtyDrafts,
   save,
   saveLinearKey,
+  saveSentryKey,
   projects,
   onGcScan,
   onGcClean,
@@ -35,9 +38,12 @@ export function GitPane({
   setPrCapText: (text: string) => void;
   linearKeyText: string;
   setLinearKeyText: (text: string) => void;
+  sentryKeyText: string;
+  setSentryKeyText: (text: string) => void;
   dirtyDrafts: RefObject<Set<SettingsDraftKey>>;
   save: () => Promise<void>;
   saveLinearKey: () => Promise<void>;
+  saveSentryKey: () => Promise<void>;
   projects: SettingsModalProps["projects"];
   onGcScan: SettingsModalProps["onGcScan"];
   onGcClean: SettingsModalProps["onGcClean"];
@@ -186,6 +192,53 @@ export function GitPane({
             Used to start threads from Linear issues. LINEAR_API_KEY in
             the environment also works. Empty and Save key clears a
             stored key.
+          </p>
+        </div>
+      </section>
+
+      <section className={styles.section}>
+        <h3 className={styles.sectionLabel}>Sentry</h3>
+        <div className={styles.field}>
+          <label className={styles.fieldLabel} htmlFor="sentry-auth-token">
+            Auth token
+          </label>
+          <div className={styles.fieldRow}>
+            <input
+              id="sentry-auth-token"
+              className={styles.input}
+              type="password"
+              autoComplete="off"
+              spellCheck={false}
+              placeholder="sntrys_…"
+              value={sentryKeyText}
+              disabled={saving}
+              data-sentry-auth-token=""
+              onChange={(e) => {
+                dirtyDrafts.current.add("sentry");
+                setSentryKeyText(e.target.value);
+                setError(null);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  void saveSentryKey();
+                }
+              }}
+            />
+            <button
+              type="button"
+              className={`${styles.btn} ${styles.btnPrimary}`}
+              disabled={saving}
+              data-sentry-auth-token-save=""
+              onClick={() => void saveSentryKey()}
+            >
+              {saving ? "Saving…" : "Save key"}
+            </button>
+          </div>
+          <p className={styles.note}>
+            Used for Sentry automation triggers. Needs event:read.
+            SENTRY_AUTH_TOKEN in the environment also works. Empty and Save
+            key clears a stored key.
           </p>
         </div>
       </section>

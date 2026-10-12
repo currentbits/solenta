@@ -305,7 +305,7 @@ process.exit(2);
   });
 
   it("returns in-band failure for a non-GitHub remote", async () => {
-    git(repo, ["remote", "set-url", "origin", "https://gitlab.com/acme/demo.git"]);
+    git(repo, ["remote", "set-url", "origin", "https://bitbucket.org/acme/demo.git"]);
     const result = await runCheckout();
     assert.deepEqual(result, { ok: false, reason: "not a GitHub repo" });
     assert.equal(store.getThreads().length, 0);
@@ -353,5 +353,160 @@ process.exit(2);
     });
     assert.equal(result.ok, true);
     assert.ok(result.thread.worktreePath);
+  });
+});
+
+const VIEW_GITLAB = {
+  iid: 12,
+  title: "Add list view",
+  description: "Please review the list view.",
+  web_url: "https://gitlab.com/acme/demo/-/merge_requests/12",
+  source_branch: "feat/list",
+  state: "opened",
+  source_project_id: 1,
+  target_project_id: 1,
+};
+
+describe("checkoutPr GitLab", { skip: process.platform === "win32" }, () => {
+  let tmp;
+  let store;
+  let worktreeBase;
+  let repo;
+  let origin;
+  let project;
+  let prevGh;
+  let prevGlab;
+  let broadcasts;
+
+  beforeEach(async () => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), "coder-checkout-gl-"));
+    store = new Store(path.join(tmp, "store.json"));
+    worktreeBase = path.join(tmp, "worktrees");
+    broadcasts = [];
+    repo = path.join(tmp, "repo");
+    origin = path.join(tmp, "origin.git");
+    fs.mkdirSync(repo);
+    git(repo, ["init", "-q", "-b", "main"]);
+    git(repo, ["config", "user.email", "t@example.com"]);
+    git(repo, ["config", "user.name", "t"]);
+    fs.writeFileSync(path.join(repo, "README.md"), "hello\n");
+    git(repo, ["add", "."]);
+    git(repo, ["commit", "-qm", "init"]);
+
+    git(tmp, ["init", "-q", "--bare", origin]);
+    git(repo, ["remote", "add", "origin", "https://gitlab.com/acme/demo.git"]);
+    git(repo, [
+      "config",
+      `url.${origin}.insteadOf`,
+      "https://gitlab.com/acme/demo.git",
+    ]);
+    git(repo, ["push", "-q", "origin", "main"]);
+
+    git(repo, ["checkout", "-qb", "feat/list"]);
+    fs.writeFileSync(path.join(repo, "pr.txt"), "hello from the PR\n");
+    git(repo, ["add", "."]);
+    git(repo, ["commit", "-qm", "pr change"]);
+    git(repo, ["push", "-q", "origin", "feat/list"]);
+    const sha = git(repo, ["rev-parse", "HEAD"]);
+    git(origin, ["update-ref", "refs/merge-requests/12/head", sha]);
+    git(repo, ["checkout", "-q", "main"]);
+
+    project = await services.addProject(store, repo);
+    prevGh = process.env.CODER_GH_BIN;
+    prevGlab = process.env.CODER_GLAB_BIN;
+    process.env.CODER_GLAB_BIN = writeFakeBin(
+      path.join(tmp, "fake-glab"),
+      `const args = process.argv.slice(2);
+const method = args[args.indexOf("-X") + 1];
+const endpoint = args[args.indexOf("-X") + 2].split("?")[0];
+if (method === "GET" && endpoint === "projects/acme%2Fdemo/merge_requests/12") {
+  process.stdout.write(${JSON.stringify(JSON.stringify(VIEW_GITLAB))});
+  process.exit(0);
+}
+process.stderr.write("glab: 404 Not Found (HTTP 404)");
+process.exit(1);
+`,
+    );
+  });
+
+  afterEach(async () => {
+    if (prevGh == null) delete process.env.CODER_GH_BIN;
+    else process.env.CODER_GH_BIN = prevGh;
+    if (prevGlab == null) delete process.env.CODER_GLAB_BIN;
+    else process.env.CODER_GLAB_BIN = prevGlab;
+    await rmTree(tmp);
+  });
+
+  it("checks out an MR by fetching refs/merge-requests/<iid>/head", async () => {
+    const result = await checkoutPr({
+      store,
+      projectId: project.id,
+      prNumber: 12,
+      worktreeBase,
+      broadcast: (channel, payload) => broadcasts.push({ channel, payload }),
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.created, true);
+    assert.equal(result.readOnly, false);
+    assert.equal(result.thread.prNumber, 12);
+    assert.equal(result.thread.prUrl, VIEW_GITLAB.web_url);
+    assert.equal(result.thread.branch, "feat/list");
+    assert.equal(
+      fs.readFileSync(path.join(result.thread.worktreePath, "pr.txt"), "utf8"),
+      "hello from the PR\n",
+    );
+    assert.match(result.prompt, /GitLab merge request #12/);
+    assert.match(result.prompt, /Please review the list view/);
+    const head = git(result.thread.worktreePath, ["rev-parse", "HEAD"]);
+    const expected = git(origin, ["rev-parse", "refs/merge-requests/12/head"]);
+    assert.equal(head, expected);
+    assert.equal(store.getThreads().length, 1);
+  });
+
+  it("fork MRs detach at refs/merge-requests/<iid>/head", async () => {
+    process.env.CODER_GLAB_BIN = writeFakeBin(
+      path.join(tmp, "fake-glab-fork"),
+      `const args = process.argv.slice(2);
+const method = args[args.indexOf("-X") + 1];
+const endpoint = args[args.indexOf("-X") + 2].split("?")[0];
+if (method === "GET" && endpoint === "projects/acme%2Fdemo/merge_requests/12") {
+  process.stdout.write(${JSON.stringify(JSON.stringify({
+    ...VIEW_GITLAB,
+    source_project_id: 99,
+    target_project_id: 1,
+  }))});
+  process.exit(0);
+}
+process.stderr.write("glab: 404 Not Found (HTTP 404)");
+process.exit(1);
+`,
+    );
+    const result = await checkoutPr({
+      store,
+      projectId: project.id,
+      prNumber: 12,
+      worktreeBase,
+      broadcast: (channel, payload) => broadcasts.push({ channel, payload }),
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.readOnly, true);
+    assert.equal(result.thread.branch, null);
+    assert.ok(result.prompt.includes(FORK_READONLY_NOTE));
+    const head = git(result.thread.worktreePath, ["rev-parse", "HEAD"]);
+    const expected = git(origin, ["rev-parse", "refs/merge-requests/12/head"]);
+    assert.equal(head, expected);
+    assert.equal(git(result.thread.worktreePath, ["branch", "--show-current"]), "");
+  });
+
+  it("returns in-band failure when glab is missing", async () => {
+    process.env.CODER_GLAB_BIN = path.join(tmp, "no-such-glab");
+    const result = await checkoutPr({
+      store,
+      projectId: project.id,
+      prNumber: 12,
+      worktreeBase,
+    });
+    assert.deepEqual(result, { ok: false, reason: "glab missing" });
+    assert.equal(store.getThreads().length, 0);
   });
 });

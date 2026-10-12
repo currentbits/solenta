@@ -539,7 +539,14 @@ export function createPairing(ctx: DevCtx): Pick<CoderApi, "pairing"> {
       async list(): Promise<PairingList> {
         return {
           pairings,
-          server: { running: true, port: 7422, url: "http://127.0.0.1:7422/mcp" },
+          server: {
+            running: true,
+            port: 7422,
+            url: "http://127.0.0.1:7422/mcp",
+            publicUrl: null,
+            publicEnabled: false,
+            funnel: { installed: true, loggedIn: true, host: "studio.tail1234.ts.net", serving: false, url: null },
+          },
         };
       },
       async create(input: PairingCreateInput): Promise<PairingCreated> {
@@ -609,6 +616,18 @@ export function createPairing(ctx: DevCtx): Pick<CoderApi, "pairing"> {
         t.pendingExternalPrompt = null;
         t.archived = true;
         return t;
+      },
+      async setPublic() {
+        return this.list();
+      },
+      async listConsents() {
+        return [];
+      },
+      async approveConsent() {
+        throw new Error("No pending consent in browser dev");
+      },
+      async denyConsent() {
+        return { redirect: "https://example.com/?error=access_denied" };
       },
     },
   };

@@ -61,6 +61,7 @@ import {
   ChunkRationale,
   ReviewItineraryView,
 } from "../ReviewItinerary";
+import { useDiffFind } from "./useDiffFind";
 import styles from "../ThreadView.module.css";
 
 const DiffLine = memo(function DiffLine({
@@ -242,6 +243,7 @@ function FileRow({
         type="button"
         className={styles.fileRow}
         data-file-row=""
+        data-file-path={file.path}
         data-selected={selected ? "true" : undefined}
         aria-current={selected ? "true" : undefined}
         onClick={() => onSelect(file.path)}
@@ -789,6 +791,12 @@ export function ChangesPanel({
     () => (selectedPath ? patches.filter((p) => p.path === selectedPath) : patches),
     [patches, selectedPath],
   );
+  const find = useDiffFind(
+    diff?.files ?? [],
+    patches,
+    setSelectedPath,
+    threadId,
+  );
 
   // Hunks only apply back to the worktree from the plain Uncommitted diff:
   // -w hunks and branch/turn ranges do not match it, and lazily fetched or
@@ -1026,10 +1034,12 @@ export function ChangesPanel({
 
   return (
     <section
+      ref={find.rootRef}
       className={styles.changesPane}
       data-git-pane=""
       aria-label="Git"
     >
+      {find.bar}
       <header className={styles.changesHead}>
         <div className={styles.changesTitleGroup}>
           {embedded ? null : <span className={styles.changesTitle}>Git</span>}

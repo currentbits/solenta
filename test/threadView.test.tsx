@@ -17,6 +17,7 @@ import { useState } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { inAct, mount, unmountAll } from "./support/dom.ts";
 import { setTranscriptViewMode } from "../src/uiPrefs";
+import { resetComposerSession } from "../src/composerSession";
 import { ThreadView } from "../src/components/ThreadView";
 import styles from "../src/components/ThreadView.module.css";
 import { routineWorkerActivitySummary } from "../src/workerActivity";
@@ -176,6 +177,7 @@ function view(props: {
   onStartSuggestion?: (s: WorkSuggestion) => void | Promise<void>;
   onFileSuggestion?: (s: WorkSuggestion) => void | Promise<void>;
   onDismissSuggestion?: (s: WorkSuggestion) => void | Promise<void>;
+  onOpenAutomations?: (automationId?: string) => void;
   revealMessageId?: string | null;
   onSelectThread?: (id: string) => void;
   returnToView?: "planboard" | "kanban" | "activity" | "digest" | "prs" | "insights";
@@ -253,6 +255,7 @@ function view(props: {
       onStartSuggestion={props.onStartSuggestion}
       onFileSuggestion={props.onFileSuggestion}
       onDismissSuggestion={props.onDismissSuggestion}
+      onOpenAutomations={props.onOpenAutomations}
       revealMessageId={props.revealMessageId}
       onSelectThread={props.onSelectThread}
       returnToView={props.returnToView}
@@ -301,6 +304,7 @@ function assertNoNestedInteractive(html: string): void {
 afterEach(() => {
   unmountAll();
   setTranscriptViewMode("normal");
+  resetComposerSession();
 });
 
 describe("ThreadView empty states", () => {
@@ -560,6 +564,103 @@ describe("ThreadView message roles", () => {
     assert.ok(html.includes("data-tool-group"), "group landmark");
     assert.ok(!html.includes("toolCard"), "collapsed group is not a tool tile");
     assert.ok(!html.includes("a.ts"), "paths stay inside the collapsed group");
+  });
+
+  it("renders automation_create as a card with Open in Automations (#1589)", () => {
+    const html = render({
+      detail: detail({
+        messages: [
+          msg({
+            id: "t1",
+            role: "tool",
+            text: "Read: a.ts",
+            createdAt: 15,
+            runId: "run-1",
+            tool: {
+              id: "tc1",
+              name: "Read",
+              input: "a.ts",
+              output: "ok",
+              done: true,
+              isError: false,
+            },
+          }),
+          msg({
+            id: "ac",
+            role: "tool",
+            text: "automation_create",
+            createdAt: 16,
+            runId: "run-1",
+            tool: {
+              id: "tc-ac",
+              name: "mcp__coder-threads__automation_create",
+              input: '{"name":"Triage CI"}',
+              output: JSON.stringify({
+                ok: true,
+                id: "auto-1",
+                name: "Triage CI",
+                preset: "hourly",
+                trigger: {
+                  type: "github",
+                  event: "ci_completed",
+                  branch: "main",
+                  conclusion: "failure",
+                },
+              }),
+              done: true,
+              isError: false,
+            },
+          }),
+        ],
+      }),
+      onOpenAutomations: () => {},
+    });
+    assert.ok(html.includes("Triage CI"));
+    assert.ok(html.includes("Open in Automations"));
+    assert.ok(html.includes("data-automation-card="));
+    assert.ok(
+      !html.includes("mcp__coder-threads__automation_create") ||
+        html.includes("data-automation-card="),
+      "result is a dedicated card, not only the raw tool name",
+    );
+  });
+
+  it("Open in Automations passes the created id (#1599)", async () => {
+    let opened: string | undefined;
+    const m = await mount(
+      view({
+        detail: detail({
+          messages: [
+            msg({
+              id: "ac",
+              role: "tool",
+              text: "automation_create",
+              createdAt: 16,
+              runId: "run-1",
+              tool: {
+                id: "tc-ac",
+                name: "mcp__coder-threads__automation_create",
+                input: '{"name":"Triage CI"}',
+                output: JSON.stringify({
+                  ok: true,
+                  id: "auto-1",
+                  name: "Triage CI",
+                  preset: "hourly",
+                }),
+                done: true,
+                isError: false,
+              },
+            }),
+          ],
+        }),
+        onOpenAutomations: (id?: string) => {
+          opened = id;
+        },
+      }),
+    );
+    await m.click(m.query("[data-automation-card] button"));
+    assert.equal(opened, "auto-1");
+    m.unmount();
   });
 
   it("renders a single tool as a group, not a boxed tool card", () => {
@@ -1245,6 +1346,46 @@ describe("ThreadView mounted interactions", () => {
     const img = m.query("img");
     assert.ok(img, `expanded card must render the image, got: ${m.html().slice(0, 300)}`);
     assert.equal(img.getAttribute("src"), dataUrl);
+    m.unmount();
+  });
+
+  it("renders a sandboxed page from tool.html once the card is open (#1525)", async () => {
+    const m = await mount(
+      view({
+        detail: detail({
+          messages: [
+            msg({
+              id: "t1",
+              role: "tool",
+              text: "mcp__charts__show",
+              createdAt: 1,
+              runId: "run-1",
+              tool: {
+                id: "tc1",
+                name: "mcp__charts__show",
+                input: "{}",
+                output: "[html]",
+                done: true,
+                isError: false,
+                html: "<h1>Sales</h1>",
+              },
+            }),
+          ],
+          workLog: [],
+        }),
+      }),
+    );
+    assert.equal(m.query("[data-html-page]"), null, "collapsed card shows no page");
+    const group = toolGroupToggle(m);
+    assert.ok(group, "html tool is grouped");
+    await m.click(group);
+    await m.click(m.query("button.toolToggle"));
+    for (let i = 0; i < 3; i++) await m.flush();
+    const frame = m.query("[data-html-page] iframe");
+    assert.ok(frame, "expanded card mounts the sandboxed page");
+    assert.equal(frame!.getAttribute("sandbox"), "allow-scripts");
+    assert.match(frame!.getAttribute("srcdoc") ?? "", /<h1>Sales<\/h1>/);
+    assert.match(frame!.getAttribute("srcdoc") ?? "", /connect-src 'none'/);
     m.unmount();
   });
 

@@ -140,6 +140,43 @@ describe("effectiveSettled", () => {
     );
   });
 
+  it("several linked PRs settle only when every one is terminal", () => {
+    assert.equal(
+      effectiveSettled(
+        thread({
+          id: "stack-open",
+          status: "done",
+          prNumber: 1,
+          prState: "MERGED",
+          prLinks: [
+            { number: 1, state: "MERGED" },
+            { number: 2, state: "OPEN" },
+          ],
+        }),
+        opts(),
+      ),
+      false,
+      "an open stacked PR keeps the thread visible",
+    );
+    assert.equal(
+      effectiveSettled(
+        thread({
+          id: "stack-done",
+          status: "done",
+          prNumber: 1,
+          prState: "MERGED",
+          prLinks: [
+            { number: 1, state: "MERGED" },
+            { number: 2, state: "CLOSED" },
+          ],
+        }),
+        opts(),
+      ),
+      true,
+      "every linked PR closed or merged settles the thread",
+    );
+  });
+
   it("prState MERGED settles without an override", () => {
     assert.equal(
       effectiveSettled(

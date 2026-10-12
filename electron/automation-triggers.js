@@ -14,7 +14,7 @@
 
 const github = require("./github.js");
 
-const TRIGGER_EVENTS = new Set([
+const GITHUB_EVENTS = new Set([
   "pr_opened",
   "pr_merged",
   "pr_labeled",
@@ -22,11 +22,83 @@ const TRIGGER_EVENTS = new Set([
   "push",
   "ci_completed",
 ]);
+const LINEAR_EVENTS = new Set(["linear_issue_created", "linear_status_changed"]);
+const SENTRY_EVENTS = new Set(["sentry_issue"]);
+const TRIGGER_EVENTS = new Set([...GITHUB_EVENTS, ...LINEAR_EVENTS, ...SENTRY_EVENTS]);
+
+function typeForEvent(event) {
+  if (LINEAR_EVENTS.has(event)) return "linear";
+  if (SENTRY_EVENTS.has(event)) return "sentry";
+  return "github";
+}
 
 const CI_CONCLUSIONS = new Set(["success", "failure", "cancelled", "timed_out"]);
 
 /** lastError prefix for poll failures, so a good poll clears only its own. */
 const POLL_ERROR = "GitHub trigger: ";
+
+function pollErrorPrefix(type) {
+  if (type === "linear") return "Linear trigger: ";
+  if (type === "sentry") return "Sentry trigger: ";
+  return POLL_ERROR;
+}
+
+/** @param {{ type: string, event: string, org?: string | null, project?: string | null }} trigger */
+function triggerNoteTitle(trigger, remote) {
+  if (trigger.type === "linear") {
+    return trigger.event === "linear_status_changed" ? "Linear status changed" : "Linear issue created";
+  }
+  if (trigger.type === "sentry") {
+    return `Sentry issue on ${trigger.org}/${trigger.project}`;
+  }
+  return `GitHub ${trigger.event} on ${remote.owner}/${remote.repo}`;
+}
+
+/**
+ * Linear/Sentry rows for one tick. One fetch per cache key, shared across
+ * automations. GitHub stays inline in pollTriggers.
+ */
+function loadRows(trigger, deps, store, cache) {
+  if (trigger.type === "linear") {
+    const linear = require("./linear.js");
+    const settings = store.getSettings();
+    const source = trigger.event === "linear_status_changed" ? "status" : "created";
+    const cacheKey = `linear|${source}`;
+    if (!cache.has(cacheKey)) {
+      cache.set(
+        cacheKey,
+        linear.fetchTriggerIssues(source, {
+          linearApiKey: settings && settings.linearApiKey,
+          linearGraphql: deps.linearGraphql,
+        }),
+      );
+    }
+    return cache.get(cacheKey);
+  }
+  if (trigger.type === "sentry") {
+    const sentry = require("./sentry.js");
+    const settings = store.getSettings();
+    const token = sentry.resolveSentryAuthToken({
+      sentryAuthToken: settings && settings.sentryAuthToken,
+    });
+    const env = trigger.environment || "";
+    const cacheKey = `sentry|${trigger.org}|${trigger.project}|${env}`;
+    if (!cache.has(cacheKey)) {
+      cache.set(
+        cacheKey,
+        sentry.fetchProjectIssues({
+          org: trigger.org,
+          project: trigger.project,
+          environment: env,
+          token,
+          sentryIssues: deps.sentryIssues,
+        }),
+      );
+    }
+    return cache.get(cacheKey);
+  }
+  return null;
+}
 
 /** Events listed in one run's prompt; the rest are counted, not dropped. */
 const MAX_EVENTS_IN_PROMPT = 20;
@@ -34,27 +106,32 @@ const MAX_EVENTS_IN_PROMPT = 20;
 /**
  * Store shape for `automation.trigger`. null means schedule mode.
  * @param {unknown} raw
- * @returns {{ type: "github", event: string, branch: string | null, label: string | null, conclusion: string | null } | null}
  */
 function normalizeTrigger(raw) {
   if (!raw || typeof raw !== "object") return null;
   const t = /** @type {Record<string, unknown>} */ (raw);
   const event = String(t.event || "");
   if (!TRIGGER_EVENTS.has(event)) return null;
+  const type = typeForEvent(event);
   const str = (v) => {
     const s = v == null ? "" : String(v).trim();
     return s || null;
   };
   const conclusion = str(t.conclusion);
   return {
-    type: "github",
+    type,
     event,
-    branch: event === "push" || event === "ci_completed" ? str(t.branch) : null,
-    label: event === "pr_labeled" ? str(t.label) : null,
+    branch: type === "github" && (event === "push" || event === "ci_completed") ? str(t.branch) : null,
+    label: type === "github" && event === "pr_labeled" ? str(t.label) : null,
     conclusion:
-      event === "ci_completed" && conclusion && CI_CONCLUSIONS.has(conclusion)
+      type === "github" && event === "ci_completed" && conclusion && CI_CONCLUSIONS.has(conclusion)
         ? conclusion
         : null,
+    team: type === "linear" ? str(t.team) : null,
+    status: event === "linear_status_changed" ? str(t.status) : null,
+    org: type === "sentry" ? str(t.org) : null,
+    project: type === "sentry" ? str(t.project) : null,
+    environment: type === "sentry" ? str(t.environment) : null,
   };
 }
 
@@ -66,8 +143,11 @@ function parseTriggerInput(raw) {
   if (raw == null) return null;
   const t = normalizeTrigger(raw);
   if (!t) {
-    const ev = raw && typeof raw === "object" ? /** @type {any} */ (raw).event : raw;
+    const ev = raw && typeof raw !== "object" ? raw : /** @type {any} */ (raw).event;
     throw new Error(`Unknown trigger event: ${ev || "(empty)"}`);
+  }
+  if (t.event === "sentry_issue" && (!t.org || !t.project)) {
+    throw new Error("Sentry trigger requires org and project");
   }
   return t;
 }
@@ -112,7 +192,9 @@ async function fetchSource(remote, source, rest, token) {
  * @returns {{ all: Array<string | number>, matched: Array<{ key: string | number, text: string }> }}
  */
 function matchRows(trigger, rows, remote) {
-  const web = `https://${remote.host}/${remote.owner}/${remote.repo}`;
+  const web = remote
+    ? `https://${remote.host}/${remote.owner}/${remote.repo}`
+    : "";
   /** @type {Array<string | number>} */
   const all = [];
   /** @type {Array<{ key: string | number, text: string }>} */
@@ -162,6 +244,55 @@ function matchRows(trigger, rows, remote) {
         });
         break;
       }
+      case "linear_issue_created": {
+        const key = typeof r.createdAt === "string" ? r.createdAt : "";
+        if (!key) continue;
+        all.push(key);
+        const teamKey = r.team && r.team.key != null ? String(r.team.key) : "";
+        if (trigger.team && teamKey.toLowerCase() !== trigger.team.toLowerCase()) continue;
+        const id = r.identifier || "?";
+        matched.push({
+          key,
+          text: `${id} created: ${r.title || ""} (${r.url || ""})`,
+        });
+        break;
+      }
+      case "linear_status_changed": {
+        const createdAt = typeof r.createdAt === "string" ? r.createdAt : "";
+        const spans = (r.stateHistory && Array.isArray(r.stateHistory.nodes)
+          ? r.stateHistory.nodes
+          : []);
+        if (spans.length === 0) {
+          if (createdAt) all.push(createdAt);
+          break;
+        }
+        const teamKey = r.team && r.team.key != null ? String(r.team.key) : "";
+        for (const span of spans) {
+          const key = span && typeof span.startedAt === "string" ? span.startedAt : "";
+          if (!key) continue;
+          all.push(key);
+          if (createdAt && !(key > createdAt)) continue;
+          const name = span.state && span.state.name != null ? String(span.state.name) : "";
+          if (trigger.status && name.toLowerCase() !== trigger.status.toLowerCase()) continue;
+          if (trigger.team && teamKey.toLowerCase() !== trigger.team.toLowerCase()) continue;
+          const id = r.identifier || "?";
+          matched.push({
+            key,
+            text: `${id} moved to ${name || "?"}: ${r.title || ""} (${r.url || ""})`,
+          });
+        }
+        break;
+      }
+      case "sentry_issue": {
+        const key = typeof r.firstSeen === "string" ? r.firstSeen : "";
+        if (!key) continue;
+        all.push(key);
+        matched.push({
+          key,
+          text: `${r.shortId || r.id || "?"} first seen: ${r.title || ""} (${r.permalink || ""})`,
+        });
+        break;
+      }
       default: {
         // Activity events API. Payloads were trimmed in 2025; only ids,
         // numbers, refs and states are relied on here.
@@ -201,14 +332,13 @@ function maxKey(keys, fallback) {
 
 /**
  * Prompt section describing the events that fired this run.
- * @param {string} event
- * @param {{ owner: string, repo: string }} remote
+ * @param {string} title text after `[Trigger] ` and before the event count
  * @param {Array<{ text: string }>} items oldest first
  */
-function formatTriggerNote(event, remote, items) {
+function formatTriggerNote(title, items) {
   const shown = items.slice(-MAX_EVENTS_IN_PROMPT);
   const lines = [
-    `[Trigger] GitHub ${event} on ${remote.owner}/${remote.repo} (${items.length} new event${items.length === 1 ? "" : "s"}):`,
+    `[Trigger] ${title} (${items.length} new event${items.length === 1 ? "" : "s"}):`,
     ...shown.map((i) => `- ${i.text}`),
   ];
   if (items.length > shown.length) {
@@ -257,30 +387,41 @@ async function pollTriggers(ctx, firing) {
     if (!project || !project.path) continue;
     const trigger = auto.trigger;
     try {
-      const remote = await remoteFor(project.path);
-      if (!remote) throw new Error("project origin is not a GitHub repo");
-      const source = sourceFor(trigger.event);
-      const cacheKey = `${remote.host}/${remote.owner}/${remote.repo}|${source}`;
-      if (!cache.has(cacheKey)) {
-        cache.set(
-          cacheKey,
-          (async () => {
-            const token = await tokenFor(remote.host);
-            if (!token) throw new Error(`no token for ${remote.host} (run gh auth login)`);
-            return fetchSource(remote, source, rest, token);
-          })(),
-        );
+      let remote = null;
+      let rows;
+      if (trigger.type === "linear" || trigger.type === "sentry") {
+        rows = await loadRows(trigger, deps, ctx.store, cache);
+      } else {
+        remote = await remoteFor(project.path);
+        if (!remote) throw new Error("project origin is not a GitHub repo");
+        const source = sourceFor(trigger.event);
+        const cacheKey = `${remote.host}/${remote.owner}/${remote.repo}|${source}`;
+        if (!cache.has(cacheKey)) {
+          cache.set(
+            cacheKey,
+            (async () => {
+              const token = await tokenFor(remote.host);
+              if (!token) throw new Error(`no token for ${remote.host} (run gh auth login)`);
+              return fetchSource(remote, source, rest, token);
+            })(),
+          );
+        }
+        rows = await cache.get(cacheKey);
       }
-      const rows = await cache.get(cacheKey);
-      const { all, matched } = matchRows(trigger, rows, remote);
-      if (auto.lastError && auto.lastError.startsWith(POLL_ERROR)) {
+      const { all, matched } = matchRows(trigger, rows, remote || { host: "", owner: "", repo: "" });
+      const prefix = pollErrorPrefix(trigger.type);
+      if (auto.lastError && auto.lastError.startsWith(prefix)) {
         patchAutomation(ctx.store, auto.id, { lastError: null });
         ctx.store.save();
       }
       const cursor = auto.triggerCursor;
       if (cursor == null) {
         // Baseline: an empty repo starts at the zero of its key type.
-        const zero = trigger.event === "ci_completed" ? "" : 0;
+        // Linear/Sentry and ci_completed key on ISO timestamps (string `>`).
+        const zero =
+          trigger.event === "ci_completed" || trigger.type === "linear" || trigger.type === "sentry"
+            ? ""
+            : 0;
         patchAutomation(ctx.store, auto.id, { triggerCursor: maxKey(all, zero) });
         ctx.store.save();
         continue;
@@ -296,13 +437,13 @@ async function pollTriggers(ctx, firing) {
       try {
         await ctx.fireRun(
           auto,
-          formatTriggerNote(trigger.event, remote, fresh),
+          formatTriggerNote(triggerNoteTitle(trigger, remote), fresh),
         );
       } finally {
         firing.delete(auto.id);
       }
     } catch (err) {
-      const msg = POLL_ERROR + (err && err.message ? String(err.message) : String(err));
+      const msg = pollErrorPrefix(trigger.type) + (err && err.message ? String(err.message) : String(err));
       if (auto.lastError !== msg) {
         patchAutomation(ctx.store, auto.id, { lastError: msg });
         ctx.store.save();

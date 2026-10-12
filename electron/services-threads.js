@@ -257,6 +257,7 @@ function createThread(store, input) {
     baseBranch: normalizeBaseBranch(input.baseBranch),
     prNumber: null,
     prUrl: null,
+    prLinks: [],
     status: "idle",
     lastError: null,
     lastErrorKind: null,

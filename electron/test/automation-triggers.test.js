@@ -13,7 +13,7 @@ const {
   settleAutomationRuns,
   MAX_MEMORY_CHARS,
 } = require("../automations.js");
-const { matchRows, normalizeTrigger } = require("../automation-triggers.js");
+const { matchRows, normalizeTrigger, parseTriggerInput } = require("../automation-triggers.js");
 
 const remote = { host: "github.com", owner: "acme", repo: "app" };
 
@@ -27,8 +27,94 @@ describe("normalizeTrigger / matchRows", () => {
       branch: null,
       label: null,
       conclusion: null,
+      team: null,
+      status: null,
+      org: null,
+      project: null,
+      environment: null,
     });
     assert.equal(normalizeTrigger({ event: "ci_completed", conclusion: "bogus" }).conclusion, null);
+  });
+
+  it("normalizes Linear and Sentry events and drops filters that do not apply", () => {
+    assert.deepEqual(
+      normalizeTrigger({
+        event: "linear_issue_created",
+        team: "eng",
+        status: "Done",
+        org: "acme",
+        branch: "main",
+      }),
+      {
+        type: "linear",
+        event: "linear_issue_created",
+        branch: null,
+        label: null,
+        conclusion: null,
+        team: "eng",
+        status: null,
+        org: null,
+        project: null,
+        environment: null,
+      },
+    );
+    assert.deepEqual(
+      normalizeTrigger({
+        event: "linear_status_changed",
+        team: "ENG",
+        status: "Done",
+      }),
+      {
+        type: "linear",
+        event: "linear_status_changed",
+        branch: null,
+        label: null,
+        conclusion: null,
+        team: "ENG",
+        status: "Done",
+        org: null,
+        project: null,
+        environment: null,
+      },
+    );
+    assert.deepEqual(
+      normalizeTrigger({
+        event: "sentry_issue",
+        org: "acme",
+        project: "pump",
+        environment: "prod",
+        team: "ENG",
+      }),
+      {
+        type: "sentry",
+        event: "sentry_issue",
+        branch: null,
+        label: null,
+        conclusion: null,
+        team: null,
+        status: null,
+        org: "acme",
+        project: "pump",
+        environment: "prod",
+      },
+    );
+    assert.equal(normalizeTrigger({ event: "pr_opened" }).type, "github");
+    assert.equal(normalizeTrigger({ event: "nope" }), null);
+  });
+
+  it("parseTriggerInput rejects sentry_issue without org or project", () => {
+    assert.throws(
+      () => parseTriggerInput({ event: "sentry_issue", org: "acme" }),
+      /Sentry trigger requires org and project/,
+    );
+    assert.throws(
+      () => parseTriggerInput({ event: "sentry_issue", project: "pump" }),
+      /Sentry trigger requires org and project/,
+    );
+    assert.deepEqual(
+      parseTriggerInput({ event: "sentry_issue", org: "acme", project: "pump" }).event,
+      "sentry_issue",
+    );
   });
 
   it("labeled matches the label name case-insensitively, issues and PRs", () => {
@@ -65,6 +151,82 @@ describe("normalizeTrigger / matchRows", () => {
     const rev = matchRows({ event: "review_submitted" }, rows, remote).matched;
     assert.equal(rev.length, 1);
     assert.match(rev[0].text, /Review approved on PR #4 by b/);
+  });
+});
+
+describe("Linear and Sentry matchRows (#1588)", () => {
+  it("linear_issue_created keys on createdAt and filters team case-insensitively", () => {
+    const rows = [
+      { identifier: "ENG-3", title: "c", url: "u3", createdAt: "2026-10-11T03:00:00Z", team: { key: "ENG" } },
+      { identifier: "DOC-1", title: "d", url: "u1", createdAt: "2026-10-11T02:00:00Z", team: { key: "DOC" } },
+      { identifier: "eng-2", title: "b", url: "u2", createdAt: "2026-10-11T01:00:00Z", team: { key: "eng" } },
+    ];
+    const { all, matched } = matchRows(
+      { event: "linear_issue_created", team: "eng" },
+      rows,
+    );
+    assert.deepEqual(all, [
+      "2026-10-11T03:00:00Z",
+      "2026-10-11T02:00:00Z",
+      "2026-10-11T01:00:00Z",
+    ]);
+    assert.deepEqual(matched.map((m) => m.key), ["2026-10-11T03:00:00Z", "2026-10-11T01:00:00Z"]);
+    assert.match(matched[0].text, /^ENG-3 created: c \(u3\)$/);
+  });
+
+  it("linear_status_changed skips the birth span and filters status + team", () => {
+    const rows = [
+      {
+        identifier: "ENG-9",
+        title: "Fix login",
+        url: "u9",
+        createdAt: "2026-10-11T00:00:00Z",
+        team: { key: "ENG" },
+        stateHistory: {
+          nodes: [
+            { startedAt: "2026-10-11T00:00:00Z", state: { name: "Todo" } },
+            { startedAt: "2026-10-11T04:00:00Z", state: { name: "Done" } },
+          ],
+        },
+      },
+      {
+        identifier: "DOC-1",
+        title: "docs",
+        url: "ud",
+        createdAt: "2026-10-11T00:00:00Z",
+        team: { key: "DOC" },
+        stateHistory: { nodes: [{ startedAt: "2026-10-11T05:00:00Z", state: { name: "Done" } }] },
+      },
+    ];
+    const { all, matched } = matchRows(
+      { event: "linear_status_changed", team: "eng", status: "done" },
+      rows,
+    );
+    assert.ok(all.includes("2026-10-11T00:00:00Z"));
+    assert.ok(all.includes("2026-10-11T04:00:00Z"));
+    assert.deepEqual(matched.map((m) => m.key), ["2026-10-11T04:00:00Z"]);
+    assert.equal(matched[0].text, "ENG-9 moved to Done: Fix login (u9)");
+  });
+
+  it("sentry_issue keys on firstSeen and skips rows without it", () => {
+    const rows = [
+      { firstSeen: "2026-10-11T06:00:00Z", shortId: "PUMP-1", title: "boom", permalink: "p1" },
+      { title: "no date" },
+    ];
+    const { all, matched } = matchRows({ event: "sentry_issue" }, rows);
+    assert.deepEqual(all, ["2026-10-11T06:00:00Z"]);
+    assert.equal(matched[0].text, "PUMP-1 first seen: boom (p1)");
+  });
+});
+
+describe("formatTriggerNote (#1588)", () => {
+  const { formatTriggerNote } = require("../automation-triggers.js");
+  it("uses the title string and the same 20-event cap", () => {
+    const items = [{ text: "a" }, { text: "b" }];
+    assert.equal(
+      formatTriggerNote("Linear issue created", items),
+      "[Trigger] Linear issue created (2 new events):\n- a\n- b",
+    );
   });
 });
 
@@ -355,6 +517,139 @@ describe("event-triggered automations", () => {
       assert.equal(store.getAutomation("shared:p1:pr-triage").prompt, "Stale");
     } finally {
       sched.stop();
+    }
+  });
+});
+
+describe("Linear and Sentry pollTriggers (#1588)", () => {
+  let tmpDir;
+  let store;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-trig-"));
+    store = new Store(path.join(tmpDir, "store.json"));
+    store.setProjects([{ id: "p1", slug: "acme/app", name: "app", path: tmpDir }]);
+    store.saveNow();
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("baselines Linear created, then batches, and records a missing-key error without the breaker", async () => {
+    const auto = services.addAutomation(store, {
+      projectId: "p1",
+      name: "Lin",
+      prompt: "triage",
+      provider: "claude",
+      preset: "hourly",
+      trigger: { event: "linear_issue_created" },
+    });
+    let nodes = [{ identifier: "ENG-1", title: "old", url: "u1", createdAt: "2026-10-11T01:00:00Z", team: { key: "ENG" } }];
+    const started = [];
+    const sched = startScheduler({
+      store,
+      runner: { startRun: async (input) => { started.push(input); return { runId: "r" }; } },
+      intervalMs: 60 * 60 * 1000,
+      triggerDeps: {
+        linearGraphql: async () => nodes,
+      },
+    });
+    store.setSettings({ linearApiKey: "k" });
+    try {
+      await sched.tick();
+      assert.equal(started.length, 0);
+      assert.equal(store.getAutomation(auto.id).triggerCursor, "2026-10-11T01:00:00Z");
+      nodes = [
+        { identifier: "ENG-3", title: "c", url: "u3", createdAt: "2026-10-11T03:00:00Z", team: { key: "ENG" } },
+        { identifier: "ENG-2", title: "b", url: "u2", createdAt: "2026-10-11T02:00:00Z", team: { key: "ENG" } },
+        nodes[0],
+      ];
+      await sched.tick();
+      assert.equal(started.length, 1);
+      assert.match(started[0].prompt, /\[Trigger\] Linear issue created \(2 new events\)/);
+      assert.ok(started[0].prompt.indexOf("ENG-2") < started[0].prompt.indexOf("ENG-3"));
+      assert.equal(store.getAutomation(auto.id).triggerCursor, "2026-10-11T03:00:00Z");
+    } finally {
+      sched.stop();
+    }
+
+    const missing = services.addAutomation(store, {
+      projectId: "p1",
+      name: "Lin2",
+      prompt: "x",
+      provider: "claude",
+      preset: "hourly",
+      trigger: { event: "linear_issue_created" },
+    });
+    store.setSettings({ linearApiKey: null });
+    const prev = process.env.LINEAR_API_KEY;
+    delete process.env.LINEAR_API_KEY;
+    const errSched = startScheduler({
+      store,
+      runner: { startRun: async () => ({}) },
+      intervalMs: 60 * 60 * 1000,
+      triggerDeps: { linearGraphql: async () => { throw new Error("should not fetch"); } },
+    });
+    try {
+      await errSched.tick();
+    } finally {
+      errSched.stop();
+      if (prev != null) process.env.LINEAR_API_KEY = prev;
+    }
+    const after = store.getAutomation(missing.id);
+    assert.match(after.lastError, /^Linear trigger: no api key/);
+    assert.equal(after.consecutiveFailures, 0);
+    assert.equal(after.enabled, true);
+  });
+
+  it("Sentry missing token is a poll error; happy path notes org/project", async () => {
+    const auto = services.addAutomation(store, {
+      projectId: "p1",
+      name: "Sen",
+      prompt: "fix",
+      provider: "claude",
+      preset: "hourly",
+      trigger: { event: "sentry_issue", org: "acme", project: "pump" },
+    });
+    const errSched = startScheduler({
+      store,
+      runner: { startRun: async () => ({}) },
+      intervalMs: 60 * 60 * 1000,
+      triggerDeps: { sentryIssues: async () => [] },
+    });
+    try {
+      await errSched.tick();
+    } finally {
+      errSched.stop();
+    }
+    assert.match(store.getAutomation(auto.id).lastError, /^Sentry trigger: no auth token/);
+    assert.equal(store.getAutomation(auto.id).enabled, true);
+
+    const prevSentry = process.env.SENTRY_AUTH_TOKEN;
+    process.env.SENTRY_AUTH_TOKEN = "st";
+    let rows = [{ firstSeen: "2026-10-11T01:00:00Z", shortId: "P-1", title: "old", permalink: "p" }];
+    const started = [];
+    const ok = startScheduler({
+      store,
+      runner: { startRun: async (input) => { started.push(input); return { runId: "r" }; } },
+      intervalMs: 60 * 60 * 1000,
+      triggerDeps: { sentryIssues: async () => rows },
+    });
+    try {
+      await ok.tick();
+      assert.equal(started.length, 0);
+      rows = [
+        { firstSeen: "2026-10-11T02:00:00Z", shortId: "P-2", title: "new", permalink: "p2" },
+        rows[0],
+      ];
+      await ok.tick();
+      assert.equal(started.length, 1);
+      assert.match(started[0].prompt, /\[Trigger\] Sentry issue on acme\/pump \(1 new event\)/);
+    } finally {
+      ok.stop();
+      if (prevSentry == null) delete process.env.SENTRY_AUTH_TOKEN;
+      else process.env.SENTRY_AUTH_TOKEN = prevSentry;
     }
   });
 });

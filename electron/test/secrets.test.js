@@ -205,6 +205,15 @@ describe("createSecrets", () => {
     assert.equal(revealed.settings.linearApiKey, "lin_api_secret");
   });
 
+  it("seals and reveals a Sentry auth token (#1588)", () => {
+    const s = createSecrets({ safeStorage: fakeSafeStorage() });
+    const sealed = s.concealSettings({ sentryAuthToken: "sntrys_secret" });
+    assert.notEqual(sealed.sentryAuthToken, "sntrys_secret");
+    assert.ok(s.isSealed(sealed.sentryAuthToken));
+    const revealed = s.revealSettings(sealed);
+    assert.equal(revealed.settings.sentryAuthToken, "sntrys_secret");
+  });
+
   it("seals and reveals a saved GitHub host token (#1528)", () => {
     const s = createSecrets({ safeStorage: fakeSafeStorage() });
     const sealed = s.concealSettings({

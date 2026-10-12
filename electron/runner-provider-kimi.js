@@ -39,6 +39,7 @@ function createKimiRun(ctx) {
     appendMessage,
     userDataPath,
     persistToolImages,
+    persistToolHtml,
     noteToolSpan,
     clearRun,
     notifyRunTerminal,
@@ -365,6 +366,7 @@ function createKimiRun(ctx) {
           mcpServers: kimiMcpServersForRun({
             projectId: thread.projectId,
             projectPath: localCwd || project.path,
+            threadId,
           }),
         });
         kimiEnv = { KIMI_CODE_HOME: dest };
@@ -504,6 +506,7 @@ function createKimiRun(ctx) {
                   isError: tool.isError,
                   done: true,
                   ...persistToolImages(threadId, tool.images),
+                  ...persistToolHtml(tool.html),
                 },
               });
               noteToolSpan(threadId, runId, tool.id, tool.name, tool.isError);
@@ -529,6 +532,7 @@ function createKimiRun(ctx) {
               isError: tool.isError,
               done: true,
               ...persistToolImages(threadId, tool.images),
+              ...persistToolHtml(tool.html),
             };
             appendMessage(threadId, "tool", tool.name, runId, toolMeta);
             // Post-tool text starts a fresh message below the tool call.

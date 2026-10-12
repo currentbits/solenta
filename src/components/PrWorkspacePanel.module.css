@@ -29,6 +29,95 @@
   color: var(--text);
 }
 
+.prPicker {
+  min-width: 0;
+  flex: 1;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  padding: 6px 16px 0;
+  border-bottom: 1px solid var(--border-soft);
+  flex-shrink: 0;
+}
+
+.tab {
+  height: 28px;
+  padding: 0 10px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 550;
+  cursor: pointer;
+}
+
+.tab[aria-selected="true"] {
+  color: var(--text);
+  border-bottom-color: var(--text);
+}
+
+.codeTab {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.codeToolbar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.codePicker {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+
+.codePicker select {
+  height: 28px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--text);
+  font-size: 12px;
+}
+
+.viewedChip {
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.viewedChip[data-pr-viewed-state="changed"] {
+  color: var(--amber);
+}
+
+.viewedRow {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.panel[data-pr-tab="code"] {
+  flex-basis: 58%;
+  max-width: 720px;
+}
+
 .icon {
   width: 28px;
   height: 28px;

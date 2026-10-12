@@ -189,6 +189,13 @@ describe("streaming markdown chunks", () => {
     }
   });
 
+  it("splits around a closed html fence whose source starts with < (#1525)", () => {
+    assert.deepEqual(
+      markdownChunks("Intro\n\n```html\n<h1>Hi</h1>\n```\n\nNext"),
+      ["Intro\n\n", "```html\n<h1>Hi</h1>\n```\n\n", "Next"],
+    );
+  });
+
   it("random block mixes render like one parse (seeded fuzz)", () => {
     const blocks = [
       "para one\nlazy line", "Setext\n===", "---", "- a\n- b", "- a\n\n  cont",

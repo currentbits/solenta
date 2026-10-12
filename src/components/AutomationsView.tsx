@@ -40,6 +40,8 @@ export interface AutomationsViewProps {
    * list is still loading — treat runs as openable.
    */
   liveThreads?: Array<{ id: string; status: ThreadStatus }>;
+  /** Open this row in the form (automation_create card, #1599). */
+  focusId?: string | null;
   onCreate: (input: AutomationWrite) => Promise<void> | void;
   onUpdate: (
     input: Partial<AutomationWrite> & { id: string },
@@ -262,6 +264,7 @@ export function AutomationsView({
   loadRuns,
   onSelectThread,
   liveThreads,
+  focusId,
   onCreate,
   onUpdate,
   onRemove,
@@ -286,6 +289,11 @@ export function AutomationsView({
   const [branch, setBranch] = useState("");
   const [label, setLabel] = useState("");
   const [conclusion, setConclusion] = useState("");
+  const [team, setTeam] = useState("");
+  const [status, setStatus] = useState("");
+  const [org, setOrg] = useState("");
+  const [project, setProject] = useState("");
+  const [environment, setEnvironment] = useState("");
   const [memory, setMemory] = useState("");
   const [scope, setScope] = useState<AutomationScope>("private");
   const [wroteFile, setWroteFile] = useState(false);
@@ -327,10 +335,24 @@ export function AutomationsView({
     setBranch(auto.trigger?.branch ?? "");
     setLabel(auto.trigger?.label ?? "");
     setConclusion(auto.trigger?.conclusion ?? "");
+    setTeam(auto.trigger?.team ?? "");
+    setStatus(auto.trigger?.status ?? "");
+    setOrg(auto.trigger?.org ?? "");
+    setProject(auto.trigger?.project ?? "");
+    setEnvironment(auto.trigger?.environment ?? "");
     setMemory(auto.memory ?? "");
     setScope(auto.scope ?? "private");
     setFormError(null);
   };
+
+  const focusedIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!focusId || focusedIdRef.current === focusId) return;
+    const found = automations.find((a) => a.id === focusId);
+    if (!found) return;
+    focusedIdRef.current = focusId;
+    fillFrom(found);
+  }, [focusId, automations]);
 
   const clearEdit = () => {
     setEditingId(null);
@@ -344,6 +366,11 @@ export function AutomationsView({
     setBranch("");
     setLabel("");
     setConclusion("");
+    setTeam("");
+    setStatus("");
+    setOrg("");
+    setProject("");
+    setEnvironment("");
     setMemory("");
     setScope("private");
     setFormError(null);
@@ -390,13 +417,28 @@ export function AutomationsView({
   }, [projectScopeBlocked, scope, editingId]);
 
   const needsHour = !event && (preset === "daily" || preset === "weekly");
+  const triggerType = isTriggerEvent(event)
+    ? event.startsWith("linear_")
+      ? "linear"
+      : event === "sentry_issue"
+        ? "sentry"
+        : "github"
+    : "github";
   const trigger: AutomationTrigger | null = event
     ? {
-        type: "github",
+        type: triggerType,
         event,
         branch: branch.trim() || null,
         label: label.trim() || null,
         conclusion: (conclusion || null) as AutomationTrigger["conclusion"],
+        team:
+          event === "linear_issue_created" || event === "linear_status_changed"
+            ? team.trim() || null
+            : null,
+        status: event === "linear_status_changed" ? status.trim() || null : null,
+        org: event === "sentry_issue" ? org.trim() || null : null,
+        project: event === "sentry_issue" ? project.trim() || null : null,
+        environment: event === "sentry_issue" ? environment.trim() || null : null,
       }
     : null;
   const providerModels =
@@ -416,6 +458,9 @@ export function AutomationsView({
       provider,
       preset: event ? "hourly" : preset,
       hour,
+      event,
+      org,
+      project,
     });
     if (error) {
       setFormError(error);
@@ -671,11 +716,20 @@ export function AutomationsView({
               <optgroup label="GitHub event (polled every minute)">
                 {(
                   Object.keys(TRIGGER_EVENT_LABELS) as AutomationTriggerEvent[]
-                ).map((ev) => (
-                  <option key={ev} value={ev}>
-                    {TRIGGER_EVENT_LABELS[ev]}
-                  </option>
-                ))}
+                )
+                  .filter((ev) => !ev.startsWith("linear_") && ev !== "sentry_issue")
+                  .map((ev) => (
+                    <option key={ev} value={ev}>
+                      {TRIGGER_EVENT_LABELS[ev]}
+                    </option>
+                  ))}
+              </optgroup>
+              <optgroup label="Linear event (polled every minute)">
+                <option value="linear_issue_created">{TRIGGER_EVENT_LABELS.linear_issue_created}</option>
+                <option value="linear_status_changed">{TRIGGER_EVENT_LABELS.linear_status_changed}</option>
+              </optgroup>
+              <optgroup label="Sentry event (polled every minute)">
+                <option value="sentry_issue">{TRIGGER_EVENT_LABELS.sentry_issue}</option>
               </optgroup>
             </select>
           </label>
@@ -724,6 +778,77 @@ export function AutomationsView({
                 <option value="cancelled">cancelled</option>
                 <option value="timed_out">timed out</option>
               </select>
+            </label>
+          ) : null}
+          {event === "linear_issue_created" || event === "linear_status_changed" ? (
+            <label className={styles.field}>
+              <span className={styles.label}>Team</span>
+              <input
+                className={styles.input}
+                value={team}
+                onChange={(e) => setTeam(e.target.value)}
+                name="team"
+                aria-label="Team"
+                placeholder="Any team"
+                autoComplete="off"
+              />
+            </label>
+          ) : null}
+          {event === "linear_status_changed" ? (
+            <label className={styles.field}>
+              <span className={styles.label}>Status</span>
+              <input
+                className={styles.input}
+                value={status}
+                onChange={(e) => setStatus(e.target.value)}
+                name="status"
+                aria-label="Status"
+                placeholder="Any status"
+                autoComplete="off"
+              />
+            </label>
+          ) : null}
+          {event === "sentry_issue" ? (
+            <label className={styles.field}>
+              <span className={styles.label}>Org</span>
+              <input
+                className={styles.input}
+                value={org}
+                onChange={(e) => setOrg(e.target.value)}
+                name="org"
+                aria-label="Org"
+                autoComplete="off"
+                spellCheck={false}
+              />
+            </label>
+          ) : null}
+          {event === "sentry_issue" ? (
+            <label className={styles.field}>
+              <span className={styles.label}>Project</span>
+              <input
+                className={styles.input}
+                value={project}
+                onChange={(e) => setProject(e.target.value)}
+                name="project"
+                aria-label="Project"
+                autoComplete="off"
+                spellCheck={false}
+              />
+            </label>
+          ) : null}
+          {event === "sentry_issue" ? (
+            <label className={styles.field}>
+              <span className={styles.label}>Environment</span>
+              <input
+                className={styles.input}
+                value={environment}
+                onChange={(e) => setEnvironment(e.target.value)}
+                name="environment"
+                aria-label="Environment"
+                placeholder="Any environment"
+                autoComplete="off"
+                spellCheck={false}
+              />
             </label>
           ) : null}
           {needsHour ? (

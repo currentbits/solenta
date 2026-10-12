@@ -392,12 +392,15 @@ function extractLiveItem(ev) {
     let output = null;
     /** @type {{ mediaType: string, data: string }[] | undefined} */
     let images;
+    /** @type {string | undefined} */
+    let html;
     if (item.error && typeof item.error === "object" && item.error.message) {
       output = String(item.error.message);
     } else if (item.result != null) {
       const harvested = harvestToolResult(item.result);
       if (harvested.images.length) images = harvested.images;
-      const payload = harvested.images.length
+      if (harvested.html) html = harvested.html;
+      const payload = harvested.images.length || harvested.html
         ? harvested.redacted
         : item.result;
       try {
@@ -416,6 +419,7 @@ function extractLiveItem(ev) {
       input,
       output,
       ...(images ? { images } : {}),
+      ...(html ? { html } : {}),
       isError: status === "failed" || Boolean(item.error),
       done: phase === "completed",
       server,

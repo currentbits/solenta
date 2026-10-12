@@ -70,6 +70,7 @@ const EMPTY = {
   automations: [],
   tasksByCrew: {},
   digestSeenAt: null,
+  prViewed: {},
   // autoSettleAfterDays defaults to 3 (AUTO_SETTLE_AFTER_DAYS); null = disabled.
   settings: {
     dailyBudgetUsd: null,
@@ -1536,6 +1537,12 @@ class Store {
         !Array.isArray(parsed.tasksByCrew)
           ? parsed.tasksByCrew
           : {},
+      prViewed:
+        parsed.prViewed &&
+        typeof parsed.prViewed === "object" &&
+        !Array.isArray(parsed.prViewed)
+          ? parsed.prViewed
+          : {},
       settings: normalizeSettings(revealed.settings),
     };
     ensureWorkflowTemplates(data);
@@ -2131,7 +2138,8 @@ class Store {
 
   appendWorkLog(threadId, item) {
     const list = this.getWorkLog(threadId).slice();
-    list.push(item);
+    // Work-log items carry tool commands and output too (#1531).
+    list.push(threadSecrets.redact(threadId, item));
     this.setWorkLog(threadId, list);
   }
 
@@ -2384,7 +2392,7 @@ class Store {
     const list = this.getWorkLog(threadId).slice();
     const idx = list.findIndex((w) => w.id === itemId);
     if (idx < 0) return null;
-    list[idx] = { ...list[idx], ...patch };
+    list[idx] = { ...list[idx], ...threadSecrets.redact(threadId, patch) };
     this.setWorkLog(threadId, list);
     return list[idx];
   }
@@ -2470,6 +2478,27 @@ class Store {
   getThread(threadId) {
     if (threadId == null) return null;
     return this.data.threads.find((t) => t.id === threadId) || null;
+  }
+
+  getPrViewedMarks(key) {
+    const all = this.data.prViewed;
+    if (!all || typeof all !== "object") return {};
+    const row = all[key];
+    return row && row.files && typeof row.files === "object" ? row.files : {};
+  }
+
+  setPrViewedMark(key, filePath, mark) {
+    if (!this.data.prViewed || typeof this.data.prViewed !== "object") {
+      this.data.prViewed = {};
+    }
+    const prev = this.data.prViewed[key];
+    const files = {
+      ...(prev && prev.files && typeof prev.files === "object" ? prev.files : {}),
+    };
+    if (mark) files[filePath] = mark;
+    else delete files[filePath];
+    this.data.prViewed[key] = { files };
+    this.save();
   }
 
   /**
@@ -2571,6 +2600,7 @@ function cloneEmpty() {
     automations: [],
     tasksByCrew: {},
     digestSeenAt: null,
+    prViewed: {},
     // autoSettleAfterDays defaults to 3 (AUTO_SETTLE_AFTER_DAYS); null = disabled.
     settings: {
       dailyBudgetUsd: null,

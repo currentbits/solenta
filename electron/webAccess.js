@@ -17,6 +17,8 @@ const LOOPBACK = "127.0.0.1";
 const ANY = "0.0.0.0";
 const TAILSCALE_BINS = ["tailscale", "/Applications/Tailscale.app/Contents/MacOS/Tailscale"];
 const TAILSCALE_TIMEOUT_MS = 20_000;
+/** Dedicated HTTPS port so MCP Funnel does not fight Solenta Web Serve on :443. */
+const MCP_FUNNEL_HTTPS_PORT = 8443;
 
 function defaultExec(file, args, opts) {
   return new Promise((resolve, reject) => {
@@ -90,6 +92,130 @@ function errorText(err) {
  * @param {() => ReturnType<typeof os.networkInterfaces>} [deps.networkInterfaces]
  * @param {(msg: string) => void} [deps.log]
  */
+function createTailscaleClient(exec) {
+  /** @type {string | null | undefined} */
+  let tailscaleBin;
+  async function tailscale(cmdArgs) {
+    if (tailscaleBin === undefined) {
+      tailscaleBin = null;
+      for (const bin of TAILSCALE_BINS) {
+        try {
+          await exec(bin, ["version"]);
+          tailscaleBin = bin;
+          break;
+        } catch {
+          // not this one
+        }
+      }
+    }
+    if (!tailscaleBin) return null;
+    return exec(tailscaleBin, cmdArgs);
+  }
+  return { tailscale };
+}
+
+function funnelPublicUrl(host, httpsPort) {
+  const h = String(host || "").replace(/\.$/, "");
+  if (!h) return null;
+  return httpsPort === 443 ? `https://${h}` : `https://${h}:${httpsPort}`;
+}
+
+/**
+ * Opt-in Tailscale Funnel for the orch MCP port (#1541).
+ * Reuses the same CLI probe as Solenta Web Serve. Off until set({ on: true }).
+ */
+function createMcpFunnel(deps) {
+  const exec = deps.exec || defaultExec;
+  const log = deps.log || (() => {});
+  const httpsPort = deps.httpsPort || MCP_FUNNEL_HTTPS_PORT;
+  const { tailscale } = createTailscaleClient(exec);
+
+  async function status(port) {
+    let st;
+    try {
+      st = await tailscale(["status", "--json"]);
+    } catch (err) {
+      return {
+        installed: true,
+        loggedIn: false,
+        host: null,
+        serving: false,
+        url: null,
+        error: errorText(err),
+      };
+    }
+    if (!st) {
+      return { installed: false, loggedIn: false, host: null, serving: false, url: null };
+    }
+    let json = {};
+    try {
+      json = JSON.parse(st.stdout);
+    } catch {
+      // treat as logged out
+    }
+    const loggedIn = json.BackendState === "Running";
+    const dns = String((json.Self && json.Self.DNSName) || "").replace(/\.$/, "");
+    const base = { installed: true, loggedIn, host: dns || null, serving: false, url: null };
+    if (!loggedIn) return base;
+    try {
+      const sv = await tailscale(["funnel", "status", "--json"]);
+      const ours = serveProxies(JSON.parse(sv.stdout || "{}")).find((p) => {
+        if (Number.isInteger(port) && port > 0) return pointsAtPort(p.proxy, port);
+        const [, pnum] = p.hostPort.split(":");
+        return Number(pnum) === httpsPort;
+      });
+      if (ours) {
+        const [, p] = ours.hostPort.split(":");
+        const https = Number(p) || httpsPort;
+        return { ...base, serving: true, url: funnelPublicUrl(dns || ours.hostPort.split(":")[0], https) };
+      }
+    } catch (err) {
+      log(`mcp-funnel: status failed: ${errorText(err)}`);
+    }
+    return base;
+  }
+
+  async function set(input) {
+    const on = Boolean(input && input.on);
+    const port = input && input.port;
+    const current = await status(port);
+    if (!current.installed) throw new Error("Tailscale is not installed.");
+    if (!current.loggedIn) throw new Error("Tailscale is not running or not logged in.");
+    if (on) {
+      if (!Number.isInteger(port) || port < 1) throw new Error("MCP server is not listening.");
+      if (current.serving) return current;
+      const sv = await tailscale(["funnel", "status", "--json"]);
+      const taken = serveProxies(JSON.parse((sv && sv.stdout) || "{}")).find((p) => {
+        const [, pnum] = p.hostPort.split(":");
+        return Number(pnum) === httpsPort && !pointsAtPort(p.proxy, port);
+      });
+      if (taken) {
+        throw new Error(`Tailscale Funnel already sends HTTPS :${httpsPort} to ${taken.proxy}. Remove that first.`);
+      }
+      try {
+        await tailscale([
+          "funnel",
+          "--bg",
+          "--yes",
+          `--https=${httpsPort}`,
+          `http://${LOOPBACK}:${port}`,
+        ]);
+      } catch (err) {
+        throw new Error(errorText(err));
+      }
+    } else if (current.serving) {
+      try {
+        await tailscale(["funnel", "--yes", `--https=${httpsPort}`, "off"]);
+      } catch (err) {
+        throw new Error(errorText(err));
+      }
+    }
+    return status(port);
+  }
+
+  return { status, set };
+}
+
 function createWebAccess(deps) {
   const devices = deps.devices;
   const exec = deps.exec || defaultExec;
@@ -98,8 +224,7 @@ function createWebAccess(deps) {
   /** @type {any} */
   let server = null;
   let host = LOOPBACK;
-  /** @type {string | null | undefined} undefined = not probed yet */
-  let tailscaleBin;
+  const { tailscale } = createTailscaleClient(exec);
 
   async function start(opts) {
     await stop();
@@ -116,23 +241,6 @@ function createWebAccess(deps) {
     const s = server;
     server = null;
     if (s) await s.close();
-  }
-
-  async function tailscale(cmdArgs) {
-    if (tailscaleBin === undefined) {
-      tailscaleBin = null;
-      for (const bin of TAILSCALE_BINS) {
-        try {
-          await exec(bin, ["version"]);
-          tailscaleBin = bin;
-          break;
-        } catch {
-          // not this one
-        }
-      }
-    }
-    if (!tailscaleBin) return null;
-    return exec(tailscaleBin, cmdArgs);
   }
 
   /** Detect only. Never installs or logs in. */
@@ -291,8 +399,10 @@ function createWebAccess(deps) {
 
 module.exports = {
   createWebAccess,
+  createMcpFunnel,
   listenUrls,
   serveProxies,
   LOOPBACK,
   ANY,
+  MCP_FUNNEL_HTTPS_PORT,
 };

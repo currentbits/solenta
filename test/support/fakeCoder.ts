@@ -2305,6 +2305,28 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         threads = threads.map((t) => (t.id === i.threadId ? next : t));
         return Promise.resolve(next);
       },
+      linkPullRequest: (input: unknown) => {
+        const i = input as { threadId: string; number: number; repo?: string; url?: string };
+        calls.push({ channel: "threads.linkPullRequest", args: [input] });
+        const existing = threads.find((t) => t.id === i.threadId);
+        if (!existing) {
+          return Promise.reject(new Error(`Unknown thread: ${i.threadId}`));
+        }
+        const link = {
+          number: i.number,
+          repo: i.repo ?? null,
+          url: i.url ?? `https://github.com/acme/demo/pull/${i.number}`,
+        };
+        const prLinks = [...(existing.prLinks || []), link];
+        const next: ThreadInfo = {
+          ...existing,
+          prLinks,
+          prNumber: existing.prNumber ?? i.number,
+          prUrl: existing.prUrl ?? link.url,
+        };
+        threads = threads.map((t) => (t.id === i.threadId ? next : t));
+        return Promise.resolve(next);
+      },
       /** Honest mute: flips the flag in place, never bumps updatedAt. */
       setMuted: (input: unknown) => {
         const i = input as { threadId: string; muted: boolean };
@@ -3311,6 +3333,25 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           } satisfies PrDetail,
         } as PrDetailResult);
       },
+      prDiff: (input: unknown) =>
+        rec("git.prDiff", [input], {
+          ok: true as const,
+          headSha: "abc1234",
+          commits: [],
+          files: [],
+          patch: "",
+          truncated: false,
+        }),
+      prViewed: (input: unknown) =>
+        rec("git.prViewed", [input], { ok: true as const, marks: {} }),
+      prMarkViewed: (input: unknown) =>
+        rec("git.prMarkViewed", [input], { ok: true as const, marks: {} }),
+      prStack: (input: unknown) =>
+        rec("git.prStack", [input], { ok: true as const, stack: [], defaultBase: "main" }),
+      prRebaseStack: (input: unknown) =>
+        rec("git.prRebaseStack", [input], { ok: true as const, stack: [], defaultBase: "main" }),
+      prMergeStack: (input: unknown) =>
+        rec("git.prMergeStack", [input], { ok: true as const, stack: [], defaultBase: "main" }),
       /**
        * Round 50 contract: newest-first; empty without a worktree.
        * SOURCE list is never mutated by list.
@@ -3538,7 +3579,14 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       list: () =>
         rec("pairing.list", [], {
           pairings: [] as PairingInfo[],
-          server: { running: false, port: null, url: null },
+          server: {
+            running: false,
+            port: null,
+            url: null,
+            publicUrl: null,
+            publicEnabled: false,
+            funnel: { installed: false, loggedIn: false, host: null, serving: false, url: null },
+          },
         } satisfies PairingList),
       create: (input: unknown) =>
         rec(
@@ -3585,6 +3633,49 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       approve: (input: unknown) => rec("pairing.approve", [input], { runId: "r1" }),
       reject: (input: unknown) =>
         rec("pairing.reject", [input], threads[0] ?? ({} as ThreadInfo)),
+      setPublic: (input: unknown) =>
+        rec("pairing.setPublic", [input], {
+          pairings: [] as PairingInfo[],
+          server: {
+            running: true,
+            port: 7422,
+            url: "http://127.0.0.1:7422/mcp",
+            publicUrl: "https://mac.tail1.ts.net:8443/mcp",
+            publicEnabled: true,
+            funnel: {
+              installed: true,
+              loggedIn: true,
+              host: "mac.tail1.ts.net",
+              serving: true,
+              url: "https://mac.tail1.ts.net:8443",
+            },
+          },
+        } satisfies PairingList),
+      listConsents: () => rec("pairing.listConsents", [], []),
+      approveConsent: (input: unknown) =>
+        rec("pairing.approveConsent", [input], {
+          pairing: {
+            id: "pair-oauth",
+            name: "ChatGPT",
+            tokenPrefix: "abcd1234",
+            capabilities: ["read", "launch"],
+            projectIds: null,
+            expiresAt: null,
+            createdAt: 0,
+            lastUsedAt: null,
+            revokedAt: null,
+            requireApproval: true,
+            managedWorktree: true,
+            launchesPerHour: 30,
+            readsPerMinute: 120,
+            kind: "oauth",
+          },
+          redirect: "https://chatgpt.com/connector/oauth/callback?code=x",
+        }),
+      denyConsent: (input: unknown) =>
+        rec("pairing.denyConsent", [input], {
+          redirect: "https://chatgpt.com/connector/oauth/callback?error=access_denied",
+        }),
     },
     web: {
       status: () => rec("web.status", [], { ...web }),
@@ -4059,6 +4150,9 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         };
       }
       if (channel === "simulator:focus") {
+        return () => {};
+      }
+      if (channel === "pairing:consent") {
         return () => {};
       }
       if (channel === "speech:changed") {

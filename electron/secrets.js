@@ -281,6 +281,14 @@ function createSecrets(opts = {}) {
         nextLinearKey = sealed;
       }
     }
+    let nextSentryTok = settings.sentryAuthToken;
+    if (typeof settings.sentryAuthToken === "string" && settings.sentryAuthToken) {
+      const sealed = seal(settings.sentryAuthToken);
+      if (sealed !== settings.sentryAuthToken) {
+        changed = true;
+        nextSentryTok = sealed;
+      }
+    }
     let nextGithubHosts = settings.githubHosts;
     if (Array.isArray(settings.githubHosts)) {
       nextGithubHosts = settings.githubHosts.map((row) => {
@@ -329,6 +337,7 @@ function createSecrets(opts = {}) {
       mcpServers: nextServers,
       otel: nextOtel,
       linearApiKey: nextLinearKey,
+      sentryAuthToken: nextSentryTok,
       githubHosts: nextGithubHosts,
       webhook: nextWebhook,
       providerInstances: nextInstances,
@@ -468,6 +477,18 @@ function createSecrets(opts = {}) {
       }
     }
 
+    let nextSentryTok = settings.sentryAuthToken;
+    if (typeof settings.sentryAuthToken === "string" && settings.sentryAuthToken) {
+      hasSecret = true;
+      if (isSealed(settings.sentryAuthToken)) {
+        const plain = open(settings.sentryAuthToken, { key: "sentryAuthToken" });
+        changed = true;
+        nextSentryTok = plain == null || plain === "" ? null : plain;
+      } else if (available) {
+        migrated += 1;
+      }
+    }
+
     let nextGithubHosts = settings.githubHosts;
     if (Array.isArray(settings.githubHosts)) {
       nextGithubHosts = settings.githubHosts.map((row) => {
@@ -541,6 +562,7 @@ function createSecrets(opts = {}) {
           mcpServers: nextServers,
           otel: nextOtel,
           linearApiKey: nextLinearKey,
+          sentryAuthToken: nextSentryTok,
           githubHosts: nextGithubHosts,
           webhook: nextWebhook,
           providerInstances: nextInstances,

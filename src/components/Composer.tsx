@@ -88,15 +88,24 @@ import {
   providerVendor,
 } from "../bestOfN";
 import {
+  getContextChips,
   getReviewComments,
   keptDrafts,
   recordSent,
   scheduleDraftSave,
   sentHistory,
+  setContextChips,
   setReviewComments,
+  subscribeContextChips,
   subscribeReviewComments,
 } from "../composerSession";
 import { formatReviewCommentsPrompt } from "../diffView";
+import {
+  formatContextChipsPrompt,
+  type ContextChip,
+  type ContextChipLoader,
+  type MentionExtra,
+} from "../contextChips";
 import {
   pickerVerb,
   type SlashAction,
@@ -128,6 +137,7 @@ import { AttachmentChip } from "./composer/AttachmentChip";
 import { CommandList, MentionList } from "./composer/ComposerPopups";
 import { ReplyChip } from "./composer/ReplyChip";
 import { ReviewCommentChips } from "./composer/ReviewCommentChips";
+import { ContextChips } from "./composer/ContextChips";
 import { PasteCardList } from "./composer/PasteCardList";
 import { SpeechControls } from "./composer/SpeechControls";
 import { useComposerAttachments } from "./composer/useComposerAttachments";
@@ -262,6 +272,9 @@ interface ComposerProps {
    * replaces the token with the snippet text.
    */
   promptSnippets?: readonly PromptSnippet[];
+  mentionThreads?: ReadonlyArray<{ id: string; title: string }>;
+  mentionPrs?: ReadonlyArray<{ number: number; title: string }>;
+  mentionSkills?: ReadonlyArray<{ name: string; description: string }>;
   /**
    * Native folder picker for the mention popup's "Browse folder" row.
    * Returns a repo-relative token (trailing slash) or null if cancelled.
@@ -272,8 +285,13 @@ interface ComposerProps {
   onClearReply?: () => void;
   /** Jump back to the quoted source message in the transcript. */
   onRevealReply?: () => void;
+  /** Jump to a context chip's source (quote message, later thread). */
+  onRevealContextChip?: (chip: ContextChip) => void;
+  onContextChipUnavailable?: (chip: ContextChip) => boolean;
   /** Source message is missing or no longer matches the snapshot. */
   replySourceUnavailable?: boolean;
+  /** Expand thread/PR/skill chips at send. Absent: those chips emit a load-error line. */
+  contextChipLoader?: ContextChipLoader;
   /**
    * File/image/folder picker for attachments. Absent hides the attach button
    * (tests / shells that do not wire one). `includeImages: false` on
@@ -388,11 +406,17 @@ export const Composer = memo(function Composer({
   onDismissError,
   onListFiles,
   promptSnippets,
+  mentionThreads,
+  mentionPrs,
+  mentionSkills,
   onPickMentionFolder,
   replyTo = null,
   onClearReply,
   onRevealReply,
+  onRevealContextChip,
+  onContextChipUnavailable,
   replySourceUnavailable = false,
+  contextChipLoader,
   onPickAttachments,
   onPickFolderAttachments,
   onSaveAttachmentImage,
@@ -544,6 +568,16 @@ export const Composer = memo(function Composer({
     () => setReviewComments(threadId, () => []),
     [threadId],
   );
+  const readContextChips = () => getContextChips(threadId);
+  const contextChips = useSyncExternalStore(
+    subscribeContextChips,
+    readContextChips,
+    readContextChips,
+  );
+  const clearContextChips = useCallback(
+    () => setContextChips(threadId, () => []),
+    [threadId],
+  );
   const [stashToast, setStashToast] = useState<"stashed" | "restored" | null>(
     null,
   );
@@ -604,6 +638,7 @@ export const Composer = memo(function Composer({
   const {
     mentionFiles,
     snippetMatches,
+    extraMatches,
     mentionCount,
     mentionActive,
     setMentionIndex,
@@ -612,11 +647,29 @@ export const Composer = memo(function Composer({
     refreshMention,
     acceptMention,
     acceptSnippet,
+    acceptExtra,
     browseMentionFolder,
   } = useMentionMenu({
     textareaRef,
     onListFiles,
     promptSnippets,
+    mentionExtras: [
+      ...(mentionThreads ?? []).map(
+        (t): MentionExtra => ({ kind: "thread", id: t.id, title: t.title }),
+      ),
+      ...(mentionPrs ?? []).map(
+        (p): MentionExtra => ({ kind: "pr", number: p.number, title: p.title }),
+      ),
+      ...(mentionSkills ?? []).map(
+        (s): MentionExtra => ({
+          kind: "skill",
+          name: s.name,
+          description: s.description,
+        }),
+      ),
+    ],
+    onAcceptExtra: (chip) =>
+      setContextChips(threadId, (prev) => [...prev, chip]),
     onPickMentionFolder,
     disabled,
     writeDraft,
@@ -697,7 +750,10 @@ export const Composer = memo(function Composer({
   const canSend =
     !disabled &&
     !sending &&
-    (hasPrompt || pasteCards.length > 0 || reviewComments.length > 0);
+    (hasPrompt ||
+      pasteCards.length > 0 ||
+      reviewComments.length > 0 ||
+      contextChips.length > 0);
   /**
    * Everything that cannot be queued (workflow start, model, permission mode)
    * waits for the run to land; only the prompt and Send stay live while busy.
@@ -965,9 +1021,14 @@ export const Composer = memo(function Composer({
   useTranscriptViewShortcuts();
 
   const composeOutgoing = useCallback(
-    (draft: string) => {
+    async (draft: string) => {
+      const chipBlock = await formatContextChipsPrompt(
+        contextChips,
+        contextChipLoader,
+      );
       let body = [
         formatReviewCommentsPrompt(reviewComments),
+        chipBlock,
         composePastePrompt(draft.trim(), pasteCards),
       ]
         .filter(Boolean)
@@ -979,7 +1040,7 @@ export const Composer = memo(function Composer({
       }
       return body;
     },
-    [pasteCards, replyTo, reviewComments],
+    [contextChipLoader, contextChips, pasteCards, replyTo, reviewComments],
   );
 
   const runAction = async (
@@ -987,7 +1048,7 @@ export const Composer = memo(function Composer({
     failLabel: string,
   ) => {
     const typed = readDraft();
-    const prompt = composeOutgoing(typed);
+    const prompt = await composeOutgoing(typed);
     if (!prompt.trim() || disabled || sending) return;
     setSending(true);
     setLocalError(null);
@@ -999,6 +1060,7 @@ export const Composer = memo(function Composer({
       clearAttachments();
       clearPasteCards();
       clearReviewComments();
+      clearContextChips();
       onClearReply?.();
       closeMention();
       closeCommand();
@@ -1139,8 +1201,8 @@ export const Composer = memo(function Composer({
     }
   };
 
-  const stashCurrent = () => {
-    const text = composeOutgoing(readDraft());
+  const stashCurrent = async () => {
+    const text = await composeOutgoing(readDraft());
     const entry = {
       text,
       attachments,
@@ -1211,7 +1273,7 @@ export const Composer = memo(function Composer({
     }
     if (matchesBinding(e, "composer.stash")) {
       e.preventDefault();
-      stashCurrent();
+      void stashCurrent();
       return;
     }
     if (mentionOpen) {
@@ -1228,8 +1290,13 @@ export const Composer = memo(function Composer({
       if (e.key === "Enter" || e.key === "Tab") {
         e.preventDefault();
         const sn = snippetMatches[mentionActive];
-        const f = mentionFiles[mentionActive - snippetMatches.length];
+        const extra = extraMatches[mentionActive - snippetMatches.length];
+        const f =
+          mentionFiles[
+            mentionActive - snippetMatches.length - extraMatches.length
+          ];
         if (sn) acceptSnippet(sn);
+        else if (extra) acceptExtra(extra);
         else if (f) acceptMention(f);
         return;
       }
@@ -1713,6 +1780,8 @@ export const Composer = memo(function Composer({
           <MentionList
             snippetMatches={snippetMatches}
             acceptSnippet={acceptSnippet}
+            extraMatches={extraMatches}
+            acceptExtra={acceptExtra}
             mentionFiles={mentionFiles}
             mentionIndex={mentionActive}
             setMentionIndex={setMentionIndex}
@@ -1758,6 +1827,32 @@ export const Composer = memo(function Composer({
                 prev.filter((c) => c.id !== id),
               )
             }
+          />
+        )}
+        {contextChips.length > 0 && (
+          <ContextChips
+            chips={contextChips}
+            onEditComment={(id, comment) =>
+              setContextChips(threadId, (prev) =>
+                prev.map((c) =>
+                  c.id === id && c.kind === "quote" ? { ...c, comment } : c,
+                ),
+              )
+            }
+            onRemove={(id) =>
+              setContextChips(threadId, (prev) =>
+                prev.filter((c) => c.id !== id),
+              )
+            }
+            unavailable={
+              onContextChipUnavailable
+                ? (chip) => onContextChipUnavailable(chip)
+                : undefined
+            }
+            onReveal={(chip) => {
+              onRevealContextChip?.(chip);
+              if (chip.kind === "quote") onRevealReply?.();
+            }}
           />
         )}
         {attachments.length > 0 && (

@@ -8,6 +8,7 @@ const { createRequire } = require("node:module");
 
 const { registerMcpServer, unregisterMcpServer } = require("./memory-sup.js");
 const pairing = require("./pairing.js");
+const oauth = require("./mcpOauth.js");
 const { startWithPoolFailover, poolFromStore } = require("./subagentPool.js");
 const { resolveBin, isBinAvailable } = require("./providers.js");
 const {
@@ -30,6 +31,8 @@ const {
   listThreads,
   planboardNoteFor,
   refreshWorkerSnapshot,
+  linkPullRequest,
+  addAutomation,
 } = require("./services.js");
 const { stop: stopDevServer } = require("./devservers.js");
 const {
@@ -52,6 +55,10 @@ const INSTRUCTIONS =
   "distinct approach as soon as you know how it turned out. " +
   "When you notice work worth doing that is out of scope, call work_suggest with a " +
   "short title and a self-contained prompt; do not start the work yourself. " +
+  "When the user describes a scheduled or GitHub-triggered workflow they want to keep " +
+  "running, call automation_create with name, prompt, and either a schedule " +
+  "(hourly/daily/weekly) or a GitHub trigger; the result appears as a card with an " +
+  "Open in Automations link. " +
   "ask_user puts a real multiple-choice question in front of the user on your own " +
   "thread — it is the ONLY question channel that reaches them here, so use it " +
   "instead of your CLI's own question tool and instead of guessing when a wrong " +
@@ -126,7 +133,10 @@ const INSTRUCTIONS =
   "not through sandboxed gh, and there is no repo argument: writes stay on " +
   "this thread's origin. issue_comment posts a comment without changing " +
   "labels or closing the issue. The tools are omitted when the origin is " +
-  "not GitHub.";
+  "not GitHub. " +
+  "link_pull_request attaches a GitHub PR to this thread (including a PR " +
+  "in another repo via repo=owner/name). The first link becomes the " +
+  "thread's primary PR.";
 
 function timingSafeEqualString(a, b) {
   const bufferA = Buffer.from(a);
@@ -299,6 +309,9 @@ async function loadOrCreateConfig(file) {
  * @param {string | null} [deps.boundProjectId] - caller identity from the MCP
  *   URL (?projectId=). When set, it wins over a claimed args.projectId so a
  *   kimi/grok session cannot name another project (issue #671).
+ * @param {string | null} [deps.boundThreadId] - caller thread from the MCP
+ *   URL (?threadId=). When set, it is the caller for fromThreadId / merge
+ *   self; a conflicting claim is rejected (issue #1432).
  */
 function createToolHandlers(deps) {
   const { store, runner, forkThread, getProvider, broadcast, userDataPath } =
@@ -309,6 +322,9 @@ function createToolHandlers(deps) {
   const previewApi = deps.preview || require("./preview.js");
   const boundProjectId = deps.boundProjectId
     ? String(deps.boundProjectId)
+    : "";
+  const boundThreadId = deps.boundThreadId
+    ? String(deps.boundThreadId)
     : "";
 
   /**
@@ -461,7 +477,7 @@ function createToolHandlers(deps) {
    * @returns {{ self: any, worker: any }}
    */
   function requireLandableWorker(args) {
-    const self = store.getThread(args.threadId);
+    const self = store.getThread(resolveBoundCaller(args.threadId));
     if (!self) {
       throw new Error(`Unknown thread: ${args.threadId}`);
     }
@@ -530,24 +546,62 @@ function createToolHandlers(deps) {
   }
 
   /**
+   * Caller id for fromThreadId: the bound MCP session wins. A conflicting
+   * claim is rejected so a worker cannot impersonate its lead (#1432).
+   * @param {{ fromThreadId?: unknown }} args
+   */
+  function resolveCallerId(args) {
+    const claimed =
+      args.fromThreadId != null && String(args.fromThreadId) !== ""
+        ? String(args.fromThreadId)
+        : "";
+    if (boundThreadId && claimed && claimed !== boundThreadId) {
+      throw new Error(
+        `fromThreadId ${claimed} does not match the bound caller ` +
+          `${boundThreadId}. The caller identity comes from the MCP session, ` +
+          `not the tool arguments.`,
+      );
+    }
+    return claimed || boundThreadId;
+  }
+
+  /**
+   * Caller id when the tool uses threadId as self (merge / PR).
+   * @param {unknown} claimed
+   */
+  function resolveBoundCaller(claimed) {
+    const id = claimed != null && String(claimed) !== "" ? String(claimed) : "";
+    if (boundThreadId && id && id !== boundThreadId) {
+      throw new Error(
+        `threadId ${id} does not match the bound caller ${boundThreadId}. ` +
+          `The caller identity comes from the MCP session, not the tool arguments.`,
+      );
+    }
+    return boundThreadId || id;
+  }
+
+  /**
    * Cross-thread archive/stop stay human-gated in every permission mode
-   * (issue #551 / #322). Self-archive (no fromThreadId, or from === target)
-   * keeps the existing ungated path so a thread can still fold itself.
+   * (issue #551 / #322). Self is only when the resolved caller equals the
+   * target: omitting fromThreadId is not proof of self (#1432).
    *
    * @param {{ fromThreadId?: unknown, threadId?: unknown, projectId?: unknown, approved?: unknown }} args
    * @param {string} action
    */
   function assertCrossThreadApproved(args, action) {
-    const fromId = args.fromThreadId != null ? String(args.fromThreadId) : "";
+    const fromId = resolveCallerId(args);
     const targetId = String(args.threadId || "");
-    if (!fromId || fromId === targetId) return;
-    const self = store.getThread(fromId);
-    if (!self) {
-      throw new Error(`Unknown thread: ${fromId}`);
+    if (fromId && fromId === targetId) return;
+    let auto = false;
+    if (fromId) {
+      const self = store.getThread(fromId);
+      if (!self) {
+        throw new Error(`Unknown thread: ${fromId}`);
+      }
+      assertSameProject(self, args.projectId);
+      auto =
+        typeof runner.isAutoTurn === "function" && runner.isAutoTurn(self.id);
     }
-    assertSameProject(self, args.projectId);
-    const auto =
-      typeof runner.isAutoTurn === "function" && runner.isAutoTurn(self.id);
     if (args.approved === true && !auto) return;
     throw new Error(
       `${action} is the user's decision in every permission mode, including ` +
@@ -698,15 +752,15 @@ function createToolHandlers(deps) {
     assertSameProject(thread, args.projectId);
 
     let from = null;
-    if (args.fromThreadId) {
-      from = store.getThread(args.fromThreadId);
+    const fromId = resolveCallerId(args);
+    if (fromId && fromId !== String(thread.id)) {
+      from = store.getThread(fromId);
       if (!from) {
-        throw new Error(`Unknown thread: ${args.fromThreadId}`);
+        throw new Error(`Unknown thread: ${fromId}`);
       }
       assertSameProject(from, args.projectId);
-      if (String(from.id) === String(thread.id)) {
-        throw new Error("Cannot thread_send to yourself.");
-      }
+    } else if (args.fromThreadId && String(args.fromThreadId) === String(thread.id)) {
+      throw new Error("Cannot thread_send to yourself.");
     }
 
     const running =
@@ -915,6 +969,44 @@ function createToolHandlers(deps) {
       ? after.suggestions.length
       : 0;
     return { recorded: true, total };
+  }
+
+  async function automation_create(args) {
+    const thread = requireOwnThread(args);
+    const triggerRaw = args && args.trigger;
+    const hasTrigger = triggerRaw != null && typeof triggerRaw === "object";
+    const presetRaw = args && args.preset != null ? String(args.preset) : "";
+    if (!hasTrigger && !presetRaw) {
+      throw new Error(
+        "Pass a schedule (preset hourly, daily, or weekly) or a GitHub trigger.",
+      );
+    }
+    const created = addAutomation(store, {
+      projectId: thread.projectId,
+      name: args && args.name,
+      prompt: args && args.prompt,
+      provider: (args && args.provider) || thread.provider,
+      model: args && args.model,
+      preset: presetRaw || "hourly",
+      hour: args && args.hour,
+      ...(typeof (args && args.enabled) === "boolean"
+        ? { enabled: args.enabled }
+        : {}),
+      trigger: hasTrigger ? { type: "github", ...triggerRaw } : null,
+      tier: args && args.tier,
+    });
+    return {
+      ok: true,
+      id: created.id,
+      name: created.name,
+      projectId: created.projectId,
+      provider: created.provider,
+      preset: created.preset,
+      hour: created.hour,
+      trigger: created.trigger || null,
+      enabled: created.enabled,
+      nextRunAt: created.nextRunAt,
+    };
   }
 
   async function spec_submit(args) {
@@ -1152,6 +1244,16 @@ function createToolHandlers(deps) {
     return listIssuePage(issueTargetOf(thread), args);
   }
 
+  async function link_pull_request(args) {
+    requireOwnThread(args);
+    return linkPullRequest(store, {
+      threadId: args.threadId,
+      number: args.number,
+      repo: args.repo,
+      url: args.url,
+    });
+  }
+
   /**
    * Explicit lead-driven refresh onto the current committed snapshot (#1112).
    * Ownership matches git.integrateWorker: caller must be the worker's
@@ -1220,6 +1322,7 @@ function createToolHandlers(deps) {
     secret_request,
     hypothesis_record,
     work_suggest,
+    automation_create,
     spec_submit,
     teach_review,
     task_add,
@@ -1235,6 +1338,7 @@ function createToolHandlers(deps) {
     issue_complete,
     issue_comment,
     issue_list,
+    link_pull_request,
   };
 }
 
@@ -1583,6 +1687,52 @@ function buildMcpServer(sdk, handlers, opts = {}) {
   );
 
   server.registerTool(
+    "automation_create",
+    {
+      description:
+        "Create a Solenta automation on THIS thread's project. The user " +
+        "describes a workflow in chat; you fill name, prompt, provider, and " +
+        "either a schedule (hourly/daily/weekly, plus hour 0–23 for daily/" +
+        "weekly) or a GitHub trigger (pr_opened, pr_merged, pr_labeled, " +
+        "review_submitted, push, ci_completed — optional branch/label/" +
+        "conclusion filters). Validation rejects bad presets and triggers. " +
+        "The result appears as a card with an Open in Automations link. " +
+        "threadId and projectId are YOUR OWN (stated at the end of your " +
+        "prompt). Provider defaults to this thread's provider.",
+      inputSchema: {
+        threadId: z.string().min(1),
+        projectId: z.string().min(1),
+        name: z.string().min(1),
+        prompt: z.string().min(1),
+        provider: z.string().min(1).optional(),
+        model: z.string().optional(),
+        preset: z.enum(["hourly", "daily", "weekly"]).optional(),
+        hour: z.number().int().min(0).max(23).optional(),
+        enabled: z.boolean().optional(),
+        tier: z.enum(["auto", "fast", "balanced", "strong"]).optional(),
+        trigger: z
+          .object({
+            event: z.enum([
+              "pr_opened",
+              "pr_merged",
+              "pr_labeled",
+              "review_submitted",
+              "push",
+              "ci_completed",
+            ]),
+            branch: z.string().optional(),
+            label: z.string().optional(),
+            conclusion: z
+              .enum(["success", "failure", "cancelled", "timed_out"])
+              .optional(),
+          })
+          .optional(),
+      },
+    },
+    async (args) => json(await handlers.automation_create(args)),
+  );
+
+  server.registerTool(
     "spec_submit",
     {
       description:
@@ -1787,6 +1937,25 @@ function buildMcpServer(sdk, handlers, opts = {}) {
     async (args) => json(await handlers.peer_send(args)),
   );
 
+  server.registerTool(
+    "link_pull_request",
+    {
+      description:
+        "Link a GitHub pull request to this thread, including a PR in " +
+        "another repo. The first linked PR becomes the thread's primary " +
+        "PR number. projectId is YOUR OWN project id; the thread must " +
+        "belong to it.",
+      inputSchema: {
+        threadId: z.string().min(1),
+        projectId: z.string().min(1),
+        number: z.number().int().positive(),
+        repo: z.string().min(1).optional(),
+        url: z.string().min(1).optional(),
+      },
+    },
+    async (args) => json(await handlers.link_pull_request(args)),
+  );
+
   if (opts.planboard) {
     server.registerTool(
       "issue_list",
@@ -1973,9 +2142,17 @@ function createOrchServer(opts) {
         return;
       }
 
+      const handled = await oauth.handleRequest(req, res, url, {
+        userDataPath,
+        port: config.port,
+        notifyConsent: opts.notifyConsent,
+      });
+      if (handled) return;
+
       if (url.pathname === "/mcp") {
         const presented = pairing.presentedTokenFromRequest(req, url);
-        const sessionOk = authorized(req, config.token, url);
+        const loopback = oauth.isLoopbackHost(req.headers.host);
+        const sessionOk = loopback && authorized(req, config.token, url);
         let pairingAuth = null;
         if (!sessionOk) {
           pairingAuth = pairing.authorizeToken(userDataPath, presented, {
@@ -1983,7 +2160,13 @@ function createOrchServer(opts) {
           });
           if (!pairingAuth.ok) {
             const status = pairingAuth.reason === "rate_limited" ? 429 : 401;
-            res.writeHead(status).end();
+            const issuer = oauth.issuerFromHost(req.headers.host, config.port);
+            res.writeHead(status, {
+              "www-authenticate": oauth.wwwAuthenticate(
+                `${issuer}/.well-known/oauth-protected-resource`,
+              ),
+            });
+            res.end();
             return;
           }
         }
@@ -2014,9 +2197,11 @@ function createOrchServer(opts) {
           mcp = pairing.buildExternalMcpServer(sdk, handlers, pairingAuth.pairing);
         } else {
           const boundProjectId = url.searchParams.get("projectId") || "";
+          const boundThreadId = url.searchParams.get("threadId") || "";
           const handlers = createToolHandlers({
             ...handlerDeps,
             boundProjectId: boundProjectId || null,
+            boundThreadId: boundThreadId || null,
           });
           const boundProject =
             boundProjectId && typeof store.getProject === "function"

@@ -58,7 +58,7 @@ function pairingPath(userDataPath) {
 }
 
 function emptyStore() {
-  return { pairings: [] };
+  return { pairings: [], publicEnabled: false };
 }
 
 function loadStore(userDataPath) {
@@ -71,14 +71,20 @@ function loadStore(userDataPath) {
     throw new Error(`pairings file at ${file} is not valid JSON`);
   }
   const rows = Array.isArray(parsed && parsed.pairings) ? parsed.pairings : [];
-  return { pairings: rows.filter((p) => p && typeof p === "object") };
+  return {
+    pairings: rows.filter((p) => p && typeof p === "object"),
+    publicEnabled: parsed.publicEnabled === true,
+  };
 }
 
 function saveStore(userDataPath, store) {
   const file = pairingPath(userDataPath);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const payload = JSON.stringify(
-    { pairings: Array.isArray(store.pairings) ? store.pairings : [] },
+    {
+      pairings: Array.isArray(store.pairings) ? store.pairings : [],
+      publicEnabled: store.publicEnabled === true,
+    },
     null,
     2,
   );
@@ -112,6 +118,8 @@ function toPublic(row) {
     readsPerMinute: Number.isFinite(row.readsPerMinute)
       ? row.readsPerMinute
       : DEFAULT_READS_PER_MINUTE,
+    kind: row.kind === "oauth" ? "oauth" : "token",
+    clientId: row.clientId ? String(row.clientId) : null,
   };
 }
 
@@ -292,7 +300,10 @@ function createPairing(userDataPath, input, opts = {}) {
   const name = String((input && input.name) || "").trim();
   if (!name) throw new Error("Name is required");
   if (name.length > NAME_MAX) throw new Error(`Name must be ${NAME_MAX} characters or fewer`);
-  const token = crypto.randomBytes(TOKEN_BYTES).toString("hex");
+  const token =
+    input && typeof input.token === "string" && input.token
+      ? String(input.token)
+      : crypto.randomBytes(TOKEN_BYTES).toString("hex");
   const ttlMs = sanitizeTtlMs(input && input.ttlMs);
   const row = {
     id: crypto.randomUUID(),
@@ -305,6 +316,13 @@ function createPairing(userDataPath, input, opts = {}) {
     createdAt: now,
     lastUsedAt: null,
     revokedAt: null,
+    kind: input && input.kind === "oauth" ? "oauth" : "token",
+    clientId: input && input.clientId ? String(input.clientId) : null,
+    refreshTokenHash:
+      input && typeof input.refreshTokenHash === "string" ? input.refreshTokenHash : null,
+    accessExpiresAt: Number.isFinite(input && input.accessExpiresAt)
+      ? input.accessExpiresAt
+      : null,
     requireApproval: input && input.requireApproval === false ? false : true,
     managedWorktree: input && input.managedWorktree === false ? false : true,
     launchesPerHour: clampRate(
@@ -330,6 +348,60 @@ function createPairing(userDataPath, input, opts = {}) {
       : readOrchPort(userDataPath);
   const configs = buildConfigs({ token, port, pairing });
   return { pairing, token, ...configs };
+}
+
+function getPublicEnabled(userDataPath) {
+  try {
+    return loadStore(userDataPath).publicEnabled === true;
+  } catch {
+    return false;
+  }
+}
+
+function setPublicEnabled(userDataPath, on) {
+  const store = loadStore(userDataPath);
+  store.publicEnabled = on === true;
+  saveStore(userDataPath, store);
+  return store.publicEnabled;
+}
+
+function rotateAccessToken(userDataPath, pairingId, accessToken, accessExpiresAt) {
+  const store = loadStore(userDataPath);
+  const row = store.pairings.find((p) => p && p.id === pairingId);
+  if (!row || row.revokedAt) throw new Error("Pairing is no longer valid");
+  const token = String(accessToken || "");
+  if (!token) throw new Error("access token is required");
+  row.tokenHash = hashToken(token);
+  row.tokenPrefix = token.slice(0, TOKEN_PREFIX_LEN);
+  row.accessExpiresAt = Number.isFinite(accessExpiresAt) ? accessExpiresAt : null;
+  saveStore(userDataPath, store);
+  return toPublic(row);
+}
+
+function findByRefreshToken(userDataPath, refreshToken) {
+  const presented = String(refreshToken || "");
+  if (!presented) return null;
+  let store;
+  try {
+    store = loadStore(userDataPath);
+  } catch {
+    return null;
+  }
+  const hash = hashToken(presented);
+  for (const row of store.pairings) {
+    if (!row || row.revokedAt) continue;
+    if (typeof row.refreshTokenHash !== "string") continue;
+    if (timingSafeEqualString(row.refreshTokenHash, hash)) return row;
+  }
+  return null;
+}
+
+function setRefreshTokenHash(userDataPath, pairingId, refreshTokenHash) {
+  const store = loadStore(userDataPath);
+  const row = store.pairings.find((p) => p && p.id === pairingId);
+  if (!row || row.revokedAt) throw new Error("Pairing is no longer valid");
+  row.refreshTokenHash = String(refreshTokenHash || "");
+  saveStore(userDataPath, store);
 }
 
 function revokePairing(userDataPath, id, opts = {}) {
@@ -373,6 +445,9 @@ function authorizeToken(userDataPath, token, opts = {}) {
   }
   if (!found) return { ok: false, reason: "unknown" };
   if (Number.isFinite(found.expiresAt) && found.expiresAt <= now) {
+    return { ok: false, reason: "expired" };
+  }
+  if (Number.isFinite(found.accessExpiresAt) && found.accessExpiresAt <= now) {
     return { ok: false, reason: "expired" };
   }
   if (opts.consume === false) {
@@ -828,6 +903,11 @@ module.exports = {
   toPublic,
   listPairings,
   createPairing,
+  getPublicEnabled,
+  setPublicEnabled,
+  rotateAccessToken,
+  findByRefreshToken,
+  setRefreshTokenHash,
   revokePairing,
   authorizeToken,
   hasCapability,

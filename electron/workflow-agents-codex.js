@@ -102,6 +102,7 @@ function spawnAgentCodex(opts) {
     ...getCodexMcpArgs({
       projectPath: cwd,
       projectId: projectId || (project && project.id),
+      threadId,
     }),
   ];
   if (codexExecConfig.length) insertBeforeLast(args, codexExecConfig);

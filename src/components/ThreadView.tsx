@@ -101,6 +101,11 @@ import {
   ensureVisibleStart,
   tailWindowStart,
 } from "../transcriptWindow";
+import {
+  revealTranscriptHit,
+  useScrollFindHit,
+  useTranscriptFind,
+} from "./thread/useTranscriptFind";
 import { lastUserMessage } from "../retryTurn";
 import { isParsed, preparseMarkdown } from "./Markdown";
 import {
@@ -139,6 +144,7 @@ import {
   replySourceUnavailable,
   type ReplyTarget,
 } from "../replyContext";
+import { quoteChipAsReply } from "../contextChips";
 import { waitWhatPrompt } from "../waitWhat";
 import { sessionImagePathsFromMessages } from "../sessionImages";
 import { PathLinkProvider, ThreadLinkContext } from "./PathLinks";
@@ -176,7 +182,7 @@ import {
   FeltEstimateCard,
   DivergenceCard,
 } from "./thread/cards";
-import { setReviewComments } from "../composerSession";
+import { setContextChips, setReviewComments } from "../composerSession";
 import { useRetryAnchors } from "./thread/useRetryAnchors";
 import { useTranscriptAnnotations } from "./thread/useTranscriptAnnotations";
 import { useCliCommands } from "./thread/useCliCommands";
@@ -502,6 +508,8 @@ interface ThreadViewProps {
   onListFiles?: (query: string) => Promise<string[]>;
   /** Saved snippets offered in the @-mention popup (issue #189). */
   promptSnippets?: readonly PromptSnippet[];
+  /** Other threads for the mixed @ menu (#1526). */
+  mentionThreads?: ReadonlyArray<{ id: string; title: string }>;
   /** Native folder picker; returns an absolute path or null. */
   onPickDirectory?: () => Promise<string | null>;
   /** AppSnap: on-screen windows the user can capture. */
@@ -665,6 +673,8 @@ interface ThreadViewProps {
   onFileSuggestion?: (s: WorkSuggestion) => void | Promise<void>;
   /** Dismiss a suggested-work chip for this thread. Permanent. */
   onDismissSuggestion?: (s: WorkSuggestion) => void | Promise<void>;
+  /** Open Automations, optionally focusing a created row (#1599). */
+  onOpenAutomations?: (automationId?: string) => void;
   /**
    * The thread this one was handed off from (handoffFrom), already resolved.
    * Resolved by App rather than passing the whole list: the list gets a new
@@ -813,6 +823,7 @@ export const ThreadView = memo(function ThreadView({
   onSuggestCommitMessage,
   onListFiles,
   promptSnippets,
+  mentionThreads,
   onPickDirectory,
   onListSnapWindows,
   onCaptureSnapWindow,
@@ -869,6 +880,7 @@ export const ThreadView = memo(function ThreadView({
   onStartSuggestion,
   onFileSuggestion,
   onDismissSuggestion,
+  onOpenAutomations,
   handoffSource = null,
   onSelectThread,
   threadTitles,
@@ -1017,9 +1029,12 @@ export const ThreadView = memo(function ThreadView({
   const [cliAgents, setCliAgents] = useState<CliAgentInfo[]>([]);
   const copyFlashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const threadId = detail?.thread.id ?? null;
+  const find = useTranscriptFind(detail, threadId);
+  const [revealPlan, setRevealPlan] = useState(false);
   if (threadId !== focusThreadId) {
     setFocusThreadId(threadId);
     setExpandedFocusTurns(new Set());
+    setRevealPlan(false);
   }
 
   useEffect(() => {
@@ -1392,6 +1407,43 @@ export const ThreadView = memo(function ThreadView({
     expandedFocusTurns,
     runningAgents,
   });
+  useEffect(() => {
+    if (!find.open || !find.current) return;
+    stickToBottom.current = false;
+    forceStick.current = false;
+    revealTranscriptHit(find.current, detail, displayTimeline, {
+      setJumpMessageId,
+      setRevealPlan,
+      setCollapsedRuns,
+      setExpandedGroups,
+      expandFocusFor: (messageId) => {
+        for (const turn of focusTurnByFirstId.values()) {
+          if (
+            turn.firstActivityId !== messageId &&
+            !turn.activityIds.includes(messageId)
+          ) {
+            continue;
+          }
+          setExpandedFocusTurns((prev) => {
+            if (prev.has(turn.key)) return prev;
+            const next = new Set(prev);
+            next.add(turn.key);
+            return next;
+          });
+        }
+      },
+    });
+  }, [find.open, find.current, detail, displayTimeline, focusTurnByFirstId]);
+
+  useScrollFindHit(bodyRef, find.open, find.current, [
+    start,
+    displayTimeline,
+    expandedGroups,
+    collapsedRuns,
+    expandedFocusTurns,
+    revealPlan,
+  ]);
+
   const isArchived = Boolean(detail?.thread.archived);
   const emptyMessages = detail != null && detail.messages.length === 0;
 
@@ -1675,7 +1727,24 @@ export const ThreadView = memo(function ThreadView({
   const storeReply = useCallback((target: ReplyTarget) => {
     const tid = target.threadId;
     if (!tid) return;
-    setReplyByThread((prev) => ({ ...prev, [tid]: target }));
+    const id =
+      typeof crypto !== "undefined" && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `quote-${Date.now()}`;
+    setContextChips(tid, (prev) => [
+      ...prev,
+      {
+        id,
+        kind: "quote",
+        messageId: target.messageId,
+        threadId: tid,
+        text: target.text,
+        comment: "",
+        truncated: target.truncated,
+        sourceText: target.sourceText,
+        quoteKind: target.kind,
+      },
+    ]);
   }, []);
 
   const handleReply = useCallback(
@@ -3777,6 +3846,8 @@ export const ThreadView = memo(function ThreadView({
         </div>
       )}
 
+      {find.bar}
+
       {detail && (
         <DivergenceCard
           key={detail.thread.id}
@@ -3993,6 +4064,7 @@ export const ThreadView = memo(function ThreadView({
                       onLoadImage={onLoadImage}
                       onLoadAttachmentImage={onLoadAttachmentImage}
                       onSelectThread={onSelectThread}
+                      onOpenAutomations={onOpenAutomations}
                       pinned={pinnedIds.has(entry.message.id)}
                       onTogglePin={
                         onSetMessagePins &&
@@ -4195,7 +4267,7 @@ export const ThreadView = memo(function ThreadView({
         {/* A pending plan prompt already shows the plan — don't show it twice. */}
         {(thread.planSteps?.length || thread.plan) &&
         !detail.pendingPermission?.plan ? (
-          <PlanCard thread={thread} />
+          <PlanCard thread={thread} forceOpen={revealPlan} />
         ) : null}
 
         {/*
@@ -4715,6 +4787,7 @@ export const ThreadView = memo(function ThreadView({
         onDismissError={onDismissRunError}
         onListFiles={onListFiles}
         promptSnippets={promptSnippets}
+        mentionThreads={mentionThreads}
         onPickMentionFolder={
           onPickDirectory ? pickMentionFolder : undefined
         }
@@ -4731,6 +4804,17 @@ export const ThreadView = memo(function ThreadView({
         onRevealReply={() => {
           if (!replyTo || replySourceGone) return;
           setJumpMessageId(replyTo.messageId);
+        }}
+        onRevealContextChip={(chip) => {
+          if (chip.kind !== "quote") return;
+          const message = detail?.messages.find((m) => m.id === chip.messageId);
+          if (replySourceUnavailable(quoteChipAsReply(chip), message)) return;
+          setJumpMessageId(chip.messageId);
+        }}
+        onContextChipUnavailable={(chip) => {
+          if (chip.kind !== "quote") return false;
+          const message = detail?.messages.find((m) => m.id === chip.messageId);
+          return replySourceUnavailable(quoteChipAsReply(chip), message);
         }}
         replySourceUnavailable={replySourceGone}
         onPickAttachments={onPickAttachments}

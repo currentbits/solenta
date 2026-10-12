@@ -323,11 +323,13 @@ function getClaudeMcpArgs(opts = {}) {
   if (servers.length === 0 || !globalMcpConfigPath) return [];
   const projectPath = opts.projectPath ? String(opts.projectPath) : "";
   const projectId = opts.projectId ? String(opts.projectId) : "";
+  const threadId = opts.threadId ? String(opts.threadId) : "";
   const memoryOnly = opts.memoryOnly === true;
   let configPath = globalMcpConfigPath;
-  if ((projectPath || projectId || memoryOnly) && globalUserDataPath) {
+  if ((projectPath || projectId || threadId || memoryOnly) && globalUserDataPath) {
     configPath = writeBoundMcpConfig(globalUserDataPath, projectPath, {
       projectId,
+      threadId,
       memoryOnly,
     });
   }
@@ -433,12 +435,14 @@ function pushCodexFirstPartyApproval(args, s) {
  *
  * HTTP URLs use boundSolentaMcpUrl: coder-memory gets `?project=` and
  * coder-threads gets `?projectId=` so orchServer publishes Planboard
- * issue_* tools (#927 / #1163). A path-only bind still omits issue_*.
+ * issue_* tools (#927 / #1163) and `?threadId=` so the caller identity is
+ * not agent-supplied (#1432). A path-only bind still omits issue_*.
  * @returns {string[]}
  */
 function getCodexMcpArgs(opts = {}) {
   const projectPath = opts.projectPath ? String(opts.projectPath) : "";
   const projectId = opts.projectId ? String(opts.projectId) : "";
+  const threadId = opts.threadId ? String(opts.threadId) : "";
   /** @type {string[]} */
   const args = [];
   for (const s of activeServers()) {
@@ -476,7 +480,7 @@ function getCodexMcpArgs(opts = {}) {
     args.push(
       "-c",
       `mcp_servers.${s.name}.url="${tomlEscape(
-        boundSolentaMcpUrl(s.url, s.name, { projectPath, projectId }),
+        boundSolentaMcpUrl(s.url, s.name, { projectPath, projectId, threadId }),
       )}"`,
     );
     if (s.token) {
@@ -613,10 +617,11 @@ function withQuery(url, query) {
 /**
  * Bind Solenta HTTP MCP URLs for a grok run. coder-memory gets `?project=`
  * (working directory); coder-threads gets `?projectId=` so the server, not
- * the model, owns the scope (issue #706). Other servers stay bare.
+ * the model, owns the scope (issue #706), and `?threadId=` so stop/archive
+ * cannot omit the caller (issue #1432). Other servers stay bare.
  * @param {string} url
  * @param {string} name
- * @param {{ projectPath?: string, projectId?: string }} [opts]
+ * @param {{ projectPath?: string, projectId?: string, threadId?: string }} [opts]
  */
 function boundSolentaMcpUrl(url, name, opts = {}) {
   /** @type {Record<string, string>} */
@@ -626,6 +631,9 @@ function boundSolentaMcpUrl(url, name, opts = {}) {
   }
   if (name === "coder-threads" && opts.projectId) {
     query.projectId = String(opts.projectId);
+  }
+  if (name === "coder-threads" && opts.threadId) {
+    query.threadId = String(opts.threadId);
   }
   return withQuery(url, query);
 }
@@ -666,12 +674,13 @@ function kimiStdioEntry(s) {
  * Solenta MCP servers for one kimi run, URLs bound to that project.
  * Does not read the user's ~/.kimi-code/mcp.json — foreign servers stay out.
  *
- * @param {{ projectId?: string, projectPath?: string }} [opts]
+ * @param {{ projectId?: string, projectPath?: string, threadId?: string }} [opts]
  * @returns {Record<string, { type: string, url: string, headers: { Authorization?: string } }>}
  */
 function kimiMcpServersForRun(opts = {}) {
   const projectId = opts.projectId ? String(opts.projectId) : "";
   const projectPath = opts.projectPath ? String(opts.projectPath) : "";
+  const threadId = opts.threadId ? String(opts.threadId) : "";
   /** @type {Record<string, { type: string, url: string, headers: { Authorization?: string } }>} */
   const mcpServers = {};
   for (const s of activeServers()) {
@@ -683,6 +692,7 @@ function kimiMcpServersForRun(opts = {}) {
     const query = {};
     if (s.name === "coder-memory" && projectPath) query.project = projectPath;
     if (s.name === "coder-threads" && projectId) query.projectId = projectId;
+    if (s.name === "coder-threads" && threadId) query.threadId = threadId;
     mcpServers[s.name] = kimiHttpEntry(s.url, s.token, query, s.headers, s.transport);
   }
   return mcpServers;
@@ -969,10 +979,11 @@ function ensureCursorMcpConfig(opts = {}) {
 
   const mcpPath = resolveCursorMcpPath(env);
   const desiredByName =
-    opts.projectPath || opts.projectId
+    opts.projectPath || opts.projectId || opts.threadId
       ? kimiMcpServersForRun({
           projectId: opts.projectId,
           projectPath: opts.projectPath,
+          threadId: opts.threadId,
         })
       : (() => {
           /** @type {Record<string, unknown>} */
@@ -1660,7 +1671,11 @@ function mcpServersDoc(projectPath, opts = {}) {
     }
     const entry = {
       type: s.transport === "sse" ? "sse" : "http",
-      url: boundSolentaMcpUrl(s.url, s.name, { projectPath, projectId: opts.projectId }),
+      url: boundSolentaMcpUrl(s.url, s.name, {
+        projectPath,
+        projectId: opts.projectId,
+        threadId: opts.threadId,
+      }),
       headers: { ...(s.headers && typeof s.headers === "object" ? s.headers : {}) },
     };
     if (s.token) {
@@ -1699,7 +1714,7 @@ function writeMcpConfig(userDataPath) {
 function writeBoundMcpConfig(userDataPath, projectPath, opts = {}) {
   const key = crypto
     .createHash("sha1")
-    .update(JSON.stringify([projectPath, opts.projectId || ""]))
+    .update(JSON.stringify([projectPath, opts.projectId || "", opts.threadId || ""]))
     .digest("hex")
     .slice(0, 12);
   const dir = path.join(userDataPath, "mcp-bound");
@@ -1708,6 +1723,7 @@ function writeBoundMcpConfig(userDataPath, projectPath, opts = {}) {
   const mcpPath = path.join(dir, `${key}${suffix}.json`);
   const docOpts = {
     projectId: opts.projectId,
+    threadId: opts.threadId,
     ...(opts.memoryOnly === true ? { names: ["coder-memory"] } : {}),
   };
   writeSecretFile(

@@ -22,6 +22,10 @@ const {
   closePr,
   readyPr,
   mergePrAt,
+  prDiff,
+  prStack,
+  prMarkViewed,
+  mergePrStack,
 } = require("../prWorkspace.js");
 const { rmTree } = require("./support/rmTree.js");
 const { setGithubApi } = require("../worktrees.js");
@@ -109,7 +113,37 @@ if (args[0] === "pr" && args[1] === "view") {
   if (pr.additions != null) out.additions = pr.additions;
   if (pr.deletions != null) out.deletions = pr.deletions;
   if (pr.mergeable) out.mergeable = pr.mergeable;
+  out.headRefOid = pr.headRefOid || "aaa1111";
+  out.commits = pr.commits || [{ oid: "aaa1111", messageHeadline: "ship" }];
+  out.files = pr.files || [{ path: "src/app.ts", additions: 1, deletions: 0, sha: "blob1" }];
   process.stdout.write(JSON.stringify(out) + "\\n");
+  process.exit(0);
+}
+
+if (args[0] === "pr" && args[1] === "diff") {
+  const pr = findPr(args[2]);
+  if (!pr) {
+    process.stderr.write("no pull requests found\\n");
+    process.exit(1);
+  }
+  const pathArg = args.includes("--") ? args[args.indexOf("--") + 1] : "";
+  const patch = pr.patch || "diff --git a/src/app.ts b/src/app.ts\\n--- a/src/app.ts\\n+++ b/src/app.ts\\n@@ -1 +1,2 @@\\n keep\\n+add\\n";
+  process.stdout.write(pathArg && pathArg !== "src/app.ts" ? "" : patch);
+  process.exit(0);
+}
+
+if (args[0] === "pr" && args[1] === "list") {
+  const prs = Object.values(state.prs || {});
+  process.stdout.write(JSON.stringify(prs.map(function (pr) {
+    return {
+      number: pr.number,
+      title: pr.title || "",
+      url: pr.url || "",
+      state: pr.state || "OPEN",
+      headRefName: pr.headRefName || "feat/x",
+      baseRefName: pr.baseRefName || "main",
+    };
+  })) + "\\n");
   process.exit(0);
 }
 
@@ -140,8 +174,10 @@ if (args[0] === "pr" && args[1] === "edit") {
   }
   const title = flagValue("--title");
   const body = flagValue("--body");
+  const base = flagValue("--base");
   if (title != null) pr.title = title;
   if (body != null) pr.body = body;
+  if (base != null) pr.baseRefName = base;
   save(state);
   process.stdout.write(pr.url + "\\n");
   process.exit(0);
@@ -295,6 +331,8 @@ describe("gh PR workspace actions", () => {
   let statePath;
   let prevGhBin;
   let prevGhState;
+  let prevGuardrails;
+  let prevGuardrailsPath;
 
   beforeEach(() => {
     tmp = fs.mkdtempSync(path.join(os.tmpdir(), "coder-pr-ws-"));
@@ -334,8 +372,14 @@ describe("gh PR workspace actions", () => {
     );
     prevGhBin = process.env.CODER_GH_BIN;
     prevGhState = process.env.CODER_FAKE_GH_STATE;
+    prevGuardrails = process.env.CODER_GUARDRAILS;
+    prevGuardrailsPath = process.env.CODER_GUARDRAILS_PATH;
     process.env.CODER_GH_BIN = fakeGh;
     process.env.CODER_FAKE_GH_STATE = statePath;
+    // Inherited live-app CODER_GUARDRAILS_PATH can disable secret scans
+    // (file "0") and let a ghp_ comment through. Do not write that file.
+    delete process.env.CODER_GUARDRAILS;
+    delete process.env.CODER_GUARDRAILS_PATH;
   });
 
   afterEach(async () => {
@@ -344,6 +388,10 @@ describe("gh PR workspace actions", () => {
     else process.env.CODER_GH_BIN = prevGhBin;
     if (prevGhState === undefined) delete process.env.CODER_FAKE_GH_STATE;
     else process.env.CODER_FAKE_GH_STATE = prevGhState;
+    if (prevGuardrails === undefined) delete process.env.CODER_GUARDRAILS;
+    else process.env.CODER_GUARDRAILS = prevGuardrails;
+    if (prevGuardrailsPath === undefined) delete process.env.CODER_GUARDRAILS_PATH;
+    else process.env.CODER_GUARDRAILS_PATH = prevGuardrailsPath;
     await rmTree(tmp);
   });
 
@@ -436,6 +484,99 @@ describe("gh PR workspace actions", () => {
     const result = await viewPrDetail(other, 12);
     assert.equal(result.ok, false);
     assert.equal(result.reason, "not a GitHub repo");
+  });
+
+  it("prDiff returns the file list, commits, and a lazy patch (#1527)", async () => {
+    const result = await prDiff(repo, { prNumber: 12 });
+    assert.equal(result.ok, true);
+    assert.equal(result.headSha, "aaa1111");
+    assert.equal(result.files[0].path, "src/app.ts");
+    assert.equal(result.files[0].viewed, "unseen");
+    assert.match(result.patch, /src\/app\.ts/);
+    assert.equal(result.commits[0].sha, "aaa1111");
+  });
+
+  it("prMarkViewed then prDiff flips the file to viewed", async () => {
+    const store = {
+      getPrViewedMarks(key) {
+        return this.marks && this.marks[key] ? this.marks[key].files : {};
+      },
+      setPrViewedMark(key, filePath, mark) {
+        this.marks = this.marks || {};
+        this.marks[key] = { files: { [filePath]: mark } };
+      },
+    };
+    const marked = prMarkViewed(store, {
+      prNumber: 12,
+      repo: "acme/demo",
+      path: "src/app.ts",
+      headSha: "aaa1111",
+      blobSha: "blob1",
+    });
+    assert.equal(marked.ok, true);
+    const result = await prDiff(repo, { prNumber: 12, repo: "acme/demo" }, { store });
+    assert.equal(result.ok, true);
+    assert.equal(result.files[0].viewed, "viewed");
+  });
+
+  it("prStack is empty for a solo PR", async () => {
+    const result = await prStack(repo, { prNumber: 12 });
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.stack, []);
+  });
+
+  it("prStack walks a base→head chain", async () => {
+    const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+    state.prs[10] = {
+      number: 10,
+      url: "https://github.com/acme/demo/pull/10",
+      state: "OPEN",
+      title: "bottom",
+      headRefName: "feat/bot",
+      baseRefName: "main",
+    };
+    state.prs[11] = {
+      number: 11,
+      url: "https://github.com/acme/demo/pull/11",
+      state: "OPEN",
+      title: "top",
+      headRefName: "feat/top",
+      baseRefName: "feat/bot",
+    };
+    fs.writeFileSync(statePath, JSON.stringify(state), "utf8");
+    const result = await prStack(repo, { prNumber: 11 });
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.stack.map((p) => p.number), [10, 11]);
+    assert.equal(result.defaultBase, "main");
+  });
+
+  it("mergePrStack merges bottom-up and retargets the next PR onto main", async () => {
+    const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+    state.prs[10] = {
+      number: 10,
+      url: "https://github.com/acme/demo/pull/10",
+      state: "OPEN",
+      title: "bottom",
+      headRefName: "feat/bot",
+      baseRefName: "main",
+    };
+    state.prs[11] = {
+      number: 11,
+      url: "https://github.com/acme/demo/pull/11",
+      state: "OPEN",
+      title: "top",
+      headRefName: "feat/top",
+      baseRefName: "feat/bot",
+    };
+    fs.writeFileSync(statePath, JSON.stringify(state), "utf8");
+    const result = await mergePrStack(repo, { prNumber: 11 });
+    assert.equal(result.ok, true);
+    const after = JSON.parse(fs.readFileSync(statePath, "utf8"));
+    assert.equal(after.prs[10].state, "MERGED");
+    assert.equal(after.prs[11].state, "MERGED");
+    assert.equal(after.prs[11].baseRefName, "main");
+    const edit = after.calls.find((c) => c[1] === "edit" && c[2] === "11");
+    assert.deepEqual(edit.slice(3), ["--base", "main"]);
   });
 
   describe("over the GitHub API (#1534)", () => {

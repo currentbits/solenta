@@ -3,6 +3,7 @@
 // Public entry point: re-exports the services-*.js domain modules.
 
 const { runCommand } = require("./projectCommands.js");
+const { linkPullRequest } = require("./prLinks.js");
 const {
   PERMISSION_MODES,
   scheduleSimulatorRelease,
@@ -36,6 +37,7 @@ const {
   planboardNoteFor,
   selfIdNoteFor,
   suggestedWorkNoteFor,
+  automationNoteFor,
   codexComputerUseNoteFor,
   hypothesisNoteFor,
   planStepsFrom,
@@ -231,6 +233,7 @@ module.exports = {
   planboardNoteFor,
   selfIdNoteFor,
   suggestedWorkNoteFor,
+  automationNoteFor,
   CODEX_COMPUTER_USE_NOTE,
   codexComputerUseNoteFor,
   subagentPoolNoteFor: require("./subagentPool").subagentPoolNoteFor,
@@ -313,6 +316,7 @@ module.exports = {
   setCrossThreadInbound,
   setQuotaWaitAutoResume,
   setPrWatch,
+  linkPullRequest,
   setNotes,
   setMessagePins,
   setBaseBranch,

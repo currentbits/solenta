@@ -14,7 +14,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { gitTryAsync, tailErr } = require("./worktrees-git.js");
-const { ghTryAsync, isGitHubRemote, GH_TIMEOUT_MS } = require("./worktrees-pr.js");
+const { ghTryAsync, isGitHubRemoteAsync, GH_TIMEOUT_MS } = require("./worktrees-pr.js");
 
 const NET = { timeout: 60_000 };
 
@@ -39,7 +39,7 @@ async function openRevertPr(opts) {
   const cwd = project.path;
   // Raw config, not get-url: url.insteadOf rewrites are a transport detail.
   const remote = await gitTryAsync(cwd, ["config", "--get", "remote.origin.url"]);
-  if (!remote.ok || !isGitHubRemote(remote.stdout.trim())) {
+  if (!remote.ok || !(await isGitHubRemoteAsync(remote.stdout.trim()))) {
     return { ok: false, reason: "Remote origin is not a GitHub repository" };
   }
 
