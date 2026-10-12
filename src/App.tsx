@@ -2094,6 +2094,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onFileSuggestion={handleFileSuggestion}
         onDismissSuggestion={handleDismissSuggestion}
         onOpenAutomations={handleOpenAutomation}
+        onIntegrateWorker={selectedThreadId ? integrateSelectedWorker : undefined}
         handoffSource={handoffSource}
         comparePeers={comparePeers}
         onPeekThread={peekThread}

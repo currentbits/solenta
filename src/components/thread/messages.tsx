@@ -31,6 +31,7 @@ import { useEscapeClose } from "../../useEscapeClose";
 import { useModalFocus } from "../../useModalFocus";
 import type { FocusTurnSummary } from "../../focusView";
 import { routineWorkerActivitySummary } from "../../workerActivity";
+import { noticeRest, workerResults, type WorkerResult } from "../../workerResult";
 import { captureCiteFromSelection, type ReplyTarget } from "../../replyContext";
 import { htmlFromToolOutput } from "../../htmlPage";
 import { Markdown } from "../Markdown";
@@ -684,6 +685,70 @@ function TranscriptAttachmentChip({
  * User bubble. Edit state lives here so a streamed timeline tick does not
  * blow away the draft. Confirm (destructive rewind) stays on ThreadView.
  */
+/**
+ * A finished worker's structured result (#1427). Integrate goes straight to
+ * git:integrateWorker: a human click, never the lead's machine-woken turn.
+ */
+function WorkerResultCard({
+  result,
+  onSelectThread,
+  onIntegrateWorker,
+}: {
+  result: WorkerResult;
+  onSelectThread?: (id: string) => void;
+  onIntegrateWorker?: (workerThreadId: string) => Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [state, setState] = useState<string | null>(null);
+  const label = result.title || result.workerId;
+  return (
+    <section data-worker-result={result.workerId}>
+      <div className={styles.inboundFrom}>
+        Worker{" "}
+        {onSelectThread ? (
+          <button
+            type="button"
+            className={styles.handoffLink}
+            onClick={() => onSelectThread(result.workerId)}
+          >
+            {label}
+          </button>
+        ) : (
+          <span>{label}</span>
+        )}{" "}
+        finished: {result.status}
+      </div>
+      {result.lastReply && <div className={styles.inboundBody}>{result.lastReply}</div>}
+      <div className={`${styles.inboundBody} ${styles.workerResultBody}`}>{result.body}</div>
+      {onIntegrateWorker && result.status === "done" && (
+        <div className={styles.workerResultActions}>
+          <button
+            type="button"
+            className={styles.retryBtn}
+            data-worker-result-integrate={result.workerId}
+            disabled={busy || state === "Integrated"}
+            onClick={async () => {
+              setBusy(true);
+              setState(null);
+              try {
+                await onIntegrateWorker(result.workerId);
+                setState("Integrated");
+              } catch (err) {
+                setState(err instanceof Error ? err.message : String(err));
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            {busy ? "Integrating…" : "Integrate into lead"}
+          </button>
+          {state && <span role="status">{state}</span>}
+        </div>
+      )}
+    </section>
+  );
+}
+
 const UserMessageBlock = memo(function UserMessageBlock({
   message,
   canEdit,
@@ -694,12 +759,14 @@ const UserMessageBlock = memo(function UserMessageBlock({
   onCancelConfirm,
   onLoadAttachmentImage,
   onSelectThread,
+  onIntegrateWorker,
   pinned = false,
   onTogglePin,
 }: {
   message: ChatMessage;
   canEdit: boolean;
   confirming: boolean;
+  onIntegrateWorker?: (workerThreadId: string) => Promise<void>;
   /** Freshly appended at the live tail — play the stream-in entrance. */
   animateIn?: boolean;
   /** Verbose mode or an active reveal: keep the original notice text shown. */
@@ -823,6 +890,38 @@ const UserMessageBlock = memo(function UserMessageBlock({
             )}
           </div>
           <div className={styles.inboundBody}>{message.text}</div>
+        </div>
+      </article>
+    );
+  }
+
+  const results = workerResults(message);
+  if (results.length > 0) {
+    const rest = noticeRest(message.text);
+    return (
+      <article
+        className={`${styles.message} ${styles.messageInbound}${streamCls}`}
+        data-msg={message.id}
+        data-stream-in={streamAttr}
+      >
+        <div className={styles.inboundCard}>
+          {rest && (
+            <div className={styles.inboundBody} data-worker-result-rest="">
+              {rest}
+            </div>
+          )}
+          {results.map((r) => (
+            <WorkerResultCard
+              key={r.workerId}
+              result={r}
+              onSelectThread={onSelectThread}
+              onIntegrateWorker={onIntegrateWorker}
+            />
+          ))}
+          <details className={styles.workerActivity}>
+            <summary className={styles.workerActivitySummary}>Full notice</summary>
+            <div className={styles.workerActivityBody}>{message.text}</div>
+          </details>
         </div>
       </article>
     );
@@ -1041,6 +1140,7 @@ export const MessageBlock = memo(function MessageBlock({
   onLoadImage,
   onLoadAttachmentImage,
   onSelectThread,
+  onIntegrateWorker,
   onReply,
   onCiteSelection,
   onWaitWhat,
@@ -1075,6 +1175,8 @@ export const MessageBlock = memo(function MessageBlock({
   /** Provenance tiers for assistant messages; null hides the strip. */
   provenance?: MessageProvenance | null;
   onSelectThread?: (id: string) => void;
+  /** Worker-result card button (#1427): squash a worker onto this lead. */
+  onIntegrateWorker?: (workerThreadId: string) => Promise<void>;
   onReply?: (message: ChatMessage) => void;
   onCiteSelection?: (target: ReplyTarget) => void;
   onWaitWhat?: (message: ChatMessage) => void;
@@ -1132,6 +1234,7 @@ export const MessageBlock = memo(function MessageBlock({
         onCancelConfirm={onCancelConfirm}
         onLoadAttachmentImage={onLoadAttachmentImage}
         onSelectThread={onSelectThread}
+        onIntegrateWorker={onIntegrateWorker}
         pinned={pinned}
         onTogglePin={onTogglePin}
       />
