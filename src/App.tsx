@@ -1861,6 +1861,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
               projects={projects}
               providers={providers}
               draft={repeatDraft}
+              focusId={focusAutomationId}
               loadRuns={listAutomationRuns}
               onSelectThread={handleSelectThread}
               liveThreads={loading ? undefined : threads}
@@ -1878,7 +1879,6 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
                 await trustAutomationsFile(projectId, hash);
                 await refreshAutomations();
               }}
-              focusId={focusAutomationId}
             />
           ) : view === "planboard" ? (
             <PlanboardView

@@ -8,6 +8,8 @@ import {
   automationRunDisplayStatus,
   automationRunStatusLabel,
   createFormError,
+  isAutomationCreateTool,
+  parseAutomationCreateResult,
   triggerLabel,
 } from "../src/automations";
 import type { ThreadStatus } from "../src/shared/ipc";
@@ -79,5 +81,45 @@ describe("automationRunDisplayStatus", () => {
       assert.equal(automationRunDisplayStatus(status), display, status);
       assert.equal(automationRunStatusLabel(status), label, status);
     }
+  });
+});
+
+describe("isAutomationCreateTool", () => {
+  it("matches bare and mcp-prefixed names (#1589)", () => {
+    assert.equal(isAutomationCreateTool("automation_create"), true);
+    assert.equal(
+      isAutomationCreateTool("mcp__coder-threads__automation_create"),
+      true,
+    );
+    assert.equal(isAutomationCreateTool("Read"), false);
+    assert.equal(isAutomationCreateTool(undefined), false);
+  });
+});
+
+describe("parseAutomationCreateResult", () => {
+  it("reads id, name, and trigger from the tool output", () => {
+    const parsed = parseAutomationCreateResult(
+      JSON.stringify({
+        id: "a1",
+        name: "Triage CI",
+        provider: "claude",
+        trigger: {
+          type: "github",
+          event: "ci_completed",
+          branch: "main",
+          conclusion: "failure",
+        },
+      }),
+    );
+    assert.equal(parsed?.id, "a1");
+    assert.equal(parsed?.name, "Triage CI");
+    assert.equal(parsed?.trigger?.event, "ci_completed");
+    assert.equal(parsed?.trigger?.branch, "main");
+  });
+
+  it("returns null when the output is not a created automation", () => {
+    assert.equal(parseAutomationCreateResult(""), null);
+    assert.equal(parseAutomationCreateResult("not json"), null);
+    assert.equal(parseAutomationCreateResult("{}"), null);
   });
 });
