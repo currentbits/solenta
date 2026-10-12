@@ -307,6 +307,8 @@ interface ThreadViewProps {
   onStopRun: () => void | Promise<void>;
   /** Resume a parked quota-wait now (#462). */
   onResumeQuotaWait?: () => void | Promise<void>;
+  /** Deliver crew notices held since a restart (#1426). */
+  onResumeCrew?: () => void | Promise<void>;
   /** Per-thread auto-resume override. null inherits the global setting. */
   onSetQuotaWaitAutoResume?: (
     enabled: boolean | null,
@@ -756,6 +758,7 @@ export const ThreadView = memo(function ThreadView({
   onRetryWorkflows,
   onStopRun,
   onResumeQuotaWait,
+  onResumeCrew,
   onSetQuotaWaitAutoResume,
   queuedPrompt = null,
   queuedItems: queuedItemsProp = null,
@@ -2737,6 +2740,21 @@ export const ThreadView = memo(function ThreadView({
           onClick={() => void onStopRun()}
         >
           Stop
+        </button>
+      </div>
+    ) : detail.thread.heldNotices && onResumeCrew ? (
+      <div className={styles.statusStrip} data-held-notices="">
+        <span className={styles.statusText}>
+          The app restarted. Your crew&apos;s updates are on hold.
+        </span>
+        <button
+          type="button"
+          className={styles.statusAction}
+          onClick={() => void onResumeCrew()}
+          data-resume-crew=""
+        >
+          Resume crew ({detail.thread.heldNotices}{" "}
+          {detail.thread.heldNotices === 1 ? "update" : "updates"})
         </button>
       </div>
     ) : coldCompact != null && nativeCompact && !isArchived ? (

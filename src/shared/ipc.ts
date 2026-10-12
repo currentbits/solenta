@@ -652,6 +652,11 @@ export interface ThreadInfo {
    */
   stoppedAt?: number | null;
   /**
+   * Crew notices queued for this lead before a restart, held until the
+   * user resumes the crew (#1426). Absent/null when nothing is held.
+   */
+  heldNotices?: number | null;
+  /**
    * When the app gave this thread its one automatic turn after a restart
    * interrupted its run (issue #1512 I3). Cleared by the next human turn.
    */
@@ -5329,6 +5334,11 @@ export interface CoderApi {
      * parked. Counts as the one-shot wake.
      */
     resumeQuotaWait(input: { threadId: string }): Promise<{ runId: string }>;
+    /**
+     * Deliver crew notices held since a restart (#1426) under the usual
+     * budget and auto-turn gates. Clears ThreadInfo.heldNotices.
+     */
+    resumeCrew(input: { threadId: string }): Promise<void>;
   };
   git: {
     status(projectId: string): Promise<GitStatus>;

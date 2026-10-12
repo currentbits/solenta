@@ -405,6 +405,8 @@ export interface UseCoderResult {
     enabled: boolean | null,
   ) => Promise<void>;
   resumeQuotaWait: (threadId: string) => Promise<void>;
+  /** Deliver crew notices held since a restart (#1426). */
+  resumeCrew: (threadId: string) => Promise<void>;
   /** Rename a thread. Does not require selection. */
   renameThread: (threadId: string, title: string) => Promise<void>;
   /** Save scratch notes on a thread (header editor, issue #194). */
@@ -1578,6 +1580,7 @@ export function useCoder(): UseCoderResult {
     setCrossThreadInbound,
     setQuotaWaitAutoResume,
     resumeQuotaWait,
+    resumeCrew,
     renameThread,
     setNotes,
     setMessagePins,
@@ -2125,6 +2128,7 @@ export function useCoder(): UseCoderResult {
     setCrossThreadInbound,
     setQuotaWaitAutoResume,
     resumeQuotaWait,
+    resumeCrew,
     renameThread,
     setNotes,
     setMessagePins,

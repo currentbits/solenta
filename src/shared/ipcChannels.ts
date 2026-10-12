@@ -210,6 +210,7 @@ export const IPC_CHANNELS = [
   { ns: "runs", method: "distillMemory" },
   { ns: "runs", method: "stop" },
   { ns: "runs", method: "resumeQuotaWait" },
+  { ns: "runs", method: "resumeCrew" },
   { ns: "git", method: "status" },
   { ns: "git", method: "listBranches" },
   { ns: "git", method: "setupWorktree" },

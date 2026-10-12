@@ -3109,6 +3109,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       stop: (input: unknown) => rec("runs.stop", [input], undefined),
       resumeQuotaWait: (input: unknown) =>
         rec("runs.resumeQuotaWait", [input], { runId: "r-quota" }),
+      resumeCrew: (input: unknown) => rec("runs.resumeCrew", [input], undefined),
     },
     git: {
       listBranches: (input: unknown) =>

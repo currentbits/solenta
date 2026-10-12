@@ -126,22 +126,46 @@ function createOrchNotices(ctx) {
   const noticeStarting = new Set();
 
   /**
-   * Pending wake-ups: threadId -> notice lines. Worker-finished notices,
-   * peer messages, and task-unblock pokes share this one queue. Idle
-   * threads start a run immediately; a running thread flushes at its own
-   * terminal. The orchestrator no longer needs the user to relay.
-   * @type {Map<string, string[]>}
+   * Pending wake-ups: threadId -> notice lines, persisted in the store so a
+   * crash cannot lose them (#1426). Worker-finished notices, peer messages,
+   * and task-unblock pokes share this one queue. Idle threads start a run
+   * immediately; a running thread flushes at its own terminal. A lead whose
+   * row has heldNotices (restored after a restart) waits for "Resume crew".
+   * @returns {Record<string, string[]>}
    */
-  const orchNotices = new Map();
+  function queues() {
+    if (!store.data.orchNoticesByThread) store.data.orchNoticesByThread = {};
+    return store.data.orchNoticesByThread;
+  }
 
   /**
-   * Consecutive machine-delivered turns per thread (issue #277). A notice
-   * flush increments; a user-initiated startRun resets to 0. At
-   * CREW_AUTO_TURN_CAP the next flush is refused through the same
-   * undeliverable path as the orchestration-budget gate.
-   * @type {Map<string, number>}
+   * Consecutive machine-delivered turns per thread (issue #277), persisted
+   * (#1426) so a restart cannot reset the cap. A notice flush increments; a
+   * user-initiated startRun resets to 0. At CREW_AUTO_TURN_CAP the next
+   * flush is refused through the same undeliverable path as the
+   * orchestration-budget gate.
    */
-  const autoTurns = new Map();
+  const autoTurns = {
+    /** @param {string} threadId */
+    get(threadId) {
+      const all = store.data.autoTurnsByThread;
+      return (all && Number(all[threadId])) || 0;
+    },
+    /** @param {string} threadId @param {number} n */
+    set(threadId, n) {
+      if (!store.data.autoTurnsByThread) store.data.autoTurnsByThread = {};
+      if (n) store.data.autoTurnsByThread[threadId] = n;
+      else delete store.data.autoTurnsByThread[threadId];
+      store.save();
+    },
+  };
+
+  /** Drop a thread's queue and its hold. Does not save. */
+  function dropQueue(threadId) {
+    delete queues()[threadId];
+    const t = store.getThread(threadId);
+    if (t && t.heldNotices) store.updateThread(threadId, { heldNotices: null });
+  }
 
   /** sessionId -> Date.now() when a Solenta Codex child left `active`. */
   const recentlyReleasedCodex = new Map();
@@ -231,15 +255,38 @@ function createOrchNotices(ctx) {
   }
 
   /**
-   * Append a line to the notice queue. Caller already checked the thread
-   * exists. Does not flush.
+   * Append a line to the notice queue and put it on disk now, not after the
+   * save debounce: owed work must survive a crash (#1426). Caller already
+   * checked the thread exists. Does not flush.
    * @param {string} threadId
    * @param {string} line
+   * @param {boolean} [hold] - hold the queue for "Resume crew"
    */
-  function enqueueNotice(threadId, line) {
-    const notes = orchNotices.get(threadId) || [];
+  function enqueueNotice(threadId, line, hold = false) {
+    const all = queues();
+    const notes = Array.isArray(all[threadId]) ? all[threadId] : [];
     notes.push(line);
-    orchNotices.set(threadId, notes);
+    all[threadId] = notes;
+    const t = store.getThread(threadId);
+    if (hold || (t && t.heldNotices)) {
+      store.updateThread(threadId, { heldNotices: notes.length });
+      pushThreadsChanged();
+    }
+    store.saveNow();
+  }
+
+  /**
+   * Dedupe key for one worker run (#1426). Marks it noticed and returns
+   * true the first time; a replayed finish returns false. "A missed wake
+   * is cheaper than a duplicate one."
+   * @param {object} worker
+   * @param {string} key
+   */
+  function claimNoticeKey(worker, key) {
+    if (!key) return true;
+    if (worker.noticeKey === key) return false;
+    store.updateThread(worker.id, { noticeKey: key });
+    return true;
   }
 
   /**
@@ -248,7 +295,7 @@ function createOrchNotices(ctx) {
    * thread flushes at its own terminal. The caller owns the prefix (peer
    * lines arrive as `[peer from …]`); do not add `[orchestration]`.
    * Unknown threadId is a silent no-op. Never throws.
-   * @param {{ threadId?: unknown, line?: unknown }} [input]
+   * @param {{ threadId?: unknown, line?: unknown, resume?: boolean }} [input]
    */
   function deliverNotice(input) {
     try {
@@ -257,6 +304,8 @@ function createOrchNotices(ctx) {
       if (!threadId || !store.getThread(threadId)) return;
       const line = input && input.line != null ? String(input.line) : "";
       if (!line) return;
+      // Auto-resume after restart is the user's standing consent (#1426).
+      if (input.resume) store.updateThread(threadId, { heldNotices: null });
       enqueueNotice(threadId, line);
       flushOrchNotices(threadId);
     } catch {
@@ -276,14 +325,17 @@ function createOrchNotices(ctx) {
     const parentId = String(thread.handoffFrom);
     if (!store.getThread(parentId)) return;
     let line = "";
+    let runId = "";
     const msgs = store.getMessages(threadId) || [];
-    for (let i = msgs.length - 1; i >= 0; i--) {
+    for (let i = msgs.length - 1; i >= 0 && !(line && runId); i--) {
       const m = msgs[i];
-      if (m && m.role === "assistant" && m.text != null && String(m.text)) {
+      if (!m) continue;
+      if (!runId && m.runId) runId = String(m.runId);
+      if (!line && m.role === "assistant" && m.text != null && String(m.text)) {
         line = String(m.text).split(/\r?\n/)[0];
-        break;
       }
     }
+    if (!claimNoticeKey(thread, runId)) return;
     const title = thread.title ? ` ("${thread.title}")` : "";
     // Its commits are on its own branch and nowhere else until someone lands
     // them — say so at the one moment the lead is awake and looking at this
@@ -317,14 +369,16 @@ function createOrchNotices(ctx) {
    * @param {string} threadId - the orchestrator thread
    */
   function flushOrchNotices(threadId) {
-    const notes = orchNotices.get(threadId);
-    if (!notes || notes.length === 0) return;
+    const notes = queues()[threadId];
+    if (!Array.isArray(notes) || notes.length === 0) return;
     if (active.has(threadId)) return;
     const thread = store.getThread(threadId);
     if (!thread) {
-      orchNotices.delete(threadId);
+      dropQueue(threadId);
       return;
     }
+    // Held after a restart until the user resumes the crew (#1426).
+    if (thread.heldNotices) return;
     const park = parkCodexFromNotice(thread);
     if (park) {
       if (park.wait) {
@@ -345,7 +399,8 @@ function createOrchNotices(ctx) {
       return;
     }
     codexParkNotified.delete(threadId);
-    orchNotices.delete(threadId);
+    dropQueue(threadId);
+    store.save();
     const prompt = noticePrompt(notes);
     // The start below is deferred, so a queued drain from the same terminal
     // would win the idle slot and this notice would bounce off "already
@@ -529,9 +584,10 @@ function createOrchNotices(ctx) {
       await stopRun({ threadId: id }, seen);
       if (wasActive) stopped++;
     }
-    const pending = orchNotices.get(threadId);
-    orchNotices.delete(threadId);
-    if (pending && pending.length > 0) {
+    const pending = queues()[threadId];
+    dropQueue(threadId);
+    store.save();
+    if (Array.isArray(pending) && pending.length > 0) {
       // Same trace as flushOrchNotices' undeliverable path: the orchestrator
       // still sees what its crew did, as an event that starts no run.
       const body = pending.join("\n");
@@ -539,6 +595,39 @@ function createOrchNotices(ctx) {
       appendMessage(threadId, "event", headed);
     }
     return { stopped, traced: !!(pending && pending.length > 0) };
+  }
+
+  /**
+   * "Resume crew" (#1426): release the hold a restart put on this lead's
+   * notices and deliver them under the usual budget and auto-turn gates.
+   * @param {{ threadId?: unknown }} input
+   */
+  function resumeCrew(input) {
+    const threadId = input && input.threadId != null ? String(input.threadId) : "";
+    if (!store.getThread(threadId)) throw new Error(`Unknown thread: ${threadId}`);
+    store.updateThread(threadId, { heldNotices: null });
+    store.save();
+    pushThreadsChanged();
+    flushOrchNotices(threadId);
+  }
+
+  /**
+   * Boot: tell each lead about workers a crash or quit cut off mid-run
+   * (#1426), held until the user resumes. Keyed by the interruption, so a
+   * second boot adds nothing. Never throws.
+   */
+  function noticeInterruptedWorkers() {
+    for (const t of store.getThreads()) {
+      try {
+        if (t.interruptedBy !== "restart" || !t.orchWorker || !t.handoffFrom) continue;
+        const parentId = String(t.handoffFrom);
+        if (!store.getThread(parentId)) continue;
+        if (!claimNoticeKey(t, `restart:${t.interruptedAt}`)) continue;
+        enqueueNotice(parentId, interruptedLine(t), true);
+      } catch {
+        // one bad row must not block the rest
+      }
+    }
   }
 
   /**
@@ -564,6 +653,8 @@ function createOrchNotices(ctx) {
     stopCrew,
     isAutoTurn,
     isNoticeStarting,
+    resumeCrew,
+    noticeInterruptedWorkers,
     cancelAll() {
       for (const id of [...codexReleaseFlush.keys()]) {
         cancelCodexReleaseFlush(id);
@@ -572,6 +663,34 @@ function createOrchNotices(ctx) {
       codexParkNotified.clear();
     },
   };
+}
+
+/**
+ * The lead's notice for a worker a restart cut off: where its work is and
+ * whether anything is uncommitted.
+ * @param {object} t - the worker
+ */
+function interruptedLine(t) {
+  const title = t.title ? ` ("${t.title}")` : "";
+  let where = "";
+  if (t.worktreePath) {
+    const head = gitTry(t.worktreePath, ["log", "-1", "--format=%h %s"], { timeout: 5000 });
+    const dirty = gitTry(t.worktreePath, ["status", "--porcelain"], { raw: true, timeout: 5000 });
+    const changed = dirty.ok ? dirty.stdout.split("\n").filter((l) => l.trim()).length : null;
+    where =
+      ` Worktree: ${t.worktreePath}, branch ${t.branch || "(unknown)"}.` +
+      (head.ok && head.stdout ? ` Last commit: ${String(head.stdout).trim()}.` : "") +
+      (changed == null
+        ? ""
+        : changed
+          ? ` The tree has ${changed} uncommitted change${changed === 1 ? "" : "s"}.`
+          : " The tree is clean.");
+  }
+  return (
+    `Worker thread ${t.id}${title} was interrupted by an app restart mid-run and is not running.` +
+    where +
+    ` Decide whether to re-dispatch it (thread_send) or review what it left.`
+  );
 }
 
 /** queueOrchNotice never throws; a broken block just drops out. */

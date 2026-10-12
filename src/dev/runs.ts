@@ -1106,6 +1106,13 @@ export function createRuns(ctx: DevCtx): Pick<CoderApi, "runs"> {
         }
         return this.start({ threadId: input.threadId, prompt: "continue" });
       },
+      async resumeCrew(input: { threadId: string }) {
+        const detail = details.get(input.threadId);
+        if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
+        detail.thread = { ...detail.thread, heldNotices: null };
+        syncThreadRow(detail.thread);
+        emitDetail(detail);
+      },
       async stop(input) {
         const detail = details.get(input.threadId);
         if (!detail) throw new Error(`Thread not found: ${input.threadId}`);

@@ -2045,6 +2045,7 @@ function createRunner(opts) {
         // human turn re-arms auto-resume, so a resumed run that is itself
         // interrupted is never resumed again.
         interruptedAt: null,
+        interruptedBy: null,
         ...(machineTurn || isReplayTurn(input) ? {} : { autoResumedAt: null }),
         quotaWaitUntil: null,
         quotaWaitResumed: input.fromQuotaWait === true,
@@ -2651,6 +2652,8 @@ function createRunner(opts) {
           stoppedAt: Date.now(),
           // Opt-in resume after restart (issue #1512 I3).
           interruptedAt: Date.now(),
+          // Its lead hears about it at next boot (#1426).
+          interruptedBy: "restart",
         },
         { touch: true },
       );
@@ -2801,6 +2804,8 @@ function createRunner(opts) {
     stopCrew,
     isAutoTurn,
     isNoticeStarting,
+    resumeCrew,
+    noticeInterruptedWorkers,
     cancelAll: cancelAllOrchNotices,
   } = createOrchNotices(ctx);
   // Read lazily by runner-verify-gate.js.
@@ -2935,6 +2940,8 @@ function createRunner(opts) {
   } = createWatchdogs(ctx);
 
   refreshAllQuotaWaits();
+  // Workers a crash or quit cut off: tell their leads, held (#1426).
+  noticeInterruptedWorkers();
   // Turns queued when the app quit (#166).
   queueMicrotask(admitQueuedRuns);
 
@@ -2958,6 +2965,7 @@ function createRunner(opts) {
     activeRunId,
     isAutoTurn,
     resumeInterruptedRuns,
+    resumeCrew,
     stopAll,
     flushTranscripts,
     workflowNameFromThreadId,

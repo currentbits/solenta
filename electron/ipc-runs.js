@@ -67,4 +67,7 @@ module.exports = {
   "runs:resumeQuotaWait": async (ctx, input) => {
     return ctx.runner.resumeQuotaWait(input);
   },
+  "runs:resumeCrew": async (ctx, input) => {
+    return ctx.runner.resumeCrew(input);
+  },
 };

@@ -69,6 +69,10 @@ const EMPTY = {
   usageThreadsByDay: {},
   automations: [],
   tasksByCrew: {},
+  // Owed crew wake-ups (#1426): leadId -> notice lines, and consecutive
+  // machine-delivered turns per thread. Survive a crash or quit.
+  orchNoticesByThread: {},
+  autoTurnsByThread: {},
   digestSeenAt: null,
   prViewed: {},
   // autoSettleAfterDays defaults to 3 (AUTO_SETTLE_AFTER_DAYS); null = disabled.
@@ -244,6 +248,8 @@ function recoverInterruptedRuns(store, data) {
     t.updatedAt = Date.now();
     // Opt-in resume after restart (issue #1512 I3) keys off this stamp.
     t.interruptedAt = Date.now();
+    // The lead learns about it from noticeInterruptedWorkers (#1426).
+    t.interruptedBy = "restart";
     store._appendLazyMessage(t.id, {
       id: randomUUID(),
       role: "event",
@@ -273,6 +279,25 @@ function recoverInterruptedRuns(store, data) {
     recovered = true;
   }
   return recovered;
+}
+
+/** @returns {object} `v` when it is a plain object, else {} */
+function plainObject(v) {
+  return v && typeof v === "object" && !Array.isArray(v) ? v : {};
+}
+
+/**
+ * Notices that survived a restart wait for the user (#1426): the lead row
+ * carries the count and flushOrchNotices skips it until "Resume crew".
+ * @param {object} data
+ */
+function holdRestoredNotices(data) {
+  const queues = data.orchNoticesByThread;
+  for (const t of data.threads) {
+    const notes = queues[t.id];
+    if (Array.isArray(notes) && notes.length > 0) t.heldNotices = notes.length;
+    else if (t.heldNotices) t.heldNotices = null;
+  }
 }
 
 /**
@@ -1543,8 +1568,11 @@ class Store {
         !Array.isArray(parsed.prViewed)
           ? parsed.prViewed
           : {},
+      orchNoticesByThread: plainObject(parsed.orchNoticesByThread),
+      autoTurnsByThread: plainObject(parsed.autoTurnsByThread),
       settings: normalizeSettings(revealed.settings),
     };
+    holdRestoredNotices(data);
     ensureWorkflowTemplates(data);
     this._scanMessageShards();
     this._adoptMessages(data, useLazy ? split : null);
@@ -2599,6 +2627,8 @@ function cloneEmpty() {
     usageThreadsByDay: {},
     automations: [],
     tasksByCrew: {},
+    orchNoticesByThread: {},
+    autoTurnsByThread: {},
     digestSeenAt: null,
     prViewed: {},
     // autoSettleAfterDays defaults to 3 (AUTO_SETTLE_AFTER_DAYS); null = disabled.
