@@ -2652,6 +2652,22 @@ button.diffLineGutter:focus-visible {
   user-select: text;
 }
 
+.workerResultBody {
+  margin-top: 6px;
+  font-family: var(--mono);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.workerResultActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
 .userBubbleWrap {
   display: flex;
   justify-content: flex-end;

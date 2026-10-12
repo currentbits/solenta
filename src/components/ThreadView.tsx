@@ -675,6 +675,8 @@ interface ThreadViewProps {
   onDismissSuggestion?: (s: WorkSuggestion) => void | Promise<void>;
   /** Open Automations, optionally focusing a created row (#1599). */
   onOpenAutomations?: (automationId?: string) => void;
+  /** Worker-result card button (#1427): integrate a worker into this lead. */
+  onIntegrateWorker?: (workerThreadId: string) => Promise<void>;
   /**
    * The thread this one was handed off from (handoffFrom), already resolved.
    * Resolved by App rather than passing the whole list: the list gets a new
@@ -881,6 +883,7 @@ export const ThreadView = memo(function ThreadView({
   onFileSuggestion,
   onDismissSuggestion,
   onOpenAutomations,
+  onIntegrateWorker,
   handoffSource = null,
   onSelectThread,
   threadTitles,
@@ -4065,6 +4068,7 @@ export const ThreadView = memo(function ThreadView({
                       onLoadAttachmentImage={onLoadAttachmentImage}
                       onSelectThread={onSelectThread}
                       onOpenAutomations={onOpenAutomations}
+                      onIntegrateWorker={onIntegrateWorker}
                       pinned={pinnedIds.has(entry.message.id)}
                       onTogglePin={
                         onSetMessagePins &&
