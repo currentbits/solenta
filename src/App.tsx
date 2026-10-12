@@ -413,6 +413,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     updateAutomation,
     removeAutomation,
     runAutomationNow,
+    trustAutomationsFile,
     listAutomationRuns,
     refreshAutomations,
   } = useCoder();
@@ -1870,8 +1871,12 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
                 await updateAutomation(input);
               }}
               onRemove={(id) => removeAutomation(id)}
-              onRunNow={async (id) => {
-                await runAutomationNow(id);
+              onRunNow={async (id, hash) => {
+                await runAutomationNow(id, hash);
+              }}
+              onTrustFile={async (projectId, hash) => {
+                await trustAutomationsFile(projectId, hash);
+                await refreshAutomations();
               }}
               focusId={focusAutomationId}
             />

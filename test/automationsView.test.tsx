@@ -7,6 +7,8 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import * as React from "react";
 import { inAct, mount } from "./support/dom.ts";
+import { createFakeCoder } from "./support/fakeCoder.ts";
+import { useCoderWorkflows } from "../src/coder/useCoderWorkflows";
 import { AutomationsView } from "../src/components/AutomationsView";
 import type {
   AutomationInfo,
@@ -51,6 +53,7 @@ function auto(
     lastRunAt: null,
     nextRunAt: Date.now() + 60 * 60 * 1000,
     lastError: null,
+    scope: over.scope ?? "private",
     ...over,
   };
 }
@@ -1103,6 +1106,402 @@ describe("AutomationsView", () => {
     await m.flush();
     assert.equal(submit.disabled, false);
     assert.equal(submit.textContent, "Add automation");
+    m.unmount();
+  });
+
+  it("create form has a Scope select; Project is disabled for a remote project", async () => {
+    const m = await mount(
+      <AutomationsView
+        automations={[]}
+        projects={[
+          p1,
+          {
+            ...p1,
+            id: "p2",
+            slug: "acme/ssh",
+            remoteHost: "h",
+            path: "/tmp/ssh",
+          },
+          { ...p1, id: "p3", slug: "acme/nopath", path: "" },
+        ]}
+        providers={providers}
+        onCreate={async () => {}}
+        onUpdate={async () => {}}
+        onRemove={async () => {}}
+        onRunNow={async () => {}}
+      />,
+    );
+    const scope = m.query("[data-automation-scope]") as HTMLSelectElement | null;
+    assert.ok(scope, "scope select");
+    const projectOpt = () =>
+      scope.querySelector('option[value="project"]') as HTMLOptionElement | null;
+    assert.ok(projectOpt());
+    assert.equal(projectOpt()!.disabled, false, "local project can use Project");
+
+    await m.change(m.query('[data-automation-create] [name="projectId"]'), "p2");
+    assert.equal(
+      projectOpt()!.disabled,
+      true,
+      "remote project cannot use Project",
+    );
+
+    await m.change(m.query('[data-automation-create] [name="projectId"]'), "p3");
+    assert.equal(
+      projectOpt()!.disabled,
+      true,
+      "pathless project cannot use Project",
+    );
+    m.unmount();
+  });
+
+  it("badges a project row and labels the toggle run-on-this-machine", async () => {
+    const m = await mount(
+      <AutomationsView
+        automations={[
+          auto({
+            id: "shared:p1:pr-triage",
+            scope: "project",
+            name: "PR triage",
+          }),
+          auto({ id: "a-private", name: "Local only" }),
+        ]}
+        projects={[p1]}
+        providers={providers}
+        onCreate={async () => {}}
+        onUpdate={async () => {}}
+        onRemove={async () => {}}
+        onRunNow={async () => {}}
+      />,
+    );
+    assert.match(m.text(), /Project/);
+    const row = m.query('[data-automation-row="shared:p1:pr-triage"]');
+    assert.ok(row);
+    const badge = row.querySelector("[data-automation-scope-badge]");
+    assert.ok(badge);
+    assert.equal(badge.textContent, "Project");
+    const toggle = row.querySelector("[data-automation-toggle]");
+    assert.ok(toggle);
+    assert.match(toggle.getAttribute("aria-label") || "", /this machine/i);
+
+    const privateRow = m.query('[data-automation-row="a-private"]');
+    assert.ok(privateRow);
+    assert.equal(
+      privateRow.querySelector("[data-automation-scope-badge]")?.textContent,
+      "Private",
+    );
+    const privateToggle = privateRow.querySelector("[data-automation-toggle]");
+    assert.ok(privateToggle);
+    assert.match(privateToggle.getAttribute("aria-label") || "", /Disable/);
+    m.unmount();
+  });
+
+  it("shows one approve card per untrusted project and calls onTrustFile", async () => {
+    let trusted: { projectId: string; hash: string } | null = null;
+    const hash = "a".repeat(64);
+    const m = await mount(
+      <AutomationsView
+        automations={[auto({ id: "shared:p1:pr-triage", scope: "project" })]}
+        projects={[
+          {
+            ...p1,
+            automationsFile: { hash, trusted: false, count: 1 },
+          },
+        ]}
+        providers={providers}
+        onCreate={async () => {}}
+        onUpdate={async () => {}}
+        onRemove={async () => {}}
+        onRunNow={async () => {}}
+        onTrustFile={async (projectId, fileHash) => {
+          trusted = { projectId, hash: fileHash };
+        }}
+      />,
+    );
+    const card = m.query("[data-automations-approve]");
+    assert.ok(card);
+    assert.match(m.text(), /solenta\.json/);
+    assert.match(
+      m.text(),
+      /Run automations from this repo’s solenta\.json\?/,
+    );
+    assert.match(
+      m.text(),
+      /These come from a checked-in file, so anyone who can push to the repo can change them\. You will be asked again if they change\./,
+    );
+    await m.click(m.query("[data-automations-approve-run]"));
+    assert.deepEqual(trusted, { projectId: "p1", hash });
+    m.unmount();
+  });
+
+  it("cancel hides the approve card for this session only", async () => {
+    const m = await mount(
+      <AutomationsView
+        automations={[auto({ id: "shared:p1:pr-triage", scope: "project" })]}
+        projects={[
+          {
+            ...p1,
+            automationsFile: {
+              hash: "a".repeat(64),
+              trusted: false,
+              count: 1,
+            },
+          },
+        ]}
+        providers={providers}
+        onCreate={async () => {}}
+        onUpdate={async () => {}}
+        onRemove={async () => {}}
+        onRunNow={async () => {}}
+        onTrustFile={async () => {}}
+      />,
+    );
+    assert.ok(m.query("[data-automations-approve]"));
+    const cancel = m.byText("Cancel");
+    assert.ok(cancel, "cancel on approve card");
+    await m.click(cancel);
+    assert.equal(m.query("[data-automations-approve]"), null);
+    m.unmount();
+  });
+
+  it("after a project-scope create, shows the write-and-commit note", async () => {
+    const created: AutomationWrite[] = [];
+    const m = await mount(
+      <AutomationsView
+        automations={[]}
+        projects={[p1]}
+        providers={providers}
+        onCreate={async (input) => {
+          created.push(input);
+        }}
+        onUpdate={async () => {}}
+        onRemove={async () => {}}
+        onRunNow={async () => {}}
+      />,
+    );
+    await m.type(m.query('[data-automation-create] [name="name"]'), "PR triage");
+    await m.type(
+      m.query('[data-automation-create] [name="prompt"]'),
+      "triage incoming PRs",
+    );
+    await m.change(m.query("[data-automation-scope]"), "project");
+    await m.click(m.query("[data-automation-create] button[type=submit]"));
+    assert.equal(created.length, 1);
+    assert.equal(created[0].scope, "project");
+    const note = m.query("[data-automation-wrote]");
+    assert.ok(note);
+    assert.equal(note.textContent, "Wrote solenta.json — commit it to share.");
+    m.unmount();
+  });
+
+  it("after a project-scope definition update, shows the write-and-commit note", async () => {
+    const updates: Array<Record<string, unknown>> = [];
+    const m = await mount(
+      <AutomationsView
+        automations={[
+          auto({
+            id: "shared:p1:pr-triage",
+            scope: "project",
+            name: "PR triage",
+          }),
+        ]}
+        projects={[p1]}
+        providers={providers}
+        onCreate={async () => {}}
+        onUpdate={async (input) => {
+          updates.push(input);
+        }}
+        onRemove={async () => {}}
+        onRunNow={async () => {}}
+      />,
+    );
+    await m.click(m.query('[data-automation-edit=""]'));
+    await m.type(
+      m.query('[data-automation-create] [name="prompt"]'),
+      "triage harder",
+    );
+    await m.click(m.query("[data-automation-create] button[type=submit]"));
+    assert.equal(updates.length, 1);
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(updates[0], "scope"),
+      false,
+      "scope cannot change on update",
+    );
+    assert.ok(m.query("[data-automation-wrote]"));
+    assert.equal(
+      m.query("[data-automation-wrote]")?.textContent,
+      "Wrote solenta.json — commit it to share.",
+    );
+    m.unmount();
+  });
+
+  it("after a project-scope memory-only save, does not show the write-and-commit note", async () => {
+    const updates: Array<Record<string, unknown>> = [];
+    const m = await mount(
+      <AutomationsView
+        automations={[
+          auto({
+            id: "shared:p1:pr-triage",
+            scope: "project",
+            name: "PR triage",
+            memory: "old notes",
+          }),
+        ]}
+        projects={[p1]}
+        providers={providers}
+        onCreate={async () => {}}
+        onUpdate={async (input) => {
+          updates.push(input);
+        }}
+        onRemove={async () => {}}
+        onRunNow={async () => {}}
+      />,
+    );
+    await m.click(m.query('[data-automation-edit=""]'));
+    await m.type(m.query("[data-automation-memory]"), "new notes");
+    await m.click(m.query("[data-automation-create] button[type=submit]"));
+    assert.equal(updates.length, 1);
+    assert.equal(updates[0].memory, "new notes");
+    assert.equal(
+      m.query("[data-automation-wrote]")?.textContent ?? null,
+      null,
+      "memory is not a definition field; solenta.json was not written",
+    );
+    m.unmount();
+  });
+
+  it("untrusted project row disables the toggle and Run now passes the file hash", async () => {
+    const runs: Array<[string, string?]> = [];
+    const updates: unknown[] = [];
+    const hash = "a".repeat(64);
+    const m = await mount(
+      <AutomationsView
+        automations={[
+          auto({
+            id: "shared:p1:pr-triage",
+            scope: "project",
+            enabled: true,
+          }),
+        ]}
+        projects={[
+          {
+            ...p1,
+            automationsFile: { hash, trusted: false, count: 1 },
+          },
+        ]}
+        providers={providers}
+        onCreate={async () => {}}
+        onUpdate={async (input) => {
+          updates.push(input);
+        }}
+        onRemove={async () => {}}
+        onRunNow={async (id, fileHash) => {
+          runs.push([id, fileHash]);
+        }}
+      />,
+    );
+    const toggle = m.query(
+      "[data-automation-toggle]",
+    ) as HTMLInputElement | null;
+    assert.ok(toggle);
+    assert.equal(
+      toggle.disabled,
+      true,
+      "toggle keys off automationsFile.trusted, not enabled",
+    );
+    assert.equal(toggle.checked, true, "do not force untrusted rows enabled:false");
+    await m.click(toggle);
+    assert.equal(updates.length, 0, "disabled toggle must not update");
+
+    await m.click(m.query("[data-automation-run]"));
+    assert.deepEqual(runs, [["shared:p1:pr-triage", hash]]);
+    m.unmount();
+  });
+
+  it("trusted project Run now calls onRunNow with only the id", async () => {
+    const runs: Array<[string, string?]> = [];
+    const m = await mount(
+      <AutomationsView
+        automations={[
+          auto({
+            id: "shared:p1:pr-triage",
+            scope: "project",
+            enabled: false,
+          }),
+        ]}
+        projects={[
+          {
+            ...p1,
+            automationsFile: {
+              hash: "a".repeat(64),
+              trusted: true,
+              count: 1,
+            },
+          },
+        ]}
+        providers={providers}
+        onCreate={async () => {}}
+        onUpdate={async () => {}}
+        onRemove={async () => {}}
+        onRunNow={async (id, fileHash) => {
+          runs.push([id, fileHash]);
+        }}
+      />,
+    );
+    const toggle = m.query(
+      "[data-automation-toggle]",
+    ) as HTMLInputElement | null;
+    assert.ok(toggle);
+    assert.equal(toggle.disabled, false);
+    assert.equal(toggle.checked, false);
+    assert.equal(m.query("[data-automations-approve]"), null);
+    await m.click(m.query("[data-automation-run]"));
+    assert.deepEqual(runs, [["shared:p1:pr-triage", undefined]]);
+    m.unmount();
+  });
+});
+
+describe("useCoderWorkflows approve-and-run", () => {
+  it("refreshes projects after runNow with a hash", async () => {
+    const fake = createFakeCoder({
+      automations: [auto({ id: "shared:p1:nightly", scope: "project" })],
+      projects: [
+        {
+          ...p1,
+          automationsFile: { hash: "a".repeat(64), trusted: false, count: 1 },
+        },
+      ],
+    });
+    const seen: ProjectInfo[][] = [];
+    let runNow:
+      | ((id: string, hash?: string) => Promise<AutomationInfo>)
+      | null = null;
+    function Harness() {
+      const selectedRef = React.useRef<string | null>(null);
+      const threadsRef = React.useRef([]);
+      const hook = useCoderWorkflows({
+        api: fake.api,
+        selectedThreadId: null,
+        setWorkflows: () => {},
+        setWorkflowListError: () => {},
+        setAutomations: () => {},
+        setProjects: (next) => {
+          seen.push(typeof next === "function" ? next([]) : next);
+        },
+        setDetail: () => {},
+        setError: () => {},
+        selectedRef,
+        threadsRef,
+        applyThreads: () => {},
+      });
+      runNow = hook.runAutomationNow;
+      return null;
+    }
+    const m = await mount(<Harness />);
+    await runNow!("shared:p1:nightly", "a".repeat(64));
+    assert.equal(fake.of("automations.runNow").length, 1);
+    assert.equal(fake.of("projects.list").length, 1);
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0][0].id, "p1");
     m.unmount();
   });
 });

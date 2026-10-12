@@ -186,6 +186,7 @@ function migrateAutomation(a) {
         ? a.triggerCursor
         : null,
     memory: typeof a.memory === "string" ? a.memory : "",
+    scope: a.scope === "project" ? "project" : "private",
   };
 }
 
@@ -254,6 +255,9 @@ function migrateProject(p) {
   const trust = normalizeTrustHash(next.repoConfigTrust);
   if (trust) next.repoConfigTrust = trust;
   else delete next.repoConfigTrust;
+  const autoTrust = normalizeTrustHash(next.automationsTrust);
+  if (autoTrust) next.automationsTrust = autoTrust;
+  else delete next.automationsTrust;
   delete next.repoConfig;
   return next;
 }

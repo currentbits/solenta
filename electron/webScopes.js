@@ -277,6 +277,7 @@ const BY_SCOPE = {
     "automations:update",
     "automations:remove",
     "automations:runNow",
+    "automations:trustFile",
     "projects:add",
     "projects:create",
     "projects:clone",

@@ -314,6 +314,20 @@ describe("solenta.json precedence and approval", () => {
     assert.equal(ok.branchPrefix, "agents/");
     assert.equal(ok.repoConfigTrust, "a".repeat(64));
   });
+
+  it("drops a non-hex automationsTrust", () => {
+    const n = migrateProject({ id: "p", path: "/tmp/p", automationsTrust: "nothex" });
+    assert.equal(n.automationsTrust, undefined);
+  });
+
+  it("keeps a hex automationsTrust", () => {
+    const ok = migrateProject({
+      id: "p",
+      path: "/tmp/p",
+      automationsTrust: "a".repeat(64),
+    });
+    assert.equal(ok.automationsTrust, "a".repeat(64));
+  });
 });
 
 describe("submodules on a new worktree", () => {

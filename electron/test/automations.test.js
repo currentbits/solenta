@@ -909,4 +909,184 @@ describe("automation CRUD + scheduler", () => {
     );
     assert.equal(store.getThreads().length, before);
   });
+
+  function writeShared(row, overlay = {}) {
+    fs.writeFileSync(
+      path.join(tmpDir, "solenta.json"),
+      JSON.stringify({ automations: [row] }, null, 2),
+    );
+    const id = `shared:p1:${row.id}`;
+    store.setAutomations([
+      {
+        id,
+        projectId: "p1",
+        scope: "project",
+        name: row.name,
+        prompt: row.prompt,
+        provider: row.provider,
+        preset: row.preset,
+        hour: row.hour ?? null,
+        trigger: row.trigger || null,
+        enabled: true,
+        lastRunAt: null,
+        nextRunAt: Date.now() - 1000,
+        lastError: null,
+        ...overlay,
+      },
+    ]);
+    return id;
+  }
+
+  it("tick does not fire an untrusted shared automation", async () => {
+    writeShared({
+      id: "nightly",
+      name: "Nightly",
+      prompt: "go",
+      provider: "claude",
+      preset: "hourly",
+    });
+    const started = [];
+    const sched = startScheduler({
+      store,
+      runner: {
+        startRun: async (input) => {
+          started.push(input);
+          return { runId: "r" };
+        },
+      },
+      intervalMs: 60 * 60 * 1000,
+    });
+    try {
+      await sched.tick();
+    } finally {
+      sched.stop();
+    }
+    assert.equal(started.length, 0);
+  });
+
+  it("tick GCs orphan shared overlays", async () => {
+    fs.writeFileSync(
+      path.join(tmpDir, "solenta.json"),
+      JSON.stringify({ automations: [] }, null, 2),
+    );
+    store.setAutomations([
+      {
+        id: "shared:p1:gone",
+        projectId: "p1",
+        scope: "project",
+        name: "Gone",
+        prompt: "x",
+        provider: "claude",
+        preset: "hourly",
+        hour: null,
+        enabled: true,
+        lastRunAt: null,
+        nextRunAt: Date.now() - 1000,
+        lastError: null,
+      },
+    ]);
+    const sched = startScheduler({
+      store,
+      runner: { startRun: async () => ({ runId: "r" }) },
+      intervalMs: 60 * 60 * 1000,
+    });
+    try {
+      await sched.tick();
+    } finally {
+      sched.stop();
+    }
+    assert.equal(store.getAutomations().length, 0);
+  });
+
+  it("runNow on untrusted shared rejects; hash trusts and fires once without enabling", async () => {
+    const id = writeShared(
+      {
+        id: "nightly",
+        name: "Nightly",
+        prompt: "go",
+        provider: "claude",
+        preset: "hourly",
+      },
+      { enabled: false, nextRunAt: Date.now() + 86_400_000 },
+    );
+    const { readAutomations } = require("../automations-file.js");
+    const hash = readAutomations(tmpDir).hash;
+    const started = [];
+    const ctx = {
+      store,
+      runner: {
+        startRun: async (input) => {
+          started.push(input);
+          return { runId: "r" };
+        },
+      },
+    };
+    await assert.rejects(() => runNow(ctx, { id }), /not trusted/);
+    assert.equal(started.length, 0);
+    const after = await runNow(ctx, { id, hash });
+    assert.equal(started.length, 1);
+    assert.equal(after.enabled, false);
+    assert.equal(store.getAutomation(id).enabled, false);
+    assert.equal(store.getProject("p1").automationsTrust, hash);
+  });
+
+  it("runNow fires the merged file prompt, not a stale overlay", async () => {
+    const id = writeShared(
+      {
+        id: "nightly",
+        name: "Nightly",
+        prompt: "From file",
+        provider: "claude",
+        preset: "hourly",
+      },
+      { prompt: "Stale", enabled: false, nextRunAt: Date.now() + 86_400_000 },
+    );
+    const { readAutomations } = require("../automations-file.js");
+    const hash = readAutomations(tmpDir).hash;
+    const started = [];
+    const after = await runNow(
+      {
+        store,
+        runner: {
+          startRun: async (input) => {
+            started.push(input);
+            return { runId: "r" };
+          },
+        },
+      },
+      { id, hash },
+    );
+    assert.equal(started.length, 1);
+    assert.match(started[0].prompt, /^From file\n/);
+    assert.equal(after.enabled, false);
+    assert.equal(store.getAutomation(id).enabled, false);
+    assert.equal(store.getAutomation(id).prompt, "Stale");
+  });
+
+  it("listAutomationRuns returns empty runs for a file-only shared row", () => {
+    fs.writeFileSync(
+      path.join(tmpDir, "solenta.json"),
+      JSON.stringify(
+        {
+          automations: [
+            {
+              id: "nightly",
+              name: "Nightly",
+              prompt: "go",
+              provider: "claude",
+              preset: "hourly",
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+    );
+    const id = "shared:p1:nightly";
+    assert.equal(store.getAutomation(id), null);
+    const listed = listAutomationRuns(store, id);
+    assert.equal(listed.automationId, id);
+    assert.deepEqual(listed.runs, []);
+    assert.equal(listed.retentionLimitReached, false);
+  });
 });
