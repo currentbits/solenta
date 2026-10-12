@@ -9,6 +9,8 @@ import { afterEach, describe, it } from "node:test";
 import { inAct, mount, unmountAll } from "./support/dom.ts";
 import { MarkdownBody } from "../src/components/Markdown";
 import { HTML_MAX_CHARS, HTML_SANDBOX } from "../src/htmlPage";
+// Warm the lazy chunk: a cold import() can outlast flush() on a loaded CI runner.
+import "../src/components/HtmlPage";
 
 const FENCE = "```html\n<h1>Hello</h1>\n```";
 
