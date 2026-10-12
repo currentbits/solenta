@@ -936,21 +936,9 @@ function createRunner(opts) {
     } catch {
       // housekeeping
     }
-    // Verify restamps status "working"; skip so we don't start the queued
-    // prompt on top of the gate. The verify settle path drains instead.
-    // A parked quota-wait is not a terminal — don't drain onto it.
-    // Failed and user-stopped turns must not auto-start a leftover
-    // follow-up as if the work landed (issue #1203).
-    const settled = store.getThread(threadId);
-    if (
-      status !== "failed" &&
-      status !== "stopped" &&
-      (!settled ||
-        (settled.status !== "quota-wait" &&
-          settled.quotaFailoverPending !== true))
-    ) {
-      maybeDrainQueued(threadId);
-    }
+    // No drain here: a done turn drains from finishSuccessfulTurn once its
+    // checkpoint (or verify) settles (#1430 R3). Failed and stopped turns
+    // never auto-start a leftover follow-up (#1203).
   }
 
   /**
@@ -1640,6 +1628,40 @@ function createRunner(opts) {
   }
 
   /**
+   * An orchestrator hop (pendingFork, /handoff and friends) awaits worker
+   * starts. Hold a preparing entry through it so a second send bounces, a
+   * worker notice queues instead of starting a run here, and Stop lands
+   * (#1430 R1). `fn` gets a cancelled() probe. Notices held meanwhile flush
+   * when the entry is cleared, as at any run terminal.
+   * @template T
+   * @param {string} threadId
+   * @param {(cancelled: () => boolean) => Promise<T>} fn
+   * @returns {Promise<T>}
+   */
+  async function holdForHop(threadId, fn) {
+    const runId = randomUUID();
+    const entry = {
+      kind: "preparing",
+      runId,
+      stopping: false,
+      handle: {
+        kill() {
+          entry.stopping = true;
+        },
+      },
+    };
+    active.set(threadId, entry);
+    try {
+      return await fn(() => launchWasCancelled(threadId, runId));
+    } finally {
+      if (active.get(threadId) === entry) {
+        clearRun(threadId);
+        flushOrchNotices(threadId);
+      }
+    }
+  }
+
+  /**
    * Upgrade the preparing `active` entry in place. No second active.set:
    * Stop holds the same object and sets `stopping` on it.
    * @returns {object | null}
@@ -1746,12 +1768,15 @@ function createRunner(opts) {
         current: resolveProvider(thread),
       });
       if (cmd) {
-        return await dispatchOrchCommand(
-          threadId,
-          thread,
-          cmd,
-          prompt,
-          attachments,
+        return await holdForHop(threadId, (cancelled) =>
+          dispatchOrchCommand(
+            threadId,
+            thread,
+            cmd,
+            prompt,
+            attachments,
+            cancelled,
+          ),
         );
       }
     }
@@ -1789,8 +1814,9 @@ function createRunner(opts) {
     // the second prompt on the flag is gone and this thread runs its own LLM,
     // supervising the crew through the coder-threads tools. The gates below
     // belong to the run that actually happens — the worker's — so they are
-    // deliberately skipped on this hop.
-    if (thread.pendingFork) {
+    // deliberately skipped on this hop. A notice is never a task to fork
+    // (#1430 R1): it wakes this thread's own LLM.
+    if (thread.pendingFork && !input.fromNotice) {
       // Promote the parent title BEFORE forking so the orchestrator is
       // named after the first prompt, not "New Thread". The worker gets
       // that same first line as its job title (no extra Fork: prefix).
@@ -1818,21 +1844,27 @@ function createRunner(opts) {
       });
       let started;
       try {
-        started = await startWithPoolFailover({
-          store,
-          worker,
-          prompt,
-          extra: { attachments, parentRunId: forkRunId },
-          startRun,
-          setProvider: services.setProvider,
-          isAvailable: providerBinAvailable,
-          onFailover: (next, fromProvider) => {
-            appendMessage(
-              threadId,
-              "event",
-              `Pool failover: ${fromProvider || "provider"} unavailable, using ${next.alias} (${next.provider}).`,
-            );
-          },
+        started = await holdForHop(threadId, async (cancelled) => {
+          const run = await startWithPoolFailover({
+            store,
+            worker,
+            prompt,
+            extra: { attachments, parentRunId: forkRunId },
+            startRun,
+            setProvider: services.setProvider,
+            isAvailable: providerBinAvailable,
+            onFailover: (next, fromProvider) => {
+              appendMessage(
+                threadId,
+                "event",
+                `Pool failover: ${fromProvider || "provider"} unavailable, using ${next.alias} (${next.provider}).`,
+              );
+            },
+          });
+          // Stop mid-hop: stopCrew misses a worker that had not claimed
+          // its slot yet. The worker keeps the prompt; it just stops.
+          if (cancelled()) await stopRun({ threadId: worker.id });
+          return run;
         });
       } catch (err) {
         // The worker could not start (missing CLI, budget gate, worktree
@@ -2155,102 +2187,125 @@ function createRunner(opts) {
       },
     };
     active.set(threadId, pendingEntry);
+    try {
+      // #1506 "Agent waits for setup": a new worktree's setup (and submodule
+      // update) is in flight; hold the agent until it settles. The command's
+      // own 30 min timeout bounds the wait, and Stop cuts it short. A failed
+      // setup is reported and the agent starts anyway, same as setup failures
+      // everywhere else: the worktree is kept, the transcript carries the log,
+      // and the agent can often repair a half-installed tree itself.
+      const setupJob =
+        projectForGate && projectForGate.waitForSetup === true
+          ? require("./projectCommands.js").pendingSetup(threadId)
+          : null;
+      if (setupJob) {
+        const waitId = beginWorkLogStep(threadId, runId, "Waiting for setup");
+        stampPreparingSteps(threadId, runId, { workingId: waitId });
+        pushDetail(threadId);
+        const ran = await Promise.race([setupJob, stopped]);
+        completeWorkLogStep(threadId, waitId);
+        if (abortIfCancelled(threadId, runId)) return { runId };
+        if (ran && /** @type {any} */ (ran).ok === false) {
+          appendMessage(
+            threadId,
+            "event",
+            "Setup did not finish cleanly. Starting the agent anyway.",
+            runId,
+          );
+        }
+        pushDetail(threadId);
+      }
 
-    // #1506 "Agent waits for setup": a new worktree's setup (and submodule
-    // update) is in flight; hold the agent until it settles. The command's
-    // own 30 min timeout bounds the wait, and Stop cuts it short. A failed
-    // setup is reported and the agent starts anyway, same as setup failures
-    // everywhere else: the worktree is kept, the transcript carries the log,
-    // and the agent can often repair a half-installed tree itself.
-    const setupJob =
-      projectForGate && projectForGate.waitForSetup === true
-        ? require("./projectCommands.js").pendingSetup(threadId)
-        : null;
-    if (setupJob) {
-      const waitId = beginWorkLogStep(threadId, runId, "Waiting for setup");
-      stampPreparingSteps(threadId, runId, { workingId: waitId });
-      pushDetail(threadId);
-      const ran = await Promise.race([setupJob, stopped]);
-      completeWorkLogStep(threadId, waitId);
+      const bootNote = await ask.prefetchBootstrapNote({
+        userDataPath,
+        projectPath:
+          dispatchThread.worktreePath ||
+          (projectForGate && projectForGate.path) ||
+          "",
+        firstTurn: !dispatchThread.sessionId,
+        bootstrapMemory,
+      });
       if (abortIfCancelled(threadId, runId)) return { runId };
-      if (ran && /** @type {any} */ (ran).ok === false) {
-        appendMessage(
+
+      // Native `/compact` goes out bare: Claude reads any trailing text as
+      // summary instructions, and Codex swaps the turn for thread/compact/start.
+      const dispatchPrompt = isNativeCompactTurn(
+        provider,
+        rawPrompt,
+        dispatchThread.sessionId,
+      )
+        ? "/compact"
+        : promptPrefix + bootNote;
+
+      const name = workflowNameFromThreadId(threadId);
+
+      if (provider === "simulate") {
+        return await startSimulatedRun(threadId, dispatchPrompt, runId, name);
+      }
+      if (provider === "generic") {
+        return await startGenericRun(threadId, dispatchPrompt, runId, name);
+      }
+
+      const entryDef = getProvider(provider) || getProvider("claude");
+      if (entryDef.kind === "claude-stream") {
+        return await startClaudeRun(threadId, dispatchPrompt, runId, entryDef);
+      }
+      if (entryDef.kind === "codex-json") {
+        return await startCodexRun(
           threadId,
-          "event",
-          "Setup did not finish cleanly. Starting the agent anyway.",
+          dispatchPrompt,
           runId,
+          entryDef,
+          nativeImages,
         );
       }
-      pushDetail(threadId);
-    }
-
-    const bootNote = await ask.prefetchBootstrapNote({
-      userDataPath,
-      projectPath:
-        dispatchThread.worktreePath ||
-        (projectForGate && projectForGate.path) ||
-        "",
-      firstTurn: !dispatchThread.sessionId,
-      bootstrapMemory,
-    });
-    if (abortIfCancelled(threadId, runId)) return { runId };
-
-    // Native `/compact` goes out bare: Claude reads any trailing text as
-    // summary instructions, and Codex swaps the turn for thread/compact/start.
-    const dispatchPrompt = isNativeCompactTurn(
-      provider,
-      rawPrompt,
-      dispatchThread.sessionId,
-    )
-      ? "/compact"
-      : promptPrefix + bootNote;
-
-    const name = workflowNameFromThreadId(threadId);
-
-    if (provider === "simulate") {
-      return startSimulatedRun(threadId, dispatchPrompt, runId, name);
-    }
-    if (provider === "generic") {
-      return startGenericRun(threadId, dispatchPrompt, runId, name);
-    }
-
-    const entryDef = getProvider(provider) || getProvider("claude");
-    if (entryDef.kind === "claude-stream") {
-      return await startClaudeRun(threadId, dispatchPrompt, runId, entryDef);
-    }
-    if (entryDef.kind === "codex-json") {
-      return startCodexRun(
+      if (entryDef.kind === "kimi-stream") {
+        return await startKimiRun(threadId, dispatchPrompt, runId, entryDef);
+      }
+      if (entryDef.kind === "opencode-json") {
+        return await startOpencodeRun(
+          threadId,
+          dispatchPrompt,
+          runId,
+          entryDef,
+          nativeFiles,
+        );
+      }
+      if (entryDef.kind === "cursor-stream") {
+        return await startCursorRun(threadId, dispatchPrompt, runId, entryDef);
+      }
+      if (entryDef.kind === "muse-json") {
+        return await startMuseRun(threadId, dispatchPrompt, runId, entryDef);
+      }
+      return await startClaudeRun(
         threadId,
         dispatchPrompt,
         runId,
-        entryDef,
-        nativeImages,
+        getProvider("claude"),
       );
+    } catch (err) {
+      // A throw before a provider claimed the slot would leak it and the
+      // thread would read "already active" forever (#1430 R5).
+      if (
+        active.get(threadId) === pendingEntry &&
+        pendingEntry.kind === "preparing"
+      ) {
+        clearRun(threadId);
+        store.updateThread(
+          threadId,
+          {
+            status: "failed",
+            runStartedAt: null,
+            lastError: shortError(String((err && err.message) || err)),
+          },
+          { touch: true },
+        );
+        store.save();
+        pushDetail(threadId);
+        pushThreadsChanged();
+      }
+      throw err;
     }
-    if (entryDef.kind === "kimi-stream") {
-      return startKimiRun(threadId, dispatchPrompt, runId, entryDef);
-    }
-    if (entryDef.kind === "opencode-json") {
-      return startOpencodeRun(
-        threadId,
-        dispatchPrompt,
-        runId,
-        entryDef,
-        nativeFiles,
-      );
-    }
-    if (entryDef.kind === "cursor-stream") {
-      return startCursorRun(threadId, dispatchPrompt, runId, entryDef);
-    }
-    if (entryDef.kind === "muse-json") {
-      return await startMuseRun(threadId, dispatchPrompt, runId, entryDef);
-    }
-    return await startClaudeRun(
-      threadId,
-      dispatchPrompt,
-      runId,
-      getProvider("claude"),
-    );
   }
 
   /**
@@ -2351,6 +2406,11 @@ function createRunner(opts) {
     if (!sent) {
       throw new Error("Live process is not accepting input");
     }
+    // The run can end during the send; never file the row under it (#1430 R8).
+    const live = active.get(threadId);
+    if (!live || live.runId !== entry.runId || live.stopping) {
+      throw new Error("The run ended before the steer landed");
+    }
     appendMessage(
       threadId,
       "user",
@@ -2435,7 +2495,8 @@ function createRunner(opts) {
         entry.kind === "muse" ||
         entry.kind === "real" ||
         entry.kind === "ask" ||
-        entry.kind === "preparing") &&
+        entry.kind === "preparing" ||
+        entry.kind === "verify") &&
       entry.handle
     ) {
       if (entry.kind === "codex") cancelCodexServerRequests(entry);
@@ -2561,7 +2622,8 @@ function createRunner(opts) {
           entry.kind === "muse" ||
           entry.kind === "real" ||
           entry.kind === "ask" ||
-          entry.kind === "preparing") &&
+          entry.kind === "preparing" ||
+          entry.kind === "verify") &&
         entry.handle
       ) {
         try {

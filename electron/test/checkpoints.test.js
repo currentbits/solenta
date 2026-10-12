@@ -753,6 +753,57 @@ describe("runner auto-checkpoint on successful turn", () => {
   });
 });
 
+describe("checkpoint before the queued follow-up (#1430 R3)", () => {
+  let fx;
+  let runner;
+  let prevSimulate;
+  let prevAgentCmd;
+
+  beforeEach(async () => {
+    prevSimulate = process.env.CODER_SIMULATE;
+    prevAgentCmd = process.env.CODER_AGENT_CMD;
+    delete process.env.CODER_SIMULATE;
+    process.env.CODER_AGENT_CMD = `${process.execPath} -e ${fakeAgentSuccessScript()}`;
+    fx = await makeWorktreeFixture();
+    runner = createRunner({
+      store: fx.store,
+      core: await loadCore(),
+      pushFn: () => {},
+      tickMs: 15,
+      userDataPath: fx.tmpDir,
+    });
+  });
+
+  afterEach(async () => {
+    if (runner) runner.stopAll();
+    await rmTree(fx.tmpDir);
+    if (prevSimulate === undefined) delete process.env.CODER_SIMULATE;
+    else process.env.CODER_SIMULATE = prevSimulate;
+    if (prevAgentCmd === undefined) delete process.env.CODER_AGENT_CMD;
+    else process.env.CODER_AGENT_CMD = prevAgentCmd;
+  });
+
+  it("a queued follow-up starts only after the checkpoint commit", async () => {
+    fs.writeFileSync(path.join(fx.worktreePath, "turn1.txt"), "turn 1\n");
+    let checkpointsAtFollowUp = null;
+    const append = fx.store.appendMessage.bind(fx.store);
+    fx.store.appendMessage = (threadId, msg) => {
+      if (msg && msg.role === "user" && msg.text === "follow-up") {
+        checkpointsAtFollowUp = git(fx.worktreePath, [
+          "log",
+          "--grep=coder-checkpoint:",
+          "--oneline",
+        ]);
+      }
+      return append(threadId, msg);
+    };
+    await runner.startRun({ threadId: fx.thread.id, prompt: "turn one" });
+    services.setQueued(fx.store, { threadId: fx.thread.id, prompt: "follow-up" });
+    await waitFor(() => checkpointsAtFollowUp !== null);
+    assert.match(checkpointsAtFollowUp, /coder-checkpoint: turn 1/);
+  });
+});
+
 describe("IPC seam git checkpoints", () => {
   it("preload exposes list/restore and main registers channels", () => {
     const Module = require("module");

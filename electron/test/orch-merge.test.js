@@ -503,3 +503,22 @@ describe("thread_merge", () => {
     assert.match(res.reason, /already there/);
   });
 });
+
+describe("git:mergeWorktree / git:removeWorktree refuse a running thread (#1430 R7)", () => {
+  const handlers = require("../ipc-git.js");
+  const ctx = { runner: { isRunning: () => true }, store: {} };
+
+  it("refuses a merge", async () => {
+    await assert.rejects(
+      handlers["git:mergeWorktree"](ctx, { threadId: "t1" }),
+      /Thread t1 is still running; wait for it to finish before merging/,
+    );
+  });
+
+  it("refuses a worktree remove", async () => {
+    await assert.rejects(
+      handlers["git:removeWorktree"](ctx, { threadId: "t1", force: true }),
+      /still running; wait for it to finish before removing its worktree/,
+    );
+  });
+});

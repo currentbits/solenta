@@ -71,6 +71,22 @@ function issueTargetFor(store, projectPath) {
   return remote || projectPath;
 }
 
+/**
+ * Merge or remove under a live run would pull the cwd out from under the
+ * agent (#1430 R7). Same refusal as thread_merge's requireLandableWorker.
+ * @param {any} ctx
+ * @param {string} threadId
+ * @param {string} action - "merging" | "removing its worktree"
+ */
+function refuseWhileRunning(ctx, threadId, action) {
+  const runner = ctx && ctx.runner;
+  if (runner && typeof runner.isRunning === "function" && runner.isRunning(threadId)) {
+    throw new Error(
+      `Thread ${threadId} is still running; wait for it to finish before ${action}.`,
+    );
+  }
+}
+
 /** IPC_HANDLERS rows for git:*, issues:*, mergeQueue:*, vibeKanban:*; ipc.js spreads them in. */
 module.exports = {
   "git:status": async (ctx, projectId) => {
@@ -153,6 +169,7 @@ module.exports = {
     return suggestPrText({ store: ctx.store, threadId: input.threadId });
   },
   "git:mergeWorktree": async (ctx, input) => {
+    refuseWhileRunning(ctx, input.threadId, "merging");
     const merged = mergeWorktree({
       store: ctx.store,
       threadId: input.threadId,
@@ -183,6 +200,7 @@ module.exports = {
     });
   },
   "git:removeWorktree": async (ctx, input) => {
+    refuseWhileRunning(ctx, input.threadId, "removing its worktree");
     return removeWorktree({
       store: ctx.store,
       threadId: input.threadId,

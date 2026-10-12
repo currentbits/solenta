@@ -414,3 +414,26 @@ describe("Claude auto-continue is unchanged (#950)", () => {
     );
   });
 });
+
+describe("codexSessionHeld counts a preparing Codex launch (#1430 R6)", () => {
+  const { createOrchNotices } = require("../runner-orch-notices.js");
+  const SID = "01a072f7-10e0-7fd2-b691-7d481327516f";
+
+  function held(provider) {
+    const threads = { a: { id: "a", provider, sessionId: SID } };
+    const { codexSessionHeld } = createOrchNotices({
+      store: { getThread: (id) => threads[id] || null },
+      active: new Map([["a", { kind: "preparing", runId: "r1" }]]),
+      resolveProvider: (t) => t.provider,
+    });
+    return codexSessionHeld(SID, "b");
+  }
+
+  it("a preparing Codex thread on the same session holds it", () => {
+    assert.equal(held("codex"), true);
+  });
+
+  it("a preparing non-Codex thread does not", () => {
+    assert.equal(held("claude"), false);
+  });
+});

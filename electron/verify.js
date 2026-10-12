@@ -89,6 +89,7 @@ function tailLog(text, max = VERIFY_LOG_MAX) {
  *   project?: { remoteHost?: string, remotePath?: string, path?: string } | null,
  *   platform?: NodeJS.Platform,
  *   spawn?: typeof spawn,
+ *   signal?: AbortSignal,
  * }} input
  * @returns {Promise<{ ok: boolean, exitCode: number | null, timedOut: boolean, log: string, durationMs: number }>}
  */
@@ -161,6 +162,16 @@ function runVerifyCommand(input) {
       killTimer = killTree(child, KILL_FALLBACK_MS);
     }, timeoutMs);
     if (typeof deadline.unref === "function") deadline.unref();
+    // Stop on the thread kills the command (#1430 R2).
+    if (input.signal) {
+      input.signal.addEventListener(
+        "abort",
+        () => {
+          if (!settled && !killTimer) killTimer = killTree(child, KILL_FALLBACK_MS);
+        },
+        { once: true },
+      );
+    }
 
     const finish = (exitCode) => {
       if (settled) return;
