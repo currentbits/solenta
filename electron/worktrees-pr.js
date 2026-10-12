@@ -20,7 +20,10 @@ const {
 } = require("./worktrees-conflicts.js");
 const { push, assertNoOutboundSecrets, scanOutgoingPush } = require("./worktrees-push.js");
 const { gateCiWorkflowMerge } = require("./worktrees-changes.js");
-const { maybeCleanupMergedWorktree } = require("./worktrees-gc.js");
+const {
+  maybeCleanupMergedWorktree,
+  retryDeferredMergedCleanups,
+} = require("./worktrees-gc.js");
 const prWatch = require("./prWatch.js");
 const github = require("./github.js");
 
@@ -1433,13 +1436,13 @@ async function mergePr(opts) {
 
 /**
  * True when a thread should be considered for background PR-state refresh:
- * has a prNumber, is not archived, and prState is not already terminal.
+ * has a prNumber and prState is not already terminal. Archived threads count
+ * (#1431): sweepCrew archives finished workers while their PRs are open.
  * @param {object} t
  * @returns {boolean}
  */
 function isPrRefreshCandidate(t) {
   if (!t || typeof t !== "object") return false;
-  if (t.archived) return false;
   if (t.prNumber == null || !Number.isFinite(Number(t.prNumber))) return false;
   const raw =
     t.prState == null || t.prState === ""
@@ -1450,7 +1453,7 @@ function isPrRefreshCandidate(t) {
 }
 
 /**
- * Lazy background PR-state refresh for non-archived threads with a prNumber
+ * Lazy background PR-state refresh for threads (archived too) with a prNumber
  * whose prState is not yet terminal (MERGED/CLOSED).
  *
  * Structural guarantees (docs/ISSUES.md):
@@ -1529,11 +1532,12 @@ async function refreshPrStates(store, opts) {
     settledPrPolledAt.set(t.id, now);
     return true;
   });
-  if (candidates.length === 0) {
+  // A merge seen mid-run skipped its cleanup (#1431); no gh needed to retry.
+  let changed = await retryDeferredMergedCleanups(store);
+  if (candidates.length === 0 && changed === 0) {
     return { examined: 0, changed: 0, spawned: 0 };
   }
 
-  let changed = 0;
   let spawned = 0;
 
   // API pre-pass (#1528): one request per repo for every unwatched thread.
@@ -1546,7 +1550,7 @@ async function refreshPrStates(store, opts) {
     /** @type {Map<string, { remote: { host: string, owner: string, repo: string }, rows: typeof candidates }>} */
     const groups = new Map();
     for (const snapshot of candidates) {
-      if (prWatchDeps && prWatch.isWatched(snapshot)) continue;
+      if (prWatchDeps && prWatch.wakeTarget(store, snapshot)) continue;
       let resolved;
       try {
         resolved = await resolveThreadGit(store, snapshot.id);
@@ -1595,6 +1599,8 @@ async function refreshPrStates(store, opts) {
 
       let info;
       let watching = false;
+      /** @type {string | null} */
+      let wakeTo = null;
       /** @type {any} */
       let viewed = null;
       if (batched.has(threadId)) {
@@ -1617,7 +1623,8 @@ async function refreshPrStates(store, opts) {
         }
 
         const prNumber = Number(snapshot.prNumber);
-        const watch = prWatchDeps && prWatch.isWatched(snapshot);
+        wakeTo = prWatchDeps ? prWatch.wakeTarget(store, snapshot) : null;
+        const watch = Boolean(wakeTo);
         spawned += 1;
         viewed = await runGh(
           cwd,
@@ -1666,6 +1673,7 @@ async function refreshPrStates(store, opts) {
           runGh,
           deliver: prWatchDeps.deliver,
           isRunning: prWatchDeps.isRunning,
+          relayTo: wakeTo,
           timeoutMs,
         });
         if (woke) changed += 1;
