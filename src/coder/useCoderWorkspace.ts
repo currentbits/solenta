@@ -18,6 +18,7 @@ import {
   pickWebFiles,
   pickWebFolder,
 } from "./webAttachments";
+import { withVideoFrames } from "./videoFrames";
 
 /**
  * The "Open in" editor last picked in Thread details (#1506), for opening
@@ -356,10 +357,11 @@ export function useCoderWorkspace({
         file: saveAttachmentFile,
       });
     }
-    const result = await api.attachments.pick({
-      includeImages: opts?.includeImages !== false,
-    });
-    return result.attachments;
+    const includeImages = opts?.includeImages !== false;
+    const result = await api.attachments.pick({ includeImages });
+    return includeImages
+      ? withVideoFrames(result.attachments, saveAttachmentImage)
+      : result.attachments;
   }, [api, saveAttachmentFile, saveAttachmentImage, selectedThreadId]);
 
   const pickFolderAttachments = useCallback(async () => {
@@ -408,7 +410,7 @@ export function useCoderWorkspace({
           .filter((p) => p.length > 0);
         if (!paths.length) return [];
         const result = await api.attachments.fromPaths({ paths });
-        return result.attachments;
+        return withVideoFrames(result.attachments, saveAttachmentImage);
       }
       const out: AttachmentInfo[] = [];
       if (folders?.length && selectedThreadId) {
