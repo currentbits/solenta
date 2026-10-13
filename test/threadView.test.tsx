@@ -20,7 +20,8 @@ import { inAct, mount, unmountAll } from "./support/dom.ts";
 import { setTranscriptViewMode } from "../src/uiPrefs";
 import { resetComposerSession } from "../src/composerSession";
 import { ThreadView } from "../src/components/ThreadView";
-// Warm the lazy chunk: a cold import() can outlast flush() on a loaded CI runner.
+// Warm the lazy chunk: a cold import() can outlast flush() on a loaded CI
+// runner, then resolves outside act() and fails the next test's console check.
 import "../src/components/HtmlPage";
 import styles from "../src/components/ThreadView.module.css";
 import { routineWorkerActivitySummary } from "../src/workerActivity";

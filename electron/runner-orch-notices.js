@@ -9,7 +9,13 @@
 
 const services = require("./services.js");
 const { noticePrompt } = require("./runnerHelpers.js");
-const { gitTry } = require("./worktrees.js");
+const fs = require("node:fs");
+const {
+  gitTry,
+  branchLanded,
+  recordedBaseBranch,
+  repoDefaultBranch,
+} = require("./worktrees.js");
 const { normalizeCommand } = require("./verify.js");
 const { readAnnotation } = require("./reviewItinerary.js");
 
@@ -412,6 +418,38 @@ function createOrchNotices(ctx) {
   }
 
   /**
+   * A worker whose branch ref (current, or kept after GC / a missing dir)
+   * still has commits off its base (#1404). A null worktreePath does not
+   * mean nothing was left to land. Unknown counts as unlanded.
+   * ponytail: sync git per excess worker; retained ones re-check on every
+   * crew terminal. Cache by ref sha if crews grow past a handful kept.
+   * @param {object} t
+   * @returns {boolean}
+   */
+  function holdsUnlandedBranch(t) {
+    const branch = t.branch || t.retainedBranch;
+    if (!branch) return false;
+    if (String(t.prState || "").toUpperCase() === "MERGED") return false;
+    const project = store.getProject(t.projectId);
+    if (!project || !project.path || project.remoteHost) return true;
+    if (!fs.existsSync(project.path)) return true;
+    try {
+      // Ref deleted (merged and cleaned, or by hand): nothing left to keep.
+      const ref = gitTry(project.path, [
+        "rev-parse",
+        "--verify",
+        "--quiet",
+        `refs/heads/${branch}^{commit}`,
+      ]);
+      if (!ref.ok) return false;
+      const base = recordedBaseBranch(t) || repoDefaultBranch(project.path);
+      return !branchLanded(project.path, branch, base);
+    } catch {
+      return true;
+    }
+  }
+
+  /**
    * Archive one orchestrator's finished workers once its crew is quiet.
    * "Quiet" means no crew member has a LIVE run: a worker left at "working"
    * by a crash or a CLI that never lands would otherwise pin the whole crew
@@ -473,6 +511,7 @@ function createOrchNotices(ctx) {
         continue;
       }
       if (active.has(t.id) || t.worktreePath || t.pinnedAt) continue;
+      if (holdsUnlandedBranch(t)) continue;
       services.purgeThread(store, t.id);
       void services.scheduleSimulatorRelease(simReleaseOpts, "releaseThread", {
         threadId: t.id,

@@ -817,6 +817,18 @@ function forkWorkerThread(store, input, forkImpl = forkThread) {
   // Ask workers stay in the checkout — a worktree would burn the isolation
   // Ask exists to avoid (issue #392).
   const sourceAsk = Boolean(source && source.ask);
+  // #1402: ssh spawns every worker with `cd <remotePath>`, so a default fork
+  // on a remote project would silently share one checkout with its siblings.
+  // ponytail: refuse; remote worktree provisioning is a separate decision.
+  if (input.worktree !== false && !sourceAsk && project && project.remoteHost) {
+    throw new Error(
+      `Remote (SSH) project ${project.remoteHost}:` +
+        `${project.remotePath || project.path || ""} cannot give a worker its ` +
+        "own worktree, so no worker was started. Pass worktree:false to run " +
+        "it in that shared remote checkout on purpose; parallel workers there " +
+        "edit the same files.",
+    );
+  }
   const wantsWorktree =
     input.worktree !== false && !sourceAsk && canHostWorktree(project);
 
