@@ -498,6 +498,31 @@ describe("nextPoolEntry / startWithPoolFailover", () => {
     assert.equal(worker.provider, "claude");
   });
 
+  it("skips the local binary filter across an ssh boundary (#1403)", async () => {
+    const run = (project) => {
+      const worker = { id: "w1", provider: "kimi", poolAlias: "fast" };
+      return startWithPoolFailover({
+        store: { getSettings: () => ({ subagentPool: pool() }), getThread: () => worker },
+        worker,
+        prompt: "go",
+        startRun: async () => {
+          if (worker.provider === "kimi") throw new Error("Provider binary not found: kimi.");
+          return { provider: worker.provider };
+        },
+        setProvider: (_store, input) => {
+          worker.provider = input.provider;
+        },
+        // Nothing installed locally; claude exists only on the remote host.
+        isAvailable: () => false,
+        project,
+      });
+    };
+    assert.deepEqual(await run({ remoteHost: "dev@box", path: "/srv/app" }), {
+      provider: "claude",
+    });
+    await assert.rejects(() => run({ path: "/tmp/app" }), /Provider binary not found/);
+  });
+
   it("does not retry a non-pool worker or a non-binary error", async () => {
     const worker = { id: "w1", provider: "kimi" };
     await assert.rejects(
