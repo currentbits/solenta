@@ -79,7 +79,9 @@ const INSTRUCTIONS =
   "of its last messages, so write a self-contained prompt with every fact the worker " +
   "needs. The worker runs in its own git worktree and branch " +
   "so parallel workers never edit the same files (pass worktree:false to share the " +
-  "project checkout). " +
+  "project checkout). SSH remote projects cannot host worker worktrees: a " +
+  "default fork there is refused, and worktree:false runs the worker in the " +
+  "one shared remote checkout. " +
   "A worker's commits live ONLY on its own branch until they are landed. WORKERS " +
   "BUILD; YOU ASK. When one finishes, check its result and REPORT it to the user — " +
   "its branch, what it changed, whether it looks right — then ask whether to merge " +
@@ -644,8 +646,8 @@ function createToolHandlers(deps) {
       return {
         merged: false,
         reason:
-          "Worker ran in the project checkout (worktree:false), so its " +
-          "changes are already there; nothing to merge.",
+          "Worker has no worktree of its own; it ran in the project " +
+          "checkout, so its changes are already there; nothing to merge.",
       };
     }
     // A sub-lead consolidating its own crew is the only unasked merge left.
@@ -733,7 +735,7 @@ function createToolHandlers(deps) {
     const { self, worker } = requireLandableWorker(args);
     if (!worker.worktreePath) {
       throw new Error(
-        `Worker ${worker.id} ran in the project checkout (worktree:false), so ` +
+        `Worker ${worker.id} ran in the project checkout without a worktree, so ` +
           `it has no branch of its own to propose. Its changes are already in ` +
           `the checkout.`,
       );
@@ -1393,7 +1395,9 @@ function buildMcpServer(sdk, handlers, opts = {}) {
         "Pass a short title for the assigned job (for example \"Review permissions\"). When omitted, " +
         "the first non-empty prompt line is used, truncated like other thread titles. " +
         "The worker gets its own git worktree so parallel workers never edit the same files; " +
-        "pass worktree:false to run it in the project checkout instead. " +
+        "pass worktree:false to run it in the project checkout instead. SSH remote projects " +
+        "cannot host worker worktrees: a default fork there is refused, and worktree:false " +
+        "runs the worker in the shared remote checkout alongside any other worker. " +
         "Optionally pass pool (an alias from the worker pool listed in your prompt) instead of " +
         "provider. Omit both to use the pool default. When the pool is pinned (force), pool and " +
         "provider are ignored. Optionally pass tier (fast, balanced, strong, or auto to classify " +

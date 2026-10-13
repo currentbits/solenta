@@ -118,6 +118,49 @@ describe("runner.resolveSpawn remoteHost", () => {
   });
 });
 
+describe("forkWorkerThread on a remote project (#1402)", () => {
+  let tmpDir;
+  let store;
+  let lead;
+  let project;
+
+  beforeEach(async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-ssh-fork-"));
+    store = new Store(path.join(tmpDir, "store.json"));
+    project = await services.addProject(store, "", {
+      remoteHost: "dev@box",
+      remotePath: "/srv/repo",
+    });
+    lead = services.createThread(store, { projectId: project.id, title: "Lead" });
+  });
+
+  afterEach(async () => {
+    await rmTree(tmpDir);
+  });
+
+  it("refuses a default fork instead of silently sharing the checkout", () => {
+    const before = store.getThreads().length;
+    assert.throws(
+      () => services.forkWorkerThread(store, { threadId: lead.id }),
+      /dev@box:\/srv\/repo cannot give a worker its own worktree.*worktree:false/,
+    );
+    assert.equal(store.getThreads().length, before, "no worker is created");
+  });
+
+  it("explicit worktree:false workers all spawn in the one remote checkout", () => {
+    const workers = [1, 2].map(() =>
+      services.forkWorkerThread(store, { threadId: lead.id, worktree: false }),
+    );
+    for (const w of workers) {
+      assert.equal(w.orchWorker, true);
+      assert.ok(!w.pendingWorktree);
+      // The spawn ignores the worker: both cd into the same remote path.
+      const out = resolveSpawn(project, "claude", ["-p", "hi"], project.path);
+      assert.match(out.args[out.args.length - 1], /^cd '\/srv\/repo' && /);
+    }
+  });
+});
+
 describe("runner startRun remoteHost fake spawn", () => {
   let tmpDir;
   let store;
