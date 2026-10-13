@@ -400,6 +400,9 @@ const PROVIDERS = [
         "stdio",
         "--verbose",
         "--include-partial-messages",
+        // Echoes each stdin user line once taken up: how a steer is known
+        // to be answered (#1608).
+        "--replay-user-messages",
         "--permission-mode",
         String(permissionMode || "default"),
       ];
