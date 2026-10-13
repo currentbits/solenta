@@ -18,6 +18,7 @@ const {
 } = require("./worktrees.js");
 const { normalizeCommand } = require("./verify.js");
 const { readAnnotation } = require("./reviewItinerary.js");
+const prReview = require("./prReview.js");
 
 /** Body cap for the structured worker result in a wake notice (#1427). */
 const WORKER_RESULT_MAX = 2000;
@@ -330,18 +331,31 @@ function createOrchNotices(ctx) {
     if (!thread || !thread.orchWorker || !thread.handoffFrom) return;
     const parentId = String(thread.handoffFrom);
     if (!store.getThread(parentId)) return;
-    let line = "";
+    let reply = "";
     let runId = "";
     const msgs = store.getMessages(threadId) || [];
-    for (let i = msgs.length - 1; i >= 0 && !(line && runId); i--) {
+    for (let i = msgs.length - 1; i >= 0 && !(reply && runId); i--) {
       const m = msgs[i];
       if (!m) continue;
       if (!runId && m.runId) runId = String(m.runId);
-      if (!line && m.role === "assistant" && m.text != null && String(m.text)) {
-        line = String(m.text).split(/\r?\n/)[0];
+      if (!reply && m.role === "assistant" && m.text != null && String(m.text)) {
+        reply = String(m.text);
       }
     }
+    const line = reply.split(/\r?\n/)[0];
     if (!claimNoticeKey(thread, runId)) return;
+    // Cross-model reviewer (#259): its whole reply is the review, and the
+    // findings go to the author (or its live lead), not a merge prompt.
+    if (thread.prReviewOf) {
+      const target = prReview.noticeTarget(store, thread);
+      if (!target) return;
+      enqueueNotice(
+        target.to,
+        prReview.reviewNotice(thread, target.author, target.to !== parentId, reply, status),
+      );
+      flushOrchNotices(target.to);
+      return;
+    }
     const title = thread.title ? ` ("${thread.title}")` : "";
     // Its commits are on its own branch and nowhere else until someone lands
     // them — say so at the one moment the lead is awake and looking at this

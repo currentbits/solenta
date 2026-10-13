@@ -226,7 +226,7 @@ module.exports = {
     });
   },
   "git:createPr": async (ctx, input) => {
-    return createPr({
+    const pr = await createPr({
       store: ctx.store,
       threadId: input.threadId,
       title: input.title,
@@ -235,6 +235,13 @@ module.exports = {
       allowOversize: Boolean(input && input.allowOversize),
       broadcast: ctx.broadcast,
     });
+    void require("./prReview.js").startPrReview({
+      store: ctx.store,
+      runner: ctx.runner,
+      threadId: input.threadId,
+      pr,
+    });
+    return pr;
   },
   "git:prStatus": async (ctx, input) => {
     const info = await prStatus({

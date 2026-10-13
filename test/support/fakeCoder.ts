@@ -369,6 +369,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
     autoSettleAfterDays: 3,
     autoSettleOnMerge: true,
     stripAgentCoauthors: false,
+    prCrossReview: false,
     mcpServers: [],
     defaultWorktree: false,
     updateChannel: null,

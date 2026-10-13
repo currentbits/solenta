@@ -3140,6 +3140,12 @@ export interface AppSettings {
    */
   stripAgentCoauthors: boolean;
   /**
+   * Opt-in (default false, #259): a PR opened from the app gets a
+   * clean-context review by a different provider than the thread that wrote
+   * it; findings come back to the author thread to filter.
+   */
+  prCrossReview: boolean;
+  /**
    * User-registered MCP servers (Skills tab). Built-ins coder-memory and
    * coder-threads are app-owned and never appear here. Enabled entries are
    * folded into every provider's MCP injection on the next turn.
