@@ -539,6 +539,26 @@ export function useCoderThreadActions({
     [api, applyThreads],
   );
 
+  const resumeCrew = useCallback(
+    async (threadId: string) => {
+      try {
+        await api.runs.resumeCrew({ threadId });
+        const d = await api.threads.get(threadId);
+        if (selectedRef.current !== threadId) return;
+        setDetail(d);
+        applyThreads(
+          threadsRef.current.map((t) =>
+            t.id === d.thread.id ? d.thread : t,
+          ),
+        );
+        setError(null);
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+      }
+    },
+    [api, applyThreads],
+  );
+
   const resumeQuotaWait = useCallback(
     async (threadId: string) => {
       try {
@@ -983,6 +1003,7 @@ export function useCoderThreadActions({
     setCrossThreadInbound,
     setQuotaWaitAutoResume,
     resumeQuotaWait,
+    resumeCrew,
     renameThread,
     setNotes,
     setMessagePins,

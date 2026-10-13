@@ -27,6 +27,9 @@ import styles from "../src/components/ThreadView.module.css";
 import { routineWorkerActivitySummary } from "../src/workerActivity";
 import { noticeRest, workerResults } from "../src/workerResult";
 import { TRANSCRIPT_WINDOW } from "../src/transcriptWindow";
+// Warm the lazy html page chunk (#1525): a cold import() can outlast a few
+// flushes on a loaded CI runner, as it did in htmlFence.test.tsx.
+import "../src/components/HtmlPage";
 import type {
   AttachmentInfo,
   ChatMessage,
@@ -1387,7 +1390,9 @@ describe("ThreadView mounted interactions", () => {
     assert.ok(group, "html tool is grouped");
     await m.click(group);
     await m.click(m.query("button.toolToggle"));
-    for (let i = 0; i < 3; i++) await m.flush();
+    for (let i = 0; i < 200 && !m.query("[data-html-page] iframe"); i++) {
+      await m.flush();
+    }
     const frame = m.query("[data-html-page] iframe");
     assert.ok(frame, "expanded card mounts the sandboxed page");
     assert.equal(frame!.getAttribute("sandbox"), "allow-scripts");

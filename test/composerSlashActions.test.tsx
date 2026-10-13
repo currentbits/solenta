@@ -119,6 +119,7 @@ async function mountView(
     ) => void | Promise<void>;
     onViewChanges?: () => void;
     onStartRun?: (prompt: string) => void;
+    onResumeCrew?: () => void;
     loadProviderLimits?: () => Promise<ProviderUsage[]>;
   } = {},
 ) {
@@ -136,6 +137,7 @@ async function mountView(
       onSaveWorkflow={noopSave}
       onRemoveWorkflow={async () => {}}
       onStopRun={() => {}}
+      onResumeCrew={over.onResumeCrew}
       onSetPermissionMode={() => {}}
       onSetProvider={() => {}}
       onSetReasoningEffort={() => {}}
@@ -439,6 +441,25 @@ describe("ThreadView / palette actions", () => {
       assert.equal(quiet.query("[data-cold-compact]"), null);
       quiet.unmount();
     }
+  });
+
+  it("held crew notices after a restart show Resume crew (#1426)", async () => {
+    let resumed = 0;
+    const m = await mountView({
+      detail: detail({ thread: thread({ status: "failed", heldNotices: 2 }) }),
+      onResumeCrew: () => {
+        resumed++;
+      },
+    });
+    const btn = m.query("[data-resume-crew]");
+    assert.match(btn?.textContent ?? "", /Resume crew \(2 updates\)/);
+    await m.click(btn as HTMLElement);
+    assert.equal(resumed, 1);
+    m.unmount();
+
+    const none = await mountView({ detail: detail({ thread: thread({ status: "failed" }) }) });
+    assert.equal(none.query("[data-held-notices]"), null);
+    none.unmount();
   });
 
   it("/compact is inert while the thread is working", async () => {

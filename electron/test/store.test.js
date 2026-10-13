@@ -1023,6 +1023,8 @@ describe("Store", () => {
       retainedCount: store.getMessages("t1").length,
     });
     store.setWorkflowRun("t1", { __orchestrated: true, phases: [] });
+    store.data.orchNoticesByThread.t1 = ["[orchestration] pending"];
+    store.data.autoTurnsByThread.t1 = 2;
 
     // Sanity: every known ByThread map currently holds t1.
     const byThreadKeys = Object.keys(store.data).filter((k) =>
