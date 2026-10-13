@@ -163,7 +163,7 @@ function artifactSecurityHeaders(extra = {}) {
  * @param {Request} request
  * @returns {Response}
  */
-function artifactRangeResponse(opened, request) {
+function artifactRangeResponse(opened, request, extraHeaders = {}) {
   const rangeHeader =
     request && request.headers && typeof request.headers.get === "function"
       ? request.headers.get("range")
@@ -172,6 +172,7 @@ function artifactRangeResponse(opened, request) {
   const baseHeaders = artifactSecurityHeaders({
     "Content-Type": opened.info.mimeType,
     "Accept-Ranges": "bytes",
+    ...extraHeaders,
   });
 
   if (range.status === 416) {
@@ -203,6 +204,27 @@ function artifactRangeResponse(opened, request) {
     end: range.end,
   });
   return new Response(Readable.toWeb(stream), { status: range.status, headers });
+}
+
+/**
+ * An attached screen recording (#266): ranged so <video> can seek, and
+ * CORS-readable so the renderer can draw frames to a canvas without
+ * tainting it. `*` is safe here only because nothing else in the default
+ * session can request this scheme: BrowserPane webviews use their own
+ * partition and HTML previews run under default-src 'none'.
+ * @param {ReturnType<typeof parseMediaUrl>} parsed
+ * @param {Request} request
+ * @returns {Promise<Response | null>}
+ */
+async function localVideoResponse(parsed, request) {
+  if (!parsed || parsed.kind !== "local") return null;
+  const video = await attachments.resolveVideoFile(parsed.path);
+  if (!video) return null;
+  return artifactRangeResponse(
+    { info: { mimeType: video.mediaType }, path: video.path, size: video.size },
+    request,
+    { "Access-Control-Allow-Origin": "*" },
+  );
 }
 
 /**
@@ -262,6 +284,9 @@ function installHandler(opts) {
       return artifactRangeResponse(opened, request);
     }
 
+    const video = await localVideoResponse(parsed, request);
+    if (video) return video;
+
     const resolved = await resolveMediaUrl(request && request.url, userDataPath);
     if (!resolved) {
       return new Response("Not found", { status: 404 });
@@ -285,4 +310,5 @@ module.exports = {
   resolveMediaUrl,
   artifactRangeResponse,
   artifactSecurityHeaders,
+  localVideoResponse,
 };

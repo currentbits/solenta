@@ -92,6 +92,15 @@
   outline-offset: 1px;
 }
 
+.modeToggle {
+  composes: reset;
+}
+
+.modeToggle[aria-pressed="true"] {
+  color: var(--blue);
+  border-color: var(--blue-border);
+}
+
 .partial {
   margin: 0;
   padding: 8px 24px 0;
@@ -215,6 +224,21 @@
 .age {
   flex-shrink: 0;
   font-variant-numeric: tabular-nums;
+}
+
+.triageDepth,
+.signal {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border-soft);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.signal {
+  background: var(--amber-soft);
+  color: var(--amber);
 }
 
 .rowActions {

@@ -82,6 +82,18 @@ describe("attachments module", () => {
     ]);
   });
 
+  it("labels video frames by clip and time in the dispatch section (#266)", () => {
+    const { attachmentPromptSection } = require("../runnerHelpers.js");
+    const section = attachmentPromptSection([
+      { kind: "file", path: "/u/repro.mov", name: "repro.mov" },
+      { kind: "image", path: "/u/1-ab.jpg", name: "repro.mov @ 0:03" },
+      { kind: "image", path: "/u/shot.png", name: "shot.png" },
+    ]);
+    assert.ok(section.includes("- File: /u/repro.mov\n"));
+    assert.ok(section.includes("- Image: /u/1-ab.jpg (repro.mov @ 0:03)\n"));
+    assert.ok(section.includes("- Image: /u/shot.png]"));
+  });
+
   it("saves a pasted image under userData and reads it back as a data URL", async () => {
     const bytes = Buffer.from("fake-png-bytes");
     const dataUrl = `data:image/png;base64,${bytes.toString("base64")}`;

@@ -2514,6 +2514,12 @@ export interface PrListItem {
   deletions?: number;
   /** ISO timestamp from gh when the extra JSON fields are available. */
   updatedAt?: string;
+  /** Triage inbox (#260) fields; absent on GitLab rows and older gh. */
+  changedFiles?: number;
+  mergeable?: "MERGEABLE" | "CONFLICTING" | "UNKNOWN";
+  reviewDecision?: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED";
+  /** One verdict over all checks; cancelled counts as "fail". */
+  checks?: "pass" | "fail" | "pending";
 }
 
 /** Optional page for `git.listPrs`. Absent limit keeps the historic 50-row page. */

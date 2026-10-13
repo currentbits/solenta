@@ -265,8 +265,10 @@ async function fetchPrStates(remote, numbers, opts = {}) {
 // parsers; ghPr answers the same argv with the same stdout gh would print, so
 // the fallback is just "run the real gh instead".
 
+// ponytail: no statusCheckRollup here, so API-fallback PR lists show no CI
+// state in the triage inbox (#260); add a commits(last: 1) rollup if missed.
 const PR_FIELDS =
-  "id number url state title body isDraft headRefName baseRefName additions deletions changedFiles mergeable updatedAt createdAt mergedAt closedAt isCrossRepository author { login }";
+  "id number url state title body isDraft headRefName baseRefName additions deletions changedFiles mergeable reviewDecision updatedAt createdAt mergedAt closedAt isCrossRepository author { login }";
 const PR_COMMENTS = "comments(last: 100) { nodes { author { login } body createdAt url } }";
 const PR_REVIEWS = "reviews(first: 100) { nodes { author { login } state submittedAt } }";
 
