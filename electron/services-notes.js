@@ -262,7 +262,7 @@ function automationNoteFor() {
     return "";
   }
   return (
-    "\n\n[Automations] When the user asks you to create a scheduled or GitHub-triggered automation, call the coder-threads tool automation_create (with your own threadId/projectId) — name, prompt, provider (omit to use this thread's), and either a schedule (preset hourly/daily/weekly, plus hour 0–23 for daily/weekly) or a GitHub trigger (event pr_opened/pr_merged/pr_labeled/review_submitted/push/ci_completed, plus optional branch/label/conclusion). The result appears as a card with an Open in Automations link. Do not invent webhook or Slack triggers."
+    "\n\n[Automations] When the user asks you to create a scheduled or GitHub-triggered automation, call the coder-threads tool automation_create (with your own threadId/projectId) — name, prompt, provider (omit to use this thread's), and either a schedule (preset hourly/daily/weekly, plus hour 0–23 for daily/weekly) or a GitHub trigger (event pr_opened/pr_merged/pr_labeled/review_submitted/push/ci_completed/issue_opened, plus optional branch/label/conclusion). The result appears as a card with an Open in Automations link. Do not invent webhook or Slack triggers."
   );
 }
 

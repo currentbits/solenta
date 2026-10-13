@@ -100,7 +100,7 @@ it.
   click, type and screenshot it through the `preview` tool.
 - **Planboard** — a project's plan as its GitHub issues. Agents on a GitHub
   origin use the coder-threads tools `issue_create`, `issue_list`,
-  `issue_set_plan`, `issue_complete`, and `issue_comment` (omitted when
+  `issue_set_plan`, `issue_complete`, `issue_comment`, and `issue_label` (omitted when
   the origin is not GitHub), with auto-dispatch from `plan:todo`, a
   review-load meter on the open PR queue, and issues that close themselves
   when the thread's work lands.
@@ -308,7 +308,9 @@ The root `package.json` already allows scripts for the pinned Electron version.
 - **Suggested work** — out-of-scope findings become one-click chips that
   start a new thread or file a planboard issue.
 - **Automations** — recurring prompts (hourly / daily / weekly) against any
-  project, and repeat a finished thread on a schedule.
+  project, and repeat a finished thread on a schedule. The issue triage
+  template labels, dedupes, and questions each new GitHub issue so only
+  well-formed ones reach `plan:todo` and auto-dispatch.
 - **Usage and fleet analytics** — cost and tokens per provider/model, merge
   rate, review tax, rework and cost per merged PR, and felt vs wall-clock
   speedup. OTel GenAI spans ship to your tracing backend.

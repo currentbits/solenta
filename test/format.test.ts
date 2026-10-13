@@ -176,5 +176,9 @@ describe("providerPermissionModes", () => {
       snapToHonouredPermissionMode(["default", "bypassPermissions"], "acceptEdits"),
       "bypassPermissions",
     );
+    assert.equal(
+      snapToHonouredPermissionMode(["default", "bypassPermissions"], "auto"),
+      "default",
+    );
   });
 });

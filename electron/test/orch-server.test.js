@@ -515,6 +515,25 @@ describe("orch-server tool handlers", () => {
     assert.deepEqual(deps.runs, [{ threadId: "fork-1", prompt: "take over" }]);
   });
 
+  it("thread_fork drops the never-started worker when startRun rejects (#1399)", async () => {
+    const deps = makeDeps();
+    deps.store.removeThread = (id) => {
+      const i = deps.store.threads.findIndex((t) => t.id === id);
+      if (i >= 0) deps.store.threads.splice(i, 1);
+    };
+    deps.store.saveNow = () => {};
+    deps.runner.startRun = async () => {
+      throw new Error("Provider binary not found: claude");
+    };
+    const h = createToolHandlers(deps);
+    await assert.rejects(
+      () => h.thread_fork({ threadId: "t1", projectId: "p1", prompt: "go" }),
+      /Provider binary not found: claude/,
+    );
+    assert.equal(deps.store.getThread("fork-1"), null);
+    assert.ok(deps.broadcasts.some((b) => b.channel === "threads:changed"));
+  });
+
   it("thread_fork omits provider key when not given", async () => {
     const deps = makeDeps();
     const h = createToolHandlers(deps);

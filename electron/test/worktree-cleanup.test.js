@@ -508,6 +508,41 @@ describe("custom worktree location (#1531)", () => {
     assert.ok(cand, "old-root worktree is a candidate");
     assert.equal(cand.reason, "retention");
   });
+
+  // #1401: WSL roots are non-owned roots like this one; only the UNC
+  // mapping differs (worktree-wsl.test.js). Same guards must hold.
+  it("retention reclaims a clean settled worktree in a non-owned root, keeps dirty and live", async () => {
+    const { enforceRetention } = require("../worktrees.js");
+    const custom = path.join(fx.tmpDir, "custom");
+    fs.mkdirSync(custom);
+    fx.store.setSettings({ worktreeRoot: custom });
+    services.updateProject(fx.store, fx.project.id, { worktreeRetention: 1 });
+    const make = (title, patch) => {
+      const t = services.createThread(fx.store, { projectId: fx.project.id, title });
+      const wt = setupWorktree({
+        store: fx.store,
+        threadId: t.id,
+        worktreeBase: fx.worktreeBase,
+        broadcast: () => {},
+      });
+      fx.store.updateThread(t.id, patch);
+      return wt.worktreePath;
+    };
+    const settled = (at) => ({ settledOverride: "settled", updatedAt: at, lastActivityAt: at });
+    // Keep-1: the original fixture thread is active, so it is not counted.
+    const newest = make("newest", settled(3000));
+    const clean = make("clean", settled(2000));
+    const dirty = make("dirty", settled(1000));
+    fs.writeFileSync(path.join(dirty, "wip.txt"), "wip\n");
+    const live = make("live", { ...settled(500), status: "working" });
+    fx.store.saveNow();
+
+    const result = await enforceRetention({ store: fx.store, worktreeBase: fx.worktreeBase });
+    assert.deepEqual(result.removed, [clean]);
+    assert.ok(!fs.existsSync(clean));
+    for (const kept of [newest, dirty, live]) assert.ok(fs.existsSync(kept), kept);
+    assert.ok(fs.existsSync(path.join(dirty, "wip.txt")));
+  });
 });
 
 describe("cleanupWorktree via removeWorktree (#843)", () => {

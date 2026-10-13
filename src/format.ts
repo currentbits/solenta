@@ -60,6 +60,7 @@ export const PERMISSION_MODE_LABELS: Record<PermissionMode, string> = {
   default: "Ask first",
   acceptEdits: "Accept edits",
   plan: "Plan mode",
+  auto: "Auto review",
   bypassPermissions: "Full access",
 };
 
@@ -67,6 +68,7 @@ export const PERMISSION_MODES: PermissionMode[] = [
   "default",
   "acceptEdits",
   "plan",
+  "auto",
   "bypassPermissions",
 ];
 
@@ -121,6 +123,10 @@ export function snapToHonouredPermissionMode(
     if (honoured.includes("default")) return "default";
   }
   if (mode === "default") {
+    if (honoured.includes("bypassPermissions")) return "bypassPermissions";
+  }
+  if (mode === "auto") {
+    if (honoured.includes("default")) return "default";
     if (honoured.includes("bypassPermissions")) return "bypassPermissions";
   }
   if (mode === "plan") {

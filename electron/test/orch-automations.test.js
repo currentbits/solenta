@@ -118,7 +118,7 @@ describe("automation_create MCP tool (#1589)", () => {
           name: "Bad event",
           prompt: "go",
           provider: "claude",
-          trigger: { event: "issue_opened" },
+          trigger: { event: "issue_closed" },
         }),
       /Unknown trigger event/,
     );
