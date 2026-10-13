@@ -11,6 +11,7 @@ const {
   parseMediaUrl,
   resolveMediaUrl,
   installHandler,
+  localVideoResponse,
 } = require("../media-protocol.js");
 const { saveToolImages, extractImages } = require("../tool-images.js");
 const attachments = require("../attachments.js");
@@ -253,5 +254,28 @@ describe("solenta-media protocol", () => {
       await resolveMediaUrl(localImageUrl("/etc/passwd"), dir),
       null,
     );
+  });
+
+  it("streams an attached video with ranges and CORS (#266)", async () => {
+    const clip = path.join(dir, "repro.mov");
+    fs.writeFileSync(clip, "0123456789");
+    const url = localImageUrl(clip);
+    const res = await localVideoResponse(
+      parseMediaUrl(url),
+      new Request(url, { headers: { range: "bytes=2-5" } }),
+    );
+    assert.equal(res.status, 206);
+    assert.equal(res.headers.get("content-type"), "video/quicktime");
+    assert.equal(res.headers.get("access-control-allow-origin"), "*");
+    assert.equal(await res.text(), "2345");
+
+    // Images keep the old path (no CORS); non-local and missing are null.
+    const png = path.join(dir, "shot.png");
+    fs.writeFileSync(png, "x");
+    const pngUrl = localImageUrl(png);
+    assert.equal(await localVideoResponse(parseMediaUrl(pngUrl), new Request(pngUrl)), null);
+    assert.equal(await localVideoResponse(parseMediaUrl(artifactUrl("a1")), null), null);
+    const gone = localImageUrl(path.join(dir, "gone.mp4"));
+    assert.equal(await localVideoResponse(parseMediaUrl(gone), new Request(gone)), null);
   });
 });

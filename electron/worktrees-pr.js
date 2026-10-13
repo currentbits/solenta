@@ -450,8 +450,10 @@ function parsePrJson(stdout, branch, created) {
   return info;
 }
 
+// reviewDecision/mergeable/statusCheckRollup/changedFiles feed the PR
+// triage inbox (#260) from the same single list call.
 const PR_LIST_FIELDS =
-  "number,title,url,state,headRefName,isDraft,additions,deletions,updatedAt";
+  "number,title,url,state,headRefName,isDraft,additions,deletions,updatedAt,changedFiles,mergeable,reviewDecision,statusCheckRollup";
 const PR_LIST_FIELDS_FALLBACK = "number,title,url,state,headRefName";
 
 /**
@@ -498,6 +500,10 @@ function isGhAuthFailure(text) {
  *   additions?: number,
  *   deletions?: number,
  *   updatedAt?: string,
+ *   changedFiles?: number,
+ *   mergeable?: "MERGEABLE" | "CONFLICTING" | "UNKNOWN",
+ *   reviewDecision?: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED",
+ *   checks?: "pass" | "fail" | "pending",
  * }}
  */
 function parsePrListItem(row) {
@@ -541,7 +547,46 @@ function parsePrListItem(row) {
   if (row && row.updatedAt != null && String(row.updatedAt).trim() !== "") {
     item.updatedAt = String(row.updatedAt);
   }
+  const changedFiles = optionalPrCount(row && row.changedFiles);
+  if (changedFiles !== undefined) item.changedFiles = changedFiles;
+  const mergeable = normalizeMergeable(row && row.mergeable);
+  if (mergeable) item.mergeable = mergeable;
+  const decision = String((row && row.reviewDecision) || "").toUpperCase();
+  if (PR_REVIEW_DECISIONS.has(decision)) item.reviewDecision = decision;
+  const checks = summarizeCheckRollup(row && row.statusCheckRollup);
+  if (checks) item.checks = checks;
   return item;
+}
+
+const PR_REVIEW_DECISIONS = new Set([
+  "APPROVED",
+  "CHANGES_REQUESTED",
+  "REVIEW_REQUIRED",
+]);
+
+/**
+ * One CI verdict from gh's statusCheckRollup (CheckRun + StatusContext rows).
+ * Cancelled counts as failing: a cancelled check is not green.
+ * undefined when the PR has no checks or gh did not send the field.
+ * @param {unknown} rollup
+ * @returns {"pass" | "fail" | "pending" | undefined}
+ */
+function summarizeCheckRollup(rollup) {
+  if (!Array.isArray(rollup) || rollup.length === 0) return undefined;
+  let pending = false;
+  for (const c of rollup) {
+    if (!c || typeof c !== "object") continue;
+    const state =
+      c.__typename === "StatusContext" || c.status == null
+        ? c.state
+        : c.status === "COMPLETED"
+          ? c.conclusion
+          : c.status;
+    const bucket = github.checkBucket(state);
+    if (bucket === "fail" || bucket === "cancel") return "fail";
+    if (bucket === "pending") pending = true;
+  }
+  return pending ? "pending" : "pass";
 }
 
 /**
@@ -2153,6 +2198,7 @@ module.exports = {
   gitlabOrigin,
   isForgeRemote,
   normalizeCheckBucket,
+  summarizeCheckRollup,
   ghTryAsync,
   parsePrJson,
   PR_LIST_FIELDS,

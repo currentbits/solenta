@@ -12,6 +12,9 @@ import {
   matchThreadForPr,
   prMatchesQuery,
   prUpdatedMs,
+  triageInbox,
+  triagePr,
+  TRIAGE_STALE_MS,
 } from "../src/prList.ts";
 import type {
   ListPrsResult,
@@ -277,5 +280,81 @@ describe("groupPrsByProject completeness", () => {
       assert.equal(groups[1].complete, true);
       assert.equal(groups[1].limit, 1);
     }
+  });
+});
+
+describe("triage inbox (#260)", () => {
+  const now = Date.parse("2026-10-13T12:00:00Z");
+  const iso = (msAgo: number) => new Date(now - msAgo).toISOString();
+  const idle = thread({ id: "t" });
+  const bucket = (over: Partial<PrListItem>, t = idle) =>
+    triagePr(pr({ number: 1, updatedAt: iso(1000), ...over }), t, now).bucket;
+
+  it("buckets by what the PR waits on", () => {
+    assert.equal(bucket({ checks: "pass" }), "review");
+    assert.equal(bucket({}), "review");
+    assert.equal(bucket({ checks: "pass", reviewDecision: "APPROVED" }), "merge");
+    assert.equal(bucket({ checks: "fail", reviewDecision: "APPROVED" }), "agent");
+    assert.equal(bucket({ checks: "pending" }), "agent");
+    assert.equal(bucket({ mergeable: "CONFLICTING" }), "agent");
+    assert.equal(bucket({ reviewDecision: "CHANGES_REQUESTED" }), "agent");
+    assert.equal(bucket({ isDraft: true }), "agent");
+    assert.equal(bucket({}, thread({ id: "w", status: "working" })), "agent");
+    assert.equal(bucket({}, thread({ id: "a", archived: true })), "closeable");
+    assert.equal(bucket({ checks: "fail", updatedAt: iso(TRIAGE_STALE_MS) }), "closeable");
+    // A running agent is never stale, however old the PR.
+    assert.equal(
+      bucket({ updatedAt: iso(TRIAGE_STALE_MS * 2) }, thread({ id: "w", status: "working" })),
+      "agent",
+    );
+  });
+
+  it("sizes review depth from the diffstat and flags risks", () => {
+    const t = (over: Partial<PrListItem>) => triagePr(pr({ number: 1, ...over }), idle, now);
+    assert.equal(t({}).depth, null);
+    assert.equal(t({ additions: 40, deletions: 10 }).depth, "quick");
+    assert.equal(t({ additions: 300, deletions: 100 }).depth, "review");
+    const big = t({ additions: 401, deletions: 0, checks: "fail", mergeable: "CONFLICTING" });
+    assert.equal(big.depth, "deep");
+    assert.deepEqual(big.signals, ["CI failing", "Conflicts", "Large diff"]);
+    assert.deepEqual(t({ updatedAt: iso(20 * 86_400_000) }).signals, ["Idle 20d"]);
+  });
+
+  it("keeps only open agent PRs, sorted by bucket then longest waiting", () => {
+    const threads = [
+      thread({ id: "a", prNumber: 1 }),
+      thread({ id: "b", prNumber: 2 }),
+      thread({ id: "c", prNumber: 3 }),
+      thread({ id: "d", projectId: "p2", prNumber: 9 }),
+    ];
+    const groups = groupPrsByProject(
+      [p1, p2],
+      new Map<string, ListPrsResult>([
+        [
+          "p1",
+          {
+            ok: true,
+            prs: [
+              pr({ number: 1, updatedAt: iso(1000), checks: "fail" }),
+              pr({ number: 2, updatedAt: iso(1000) }),
+              pr({ number: 3, updatedAt: iso(5000) }),
+              pr({ number: 4, updatedAt: iso(9000) }), // no thread: not an agent PR
+            ],
+          },
+        ],
+        ["p2", { ok: true, prs: [pr({ number: 9, reviewDecision: "APPROVED" })] }],
+      ]),
+    );
+    const rows = triageInbox(groups, threads, now);
+    assert.deepEqual(
+      rows.map((r) => [r.project.id, r.pr.number, r.triage.bucket]),
+      [
+        ["p2", 9, "merge"],
+        ["p1", 3, "review"],
+        ["p1", 2, "review"],
+        ["p1", 1, "agent"],
+      ],
+    );
+    assert.equal(rows[1].thread.id, "c");
   });
 });

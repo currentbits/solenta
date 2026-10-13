@@ -3627,9 +3627,13 @@ button.diffLineGutter:focus-visible {
 }
 
 .queuedFiles {
-  flex: 0 0 auto;
-  color: var(--text-dim);
-  font-size: 11px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+  flex: 0 1 auto;
+  max-width: 45%;
+  min-width: 0;
 }
 
 .queuedBody {
