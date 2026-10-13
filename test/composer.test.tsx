@@ -204,6 +204,7 @@ function composer(
     agentProfiles?: AgentProfile[];
     onListFiles?: (query: string) => Promise<string[]>;
     onProviderSignIn?: (providerId: string) => Promise<void>;
+    restoreDraft?: { threadId: string; text: string; append?: boolean } | null;
   } = {},
 ) {
   // Seed the emulation from the thread this element renders with, so the
@@ -229,6 +230,7 @@ function composer(
       fast={over.fast === true}
       providers={over.providers ?? PROVIDERS}
       onProviderSignIn={over.onProviderSignIn}
+      restoreDraft={over.restoreDraft}
       ask={over.ask ?? false}
       agentProfiles={over.agentProfiles}
       workflows={over.workflows ?? WORKFLOWS}
@@ -537,6 +539,22 @@ describe("Composer per-thread draft", () => {
       "draft for thread A",
       "switching back must restore thread A's draft",
     );
+    m.unmount();
+  });
+});
+
+describe("Composer restoreDraft", () => {
+  it("never clobbers a draft, but an append (fix prompt, #253) lands after it", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h));
+    const ta = () => m.query("textarea") as HTMLTextAreaElement;
+    await m.type(ta(), "half-written ");
+    await m.rerender(composer(h, { restoreDraft: { threadId: "t1", text: "queued" } }));
+    assert.equal(ta().value, "half-written ");
+    await m.rerender(
+      composer(h, { restoreDraft: { threadId: "t1", text: "Fix it", append: true } }),
+    );
+    assert.equal(ta().value, "half-written\n\nFix it");
     m.unmount();
   });
 });

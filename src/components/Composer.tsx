@@ -233,9 +233,10 @@ interface ComposerProps {
   /**
    * Text pushed back toward the draft from outside (a cancelled queued
    * follow-up, issue #364). Applied at most once, and only onto an EMPTY
-   * draft — never clobbers an in-progress one.
+   * draft — never clobbers an in-progress one. `append` (a fix prompt,
+   * #253) lands after an in-progress draft instead of being dropped.
    */
-  restoreDraft?: { threadId: string; text: string } | null;
+  restoreDraft?: { threadId: string; text: string; append?: boolean } | null;
   /** Multi-phase workflow. The Build action inside Options calls this. */
   onBuild: (prompt: string, templateId: string) => void | Promise<void>;
   /**
@@ -538,8 +539,10 @@ export const Composer = memo(function Composer({
     if (!restoreDraft || restoreDraft === appliedRestoreRef.current) return;
     appliedRestoreRef.current = restoreDraft;
     if (restoreDraft.threadId !== threadId) return;
-    if (readDraft().trim()) return;
-    writeDraft(restoreDraft.text, restoreDraft.text.length);
+    const cur = readDraft().trimEnd();
+    if (cur && !restoreDraft.append) return;
+    const text = cur ? `${cur}\n\n${restoreDraft.text}` : restoreDraft.text;
+    writeDraft(text, text.length);
   }, [restoreDraft, threadId, readDraft, writeDraft]);
   const { attachments, addAttachments, removeAttachment, clearAttachments } =
     useComposerAttachments({
