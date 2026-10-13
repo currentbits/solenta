@@ -129,6 +129,14 @@ function sendJson(res, status, value) {
 
 const entryType = z.enum(['knowledge', 'task', 'convention', 'run', 'strategy'])
 const taskStatus = z.enum(['active', 'done', 'abandoned'])
+const inclusionMode = z
+  .enum(['always', 'glob', 'auto', 'manual'])
+  .describe(
+    'When bootstrap injects this entry. always (default); glob: a touched file matches globs; auto: the prompt matches the title, so write the title as a keyword description; manual: only when the prompt mentions #<first 8 chars of id>. Conditional entries stay searchable.',
+  )
+const inclusionGlobs = z
+  .array(z.string().min(1))
+  .describe('Repo-relative globs for inclusion glob, e.g. "electron/**/*.js"; a slash-less glob matches basenames')
 const citationSchema = z.object({
   kind: z.enum(['file', 'thread', 'commit']),
   path: z.string().optional(),
@@ -205,6 +213,8 @@ export function buildServer(memory, opts = {}) {
         importance: z.number().int().min(1).max(5).optional(),
         force: z.boolean().optional(),
         citations: z.array(citationSchema).optional(),
+        inclusion: inclusionMode.optional(),
+        globs: inclusionGlobs.optional(),
       },
     },
     // #409: source is set here, not by the caller. An agent that could label
@@ -277,6 +287,8 @@ export function buildServer(memory, opts = {}) {
         agent: z.string().optional(),
         project: z.string().optional(),
         citations: z.array(citationSchema).optional(),
+        inclusion: inclusionMode.optional(),
+        globs: inclusionGlobs.optional(),
       },
     },
     async (args) => {
@@ -291,9 +303,12 @@ export function buildServer(memory, opts = {}) {
     'memory_bootstrap',
     {
       description:
-        'One-call startup context: conventions, distilled strategies, knowledge, active tasks, and a regenerated code wiki (modules/deps/architecture — not a learning) for a project, plus the usage protocol. Call at session start with project set to your working directory — file citations are verified against that tree and contradicted entries are invalidated instead of injected.',
+        'One-call startup context: conventions, distilled strategies, knowledge, active tasks, and a regenerated code wiki (modules/deps/architecture — not a learning) for a project, plus the usage protocol. Call at session start with project set to your working directory — file citations are verified against that tree and contradicted entries are invalidated instead of injected. Glob/auto/manual entries load only when files or prompt match; deferred counts the rest. Call again with matchedOnly: true and the files you are about to edit to pull just the matching ones.',
       inputSchema: {
         project: z.string().optional(),
+        files: z.array(z.string()).max(200).optional().describe('Paths being touched, for glob-scoped entries'),
+        prompt: z.string().optional().describe('Current task text, for auto/manual entries'),
+        matchedOnly: z.boolean().optional().describe('Return only matched conditional entries'),
       },
     },
     async (args) => json(memory.bootstrap(scoped(args))),
@@ -640,7 +655,16 @@ async function handleApi(req, res, url, memory) {
 
     if (req.method === 'GET' && url.pathname === '/api/bootstrap') {
       const project = url.searchParams.get('project') ?? undefined
-      sendJson(res, 200, memory.bootstrap({ project }))
+      sendJson(
+        res,
+        200,
+        memory.bootstrap({
+          project,
+          prompt: url.searchParams.get('prompt') ?? undefined,
+          files: url.searchParams.getAll('file'),
+          matchedOnly: url.searchParams.get('matchedOnly') === '1',
+        }),
+      )
       return true
     }
 
