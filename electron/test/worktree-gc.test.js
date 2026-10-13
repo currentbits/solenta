@@ -19,6 +19,7 @@ const {
   gcScan,
   gcClean,
   enforceRetention,
+  prepareThreadWorktree,
   setExecFile,
 } = require("../worktrees.js");
 
@@ -493,6 +494,16 @@ describe("gcScan / gcClean", { concurrency: 1 }, () => {
     assert.ok(fs.existsSync(keep.worktreePath));
     assert.ok(broadcasts.some((b) => b.channel === "threads:changed"));
     assert.equal(broadcasts.length, 1);
+
+    // #1400: the next run resumes the kept branch, not the project checkout.
+    assert.equal(thread.pendingWorktree, true);
+    const resumed = prepareThreadWorktree({
+      store: fx.store,
+      threadId: drop.id,
+      worktreeBase: fx.worktreeBase,
+    });
+    assert.equal(resumed.branch, branch);
+    assert.ok(fs.existsSync(resumed.worktreePath));
   });
 
   it("gcClean refuses a stale or live path", async () => {

@@ -28,6 +28,7 @@ const {
   gcScan,
   ensureWorktree,
   clearMissingWorktree,
+  prepareThreadWorktree,
   removeWorktree,
   removeWorktreeDir,
   removeGcWorktree,
@@ -644,6 +645,73 @@ describe("clearMissingWorktree (worktree deleted behind our back)", () => {
     assert.equal(thread.worktreePath, null);
     assert.equal(thread.branch, null);
     assert.equal(thread.pendingWorktree, true);
+  });
+
+  // #1400: rematerializing must resume the thread's own branch at its tip,
+  // not mint a suffixed branch from the start snapshot without its commits.
+  it("restores the retained branch with its commits, not uncommitted files", () => {
+    const thread = services.createThread(store, {
+      projectId: project.id,
+      title: "Resume",
+    });
+    const setup = setupWorktree({ store, threadId: thread.id, worktreeBase });
+    fs.writeFileSync(path.join(setup.worktreePath, "work.txt"), "done\n");
+    git(setup.worktreePath, ["add", "work.txt"]);
+    git(setup.worktreePath, ["commit", "-m", "work"]);
+    const tip = git(setup.worktreePath, ["rev-parse", "HEAD"]);
+    fs.writeFileSync(path.join(setup.worktreePath, "scratch.txt"), "wip\n");
+    // Hand delete: git still registers the folder until a prune.
+    fs.rmSync(setup.worktreePath, { recursive: true, force: true });
+
+    const after = prepareThreadWorktree({
+      store,
+      threadId: thread.id,
+      worktreeBase,
+    });
+    assert.equal(after.branch, setup.branch);
+    assert.equal(after.retainedBranch, null);
+    assert.equal(after.pendingWorktree, false);
+    assert.equal(git(after.worktreePath, ["rev-parse", "HEAD"]), tip);
+    assert.ok(fs.existsSync(path.join(after.worktreePath, "work.txt")));
+    assert.ok(!fs.existsSync(path.join(after.worktreePath, "scratch.txt")));
+    assert.equal(git(repo, ["branch", "--list", `${setup.branch}-2`]), "");
+  });
+
+  it("fails clearly and keeps the flags when the retained branch is gone", () => {
+    const { threadId } = threadWithRemovedWorktree("Lost");
+    const { branch } = store.getThread(threadId);
+    git(repo, ["branch", "-D", branch]);
+
+    assert.throws(
+      () => prepareThreadWorktree({ store, threadId, worktreeBase }),
+      new RegExp(`branch ${branch} is gone`),
+    );
+    const after = store.getThread(threadId);
+    assert.equal(after.worktreePath, null);
+    assert.equal(after.retainedBranch, branch);
+    assert.equal(after.pendingWorktree, true);
+  });
+
+  it("a fresh worker with no retained branch still starts from leadSnapshotSha", () => {
+    const snapshot = git(repo, ["rev-parse", "HEAD"]);
+    fs.writeFileSync(path.join(repo, "later.txt"), "later\n");
+    git(repo, ["add", "later.txt"]);
+    git(repo, ["commit", "-m", "later"]);
+    const thread = services.createThread(store, {
+      projectId: project.id,
+      title: "Worker",
+    });
+    store.updateThread(thread.id, {
+      pendingWorktree: true,
+      leadSnapshotSha: snapshot,
+    });
+
+    const after = prepareThreadWorktree({
+      store,
+      threadId: thread.id,
+      worktreeBase,
+    });
+    assert.equal(git(after.worktreePath, ["rev-parse", "HEAD"]), snapshot);
   });
 
   // #74 was spawn-into-missing-cwd looking like a missing CLI. #511 forbids

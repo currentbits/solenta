@@ -1010,9 +1010,26 @@ function setupWorktree(opts) {
     throw new Error(`Unknown project for thread: ${threadId}`);
   }
 
+  // A worktree lost to GC or a hand delete resumes on its own branch, not a
+  // fresh one from the start snapshot that would drop its commits (#1400).
+  const retained = thread.retainedBranch || null;
+  if (
+    retained &&
+    !gitTry(project.path, [
+      "show-ref",
+      "--verify",
+      "--quiet",
+      `refs/heads/${retained}`,
+    ]).ok
+  ) {
+    throw new Error(
+      `This thread's worktree folder was removed and its branch ${retained} is gone too, so its commits cannot be restored. ` +
+        `Recreate the branch (git branch ${retained} <commit>) to resume, or continue in a new thread.`,
+    );
+  }
   const shortId = String(thread.id).slice(0, 6);
   const wanted = `${branchPrefixFor(project)}${slugify(thread.title)}-${shortId}`;
-  const branch = uniqueCoderBranch(project.path, wanted) || wanted;
+  const branch = retained || uniqueCoderBranch(project.path, wanted) || wanted;
   const base = effectiveWorktreeBase(store, worktreeBase);
   const { dir, addPath } = resolveWorktreeDir(project, base, thread.id);
 
@@ -1029,14 +1046,22 @@ function setupWorktree(opts) {
   // covers the start-point resolution (incl. a Start-from-origin fetch).
   const setupStartedAt = Date.now();
   try {
-    const start = resolveWorktreeStart(thread, project.path);
-    if (!claimPooledWorktree(project, base, dir, branch, start)) {
-      gitOut(project.path, ["worktree", "add", "-b", branch, addPath, start]);
+    if (retained) {
+      // Drop the deleted folder's registration so git lets the branch go.
+      // A branch checked out in a live worktree still fails, verbatim.
+      gitTry(project.path, ["worktree", "prune"]);
+      gitOut(project.path, ["worktree", "add", addPath, retained]);
+    } else {
+      const start = resolveWorktreeStart(thread, project.path);
+      if (!claimPooledWorktree(project, base, dir, branch, start)) {
+        gitOut(project.path, ["worktree", "add", "-b", branch, addPath, start]);
+      }
     }
   } catch (err) {
     // Verbatim git stderr (#511). Never first-line-only: the lock/disk/
     // submodule reason is almost always on a later line.
-    throw new Error(`Failed to create worktree:\n${gitFailureText(err)}`);
+    const what = retained ? `restore branch ${retained}` : "create worktree";
+    throw new Error(`Failed to ${what}:\n${gitFailureText(err)}`);
   }
 
   // Before the setup script (#153), which may need .env to install/migrate.
@@ -1049,6 +1074,7 @@ function setupWorktree(opts) {
   const updated = store.updateThread(threadId, {
     worktreePath: dir,
     branch,
+    ...(retained ? { retainedBranch: null } : {}),
     worktreeSetupMs: Math.max(0, Date.now() - setupStartedAt),
   });
   store.save();
