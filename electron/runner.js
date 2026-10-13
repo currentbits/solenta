@@ -2151,6 +2151,7 @@ function createRunner(opts) {
       services.automationNoteFor() +
       services.subagentPoolNoteFor(
         store.getSettings && store.getSettings().subagentPool,
+        projectForGate,
       ) +
       services.hypothesisNoteFor(dispatchThread, (id) => store.getThread(id)) +
       services.specNoteFor(

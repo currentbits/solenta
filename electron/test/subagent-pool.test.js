@@ -343,6 +343,103 @@ describe("formatPoolMenu / subagentPoolNoteFor", () => {
     }
     assert.equal(subagentPoolNoteFor(pool()), "");
   });
+
+  // #1403: the worker CLI runs on the ssh host / inside the WSL distro, so a
+  // missing local binary must not hide its alias from the lead.
+  it("boundary projects list aliases whose CLI is missing locally", async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pool-remote-"));
+    const prev = {
+      CODER_SIMULATE: process.env.CODER_SIMULATE,
+      CODER_KIMI_BIN: process.env.CODER_KIMI_BIN,
+      CODER_GROK_MCP_DISABLE: process.env.CODER_GROK_MCP_DISABLE,
+      CODER_KIMI_MCP_PATH: process.env.CODER_KIMI_MCP_PATH,
+    };
+    process.env.CODER_SIMULATE = "1";
+    // registerMcpServer must not touch the developer's real grok/kimi config.
+    process.env.CODER_GROK_MCP_DISABLE = "1";
+    process.env.CODER_KIMI_MCP_PATH = path.join(tmpDir, "kimi-mcp.json");
+    process.env.CODER_KIMI_BIN = path.join(tmpDir, "no-kimi");
+    const realNote = services.subagentPoolNoteFor;
+    const notes = [];
+    services.subagentPoolNoteFor = (...args) => {
+      const note = realNote(...args);
+      notes.push(note);
+      return note;
+    };
+    registerMcpServer({
+      name: "coder-threads",
+      port: 1234,
+      token: "tok",
+      userDataPath: tmpDir,
+    });
+    let runner;
+    try {
+      const remoteOnly = pool({ entries: [entry()] });
+      const forced = pool({ entries: [entry()], force: true });
+
+      // The runner note path, with an injected ssh project.
+      const { pathToFileURL } = require("node:url");
+      const { execFileSync } = require("node:child_process");
+      const { createRunner } = require("../runner.js");
+      const core = await import(
+        pathToFileURL(path.join(__dirname, "../../core/dist/index.js")).href
+      );
+      const store = new Store(path.join(tmpDir, "store.json"));
+      runner = createRunner({ store, core, pushFn: () => {}, tickMs: 15 });
+      const repo = path.join(tmpDir, "app");
+      fs.mkdirSync(repo);
+      execFileSync("git", ["init"], { cwd: repo, stdio: "ignore" });
+      const project = await services.addProject(store, repo);
+      store.setProjects(
+        store
+          .getProjects()
+          .map((p) =>
+            p.id === project.id
+              ? { ...p, remoteHost: "dev@box", remotePath: "/srv/app" }
+              : p,
+          ),
+      );
+      services.setSettings(store, { subagentPool: remoteOnly });
+      const thread = services.createThread(store, {
+        projectId: project.id,
+        title: "lead",
+      });
+      await runner.startRun({ threadId: thread.id, prompt: "hi" });
+      assert.equal(notes.length, 1);
+      assert.match(notes[0], /^- fast: .*\(kimi \/ /m);
+      assert.match(notes[0], /checked when the worker starts/);
+      assert.doesNotMatch(notes[0], /No pool providers/);
+
+      // Same absent CLI on a local project stays hidden.
+      assert.match(
+        subagentPoolNoteFor(remoteOnly, { path: repo }),
+        /No pool providers are installed on this machine/,
+      );
+
+      // WSL distro path, and an accurate force-pinned default.
+      const realPlatform = Object.getOwnPropertyDescriptor(process, "platform");
+      Object.defineProperty(process, "platform", { value: "win32" });
+      try {
+        const wsl = { path: "\\\\wsl$\\Ubuntu\\home\\me\\repo" };
+        assert.match(subagentPoolNoteFor(remoteOnly, wsl), /^- fast: /m);
+        assert.match(
+          subagentPoolNoteFor(forced, wsl),
+          /Pinned to "fast" \(kimi \/ kimi-for-coding-highspeed\)/,
+        );
+      } finally {
+        Object.defineProperty(process, "platform", realPlatform);
+      }
+    } finally {
+      if (runner) runner.stopAll();
+      services.subagentPoolNoteFor = realNote;
+      unregisterMcpServer("coder-threads");
+      for (const [k, v] of Object.entries(prev)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("nextPoolEntry / startWithPoolFailover", () => {
