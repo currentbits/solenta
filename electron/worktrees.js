@@ -37,6 +37,7 @@ const { conflictContext, conflictForecast } = require("./worktrees-conflicts.js"
 const { push, assertNoOutboundSecrets } = require("./worktrees-push.js");
 const {
   diff,
+  imageDiff,
   listChangedPathsAsync,
   listChangedPaths,
   commit,
@@ -150,6 +151,7 @@ module.exports = {
   gitFailureText,
   maybeRenameWorktreeBranch,
   diff,
+  imageDiff,
   commit,
   revertFile,
   revertHunk,
