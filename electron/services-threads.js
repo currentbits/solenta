@@ -796,7 +796,7 @@ function savePlanFile(store, input) {
   return { path: rel };
 }
 
-const PERMISSION_RANK = { plan: 0, default: 1, acceptEdits: 2, bypassPermissions: 3 };
+const PERMISSION_RANK = { plan: 0, default: 1, acceptEdits: 2, auto: 3, bypassPermissions: 4 };
 
 /**
  * Privilege narrowing for agent-spawned workers (#1425): a worker's snapped
@@ -819,7 +819,7 @@ function assertWorkerNarrows(lead, providerRef, poolEntry) {
     : lead.provider;
   const leadMode = snapPermissionMode(getProvider(lead.provider), lead.permissionMode);
   const workerMode = snapPermissionMode(getProvider(provider), lead.permissionMode);
-  if ((PERMISSION_RANK[workerMode] ?? 3) <= (PERMISSION_RANK[leadMode] ?? 3)) return;
+  if ((PERMISSION_RANK[workerMode] ?? 4) <= (PERMISSION_RANK[leadMode] ?? 4)) return;
   const err = new Error(
     `A ${provider} worker would run in ${workerMode}, above its lead's ` +
       `${leadMode}; a worker cannot get more permissions than the thread that ` +

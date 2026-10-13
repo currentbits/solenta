@@ -442,6 +442,13 @@ function createCodexRun(ctx) {
           return;
         }
 
+        if (ev.type === "auto_review") {
+          appendMessage(threadId, "event", ev.note, runId);
+          store.save();
+          pushDetail(threadId, codexState);
+          return;
+        }
+
         if (ev.type === "server_request.resolved") {
           const live = active.get(threadId);
           live.pendingPermissions = live.pendingPermissions.filter((p) => p.rpcId !== ev.requestId);
