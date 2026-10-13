@@ -6,7 +6,7 @@
  */
 import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
-import { inAct, mount, unmountAll } from "./support/dom.ts";
+import { inAct, mount, unmountAll, type Mounted } from "./support/dom.ts";
 import { MarkdownBody } from "../src/components/Markdown";
 import { HTML_MAX_CHARS, HTML_SANDBOX } from "../src/htmlPage";
 
@@ -20,6 +20,16 @@ async function flush() {
   }
 }
 
+// The page is a lazy chunk: a loaded CI runner can need more than a few ticks.
+async function until(m: Mounted, sel: string) {
+  for (let i = 0; i < 100 && !m.query(sel); i++) {
+    // Inside act: a chunk resolving outside it trips the console gate.
+    await inAct(async () => {
+      await new Promise((r) => setTimeout(r, 20));
+    });
+  }
+}
+
 describe("html fences (#1525)", () => {
   afterEach(() => {
     unmountAll();
@@ -27,7 +37,7 @@ describe("html fences (#1525)", () => {
 
   it("swaps a settled fence for a sandboxed srcdoc iframe", async () => {
     const m = await mount(<MarkdownBody text={FENCE} />);
-    await flush();
+    await until(m, "[data-html-page] iframe");
     const frame = m.query("[data-html-page] iframe");
     assert.ok(frame, "iframe mounted");
     assert.equal(frame!.getAttribute("sandbox"), HTML_SANDBOX);
@@ -49,7 +59,7 @@ describe("html fences (#1525)", () => {
     const settled = await mount(
       <MarkdownBody text={`Intro\n\n${FENCE}\n\nNext paragraph`} streaming />,
     );
-    await flush();
+    await until(settled, "[data-html-page]");
     assert.ok(settled.query("[data-html-page]"), "a settled chunk draws");
   });
 

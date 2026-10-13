@@ -1384,7 +1384,13 @@ describe("ThreadView mounted interactions", () => {
     assert.ok(group, "html tool is grouped");
     await m.click(group);
     await m.click(m.query("button.toolToggle"));
-    for (let i = 0; i < 3; i++) await m.flush();
+    // The page is a lazy chunk: a loaded CI runner can need more than a few ticks.
+    for (let i = 0; i < 100 && !m.query("[data-html-page] iframe"); i++) {
+      // Inside act: a chunk resolving outside it trips the console gate.
+      await inAct(async () => {
+        await new Promise((r) => setTimeout(r, 20));
+      });
+    }
     const frame = m.query("[data-html-page] iframe");
     assert.ok(frame, "expanded card mounts the sandboxed page");
     assert.equal(frame!.getAttribute("sandbox"), "allow-scripts");
