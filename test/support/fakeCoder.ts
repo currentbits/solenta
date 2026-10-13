@@ -30,6 +30,7 @@ import type {
   TerminalState,
   PreviewSnapshot,
   DiffResult,
+  ImageDiffResult,
   CreateIssueResult,
   FetchIssueResult,
   ListIssuesResult,
@@ -3135,6 +3136,11 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           patch: "",
           truncated: false,
         } as DiffResult),
+      imageDiff: (input: unknown) =>
+        rec("git.imageDiff", [input], {
+          before: { label: "HEAD abc1234", exists: false },
+          after: { label: "Working tree", exists: false },
+        } as ImageDiffResult),
       reviewContext: (input: unknown) =>
         rec("git.reviewContext", [input], {
           annotation: null,

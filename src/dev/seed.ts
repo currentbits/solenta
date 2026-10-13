@@ -478,6 +478,7 @@ export function fakeDiff(thread: ThreadInfo): DiffResult {
       additions: 140,
       deletions: 40,
     },
+    { path: "assets/icon.png", status: "M", additions: 0, deletions: 0 },
   ];
   const patch = [
     `diff --git a/src/components/Composer.tsx b/src/components/Composer.tsx`,

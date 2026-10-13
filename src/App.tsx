@@ -278,6 +278,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     removeWorktree,
     fetchDiff,
     fetchReviewContext,
+    fetchImageDiff,
     setReviewAccepted,
     commitChanges,
     setStagedPaths,
@@ -2055,6 +2056,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         restoreCheckpoint={restoreCheckpoint}
         onFetchDiff={fetchDiff}
         onFetchReviewContext={fetchReviewContext}
+        onFetchImageDiff={fetchImageDiff}
         onSetReviewAccepted={setReviewAccepted}
         onCommitChanges={commitChanges}
         onStagedPathsChange={setStagedPaths}

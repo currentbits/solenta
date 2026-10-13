@@ -79,6 +79,7 @@ const BY_SCOPE = {
     "git:status",
     "git:listBranches",
     "git:diff",
+    "git:imageDiff",
     "git:reviewContext",
     "git:conflictContext",
     "git:prStatus",
