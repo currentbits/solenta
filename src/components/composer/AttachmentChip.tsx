@@ -2,14 +2,17 @@ import { useEffect, useState } from "react";
 import type { AttachmentInfo } from "../../shared/ipc";
 import styles from "../Composer.module.css";
 
-/** One pending attachment: thumbnail for images, glyph for files/folders. */
+/**
+ * One attachment: thumbnail for images, glyph for files/folders. Without
+ * onRemove it is read-only (the queued strip, #1212).
+ */
 export function AttachmentChip({
   attachment,
   onRemove,
   onLoadImage,
 }: {
   attachment: AttachmentInfo;
-  onRemove: () => void;
+  onRemove?: () => void;
   onLoadImage?: (path: string) => Promise<string | null>;
 }) {
   const [thumb, setThumb] = useState<string | null>(null);
@@ -67,15 +70,17 @@ export function AttachmentChip({
         </svg>
       )}
       <span className={styles.attachmentName}>{attachment.name}</span>
-      <button
-        type="button"
-        className={styles.attachmentRemove}
-        aria-label={`Remove ${attachment.name}`}
-        title={`Remove ${attachment.name}`}
-        onClick={onRemove}
-      >
-        ×
-      </button>
+      {onRemove ? (
+        <button
+          type="button"
+          className={styles.attachmentRemove}
+          aria-label={`Remove ${attachment.name}`}
+          title={`Remove ${attachment.name}`}
+          onClick={onRemove}
+        >
+          ×
+        </button>
+      ) : null}
     </span>
   );
 }
