@@ -13,6 +13,8 @@ import type {
   DiffResult,
   DiffScope,
   FileChange,
+  ImageDiffInput,
+  ImageDiffResult,
 } from "../../shared/ipc";
 import {
   annotateHunkLines,
@@ -62,6 +64,7 @@ import {
   ReviewItineraryView,
 } from "../ReviewItinerary";
 import { useDiffFind } from "./useDiffFind";
+import { ImageDiff, isImagePath } from "./ImageDiff";
 import styles from "../ThreadView.module.css";
 
 const DiffLine = memo(function DiffLine({
@@ -536,6 +539,7 @@ export function ChangesPanel({
   onFetchDiff,
   onFetchReviewContext,
   onSetReviewAccepted,
+  onFetchImageDiff,
   onCommit,
   onStagedPathsChange,
   onRevert,
@@ -560,6 +564,7 @@ export function ChangesPanel({
     acceptedHunks: string[];
   }>;
   onSetReviewAccepted?: (hashes: string[]) => Promise<void>;
+  onFetchImageDiff?: (input: ImageDiffInput) => Promise<ImageDiffResult>;
   onCommit: (
     message: string,
     paths?: string[],
@@ -828,6 +833,8 @@ export function ChangesPanel({
   if (!open) return null;
 
   const empty = !loading && !error && diff != null && isEmptyDiff(diff);
+  const imageFile =
+    selectedFile && onFetchImageDiff && isImagePath(selectedFile.path) ? selectedFile : null;
 
   const failMessage = (err: unknown, fallback: string) =>
     err instanceof Error && err.message ? err.message : fallback;
@@ -1189,6 +1196,7 @@ export function ChangesPanel({
               ))}
             </div>
             <div className={styles.changesDiff}>
+              {imageFile ? null : (
               <div className={styles.diffToolbar} role="group" aria-label="Diff view">
                 <button
                   type="button"
@@ -1219,7 +1227,16 @@ export function ChangesPanel({
                   Ignore whitespace
                 </button>
               </div>
-              {visiblePatches.length === 0 ? (
+              )}
+              {imageFile && onFetchImageDiff ? (
+                <ImageDiff
+                  threadId={threadId}
+                  scope={scope}
+                  file={imageFile}
+                  reloadKey={diff}
+                  onFetch={onFetchImageDiff}
+                />
+              ) : visiblePatches.length === 0 ? (
                 <OmittedPatch
                   file={selectedFile}
                   state={selectedFile ? filePatches[selectedFile.path] : undefined}

@@ -4,6 +4,7 @@ import {
   EDITOR_PREF_KEY,
   type AttachmentInfo,
   type CoderApi,
+  type ImageDiffInput,
   type DiffOptions,
   type EditorId,
   type ReviewSymbol,
@@ -109,6 +110,11 @@ export function useCoderWorkspace({
     }
     const threadId = selectedThreadId;
     return api.git.diff({ threadId, ...opts });
+  }, [api, selectedThreadId]);
+
+  const fetchImageDiff = useCallback(async (input: ImageDiffInput) => {
+    if (!selectedThreadId) throw new Error("No thread selected");
+    return api.git.imageDiff({ threadId: selectedThreadId, ...input });
   }, [api, selectedThreadId]);
 
   const fetchReviewContext = useCallback(async () => {
@@ -440,6 +446,7 @@ export function useCoderWorkspace({
     removeWorktree,
     fetchDiff,
     fetchReviewContext,
+    fetchImageDiff,
     setReviewAccepted,
     commitChanges,
     revertFile,

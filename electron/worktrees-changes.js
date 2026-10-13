@@ -20,6 +20,7 @@ const {
   cachedRead,
   gitOut,
   gitTry,
+  gitOutAsync,
   gitOutForDiffAsync,
   tailErr,
   gitTryAsync,
@@ -218,8 +219,11 @@ async function diffOnce(store, thread, project, cwd, view) {
       // Branch scope takes tracked letters from name-status below.
       if (scope === "branch" && status !== "??") continue;
       let filePath = line.slice(3);
+      let oldPath = "";
       if (filePath.includes(" -> ")) {
-        filePath = filePath.split(" -> ").pop() || filePath;
+        const [from, ...rest] = filePath.split(" -> ");
+        oldPath = from.replace(/^"|"$/g, "");
+        filePath = rest.pop() || filePath;
       }
       filePath = filePath.replace(/^"|"$/g, "");
       const letter =
@@ -228,6 +232,7 @@ async function diffOnce(store, thread, project, cwd, view) {
           : (status.replace(/\s/g, "").slice(-1) || status[0] || "M");
       byPath.set(filePath, {
         path: filePath,
+        ...(oldPath ? { oldPath } : {}),
         status: letter === "?" ? "??" : letter,
         additions: 0,
         deletions: 0,
@@ -355,6 +360,156 @@ async function diffOnce(store, thread, project, cwd, view) {
       lintPatch,
     ),
   };
+}
+
+/** Per-side transfer cap and decoded-size cap for image review (#1192). */
+const IMAGE_MAX_BYTES = 8 * 1024 * 1024;
+const IMAGE_MAX_PIXELS = 25_000_000;
+
+/**
+ * Format and pixel size from the header bytes, without decoding. Null for
+ * anything that is not PNG, GIF, JPEG, WebP or BMP (SVG is deferred: it is
+ * text and keeps its textual diff).
+ * @param {Buffer} b
+ * @returns {{ mime: string, width: number, height: number } | null}
+ */
+function imageInfo(b) {
+  try {
+    if (b.length >= 24 && b.readUInt32BE(0) === 0x89504e47 && b.toString("latin1", 12, 16) === "IHDR") {
+      return { mime: "image/png", width: b.readUInt32BE(16), height: b.readUInt32BE(20) };
+    }
+    if (b.length >= 10 && /^GIF8[79]a$/.test(b.toString("latin1", 0, 6))) {
+      return { mime: "image/gif", width: b.readUInt16LE(6), height: b.readUInt16LE(8) };
+    }
+    if (b.length >= 26 && b.toString("latin1", 0, 2) === "BM") {
+      return { mime: "image/bmp", width: Math.abs(b.readInt32LE(18)), height: Math.abs(b.readInt32LE(22)) };
+    }
+    if (b.length >= 30 && b.toString("latin1", 0, 4) === "RIFF" && b.toString("latin1", 8, 12) === "WEBP") {
+      const kind = b.toString("latin1", 12, 16);
+      if (kind === "VP8 ") return { mime: "image/webp", width: b.readUInt16LE(26) & 0x3fff, height: b.readUInt16LE(28) & 0x3fff };
+      if (kind === "VP8L") {
+        const bits = b.readUInt32LE(21);
+        return { mime: "image/webp", width: (bits & 0x3fff) + 1, height: ((bits >> 14) & 0x3fff) + 1 };
+      }
+      if (kind === "VP8X") return { mime: "image/webp", width: b.readUIntLE(24, 3) + 1, height: b.readUIntLE(27, 3) + 1 };
+      return null;
+    }
+    if (b.length >= 4 && b[0] === 0xff && b[1] === 0xd8) {
+      // Walk segments to the first SOF (C0-CF minus DHT C4, JPG C8, DAC CC).
+      let i = 2;
+      while (i + 9 < b.length) {
+        if (b[i] !== 0xff) return null;
+        const m = b[i + 1];
+        if (m === 0xff) { i++; continue; }
+        if (m >= 0xc0 && m <= 0xcf && m !== 0xc4 && m !== 0xc8 && m !== 0xcc) {
+          return { mime: "image/jpeg", width: b.readUInt16BE(i + 7), height: b.readUInt16BE(i + 5) };
+        }
+        if (m === 0xda) return null;
+        i += 2 + b.readUInt16BE(i + 2);
+      }
+    }
+  } catch {
+    // Truncated header: fall through to unsupported.
+  }
+  return null;
+}
+
+/**
+ * One side of an image review: bytes become a data URL only when the
+ * header names a supported raster within the byte and pixel caps.
+ * @param {string} label
+ * @param {Buffer} bytes
+ */
+function imageSide(label, bytes) {
+  const info = imageInfo(bytes);
+  const base = { label, exists: true, bytes: bytes.length };
+  if (!info) return { ...base, note: "Not a supported image format" };
+  const dims = { width: info.width, height: info.height };
+  if (!info.width || !info.height || info.width * info.height > IMAGE_MAX_PIXELS) {
+    return { ...base, ...dims, note: "Too many pixels to preview" };
+  }
+  return { ...base, ...dims, dataUrl: `data:${info.mime};base64,${bytes.toString("base64")}` };
+}
+
+const tooLarge = (label, bytes) => ({ label, exists: true, bytes, note: "Too large to preview" });
+
+/** `rev:rel` from the object store; `exists: false` when the rev lacks it. */
+async function blobImageSide(cwd, rev, rel, label) {
+  // ponytail: two spawns (size, then bytes) so an oversized blob is never read.
+  // execFile argv, never a shell: a filename cannot become a command.
+  const spec = `${rev}:${rel}`;
+  let size;
+  try {
+    size = Number(await gitOutAsync(cwd, ["cat-file", "-s", spec]));
+  } catch {
+    return { label, exists: false };
+  }
+  if (size > IMAGE_MAX_BYTES) return tooLarge(label, size);
+  const bytes = /** @type {Buffer} */ (/** @type {unknown} */ (
+    await gitOutAsync(cwd, ["cat-file", "blob", spec], { buffer: true })
+  ));
+  return imageSide(label, bytes);
+}
+
+/** The working-tree file, refusing symlinks and anything resolving outside cwd. */
+async function fileImageSide(root, rel, label) {
+  const full = path.join(root, rel);
+  let st;
+  try {
+    st = await fs.promises.lstat(full);
+  } catch {
+    return { label, exists: false };
+  }
+  const real = await fs.promises.realpath(full).catch(() => "");
+  const realRoot = await fs.promises.realpath(root).catch(() => root);
+  if (!st.isFile() || !real.startsWith(realRoot + path.sep)) {
+    return { label, exists: true, note: "Not a regular file" };
+  }
+  if (st.size > IMAGE_MAX_BYTES) return tooLarge(label, st.size);
+  const bytes = await fs.promises.readFile(full);
+  // The agent may still be writing it: re-check what was actually read.
+  return bytes.length > IMAGE_MAX_BYTES ? tooLarge(label, bytes.length) : imageSide(label, bytes);
+}
+
+/**
+ * Before/after bytes of one image for the Git pane (#1192), read from the
+ * exact refs `diff()` compares for `scope`: uncommitted is HEAD vs the
+ * working tree, branch is the merge base vs the working tree, turn is
+ * checkpoint vs checkpoint. Read-only: cat-file and file reads, no index.
+ *
+ * @param {object} opts
+ * @param {import('./store').Store} opts.store
+ * @param {string} opts.threadId
+ * @param {string} [opts.scope]
+ * @param {string} opts.path - after-side path
+ * @param {string} [opts.oldPath] - before-side path for a rename
+ */
+async function imageDiff(opts) {
+  const { thread, project, cwd } = threadGitCwd(opts.store, opts.threadId);
+  if (project.remoteHost) throw new Error("Image review is not available for remote projects");
+  const root = path.resolve(String(cwd || ""));
+  const rel = assertRelPathInCwd(root, String(opts.path || ""));
+  const oldRel = opts.oldPath ? assertRelPathInCwd(root, String(opts.oldPath)) : rel;
+  const scope = DIFF_SCOPES.has(String(opts.scope)) ? String(opts.scope) : "uncommitted";
+  const resolved = await scopeRange(opts.store, thread, project, cwd, scope);
+  if (!resolved) throw new Error("No turn checkpoint yet");
+  const [from, to] = resolved.range;
+  const short = async (rev) => {
+    try {
+      return await gitOutAsync(cwd, ["rev-parse", "--short", rev]);
+    } catch {
+      return "";
+    }
+  };
+  const turn = scope === "turn" ? resolved.label : "";
+  const beforeLabel = `${turn ? `Before ${turn.toLowerCase()}` : scope === "branch" ? "Merge base" : "HEAD"} ${await short(from)}`.trim();
+  const [before, after] = await Promise.all([
+    blobImageSide(cwd, from, oldRel, beforeLabel),
+    to
+      ? short(to).then((s) => blobImageSide(cwd, to, rel, `${turn} ${s}`.trim()))
+      : fileImageSide(root, rel, "Working tree"),
+  ]);
+  return { before, after };
 }
 
 /** Refs tried, in order, for a diff base name (#760). */
@@ -1008,6 +1163,8 @@ async function searchFiles(opts) {
 
 module.exports = {
   diff,
+  imageDiff,
+  imageInfo,
   listChangedPathsAsync,
   ensureWorktreePresent,
   listChangedPaths,

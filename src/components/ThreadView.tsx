@@ -34,6 +34,8 @@ import type {
   CoderApi,
   ConflictContext,
   DiffResult,
+  ImageDiffInput,
+  ImageDiffResult,
   GitSyncInfo,
   PrChecksResult,
   MergeMethod,
@@ -490,6 +492,8 @@ interface ThreadViewProps {
   }>;
   /** Persist hunk hashes the user marked as reviewed. */
   onSetReviewAccepted?: (hashes: string[]) => Promise<void>;
+  /** Before/after of one changed image (#1192). */
+  onFetchImageDiff?: (input: ImageDiffInput) => Promise<ImageDiffResult>;
   /** Commit the staged paths (or all files when `paths` is omitted). */
   onCommitChanges: (
     message: string,
@@ -817,6 +821,7 @@ export const ThreadView = memo(function ThreadView({
   restoreCheckpoint,
   onFetchDiff,
   onFetchReviewContext,
+  onFetchImageDiff,
   onSetReviewAccepted,
   onCommitChanges,
   onStagedPathsChange,
@@ -3720,6 +3725,7 @@ export const ThreadView = memo(function ThreadView({
                 openNonce={changesNonce}
                 onFetchDiff={onFetchDiff}
                 onFetchReviewContext={onFetchReviewContext}
+                onFetchImageDiff={onFetchImageDiff}
                 onSetReviewAccepted={onSetReviewAccepted}
                 onCommit={onCommitChanges}
                 onStagedPathsChange={onStagedPathsChange}
