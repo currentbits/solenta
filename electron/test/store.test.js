@@ -232,6 +232,7 @@ describe("Store", () => {
       branch: "main",
       prNumber: null,
       prUrl: null,
+      prLinks: [],
       status: "idle",
       lastError: null,
       lastErrorKind: null,
