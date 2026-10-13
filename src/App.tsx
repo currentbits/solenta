@@ -13,6 +13,7 @@ import { demoProviderLimits } from "./providerUsageDemo";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Sidebar } from "./components/Sidebar";
 import { ThreadView } from "./components/ThreadView";
+import type { ComposerProps } from "./components/Composer";
 import { REOPEN_PANE_EVENT } from "./paneLayout";
 import type { UsageReportControls } from "./components/UsageView";
 import {
@@ -496,11 +497,13 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   const [memoryDraft, setMemoryDraft] = useState<DistilledMemory | null>(null);
   const clearMemoryDraft = useCallback(() => setMemoryDraft(null), []);
   const [chipError, setChipError] = useState<string | null>(null);
-  /** Discarded queued follow-up, handed back to the composer draft (#364). */
-  const [queuedDraftRestore, setQueuedDraftRestore] = useState<{
-    threadId: string;
-    text: string;
-  } | null>(null);
+  /** Discarded queued follow-up, handed back to the composer draft (#364, #1212). */
+  const [queuedDraftRestore, setQueuedDraftRestore] =
+    useState<ComposerProps["restoreDraft"]>(null);
+  const clearQueuedDraftRestore = useCallback(
+    () => setQueuedDraftRestore(null),
+    [],
+  );
   /** Freshly created thread the Sidebar should reveal (expand/scroll/flash). */
   const [revealThreadId, setRevealThreadId] = useState<string | null>(null);
   const [drawer, setDrawer] = useState<DrawerId | null>(null);
@@ -1088,13 +1091,20 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   // onClick, so cancelQueued's optional threadId would swallow the DOM event
   // and cancel nothing.
   const handleCancelQueued = useCallback(() => {
-    // Non-destructive cancel (#364): restore the discarded text onto an
-    // empty composer only after the host clear lands. A rejected clear
-    // keeps the overlay; filling the draft then would duplicate on send.
+    // Non-destructive cancel (#364, #1212): hand the discarded text and
+    // files back to that thread's draft only after the host clear lands. A
+    // rejected clear keeps the overlay; filling the draft then would
+    // duplicate on send.
     const id = selectedThreadId;
-    const text = id ? queued[id]?.prompt : null;
+    const q = id ? queued[id] : null;
     void cancelQueued().then((cleared) => {
-      if (cleared && id && text) setQueuedDraftRestore({ threadId: id, text });
+      if (cleared && id && q && (q.prompt || q.attachments?.length)) {
+        setQueuedDraftRestore({
+          threadId: id,
+          text: q.prompt,
+          attachments: q.attachments,
+        });
+      }
     });
   }, [cancelQueued, selectedThreadId, queued]);
 
@@ -2000,6 +2010,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onSavePlan={handleSavePlan}
         onEditQueued={handleEditQueued}
         restoreDraft={queuedDraftRestore}
+        onRestoreDraftConsumed={clearQueuedDraftRestore}
         onSetPermissionMode={setPermissionMode}
         onRespondPermission={respondPermission}
         onClearQuestion={clearQuestion}
