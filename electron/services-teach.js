@@ -41,13 +41,13 @@ function teachAutonomyFor(reviewsPassed) {
 
 /**
  * Permission modes allowed at this autonomy rung.
- * hint: ask / plan. review: + accept edits. pair: full access too.
+ * hint: ask / plan. review: + accept edits. pair: auto review and full access too.
  * @param {string} autonomy
  * @returns {string[]}
  */
 function teachAllowedModes(autonomy) {
   if (autonomy === "pair") {
-    return ["default", "acceptEdits", "plan", "bypassPermissions"];
+    return ["default", "acceptEdits", "plan", "auto", "bypassPermissions"];
   }
   if (autonomy === "review") return ["default", "acceptEdits", "plan"];
   return ["default", "plan"];
@@ -82,6 +82,7 @@ function snapPermissionModeForThread(entry, mode, teach) {
     "default",
     "plan",
     "acceptEdits",
+    "auto",
     "bypassPermissions",
   ]) {
     if (teachOk.includes(preferred)) return preferred;

@@ -1857,6 +1857,7 @@ function createRunner(opts) {
             startRun,
             setProvider: services.setProvider,
             isAvailable: providerBinAvailable,
+            project: store.getProject(worker.projectId),
             onFailover: (next, fromProvider) => {
               appendMessage(
                 threadId,

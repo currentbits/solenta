@@ -195,7 +195,10 @@ module.exports = {
     return services.savePlanFile(ctx.store, input);
   },
   "threads:fork": async (ctx, input) => {
-    const thread = services.forkThread(ctx.store, input);
+    const thread =
+      input && input.checkpointSha
+        ? await services.forkFromCheckpoint(ctx.store, input)
+        : services.forkThread(ctx.store, input);
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
     return thread;
   },

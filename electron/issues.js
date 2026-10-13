@@ -781,6 +781,55 @@ async function commentIssue(projectPath, number, body) {
 }
 
 /**
+ * Add labels to an issue (triage, #258). plan:* labels are refused: those
+ * move through setPlanStatus so the column swap stays exclusive. gh refuses
+ * labels the repo lacks, so a "not found" creates them and retries once;
+ * GitLab creates missing labels on assignment. Never throws.
+ *
+ * @param {string} projectPath
+ * @param {unknown} number
+ * @param {unknown} labels
+ * @returns {Promise<{ ok: true } | { ok: false, reason: string }>}
+ */
+async function labelIssue(projectPath, number, labels) {
+  const cwd = cwdOf(projectPath);
+  const issueNumber = Number(number);
+  const names = (Array.isArray(labels) ? labels : [])
+    .map((l) => String(l == null ? "" : l).trim())
+    .filter(Boolean);
+  if (!cwd) return { ok: false, reason: "not a GitHub repo" };
+  if (!Number.isInteger(issueNumber) || issueNumber <= 0) {
+    return { ok: false, reason: "invalid issue reference" };
+  }
+  if (names.length === 0) return { ok: false, reason: "no labels" };
+  if (names.some((n) => n.includes(","))) return { ok: false, reason: "label names cannot contain commas" };
+  const plan = names.find((n) => /^plan:/i.test(n));
+  if (plan) return { ok: false, reason: `use issue_set_plan for ${plan}` };
+
+  const gl = gitlabOriginOf(projectPath);
+  if (gl) return gitlab.addLabels(cwd, gl, issueNumber, names);
+
+  if (!(await isGitHubPrRemote(originUrlOf(projectPath)))) {
+    return { ok: false, reason: "not a GitHub repo" };
+  }
+  const ghOpts = ghOptsOf(projectPath);
+  const edit = ["issue", "edit", String(issueNumber), "--add-label", names.join(",")];
+  let edited = await ghApiTryAsync(cwd, edit, ghOpts);
+  let errText = edited.stderr || edited.combined || edited.stdout || "";
+  if (!edited.ok && !edited.enoent && /not found/i.test(errText) && !isIssueNotFound(errText)) {
+    // Already-existing labels fail `label create`; that is fine.
+    for (const name of names) await ghApiTryAsync(cwd, ["label", "create", name], ghOpts);
+    edited = await ghApiTryAsync(cwd, edit, ghOpts);
+    errText = edited.stderr || edited.combined || edited.stdout || "";
+  }
+  if (edited.ok) return { ok: true };
+  if (edited.enoent) return { ok: false, reason: "gh missing" };
+  if (isGhAuthFailure(errText)) return { ok: false, reason: "auth" };
+  if (isIssueNotFound(errText)) return { ok: false, reason: "issue not found" };
+  return { ok: false, reason: tailErr(errText, "gh issue edit failed") };
+}
+
+/**
  * File an issue via `gh issue create` and label it plan:todo (issue #550
  * "File on planboard" chip). Never throws; failures come back as
  * `{ ok: false, reason }`. The label ride-along is best-effort: creation
@@ -845,6 +894,7 @@ module.exports = {
   reopenIssue,
   completeIssue,
   commentIssue,
+  labelIssue,
   createIssue,
   parseIssueListJson,
   ownerRepoFromRemote,
