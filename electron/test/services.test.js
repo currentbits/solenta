@@ -1639,6 +1639,7 @@ describe("forkWorkerThread", () => {
             provider: "kimi",
             model: "kimi-for-coding-highspeed",
             description: "Fast and cheap. Good for small edits.",
+            allowEscalation: true, // kimi only runs bypass (#1425)
           },
         ],
       },
@@ -1666,6 +1667,7 @@ describe("forkWorkerThread", () => {
             provider: "kimi",
             model: "kimi-for-coding-highspeed",
             description: "Fast and cheap. Good for small edits.",
+            allowEscalation: true, // kimi only runs bypass (#1425)
           },
         ],
       },
