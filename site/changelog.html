@@ -59,6 +59,44 @@
         Every notable change to Solenta, newest first.
       </p>
 
+      <h2 id="v0-25-0">0.25.0 <small>2026-10-13</small></h2>
+      <h3>Added</h3>
+      <ul>
+        <li><strong>Review PRs in the app.</strong> A Code tab shows a PR's files with per-file diffs and a commit picker. Viewed marks flip to Changed after a new push, a thread can link several PRs (from other repos too), and a stacked chain can be rebased or merged in order.</li>
+        <li><strong>Needs me.</strong> A toggle on the PR list groups every open agent PR by what it needs: ready to merge, needs your review, waiting on the agent or CI, or stale.</li>
+        <li><strong>Second-opinion review.</strong> An optional setting has a different provider review each PR the app opens, and sends its findings back to the thread that wrote it.</li>
+        <li><strong>Hunk staging.</strong> Stage or discard single hunks in the Git pane, so you can commit part of a file. Changed images show before and after side by side.</li>
+        <li><strong>Fork from any point.</strong> Fork from here on an assistant message starts a new thread cut at that message, and on Claude it resumes the real session at that point. In the checkpoint list you can fork from any checkpoint or compare any two.</li>
+        <li><strong>Automations react to events.</strong> Fire on a GitHub PR being opened, merged or labelled, a review, a push, a finished CI run or a new issue (with a triage template), or on a new or moved Linear issue or a new Sentry issue. Describe one in chat and the agent creates it.</li>
+        <li><strong>Automations you can trust.</strong> Each automation keeps its own memory and pauses after three failures in a row. Project automations can be shared in solenta.json, and each machine opts in before they fire.</li>
+        <li><strong>Multi-repo tasks.</strong> Group threads across repos into one task. Each agent sees its siblings, their status and their PRs, and still only writes to its own repo.</li>
+        <li><strong>GitLab.</strong> Merge requests (list, check out, create, merge), CI badges, the planboard and issue ingestion work on gitlab.com and self-hosted GitLab.</li>
+        <li><strong>GitHub without the gh CLI.</strong> Solenta talks to the GitHub API with a token from Settings or your existing gh login, refreshes PRs with one query per repo, and works with GitHub Enterprise hosts.</li>
+        <li><strong>Composer chips.</strong> @ lists threads, PRs and skills next to files, and each becomes a chip that expands when you send. Cite (⌘⇧C) adds quote chips, prompt snippets live in Settings › Agents, and an attached screen recording reaches the agent as labelled frames.</li>
+        <li><strong>Auto review.</strong> A new permission mode between Accept edits and Full access: the CLI's own reviewer approves routine actions and anything else still asks you. Claude and Codex.</li>
+        <li><strong>Pick the right model.</strong> A Fast tier on models that have one, routing a new thread to a provider and model by task size, Plan only for Best of N, and custom agents from .claude/agents or opencode per thread.</li>
+        <li><strong>Run queue.</strong> Cap how many runs go at once (Settings › Spending, default 4). Extra runs queue first come, first served across all projects.</li>
+        <li><strong>Coming back to a thread.</strong> A recap card (asked, changed, now, open) when you return to a thread that sat idle, ⌘F to find in the thread and its diffs, ⌘⇧T to reopen a closed pane, /goal to pin a goal, and solenta:// links to threads and projects.</li>
+        <li><strong>Richer output.</strong> HTML blocks and MCP app UIs render in a sandboxed frame in the thread. Build errors, failing tests and merge conflicts in terminal output get a one-click fix card, and quick-action output stays in the transcript.</li>
+        <li><strong>Secrets.</strong> An agent can ask for a secret through a masked card. The value only goes into the run's environment and is redacted from the transcript, the work log and memory.</li>
+        <li><strong>Worktrees.</strong> Choose where worktrees live, new threads start instantly from a pre-warmed pool, .worktreeinclude copies gitignored files like .env, and per-project environment variables reach runs, terminals and dev servers.</li>
+        <li><strong>Workflows and planboard.</strong> A WORKFLOW.md in the repo versions the workflow with the branch, and a crashed multi-phase run resumes from the phase it stopped in. Planboard cards can wait on other cards.</li>
+        <li><strong>Memory.</strong> Entries can load always, by file glob, by topic, or only when mentioned. Save a finished thread as a memory after reviewing it. Repos with the same folder name get separate memory.</li>
+        <li><strong>Solenta Web and MCP.</strong> Paired devices get a scope (read only, steer or full, plus file, git and terminal grants). Hosted agents such as claude.ai can reach Solenta's MCP over an opt-in Tailscale Funnel with OAuth.</li>
+        <li><strong>Also.</strong> The current Claude lineup, a Usage filter by provider, custom model prices, stripping agent co-authors from squash merges, an Open revert PR button, the agent's live thought on the working row, MCP prompts from Claude's tools, a Compact first offer on large idle Claude threads, Stop on worker rows, and AppSnap attaching the window's text next to the screenshot on macOS.</li>
+      </ul>
+      <h3>Fixed</h3>
+      <ul>
+        <li><strong>Claude spend.</strong> A Claude session kept warm across turns added its whole running cost again on every turn, so thread spend and the daily budget were over-counted. Only the growth is billed now.</li>
+        <li><strong>No lost work on cleanup.</strong> With git's status.showUntrackedFiles=no, a worktree holding new files looked clean and could be removed. A thread whose worktree folder disappeared now picks up its old branch instead of starting over.</li>
+        <li><strong>Steers get their reply.</strong> A steer sent while Claude was mid-reply was answered in a second turn that Solenta dropped.</li>
+        <li><strong>Workers stay in their lane.</strong> A worker an agent forks can't run with more permissions than its lead, an agent can't stop or archive another thread or unlock a merge without your approval, and SSH projects refuse a worker fork that would share one checkout.</li>
+        <li><strong>Crews survive a restart.</strong> Pending lead wake-ups are saved and held for Resume, leads get a worker result card with the diff and verify verdict, and archived workers' PRs are still watched.</li>
+        <li><strong>Stop and verify races.</strong> Fixed several races between Stop, verify, hand-offs and worker notices that could leave a run stuck or start one twice.</li>
+        <li><strong>Background agents.</strong> Idle Claude sessions running background subagents are no longer killed, and kimi background agents no longer trip the hang warning. opencode tool cards and live plan steps now show up.</li>
+        <li><strong>Disk.</strong> Retention reclaims old clean orphan worktrees and stops keeping landed ones when local main is behind. Merge cleans up a worktree with nothing left to land, and background git reads no longer take the index lock while the agent commits.</li>
+      </ul>
+
       <h2 id="v0-24-0">0.24.0 <small>2026-10-06</small></h2>
       <h3>Added</h3>
       <ul>
