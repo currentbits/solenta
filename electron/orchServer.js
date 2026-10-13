@@ -13,6 +13,7 @@ const { startWithPoolFailover, poolFromStore } = require("./subagentPool.js");
 const { resolveBin, isBinAvailable } = require("./providers.js");
 const {
   forkWorkerThread,
+  deleteThread,
   setProvider,
   setRoute,
   recordHypothesis,
@@ -460,23 +461,35 @@ function createToolHandlers(deps) {
     // orchWorker + lazy worktree live in services.forkWorkerThread, shared
     // with the runner's pendingFork dispatch.
     let fork = forkWorkerThread(store, input, forkThread);
-    // #246: a declared tier routes the worker's first turn through the
-    // project's tier → profile map. A pinned pool still wins.
-    if (args.tier != null && !poolFromStore(store).force) {
-      fork = setRoute(store, { threadId: fork.id, route: String(args.tier) });
+    try {
+      // #246: a declared tier routes the worker's first turn through the
+      // project's tier → profile map. A pinned pool still wins.
+      if (args.tier != null && !poolFromStore(store).force) {
+        fork = setRoute(store, { threadId: fork.id, route: String(args.tier) });
+      }
+      await startWithPoolFailover({
+        store,
+        worker: fork,
+        prompt: args.prompt,
+        startRun: (runInput) => runner.startRun(runInput),
+        setProvider,
+        isAvailable: (id) => {
+          const entry = getProvider(id);
+          if (!entry) return false;
+          return isBinAvailable(resolveBin(entry));
+        },
+      });
+    } catch (err) {
+      // #1399: startRun rejected, so no run was accepted and the lead never
+      // got this id. Drop the orphan, same contract as the pendingFork path.
+      try {
+        deleteThread(store, { threadId: fork.id });
+      } catch {
+        /* best effort */
+      }
+      broadcastThreadsChanged();
+      throw err;
     }
-    await startWithPoolFailover({
-      store,
-      worker: fork,
-      prompt: args.prompt,
-      startRun: (runInput) => runner.startRun(runInput),
-      setProvider,
-      isAvailable: (id) => {
-        const entry = getProvider(id);
-        if (!entry) return false;
-        return isBinAvailable(resolveBin(entry));
-      },
-    });
     return { threadId: fork.id };
   }
 
