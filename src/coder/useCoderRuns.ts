@@ -52,6 +52,7 @@ export function useCoderRuns({
         issueNumber?: number | null;
         baseBranch?: string | null;
         inheritProvider?: boolean;
+        taskGroupFrom?: string;
       },
     ) => {
       const pid = projectId ?? selectedProjectId;
@@ -87,6 +88,7 @@ export function useCoderRuns({
           ...(ask ? { ask: true } : {}),
           ...(opts?.issueNumber != null ? { issueNumber: opts.issueNumber } : {}),
           ...(opts?.baseBranch ? { baseBranch: opts.baseBranch } : {}),
+          ...(opts?.taskGroupFrom ? { taskGroupFrom: opts.taskGroupFrom } : {}),
         });
       } catch (err) {
         setError({ scope: "run", message: errorMessage(err) });

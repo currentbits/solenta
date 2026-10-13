@@ -1961,7 +1961,11 @@ async function createPr(opts) {
     let info = await gitlab.viewMr(cwd, gl, branch);
     if (!info || info.state !== "OPEN") {
       const titleText = String(title ?? "");
-      const bodyText = body != null ? String(body) : "";
+      const bodyText = require("./taskGroups.js").withTaskGroupFooter(
+        store,
+        thread,
+        body,
+      );
       assertNoOutboundSecrets(`${titleText}\n${bodyText}`, "PR");
       info = await gitlab.createMr(cwd, gl, {
         branch,
@@ -2026,7 +2030,8 @@ async function createPr(opts) {
   }
 
   const titleText = String(title ?? "");
-  const bodyText = body != null ? String(body) : "";
+  // #263: name the sibling repos' PRs so the change lands together.
+  const bodyText = require("./taskGroups.js").withTaskGroupFooter(store, thread, body);
   assertNoOutboundSecrets(`${titleText}\n${bodyText}`, "PR");
 
   /** @type {string[]} */

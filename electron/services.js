@@ -260,6 +260,7 @@ module.exports = {
   completeCrewTask,
   releaseCrewTasks,
   crewTaskNoteFor,
+  taskGroupNoteFor: require("./taskGroups.js").taskGroupNoteFor,
   SPEC_ARTIFACTS,
   SPEC_DIR,
   nextSpecStage,
