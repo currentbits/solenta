@@ -105,16 +105,14 @@ describe("event text", () => {
     assert.match(formatDuration(4100), /4\.1s/);
   });
 
-  it("includes the log tail on failure", () => {
+  it("summarizes failure in one line; the output rides on commandResult (#1216)", () => {
     const text = eventText("Lint", "end", {
       command: "npm run lint",
       ok: false,
       exitCode: 1,
       durationMs: 800,
-      log: "boom",
     });
-    assert.match(text, /\[Lint\] failed: exit 1 in 0\.8s/);
-    assert.match(text, /boom/);
+    assert.equal(text, "[Lint] failed: exit 1 in 0.8s");
   });
 });
 
@@ -257,9 +255,11 @@ describe("setup on worktree create", () => {
     await waitForCommand(thread.id);
     assert.ok(updated.worktreePath);
     assert.ok(fs.existsSync(updated.worktreePath));
-    const texts = store.getMessages(thread.id).map((m) => m.text).join("\n");
-    assert.match(texts, /failed: exit 1/);
-    assert.match(texts, /npm ERR/);
+    const msgs = store.getMessages(thread.id);
+    assert.match(msgs.map((m) => m.text).join("\n"), /failed: exit 1/);
+    const end = msgs.find((m) => m.commandResult);
+    assert.match(end.commandResult.log, /npm ERR/);
+    assert.equal(end.commandResult.cwd, updated.worktreePath);
   });
 
   it("writes a marker via a real shell command", async () => {
@@ -336,6 +336,38 @@ describe("runCommand", () => {
     assert.ok(texts.some((t) => t.includes("[Lint] ok")));
   });
 
+  it("keeps each run's bounded output on its own end event (#1216)", async () => {
+    const outcomes = [
+      { ok: true, exitCode: 0, timedOut: false, log: "Coverage 91.2%", durationMs: 5 },
+      { ok: false, exitCode: 2, timedOut: false, log: "x".repeat(50_000), durationMs: 6 },
+      { ok: false, exitCode: null, timedOut: true, log: "hung", durationMs: 7 },
+    ];
+    setRunCommandFn(() => Promise.resolve(outcomes.shift()));
+    services.updateProject(store, project.id, {
+      quickActions: [{ id: "cov", name: "Coverage", command: "npm run cov" }],
+    });
+    const deps = { runner: { isRunning: () => false } };
+    const returned = [];
+    for (let i = 0; i < 3; i++) {
+      returned.push(await runCommand(store, { threadId, actionId: "cov" }, deps));
+    }
+    const ends = store.getMessages(threadId).filter((m) => m.commandResult);
+    assert.equal(ends.length, 3, "one result per invocation, same action");
+    assert.deepEqual(
+      ends.map((m) => m.commandResult),
+      returned,
+      "the API result is what the transcript keeps",
+    );
+    assert.equal(ends[0].commandResult.log, "Coverage 91.2%");
+    assert.equal(ends[0].commandResult.cwd, project.path);
+    assert.equal(ends[0].text, "[Coverage] ok in 0.0s");
+    assert.ok(ends[1].commandResult.log.length < 8100, "log stays bounded");
+    assert.match(ends[1].commandResult.log, /^…\[42000 chars trimmed\]…/);
+    assert.equal(ends[1].text, "[Coverage] failed: exit 2 in 0.0s");
+    assert.equal(ends[2].commandResult.timedOut, true);
+    assert.equal(ends[2].text, "[Coverage] timed out in 0.0s");
+  });
+
   it("rejects an unknown action, a missing setup, and an active run", async () => {
     await assert.rejects(
       () =>
@@ -365,6 +397,7 @@ describe("runCommand", () => {
         ),
       /run is already active/i,
     );
+    assert.deepEqual(store.getMessages(threadId), [], "a rejected start logs nothing");
   });
 
   it("rejects a second command while one is in flight", async () => {

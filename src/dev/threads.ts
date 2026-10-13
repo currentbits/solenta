@@ -869,12 +869,14 @@ export function createThreads(ctx: DevCtx): Pick<CoderApi, "threads"> {
           log: "ok",
           durationMs: 12,
           at: now(),
+          cwd: detail.thread.worktreePath || project?.path,
         };
         detail.messages.push({
           id: id("evt"),
           role: "event",
           text: `[${name}] ok in 0.0s`,
           createdAt: now(),
+          commandResult: result,
         });
         return result;
       },

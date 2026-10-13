@@ -1472,6 +1472,11 @@ export interface ChatMessage {
    * follow-up; the transcript paints a Steered label.
    */
   steer?: boolean;
+  /**
+   * Setup / quick action outcome (#1216), on that invocation's end event.
+   * The transcript shows its output with Copy and Add to prompt.
+   */
+  commandResult?: CommandRunResult;
 }
 
 /** Cumulative session usage across turns of a thread. */
@@ -2215,9 +2220,12 @@ export interface CommandRunResult {
   ok: boolean;
   exitCode: number | null;
   timedOut: boolean;
+  /** Output tail, bounded by verify.js tailLog (marked when trimmed). */
   log: string;
   durationMs: number;
   at: number;
+  /** Checkout the command ran in (#1216). */
+  cwd?: string;
 }
 
 /**

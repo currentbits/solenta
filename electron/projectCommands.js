@@ -29,8 +29,6 @@ const QUICK_ACTION_MAX = 8;
 const ACTION_NAME_MAX = 32;
 /** npm install on a cold cache is slower than a test suite. */
 const SETUP_TIMEOUT_MS = 30 * 60_000;
-/** Tail dropped into the transcript event on failure. */
-const EVENT_LOG_MAX = 1500;
 
 /** @type {Map<string, Promise<unknown>>} */
 const inflight = new Map();
@@ -135,7 +133,7 @@ function formatDuration(ms) {
 /**
  * @param {string} name
  * @param {"start" | "end"} phase
- * @param {{ command: string, ok?: boolean, timedOut?: boolean, exitCode?: number | null, durationMs?: number, log?: string }} ran
+ * @param {{ command: string, ok?: boolean, timedOut?: boolean, exitCode?: number | null, durationMs?: number }} ran
  */
 function eventText(name, phase, ran) {
   const tag = `[${name}]`;
@@ -148,22 +146,23 @@ function eventText(name, phase, ran) {
   const why = ran.timedOut
     ? `timed out in ${formatDuration(ran.durationMs || 0)}`
     : `failed: exit ${ran.exitCode == null ? "?" : ran.exitCode} in ${formatDuration(ran.durationMs || 0)}`;
-  const log = ran.log ? `\n${tailLog(ran.log, EVENT_LOG_MAX)}` : "";
-  return `${tag} ${why}${log}`;
+  return `${tag} ${why}`;
 }
 
 /**
  * @param {import("./store").Store} store
  * @param {string} threadId
  * @param {string} text
+ * @param {object} [extra] fields merged onto the message
  */
-function appendEvent(store, threadId, text) {
+function appendEvent(store, threadId, text, extra) {
   const list = (store.getMessages(threadId) || []).slice();
   list.push({
     id: randomUUID(),
     role: "event",
     text,
     createdAt: Date.now(),
+    ...extra,
   });
   store.setMessages(threadId, list);
 }
@@ -449,11 +448,17 @@ async function runOne(store, args) {
     ok: Boolean(ran && ran.ok),
     exitCode: ran && ran.exitCode != null ? ran.exitCode : null,
     timedOut: Boolean(ran && ran.timedOut),
-    log: ran && ran.log ? String(ran.log) : "",
+    // Re-bounded here too: a swapped runner or a thrown error is not tailed.
+    log: ran && ran.log ? tailLog(String(ran.log)) : "",
     durationMs: ran && typeof ran.durationMs === "number" ? ran.durationMs : 0,
     at: Date.now(),
+    cwd,
   };
-  appendEvent(store, threadId, eventText(resolved.name, "end", result));
+  // The output rides on this invocation's own event (#1216), so two runs of
+  // one action stay apart and a remount reads it back from the transcript.
+  appendEvent(store, threadId, eventText(resolved.name, "end", result), {
+    commandResult: result,
+  });
   store.save();
   pushCommandState(store, threadId, broadcast);
   return result;
@@ -529,7 +534,6 @@ module.exports = {
   QUICK_ACTION_MAX,
   ACTION_NAME_MAX,
   SETUP_TIMEOUT_MS,
-  EVENT_LOG_MAX,
   normalizeSetupCommand,
   normalizeQuickActions,
   normalizeThreadDefaults,
