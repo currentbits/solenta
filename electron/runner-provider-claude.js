@@ -524,6 +524,8 @@ function createClaudeRun(ctx) {
        * Ephemeral: dies with the run entry; a killed CLI cannot be answered.
        */
       pendingPermissions: [],
+      /** Steer texts the CLI has not echoed back yet (#1608). */
+      unansweredSteers: [],
     });
     if (!entry) {
       completeWorkLogStep(threadId, startingId);
@@ -594,6 +596,19 @@ function createClaudeRun(ctx) {
         sawAnyEvent = true;
         disarmAck();
         const type = ev && ev.type;
+
+        // --replay-user-messages echoes each stdin user line once the CLI
+        // takes it up: at a tool boundary (before the result) or as its own
+        // turn after it. Steers sent together come back as one "\n"-joined
+        // echo, hence includes() (#1608).
+        if (type === "user" && ev.isReplay === true) {
+          const e = guard();
+          const c = ev.message && ev.message.content;
+          if (e && typeof c === "string") {
+            e.unansweredSteers = e.unansweredSteers.filter((s) => !c.includes(s));
+          }
+          return;
+        }
 
         // Background-subagent task notifications can land between turns on a
         // kept-alive CLI (guard() is null then), so scan user text first.
@@ -955,11 +970,20 @@ function createClaudeRun(ctx) {
             return;
           }
           discardHeldPhantom();
-          sawResult = true;
-          if (!guard()) return;
-
-          completeWorkLogStep(threadId, startingId);
-          completeWorkLogStep(threadId, workingId);
+          const live = guard();
+          if (!live) {
+            sawResult = true;
+            return;
+          }
+          // A steer the CLI has not taken up yet gets its own turn after this
+          // result (#1608). Stay open for it; this turn's usage still counts.
+          // If the CLI dies first, onExit fails the run: the steer went unanswered.
+          const awaitingSteer = live.unansweredSteers.length > 0;
+          if (!awaitingSteer) {
+            sawResult = true;
+            completeWorkLogStep(threadId, startingId);
+            completeWorkLogStep(threadId, workingId);
+          }
 
           if (typeof ev.session_id === "string" && ev.session_id) {
             capturedSessionId = ev.session_id;
@@ -1054,6 +1078,11 @@ function createClaudeRun(ctx) {
                 text: assistantText,
               });
             }
+          }
+          if (awaitingSteer) {
+            store.save();
+            pushDetail(threadId, claudeState);
+            return;
           }
 
           /** @type {"done" | "failed" | "stopped"} */

@@ -245,6 +245,7 @@ describe("Store", () => {
       settledAt: null,
       prState: null,
       prMergeable: null,
+      prLinks: [],
       quotaWaitUntil: null,
       quotaWaitResumed: false,
       quotaWaitAutoResume: null,
