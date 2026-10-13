@@ -171,6 +171,7 @@ export function TurnDiffPanel({
   mode,
   onModeChange,
   onFetch,
+  label,
 }: {
   threadId: string;
   sha: string;
@@ -178,6 +179,8 @@ export function TurnDiffPanel({
   mode: DiffViewMode;
   onModeChange: (mode: DiffViewMode) => void;
   onFetch: (threadId: string, sha: string) => Promise<DiffResult>;
+  /** Header override, e.g. a checkpoint range (#252). */
+  label?: string;
 }) {
   const [diff, setDiff] = useState<DiffResult | null>(null);
   const [loading, setLoading] = useState(true);
@@ -248,12 +251,12 @@ export function TurnDiffPanel({
       data-turn-diff=""
       data-turn-diff-sha={sha}
       data-turn-diff-mode={mode}
-      aria-label={`Turn ${turn} diff`}
+      aria-label={`${label ?? `Turn ${turn}`} diff`}
     >
       {find.bar}
       <header className={styles.head}>
         <span className={styles.title}>
-          Turn {turn} · {sha.slice(0, 7)}
+          {label ?? `Turn ${turn} · ${sha.slice(0, 7)}`}
         </span>
         <div className={styles.modes} role="group" aria-label="Diff layout">
           <button

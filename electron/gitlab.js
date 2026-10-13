@@ -384,6 +384,11 @@ async function setPlanLabel(cwd, remote, number, label, planLabels, extra) {
   return res.ok ? { ok: true } : issueFail(res);
 }
 
+async function addLabels(cwd, remote, number, labels) {
+  const res = await glabApi(cwd, remote, "PUT", `/issues/${number}`, { add_labels: labels.join(",") });
+  return res.ok ? { ok: true } : issueFail(res);
+}
+
 async function addNote(cwd, remote, number, body) {
   const res = await glabApi(cwd, remote, "POST", `/issues/${number}/notes`, { body });
   if (!res.ok) return issueFail(res);
@@ -445,6 +450,7 @@ module.exports = {
   fetchIssue,
   listIssuePage,
   setPlanLabel,
+  addLabels,
   addNote,
   reopenIssue,
   completeIssue,

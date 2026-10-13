@@ -6,6 +6,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  commandOutputChip,
+  CONTEXT_BODY_CAP,
   contextChipLabel,
   filterMentionExtras,
   formatContextChipsPrompt,
@@ -182,5 +184,21 @@ describe("filterMentionExtras", () => {
       rows.map((r) => r.kind),
       ["pr", "skill"],
     );
+  });
+});
+
+describe("commandOutputChip (#1216)", () => {
+  it("keeps the tail of a long log and fits the send cap", async () => {
+    const result = { command: "npm test", cwd: "/wt", log: "a".repeat(20_000) + "\nFAIL last" };
+    const chip = commandOutputChip("c1", result, "[Test] failed: exit 1 in 2s");
+    const sent = await formatContextChipsPrompt([chip]);
+    assert.ok(sent.startsWith("Terminal npm test\n\n[Test] failed: exit 1 in 2s\ncwd: /wt\n\n…["));
+    assert.ok(sent.endsWith("FAIL last"), "tail kept, not cut by the body cap");
+    assert.ok(chip.text.length <= CONTEXT_BODY_CAP);
+  });
+
+  it("uses a picked selection over the whole log", () => {
+    const chip = commandOutputChip("c2", { command: "x", log: "all of it" }, "[X] ok in 1s", "just this");
+    assert.equal(chip.text, "[X] ok in 1s\n\njust this");
   });
 });

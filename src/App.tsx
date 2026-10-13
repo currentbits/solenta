@@ -775,6 +775,17 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   // Each offer stores the IPC call that restores the state read just before.
   const threadsRef = useRef(threads);
   threadsRef.current = threads;
+  // Multi-repo task (#263): a sibling thread for the same task in another repo.
+  const handleAddTaskRepo = useCallback(
+    (projectId: string) => {
+      const src = threadsRef.current.find((t) => t.id === selectedThreadId);
+      if (!src) return;
+      void createThread(src.title, projectId, { taskGroupFrom: src.id }).then((t) => {
+        if (t) setRevealThreadId(t.id);
+      });
+    },
+    [createThread, selectedThreadId],
+  );
   const { undoKey, undoMessage, offerUndo, dismissUndo, runUndo } =
     useUndoLast();
   const offerUndoOnly = useCallback(
@@ -1063,6 +1074,12 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     (threadId: string, opts?: { provider?: string }) => {
       void forkThread(threadId, opts);
     },
+    [forkThread],
+  );
+
+  const forkFromCheckpoint = useCallback(
+    (threadId: string, sha: string) =>
+      forkThread(threadId, { checkpointSha: sha }),
     [forkThread],
   );
 
@@ -1385,10 +1402,13 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     runQueueIds,
     comparePeers,
     threadTitles,
+    taskGroup,
+    taskTargets,
   } = useThreadRoster({
     threads,
     visibleDetail,
     providers,
+    projects,
   });
 
   const {
@@ -2116,6 +2136,9 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onOpenAutomations={handleOpenAutomation}
         onIntegrateWorker={selectedThreadId ? integrateSelectedWorker : undefined}
         handoffSource={handoffSource}
+        taskGroup={taskGroup}
+        taskTargets={taskTargets}
+        onAddTaskRepo={handleAddTaskRepo}
         comparePeers={comparePeers}
         onPeekThread={peekThread}
         onSelectThread={handleSelectThread}
@@ -2203,6 +2226,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         fetchDiff={fetchDiff}
         listCheckpoints={listCheckpoints}
         restoreCheckpoint={restoreCheckpoint}
+        forkFromCheckpoint={forkFromCheckpoint}
+        fetchTurnDiff={fetchTurnDiff}
         listLocalServers={listLocalServers}
         revealInFinder={revealInFinder}
         openInEditor={openInEditor}

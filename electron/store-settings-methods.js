@@ -70,6 +70,7 @@ class StoreSettingsMethods {
       autoSettleAfterDays: n.autoSettleAfterDays,
       autoSettleOnMerge: n.autoSettleOnMerge,
       stripAgentCoauthors: n.stripAgentCoauthors,
+      prCrossReview: n.prCrossReview,
       mcpServers: n.mcpServers,
       defaultWorktree: n.defaultWorktree,
       defaultOrchestrate: n.defaultOrchestrate,
@@ -206,6 +207,13 @@ class StoreSettingsMethods {
         throw new Error("stripAgentCoauthors must be a boolean");
       }
       this.data.settings.stripAgentCoauthors = v;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "prCrossReview")) {
+      const v = patch.prCrossReview;
+      if (typeof v !== "boolean") {
+        throw new Error("prCrossReview must be a boolean");
+      }
+      this.data.settings.prCrossReview = v;
     }
     if (Object.prototype.hasOwnProperty.call(patch, "mcpServers")) {
       this.data.settings.mcpServers = validateMcpServers(

@@ -974,11 +974,14 @@ async function gcClean(opts) {
         const thread = store.getThread(cand.threadId);
         if (thread) {
           // The ref survives GC; keep its name so the crew cap cannot
-          // purge the only link to unlanded commits (#1404).
+          // purge the only link to unlanded commits (#1404), and so the
+          // next run restores that branch instead of the checkout (#1400).
           store.updateThread(cand.threadId, {
             worktreePath: null,
             branch: null,
-            ...(thread.branch ? { retainedBranch: thread.branch } : {}),
+            ...(thread.branch
+              ? { retainedBranch: thread.branch, pendingWorktree: true }
+              : {}),
           });
           touchedThread = true;
         }

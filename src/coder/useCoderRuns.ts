@@ -52,6 +52,7 @@ export function useCoderRuns({
         issueNumber?: number | null;
         baseBranch?: string | null;
         inheritProvider?: boolean;
+        taskGroupFrom?: string;
       },
     ) => {
       const pid = projectId ?? selectedProjectId;
@@ -87,6 +88,7 @@ export function useCoderRuns({
           ...(ask ? { ask: true } : {}),
           ...(opts?.issueNumber != null ? { issueNumber: opts.issueNumber } : {}),
           ...(opts?.baseBranch ? { baseBranch: opts.baseBranch } : {}),
+          ...(opts?.taskGroupFrom ? { taskGroupFrom: opts.taskGroupFrom } : {}),
         });
       } catch (err) {
         setError({ scope: "run", message: errorMessage(err) });
@@ -132,6 +134,7 @@ export function useCoderRuns({
         select?: boolean;
         leavePlan?: boolean;
         messageId?: string;
+        checkpointSha?: string;
       },
     ) => {
       try {
@@ -142,9 +145,11 @@ export function useCoderRuns({
           worktree?: boolean;
           leavePlan?: boolean;
           messageId?: string;
+          checkpointSha?: string;
         } = { threadId };
         if (opts?.leavePlan) input.leavePlan = true;
         if (opts?.messageId) input.messageId = opts.messageId;
+        if (opts?.checkpointSha) input.checkpointSha = opts.checkpointSha;
         if (opts && Object.prototype.hasOwnProperty.call(opts, "provider")) {
           input.provider = opts.provider;
         }

@@ -84,6 +84,7 @@ import { useModalFocus } from "../useModalFocus";
 import { bindingLabel } from "../keybindings";
 import styles from "./AgentsPanel.module.css";
 import { lazyNamed } from "../lazyNamed";
+import { setDiffSplit, useDiffSplit } from "../uiPrefs";
 
 // Never the default tab, so they load on first open (#1475 finding 7).
 const MemoryTab = lazyNamed(() =>
@@ -91,6 +92,9 @@ const MemoryTab = lazyNamed(() =>
 );
 const SkillsTab = lazyNamed(() =>
   import("./SkillsTab").then((m) => m.SkillsTab),
+);
+const TurnDiffPanel = lazyNamed(() =>
+  import("./TurnDiffPanel").then((m) => m.TurnDiffPanel),
 );
 
 export type PanelTab = "agents" | "git" | "memory" | "skills";
@@ -200,6 +204,14 @@ interface AgentsPanelProps {
   /** Worktree checkpoints (newest-first). */
   listCheckpoints: (threadId: string) => Promise<CheckpointInfo[]>;
   restoreCheckpoint: (threadId: string, sha: string) => Promise<void>;
+  /** Fork a new thread at a checkpoint (#252). */
+  forkFromCheckpoint?: (threadId: string, sha: string) => Promise<unknown>;
+  /** Checkpoint patch; `from` compares any two (#252). Never rejects. */
+  fetchTurnDiff?: (
+    threadId: string,
+    sha: string,
+    from?: string,
+  ) => Promise<DiffResult>;
   listLocalServers: (threadId: string) => Promise<LocalServerInfo[]>;
   revealInFinder: () => Promise<void>;
   openInEditor: () => Promise<void>;
@@ -1197,6 +1209,7 @@ function shortSha(sha: string): string {
 /**
  * Round 50: worktree turn checkpoints. Hidden with no worktree; empty copy
  * when a worktree exists but list is empty. Restore is confirm-gated.
+ * #252: tick any two to diff them; Fork starts a new thread at a checkpoint.
  */
 function CheckpointsCard({
   thread,
@@ -1206,6 +1219,9 @@ function CheckpointsCard({
   cardError,
   isWorking,
   onRestoreRequest,
+  onFork,
+  forkPending = false,
+  fetchTurnDiff,
   onDismissError,
   now,
 }: {
@@ -1216,9 +1232,28 @@ function CheckpointsCard({
   cardError: string | null;
   isWorking: boolean;
   onRestoreRequest: (cp: CheckpointInfo) => void;
+  onFork?: (cp: CheckpointInfo) => void;
+  forkPending?: boolean;
+  fetchTurnDiff?: (
+    threadId: string,
+    sha: string,
+    from?: string,
+  ) => Promise<DiffResult>;
   onDismissError: () => void;
   now: number;
 }) {
+  const [picked, setPicked] = useState<string[]>([]);
+  const split = useDiffSplit();
+  // Newest-first like the list: [to, from]. Picks a restore dropped vanish.
+  const pair = checkpoints.filter((c) => picked.includes(c.sha));
+  const fromSha = pair.length === 2 ? pair[1]!.sha : "";
+  const fetchRange = useCallback(
+    (id: string, sha: string) =>
+      fetchTurnDiff
+        ? fetchTurnDiff(id, sha, fromSha)
+        : Promise.resolve({ files: [], patch: "", truncated: false }),
+    [fetchTurnDiff, fromSha],
+  );
   const hasWorktree = Boolean(thread?.worktreePath);
   if (!thread || !hasWorktree) return null;
 
@@ -1249,6 +1284,22 @@ function CheckpointsCard({
                 data-checkpoint-turn={cp.turn}
               >
                 <div className={styles.checkpointMeta}>
+                  {fetchTurnDiff ? (
+                    <input
+                      type="checkbox"
+                      data-checkpoint-compare={cp.sha}
+                      aria-label={`Compare turn ${cp.turn}`}
+                      title="Tick two checkpoints to diff them"
+                      checked={picked.includes(cp.sha)}
+                      onChange={() =>
+                        setPicked((prev) =>
+                          prev.includes(cp.sha)
+                            ? prev.filter((x) => x !== cp.sha)
+                            : [...prev, cp.sha].slice(-2),
+                        )
+                      }
+                    />
+                  ) : null}
                   <span className={styles.checkpointTurn}>Turn {cp.turn}</span>
                   <span className={styles.checkpointSha} title={cp.sha}>
                     {short}
@@ -1257,6 +1308,18 @@ function CheckpointsCard({
                     {formatRelativeAge(cp.at, now)}
                   </span>
                 </div>
+                {onFork ? (
+                  <button
+                    type="button"
+                    className={styles.gitBtn}
+                    data-checkpoint-fork={cp.sha}
+                    disabled={forkPending}
+                    title={`New thread from turn ${cp.turn}: its files and conversation`}
+                    onClick={() => onFork(cp)}
+                  >
+                    Fork
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   className={styles.gitBtn}
@@ -1275,6 +1338,23 @@ function CheckpointsCard({
           })}
         </ul>
       )}
+      {picked.length === 1 && pair.length === 1 ? (
+        <p className={styles.gitHint}>Tick another checkpoint to compare</p>
+      ) : null}
+      {pair.length === 2 && fetchTurnDiff ? (
+        <Suspense fallback={null}>
+          <TurnDiffPanel
+            key={`${fromSha}..${pair[0]!.sha}`}
+            threadId={thread.id}
+            sha={pair[0]!.sha}
+            turn={pair[0]!.turn}
+            label={`Turn ${pair[1]!.turn} → ${pair[0]!.turn}`}
+            mode={split ? "split" : "unified"}
+            onModeChange={(m) => setDiffSplit(m === "split")}
+            onFetch={fetchRange}
+          />
+        </Suspense>
+      ) : null}
       {cardError && (
         <div className={styles.cardError} role="alert" data-checkpoint-error="">
           <span className={styles.cardErrorText}>{cardError}</span>
@@ -1538,6 +1618,8 @@ export function GitTab({
   fetchDiff,
   listCheckpoints,
   restoreCheckpoint,
+  forkFromCheckpoint,
+  fetchTurnDiff,
   listLocalServers,
   revealInFinder,
   openInEditor,
@@ -1567,6 +1649,14 @@ export function GitTab({
   fetchDiff?: () => Promise<DiffResult>;
   listCheckpoints: (threadId: string) => Promise<CheckpointInfo[]>;
   restoreCheckpoint: (threadId: string, sha: string) => Promise<void>;
+  /** Fork a new thread at a checkpoint (#252). */
+  forkFromCheckpoint?: (threadId: string, sha: string) => Promise<unknown>;
+  /** Checkpoint patch; `from` compares any two (#252). Never rejects. */
+  fetchTurnDiff?: (
+    threadId: string,
+    sha: string,
+    from?: string,
+  ) => Promise<DiffResult>;
   listLocalServers: (threadId: string) => Promise<LocalServerInfo[]>;
   revealInFinder?: () => Promise<void>;
   openInEditor?: () => Promise<void>;
@@ -1608,6 +1698,7 @@ export function GitTab({
     null,
   );
   const [restorePending, setRestorePending] = useState(false);
+  const [forkPending, setForkPending] = useState(false);
   const closeRestoreConfirm = useCallback(() => {
     if (restorePending) return;
     setRestoreConfirm(null);
@@ -1995,6 +2086,7 @@ export function GitTab({
         )}
         {remote ? null : (
           <CheckpointsCard
+            key={thread?.id}
             thread={thread}
             checkpoints={checkpoints}
             loading={checkpointsLoading}
@@ -2006,6 +2098,20 @@ export function GitTab({
               setCheckpointError(null);
               setRestoreConfirm(cp);
             }}
+            onFork={
+              forkFromCheckpoint
+                ? (cp) => {
+                    if (!thread || forkPending) return;
+                    setForkPending(true);
+                    // Errors surface on the global banner (forkThread).
+                    void forkFromCheckpoint(thread.id, cp.sha).finally(() =>
+                      setForkPending(false),
+                    );
+                  }
+                : undefined
+            }
+            forkPending={forkPending}
+            fetchTurnDiff={fetchTurnDiff}
             onDismissError={() => setCheckpointError(null)}
             now={now}
           />
@@ -2982,6 +3088,8 @@ export const AgentsPanel = memo(function AgentsPanel({
   onTabChange,
   listCheckpoints,
   restoreCheckpoint,
+  forkFromCheckpoint,
+  fetchTurnDiff,
   listLocalServers,
   revealInFinder,
   openInEditor,
@@ -3157,6 +3265,8 @@ export const AgentsPanel = memo(function AgentsPanel({
           fetchDiff={fetchDiff}
           listCheckpoints={listCheckpoints}
           restoreCheckpoint={restoreCheckpoint}
+          forkFromCheckpoint={forkFromCheckpoint}
+          fetchTurnDiff={fetchTurnDiff}
           listLocalServers={listLocalServers}
           revealInFinder={revealInFinder}
           openInEditor={openInEditor}

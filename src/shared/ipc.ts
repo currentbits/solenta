@@ -539,7 +539,7 @@ export interface CliSessionCandidate {
 
 export type ThreadStatus = "idle" | "working" | "done" | "failed" | "quota-wait";
 
-export type PermissionMode = "default" | "acceptEdits" | "plan" | "bypassPermissions";
+export type PermissionMode = "default" | "acceptEdits" | "plan" | "auto" | "bypassPermissions";
 
 /**
  * Computed (never persisted): whether this thread's next run is actually
@@ -738,6 +738,12 @@ export interface ThreadInfo {
    * After that first turn the session carries its own context.
    */
   handoffFrom: string | null;
+  /**
+   * Multi-repo task (#263): threads sharing this id are one task, one thread
+   * per repo. The id is the thread the task was first extended from. Each
+   * thread still only writes in its own project. Absent = not grouped.
+   */
+  taskGroupId?: string;
   /**
    * Cached thread recap (#239), rebuilt after each successful turn. Detail
    * only: stripped from sidebar rows. Absent before the first finished turn.
@@ -1466,6 +1472,11 @@ export interface ChatMessage {
    * follow-up; the transcript paints a Steered label.
    */
   steer?: boolean;
+  /**
+   * Setup / quick action outcome (#1216), on that invocation's end event.
+   * The transcript shows its output with Copy and Add to prompt.
+   */
+  commandResult?: CommandRunResult;
 }
 
 /** Cumulative session usage across turns of a thread. */
@@ -2209,9 +2220,12 @@ export interface CommandRunResult {
   ok: boolean;
   exitCode: number | null;
   timedOut: boolean;
+  /** Output tail, bounded by verify.js tailLog (marked when trimmed). */
   log: string;
   durationMs: number;
   at: number;
+  /** Checkout the command ran in (#1216). */
+  cwd?: string;
 }
 
 /**
@@ -2506,6 +2520,12 @@ export interface PrListItem {
   deletions?: number;
   /** ISO timestamp from gh when the extra JSON fields are available. */
   updatedAt?: string;
+  /** Triage inbox (#260) fields; absent on GitLab rows and older gh. */
+  changedFiles?: number;
+  mergeable?: "MERGEABLE" | "CONFLICTING" | "UNKNOWN";
+  reviewDecision?: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED";
+  /** One verdict over all checks; cancelled counts as "fail". */
+  checks?: "pass" | "fail" | "pending";
 }
 
 /** Optional page for `git.listPrs`. Absent limit keeps the historic 50-row page. */
@@ -2995,6 +3015,7 @@ export type AutomationTriggerEvent =
   | "review_submitted"
   | "push"
   | "ci_completed"
+  | "issue_opened"
   | "linear_issue_created"
   | "linear_status_changed"
   | "sentry_issue";
@@ -3139,6 +3160,12 @@ export interface AppSettings {
    * `Co-authored-by:` trailers naming an AI agent; human co-authors stay.
    */
   stripAgentCoauthors: boolean;
+  /**
+   * Opt-in (default false, #259): a PR opened from the app gets a
+   * clean-context review by a different provider than the thread that wrote
+   * it; findings come back to the author thread to filter.
+   */
+  prCrossReview: boolean;
   /**
    * User-registered MCP servers (Skills tab). Built-ins coder-memory and
    * coder-threads are app-owned and never appear here. Enabled entries are
@@ -4330,6 +4357,12 @@ export type ThreadForkOpts = {
   leadSnapshotDirty?: boolean;
   /** Start the fork out of plan mode ("Implement in a new thread", #1501). */
   leavePlan?: boolean;
+  /**
+   * Fork from one of the source's turn checkpoints (#252): the new worktree
+   * starts at that commit (recorded as leadSnapshotSha) and the transcript is
+   * cut at the turn that made it. Rejects a sha that is not the source's.
+   */
+  checkpointSha?: string;
 };
 
 /**
@@ -4709,6 +4742,11 @@ export interface CoderApi {
        * Honoured by setupWorktree, mergeWorktree (no intoPath), and createPr.
        */
       baseBranch?: string | null;
+      /**
+       * Multi-repo task (#263): join this thread's task group (starting one
+       * if it has none). Rejected for the Scratch workspace.
+       */
+      taskGroupFrom?: string;
     }): Promise<ThreadInfo>;
     /**
      * List CLI sessions on disk (#433 Codex, #972 Grok, #970 Claude,
@@ -5723,9 +5761,14 @@ export interface CoderApi {
      * Checkpoint-to-checkpoint patch for one turn (#148). Same pairing as
      * runStats: N vs N-1 (first vs its parent). `sha` must be one of this
      * thread's checkpoints. Never rejects: missing worktree / unknown sha /
-     * git failure return an empty DiffResult.
+     * git failure return an empty DiffResult. `from` (another of this
+     * thread's checkpoints) replaces N-1 to compare any two (#252).
      */
-    turnDiff(input: { threadId: string; sha: string }): Promise<DiffResult>;
+    turnDiff(input: {
+      threadId: string;
+      sha: string;
+      from?: string;
+    }): Promise<DiffResult>;
     /**
      * Predicted merge conflicts between the project's active worktree threads
      * (#249), computed with `git merge-tree` before anyone merges. Read-only

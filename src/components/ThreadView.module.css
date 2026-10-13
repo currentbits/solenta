@@ -296,6 +296,22 @@
   overflow-wrap: anywhere;
 }
 
+/* #263 multi-repo task roll-up: one row per repo thread. */
+.taskMembers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 16px;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Long project lists scroll inside the title menu. */
+.taskAddRepo {
+  max-height: 14em;
+  overflow-y: auto;
+}
+
 .handoffLink {
   border: none;
   background: none;
@@ -2108,6 +2124,21 @@ button.diffLineGutter:focus-visible {
   line-height: 1.45;
   min-width: 0;
   flex: 1;
+}
+
+/* Quick-action output (#1216): bounded, scrolls inside the transcript. */
+.commandOutput {
+  margin: 2px 0 6px 23px;
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  user-select: text;
+}
+
+.commandActions {
+  display: flex;
+  gap: 6px;
 }
 
 /* Round 48: re-send last user message after failed / interrupted runs. */

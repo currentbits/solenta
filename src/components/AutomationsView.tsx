@@ -5,6 +5,7 @@ import {
   formatNextRun,
   isTriggerEvent,
   scheduleLabel,
+  TRIAGE_TEMPLATE,
   TRIGGER_EVENT_LABELS,
   triggerLabel,
 } from "../automations";
@@ -910,7 +911,21 @@ export function AutomationsView({
             >
               Cancel
             </button>
-          ) : null}
+          ) : (
+            <button
+              type="button"
+              className={styles.action}
+              data-automation-triage=""
+              title="Label, dedupe, and question new GitHub issues; only well-formed ones reach plan:todo"
+              onClick={() => {
+                setName(TRIAGE_TEMPLATE.name);
+                setEvent(TRIAGE_TEMPLATE.event);
+                setPrompt(TRIAGE_TEMPLATE.prompt);
+              }}
+            >
+              Use triage template
+            </button>
+          )}
           <button
             type="submit"
             className={styles.submit}

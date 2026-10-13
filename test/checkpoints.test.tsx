@@ -882,3 +882,53 @@ describe("App stable listCheckpoints wiring (round 50 rework B-R2)", () => {
     m.unmount();
   });
 });
+
+describe("checkpoint graph (#252)", () => {
+  it("Fork sends the checkpoint sha; ticking two diffs older → newer", async () => {
+    const cps = threeCheckpoints();
+    const [newest, middle, oldest] = [cps[0]!, cps[1]!, cps[2]!];
+    const fake = makeFake({ checkpoints: cps });
+    const m = await boot(fake);
+    await selectThread(m, "checkpoint source thread");
+    await openGitTab(m);
+
+    await m.click(
+      m.query(`[data-checkpoint-fork="${middle.sha}"]`) as HTMLElement,
+    );
+    await m.flush();
+    const forks = fake.of("threads.fork");
+    assert.equal(forks.length, 1);
+    assert.deepEqual(forks[0]!.args[0], {
+      threadId: "t-cp-source",
+      checkpointSha: middle.sha,
+    });
+
+    // Fork selected the new thread; come back to compare.
+    await selectThread(m, "checkpoint source thread");
+    await openGitTab(m);
+    // Tick newest first: the diff must still run older → newer.
+    await m.click(
+      m.query(`[data-checkpoint-compare="${newest.sha}"]`) as HTMLElement,
+    );
+    await m.flush();
+    assert.equal(m.query("[data-turn-diff]"), null, "one tick is not a pair");
+    await m.click(
+      m.query(`[data-checkpoint-compare="${oldest.sha}"]`) as HTMLElement,
+    );
+    await m.flush();
+    await m.flush();
+
+    const diffs = fake
+      .of("git.turnDiff")
+      .map((c) => c.args[0] as { sha: string; from?: string });
+    assert.deepEqual(diffs.at(-1), {
+      threadId: "t-cp-source",
+      sha: newest.sha,
+      from: oldest.sha,
+    });
+    const panel = m.query("[data-turn-diff]");
+    assert.ok(panel, "range diff panel renders");
+    assert.ok((panel!.textContent || "").includes("Turn 1 → 3"));
+    m.unmount();
+  });
+});

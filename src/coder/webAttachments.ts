@@ -1,4 +1,5 @@
 import type { AttachmentInfo } from "../shared/ipc";
+import { isVideoName, videoFrameAttachments } from "./videoFrames";
 
 function readFileAsDataUrl(file: File): Promise<string | null> {
   return new Promise((resolve) => {
@@ -43,6 +44,16 @@ export async function filesToAttachments(
       ? await save.image(dataUrl)
       : await save.file(file.name, dataUrl);
     if (attachment) out.push(attachment);
+    // Frames even when the clip itself was too big to upload: they are
+    // what the agent actually looks at.
+    if (isVideoName(file.name)) {
+      const url = URL.createObjectURL(file);
+      try {
+        out.push(...(await videoFrameAttachments(file.name, url, save.image)));
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+    }
   }
   return out;
 }
