@@ -5,6 +5,10 @@
  * Run: npm run test:renderer
  */
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import { createRequire } from "node:module";
+import os from "node:os";
+import path from "node:path";
 import { describe, it, afterEach } from "node:test";
 import { useState } from "react";
 import { inAct, mount, unmountAll } from "./support/dom.ts";
@@ -25,7 +29,11 @@ import type {
   WorkflowTemplateInfo,
 } from "../src/shared/ipc";
 import { setRunDurationEnabled } from "../src/uiPrefs";
-import { resetComposerSession } from "../src/composerSession";
+import {
+  getContextChips,
+  keptDrafts,
+  resetComposerSession,
+} from "../src/composerSession";
 
 const project: ProjectInfo = {
   id: "p1",
@@ -1730,6 +1738,133 @@ describe("project quick actions in Thread details (#153)", () => {
     assert.ok(err);
     assert.match(err!.textContent || "", /already active/);
     m.unmount();
+  });
+});
+
+describe("quick-action output through the real service (#1216)", () => {
+  const require = createRequire(import.meta.url);
+  const { Store } = require("../electron/store.js");
+  const pc = require("../electron/projectCommands.js");
+  const action = { id: "cov", name: "Coverage", command: "npm run cov" };
+  const withAction = { ...project, quickActions: [action] };
+  type Ran = { ok: boolean; exitCode: number | null; timedOut: boolean; log: string; durationMs: number };
+
+  /** Real Store + runCommand; only the shell is simulated. */
+  function service(opts: { busy?: boolean } = {}) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qa-output-"));
+    const store = new Store(path.join(dir, "store.json"));
+    store.setProjects([{ ...withAction, path: dir }]);
+    store.setThreads([thread({ worktreePath: dir }), thread({ id: "t2", worktreePath: dir })]);
+    const queue: Array<Ran | Promise<Ran>> = [];
+    let spawned = 0;
+    pc.setRunCommandFn(async () => {
+      spawned++;
+      return queue.shift();
+    });
+    return {
+      dir,
+      store,
+      queue,
+      spawned: () => spawned,
+      onRunCommand: (threadId: string, actionId?: string, trust?: string) =>
+        pc.runCommand(
+          store,
+          { threadId, actionId, trustRepoConfig: trust },
+          { runner: { isRunning: () => Boolean(opts.busy) } },
+        ),
+      done() {
+        pc.setRunCommandFn(null);
+        fs.rmSync(dir, { recursive: true, force: true });
+      },
+    };
+  }
+
+  it("keeps success, failure and timeout output per invocation; Add to prompt fills only this draft", async () => {
+    const svc = service();
+    try {
+      let release!: (r: Ran) => void;
+      svc.queue.push(
+        new Promise<Ran>((r) => (release = r)),
+        { ok: false, exitCode: 2, timedOut: false, log: "y".repeat(20_000) + "\nFAIL summary", durationMs: 9 },
+        { ok: false, exitCode: null, timedOut: true, log: "hung\n[verify] killed after 600s", durationMs: 600_000 },
+      );
+      const m = await mount(view({ project: withAction, onRunCommand: svc.onRunCommand }));
+      await m.flush();
+      await m.click(m.query("[data-thread-details-btn]"));
+      const btn = () => m.query('[data-thread-command="cov"]');
+      await m.click(btn());
+      await m.click(btn());
+      assert.equal(svc.spawned(), 1, "a duplicate click launches no second copy");
+      await inAct(async () => {
+        release({ ok: true, exitCode: 0, timedOut: false, log: "Coverage 91.2%", durationMs: 40 });
+        await pc.waitForCommand("t1");
+      });
+      for (let i = 0; i < 2; i++) {
+        await m.click(btn());
+        await inAct(() => pc.waitForCommand("t1"));
+      }
+      await m.flush();
+      assert.equal(svc.spawned(), 3);
+      m.unmount();
+
+      // Remount from the persisted transcript, as after a thread switch.
+      keptDrafts["t1"] = "my own words";
+      const r = await mount(
+        view({
+          project: withAction,
+          onRunCommand: svc.onRunCommand,
+          detail: detail({ thread: thread({ worktreePath: svc.dir }), messages: svc.store.getMessages("t1") }),
+        }),
+      );
+      await r.flush();
+      const rows = r.queryAll("[data-command-result]");
+      assert.deepEqual(
+        rows.map((el) => el.getAttribute("data-command-result")),
+        ["ok", "failed", "timeout"],
+        "two runs of one action stay separate, in order",
+      );
+      assert.equal(rows[0]!.querySelector("[data-command-output]"), null, "success starts folded");
+      await r.click(rows[0]!.querySelector("button[aria-expanded]"));
+      assert.equal(rows[0]!.querySelector("[data-command-output]")?.textContent, "Coverage 91.2%");
+      const failed = rows[1]!.querySelector("[data-command-output]")?.textContent || "";
+      assert.match(failed, /^…\[\d+ chars trimmed\]…/, "truncation is visible");
+      assert.match(failed, /FAIL summary$/);
+      assert.match(rows[2]!.querySelector("[data-command-output]")?.textContent || "", /killed after 600s/);
+
+      await r.click(rows[0]!.querySelector("[data-command-add]"));
+      const chips = getContextChips("t1");
+      assert.equal(chips.length, 1);
+      const chip = chips[0]!;
+      assert.equal(chip.kind, "terminal");
+      assert.equal(chip.kind === "terminal" && chip.command, "npm run cov");
+      assert.equal(
+        chip.kind === "terminal" && chip.text,
+        `[Coverage] ok in 0.0s\ncwd: ${svc.dir}\n\nCoverage 91.2%`,
+      );
+      assert.deepEqual(getContextChips("t2"), [], "no other thread's draft");
+      assert.equal(keptDrafts["t1"], "my own words", "typed text kept");
+      assert.equal(svc.spawned(), 3, "inspecting and adding never reruns");
+      r.unmount();
+    } finally {
+      svc.done();
+    }
+  });
+
+  it("a rejected start shows the error and records no result", async () => {
+    const svc = service({ busy: true });
+    try {
+      const m = await mount(view({ project: withAction, onRunCommand: svc.onRunCommand }));
+      await m.flush();
+      await m.click(m.query("[data-thread-details-btn]"));
+      await m.click(m.query('[data-thread-command="cov"]'));
+      await m.flush();
+      assert.match(m.query("[data-thread-command-error]")?.textContent || "", /already active/);
+      assert.equal(svc.spawned(), 0);
+      assert.deepEqual(svc.store.getMessages("t1"), []);
+      m.unmount();
+    } finally {
+      svc.done();
+    }
   });
 });
 

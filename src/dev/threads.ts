@@ -156,7 +156,14 @@ export function createThreads(ctx: DevCtx): Pick<CoderApi, "threads"> {
         return hits.slice(0, 50);
       },
       async create(input) {
+        const source = input.taskGroupFrom
+          ? ctx.threads.find((x) => x.id === input.taskGroupFrom)
+          : undefined;
+        if (source && !source.taskGroupId) {
+          patchThread(source.id, { taskGroupId: source.id });
+        }
         const t = newThread({
+          ...(source ? { taskGroupId: source.taskGroupId || source.id } : {}),
           projectId: input.projectId,
           title: input.title || "New Thread",
           baseBranch: input.baseBranch?.trim() || null,
@@ -862,12 +869,14 @@ export function createThreads(ctx: DevCtx): Pick<CoderApi, "threads"> {
           log: "ok",
           durationMs: 12,
           at: now(),
+          cwd: detail.thread.worktreePath || project?.path,
         };
         detail.messages.push({
           id: id("evt"),
           role: "event",
           text: `[${name}] ok in 0.0s`,
           createdAt: now(),
+          commandResult: result,
         });
         return result;
       },

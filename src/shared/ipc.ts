@@ -747,6 +747,12 @@ export interface ThreadInfo {
    */
   handoffFrom: string | null;
   /**
+   * Multi-repo task (#263): threads sharing this id are one task, one thread
+   * per repo. The id is the thread the task was first extended from. Each
+   * thread still only writes in its own project. Absent = not grouped.
+   */
+  taskGroupId?: string;
+  /**
    * Cached thread recap (#239), rebuilt after each successful turn. Detail
    * only: stripped from sidebar rows. Absent before the first finished turn.
    */
@@ -1474,6 +1480,11 @@ export interface ChatMessage {
    * follow-up; the transcript paints a Steered label.
    */
   steer?: boolean;
+  /**
+   * Setup / quick action outcome (#1216), on that invocation's end event.
+   * The transcript shows its output with Copy and Add to prompt.
+   */
+  commandResult?: CommandRunResult;
 }
 
 /** Cumulative session usage across turns of a thread. */
@@ -2217,9 +2228,12 @@ export interface CommandRunResult {
   ok: boolean;
   exitCode: number | null;
   timedOut: boolean;
+  /** Output tail, bounded by verify.js tailLog (marked when trimmed). */
   log: string;
   durationMs: number;
   at: number;
+  /** Checkout the command ran in (#1216). */
+  cwd?: string;
 }
 
 /**
@@ -3154,6 +3168,12 @@ export interface AppSettings {
    * `Co-authored-by:` trailers naming an AI agent; human co-authors stay.
    */
   stripAgentCoauthors: boolean;
+  /**
+   * Opt-in (default false, #259): a PR opened from the app gets a
+   * clean-context review by a different provider than the thread that wrote
+   * it; findings come back to the author thread to filter.
+   */
+  prCrossReview: boolean;
   /**
    * User-registered MCP servers (Skills tab). Built-ins coder-memory and
    * coder-threads are app-owned and never appear here. Enabled entries are
@@ -4730,6 +4750,11 @@ export interface CoderApi {
        * Honoured by setupWorktree, mergeWorktree (no intoPath), and createPr.
        */
       baseBranch?: string | null;
+      /**
+       * Multi-repo task (#263): join this thread's task group (starting one
+       * if it has none). Rejected for the Scratch workspace.
+       */
+      taskGroupFrom?: string;
     }): Promise<ThreadInfo>;
     /**
      * List CLI sessions on disk (#433 Codex, #972 Grok, #970 Claude,

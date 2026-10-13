@@ -2,6 +2,8 @@ import { useMemo } from "react";
 import type { UseCoderResult } from "../useCoder";
 import { sameTaskPeers, toComparePeer } from "../divergence";
 import { isDirectCrewChild, sameCrewProject } from "../crewIntegration";
+import { taskGroupRollup, taskRepoTargets } from "../taskGroup";
+import type { TaskGroupRollup } from "../taskGroup";
 
 /**
  * Values the memo'd panes derive from the churning thread list. Each one only
@@ -11,10 +13,12 @@ export function useThreadRoster({
   threads,
   visibleDetail,
   providers,
+  projects,
 }: {
   threads: UseCoderResult["threads"];
   visibleDetail: UseCoderResult["detail"];
   providers: UseCoderResult["providers"];
+  projects: UseCoderResult["projects"];
 }) {
   /** Provenance of a handed-off thread; a stable object while the row is. */
   const handoffFrom = visibleDetail?.thread.handoffFrom ?? null;
@@ -113,7 +117,28 @@ export function useThreadRoster({
     providers,
   ]);
 
+  /** Multi-repo task (#263) banner + "Add repo" targets, as a value key so
+   *  stream ticks on unrelated rows keep the identity. */
+  const taskKey = useMemo(() => {
+    const cur = visibleDetail?.thread
+      ? (threads.find((t) => t.id === visibleDetail.thread.id) ?? visibleDetail.thread)
+      : null;
+    return JSON.stringify({
+      rollup: taskGroupRollup(cur, threads, projects),
+      targets: taskRepoTargets(cur, threads, projects),
+    });
+  }, [threads, projects, visibleDetail?.thread]);
+  const { taskGroup, taskTargets } = useMemo(() => {
+    const v = JSON.parse(taskKey) as {
+      rollup: TaskGroupRollup | null;
+      targets: { id: string; name: string }[];
+    };
+    return { taskGroup: v.rollup, taskTargets: v.targets };
+  }, [taskKey]);
+
   return {
+    taskGroup,
+    taskTargets,
     handoffSource,
     workerCount,
     previousWorktree,

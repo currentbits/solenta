@@ -2173,6 +2173,7 @@ function createRunner(opts) {
       services.askNoteFor(dispatchThread) +
       services.codexComputerUseNoteFor(dispatchThread.provider) +
       services.crewTaskNoteFor(store, dispatchThread) +
+      services.taskGroupNoteFor(store, dispatchThread) +
       services.codeIndexNoteFor(
         userDataPath && repoRoot
           ? tryReadCodeIndex(userDataPath, repoRoot)

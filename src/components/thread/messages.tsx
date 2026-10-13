@@ -9,8 +9,10 @@ import {
 import type {
   AttachmentInfo,
   ChatMessage,
+  CommandRunResult,
   WorkSuggestion,
 } from "../../shared/ipc";
+import { commandOutputChip, type TerminalChip } from "../../contextChips";
 import { messageMetaLine } from "../../messageMeta";
 import {
   liveGroupLabel,
@@ -546,6 +548,99 @@ function StepLine({
       <span className={styles.stepText}>{children}</span>
       <span className={styles.stepMore}>{open ? "Hide" : "Show"}</span>
     </button>
+  );
+}
+
+/**
+ * A setup / quick action's end event with its output (#1216). Failures
+ * open by default, like the old inline tail. Copy and Add to prompt take
+ * a selection inside the output when there is one, else all of it; neither
+ * reruns the command.
+ */
+function CommandResultEvent({
+  message,
+  result,
+  animateIn,
+  onAddToPrompt,
+}: {
+  message: ChatMessage;
+  result: CommandRunResult;
+  animateIn: boolean;
+  onAddToPrompt?: (chip: TerminalChip) => void;
+}) {
+  const [open, setOpen] = useState(!result.ok);
+  const [done, setDone] = useState<"copied" | "added" | null>(null);
+  const preRef = useRef<HTMLPreElement>(null);
+  const summary = message.text.split(/\r?\n/)[0] ?? "";
+  const chip = () => {
+    const sel = window.getSelection();
+    const picked =
+      sel && preRef.current?.contains(sel.anchorNode) ? sel.toString() : "";
+    const id =
+      typeof crypto !== "undefined" && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `cmd-${Date.now()}`;
+    return commandOutputChip(id, result, summary, picked);
+  };
+  const flash = (what: "copied" | "added") => {
+    setDone(what);
+    window.setTimeout(() => setDone(null), 1200);
+  };
+  // Keep a selection in the output alive through the button press.
+  const keepSelection = (e: { preventDefault: () => void }) => e.preventDefault();
+  return (
+    <section
+      className={`${styles.eventLine}${animateIn ? ` ${styles.streamIn}` : ""}`}
+      data-stream-in={animateIn ? "" : undefined}
+      data-command-result={result.ok ? "ok" : result.timedOut ? "timeout" : "failed"}
+    >
+      <div className={styles.eventRow}>
+        <StepLine icon="tool" open={open} onToggle={() => setOpen((v) => !v)}>
+          {summary}
+        </StepLine>
+        <span className={styles.commandActions}>
+          <button
+            type="button"
+            className={styles.retryBtn}
+            data-command-copy=""
+            title={`Copy the output of ${result.command}`}
+            onMouseDown={keepSelection}
+            onClick={() => {
+              const c = chip();
+              void navigator.clipboard
+                ?.writeText(`$ ${result.command}\n${c.text}`)
+                .then(() => flash("copied"), () => {});
+            }}
+          >
+            {done === "copied" ? "Copied" : "Copy"}
+          </button>
+          {onAddToPrompt && (
+            <button
+              type="button"
+              className={styles.retryBtn}
+              data-command-add=""
+              title="Attach this output to the next prompt (nothing is sent)"
+              onMouseDown={keepSelection}
+              onClick={() => {
+                onAddToPrompt(chip());
+                flash("added");
+              }}
+            >
+              {done === "added" ? "Added" : "Add to prompt"}
+            </button>
+          )}
+        </span>
+      </div>
+      {open && (
+        <pre
+          ref={preRef}
+          className={`${styles.toolPre} ${styles.commandOutput}`}
+          data-command-output=""
+        >
+          {result.log || "(no output)"}
+        </pre>
+      )}
+    </section>
   );
 }
 
@@ -1150,6 +1245,7 @@ export const MessageBlock = memo(function MessageBlock({
   onTogglePin,
   threadId = null,
   onOpenAutomations,
+  onAddCommandOutput,
 }: {
   message: ChatMessage;
   autoExpandTool: boolean;
@@ -1187,6 +1283,8 @@ export const MessageBlock = memo(function MessageBlock({
   onTogglePin?: () => void;
   threadId?: string | null;
   onOpenAutomations?: (automationId?: string) => void;
+  /** Attach a quick action's output to this thread's draft (#1216). */
+  onAddCommandOutput?: (chip: TerminalChip) => void;
 }) {
   // Latch at mount; see ToolCallCard for why.
   const [entered] = useState(Boolean(animateIn));
@@ -1238,6 +1336,17 @@ export const MessageBlock = memo(function MessageBlock({
         onIntegrateWorker={onIntegrateWorker}
         pinned={pinned}
         onTogglePin={onTogglePin}
+      />
+    );
+  }
+
+  if (message.role === "event" && message.commandResult) {
+    return (
+      <CommandResultEvent
+        message={message}
+        result={message.commandResult}
+        animateIn={entered}
+        onAddToPrompt={onAddCommandOutput}
       />
     );
   }
