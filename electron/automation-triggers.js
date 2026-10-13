@@ -21,6 +21,7 @@ const GITHUB_EVENTS = new Set([
   "review_submitted",
   "push",
   "ci_completed",
+  "issue_opened",
 ]);
 const LINEAR_EVENTS = new Set(["linear_issue_created", "linear_status_changed"]);
 const SENTRY_EVENTS = new Set(["sentry_issue"]);
@@ -102,6 +103,8 @@ function loadRows(trigger, deps, store, cache) {
 
 /** Events listed in one run's prompt; the rest are counted, not dropped. */
 const MAX_EVENTS_IN_PROMPT = 20;
+/** issue_opened body excerpt cap, so 20 issues stay a sane prompt. */
+const MAX_ISSUE_BODY = 1500;
 
 /**
  * Store shape for `automation.trigger`. null means schedule mode.
@@ -155,6 +158,7 @@ function parseTriggerInput(raw) {
 /** @param {string} event */
 function sourceFor(event) {
   if (event === "pr_opened") return "pulls";
+  if (event === "issue_opened") return "issues";
   if (event === "pr_merged" || event === "pr_labeled") return "issueEvents";
   if (event === "ci_completed") return "runs";
   return "events";
@@ -169,14 +173,13 @@ function sourceFor(event) {
  */
 async function fetchSource(remote, source, rest, token) {
   const base = `/repos/${remote.owner}/${remote.repo}`;
-  const path =
-    source === "pulls"
-      ? `${base}/pulls?state=all&sort=created&direction=desc&per_page=30`
-      : source === "issueEvents"
-        ? `${base}/issues/events?per_page=100`
-        : source === "runs"
-          ? `${base}/actions/runs?status=completed&per_page=50`
-          : `${base}/events?per_page=100`;
+  const paths = {
+    pulls: `${base}/pulls?state=all&sort=created&direction=desc&per_page=30`,
+    issues: `${base}/issues?state=all&sort=created&direction=desc&per_page=30`,
+    issueEvents: `${base}/issues/events?per_page=100`,
+    runs: `${base}/actions/runs?status=completed&per_page=50`,
+  };
+  const path = paths[source] || `${base}/events?per_page=100`;
   const body = await rest({ host: remote.host, token, method: "GET", path });
   if (source === "runs") return (body && body.workflow_runs) || [];
   return Array.isArray(body) ? body : [];
@@ -209,6 +212,29 @@ function matchRows(trigger, rows, remote) {
         matched.push({
           key,
           text: `PR #${key} opened by ${r.user?.login || "?"}: ${r.title || ""} (${r.html_url || `${web}/pull/${key}`})`,
+        });
+        break;
+      }
+      case "issue_opened": {
+        // /issues lists PRs too; they share the number sequence, so they
+        // still move the baseline but never fire.
+        const key = Number(r.number);
+        if (!Number.isInteger(key)) continue;
+        all.push(key);
+        if (r.pull_request) continue;
+        const labels = (Array.isArray(r.labels) ? r.labels : [])
+          .map((l) => (l && typeof l === "object" ? l.name : l))
+          .filter(Boolean);
+        // Triage needs the body and no planboard tool returns it. Public
+        // issues are attacker-controlled, hence the injection banner.
+        const raw = String(r.body || "").trim();
+        const body = raw.length > MAX_ISSUE_BODY ? `${raw.slice(0, MAX_ISSUE_BODY)}…` : raw;
+        const quoted = body
+          ? "\n" + require("./issues.js").bannerUntrustedBody(body).replace(/^/gm, "  > ")
+          : "\n  > (empty body)";
+        matched.push({
+          key,
+          text: `Issue #${key} opened by ${r.user?.login || "?"}: ${r.title || ""}${labels.length ? ` [${labels.join(", ")}]` : ""} (${r.html_url || `${web}/issues/${key}`})${quoted}`,
         });
         break;
       }

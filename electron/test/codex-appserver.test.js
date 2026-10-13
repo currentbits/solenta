@@ -51,6 +51,26 @@ describe("notificationToJsonl", () => {
     }), { type: "server_request.resolved", requestId });
   });
 
+  it("logs finished auto reviews and skips in-progress ones (#256)", () => {
+    assert.deepEqual(
+      notificationToJsonl({
+        method: "item/autoApprovalReview/completed",
+        params: {
+          review: { status: "approved", riskLevel: "low", rationale: "user asked for tests" },
+          action: { type: "command", command: "npm test", cwd: "/r", source: "shell" },
+        },
+      }),
+      { type: "auto_review", note: "Auto review approved `npm test` (low risk): user asked for tests" },
+    );
+    assert.equal(
+      notificationToJsonl({
+        method: "item/autoApprovalReview/completed",
+        params: { review: { status: "inProgress" }, action: { type: "command", command: "x" } },
+      }),
+      null,
+    );
+  });
+
   it("maps thread/started to thread.started with session id", () => {
     const ev = notificationToJsonl({
       method: "thread/started",
@@ -546,6 +566,8 @@ rl.on("line", async (line) => {
     const turnStart = rpc.find((m) => m.method === "turn/start");
     assert.ok(turnStart);
     assert.equal(turnStart.params.approvalPolicy, "on-request");
+    assert.equal(start.params.approvalsReviewer, "user");
+    assert.equal(turnStart.params.approvalsReviewer, "user");
     assert.ok(rpc.some((m) => m.method === "thread/unsubscribe"));
     assert.equal(typeof handle.send, "function");
     await rmTree(dir);
@@ -563,6 +585,7 @@ rl.on("line", async (line) => {
       envExtra: { CODER_FAKE_CODEX_RPC_FILE: rpcFile },
       prompt: "again",
       sessionId: "01a085eb-14f7-71f3-a715-f96593249ad6",
+      permissionMode: "auto",
       onEvent: () => {},
       onExit: (info) => {
         exitInfo = info;
@@ -587,6 +610,10 @@ rl.on("line", async (line) => {
     const resumeTurn = rpc.find((m) => m.method === "turn/start");
     assert.ok(resumeTurn);
     assert.equal(resumeTurn.params.approvalPolicy, "on-request");
+    // Auto review (#256): codex's reviewer answers, on resume and turn.
+    assert.equal(resume.params.approvalsReviewer, "auto_review");
+    assert.equal(resume.params.sandbox, "workspace-write");
+    assert.equal(resumeTurn.params.approvalsReviewer, "auto_review");
     await rmTree(dir);
   });
 

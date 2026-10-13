@@ -135,13 +135,14 @@ const INSTRUCTIONS =
   "on that origin (plan:todo, plan:doing, plan:done). They run on the host, " +
   "not through sandboxed gh, and there is no repo argument: writes stay on " +
   "this thread's origin. issue_comment posts a comment without changing " +
-  "labels or closing the issue. The tools are omitted when the origin is " +
+  "labels or closing the issue. issue_label adds non-plan labels (triage: " +
+  "type, priority, duplicate, needs-info). The tools are omitted when the origin is " +
   "not GitHub. " +
   "When the user describes a workflow to run later, call automation_create " +
   "with a name, prompt, provider, and either a schedule or a GitHub trigger " +
   "(preset hourly/daily/weekly plus hour 0-23 for daily/weekly; or trigger " +
   "event pr_opened, pr_merged, pr_labeled, review_submitted, push, " +
-  "ci_completed with optional branch, label, conclusion). The automation is " +
+  "ci_completed, issue_opened with optional branch, label, conclusion). The automation is " +
   "created on this thread's project immediately. If a required field is " +
   "missing, ask_user. Do not invent a trigger or schedule they did not ask for. " +
   "link_pull_request attaches a GitHub PR to this thread (including a PR " +
@@ -1262,6 +1263,12 @@ function createToolHandlers(deps) {
     );
   }
 
+  async function issue_label(args) {
+    const thread = requireOwnThread(args);
+    const { labelIssue } = require("./issues.js");
+    return labelIssue(issueTargetOf(thread), args && args.number, args && args.labels);
+  }
+
   async function issue_list(args) {
     const thread = requireOwnThread(args);
     const { listIssuePage } = require("./issues.js");
@@ -1361,6 +1368,7 @@ function createToolHandlers(deps) {
     issue_set_plan,
     issue_complete,
     issue_comment,
+    issue_label,
     issue_list,
     link_pull_request,
   };
@@ -1720,7 +1728,7 @@ function buildMcpServer(sdk, handlers, opts = {}) {
         "describes a workflow in chat; you fill name, prompt, provider, and " +
         "either a schedule (hourly/daily/weekly, plus hour 0–23 for daily/" +
         "weekly) or a GitHub trigger (pr_opened, pr_merged, pr_labeled, " +
-        "review_submitted, push, ci_completed — optional branch/label/" +
+        "review_submitted, push, ci_completed, issue_opened — optional branch/label/" +
         "conclusion filters). Validation rejects bad presets and triggers. " +
         "The result appears as a card with an Open in Automations link. " +
         "threadId and projectId are YOUR OWN (stated at the end of your " +
@@ -1745,6 +1753,7 @@ function buildMcpServer(sdk, handlers, opts = {}) {
               "review_submitted",
               "push",
               "ci_completed",
+              "issue_opened",
             ]),
             branch: z.string().optional(),
             label: z.string().optional(),
@@ -2072,6 +2081,24 @@ function buildMcpServer(sdk, handlers, opts = {}) {
         },
       },
       async (args) => json(await handlers.issue_comment(args)),
+    );
+    server.registerTool(
+      "issue_label",
+      {
+        description:
+          "Add labels (e.g. bug, priority:high, duplicate, needs-info) to an " +
+          "issue on THIS thread's project origin. Missing labels are created. " +
+          "plan:* labels are refused; use issue_set_plan. There is no repo " +
+          "argument. projectId is YOUR OWN project id (stated at the end of " +
+          "your prompt); the thread must belong to it.",
+        inputSchema: {
+          threadId: z.string().min(1),
+          projectId: z.string().min(1),
+          number: z.number().int().positive(),
+          labels: z.array(z.string().min(1)).min(1),
+        },
+      },
+      async (args) => json(await handlers.issue_label(args)),
     );
   }
 

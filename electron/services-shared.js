@@ -10,6 +10,7 @@ const PERMISSION_MODES = new Set([
   "default",
   "acceptEdits",
   "plan",
+  "auto",
   "bypassPermissions",
 ]);
 

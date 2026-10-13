@@ -27,7 +27,7 @@ function git(cwd, args) {
   execFileSync("git", args, { cwd, stdio: "ignore" });
 }
 
-const ALL = ["default", "acceptEdits", "plan", "bypassPermissions"];
+const ALL = ["default", "acceptEdits", "plan", "auto", "bypassPermissions"];
 
 function sandboxOf(args) {
   const i = args.indexOf("--sandbox");
@@ -93,6 +93,9 @@ describe("permission modes: registry + listProviders", () => {
     assert.equal(snapPermissionMode(opencode, "bypassPermissions"), "bypassPermissions");
     assert.equal(snapPermissionMode(opencode, "acceptEdits"), "bypassPermissions");
     assert.equal(snapPermissionMode(opencode, "plan"), "default");
+    // No native reviewer: auto asks instead of gaining full access (#256).
+    assert.equal(snapPermissionMode(opencode, "auto"), "default");
+    assert.equal(snapPermissionMode(grok, "auto"), "bypassPermissions");
 
     const muse = getProvider("muse");
     assert.equal(snapPermissionMode(muse, "plan"), "default");

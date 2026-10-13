@@ -539,7 +539,7 @@ export interface CliSessionCandidate {
 
 export type ThreadStatus = "idle" | "working" | "done" | "failed" | "quota-wait";
 
-export type PermissionMode = "default" | "acceptEdits" | "plan" | "bypassPermissions";
+export type PermissionMode = "default" | "acceptEdits" | "plan" | "auto" | "bypassPermissions";
 
 /**
  * Computed (never persisted): whether this thread's next run is actually
@@ -2995,6 +2995,7 @@ export type AutomationTriggerEvent =
   | "review_submitted"
   | "push"
   | "ci_completed"
+  | "issue_opened"
   | "linear_issue_created"
   | "linear_status_changed"
   | "sentry_issue";
