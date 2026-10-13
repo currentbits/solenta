@@ -689,6 +689,10 @@ function createRunner(opts) {
    * @type {Map<string, object>}
    */
   const active = new Map();
+  // Conditional memory ids already injected per thread (#271).
+  // ponytail: in-memory; a restart re-sends each matched entry once.
+  /** @type {Map<string, Set<string>>} */
+  const memorySeen = new Map();
   // OTel GenAI spans (issue #280). Inert while settings.otel.endpoint is null,
   // and every method swallows its own failures, so no call site below guards.
   const otel = createOtel({
@@ -2218,6 +2222,7 @@ function createRunner(opts) {
         pushDetail(threadId);
       }
 
+      if (!memorySeen.has(threadId)) memorySeen.set(threadId, new Set());
       const bootNote = await ask.prefetchBootstrapNote({
         userDataPath,
         projectPath:
@@ -2225,6 +2230,8 @@ function createRunner(opts) {
           (projectForGate && projectForGate.path) ||
           "",
         firstTurn: !dispatchThread.sessionId,
+        prompt: rawPrompt,
+        seen: memorySeen.get(threadId),
         bootstrapMemory,
       });
       if (abortIfCancelled(threadId, runId)) return { runId };

@@ -417,6 +417,10 @@ export function createSchema(db) {
   addColumnIfMissing(db, 'entries', 'citations', 'TEXT')
   // Consecutive citation-verify mismatches (#710). Tombstone only after N.
   addColumnIfMissing(db, 'entries', 'verify_fail_count', 'INTEGER NOT NULL DEFAULT 0')
+  // Inclusion modes (#271): NULL = always; glob | auto | manual load on match.
+  addColumnIfMissing(db, 'entries', 'inclusion', 'TEXT')
+  // JSON array of repo-relative globs for inclusion 'glob'.
+  addColumnIfMissing(db, 'entries', 'globs', 'TEXT')
 
   try {
     normalizeEntities(db)

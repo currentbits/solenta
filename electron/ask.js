@@ -95,6 +95,12 @@ function formatBootstrapNote(boot) {
       lines.push(wikiNote.replace(/^\n+/, ""));
     }
   }
+  const deferred = Number(o.deferred) || 0;
+  if (deferred > 0) {
+    lines.push(
+      `(${deferred} file- or topic-scoped entries load when matched; memory_bootstrap with files and matchedOnly: true pulls them)`,
+    );
+  }
   const truncated =
     o.truncated && typeof o.truncated === "object" ? o.truncated : null;
   if (truncated) {
@@ -110,26 +116,65 @@ function formatBootstrapNote(boot) {
   return lines.length > 1 ? "\n\n" + lines.join("\n") : "";
 }
 
+const BOOTSTRAP_SECTIONS = ["conventions", "strategies", "knowledge", "tasks"];
+
+/**
+ * Conditional (glob/auto/manual, #271) entries not yet sent to this thread.
+ * Rows without `inclusion` are skipped, so an older server that ignores
+ * matchedOnly and returns the full pack injects nothing.
+ * @param {unknown} boot
+ * @param {Set<string>} seen - ids already sent; updated in place
+ * @returns {string}
+ */
+function formatMatchedNote(boot, seen) {
+  if (!boot || typeof boot !== "object") return "";
+  const o = /** @type {Record<string, unknown>} */ (boot);
+  const lines = ["[Memory] Matched for this turn."];
+  for (const key of BOOTSTRAP_SECTIONS) {
+    const rows = Array.isArray(o[key]) ? o[key] : [];
+    for (const raw of rows) {
+      if (!raw || typeof raw !== "object" || !raw.inclusion) continue;
+      if (raw.inclusion === "always" || seen.has(raw.id)) continue;
+      seen.add(raw.id);
+      const title = String(raw.title || "").trim() || "(untitled)";
+      const body = String(raw.body || raw.excerpt || "")
+        .trim()
+        .slice(0, MEMORY_BODY);
+      lines.push(`- ${title}${body ? `: ${body}` : ""}`);
+    }
+  }
+  return lines.length > 1 ? "\n\n" + lines.join("\n") : "";
+}
+
 /**
  * Prefetch memory_bootstrap for the CLI prompt (issue #710). Fail-open:
  * a down server becomes a one-line nudge instead of blocking the run.
- * Follow-up turns (live sessionId) skip the pack — it already rode turn one.
+ * Turn one gets the full pack plus entries matching its prompt; follow-up
+ * turns (live sessionId) get only conditional entries the new prompt
+ * matches that `seen` has not already carried (#271).
  *
  * @param {object} opts
  * @param {string} [opts.userDataPath]
  * @param {string} [opts.projectPath]
  * @param {boolean} [opts.firstTurn]
- * @param {(projectPath: string) => Promise<object>} [opts.bootstrapMemory]
+ * @param {string} [opts.prompt] - matched against auto/manual/glob entries
+ * @param {Set<string>} [opts.seen] - per-thread ids already injected
+ * @param {(projectPath: string, o: { prompt?: string, matchedOnly?: boolean }) => Promise<object>} [opts.bootstrapMemory]
  * @returns {Promise<string>}
  */
 async function prefetchBootstrapNote(opts) {
   const firstTurn = !opts || opts.firstTurn !== false;
-  if (!firstTurn) return "";
+  const seen = opts && opts.seen;
+  if (!firstTurn && !seen) return "";
   const projectPath = opts && opts.projectPath ? String(opts.projectPath) : "";
+  const query = {
+    prompt: (opts && opts.prompt) || undefined,
+    matchedOnly: !firstTurn,
+  };
   try {
     let boot;
     if (opts && typeof opts.bootstrapMemory === "function") {
-      boot = await opts.bootstrapMemory(projectPath);
+      boot = await opts.bootstrapMemory(projectPath, query);
     } else {
       const userDataPath = opts && opts.userDataPath;
       if (!userDataPath) return "";
@@ -137,7 +182,13 @@ async function prefetchBootstrapNote(opts) {
       const proxy = createMemoryProxy({ userDataPath });
       boot = await proxy.bootstrap({
         project: projectPath || undefined,
+        ...query,
       });
+    }
+    if (!firstTurn) return formatMatchedNote(boot, seen);
+    if (seen) {
+      seen.clear();
+      formatMatchedNote(boot, seen);
     }
     return formatBootstrapNote(boot) || MEMORY_BOOTSTRAP_NUDGE;
   } catch {
@@ -530,6 +581,7 @@ module.exports = {
   askNoteFor,
   formatMemoryHits,
   formatBootstrapNote,
+  formatMatchedNote,
   prefetchBootstrapNote,
   formatThreadDigest,
   formatMatchingFiles,
