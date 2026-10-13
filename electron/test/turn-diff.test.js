@@ -206,7 +206,7 @@ describe("checkpoint graph (#252)", () => {
 
   afterEach(() => {
     if (fx) {
-      fs.rmSync(fx.tmpDir, { recursive: true, force: true });
+      fs.rmSync(fx.tmpDir, { recursive: true, force: true, maxRetries: 8, retryDelay: 10 });
       fx = null;
     }
   });
