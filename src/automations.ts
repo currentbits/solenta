@@ -126,3 +126,51 @@ export function createFormError(input: {
   }
   return null;
 }
+
+/** Bare or `mcp__coder-threads__automation_create` (#1589). */
+export function isAutomationCreateTool(name?: string): boolean {
+  return Boolean(name && /(?:^|__)automation_create$/i.test(name));
+}
+
+export type AutomationCreateResult = {
+  id: string;
+  name: string;
+  provider?: string;
+  preset?: AutomationPreset;
+  hour?: number | null;
+  trigger?: AutomationTrigger | null;
+  nextRunAt?: number;
+};
+
+/** Best-effort parse of an automation_create tool result. */
+export function parseAutomationCreateResult(
+  output?: string | null,
+): AutomationCreateResult | null {
+  if (!output) return null;
+  try {
+    const parsed = JSON.parse(output) as Record<string, unknown>;
+    if (!parsed || typeof parsed !== "object") return null;
+    const id = parsed.id != null ? String(parsed.id) : "";
+    const name = parsed.name != null ? String(parsed.name) : "";
+    if (!id || !name) return null;
+    const trigger =
+      parsed.trigger && typeof parsed.trigger === "object"
+        ? (parsed.trigger as AutomationTrigger)
+        : null;
+    return {
+      id,
+      name,
+      provider: parsed.provider != null ? String(parsed.provider) : undefined,
+      preset:
+        typeof parsed.preset === "string"
+          ? (parsed.preset as AutomationPreset)
+          : undefined,
+      hour: typeof parsed.hour === "number" ? parsed.hour : null,
+      trigger,
+      nextRunAt:
+        typeof parsed.nextRunAt === "number" ? parsed.nextRunAt : undefined,
+    };
+  } catch {
+    return null;
+  }
+}

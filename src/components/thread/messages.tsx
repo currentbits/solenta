@@ -24,6 +24,7 @@ import {
   memoryStepText,
   parseMemoryStep,
 } from "../../memorySteps";
+import { scheduleLabel, triggerLabel } from "../../automations";
 import { formatReviewBarText, type ReviewBar } from "../../reviewBar";
 import type { RunHeader } from "../../runHeader";
 import { useEscapeClose } from "../../useEscapeClose";
@@ -42,7 +43,6 @@ import {
   isAutomationCreateMessage,
   parseAutomationCreateResult,
 } from "../../automationCard";
-import { scheduleLabel, triggerLabel } from "../../automations";
 import styles from "../ThreadView.module.css";
 
 /** Byte-equal to electron/worktrees.js restoreCheckpoint run-active guard. */
@@ -257,7 +257,7 @@ function AutomationCreatedCard({
         ? scheduleLabel(parsed.preset, parsed.hour ?? null, parsed.nextRunAt ?? Date.now())
         : "";
   return (
-    <div className={styles.specCard} data-automation-card="">
+    <div className={styles.specCard} data-automation-card="" data-automation-created="">
       <div className={styles.specCardHead}>
         <span className={styles.specCardTitle}>
           {running ? "Creating automation…" : name}
@@ -269,6 +269,7 @@ function AutomationCreatedCard({
           <button
             type="button"
             className={styles.permissionAllow}
+            data-open-automations=""
             onClick={() => onOpen(parsed?.id)}
           >
             Open in Automations

@@ -277,6 +277,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     removeWorktree,
     fetchDiff,
     fetchReviewContext,
+    fetchImageDiff,
     setReviewAccepted,
     commitChanges,
     setStagedPaths,
@@ -1861,6 +1862,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
               projects={projects}
               providers={providers}
               draft={repeatDraft}
+              focusId={focusAutomationId}
               loadRuns={listAutomationRuns}
               onSelectThread={handleSelectThread}
               liveThreads={loading ? undefined : threads}
@@ -1878,7 +1880,6 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
                 await trustAutomationsFile(projectId, hash);
                 await refreshAutomations();
               }}
-              focusId={focusAutomationId}
             />
           ) : view === "planboard" ? (
             <PlanboardView
@@ -2051,6 +2052,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         restoreCheckpoint={restoreCheckpoint}
         onFetchDiff={fetchDiff}
         onFetchReviewContext={fetchReviewContext}
+        onFetchImageDiff={fetchImageDiff}
         onSetReviewAccepted={setReviewAccepted}
         onCommitChanges={commitChanges}
         onStagedPathsChange={setStagedPaths}

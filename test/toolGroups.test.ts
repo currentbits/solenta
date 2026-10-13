@@ -71,7 +71,14 @@ describe("isGroupable", () => {
       false,
     );
     assert.equal(
-      isGroupable(tool({ id: "ac", name: "mcp__coder-threads__automation_create" })),
+      isGroupable(tool({ id: "ac", name: "automation_create" })),
+      false,
+      "created-automation cards stay out of tool groups (#1589)",
+    );
+    assert.equal(
+      isGroupable(
+        tool({ id: "ac2", name: "mcp__coder-threads__automation_create" }),
+      ),
       false,
       "automation_create stays a standalone card (#1589)",
     );

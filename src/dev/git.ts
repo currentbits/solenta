@@ -537,6 +537,18 @@ export function createGit(ctx: DevCtx): Pick<CoderApi, "git" | "mergeQueue"> {
           input.scope === "branch" ? "since main (3f2a9c1)" : input.scope === "turn" ? "Turn 2" : "";
         return { ...fakeDiff(detail.thread), ...(label ? { scopeLabel: label } : {}) };
       },
+      async imageDiff(input) {
+        if (!details.has(input.threadId)) throw new Error(`Thread not found: ${input.threadId}`);
+        // Dev only: SVG stands in for raster bytes the host would read from git.
+        const icon = (fill: string, r: number) =>
+          `data:image/svg+xml,${encodeURIComponent(
+            `<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128"><circle cx="64" cy="64" r="${r}" fill="${fill}"/></svg>`,
+          )}`;
+        return {
+          before: { label: "HEAD 3f2a9c1", exists: true, bytes: 2_150, width: 128, height: 128, dataUrl: icon("#3b82f6", 40) },
+          after: { label: "Working tree", exists: true, bytes: 2_412, width: 128, height: 128, dataUrl: icon("#f97316", 56) },
+        };
+      },
       async commit(input) {
         const detail = details.get(input.threadId);
         if (!detail) throw new Error(`Thread not found: ${input.threadId}`);

@@ -134,6 +134,13 @@ const INSTRUCTIONS =
   "this thread's origin. issue_comment posts a comment without changing " +
   "labels or closing the issue. The tools are omitted when the origin is " +
   "not GitHub. " +
+  "When the user describes a workflow to run later, call automation_create " +
+  "with a name, prompt, provider, and either a schedule or a GitHub trigger " +
+  "(preset hourly/daily/weekly plus hour 0-23 for daily/weekly; or trigger " +
+  "event pr_opened, pr_merged, pr_labeled, review_submitted, push, " +
+  "ci_completed with optional branch, label, conclusion). The automation is " +
+  "created on this thread's project immediately. If a required field is " +
+  "missing, ask_user. Do not invent a trigger or schedule they did not ask for. " +
   "link_pull_request attaches a GitHub PR to this thread (including a PR " +
   "in another repo via repo=owner/name). The first link becomes the " +
   "thread's primary PR.";
@@ -978,7 +985,7 @@ function createToolHandlers(deps) {
     const presetRaw = args && args.preset != null ? String(args.preset) : "";
     if (!hasTrigger && !presetRaw) {
       throw new Error(
-        "Pass a schedule (preset hourly, daily, or weekly) or a GitHub trigger.",
+        "Schedule or GitHub trigger is required. Pass preset (hourly, daily, weekly) or trigger.event.",
       );
     }
     const created = addAutomation(store, {
@@ -986,20 +993,22 @@ function createToolHandlers(deps) {
       name: args && args.name,
       prompt: args && args.prompt,
       provider: (args && args.provider) || thread.provider,
-      model: args && args.model,
+      ...(args && args.model != null ? { model: args.model } : {}),
       preset: presetRaw || "hourly",
-      hour: args && args.hour,
+      hour: hasTrigger ? null : args && args.hour,
       ...(typeof (args && args.enabled) === "boolean"
         ? { enabled: args.enabled }
         : {}),
       trigger: hasTrigger ? { type: "github", ...triggerRaw } : null,
-      tier: args && args.tier,
+      ...(args && args.memory != null ? { memory: args.memory } : {}),
+      ...(args && args.tier != null ? { tier: args.tier } : {}),
     });
     return {
       ok: true,
       id: created.id,
       name: created.name,
       projectId: created.projectId,
+      prompt: created.prompt,
       provider: created.provider,
       preset: created.preset,
       hour: created.hour,

@@ -1789,6 +1789,86 @@ button.diffLineGutter:focus-visible {
   white-space: nowrap;
 }
 
+/* Image before/after (#1192). */
+.imageDiffBar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.imageDiffSides {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+}
+
+.imageSide {
+  margin: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.imageSideHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  font-size: 11.5px;
+  color: var(--text);
+}
+
+.imageSideRef {
+  font-family: var(--mono);
+  color: var(--text-muted);
+}
+
+.imageSideMeta {
+  margin-left: auto;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Checkerboard so transparent pixels read as transparent. */
+.imageStage {
+  min-height: 120px;
+  max-height: 60vh;
+  overflow: auto;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background:
+    repeating-conic-gradient(var(--overlay-hover) 0% 25%, transparent 0% 50%)
+    0 0 / 16px 16px;
+}
+
+.imageStage[data-zoom="fit"] img {
+  max-width: 100%;
+  max-height: 60vh;
+  image-rendering: auto;
+}
+
+.imageStage:not([data-zoom="fit"]) {
+  place-items: start;
+}
+
+/* Zoomed in: show real pixels, not a blur. */
+.imageStage img {
+  display: block;
+  max-width: none;
+  image-rendering: pixelated;
+}
+
+.imageMissing {
+  margin: 16px;
+  color: var(--text-dim);
+  font-size: 12px;
+  text-align: center;
+}
+
 .hunkSeen {
   flex-shrink: 0;
   font-size: 11px;
