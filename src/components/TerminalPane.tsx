@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { CoderApi, TerminalDataPush, TerminalState } from "../shared/ipc";
+import { detectFailure, failureKey, plainText, type Failure, type FixHandler } from "../fixSuggest";
+import { FixSuggestion } from "./FixSuggestion";
 import styles from "./TerminalPane.module.css";
 
 /** Terminals side by side in one pane. More than this is unreadable. */
 const MAX_SPLITS = 4;
+/** Plain output kept for fix suggestions (#253): detection window + prompt excerpt. */
+const FIX_TAIL_CHARS = 16_000;
 
 export type TerminalApi = CoderApi["terminal"] & {
   onData: (cb: (push: TerminalDataPush) => void) => () => void;
@@ -103,6 +107,7 @@ function TerminalView({
   load,
   onClose,
   onSplit,
+  onFix,
 }: {
   threadId: string;
   termId: string;
@@ -110,6 +115,7 @@ function TerminalView({
   load: XtermLoader;
   onClose?: () => void;
   onSplit?: () => void;
+  onFix?: FixHandler;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<XtermLike | null>(null);
@@ -118,6 +124,13 @@ function TerminalView({
   const [failed, setFailed] = useState(false);
   // Restart = close, then a fresh mount of the effect below.
   const [epoch, setEpoch] = useState(0);
+  // Fix suggestions (#253) scan live pushes only: replayed scrollback is
+  // old news. Dismissed/acted failures stay quiet for this view's lifetime.
+  const [failure, setFailure] = useState<Failure | null>(null);
+  const tailRef = useRef("");
+  const handledRef = useRef(new Set<string>());
+  const scanRef = useRef(Boolean(onFix));
+  scanRef.current = Boolean(onFix);
 
   useEffect(() => {
     let live = true;
@@ -163,8 +176,17 @@ function TerminalView({
       setRunning(p.running);
       if (p.cursor <= cursor || !term) return;
       if (p.from > cursor) return resync();
-      term.write(p.data.slice(cursor - p.from));
+      const data = p.data.slice(cursor - p.from);
+      term.write(data);
       cursor = p.cursor;
+      if (!scanRef.current) return;
+      const fresh = plainText(data);
+      tailRef.current = (tailRef.current + fresh).slice(-FIX_TAIL_CHARS);
+      // A little overlap catches a failing line split across two pushes.
+      const found = detectFailure(tailRef.current.slice(-(fresh.length + 300)));
+      if (found && !handledRef.current.has(failureKey(found))) {
+        setFailure((cur) => (cur && failureKey(cur) === failureKey(found) ? cur : found));
+      }
     });
 
     void load()
@@ -223,6 +245,13 @@ function TerminalView({
       .catch(() => {})
       .then(() => setEpoch((e) => e + 1));
   }, [api, threadId, termId]);
+
+  const resolveFailure = useCallback(() => {
+    setFailure((cur) => {
+      if (cur) handledRef.current.add(failureKey(cur));
+      return null;
+    });
+  }, []);
 
   // Close session (#1512): end the shell, keep its scrollback on screen.
   const end = useCallback(() => {
@@ -315,6 +344,16 @@ function TerminalView({
           Could not start a shell for this thread.
         </p>
       )}
+      {failure && onFix && (
+        <FixSuggestion
+          failure={failure}
+          source="terminal"
+          threadId={threadId}
+          output={() => tailRef.current}
+          onFix={onFix}
+          onDone={resolveFailure}
+        />
+      )}
       <div
         className={styles.screen}
         ref={hostRef}
@@ -335,10 +374,13 @@ export function TerminalPane({
   api,
   load = loadXterm,
   reveal = null,
+  onFix,
 }: {
   threadId: string | null;
   api: TerminalApi;
   load?: XtermLoader;
+  /** Offer fixes for failures in the output (#253). Absent = no offers. */
+  onFix?: FixHandler;
   /**
    * A shell the main process just (re)started, e.g. Sign in's (#1501). Each
    * new nonce adds the split and remounts it onto the fresh session. Only
@@ -413,6 +455,7 @@ export function TerminalPane({
             onSplit={
               ids && i === ids.length - 1 && ids.length < MAX_SPLITS ? split : undefined
             }
+            onFix={onFix}
           />
         ))}
       </div>

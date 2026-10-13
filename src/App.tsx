@@ -1379,6 +1379,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     });
 
   const {
+    handleFixSuggestion,
     handleStartSuggestion,
     handleFileSuggestion,
     handleDismissSuggestion,
@@ -1390,6 +1391,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     createIssue,
     resolveSuggestion,
     setChipError,
+    restoreDraft: setQueuedDraftRestore,
   });
 
   const {
@@ -2078,6 +2080,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onCloseChanges={closeChanges}
         onViewChanges={openChanges}
         terminalApi={terminal}
+        onFixSuggestion={handleFixSuggestion}
         terminalReveal={terminalReveal}
         onProviderSignIn={handleProviderSignIn}
         filesApi={files}
@@ -2242,6 +2245,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         startDevServer={startDevServer}
         stopDevServer={stopDevServer}
         devServerStatus={devServerStatus}
+        onFixSuggestion={handleFixSuggestion}
         setVerifyCommand={setVerifyCommand}
         runVerify={runVerify}
         searchMemory={searchMemory}

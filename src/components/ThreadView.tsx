@@ -16,6 +16,7 @@ import {
   ViewsMenu,
 } from "./PaneWorkspace";
 import type { TerminalApi } from "./TerminalPane";
+import type { FixHandler } from "../fixSuggest";
 import type { FilesPaneApi } from "./FilesPane";
 import { useWorktreeChrome } from "./WorktreeControl";
 import { WorkspaceStrip } from "./WorkspaceStrip";
@@ -474,6 +475,8 @@ interface ThreadViewProps {
   onViewChanges?: () => void;
   /** Shell session for the Terminal pane (#147). */
   terminalApi?: TerminalApi;
+  /** Offer fixes for failures in the terminal output (#253). */
+  onFixSuggestion?: FixHandler;
   /** Show the Terminal pane on this shell (Sign in, #1501). */
   terminalReveal?: { nonce: number; termId: string; threadId: string } | null;
   /** Tree, preview and open-in for the Files pane (#1506). */
@@ -827,6 +830,7 @@ export const ThreadView = memo(function ThreadView({
   onCloseChanges,
   onViewChanges,
   terminalApi,
+  onFixSuggestion,
   terminalReveal = null,
   filesApi,
   onPanesNeedRoom,
@@ -3834,6 +3838,7 @@ export const ThreadView = memo(function ThreadView({
                 threadId={detail?.thread.id ?? null}
                 api={terminalApi}
                 reveal={terminalReveal}
+                onFix={onFixSuggestion}
               />
             );
           }

@@ -58,6 +58,13 @@ import {
   sameCrewProject,
 } from "../crewIntegration";
 import { CrewIntegration } from "./CrewIntegration";
+import { FixSuggestion } from "./FixSuggestion";
+import {
+  detectFailure,
+  failureKey,
+  plainText,
+  type FixHandler,
+} from "../fixSuggest";
 import { InspectorSection } from "./InspectorSection";
 import inspector from "./Inspector.module.css";
 import type { SettingsPane } from "./SettingsModal";
@@ -218,6 +225,8 @@ interface AgentsPanelProps {
   startDevServer: (threadId: string, script: string) => Promise<DevServerState>;
   stopDevServer: (threadId: string) => Promise<DevServerState>;
   devServerStatus: (threadId: string) => Promise<DevServerState>;
+  /** Offer fixes for failures in the dev-server output (#253). */
+  onFixSuggestion?: FixHandler;
   setVerifyCommand: (threadId: string, command: string | null) => Promise<void>;
   runVerify: (threadId: string) => Promise<VerifyResult>;
   searchMemory: (input: {
@@ -479,12 +488,14 @@ export function DevServerCard({
   startDevServer,
   stopDevServer,
   devServerStatus,
+  onFix,
 }: {
   threadId: string | null;
   listDevScripts: (threadId: string) => Promise<string[]>;
   startDevServer: (threadId: string, script: string) => Promise<DevServerState>;
   stopDevServer: (threadId: string) => Promise<DevServerState>;
   devServerStatus: (threadId: string) => Promise<DevServerState>;
+  onFix?: FixHandler;
 }) {
   const [scripts, setScripts] = useState<string[]>([]);
   const [script, setScript] = useState<string>("");
@@ -566,6 +577,12 @@ export function DevServerCard({
       : null;
   const failLine =
     errorLine || (!state.running && !starting && lastLine ? lastLine : null);
+  // #253: the polled tail is the whole window; a failure stays offered while
+  // it is in view, until dismissed or acted on.
+  const [handledFixes, setHandledFixes] = useState<string[]>([]);
+  const devOutput = onFix ? plainText((state.lastLines ?? []).join("\n")) : "";
+  const found = onFix ? detectFailure(devOutput) : null;
+  const fixFailure = found && !handledFixes.includes(failureKey(found)) ? found : null;
 
   async function onStart() {
     if (!threadId || !script || starting || state.running) return;
@@ -691,6 +708,16 @@ export function DevServerCard({
         <p className={styles.devServerError} data-dev-server-error="" role="alert">
           {failLine}
         </p>
+      )}
+      {threadId && onFix && fixFailure && (
+        <FixSuggestion
+          failure={fixFailure}
+          source="dev server"
+          threadId={threadId}
+          output={() => devOutput}
+          onFix={onFix}
+          onDone={() => setHandledFixes((cur) => [...cur, failureKey(fixFailure)])}
+        />
       )}
     </div>
   );
@@ -1605,6 +1632,7 @@ export function GitTab({
   startDevServer,
   stopDevServer,
   devServerStatus,
+  onFixSuggestion,
   setVerifyCommand,
   runVerify,
   claimLane,
@@ -1656,6 +1684,7 @@ export function GitTab({
   startDevServer: (threadId: string, script: string) => Promise<DevServerState>;
   stopDevServer: (threadId: string) => Promise<DevServerState>;
   devServerStatus: (threadId: string) => Promise<DevServerState>;
+  onFixSuggestion?: FixHandler;
   setVerifyCommand?: (
     threadId: string,
     command: string | null,
@@ -2040,6 +2069,7 @@ export function GitTab({
               startDevServer={startDevServer}
               stopDevServer={stopDevServer}
               devServerStatus={devServerStatus}
+              onFix={onFixSuggestion}
             />
             {setVerifyCommand && runVerify ? (
               <VerifyCard
@@ -3071,6 +3101,7 @@ export const AgentsPanel = memo(function AgentsPanel({
   startDevServer,
   stopDevServer,
   devServerStatus,
+  onFixSuggestion,
   setVerifyCommand,
   runVerify,
   searchMemory,
@@ -3248,6 +3279,7 @@ export const AgentsPanel = memo(function AgentsPanel({
           startDevServer={startDevServer}
           stopDevServer={stopDevServer}
           devServerStatus={devServerStatus}
+          onFixSuggestion={onFixSuggestion}
           setVerifyCommand={setVerifyCommand}
           runVerify={runVerify}
           claimLane={claimLane}
