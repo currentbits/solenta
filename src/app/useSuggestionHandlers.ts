@@ -24,7 +24,7 @@ export function useSuggestionHandlers({
   createIssue: UseCoderResult["createIssue"];
   resolveSuggestion: UseCoderResult["resolveSuggestion"];
   setChipError: Dispatch<SetStateAction<string | null>>;
-  restoreDraft: (draft: { threadId: string; text: string; append: boolean }) => void;
+  restoreDraft: (draft: { threadId: string; text: string }) => void;
 }) {
   const handleStartSuggestion = useCallback(
     async (s: WorkSuggestion) => {
@@ -84,7 +84,7 @@ export function useSuggestionHandlers({
   const handleFixSuggestion = useCallback<FixHandler>(
     (action, threadId, prompt) => {
       if (action === "draft") {
-        restoreDraft({ threadId, text: prompt, append: true });
+        restoreDraft({ threadId, text: prompt });
         return;
       }
       void (async () => {
