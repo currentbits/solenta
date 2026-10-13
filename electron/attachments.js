@@ -25,6 +25,12 @@ const MEDIA_BY_EXT = {
   bmp: "image/bmp",
   svg: "image/svg+xml",
 };
+const VIDEO_MEDIA_BY_EXT = {
+  mp4: "video/mp4",
+  m4v: "video/mp4",
+  mov: "video/quicktime",
+  webm: "video/webm",
+};
 const EXT_BY_MEDIA = {
   "image/png": "png",
   "image/jpeg": "jpg",
@@ -287,12 +293,26 @@ function saveFolder(userDataPath, threadId, name, files) {
  * @returns {Promise<{ path: string, mediaType: string, size: number } | null>}
  */
 async function resolveImageFile(filePath) {
+  return resolveLocalFile(filePath, MEDIA_BY_EXT, MAX_IMAGE_BYTES);
+}
+
+/**
+ * Same gate for an attached screen recording (#266). The renderer samples
+ * frames from it; the protocol streams it with ranges, so no size cap.
+ * @param {unknown} filePath
+ */
+async function resolveVideoFile(filePath) {
+  return resolveLocalFile(filePath, VIDEO_MEDIA_BY_EXT, Infinity);
+}
+
+async function resolveLocalFile(filePath, byExt, maxBytes) {
   const p = String(filePath || "");
-  const mediaType = MEDIA_BY_EXT[path.extname(p).slice(1).toLowerCase()];
+  const ext = path.extname(p).slice(1).toLowerCase();
+  const mediaType = Object.hasOwn(byExt, ext) ? byExt[ext] : undefined;
   if (!p || !path.isAbsolute(p) || !mediaType) return null;
   try {
     const st = await fs.promises.stat(p);
-    if (!st.isFile() || st.size > MAX_IMAGE_BYTES) return null;
+    if (!st.isFile() || st.size > maxBytes) return null;
     return { path: p, mediaType, size: st.size };
   } catch {
     return null;
@@ -325,6 +345,7 @@ module.exports = {
   savePng,
   readImage,
   resolveImageFile,
+  resolveVideoFile,
   IMAGE_EXTS,
   MAX_IMAGE_BYTES,
   DIR_NAME,
