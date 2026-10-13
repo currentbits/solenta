@@ -110,11 +110,11 @@ describe("automation_create MCP tool", () => {
       branch: "main",
       label: null,
       conclusion: "failure",
-      environment: null,
+      team: null,
+      status: null,
       org: null,
       project: null,
-      status: null,
-      team: null,
+      environment: null,
     });
     assert.equal(store.getAutomation(out.id).trigger.event, "ci_completed");
   });

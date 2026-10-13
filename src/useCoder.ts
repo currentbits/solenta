@@ -19,6 +19,8 @@ import type {
   ConflictForecast,
   DevServerState,
   DiffResult,
+  ImageDiffInput,
+  ImageDiffResult,
   DiffOptions,
   ReviewContext,
   GitSyncInfo,
@@ -510,6 +512,8 @@ export interface UseCoderResult {
   removeWorktree: (force?: boolean) => Promise<ThreadInfo | null>;
   fetchDiff: (opts?: DiffOptions) => Promise<DiffResult>;
   fetchReviewContext: () => Promise<ReviewContext>;
+  /** Before/after of one changed image in the selected thread (#1192). */
+  fetchImageDiff: (input: ImageDiffInput) => Promise<ImageDiffResult>;
   setReviewAccepted: (hashes: string[]) => Promise<void>;
   /** Commit selected (or all) changes in the selected thread's cwd. */
   commitChanges: (
@@ -1651,6 +1655,7 @@ export function useCoder(): UseCoderResult {
     removeWorktree,
     fetchDiff,
     fetchReviewContext,
+    fetchImageDiff,
     setReviewAccepted,
     commitChanges,
     revertFile,
@@ -2157,6 +2162,7 @@ export function useCoder(): UseCoderResult {
     removeWorktree,
     fetchDiff,
     fetchReviewContext,
+    fetchImageDiff,
     setReviewAccepted,
     commitChanges,
     setStagedPaths,
