@@ -80,6 +80,42 @@ describe("parsePrListJson", () => {
     assert.equal(prs[0].updatedAt, undefined);
   });
 
+  it("summarizes triage fields: CI rollup, review decision, conflicts (#260)", () => {
+    const row = (extra) =>
+      parsePrListJson(
+        JSON.stringify([
+          { number: 1, url: "https://github.com/a/b/pull/1", ...extra },
+        ]),
+      )[0];
+    const run = (status, conclusion) => ({
+      __typename: "CheckRun",
+      status,
+      conclusion,
+    });
+    const ctx = (state) => ({ __typename: "StatusContext", state });
+
+    const full = row({
+      changedFiles: 4,
+      mergeable: "CONFLICTING",
+      reviewDecision: "CHANGES_REQUESTED",
+      statusCheckRollup: [run("COMPLETED", "SUCCESS"), ctx("SUCCESS")],
+    });
+    assert.equal(full.changedFiles, 4);
+    assert.equal(full.mergeable, "CONFLICTING");
+    assert.equal(full.reviewDecision, "CHANGES_REQUESTED");
+    assert.equal(full.checks, "pass");
+
+    const checks = (rollup) => row({ statusCheckRollup: rollup }).checks;
+    assert.equal(checks([run("COMPLETED", "SKIPPED")]), "pass");
+    assert.equal(checks([run("IN_PROGRESS", ""), run("COMPLETED", "SUCCESS")]), "pending");
+    assert.equal(checks([ctx("PENDING"), run("COMPLETED", "FAILURE")]), "fail");
+    // Cancelled is not green (main went red on that once).
+    assert.equal(checks([run("COMPLETED", "CANCELLED")]), "fail");
+    assert.equal(checks([ctx("ERROR")]), "fail");
+    assert.equal(checks([]), undefined);
+    assert.equal(row({ reviewDecision: "" }).reviewDecision, undefined);
+  });
+
   it("treats empty stdout as an empty list", () => {
     assert.deepEqual(parsePrListJson(""), []);
   });

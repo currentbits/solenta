@@ -98,6 +98,54 @@ describe("PrListView", () => {
     m.unmount();
   });
 
+  it("Needs me ranks agent PRs across projects by attention (#260)", async () => {
+    const recent = new Date(Date.now() - 60_000).toISOString();
+    const m = await mount(
+      <PrListView
+        projects={[p1, p2]}
+        threads={[
+          thread({ id: "a", prNumber: 1 }),
+          thread({ id: "b", projectId: "p2", prNumber: 2 }),
+        ]}
+        listPrs={async (projectPath) =>
+          projectPath === p1.path
+            ? {
+                ok: true,
+                prs: [
+                  pr({ number: 1, updatedAt: recent, checks: "fail", additions: 500 }),
+                  pr({ number: 7, updatedAt: recent }), // no thread
+                ],
+              }
+            : {
+                ok: true,
+                prs: [pr({ number: 2, updatedAt: recent, checks: "pass", changedFiles: 3 })],
+              }
+        }
+        onSelectThread={() => {}}
+      />,
+    );
+    await m.flush();
+    const toggle = m.query("[data-pr-inbox-toggle]");
+    assert.ok(toggle);
+    await m.click(toggle);
+    assert.equal(toggle.getAttribute("aria-pressed"), "true");
+    assert.equal(m.query("[data-pr-group]"), null, "project groups hidden");
+    const review = m.query('[data-pr-triage="review"]');
+    const agent = m.query('[data-pr-triage="agent"]');
+    assert.ok(review?.querySelector('[data-pr-row="2"]'), "green PR needs review");
+    assert.ok(agent?.querySelector('[data-pr-row="1"]'), "failing PR waits on agent");
+    assert.equal(m.query('[data-pr-row="7"]'), null, "non-agent PR left out");
+    assert.ok(review?.textContent?.includes("Quick look · 3 files"));
+    assert.ok(agent?.textContent?.includes("CI failing"));
+    assert.ok(agent?.textContent?.includes("Large diff"));
+    // Bucket order on screen follows attention, not project order.
+    const order = m.queryAll("[data-pr-triage]").map((el) =>
+      el.getAttribute("data-pr-triage"),
+    );
+    assert.deepEqual(order, ["review", "agent"]);
+    m.unmount();
+  });
+
   it("selects the matching thread when a row is clicked", async () => {
     let selected: string | null = null;
     const listPrs = async (): Promise<ListPrsResult> => ({
