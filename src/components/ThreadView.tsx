@@ -139,7 +139,8 @@ import {
   useTranscriptViewMode,
 } from "../uiPrefs";
 import { DROP_OVERLAY_MESSAGE, type DroppedFolder } from "../dropFiles";
-import { Composer } from "./Composer";
+import { Composer, type ComposerProps } from "./Composer";
+import { AttachmentChip } from "./composer/AttachmentChip";
 import { repoRelativeDir } from "../mention";
 import {
   makeReplyTarget,
@@ -196,6 +197,7 @@ import { useAppSnap } from "./thread/useAppSnap";
 import { useStickToBottom } from "./thread/useStickToBottom";
 import { bindingLabel } from "../keybindings";
 import styles from "./ThreadView.module.css";
+import type { TaskGroupRollup } from "../taskGroup";
 import { lazyNamed } from "../lazyNamed";
 
 // Panes that are closed by default load on first use, keeping their code out
@@ -241,6 +243,7 @@ function preloadPanesWhenIdle(): () => void {
 }
 
 const EMPTY_COMPARE_PEERS: ComparePeer[] = [];
+const EMPTY_TASK_TARGETS: { id: string; name: string }[] = [];
 
 const COPY_FLASH_MS = 1500;
 
@@ -339,10 +342,11 @@ interface ThreadViewProps {
     itemAttachments?: AttachmentInfo[][],
   ) => void | Promise<void>;
   /**
-   * Text a cancelled queue pushed back toward the composer (issue #364).
-   * Passed through to Composer, which applies it only onto an empty draft.
+   * Text and files a cancelled queue pushed back toward the composer
+   * (issue #364, #1212). Passed through to Composer.
    */
-  restoreDraft?: { threadId: string; text: string } | null;
+  restoreDraft?: ComposerProps["restoreDraft"];
+  onRestoreDraftConsumed?: () => void;
   onSetPermissionMode: (
     mode: PermissionMode,
     threadId?: string,
@@ -689,6 +693,12 @@ interface ThreadViewProps {
    * identity on every stream tick, which would defeat the memo (issue #91).
    */
   handoffSource?: ThreadInfo | null;
+  /** Multi-repo task (#263) roll-up across repos; resolved in App like handoffSource. */
+  taskGroup?: TaskGroupRollup | null;
+  /** Projects this thread's task can add a repo thread in. */
+  taskTargets?: { id: string; name: string }[];
+  /** Start a sibling thread for this task in another project. */
+  onAddTaskRepo?: (projectId: string) => void;
   /** Select another thread (provenance chip → source). */
   onSelectThread?: (id: string) => void;
   /** Same-project thread id → title; those ids link in replies (#1531). */
@@ -773,6 +783,7 @@ export const ThreadView = memo(function ThreadView({
   onSteerQueued,
   onEditQueued,
   restoreDraft = null,
+  onRestoreDraftConsumed,
   onSetPermissionMode,
   onRespondPermission,
   onImplementPlan,
@@ -893,6 +904,9 @@ export const ThreadView = memo(function ThreadView({
   onOpenAutomations,
   onIntegrateWorker,
   handoffSource = null,
+  taskGroup = null,
+  taskTargets = EMPTY_TASK_TARGETS,
+  onAddTaskRepo,
   onSelectThread,
   threadTitles,
   returnToView = null,
@@ -3066,6 +3080,31 @@ export const ThreadView = memo(function ThreadView({
                           })}
                         </div>
                       )}
+                      {onAddTaskRepo && taskTargets.length > 0 && !thread.ask && (
+                        <div
+                          className={`${styles.menuInbound} ${styles.taskAddRepo}`}
+                          data-task-add-repo-menu=""
+                        >
+                          <div className={styles.menuInboundLabel}>
+                            {taskGroup ? "Add repo to task" : "Continue task in another repo"}
+                          </div>
+                          {taskTargets.map((p) => (
+                            <button
+                              key={p.id}
+                              type="button"
+                              className={styles.menuItem}
+                              role="menuitem"
+                              data-task-add-repo={p.id}
+                              onClick={() => {
+                                setMenuOpen(false);
+                                onAddTaskRepo(p.id);
+                              }}
+                            >
+                              {p.name}
+                            </button>
+                          ))}
+                        </div>
+                      )}
                       {!isWorking && onRepeatSchedule && (
                         <button
                           type="button"
@@ -3830,6 +3869,53 @@ export const ThreadView = memo(function ThreadView({
           </span>
         </div>
       )}
+      {taskGroup && (
+        <div className={styles.handoffBanner} data-task-group="">
+          <div className={styles.handoffBannerText}>
+            <strong>Multi-repo task</strong> · {taskGroup.members.length} repos
+            {taskGroup.prsTotal > 0
+              ? ` · ${taskGroup.prsMerged} of ${taskGroup.prsTotal} PRs merged`
+              : " · no PRs yet"}
+            <ul className={styles.taskMembers}>
+              {taskGroup.members.map((m) => (
+                <li key={m.id} data-task-member={m.id}>
+                  {m.current ? (
+                    <strong>{m.projectName}</strong>
+                  ) : (
+                    <button
+                      type="button"
+                      className={styles.handoffLink}
+                      title={m.title}
+                      onClick={() => onSelectThread?.(m.id)}
+                    >
+                      {m.projectName}
+                    </button>
+                  )}{" "}
+                  {m.status}
+                  {m.prs.map((pr) => (
+                    <span key={`${pr.repo ?? ""}#${pr.number}`}>
+                      {" · "}
+                      {pr.url ? (
+                        <a
+                          className={styles.handoffLink}
+                          href={pr.url}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          #{pr.number}
+                        </a>
+                      ) : (
+                        `#${pr.number}`
+                      )}
+                      {pr.state ? ` ${pr.state.toLowerCase()}` : ""}
+                    </span>
+                  ))}
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      )}
       {showHandoffBanner && (
         <div className={styles.handoffBanner} data-handoff-banner="">
           <span className={styles.handoffBannerText}>
@@ -4493,12 +4579,15 @@ export const ThreadView = memo(function ThreadView({
                           {queuedFiles[i]?.length ? (
                             <span
                               className={styles.queuedFiles}
-                              title={queuedFiles[i]!.map((f) => f.name).join(", ")}
                               data-queued-files={String(queuedFiles[i]!.length)}
                             >
-                              {queuedFiles[i]!.length === 1
-                                ? "1 file"
-                                : `${queuedFiles[i]!.length} files`}
+                              {queuedFiles[i]!.map((f) => (
+                                <AttachmentChip
+                                  key={f.path}
+                                  attachment={f}
+                                  onLoadImage={onLoadAttachmentImage}
+                                />
+                              ))}
                             </span>
                           ) : null}
                           <div
@@ -4817,6 +4906,7 @@ export const ThreadView = memo(function ThreadView({
         }
         onSend={handleComposerSend}
         restoreDraft={restoreDraft}
+        onRestoreDraftConsumed={onRestoreDraftConsumed}
         onBuild={onStartWorkflow}
         onBestOfN={onFork && !thread.ask ? runBestOfN : undefined}
         onDelegate={onFork && !thread.ask ? runDelegate : undefined}

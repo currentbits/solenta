@@ -498,6 +498,11 @@ describe("memory-proxy", () => {
     assert.equal(boot.conventions[0].title, "No em dash");
     assert.equal(typeof boot.truncated.conventions, "number");
     assert.ok(seen.at(-1).includes("project="));
+    await proxy().bootstrap({ prompt: "fix it", files: ["a.js", "b.js"], matchedOnly: true });
+    const q = new URL(seen.at(-1), "http://x").searchParams;
+    assert.equal(q.get("prompt"), "fix it");
+    assert.deepEqual(q.getAll("file"), ["a.js", "b.js"]);
+    assert.equal(q.get("matchedOnly"), "1");
   });
 
   it("maintenance + resolve: camelCase queue items and POST resolution", async () => {

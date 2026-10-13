@@ -147,6 +147,7 @@ function createAskRuns(ctx) {
           userDataPath,
           projectPath: repoRoot,
           firstTurn: true,
+          prompt: String(prompt || ""),
           bootstrapMemory,
         });
         if (bootNote) {
@@ -291,6 +292,7 @@ function createAskRuns(ctx) {
           userDataPath,
           projectPath: repoRoot,
           firstTurn: true,
+          prompt: String(card.question || ""),
           bootstrapMemory,
         });
         if (bootNote) {
