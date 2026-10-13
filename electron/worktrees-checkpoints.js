@@ -119,6 +119,8 @@ function unquoteGitPath(filePath) {
  * @param {import('./store').Store} opts.store
  * @param {string} opts.threadId
  * @param {string} opts.sha
+ * @param {string} [opts.from] another checkpoint of this thread to diff
+ *   against instead of the previous one (#252)
  * @returns {Promise<{ files: Array<{path: string, status: string, additions: number, deletions: number}>, patch: string, truncated: boolean }>}
  */
 async function turnDiff(opts) {
@@ -141,7 +143,13 @@ async function turnDiff(opts) {
     if (idx < 0) return { ...EMPTY_TURN_DIFF };
 
     const cp = oldestFirst[idx];
-    const from = idx === 0 ? `${cp.sha}^` : oldestFirst[idx - 1].sha;
+    let from = idx === 0 ? `${cp.sha}^` : oldestFirst[idx - 1].sha;
+    // Any-two compare (#252): `from` is held to the same contract as `sha`.
+    if (opts.from) {
+      const base = oldestFirst.find((c) => c.sha === opts.from);
+      if (!base) return { ...EMPTY_TURN_DIFF };
+      from = base.sha;
+    }
     const to = cp.sha;
 
     const nameStatus = await gitTryAsync(
@@ -420,6 +428,34 @@ function rewindTranscriptToCheckpoint(store, threadId, keepMessageId, checkpoint
 }
 
 /**
+ * Where a fork from checkpoint `sha` starts (#252): the checkpoint commit and
+ * the last message of the turn that produced it. Same message lookup as
+ * restore: body trailer, else the last message by the commit second (+999ms).
+ * messageId is null when no message qualifies (fork starts empty).
+ *
+ * @param {{ store: import('./store').Store, threadId: string, sha: string }} opts
+ * @returns {Promise<{ sha: string, turn: number, messageId: string | null }>}
+ */
+async function checkpointForkPoint(opts) {
+  const { store, threadId, sha } = opts;
+  // listCheckpoints membership: sibling worktrees share an object DB.
+  const list = await listCheckpoints({ store, threadId });
+  const match = list.find((c) => c.sha === String(sha || "").trim());
+  if (!match) throw new Error(`Unknown checkpoint: ${sha}`);
+  const msgs = store.getMessages(threadId);
+  const keepId = await readCheckpointMessageId(
+    store.getThread(threadId).worktreePath,
+    match.sha,
+  );
+  let cut = keepId ? msgs.find((m) => m && m.id === keepId) : undefined;
+  if (!cut) {
+    const end = match.at + 999;
+    cut = msgs.findLast((m) => Number(m && m.createdAt) <= end);
+  }
+  return { sha: match.sha, turn: match.turn, messageId: cut ? cut.id : null };
+}
+
+/**
  * Hard-reset the thread WORKTREE to a prior checkpoint sha and rewind the
  * transcript to that turn (issue #149). CLI sessions cannot be rewound, so
  * sessionId is cleared and replayContext is set — same as threads.rewind.
@@ -514,5 +550,6 @@ module.exports = {
   latestTurnRange,
   maybeCreateCheckpoint,
   listCheckpoints,
+  checkpointForkPoint,
   restoreCheckpoint,
 };
