@@ -356,6 +356,46 @@ describe("TerminalPane", () => {
     assert.equal(m.query("[data-terminal-end]"), null);
   });
 
+  it("offers a fix for a failure in live output, never in replayed scrollback (#253)", async () => {
+    const h = harness({
+      open: async () => state({ text: "src/old.ts(1,1): error TS2304: stale\r\n$ ", cursor: 40 }),
+    });
+    const fixes: [string, string, string][] = [];
+    const m = await mount(
+      <TerminalPane threadId="t1" api={h.api} load={h.load} onFix={(...a) => fixes.push(a)} />,
+    );
+    await settle();
+    assert.equal(m.query("[data-fix-suggestion]"), null, "restored scrollback is old news");
+    await h.push({ from: 40, data: "$ npm test\r\n\x1b[31m FAIL \x1b[0m src/sum.test", cursor: 80 });
+    await h.push({ from: 80, data: ".ts\r\n  expected 3, got 4\r\n", cursor: 120 });
+    assert.equal(m.query("[data-fix-suggestion]")?.getAttribute("data-fix-suggestion"), "test");
+    assert.match(m.query("[data-fix-suggestion] code")!.textContent!, /FAIL\s+src\/sum\.test\.ts/);
+    await m.click(m.query("[data-fix-run]"));
+    assert.equal(fixes.length, 1);
+    const [action, threadId, prompt] = fixes[0];
+    assert.equal(action, "run");
+    assert.equal(threadId, "t1");
+    assert.match(prompt, /^The terminal in this thread's worktree reported a test failure:/);
+    assert.match(prompt, /expected 3, got 4/, "output after the failing line rides along");
+    assert.doesNotMatch(prompt, /\x1b/);
+    assert.equal(m.query("[data-fix-suggestion]"), null, "acting resolves the card");
+    await h.push({ from: 120, data: " FAIL  src/sum.test.ts\r\n", cursor: 160 });
+    assert.equal(m.query("[data-fix-suggestion]"), null, "a handled failure stays quiet");
+    await h.push({ from: 160, data: "CONFLICT (content): Merge conflict in a.ts\r\n", cursor: 200 });
+    assert.equal(m.query("[data-fix-suggestion]")?.getAttribute("data-fix-suggestion"), "conflict");
+    await m.click(m.query("[data-fix-dismiss]"));
+    assert.equal(m.query("[data-fix-suggestion]"), null);
+    assert.equal(fixes.length, 1, "dismiss sends nothing");
+  });
+
+  it("offers nothing without an onFix handler", async () => {
+    const h = harness();
+    const m = await mount(<TerminalPane threadId="t1" api={h.api} load={h.load} />);
+    await settle();
+    await h.push({ from: 0, data: "a.ts(1,1): error TS2304: x\r\n", cursor: 30 });
+    assert.equal(m.query("[data-fix-suggestion]"), null);
+  });
+
   it("copies a selection on Cmd+C and lets Ctrl+C reach the shell", async () => {
     const h = harness();
     await mount(<TerminalPane threadId="t1" api={h.api} load={h.load} />);

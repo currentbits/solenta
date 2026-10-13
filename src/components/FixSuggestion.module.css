@@ -1,0 +1,47 @@
+.card {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--overlay-soft);
+  font-size: 11px;
+}
+
+.label {
+  flex: 0 0 auto;
+  color: var(--danger-fg);
+  font-weight: 600;
+}
+
+.line {
+  flex: 1 1 120px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono);
+  color: var(--text-muted);
+}
+
+.button {
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--overlay-soft);
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.button:hover {
+  background: var(--overlay-hover);
+  color: var(--text);
+}
+
+.primary {
+  border-color: var(--accent-edge, var(--border));
+  color: var(--text);
+}

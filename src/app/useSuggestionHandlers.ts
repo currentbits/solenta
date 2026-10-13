@@ -1,8 +1,12 @@
 import { useCallback, type Dispatch, type SetStateAction } from "react";
 import type { ProjectInfo, WorkSuggestion } from "../shared/ipc";
 import type { UseCoderResult } from "../useCoder";
+import type { FixHandler } from "../fixSuggest";
 
-/** Suggested-work chip actions: start as a fork, file an issue, dismiss. */
+/**
+ * Suggested-work chip actions (start as a fork, file an issue, dismiss), and
+ * the terminal / dev-server fix cards (#253).
+ */
 export function useSuggestionHandlers({
   selectedThreadId,
   project,
@@ -11,6 +15,7 @@ export function useSuggestionHandlers({
   createIssue,
   resolveSuggestion,
   setChipError,
+  restoreDraft,
 }: {
   selectedThreadId: UseCoderResult["selectedThreadId"];
   project: ProjectInfo | null;
@@ -19,6 +24,7 @@ export function useSuggestionHandlers({
   createIssue: UseCoderResult["createIssue"];
   resolveSuggestion: UseCoderResult["resolveSuggestion"];
   setChipError: Dispatch<SetStateAction<string | null>>;
+  restoreDraft: (draft: { threadId: string; text: string }) => void;
 }) {
   const handleStartSuggestion = useCallback(
     async (s: WorkSuggestion) => {
@@ -75,7 +81,28 @@ export function useSuggestionHandlers({
     [selectedThreadId, resolveSuggestion],
   );
 
+  const handleFixSuggestion = useCallback<FixHandler>(
+    (action, threadId, prompt) => {
+      if (action === "draft") {
+        restoreDraft({ threadId, text: prompt });
+        return;
+      }
+      void (async () => {
+        let target: string | undefined = threadId;
+        if (action === "fork") {
+          const t = await forkThread(threadId, { worktree: true, select: false });
+          if (!t) return;
+          target = t.id;
+        }
+        // startRun reports its own failure as the run-scope error.
+        await startRun(prompt, target).catch(() => {});
+      })();
+    },
+    [forkThread, startRun, restoreDraft],
+  );
+
   return {
+    handleFixSuggestion,
     handleStartSuggestion,
     handleFileSuggestion,
     handleDismissSuggestion,
