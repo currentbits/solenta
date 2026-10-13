@@ -18,6 +18,7 @@ import ReactMarkdown, {
   type Components,
 } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { lazyNamed } from "../lazyNamed";
 import { isAbsolutePath } from "../pathLinks";
 import { languageForFence, useHighlightedBlock } from "../syntaxHighlight";
 import { markdownChunks } from "./markdownChunks";
@@ -122,7 +123,7 @@ const LiveChunkContext = createContext(false);
  * DOMPurify are all one lazy chunk; the code block is the Suspense fallback.
  */
 const MermaidDiagram = lazy(() => import("./MermaidDiagram"));
-const HtmlPage = lazy(() => import("./HtmlPage"));
+const HtmlPage = lazyNamed(() => import("./HtmlPage").then((m) => m.default));
 
 /**
  * Fenced code block with a header bar: language label + Copy.

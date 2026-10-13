@@ -625,13 +625,18 @@ describe("orch-server tool handlers", () => {
 
     try {
       assert.equal((await forkInto(projects.p1, {})).pendingWorktree, true);
-      // Opt-out, remote project and non-repo all share the project checkout.
+      // Opt-out and non-repo share the project checkout.
       assert.equal(
         (await forkInto(projects.p1, { worktree: false })).pendingWorktree,
         undefined,
       );
+      // #1402: a default remote fork is refused; worktree:false still shares.
+      await assert.rejects(
+        () => forkInto({ id: "p1", path: dir, remoteHost: "box" }, {}),
+        /Remote \(SSH\) project box:.*worktree:false/,
+      );
       assert.equal(
-        (await forkInto({ id: "p1", path: dir, remoteHost: "box" }, {}))
+        (await forkInto({ id: "p1", path: dir, remoteHost: "box" }, { worktree: false }))
           .pendingWorktree,
         undefined,
       );

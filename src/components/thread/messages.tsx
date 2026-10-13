@@ -1,5 +1,4 @@
 import {
-  lazy,
   memo,
   Suspense,
   useEffect,
@@ -35,8 +34,10 @@ import { noticeRest, workerResults, type WorkerResult } from "../../workerResult
 import { captureCiteFromSelection, type ReplyTarget } from "../../replyContext";
 import { htmlFromToolOutput } from "../../htmlPage";
 import { Markdown } from "../Markdown";
+import { lazyNamed } from "../../lazyNamed";
 
-const HtmlPage = lazy(() => import("../HtmlPage"));
+// lazyNamed, not lazy: mount() preloads it, so tests never suspend on it.
+const HtmlPage = lazyNamed(() => import("../HtmlPage").then((m) => m.default));
 import { PathText } from "../PathLinks";
 import { provenanceVisible, type MessageProvenance } from "../../provenance";
 import {

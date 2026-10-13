@@ -1281,6 +1281,8 @@ function clearMissingWorktree(opts) {
   store.updateThread(threadId, {
     worktreePath: null,
     branch: null,
+    // The branch ref is still in the repo (#1404).
+    ...(thread.branch ? { retainedBranch: thread.branch } : {}),
     pendingWorktree: true,
   });
   store.save();

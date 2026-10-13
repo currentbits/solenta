@@ -104,7 +104,7 @@ function createAutoResume(ctx) {
       appendMessage(id, "event", RESUME_EVENT);
       store.save();
       pushDetail(id, null);
-      ctx.deliverNotice({ threadId: id, line: RESUME_LINE });
+      ctx.deliverNotice({ threadId: id, line: RESUME_LINE, resume: true });
       await waitFor(() => active.has(id), startGraceMs);
       await waitFor(() => !active.has(id), Infinity);
     };
