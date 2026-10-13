@@ -15,6 +15,10 @@ import {
   PR_LIST_MAX_LIMIT,
   PR_LIST_PAGE_SIZE,
   prUpdatedMs,
+  TRIAGE_BUCKETS,
+  triageInbox,
+  type PrTriage,
+  type TriageDepth,
 } from "../prList";
 import { forgeReadiness } from "../sourceControl";
 import type {
@@ -24,6 +28,7 @@ import type {
   ListPrsOptions,
   ListPrsResult,
   PrCommentResult,
+  PrListItem,
   PrDetailResult,
   ProjectInfo,
   SourceControlDiscovery,
@@ -31,6 +36,12 @@ import type {
 } from "../shared/ipc";
 import { PrWorkspacePanel } from "./PrWorkspacePanel";
 import styles from "./PrListView.module.css";
+
+const TRIAGE_DEPTH_LABEL: Record<TriageDepth, string> = {
+  quick: "Quick look",
+  review: "Review",
+  deep: "Deep review",
+};
 
 function rejectReason(err: unknown, fallback: string): string {
   return err instanceof Error && err.message ? err.message : fallback;
@@ -113,6 +124,7 @@ export function PrListView({
     () => new Map(),
   );
   const [query, setQuery] = useState(restore?.query ?? "");
+  const [inbox, setInbox] = useState(false);
   const [projectFilter, setProjectFilter] = useState(
     restore?.projectFilter ?? "",
   );
@@ -277,6 +289,10 @@ export function PrListView({
     () => filterPrGroups(scoped, { query }),
     [scoped, query],
   );
+  const inboxRows = useMemo(
+    () => (inbox ? triageInbox(filtered, threads, now) : []),
+    [inbox, filtered, threads, now],
+  );
   const loadedCount = scoped.reduce(
     (n, group) => n + (group.ok ? group.prs.length : 0),
     0,
@@ -314,6 +330,149 @@ export function PrListView({
       ? matchThreadForPr(listed, threads, selectedProject.id)
       : null;
   })();
+
+  const renderRow = (
+    project: ProjectInfo,
+    pr: PrListItem,
+    triage?: PrTriage,
+  ) => {
+    const matched = matchThreadForPr(pr, threads, project.id);
+    const diff = formatPrDiff(pr);
+    const updatedMs = prUpdatedMs(pr);
+    const checkoutKey = `${project.id}:${pr.number}`;
+    const checkoutBusy = checkingOut === checkoutKey;
+    const checkoutErr = checkoutErrors.get(checkoutKey);
+    const githubBlocked = github != null && github.ready === false;
+    const showCheckout = Boolean(onCheckoutPr) && !matched;
+    const rowKey = `${project.id}:${pr.number}`;
+    return (
+      <div
+        key={`${project.id}-${pr.number}`}
+        className={styles.row}
+        data-pr-row={pr.number}
+        data-pr-selected={
+          selected?.projectId === project.id &&
+          selected.prNumber === pr.number
+            ? ""
+            : undefined
+        }
+        data-return-row={rowKey}
+      >
+        <button
+          type="button"
+          className={styles.rowSelect}
+          disabled={!workspaceReady && !matched}
+          aria-label={
+            workspaceReady
+              ? `Open pull request #${pr.number}`
+              : `Select thread for PR #${pr.number}`
+          }
+          aria-pressed={
+            selected?.projectId === project.id &&
+            selected.prNumber === pr.number
+          }
+          onClick={() => {
+            if (workspaceReady) {
+              setSelected({
+                projectId: project.id,
+                prNumber: pr.number,
+              });
+              return;
+            }
+            if (!matched) return;
+            onSelectThread(
+              matched.id,
+              originFromRowKey(rootRef.current, rowKey, {
+                query,
+                projectFilter,
+              }),
+            );
+          }}
+        />
+        <div className={styles.rowBody}>
+          <div className={styles.rowTop}>
+            <span className={styles.number}>#{pr.number}</span>
+            <span className={styles.prTitle}>{pr.title}</span>
+            {pr.isDraft ? (
+              <span className={styles.draft}>Draft</span>
+            ) : null}
+          </div>
+          <div className={styles.rowMeta}>
+            {pr.headRefName ? (
+              <span className={styles.branch}>
+                {pr.headRefName}
+              </span>
+            ) : null}
+            {diff ? (
+              <span className={styles.diff}>{diff}</span>
+            ) : null}
+            {updatedMs != null ? (
+              <span className={styles.age}>
+                {formatRelativeAge(updatedMs, now)}
+              </span>
+            ) : null}
+            {triage ? (
+              <>
+                <span className={styles.branch}>{project.slug}</span>
+                {triage.depth ? (
+                  <span className={styles.triageDepth} data-pr-depth={triage.depth}>
+                    {TRIAGE_DEPTH_LABEL[triage.depth]}
+                    {pr.changedFiles != null
+                      ? ` · ${pr.changedFiles} ${pr.changedFiles === 1 ? "file" : "files"}`
+                      : ""}
+                  </span>
+                ) : null}
+                {triage.signals.map((signal) => (
+                  <span key={signal} className={styles.signal} data-pr-signal="">
+                    {signal}
+                  </span>
+                ))}
+              </>
+            ) : null}
+            <div className={styles.rowActions}>
+              {showCheckout ? (
+                <button
+                  type="button"
+                  className={styles.checkout}
+                  data-pr-checkout-btn=""
+                  disabled={checkoutBusy || githubBlocked}
+                  title={
+                    githubBlocked
+                      ? (github?.hint ?? "GitHub is not ready")
+                      : "Check out this pull request into a worktree thread"
+                  }
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    void handleCheckout(project.id, pr.number);
+                  }}
+                >
+                  {checkoutBusy ? "Checking out…" : "Check out"}
+                </button>
+              ) : null}
+              <a
+                className={styles.prLink}
+                href={pr.url}
+                target="_blank"
+                rel="noreferrer"
+                title={pr.url}
+              >
+                Open
+              </a>
+            </div>
+          </div>
+          {checkoutErr ? (
+            <p
+              className={styles.checkoutError}
+              data-pr-checkout-error=""
+            >
+              {checkoutErr}
+            </p>
+          ) : null}
+        </div>
+      </div>
+    );
+  };
 
   return (
     <main className={styles.main} data-pr-list="" ref={rootRef}>
@@ -360,6 +519,16 @@ export function PrListView({
             </option>
           ))}
         </select>
+        <button
+          type="button"
+          className={styles.modeToggle}
+          data-pr-inbox-toggle=""
+          aria-pressed={inbox}
+          onClick={() => setInbox((on) => !on)}
+          title="Agent pull requests, ranked by the attention they need from you"
+        >
+          Needs me
+        </button>
         <span className={styles.count} aria-live="polite">
           {filtering ? `${matchCount} of ${loadedCount}` : `${loadedCount}`}
         </span>
@@ -432,6 +601,8 @@ export function PrListView({
         <div className={styles.workspace}>
         <div className={styles.list} data-return-scroll="">
           {filtered.map((group) => {
+            // The inbox keeps per-project load errors; its rows render below.
+            if (group.ok && inbox) return null;
             if (group.ok && group.prs.length === 0 && query.trim()) return null;
             return (
               <section
@@ -460,133 +631,7 @@ export function PrListView({
               ) : group.prs.length === 0 ? (
                 <p className={styles.hint}>No open pull requests</p>
               ) : (
-                group.prs.map((pr) => {
-                  const matched = matchThreadForPr(
-                    pr,
-                    threads,
-                    group.project.id,
-                  );
-                  const diff = formatPrDiff(pr);
-                  const updatedMs = prUpdatedMs(pr);
-                  const checkoutKey = `${group.project.id}:${pr.number}`;
-                  const checkoutBusy = checkingOut === checkoutKey;
-                  const checkoutErr = checkoutErrors.get(checkoutKey);
-                  const githubBlocked = github != null && github.ready === false;
-                  const showCheckout = Boolean(onCheckoutPr) && !matched;
-                  const rowKey = `${group.project.id}:${pr.number}`;
-                  return (
-                    <div
-                      key={`${group.project.id}-${pr.number}`}
-                      className={styles.row}
-                      data-pr-row={pr.number}
-                      data-pr-selected={
-                        selected?.projectId === group.project.id &&
-                        selected.prNumber === pr.number
-                          ? ""
-                          : undefined
-                      }
-                      data-return-row={rowKey}
-                    >
-                      <button
-                        type="button"
-                        className={styles.rowSelect}
-                        disabled={!workspaceReady && !matched}
-                        aria-label={
-                          workspaceReady
-                            ? `Open pull request #${pr.number}`
-                            : `Select thread for PR #${pr.number}`
-                        }
-                        aria-pressed={
-                          selected?.projectId === group.project.id &&
-                          selected.prNumber === pr.number
-                        }
-                        onClick={() => {
-                          if (workspaceReady) {
-                            setSelected({
-                              projectId: group.project.id,
-                              prNumber: pr.number,
-                            });
-                            return;
-                          }
-                          if (!matched) return;
-                          onSelectThread(
-                            matched.id,
-                            originFromRowKey(rootRef.current, rowKey, {
-                              query,
-                              projectFilter,
-                            }),
-                          );
-                        }}
-                      />
-                      <div className={styles.rowBody}>
-                        <div className={styles.rowTop}>
-                          <span className={styles.number}>#{pr.number}</span>
-                          <span className={styles.prTitle}>{pr.title}</span>
-                          {pr.isDraft ? (
-                            <span className={styles.draft}>Draft</span>
-                          ) : null}
-                        </div>
-                        <div className={styles.rowMeta}>
-                          {pr.headRefName ? (
-                            <span className={styles.branch}>
-                              {pr.headRefName}
-                            </span>
-                          ) : null}
-                          {diff ? (
-                            <span className={styles.diff}>{diff}</span>
-                          ) : null}
-                          {updatedMs != null ? (
-                            <span className={styles.age}>
-                              {formatRelativeAge(updatedMs, now)}
-                            </span>
-                          ) : null}
-                          <div className={styles.rowActions}>
-                            {showCheckout ? (
-                              <button
-                                type="button"
-                                className={styles.checkout}
-                                data-pr-checkout-btn=""
-                                disabled={checkoutBusy || githubBlocked}
-                                title={
-                                  githubBlocked
-                                    ? (github?.hint ?? "GitHub is not ready")
-                                    : "Check out this pull request into a worktree thread"
-                                }
-                                onClick={(event) => {
-                                  event.preventDefault();
-                                  event.stopPropagation();
-                                  void handleCheckout(
-                                    group.project.id,
-                                    pr.number,
-                                  );
-                                }}
-                              >
-                                {checkoutBusy ? "Checking out…" : "Check out"}
-                              </button>
-                            ) : null}
-                            <a
-                              className={styles.prLink}
-                              href={pr.url}
-                              target="_blank"
-                              rel="noreferrer"
-                              title={pr.url}
-                            >
-                              Open
-                            </a>
-                          </div>
-                        </div>
-                        {checkoutErr ? (
-                          <p
-                            className={styles.checkoutError}
-                            data-pr-checkout-error=""
-                          >
-                            {checkoutErr}
-                          </p>
-                        ) : null}
-                      </div>
-                    </div>
-                  );
-                })
+                group.prs.map((pr) => renderRow(group.project, pr))
               )}
               {group.ok && !group.complete ? (
                 <div className={styles.moreRow}>
@@ -615,6 +660,30 @@ export function PrListView({
               </section>
             );
           })}
+          {inbox
+            ? TRIAGE_BUCKETS.map((bucket) => {
+                const rows = inboxRows.filter((r) => r.triage.bucket === bucket.id);
+                if (rows.length === 0) return null;
+                return (
+                  <section
+                    key={bucket.id}
+                    className={styles.group}
+                    data-pr-triage={bucket.id}
+                  >
+                    <h2 className={styles.groupHeader}>
+                      {bucket.label} · {rows.length}
+                    </h2>
+                    {rows.map((r) => renderRow(r.project, r.pr, r.triage))}
+                  </section>
+                );
+              })
+            : null}
+          {inbox && inboxRows.length === 0 ? (
+            <p className={styles.hint} data-pr-inbox-empty="">
+              No open agent pull requests. PRs without a Solenta thread stay
+              under By project.
+            </p>
+          ) : null}
         </div>
         {workspaceReady &&
         selected &&

@@ -153,7 +153,7 @@ import { matchesBinding } from "../keybindings";
 
 import styles from "./Composer.module.css";
 
-interface ComposerProps {
+export interface ComposerProps {
   /** Selected thread id; used for per-thread last-used template. */
   threadId: string;
   /** Sticky permission mode for this thread. */
@@ -231,11 +231,17 @@ interface ComposerProps {
     opts?: { steer?: boolean },
   ) => void | Promise<void>;
   /**
-   * Text pushed back toward the draft from outside (a cancelled queued
-   * follow-up, issue #364). Applied at most once, and only onto an EMPTY
-   * draft — never clobbers an in-progress one.
+   * Text and files pushed back toward the draft from outside (a cancelled
+   * queued follow-up, issue #364 / #1212). Applied once, on its own thread
+   * only; an in-progress draft is kept and the text appended after it.
    */
-  restoreDraft?: { threadId: string; text: string } | null;
+  restoreDraft?: {
+    threadId: string;
+    text: string;
+    attachments?: AttachmentInfo[];
+  } | null;
+  /** The restore landed; the parent drops it so a remount cannot replay it. */
+  onRestoreDraftConsumed?: () => void;
   /** Multi-phase workflow. The Build action inside Options calls this. */
   onBuild: (prompt: string, templateId: string) => void | Promise<void>;
   /**
@@ -395,6 +401,7 @@ export const Composer = memo(function Composer({
   busy = false,
   onSend,
   restoreDraft = null,
+  onRestoreDraftConsumed,
   onBuild,
   onBestOfN,
   ask = false,
@@ -528,19 +535,6 @@ export const Composer = memo(function Composer({
     syncOverflow,
     setLocalError,
   });
-  /**
-   * A cancelled queued follow-up lands here (issue #364): put its text back
-   * into the draft, but only onto an empty one — an in-progress draft always
-   * wins. Applied at most once per restore payload.
-   */
-  const appliedRestoreRef = useRef<ComposerProps["restoreDraft"]>(null);
-  useEffect(() => {
-    if (!restoreDraft || restoreDraft === appliedRestoreRef.current) return;
-    appliedRestoreRef.current = restoreDraft;
-    if (restoreDraft.threadId !== threadId) return;
-    if (readDraft().trim()) return;
-    writeDraft(restoreDraft.text, restoreDraft.text.length);
-  }, [restoreDraft, threadId, readDraft, writeDraft]);
   const { attachments, addAttachments, removeAttachment, clearAttachments } =
     useComposerAttachments({
       threadId,
@@ -549,6 +543,31 @@ export const Composer = memo(function Composer({
       incomingAttachmentThreadId,
       onIncomingAttachmentsConsumed,
     });
+  /**
+   * A cancelled queued follow-up lands here (issue #364 / #1212): its text
+   * and files go back into its own thread's draft. Another thread's
+   * composer leaves it pending until that thread is shown again. An
+   * in-progress draft is never replaced: the text goes after it.
+   */
+  const appliedRestoreRef = useRef<ComposerProps["restoreDraft"]>(null);
+  useEffect(() => {
+    if (!restoreDraft || restoreDraft === appliedRestoreRef.current) return;
+    if (restoreDraft.threadId !== threadId) return;
+    appliedRestoreRef.current = restoreDraft;
+    const text = [readDraft().trimEnd(), restoreDraft.text]
+      .filter(Boolean)
+      .join("\n\n");
+    writeDraft(text, text.length);
+    if (restoreDraft.attachments?.length) addAttachments(restoreDraft.attachments);
+    onRestoreDraftConsumed?.();
+  }, [
+    restoreDraft,
+    threadId,
+    readDraft,
+    writeDraft,
+    addAttachments,
+    onRestoreDraftConsumed,
+  ]);
   const {
     pasteCards,
     expandedCardIds,

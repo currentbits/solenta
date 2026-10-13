@@ -152,6 +152,19 @@ describe("normalizeTrigger / matchRows", () => {
     assert.equal(rev.length, 1);
     assert.match(rev[0].text, /Review approved on PR #4 by b/);
   });
+
+  it("issue_opened skips PRs but lets them move the baseline (#258)", () => {
+    const rows = [
+      { number: 9, title: "PR", pull_request: {} },
+      { number: 8, title: "Crash on boot", user: { login: "a" }, labels: [{ name: "bug" }], body: "Steps:\n1. open" },
+      { number: 7, title: "x", body: "y".repeat(2000) },
+    ];
+    const { all, matched } = matchRows({ event: "issue_opened" }, rows, remote);
+    assert.deepEqual(all, [9, 8, 7]);
+    assert.deepEqual(matched.map((m) => m.key), [8, 7]);
+    assert.match(matched[0].text, /^Issue #8 opened by a: Crash on boot \[bug\] \(.*\)\n {2}> Steps:\n {2}> 1\. open$/);
+    assert.ok(matched[1].text.length < 1700);
+  });
 });
 
 describe("Linear and Sentry matchRows (#1588)", () => {

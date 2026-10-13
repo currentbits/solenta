@@ -1006,9 +1006,33 @@ async function gcClean(opts) {
   return { removed, failed, bytes };
 }
 
+/** Quiet time an orphan dir gets before periodic retention takes it (#1397). */
+const ORPHAN_GRACE_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * An orphan the periodic pass may reclaim unattended (#1397): clean, on a
+ * branch (a detached HEAD has no ref to keep its commits), nothing unmerged,
+ * git could read it (corrupt ones stay for the dialog), and the directory has
+ * been untouched past ORPHAN_GRACE_MS so a just-created worktree cannot race
+ * its thread being persisted. Dirty / unreadable are already `blocked`.
+ * @param {object} c gcScan candidate
+ * @param {number} now
+ */
+function isSafeAgedOrphan(c, now) {
+  if (c.reason !== "orphan" || c.corrupt || !c.branch || c.unmerged > 0) {
+    return false;
+  }
+  try {
+    return fs.statSync(c.path).mtimeMs < now - ORPHAN_GRACE_MS;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Enforce per-project retention limits (#316 / #559): reclaim the settled
- * worktrees a project keeps past its `worktreeRetention`. After #559 the
+ * worktrees a project keeps past its `worktreeRetention`, plus aged clean
+ * orphans (#1397, see isSafeAgedOrphan). After #559 the
  * default is 10, persisted on every project, so this actually runs. 0 is
  * the keep-everything hatch and is skipped. When a limit is set, the scan
  * skips `du` (activity time, not size, picks what to drop). Runs gcClean,
@@ -1035,18 +1059,20 @@ async function enforceRetention(opts) {
   if (configured.size === 0) return { removed: [], failed: [], bytes: 0 };
 
   const scan = await gcScan({ store, worktreeBase, skipSizes: true, fresh: true });
+  const now = Date.now();
   const paths = scan.candidates
     .filter(
       (c) =>
-        c.reason === "retention" &&
         !c.blocked &&
         // Skip a project whose stored value is 0 (keep everything). The
         // default of 10 is persisted (#559), so it is in `configured`.
         configured.has(c.projectId) &&
-        // ...and never a worktree holding commits nobody landed, unless it is
-        // a fork / archived one, which the scan already put past its grace
-        // period (#624). The branch survives either way.
-        (c.transient === true || !(c.unmerged > 0)),
+        (c.reason === "retention"
+          ? // Never a worktree holding commits nobody landed, unless it is a
+            // fork / archived one, which the scan already put past its grace
+            // period (#624). The branch survives either way.
+            c.transient === true || !(c.unmerged > 0)
+          : isSafeAgedOrphan(c, now)),
     )
     .map((c) => c.path);
   if (paths.length === 0) return { removed: [], failed: [], bytes: 0 };

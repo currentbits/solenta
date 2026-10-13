@@ -27,6 +27,7 @@ const PLANBOARD_TOOLS = [
   "issue_comment",
   "issue_complete",
   "issue_create",
+  "issue_label",
   "issue_list",
   "issue_set_plan",
 ];
@@ -171,6 +172,10 @@ if (args[1] === "view") {
     labels: [{ name: "plan:doing" }],
   }));
   process.exit(0);
+}
+if (args[1] === "edit" && args.some((a) => a.includes("triage-new")) && !prev.some((c) => c.args[0] === "label")) {
+  process.stderr.write("could not add label: 'triage-new' not found\\n");
+  process.exit(1);
 }
 if (args[1] === "comment") {
   process.stdout.write("https://github.com/acme/demo/issues/150#issuecomment-99\\n");
@@ -340,6 +345,31 @@ process.stdout.write(JSON.stringify({ data: { repository: { issues: { nodes,
       seen.some((c) => ["edit", "close", "reopen"].includes(c.args[1])),
       false,
     );
+  });
+
+  it("issue_label creates missing labels, retries, and refuses plan:* (#258)", async () => {
+    const h = createToolHandlers(githubDeps());
+    const res = await h.issue_label({
+      threadId: "t1",
+      projectId: "p1",
+      number: 150,
+      labels: ["bug", "triage-new"],
+    });
+    assert.deepEqual(res, { ok: true });
+    assert.deepEqual(
+      calls(callsPath).map((c) => c.args.join(" ")),
+      [
+        "issue edit 150 --add-label bug,triage-new",
+        "label create bug",
+        "label create triage-new",
+        "issue edit 150 --add-label bug,triage-new",
+      ],
+    );
+    assert.deepEqual(
+      await h.issue_label({ threadId: "t1", projectId: "p1", number: 150, labels: ["plan:todo"] }),
+      { ok: false, reason: "use issue_set_plan for plan:todo" },
+    );
+    assert.equal(calls(callsPath).length, 4);
   });
 
   it("rejects an empty comment body without spawning gh", async () => {

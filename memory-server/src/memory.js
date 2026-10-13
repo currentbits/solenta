@@ -1,4 +1,5 @@
 import crypto from 'node:crypto'
+import path from 'node:path'
 import { openDb, createSchema, purgeStaleVectors } from './db.js'
 import { extractEntities } from './extract.js'
 import { runJanitor, readJanitorSnapshot, JANITOR_INTERVAL_MS } from './janitor.js'
@@ -79,6 +80,109 @@ const SECTION_BUDGETS = {
   tasks: 300,
 }
 
+// Inclusion modes (#271). always (stored NULL) rides every bootstrap; glob
+// loads when a touched file matches, auto when the prompt matches the title,
+// manual only when the prompt mentions #<first 8 of id>.
+const INCLUSION_MODES = new Set(['always', 'glob', 'auto', 'manual'])
+const CONDITIONAL_SCAN_CAP = 500
+const MATCH_PROMPT_CHARS = 8000
+const MATCH_FILES_MAX = 200
+const AUTO_TITLE_RATIO = 0.5
+const AUTO_STOPWORDS = new Set(
+  'the and for not but are was with that this from when then than into onto must should only also does have has use used using'.split(
+    ' ',
+  ),
+)
+
+/**
+ * Validate an inclusion/globs pair into column values.
+ * @param {unknown} inclusion
+ * @param {unknown} globs
+ * @returns {{ inclusion: string|null, globs: string|null }}
+ */
+function cleanInclusion(inclusion, globs) {
+  const mode = inclusion == null || inclusion === '' ? 'always' : String(inclusion)
+  if (!INCLUSION_MODES.has(mode)) throw new Error(`invalid inclusion '${mode}'`)
+  if (globs != null && !Array.isArray(globs)) throw new Error('globs must be an array of strings')
+  const list = (globs ?? []).map((g) => String(g).trim()).filter(Boolean)
+  if (mode === 'glob' && list.length === 0) {
+    throw new Error(`inclusion 'glob' needs at least one glob`)
+  }
+  if (mode !== 'glob' && list.length > 0) {
+    throw new Error(`globs are only valid with inclusion 'glob'`)
+  }
+  return {
+    inclusion: mode === 'always' ? null : mode,
+    globs: list.length ? JSON.stringify(list) : null,
+  }
+}
+
+/** @returns {string[]} */
+function parseGlobs(raw) {
+  try {
+    const list = JSON.parse(String(raw ?? '[]'))
+    return Array.isArray(list) ? list.map(String) : []
+  } catch {
+    return []
+  }
+}
+
+/** Read-side shape: inclusion defaults to 'always'; globs only when set. */
+function inclusionFields(row) {
+  return {
+    inclusion: row.inclusion ?? 'always',
+    globs: row.globs ? parseGlobs(row.globs) : undefined,
+  }
+}
+
+/** Path-looking tokens in a prompt: a slash or a file extension, `:line` dropped. */
+export function promptPaths(prompt) {
+  const out = []
+  for (const raw of String(prompt ?? '').split(/[\s`'"()<>[\],]+/)) {
+    const t = raw.replace(/:\d+(?::\d+)?$/, '').replace(/[.:;!?]+$/, '')
+    if (t.includes('/') || /\.[A-Za-z][A-Za-z0-9]{0,5}$/.test(t)) out.push(t)
+  }
+  return out
+}
+
+/** Repo-relative, forward-slash path; absolute paths under root lose the root. */
+function relPath(file, root) {
+  let f = String(file).replace(/\\/g, '/').replace(/^\.\//, '')
+  if (root) {
+    const r = root.replace(/\\/g, '/').replace(/\/+$/, '') + '/'
+    if (f.startsWith(r)) f = f.slice(r.length)
+  }
+  return f
+}
+
+/** A slash-less glob also matches basenames anywhere (gitignore semantics). */
+export function globsMatch(globs, files) {
+  return files.some((f) =>
+    globs.some(
+      (g) =>
+        path.posix.matchesGlob(f, g) ||
+        (!g.includes('/') && path.posix.matchesGlob(path.posix.basename(f), g)),
+    ),
+  )
+}
+
+function autoTokens(text) {
+  return new Set([...contentTokens(text)].filter((t) => !AUTO_STOPWORDS.has(t)))
+}
+
+/**
+ * The title is the entry's description: half its words in the prompt matches.
+ * ponytail: lexical title overlap. Swap for vector similarity if bootstrap
+ * goes async (vectorSearch needs an awaited query embedding).
+ */
+export function autoMatches(title, promptTokens) {
+  const want = autoTokens(title)
+  if (want.size === 0) return false
+  let hit = 0
+  for (const t of want) if (promptTokens.has(t)) hit += 1
+  return hit > 0 && hit / want.size >= AUTO_TITLE_RATIO
+}
+
 /** Consecutive citation mismatches before verifyAndHeal tombstones (#710). */
 export const VERIFY_FAIL_LIMIT = 3
 
@@ -124,6 +228,7 @@ const PROTOCOL = [
   'Search returns excerpts; use memory_get for the full body.',
   'If active tasks may conflict, inspect with memory_search before changing files.',
   'memory_maintenance reports queue items to resolve with memory_resolve.',
+  'Some entries load only on match (inclusion glob/auto/manual; `deferred` counts the rest). Before working in a new area, call memory_bootstrap with files you will edit, prompt, and matchedOnly: true to pull just those.',
   'A wiki section describes the code (modules, dependencies, architecture). It is regenerated when main moves — not a learning. Do not memory_store it.',
 ]
 
@@ -577,6 +682,7 @@ export class Memory {
     const agent = cleanOptional(input.agent)
     const source = cleanOptional(input.source)
     const citations = serializeCitations(input.citations)
+    const scope = cleanInclusion(input.inclusion, input.globs)
 
     // Agent-written entries (source 'mcp') are the injection-propagation
     // channel. App / import / janitor / rest writes are human-initiated.
@@ -607,8 +713,8 @@ export class Memory {
 
     this.db
       .prepare(
-        `INSERT INTO entries (id, type, title, body, project, agent, source, status, importance, citations, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO entries (id, type, title, body, project, agent, source, status, importance, citations, inclusion, globs, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -621,6 +727,8 @@ export class Memory {
         input.status ?? null,
         importance,
         citations,
+        scope.inclusion,
+        scope.globs,
         now,
         now,
       )
@@ -759,7 +867,7 @@ export class Memory {
       .prepare(
         `SELECT id, type, title, body, project, agent, source, status, created_at, updated_at,
                 importance, access_count, last_accessed_at, superseded_by,
-                helpful_count, harmful_count, citations,
+                helpful_count, harmful_count, citations, inclusion, globs,
                 invalid_at, invalidated_by, invalidation_reason
          FROM entries WHERE id = ?`,
       )
@@ -800,12 +908,13 @@ export class Memory {
       this.markAccessed([id])
       return {
         ...row,
+        ...inclusionFields(row),
         citations: verdict.citations,
         ...(verdict.verified ? { verified: true } : {}),
       }
     }
     this.markAccessed([id])
-    return { ...row, citations: parseCitations(row.citations) }
+    return { ...row, ...inclusionFields(row), citations: parseCitations(row.citations) }
   }
 
   /**
@@ -1273,7 +1382,7 @@ export class Memory {
     const cleanId = cleanText('id', id)
     const old = this.db
       .prepare(
-        `SELECT id, type, title, body, project, agent, source, status, importance, citations, superseded_by
+        `SELECT id, type, title, body, project, agent, source, status, importance, citations, inclusion, globs, superseded_by
          FROM entries WHERE id = ?`,
       )
       .get(cleanId)
@@ -1296,6 +1405,12 @@ export class Memory {
     const source = fields.source !== undefined ? cleanOptional(fields.source) : old.source
     const citations =
       fields.citations !== undefined ? serializeCitations(fields.citations) : old.citations ?? null
+    // A successor keeps its parent's inclusion; switching away from glob drops the old globs.
+    const mode = fields.inclusion !== undefined ? fields.inclusion : old.inclusion
+    const scope = cleanInclusion(
+      mode,
+      fields.globs !== undefined ? fields.globs : mode === 'glob' ? parseGlobs(old.globs) : undefined,
+    )
 
     // Rewriting a live entry poisons the same channel as writing a new one.
     if (source === 'mcp') rejectInjectedMemory(title, body)
@@ -1317,8 +1432,8 @@ export class Memory {
     try {
       this.db
         .prepare(
-          `INSERT INTO entries (id, type, title, body, project, agent, source, status, importance, citations, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO entries (id, type, title, body, project, agent, source, status, importance, citations, inclusion, globs, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           newId,
@@ -1331,6 +1446,8 @@ export class Memory {
           status ?? null,
           importance,
           citations,
+          scope.inclusion,
+          scope.globs,
           now,
           now,
         )
@@ -1359,55 +1476,75 @@ export class Memory {
   }
 
   /**
-   * @param {{ project?: string }} opts
+   * Startup pack. `prompt` and `files` (paths being touched) pull in matching
+   * glob / auto / manual entries (#271); `matchedOnly` returns just those, for
+   * follow-up turns that already carry the always-on pack.
+   * @param {{ project?: string, prompt?: string, files?: string[], matchedOnly?: boolean }} opts
    */
   bootstrap(opts = {}) {
     const rawProject = cleanOptional(opts.project)
     const project = canonicalProject(rawProject, this.db)
     const root = resolveVerifyRoot(rawProject)
+    const matchedOnly = opts.matchedOnly === true
 
-    const conventionsRaw = this.db
-      .prepare(
-        `SELECT id, title, body, importance, created_at, citations FROM entries
-         WHERE type = 'convention' AND ${liveSql()}
-           AND (? IS NULL OR project = ?)
-         ORDER BY importance DESC, created_at DESC
-         LIMIT 50`,
-      )
-      .all(project, project)
+    const section = (type, cols, extra = '') =>
+      matchedOnly
+        ? []
+        : this.db
+            .prepare(
+              `SELECT ${cols} FROM entries
+               WHERE type = '${type}' AND ${liveSql()} AND inclusion IS NULL ${extra}
+                 AND (? IS NULL OR project = ?)
+               ORDER BY ${type === 'task' ? 'updated_at DESC' : 'importance DESC'}, created_at DESC
+               LIMIT 50`,
+            )
+            .all(project, project)
 
+    const cols = 'id, title, body, importance, created_at, citations, inclusion'
     // Strategies go in whole: a "when X, do Y" rule truncated mid-clause is worse
     // than absent. They are short by construction and the budget caps the count.
-    const strategiesRaw = this.db
+    const conventionsRaw = section('convention', cols)
+    const strategiesRaw = section('strategy', cols)
+    const knowledgeRaw = section('knowledge', cols)
+    const tasksRaw = section(
+      'task',
+      'id, title, body, status, agent, source, project, created_at, updated_at, citations, inclusion',
+      `AND COALESCE(status, 'active') = 'active'`,
+    )
+
+    // Matched conditional entries go first: they were picked for this prompt.
+    const conditional = this.db
       .prepare(
-        `SELECT id, title, body, importance, created_at, citations FROM entries
-         WHERE type = 'strategy' AND ${liveSql()}
+        `SELECT id, type, title, body, importance, status, agent, source, project,
+                created_at, updated_at, citations, inclusion, globs FROM entries
+         WHERE type IN ('convention', 'strategy', 'knowledge', 'task') AND ${liveSql()}
+           AND inclusion IS NOT NULL
+           AND (type <> 'task' OR COALESCE(status, 'active') = 'active')
            AND (? IS NULL OR project = ?)
          ORDER BY importance DESC, created_at DESC
-         LIMIT 50`,
+         LIMIT ${CONDITIONAL_SCAN_CAP}`,
       )
       .all(project, project)
-
-    const knowledgeRaw = this.db
-      .prepare(
-        `SELECT id, title, body, importance, created_at, citations FROM entries
-         WHERE type = 'knowledge' AND ${liveSql()}
-           AND (? IS NULL OR project = ?)
-         ORDER BY importance DESC, created_at DESC
-         LIMIT 50`,
-      )
-      .all(project, project)
-
-    const tasksRaw = this.db
-      .prepare(
-        `SELECT id, title, body, status, agent, source, project, created_at, updated_at, citations FROM entries
-         WHERE type = 'task' AND ${liveSql()}
-           AND COALESCE(status, 'active') = 'active'
-           AND (? IS NULL OR project = ?)
-         ORDER BY updated_at DESC, created_at DESC
-         LIMIT 50`,
-      )
-      .all(project, project)
+    const prompt = String(opts.prompt ?? '').slice(0, MATCH_PROMPT_CHARS)
+    const files = [
+      ...(Array.isArray(opts.files) ? opts.files.slice(0, MATCH_FILES_MAX) : []),
+      ...promptPaths(prompt),
+    ].map((f) => relPath(f, root))
+    const promptTokens = autoTokens(prompt)
+    const lowerPrompt = prompt.toLowerCase()
+    const matched = conditional.filter((r) => {
+      if (r.inclusion === 'glob') return globsMatch(parseGlobs(r.globs), files)
+      if (r.inclusion === 'auto') return autoMatches(r.title, promptTokens)
+      if (r.inclusion === 'manual') return lowerPrompt.includes(`#${r.id.slice(0, 8)}`)
+      return false
+    })
+    const deferred = conditional.length - matched.length
+    const pick = (type) => matched.filter((r) => r.type === type)
+    conventionsRaw.unshift(...pick('convention'))
+    strategiesRaw.unshift(...pick('strategy'))
+    knowledgeRaw.unshift(...pick('knowledge'))
+    tasksRaw.unshift(...pick('task'))
+    const withInclusion = (r) => (r.inclusion ? { inclusion: r.inclusion } : {})
 
     const conventionsBudget = budgetSection(
       conventionsRaw,
@@ -1425,6 +1562,7 @@ export class Memory {
       created_at: r.created_at,
       citations: r.citations,
       ...(r.verified ? { verified: true } : {}),
+      ...withInclusion(r),
     }))
 
     const strategiesBudget = budgetSection(
@@ -1443,6 +1581,7 @@ export class Memory {
       created_at: r.created_at,
       citations: r.citations,
       ...(r.verified ? { verified: true } : {}),
+      ...withInclusion(r),
     }))
 
     const knowledgeBudget = budgetSection(
@@ -1467,6 +1606,7 @@ export class Memory {
       created_at: r.created_at,
       citations: r.citations,
       ...(r.verified ? { verified: true } : {}),
+      ...withInclusion(r),
     }))
 
     const tasksBudget = budgetSection(
@@ -1496,6 +1636,7 @@ export class Memory {
       project: r.project,
       updated_at: r.updated_at,
       citations: r.citations,
+      ...withInclusion(r),
     }))
 
     this.markAccessed([
@@ -1510,8 +1651,10 @@ export class Memory {
       strategies,
       knowledge,
       tasks,
-      wiki: this.getWiki(rawProject),
+      wiki: matchedOnly ? null : this.getWiki(rawProject),
       protocol: [...PROTOCOL],
+      // Conditional entries that did not match this prompt/files.
+      deferred,
       truncated: {
         conventions: conventionsBudget.truncated,
         strategies: strategiesBudget.truncated,
