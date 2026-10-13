@@ -1066,6 +1066,12 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     [forkThread],
   );
 
+  const forkFromCheckpoint = useCallback(
+    (threadId: string, sha: string) =>
+      forkThread(threadId, { checkpointSha: sha }),
+    [forkThread],
+  );
+
   const handleForkOpen = useCallback(
     async (opts?: {
       provider?: string;
@@ -2200,6 +2206,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         fetchDiff={fetchDiff}
         listCheckpoints={listCheckpoints}
         restoreCheckpoint={restoreCheckpoint}
+        forkFromCheckpoint={forkFromCheckpoint}
+        fetchTurnDiff={fetchTurnDiff}
         listLocalServers={listLocalServers}
         revealInFinder={revealInFinder}
         openInEditor={openInEditor}

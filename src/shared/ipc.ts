@@ -4331,6 +4331,12 @@ export type ThreadForkOpts = {
   leadSnapshotDirty?: boolean;
   /** Start the fork out of plan mode ("Implement in a new thread", #1501). */
   leavePlan?: boolean;
+  /**
+   * Fork from one of the source's turn checkpoints (#252): the new worktree
+   * starts at that commit (recorded as leadSnapshotSha) and the transcript is
+   * cut at the turn that made it. Rejects a sha that is not the source's.
+   */
+  checkpointSha?: string;
 };
 
 /**
@@ -5724,9 +5730,14 @@ export interface CoderApi {
      * Checkpoint-to-checkpoint patch for one turn (#148). Same pairing as
      * runStats: N vs N-1 (first vs its parent). `sha` must be one of this
      * thread's checkpoints. Never rejects: missing worktree / unknown sha /
-     * git failure return an empty DiffResult.
+     * git failure return an empty DiffResult. `from` (another of this
+     * thread's checkpoints) replaces N-1 to compare any two (#252).
      */
-    turnDiff(input: { threadId: string; sha: string }): Promise<DiffResult>;
+    turnDiff(input: {
+      threadId: string;
+      sha: string;
+      from?: string;
+    }): Promise<DiffResult>;
     /**
      * Predicted merge conflicts between the project's active worktree threads
      * (#249), computed with `git merge-tree` before anyone merges. Read-only
