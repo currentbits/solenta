@@ -225,8 +225,8 @@
         Planboard reads the board from labels. Agents on a GitHub-origin
         project write with the coder-threads tools
         <code>issue_create</code>, <code>issue_list</code>,
-        <code>issue_set_plan</code>, <code>issue_complete</code> and
-        <code>issue_comment</code>
+        <code>issue_set_plan</code>, <code>issue_complete</code>,
+        <code>issue_comment</code> and <code>issue_label</code>
         (omitted when the origin is not GitHub). Sandboxed
         <code>gh</code> cannot see macOS keychain credentials, so those
         tools run on the host instead. An issue labelled
@@ -706,6 +706,7 @@
           <tr><td>issue_create</td><td>Creates a GitHub issue on this origin and labels it plan:todo.</td></tr>
           <tr><td>issue_set_plan</td><td>Moves a Planboard issue's plan:todo / plan:doing / plan:done label.</td></tr>
           <tr><td>issue_comment</td><td>Appends an issue comment without changing plan labels or closing the issue.</td></tr>
+          <tr><td>issue_label</td><td>Adds non-plan labels (type, priority, duplicate, needs-info), creating missing ones.</td></tr>
           <tr><td>issue_complete</td><td>Labels a plan:doing issue plan:done and closes it.</td></tr>
         </tbody>
       </table>
