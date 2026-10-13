@@ -180,6 +180,7 @@ const BY_SCOPE = {
     "runs:retryWorkflowAgent",
     "runs:stop",
     "runs:resumeQuotaWait",
+    "runs:resumeCrew",
     "git:setReviewAccepted",
     "git:suggestCommitMessage",
     "git:suggestPrText",

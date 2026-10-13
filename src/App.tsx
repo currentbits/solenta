@@ -245,6 +245,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     setCrossThreadInbound,
     setQuotaWaitAutoResume,
     resumeQuotaWait,
+    resumeCrew,
     renameThread,
     setNotes,
     setMessagePins,
@@ -1972,6 +1973,9 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
           selectedThreadId
             ? () => resumeQuotaWait(selectedThreadId)
             : undefined
+        }
+        onResumeCrew={
+          selectedThreadId ? () => resumeCrew(selectedThreadId) : undefined
         }
         onSetQuotaWaitAutoResume={
           selectedThreadId
