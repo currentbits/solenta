@@ -17,13 +17,13 @@ export function teachAutonomyFor(reviewsPassed: number): TeachAutonomy {
 
 /**
  * Permission modes allowed at this autonomy rung.
- * hint: ask / plan. review: + accept edits. pair: full access too.
+ * hint: ask / plan. review: + accept edits. pair: auto review and full access too.
  */
 export function teachAllowedPermissionModes(
   autonomy: TeachAutonomy,
 ): PermissionMode[] {
   if (autonomy === "pair") {
-    return ["default", "acceptEdits", "plan", "bypassPermissions"];
+    return ["default", "acceptEdits", "plan", "auto", "bypassPermissions"];
   }
   if (autonomy === "review") {
     return ["default", "acceptEdits", "plan"];
