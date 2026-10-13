@@ -132,6 +132,7 @@ export function useCoderRuns({
         select?: boolean;
         leavePlan?: boolean;
         messageId?: string;
+        checkpointSha?: string;
       },
     ) => {
       try {
@@ -142,9 +143,11 @@ export function useCoderRuns({
           worktree?: boolean;
           leavePlan?: boolean;
           messageId?: string;
+          checkpointSha?: string;
         } = { threadId };
         if (opts?.leavePlan) input.leavePlan = true;
         if (opts?.messageId) input.messageId = opts.messageId;
+        if (opts?.checkpointSha) input.checkpointSha = opts.checkpointSha;
         if (opts && Object.prototype.hasOwnProperty.call(opts, "provider")) {
           input.provider = opts.provider;
         }

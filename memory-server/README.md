@@ -20,6 +20,8 @@ cd memory-server && npm install && node src/index.js
 
 - `memory_bootstrap` — conventions, strategies, knowledge, active tasks, protocol
 
+Inclusion modes (`inclusion` on store/supersede): `always` (default) rides every bootstrap; `glob` (with `globs`) loads when a file in bootstrap's `files` or a path in its `prompt` matches; `auto` loads when half the title's words appear in `prompt`; `manual` loads only when `prompt` mentions `#<first 8 of id>`. Conditional entries stay searchable, and bootstrap reports the unmatched count as `deferred`. `matchedOnly: true` returns just the matched ones (Solenta sends each follow-up prompt this way). REST: `GET /api/bootstrap?prompt=…&file=…&matchedOnly=1`.
+
 Entry types: `convention` (standing rule, importance 5), `strategy` (distilled "when doing X, do/don't Y" procedural rule, 4), `knowledge` (fact, 3), `task` (3), `run` (episodic note, 1). Strategies are injected whole at bootstrap — a rule truncated mid-clause is worse than an absent one.
 
 - `memory_store` / `memory_get` / `memory_search` / `memory_supersede` — learned facts should carry `citations` (`file` path+line+excerpt, `thread`, `commit`). When `project` is a live working directory, bootstrap/search/get verify file citations against that tree and invalidate contradictions instead of injecting them.

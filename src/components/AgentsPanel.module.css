@@ -1345,3 +1345,18 @@
     align-items: flex-start;
   }
 }
+
+/* #252: compare tick + Fork/Restore share the row; wrap when narrow */
+.checkpointRow {
+  flex-wrap: wrap;
+}
+
+.checkpointRow > .gitBtn {
+  flex-shrink: 0;
+  padding: 0 8px;
+}
+
+.checkpointMeta input[type="checkbox"] {
+  margin: 0;
+  align-self: center;
+}
