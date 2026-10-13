@@ -212,6 +212,15 @@ function createThread(store, input) {
   if (!project) {
     throw new Error(`Unknown project: ${input.projectId}`);
   }
+  // Multi-repo task (#263): join the group of the thread extended from.
+  const groupSource =
+    input.taskGroupFrom != null ? store.getThread(input.taskGroupFrom) : null;
+  if (input.taskGroupFrom != null) {
+    if (!groupSource) throw new Error(`Unknown thread: ${input.taskGroupFrom}`);
+    if (project.scratch === true) {
+      throw new Error("Scratch has no repo to add to a multi-repo task");
+    }
+  }
 
   const settings =
     typeof store.getSettings === "function" ? store.getSettings() : null;
@@ -312,11 +321,17 @@ function createThread(store, input) {
     ...(input.memoryConsolidate === true
       ? { memoryConsolidate: true }
       : {}),
+    ...(groupSource
+      ? { taskGroupId: groupSource.taskGroupId || groupSource.id }
+      : {}),
   };
 
   const threads = store.getThreads().slice();
   threads.push(thread);
   store.setThreads(threads);
+  if (groupSource && !groupSource.taskGroupId) {
+    store.updateThread(groupSource.id, { taskGroupId: groupSource.id });
+  }
   store.setMessages(thread.id, []);
   store.setWorkLog(thread.id, []);
   store.save();

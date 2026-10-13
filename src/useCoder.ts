@@ -220,6 +220,7 @@ export interface UseCoderResult {
       issueNumber?: number | null;
       baseBranch?: string | null;
       inheritProvider?: boolean;
+      taskGroupFrom?: string;
     },
   ) => Promise<ThreadInfo | null>;
   /**

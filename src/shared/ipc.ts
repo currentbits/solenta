@@ -739,6 +739,12 @@ export interface ThreadInfo {
    */
   handoffFrom: string | null;
   /**
+   * Multi-repo task (#263): threads sharing this id are one task, one thread
+   * per repo. The id is the thread the task was first extended from. Each
+   * thread still only writes in its own project. Absent = not grouped.
+   */
+  taskGroupId?: string;
+  /**
    * Cached thread recap (#239), rebuilt after each successful turn. Detail
    * only: stripped from sidebar rows. Absent before the first finished turn.
    */
@@ -4722,6 +4728,11 @@ export interface CoderApi {
        * Honoured by setupWorktree, mergeWorktree (no intoPath), and createPr.
        */
       baseBranch?: string | null;
+      /**
+       * Multi-repo task (#263): join this thread's task group (starting one
+       * if it has none). Rejected for the Scratch workspace.
+       */
+      taskGroupFrom?: string;
     }): Promise<ThreadInfo>;
     /**
      * List CLI sessions on disk (#433 Codex, #972 Grok, #970 Claude,
