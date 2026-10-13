@@ -1893,10 +1893,12 @@ function createRunner(opts) {
 
       otel.endRun({ threadId, runId: forkRunId, status: "done" });
       appendMessage(threadId, "user", prompt, forkRunId, null, attachments);
+      const dirty = services.dirtySnapshotWarning(worker);
       appendMessage(
         threadId,
         "event",
-        `[orchestration] Forked worker ${worker.id} for this prompt; it works in its own worktree and wakes this thread when it lands.`,
+        `[orchestration] Forked worker ${worker.id} for this prompt; it works in its own worktree and wakes this thread when it lands.` +
+          (dirty ? ` ${dirty}` : ""),
         forkRunId,
       );
       store.updateThread(

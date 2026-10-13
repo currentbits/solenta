@@ -71,6 +71,7 @@ describe("edit project", () => {
       remotePath: "/srv/app",
       worktreeRetention: 10,
       autoDispatch: false,
+      autoPr: false,
       setupCommand: null,
       waitForSetup: false,
       branchPrefix: null,
@@ -114,6 +115,7 @@ describe("edit project", () => {
       name: "ledger",
       path: "/tmp/ledger",
       autoDispatch: true,
+      autoPr: true,
     });
     const t1 = thread({ id: "t1", projectId: "p1" });
     const fake = createFakeCoder({
@@ -131,6 +133,11 @@ describe("edit project", () => {
     assert.ok(box, "auto-dispatch checkbox must exist");
     assert.equal(box.checked, true, "checkbox prefills from the project");
     assert.equal(box.disabled, false);
+    assert.equal(
+      (m.query("[data-edit-project-auto-pr]") as HTMLInputElement).checked,
+      true,
+      "auto-PR checkbox prefills from the project",
+    );
 
     await m.click(m.query("[data-edit-project-submit]"));
     await m.flush();
@@ -141,6 +148,11 @@ describe("edit project", () => {
       (calls[0]!.args[0] as { autoDispatch?: boolean }).autoDispatch,
       true,
       "submit sends autoDispatch",
+    );
+    assert.equal(
+      (calls[0]!.args[0] as { autoPr?: boolean }).autoPr,
+      true,
+      "submit sends autoPr",
     );
     m.unmount();
   });

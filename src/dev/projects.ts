@@ -215,6 +215,7 @@ export function createProjects(ctx: DevCtx): Pick<CoderApi, "projects" | "spaces
         threadDefaults?: ProjectInfo["threadDefaults"] | null;
         waitForSetup?: boolean | null;
         branchPrefix?: string | null;
+        autoPr?: boolean;
       }) {
         const project = ctx.projects.find((p) => p.id === input.projectId);
         if (!project) {
@@ -290,6 +291,8 @@ export function createProjects(ctx: DevCtx): Pick<CoderApi, "projects" | "spaces
         else if (input.waitForSetup === false || input.waitForSetup === null) {
           delete project.waitForSetup;
         }
+        if (input.autoPr === true) project.autoPr = true;
+        else if (input.autoPr === false) delete project.autoPr;
         if (Object.prototype.hasOwnProperty.call(input, "branchPrefix")) {
           const prefix = input.branchPrefix?.trim() ?? "";
           if (prefix && /[\s~^:?*[\\]|\.\.|^[-/]/.test(prefix)) {

@@ -950,6 +950,24 @@ function forkWorkerThread(store, input, forkImpl = forkThread) {
 }
 
 /**
+ * #1396: a worker forked from a dirty lead starts without those edits. Say
+ * so at fork time (thread_fork result, pendingFork event) instead of only in
+ * the WorktreeControl tooltip. Null for a clean or worktree-less fork.
+ *
+ * @param {any} worker
+ * @returns {string | null}
+ */
+function dirtySnapshotWarning(worker) {
+  if (!worker || worker.leadSnapshotDirty !== true) return null;
+  const sha = String(worker.leadSnapshotSha || "").slice(0, 8);
+  return (
+    `The worker starts from your committed HEAD ${sha}; your uncommitted ` +
+    "edits are NOT in its worktree. Commit them and call " +
+    "refresh_worker_snapshot once it is idle, or tell the worker what is missing."
+  );
+}
+
+/**
  * Set thread provider and/or model. Does not bump updatedAt.
  *
  * Rejects unknown provider ids. Changing provider on a thread with a session
@@ -1743,6 +1761,7 @@ module.exports = {
   forkThread,
   forkFromCheckpoint,
   forkWorkerThread,
+  dirtySnapshotWarning,
   assertWorkerNarrows,
   setProvider,
   listProvidersForApi,

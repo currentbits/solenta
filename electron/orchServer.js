@@ -13,6 +13,7 @@ const { startWithPoolFailover, poolFromStore } = require("./subagentPool.js");
 const { resolveBin, isBinAvailable } = require("./providers.js");
 const {
   forkWorkerThread,
+  dirtySnapshotWarning,
   deleteThread,
   setProvider,
   setRoute,
@@ -462,6 +463,7 @@ function createToolHandlers(deps) {
     // orchWorker + lazy worktree live in services.forkWorkerThread, shared
     // with the runner's pendingFork dispatch.
     let fork = forkWorkerThread(store, input, forkThread);
+    const warning = dirtySnapshotWarning(fork);
     try {
       // #246: a declared tier routes the worker's first turn through the
       // project's tier → profile map. A pinned pool still wins.
@@ -491,7 +493,7 @@ function createToolHandlers(deps) {
       broadcastThreadsChanged();
       throw err;
     }
-    return { threadId: fork.id };
+    return warning ? { threadId: fork.id, warning } : { threadId: fork.id };
   }
 
   /**

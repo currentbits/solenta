@@ -87,6 +87,7 @@ export function EditProjectModal({
   const [autoDispatch, setAutoDispatch] = useState(
     project.autoDispatch ?? false,
   );
+  const [autoPr, setAutoPr] = useState(project.autoPr === true);
   const [retentionText, setRetentionText] = useState(
     String(
       typeof project.worktreeRetention === "number"
@@ -184,6 +185,7 @@ export function EditProjectModal({
         remotePath: rpath,
         worktreeRetention,
         autoDispatch,
+        autoPr,
         setupCommand: setupCommand.trim() || null,
         waitForSetup,
         branchPrefix: branchPrefix.trim() || null,
@@ -881,6 +883,24 @@ export function EditProjectModal({
             </label>
             <p className={styles.note}>
               Starts a thread for each issue that enters plan:todo.
+            </p>
+          </div>
+          <div className={styles.field}>
+            <label className={styles.fieldRow} htmlFor="edit-project-auto-pr">
+              <input
+                id="edit-project-auto-pr"
+                type="checkbox"
+                data-edit-project-auto-pr=""
+                checked={autoPr}
+                disabled={pending}
+                onChange={(e) => setAutoPr(e.target.checked)}
+              />
+              <span>Open a pull request when a thread finishes</span>
+            </label>
+            <p className={styles.note}>
+              When a thread in its own worktree finishes a turn with new
+              commits, its branch is pushed and a pull request is opened, or
+              the open one is updated.
             </p>
           </div>
           {error && (

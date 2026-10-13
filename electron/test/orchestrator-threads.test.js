@@ -138,6 +138,22 @@ describe("orchestrator threads", () => {
     );
   });
 
+  it("warns in the fork event only when the lead has uncommitted edits (#1396)", async () => {
+    const forkEvent = () =>
+      (store.getMessages(thread.id) || []).find(
+        (m) => m.role === "event" && String(m.text).includes("Forked worker"),
+      ).text;
+    await makeRunner(tmpDir).startRun({ threadId: thread.id, prompt: "clean" });
+    assert.doesNotMatch(forkEvent(), /uncommitted/);
+
+    const project = store.getProject(thread.projectId);
+    fs.writeFileSync(path.join(project.path, "README.md"), "edited\n");
+    thread = services.createThread(store, { projectId: project.id });
+    store.updateThread(thread.id, { pendingFork: true });
+    await runner.startRun({ threadId: thread.id, prompt: "dirty" });
+    assert.match(forkEvent(), /uncommitted edits are NOT in its worktree/);
+  });
+
   it("promotes the title before forking so the worker is not 'Fork: New Thread'", async () => {
     await makeRunner(tmpDir).startRun({
       threadId: thread.id,

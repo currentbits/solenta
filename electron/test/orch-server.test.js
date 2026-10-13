@@ -669,6 +669,38 @@ describe("orch-server tool handlers", () => {
     }
   });
 
+  it("thread_fork warns when the lead's uncommitted edits stay behind (#1396)", async () => {
+    const { execFileSync } = require("node:child_process");
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "orch-dirty-"));
+    const git = (...args) => execFileSync("git", args, { cwd: dir, stdio: "ignore" });
+    git("init");
+    git("config", "user.email", "test@example.com");
+    git("config", "user.name", "Test");
+    fs.writeFileSync(path.join(dir, "README.md"), "hello\n");
+    git("add", "README.md");
+    git("commit", "-m", "init");
+    const fork = async () => {
+      const deps = makeDeps();
+      deps.store.getThread("t1").projectId = "p1";
+      deps.store.getProject = () => ({ id: "p1", path: dir });
+      return createToolHandlers(deps).thread_fork({
+        threadId: "t1",
+        projectId: "p1",
+        prompt: "go",
+      });
+    };
+    try {
+      assert.deepEqual(await fork(), { threadId: "fork-1" });
+      fs.writeFileSync(path.join(dir, "README.md"), "edited\n");
+      const out = await fork();
+      assert.equal(out.threadId, "fork-1");
+      assert.match(out.warning, /uncommitted edits are NOT in its worktree/);
+      assert.match(out.warning, /refresh_worker_snapshot/);
+    } finally {
+      await rmTree(dir);
+    }
+  });
+
   it("thread_send unarchives a re-dispatched archived worker", async () => {
     const deps = makeDeps();
     deps.store.threads.push({
