@@ -121,3 +121,113 @@ export function filterPrGroups(
       };
     });
 }
+
+/**
+ * Agent-PR triage inbox (#260): which PRs wait on the human, ordered by the
+ * kind of attention they need rather than recency.
+ */
+export type TriageBucket = "merge" | "review" | "closeable" | "agent";
+
+export const TRIAGE_BUCKETS: readonly { id: TriageBucket; label: string }[] = [
+  { id: "merge", label: "Ready to merge" },
+  { id: "review", label: "Needs your review" },
+  { id: "closeable", label: "Stale or closeable" },
+  { id: "agent", label: "Waiting on the agent or CI" },
+];
+
+export type TriageDepth = "quick" | "review" | "deep";
+
+export interface PrTriage {
+  bucket: TriageBucket;
+  /** Null when gh sent no diffstat (GitLab, older gh). */
+  depth: TriageDepth | null;
+  /** Short risk/blocker chips, most important first. */
+  signals: string[];
+}
+
+export interface TriageRow {
+  project: ProjectInfo;
+  pr: PrListItem;
+  thread: ThreadInfo;
+  triage: PrTriage;
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+/** No PR update for this long and no agent run: offer it for closing. */
+export const TRIAGE_STALE_MS = 14 * DAY_MS;
+const QUICK_LINES = 50;
+/** Matches the default PR size cap (#402). */
+const DEEP_LINES = 400;
+
+export function triagePr(
+  pr: PrListItem,
+  thread: Pick<ThreadInfo, "status" | "archived">,
+  now: number,
+): PrTriage {
+  const signals: string[] = [];
+  if (pr.checks === "fail") signals.push("CI failing");
+  if (pr.mergeable === "CONFLICTING") signals.push("Conflicts");
+  if (pr.reviewDecision === "CHANGES_REQUESTED") signals.push("Changes requested");
+  if (pr.checks === "pending") signals.push("CI running");
+  if (pr.isDraft) signals.push("Draft");
+  const working = thread.status === "working";
+  if (working) signals.push("Agent working");
+  const blocked = signals.length > 0;
+
+  const lines =
+    pr.additions != null && pr.deletions != null
+      ? pr.additions + pr.deletions
+      : null;
+  const depth: TriageDepth | null =
+    lines == null
+      ? null
+      : lines <= QUICK_LINES
+        ? "quick"
+        : lines <= DEEP_LINES
+          ? "review"
+          : "deep";
+  if (depth === "deep") signals.push("Large diff");
+
+  const idleMs = now - (prUpdatedMs(pr) ?? now);
+  const stale = !working && idleMs >= TRIAGE_STALE_MS;
+  if (stale) signals.push(`Idle ${Math.floor(idleMs / DAY_MS)}d`);
+  if (thread.archived) signals.push("Thread archived");
+
+  const bucket: TriageBucket =
+    thread.archived || stale
+      ? "closeable"
+      : blocked
+        ? "agent"
+        : pr.reviewDecision === "APPROVED"
+          ? "merge"
+          : "review";
+  return { bucket, depth, signals };
+}
+
+/**
+ * Open agent PRs (those with a Solenta thread) across loaded groups, sorted
+ * by bucket, then longest-waiting first. Failed groups contribute nothing.
+ */
+export function triageInbox(
+  groups: readonly PrGroup[],
+  threads: readonly ThreadInfo[],
+  now: number,
+): TriageRow[] {
+  const rows: TriageRow[] = [];
+  for (const group of groups) {
+    if (!group.ok) continue;
+    for (const pr of group.prs) {
+      if (pr.state !== "OPEN") continue;
+      const thread = matchThreadForPr(pr, threads, group.project.id);
+      if (!thread) continue;
+      rows.push({ project: group.project, pr, thread, triage: triagePr(pr, thread, now) });
+    }
+  }
+  const order = TRIAGE_BUCKETS.map((b) => b.id);
+  const age = (row: TriageRow) => prUpdatedMs(row.pr) ?? Infinity;
+  return rows.sort(
+    (a, b) =>
+      order.indexOf(a.triage.bucket) - order.indexOf(b.triage.bucket) ||
+      age(a) - age(b),
+  );
+}

@@ -453,15 +453,22 @@ function createMemoryProxy(opts) {
 
     /**
      * One-call startup context (conventions, strategies, knowledge, tasks).
-     * @param {{ project?: string }} [input]
+     * prompt/files pull in matching conditional entries (#271). GET with
+     * query params so an older adopted server just ignores them; the prompt
+     * is capped to stay well under node's 16KB header limit.
+     * @param {{ project?: string, prompt?: string, files?: string[], matchedOnly?: boolean }} [input]
      * @returns {Promise<object>}
      */
     async bootstrap(input) {
-      let pathWithQuery = "/api/bootstrap";
+      const params = new URLSearchParams();
       if (input && input.project != null && input.project !== "") {
-        pathWithQuery += `?project=${encodeURIComponent(String(input.project))}`;
+        params.set("project", String(input.project));
       }
-      const raw = await request("GET", pathWithQuery);
+      if (input && input.prompt) params.set("prompt", String(input.prompt).slice(0, 2000));
+      for (const f of (input && input.files) || []) params.append("file", String(f));
+      if (input && input.matchedOnly === true) params.set("matchedOnly", "1");
+      const query = params.toString();
+      const raw = await request("GET", `/api/bootstrap${query ? `?${query}` : ""}`);
       return raw && typeof raw === "object" ? raw : {};
     },
 

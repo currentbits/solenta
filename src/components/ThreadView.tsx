@@ -139,7 +139,8 @@ import {
   useTranscriptViewMode,
 } from "../uiPrefs";
 import { DROP_OVERLAY_MESSAGE, type DroppedFolder } from "../dropFiles";
-import { Composer } from "./Composer";
+import { Composer, type ComposerProps } from "./Composer";
+import { AttachmentChip } from "./composer/AttachmentChip";
 import { repoRelativeDir } from "../mention";
 import {
   makeReplyTarget,
@@ -339,10 +340,11 @@ interface ThreadViewProps {
     itemAttachments?: AttachmentInfo[][],
   ) => void | Promise<void>;
   /**
-   * Text a cancelled queue pushed back toward the composer (issue #364).
-   * Passed through to Composer, which applies it only onto an empty draft.
+   * Text and files a cancelled queue pushed back toward the composer
+   * (issue #364, #1212). Passed through to Composer.
    */
-  restoreDraft?: { threadId: string; text: string } | null;
+  restoreDraft?: ComposerProps["restoreDraft"];
+  onRestoreDraftConsumed?: () => void;
   onSetPermissionMode: (
     mode: PermissionMode,
     threadId?: string,
@@ -773,6 +775,7 @@ export const ThreadView = memo(function ThreadView({
   onSteerQueued,
   onEditQueued,
   restoreDraft = null,
+  onRestoreDraftConsumed,
   onSetPermissionMode,
   onRespondPermission,
   onImplementPlan,
@@ -4482,12 +4485,15 @@ export const ThreadView = memo(function ThreadView({
                           {queuedFiles[i]?.length ? (
                             <span
                               className={styles.queuedFiles}
-                              title={queuedFiles[i]!.map((f) => f.name).join(", ")}
                               data-queued-files={String(queuedFiles[i]!.length)}
                             >
-                              {queuedFiles[i]!.length === 1
-                                ? "1 file"
-                                : `${queuedFiles[i]!.length} files`}
+                              {queuedFiles[i]!.map((f) => (
+                                <AttachmentChip
+                                  key={f.path}
+                                  attachment={f}
+                                  onLoadImage={onLoadAttachmentImage}
+                                />
+                              ))}
                             </span>
                           ) : null}
                           <div
@@ -4806,6 +4812,7 @@ export const ThreadView = memo(function ThreadView({
         }
         onSend={handleComposerSend}
         restoreDraft={restoreDraft}
+        onRestoreDraftConsumed={onRestoreDraftConsumed}
         onBuild={onStartWorkflow}
         onBestOfN={onFork && !thread.ask ? runBestOfN : undefined}
         onDelegate={onFork && !thread.ask ? runDelegate : undefined}

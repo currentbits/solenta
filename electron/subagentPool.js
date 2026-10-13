@@ -351,7 +351,9 @@ function nextPoolEntry(pool, opts) {
 /**
  * Retry startRun on the same worker after a missing-binary failure,
  * switching to the next available pool entry. Only retries when the
- * worker was resolved from the pool (poolAlias / force).
+ * worker was resolved from the pool (poolAlias / force). Across an
+ * ssh/WSL boundary the CLI runs remotely, so the local isAvailable check
+ * is skipped (#1403); the next start reports the real remote result.
  *
  * @param {{
  *   store: any,
@@ -361,6 +363,7 @@ function nextPoolEntry(pool, opts) {
  *   startRun: (input: object) => Promise<any>,
  *   setProvider: (store: any, input: object) => any,
  *   isAvailable?: (provider: string) => boolean,
+ *   project?: { remoteHost?: string, path?: string } | null,
  *   onFailover?: (next: SubagentPoolEntry, fromProvider: string) => void,
  * }} opts
  */
@@ -373,6 +376,8 @@ async function startWithPoolFailover(opts) {
   const fromPool = Boolean(
     (worker && worker.poolAlias) || (pool && pool.force && pool.defaultAlias),
   );
+  const { crossesBoundary } = require("./workflow-spawn.js");
+  const isAvailable = crossesBoundary(opts.project) ? undefined : opts.isAvailable;
   const tried = new Set();
   let lastErr;
   for (let i = 0; i < 8; i++) {
@@ -390,7 +395,7 @@ async function startWithPoolFailover(opts) {
       if (provider) tried.add(provider);
       const next = nextPoolEntry(pool, {
         skipProviders: tried,
-        isAvailable: opts.isAvailable,
+        isAvailable,
       });
       if (!next) throw err;
       // #1425: failover must not hand the worker more permissions than its lead.

@@ -201,6 +201,115 @@ describe("turnDiff", () => {
   });
 });
 
+describe("checkpoint graph (#252)", () => {
+  let fx;
+
+  afterEach(() => {
+    if (fx) {
+      fs.rmSync(fx.tmpDir, { recursive: true, force: true, maxRetries: 8, retryDelay: 10 });
+      fx = null;
+    }
+  });
+
+  async function twoTurns() {
+    fx = await makeWorktreeFixture();
+    const wt = fx.worktreePath;
+    fx.store.setMessages(fx.thread.id, [
+      { id: "u1", role: "user", text: "write a", createdAt: 1 },
+      { id: "a1", role: "assistant", text: "wrote a", createdAt: 2, claudeUuid: "uu-a1" },
+    ]);
+    fs.writeFileSync(path.join(wt, "a.txt"), "one\n");
+    const c1 = await maybeCreateCheckpoint(fx.store, fx.thread.id);
+    fx.store.setMessages(fx.thread.id, [
+      ...fx.store.getMessages(fx.thread.id),
+      { id: "u2", role: "user", text: "write b", createdAt: 3 },
+      { id: "a2", role: "assistant", text: "wrote b", createdAt: 4 },
+    ]);
+    fs.writeFileSync(path.join(wt, "a.txt"), "one\ntwo\n");
+    fs.writeFileSync(path.join(wt, "b.txt"), "beta\n");
+    const c2 = await maybeCreateCheckpoint(fx.store, fx.thread.id);
+    fs.writeFileSync(path.join(wt, "c.txt"), "gamma\n");
+    const c3 = await maybeCreateCheckpoint(fx.store, fx.thread.id);
+    assert.ok(c1.sha && c2.sha && c3.sha);
+    return { c1, c2, c3 };
+  }
+
+  it("turnDiff `from` diffs any two of the thread's checkpoints", async () => {
+    const { c1, c3 } = await twoTurns();
+    const range = await turnDiff({
+      store: fx.store,
+      threadId: fx.thread.id,
+      sha: c3.sha,
+      from: c1.sha,
+    });
+    const expected = git(fx.worktreePath, ["diff", c1.sha, c3.sha, "--"]);
+    assert.equal(range.patch.trim(), expected.trim());
+    assert.deepEqual(range.files.map((f) => f.path).sort(), [
+      "a.txt",
+      "b.txt",
+      "c.txt",
+    ]);
+    // `from` obeys the same contract as `sha`: never an arbitrary rev.
+    const parent = git(fx.worktreePath, ["rev-parse", `${c1.sha}^`]).trim();
+    assert.deepEqual(
+      await turnDiff({
+        store: fx.store,
+        threadId: fx.thread.id,
+        sha: c3.sha,
+        from: parent,
+      }),
+      { files: [], patch: "", truncated: false },
+    );
+  });
+
+  it("forks a thread whose worktree and transcript start at the checkpoint", async () => {
+    const { c1 } = await twoTurns();
+    services.setProvider(fx.store, { threadId: fx.thread.id, provider: "claude" });
+    fx.store.updateThread(fx.thread.id, { sessionId: "sess-src" });
+
+    const fork = await services.forkFromCheckpoint(fx.store, {
+      threadId: fx.thread.id,
+      checkpointSha: c1.sha,
+    });
+    assert.equal(fork.leadSnapshotSha, c1.sha);
+    assert.equal(fork.pendingWorktree, true);
+    assert.equal(fork.handoffFrom, fx.thread.id);
+    assert.deepEqual(
+      fx.store.getMessages(fork.id).map((m) => m.text),
+      ["write a", "wrote a"],
+    );
+    // A new worktree is a new cwd: Claude cannot --resume there, so replay.
+    assert.equal(fork.sessionId, null);
+    assert.ok(!fork.forkSessionAt);
+    assert.equal(fork.replayContext, true);
+
+    const setup = setupWorktree({
+      store: fx.store,
+      threadId: fork.id,
+      worktreeBase: path.join(fx.tmpDir, "worktrees"),
+      broadcast: () => {},
+    });
+    assert.equal(git(setup.worktreePath, ["rev-parse", "HEAD"]).trim(), c1.sha);
+    assert.equal(fs.existsSync(path.join(setup.worktreePath, "b.txt")), false);
+    // Source untouched.
+    assert.equal(fx.store.getMessages(fx.thread.id).length, 4);
+  });
+
+  it("rejects a sha that is not one of the source's checkpoints", async () => {
+    await twoTurns();
+    const before = fx.store.getThreads().length;
+    const parent = git(fx.worktreePath, ["rev-parse", "HEAD~3"]).trim();
+    await assert.rejects(
+      services.forkFromCheckpoint(fx.store, {
+        threadId: fx.thread.id,
+        checkpointSha: parent,
+      }),
+      /Unknown checkpoint/,
+    );
+    assert.equal(fx.store.getThreads().length, before);
+  });
+});
+
 describe("IPC seam git:turnDiff", () => {
   it("preload exposes turnDiff and main registers the channel", () => {
     const Module = require("module");

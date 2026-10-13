@@ -43,6 +43,44 @@ const THREAD_SOURCE = "solenta";
 // Interactive only (#1208). exec / workflow / ask / commitmsg stay never.
 const APPROVAL_POLICY = "on-request";
 
+// Auto review (#256): codex's own reviewer subagent answers approval
+// requests; anything it will not approve still reaches the user.
+function approvalsReviewerFor(permissionMode) {
+  return String(permissionMode || "") === "auto" ? "auto_review" : "user";
+}
+
+/**
+ * One-line log of a finished auto review, or null while it is in progress.
+ * @param {object} p - item/autoApprovalReview/completed params
+ * @returns {string | null}
+ */
+function autoReviewNote(p) {
+  const review = p && p.review && typeof p.review === "object" ? p.review : {};
+  const verdict = {
+    approved: "approved",
+    denied: "denied",
+    timedOut: "timed out on",
+    aborted: "aborted",
+  }[String(review.status || "")];
+  if (!verdict) return null;
+  const a = p.action && typeof p.action === "object" ? p.action : {};
+  const what =
+    a.type === "command"
+      ? `\`${a.command}\``
+      : a.type === "execve"
+        ? `\`${[a.program, ...(Array.isArray(a.argv) ? a.argv.slice(1) : [])].join(" ")}\``
+        : a.type === "applyPatch"
+          ? `edits to ${(a.files || []).length} file(s)`
+          : a.type === "networkAccess"
+            ? `network access to ${a.host}`
+            : a.type === "mcpToolCall"
+              ? `${a.server} ${a.toolName}`
+              : String(a.type || "a request");
+  const risk = review.riskLevel ? ` (${review.riskLevel} risk)` : "";
+  const why = review.rationale ? `: ${review.rationale}` : "";
+  return `Auto review ${verdict} ${what}${risk}${why}`;
+}
+
 const ITEM_TYPE_TO_JSONL = {
   agentMessage: "agent_message",
   commandExecution: "command_execution",
@@ -271,6 +309,10 @@ function notificationToJsonl(msg) {
       ? { type: "goal.updated", goal: p.goal }
       : null;
   }
+  if (method === "item/autoApprovalReview/completed") {
+    const note = autoReviewNote(p);
+    return note ? { type: "auto_review", note } : null;
+  }
   if (method === "error") {
     return { type: "error", error: p };
   }
@@ -321,6 +363,7 @@ function turnParams(opts, threadId, prompt, images) {
   if (opts.reasoningEffort) params.effort = String(opts.reasoningEffort);
   if (opts.cwd) params.cwd = String(opts.cwd);
   params.approvalPolicy = APPROVAL_POLICY;
+  params.approvalsReviewer = approvalsReviewerFor(opts.permissionMode);
   return params;
 }
 
@@ -329,6 +372,7 @@ function threadParams(opts) {
   /** @type {Record<string, unknown>} */
   const params = {
     approvalPolicy: APPROVAL_POLICY,
+    approvalsReviewer: approvalsReviewerFor(opts.permissionMode),
     sandbox,
     threadSource: THREAD_SOURCE,
     ephemeral: false,
