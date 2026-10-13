@@ -296,6 +296,22 @@
   overflow-wrap: anywhere;
 }
 
+/* #263 multi-repo task roll-up: one row per repo thread. */
+.taskMembers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 16px;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Long project lists scroll inside the title menu. */
+.taskAddRepo {
+  max-height: 14em;
+  overflow-y: auto;
+}
+
 .handoffLink {
   border: none;
   background: none;
@@ -3611,9 +3627,13 @@ button.diffLineGutter:focus-visible {
 }
 
 .queuedFiles {
-  flex: 0 0 auto;
-  color: var(--text-dim);
-  font-size: 11px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+  flex: 0 1 auto;
+  max-width: 45%;
+  min-width: 0;
 }
 
 .queuedBody {

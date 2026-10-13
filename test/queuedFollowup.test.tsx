@@ -555,7 +555,7 @@ describe("queued follow-up (issue #92 / #314)", () => {
     m.unmount();
   });
 
-  it("cancel does not clobber an in-progress composer draft", async () => {
+  it("cancel keeps an in-progress composer draft and appends the queued text (#1212)", async () => {
     const { m } = await bootOnBusyThread();
 
     await m.type(m.query("textarea"), "queued words");
@@ -570,8 +570,8 @@ describe("queued follow-up (issue #92 / #314)", () => {
     assert.equal(m.query("[data-queued-prompt]"), null);
     assert.equal(
       ta.value,
-      "half-typed draft",
-      "an in-progress draft always wins",
+      "half-typed draft\n\nqueued words",
+      "an in-progress draft is kept, the queued text goes after it",
     );
     m.unmount();
   });
@@ -670,8 +670,82 @@ describe("queued follow-up (issue #92 / #314)", () => {
     const { m } = await bootBusySteerable(false, perItemQueue());
     assert.equal(m.query('[data-queued-item="0"] [data-queued-files]'), null);
     const label = m.query('[data-queued-item="1"] [data-queued-files]');
-    assert.equal(label?.textContent, "1 file");
-    assert.equal(label?.getAttribute("title"), "b.png");
+    const chip = label?.querySelector('[data-attachment-kind="image"]');
+    assert.equal(chip?.textContent, "b.png", "the queued file shows by name");
+    assert.equal(chip?.getAttribute("title"), "/tmp/b.png");
+    assert.equal(
+      label?.querySelector("button"),
+      null,
+      "queued chips are read-only; Cancel or Edit owns removal",
+    );
+    m.unmount();
+  });
+
+  it("cancel hands queued files back to the composer, and a resend keeps them (#1212)", async () => {
+    const { fake, m } = await bootBusySteerable(false, perItemQueue());
+    await m.click(m.query("button[data-cancel-queued]"));
+    await m.flush();
+    const ta = m.query("textarea") as HTMLTextAreaElement;
+    assert.equal(ta.value, "first thought\n\nsecond thought");
+    assert.ok(
+      m.query('[aria-label="Attachments"] [title="/tmp/b.png"]'),
+      "the queued image returns as a composer chip",
+    );
+
+    await m.click(m.query('button[aria-label="Send"]'));
+    await m.flush();
+    const requeued = fake
+      .of("threads.setQueued")
+      .map((c) => c.args[0] as { prompt: string | null; attachments?: unknown })
+      .filter((a) => a.prompt);
+    assert.deepEqual(requeued.at(-1)?.attachments, [ITEM_SHOT]);
+    m.unmount();
+  });
+
+  it("a cancel that lands after a thread switch restores on its own thread only (#1212)", async () => {
+    // Settled, not working: the sidebar folds unselected working threads
+    // into a group, and the switch back needs the card.
+    const settled = { ...working(), status: "done" as const, queued: perItemQueue() };
+    const fake = createFakeCoder({
+      projects: [project()],
+      threads: [decoy(), settled],
+      details: {
+        "t-decoy": detail({ thread: decoy() }),
+        "t-busy": detail({ thread: settled }),
+      },
+    });
+    const m = await boot(fake);
+    await m.click(m.query('button[aria-label^="Select thread: busy target thread"]'));
+    await m.flush();
+    const orig = fake.api.threads.setQueued.bind(fake.api.threads);
+    let land!: () => void;
+    fake.api.threads.setQueued = (input) =>
+      (input as { prompt: string | null }).prompt === null
+        ? new Promise((resolve) => {
+            land = () => resolve(orig(input));
+          })
+        : orig(input);
+
+    await m.click(m.query("button[data-cancel-queued]"));
+    await m.flush();
+    await m.click(m.query('button[aria-label^="Select thread: decoy first thread"]'));
+    await m.flush();
+    await inAct(async () => land());
+    await m.flush();
+    assert.equal((m.query("textarea") as HTMLTextAreaElement).value, "");
+    assert.equal(
+      m.query('[aria-label="Attachments"]'),
+      null,
+      "another thread's composer must not receive the queued chips",
+    );
+
+    await m.click(m.query('button[aria-label^="Select thread: busy target thread"]'));
+    await m.flush();
+    assert.equal(
+      (m.query("textarea") as HTMLTextAreaElement).value,
+      "first thought\n\nsecond thought",
+    );
+    assert.ok(m.query('[aria-label="Attachments"] [title="/tmp/b.png"]'));
     m.unmount();
   });
 
@@ -688,7 +762,7 @@ describe("queued follow-up (issue #92 / #314)", () => {
     );
     assert.equal(
       m.query('[data-queued-item="0"] [data-queued-files]')?.textContent,
-      "1 file",
+      "b.png",
     );
     m.unmount();
   });

@@ -610,6 +610,7 @@ module.exports = {
       store: ctx.store,
       threadId: input && input.threadId,
       sha: input && input.sha,
+      from: input && input.from,
     });
   },
   "git:conflictForecast": async (ctx, input) => {

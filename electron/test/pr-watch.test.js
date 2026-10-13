@@ -14,6 +14,7 @@ const { execFileSync } = require("node:child_process");
 const { Store } = require("../store.js");
 const services = require("../services.js");
 const prWatch = require("../prWatch.js");
+const { rmTree } = require("./support/rmTree.js");
 const { setupWorktree, refreshPrStates } = require("../worktrees.js");
 const { createToolHandlers } = require("../orchServer.js");
 const { createRunner } = require("../runner.js");
@@ -286,11 +287,12 @@ describe("PR watch wake-ups through the refresher are machine turns", () => {
     store = new Store(path.join(tmpDir, "store.json"));
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (runner) runner.stopAll();
-    fs.rmSync(tmpDir, { recursive: true, force: true });
     if (prevSimulate === undefined) delete process.env.CODER_SIMULATE;
     else process.env.CODER_SIMULATE = prevSimulate;
+    // A late store flush can drop a .tmp mid-delete (ENOTEMPTY); rmTree retries.
+    await rmTree(tmpDir);
   });
 
   it("the refresher polls an archived worker's PR and wakes its lead (#1431)", async () => {

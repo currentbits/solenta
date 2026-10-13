@@ -179,7 +179,13 @@ function attachmentPromptSection(attachments) {
   const lines = attachments.map((a) => {
     const label =
       a.kind === "folder" ? "Folder" : a.kind === "file" ? "File" : "Image";
-    return `- ${label}: ${a.path}`;
+    // Video frames (#266) are named "clip.mov @ 0:03" while the stored
+    // filename is a timestamp; pass the display name through.
+    const note =
+      a.kind === "image" && a.name && a.name !== path.basename(a.path)
+        ? ` (${a.name.replace(/[\r\n\]]+/g, " ")})`
+        : "";
+    return `- ${label}: ${a.path}${note}`;
   });
   return (
     "\n\n[The user attached the following items. Inspect them with your " +

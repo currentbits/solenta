@@ -49,7 +49,10 @@ const paths = (res) => res.files.map((f) => f.path).sort();
 describe("diff scopes (#1493)", () => {
   let fx;
   afterEach(() => {
-    if (fx) fs.rmSync(fx.tmpDir, { recursive: true, force: true });
+    // A late git write into repo/.git can ENOTEMPTY the first pass (CI #1626).
+    if (fx) {
+      fs.rmSync(fx.tmpDir, { recursive: true, force: true, maxRetries: 8, retryDelay: 10 });
+    }
     fx = null;
   });
 

@@ -84,7 +84,7 @@ const { posixQuote } = require("./ssh.js");
  * @property {boolean} [supportsAgents] - CLI accepts `--agent <name>` to run
  *   as a custom agent (#172; electron/agents.js lists them). Absent/false
  *   hides the composer Agent picker and setAgent rejects names.
- * @property {Array<"default"|"acceptEdits"|"plan"|"bypassPermissions">} permissionModes
+ * @property {Array<"default"|"acceptEdits"|"plan"|"auto"|"bypassPermissions">} permissionModes
  *   Modes this adapter actually honours (changes argv / CLI behaviour).
  *   The composer only offers these; setPermissionMode rejects the rest.
  * @property {"claude-stream" | "codex-json" | "kimi-stream" | "opencode-json" | "cursor-stream" | "muse-json" | "simulate"} kind
@@ -102,10 +102,13 @@ const { posixQuote } = require("./ssh.js");
  * }) => string[]} buildArgs
  */
 
+// "auto" (#256): the CLI's own model reviewer approves routine actions
+// (claude --permission-mode auto, codex approvalsReviewer auto_review).
 const ALL_PERMISSION_MODES = [
   "default",
   "acceptEdits",
   "plan",
+  "auto",
   "bypassPermissions",
 ];
 
@@ -216,7 +219,8 @@ function honouredPermissionModes(entry) {
 /**
  * Nearest honoured mode for a stored value this provider cannot send.
  * Asking modes on unprompted CLIs become bypassPermissions; plan on a CLI
- * without a plan flag becomes default (do not auto-approve).
+ * without a plan flag becomes default (do not auto-approve). auto without a
+ * native reviewer asks rather than silently gaining full access.
  * @param {ProviderEntry | null | undefined} entry
  * @param {string | null | undefined} mode
  * @returns {string}
@@ -232,6 +236,10 @@ function snapPermissionMode(entry, mode) {
     if (allowed.includes("default")) return "default";
   }
   if (requested === "default") {
+    if (allowed.includes("bypassPermissions")) return "bypassPermissions";
+  }
+  if (requested === "auto") {
+    if (allowed.includes("default")) return "default";
     if (allowed.includes("bypassPermissions")) return "bypassPermissions";
   }
   if (requested === "plan") {

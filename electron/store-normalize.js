@@ -38,6 +38,7 @@ const PERMISSION_MODES = new Set([
   "default",
   "acceptEdits",
   "plan",
+  "auto",
   "bypassPermissions",
 ]);
 
@@ -92,7 +93,7 @@ function parseAgentProfile(item, strict) {
   const permissionMode = rec.permissionMode;
   if (!PERMISSION_MODES.has(permissionMode)) {
     return fail(
-      "agentProfiles entry permissionMode must be one of default, acceptEdits, plan, bypassPermissions",
+      "agentProfiles entry permissionMode must be one of default, acceptEdits, plan, auto, bypassPermissions",
     );
   }
   return {
