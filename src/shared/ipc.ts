@@ -75,6 +75,12 @@ export interface ProjectInfo {
   /** When true, a background poller starts a thread for every issue that enters plan:todo (issue #165). Absent = off. */
   autoDispatch?: boolean;
   /**
+   * When true, a worktree thread whose turn finishes with commits ahead of
+   * base pushes its branch and opens (or updates) a ready-for-review PR.
+   * Absent = off.
+   */
+  autoPr?: boolean;
+  /**
    * Worktree retention (#316 / #559): how many SETTLED threads keep their
    * worktree on disk. Default 10. 0 = keep everything. Reclaiming only
    * ever removes the worktree directory — the branch always survives, so
@@ -375,6 +381,8 @@ export interface ProjectUpdateInput {
   spaceId?: string;
   /** When true, a background poller starts a thread for every issue that enters plan:todo (issue #165). Absent = off. */
   autoDispatch?: boolean;
+  /** Open a PR when a worktree thread's turn finishes. false clears it. */
+  autoPr?: boolean;
   /** Worktree retention (#316 / #559): 0 keeps everything, N > 0 sets the keep count. Default 10. */
   worktreeRetention?: number;
   /**

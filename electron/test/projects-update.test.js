@@ -113,6 +113,19 @@ describe("services.updateProject", () => {
     assert.equal(store.getProjects()[0].autoDispatch, true);
   });
 
+  it("persists autoPr on true and drops the key on false", () => {
+    assert.equal(
+      services.updateProject(store, project.id, { autoPr: true }).autoPr,
+      true,
+    );
+    assert.equal(
+      services.updateProject(store, project.id, { name: "box app" }).autoPr,
+      true,
+    );
+    services.updateProject(store, project.id, { autoPr: false });
+    assert.equal("autoPr" in store.getProjects()[0], false);
+  });
+
   it("sets worktreeRetention and stores 0 as keep-everything (#559)", () => {
     const set = services.updateProject(store, project.id, {
       worktreeRetention: 2,
