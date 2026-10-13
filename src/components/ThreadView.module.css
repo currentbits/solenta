@@ -2110,6 +2110,21 @@ button.diffLineGutter:focus-visible {
   flex: 1;
 }
 
+/* Quick-action output (#1216): bounded, scrolls inside the transcript. */
+.commandOutput {
+  margin: 2px 0 6px 23px;
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  user-select: text;
+}
+
+.commandActions {
+  display: flex;
+  gap: 6px;
+}
+
 /* Round 48: re-send last user message after failed / interrupted runs. */
 .retryBtn {
   flex-shrink: 0;

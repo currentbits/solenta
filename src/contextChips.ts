@@ -118,6 +118,26 @@ function terminalRange(chip: TerminalChip): string | null {
   return `L${chip.startLine}`;
 }
 
+/**
+ * Quick-action output as a terminal chip (#1216). Names the action, its
+ * outcome and checkout; keeps the TAIL under CONTEXT_BODY_CAP, since a
+ * failing command prints its summary last.
+ */
+export function commandOutputChip(
+  id: string,
+  result: { command: string; cwd?: string; log: string },
+  summary: string,
+  picked?: string,
+): TerminalChip {
+  const head = result.cwd ? `${summary}\ncwd: ${result.cwd}` : summary;
+  let body = (picked || result.log).trimEnd() || "(no output)";
+  const room = CONTEXT_BODY_CAP - head.length - 64;
+  if (body.length > room) {
+    body = `…[${body.length - room} chars trimmed]…\n${body.slice(-room)}`;
+  }
+  return { id, kind: "terminal", command: result.command, text: `${head}\n\n${body}` };
+}
+
 function capBody(text: string): string {
   if (text.length <= CONTEXT_BODY_CAP) return text;
   return `${text.slice(0, CONTEXT_BODY_CAP)}\n[… truncated …]`;

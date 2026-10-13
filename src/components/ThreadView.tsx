@@ -146,7 +146,7 @@ import {
   replySourceUnavailable,
   type ReplyTarget,
 } from "../replyContext";
-import { quoteChipAsReply } from "../contextChips";
+import { quoteChipAsReply, type TerminalChip } from "../contextChips";
 import { waitWhatPrompt } from "../waitWhat";
 import { sessionImagePathsFromMessages } from "../sessionImages";
 import { PathLinkProvider, ThreadLinkContext } from "./PathLinks";
@@ -1757,6 +1757,14 @@ export const ThreadView = memo(function ThreadView({
       },
     ]);
   }, []);
+
+  // Bound to the thread whose transcript holds the output (#1216).
+  const addCommandOutput = useCallback(
+    (chip: TerminalChip) => {
+      if (threadId) setContextChips(threadId, (prev) => [...prev, chip]);
+    },
+    [threadId],
+  );
 
   const handleReply = useCallback(
     (message: ChatMessage) => {
@@ -4157,6 +4165,9 @@ export const ThreadView = memo(function ThreadView({
                         provenanceById.get(entry.message.id) ?? null
                       }
                       threadId={threadId}
+                      onAddCommandOutput={
+                        isArchived ? undefined : addCommandOutput
+                      }
                       onReply={
                         entry.message.role === "assistant"
                           ? handleReply
