@@ -183,6 +183,7 @@ function createTurnSetup(ctx) {
           startRun: ctx.startRun,
           setProvider: services.setProvider,
           isAvailable: providerBinAvailable,
+          project: store.getProject(workers[i].projectId),
         });
         started = started || run;
         // stopCrew misses a worker that had not claimed its slot yet.
