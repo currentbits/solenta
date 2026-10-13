@@ -2401,9 +2401,8 @@ function createRunner(opts) {
       throw new Error("Live process is not accepting input");
     }
     const attachments = sanitizeAttachments(input.attachments);
-    const sent = await Promise.resolve(
-      entry.handle.send(prompt + attachmentPromptSection(attachments)),
-    );
+    const text = prompt + attachmentPromptSection(attachments);
+    const sent = await Promise.resolve(entry.handle.send(text));
     if (!sent) {
       throw new Error("Live process is not accepting input");
     }
@@ -2412,6 +2411,8 @@ function createRunner(opts) {
     if (!live || live.runId !== entry.runId || live.stopping) {
       throw new Error("The run ended before the steer landed");
     }
+    // Claude holds the run open until the CLI echoes this back (#1608).
+    if (live.unansweredSteers) live.unansweredSteers.push(text);
     appendMessage(
       threadId,
       "user",

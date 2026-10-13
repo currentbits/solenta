@@ -20,6 +20,8 @@ import { inAct, mount, unmountAll } from "./support/dom.ts";
 import { setTranscriptViewMode } from "../src/uiPrefs";
 import { resetComposerSession } from "../src/composerSession";
 import { ThreadView } from "../src/components/ThreadView";
+// Warm the lazy chunk: a cold import() can outlast flush() on a loaded CI runner.
+import "../src/components/HtmlPage";
 import styles from "../src/components/ThreadView.module.css";
 import { routineWorkerActivitySummary } from "../src/workerActivity";
 import { noticeRest, workerResults } from "../src/workerResult";
@@ -1384,13 +1386,7 @@ describe("ThreadView mounted interactions", () => {
     assert.ok(group, "html tool is grouped");
     await m.click(group);
     await m.click(m.query("button.toolToggle"));
-    // The page is a lazy chunk: a loaded CI runner can need more than a few ticks.
-    for (let i = 0; i < 100 && !m.query("[data-html-page] iframe"); i++) {
-      // Inside act: a chunk resolving outside it trips the console gate.
-      await inAct(async () => {
-        await new Promise((r) => setTimeout(r, 20));
-      });
-    }
+    for (let i = 0; i < 3; i++) await m.flush();
     const frame = m.query("[data-html-page] iframe");
     assert.ok(frame, "expanded card mounts the sandboxed page");
     assert.equal(frame!.getAttribute("sandbox"), "allow-scripts");

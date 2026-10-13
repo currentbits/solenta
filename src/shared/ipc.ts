@@ -1502,10 +1502,40 @@ export interface FileChange {
    * fit the list budget (fetch it when the file is opened).
    */
   patchOmitted?: "large" | "lazy";
+  /** Pre-rename path (uncommitted scope, staged renames). */
+  oldPath?: string;
   /** Blob SHA when the host knows it (PR files API). */
   blobSha?: string;
   /** Review mark for the PR Code tab (#1527). */
   viewed?: "unseen" | "viewed" | "changed";
+}
+
+/** One side of an image review (#1192). */
+export interface ImageDiffSide {
+  /** Where the bytes came from, e.g. `HEAD 1a2b3c4` or `Working tree`. */
+  label: string;
+  /** False when this side has no such file (added / deleted). */
+  exists: boolean;
+  bytes?: number;
+  width?: number;
+  height?: number;
+  /** `data:` URL; absent when over the caps or not a supported raster. */
+  dataUrl?: string;
+  /** Why there is no preview. */
+  note?: string;
+}
+
+/** Which image `git.imageDiff` reads; the thread is bound by the caller. */
+export interface ImageDiffInput {
+  scope?: DiffScope;
+  path: string;
+  /** Before-side path for a rename. */
+  oldPath?: string;
+}
+
+export interface ImageDiffResult {
+  before: ImageDiffSide;
+  after: ImageDiffSide;
 }
 
 /** Which changes the Git pane reviews (#1493). */
@@ -5344,6 +5374,8 @@ export interface CoderApi {
     setupWorktree(input: { threadId: string }): Promise<ThreadInfo>;
     /** Changes in the thread's cwd (worktree if set, else project), by scope. */
     diff(input: { threadId: string } & DiffOptions): Promise<DiffResult>;
+    /** Before/after bytes of one changed image, from the scope's exact refs (#1192). */
+    imageDiff(input: { threadId: string } & ImageDiffInput): Promise<ImageDiffResult>;
     /**
      * Review itinerary extras (issue #421): author annotation file, code-index
      * symbols for the reuse scan, and hunk hashes already marked reviewed.

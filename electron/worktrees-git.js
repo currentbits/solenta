@@ -344,7 +344,8 @@ function gitOutForDiffAsync(project, cwd, args, opts) {
  * @param {{ remoteHost?: string, remotePath?: string, path?: string } | null} project
  * @param {string} cwd
  * @param {string[]} args
- * @param {{ raw?: boolean, timeout?: number }} [opts]
+ * @param {{ raw?: boolean, timeout?: number, buffer?: boolean }} [opts] - buffer
+ *   resolves the raw stdout Buffer (blob bytes) instead of a string
  * @returns {Promise<string>}
  */
 function gitExecThrowAsync(project, cwd, args, opts) {
@@ -352,7 +353,7 @@ function gitExecThrowAsync(project, cwd, args, opts) {
     opts && opts.timeout != null ? opts.timeout : SYNC_TIMEOUT_MS;
   /** @type {import("node:child_process").ExecFileOptionsWithStringEncoding} */
   const execOpts = {
-    encoding: "utf8",
+    encoding: /** @type {"utf8"} */ (opts && opts.buffer ? "buffer" : "utf8"),
     maxBuffer: GIT_MAX_BUFFER,
     timeout,
     stdio: ["ignore", "pipe", "pipe"],
@@ -371,6 +372,10 @@ function gitExecThrowAsync(project, cwd, args, opts) {
         if (err.stdout == null && stdout != null) err.stdout = stdout;
         if (err.stderr == null && stderr != null) err.stderr = stderr;
         reject(err);
+        return;
+      }
+      if (opts && opts.buffer) {
+        resolve(stdout);
         return;
       }
       const out = stdout == null ? "" : String(stdout);
