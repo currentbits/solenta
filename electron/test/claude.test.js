@@ -125,8 +125,9 @@ async function main() {
   }
 
   // Mid-turn steer (issue #156): first user line starts work without a
-  // result; a second user line is guidance on the same turn.
-  if (scenario === "steer-wait") {
+  // result; a second user line is guidance on the same turn. steer-no-echo:
+  // the CLI never takes the steer up (#1608).
+  if (scenario === "steer-wait" || scenario === "steer-no-echo") {
     emit({ type: "system", subtype: "init", session_id: "sess-steer", model: "m" });
     let buf = "";
     let users = 0;
@@ -147,6 +148,10 @@ async function main() {
             message: { content: [{ type: "text", text: "working..." }] },
           });
           continue;
+        }
+        // Taken up at a tool boundary: echoed before this turn's result.
+        if (scenario === "steer-wait") {
+          emit({ type: "user", message: { role: "user", content: msg.message.content }, isReplay: true });
         }
         emit({
           type: "assistant",
@@ -1393,6 +1398,7 @@ describe("runner claude provider", () => {
     assert.ok(argv.includes("stdio"));
     assert.ok(argv.includes("--verbose"));
     assert.ok(argv.includes("--include-partial-messages"));
+    assert.ok(argv.includes("--replay-user-messages"));
     assert.ok(argv.includes("--permission-mode"));
     assert.ok(argv.includes("default"));
     assert.ok(!argv.includes("do the thing"));
@@ -2832,6 +2838,20 @@ describe("runner claude provider", () => {
     assert.match(stdin, /do the thing/);
     assert.match(stdin, /stop that, do X instead/);
     delete process.env.CODER_FAKE_CLAUDE_STDIN_FILE;
+  });
+
+  it("a steer the CLI never takes up fails the run when the CLI exits (#1608)", async () => {
+    process.env.CODER_FAKE_CLAUDE_SCENARIO = "steer-no-echo";
+    const thread = store.getThreads()[0];
+    await runner.startRun({ threadId: thread.id, prompt: "do the thing" });
+    await waitFor(() =>
+      store.getMessages(thread.id).some((m) => m.role === "assistant" && m.text === "working..."),
+    );
+    await runner.steerRun({ threadId: thread.id, prompt: "stop that" });
+    // The result arrives with the steer unanswered; the exit after it, not
+    // that result, ends the run, so it never sits on "working".
+    await waitFor(() => store.getThread(thread.id).status === "failed");
+    assert.equal(runner.isRunning(thread.id), false);
   });
 
   it("steerRun rejects when no run is live", async () => {
