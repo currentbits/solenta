@@ -811,7 +811,9 @@ async function main() {
       num_turns: 0,
       session_id: "sess-ph",
     });
-    await delay(80);
+    // Wide gap: the test asserts "no reply yet" 40ms after start, and a
+    // loaded CI runner ate an 80ms gap.
+    await delay(400);
     emit({
       type: "assistant",
       message: { content: [{ type: "text", text: "real reply" }] },
