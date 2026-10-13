@@ -145,12 +145,18 @@ describe("replay: recorded claude transcripts through the real runner (#1428)", 
     });
 
     // claude 2.1.283 answers a steer that lands mid-text as a SECOND turn
-    // after the first result (new system/init + result "steered"). The run
-    // already ended on the first result, so that reply is dropped (#1608).
-    it("keeps the reply to a steer that the CLI answers as its own turn", { todo: "#1608" }, async () => {
+    // after the first result (new system/init, the steer's isReplay echo,
+    // result "steered"). The run stays open for it (#1608).
+    it("keeps the reply to a steer that the CLI answers as its own turn", async () => {
       const { store, lead } = await steer();
-      await new Promise((r) => setTimeout(r, 200));
-      assert.ok(rows(store, lead.id, "assistant").some((m) => m.text === "steered"));
+      const replies = rows(store, lead.id, "assistant");
+      assert.equal(replies.length, 2);
+      assert.match(replies[0].text, /\ntwo hundred$/);
+      assert.equal(replies[1].text, "steered");
+      assert.equal(replies[1].runId, replies[0].runId);
+      // total_cost_usd is the process's running total; both turns are billed.
+      assert.equal(store.getUsage(lead.id).costUsd, 0.0326415);
+      assert.equal(store.getUsage(lead.id).turns, 2);
     });
   });
 
