@@ -756,7 +756,7 @@ function createToolHandlers(deps) {
     }
     assertUserApproved(self, args, "Opening a pull request");
     const { createPr } = require("./worktrees.js");
-    return createPr({
+    const pr = await createPr({
       store,
       threadId: worker.id,
       title: args.title,
@@ -765,6 +765,13 @@ function createToolHandlers(deps) {
       allowOversize: args.allowOversize,
       broadcast,
     });
+    void require("./prReview.js").startPrReview({
+      store,
+      runner,
+      threadId: worker.id,
+      pr,
+    });
+    return pr;
   }
 
   async function thread_send(args) {

@@ -147,6 +147,32 @@ export function GitPane({
           Squash merges from the app drop trailers that credit an AI agent
           (Claude, Codex, Cursor, bots). Human co-authors are kept.
         </p>
+        <label className={styles.fieldRow}>
+          <input
+            type="checkbox"
+            data-pr-cross-review=""
+            checked={settings?.prCrossReview === true}
+            disabled={saving || settings == null}
+            onChange={(e) => {
+              setError(null);
+              void onSaveSettings({
+                prCrossReview: e.target.checked,
+              }).catch((err) => {
+                setError(
+                  err instanceof Error && err.message
+                    ? err.message
+                    : "Failed to save settings",
+                );
+              });
+            }}
+          />
+          <span>Review new PRs with a different provider</span>
+        </label>
+        <p className={styles.note}>
+          When a thread opens a PR, a worker on another installed provider
+          reviews the diff with no context and reports only real bugs. The
+          findings go back to the author thread, which decides what to fix.
+        </p>
       </section>
 
       <section className={styles.section}>

@@ -388,6 +388,7 @@ function normalizeSettings(raw) {
     autoSettleAfterDays: DEFAULT_AUTO_SETTLE_AFTER_DAYS,
     autoSettleOnMerge: true,
     stripAgentCoauthors: false,
+    prCrossReview: false,
     mcpServers: [],
     defaultWorktree: false,
     defaultOrchestrate: false,
@@ -578,6 +579,8 @@ function normalizeSettings(raw) {
   settings.stripAgentCoauthors =
     /** @type {{ stripAgentCoauthors?: unknown }} */ (obj).stripAgentCoauthors ===
     true;
+  settings.prCrossReview =
+    /** @type {{ prCrossReview?: unknown }} */ (obj).prCrossReview === true;
   settings.otel = normalizeOtel(/** @type {{ otel?: unknown }} */ (obj).otel);
   const linearKey = /** @type {{ linearApiKey?: unknown }} */ (obj).linearApiKey;
   if (typeof linearKey === "string" && linearKey.trim()) {

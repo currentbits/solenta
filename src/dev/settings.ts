@@ -40,6 +40,7 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
   let autoSettleOnMerge = true;
   /** Opt-in: strip agent Co-authored-by trailers from squash merges. */
   let stripAgentCoauthors = false;
+  let prCrossReview = false;
   /** PR size cap in lines (issue #402); default 400, null disables. */
   let prDiffCapLines: number | null = 400;
   /** Run concurrency cap (issue #166); default 4, null disables. */
@@ -143,6 +144,7 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           autoSettleAfterDays,
           autoSettleOnMerge,
           stripAgentCoauthors,
+          prCrossReview,
           prDiffCapLines,
           maxConcurrentRuns,
           mcpServers: ctx.mcpServers,
@@ -194,6 +196,12 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
             throw new Error("stripAgentCoauthors must be a boolean");
           }
           stripAgentCoauthors = patch.stripAgentCoauthors;
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, "prCrossReview")) {
+          if (typeof patch.prCrossReview !== "boolean") {
+            throw new Error("prCrossReview must be a boolean");
+          }
+          prCrossReview = patch.prCrossReview;
         }
         if (Object.prototype.hasOwnProperty.call(patch, "prDiffCapLines")) {
           const v = patch.prDiffCapLines;
@@ -471,6 +479,7 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           autoSettleAfterDays,
           autoSettleOnMerge,
           stripAgentCoauthors,
+          prCrossReview,
           prDiffCapLines,
           maxConcurrentRuns,
           mcpServers: ctx.mcpServers.map(redactDevMcp) as AppSettings["mcpServers"],
