@@ -237,9 +237,53 @@ describe("gcScan / gcClean", { concurrency: 1 }, () => {
     assert.deepEqual(result.removed, [drop.worktreePath]);
     assert.ok(!fs.existsSync(drop.worktreePath));
     assert.ok(fs.existsSync(keep.worktreePath));
-    // Orphans are the batch dialog's job, not the boot sweep's.
+    // A fresh orphan is inside its grace period (#1397).
     assert.ok(fs.existsSync(orphan.worktreePath));
     assert.equal(branchExists(fx.repo, drop.branch), true);
+  });
+
+  it("enforceRetention reclaims only aged clean orphans (#1397)", async () => {
+    const orphanOf = (title) => {
+      const t = services.createThread(fx.store, {
+        projectId: fx.project.id,
+        title,
+      });
+      const wt = setupWorktree({
+        store: fx.store,
+        threadId: t.id,
+        worktreeBase: fx.worktreeBase,
+      });
+      fx.store.removeThread(t.id);
+      return wt;
+    };
+    const clean = orphanOf("Clean");
+    const fresh = orphanOf("Fresh");
+    const dirty = orphanOf("Dirty");
+    fs.writeFileSync(path.join(dirty.worktreePath, "wip.txt"), "wip\n");
+    const unmerged = orphanOf("Unmerged");
+    fs.writeFileSync(path.join(unmerged.worktreePath, "new.txt"), "x\n");
+    git(unmerged.worktreePath, ["add", "new.txt"]);
+    git(unmerged.worktreePath, ["commit", "-m", "unlanded"]);
+    const corrupt = orphanOf("Corrupt");
+    fs.rmSync(path.join(corrupt.worktreePath, ".git"));
+    fx.store.saveNow();
+    const old = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
+    for (const wt of [clean, dirty, unmerged, corrupt]) {
+      fs.utimesSync(wt.worktreePath, old, old);
+    }
+
+    const result = await enforceRetention({
+      store: fx.store,
+      worktreeBase: fx.worktreeBase,
+    });
+    assert.deepEqual(result.removed, [clean.worktreePath]);
+    assert.ok(!fs.existsSync(clean.worktreePath));
+    for (const wt of [fresh, dirty, unmerged, corrupt]) {
+      assert.ok(fs.existsSync(wt.worktreePath), wt.title);
+    }
+    for (const wt of [clean, fresh, dirty, unmerged, corrupt]) {
+      assert.equal(branchExists(fx.repo, wt.branch), true, wt.title);
+    }
   });
 
   it("enforceRetention does not spawn du when no project sets retention (#563)", async () => {
