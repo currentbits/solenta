@@ -13,6 +13,7 @@ import { demoProviderLimits } from "./providerUsageDemo";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Sidebar } from "./components/Sidebar";
 import { ThreadView } from "./components/ThreadView";
+import type { ComposerProps } from "./components/Composer";
 import { REOPEN_PANE_EVENT } from "./paneLayout";
 import type { UsageReportControls } from "./components/UsageView";
 import {
@@ -496,11 +497,13 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   const [memoryDraft, setMemoryDraft] = useState<DistilledMemory | null>(null);
   const clearMemoryDraft = useCallback(() => setMemoryDraft(null), []);
   const [chipError, setChipError] = useState<string | null>(null);
-  /** Discarded queued follow-up, handed back to the composer draft (#364). */
-  const [queuedDraftRestore, setQueuedDraftRestore] = useState<{
-    threadId: string;
-    text: string;
-  } | null>(null);
+  /** Discarded queued follow-up, handed back to the composer draft (#364, #1212). */
+  const [queuedDraftRestore, setQueuedDraftRestore] =
+    useState<ComposerProps["restoreDraft"]>(null);
+  const clearQueuedDraftRestore = useCallback(
+    () => setQueuedDraftRestore(null),
+    [],
+  );
   /** Freshly created thread the Sidebar should reveal (expand/scroll/flash). */
   const [revealThreadId, setRevealThreadId] = useState<string | null>(null);
   const [drawer, setDrawer] = useState<DrawerId | null>(null);
@@ -772,6 +775,17 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   // Each offer stores the IPC call that restores the state read just before.
   const threadsRef = useRef(threads);
   threadsRef.current = threads;
+  // Multi-repo task (#263): a sibling thread for the same task in another repo.
+  const handleAddTaskRepo = useCallback(
+    (projectId: string) => {
+      const src = threadsRef.current.find((t) => t.id === selectedThreadId);
+      if (!src) return;
+      void createThread(src.title, projectId, { taskGroupFrom: src.id }).then((t) => {
+        if (t) setRevealThreadId(t.id);
+      });
+    },
+    [createThread, selectedThreadId],
+  );
   const { undoKey, undoMessage, offerUndo, dismissUndo, runUndo } =
     useUndoLast();
   const offerUndoOnly = useCallback(
@@ -1063,6 +1077,12 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     [forkThread],
   );
 
+  const forkFromCheckpoint = useCallback(
+    (threadId: string, sha: string) =>
+      forkThread(threadId, { checkpointSha: sha }),
+    [forkThread],
+  );
+
   const handleForkOpen = useCallback(
     async (opts?: {
       provider?: string;
@@ -1088,13 +1108,20 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   // onClick, so cancelQueued's optional threadId would swallow the DOM event
   // and cancel nothing.
   const handleCancelQueued = useCallback(() => {
-    // Non-destructive cancel (#364): restore the discarded text onto an
-    // empty composer only after the host clear lands. A rejected clear
-    // keeps the overlay; filling the draft then would duplicate on send.
+    // Non-destructive cancel (#364, #1212): hand the discarded text and
+    // files back to that thread's draft only after the host clear lands. A
+    // rejected clear keeps the overlay; filling the draft then would
+    // duplicate on send.
     const id = selectedThreadId;
-    const text = id ? queued[id]?.prompt : null;
+    const q = id ? queued[id] : null;
     void cancelQueued().then((cleared) => {
-      if (cleared && id && text) setQueuedDraftRestore({ threadId: id, text });
+      if (cleared && id && q && (q.prompt || q.attachments?.length)) {
+        setQueuedDraftRestore({
+          threadId: id,
+          text: q.prompt,
+          attachments: q.attachments,
+        });
+      }
     });
   }, [cancelQueued, selectedThreadId, queued]);
 
@@ -1352,6 +1379,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     });
 
   const {
+    handleFixSuggestion,
     handleStartSuggestion,
     handleFileSuggestion,
     handleDismissSuggestion,
@@ -1363,6 +1391,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     createIssue,
     resolveSuggestion,
     setChipError,
+    restoreDraft: setQueuedDraftRestore,
   });
 
   const {
@@ -1373,10 +1402,13 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     runQueueIds,
     comparePeers,
     threadTitles,
+    taskGroup,
+    taskTargets,
   } = useThreadRoster({
     threads,
     visibleDetail,
     providers,
+    projects,
   });
 
   const {
@@ -2000,6 +2032,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onSavePlan={handleSavePlan}
         onEditQueued={handleEditQueued}
         restoreDraft={queuedDraftRestore}
+        onRestoreDraftConsumed={clearQueuedDraftRestore}
         onSetPermissionMode={setPermissionMode}
         onRespondPermission={respondPermission}
         onClearQuestion={clearQuestion}
@@ -2047,6 +2080,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onCloseChanges={closeChanges}
         onViewChanges={openChanges}
         terminalApi={terminal}
+        onFixSuggestion={handleFixSuggestion}
         terminalReveal={terminalReveal}
         onProviderSignIn={handleProviderSignIn}
         filesApi={files}
@@ -2102,6 +2136,9 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onOpenAutomations={handleOpenAutomation}
         onIntegrateWorker={selectedThreadId ? integrateSelectedWorker : undefined}
         handoffSource={handoffSource}
+        taskGroup={taskGroup}
+        taskTargets={taskTargets}
+        onAddTaskRepo={handleAddTaskRepo}
         comparePeers={comparePeers}
         onPeekThread={peekThread}
         onSelectThread={handleSelectThread}
@@ -2189,6 +2226,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         fetchDiff={fetchDiff}
         listCheckpoints={listCheckpoints}
         restoreCheckpoint={restoreCheckpoint}
+        forkFromCheckpoint={forkFromCheckpoint}
+        fetchTurnDiff={fetchTurnDiff}
         listLocalServers={listLocalServers}
         revealInFinder={revealInFinder}
         openInEditor={openInEditor}
@@ -2206,6 +2245,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         startDevServer={startDevServer}
         stopDevServer={stopDevServer}
         devServerStatus={devServerStatus}
+        onFixSuggestion={handleFixSuggestion}
         setVerifyCommand={setVerifyCommand}
         runVerify={runVerify}
         searchMemory={searchMemory}

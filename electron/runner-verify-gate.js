@@ -16,6 +16,7 @@ const {
 const { prepareVerifyRun } = require("./verifyEfficiency.js");
 const { maybeApplyFmTitle } = require("./fm-title.js");
 const { refreshRecap } = require("./recap.js");
+const { maybeAutoPr } = require("./autoPr.js");
 
 /**
  * @param {object} ctx - createRunner context (see runner-watchdogs.js header)
@@ -233,6 +234,15 @@ function createVerifyGate(ctx) {
   }
 
   function finishSuccessfulTurn(threadId) {
+    void maybeAutoPr({
+      store,
+      threadId,
+      appendMessage,
+      onChange: () => {
+        pushDetail(threadId);
+        pushThreadsChanged();
+      },
+    });
     try {
       ctx.queueOrchNotice(threadId, "done");
       ctx.flushOrchNotices(threadId);

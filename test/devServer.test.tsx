@@ -88,4 +88,35 @@ describe("DevServerCard", () => {
     assert.match(err!.textContent || "", /EADDRINUSE/);
     m.unmount();
   });
+
+  it("offers a fix for a build error in the dev-server output (#253)", async () => {
+    const fixes: [string, string, string][] = [];
+    const m = await mount(
+      <DevServerCard
+        threadId="t1"
+        listDevScripts={async () => ["dev"]}
+        startDevServer={async () => ({ running: false })}
+        stopDevServer={async () => ({ running: false })}
+        devServerStatus={async () => ({
+          running: true,
+          script: "dev",
+          startedAt: Date.now(),
+          lastLines: [
+            "  VITE ready",
+            "\x1b[31m12:00:01 [vite] Internal server error: Failed to resolve import \"./x\"\x1b[39m",
+            "  Plugin: vite:import-analysis",
+          ],
+        })}
+        onFix={(...a) => fixes.push(a)}
+      />,
+    );
+    await m.flush();
+    assert.equal(m.query("[data-fix-suggestion]")?.getAttribute("data-fix-suggestion"), "build");
+    await m.click(m.query("[data-fix-fork]"));
+    assert.equal(fixes[0][0], "fork");
+    assert.match(fixes[0][2], /^The dev server in this thread's worktree reported a build error:/);
+    assert.match(fixes[0][2], /Plugin: vite:import-analysis/);
+    assert.equal(m.query("[data-fix-suggestion]"), null);
+    m.unmount();
+  });
 });

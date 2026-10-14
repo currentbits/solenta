@@ -8,6 +8,7 @@ const {
   askNoteFor,
   formatMemoryHits,
   formatBootstrapNote,
+  formatMatchedNote,
   prefetchBootstrapNote,
   MEMORY_BOOTSTRAP_NUDGE,
   formatThreadDigest,
@@ -140,6 +141,55 @@ describe("prefetchBootstrapNote", () => {
       }),
     });
     assert.match(note, /No em dash/);
+  });
+});
+
+describe("conditional memory (#271)", () => {
+  const pack = {
+    conventions: [
+      { id: "g1", title: "Electron rule", body: "glob", inclusion: "glob" },
+      { id: "a1", title: "Always rule", body: "every turn" },
+    ],
+    strategies: [{ id: "s1", title: "Grok", body: "auto", inclusion: "auto" }],
+  };
+
+  it("formatMatchedNote sends conditional rows once and skips always rows", () => {
+    const seen = new Set();
+    const text = formatMatchedNote(pack, seen);
+    assert.match(text, /Electron rule: glob/);
+    assert.match(text, /Grok: auto/);
+    assert.doesNotMatch(text, /Always rule/);
+    assert.equal(formatMatchedNote(pack, seen), "");
+  });
+
+  it("follow-up turns ask for matchedOnly with the prompt", async () => {
+    /** @type {object[]} */
+    const calls = [];
+    const seen = new Set(["g1"]);
+    const note = await prefetchBootstrapNote({
+      firstTurn: false,
+      prompt: "grok again",
+      seen,
+      bootstrapMemory: async (_p, o) => {
+        calls.push(o);
+        return pack;
+      },
+    });
+    assert.deepEqual(calls, [{ prompt: "grok again", matchedOnly: true }]);
+    assert.match(note, /^\n\n\[Memory\] Matched for this turn\./);
+    assert.doesNotMatch(note, /Electron rule/);
+  });
+
+  it("turn one resets seen to what it injected", async () => {
+    const seen = new Set(["stale"]);
+    const note = await prefetchBootstrapNote({
+      firstTurn: true,
+      seen,
+      bootstrapMemory: async () => ({ ...pack, deferred: 2 }),
+    });
+    assert.match(note, /Always rule/);
+    assert.match(note, /2 file- or topic-scoped entries/);
+    assert.deepEqual([...seen].sort(), ["g1", "s1"]);
   });
 });
 

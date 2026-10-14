@@ -212,6 +212,15 @@ function createThread(store, input) {
   if (!project) {
     throw new Error(`Unknown project: ${input.projectId}`);
   }
+  // Multi-repo task (#263): join the group of the thread extended from.
+  const groupSource =
+    input.taskGroupFrom != null ? store.getThread(input.taskGroupFrom) : null;
+  if (input.taskGroupFrom != null) {
+    if (!groupSource) throw new Error(`Unknown thread: ${input.taskGroupFrom}`);
+    if (project.scratch === true) {
+      throw new Error("Scratch has no repo to add to a multi-repo task");
+    }
+  }
 
   const settings =
     typeof store.getSettings === "function" ? store.getSettings() : null;
@@ -312,11 +321,17 @@ function createThread(store, input) {
     ...(input.memoryConsolidate === true
       ? { memoryConsolidate: true }
       : {}),
+    ...(groupSource
+      ? { taskGroupId: groupSource.taskGroupId || groupSource.id }
+      : {}),
   };
 
   const threads = store.getThreads().slice();
   threads.push(thread);
   store.setThreads(threads);
+  if (groupSource && !groupSource.taskGroupId) {
+    store.updateThread(groupSource.id, { taskGroupId: groupSource.id });
+  }
   store.setMessages(thread.id, []);
   store.setWorkLog(thread.id, []);
   store.save();
@@ -687,8 +702,11 @@ function forkThread(store, input) {
       prefixMsgs.map((m) => ({ ...m, id: randomUUID() })),
     );
     const cut = prefixMsgs[prefixMsgs.length - 1].claudeUuid;
+    // Claude stores sessions per cwd: a fork that gets its own worktree
+    // cannot --resume the source's session, so it replays instead.
     if (
       cut &&
+      !forkPatch.pendingWorktree &&
       source.sessionId &&
       source.provider === "claude" &&
       nextProvider === "claude" &&
@@ -703,6 +721,38 @@ function forkThread(store, input) {
   const updated = store.updateThread(created.id, forkPatch);
   store.save();
   return updated ? { ...updated } : { ...created, ...forkPatch };
+}
+
+/**
+ * Fork from a turn checkpoint (#252): a new thread whose worktree starts at
+ * the checkpoint commit and whose transcript is cut at the turn that made it.
+ * The start SHA rides leadSnapshotSha, which resolveWorktreeStart uses
+ * exclusively, so the fork never silently starts from main instead.
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string, checkpointSha: string, provider?: string, model?: string | null }} input
+ */
+async function forkFromCheckpoint(store, input) {
+  const { checkpointForkPoint } = require("./worktrees-checkpoints.js");
+  const { checkpointSha, ...rest } = input;
+  const point = await checkpointForkPoint({
+    store,
+    threadId: input.threadId,
+    sha: checkpointSha,
+  });
+  const created = forkThread(store, {
+    ...rest,
+    messageId: point.messageId ?? undefined,
+    worktree: true,
+  });
+  const source = store.getThread(input.threadId);
+  const patch = {
+    leadSnapshotSha: point.sha,
+    leadSnapshotBranch: (source && source.branch) || null,
+  };
+  const updated = store.updateThread(created.id, patch);
+  store.save();
+  return updated ? { ...updated } : { ...created, ...patch };
 }
 
 /**
@@ -761,7 +811,7 @@ function savePlanFile(store, input) {
   return { path: rel };
 }
 
-const PERMISSION_RANK = { plan: 0, default: 1, acceptEdits: 2, bypassPermissions: 3 };
+const PERMISSION_RANK = { plan: 0, default: 1, acceptEdits: 2, auto: 3, bypassPermissions: 4 };
 
 /**
  * Privilege narrowing for agent-spawned workers (#1425): a worker's snapped
@@ -784,7 +834,7 @@ function assertWorkerNarrows(lead, providerRef, poolEntry) {
     : lead.provider;
   const leadMode = snapPermissionMode(getProvider(lead.provider), lead.permissionMode);
   const workerMode = snapPermissionMode(getProvider(provider), lead.permissionMode);
-  if ((PERMISSION_RANK[workerMode] ?? 3) <= (PERMISSION_RANK[leadMode] ?? 3)) return;
+  if ((PERMISSION_RANK[workerMode] ?? 4) <= (PERMISSION_RANK[leadMode] ?? 4)) return;
   const err = new Error(
     `A ${provider} worker would run in ${workerMode}, above its lead's ` +
       `${leadMode}; a worker cannot get more permissions than the thread that ` +
@@ -897,6 +947,24 @@ function forkWorkerThread(store, input, forkImpl = forkThread) {
   const updated = store.updateThread(fork.id, patch);
   store.save();
   return updated ? { ...updated } : { ...fork, ...patch };
+}
+
+/**
+ * #1396: a worker forked from a dirty lead starts without those edits. Say
+ * so at fork time (thread_fork result, pendingFork event) instead of only in
+ * the WorktreeControl tooltip. Null for a clean or worktree-less fork.
+ *
+ * @param {any} worker
+ * @returns {string | null}
+ */
+function dirtySnapshotWarning(worker) {
+  if (!worker || worker.leadSnapshotDirty !== true) return null;
+  const sha = String(worker.leadSnapshotSha || "").slice(0, 8);
+  return (
+    `The worker starts from your committed HEAD ${sha}; your uncommitted ` +
+    "edits are NOT in its worktree. Commit them and call " +
+    "refresh_worker_snapshot once it is idle, or tell the worker what is missing."
+  );
 }
 
 /**
@@ -1691,7 +1759,9 @@ module.exports = {
   setAgent,
   setFast,
   forkThread,
+  forkFromCheckpoint,
   forkWorkerThread,
+  dirtySnapshotWarning,
   assertWorkerNarrows,
   setProvider,
   listProvidersForApi,

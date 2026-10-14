@@ -188,6 +188,25 @@
         injected into every dispatched prompt, so a fresh worker starts knowing
         where things live.
       </p>
+      <p>
+        Each entry has an <strong>inclusion mode</strong> that decides when
+        it is injected: <em>always</em> (the default), <em>glob</em> (when a
+        file in play matches its globs), <em>auto</em> (when the prompt
+        shares most of its title's words) or <em>manual</em> (when the
+        prompt mentions <code>#</code> plus the first eight characters of
+        its id). Conditional entries still show up in search.
+      </p>
+      <p>
+        <strong>Save as memory…</strong> in a finished thread's menu drafts
+        a shared memory entry from the run. You review and edit the draft
+        before anything is stored.
+      </p>
+      <p>
+        Two repos with the same folder name get separate memory scopes. The
+        first keeps the plain name; later ones get a short suffix. Settings,
+        Memory lists repos that share a folder name, with a Rename box per
+        scope that moves its memories along.
+      </p>
 
       <h3 id="memory-browser">Browse the full memory library</h3>
       <p>
@@ -216,7 +235,7 @@
       </p>
       <ul>
         <li><strong>Planboard</strong> shows one project's plan as its GitHub issues in Todo / In progress / Done. Cards open the issue on GitHub, and <strong>Start task</strong> on a Todo card opens a thread on it, in worktree, orchestrator or plain mode.</li>
-        <li><strong>Review</strong> lists the open PRs per project with their checks, and jumps to the thread that opened one.</li>
+        <li><strong>Review</strong> lists the open PRs per project with their checks, and jumps to the thread that opened one. The <strong>Needs me</strong> toggle swaps the per-project groups for one list of agent PRs across projects, sorted by what each needs: ready to merge, needs your review, stale or closeable, or waiting on the agent or CI.</li>
         <li><strong>More</strong> holds Activity, Kanban, Automations, Usage, Fleet, Insights, and the morning digest.</li>
         <li><strong>Kanban</strong> groups every thread by status (working, waiting on you, done, failed) so a pile of parallel runs stays readable.</li>
         <li><strong>Activity</strong> is a chronological feed, grouped by day, of everything your agents did.</li>
@@ -225,8 +244,8 @@
         Planboard reads the board from labels. Agents on a GitHub-origin
         project write with the coder-threads tools
         <code>issue_create</code>, <code>issue_list</code>,
-        <code>issue_set_plan</code>, <code>issue_complete</code> and
-        <code>issue_comment</code>
+        <code>issue_set_plan</code>, <code>issue_complete</code>,
+        <code>issue_comment</code> and <code>issue_label</code>
         (omitted when the origin is not GitHub). Sandboxed
         <code>gh</code> cannot see macOS keychain credentials, so those
         tools run on the host instead. An issue labelled
@@ -235,9 +254,13 @@
         open issue in Todo. Other labels show as badges on the card.
         Agent sessions are told this convention, so &ldquo;keep the plan
         on the board&rdquo; is enough to have multi-step work tracked as
-        issues. The view still needs the GitHub CLI installed and
-        authenticated in the host app, and a project whose
-        <code>origin</code> is on GitHub. The header also
+        issues. The view needs a project whose <code>origin</code> is on
+        GitHub or GitLab. GitHub calls go through its API with a token
+        saved per host in Settings, Git, under <strong>Source
+        Control</strong>, or the GitHub CLI's token when none is saved;
+        GitHub Enterprise hosts work the same way. GitLab goes through
+        <code>glab</code>, including self-hosted hosts with "gitlab" in
+        the name. The header also
         shows <strong>review load</strong>: how many open, non-draft PRs
         are waiting and their combined line count. Thresholds follow the
         400-line cap, four PRs or 1,200 lines is busy; seven or
@@ -249,6 +272,14 @@
         The board can also dispatch for you: turn on auto-dispatch and an issue
         entering <code>plan:todo</code> starts its own thread, so labelling a
         ticket is the same act as queueing the work.
+      </p>
+      <p>
+        Cards can depend on each other. An issue that GitHub marks as
+        blocked by another, or that carries a <code>blocked-by: #12</code>
+        label, shows a <strong>Blocked by</strong> badge, and auto-dispatch
+        skips it until the blocker lands. Live plan steps now come from
+        OpenCode and Kimi runs as well as Claude, and the planboard works
+        on SSH remote projects.
       </p>
       <p>
         The sidebar's project scope filter limits Kanban, Planboard and
@@ -296,11 +327,13 @@
         in and follow-up turns resume where the previous one stopped.
       </p>
       <ul>
-        <li><strong>Permission mode</strong> is sticky per thread: default, ask-first, or full access.</li>
+        <li><strong>Permission mode</strong> is sticky per thread: Ask first, Accept edits, Plan mode, Auto review, or Full access. <strong>Auto review</strong> lets the CLI's own reviewer approve routine actions (Claude and Codex) and still sends you anything it will not approve.</li>
         <li><strong>Model picker</strong> lists the provider's known models; providers without a list accept free-form model ids.</li>
-        <li><strong>Reasoning effort</strong> can be set per thread where the provider supports it.</li>
-        <li><strong>Fork and hand off</strong> copies a thread, optionally onto another provider, and starts it on a new prompt.</li>
-        <li><strong>Best of N</strong> sends one prompt to several providers at once so you can compare the results.</li>
+        <li><strong>Reasoning effort</strong> can be set per thread where the provider supports it. On models with a fast tier, <strong>Speed</strong> sets Fast and the model button reads "· Fast".</li>
+        <li><strong>Auto</strong> in the model picker routes the first turn by task tier: fast, balanced or strong, picked from the prompt. Map each tier to an agent profile in Edit Project, <strong>Model routing</strong>. Routing never changes the permission mode.</li>
+        <li><strong>Agent</strong> picks a custom CLI agent for the thread on Claude and OpenCode (passed as <code>--agent</code>), from the project's and your own agent files.</li>
+        <li><strong>Fork and hand off</strong> copies a thread, optionally onto another provider, and starts it on a new prompt. <strong>Fork from here</strong> on an assistant message copies the conversation only up to that message; on Claude the native session is forked at that point.</li>
+        <li><strong>Best of N</strong> sends one prompt to several providers at once so you can compare the results. Tick <strong>Plan only</strong> to have each one draft a plan without building. On the plan card you like, pick a provider next to <strong>Implement in a new thread</strong> to build it there.</li>
         <li><strong>Agent profiles</strong> save a provider + model + effort + permission combination under a name, so a thread can be set up in one click instead of four.</li>
         <li><strong>Edit and resubmit</strong> rewinds to any past message of yours, lets you change it, and runs again from that point.</li>
         <li><strong>Scratch notes</strong> are a free-text field per thread, edited from the header and previewed in the sidebar, for the context that is not worth a memory entry.</li>
@@ -348,6 +381,40 @@
         opens live account quotas (five-hour and weekly windows where the
         provider reports them). A mic on the composer transcribes locally,
         and optional vim mode adds Insert and Normal motions.
+        <code>/goal &lt;text&gt;</code> sets a standing goal for the thread,
+        shown as a chip in the header; a bare <code>/goal</code> clears it.
+        Codex uses its native goal and keeps taking turns until the goal
+        is done. Other providers get the goal as a note on each prompt.
+      </p>
+      <p>
+        <kbd>⌘F</kbd> finds text in the open thread, including messages
+        outside the rendered tail and collapsed tool groups, and in loaded
+        diffs in the Git pane. Enter and <kbd>⇧Enter</kbd> step through
+        matches. <kbd>⌘⇧T</kbd> reopens the last closed pane.
+        <strong>Copy link</strong> in the thread header menu or the sidebar
+        menu copies a <code>solenta://thread/&lt;id&gt;</code> link that
+        opens the thread; the project filter menu copies
+        <code>solenta://project/&lt;id&gt;</code> links. A thread id in an
+        assistant reply is a link when it belongs to this project.
+      </p>
+      <p>
+        Coming back to a thread that sat idle for half an hour or more
+        shows a dismissible <strong>Recap</strong> card: what was asked,
+        what changed, where it stands, and what is open. It is built
+        locally after each turn, so no provider is billed. While the agent
+        thinks, the working row shows the last line of its latest thought
+        instead of just Thinking.
+      </p>
+      <p>
+        Agents can render an <code>html</code> block, or an MCP tool's UI,
+        as a page inside the transcript. It runs in a sandboxed frame with
+        no network access. When an agent calls <code>secret_request</code>,
+        a masked <strong>Secret requested</strong> card asks for the value.
+        Provide puts it only in the environment of that thread's next runs,
+        never in the transcript or on disk, and the value is redacted from
+        any output that echoes it. When an MCP server asks a Claude run for
+        input mid-turn, the question shows as an input card instead of
+        failing.
       </p>
       <p>
         A thread that fails keeps its <strong>failure reason</strong> and shows
@@ -407,7 +474,31 @@
         even when it is outside the currently rendered transcript. Pins are
         your bookmarks and are not added to the agent's prompt. Select text
         inside an assistant reply and choose the quote action or press
-        <kbd>⌘⇧C</kbd> to attach that selection as context for your next send.
+        <kbd>⌘⇧C</kbd> (Cite) to attach that selection as a quote chip for
+        your next send. A draft can hold several quote chips, each with an
+        optional note.
+      </p>
+      <p>
+        Type <code>@</code> in the composer to attach more than files. The
+        list shows your prompt snippets first, then threads, PRs and skills,
+        then files. A thread, PR or skill becomes a chip that survives a
+        restart and is expanded into the prompt when you send. Files still
+        insert <code>@path</code>. Save reusable text in Settings, Agents,
+        <strong>Prompt snippets</strong>, then insert one with
+        <code>@name</code>.
+      </p>
+      <p>
+        Attach a screen recording (<code>.mp4</code>, <code>.m4v</code>,
+        <code>.mov</code>, <code>.webm</code>) and the agent gets up to
+        eight sampled frames, each labelled with the clip name and time.
+        Queued follow-ups show their files as chips, and cancelling a
+        queued follow-up gives back both the text and the files.
+      </p>
+      <p>
+        A Claude thread that sat idle past the prompt cache window with a
+        large context shows a strip above the composer:
+        <strong>Compact first</strong> compacts the conversation before
+        your next send re-reads all of it.
       </p>
       <p>
         Question cards accept supporting files on each answer. Those files
@@ -527,6 +618,12 @@
         line attached, so a review note goes straight back into the run.
       </p>
       <p>
+        Each hunk has its own stage checkbox and a discard button, so you
+        can commit part of a file or throw away one hunk and keep the rest.
+        A changed image (PNG, JPEG, GIF, WebP, BMP) shows its before and
+        after side by side instead of a text diff, at Fit, 100% or 200%.
+      </p>
+      <p>
         A worktree thread can start on a chosen local <strong>base branch</strong>,
         shown in the header and the Git pane. Change the base before the first
         PR and Solenta rebases this thread's commits onto the new branch; a
@@ -546,6 +643,11 @@
         <code>PULL_REQUEST_TEMPLATE/</code> folder. After the PR is open
         you can view it, edit the body, comment, mark it ready, close it
         or merge it from the same pane, without a trip to the browser.
+        Its <strong>Code</strong> tab reviews the PR's files in the app,
+        across all commits or one at a time. Mark files viewed; a file that
+        changes in a later push flips to Changed. A thread can link several
+        PRs, including ones in other repos, and a stacked chain offers
+        <strong>Rebase stack</strong> and <strong>Merge stack</strong>.
         File paths in the
         transcript open the file in that worktree. Create PR refuses a
         diff larger than the configured <strong>PR size cap</strong>
@@ -568,12 +670,28 @@
         back with the files, not only the tree. The Git pane can also open a
         <strong>per-turn diff</strong>: what changed between two checkpoints,
         unified or split, with a chip per file, instead of the whole branch
-        since the base.
+        since the base. In the checkpoint list, tick any two checkpoints to
+        compare them, or use <strong>Fork</strong> on one to start a new
+        thread with that checkpoint's files and conversation.
       </p>
       <p>
-        Work can also start from an issue: paste a GitHub or Linear issue
-        reference and Solenta pulls the title and body in as the thread's
-        first prompt. Linear needs an API key in Settings (Git) or
+        Settings, Git has two opt-in merge settings.
+        <strong>Review new PRs with a different provider</strong> has a
+        worker on another installed provider review each PR a thread opens
+        and send real bugs back to the author thread.
+        <strong>Strip agent Co-authored-by lines from squash merges</strong>
+        drops AI agent trailers and keeps human co-authors. A thread whose
+        PR merged offers <strong>Open revert PR</strong>.
+      </p>
+      <p>
+        GitLab projects get the same flow for merge requests through the
+        <code>glab</code> CLI: list, check out, create, squash merge, and CI
+        badges from the head pipeline.
+      </p>
+      <p>
+        Work can also start from an issue: paste a GitHub, GitLab or Linear
+        issue reference and Solenta pulls the title and body in as the
+        thread's first prompt. Linear needs an API key in Settings (Git) or
         LINEAR_API_KEY in the environment.
       </p>
       <p>
@@ -589,6 +707,25 @@
         (a default applies when the project has not set its own), batch
         cleanup, and a visible disk-usage figure so you can see what the
         branches are costing you.
+      </p>
+      <p>
+        <strong>Worktree location</strong> in Settings, Threads moves new
+        worktrees to another absolute folder; existing threads stay where
+        they are. Solenta keeps two idle worktrees per project ready, so a
+        new worktree thread starts without waiting on a full checkout. A
+        new worktree gets copies of gitignored files listed in a checked-in
+        <code>.worktreeinclude</code> (gitignore-style patterns), or the
+        root <code>.env*</code> files when there is none. Existing files are
+        never overwritten. If a thread's worktree folder was deleted, the
+        next run restores it from the thread's preserved branch, so earlier
+        commits are not lost.
+      </p>
+      <p>
+        <strong>Environment variables</strong> in Edit Project takes one
+        <code>KEY=value</code> per line (<code>#</code> comments allowed).
+        They apply to agent runs on every provider, workflow phase agents,
+        the thread terminal, verify, setup and quick-action commands, and
+        dev servers, locally and over SSH.
       </p>
       <p>
         Coming from Vibe Kanban: Settings → <em>Your data</em> reads the local
@@ -635,6 +772,20 @@
         does not create a duplicate workflow. A true save failure keeps the
         unsaved draft available.
       </p>
+      <p>
+        A workflow can live in the repo. When you run the default template,
+        Solenta reads <code>WORKFLOW.md</code> (or
+        <code>.solenta/workflow.md</code>) from the thread's checkout, so
+        the workflow versions with the branch. An invalid file fails the
+        start with its name in the error. A template you pick explicitly
+        still wins. <strong>Export to repo</strong> in the workflow editor
+        writes a template out as that file and asks before overwriting.
+      </p>
+      <p>
+        A multi-phase run that was cut off by a crash or quit is kept.
+        Retry on an interrupted agent reruns the interrupted agents of that
+        phase and continues from there; finished phases are not redone.
+      </p>
 
       <h2 id="orchestration">Orchestration</h2>
       <p>
@@ -651,7 +802,26 @@
         and stays on the Working shelf rather than reporting itself done.
         Stopping an orchestrator stops its crew. Like worktrees, orchestrator
         threads are local-only: an <a href="#ssh">SSH remote project</a> always
-        gets a plain thread.
+        gets a plain thread. An agent that forks a worker on a remote
+        project is refused rather than silently sharing the remote
+        checkout, unless it asks for a shared checkout explicitly.
+      </p>
+      <p>
+        A worker row in the Agents panel has a <strong>Stop</strong> button
+        while it runs. A worker an agent forks can never run in a higher
+        permission mode than its lead. When a worker finishes, the lead's
+        wake notice carries a <strong>worker result</strong> card: the diff
+        summary, the verify verdict when a verify command is set, ruled-out
+        hypotheses and review risks. Pending crew notices are saved to
+        disk. After a restart they wait for you, and the lead shows
+        <strong>Resume crew</strong> with the number of held updates.
+      </p>
+      <p>
+        One task can span several repos. <strong>Continue task in another
+        repo</strong> in the thread menu (<strong>Add repo to task</strong>
+        once a group exists) starts a thread in another project, and a
+        <strong>Multi-repo task</strong> banner lists each repo's thread,
+        status and PRs. Each thread still writes only to its own repo.
       </p>
       <p>
         A crew is not just a fan-out. Workers under one orchestrator share a
@@ -706,6 +876,7 @@
           <tr><td>issue_create</td><td>Creates a GitHub issue on this origin and labels it plan:todo.</td></tr>
           <tr><td>issue_set_plan</td><td>Moves a Planboard issue's plan:todo / plan:doing / plan:done label.</td></tr>
           <tr><td>issue_comment</td><td>Appends an issue comment without changing plan labels or closing the issue.</td></tr>
+          <tr><td>issue_label</td><td>Adds non-plan labels (type, priority, duplicate, needs-info), creating missing ones.</td></tr>
           <tr><td>issue_complete</td><td>Labels a plan:doing issue plan:done and closes it.</td></tr>
         </tbody>
       </table>
@@ -739,7 +910,10 @@
       </p>
       <p>
         Each worker records the lead's committed branch and revision at fork.
-        Uncommitted lead edits are not copied. <strong>Refresh snapshot</strong>
+        Uncommitted lead edits are not copied; when the lead has any, the
+        fork event in the lead's transcript says so and names the commit
+        the worker started from.
+        <strong>Refresh snapshot</strong>
         explicitly updates an idle worker to the lead's current committed
         revision; it does not change the final merge target. Busy workers and
         unsafe refreshes are refused. Integrating a worker into the lead
@@ -883,6 +1057,34 @@
         identity; changing the schedule recalculates its next run. History
         retention removes completed old runs, preserving unfinished work.
       </p>
+      <p>
+        You can also describe an automation in a thread. The agent creates
+        it and a card links to it with <strong>Open in Automations</strong>.
+      </p>
+      <p>
+        Instead of a schedule, <strong>When</strong> can be an event. The
+        app polls for these about once a minute:
+      </p>
+      <ul>
+        <li><strong>GitHub</strong>: PR opened, PR merged, Label added (optional label filter), Review submitted, Push (optional branch), CI completed (optional branch and result), and Issue opened. <strong>Use triage template</strong> fills in an issue triage prompt that labels, dedupes and questions new issues, so only well-formed ones reach <code>plan:todo</code>.</li>
+        <li><strong>Linear</strong>: issue created or status changed, optionally per team or status.</li>
+        <li><strong>Sentry</strong>: a new grouped issue. Save an auth token in Settings, Git, or set <code>SENTRY_AUTH_TOKEN</code>.</li>
+      </ul>
+      <p>
+        Each automation has a <strong>Memory</strong> field: notes it keeps
+        between runs, which a run replaces by ending with an
+        <code>&lt;automation-memory&gt;</code> block. After three failed
+        runs in a row the automation pauses itself and notifies you.
+        Turning it back on resets the count.
+      </p>
+      <p>
+        <strong>Scope</strong> chooses <strong>Private (this
+        machine)</strong> or <strong>Project (solenta.json)</strong>. A
+        project automation is written to <code>solenta.json</code> so
+        teammates get the definition, but it only fires on a machine where
+        someone chose <strong>Run on this machine</strong> and approved the
+        file.
+      </p>
 
       <h2 id="dev-servers">Dev servers</h2>
       <p>
@@ -903,6 +1105,15 @@
         isolation; it does not rewrite hard-coded paths or ports. Stop and
         settle clean up the thread's managed dev server.
       </p>
+      <p>
+        Setup commands and quick actions keep their output in the
+        transcript, so you can read, copy or attach it without running the
+        command again. An <code>onSettle</code> entry in
+        <code>solenta.json</code> (a command, or the name of a quick action)
+        runs once in a worktree thread's checkout when the thread settles.
+        It goes through the same repo-command trust prompt as the rest of
+        the file.
+      </p>
 
       <h2 id="panes">Terminal and Browser panes</h2>
       <p>
@@ -918,6 +1129,13 @@
         you are never a directory away from what the agent is editing. It is
         pipes rather than a full TTY: interactive prompts and curses apps are
         out of scope, and closing the pane kills the shell and its scrollback.
+      </p>
+      <p>
+        When the terminal or a dev server prints a build error, a failing
+        test or a merge conflict, a card appears at that line.
+        <strong>Fix it</strong> asks this thread's agent to fix it,
+        <strong>Edit prompt</strong> puts the fix prompt in the composer
+        first, and <strong>Fork</strong> fixes it in a new thread.
       </p>
       <p>
         The <strong>Browser</strong> pane is an embedded browser bound to the
@@ -945,14 +1163,28 @@
         a wake-up is held back by it, the thread says so instead of stalling
         silently.
       </p>
+      <p>
+        <strong>Max concurrent runs</strong> in Settings, Spending caps how
+        many runs go at once across all projects (default 4; empty for no
+        cap). A start beyond the cap is queued on its thread with a
+        Queued #N note and starts, oldest first, as a slot frees up.
+      </p>
 
       <h2 id="analytics">Usage and fleet analytics</h2>
       <p>
         The <strong>Usage</strong> view breaks spend and token burn down per
         provider and per model over the last 7, 30 or 90 days, so the question
-        of which model is actually costing you money has an answer.
+        of which model is actually costing you money has an answer. A
+        provider filter narrows the totals, charts and rows.
         <code>/usage</code> is separate: it reads the provider's own quota
         windows and reset clocks, not the local history.
+      </p>
+      <p>
+        For models that report tokens but no cost, set prices in Settings,
+        Spending, <strong>Model prices</strong> (USD per million tokens for
+        input, output and optional cache read and write). They fill only
+        the missing costs, never override a cost the provider reports, and
+        re-price past usage when you edit them.
       </p>
       <p>
         <strong>Fleet analytics</strong> asks the harder question: is the work
@@ -997,6 +1229,16 @@
         for you to approve it in the app. Revoke a pairing any time. Do
         not put the token on a command line.
       </p>
+      <p>
+        Hosted agents (ChatGPT, claude.ai) cannot reach loopback. If
+        Tailscale is installed and logged in, <strong>Expose /mcp on the
+        public internet</strong> under <strong>Public URL (Tailscale
+        Funnel)</strong> publishes the MCP endpoint over HTTPS on port 8443,
+        and <strong>Copy public URL</strong> gives you the address. It is
+        off by default. A caller on that URL must sign in with OAuth or
+        present a pairing token; the in-app session token is not accepted
+        there.
+      </p>
 
       <h2 id="updates">Notifications and updates</h2>
       <p>
@@ -1038,6 +1280,16 @@ solenta --serve-web --serve-host 0.0.0.0   # LAN, your call</code></pre>
         This is how you check in on runs from a phone or another machine.
         There is no TLS in v1, so the default bind is loopback; widening it is
         the operator's informed choice.
+      </p>
+      <p>
+        When you pair a device under <strong>Solenta Web</strong> in
+        Settings, pick its access: <strong>Read only</strong>,
+        <strong>Steer threads</strong> (the default) or <strong>Full
+        access</strong>, plus grants for files, git, the terminal (watch or
+        type), preview control and settings. Solenta checks every request
+        against them on the host. Steer threads can approve the agent's
+        tool requests. To change a device's access, revoke it and pair
+        again.
       </p>
 
       <h2 id="ssh">SSH and Connections</h2>

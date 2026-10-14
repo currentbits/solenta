@@ -312,16 +312,17 @@ describe("stop during first-turn prepare (#1228)", () => {
     await waitFor(() => store.getThread(thread.id).status === "done");
   });
 
-  it("follow-up turns skip bootstrapMemory and still spawn", async () => {
-    let boots = 0;
+  it("follow-up turns fetch only matched memory and still spawn (#271)", async () => {
+    /** @type {object[]} */
+    const boots = [];
     let spawns = 0;
     runner = createRunner({
       store,
       core,
       pushFn() {},
       tickMs: 15,
-      bootstrapMemory: async () => {
-        boots += 1;
+      bootstrapMemory: async (_p, o) => {
+        boots.push(o);
         return {};
       },
       runAgentFn: ({ onDone }) => {
@@ -334,7 +335,7 @@ describe("stop during first-turn prepare (#1228)", () => {
     store.updateThread(thread.id, { sessionId: "sess-follow-up" });
     await runner.startRun({ threadId: thread.id, prompt: "again" });
     await waitFor(() => spawns === 1);
-    assert.equal(boots, 0);
+    assert.deepEqual(boots, [{ prompt: "again", matchedOnly: true }]);
     await waitFor(() => store.getThread(thread.id).status === "done");
   });
 

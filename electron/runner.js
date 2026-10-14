@@ -689,6 +689,10 @@ function createRunner(opts) {
    * @type {Map<string, object>}
    */
   const active = new Map();
+  // Conditional memory ids already injected per thread (#271).
+  // ponytail: in-memory; a restart re-sends each matched entry once.
+  /** @type {Map<string, Set<string>>} */
+  const memorySeen = new Map();
   // OTel GenAI spans (issue #280). Inert while settings.otel.endpoint is null,
   // and every method swallows its own failures, so no call site below guards.
   const otel = createOtel({
@@ -1853,6 +1857,7 @@ function createRunner(opts) {
             startRun,
             setProvider: services.setProvider,
             isAvailable: providerBinAvailable,
+            project: store.getProject(worker.projectId),
             onFailover: (next, fromProvider) => {
               appendMessage(
                 threadId,
@@ -1888,10 +1893,12 @@ function createRunner(opts) {
 
       otel.endRun({ threadId, runId: forkRunId, status: "done" });
       appendMessage(threadId, "user", prompt, forkRunId, null, attachments);
+      const dirty = services.dirtySnapshotWarning(worker);
       appendMessage(
         threadId,
         "event",
-        `[orchestration] Forked worker ${worker.id} for this prompt; it works in its own worktree and wakes this thread when it lands.`,
+        `[orchestration] Forked worker ${worker.id} for this prompt; it works in its own worktree and wakes this thread when it lands.` +
+          (dirty ? ` ${dirty}` : ""),
         forkRunId,
       );
       store.updateThread(
@@ -2166,6 +2173,7 @@ function createRunner(opts) {
       services.askNoteFor(dispatchThread) +
       services.codexComputerUseNoteFor(dispatchThread.provider) +
       services.crewTaskNoteFor(store, dispatchThread) +
+      services.taskGroupNoteFor(store, dispatchThread) +
       services.codeIndexNoteFor(
         userDataPath && repoRoot
           ? tryReadCodeIndex(userDataPath, repoRoot)
@@ -2218,6 +2226,7 @@ function createRunner(opts) {
         pushDetail(threadId);
       }
 
+      if (!memorySeen.has(threadId)) memorySeen.set(threadId, new Set());
       const bootNote = await ask.prefetchBootstrapNote({
         userDataPath,
         projectPath:
@@ -2225,6 +2234,8 @@ function createRunner(opts) {
           (projectForGate && projectForGate.path) ||
           "",
         firstTurn: !dispatchThread.sessionId,
+        prompt: rawPrompt,
+        seen: memorySeen.get(threadId),
         bootstrapMemory,
       });
       if (abortIfCancelled(threadId, runId)) return { runId };

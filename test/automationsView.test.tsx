@@ -1011,6 +1011,30 @@ describe("AutomationsView", () => {
     m.unmount();
   });
 
+  it("triage template fills an issue_opened automation (#258)", async () => {
+    const created: Array<Record<string, unknown>> = [];
+    const m = await mount(
+      <AutomationsView
+        automations={[]}
+        projects={[p1]}
+        providers={providers}
+        onCreate={(input) => {
+          created.push(input as unknown as Record<string, unknown>);
+        }}
+        onUpdate={() => {}}
+        onRemove={() => {}}
+        onRunNow={() => {}}
+      />,
+    );
+    await m.click(m.query("[data-automation-triage]"));
+    await m.click(m.query("[data-automation-create] button[type=submit]"));
+    assert.equal(created.length, 1);
+    assert.equal(created[0].name, "Issue triage");
+    assert.match(String(created[0].prompt), /issue_set_plan status todo/);
+    assert.equal((created[0].trigger as { event: string }).event, "issue_opened");
+    m.unmount();
+  });
+
   it("event triggers: Linear and Sentry fields (#1588)", async () => {
     const created: Array<Record<string, unknown>> = [];
     const m = await mount(
