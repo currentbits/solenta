@@ -123,13 +123,26 @@ describe("PlanCard", () => {
 
   it("keeps the approved plan behind a toggle once steps exist", async () => {
     const view = await mountView(
-      detail({ planSteps: steps, plan: "## Steps\n\nShip the card" }),
+      detail({
+        id: "t-toggle",
+        planSteps: steps,
+        plan: "## Steps\n\nShip the card",
+      }),
     );
     assert.ok(!view.text().includes("Ship the card"));
     await view.click(view.byText("Show full plan"));
     assert.match(view.text(), /Ship the card/);
     await view.click(view.byText("Hide full plan"));
     assert.ok(!view.text().includes("Ship the card"));
+  });
+
+  it("remembers a hidden plan when the thread is opened again", async () => {
+    const d = detail({ id: "t-remount", plan: "## Steps\n\nShip the card" });
+    const first = await mountView(d);
+    await first.click(first.byText("Hide full plan"));
+    const again = await mountView(d);
+    assert.ok(again.byText("Show full plan"));
+    assert.ok(!again.text().includes("Ship the card"));
   });
 
   it("expands the plan when there are no steps yet", async () => {

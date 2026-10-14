@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useReducer, useState } from "react";
 import type {
   PendingPermissionInfo,
   PermissionDecision,
@@ -393,6 +393,10 @@ export function ExternalApprovalCard({ thread }: { thread: ThreadInfo }) {
   );
 }
 
+// Hide/show choice per thread, so switching away and back doesn't reopen it.
+// ponytail: session-only; move to localStorage if it should survive relaunch.
+const planOpenByThread = new Map<string, boolean>();
+
 export function PlanCard({
   thread,
   forceOpen = false,
@@ -401,10 +405,16 @@ export function PlanCard({
   forceOpen?: boolean;
 }) {
   const steps = thread.planSteps ?? [];
+  const [, rerender] = useReducer((n: number) => n + 1, 0);
   // No steps yet means the prose IS the overview, so it starts expanded.
-  const [open, setOpen] = useState(steps.length === 0);
+  const open = planOpenByThread.get(thread.id) ?? steps.length === 0;
+  const setOpen = (next: boolean) => {
+    planOpenByThread.set(thread.id, next);
+    rerender();
+  };
   useEffect(() => {
     if (forceOpen) setOpen(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [forceOpen]);
   const done = steps.filter((s) => s.status === "done").length;
   return (
@@ -423,7 +433,7 @@ export function PlanCard({
           <button
             type="button"
             className={styles.planToggle}
-            onClick={() => setOpen((v) => !v)}
+            onClick={() => setOpen(!open)}
           >
             {open ? "Hide full plan" : "Show full plan"}
           </button>
