@@ -78,7 +78,7 @@ const baseProps = {
   activeThreadId: null,
   onSelectThread: () => {},
   onAddProject: () => {},
-  searchThreads: async () => [],
+  searchThreads: async () => ({ threads: [], truncated: false }),
 };
 
 describe("Sidebar thread-mode menu", () => {

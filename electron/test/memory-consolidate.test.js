@@ -329,7 +329,7 @@ describe("consolidation scheduler", () => {
     );
     assert.equal(
       (await services.searchThreads(store, { query: "Memory consolidation" }))
-        .length,
+        .threads.length,
       0,
     );
   });

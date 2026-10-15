@@ -1917,7 +1917,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
             receipts: [],
           } as CrewIntegration,
         ),
-      search: (input: unknown) => rec("threads.search", [input], [] as ThreadInfo[]),
+      search: (input: unknown) => rec("threads.search", [input], { threads: [] as ThreadInfo[], truncated: false }),
       create: (input: unknown) => {
         const createdAt = Date.now();
         const wantWorktree =
