@@ -314,6 +314,8 @@ export const IPC_CHANNELS = [
   { ns: "preview", method: "screenshot" },
   { ns: "preview", method: "click" },
   { ns: "preview", method: "type" },
+  { ns: "preview", method: "inspect" },
+  { ns: "preview", method: "cancelInspect" },
   { ns: "simulator", method: "capabilities" },
   { ns: "simulator", method: "selectDeveloperDir" },
   { ns: "simulator", method: "listDevices" },

@@ -248,6 +248,9 @@ const BY_SCOPE = {
     "preview:goForward",
     "preview:click",
     "preview:type",
+    // Inspect reads the guest DOM the user points at (#1193).
+    "preview:inspect",
+    "preview:cancelInspect",
     "devserver:start",
     "devserver:stop",
   ],
