@@ -3867,6 +3867,22 @@ export const ThreadView = memo(function ThreadView({
                 api={terminalApi}
                 reveal={terminalReveal}
                 onFix={onFixSuggestion}
+                onAddToPrompt={
+                  isArchived
+                    ? undefined
+                    : (tid, text) =>
+                        setContextChips(tid, (prev) => [
+                          ...prev,
+                          {
+                            id:
+                              typeof crypto !== "undefined" && crypto.randomUUID
+                                ? crypto.randomUUID()
+                                : `term-${Date.now()}`,
+                            kind: "terminal",
+                            text,
+                          },
+                        ])
+                }
               />
             );
           }
