@@ -957,6 +957,15 @@ app.whenReady().then(async () => {
   });
   prStateRefresher.start();
 
+  // Anonymous daily usage ping (installs, OS, agents) for the team's stats.
+  if (app.isPackaged) {
+    require("./telemetry.js").startTelemetry({
+      userData,
+      version: app.getVersion(),
+      getThreads: () => store.getThreads(),
+    });
+  }
+
   // Boot-time worktree GC: reclaim clean worktree dirs no thread references
   // (crash/store-drift orphans). Conservative by design — dirty trees are
   // committed to recovered/<id> first (#1386) and unmerged branches are

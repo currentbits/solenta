@@ -3,6 +3,8 @@
  * Solenta site analytics (issue #747).
  *
  * POST /e  {n,u,r,p?}  -> 204 always. Never stores IP.
+ * POST /ping {installId,version,platform,arch,providers} -> 204 always. The
+ *      desktop app's anonymous daily ping; one row per install per UTC day.
  * GET  /   HTML dashboard (cookie or bearer ADMIN_TOKEN)
  * GET  /api/stats      JSON for the same payload
  *
@@ -47,7 +49,19 @@ const SCHEMA = `
   );
   CREATE INDEX IF NOT EXISTS events_ts ON events (ts);
   CREATE INDEX IF NOT EXISTS events_name_ts ON events (name, ts);
+  CREATE TABLE IF NOT EXISTS install_days (
+    install_id UUID NOT NULL,
+    day DATE NOT NULL DEFAULT current_date,
+    version TEXT NOT NULL DEFAULT '',
+    platform TEXT NOT NULL DEFAULT '',
+    arch TEXT NOT NULL DEFAULT '',
+    providers TEXT[] NOT NULL DEFAULT '{}',
+    PRIMARY KEY (install_id, day)
+  );
 `;
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const PROVIDER_RE = /^[a-z0-9_-]{1,32}$/;
 
 /** @type {{ query: (sql: string, params?: unknown[]) => Promise<{rows: any[]}> } | null} */
 let db = null;
@@ -328,6 +342,80 @@ async function handleEvent(req, res) {
   return noContent(req, res);
 }
 
+const str = (v, max) => (typeof v === "string" ? v.slice(0, max) : "");
+
+async function handlePing(req, res) {
+  if (rateLimited(clientIp(req))) return noContent(req, res);
+  const body = await readBody(req);
+  if (body === TOO_LARGE) {
+    res.on("finish", () => req.destroy());
+    return noContent(req, res);
+  }
+  if (!body || typeof body.installId !== "string" || !UUID_RE.test(body.installId)) {
+    console.log("drop: ping id");
+    return noContent(req, res);
+  }
+  const providers = Array.isArray(body.providers)
+    ? [...new Set(body.providers.filter((p) => typeof p === "string" && PROVIDER_RE.test(p)))].slice(0, 20)
+    : [];
+  if (!db) return noContent(req, res);
+  try {
+    // Last ping of the day wins, so an upgrade mid-day shows the new version.
+    await db.query(
+      `INSERT INTO install_days (install_id, version, platform, arch, providers)
+         VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (install_id, day) DO UPDATE SET version = EXCLUDED.version,
+         platform = EXCLUDED.platform, arch = EXCLUDED.arch, providers = EXCLUDED.providers`,
+      [body.installId.toLowerCase(), str(body.version, 40), str(body.platform, 20), str(body.arch, 20), providers],
+    );
+  } catch (err) {
+    console.log("drop: ping db", err && err.message);
+  }
+  return noContent(req, res);
+}
+
+/** Every query takes $1 = first UTC day of the range. */
+const APP_QUERIES = {
+  totals: `SELECT count(*)::int AS ever,
+      count(*) FILTER (WHERE last >= $1)::int AS active,
+      count(*) FILTER (WHERE first >= $1)::int AS fresh
+    FROM (SELECT install_id, min(day) AS first, max(day) AS last
+            FROM install_days GROUP BY 1) i`,
+  daily: `SELECT day::text AS day, count(*)::int AS count FROM install_days
+    WHERE day >= $1 GROUP BY 1`,
+  os: `SELECT platform || ' ' || arch AS label, count(DISTINCT install_id)::int AS count
+    FROM install_days WHERE day >= $1 GROUP BY 1 ORDER BY 2 DESC LIMIT 20`,
+  agents: `SELECT p AS label, count(DISTINCT install_id)::int AS count
+    FROM install_days, unnest(providers) AS p
+    WHERE day >= $1 GROUP BY 1 ORDER BY 2 DESC LIMIT 20`,
+  versions: `SELECT version AS label, count(DISTINCT install_id)::int AS count
+    FROM install_days WHERE day >= $1 GROUP BY 1 ORDER BY 2 DESC LIMIT 20`,
+};
+
+async function appStats(days, nowMs) {
+  const since = utcDay(rangeStartMs(days, nowMs));
+  const out = {};
+  for (const [key, sql] of Object.entries(APP_QUERIES)) {
+    out[key] = (await db.query(sql, [since])).rows;
+  }
+  const t = out.totals[0] || {};
+  const byDay = new Map(out.daily.map((r) => [r.day, r.count]));
+  const series = [];
+  for (let i = 0; i < days; i++) {
+    const day = utcDay(rangeStartMs(days, nowMs) + i * 86400000);
+    series.push({ day, installs: byDay.get(day) || 0 });
+  }
+  return {
+    ever: t.ever || 0,
+    active: t.active || 0,
+    new: t.fresh || 0,
+    series,
+    os: out.os,
+    agents: out.agents,
+    versions: out.versions,
+  };
+}
+
 async function readRaw(req) {
   return new Promise((resolve) => {
     let size = 0;
@@ -590,7 +678,8 @@ async function handleStats(req, res, days) {
          ORDER BY ts ASC`,
       [querySince(days, nowFn()).toISOString()],
     );
-    return json(res, 200, buildStats(rows, days, nowFn()));
+    const app = await appStats(days, nowFn());
+    return json(res, 200, { ...buildStats(rows, days, nowFn()), app });
   } catch (err) {
     console.error("stats failed", err);
     return json(res, 503, { error: "Could not read stats" });
@@ -605,7 +694,34 @@ function escapeHtml(s) {
     .replace(/"/g, "&quot;");
 }
 
-function renderDashboard(stats, days) {
+function renderApp(app) {
+  if (!app || app.ever === 0) return `<section><h2>App</h2><p>No app pings yet.</p></section>`;
+  const max = Math.max(1, ...app.series.map((s) => s.installs));
+  const bars = app.series
+    .map((s) => {
+      const h = Math.round((s.installs / max) * 100);
+      return `<div class="bar"><span style="height:${h}%"></span><small>${s.installs}</small><em>${escapeHtml(s.day.slice(5))}</em></div>`;
+    })
+    .join("");
+  const list = (items) =>
+    items.length
+      ? `<ol>${items.map((it) => `<li><span>${escapeHtml(it.label || "unknown")}</span><b>${it.count}</b></li>`).join("")}</ol>`
+      : "<p>None.</p>";
+  return `<section><h2>App</h2>
+  <div class="nums">
+    <div class="num"><b>${app.active}</b><span>Active installs</span></div>
+    <div class="num"><b>${app.new}</b><span>New installs</span></div>
+    <div class="num"><b>${app.ever}</b><span>Installs ever</span></div>
+  </div>
+  <div class="chart">${bars}</div>
+  <div class="cols">
+    <section><h2>OS</h2>${list(app.os)}</section>
+    <section><h2>Agents</h2>${list(app.agents)}</section>
+    <section><h2>Versions</h2>${list(app.versions)}</section>
+  </div></section>`;
+}
+
+function renderDashboard(stats, days, app) {
   const max = Math.max(1, ...stats.series.map((s) => s.visitors));
   const bars = stats.series
     .map((s) => {
@@ -697,6 +813,7 @@ button { font:inherit; background:none; border:0; cursor:pointer; text-decoratio
   <section><h2>Browsers</h2>${list(stats.browsers, "name")}</section>
   <section><h2>Sources</h2>${list(stats.sources, "label")}</section>
   <section><h2>Funnels</h2><ol>${funnels}</ol></section>`}
+  ${renderApp(app)}
 </main>
 </body></html>`;
 }
@@ -712,7 +829,8 @@ async function handleHome(req, res) {
          ORDER BY ts ASC`,
       [querySince(days, nowFn()).toISOString()],
     );
-    return sendHtml(res, 200, renderDashboard(buildStats(rows, days, nowFn()), days));
+    const app = await appStats(days, nowFn());
+    return sendHtml(res, 200, renderDashboard(buildStats(rows, days, nowFn()), days, app));
   } catch (err) {
     console.error("dashboard failed", err);
     return sendHtml(res, 503, "<p>Could not read stats.</p>");
@@ -724,6 +842,7 @@ const server = http.createServer(async (req, res) => {
   if (path === "/health") return json(res, 200, { ok: true });
   if (path === "/e" && req.method === "OPTIONS") return noContent(req, res);
   if (path === "/e" && req.method === "POST") return handleEvent(req, res);
+  if (path === "/ping" && req.method === "POST") return handlePing(req, res);
   if (path === "/login" && req.method === "POST") return handleLogin(req, res);
   if (path === "/logout" && req.method === "POST") return handleLogout(req, res);
   if (path === "/api/stats" && req.method === "GET") {
