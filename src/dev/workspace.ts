@@ -3,6 +3,7 @@ import type {
   CoderApi,
   DevServerState,
   TerminalState,
+  PreviewInspectResult,
   PreviewSnapshot,
   LocalServerInfo,
   FileTreeEntry,
@@ -213,6 +214,12 @@ export function createWorkspace(): Pick<CoderApi, "servers" | "simulator" | "pre
         text: string;
       }): Promise<PreviewSnapshot> {
         return { url: "", title: "", canGoBack: false, canGoForward: false };
+      },
+      async inspect(_input: { threadId: string }): Promise<PreviewInspectResult> {
+        return { cancelled: true, url: "", title: "", canGoBack: false, canGoForward: false };
+      },
+      async cancelInspect(_input: { threadId: string }) {
+        return { ok: true };
       },
     },
     devserver: {

@@ -91,21 +91,23 @@ export function useAppSnap({
     att: AttachmentInfo,
     append = false,
   ) => {
-    if (!isLiveScreenshotHandoff(originThreadId, generation)) return;
+    if (!isLiveScreenshotHandoff(originThreadId, generation)) return false;
     setIncomingHandoff((prev) =>
       append && prev && prev.threadId === originThreadId
         ? { threadId: originThreadId, items: [...prev.items, att] }
         : { threadId: originThreadId, items: [att] },
     );
+    return true;
   };
 
+  /** Resolves true when the image reached the composer. */
   const attachBrowserScreenshot = useCallback(
     async (dataUrl: string, originThreadId: string) => {
-      if (!onSaveAttachmentImage) return;
+      if (!onSaveAttachmentImage) return false;
       const generation = screenshotHandoffGen.current;
       const att = await onSaveAttachmentImage(dataUrl);
-      if (!att) return;
-      deliverIncomingAttachment(originThreadId, generation, att);
+      if (!att) return false;
+      return deliverIncomingAttachment(originThreadId, generation, att);
     },
     [onSaveAttachmentImage],
   );
