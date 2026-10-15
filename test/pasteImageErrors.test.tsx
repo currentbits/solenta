@@ -79,11 +79,15 @@ describe("clipboard image paste failures (#1211)", () => {
       "keep this draft",
     );
 
-    fail["attachments.saveImage"] = new Error("ipc down");
+    fail["attachments.saveImage"] = new Error("Attachments folder is read-only");
     await paste(m);
     assert.equal(fake.of("attachments.saveImage").length, 2);
     assert.equal(chips(m).length, 0, "a rejected save must not show a chip");
-    assert.match(alertText(m), /Couldn't save the pasted image/);
+    assert.match(
+      alertText(m),
+      /^Attachments folder is read-only/,
+      "a host error reaches the composer verbatim",
+    );
 
     delete fail["attachments.saveImage"];
     next = { kind: "image", path: "/tmp/a/one.png", name: "one.png" };

@@ -572,7 +572,7 @@ export interface UseCoderResult {
   }) => Promise<AttachmentInfo[]>;
   /** Web-only folder pick via showDirectoryPicker; persists through saveFolder. */
   pickFolderAttachments: () => Promise<AttachmentInfo[]>;
-  /** Persist a pasted image for the selected thread; null when rejected. */
+  /** Persist a pasted image for the selected thread; null when refused, rejects with the host error. */
   saveAttachmentImage: (dataUrl: string) => Promise<AttachmentInfo | null>;
   /** Data URL for one attached image; null when it is gone. */
   loadAttachmentImage: (path: string) => Promise<string | null>;
