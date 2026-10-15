@@ -35,6 +35,18 @@ function fakeDb(opts = {}) {
         const salt = salts.get(params[0]);
         return { rows: salt ? [{ salt }] : [] };
       }
+      if (/install_days/i.test(sql)) {
+        if (/INSERT/i.test(sql)) return { rows: [] };
+        const app = opts.app || {};
+        const pick = [
+          ["totals", "AS ever"],
+          ["daily", "AS day"],
+          ["os", "platform ||"],
+          ["agents", "unnest"],
+          ["versions", "version AS label"],
+        ].find(([, frag]) => sql.includes(frag));
+        return { rows: (pick && app[pick[0]]) || [] };
+      }
       if (/^\s*SELECT/i.test(sql)) return { rows: opts.rows || [] };
       if (/INSERT INTO events/i.test(sql)) {
         events.push({
@@ -631,4 +643,73 @@ test("login HTML does not auto-refresh", async (t) => {
   const html = await (await fetch(`http://127.0.0.1:${port}/`)).text();
   assert.equal(html.includes("http-equiv=\"refresh\""), false);
   assert.match(html, /name="password"/);
+});
+
+test("POST /ping upserts a sanitized row; bad ids never reach the db", async (t) => {
+  const port = await listen();
+  const db = fakeDb();
+  setDb(db);
+  resetHits();
+  t.after(() => {
+    server.close();
+    setDb(null);
+  });
+  const ping = (body) =>
+    fetch(`http://127.0.0.1:${port}/ping`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-forwarded-for": "198.51.100.7" },
+      body: JSON.stringify(body),
+    });
+  assert.equal((await ping({ installId: "nope" })).status, 204);
+  assert.equal(db.calls.length, 0);
+
+  const id = "8C1F2B9E-1D2A-4C3B-9A8F-0E1D2C3B4A59";
+  const res = await ping({
+    installId: id,
+    version: "0.25.0",
+    platform: "darwin",
+    arch: "arm64",
+    providers: ["claude", "codex", "claude", "Bad Name!", 7],
+  });
+  assert.equal(res.status, 204);
+  const insert = db.calls.at(-1);
+  assert.match(insert.sql, /ON CONFLICT \(install_id, day\)/);
+  assert.deepEqual(insert.params, [id.toLowerCase(), "0.25.0", "darwin", "arm64", ["claude", "codex"]]);
+});
+
+test("dashboard App section: empty sentence, then installs, OS and agents", async (t) => {
+  const port = await listen();
+  setNow(() => Date.parse("2026-10-15T12:00:00Z"));
+  t.after(() => {
+    server.close();
+    setDb(null);
+    setNow(null);
+  });
+  const auth = { headers: { authorization: "Bearer secret-token" } };
+  const url = `http://127.0.0.1:${port}/?days=7`;
+
+  setDb(fakeDb());
+  assert.match(await (await fetch(url, auth)).text(), /No app pings yet\./);
+
+  setDb(
+    fakeDb({
+      app: {
+        totals: [{ ever: 12, active: 9, fresh: 3 }],
+        daily: [{ day: "2026-10-15", count: 7 }],
+        os: [{ label: "darwin arm64", count: 8 }],
+        agents: [{ label: "claude", count: 9 }, { label: "<codex>", count: 2 }],
+        versions: [{ label: "0.25.0", count: 9 }],
+      },
+    }),
+  );
+  const html = await (await fetch(url, auth)).text();
+  assert.match(html, /<b>9<\/b><span>Active installs/);
+  assert.match(html, /<b>3<\/b><span>New installs/);
+  assert.match(html, /darwin arm64/);
+  assert.match(html, /&lt;codex&gt;/, "labels are escaped");
+
+  const api = await (await fetch(`http://127.0.0.1:${port}/api/stats?days=7`, auth)).json();
+  assert.equal(api.app.series.length, 7);
+  assert.deepEqual(api.app.series.at(-1), { day: "2026-10-15", installs: 7 });
+  assert.equal(api.app.agents[0].label, "claude");
 });
