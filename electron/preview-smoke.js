@@ -31,7 +31,7 @@ const FORM_PAGE = (refusedPort) => `<!doctype html><title>Fixture</title>
   <button style="display:none">Hidden action</button>
   <div aria-hidden="true"><button>Decorative</button></div>
 </form>
-<button id=blocker onclick="alert('blocked')">Blocking dialog</button>
+<button id=blocker onclick="const end = Date.now() + 6500; while (Date.now() < end) {}">Busy page</button>
 <a href="/next">Next page</a>
 <script>
 console.error("boom from fixture");
@@ -192,18 +192,29 @@ async function main() {
   assert.equal(fill.viewport.width, 800);
   log("viewport", { mobile: mobile.viewport, image: shot.image });
 
-  // A blocking dialog: the action cannot be confirmed either way.
+  // A page busy past the action timeout: the click cannot be confirmed
+  // either way. A busy loop, not alert(): on Windows a native alert dialog
+  // still open at app.exit made the process exit 1 after every step passed.
   const s3 = await preview.snapshot({ threadId });
-  const blocker = s3.nodes.find((n) => n.name === "Blocking dialog");
+  const blocker = s3.nodes.find((n) => n.name === "Busy page");
   const started = Date.now();
   const blocked = await preview.click({ threadId, ref: blocker.ref });
   assert.equal(blocked.completion, "uncertain");
   assert.ok(Date.now() - started >= preview.ACTION_TIMEOUT_MS - 50);
   log("uncertain", {});
+  // Let the page come back before teardown.
+  await until(async () => {
+    try {
+      return (await preview.info({ threadId })) && (await guest.executeJavaScript("1")) === 1;
+    } catch {
+      return false;
+    }
+  }, "page to recover", 10_000);
 
   preview.unbind({ threadId, webContentsId: guest.id });
   assert.equal(guest.listenerCount("console-message"), baseline);
   server.close();
+  win.destroy();
   log("done", {});
 }
 

@@ -19,8 +19,16 @@ const r = spawnSync(
   [...base, path.join(dir, "smoke.js"), ...process.argv.slice(2)],
   { stdio: "inherit" },
 );
-if (r.status !== 0) process.exit(r.status ?? 1);
+function report(name, res) {
+  if (res.status === 0) return;
+  console.error(
+    `${name} exited status=${res.status} signal=${res.signal}` +
+      (res.error ? ` error=${res.error.message}` : ""),
+  );
+  process.exit(res.status || 1);
+}
+report("smoke.js", r);
 const p = spawnSync(electron, [...base, path.join(dir, "preview-smoke.js")], {
   stdio: "inherit",
 });
-process.exit(p.status ?? 1);
+report("preview-smoke.js", p);
