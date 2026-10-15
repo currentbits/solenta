@@ -370,6 +370,26 @@ describe("preview session (issue #155)", () => {
     await assert.rejects(preview.click({ threadId: "t1" }), /selector or ref/);
   });
 
+  it("a snapshot that raced one late navigation event retries once", async () => {
+    let calls = 0;
+    const wc = fakeWebContents({
+      url: "http://localhost:5173/",
+      execute: (fn, arg) => {
+        if (fn === "pageAction") return { ok: true, tag: "BUTTON" };
+        if (fn === "pageSnapshot" && ++calls === 1) {
+          wc.emit("did-navigate", {}, "http://localhost:5173/");
+        }
+        return { nodes: [{ ref: `s${arg.snapshotId}e0`, role: "button", name: "Go" }], truncated: null, viewport: null };
+      },
+    });
+    preview.setWebContentsLookup(() => wc);
+    preview.bind({ threadId: "t1", webContentsId: 7 });
+    const snap = await preview.snapshot({ threadId: "t1" });
+    assert.equal(calls, 2);
+    assert.equal(snap.snapshotId, 2);
+    assert.equal((await preview.click({ threadId: "t1", ref: "s2e0" })).completion, "done");
+  });
+
   it("a snapshot taken across a navigation is refused", async () => {
     const wc = fakeWebContents({
       url: "http://localhost:5173/",

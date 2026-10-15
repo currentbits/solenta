@@ -612,20 +612,30 @@ async function screenshot(input) {
  */
 async function snapshot(input) {
   const { s, wc } = requireSession(threadIdOf(input));
-  const id = ++s.snapshotSeq;
-  const docGeneration = s.docGeneration;
-  const page = await withTimeout(
-    pageCall(wc, pageSnapshot, { snapshotId: id, ...SNAPSHOT_LIMITS }),
-    READ_TIMEOUT_MS,
-  );
-  if (page === TIMED_OUT) {
-    throw new Error(
-      `The page did not answer within ${READ_TIMEOUT_MS / 1000}s; a dialog or busy script may be blocking it. Take a screenshot to see it.`,
+  // did-navigate can reach main after the new document already answered
+  // (seen on macOS CI right after navigate). Reading is safe to repeat, so
+  // retry once; a page that keeps navigating is still refused.
+  for (let attempt = 0; ; attempt++) {
+    const id = ++s.snapshotSeq;
+    const docGeneration = s.docGeneration;
+    const page = await withTimeout(
+      pageCall(wc, pageSnapshot, { snapshotId: id, ...SNAPSHOT_LIMITS }),
+      READ_TIMEOUT_MS,
     );
+    if (page === TIMED_OUT) {
+      throw new Error(
+        `The page did not answer within ${READ_TIMEOUT_MS / 1000}s; a dialog or busy script may be blocking it. Take a screenshot to see it.`,
+      );
+    }
+    if (s.docGeneration !== docGeneration) {
+      if (attempt === 0) continue;
+      throw new Error("The page navigated during the snapshot. Take a new snapshot.");
+    }
+    return snapshotResult(s, wc, id, docGeneration, page);
   }
-  if (s.docGeneration !== docGeneration) {
-    throw new Error("The page navigated during the snapshot. Take a new snapshot.");
-  }
+}
+
+function snapshotResult(s, wc, id, docGeneration, page) {
   s.snapshot = { id, docGeneration };
   return {
     ...navState(wc),
