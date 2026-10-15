@@ -14,6 +14,7 @@
     "electron": "electron .",
     "package": "bash scripts/package-app.sh",
     "acceptance": "electron scripts/acceptance.js",
+    "verify:browser-inspect": "electron scripts/verify-browser-inspect.js",
     "beachball": "electron electron/beachball.js",
     "test": "node scripts/test-all.js",
     "test:core": "npm run build --prefix core && npm test --prefix core",
