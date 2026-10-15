@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// Launch electron/smoke.js. On Linux, Chromium aborts before any JS runs
+// Launch electron/smoke.js, then electron/preview-smoke.js (Browser pane
+// evidence on a real guest, #1191). On Linux, Chromium aborts before any JS runs
 // when it is root without --no-sandbox (electron_main_delegate), and the
 // npm-installed chrome-sandbox is not setuid so CI cannot use the SUID
 // helper either. app.commandLine.appendSwitch is too late. The packaged
@@ -10,10 +11,16 @@ const { spawnSync } = require("node:child_process");
 const path = require("node:path");
 
 const electron = require("electron");
-const args = [];
-if (process.platform === "linux") args.push("--no-sandbox");
-args.push(path.join(__dirname, "..", "electron", "smoke.js"));
-args.push(...process.argv.slice(2));
+const base = process.platform === "linux" ? ["--no-sandbox"] : [];
+const dir = path.join(__dirname, "..", "electron");
 
-const r = spawnSync(electron, args, { stdio: "inherit" });
-process.exit(r.status ?? 1);
+const r = spawnSync(
+  electron,
+  [...base, path.join(dir, "smoke.js"), ...process.argv.slice(2)],
+  { stdio: "inherit" },
+);
+if (r.status !== 0) process.exit(r.status ?? 1);
+const p = spawnSync(electron, [...base, path.join(dir, "preview-smoke.js")], {
+  stdio: "inherit",
+});
+process.exit(p.status ?? 1);

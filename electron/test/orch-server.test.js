@@ -230,6 +230,34 @@ describe("preview MCP tool (issue #155)", () => {
     );
   });
 
+  it("forwards snapshot, diagnostics, viewport and ref actions", async () => {
+    const calls = [];
+    const deps = makeDeps();
+    deps.preview = Object.fromEntries(
+      ["snapshot", "diagnostics", "viewport", "click", "type"].map((name) => [
+        name,
+        async (input) => {
+          calls.push([name, input]);
+          return { ok: true };
+        },
+      ]),
+    );
+    const h = createToolHandlers(deps);
+    const base = { threadId: "t1", projectId: "p1" };
+    await h.preview({ ...base, action: "snapshot" });
+    await h.preview({ ...base, action: "diagnostics" });
+    await h.preview({ ...base, action: "viewport", preset: "mobile" });
+    await h.preview({ ...base, action: "click", ref: "s1e2" });
+    await h.preview({ ...base, action: "type", ref: "s1e3", text: "a@b.co" });
+    assert.deepEqual(calls, [
+      ["snapshot", { threadId: "t1" }],
+      ["diagnostics", { threadId: "t1" }],
+      ["viewport", { threadId: "t1", preset: "mobile" }],
+      ["click", { threadId: "t1", selector: undefined, ref: "s1e2" }],
+      ["type", { threadId: "t1", selector: undefined, ref: "s1e3", text: "a@b.co" }],
+    ]);
+  });
+
   it("rejects an unknown action", async () => {
     const h = createToolHandlers(makeDeps());
     await assert.rejects(

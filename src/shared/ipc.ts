@@ -2440,9 +2440,101 @@ export interface PreviewSnapshot {
   canGoForward: boolean;
 }
 
+export type PreviewViewportPreset = "fill" | "mobile" | "tablet" | "desktop";
+
+/**
+ * Viewport as the page measured it (CSS px). `displayScale` is set when a
+ * preset larger than the pane is drawn shrunk to fit it (#1191).
+ */
+export interface PreviewViewport {
+  preset: PreviewViewportPreset;
+  width?: number;
+  height?: number;
+  devicePixelRatio?: number;
+  displayScale?: number;
+}
+
 export interface PreviewScreenshot extends PreviewSnapshot {
   /** PNG data URL of the visible page. */
   dataUrl: string;
+  viewport?: PreviewViewport;
+  /** Pixel size of the PNG. */
+  image?: { width: number; height: number };
+}
+
+export interface PreviewActionResult extends PreviewSnapshot {
+  ok: boolean;
+  /** "uncertain": the page never answered, so observe it before retrying a mutation. */
+  completion: "done" | "uncertain";
+  tag?: string;
+  text?: string;
+  message?: string;
+}
+
+/** One visible control or landmark in a semantic snapshot. */
+export interface PreviewSnapshotNode {
+  /** Valid only for this snapshot of this document, e.g. "s3e12". */
+  ref: string;
+  role: string;
+  name: string;
+  /** Nesting among snapshot nodes; omitted at the top level. */
+  depth?: number;
+  level?: number;
+  value?: string;
+  /** Password fields report only whether they are filled. */
+  filled?: boolean;
+  disabled?: boolean;
+  checked?: boolean | "mixed";
+  expanded?: boolean;
+  selected?: boolean;
+  required?: boolean;
+  readonly?: boolean;
+  invalid?: boolean;
+  validationMessage?: string;
+  focused?: boolean;
+  offscreen?: boolean;
+}
+
+export interface PreviewPageSnapshot extends PreviewSnapshot {
+  snapshotId: number;
+  documentGeneration: number;
+  viewport: PreviewViewport;
+  nodes: PreviewSnapshotNode[];
+  truncated: { nodes?: boolean; depth?: boolean; bytes?: boolean } | null;
+  limits: { maxNodes: number; maxDepth: number; maxBytes: number };
+}
+
+export interface PreviewConsoleEntry {
+  seq: number;
+  at: number;
+  /** Document generation the entry was recorded in. */
+  doc: number;
+  level: string;
+  text: string;
+  source: string;
+}
+
+/** Request outcome only: no headers or bodies, query values redacted. */
+export interface PreviewNetworkEntry {
+  seq: number;
+  at: number;
+  doc: number;
+  method: string;
+  url: string;
+  type: string;
+  status?: number;
+  error?: string;
+  durationMs: number | null;
+  fromCache?: boolean;
+}
+
+export interface PreviewDiagnostics extends PreviewSnapshot {
+  viewportPreset: PreviewViewportPreset;
+  documentGeneration: number;
+  console: PreviewConsoleEntry[];
+  network: PreviewNetworkEntry[];
+  /** Entries evicted from each bounded ring. */
+  dropped: { console: number; network: number };
 }
 
 export interface PrInfo {
@@ -6113,14 +6205,26 @@ export interface CoderApi {
     reload(input: { threadId: string }): Promise<PreviewSnapshot>;
     goBack(input: { threadId: string }): Promise<PreviewSnapshot>;
     goForward(input: { threadId: string }): Promise<PreviewSnapshot>;
-    info(input: { threadId: string }): Promise<PreviewSnapshot>;
+    info(
+      input: { threadId: string },
+    ): Promise<PreviewSnapshot & { viewportPreset: PreviewViewportPreset }>;
     screenshot(input: { threadId: string }): Promise<PreviewScreenshot>;
-    click(input: { threadId: string; selector: string }): Promise<PreviewSnapshot>;
+    /** Pass a CSS selector, or a ref from the latest snapshot (#1191). */
+    click(input: { threadId: string; selector?: string; ref?: string }): Promise<PreviewActionResult>;
     type(input: {
       threadId: string;
-      selector: string;
+      selector?: string;
+      ref?: string;
       text: string;
-    }): Promise<PreviewSnapshot>;
+    }): Promise<PreviewActionResult>;
+    /** Bounded semantic snapshot of visible roles, names and states (#1191). */
+    snapshot(input: { threadId: string }): Promise<PreviewPageSnapshot>;
+    /** Bounded console and request-outcome rings since the pane bound. */
+    diagnostics(input: { threadId: string }): Promise<PreviewDiagnostics>;
+    viewport(input: {
+      threadId: string;
+      preset: PreviewViewportPreset;
+    }): Promise<PreviewSnapshot & { viewport: PreviewViewport }>;
   };
   /**
    * Desktop-only iOS Simulator pane (#248). Web invokes are denied before

@@ -256,4 +256,16 @@ module.exports = {
     resolveDevServerRoot(ctx, input && input.threadId);
     return preview.type(input);
   },
+  "preview:snapshot": async (ctx, input) => {
+    resolveDevServerRoot(ctx, input && input.threadId);
+    return preview.snapshot(input);
+  },
+  "preview:diagnostics": async (ctx, input) => {
+    resolveDevServerRoot(ctx, input && input.threadId);
+    return preview.diagnostics(input);
+  },
+  "preview:viewport": async (ctx, input) => {
+    resolveDevServerRoot(ctx, input && input.threadId);
+    return preview.viewport(input);
+  },
 };

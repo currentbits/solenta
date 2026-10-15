@@ -114,6 +114,8 @@ const BY_SCOPE = {
     "devserver:status",
     "preview:info",
     "preview:screenshot",
+    "preview:snapshot",
+    "preview:diagnostics",
     "speech:status",
   ],
   steer: [
@@ -248,6 +250,7 @@ const BY_SCOPE = {
     "preview:goForward",
     "preview:click",
     "preview:type",
+    "preview:viewport",
     "devserver:start",
     "devserver:stop",
   ],
