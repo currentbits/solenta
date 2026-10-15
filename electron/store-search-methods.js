@@ -15,12 +15,15 @@ class StoreSearchMethods {
    * unsaved text; persisted shards are paths only so the scan does not
    * populate _messagesHydrated.
    * @param {string} needle already lowercased
+   * @param {((thread: object) => boolean) | null} [include] scope filter
+   *   applied before the scan, so out-of-scope rows never touch the cap
    */
-  _buildSearchSnapshot(needle) {
+  _buildSearchSnapshot(needle, include) {
     /** @type {object[]} */
     const threads = [];
     for (const thread of this.data.threads) {
       if (!thread || typeof thread !== "object" || thread.id == null) continue;
+      if (include && !include(thread)) continue;
       const id = thread.id;
       const row = {
         id,
@@ -63,15 +66,16 @@ class StoreSearchMethods {
   /**
    * @param {{ needle: string, threads: object[] }} snapshot
    * @param {number} gen
-   * @returns {Promise<string[]>}
+   * @returns {Promise<{ ids: string[], truncated: boolean }>}
    */
   _runSearchScan(snapshot, gen) {
+    const none = { ids: [], truncated: false };
     return new Promise((resolve) => {
       let settled = false;
-      const finish = (ids) => {
+      const finish = (result) => {
         if (settled) return;
         settled = true;
-        resolve(gen !== this._searchGen ? [] : ids);
+        resolve(gen !== this._searchGen ? none : result);
       };
       const SEARCH_INLINE_BATCH = 8;
       const runInline = () => {
@@ -80,7 +84,7 @@ class StoreSearchMethods {
         let i = 0;
         const step = () => {
           if (gen !== this._searchGen) {
-            finish([]);
+            finish(none);
             return;
           }
           const end = Math.min(i + SEARCH_INLINE_BATCH, snapshot.threads.length);
@@ -103,10 +107,10 @@ class StoreSearchMethods {
         const worker = new Worker(path.join(__dirname, "threadSearch.js"));
         this._searchWorker = worker;
         let usedInline = false;
-        worker.once("message", (ids) => {
+        worker.once("message", (result) => {
           if (this._searchWorker === worker) this._searchWorker = null;
           Promise.resolve(worker.terminate()).catch(() => {});
-          finish(Array.isArray(ids) ? ids : []);
+          finish(result && Array.isArray(result.ids) ? result : none);
         });
         worker.once("error", () => {
           if (this._searchWorker === worker) this._searchWorker = null;
@@ -115,7 +119,7 @@ class StoreSearchMethods {
         });
         worker.once("exit", () => {
           if (this._searchWorker === worker) this._searchWorker = null;
-          if (!usedInline) finish([]);
+          if (!usedInline) finish(none);
         });
         worker.postMessage(snapshot);
       } catch {
@@ -127,22 +131,24 @@ class StoreSearchMethods {
   /**
    * Full-content thread search: titles + notes + message text,
    * case-insensitive substring. Includes archived. Ordered by updatedAt
-   * DESC, max 50. Empty / 1-char queries return [] (renderer only calls
-   * with 2+ chars). Scans shards off the main thread and does not hydrate
-   * transcripts into _messagesHydrated. A newer call cancels the previous
-   * scan (#1122).
+   * DESC, max SEARCH_LIMIT; truncated says more matched. `include` scopes
+   * the scan BEFORE the cap (#1201). Empty / 1-char queries match nothing
+   * (renderer only calls with 2+ chars). Scans shards off the main thread
+   * and does not hydrate transcripts into _messagesHydrated. A newer call
+   * cancels the previous scan (#1122).
    * @param {unknown} query
-   * @returns {Promise<object[]>}
+   * @param {{ include?: (thread: object) => boolean }} [opts]
+   * @returns {Promise<{ threads: object[], truncated: boolean }>}
    */
-  async searchThreads(query) {
+  async searchThreads(query, opts) {
     const raw = query == null ? "" : String(query).trim();
-    if (raw.length < 2) return [];
+    if (raw.length < 2) return { threads: [], truncated: false };
     const needle = raw.toLowerCase();
     const gen = ++this._searchGen;
     this._cancelSearchWorker();
-    const snapshot = this._buildSearchSnapshot(needle);
-    const ids = await this._runSearchScan(snapshot, gen);
-    if (gen !== this._searchGen) return [];
+    const snapshot = this._buildSearchSnapshot(needle, opts && opts.include);
+    const { ids, truncated } = await this._runSearchScan(snapshot, gen);
+    if (gen !== this._searchGen) return { threads: [], truncated: false };
     const byId = new Map();
     for (const thread of this.data.threads) {
       if (thread && thread.id != null) byId.set(thread.id, thread);
@@ -153,7 +159,7 @@ class StoreSearchMethods {
       const thread = byId.get(id);
       if (thread) hits.push(thread);
     }
-    return hits;
+    return { threads: hits, truncated };
   }
 }
 

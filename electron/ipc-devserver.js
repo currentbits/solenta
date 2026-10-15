@@ -256,4 +256,12 @@ module.exports = {
     resolveDevServerRoot(ctx, input && input.threadId);
     return preview.type(input);
   },
+  "preview:inspect": async (ctx, input) => {
+    resolveDevServerRoot(ctx, input && input.threadId);
+    return preview.inspect(input);
+  },
+  "preview:cancelInspect": async (ctx, input) => {
+    resolveDevServerRoot(ctx, input && input.threadId);
+    return preview.cancelInspect(input);
+  },
 };

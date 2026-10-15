@@ -1903,7 +1903,9 @@ export const Composer = memo(function Composer({
             onEditComment={(id, comment) =>
               setContextChips(threadId, (prev) =>
                 prev.map((c) =>
-                  c.id === id && c.kind === "quote" ? { ...c, comment } : c,
+                  c.id === id && (c.kind === "quote" || c.kind === "element")
+                    ? { ...c, comment }
+                    : c,
                 ),
               )
             }

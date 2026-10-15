@@ -89,7 +89,7 @@ function mountSidebar(
       onCreateThread={onCreateThread}
       defaultWorktree={defaultWorktree}
       onAddProject={() => {}}
-      searchThreads={async () => []}
+      searchThreads={async () => ({ threads: [], truncated: false })}
     />,
   );
 }
@@ -203,7 +203,7 @@ describe("Sidebar worktree thread creation", () => {
           branches: ["main", "stacked-base"],
         })}
         onAddProject={() => {}}
-        searchThreads={async () => []}
+        searchThreads={async () => ({ threads: [], truncated: false })}
       />,
     );
 

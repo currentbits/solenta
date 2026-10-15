@@ -104,6 +104,8 @@ import type {
   WorkflowTemplateInfo,
   WorkSuggestionStatus,
   ModelRoute,
+  ThreadSearchInput,
+  ThreadSearchResult,
 } from "./shared/ipc";
 import { resolveCoderApi } from "./coderApi";
 import {
@@ -907,7 +909,7 @@ export interface UseCoderResult {
     provider?: "codex" | "grok" | "claude" | "cursor" | "opencode" | "kimi" | "muse";
   }) => Promise<ThreadInfo>;
   /** Full-content thread search (titles + message text); Sidebar owns debounce/state. */
-  searchThreads: (input: { query: string }) => Promise<ThreadInfo[]>;
+  searchThreads: (input: ThreadSearchInput) => Promise<ThreadSearchResult>;
   /** Load another thread's transcript without marking it visited (#393). */
   peekThread: (id: string) => Promise<ThreadDetail>;
 }
@@ -2058,7 +2060,7 @@ export function useCoder(): UseCoderResult {
   );
 
   const searchThreads = useCallback(
-    async (input: { query: string }) => {
+    async (input: ThreadSearchInput) => {
       return api.threads.search(input);
     },
     [api],
