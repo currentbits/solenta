@@ -181,7 +181,9 @@ const FILE_CHANGE_DIFF_MAX = 200_000;
 function fileChangePatch(changes, root) {
   const show = (p) => {
     const rel = root ? path.relative(root, p) : p;
-    return rel && !rel.startsWith("..") && !path.isAbsolute(rel) ? rel : p;
+    const shown = rel && !rel.startsWith("..") && !path.isAbsolute(rel) ? rel : p;
+    // Patch headers are always `/`-separated, also on win32.
+    return shown.split(path.sep).join("/");
   };
   const files = changes.map((c) => {
     const type = c.kind && c.kind.type;
