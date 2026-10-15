@@ -251,6 +251,33 @@ describe("PermissionPrompt (#509)", () => {
     assert.ok(!view.text().includes("Accept all"));
   });
 
+  it("Codex fileChange shows the diff, reason and grantRoot instead of JSON (#1189)", async () => {
+    const { m, spy } = mountView({
+      ...editPending,
+      requestId: "req-fc-1",
+      input: '{\n  "changes": []\n}',
+      fileChange: {
+        diff:
+          "diff --git a/src/foo.ts b/src/foo.ts\n--- a/src/foo.ts\n+++ b/src/foo.ts\n@@ -1 +1 @@\n-const a = 1;\n+const a = 2;\n",
+        reason: "needs write access",
+        grantRoot: "/tmp/other",
+      },
+    });
+    const view = await m;
+    const diff = view.query("[data-permission-diff]");
+    assert.ok(diff, "diff surface");
+    assert.match(diff.textContent || "", /src\/foo\.ts/);
+    assert.match(diff.textContent || "", /const a = 2;/);
+    assert.ok(diff.querySelector('[data-kind="add"]'));
+    assert.ok(diff.querySelector('[data-kind="del"]'));
+    assert.ok(!view.text().includes('"changes"'));
+    assert.match(view.query("[data-permission-reason]")?.textContent || "", /needs write access/);
+    assert.match(view.query("[data-permission-grant-root]")?.textContent || "", /\/tmp\/other/);
+    await view.click(view.byText("Accept all"));
+    assert.equal(spy.calls[0].decision, "allowAlways");
+    assert.equal(spy.calls[0].updatedCommand, undefined);
+  });
+
   it("non-command tools keep the JSON preview and do not send updatedCommand", async () => {
     const { m, spy } = mountView(editPending);
     const view = await m;

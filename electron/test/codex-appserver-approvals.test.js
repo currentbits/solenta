@@ -89,7 +89,8 @@ describe("Codex app-server command approval attach (#1200)", () => {
     process.env.CODER_GROK_BIN = "no-grok-not-a-real-binary";
     process.env.CODER_FAKE_CODEX_SCENARIO = "ask-command";
 
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-codex-ask-rpc-"));
+    // realpath: the fake reports process.cwd() (/private/var on macOS).
+    tmpDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "coder-codex-ask-rpc-")));
     const helper = require.resolve("./support/fakeCodexCli.js");
     const fake = writeFakeBin(
       path.join(tmpDir, "fake-codex"),
@@ -209,6 +210,29 @@ require(${JSON.stringify(helper)}).main();
     assert.equal(runner.getPendingPermission(thread.id), null);
   });
 
+  it("shows a fileChange ask as the correlated item/started diff (#1189)", async () => {
+    process.env.CODER_FAKE_CODEX_SCENARIO = "ask-file-change";
+    const thread = store.getThreads()[0];
+    await runner.startRun({ threadId: thread.id, prompt: "do work" });
+    await waitFor(() => runner.getPendingPermission(thread.id));
+    const pending = runner.getPendingPermission(thread.id);
+    assert.equal(pending.toolName, "Edit");
+    assert.equal(pending.requestId, "ask-1");
+    assert.equal(pending.fileChange.reason, "needs write");
+    assert.equal(pending.fileChange.grantRoot, null);
+    assert.equal(
+      pending.fileChange.diff,
+      "diff --git a/src/a.js b/src/a.js\n--- a/src/a.js\n+++ b/src/a.js\n@@ -1 +1 @@\n-old\n+new\n" +
+        "diff --git a/NEW.md b/NEW.md\n--- /dev/null\n+++ b/NEW.md\n@@ -0,0 +1,1 @@\n+hello\n",
+    );
+    assert.equal(readRpc(rpcFile).some((m) => m.id === "ask-1"), false);
+
+    runner.respondPermission({ threadId: thread.id, requestId: "ask-1", decision: "allowAlways" });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+    assert.deepEqual(readRpc(rpcFile).find((m) => m.id === "ask-1").result, { decision: "acceptForSession" });
+    assert.equal(runner.getPendingPermission(thread.id), null);
+  });
+
   for (const [scenario, inputValues, result] of [
     ["ask-mcp-input", { count: 0, enabled: false }, { action: "accept", content: { count: 0, enabled: false }, _meta: null }],
     ["ask-native-input", { destination: "staging" }, { answers: { destination: { answers: ["staging"] } } }],
@@ -226,12 +250,11 @@ require(${JSON.stringify(helper)}).main();
     assert.equal(runner.getPendingPermission(thread.id), null);
   });
 
-  // #1190: sandbox overlay and file-change asks ride the same card.
+  // #1190: sandbox overlay asks ride the same card.
   for (const [scenario, decision, preview, result] of [
     ["ask-permissions", "allowAlways", /"enabled": true/,
       { permissions: { network: { enabled: true } }, scope: "session" }],
     ["ask-permissions", "deny", /fetch deps/, { permissions: {}, scope: "turn" }],
-    ["ask-file-change", "allow", /\/etc\/hosts/, { decision: DECISION_ACCEPT }],
   ]) it(`round-trips ${scenario} ${decision} through the real JSON-RPC transport`, async () => {
     process.env.CODER_FAKE_CODEX_SCENARIO = scenario;
     const thread = store.getThreads()[0];

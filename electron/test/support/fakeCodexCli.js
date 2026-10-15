@@ -529,10 +529,30 @@ async function runAppServer() {
         return;
       }
       if (scenario === "ask-file-change") {
-        notify("item/started", { threadId, turnId, item: { type: "fileChange", id: "fc-1", status: "inProgress",
-          changes: [{ path: "/etc/hosts", kind: { type: "update" }, diff: "+127.0.0.1 x" }] } });
-        send({ jsonrpc: "2.0", id: "ask-1", method: "item/fileChange/requestApproval",
-          params: { threadId, turnId, itemId: "fc-1", startedAtMs: 1, grantRoot: "/etc" } });
+        // The ask names only itemId (#1189): the diff lives on item/started.
+        notify("item/started", {
+          item: {
+            type: "fileChange",
+            id: "item-edit-ask",
+            status: "inProgress",
+            changes: [
+              {
+                path: `${process.cwd()}/src/a.js`,
+                kind: { type: "update", move_path: null },
+                diff: "@@ -1 +1 @@\n-old\n+new\n",
+              },
+              { path: `${process.cwd()}/NEW.md`, kind: { type: "add" }, diff: "hello\n" },
+            ],
+          },
+          threadId,
+          turnId,
+        });
+        send({
+          jsonrpc: "2.0",
+          id: "ask-1",
+          method: "item/fileChange/requestApproval",
+          params: { threadId, turnId, itemId: "item-edit-ask", startedAtMs: 1, reason: "needs write" },
+        });
         return;
       }
       if (scenario === "ask-command") {
