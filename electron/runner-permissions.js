@@ -14,6 +14,8 @@ const {
   classifyServerRequest,
   pendingFromCommand,
   pendingFromMcp,
+  pendingFromApproval,
+  METHOD_FILE_CHANGE,
   approvalResponse,
   mapSolentaDecision,
   unsupportedError,
@@ -164,7 +166,7 @@ function createPermissions(ctx) {
     if (id === undefined || id === null) return false;
 
     const classified = classifyServerRequest(method, msg && msg.params);
-    if (!["command", "mcp", "input"].includes(classified.action)) {
+    if (!["command", "approval", "mcp", "input"].includes(classified.action)) {
       try {
         replyCodexJsonRpcError(
           e,
@@ -179,7 +181,12 @@ function createPermissions(ctx) {
 
     let pending;
     try {
+      // The fileChange ask carries no diff; its item streamed in just before.
+      const changes = method === METHOD_FILE_CHANGE
+        ? store.getMessages(threadId).find((m) => m.tool && m.tool.id === msg.params?.itemId)?.tool.input
+        : undefined;
       pending = classified.action === "input" ? pendingFromInput(id, method, msg.params)
+        : classified.action === "approval" ? pendingFromApproval(id, method, msg.params, changes)
         : classified.action === "mcp" ? pendingFromMcp(id, msg.params) : pendingFromCommand(id, msg.params);
     } catch {
       replyCodexJsonRpcError(e, id, unsupportedError(method, `${method}: unsupported input schema or URL`));
@@ -256,7 +263,7 @@ function createPermissions(ctx) {
     }
     const pending = e.pendingPermissions[idx];
     const mapped = mapSolentaDecision(decision, pending.availableDecisions);
-    const content = pending.inputRequest && mapped === "accept" ? pending.validateInput(input.inputValues) : undefined;
+    const content = pending.inputRequest && mapped === "accept" ? pending.validateInput(input.inputValues) : pending.grant;
     replyCodexJsonRpc(
       e,
       pending.rpcId !== undefined ? pending.rpcId : pending.id,

@@ -3,8 +3,9 @@
 /**
  * Codex app-server ServerRequest mapping (issue #1171).
  *
- * Command approval and input requests reuse the pending-permission queue. Everything else
- * is fail-closed until a dedicated UI exists. Do not send `updatedCommand`
+ * Command, file-change, sandbox-permission and input requests reuse the
+ * pending-permission queue. Everything else is fail-closed until a
+ * dedicated UI exists (#1190). Do not send `updatedCommand`
  * into this RPC: Accept runs the proposed string (#509 hole).
  */
 
@@ -23,7 +24,6 @@ const JSONRPC_METHOD_NOT_FOUND = -32601;
 
 /** Methods we recognize but do not map onto PermissionPrompt. */
 const UNSUPPORTED_METHODS = new Set([
-  METHOD_FILE_CHANGE,
   METHOD_PERMISSIONS,
   METHOD_ELICITATION,
   METHOD_USER_INPUT,
@@ -55,7 +55,7 @@ function decisionNames(available) {
  * @param {string} method
  * @param {unknown} params
  * @returns {{
- *   action: "command" | "mcp" | "input" | "unsupported" | "unknown",
+ *   action: "command" | "approval" | "mcp" | "input" | "unsupported" | "unknown",
  *   method: string,
  *   kind?: string | null,
  *   reason: string,
@@ -91,6 +91,10 @@ function classifyServerRequest(method, params) {
       };
     }
     return { action: "command", method: name, kind, reason: name };
+  }
+  if (name === METHOD_FILE_CHANGE || (name === METHOD_PERMISSIONS &&
+      params?.permissions && typeof params.permissions === "object")) {
+    return { action: "approval", method: name, reason: name };
   }
   if ((name === METHOD_ELICITATION && typeof params?.message === "string") ||
       (name === METHOD_USER_INPUT && Array.isArray(params?.questions) && params.questions.length)) {
@@ -174,7 +178,51 @@ function pendingFromMcp(rpcId, params) {
   };
 }
 
+/**
+ * File-change and sandbox-permission asks. A file change is only shown with
+ * the diff from its already-streamed item (`changesJson`); without it the
+ * caller fails closed rather than asking for a blind approval. Permissions
+ * carry the requested profile so Accept grants exactly that, nothing wider.
+ *
+ * @param {unknown} rpcId
+ * @param {string} method
+ * @param {Record<string, any>} params
+ * @param {string} [changesJson]
+ */
+function pendingFromApproval(rpcId, method, params, changesJson) {
+  const fileChange = method === METHOD_FILE_CHANGE;
+  if (fileChange && !changesJson) throw new Error("File change item not found");
+  const rawInput = Object.fromEntries(Object.entries(fileChange
+    ? { reason: params.reason, grantRoot: params.grantRoot }
+    : { cwd: params.cwd, reason: params.reason, permissions: params.permissions })
+    .filter(([, v]) => v != null));
+  const toolName = fileChange ? "file change" : "sandbox permissions";
+  const reason = typeof params.reason === "string" && params.reason ? params.reason : "";
+  return {
+    id: stringifyRpcId(rpcId), rpcId, method, toolName,
+    summary: reason ? `${toolName}: ${reason}` : toolName,
+    input: fileChange
+      ? `${Object.keys(rawInput).length ? `${JSON.stringify(rawInput, null, 2)}\n` : ""}${changesJson}`
+      : JSON.stringify(rawInput, null, 2),
+    rawInput, command: null, commandEditable: false, acceptAlways: true,
+    availableDecisions: [DECISION_ACCEPT, DECISION_SESSION, DECISION_DECLINE],
+    grant: fileChange ? undefined : params.permissions,
+  };
+}
+
 function approvalResponse(method, decision, content = {}) {
+  if (method === METHOD_PERMISSIONS) {
+    // An empty profile grants nothing: decline and cancel both land here.
+    const ok = decision === DECISION_ACCEPT || decision === DECISION_SESSION;
+    const req = ok && content ? content : {};
+    return {
+      permissions: {
+        ...(req.network ? { network: req.network } : {}),
+        ...(req.fileSystem ? { fileSystem: req.fileSystem } : {}),
+      },
+      scope: decision === DECISION_SESSION ? "session" : "turn",
+    };
+  }
   if (method === METHOD_ELICITATION) {
     const action = decision === DECISION_SESSION ? DECISION_ACCEPT : decision;
     return { action, content: action === DECISION_ACCEPT ? content : null, _meta: null };
@@ -237,6 +285,7 @@ module.exports = {
   stringifyRpcId,
   pendingFromCommand,
   pendingFromMcp,
+  pendingFromApproval,
   approvalResponse,
   mapSolentaDecision,
   unsupportedError,

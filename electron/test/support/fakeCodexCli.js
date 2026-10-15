@@ -522,6 +522,19 @@ async function runAppServer() {
         });
         return;
       }
+      if (scenario === "ask-permissions") {
+        send({ jsonrpc: "2.0", id: "ask-1", method: "item/permissions/requestApproval",
+          params: { threadId, turnId, itemId: "perm", environmentId: null, startedAtMs: 1, cwd: process.cwd(),
+            reason: "fetch deps", permissions: { network: { enabled: true }, fileSystem: null } } });
+        return;
+      }
+      if (scenario === "ask-file-change") {
+        notify("item/started", { threadId, turnId, item: { type: "fileChange", id: "fc-1", status: "inProgress",
+          changes: [{ path: "/etc/hosts", kind: { type: "update" }, diff: "+127.0.0.1 x" }] } });
+        send({ jsonrpc: "2.0", id: "ask-1", method: "item/fileChange/requestApproval",
+          params: { threadId, turnId, itemId: "fc-1", startedAtMs: 1, grantRoot: "/etc" } });
+        return;
+      }
       if (scenario === "ask-command") {
         send({
           jsonrpc: "2.0",

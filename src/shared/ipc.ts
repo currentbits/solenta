@@ -2457,6 +2457,40 @@ export interface PreviewScreenshot extends PreviewSnapshot {
   dataUrl: string;
 }
 
+/** One element picked in the Browser pane (#1193). Guest-reported, capped. */
+export interface PreviewInspectElement {
+  tag: string;
+  role: string;
+  /** Accessible name; never a text field's value. */
+  name: string;
+  selectorHint: string;
+  /** outerHTML with password/hidden values and secret-looking attributes redacted. */
+  html: string;
+  htmlTruncated: boolean;
+  styles: Record<string, string>;
+  /** CSS px, relative to the viewport at capture time. */
+  rect: { x: number; y: number; width: number; height: number };
+  viewport: { width: number; height: number };
+  /** Source hint from data-* attributes; null when the page exposes none. */
+  source: string | null;
+  /** An iframe was picked; its contents are not inspected. */
+  frame: boolean;
+  password: boolean;
+}
+
+export type PreviewInspectResult =
+  | (PreviewSnapshot & { cancelled: true })
+  | (PreviewSnapshot & {
+      cancelled: false;
+      capturedAt: number;
+      element: PreviewInspectElement;
+      /** PNG data URL of the element crop, at most 800px per edge. */
+      crop: string | null;
+      cropRect: { x: number; y: number; width: number; height: number } | null;
+      /** Why there is no crop. */
+      cropNote?: string;
+    });
+
 export interface PrInfo {
   number: number;
   url: string;
@@ -6134,6 +6168,12 @@ export interface CoderApi {
       selector: string;
       text: string;
     }): Promise<PreviewSnapshot>;
+    /**
+     * Pick one element on the visible page (#1193). Settles when the user
+     * selects or cancels (Escape, cancelInspect, navigation, pane closed).
+     */
+    inspect(input: { threadId: string }): Promise<PreviewInspectResult>;
+    cancelInspect(input: { threadId: string }): Promise<{ ok: boolean }>;
   };
   /**
    * Desktop-only iOS Simulator pane (#248). Web invokes are denied before
