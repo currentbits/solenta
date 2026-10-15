@@ -83,7 +83,7 @@ function renderSidebar(t: ThreadInfo): string {
       onSelectThread={() => {}}
       onCreateThread={() => {}}
       onAddProject={() => {}}
-      searchThreads={async () => []}
+      searchThreads={async () => ({ threads: [], truncated: false })}
     />,
   );
 }
