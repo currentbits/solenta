@@ -268,7 +268,7 @@ describe("createCodexJsonRpcSession (#1171)", () => {
     assert.equal(session.respondJsonRpc("input", { answers: {} }), false);
   });
 
-  it("JSON-RPC-errors fileChange until a diff card exists", async () => {
+  it("JSON-RPC-errors fileChange when no handler takes it", async () => {
     const dir = tmp();
     const replyFile = path.join(dir, "replies.jsonl");
     const bin = writeFakeAppServer(dir);

@@ -14,6 +14,7 @@ const {
   DECISION_CANCEL,
   JSONRPC_METHOD_NOT_FOUND,
   classifyServerRequest,
+  fileChangePatch,
   pendingFromCommand,
   mapSolentaDecision,
   unsupportedError,
@@ -37,9 +38,12 @@ describe("codexApprovals classifyServerRequest", () => {
     assert.match(got.reason, /writeStdin/);
   });
 
+  it("maps fileChange onto the permission card (#1189)", () => {
+    assert.equal(classifyServerRequest(METHOD_FILE_CHANGE, {}).action, "fileChange");
+  });
+
   it("fail-closes known non-command ServerRequests", () => {
     for (const method of [
-      METHOD_FILE_CHANGE,
       METHOD_PERMISSIONS,
       METHOD_ELICITATION,
       METHOD_USER_INPUT,
@@ -99,6 +103,24 @@ describe("codexApprovals mapSolentaDecision", () => {
     assert.equal(
       mapSolentaDecision("allowAlways", ["accept", "decline"]),
       DECISION_ACCEPT,
+    );
+  });
+});
+
+describe("codexApprovals fileChangePatch (#1189)", () => {
+  it("writes delete and move as git patches, keeps outside paths absolute", () => {
+    assert.equal(
+      fileChangePatch(
+        [
+          { path: "/w/gone.txt", kind: { type: "delete" }, diff: "a\nb\n" },
+          { path: "/w/old.js", kind: { type: "update", move_path: "/w/new.js" }, diff: "@@ -1 +1 @@\n-x\n+y" },
+          { path: "/etc/hosts", kind: { type: "update" }, diff: "" },
+        ],
+        "/w",
+      ),
+      "diff --git a/gone.txt b/gone.txt\n--- a/gone.txt\n+++ /dev/null\n@@ -1,2 +0,0 @@\n-a\n-b\n" +
+        "diff --git a/old.js b/new.js\n--- a/old.js\n+++ b/new.js\n@@ -1 +1 @@\n-x\n+y\n" +
+        "diff --git a//etc/hosts b//etc/hosts\n--- a//etc/hosts\n+++ b//etc/hosts\n",
     );
   });
 });

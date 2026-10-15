@@ -1959,6 +1959,12 @@ export interface PendingPermissionInfo {
   /** Typed input for Codex questions and MCP elicitation. Ephemeral, never persisted. */
   inputRequest?: PendingInputRequest | null;
   /**
+   * Codex item/fileChange/requestApproval (#1189): the correlated
+   * fileChange item as a git-style patch, plus the ask's optional reason
+   * and (unstable) grantRoot. The card shows the diff, not `input`.
+   */
+  fileChange?: { diff: string; reason: string | null; grantRoot: string | null } | null;
+  /**
    * Present when the agent is asking to leave plan mode (ExitPlanMode): the
    * plan markdown, rendered in the prompt panel instead of the raw JSON.
    */

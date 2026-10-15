@@ -3,10 +3,13 @@
 /**
  * Codex app-server ServerRequest mapping (issue #1171).
  *
- * Command approval and input requests reuse the pending-permission queue. Everything else
- * is fail-closed until a dedicated UI exists. Do not send `updatedCommand`
- * into this RPC: Accept runs the proposed string (#509 hole).
+ * Command approval, file-change approval (#1189) and input requests reuse
+ * the pending-permission queue. Everything else is fail-closed until a
+ * dedicated UI exists. Do not send `updatedCommand` into this RPC: Accept
+ * runs the proposed string (#509 hole).
  */
+
+const path = require("node:path");
 
 const METHOD_COMMAND = "item/commandExecution/requestApproval";
 const METHOD_FILE_CHANGE = "item/fileChange/requestApproval";
@@ -23,7 +26,6 @@ const JSONRPC_METHOD_NOT_FOUND = -32601;
 
 /** Methods we recognize but do not map onto PermissionPrompt. */
 const UNSUPPORTED_METHODS = new Set([
-  METHOD_FILE_CHANGE,
   METHOD_PERMISSIONS,
   METHOD_ELICITATION,
   METHOD_USER_INPUT,
@@ -55,7 +57,7 @@ function decisionNames(available) {
  * @param {string} method
  * @param {unknown} params
  * @returns {{
- *   action: "command" | "mcp" | "input" | "unsupported" | "unknown",
+ *   action: "command" | "fileChange" | "mcp" | "input" | "unsupported" | "unknown",
  *   method: string,
  *   kind?: string | null,
  *   reason: string,
@@ -91,6 +93,9 @@ function classifyServerRequest(method, params) {
       };
     }
     return { action: "command", method: name, kind, reason: name };
+  }
+  if (name === METHOD_FILE_CHANGE) {
+    return { action: "fileChange", method: name, reason: name };
   }
   if ((name === METHOD_ELICITATION && typeof params?.message === "string") ||
       (name === METHOD_USER_INPUT && Array.isArray(params?.questions) && params.questions.length)) {
@@ -159,6 +164,98 @@ function pendingFromCommand(rpcId, params) {
     commandEditable: false,
     acceptAlways: !available || available.includes(DECISION_SESSION),
     availableDecisions: available,
+  };
+}
+
+// ponytail: one cap for the whole patch; it rides every pushDetail while pending.
+const FILE_CHANGE_DIFF_MAX = 200_000;
+
+/**
+ * Codex fileChange `changes` ({ path, kind: { type, move_path? }, diff })
+ * as a git-style patch the renderer's parsePatch reads. `diff` is the
+ * whole file for add/delete and bare hunks for update.
+ *
+ * @param {object[]} changes
+ * @param {string | null} root - shown paths are relative to this when inside
+ */
+function fileChangePatch(changes, root) {
+  const show = (p) => {
+    const rel = root ? path.relative(root, p) : p;
+    return rel && !rel.startsWith("..") && !path.isAbsolute(rel) ? rel : p;
+  };
+  const files = changes.map((c) => {
+    const type = c.kind && c.kind.type;
+    const from = show(c.path);
+    const to = type === "update" && c.kind.move_path ? show(c.kind.move_path) : from;
+    const text = typeof c.diff === "string" ? c.diff : "";
+    let body = "";
+    if (type === "add" || type === "delete") {
+      const lines = text.split("\n");
+      if (lines[lines.length - 1] === "") lines.pop();
+      const sign = type === "add" ? "+" : "-";
+      const range = lines.length ? `1,${lines.length}` : "0,0";
+      body = lines.length
+        ? `@@ ${type === "add" ? `-0,0 +${range}` : `-${range} +0,0`} @@\n` +
+          lines.map((l) => sign + l).join("\n") + "\n"
+        : "";
+    } else {
+      const at = text.search(/^@@/m);
+      body = at < 0 ? "" : text.slice(at);
+      if (body && !body.endsWith("\n")) body += "\n";
+    }
+    return (
+      `diff --git a/${from} b/${to}\n` +
+      `--- ${type === "add" ? "/dev/null" : `a/${from}`}\n` +
+      `+++ ${type === "delete" ? "/dev/null" : `b/${to}`}\n` +
+      body
+    );
+  });
+  const patch = files.join("");
+  return patch.length <= FILE_CHANGE_DIFF_MAX
+    ? patch
+    : `${patch.slice(0, FILE_CHANGE_DIFF_MAX)}\n\\ diff truncated (${patch.length - FILE_CHANGE_DIFF_MAX} more chars)\n`;
+}
+
+/**
+ * Shape item/fileChange/requestApproval for PermissionPrompt. The request
+ * carries no diff; `changes` comes from the correlated item/started.
+ *
+ * @param {unknown} rpcId
+ * @param {unknown} params
+ * @param {unknown} changes - fileChange item `changes` from item/started
+ * @param {string | null} root - worktree, for display paths
+ */
+function pendingFromFileChange(rpcId, params, changes, root) {
+  const rec =
+    params && typeof params === "object" && !Array.isArray(params)
+      ? /** @type {Record<string, unknown>} */ (params)
+      : {};
+  const list = (Array.isArray(changes) ? changes : []).filter(
+    (c) => c && typeof c === "object" && typeof c.path === "string" && c.path,
+  );
+  const reason = typeof rec.reason === "string" && rec.reason ? rec.reason : null;
+  const grantRoot =
+    typeof rec.grantRoot === "string" && rec.grantRoot ? rec.grantRoot : null;
+  /** @type {Record<string, unknown>} */
+  const rawInput = {
+    changes: list.map((c) => ({ path: c.path, kind: c.kind ?? null })),
+  };
+  if (reason) rawInput.reason = reason;
+  if (grantRoot) rawInput.grantRoot = grantRoot;
+  const first = list[0] ? list[0].path : "";
+  const short = first.length > 80 ? `${first.slice(0, 80)}…` : first;
+  return {
+    id: stringifyRpcId(rpcId),
+    rpcId,
+    toolName: "Edit",
+    summary: !first ? "Edit" : list.length === 1 ? `Edit: ${short}` : `Edit: ${short} +${list.length - 1}`,
+    input: JSON.stringify(rawInput, null, 2),
+    rawInput,
+    command: null,
+    commandEditable: false,
+    acceptAlways: true,
+    availableDecisions: null,
+    fileChange: { diff: fileChangePatch(list, root), reason, grantRoot },
   };
 }
 
@@ -236,6 +333,8 @@ module.exports = {
   decisionNames,
   stringifyRpcId,
   pendingFromCommand,
+  pendingFromFileChange,
+  fileChangePatch,
   pendingFromMcp,
   approvalResponse,
   mapSolentaDecision,
