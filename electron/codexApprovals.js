@@ -3,10 +3,10 @@
 /**
  * Codex app-server ServerRequest mapping (issue #1171).
  *
- * Command approval, file-change approval (#1189) and input requests reuse
- * the pending-permission queue. Everything else is fail-closed until a
- * dedicated UI exists. Do not send `updatedCommand` into this RPC: Accept
- * runs the proposed string (#509 hole).
+ * Command, file-change (#1189), sandbox-permission (#1190) and input
+ * requests reuse the pending-permission queue. Everything else is
+ * fail-closed until a dedicated UI exists. Do not send `updatedCommand`
+ * into this RPC: Accept runs the proposed string (#509 hole).
  */
 
 const path = require("node:path");
@@ -57,7 +57,7 @@ function decisionNames(available) {
  * @param {string} method
  * @param {unknown} params
  * @returns {{
- *   action: "command" | "fileChange" | "mcp" | "input" | "unsupported" | "unknown",
+ *   action: "command" | "fileChange" | "approval" | "mcp" | "input" | "unsupported" | "unknown",
  *   method: string,
  *   kind?: string | null,
  *   reason: string,
@@ -96,6 +96,9 @@ function classifyServerRequest(method, params) {
   }
   if (name === METHOD_FILE_CHANGE) {
     return { action: "fileChange", method: name, reason: name };
+  }
+  if (name === METHOD_PERMISSIONS && params?.permissions && typeof params.permissions === "object") {
+    return { action: "approval", method: name, reason: name };
   }
   if ((name === METHOD_ELICITATION && typeof params?.message === "string") ||
       (name === METHOD_USER_INPUT && Array.isArray(params?.questions) && params.questions.length)) {
@@ -273,7 +276,44 @@ function pendingFromMcp(rpcId, params) {
   };
 }
 
+/**
+ * Sandbox-permission asks (#1190). The pending carries the requested
+ * profile so Accept grants exactly that, nothing wider. File changes have
+ * their own diff card (pendingFromFileChange, #1189).
+ *
+ * @param {unknown} rpcId
+ * @param {string} method
+ * @param {Record<string, any>} params
+ */
+function pendingFromApproval(rpcId, method, params) {
+  const rawInput = Object.fromEntries(
+    Object.entries({ cwd: params.cwd, reason: params.reason, permissions: params.permissions })
+      .filter(([, v]) => v != null));
+  const toolName = "sandbox permissions";
+  const reason = typeof params.reason === "string" && params.reason ? params.reason : "";
+  return {
+    id: stringifyRpcId(rpcId), rpcId, method, toolName,
+    summary: reason ? `${toolName}: ${reason}` : toolName,
+    input: JSON.stringify(rawInput, null, 2),
+    rawInput, command: null, commandEditable: false, acceptAlways: true,
+    availableDecisions: [DECISION_ACCEPT, DECISION_SESSION, DECISION_DECLINE],
+    grant: params.permissions,
+  };
+}
+
 function approvalResponse(method, decision, content = {}) {
+  if (method === METHOD_PERMISSIONS) {
+    // An empty profile grants nothing: decline and cancel both land here.
+    const ok = decision === DECISION_ACCEPT || decision === DECISION_SESSION;
+    const req = ok && content ? content : {};
+    return {
+      permissions: {
+        ...(req.network ? { network: req.network } : {}),
+        ...(req.fileSystem ? { fileSystem: req.fileSystem } : {}),
+      },
+      scope: decision === DECISION_SESSION ? "session" : "turn",
+    };
+  }
   if (method === METHOD_ELICITATION) {
     const action = decision === DECISION_SESSION ? DECISION_ACCEPT : decision;
     return { action, content: action === DECISION_ACCEPT ? content : null, _meta: null };
@@ -338,6 +378,7 @@ module.exports = {
   pendingFromFileChange,
   fileChangePatch,
   pendingFromMcp,
+  pendingFromApproval,
   approvalResponse,
   mapSolentaDecision,
   unsupportedError,

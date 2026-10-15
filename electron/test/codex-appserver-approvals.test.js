@@ -249,4 +249,32 @@ require(${JSON.stringify(helper)}).main();
     assert.deepEqual(readRpc(rpcFile).find((m) => m.id === "ask-1").result, result);
     assert.equal(runner.getPendingPermission(thread.id), null);
   });
+
+  // #1190: sandbox overlay asks ride the same card.
+  for (const [scenario, decision, preview, result] of [
+    ["ask-permissions", "allowAlways", /"enabled": true/,
+      { permissions: { network: { enabled: true } }, scope: "session" }],
+    ["ask-permissions", "deny", /fetch deps/, { permissions: {}, scope: "turn" }],
+  ]) it(`round-trips ${scenario} ${decision} through the real JSON-RPC transport`, async () => {
+    process.env.CODER_FAKE_CODEX_SCENARIO = scenario;
+    const thread = store.getThreads()[0];
+    await runner.startRun({ threadId: thread.id, prompt: "do work" });
+    await waitFor(() => runner.getPendingPermission(thread.id));
+    const pending = runner.getPendingPermission(thread.id);
+    assert.match(pending.input, preview);
+    runner.respondPermission({ threadId: thread.id, requestId: pending.requestId, decision });
+    await waitFor(() => readRpc(rpcFile).some((m) => m.id === "ask-1" && m.result));
+    assert.deepEqual(readRpc(rpcFile).find((m) => m.id === "ask-1").result, result);
+    assert.equal(runner.getPendingPermission(thread.id), null);
+  });
+
+  it("stop grants nothing to an outstanding sandbox-permission ask", async () => {
+    process.env.CODER_FAKE_CODEX_SCENARIO = "ask-permissions";
+    const thread = store.getThreads()[0];
+    await runner.startRun({ threadId: thread.id, prompt: "do work" });
+    await waitFor(() => runner.getPendingPermission(thread.id));
+    runner.stopRun({ threadId: thread.id });
+    await waitFor(() => readRpc(rpcFile).some((m) => m.id === "ask-1" && m.result));
+    assert.deepEqual(readRpc(rpcFile).find((m) => m.id === "ask-1").result, { permissions: {}, scope: "turn" });
+  });
 });

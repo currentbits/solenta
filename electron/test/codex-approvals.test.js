@@ -16,6 +16,8 @@ const {
   classifyServerRequest,
   fileChangePatch,
   pendingFromCommand,
+  pendingFromApproval,
+  approvalResponse,
   mapSolentaDecision,
   unsupportedError,
 } = require("../codexApprovals.js");
@@ -38,8 +40,24 @@ describe("codexApprovals classifyServerRequest", () => {
     assert.match(got.reason, /writeStdin/);
   });
 
-  it("maps fileChange onto the permission card (#1189)", () => {
+  it("maps fileChange onto the diff card (#1189), permissions onto the approval card (#1190)", () => {
     assert.equal(classifyServerRequest(METHOD_FILE_CHANGE, {}).action, "fileChange");
+    assert.equal(classifyServerRequest(METHOD_PERMISSIONS, { permissions: {} }).action, "approval");
+  });
+
+  it("grants exactly the requested sandbox profile, or nothing", () => {
+    const permissions = { network: { enabled: true }, fileSystem: null };
+    const pending = pendingFromApproval("p", METHOD_PERMISSIONS, { cwd: "/w", reason: "fetch deps", permissions });
+    assert.equal(pending.summary, "sandbox permissions: fetch deps");
+    assert.deepEqual(pending.availableDecisions, [DECISION_ACCEPT, DECISION_SESSION, DECISION_DECLINE]);
+    assert.deepEqual(approvalResponse(METHOD_PERMISSIONS, DECISION_ACCEPT, pending.grant),
+      { permissions: { network: { enabled: true } }, scope: "turn" });
+    assert.deepEqual(approvalResponse(METHOD_PERMISSIONS, DECISION_SESSION, pending.grant),
+      { permissions: { network: { enabled: true } }, scope: "session" });
+    for (const decision of [DECISION_DECLINE, DECISION_CANCEL]) {
+      assert.deepEqual(approvalResponse(METHOD_PERMISSIONS, decision, pending.grant),
+        { permissions: {}, scope: "turn" });
+    }
   });
 
   it("fail-closes known non-command ServerRequests", () => {

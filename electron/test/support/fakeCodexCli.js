@@ -522,6 +522,12 @@ async function runAppServer() {
         });
         return;
       }
+      if (scenario === "ask-permissions") {
+        send({ jsonrpc: "2.0", id: "ask-1", method: "item/permissions/requestApproval",
+          params: { threadId, turnId, itemId: "perm", environmentId: null, startedAtMs: 1, cwd: process.cwd(),
+            reason: "fetch deps", permissions: { network: { enabled: true }, fileSystem: null } } });
+        return;
+      }
       if (scenario === "ask-file-change") {
         // The ask names only itemId (#1189): the diff lives on item/started.
         notify("item/started", {

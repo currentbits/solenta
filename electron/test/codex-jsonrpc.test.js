@@ -268,7 +268,7 @@ describe("createCodexJsonRpcSession (#1171)", () => {
     assert.equal(session.respondJsonRpc("input", { answers: {} }), false);
   });
 
-  it("JSON-RPC-errors fileChange when no handler takes it", async () => {
+  it("JSON-RPC-errors a ServerRequest nobody handles", async () => {
     const dir = tmp();
     const replyFile = path.join(dir, "replies.jsonl");
     const bin = writeFakeAppServer(dir);
