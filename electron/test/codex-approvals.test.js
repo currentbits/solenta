@@ -15,6 +15,8 @@ const {
   JSONRPC_METHOD_NOT_FOUND,
   classifyServerRequest,
   pendingFromCommand,
+  pendingFromApproval,
+  approvalResponse,
   mapSolentaDecision,
   unsupportedError,
 } = require("../codexApprovals.js");
@@ -37,9 +39,35 @@ describe("codexApprovals classifyServerRequest", () => {
     assert.match(got.reason, /writeStdin/);
   });
 
+  it("maps file-change and sandbox-permission asks onto the approval card (#1190)", () => {
+    assert.equal(classifyServerRequest(METHOD_FILE_CHANGE, {}).action, "approval");
+    assert.equal(classifyServerRequest(METHOD_PERMISSIONS, { permissions: {} }).action, "approval");
+  });
+
+  it("grants exactly the requested sandbox profile, or nothing", () => {
+    const permissions = { network: { enabled: true }, fileSystem: null };
+    const pending = pendingFromApproval("p", METHOD_PERMISSIONS, { cwd: "/w", reason: "fetch deps", permissions });
+    assert.equal(pending.summary, "sandbox permissions: fetch deps");
+    assert.deepEqual(pending.availableDecisions, [DECISION_ACCEPT, DECISION_SESSION, DECISION_DECLINE]);
+    assert.deepEqual(approvalResponse(METHOD_PERMISSIONS, DECISION_ACCEPT, pending.grant),
+      { permissions: { network: { enabled: true } }, scope: "turn" });
+    assert.deepEqual(approvalResponse(METHOD_PERMISSIONS, DECISION_SESSION, pending.grant),
+      { permissions: { network: { enabled: true } }, scope: "session" });
+    for (const decision of [DECISION_DECLINE, DECISION_CANCEL]) {
+      assert.deepEqual(approvalResponse(METHOD_PERMISSIONS, decision, pending.grant),
+        { permissions: {}, scope: "turn" });
+    }
+  });
+
+  it("never shows a file-change ask without its diff", () => {
+    assert.throws(() => pendingFromApproval("f", METHOD_FILE_CHANGE, { reason: "x" }));
+    const pending = pendingFromApproval("f", METHOD_FILE_CHANGE, { grantRoot: "/etc" }, '[{"path":"/etc/hosts"}]');
+    assert.match(pending.input, /"grantRoot": "\/etc"[\s\S]*\/etc\/hosts/);
+    assert.deepEqual(approvalResponse(METHOD_FILE_CHANGE, DECISION_SESSION), { decision: DECISION_SESSION });
+  });
+
   it("fail-closes known non-command ServerRequests", () => {
     for (const method of [
-      METHOD_FILE_CHANGE,
       METHOD_PERMISSIONS,
       METHOD_ELICITATION,
       METHOD_USER_INPUT,

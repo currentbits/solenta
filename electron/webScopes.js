@@ -251,6 +251,9 @@ const BY_SCOPE = {
     "preview:click",
     "preview:type",
     "preview:viewport",
+    // Inspect reads the guest DOM the user points at (#1193).
+    "preview:inspect",
+    "preview:cancelInspect",
     "devserver:start",
     "devserver:stop",
   ],

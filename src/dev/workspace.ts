@@ -3,6 +3,7 @@ import type {
   CoderApi,
   DevServerState,
   TerminalState,
+  PreviewInspectResult,
   PreviewSnapshot,
   PreviewViewportPreset,
   LocalServerInfo,
@@ -258,6 +259,12 @@ export function createWorkspace(): Pick<CoderApi, "servers" | "simulator" | "pre
           canGoForward: false,
           viewport: { preset: input.preset },
         };
+      },
+      async inspect(_input: { threadId: string }): Promise<PreviewInspectResult> {
+        return { cancelled: true, url: "", title: "", canGoBack: false, canGoForward: false };
+      },
+      async cancelInspect(_input: { threadId: string }) {
+        return { ok: true };
       },
     },
     devserver: {

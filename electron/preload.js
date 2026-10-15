@@ -369,6 +369,8 @@ const IPC_CHANNELS = Object.freeze([
   { ns: "preview", method: "snapshot" },
   { ns: "preview", method: "diagnostics" },
   { ns: "preview", method: "viewport" },
+  { ns: "preview", method: "inspect" },
+  { ns: "preview", method: "cancelInspect" },
   { ns: "simulator", method: "capabilities" },
   { ns: "simulator", method: "selectDeveloperDir" },
   { ns: "simulator", method: "listDevices" },

@@ -1074,6 +1074,18 @@ export interface ThreadInfo {
   btw?: BtwCard[];
 }
 
+/** threads.search input. threadIds scopes the scan before the cap (#1201). */
+export interface ThreadSearchInput {
+  query: string;
+  threadIds?: string[];
+}
+
+/** threads.search reply: up to 50 hits; truncated when more matched. */
+export interface ThreadSearchResult {
+  threads: ThreadInfo[];
+  truncated: boolean;
+}
+
 /** One `/btw` side-question card (issue #471). */
 export type BtwStatus = "running" | "done" | "error";
 export type BtwSource = "fm" | "print" | "retrieval";
@@ -2536,6 +2548,40 @@ export interface PreviewDiagnostics extends PreviewSnapshot {
   /** Entries evicted from each bounded ring. */
   dropped: { console: number; network: number };
 }
+
+/** One element picked in the Browser pane (#1193). Guest-reported, capped. */
+export interface PreviewInspectElement {
+  tag: string;
+  role: string;
+  /** Accessible name; never a text field's value. */
+  name: string;
+  selectorHint: string;
+  /** outerHTML with password/hidden values and secret-looking attributes redacted. */
+  html: string;
+  htmlTruncated: boolean;
+  styles: Record<string, string>;
+  /** CSS px, relative to the viewport at capture time. */
+  rect: { x: number; y: number; width: number; height: number };
+  viewport: { width: number; height: number };
+  /** Source hint from data-* attributes; null when the page exposes none. */
+  source: string | null;
+  /** An iframe was picked; its contents are not inspected. */
+  frame: boolean;
+  password: boolean;
+}
+
+export type PreviewInspectResult =
+  | (PreviewSnapshot & { cancelled: true })
+  | (PreviewSnapshot & {
+      cancelled: false;
+      capturedAt: number;
+      element: PreviewInspectElement;
+      /** PNG data URL of the element crop, at most 800px per edge. */
+      crop: string | null;
+      cropRect: { x: number; y: number; width: number; height: number } | null;
+      /** Why there is no crop. */
+      cropNote?: string;
+    });
 
 export interface PrInfo {
   number: number;
@@ -4810,9 +4856,10 @@ export interface CoderApi {
     /**
      * Full-content search: matches thread titles, notes, AND message text
      * (case-insensitive substring), newest activity first, max 50. Includes
-     * archived threads; the renderer styles them as usual.
+     * archived threads; the renderer styles them as usual. threadIds limits
+     * the scan to those ids before the cap.
      */
-    search(input: { query: string }): Promise<ThreadInfo[]>;
+    search(input: ThreadSearchInput): Promise<ThreadSearchResult>;
     /**
      * Create a thread. With `worktree: true` the thread immediately gets its
      * own git worktree + `coder/<slug>-<id>` branch (local projects only);
@@ -6225,6 +6272,12 @@ export interface CoderApi {
       threadId: string;
       preset: PreviewViewportPreset;
     }): Promise<PreviewSnapshot & { viewport: PreviewViewport }>;
+    /**
+     * Pick one element on the visible page (#1193). Settles when the user
+     * selects or cancels (Escape, cancelInspect, navigation, pane closed).
+     */
+    inspect(input: { threadId: string }): Promise<PreviewInspectResult>;
+    cancelInspect(input: { threadId: string }): Promise<{ ok: boolean }>;
   };
   /**
    * Desktop-only iOS Simulator pane (#248). Web invokes are denied before

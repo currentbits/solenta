@@ -14,6 +14,11 @@ import type {
   PreviewSnapshot,
   PreviewViewportPreset,
 } from "../shared/ipc";
+import {
+  elementChip,
+  elementChipPrompt,
+  type InspectPick,
+} from "../contextChips";
 import { coercePreviewUrl, isLoopbackPreviewUrl } from "../previewUrl";
 import styles from "./BrowserPane.module.css";
 
@@ -127,6 +132,7 @@ export function BrowserPane({
   devServerStatus,
   listLocalServers,
   onAttachScreenshot,
+  onAttachElement,
 }: {
   threadId: string;
   preview?: PreviewApi | null;
@@ -139,7 +145,16 @@ export function BrowserPane({
   onAttachScreenshot?: (
     dataUrl: string,
     originThreadId: string,
-  ) => void | Promise<void>;
+  ) => unknown;
+  /**
+   * Insert a picked element into `originThreadId`'s composer as a context
+   * chip (#1193). Never sends.
+   */
+  onAttachElement?: (
+    pick: InspectPick,
+    comment: string,
+    originThreadId: string,
+  ) => unknown;
 }) {
   const webviewRef = useRef<HTMLElement | null>(null);
   const [bound, setBound] = useState(false);
@@ -154,6 +169,12 @@ export function BrowserPane({
   const [viewportPreset, setViewportPreset] = useState<PreviewViewportPreset>("fill");
   const [diag, setDiag] = useState<PreviewDiagnostics | null>(null);
   const [diagOpen, setDiagOpen] = useState(false);
+  const [inspecting, setInspecting] = useState(false);
+  const [picked, setPicked] = useState<{
+    threadId: string;
+    pick: InspectPick;
+    comment: string;
+  } | null>(null);
   const autoLoaded = useRef<string | null>(null);
   const threadIdRef = useRef(threadId);
   const captureGenRef = useRef(0);
@@ -202,6 +223,8 @@ export function BrowserPane({
     setCapturing(false);
     setDiag(null);
     setViewportPreset("fill");
+    setInspecting(false);
+    setPicked(null);
   }, [threadId]);
 
   // Diagnostics also carry the viewport preset, so an agent-driven resize
@@ -337,13 +360,18 @@ export function BrowserPane({
     }
   };
 
+  /** True while the pane still shows the thread and mount that asked. */
+  const liveGuard = (originThreadId: string) => {
+    const generation = captureGenRef.current;
+    return () =>
+      originThreadId === threadIdRef.current &&
+      generation === captureGenRef.current;
+  };
+
   const onScreenshot = async () => {
     if (!preview || !onAttachScreenshot) return;
     const originThreadId = threadId;
-    const generation = captureGenRef.current;
-    const isLive = () =>
-      originThreadId === threadIdRef.current &&
-      generation === captureGenRef.current;
+    const isLive = liveGuard(originThreadId);
     setCapturing(true);
     setError(null);
     try {
@@ -375,11 +403,62 @@ export function BrowserPane({
     ? diag.console.filter((c) => c.level === "error").length +
       diag.network.filter((n) => n.error || (n.status ?? 0) >= 400).length
     : 0;
+  const cancelInspect = () => {
+    if (preview) void preview.cancelInspect({ threadId }).catch(() => {});
+  };
+
+  const onInspect = async () => {
+    if (!preview) return;
+    if (inspecting) return cancelInspect();
+    const originThreadId = threadId;
+    const isLive = liveGuard(originThreadId);
+    setInspecting(true);
+    setPicked(null);
+    setError(null);
+    // Keys go to the guest, so Tab/Enter/Escape drive the picker there.
+    webviewRef.current?.focus();
+    try {
+      const res = await preview.inspect({ threadId: originThreadId });
+      if (!isLive() || res.cancelled) return;
+      setPicked({ threadId: originThreadId, pick: res, comment: "" });
+    } catch (err) {
+      if (isLive()) setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      if (isLive()) setInspecting(false);
+    }
+  };
+
+  const addPicked = () => {
+    if (!picked || !onAttachElement) return;
+    setPicked(null);
+    void onAttachElement(picked.pick, picked.comment.trim(), picked.threadId);
+  };
+
   const showEmpty = !address;
   const canShot = Boolean(preview && onAttachScreenshot && bound && address);
+  const canInspect = Boolean(preview && onAttachElement && bound && address);
+  const pickedChip = picked
+    ? elementChip(
+        "preview",
+        picked.threadId,
+        picked.pick,
+        Boolean(picked.pick.crop),
+        picked.comment.trim(),
+      )
+    : null;
 
   return (
-    <div className={styles.pane} data-browser-pane="">
+    <div
+      className={styles.pane}
+      data-browser-pane=""
+      onKeyDown={(e) => {
+        if (inspecting && e.key === "Escape") {
+          e.preventDefault();
+          e.stopPropagation();
+          cancelInspect();
+        }
+      }}
+    >
       <div className={styles.toolbar} data-browser-toolbar="">
         <button
           type="button"
@@ -456,6 +535,20 @@ export function BrowserPane({
         >
           {problems ? `Diagnostics (${problems})` : "Diagnostics"}
         </button>
+        {onAttachElement ? (
+          <button
+            type="button"
+            className={styles.navBtn}
+            data-browser-inspect=""
+            aria-label="Inspect element"
+            aria-pressed={inspecting}
+            title="Inspect: pick an element to send as context"
+            disabled={!canInspect && !inspecting}
+            onClick={() => void onInspect()}
+          >
+            ⌖
+          </button>
+        ) : null}
         <button
           type="button"
           className={styles.shot}
@@ -485,6 +578,73 @@ export function BrowserPane({
         </p>
       ) : null}
       {diagOpen ? <DiagnosticsPanel diag={diag} /> : null}
+      {inspecting ? (
+        <p className={styles.hint} data-browser-inspect-hint="" role="status">
+          Click an element, or Tab to one and press Enter. ↑ picks its parent.
+          Esc cancels.
+        </p>
+      ) : null}
+      {picked && pickedChip ? (
+        <section
+          className={styles.pick}
+          data-browser-pick=""
+          aria-label="Selected element"
+        >
+          <div className={styles.pickHead}>
+            <strong className={styles.pickLabel}>{pickedChip.label}</strong>
+            <span className={styles.pickUrl} title={picked.pick.url}>
+              {picked.pick.url}
+            </span>
+          </div>
+          <div className={styles.pickBody}>
+            {picked.pick.crop ? (
+              <img
+                className={styles.pickCrop}
+                data-browser-pick-crop=""
+                src={picked.pick.crop}
+                alt={`Crop of ${pickedChip.label}`}
+              />
+            ) : null}
+            <textarea
+              className={styles.pickComment}
+              data-browser-pick-comment=""
+              aria-label="Comment for the agent"
+              placeholder="What should change? (optional)"
+              rows={2}
+              value={picked.comment}
+              onChange={(e) => {
+                const comment = e.target.value;
+                setPicked((p) => (p ? { ...p, comment } : p));
+              }}
+            />
+          </div>
+          <div className={styles.pickActions}>
+            <button
+              type="button"
+              className={styles.shot}
+              data-primary="true"
+              data-browser-pick-add=""
+              onClick={addPicked}
+            >
+              Add to composer
+            </button>
+            <button
+              type="button"
+              className={styles.go}
+              data-browser-pick-discard=""
+              onClick={() => setPicked(null)}
+            >
+              Discard
+            </button>
+          </div>
+          <details className={styles.pickDetails}>
+            <summary>Exact text added to the message</summary>
+            <pre data-browser-pick-preview="">
+              {elementChipPrompt(pickedChip)}
+            </pre>
+          </details>
+        </section>
+      ) : null}
       <div className={styles.stage}>
         {createElement("webview", {
           key: threadId,
