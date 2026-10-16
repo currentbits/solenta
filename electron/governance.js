@@ -448,6 +448,25 @@ function evaluateUnsafe(input) {
 }
 
 /**
+ * Network rules for one host, most severe first (#803 proxy). null when no
+ * rule matches: the proxy then lets it through, same as an unmatched call.
+ * @param {{ rules?: Array<{ kind: string, match: string, action: string }> } | null | undefined} policy
+ * @param {string} host
+ * @returns {{ action: string, rule: string } | null}
+ */
+function networkVerdict(policy, host) {
+  const h = String(host || "").toLowerCase().replace(/^\[|\]$/g, "");
+  const hits = ((policy && policy.rules) || []).filter(
+    (r) => r.kind === "network" && globRe(r.match).test(h),
+  );
+  for (const action of SEVERITY) {
+    const hit = hits.find((r) => r.action === action);
+    if (hit) return { action, rule: ruleLabel(hit) };
+  }
+  return null;
+}
+
+/**
  * Policy of the profile a thread runs under, or null. A deleted or unknown
  * profile id is "no profile", never a store error.
  * @param {{ getThread: Function, getSettings: Function }} store
@@ -471,5 +490,6 @@ module.exports = {
   normalizeCall,
   actionHash,
   evaluate,
+  networkVerdict,
   threadPolicy,
 };

@@ -509,7 +509,7 @@ function createClaudeRun(ctx) {
         }
       }
     }
-    const spawn = resolveSpawn(project, binary, args, localCwd, grokHomeEnv);
+    const spawn = resolveSpawn(project, binary, args, localCwd, grokHomeEnv, threadId);
 
     if (abortIfCancelled(threadId, runId)) return { runId };
     const entry = claimPreparingRun(threadId, runId, {
@@ -1344,6 +1344,8 @@ function createClaudeRun(ctx) {
           .map((a) => createHash("sha256").update(fs.readFileSync(a.slice("--mcp-config=".length))).digest("hex"))
         : [],
       otelEnv: spawnEnv || null,
+      // The Seatbelt profile is fixed at spawn (#803): a policy edit respawns.
+      seatbelt: spawn.seatbelt || null,
     });
 
     const prevSess = claudeSessions.get(threadId);

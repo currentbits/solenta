@@ -1608,23 +1608,35 @@ function listTrashed(store, opts) {
  * @param {import('./store').Store} store
  * @param {object} thread
  */
-function decorateThread(store, thread) {
+function decorateThread(store, thread, profiles = agentProfilesOf(store)) {
   if (!thread) return thread;
   const project = store.getProject(thread.projectId);
+  const profile = thread.agentProfileId
+    ? profiles.find((p) => p.id === thread.agentProfileId)
+    : null;
   return {
     ...thread,
     sandbox: resolveSandbox({
       provider: thread.provider,
       permissionMode: thread.permissionMode,
       project,
+      // Seatbelt wraps follow the profile's matrix (#803).
+      policy: (profile && profile.policy) || null,
     }),
   };
+}
+
+/** @param {import('./store').Store} store */
+function agentProfilesOf(store) {
+  return typeof store.getSettings === "function"
+    ? store.getSettings().agentProfiles || []
+    : [];
 }
 
 /**
  * listThreads cache, keyed per store (WeakMap so a discarded store — tests
  * create plenty — never leaks). See listThreads for the invariants.
- * @type {WeakMap<import('./store').Store, { threads: object[], projects: object[], value: object[], rows: Map<object, object> }>}
+ * @type {WeakMap<import('./store').Store, { threads: object[], projects: object[], policyKey: string, value: object[], rows: Map<object, object> }>}
  */
 const listThreadsCache = new WeakMap();
 
@@ -1650,11 +1662,20 @@ function listThreads(store) {
   // reuse decorated rows keyed on the thread object so an updateThread that
   // only patched one row skips re-decorating the rest. Row identity does
   // not survive IPC; the renderer restores it in reconcileThreadList.
+  // Settings are re-normalized per read, so key the badge's inputs (#803:
+  // profile policies decide Seatbelt) by value, not identity.
+  const profiles = agentProfilesOf(store);
+  const policyKey = JSON.stringify(profiles.map((p) => [p.id, p.policy || null]));
   const cache = listThreadsCache.get(store);
-  if (cache && cache.threads === threads && cache.projects === projects) {
+  if (
+    cache &&
+    cache.threads === threads &&
+    cache.projects === projects &&
+    cache.policyKey === policyKey
+  ) {
     return cache.value;
   }
-  const prevRows = cache ? cache.rows : null;
+  const prevRows = cache && cache.policyKey === policyKey ? cache.rows : null;
   /** @type {Map<object, object>} */
   const rows = new Map();
   /** @type {object[]} */
@@ -1670,11 +1691,11 @@ function listThreads(store) {
       value.push(prev);
       continue;
     }
-    const decorated = listRow(decorateThread(store, t));
+    const decorated = listRow(decorateThread(store, t, profiles));
     rows.set(t, decorated);
     value.push(decorated);
   }
-  listThreadsCache.set(store, { threads, projects, value, rows });
+  listThreadsCache.set(store, { threads, projects, policyKey, value, rows });
   return value;
 }
 

@@ -1478,9 +1478,11 @@ function PolicyFields({
       ))}
       <p className={styles.note}>
         Built-in Solenta guardrails still apply and cannot be lifted. Rules
-        gate Claude&apos;s permission prompts only, so Accept edits and Bypass
-        modes skip what they would check; other agents are not confined until
-        the OS sandbox (#803).
+        gate Claude&apos;s permission prompts, which Accept edits and Bypass
+        modes skip. On macOS, any Write path or Network rule also runs the
+        agent (every provider, local projects) under Seatbelt: writes are
+        confined to the worktree plus allow/ask paths, and network rules
+        filter egress through Solenta&apos;s proxy.
       </p>
     </>
   );
