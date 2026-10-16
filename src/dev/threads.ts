@@ -341,7 +341,23 @@ export function createThreads(ctx: DevCtx): Pick<CoderApi, "threads"> {
         });
       },
       async applyAgentProfile(input) {
-        return patchThread(input.threadId, { agentProfileId: input.profileId });
+        const { agentProfiles = [] } = await ctx.api().settings.get();
+        const profile = agentProfiles.find((p) => p.id === input.profileId);
+        if (!profile) throw new Error("Unknown agent profile");
+        const thread = details.get(input.threadId)?.thread;
+        if (!thread) throw new Error(`Thread not found: ${input.threadId}`);
+        // ponytail: fixture skips the honoured-mode snap; electron does it.
+        return patchThread(input.threadId, {
+          provider: profile.provider,
+          providerInstance: null,
+          model: profile.model,
+          reasoningEffort: profile.reasoningEffort,
+          permissionMode: profile.permissionMode,
+          agentProfileId: profile.id,
+          route: null,
+          ...(profile.provider !== thread.provider ? { sessionId: null } : {}),
+          updatedAt: now(),
+        });
       },
       async savePlan(input) {
         if (!details.has(input.threadId)) {
@@ -788,7 +804,10 @@ export function createThreads(ctx: DevCtx): Pick<CoderApi, "threads"> {
         threadId: string;
         effort: ReasoningEffort | null;
       }) {
-        return patchThread(input.threadId, { reasoningEffort: input.effort });
+        return patchThread(input.threadId, {
+          reasoningEffort: input.effort,
+          agentProfileId: null,
+        });
       },
       async setWebSearch(input: {
         threadId: string;
@@ -893,7 +912,7 @@ export function createThreads(ctx: DevCtx): Pick<CoderApi, "threads"> {
         // run-active refusal, session drop, effort reset) live in
         // electron/services.js setProvider and are exercised by npm run dev.
         // A manual pick clears a pending Auto route (#246).
-        const patch: Partial<ThreadInfo> = { route: null };
+        const patch: Partial<ThreadInfo> = { route: null, agentProfileId: null };
         if (Object.prototype.hasOwnProperty.call(input, "provider")) {
           // A ref "claude:work" is base + named instance (#453).
           const [base = "", instance = null] = String(input.provider).split(":");

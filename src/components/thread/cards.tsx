@@ -215,7 +215,13 @@ export function PermissionPrompt({
   const original = pending.command ?? null;
   const hasCommand = original !== null;
   const editable = hasCommand && pending.commandEditable !== false;
-  const acceptAlways = pending.acceptAlways !== false;
+  const guardrail = pending.guardrail ?? null;
+  // A session grant cannot mute an always-confirm profile rule (#262).
+  const acceptAlways =
+    pending.acceptAlways !== false && guardrail?.layer !== "profile.ask";
+  const guardrailSource = guardrail
+    ? [guardrail.layer, guardrail.rule].filter(Boolean).join(" / ")
+    : "";
   const [command, setCommand] = useState(original ?? "");
   const [sent, setSent] = useState(false);
   const edited =
@@ -250,9 +256,10 @@ export function PermissionPrompt({
           </span>
         ) : null}
       </div>
-      {pending.guardrail ? (
-        <div className={styles.permissionGuardrail}>
-          ⚠ {pending.guardrail.reason} ({pending.guardrail.rule})
+      {guardrail ? (
+        <div className={styles.permissionGuardrail} data-permission-guardrail="">
+          ⚠ {guardrail.reason}
+          {guardrailSource ? ` (${guardrailSource})` : ""}
         </div>
       ) : null}
       {hasCommand ? (

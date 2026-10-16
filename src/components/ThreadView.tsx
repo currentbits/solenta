@@ -380,6 +380,8 @@ interface ThreadViewProps {
     effort: ReasoningEffort | null,
     threadId?: string,
   ) => void | Promise<void>;
+  /** Apply a saved AgentProfile in one write (#262). */
+  onApplyAgentProfile: (profileId: string, threadId?: string) => void | Promise<void>;
   onSetWebSearch?: (webSearch: boolean, threadId?: string) => void | Promise<void>;
   onSetFast?: (fast: boolean, threadId?: string) => void | Promise<void>;
   onSetRoute?: (route: ModelRoute | null, threadId?: string) => void | Promise<void>;
@@ -795,6 +797,7 @@ export const ThreadView = memo(function ThreadView({
   onAnswerSecret,
   onSetProvider,
   onSetReasoningEffort,
+  onApplyAgentProfile,
   onSetWebSearch,
   onSetFast,
   onSetRoute,
@@ -1845,8 +1848,8 @@ export const ThreadView = memo(function ThreadView({
    * Fork one thread per selected provider or profile, then start the same
    * prompt on each new fork. Sequential: a run cannot start until its fork
    * exists. Failures throw so Composer and the run-error banner both surface
-   * them. Profile forks set effort then permission on the new thread before
-   * the run, same order as pickProfile. planOnly (#241) starts every fork in
+   * them. Profile forks apply the profile to the new thread before the run
+   * (#262: stamps agentProfileId so its policy gates the fork). planOnly (#241) starts every fork in
    * plan mode and drops providers that cannot plan; the user then builds the
    * winning plan from its card ("Implement in a new thread").
    */
@@ -1875,12 +1878,9 @@ export const ThreadView = memo(function ThreadView({
         }
         created.push(forked.id);
         if (entry.kind === "profile") {
-          await onSetReasoningEffort(entry.reasoningEffort, forked.id);
+          await onApplyAgentProfile(entry.id, forked.id);
         }
         if (planOnly) await onSetPermissionMode("plan", forked.id);
-        else if (entry.kind === "profile") {
-          await onSetPermissionMode(entry.permissionMode, forked.id);
-        }
         await onStartRun(prompt, forked.id);
       }
       if (created[0]) onSelectThread?.(created[0]);
@@ -1891,7 +1891,7 @@ export const ThreadView = memo(function ThreadView({
       onFork,
       onSelectThread,
       onSetPermissionMode,
-      onSetReasoningEffort,
+      onApplyAgentProfile,
       onStartRun,
       providers,
     ],
@@ -4845,9 +4845,11 @@ export const ThreadView = memo(function ThreadView({
         onSetAgent={onSetAgent}
         providers={providers}
         agentProfiles={agentProfiles}
+        agentProfileId={thread.agentProfileId ?? null}
         workflows={workflows}
         onSetProvider={onSetProvider}
         onSetReasoningEffort={onSetReasoningEffort}
+        onApplyAgentProfile={onApplyAgentProfile}
         onSetWebSearch={onSetWebSearch}
         onSetFast={onSetFast}
         onSetRoute={onSetRoute}

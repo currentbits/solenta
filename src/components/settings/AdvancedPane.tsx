@@ -1,5 +1,11 @@
-import type { RefObject } from "react";
-import type { AppSettings, OtelSettings } from "../../shared/ipc";
+import { useEffect, useState, type RefObject } from "react";
+import { resolveCoderApi } from "../../coderApi";
+import type {
+  AppSettings,
+  CoderApi,
+  GovernanceAuditEntry,
+  OtelSettings,
+} from "../../shared/ipc";
 import styles from "../SettingsModal.module.css";
 import type { SettingsDraftKey, SettingsModalProps } from "../SettingsModal";
 import { VibeKanbanSection } from "../VibeKanbanSection";
@@ -200,7 +206,94 @@ export function AdvancedPane({
         </div>
       </section>
 
+      <GovernanceAuditSection />
+
       <VibeKanbanSection active />
     </>
+  );
+}
+
+function governanceApi(): CoderApi["governance"] | null {
+  try {
+    const api = resolveCoderApi();
+    return typeof api.governance?.listAudit === "function" ? api.governance : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Read-only tail of the HMAC-chained governance audit (#262). */
+function GovernanceAuditSection() {
+  const [rows, setRows] = useState<GovernanceAuditEntry[] | null>(null);
+  const [verdict, setVerdict] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    const api = governanceApi();
+    if (!api) return;
+    let live = true;
+    api
+      .listAudit({ limit: 50 })
+      .then((next) => live && setRows(next))
+      .catch(() => live && setRows([]));
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  const verify = async () => {
+    const api = governanceApi();
+    if (!api) return;
+    setBusy(true);
+    try {
+      const r = await api.verifyAudit();
+      setVerdict(
+        r.ok
+          ? `Chain OK (${r.entries} ${r.entries === 1 ? "entry" : "entries"})`
+          : r.seq != null
+            ? `Chain broken at #${r.seq}: ${r.reason}`
+            : r.reason,
+      );
+    } catch (err) {
+      setVerdict(err instanceof Error && err.message ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className={styles.section} data-governance-audit="">
+      <h3 className={styles.sectionLabel}>Governance audit</h3>
+      <p className={styles.note}>
+        Last 50 tool calls an agent profile&apos;s rules decided, newest first.
+      </p>
+      {rows != null && rows.length === 0 && (
+        <p className={styles.note}>No governed tool calls yet.</p>
+      )}
+      {rows?.map((row) => (
+        <div key={row.seq} className={styles.memoryRow} data-audit-row={row.seq}>
+          <span className={styles.monoNote}>
+            {new Date(row.ts).toLocaleString()} · {row.threadId.slice(0, 8)} ·{" "}
+            {row.toolName} · {row.decision} · {row.layer}
+          </span>
+        </div>
+      ))}
+      <div className={styles.fieldRow}>
+        <button
+          type="button"
+          className={styles.btn}
+          data-audit-verify=""
+          disabled={busy}
+          onClick={() => void verify()}
+        >
+          Verify chain
+        </button>
+        {verdict && (
+          <span className={styles.note} data-audit-verdict="">
+            {verdict}
+          </span>
+        )}
+      </div>
+    </section>
   );
 }
