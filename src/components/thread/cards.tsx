@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useReducer, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import type {
   PendingPermissionInfo,
   PermissionDecision,
@@ -12,6 +12,7 @@ import type {
 import { SPEC_ARTIFACTS, FELT_ESTIMATE_BUCKETS_MS } from "../../shared/ipc";
 import { resolveCoderApi } from "../../coderApi";
 import { TEACH_AUTONOMY_LABELS } from "../../teach";
+import { loadFlag, saveFlag } from "../sidebar/storage";
 import type { TeachAutonomy } from "../../shared/ipc";
 import {
   comparePeerLabel,
@@ -438,10 +439,6 @@ export function ExternalApprovalCard({ thread }: { thread: ThreadInfo }) {
   );
 }
 
-// Hide/show choice per thread, so switching away and back doesn't reopen it.
-// ponytail: session-only; move to localStorage if it should survive relaunch.
-const planOpenByThread = new Map<string, boolean>();
-
 export function PlanCard({
   thread,
   forceOpen = false,
@@ -450,16 +447,19 @@ export function PlanCard({
   forceOpen?: boolean;
 }) {
   const steps = thread.planSteps ?? [];
-  const [, rerender] = useReducer((n: number) => n + 1, 0);
   // No steps yet means the prose IS the overview, so it starts expanded.
-  const open = planOpenByThread.get(thread.id) ?? steps.length === 0;
-  const setOpen = (next: boolean) => {
-    planOpenByThread.set(thread.id, next);
-    rerender();
+  // A Hide/Show click is remembered per thread across switches and relaunches.
+  // ponytail: one localStorage key per toggled thread, never pruned.
+  const storeKey = `coder.planOpen.${thread.id}`;
+  const [open, setOpen] = useState(() =>
+    loadFlag(storeKey, steps.length === 0),
+  );
+  const toggle = () => {
+    saveFlag(storeKey, !open);
+    setOpen(!open);
   };
   useEffect(() => {
     if (forceOpen) setOpen(true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [forceOpen]);
   const done = steps.filter((s) => s.status === "done").length;
   return (
@@ -478,7 +478,7 @@ export function PlanCard({
           <button
             type="button"
             className={styles.planToggle}
-            onClick={() => setOpen(!open)}
+            onClick={toggle}
           >
             {open ? "Hide full plan" : "Show full plan"}
           </button>

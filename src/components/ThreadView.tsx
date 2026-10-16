@@ -4441,7 +4441,11 @@ export const ThreadView = memo(function ThreadView({
         {/* A pending plan prompt already shows the plan — don't show it twice. */}
         {(thread.planSteps?.length || thread.plan) &&
         !detail.pendingPermission?.plan ? (
-          <PlanCard thread={thread} forceOpen={revealPlan} />
+          <PlanCard
+            key={thread.id}
+            thread={thread}
+            forceOpen={revealPlan}
+          />
         ) : null}
 
         {/*
