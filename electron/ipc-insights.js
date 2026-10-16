@@ -4,8 +4,13 @@ const { buildActivity } = require("./activity.js");
 const { collectDigest } = require("./digest.js");
 const { collectFleet } = require("./fleet.js");
 
-/** IPC_HANDLERS rows for activity:*, usage:*, insights:*, fleet:*, digest:*; ipc.js spreads them in. */
+/** IPC_HANDLERS rows for activity:*, governance:*, usage:*, insights:*, fleet:*, digest:*; ipc.js spreads them in. */
 module.exports = {
+  // Read-only (#262): nothing in the renderer can append to the audit.
+  "governance:listAudit": async (_ctx, input) =>
+    require("./governanceAudit.js").listAudit(input || {}),
+  "governance:verifyAudit": async () =>
+    require("./governanceAudit.js").verifyAudit(),
   "activity:list": async (ctx) => {
     const threads = ctx.store.getThreads();
     return buildActivity(threads, ctx.store.data.workLogByThread, Date.now());

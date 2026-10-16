@@ -670,6 +670,7 @@ app.whenReady().then(async () => {
       configureDefaultSecrets({
         auditPath: path.join(userData, "secrets-audit.jsonl"),
       });
+      require("./governanceAudit.js").configureGovernanceAudit({ dir: userData });
       const loaded = new Store(path.join(userData, "coder-store.json"));
       require("./guardrails.js").setGuardrailsEnabled(loaded.getSettings().guardrailsEnabled);
       return loaded;

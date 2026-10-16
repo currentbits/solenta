@@ -444,6 +444,46 @@ function setPermissionMode(store, input) {
 }
 
 /**
+ * Apply a saved AgentProfile (#262): provider, model, effort, permission
+ * mode (snapped to what the provider honours), then stamp agentProfileId.
+ * An unknown id throws before anything changes. Goes through the service
+ * setters (not the IPC handlers, which clear the id on a manual pick).
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string, profileId: string }} input
+ */
+function applyAgentProfile(store, input) {
+  const { threadId, profileId } = input || {};
+  const thread = store.getThread(threadId);
+  if (!thread) throw new Error(`Unknown thread: ${threadId}`);
+  const profile = (store.getSettings().agentProfiles || []).find(
+    (p) => p.id === profileId,
+  );
+  if (!profile) throw new Error("Unknown agent profile");
+  setProvider(store, { threadId, provider: profile.provider, model: profile.model });
+  const live = store.getThread(threadId);
+  setReasoningEffort(store, {
+    threadId,
+    effort: honouredEfforts(getProvider(live.provider), live.model).includes(
+      profile.reasoningEffort,
+    )
+      ? profile.reasoningEffort
+      : null,
+  });
+  const mode = snapPermissionModeForThread(
+    getProvider(live.provider),
+    profile.permissionMode,
+    live.teach,
+  );
+  if (mode !== store.getThread(threadId).permissionMode) {
+    setPermissionMode(store, { threadId, mode });
+  }
+  const updated = store.updateThread(threadId, { agentProfileId: profile.id });
+  store.save();
+  return decorateThread(store, updated || store.getThread(threadId));
+}
+
+/**
  * Set reasoning effort for a thread. null always means "provider default".
  * Rejects levels the thread's provider does not honour so a setting that
  * would never reach the CLI cannot be stored.
@@ -678,6 +718,16 @@ function forkThread(store, input) {
   // and must not grow a worktree (issue #392).
   if (source.ask === true) {
     forkPatch.ask = true;
+  }
+  // The profile's matrix follows the fork (#262) only while the profile
+  // still exists and the fork stays on its provider.
+  const profile = source.agentProfileId
+    ? (store.getSettings().agentProfiles || []).find(
+        (p) => p.id === source.agentProfileId,
+      )
+    : null;
+  if (profile && parseProviderRef(profile.provider).provider === nextProvider) {
+    forkPatch.agentProfileId = profile.id;
   }
   // Opt-in worktree for user-facing forks (issue #550 chips). Same guards
   // as forkWorkerThread: not an Ask thread, project can host a worktree.
@@ -1747,6 +1797,7 @@ function getThreadDetail(store, threadId, workflow = null, opts) {
 
 module.exports = {
   savePlanFile,
+  applyAgentProfile,
   normalizeBaseBranch,
   createThread,
   recordLastUsedDefaults,
