@@ -29,6 +29,9 @@ const MAX_QUEUED = 64;
 // ponytail: one timeout for every channel. Raise it if a legitimately slow
 // handler (gh network calls) starts tripping instead of per-channel budgets.
 const INVOKE_TIMEOUT_MS = 120_000;
+// Only side-effect-free reads may share one reply on reconnect. ponytail:
+// method-name allowlist; an unlisted read just costs one extra request.
+const COALESCE_SAFE = /^[a-zA-Z]+:(list\w*|get|status|summaries|search|recent)$/;
 
 function unref(timer: unknown): void {
   if (typeof timer === "object" && timer && "unref" in timer) {
@@ -66,6 +69,13 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
     const batch = queued.splice(0);
     const bySig = new Map<string, Pending>();
     for (const p of batch) {
+      if (!COALESCE_SAFE.test(p.channel)) {
+        // A mutation runs as queued, and a read queued after it must not
+        // borrow a reply from before it (#928).
+        bySig.clear();
+        sendPending(p);
+        continue;
+      }
       const sig = JSON.stringify([p.channel, p.args]);
       const first = bySig.get(sig);
       if (!first) {
