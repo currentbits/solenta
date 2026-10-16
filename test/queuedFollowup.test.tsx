@@ -702,6 +702,49 @@ describe("queued follow-up (issue #92 / #314)", () => {
     m.unmount();
   });
 
+  it("a rejected mid-run queue write keeps the draft and files for retry (#922)", async () => {
+    // Cancel first: the only App path that puts a file chip in the composer.
+    const { fake, m } = await bootBusySteerable(false, perItemQueue());
+    await m.click(m.query("button[data-cancel-queued]"));
+    await m.flush();
+    const ta = m.query("textarea") as HTMLTextAreaElement;
+    const chip = '[aria-label="Attachments"] [title="/tmp/b.png"]';
+    assert.ok(m.query(chip), "precondition: the file is in the composer");
+
+    const orig = fake.api.threads.setQueued.bind(fake.api.threads);
+    let reject = true;
+    fake.api.threads.setQueued = (input) => {
+      if (reject && (input as { prompt: string | null }).prompt) {
+        fake.calls.push({ channel: "threads.setQueued", args: [input] });
+        return Promise.reject(new Error("queue write failed"));
+      }
+      return orig(input);
+    };
+
+    await m.click(m.query('button[aria-label="Send"]'));
+    await m.flush();
+    assert.equal(ta.value, "first thought\n\nsecond thought", "draft survives");
+    assert.ok(m.query(chip), "the file chip survives");
+    assert.equal(m.query("[data-queued-prompt]"), null, "nothing claims queued");
+    const row = (await fake.api.threads.list()).find((t) => t.id === "t-busy");
+    assert.equal(row?.queued ?? null, null, "the host holds no queue");
+    assert.match(m.text(), /queue write failed/, "the failure is visible");
+
+    reject = false;
+    await m.click(m.query('button[aria-label="Send"]'));
+    await m.flush();
+    assert.equal(ta.value, "", "a landed retry clears the composer");
+    assert.equal(m.query(chip), null);
+    const strip = m.query("[data-queued-prompt]");
+    assert.match(strip!.textContent || "", /second thought/);
+    assert.doesNotMatch(
+      strip!.textContent || "",
+      /second thought[\s\S]*second thought/,
+      "the retry queues once",
+    );
+    m.unmount();
+  });
+
   it("a cancel that lands after a thread switch restores on its own thread only (#1212)", async () => {
     // Settled, not working: the sidebar folds unselected working threads
     // into a group, and the switch back needs the card.
