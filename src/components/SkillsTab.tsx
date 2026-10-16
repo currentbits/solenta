@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   McpCatalogEntry,
+  XcodeMcpStatus,
   McpImportPreview,
   McpInstallRequest,
   McpInstallResult,
@@ -26,6 +27,7 @@ import {
   AddSkillSection,
   AddedMcpsSection,
   CuratedMcpsSection,
+  XcodeMcpCard,
   CuratedSkillsSection,
   HarnessImportPreviewPanel,
   HarnessImportSection,
@@ -73,6 +75,8 @@ export interface SkillsManagerProps {
     enabled: boolean;
   }) => Promise<McpServerDefinition>;
   listMcpCatalog: () => Promise<McpCatalogEntry[]>;
+  xcodeMcpStatus?: (input: { projectPath: string }) => Promise<XcodeMcpStatus | null>;
+  pairXcodeMcp?: (input: { projectPath: string }) => Promise<McpServerDefinition>;
   pickMcpImport: () => Promise<McpImportPreview | null>;
   previewMcpImport: (input: McpPreviewImportInput) => Promise<McpImportPreview>;
   installMcpImport: (input: McpInstallRequest) => Promise<McpInstallResult>;
@@ -241,6 +245,8 @@ export function SkillsManager({
   removeMcpServer,
   setMcpEnabled,
   listMcpCatalog,
+  xcodeMcpStatus,
+  pairXcodeMcp,
   pickMcpImport,
   previewMcpImport,
   installMcpImport,
@@ -272,6 +278,7 @@ export function SkillsManager({
   const [mcpUrl, setMcpUrl] = useState("");
   const [mcpToken, setMcpToken] = useState("");
   const [mcpCatalog, setMcpCatalog] = useState<McpCatalogEntry[]>([]);
+  const [xcode, setXcode] = useState<XcodeMcpStatus | null>(null);
   const [mcpCommand, setMcpCommand] = useState("");
   const [mcpArgs, setMcpArgs] = useState("");
   const [mcpTrustLocal, setMcpTrustLocal] = useState(false);
@@ -393,17 +400,22 @@ export function SkillsManager({
 
   const reloadMcp = useCallback(async () => {
     try {
-      const [list, catalog] = await Promise.all([
+      const [list, catalog, xcodeStatus] = await Promise.all([
         listMcpServers(),
         listMcpCatalog(),
+        // The card is advisory: a failed probe hides it, never the MCP list.
+        xcodeMcpStatus && projectPath
+          ? xcodeMcpStatus({ projectPath }).catch(() => null)
+          : null,
       ]);
       if (!mountedRef.current) return;
       setMcpServers(list);
       setMcpCatalog(catalog);
+      setXcode(xcodeStatus);
     } catch (err) {
       if (mountedRef.current) setMcpError(errorMessage(err));
     }
-  }, [listMcpServers, listMcpCatalog]);
+  }, [listMcpServers, listMcpCatalog, xcodeMcpStatus, projectPath]);
 
   const reloadVisible = useCallback(async () => {
     await Promise.all([reloadSkills(), reloadCatalog(), reloadMcp()]);
@@ -623,6 +635,13 @@ export function SkillsManager({
     } finally {
       if (mountedRef.current) setMcpBusy(false);
     }
+  };
+
+  const handlePairXcode = () => {
+    if (!pairXcodeMcp || !projectPath) return;
+    void runMcp(async () => {
+      await pairXcodeMcp({ projectPath });
+    });
   };
 
   const handleMcpCatalogInstall = async (id: string) => {
@@ -995,6 +1014,8 @@ export function SkillsManager({
       <McpServersSection
         mcpServers={mcpServers}
         mcpCatalog={mcpCatalog}
+        xcode={xcode}
+        onPairXcode={handlePairXcode}
         mcpBusy={mcpBusy}
         mcpError={mcpError}
         mcpErrorScope={mcpErrorScope}
@@ -1481,6 +1502,8 @@ export function SkillsTab({
 function McpServersSection({
   mcpServers,
   mcpCatalog,
+  xcode,
+  onPairXcode,
   mcpBusy,
   mcpError,
   mcpErrorScope,
@@ -1513,6 +1536,8 @@ function McpServersSection({
 }: {
   mcpServers: McpServerDefinition[];
   mcpCatalog: McpCatalogEntry[];
+  xcode: XcodeMcpStatus | null;
+  onPairXcode: () => void;
   mcpBusy: boolean;
   mcpError: string | null;
   mcpErrorScope: "http" | "local";
@@ -1560,6 +1585,9 @@ function McpServersSection({
           </span>
         </p>
       </div>
+      {xcode && (
+        <XcodeMcpCard status={xcode} busy={mcpBusy} onPair={onPairXcode} />
+      )}
       <CuratedMcpsSection
         catalog={mcpCatalog}
         busy={mcpBusy}

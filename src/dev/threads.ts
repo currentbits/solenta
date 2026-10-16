@@ -8,6 +8,8 @@ import type {
   SpecArtifact,
   ThreadDetail,
   ThreadInfo,
+  ThreadSearchInput,
+  ThreadSearchResult,
   ThreadMessagePin,
   ThreadSummariesInput,
   TrashedThreadInfo,
@@ -124,17 +126,19 @@ export function createThreads(ctx: DevCtx): Pick<CoderApi, "threads"> {
       /**
        * Full-content search: title + notes + message text, case-insensitive
        * substring, newest activity first, max 50. Includes archived. 0–1
-       * char → [].
+       * char → no hits. threadIds scopes before the cap.
        */
-      async search(input: { query: string }): Promise<ThreadInfo[]> {
+      async search(input: ThreadSearchInput): Promise<ThreadSearchResult> {
         const q = input.query.trim().toLowerCase();
-        if (q.length < 2) return [];
+        if (q.length < 2) return { threads: [], truncated: false };
+        const scope = input.threadIds ? new Set(input.threadIds) : null;
 
         const seen = new Set<string>();
         const hits: ThreadInfo[] = [];
 
         for (const t of ctx.threads) {
           if (seen.has(t.id)) continue;
+          if (scope && !scope.has(t.id)) continue;
           let match = t.title.toLowerCase().includes(q);
           if (!match) {
             match = (t.notes || "").toLowerCase().includes(q);
@@ -153,7 +157,7 @@ export function createThreads(ctx: DevCtx): Pick<CoderApi, "threads"> {
         }
 
         hits.sort((a, b) => b.updatedAt - a.updatedAt);
-        return hits.slice(0, 50);
+        return { threads: hits.slice(0, 50), truncated: hits.length > 50 };
       },
       async create(input) {
         const source = input.taskGroupFrom
