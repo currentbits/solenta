@@ -119,9 +119,17 @@ const INSTRUCTIONS =
   "preview drives the Browser pane on YOUR OWN thread — the shared visible " +
   "webview the user sees. The pane must be open (Views → Browser). Loopback " +
   "URLs only (localhost). action is one of info, navigate, reload, back, " +
-  "forward, screenshot, click, type. screenshot returns a PNG of the page; " +
-  "click and type take a CSS selector. If the pane is not open the tool says " +
-  "so: ask the user to open it. Do not claim the UI works without a screenshot. " +
+  "forward, screenshot, snapshot, diagnostics, viewport, click, type. " +
+  "snapshot lists visible roles, names and states (invalid fields carry the " +
+  "browser's validation message) with refs like s3e12; click and type take a " +
+  "ref from the LATEST snapshot (stale after navigation or a newer snapshot) " +
+  "or a CSS selector. diagnostics returns console errors and failed or fetch " +
+  "requests since the pane opened: read it instead of guessing why a page " +
+  "broke. viewport takes preset mobile, tablet, desktop or fill; screenshot " +
+  "reports the viewport it was taken at. An action with completion " +
+  "\"uncertain\" may have run: snapshot before retrying it. If the pane is " +
+  "not open the tool says so: ask the user to open it. Do not claim the UI " +
+  "works without a screenshot. " +
   "Worktrees of one repo share a git object store, so the durable way to hand " +
   "over a document (plan.md, contract.md) is to COMMIT it on your branch and " +
   "send the peer a `branch:path` ref in the task note or peer message. The peer " +
@@ -1332,18 +1340,24 @@ function createToolHandlers(deps) {
     if (action === "back") return previewApi.goBack({ threadId });
     if (action === "forward") return previewApi.goForward({ threadId });
     if (action === "screenshot") return previewApi.screenshot({ threadId });
+    if (action === "snapshot") return previewApi.snapshot({ threadId });
+    if (action === "diagnostics") return previewApi.diagnostics({ threadId });
+    if (action === "viewport") {
+      return previewApi.viewport({ threadId, preset: args.preset });
+    }
     if (action === "click") {
-      return previewApi.click({ threadId, selector: args.selector });
+      return previewApi.click({ threadId, selector: args.selector, ref: args.ref });
     }
     if (action === "type") {
       return previewApi.type({
         threadId,
         selector: args.selector,
+        ref: args.ref,
         text: args.text,
       });
     }
     throw new Error(
-      "Unknown preview action. Use info, navigate, reload, back, forward, screenshot, click, or type.",
+      "Unknown preview action. Use info, navigate, reload, back, forward, screenshot, snapshot, diagnostics, viewport, click, or type.",
     );
   }
 
@@ -1915,9 +1929,15 @@ function buildMcpServer(sdk, handlers, opts = {}) {
         "Drive the Browser pane on YOUR OWN thread, the shared visible " +
         "webview. The pane must already be open (Views → Browser). Loopback " +
         "URLs only. action: info, navigate (url), reload, back, forward, " +
-        "screenshot, click (selector), type (selector + text). screenshot " +
-        "returns a PNG of the page. If the pane is not open the tool says so; " +
-        "ask the user to open it instead of claiming the UI works.",
+        "screenshot, snapshot, diagnostics, viewport (preset), click (ref or " +
+        "selector), type (ref or selector + text). screenshot returns a PNG " +
+        "and the viewport it was taken at. snapshot returns visible roles, " +
+        "names and states with refs that only work until the next snapshot " +
+        "or navigation. diagnostics returns console messages and request " +
+        "status/timing/errors since the pane opened (no headers or bodies). " +
+        "completion \"uncertain\" means the action may have run: observe " +
+        "before retrying. If the pane is not open the tool says so; ask the " +
+        "user to open it instead of claiming the UI works.",
       inputSchema: {
         threadId: z.string().min(1),
         projectId: z.string().min(1),
@@ -1928,11 +1948,16 @@ function buildMcpServer(sdk, handlers, opts = {}) {
           "back",
           "forward",
           "screenshot",
+          "snapshot",
+          "diagnostics",
+          "viewport",
           "click",
           "type",
         ]),
         url: z.string().min(1).optional(),
         selector: z.string().min(1).optional(),
+        ref: z.string().min(1).optional(),
+        preset: z.enum(["mobile", "tablet", "desktop", "fill"]).optional(),
         text: z.string().optional(),
       },
     },

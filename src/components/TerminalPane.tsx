@@ -26,6 +26,11 @@ export interface XtermLike {
   fit(): void;
   hasSelection(): boolean;
   getSelection(): string;
+  /** Wipe the display, keeping the prompt line. The shell is untouched. */
+  clear(): void;
+  /** Select and scroll to the next match above (back) or below the last one. */
+  find(query: string, back: boolean): boolean;
+  onSelectionChange(cb: () => void): { dispose(): void };
   onData(cb: (data: string) => void): { dispose(): void };
   onResize(cb: (size: { cols: number; rows: number }) => void): { dispose(): void };
   attachCustomKeyEventHandler(fn: (e: KeyboardEvent) => boolean): void;
@@ -76,9 +81,57 @@ export const loadXterm: XtermLoader = async () => {
     term.loadAddon(fit);
     // window.open goes through the app's link policy (external browser).
     term.loadAddon(new WebLinksAddon((_e, uri) => window.open(uri, "_blank")));
-    return Object.assign(term, { fit: () => fit.fit() }) as unknown as XtermLike;
+    let last: Match | null = null;
+    // ponytail: per-row scan of the retained buffer; matches across a soft
+    // wrap or after wide (CJK) chars are missed/offset. @xterm/addon-search
+    // handles both if that ever matters.
+    const find = (query: string, back: boolean) => {
+      const buf = term.buffer.active;
+      const lines = Array.from({ length: buf.length }, (_, y) => buf.getLine(y)?.translateToString() ?? "");
+      last = findMatch(lines, query, last, back);
+      if (!last) {
+        term.clearSelection();
+        return false;
+      }
+      term.select(last.x, last.y, query.length);
+      term.scrollToLine(Math.max(0, last.y - (term.rows >> 1)));
+      return true;
+    };
+    return Object.assign(term, { fit: () => fit.fit(), find }) as unknown as XtermLike;
   };
 };
+
+export interface Match {
+  y: number;
+  x: number;
+}
+
+/**
+ * Case-insensitive match of `query` in buffer rows, the first one above
+ * (back) or below `from`, wrapping around. No `from` starts at the bottom
+ * going up, at the top going down.
+ */
+export function findMatch(
+  lines: string[],
+  query: string,
+  from: Match | null,
+  back: boolean,
+): Match | null {
+  const q = query.toLowerCase();
+  if (!q) return null;
+  const hits: Match[] = [];
+  lines.forEach((line, y) => {
+    const l = line.toLowerCase();
+    for (let x = l.indexOf(q); x >= 0; x = l.indexOf(q, x + 1)) hits.push({ y, x });
+  });
+  if (!hits.length) return null;
+  const before = (h: Match) => !from || h.y < from.y || (h.y === from.y && h.x < from.x);
+  const after = (h: Match) => !from || h.y > from.y || (h.y === from.y && h.x > from.x);
+  if (back) return [...hits].reverse().find(before) ?? hits[hits.length - 1]!;
+  return hits.find(after) ?? hits[0]!;
+}
+
+const SELECT_FIRST = "Select output in the terminal first";
 
 /** ⌘C / Ctrl+Shift+C copy a selection; without one the key goes to the shell. */
 function copyKeys(term: XtermLike) {
@@ -108,6 +161,7 @@ function TerminalView({
   onClose,
   onSplit,
   onFix,
+  onAddToPrompt,
 }: {
   threadId: string;
   termId: string;
@@ -116,12 +170,19 @@ function TerminalView({
   onClose?: () => void;
   onSplit?: () => void;
   onFix?: FixHandler;
+  onAddToPrompt?: (threadId: string, text: string) => void;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<XtermLike | null>(null);
   const [session, setSession] = useState<TerminalState | null>(null);
   const [running, setRunning] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [selected, setSelected] = useState(false);
+  const [finding, setFinding] = useState(false);
+  const [query, setQuery] = useState("");
+  // One live region for "No matches", "Copied", "Added to composer". It
+  // floats: a reflowed bar resizes xterm, which drops the selection.
+  const [status, setStatus] = useState("");
   // Restart = close, then a fresh mount of the effect below.
   const [epoch, setEpoch] = useState(0);
   // Fix suggestions (#253) scan live pushes only: replayed scrollback is
@@ -141,6 +202,7 @@ function TerminalView({
     const subs: { dispose(): void }[] = [];
     setSession(null);
     setFailed(false);
+    setSelected(false);
 
     const apply = (s: TerminalState) => {
       if (!live || !term) return;
@@ -203,6 +265,11 @@ function TerminalView({
           }),
           t.onResize(({ cols, rows }) => {
             void api.resize({ threadId, termId, cols, rows }).catch(() => {});
+          }),
+          t.onSelectionChange(() => {
+            if (!live) return;
+            setSelected(t.hasSelection());
+            setStatus("");
           }),
         );
         return api.open({ threadId, termId, cols: t.cols, rows: t.rows }).then((s) => {
@@ -268,6 +335,47 @@ function TerminalView({
       .then(() => setEpoch((e) => e + 1));
   }, [api, threadId, termId]);
 
+  // Display only (#1185): the shell, its running command and the main
+  // process's scrollback are untouched, so new output lands once.
+  const clear = useCallback(() => {
+    termRef.current?.clear();
+    termRef.current?.focus();
+  }, []);
+
+  const find = useCallback(
+    (back: boolean) => {
+      const t = termRef.current;
+      if (!t || !query) return;
+      const hit = t.find(query, back);
+      setStatus(hit ? "" : "No matches");
+    },
+    [query],
+  );
+
+  const closeFind = useCallback(() => {
+    setFinding(false);
+    setStatus("");
+    termRef.current?.focus();
+  }, []);
+
+  const copy = useCallback(() => {
+    const t = termRef.current;
+    if (!t?.hasSelection()) return;
+    void navigator.clipboard
+      ?.writeText(t.getSelection())
+      .then(() => setStatus("Copied"))
+      .catch(() => {});
+  }, []);
+
+  // Selection only, never the whole buffer; lands as a context chip beside
+  // the draft, for review before the user sends.
+  const send = useCallback(() => {
+    const text = termRef.current?.getSelection() ?? "";
+    if (!onAddToPrompt || !text.trim()) return;
+    onAddToPrompt(threadId, text);
+    setStatus("Added to composer");
+  }, [onAddToPrompt, threadId]);
+
   return (
     <div className={styles.view} data-terminal-view={termId}>
       <div className={styles.bar}>
@@ -277,6 +385,49 @@ function TerminalView({
         <span className={styles.state} data-running={running ? "true" : "false"}>
           {running ? session?.shell : session ? "not running" : ""}
         </span>
+        <button
+          type="button"
+          className={styles.button}
+          data-terminal-find=""
+          aria-expanded={finding}
+          title="Find in output"
+          onClick={() => (finding ? closeFind() : setFinding(true))}
+        >
+          Find
+        </button>
+        <button
+          type="button"
+          className={styles.button}
+          data-terminal-clear=""
+          title="Clear the display. The shell keeps running."
+          onClick={clear}
+        >
+          Clear
+        </button>
+        <button
+          type="button"
+          className={styles.button}
+          data-terminal-copy=""
+          aria-label="Copy selection"
+          title={selected ? "Copy selection" : SELECT_FIRST}
+          disabled={!selected}
+          onClick={copy}
+        >
+          Copy
+        </button>
+        {onAddToPrompt && (
+          <button
+            type="button"
+            className={styles.button}
+            data-terminal-send=""
+            aria-label="Send selection to composer"
+            title={selected ? "Add the selection to this thread's composer" : SELECT_FIRST}
+            disabled={!selected}
+            onClick={send}
+          >
+            To composer
+          </button>
+        )}
         <button
           type="button"
           className={styles.button}
@@ -320,6 +471,62 @@ function TerminalView({
           </button>
         )}
       </div>
+      {finding && (
+        <div className={styles.find} role="search" data-terminal-findbar="">
+          <input
+            className={styles.findInput}
+            aria-label="Find in terminal output"
+            placeholder="Find"
+            autoFocus
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setStatus("");
+            }}
+            onKeyDown={(e) => {
+              // Enter searches up, newest output first; Shift+Enter goes down.
+              if (e.key === "Enter") {
+                e.preventDefault();
+                find(!e.shiftKey);
+              } else if (e.key === "Escape") {
+                e.preventDefault();
+                e.stopPropagation();
+                closeFind();
+              }
+            }}
+          />
+          <button
+            type="button"
+            className={styles.button}
+            data-terminal-find-prev=""
+            aria-label="Previous match"
+            title="Previous match (Enter)"
+            onClick={() => find(true)}
+          >
+            ↑
+          </button>
+          <button
+            type="button"
+            className={styles.button}
+            data-terminal-find-next=""
+            aria-label="Next match"
+            title="Next match (Shift+Enter)"
+            onClick={() => find(false)}
+          >
+            ↓
+          </button>
+          <button
+            type="button"
+            className={styles.button}
+            data-terminal-find-close=""
+            aria-label="Close find"
+            title="Close find (Escape)"
+            onClick={closeFind}
+          >
+            ×
+          </button>
+        </div>
+      )}
       {session?.staleRoot && (
         <p className={styles.notice} data-terminal-stale="">
           This shell started in {session.cwd}, which this thread has left.{" "}
@@ -354,6 +561,9 @@ function TerminalView({
           onDone={resolveFailure}
         />
       )}
+      <span className={styles.status} role="status" data-terminal-status="">
+        {status}
+      </span>
       <div
         className={styles.screen}
         ref={hostRef}
@@ -375,12 +585,15 @@ export function TerminalPane({
   load = loadXterm,
   reveal = null,
   onFix,
+  onAddToPrompt,
 }: {
   threadId: string | null;
   api: TerminalApi;
   load?: XtermLoader;
   /** Offer fixes for failures in the output (#253). Absent = no offers. */
   onFix?: FixHandler;
+  /** Hand a selection to this thread's composer (#1185). Absent = no button. */
+  onAddToPrompt?: (threadId: string, text: string) => void;
   /**
    * A shell the main process just (re)started, e.g. Sign in's (#1501). Each
    * new nonce adds the split and remounts it onto the fresh session. Only
@@ -456,6 +669,7 @@ export function TerminalPane({
               ids && i === ids.length - 1 && ids.length < MAX_SPLITS ? split : undefined
             }
             onFix={onFix}
+            onAddToPrompt={onAddToPrompt}
           />
         ))}
       </div>

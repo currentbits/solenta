@@ -16,6 +16,8 @@ import type {
   StayAwakeMode,
   StayAwakeStatus,
   ThreadInfo,
+  ThreadSearchInput,
+  ThreadSearchResult,
   TrashedThreadInfo,
   UpdateStatus,
 } from "../shared/ipc";
@@ -213,7 +215,7 @@ export interface SidebarProps {
    * Full-content thread search (titles + message text). Called only for
    * queries of 2+ chars after debounce; empty / 1-char stays local.
    */
-  searchThreads: (input: { query: string }) => Promise<ThreadInfo[]>;
+  searchThreads: (input: ThreadSearchInput) => Promise<ThreadSearchResult>;
   /**
    * Pin or unpin settle override for a thread card (hover action).
    * override "settled" folds it; "active" keeps it out of the fold.
@@ -499,18 +501,6 @@ export const Sidebar = memo(function Sidebar({
     [now, autoSettleAfterDays, autoSettleOnMerge],
   );
   const threadTitles = useStableThreadTitles(threads);
-  const [searchResults, setSearchResults] = useState<ThreadInfo[] | null>(null);
-  const [searchLoading, setSearchLoading] = useState(false);
-
-  const searchGen = useRef(0);
-  const mountedRef = useRef(true);
-
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
 
   useEffect(() => {
     const handle = window.setInterval(() => {
@@ -533,15 +523,6 @@ export const Sidebar = memo(function Sidebar({
 
   const waitStates = useMemo(() => buildWaitStates(threads), [threads]);
 
-  const { trimmedQuery, searching } = useThreadSearch({
-    query,
-    searchThreads,
-    searchGen,
-    mountedRef,
-    setSearchResults,
-    setSearchLoading,
-  });
-
   const keepThreadIds = useMemo(() => {
     const ids: (string | null | undefined)[] = [activeThreadId, revealThreadId];
     for (const id of [activeThreadId, revealThreadId]) {
@@ -555,6 +536,43 @@ export const Sidebar = memo(function Sidebar({
     return ids;
   }, [activeThreadId, revealThreadId, liveById]);
 
+  const threadFilter = useMemo(
+    () => ({
+      status: statusFilter,
+      providers: providerFilter,
+      projectId: projectScope,
+      tag: tagFilter,
+    }),
+    [statusFilter, providerFilter, projectScope, tagFilter],
+  );
+
+  // Filters go to the backend as ids so they apply before its result cap
+  // (#1201); keepIds ride along to keep the open-thread carve-out.
+  const searchScopeIds = useMemo(() => {
+    const f = threadFilter;
+    if (
+      f.status == null &&
+      f.providers.length === 0 &&
+      f.projectId == null &&
+      f.tag == null
+    ) {
+      return null;
+    }
+    return filterThreads(threads, threadFilter, {
+      waits: waitStates,
+      keepIds: keepThreadIds,
+    }).map((t) => t.id);
+  }, [threads, threadFilter, waitStates, keepThreadIds]);
+
+  const {
+    trimmedQuery,
+    searching,
+    searchResults,
+    searchLoading,
+    searchFailed,
+    searchTruncated,
+  } = useThreadSearch({ query, scopeIds: searchScopeIds, searchThreads });
+
   const displayThreads = useMemo(() => {
     const source =
       searching
@@ -562,29 +580,17 @@ export const Sidebar = memo(function Sidebar({
           ? []
           : searchResults.map((t) => liveById.get(t.id) ?? t)
         : threads;
-    const filtered = filterThreads(
-      source,
-      {
-        status: statusFilter,
-        providers: providerFilter,
-        projectId: projectScope,
-        tag: tagFilter,
-      },
-      {
-        waits: waitStates,
-        keepIds: keepThreadIds,
-      },
-    );
+    const filtered = filterThreads(source, threadFilter, {
+      waits: waitStates,
+      keepIds: keepThreadIds,
+    });
     return searching ? withCrewSearchContext(filtered, threads) : filtered;
   }, [
     searching,
     searchResults,
     threads,
     liveById,
-    statusFilter,
-    providerFilter,
-    tagFilter,
-    projectScope,
+    threadFilter,
     waitStates,
     keepThreadIds,
   ]);
@@ -710,6 +716,7 @@ export const Sidebar = memo(function Sidebar({
   const searchEmpty =
     searching &&
     !searchInFlight &&
+    !searchFailed &&
     displayThreads.length === 0;
 
   const slugFor = (t: ThreadInfo) =>
@@ -1719,6 +1726,18 @@ export const Sidebar = memo(function Sidebar({
           <p className={styles.emptySearch}>No threads match</p>
         )}
 
+        {searching && !searchInFlight && searchFailed && (
+          <p className={styles.emptySearch} role="alert" data-search-failed="">
+            Search failed. Edit the query to retry.
+          </p>
+        )}
+
+        {searching && !searchInFlight && searchTruncated && (
+          <p className={styles.searchHint} data-search-truncated="">
+            Showing the newest matches. Refine the search to see older ones.
+          </p>
+        )}
+
         {searching
           ? visibleFamilyRows(displayThreads, familyOpts).map((thread) =>
               renderCard(thread, searchFamilies),
@@ -1752,6 +1771,15 @@ export const Sidebar = memo(function Sidebar({
                             />
                           ) : null}
                           <span className={styles.filterGroupTitle}>{title}</span>
+                          {g.project?.folders?.length ? (
+                            <span
+                              className={styles.folderChip}
+                              data-project-folders={g.project.folders.length}
+                              title={g.project.folders.join("\n")}
+                            >
+                              +{g.project.folders.length}
+                            </span>
+                          ) : null}
                           <span className={styles.filterGroupCount}>
                             {g.threads.length}
                           </span>

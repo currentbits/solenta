@@ -21,7 +21,12 @@ import {
   type PaletteItem,
   type PaletteMode,
 } from "../commandPalette";
-import type { ProjectInfo, ThreadInfo } from "../shared/ipc";
+import type {
+  ProjectInfo,
+  ThreadInfo,
+  ThreadSearchInput,
+  ThreadSearchResult,
+} from "../shared/ipc";
 import styles from "./CommandPalette.module.css";
 
 const DEBOUNCE_MS = 150;
@@ -35,7 +40,7 @@ export interface CommandPaletteProps {
   onModeChange: (mode: PaletteMode) => void;
   threads: ThreadInfo[];
   projects: ProjectInfo[];
-  searchThreads: (input: { query: string }) => Promise<ThreadInfo[]>;
+  searchThreads: (input: ThreadSearchInput) => Promise<ThreadSearchResult>;
   listFiles?: (query: string, opts?: { limit?: number }) => Promise<string[]>;
   searchFileContents?: (query: string) => Promise<FileContentHit[]>;
   canSearchWorkspace: boolean;
@@ -126,8 +131,8 @@ export function CommandPalette({
     setRemoteLoading(true);
     const handle = window.setTimeout(() => {
       void searchThreads({ query: trimmed })
-        .then((list) => {
-          if (gen.current) setContentHits(list);
+        .then((res) => {
+          if (gen.current) setContentHits(res.threads);
         })
         .catch(() => {
           if (gen.current) setContentHits([]);
