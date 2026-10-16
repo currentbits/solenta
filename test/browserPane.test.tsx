@@ -8,7 +8,7 @@ import { describe, it, afterEach } from "node:test";
 import { useState } from "react";
 import { inAct, mount, unmountAll } from "./support/dom.ts";
 import { BrowserPane } from "../src/components/BrowserPane";
-import type { CoderApi, PreviewSnapshot } from "../src/shared/ipc";
+import type { CoderApi, PreviewDiagnostics, PreviewSnapshot } from "../src/shared/ipc";
 
 afterEach(unmountAll);
 
@@ -136,6 +136,52 @@ async function bindAndLoad(m: Awaited<ReturnType<typeof mount>>) {
   await m.flush();
   assert.equal(m.query("[data-browser-empty]"), null);
 }
+
+describe("BrowserPane diagnostics and viewport (issue #1191)", () => {
+  it("shows the agent's console and network evidence and drives the viewport", async () => {
+    const presets: string[] = [];
+    let current: PreviewDiagnostics["viewportPreset"] = "fill";
+    const preview = fakePreview({
+      diagnostics: async () => ({
+        ...SNAP,
+        viewportPreset: current,
+        documentGeneration: 1,
+        console: [
+          { seq: 1, at: 0, doc: 1, level: "error", text: "boom from fixture", source: "http://localhost:5173/:8" },
+        ],
+        network: [
+          { seq: 2, at: 0, doc: 1, method: "GET", url: "http://localhost:5173/api/missing?token=redacted", type: "xhr", status: 404, durationMs: 7 },
+          { seq: 3, at: 0, doc: 1, method: "GET", url: "http://127.0.0.1:9/x", type: "xhr", error: "net::ERR_CONNECTION_REFUSED", durationMs: 2 },
+        ],
+        dropped: { console: 0, network: 0 },
+      }),
+      viewport: async (input) => {
+        presets.push(input.preset);
+        current = input.preset;
+        return { ...SNAP, viewport: { preset: input.preset, width: 390, height: 844 } };
+      },
+    });
+    const m = await mount(<BrowserPane threadId="t1" preview={preview} />);
+    await bindAndLoad(m);
+
+    const toggle = m.query("[data-browser-diagnostics-toggle]") as HTMLButtonElement;
+    assert.equal(toggle.textContent, "Diagnostics (3)");
+    assert.equal(m.query("[data-browser-diagnostics]"), null, "closed until asked");
+    await m.click(toggle);
+    const panel = m.query("[data-browser-diagnostics]")!;
+    assert.match(panel.textContent || "", /boom from fixture/);
+    assert.match(panel.textContent || "", /404GET http:\/\/localhost:5173\/api\/missing\?token=redacted/);
+    assert.match(panel.textContent || "", /ERR_CONNECTION_REFUSED/);
+
+    const select = m.query("[data-browser-viewport]") as HTMLSelectElement;
+    assert.equal(select.value, "fill");
+    await m.change(select, "mobile");
+    await m.flush();
+    assert.deepEqual(presets, ["mobile"]);
+    assert.equal(select.value, "mobile");
+    m.unmount();
+  });
+});
 
 describe("BrowserPane screenshot ownership (issue #1206)", () => {
   it("does not attach after the pane switches threads during capture", async () => {

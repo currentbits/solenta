@@ -94,7 +94,7 @@ describe("Spaces retired (#568)", () => {
         onSelectThread={() => {}}
         onCreateThread={() => {}}
         onAddProject={() => {}}
-        searchThreads={async () => []}
+        searchThreads={async () => ({ threads: [], truncated: false })}
       />,
     );
     assert.equal(m.query("[data-space-add]"), null);
