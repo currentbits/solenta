@@ -6457,6 +6457,13 @@ export interface CoderApi {
       position?: { x: number; y: number },
     ): Promise<string | null>;
   };
+  /**
+   * Desktop only (#519): open the thread in its own window, or focus the one
+   * already open. Absent on web/dev.
+   */
+  windows?: {
+    detachThread(threadId: string): Promise<void>;
+  };
   /** Returns an unsubscribe function. */
   on(channel: "threads:changed", cb: (push: ThreadListPush) => void): () => void;
   on(channel: "thread:updated", cb: (patch: ThreadPatch) => void): () => void;

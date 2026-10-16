@@ -10,6 +10,7 @@
  * Desktop-only extras that are NOT in this table:
  *   attachments.droppedFilePath  (webUtils.getPathForFile, not IPC)
  *   contextMenu.show             (needs event.sender; registerIpc wires it)
+ *   windows.detachThread         (main.js owns windows; #519)
  *
  * After editing: `node --experimental-strip-types scripts/sync-ipc-preload.js`
  * (`--check` is part of `npm run typecheck`).
@@ -362,7 +363,7 @@ export function ipcChannelName(row: {
 }
 
 /** Namespaces on CoderApi that are not invoke-channel tables. */
-type ApiExtra = "on" | "contextMenu";
+type ApiExtra = "on" | "contextMenu" | "windows";
 /** Methods on CoderApi that are not invoke channels. */
 type ExtraMethod = { attachments: "droppedFilePath" };
 
