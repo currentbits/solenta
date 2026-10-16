@@ -113,6 +113,8 @@ const IPC_CHANNELS = Object.freeze([
   { ns: "mcp", method: "remove" },
   { ns: "mcp", method: "setEnabled" },
   { ns: "mcp", method: "catalog" },
+  { ns: "mcp", method: "xcodeStatus" },
+  { ns: "mcp", method: "pairXcode" },
   { ns: "mcp", method: "pickImport" },
   { ns: "mcp", method: "previewImport" },
   { ns: "mcp", method: "installImport" },
