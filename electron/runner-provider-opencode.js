@@ -148,7 +148,7 @@ function createOpencodeRun(ctx) {
         // Overlay is best-effort; a failed isolate must not block the turn.
       }
     }
-    const spawn = resolveSpawn(project, binary, args, localCwd, opencodeEnv);
+    const spawn = resolveSpawn(project, binary, args, localCwd, opencodeEnv, threadId);
 
     if (abortIfCancelled(threadId, runId)) return { runId };
     const entry = claimPreparingRun(threadId, runId, {
