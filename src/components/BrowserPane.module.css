@@ -55,6 +55,7 @@
 }
 
 .navBtn:focus-visible,
+.viewport:focus-visible,
 .go:focus-visible,
 .shot:focus-visible,
 .url:focus-visible {
@@ -118,8 +119,95 @@
 }
 
 .go:disabled,
-.shot:disabled {
+.shot:disabled,
+.viewport:disabled {
   opacity: 0.45;
+}
+
+.go[data-problems="true"] {
+  color: var(--danger-fg);
+  border-color: var(--danger-border);
+}
+
+.viewport {
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.diag {
+  flex-shrink: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  max-height: 200px;
+  overflow: auto;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--bg-elevated);
+  font-size: 11.5px;
+}
+
+.diagHead {
+  margin: 0 0 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.diagDropped,
+.diagEmpty {
+  margin: 0;
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.diagList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.diagRow {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  padding: 2px 0;
+  font-family: var(--mono);
+  color: var(--text-muted);
+}
+
+.diagRow[data-level="error"] {
+  color: var(--danger-fg);
+}
+
+.diagRow[data-level="warning"] {
+  color: var(--warning-fg);
+}
+
+.diagTag {
+  flex-shrink: 0;
+  min-width: 5ch;
+  font-weight: 600;
+}
+
+.diagText {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.diagMeta {
+  flex-shrink: 0;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.8;
 }
 
 .error {
