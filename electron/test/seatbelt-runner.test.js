@@ -40,8 +40,7 @@ function waitFor(predicate, { timeoutMs = 15000 } = {}) {
 }
 
 async function setup(rules) {
-  // Under $HOME, not tmp: tmp is writable inside the sandbox by design.
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.homedir(), ".sb-run-")));
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "sb-run-")));
   configureGovernanceAudit({ dir });
   const store = new Store(path.join(dir, "store.json"));
   const repo = path.join(dir, "app");
@@ -206,9 +205,13 @@ describe("runner seatbelt seam (issue #803)", () => {
 describe("a real provider run is confined end to end (issue #803)", { skip: !CAN_WRAP }, () => {
   let env;
   let runner;
+  let outside;
   const saved = {};
   const KEYS = ["CODER_CLAUDE_BIN", "CODER_SIMULATE", "CODER_AGENT_CMD", "SB_OUT", "SB_PROBE"];
   beforeEach(() => {
+    // The probe target must sit outside tmp (writable inside the sandbox by
+    // design) and outside any Store dir (its exit flush would recreate it).
+    outside = fs.realpathSync(fs.mkdtempSync(path.join(os.homedir(), ".sb-probe-")));
     for (const k of KEYS) saved[k] = process.env[k];
     delete process.env.CODER_SIMULATE;
     delete process.env.CODER_AGENT_CMD;
@@ -218,6 +221,7 @@ describe("a real provider run is confined end to end (issue #803)", { skip: !CAN
     configureGovernanceAudit(null);
     stopSharedProxy();
     if (env) await rmTree(env.dir);
+    fs.rmSync(outside, { recursive: true, force: true });
     for (const k of KEYS) {
       if (saved[k] === undefined) delete process.env[k];
       else process.env[k] = saved[k];
@@ -250,7 +254,7 @@ process.exit(0);
     process.env.CODER_CLAUDE_BIN = fakeClaude(env.dir);
     const out = path.join(fs.realpathSync(os.tmpdir()), `sb-out-${process.pid}-${Date.now()}`);
     process.env.SB_OUT = out;
-    process.env.SB_PROBE = path.join(env.dir, "outside.txt");
+    process.env.SB_PROBE = path.join(outside, "outside.txt");
     const core = await import(pathToFileURL(path.join(__dirname, "../../core/dist/index.js")).href);
     runner = createRunner({ store: env.store, core, pushFn() {}, tickMs: 15, userDataPath: env.dir });
     await runner.startRun({ threadId: env.thread.id, prompt: "probe" });
