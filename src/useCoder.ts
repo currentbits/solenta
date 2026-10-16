@@ -1358,6 +1358,12 @@ export function useCoder(): UseCoderResult {
         // Missed a push (boot race, web reconnect): the patch has no base.
         resyncThreads();
       }
+      // Main always seq-encodes (#1475), so a bare array is the web
+      // reconnect resync: the open thread's final push may be lost with
+      // nothing after it to expose the gap (#929). Refetch it too.
+      if (Array.isArray(push) && selectedRef.current) {
+        reloadDetail(selectedRef.current);
+      }
       refreshTrashed();
       // Import (and any other main-process mint) can add projects without
       // going through projects.add. Refresh so the sidebar sees them.
