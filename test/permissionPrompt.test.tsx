@@ -330,3 +330,24 @@ describe("PermissionPrompt governance strip (#262)", () => {
     assert.ok(!view.text().includes("Accept all"));
   });
 });
+
+describe("PermissionPrompt folder grant (#514)", () => {
+  it("offers Allow writes to <folder> and sends allowFolder", async () => {
+    const { m, spy } = mountView({
+      ...editPending,
+      summary: "Write: /tmp/shared-lib/x.ts",
+      folderGrant: "/tmp/shared-lib",
+    });
+    const view = await m;
+    assert.ok(view.query("[data-permission-folder]"));
+    await view.click(view.byText("Allow writes to shared-lib"));
+    assert.equal(spy.calls.length, 1);
+    assert.equal(spy.calls[0].decision, "allowFolder");
+  });
+
+  it("has no folder button on an ordinary edit", async () => {
+    const { m } = mountView(editPending);
+    const view = await m;
+    assert.equal(view.query("[data-permission-allow-folder]"), null);
+  });
+});

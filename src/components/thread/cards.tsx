@@ -270,6 +270,11 @@ export function PermissionPrompt({
           {guardrailSource ? ` (${guardrailSource})` : ""}
         </div>
       ) : null}
+      {pending.folderGrant ? (
+        <div className={styles.permissionGuardrail} data-permission-folder="">
+          Writes to {pending.folderGrant}, a read-only project folder
+        </div>
+      ) : null}
       {fileChange ? (
         <>
           {fileChange.reason ? (
@@ -342,6 +347,18 @@ export function PermissionPrompt({
             onClick={() => answer("allowAlways")}
           >
             Accept all
+          </button>
+        ) : null}
+        {pending.folderGrant ? (
+          <button
+            type="button"
+            className={styles.permissionAllow}
+            disabled={sent || empty}
+            data-permission-allow-folder=""
+            title={`Allow this thread to write anywhere in ${pending.folderGrant}`}
+            onClick={() => answer("allowFolder")}
+          >
+            Allow writes to {pending.folderGrant.split(/[\\/]/).pop()}
           </button>
         ) : null}
         <button
