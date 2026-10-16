@@ -564,7 +564,7 @@ describe("Best of N submit sequence", () => {
     m.unmount();
   });
 
-  it("profile pick forks with model then sets effort and permission on the fork", async () => {
+  it("profile pick forks with model then applies the profile to the fork (#262)", async () => {
     const calls: string[] = [];
     const m = await mount(
       <ThreadView
@@ -588,6 +588,9 @@ describe("Best of N submit sequence", () => {
         onSetProvider={() => {}}
         onSetReasoningEffort={(effort, threadId) => {
           calls.push(`effort:${threadId ?? ""}:${effort}`);
+        }}
+        onApplyAgentProfile={(profileId, threadId) => {
+          calls.push(`profile:${threadId ?? ""}:${profileId}`);
         }}
         onSetArchived={() => {}}
         onDeleteThread={() => {}}
@@ -620,8 +623,7 @@ describe("Best of N submit sequence", () => {
 
     assert.deepEqual(calls, [
       "fork:claude:haiku",
-      "effort:fork-claude:low",
-      "perm:fork-claude:plan",
+      "profile:fork-claude:prof-scout",
       "run:fork-claude:compare this",
       "fork:kimi:-",
       "run:fork-kimi:compare this",

@@ -2,10 +2,6 @@ import { useCallback, type Dispatch, type SetStateAction } from "react";
 import type { UseCoderResult } from "../useCoder";
 import type { AppView } from "../App";
 import type { ThreadStartMode } from "../components/PlanboardView";
-import {
-  providerPermissionModes,
-  snapToHonouredPermissionMode,
-} from "../format";
 
 /** Thread starters from outside the composer: CLI import, issue, PR checkout. */
 export function useIssueStarters({
@@ -16,9 +12,7 @@ export function useIssueStarters({
   createThread,
   startRun,
   setIssuePlanStatus,
-  setProvider,
-  setReasoningEffort,
-  setPermissionMode,
+  applyAgentProfile,
   checkoutPr,
   setView,
   setRevealThreadId,
@@ -30,9 +24,7 @@ export function useIssueStarters({
   createThread: UseCoderResult["createThread"];
   startRun: UseCoderResult["startRun"];
   setIssuePlanStatus: UseCoderResult["setIssuePlanStatus"];
-  setProvider: UseCoderResult["setProvider"];
-  setReasoningEffort: UseCoderResult["setReasoningEffort"];
-  setPermissionMode: UseCoderResult["setPermissionMode"];
+  applyAgentProfile: UseCoderResult["applyAgentProfile"];
   checkoutPr: UseCoderResult["checkoutPr"];
   setView: Dispatch<SetStateAction<AppView>>;
   setRevealThreadId: Dispatch<SetStateAction<string | null>>;
@@ -111,21 +103,7 @@ export function useIssueStarters({
           };
         }
         try {
-          // Same order as Composer.pickProfile: setProvider clears effort
-          // on a harness switch, then effort, then permission.
-          await setProvider({
-            threadId: thread.id,
-            provider: profile.provider,
-            model: profile.model,
-          });
-          await setReasoningEffort(profile.reasoningEffort, thread.id);
-          await setPermissionMode(
-            snapToHonouredPermissionMode(
-              providerPermissionModes(info),
-              profile.permissionMode,
-            ),
-            thread.id,
-          );
+          await applyAgentProfile(profile.id, thread.id);
         } catch (err) {
           return {
             ok: false as const,
@@ -178,9 +156,7 @@ export function useIssueStarters({
       setIssuePlanStatus,
       settings?.agentProfiles,
       providers,
-      setProvider,
-      setReasoningEffort,
-      setPermissionMode,
+      applyAgentProfile,
     ],
   );
 

@@ -230,6 +230,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     answerSecret,
     setProvider,
     setReasoningEffort,
+    applyAgentProfile,
     setWebSearch,
     setFast,
     setRoute,
@@ -1423,9 +1424,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     createThread,
     startRun,
     setIssuePlanStatus,
-    setProvider,
-    setReasoningEffort,
-    setPermissionMode,
+    applyAgentProfile,
     checkoutPr,
     setView,
     setRevealThreadId,
@@ -2039,6 +2038,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onAnswerSecret={answerSecret}
         onSetProvider={setProvider}
         onSetReasoningEffort={setReasoningEffort}
+        onApplyAgentProfile={applyAgentProfile}
         onSetWebSearch={setWebSearch}
         onSetFast={setFast}
         onSetRoute={setRoute}
