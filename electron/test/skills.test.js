@@ -175,7 +175,11 @@ describe("SKILL_DIRS / activeSkillTargets", () => {
       dirs.opencode,
       path.join(tmp, ".config", "opencode", "skills"),
     );
-    assert.equal(dirs.kimi, path.join(tmp, ".kimi", "skills"));
+    assert.equal(dirs.kimi, path.join(tmp, ".kimi-code", "skills"));
+    assert.equal(
+      SKILL_DIRS({ ...env, KIMI_CODE_HOME: path.join(tmp, "kh") }).kimi,
+      path.join(tmp, "kh", "skills"),
+    );
     assert.equal(dirs.cursor, path.join(tmp, ".cursor", "skills"));
     assert.equal(dirs.muse, path.join(tmp, ".config", "muse", "skills"));
     assert.equal(skillBaseDir("claude", env), dirs.claude);
@@ -284,6 +288,20 @@ describe("listSkills", () => {
     assert.notEqual(
       projectShared.bytes,
       skillBytes(path.join(tmp, ".claude", "skills"), "shared"),
+    );
+  });
+
+  it("lists project skills from every CLI's repo dir, not just .claude", () => {
+    const env = { HOME: tmp };
+    const project = path.join(tmp, "proj");
+    writeSkill(path.join(project, ".claude", "skills"), "both", "---\ndescription: Claude\n---\n");
+    writeSkill(path.join(project, ".kimi-code", "skills"), "both", "---\ndescription: Kimi\n---\n");
+    writeSkill(path.join(project, ".kimi-code", "skills"), "kimi-only", "---\ndescription: K\n---\n");
+    writeSkill(path.join(project, ".agents", "skills"), "shared", "---\ndescription: A\n---\n");
+    const list = listSkills(project, env);
+    assert.deepEqual(
+      list.map((s) => [s.name, s.description]),
+      [["both", "Claude"], ["kimi-only", "K"], ["shared", "A"]],
     );
   });
 

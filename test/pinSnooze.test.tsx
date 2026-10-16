@@ -125,7 +125,7 @@ function Host({
           ),
         );
       }}
-      searchThreads={async () => threads}
+      searchThreads={async () => ({ threads, truncated: false })}
     />
   );
 }

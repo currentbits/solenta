@@ -37,6 +37,7 @@ import type {
   MergeLaneRestore,
   MergeSpotlight,
   McpCatalogEntry,
+  XcodeMcpStatus,
   McpImportPreview,
   McpInstallRequest,
   McpInstallResult,
@@ -104,6 +105,8 @@ import type {
   WorkflowTemplateInfo,
   WorkSuggestionStatus,
   ModelRoute,
+  ThreadSearchInput,
+  ThreadSearchResult,
 } from "./shared/ipc";
 import { resolveCoderApi } from "./coderApi";
 import {
@@ -121,6 +124,7 @@ import {
   saveCachedThreadDetail,
   whenIdle,
 } from "./bootSnapshot";
+import { detachedThreadId } from "./detachedWindow";
 import { prunePaneLayouts } from "./paneLayout";
 import { pruneComposerDrafts } from "./composerSession";
 import { createThreadDetailCache } from "./threadDetailCache";
@@ -572,7 +576,7 @@ export interface UseCoderResult {
   }) => Promise<AttachmentInfo[]>;
   /** Web-only folder pick via showDirectoryPicker; persists through saveFolder. */
   pickFolderAttachments: () => Promise<AttachmentInfo[]>;
-  /** Persist a pasted image for the selected thread; null when rejected. */
+  /** Persist a pasted image for the selected thread; null when refused, rejects with the host error. */
   saveAttachmentImage: (dataUrl: string) => Promise<AttachmentInfo | null>;
   /** Data URL for one attached image; null when it is gone. */
   loadAttachmentImage: (path: string) => Promise<string | null>;
@@ -860,6 +864,8 @@ export interface UseCoderResult {
     enabled: boolean;
   }) => Promise<McpServerDefinition>;
   listMcpCatalog: () => Promise<McpCatalogEntry[]>;
+  xcodeMcpStatus: (input: { projectPath: string }) => Promise<XcodeMcpStatus | null>;
+  pairXcodeMcp: (input: { projectPath: string }) => Promise<McpServerDefinition>;
   pickMcpImport: () => Promise<McpImportPreview | null>;
   previewMcpImport: (input: McpPreviewImportInput) => Promise<McpImportPreview>;
   installMcpImport: (input: McpInstallRequest) => Promise<McpInstallResult>;
@@ -907,7 +913,7 @@ export interface UseCoderResult {
     provider?: "codex" | "grok" | "claude" | "cursor" | "opencode" | "kimi" | "muse";
   }) => Promise<ThreadInfo>;
   /** Full-content thread search (titles + message text); Sidebar owns debounce/state. */
-  searchThreads: (input: { query: string }) => Promise<ThreadInfo[]>;
+  searchThreads: (input: ThreadSearchInput) => Promise<ThreadSearchResult>;
   /** Load another thread's transcript without marking it visited (#393). */
   peekThread: (id: string) => Promise<ThreadDetail>;
 }
@@ -930,8 +936,10 @@ export function useCoder(): UseCoderResult {
     null,
   );
   const [automations, setAutomations] = useState<AutomationInfo[]>([]);
+  // A detached window (#519) is locked to its thread from the first paint.
+  const detachedId = useMemo(detachedThreadId, []);
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(
-    () => bootSnapshot?.selectedThreadId ?? null,
+    () => detachedId ?? bootSnapshot?.selectedThreadId ?? null,
   );
   const [detail, setDetail] = useState<ThreadDetail | null>(null);
   /** Last threads.get failure for the selected thread; retry bumps the nonce. */
@@ -946,7 +954,7 @@ export function useCoder(): UseCoderResult {
   const [simulatorStatus, setSimulatorStatus] =
     useState<SimulatorStatus | null>(null);
   const selectedRef = useRef<string | null>(
-    bootSnapshot?.selectedThreadId ?? null,
+    detachedId ?? bootSnapshot?.selectedThreadId ?? null,
   );
   /** Bumped on every threads:changed push so a late initial list cannot clobber it. */
   const threadsListGen = useRef(0);
@@ -1001,12 +1009,14 @@ export function useCoder(): UseCoderResult {
   // Render-first boot (#364): persist the boot inputs so the next launch can
   // paint the last-known lists before IPC answers. Fire-and-forget
   // localStorage writes; the threadsListGen guards do not apply here.
+  // Detached windows skip it: the snapshot is the main window's selection.
   useEffect(() => {
+    if (detachedId) return;
     const handle = window.setTimeout(() => {
       saveBootSnapshot({ projects, threads, selectedThreadId });
     }, BOOT_SNAPSHOT_DEBOUNCE_MS);
     return () => window.clearTimeout(handle);
-  }, [projects, threads, selectedThreadId]);
+  }, [projects, threads, selectedThreadId, detachedId]);
 
   // Same for the open transcript, so a relaunch (or a switch to a thread not
   // yet fetched this session) can paint it before threads.get answers.
@@ -2020,6 +2030,8 @@ export function useCoder(): UseCoderResult {
     removeMcpServer,
     setMcpEnabled,
     listMcpCatalog,
+    xcodeMcpStatus,
+    pairXcodeMcp,
     pickMcpImport,
     previewMcpImport,
     installMcpImport,
@@ -2064,7 +2076,7 @@ export function useCoder(): UseCoderResult {
   );
 
   const searchThreads = useCallback(
-    async (input: { query: string }) => {
+    async (input: ThreadSearchInput) => {
       return api.threads.search(input);
     },
     [api],
@@ -2290,6 +2302,8 @@ export function useCoder(): UseCoderResult {
     removeMcpServer,
     setMcpEnabled,
     listMcpCatalog,
+    xcodeMcpStatus,
+    pairXcodeMcp,
     pickMcpImport,
     previewMcpImport,
     installMcpImport,

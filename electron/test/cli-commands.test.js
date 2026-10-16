@@ -1418,3 +1418,15 @@ it("uses the current provider's skill roots and shared fallback", () => {
   writeSkill(path.join(project, ".codex", "skills"), "demo", "Project Codex version");
   assert.match(expandInvocableCommand("/demo", { env, projectPath: project, provider: "codex" }).prompt, /Project Codex/);
 });
+
+it("kimi reads $KIMI_CODE_HOME/skills and the repo's .kimi-code/skills", () => {
+  const env = { HOME: tmp };
+  writeSkill(path.join(tmp, ".kimi-code", "skills"), "kuser", "Kimi user version");
+  writeSkill(path.join(tmp, ".kimi", "skills"), "legacy", "Legacy kimi");
+  const project = path.join(tmp, "project");
+  writeSkill(path.join(project, ".kimi-code", "skills"), "krepo", "Kimi repo version");
+  const opts = { env, projectPath: project, provider: "kimi" };
+  assert.match(expandInvocableCommand("/kuser", opts).prompt, /Kimi user/);
+  assert.match(expandInvocableCommand("/krepo", opts).prompt, /Kimi repo/);
+  assert.equal(expandInvocableCommand("/legacy", opts), null);
+});

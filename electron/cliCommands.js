@@ -23,7 +23,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
-const { parseSkillMarkdown, SKILL_DIRS } = require("./skills.js");
+const { parseSkillMarkdown, SKILL_DIRS, projectSkillRel } = require("./skills.js");
 const {
   collectCursorPluginRoots,
   collectCodexPluginRoots,
@@ -295,7 +295,7 @@ function listInvocableCommands(opts = {}) {
 
   // Project first so a repo skill wins the bare `/name`.
   if (project) {
-    for (const rel of projectProviders.map((p) => path.join(`.${p}`, "skills"))) {
+    for (const rel of projectProviders.map(projectSkillRel)) {
       for (const skill of scanSkillDir(path.join(project, rel))) {
         addSkill(`/${skill.name}`, skill);
       }

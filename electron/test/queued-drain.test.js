@@ -519,6 +519,117 @@ describe("takeQueuedHead / restoreQueuedHead (#1501)", () => {
   });
 });
 
+describe("a fresh turn that fails preflight keeps the queue (#924)", () => {
+  const shot = { kind: "image", path: "/tmp/q.png", name: "q.png" };
+  const envKeys = ["CODER_SIMULATE", "CODER_AGENT_CMD", "CODER_CLAUDE_BIN"];
+  let prevEnv;
+  let fx;
+
+  beforeEach(() => {
+    prevEnv = Object.fromEntries(envKeys.map((k) => [k, process.env[k]]));
+    for (const k of envKeys) delete process.env[k];
+  });
+
+  afterEach(async () => {
+    if (fx) {
+      fx.runner.stopAll();
+      await rmTree(fx.tmpDir);
+      fx = null;
+    }
+    for (const k of envKeys) {
+      if (prevEnv[k] === undefined) delete process.env[k];
+      else process.env[k] = prevEnv[k];
+    }
+  });
+
+  async function queuedFixture() {
+    fx = await makeFixture();
+    services.setQueued(fx.store, {
+      threadId: fx.thread.id,
+      prompt: "old queued",
+      attachments: [shot],
+    });
+    return fx;
+  }
+
+  function assertQueueKept(store, threadId, items) {
+    const check = (q) => {
+      assert.deepEqual(q && q.items, items);
+      assert.deepEqual(q.itemAttachments[0], [shot]);
+    };
+    check(store.getThread(threadId).queued);
+    store.saveNow();
+    check(new Store(path.join(fx.tmpDir, "store.json")).getThread(threadId).queued);
+  }
+
+  it("budget rejection", async () => {
+    const { store, runner, thread } = await queuedFixture();
+    services.setSettings(store, { dailyBudgetUsd: 1 });
+    store.recordSpend(1);
+    await assert.rejects(
+      () => runner.startRun({ threadId: thread.id, prompt: "new" }),
+      /Daily budget reached/,
+    );
+    assertQueueKept(store, thread.id, ["old queued"]);
+    assert.deepEqual(userTexts(store, thread.id), []);
+  });
+
+  it("missing provider binary", async () => {
+    const { store, runner, thread } = await queuedFixture();
+    process.env.CODER_CLAUDE_BIN = path.join(fx.tmpDir, "no-such-claude");
+    await assert.rejects(
+      () => runner.startRun({ threadId: thread.id, prompt: "new" }),
+      /Provider binary not found/,
+    );
+    assertQueueKept(store, thread.id, ["old queued"]);
+  });
+
+  it("worktree setup failure records only the new prompt", async () => {
+    const { store, runner, thread } = await queuedFixture();
+    process.env.CODER_CLAUDE_BIN = process.execPath;
+    store.updateThread(thread.id, { pendingWorktree: true });
+    await assert.rejects(
+      () => runner.startRun({ threadId: thread.id, prompt: "new" }),
+      /worktreeBase is not configured/,
+    );
+    assertQueueKept(store, thread.id, ["old queued"]);
+    // Retry re-sends this row; the queue is not folded into it twice.
+    assert.deepEqual(userTexts(store, thread.id), ["new"]);
+  });
+
+  it("puts the taken queue in front of a follow-up queued meanwhile", async () => {
+    const { store, runner, thread } = await queuedFixture();
+    const real = services.assertUnderDailyBudget;
+    services.assertUnderDailyBudget = () => {
+      services.setQueued(store, { threadId: thread.id, prompt: "meanwhile" });
+      throw new Error("Daily budget reached");
+    };
+    try {
+      await assert.rejects(
+        () => runner.startRun({ threadId: thread.id, prompt: "new" }),
+        /Daily budget reached/,
+      );
+    } finally {
+      services.assertUnderDailyBudget = real;
+    }
+    assertQueueKept(store, thread.id, ["old queued", "meanwhile"]);
+  });
+
+  it("an accepted turn takes the queue exactly once", async () => {
+    process.env.CODER_SIMULATE = "1";
+    const { store, runner, thread } = await queuedFixture();
+    await runner.startRun({ threadId: thread.id, prompt: "new" });
+    assert.equal(store.getThread(thread.id).queued, null);
+    await waitFor(() => store.getThread(thread.id).status === "done");
+    await settle();
+    assert.equal(store.getThread(thread.id).queued, null);
+    assert.deepEqual(userTexts(store, thread.id), ["new"]);
+    store.saveNow();
+    const reloaded = new Store(path.join(fx.tmpDir, "store.json"));
+    assert.equal(reloaded.getThread(thread.id).queued, null);
+  });
+});
+
 describe("queued row migration (#1512)", () => {
   const { migrateThread } = require("../store-migrate.js");
   const shot = { kind: "image", path: "/tmp/x.png", name: "x.png" };
