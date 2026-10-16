@@ -113,6 +113,8 @@ const IPC_CHANNELS = Object.freeze([
   { ns: "mcp", method: "remove" },
   { ns: "mcp", method: "setEnabled" },
   { ns: "mcp", method: "catalog" },
+  { ns: "mcp", method: "xcodeStatus" },
+  { ns: "mcp", method: "pairXcode" },
   { ns: "mcp", method: "pickImport" },
   { ns: "mcp", method: "previewImport" },
   { ns: "mcp", method: "installImport" },
@@ -366,6 +368,11 @@ const IPC_CHANNELS = Object.freeze([
   { ns: "preview", method: "screenshot" },
   { ns: "preview", method: "click" },
   { ns: "preview", method: "type" },
+  { ns: "preview", method: "snapshot" },
+  { ns: "preview", method: "diagnostics" },
+  { ns: "preview", method: "viewport" },
+  { ns: "preview", method: "inspect" },
+  { ns: "preview", method: "cancelInspect" },
   { ns: "simulator", method: "capabilities" },
   { ns: "simulator", method: "selectDeveloperDir" },
   { ns: "simulator", method: "listDevices" },
@@ -415,6 +422,9 @@ const coder = bindChannels(invoke, IPC_CHANNELS);
 coder.attachments.droppedFilePath = (file) => webUtils.getPathForFile(file);
 coder.contextMenu = {
   show: (items, position) => invoke("contextMenu:show", items, position),
+};
+coder.windows = {
+  detachThread: (threadId) => invoke("window:detachThread", threadId),
 };
 coder.on = on;
 

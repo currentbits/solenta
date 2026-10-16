@@ -60,6 +60,13 @@ export interface ProjectInfo {
   slug: string;
   name: string;
   path: string;
+  /**
+   * Multi-folder projects (#514): extra absolute folders, in order. `path`
+   * stays the primary (git, worktrees, AGENTS.md / skills / memory); agents
+   * may read and search these, and write only after a per-folder grant on
+   * the permission card. Local projects only.
+   */
+  folders?: string[];
   /** When set, the project lives on this host (user@host) and agents run over ssh. */
   remoteHost?: string;
   /** Absolute path on the remote host. Required when remoteHost is set. */
@@ -385,6 +392,8 @@ export interface ProjectUpdateInput {
   autoPr?: boolean;
   /** Worktree retention (#316 / #559): 0 keeps everything, N > 0 sets the keep count. Default 10. */
   worktreeRetention?: number;
+  /** Secondary folders (#514), absolute paths. Empty / null clears them. */
+  folders?: string[] | null;
   /**
    * Relative project file to use as the icon, or null to restore
    * Automatic detection (#610).
@@ -1072,6 +1081,18 @@ export interface ThreadInfo {
    * Absent → none. Dismiss removes a row; promote queues it as a follow-up.
    */
   btw?: BtwCard[];
+}
+
+/** threads.search input. threadIds scopes the scan before the cap (#1201). */
+export interface ThreadSearchInput {
+  query: string;
+  threadIds?: string[];
+}
+
+/** threads.search reply: up to 50 hits; truncated when more matched. */
+export interface ThreadSearchResult {
+  threads: ThreadInfo[];
+  truncated: boolean;
 }
 
 /** One `/btw` side-question card (issue #471). */
@@ -1959,6 +1980,12 @@ export interface PendingPermissionInfo {
   /** Typed input for Codex questions and MCP elicitation. Ephemeral, never persisted. */
   inputRequest?: PendingInputRequest | null;
   /**
+   * Codex item/fileChange/requestApproval (#1189): the correlated
+   * fileChange item as a git-style patch, plus the ask's optional reason
+   * and (unstable) grantRoot. The card shows the diff, not `input`.
+   */
+  fileChange?: { diff: string; reason: string | null; grantRoot: string | null } | null;
+  /**
    * Present when the agent is asking to leave plan mode (ExitPlanMode): the
    * plan markdown, rendered in the prompt panel instead of the raw JSON.
    */
@@ -1969,6 +1996,12 @@ export interface PendingPermissionInfo {
    * calls never reach here; they are answered without asking.
    */
   guardrail?: { rule: string | null; reason: string } | null;
+  /**
+   * Multi-folder projects (#514): the edit lands in this secondary folder,
+   * which the thread may not write yet. "allowFolder" grants it for the
+   * rest of the thread.
+   */
+  folderGrant?: string | null;
 }
 
 /**
@@ -2022,7 +2055,13 @@ export interface PendingQuestion {
 }
 
 /** User decision on a PendingPermissionInfo. "allowAlways" also allows the tool for the rest of the CLI session. */
-export type PermissionDecision = "allow" | "allowAlways" | "deny" | "cancel";
+export type PermissionDecision =
+  | "allow"
+  | "allowAlways"
+  /** #514: allow, and grant writes to pending.folderGrant for this thread. */
+  | "allowFolder"
+  | "deny"
+  | "cancel";
 export type InputValues = Record<string, string | number | boolean | string[]>;
 export interface PendingInputRequest {
   source: string;
@@ -2440,10 +2479,136 @@ export interface PreviewSnapshot {
   canGoForward: boolean;
 }
 
+export type PreviewViewportPreset = "fill" | "mobile" | "tablet" | "desktop";
+
+/**
+ * Viewport as the page measured it (CSS px). `displayScale` is set when a
+ * preset larger than the pane is drawn shrunk to fit it (#1191).
+ */
+export interface PreviewViewport {
+  preset: PreviewViewportPreset;
+  width?: number;
+  height?: number;
+  devicePixelRatio?: number;
+  displayScale?: number;
+}
+
 export interface PreviewScreenshot extends PreviewSnapshot {
   /** PNG data URL of the visible page. */
   dataUrl: string;
+  viewport?: PreviewViewport;
+  /** Pixel size of the PNG. */
+  image?: { width: number; height: number };
 }
+
+export interface PreviewActionResult extends PreviewSnapshot {
+  ok: boolean;
+  /** "uncertain": the page never answered, so observe it before retrying a mutation. */
+  completion: "done" | "uncertain";
+  tag?: string;
+  text?: string;
+  message?: string;
+}
+
+/** One visible control or landmark in a semantic snapshot. */
+export interface PreviewSnapshotNode {
+  /** Valid only for this snapshot of this document, e.g. "s3e12". */
+  ref: string;
+  role: string;
+  name: string;
+  /** Nesting among snapshot nodes; omitted at the top level. */
+  depth?: number;
+  level?: number;
+  value?: string;
+  /** Password fields report only whether they are filled. */
+  filled?: boolean;
+  disabled?: boolean;
+  checked?: boolean | "mixed";
+  expanded?: boolean;
+  selected?: boolean;
+  required?: boolean;
+  readonly?: boolean;
+  invalid?: boolean;
+  validationMessage?: string;
+  focused?: boolean;
+  offscreen?: boolean;
+}
+
+export interface PreviewPageSnapshot extends PreviewSnapshot {
+  snapshotId: number;
+  documentGeneration: number;
+  viewport: PreviewViewport;
+  nodes: PreviewSnapshotNode[];
+  truncated: { nodes?: boolean; depth?: boolean; bytes?: boolean } | null;
+  limits: { maxNodes: number; maxDepth: number; maxBytes: number };
+}
+
+export interface PreviewConsoleEntry {
+  seq: number;
+  at: number;
+  /** Document generation the entry was recorded in. */
+  doc: number;
+  level: string;
+  text: string;
+  source: string;
+}
+
+/** Request outcome only: no headers or bodies, query values redacted. */
+export interface PreviewNetworkEntry {
+  seq: number;
+  at: number;
+  doc: number;
+  method: string;
+  url: string;
+  type: string;
+  status?: number;
+  error?: string;
+  durationMs: number | null;
+  fromCache?: boolean;
+}
+
+export interface PreviewDiagnostics extends PreviewSnapshot {
+  viewportPreset: PreviewViewportPreset;
+  documentGeneration: number;
+  console: PreviewConsoleEntry[];
+  network: PreviewNetworkEntry[];
+  /** Entries evicted from each bounded ring. */
+  dropped: { console: number; network: number };
+}
+
+/** One element picked in the Browser pane (#1193). Guest-reported, capped. */
+export interface PreviewInspectElement {
+  tag: string;
+  role: string;
+  /** Accessible name; never a text field's value. */
+  name: string;
+  selectorHint: string;
+  /** outerHTML with password/hidden values and secret-looking attributes redacted. */
+  html: string;
+  htmlTruncated: boolean;
+  styles: Record<string, string>;
+  /** CSS px, relative to the viewport at capture time. */
+  rect: { x: number; y: number; width: number; height: number };
+  viewport: { width: number; height: number };
+  /** Source hint from data-* attributes; null when the page exposes none. */
+  source: string | null;
+  /** An iframe was picked; its contents are not inspected. */
+  frame: boolean;
+  password: boolean;
+}
+
+export type PreviewInspectResult =
+  | (PreviewSnapshot & { cancelled: true })
+  | (PreviewSnapshot & {
+      cancelled: false;
+      capturedAt: number;
+      element: PreviewInspectElement;
+      /** PNG data URL of the element crop, at most 800px per edge. */
+      crop: string | null;
+      cropRect: { x: number; y: number; width: number; height: number } | null;
+      /** Why there is no crop. */
+      cropNote?: string;
+    });
 
 export interface PrInfo {
   number: number;
@@ -3750,6 +3915,18 @@ export interface McpCatalogEntry {
   installed: boolean;
 }
 
+/** One-click Xcode MCP pairing (#488). */
+export interface XcodeMcpStatus {
+  project: { kind: "workspace" | "project" | "package"; name: string };
+  /** `xcrun --find mcpbridge` succeeded (Xcode 26.3+). */
+  bridge: boolean;
+  /** MobileBuildMCP binary on PATH (`mobilebuildmcp` or legacy `xcodebuildmcp`). */
+  buildMcp: string | null;
+  /** Name of an MCP server that already drives Xcode. */
+  paired: string | null;
+  recommended: "mobilebuildmcp" | "xcode" | null;
+}
+
 export type McpImportKind = "local" | "github" | "catalog" | "json";
 
 export type McpPreviewImportInput =
@@ -4487,6 +4664,10 @@ export interface CoderApi {
       enabled: boolean;
     }): Promise<McpServerDefinition>;
     catalog(): Promise<McpCatalogEntry[]>;
+    /** Xcode MCP doctor card (#488); null off macOS or with no Apple project. */
+    xcodeStatus(input: { projectPath: string }): Promise<XcodeMcpStatus | null>;
+    /** Add the recommended Xcode server; rejects if one is already paired. */
+    pairXcode(input: { projectPath: string }): Promise<McpServerDefinition>;
     pickImport(): Promise<McpImportPreview | null>;
     previewImport(input: McpPreviewImportInput): Promise<McpImportPreview>;
     installImport(input: McpInstallRequest): Promise<McpInstallResult>;
@@ -4718,9 +4899,10 @@ export interface CoderApi {
     /**
      * Full-content search: matches thread titles, notes, AND message text
      * (case-insensitive substring), newest activity first, max 50. Includes
-     * archived threads; the renderer styles them as usual.
+     * archived threads; the renderer styles them as usual. threadIds limits
+     * the scan to those ids before the cap.
      */
-    search(input: { query: string }): Promise<ThreadInfo[]>;
+    search(input: ThreadSearchInput): Promise<ThreadSearchResult>;
     /**
      * Create a thread. With `worktree: true` the thread immediately gets its
      * own git worktree + `coder/<slug>-<id>` branch (local projects only);
@@ -6113,14 +6295,32 @@ export interface CoderApi {
     reload(input: { threadId: string }): Promise<PreviewSnapshot>;
     goBack(input: { threadId: string }): Promise<PreviewSnapshot>;
     goForward(input: { threadId: string }): Promise<PreviewSnapshot>;
-    info(input: { threadId: string }): Promise<PreviewSnapshot>;
+    info(
+      input: { threadId: string },
+    ): Promise<PreviewSnapshot & { viewportPreset: PreviewViewportPreset }>;
     screenshot(input: { threadId: string }): Promise<PreviewScreenshot>;
-    click(input: { threadId: string; selector: string }): Promise<PreviewSnapshot>;
+    /** Pass a CSS selector, or a ref from the latest snapshot (#1191). */
+    click(input: { threadId: string; selector?: string; ref?: string }): Promise<PreviewActionResult>;
     type(input: {
       threadId: string;
-      selector: string;
+      selector?: string;
+      ref?: string;
       text: string;
-    }): Promise<PreviewSnapshot>;
+    }): Promise<PreviewActionResult>;
+    /** Bounded semantic snapshot of visible roles, names and states (#1191). */
+    snapshot(input: { threadId: string }): Promise<PreviewPageSnapshot>;
+    /** Bounded console and request-outcome rings since the pane bound. */
+    diagnostics(input: { threadId: string }): Promise<PreviewDiagnostics>;
+    viewport(input: {
+      threadId: string;
+      preset: PreviewViewportPreset;
+    }): Promise<PreviewSnapshot & { viewport: PreviewViewport }>;
+    /**
+     * Pick one element on the visible page (#1193). Settles when the user
+     * selects or cancels (Escape, cancelInspect, navigation, pane closed).
+     */
+    inspect(input: { threadId: string }): Promise<PreviewInspectResult>;
+    cancelInspect(input: { threadId: string }): Promise<{ ok: boolean }>;
   };
   /**
    * Desktop-only iOS Simulator pane (#248). Web invokes are denied before
@@ -6256,6 +6456,13 @@ export interface CoderApi {
       }[],
       position?: { x: number; y: number },
     ): Promise<string | null>;
+  };
+  /**
+   * Desktop only (#519): open the thread in its own window, or focus the one
+   * already open. Absent on web/dev.
+   */
+  windows?: {
+    detachThread(threadId: string): Promise<void>;
   };
   /** Returns an unsubscribe function. */
   on(channel: "threads:changed", cb: (push: ThreadListPush) => void): () => void;

@@ -10,6 +10,9 @@
  * machine; services owns startAsk / stopAsk. Same split as orchcommands.js.
  */
 
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
 const { spawn } = require("cross-spawn");
 const { getProvider, resolveBin, isBinAvailable } = require("./providers.js");
 const { fmRun } = require("./fm.js");
@@ -333,9 +336,34 @@ function retrievalFallback(opts) {
   return chunks.join("\n\n");
 }
 
+// kimi -p runs tools unprompted and rejects --plan/--yolo/--auto alongside
+// it (0.39.1, verified live). An --agent-file whose `tools: []` is an
+// explicit empty allowlist is the only off switch (issue #698).
+const KIMI_NO_TOOLS_AGENT =
+  "---\nname: solenta-no-tools\ndescription: One-shot text answer with no tools.\ntools: []\n---\n" +
+  "You have no tools. Reply with plain text only.\n";
+/** @type {string | null} */
+let kimiAgentPath = null;
+
+/**
+ * Path to the no-tools kimi agent file, written once per process into a
+ * private mkdtemp dir (not a fixed /tmp name another user could pre-plant).
+ * Rewritten if a tmp cleaner removed it.
+ * @returns {string}
+ */
+function kimiNoToolsAgentFile() {
+  if (!kimiAgentPath || !fs.existsSync(kimiAgentPath)) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "solenta-kimi-"));
+    kimiAgentPath = path.join(dir, "no-tools.md");
+    fs.writeFileSync(kimiAgentPath, KIMI_NO_TOOLS_AGENT);
+  }
+  return kimiAgentPath;
+}
+
 /**
  * Print-mode argv: one shot, no session, no MCP. Claude is capped at one
- * turn so a missed "no tools" instruction cannot start a tool loop.
+ * turn so a missed "no tools" instruction cannot start a tool loop; kimi
+ * gets the no-tools agent file for the same reason.
  * Cursor uses `-p --mode ask` (read-only Q&A; `-p` is boolean).
  *
  * @param {string} providerId
@@ -370,7 +398,7 @@ function buildAskArgs(providerId, opts) {
       return args;
     }
     case "kimi": {
-      const args = [];
+      const args = ["--agent-file", kimiNoToolsAgentFile()];
       if (model) args.push("-m", String(model));
       args.push("-p", String(prompt));
       return args;
@@ -588,6 +616,7 @@ module.exports = {
   buildAskPrompt,
   retrievalFallback,
   buildAskArgs,
+  kimiNoToolsAgentFile,
   extractAskText,
   extractCodexText,
   runAskPrint,
