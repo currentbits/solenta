@@ -63,6 +63,16 @@ export function useCoderAgentTools(api: CoderApi) {
     return api.mcp.catalog();
   }, [api]);
 
+  const xcodeMcpStatus = useCallback(
+    async (input: { projectPath: string }) => api.mcp.xcodeStatus(input),
+    [api],
+  );
+
+  const pairXcodeMcp = useCallback(
+    async (input: { projectPath: string }) => api.mcp.pairXcode(input),
+    [api],
+  );
+
   const pickMcpImport = useCallback(async () => {
     return api.mcp.pickImport();
   }, [api]);
@@ -192,6 +202,8 @@ export function useCoderAgentTools(api: CoderApi) {
     removeMcpServer,
     setMcpEnabled,
     listMcpCatalog,
+    xcodeMcpStatus,
+    pairXcodeMcp,
     pickMcpImport,
     previewMcpImport,
     installMcpImport,
