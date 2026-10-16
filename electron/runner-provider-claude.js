@@ -30,6 +30,16 @@ const {
 const path = require("node:path");
 const threadSecrets = require("./threadSecrets.js");
 const { classifyTool } = require("./guardrails.js");
+const {
+  secondaryFolders,
+  writeGrants,
+  folderFor,
+} = require("./projectFolders.js");
+
+/** File tools a claude `Edit(path)` ask rule gates (#514). */
+const CLAUDE_EDIT_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
+/** Modes where claude edits the working directory without asking. */
+const AUTO_EDIT_MODES = new Set(["acceptEdits", "auto", "bypassPermissions"]);
 const { pendingFromInput } = require("./codexInput.js");
 const { METHOD_ELICITATION } = require("./codexApprovals.js");
 const { isMemoryConsolidateTool } = require("./memory-consolidate.js");
@@ -419,6 +429,10 @@ function createClaudeRun(ctx) {
 
     const localCwd = thread.worktreePath || project.path;
     const binary = resolveBin(entryDef);
+    // #514: secondary folders are local paths; a boundary run cannot see them.
+    const extraDirs = crossesBoundary(project) ? [] : secondaryFolders(project);
+    const grantedDirs = writeGrants(thread);
+    const askWriteDirs = extraDirs.filter((d) => !grantedDirs.includes(d));
     const args = entryDef.buildArgs({
       prompt,
       sessionId: thread.sessionId || null,
@@ -429,6 +443,8 @@ function createClaudeRun(ctx) {
       agent: thread.agent || null,
       fast: thread.fast === true,
       forkSessionAt: thread.forkSessionAt || null,
+      addDirs: extraDirs,
+      askWriteDirs,
     });
     // Claude runs interactively: prompt over stdin, permission prompts via
     // the control protocol. Other claude-stream providers (e.g. grok) keep
@@ -712,6 +728,26 @@ function createClaudeRun(ctx) {
               return;
             }
 
+            // #514: an edit inside a secondary folder. One granted after this
+            // CLI spawned still hits its ask rule; let it through wherever
+            // the mode would let a primary-folder edit through.
+            const editTarget = CLAUDE_EDIT_TOOLS.has(toolName)
+              ? String(rawInput.file_path || rawInput.notebook_path || "")
+              : "";
+            const editFolder = editTarget
+              ? folderFor(editTarget, extraDirs, localCwd)
+              : null;
+            const live = store.getThread(threadId) || thread;
+            const granted =
+              editFolder != null && writeGrants(live).includes(editFolder);
+            if (granted && AUTO_EDIT_MODES.has(live.permissionMode)) {
+              handle.respond(requestId, {
+                behavior: "allow",
+                updatedInput: rawInput,
+              });
+              return;
+            }
+
             const pending = {
               id: requestId,
               toolName,
@@ -719,6 +755,7 @@ function createClaudeRun(ctx) {
               input: inputStr,
               rawInput,
             };
+            if (editFolder && !granted) pending.folderGrant = editFolder;
             if (verdict && verdict.decision === "ask") {
               pending.guardrail = {
                 rule: verdict.rule,
@@ -1280,6 +1317,8 @@ function createClaudeRun(ctx) {
       reasoningEffort: thread.reasoningEffort || null,
       // --settings fastMode is argv: toggling Fast must respawn (#1529).
       fast: thread.fast === true,
+      // --add-dir / ask rules are argv: a folder change or grant respawns.
+      dirs: [extraDirs, askWriteDirs],
       mcp: interactive ? mcpArgs : [],
       // The config path is stable; a warm process has already read its contents.
       mcpHash: interactive

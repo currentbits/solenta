@@ -60,6 +60,13 @@ export interface ProjectInfo {
   slug: string;
   name: string;
   path: string;
+  /**
+   * Multi-folder projects (#514): extra absolute folders, in order. `path`
+   * stays the primary (git, worktrees, AGENTS.md / skills / memory); agents
+   * may read and search these, and write only after a per-folder grant on
+   * the permission card. Local projects only.
+   */
+  folders?: string[];
   /** When set, the project lives on this host (user@host) and agents run over ssh. */
   remoteHost?: string;
   /** Absolute path on the remote host. Required when remoteHost is set. */
@@ -385,6 +392,8 @@ export interface ProjectUpdateInput {
   autoPr?: boolean;
   /** Worktree retention (#316 / #559): 0 keeps everything, N > 0 sets the keep count. Default 10. */
   worktreeRetention?: number;
+  /** Secondary folders (#514), absolute paths. Empty / null clears them. */
+  folders?: string[] | null;
   /**
    * Relative project file to use as the icon, or null to restore
    * Automatic detection (#610).
@@ -1987,6 +1996,12 @@ export interface PendingPermissionInfo {
    * calls never reach here; they are answered without asking.
    */
   guardrail?: { rule: string | null; reason: string } | null;
+  /**
+   * Multi-folder projects (#514): the edit lands in this secondary folder,
+   * which the thread may not write yet. "allowFolder" grants it for the
+   * rest of the thread.
+   */
+  folderGrant?: string | null;
 }
 
 /**
@@ -2040,7 +2055,13 @@ export interface PendingQuestion {
 }
 
 /** User decision on a PendingPermissionInfo. "allowAlways" also allows the tool for the rest of the CLI session. */
-export type PermissionDecision = "allow" | "allowAlways" | "deny" | "cancel";
+export type PermissionDecision =
+  | "allow"
+  | "allowAlways"
+  /** #514: allow, and grant writes to pending.folderGrant for this thread. */
+  | "allowFolder"
+  | "deny"
+  | "cancel";
 export type InputValues = Record<string, string | number | boolean | string[]>;
 export interface PendingInputRequest {
   source: string;
