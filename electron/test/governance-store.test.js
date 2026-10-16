@@ -96,6 +96,17 @@ describe("governance store + binding", () => {
     assert.equal(out.provider, "claude");
   });
 
+  it("applyAgentProfile snaps a mode the provider cannot honour", () => {
+    // The renderer used to snap before #262; now only the backend does.
+    store.setSettings({
+      agentProfiles: [profile({ provider: "grok", permissionMode: "acceptEdits" })],
+    });
+    const out = services.applyAgentProfile(store, { threadId: thread.id, profileId: "scout" });
+    assert.equal(out.provider, "grok");
+    assert.ok(["plan", "bypassPermissions"].includes(out.permissionMode), out.permissionMode);
+    assert.equal(out.agentProfileId, "scout");
+  });
+
   it("fork copies the id only on the profile's provider", () => {
     store.setSettings({ agentProfiles: [profile()] });
     services.applyAgentProfile(store, { threadId: thread.id, profileId: "scout" });
