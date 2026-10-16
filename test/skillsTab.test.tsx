@@ -38,6 +38,7 @@ import type {
   HarnessImportPreview,
   HarnessInstallRequest,
   HarnessInstallResult,
+  XcodeMcpStatus,
 } from "../src/shared/ipc";
 
 afterEach(unmountAll);
@@ -223,6 +224,8 @@ interface HarnessOptions {
   onDiscardHarnessImport?: (input: { previewId: string }) => void;
   surface?: "inspector" | "settings";
   onManage?: () => void;
+  xcodeStatus?: XcodeMcpStatus;
+  onPairXcode?: (input: { projectPath: string }) => void;
 }
 
 /**
@@ -239,6 +242,7 @@ function Harness(opts: HarnessOptions) {
   );
   const mcpRef = useRef(mcpServers);
   mcpRef.current = mcpServers;
+  const xcodeRef = useRef(opts.xcodeStatus ?? null);
   const skillsRef = useRef<SkillInfo[]>(
     (opts.skills ?? SKILLS).map((s) => ({
       ...s,
@@ -295,6 +299,22 @@ function Harness(opts: HarnessOptions) {
       listMcpCatalog={async () => {
         opts.onListMcpCatalog?.();
         return (opts.mcpCatalog ?? []).map((row) => ({ ...row }));
+      }}
+      xcodeMcpStatus={async () => xcodeRef.current}
+      pairXcodeMcp={async (input) => {
+        opts.onPairXcode?.(input);
+        const saved = definitionFromSave({
+          name: "mobilebuildmcp",
+          transport: "stdio",
+          command: "mobilebuildmcp",
+          args: ["mcp"],
+          enabled: true,
+          trusted: true,
+        });
+        if (xcodeRef.current) xcodeRef.current = { ...xcodeRef.current, paired: saved.name };
+        mcpRef.current = [...mcpRef.current, saved];
+        setMcpServers(mcpRef.current);
+        return saved;
       }}
       pickMcpImport={async () => opts.onPickMcpImport?.() ?? null}
       previewMcpImport={async (input) => {
@@ -788,6 +808,36 @@ describe("SkillsTab MCP servers", () => {
       settingsPatches.every((p) => !Object.hasOwn(p, "mcpServers")),
       "saveSettings must not receive mcpServers",
     );
+    m.unmount();
+  });
+
+  it("offers one Xcode server for an Apple project and shows it paired after the click", async () => {
+    const pairs: Array<{ projectPath: string }> = [];
+    const m = await mount(
+      <ManagerHarness
+        xcodeStatus={{
+          project: { kind: "project", name: "App.xcodeproj" },
+          bridge: true,
+          buildMcp: "mobilebuildmcp",
+          paired: null,
+          recommended: "mobilebuildmcp",
+        }}
+        onPairXcode={(input) => pairs.push(input)}
+      />,
+    );
+    assert.ok(m.query('[data-mcp-section="xcode"]'), "Xcode card must render");
+    assert.ok(m.text().includes("App.xcodeproj"));
+    assert.equal(m.byText("Add Xcode MCP"), null, "never offer both servers");
+    await m.click(m.byText("Add MobileBuildMCP"));
+    assert.deepEqual(pairs, [{ projectPath: "/repo" }]);
+    assert.ok(m.text().includes("Paired as mobilebuildmcp"));
+    assert.equal(m.byText("Add MobileBuildMCP"), null);
+    m.unmount();
+  });
+
+  it("hides the Xcode card when the project is not an Apple project", async () => {
+    const m = await mount(<ManagerHarness />);
+    assert.equal(m.query('[data-mcp-section="xcode"]'), null);
     m.unmount();
   });
 

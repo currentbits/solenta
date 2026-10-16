@@ -13,7 +13,9 @@ const { pendingFromInput } = require("./codexInput.js");
 const {
   classifyServerRequest,
   pendingFromCommand,
+  pendingFromFileChange,
   pendingFromMcp,
+  pendingFromApproval,
   approvalResponse,
   mapSolentaDecision,
   unsupportedError,
@@ -27,6 +29,7 @@ const {
 } = require("./permissionCommand.js");
 const { normalizeQuestions } = require("./questions.js");
 const threadSecrets = require("./threadSecrets.js");
+const { writeGrants } = require("./projectFolders.js");
 const {
   PLAN_TRUNCATE,
   planText,
@@ -113,8 +116,10 @@ function createPermissions(ctx) {
           acceptAlways: p.acceptAlways !== false,
           questions: questionInfo(p.toolName, p.rawInput),
           inputRequest: p.inputRequest || null,
+          fileChange: p.fileChange || null,
           plan: planText(p.toolName, p.rawInput),
           guardrail: p.guardrail || null,
+          folderGrant: p.folderGrant || null,
         };
       }
     }
@@ -146,7 +151,8 @@ function createPermissions(ctx) {
 
   /**
    * Inbound Codex app-server ServerRequest (issue #1171). Command
-   * kind=command becomes pendingPermission; unknown methods fail closed.
+   * kind=command and fileChange (#1189) become pendingPermission; unknown
+   * methods fail closed.
    * #1170 attaches this to the long-lived JSON-RPC session. Exec --json
    * never emits these.
    *
@@ -164,7 +170,17 @@ function createPermissions(ctx) {
     if (id === undefined || id === null) return false;
 
     const classified = classifyServerRequest(method, msg && msg.params);
-    if (!["command", "mcp", "input"].includes(classified.action)) {
+    // The ask carries no diff (#1189): show the item/started fileChange
+    // with the same itemId, or fail closed rather than approve blind.
+    const changes =
+      classified.action === "fileChange" && e.codexFileChanges
+        ? e.codexFileChanges.get(msg.params && msg.params.itemId)
+        : null;
+    if (classified.action === "fileChange" && !changes) {
+      replyCodexJsonRpcError(e, id, unsupportedError(method, `${method}: no item/started for itemId`));
+      return true;
+    }
+    if (!["command", "fileChange", "approval", "mcp", "input"].includes(classified.action)) {
       try {
         replyCodexJsonRpcError(
           e,
@@ -177,9 +193,15 @@ function createPermissions(ctx) {
       return true;
     }
 
+    const live = store.getThread(threadId);
+    const worktreePath = (live && live.worktreePath) || null;
+    // Display root: the run's cwd (codex.js runs in the project without a worktree).
+    const runRoot = worktreePath || (live && store.getProject(live.projectId)?.path) || null;
     let pending;
     try {
       pending = classified.action === "input" ? pendingFromInput(id, method, msg.params)
+        : classified.action === "fileChange" ? pendingFromFileChange(id, msg.params, changes, runRoot)
+        : classified.action === "approval" ? pendingFromApproval(id, method, msg.params)
         : classified.action === "mcp" ? pendingFromMcp(id, msg.params) : pendingFromCommand(id, msg.params);
     } catch {
       replyCodexJsonRpcError(e, id, unsupportedError(method, `${method}: unsupported input schema or URL`));
@@ -195,14 +217,20 @@ function createPermissions(ctx) {
 
     /** @type {{ decision: string, rule: string | null, reason: string } | null} */
     let verdict = null;
+    // A file change is one Edit per touched path (and move target / grantRoot);
+    // the worst verdict wins.
+    const inputs = classified.action === "fileChange"
+      ? [
+          ...pending.rawInput.changes.flatMap((c) => [c.path, c.kind && c.kind.move_path]),
+          pending.rawInput.grantRoot,
+        ].filter((p) => typeof p === "string" && p).map((file_path) => ({ file_path }))
+      : [pending.rawInput];
     try {
-      const live = store.getThread(threadId);
-      const worktreePath = (live && live.worktreePath) || null;
-      verdict = classifyTool({
-        toolName: pending.toolName,
-        input: pending.rawInput,
-        worktreePath,
-      });
+      for (const input of inputs) {
+        const v = classifyTool({ toolName: pending.toolName, input, worktreePath });
+        if (v && v.decision === "deny") { verdict = v; break; }
+        if (v && v.decision === "ask" && !verdict) verdict = v;
+      }
     } catch {
       verdict = null;
     }
@@ -256,7 +284,7 @@ function createPermissions(ctx) {
     }
     const pending = e.pendingPermissions[idx];
     const mapped = mapSolentaDecision(decision, pending.availableDecisions);
-    const content = pending.inputRequest && mapped === "accept" ? pending.validateInput(input.inputValues) : undefined;
+    const content = pending.inputRequest && mapped === "accept" ? pending.validateInput(input.inputValues) : pending.grant;
     replyCodexJsonRpc(
       e,
       pending.rpcId !== undefined ? pending.rpcId : pending.id,
@@ -285,7 +313,7 @@ function createPermissions(ctx) {
    * allow-always after an edit keys the session rule on the edited prefix.
    * Codex JSON-RPC ignores `updatedCommand` (the reply cannot rewrite the
    * command).
-   * @param {{ threadId: string, requestId: string, decision: "allow" | "allowAlways" | "deny", answers?: Record<string, string>, updatedCommand?: string }} input
+   * @param {{ threadId: string, requestId: string, decision: "allow" | "allowAlways" | "allowFolder" | "deny", answers?: Record<string, string>, updatedCommand?: string }} input
    */
   function respondPermission(input) {
     const { threadId, requestId, decision, answers, updatedCommand } =
@@ -358,6 +386,20 @@ function createPermissions(ctx) {
       pushDetail(threadId, e.claudeState);
       pushThreadsChanged();
       return;
+    }
+    // #514: "allowFolder" allows this edit and grants the whole secondary
+    // folder for the rest of the thread (the next spawn drops its ask rule).
+    if (decision === "allowFolder") {
+      if (!pending.folderGrant) throw new Error("This request has no folder to grant");
+      const t = store.getThread(threadId);
+      const grants = writeGrants(t);
+      if (!grants.includes(pending.folderGrant)) {
+        store.updateThread(threadId, {
+          folderWriteGrants: [...grants, pending.folderGrant],
+        });
+      }
+      appendMessage(threadId, "event", `Writes allowed in ${pending.folderGrant}`, e.runId);
+      return respondPermission({ ...input, decision: "allow" });
     }
     const resolved = resolveEditedCommand(pending.rawInput, updatedCommand);
     if (

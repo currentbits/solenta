@@ -49,6 +49,15 @@ export function ScopeMenu({
               size={16}
             />
             {p.slug || p.name}
+{p.folders?.length ? (
+              <span
+                className={styles.folderChip}
+                data-project-folders={p.folders.length}
+                title={p.folders.join("\n")}
+              >
+                +{p.folders.length} {p.folders.length === 1 ? "folder" : "folders"}
+              </span>
+            ) : null}
             {p.scm?.kind === "jj" ? (
               <span
                 className={styles.scmChip}

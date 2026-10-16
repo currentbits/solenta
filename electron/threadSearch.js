@@ -82,13 +82,18 @@ function threadMatches(thread, needle) {
   return parseAndMatch(raw, needle);
 }
 
+const SEARCH_LIMIT = 50;
+
 /**
  * @param {Array<{ id: string, updatedAt: number }>} hits
- * @returns {string[]}
+ * @returns {{ ids: string[], truncated: boolean }}
  */
 function rankSearchHits(hits) {
   hits.sort((a, b) => b.updatedAt - a.updatedAt);
-  return hits.slice(0, 50).map((h) => h.id);
+  return {
+    ids: hits.slice(0, SEARCH_LIMIT).map((h) => h.id),
+    truncated: hits.length > SEARCH_LIMIT,
+  };
 }
 
 /**
@@ -104,11 +109,12 @@ function rankSearchHits(hits) {
  *     shardPath?: string | null,
  *   }>,
  * }} snapshot
- * @returns {string[]} matching ids, updatedAt DESC, max 50
+ * @returns {{ ids: string[], truncated: boolean }} matching ids,
+ *   updatedAt DESC, max SEARCH_LIMIT; truncated when more matched
  */
 function scanSearchSnapshot(snapshot) {
   const needle = snapshot && snapshot.needle != null ? String(snapshot.needle) : "";
-  if (needle.length < 2) return [];
+  if (needle.length < 2) return { ids: [], truncated: false };
   /** @type {Array<{ id: string, updatedAt: number }>} */
   const hits = [];
   const threads = (snapshot && snapshot.threads) || [];
@@ -131,4 +137,5 @@ module.exports = {
   threadMatches,
   rankSearchHits,
   scanSearchSnapshot,
+  SEARCH_LIMIT,
 };
