@@ -416,6 +416,9 @@ coder.attachments.droppedFilePath = (file) => webUtils.getPathForFile(file);
 coder.contextMenu = {
   show: (items, position) => invoke("contextMenu:show", items, position),
 };
+coder.windows = {
+  detachThread: (threadId) => invoke("window:detachThread", threadId),
+};
 coder.on = on;
 
 contextBridge.exposeInMainWorld("coder", coder);
