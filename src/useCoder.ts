@@ -364,6 +364,11 @@ export interface UseCoderResult {
     threadId?: string,
   ) => Promise<void>;
   /**
+   * Apply a saved AgentProfile (#262) in one write. Defaults to the selected
+   * thread; pass threadId for a fork that is not selected.
+   */
+  applyAgentProfile: (profileId: string, threadId?: string) => Promise<void>;
+  /**
    * Enable or disable Codex live web search. Defaults to the selected thread.
    * Pass threadId when applying to a fork that is not selected.
    */
@@ -1590,6 +1595,7 @@ export function useCoder(): UseCoderResult {
     answerSecret,
     setProvider,
     setReasoningEffort,
+    applyAgentProfile,
     setWebSearch,
     setAgent,
     listAgents,
@@ -2141,6 +2147,7 @@ export function useCoder(): UseCoderResult {
     answerSecret,
     setProvider,
     setReasoningEffort,
+    applyAgentProfile,
     setWebSearch,
     setAgent,
     listAgents,

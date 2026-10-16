@@ -30,7 +30,6 @@ import {
   permissionPickerModes,
   providerDisplayName,
   providerPermissionModes,
-  snapToHonouredPermissionMode,
 } from "../format";
 import {
   buildPickerRows,
@@ -182,6 +181,8 @@ export interface ComposerProps {
   providers: ProviderInfo[];
   /** Saved named profiles from settings. Empty hides the Profiles section. */
   agentProfiles?: AgentProfile[];
+  /** thread.agentProfileId (#262): marks that profile row as selected. */
+  agentProfileId?: string | null;
   /** Workflow templates from workflows.list(). */
   workflows: WorkflowTemplateInfo[];
   onSetProvider: (input: {
@@ -189,6 +190,8 @@ export interface ComposerProps {
     model?: string | null;
   }) => void | Promise<void>;
   onSetReasoningEffort: (effort: ReasoningEffort | null) => void | Promise<void>;
+  /** Apply a saved profile in one write (#262); stamps thread.agentProfileId. */
+  onApplyAgentProfile: (profileId: string) => void | Promise<void>;
   onSetWebSearch?: (webSearch: boolean) => void | Promise<void>;
   onSetFast?: (fast: boolean) => void | Promise<void>;
   /** Pending first-turn route (#246); "auto" shows the pill as Auto. */
@@ -402,9 +405,11 @@ export const Composer = memo(function Composer({
   onSetAgent,
   providers,
   agentProfiles = [],
+  agentProfileId = null,
   workflows,
   onSetProvider,
   onSetReasoningEffort,
+  onApplyAgentProfile,
   onSetWebSearch,
   onSetFast,
   route = null,
@@ -1604,16 +1609,7 @@ export const Composer = memo(function Composer({
     if (row.disabled) return;
     closeModelPicker(true);
     try {
-      // setProvider clears effort on a harness switch; effort then permission.
-      await onSetProvider({ provider: row.provider, model: row.model });
-      await onSetReasoningEffort(row.reasoningEffort);
-      const next = providers.find((p) => p.id === row.provider);
-      await onPermissionModeChange(
-        snapToHonouredPermissionMode(
-          providerPermissionModes(next),
-          row.permissionMode,
-        ),
-      );
+      await onApplyAgentProfile(row.id);
     } catch (err) {
       const msg =
         err instanceof Error && err.message
@@ -2219,8 +2215,10 @@ export const Composer = memo(function Composer({
                       {modelRows.map((row, index) => {
                         const selected = row.auto
                           ? route != null
-                          : route == null &&
-                            isRowSelected(row, provider, model);
+                          : row.profile
+                            ? row.profile.id === agentProfileId
+                            : route == null &&
+                              isRowSelected(row, provider, model);
                         const highlighted = index === hi;
                         const starrable = canFavourite(row);
                         const starred =

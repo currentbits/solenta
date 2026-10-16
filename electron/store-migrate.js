@@ -626,6 +626,13 @@ function migrateThread(t) {
   } else {
     delete next.providerInstance;
   }
+  // Applied AgentProfile (#262). A stale id is "no profile" at evaluate
+  // time, not a heal error. Omitted when unset.
+  if (typeof t.agentProfileId === "string" && t.agentProfileId) {
+    next.agentProfileId = t.agentProfileId;
+  } else {
+    delete next.agentProfileId;
+  }
   return next;
 }
 

@@ -289,6 +289,48 @@ describe("PermissionPrompt (#509)", () => {
   });
 });
 
+describe("PermissionPrompt governance strip (#262)", () => {
+  const risky = { rule: "rm-rf", reason: "Deletes files recursively" };
+
+  it("keeps reason (rule) when no layer is sent", async () => {
+    const view = await mountView({ ...bashPending, guardrail: risky }).m;
+    assert.equal(
+      view.query("[data-permission-guardrail]")?.textContent,
+      "⚠ Deletes files recursively (rm-rf)",
+    );
+    assert.ok(view.text().includes("Accept all"));
+  });
+
+  it("shows reason (layer / rule) and keeps Accept all for builtin", async () => {
+    const view = await mountView({
+      ...bashPending,
+      guardrail: { ...risky, layer: "builtin" },
+    }).m;
+    assert.equal(
+      view.query("[data-permission-guardrail]")?.textContent,
+      "⚠ Deletes files recursively (builtin / rm-rf)",
+    );
+    assert.ok(view.text().includes("Accept all"));
+  });
+
+  it("hides Accept all on profile.ask", async () => {
+    const view = await mountView({
+      ...bashPending,
+      guardrail: {
+        rule: "bash:git push*",
+        reason: "Profile always asks",
+        layer: "profile.ask",
+      },
+    }).m;
+    assert.match(
+      view.query("[data-permission-guardrail]")?.textContent || "",
+      /\(profile\.ask \/ bash:git push\*\)/,
+    );
+    assert.ok(view.byText("Accept"));
+    assert.ok(!view.text().includes("Accept all"));
+  });
+});
+
 describe("PermissionPrompt folder grant (#514)", () => {
   it("offers Allow writes to <folder> and sends allowFolder", async () => {
     const { m, spy } = mountView({

@@ -30,6 +30,8 @@ const {
 const path = require("node:path");
 const threadSecrets = require("./threadSecrets.js");
 const { classifyTool } = require("./guardrails.js");
+const { evaluate, threadPolicy } = require("./governance.js");
+const { appendAudit } = require("./governanceAudit.js");
 const {
   secondaryFolders,
   writeGrants,
@@ -523,7 +525,7 @@ function createClaudeRun(ctx) {
         }
       }
     }
-    const spawn = resolveSpawn(project, binary, args, localCwd, grokHomeEnv);
+    const spawn = resolveSpawn(project, binary, args, localCwd, grokHomeEnv, threadId);
 
     if (abortIfCancelled(threadId, runId)) return { runId };
     const entry = claimPreparingRun(threadId, runId, {
@@ -675,12 +677,12 @@ function createClaudeRun(ctx) {
             // social-engineer a yes. classifyTool fails open; wrap anyway.
             /** @type {{ decision: string, rule: string | null, reason: string } | null} */
             let verdict = null;
+            const live = store.getThread(threadId);
+            const worktreePath =
+              (live && live.worktreePath) ||
+              (thread && thread.worktreePath) ||
+              null;
             try {
-              const live = store.getThread(threadId);
-              const worktreePath =
-                (live && live.worktreePath) ||
-                (thread && thread.worktreePath) ||
-                null;
               verdict = classifyTool({
                 toolName,
                 input: rawInput,
@@ -689,18 +691,50 @@ function createClaudeRun(ctx) {
             } catch {
               verdict = null;
             }
+            // #262: the profile matrix on top. evaluate never throws; a
+            // path it cannot canonicalize is a deny, not a pass.
+            const gov = threadPolicy(store, threadId);
+            if (!e.sessionAllows) e.sessionAllows = new Set();
+            const ev = evaluate({
+              toolName,
+              rawInput,
+              worktreePath,
+              policy: gov.policy,
+              builtin: verdict,
+              sessionAllows: e.sessionAllows,
+            });
+            const auditRow = (decision, executed) =>
+              appendAudit({
+                threadId,
+                profileId: gov.profileId,
+                provider: String((live && live.provider) || "claude"),
+                toolName,
+                actionHash: ev.actionHash,
+                declared: ev.declared,
+                executed,
+                decision,
+                layer: ev.layer,
+                rule: ev.rule,
+                reason: ev.reason,
+              });
 
-            if (verdict && verdict.decision === "deny") {
-              const rule = verdict.rule || "policy";
-              const reason = verdict.reason || "blocked";
+            if (ev.decision === "deny") {
+              const rule = ev.rule || "policy";
+              const reason = ev.reason || "blocked";
+              const builtin = ev.layer === "builtin";
               handle.respond(requestId, {
                 behavior: "deny",
-                message: `Blocked by Solenta guardrails (${rule}): ${reason}`,
+                message: builtin
+                  ? `Blocked by Solenta guardrails (${rule}): ${reason}`
+                  : `Blocked by Solenta policy (${ev.layer}: ${rule}): ${reason}`,
               });
+              auditRow("deny", null);
               appendMessage(
                 threadId,
                 "event",
-                `Guardrail blocked ${toolName}: ${rule}: ${reason}`,
+                builtin
+                  ? `Guardrail blocked ${toolName}: ${rule}: ${reason}`
+                  : `Governance blocked ${toolName}: ${ev.layer}: ${rule}: ${reason}`,
                 e.runId,
               );
               store.save();
@@ -728,19 +762,33 @@ function createClaudeRun(ctx) {
               return;
             }
 
+            if (ev.decision === "allow") {
+              // Profile allow / session grant: no card.
+              handle.respond(requestId, {
+                behavior: "allow",
+                updatedInput: rawInput,
+              });
+              auditRow("allow", ev.declared);
+              return;
+            }
+
             // #514: an edit inside a secondary folder. One granted after this
             // CLI spawned still hits its ask rule; let it through wherever
-            // the mode would let a primary-folder edit through.
+            // the mode would let a primary-folder edit through, unless the
+            // profile explicitly asks for it (#262).
             const editTarget = CLAUDE_EDIT_TOOLS.has(toolName)
               ? String(rawInput.file_path || rawInput.notebook_path || "")
               : "";
             const editFolder = editTarget
               ? folderFor(editTarget, extraDirs, localCwd)
               : null;
-            const live = store.getThread(threadId) || thread;
             const granted =
-              editFolder != null && writeGrants(live).includes(editFolder);
-            if (granted && AUTO_EDIT_MODES.has(live.permissionMode)) {
+              editFolder != null && writeGrants(live || thread).includes(editFolder);
+            if (
+              granted &&
+              AUTO_EDIT_MODES.has((live || thread).permissionMode) &&
+              ev.layer !== "profile.ask"
+            ) {
               handle.respond(requestId, {
                 behavior: "allow",
                 updatedInput: rawInput,
@@ -754,14 +802,27 @@ function createClaudeRun(ctx) {
               summary: toolSummary(toolName, rawInput),
               input: inputStr,
               rawInput,
+              governance: {
+                actionHash: ev.actionHash,
+                declared: ev.declared,
+                layer: ev.layer,
+                profileId: gov.profileId,
+                governed: Boolean(gov.policy && gov.policy.rules.length),
+              },
             };
             if (editFolder && !granted) pending.folderGrant = editFolder;
-            if (verdict && verdict.decision === "ask") {
+            if (
+              (ev.layer === "builtin" && verdict && verdict.decision === "ask") ||
+              (gov.policy && ev.layer !== "builtin")
+            ) {
               pending.guardrail = {
-                rule: verdict.rule,
-                reason: verdict.reason,
+                rule: ev.rule,
+                reason: ev.reason,
+                layer: ev.layer,
               };
             }
+            // AskUserQuestion / ExitPlanMode skip the matrix: not a decision.
+            if (ev.layer !== "builtin" || pending.guardrail) auditRow("ask", null);
             e.pendingPermissions.push(pending);
             if (e.pendingPermissions.length === 1) {
               // Run is now blocked on the user: flip the sidebar badge to
@@ -1326,6 +1387,8 @@ function createClaudeRun(ctx) {
           .map((a) => createHash("sha256").update(fs.readFileSync(a.slice("--mcp-config=".length))).digest("hex"))
         : [],
       otelEnv: spawnEnv || null,
+      // The Seatbelt profile is fixed at spawn (#803): a policy edit respawns.
+      seatbelt: spawn.seatbelt || null,
     });
 
     const prevSess = claudeSessions.get(threadId);

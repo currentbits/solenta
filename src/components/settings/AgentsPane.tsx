@@ -14,6 +14,8 @@ import {
 import type {
   AgentProfile,
   AppSettings,
+  GovernanceAction,
+  GovernanceRule,
   PermissionMode,
   PromptSnippet,
   ProviderInfo,
@@ -33,7 +35,12 @@ export interface ProfileDraft {
   reasoningEffort: ReasoningEffort | null;
   permissionMode: PermissionMode;
   customModel: boolean;
+  defaultAction: "ask" | "allow";
+  rules: GovernanceRule[];
 }
+
+/** Per-profile rule cap; the store rejects more (#262). */
+const MAX_POLICY_RULES = 40;
 
 function defaultProviderId(providers: readonly ProviderInfo[]): string {
   return providers.find((p) => p.available)?.id ?? providers[0]?.id ?? "";
@@ -100,6 +107,8 @@ function emptyDraft(providers: readonly ProviderInfo[]): ProfileDraft {
       "default",
     ),
     customModel: false,
+    defaultAction: "ask",
+    rules: [],
   };
 }
 
@@ -122,6 +131,8 @@ function draftFromProfile(
       profile.permissionMode,
     ),
     customModel: profile.model != null && !known,
+    defaultAction: profile.policy?.defaultAction ?? "ask",
+    rules: profile.policy?.rules.map((r) => ({ ...r })) ?? [],
   };
 }
 
@@ -237,6 +248,13 @@ export function AgentsPane({
         draft.permissionMode,
       ),
     };
+    const rules = draft.rules
+      .map((r) => ({ ...r, match: r.match.trim() }))
+      .filter((r) => r.match !== "");
+    // Absent policy = today's behavior; only store one that changes something.
+    if (rules.length > 0 || draft.defaultAction !== "ask") {
+      nextProfile.policy = { defaultAction: draft.defaultAction, rules };
+    }
     const list = settings?.agentProfiles ?? [];
     const next = draft.id
       ? list.map((p) => (p.id === draft.id ? nextProfile : p))
@@ -1314,6 +1332,7 @@ function ProfileForm({
           ))}
         </select>
       </div>
+      <PolicyFields draft={draft} saving={saving} onChange={onChange} />
       <div className={styles.fieldRow}>
         <button
           type="button"
@@ -1333,6 +1352,139 @@ function ProfileForm({
         </button>
       </div>
     </div>
+  );
+}
+
+const POLICY_LISTS: Array<{
+  kind: GovernanceRule["kind"];
+  label: string;
+  placeholder: string;
+}> = [
+  { kind: "tool", label: "Tools", placeholder: "WebFetch" },
+  { kind: "bash", label: "Bash", placeholder: "npm publish*" },
+  { kind: "write", label: "Write paths", placeholder: "/etc/*" },
+  { kind: "network", label: "Network", placeholder: "*.example.com" },
+];
+
+const GOVERNANCE_ACTIONS: GovernanceAction[] = ["block", "deny", "ask", "allow"];
+
+/** Permission matrix rows for a profile (#262), one list per rule kind. */
+function PolicyFields({
+  draft,
+  saving,
+  onChange,
+}: {
+  draft: ProfileDraft;
+  saving: boolean;
+  onChange: (draft: ProfileDraft) => void;
+}) {
+  const setRule = (i: number, patch: Partial<GovernanceRule>) =>
+    onChange({
+      ...draft,
+      rules: draft.rules.map((r, j) => (j === i ? { ...r, ...patch } : r)),
+    });
+  const full = draft.rules.length >= MAX_POLICY_RULES;
+  return (
+    <>
+      <div className={styles.field}>
+        <label className={styles.fieldLabel} htmlFor="profile-default-action">
+          Default action
+        </label>
+        <select
+          id="profile-default-action"
+          className={styles.input}
+          value={draft.defaultAction}
+          disabled={saving}
+          onChange={(e) =>
+            onChange({
+              ...draft,
+              defaultAction: e.target.value as ProfileDraft["defaultAction"],
+            })
+          }
+        >
+          <option value="ask">Ask</option>
+          <option value="allow">Allow</option>
+        </select>
+      </div>
+      {POLICY_LISTS.map((list) => (
+        <div key={list.kind} className={styles.field} data-policy-list={list.kind}>
+          <span className={styles.fieldLabel}>{list.label}</span>
+          {draft.rules.map((rule, i) =>
+            rule.kind !== list.kind ? null : (
+              <div key={i} className={styles.fieldRow} data-policy-rule="">
+                <input
+                  className={styles.input}
+                  aria-label={`${list.label} match`}
+                  value={rule.match}
+                  maxLength={200}
+                  disabled={saving}
+                  autoComplete="off"
+                  spellCheck={false}
+                  placeholder={list.placeholder}
+                  onChange={(e) => setRule(i, { match: e.target.value })}
+                />
+                <select
+                  className={styles.input}
+                  aria-label={`Action for ${rule.match || list.label}`}
+                  value={rule.action}
+                  disabled={saving}
+                  onChange={(e) =>
+                    setRule(i, { action: e.target.value as GovernanceAction })
+                  }
+                >
+                  {GOVERNANCE_ACTIONS.map((action) => (
+                    <option key={action} value={action}>
+                      {action}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  className={styles.btn}
+                  aria-label={`Remove ${rule.match || list.label} rule`}
+                  disabled={saving}
+                  onClick={() =>
+                    onChange({
+                      ...draft,
+                      rules: draft.rules.filter((_, j) => j !== i),
+                    })
+                  }
+                >
+                  Remove
+                </button>
+              </div>
+            ),
+          )}
+          <div className={styles.fieldRow}>
+            <button
+              type="button"
+              className={styles.btn}
+              data-policy-add={list.kind}
+              disabled={saving || full}
+              onClick={() =>
+                onChange({
+                  ...draft,
+                  rules: [
+                    ...draft.rules,
+                    { kind: list.kind, match: "", action: "deny" },
+                  ],
+                })
+              }
+            >
+              Add rule
+            </button>
+          </div>
+        </div>
+      ))}
+      <p className={styles.note}>
+        Built-in Solenta guardrails still apply and cannot be lifted. Rules
+        gate Claude&apos;s permission prompts, which Accept edits and Bypass
+        modes skip. On macOS, any Write path or Network rule also runs the
+        agent (every provider, local projects) under Seatbelt: writes are
+        confined to the worktree plus allow/ask paths, and network rules
+        filter egress through Solenta&apos;s proxy.
+      </p>
+    </>
   );
 }
 

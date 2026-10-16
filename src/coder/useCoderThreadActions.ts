@@ -205,6 +205,35 @@ export function useCoderThreadActions({
     [api, selectedThreadId, applyThreads],
   );
 
+  /** Apply a saved AgentProfile in one write, stamping agentProfileId (#262). */
+  const applyAgentProfile = useCallback(
+    async (profileId: string, threadIdArg?: string) => {
+      const threadId = threadIdArg ?? selectedThreadId;
+      if (!threadId) return;
+      try {
+        const thread = await api.threads.applyAgentProfile({
+          threadId,
+          profileId,
+        });
+        applyThreads(
+          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
+        );
+        if (selectedRef.current === threadId) {
+          setDetail((prev) =>
+            prev && prev.thread.id === thread.id
+              ? { ...prev, thread }
+              : prev,
+          );
+        }
+        setError(null);
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+        throw err;
+      }
+    },
+    [api, selectedThreadId, applyThreads],
+  );
+
   const setWebSearch = useCallback(
     async (webSearch: boolean, threadIdArg?: string) => {
       const threadId = threadIdArg ?? selectedThreadId;
@@ -987,6 +1016,7 @@ export function useCoderThreadActions({
     answerSecret,
     setProvider,
     setReasoningEffort,
+    applyAgentProfile,
     setWebSearch,
     setAgent,
     listAgents,

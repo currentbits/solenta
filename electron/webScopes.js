@@ -72,6 +72,8 @@ const BY_SCOPE = {
     "threads:specArtifact",
     "threads:listTrashed",
     "activity:list",
+    "governance:listAudit",
+    "governance:verifyAudit",
     "usage:byDay",
     "usage:providerLimits",
     "insights:failureModes",
@@ -325,6 +327,8 @@ const BY_SCOPE = {
     "threads:purge",
     // Bypass mode would let a steer device skip the terminal/files/git grants.
     "threads:setPermissionMode",
+    // Applies a profile's permission mode too (#262).
+    "threads:applyAgentProfile",
     // A secret lands in the agent's run env (#1531); host or full devices only.
     "threads:answerSecret",
     "app:checkUpdate",

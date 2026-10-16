@@ -22,6 +22,8 @@ const {
 } = require("./codexApprovals.js");
 const { getProvider, snapPermissionMode } = require("./providers.js");
 const { classifyTool } = require("./guardrails.js");
+const { evaluate, threadPolicy } = require("./governance.js");
+const { appendAudit } = require("./governanceAudit.js");
 const {
   extractCommand,
   resolveEditedCommand,
@@ -409,6 +411,81 @@ function createPermissions(ctx) {
     ) {
       throw new Error("Command cannot be empty");
     }
+    const allowing = decision === "allow" || decision === "allowAlways";
+    // #262: judge what will actually run, not what was asked. An edit that
+    // now hits a deny (builtin, profile, or a path that will not
+    // canonicalize) is refused even though the user clicked Allow.
+    let recheck = null;
+    let governed = false;
+    if (pending.governance && allowing) {
+      const live = store.getThread(threadId);
+      const worktreePath = (live && live.worktreePath) || null;
+      let builtin = null;
+      try {
+        builtin = classifyTool({
+          toolName: pending.toolName,
+          input: resolved.input,
+          worktreePath,
+        });
+      } catch {
+        builtin = null;
+      }
+      const gov = threadPolicy(store, threadId);
+      governed = Boolean(gov.policy && gov.policy.rules.length);
+      recheck = evaluate({
+        toolName: pending.toolName,
+        rawInput: resolved.input,
+        worktreePath,
+        policy: gov.policy,
+        builtin,
+      });
+      const audit = (row) =>
+        appendAudit({
+          threadId,
+          profileId: gov.profileId,
+          provider: String((live && live.provider) || "claude"),
+          toolName: pending.toolName,
+          actionHash: recheck.actionHash,
+          declared: pending.governance.declared,
+          rule: recheck.rule,
+          layer: recheck.layer,
+          ...row,
+        });
+      if (recheck.decision === "deny") {
+        e.pendingPermissions.splice(idx, 1);
+        const rule = recheck.rule || "policy";
+        e.handle.respond(pending.id, {
+          behavior: "deny",
+          message: `Blocked by Solenta policy (${recheck.layer}: ${rule}): ${recheck.reason}`,
+        });
+        audit({
+          executed: null,
+          decision: "deny",
+          reason: recheck.reason,
+        });
+        appendMessage(
+          threadId,
+          "event",
+          `Governance blocked ${pending.toolName}: ${recheck.layer}: ${rule}: ${recheck.reason}`,
+          e.runId,
+        );
+        if (e.pendingPermissions.length === 0) {
+          store.updateThread(threadId, { awaitingInput: false });
+        }
+        store.save();
+        pushDetail(threadId, e.claudeState);
+        pushThreadsChanged();
+        throw new Error(`Blocked by policy (${recheck.layer})`);
+      }
+      // Question / plan answers skip the matrix: not a governed decision.
+      if (recheck.layer !== "builtin" || (builtin && builtin.decision === "ask")) {
+        audit({
+          executed: recheck.declared,
+          decision: "allow",
+          reason: "allowed by user",
+        });
+      }
+    }
     e.pendingPermissions.splice(idx, 1);
     const answerMap =
       answers && typeof answers === "object" && !Array.isArray(answers)
@@ -423,7 +500,16 @@ function createPermissions(ctx) {
           ? { ...resolved.input, answers: answerMap }
           : resolved.input,
       };
-      if (decision === "allowAlways") {
+      if (decision === "allowAlways" && recheck) {
+        // A session grant cannot mute an always-confirm rule (#262).
+        if (recheck.layer !== "profile.ask") {
+          if (!e.sessionAllows) e.sessionAllows = new Set();
+          e.sessionAllows.add(recheck.actionHash);
+        }
+      }
+      // A governed thread keeps the CLI asking: a Claude session rule would
+      // stop can_use_tool for that tool and skip the matrix next time.
+      if (decision === "allowAlways" && !governed) {
         // Unedited: whole-tool session rule (matches today's Accept all).
         // Edited: prefix of the *edited* command, never the original (#509).
         response.updatedPermissions = [

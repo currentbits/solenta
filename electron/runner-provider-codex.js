@@ -204,7 +204,7 @@ function createCodexRun(ctx) {
         // Overlay is best-effort; a failed isolate must not block the turn.
       }
     }
-    const spawn = resolveSpawn(project, binary, args, localCwd, codexWrapEnv);
+    const spawn = resolveSpawn(project, binary, args, localCwd, codexWrapEnv, threadId);
 
     if (abortIfCancelled(threadId, runId)) return { runId };
     const entry = claimPreparingRun(threadId, runId, {

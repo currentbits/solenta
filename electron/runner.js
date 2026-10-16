@@ -60,6 +60,8 @@ const workflowEngine = require("./workflow.js");
 const { wrapCommand } = require("./ssh.js");
 const { wslTarget } = require("./wsl.js");
 const { resolveSandbox } = require("./sandbox.js");
+const { createSeatbelt } = require("./runner-seatbelt.js");
+const { stopWatching } = require("./seatbeltWatch.js");
 const { killTree } = require("./proc.js");
 const { stop: stopDevServer } = require("./devservers.js");
 const {
@@ -2648,6 +2650,8 @@ function createRunner(opts) {
   function stopAll() {
     disposeWatchdogs();
     stopAllBtw();
+    // The Seatbelt denial follower (#803) is a `log stream` child.
+    stopWatching();
     // Clean app quit (main.js before-quit). Mark each active run idle with an
     // interruption event so the next launch's recoverInterruptedRuns (crash
     // path only) does not re-stamp them as generic failures. Kill + flush
@@ -2878,6 +2882,17 @@ function createRunner(opts) {
     clearQuestion,
     maybePersistPlanApproval,
   } = createPermissions(ctx);
+
+  // #803: every provider spawns through ctx.resolveSpawn; a thread whose
+  // profile has write/network rules runs under sandbox-exec (macOS, local).
+  // Before the provider seams below destructure ctx.
+  const { confineSpawn } = createSeatbelt(ctx);
+  ctx.resolveSpawn = (project, binary, args, localCwd, env, threadId) =>
+    confineSpawn(resolveSpawn(project, binary, args, localCwd, env), {
+      threadId,
+      project,
+      env,
+    });
 
   const {
     afterFailedTurn,
