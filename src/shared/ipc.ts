@@ -3915,6 +3915,18 @@ export interface McpCatalogEntry {
   installed: boolean;
 }
 
+/** One-click Xcode MCP pairing (#488). */
+export interface XcodeMcpStatus {
+  project: { kind: "workspace" | "project" | "package"; name: string };
+  /** `xcrun --find mcpbridge` succeeded (Xcode 26.3+). */
+  bridge: boolean;
+  /** MobileBuildMCP binary on PATH (`mobilebuildmcp` or legacy `xcodebuildmcp`). */
+  buildMcp: string | null;
+  /** Name of an MCP server that already drives Xcode. */
+  paired: string | null;
+  recommended: "mobilebuildmcp" | "xcode" | null;
+}
+
 export type McpImportKind = "local" | "github" | "catalog" | "json";
 
 export type McpPreviewImportInput =
@@ -4652,6 +4664,10 @@ export interface CoderApi {
       enabled: boolean;
     }): Promise<McpServerDefinition>;
     catalog(): Promise<McpCatalogEntry[]>;
+    /** Xcode MCP doctor card (#488); null off macOS or with no Apple project. */
+    xcodeStatus(input: { projectPath: string }): Promise<XcodeMcpStatus | null>;
+    /** Add the recommended Xcode server; rejects if one is already paired. */
+    pairXcode(input: { projectPath: string }): Promise<McpServerDefinition>;
     pickImport(): Promise<McpImportPreview | null>;
     previewImport(input: McpPreviewImportInput): Promise<McpImportPreview>;
     installImport(input: McpInstallRequest): Promise<McpInstallResult>;

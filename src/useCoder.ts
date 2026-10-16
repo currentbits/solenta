@@ -37,6 +37,7 @@ import type {
   MergeLaneRestore,
   MergeSpotlight,
   McpCatalogEntry,
+  XcodeMcpStatus,
   McpImportPreview,
   McpInstallRequest,
   McpInstallResult,
@@ -862,6 +863,8 @@ export interface UseCoderResult {
     enabled: boolean;
   }) => Promise<McpServerDefinition>;
   listMcpCatalog: () => Promise<McpCatalogEntry[]>;
+  xcodeMcpStatus: (input: { projectPath: string }) => Promise<XcodeMcpStatus | null>;
+  pairXcodeMcp: (input: { projectPath: string }) => Promise<McpServerDefinition>;
   pickMcpImport: () => Promise<McpImportPreview | null>;
   previewMcpImport: (input: McpPreviewImportInput) => Promise<McpImportPreview>;
   installMcpImport: (input: McpInstallRequest) => Promise<McpInstallResult>;
@@ -2016,6 +2019,8 @@ export function useCoder(): UseCoderResult {
     removeMcpServer,
     setMcpEnabled,
     listMcpCatalog,
+    xcodeMcpStatus,
+    pairXcodeMcp,
     pickMcpImport,
     previewMcpImport,
     installMcpImport,
@@ -2286,6 +2291,8 @@ export function useCoder(): UseCoderResult {
     removeMcpServer,
     setMcpEnabled,
     listMcpCatalog,
+    xcodeMcpStatus,
+    pairXcodeMcp,
     pickMcpImport,
     previewMcpImport,
     installMcpImport,
