@@ -113,7 +113,7 @@ describe("recently deleted threads (#940)", () => {
       services.threadSummaries(store).some((t) => t.id === gone.id),
       false,
     );
-    const hits = await services.searchThreads(store, { query: "auth" });
+    const { threads: hits } = await services.searchThreads(store, { query: "auth" });
     assert.equal(hits.some((t) => t.id === gone.id), false);
   });
 

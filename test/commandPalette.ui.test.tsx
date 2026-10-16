@@ -6,7 +6,10 @@ import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
 import { useState } from "react";
 import { inAct, mount } from "./support/dom.ts";
-import { CommandPalette } from "../src/components/CommandPalette";
+import {
+  CommandPalette,
+  type CommandPaletteProps,
+} from "../src/components/CommandPalette";
 import {
   PALETTE_ACTIONS,
   matchPaletteShortcut,
@@ -54,7 +57,7 @@ function PalletteHost({
   searchFileContents?: (
     query: string,
   ) => Promise<Array<{ path: string; line: number; text: string }>>;
-  searchThreads?: (input: { query: string }) => Promise<ThreadInfo[]>;
+  searchThreads?: CommandPaletteProps["searchThreads"];
   onSelectThread?: (id: string) => void;
   onSelectProject?: (id: string) => void;
   onRunAction?: (id: string) => void;
@@ -74,7 +77,9 @@ function PalletteHost({
         onModeChange={setMode}
         threads={threads}
         projects={projects}
-        searchThreads={searchThreads ?? (async () => [])}
+        searchThreads={
+          searchThreads ?? (async () => ({ threads: [], truncated: false }))
+        }
         listFiles={listFiles}
         searchFileContents={searchFileContents}
         canSearchWorkspace={canSearchWorkspace}
@@ -126,7 +131,7 @@ describe("command palette ui", () => {
       <PalletteHost
         searchThreads={async ({ query }) => {
           searched.push(query);
-          return [];
+          return { threads: [], truncated: false };
         }}
       />,
     );

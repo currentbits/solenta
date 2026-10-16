@@ -224,6 +224,12 @@ export function createMcp(ctx: DevCtx): Pick<CoderApi, "mcp"> {
       async catalog(): Promise<McpCatalogEntry[]> {
         return devMcpCatalogRows(ctx.mcpServers);
       },
+      async xcodeStatus() {
+        return null;
+      },
+      async pairXcode(): Promise<McpServerDefinition> {
+        throw new Error("Xcode pairing needs the desktop app.");
+      },
       async pickImport(): Promise<McpImportPreview | null> {
         return null;
       },

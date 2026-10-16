@@ -371,7 +371,7 @@ async function createProject(store, input) {
  * Patch an existing project. Today: display name, SSH remote fields,
  * space membership (issue #159), the autoDispatch opt-in (issue #165),
  * worktree retention (#316), a per-project iconPath override (#610), and
- * setupCommand / quickActions (issue #153).
+ * setupCommand / quickActions (issue #153), secondary folders (#514).
  * Remote validation mirrors addProject: a non-empty host requires an
  * absolute remotePath; an empty host clears both keys, turning the
  * project local again. The local checkout path is never edited here.
@@ -503,6 +503,17 @@ function updateProject(store, projectId, patch) {
     const modelRouting = normalizeModelRouting(input.modelRouting);
     if (modelRouting) next.modelRouting = modelRouting;
     else delete next.modelRouting;
+  }
+
+  // #514. Secondary folders; null / empty clears them. Validated against
+  // the post-patch row so a project turning remote cannot keep any.
+  if (Object.prototype.hasOwnProperty.call(input, "folders")) {
+    const { normalizeFolders } = require("./projectFolders.js");
+    const folders = normalizeFolders(input.folders, next);
+    if (folders.length) next.folders = folders;
+    else delete next.folders;
+  } else if (next.remoteHost) {
+    delete next.folders;
   }
 
   projects[idx] = next;

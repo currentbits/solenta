@@ -1170,6 +1170,12 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       },
       catalog: () =>
         rec("mcp.catalog", [], devMcpCatalogRows(settingsState.mcpServers)),
+      xcodeStatus: (input: { projectPath: string }) =>
+        rec("mcp.xcodeStatus", [input], null),
+      pairXcode: (input: { projectPath: string }) => {
+        calls.push({ channel: "mcp.pairXcode", args: [input] });
+        return Promise.reject(new Error("No Xcode project or Swift package in this project."));
+      },
       pickImport: () => rec("mcp.pickImport", [], null),
       previewImport: (input: McpPreviewImportInput) => {
         try {
@@ -1917,7 +1923,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
             receipts: [],
           } as CrewIntegration,
         ),
-      search: (input: unknown) => rec("threads.search", [input], [] as ThreadInfo[]),
+      search: (input: unknown) => rec("threads.search", [input], { threads: [] as ThreadInfo[], truncated: false }),
       create: (input: unknown) => {
         const createdAt = Date.now();
         const wantWorktree =

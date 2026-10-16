@@ -655,4 +655,29 @@ describe("project env (#188)", () => {
     });
     m.unmount();
   });
+
+  it("multi-folder project (#514): +N badge, prefilled folders, folders in the update", async () => {
+    const p1 = project({ id: "p1", name: "ledger", path: "/tmp/ledger", folders: ["/tmp/lib"] });
+    const t1 = thread({ id: "t1", projectId: "p1" });
+    const fake = createFakeCoder({
+      projects: [p1],
+      threads: [t1],
+      details: { t1: detail({ thread: t1 }) },
+    });
+    const m = await boot(fake);
+    await m.click(m.query("[data-scope-trigger]"));
+    const badge = m.query('[data-project-folders="1"]');
+    assert.ok(badge, "scope menu shows the folder badge");
+    assert.equal(badge.textContent, "+1 folder");
+    await m.click(m.query('[data-scope-edit="p1"]'));
+    const ta = m.query("[data-edit-project-folders]") as HTMLTextAreaElement | null;
+    assert.ok(ta);
+    assert.equal(ta.value, "/tmp/lib");
+    await m.type(ta, "/tmp/lib\n  /tmp/svc \n");
+    await m.click(m.query("[data-edit-project-submit]"));
+    await m.flush();
+    const args = fake.of("projects.update")[0]!.args[0] as ProjectUpdateInput;
+    assert.deepEqual(args.folders, ["/tmp/lib", "/tmp/svc"]);
+    m.unmount();
+  });
 });

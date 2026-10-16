@@ -2,7 +2,7 @@
 
 /**
  * Agent skills on disk: SKILL.md files under every provider's user skills
- * dir, plus the selected project's .claude/skills. Listing merges user
+ * dir, plus the selected project's per-CLI skills dirs. Listing merges user
  * copies into one row per name (project copies stay separate, read-only).
  * Writes, deletes, and sync only ever touch the user dirs.
  */
@@ -56,7 +56,8 @@ function SKILL_DIRS(env = process.env) {
     codex: path.join(env.CODEX_HOME || path.join(home, ".codex"), "skills"),
     grok: path.join(home, ".grok", "skills"),
     opencode: path.join(home, ".config", "opencode", "skills"),
-    kimi: path.join(home, ".kimi", "skills"),
+    // kimi-cli reads $KIMI_CODE_HOME/skills; ~/.kimi/skills is the legacy tree.
+    kimi: path.join(env.KIMI_CODE_HOME || path.join(home, ".kimi-code"), "skills"),
     cursor: path.join(env.CURSOR_HOME || path.join(home, ".cursor"), "skills"),
     muse: path.join(
       env.XDG_CONFIG_HOME || path.join(home, ".config"),
@@ -64,6 +65,18 @@ function SKILL_DIRS(env = process.env) {
       "skills",
     ),
   };
+}
+
+/**
+ * Repo-relative skills dir a CLI reads for `target`. Kimi's project dir is
+ * `.kimi-code/skills` (kimi-cli skillRoots), not `.kimi/skills`.
+ * @param {SkillTarget} target
+ * @returns {string}
+ */
+function projectSkillRel(target) {
+  return target === "kimi"
+    ? path.join(".kimi-code", "skills")
+    : path.join(`.${target}`, "skills");
 }
 
 /**
@@ -371,7 +384,8 @@ function resolveManagedProvenance(skillDir, userDataPath, registry) {
 
 /**
  * List skills as one row per user-skill name (merged across targets) plus
- * separate read-only rows from <project>/.claude/skills. Never throws on
+ * separate read-only rows from every <project>/<projectSkillRel> dir (first
+ * target wins a name collision). Never throws on
  * unreadable dirs. User rows first (by name), then project rows (by name).
  *
  * @param {string | null | undefined} projectPath
@@ -462,19 +476,24 @@ function finishSkillList(byName, active, projectPath, parseCache) {
   const projectRows = [];
   const project = typeof projectPath === "string" ? projectPath.trim() : "";
   if (project) {
-    for (const skill of scanSkillDir(
-      path.join(project, ".claude", "skills"),
-      parseCache,
-    )) {
-      projectRows.push({
-        name: skill.name,
-        description: skill.description,
-        source: "project",
-        installedIn: [],
-        missingFrom: [],
-        bytes: skill.bytes,
-        provenance: "project",
-      });
+    const seen = new Set();
+    for (const target of SKILL_TARGETS) {
+      for (const skill of scanSkillDir(
+        path.join(project, projectSkillRel(target)),
+        parseCache,
+      )) {
+        if (seen.has(skill.name)) continue;
+        seen.add(skill.name);
+        projectRows.push({
+          name: skill.name,
+          description: skill.description,
+          source: "project",
+          installedIn: [],
+          missingFrom: [],
+          bytes: skill.bytes,
+          provenance: "project",
+        });
+      }
     }
     projectRows.sort((a, b) => a.name.localeCompare(b.name));
   }
@@ -744,6 +763,7 @@ module.exports = {
   SKILL_TARGETS,
   parseSkillMarkdown,
   listSkills,
+  projectSkillRel,
   listSkillsAsync,
   installedCatalogIds,
   addSkill,

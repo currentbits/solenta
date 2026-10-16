@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import { afterEach, beforeEach } from "node:test";
 import { dismissContextMenu } from "../../src/contextMenuFallback";
 import { mount } from "./dom";
-import { Sidebar } from "../../src/components/Sidebar";
+import { Sidebar, type SidebarProps } from "../../src/components/Sidebar";
 import type {
   ProjectInfo,
   ProviderInfo,
@@ -179,7 +179,7 @@ export function sidebar(
     onOpenSettings?: () => void;
     appVersion?: string | null;
     channel?: "prod" | "nightly" | null;
-    searchThreads?: (input: { query: string }) => Promise<ThreadInfo[]>;
+    searchThreads?: SidebarProps["searchThreads"];
     trashedThreads?: import("../../src/shared/ipc").TrashedThreadInfo[];
     onRestoreThread?: (threadId: string) => void;
     onPurgeThread?: (threadId: string) => void;
@@ -237,8 +237,10 @@ export function sidebar(
       onOpenSettings={over.onOpenSettings}
       searchThreads={
         over.searchThreads ??
-        (async ({ query }) =>
-          threads.filter((t) => t.title.includes(query)))
+        (async ({ query }) => ({
+          threads: threads.filter((t) => t.title.includes(query)),
+          truncated: false,
+        }))
       }
       trashedThreads={over.trashedThreads}
       onRestoreThread={over.onRestoreThread}
