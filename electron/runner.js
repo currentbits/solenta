@@ -46,6 +46,7 @@ const cliCommands = require("./cliCommands.js");
 const ask = require("./ask.js");
 const btw = require("./btw.js");
 const { applyRoute } = require("./routing.js");
+const { foldersNoteFor } = require("./projectFolders.js");
 const {
   getMemoryStatus,
   looksGrokConfigCorrupt,
@@ -2154,6 +2155,7 @@ function createRunner(opts) {
           (projectForGate && projectForGate.path) ||
           null,
       ) +
+      foldersNoteFor(projectForGate, dispatchThread) +
       services.suggestedWorkNoteFor() +
       services.automationNoteFor() +
       services.subagentPoolNoteFor(

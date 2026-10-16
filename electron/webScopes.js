@@ -45,6 +45,7 @@ const BY_SCOPE = {
     "memory:maintenance",
     "mcp:list",
     "mcp:catalog",
+    "mcp:xcodeStatus",
     "skills:list",
     "skills:commands",
     "threads:listAgents",
@@ -114,6 +115,8 @@ const BY_SCOPE = {
     "devserver:status",
     "preview:info",
     "preview:screenshot",
+    "preview:snapshot",
+    "preview:diagnostics",
     "speech:status",
   ],
   steer: [
@@ -248,6 +251,10 @@ const BY_SCOPE = {
     "preview:goForward",
     "preview:click",
     "preview:type",
+    "preview:viewport",
+    // Inspect reads the guest DOM the user points at (#1193).
+    "preview:inspect",
+    "preview:cancelInspect",
     "devserver:start",
     "devserver:stop",
   ],
@@ -300,6 +307,7 @@ const BY_SCOPE = {
     // mcp:save registers a command to spawn; pairing:* mints or approves tokens.
     "mcp:save",
     "mcp:installImport",
+    "mcp:pairXcode",
     "pairing:create",
     "pairing:revoke",
     "pairing:approve",

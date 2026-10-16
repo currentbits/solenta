@@ -37,6 +37,7 @@ import type {
   MergeLaneRestore,
   MergeSpotlight,
   McpCatalogEntry,
+  XcodeMcpStatus,
   McpImportPreview,
   McpInstallRequest,
   McpInstallResult,
@@ -104,6 +105,8 @@ import type {
   WorkflowTemplateInfo,
   WorkSuggestionStatus,
   ModelRoute,
+  ThreadSearchInput,
+  ThreadSearchResult,
 } from "./shared/ipc";
 import { resolveCoderApi } from "./coderApi";
 import {
@@ -573,7 +576,7 @@ export interface UseCoderResult {
   }) => Promise<AttachmentInfo[]>;
   /** Web-only folder pick via showDirectoryPicker; persists through saveFolder. */
   pickFolderAttachments: () => Promise<AttachmentInfo[]>;
-  /** Persist a pasted image for the selected thread; null when rejected. */
+  /** Persist a pasted image for the selected thread; null when refused, rejects with the host error. */
   saveAttachmentImage: (dataUrl: string) => Promise<AttachmentInfo | null>;
   /** Data URL for one attached image; null when it is gone. */
   loadAttachmentImage: (path: string) => Promise<string | null>;
@@ -861,6 +864,8 @@ export interface UseCoderResult {
     enabled: boolean;
   }) => Promise<McpServerDefinition>;
   listMcpCatalog: () => Promise<McpCatalogEntry[]>;
+  xcodeMcpStatus: (input: { projectPath: string }) => Promise<XcodeMcpStatus | null>;
+  pairXcodeMcp: (input: { projectPath: string }) => Promise<McpServerDefinition>;
   pickMcpImport: () => Promise<McpImportPreview | null>;
   previewMcpImport: (input: McpPreviewImportInput) => Promise<McpImportPreview>;
   installMcpImport: (input: McpInstallRequest) => Promise<McpInstallResult>;
@@ -908,7 +913,7 @@ export interface UseCoderResult {
     provider?: "codex" | "grok" | "claude" | "cursor" | "opencode" | "kimi" | "muse";
   }) => Promise<ThreadInfo>;
   /** Full-content thread search (titles + message text); Sidebar owns debounce/state. */
-  searchThreads: (input: { query: string }) => Promise<ThreadInfo[]>;
+  searchThreads: (input: ThreadSearchInput) => Promise<ThreadSearchResult>;
   /** Load another thread's transcript without marking it visited (#393). */
   peekThread: (id: string) => Promise<ThreadDetail>;
 }
@@ -2019,6 +2024,8 @@ export function useCoder(): UseCoderResult {
     removeMcpServer,
     setMcpEnabled,
     listMcpCatalog,
+    xcodeMcpStatus,
+    pairXcodeMcp,
     pickMcpImport,
     previewMcpImport,
     installMcpImport,
@@ -2063,7 +2070,7 @@ export function useCoder(): UseCoderResult {
   );
 
   const searchThreads = useCallback(
-    async (input: { query: string }) => {
+    async (input: ThreadSearchInput) => {
       return api.threads.search(input);
     },
     [api],
@@ -2289,6 +2296,8 @@ export function useCoder(): UseCoderResult {
     removeMcpServer,
     setMcpEnabled,
     listMcpCatalog,
+    xcodeMcpStatus,
+    pairXcodeMcp,
     pickMcpImport,
     previewMcpImport,
     installMcpImport,

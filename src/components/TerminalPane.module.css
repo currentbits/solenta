@@ -15,6 +15,7 @@
 }
 
 .view {
+  position: relative;
   flex: 1 1 0;
   min-width: 0;
   min-height: 0;
@@ -28,8 +29,9 @@
 
 .bar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 4px 8px;
   padding: 4px 8px;
   border-bottom: 1px solid var(--border-soft);
   font-size: 11px;
@@ -37,7 +39,8 @@
 }
 
 .cwd {
-  flex: 1;
+  /* Holds a little room so narrow splits wrap the buttons, not the path. */
+  flex: 1 1 6em;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -67,9 +70,58 @@
   cursor: pointer;
 }
 
-.button:hover {
+.button:hover:not(:disabled) {
   background: var(--overlay-hover);
   color: var(--text);
+}
+
+.button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.button:focus-visible,
+.findInput:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.status {
+  position: absolute;
+  right: 8px;
+  bottom: 6px;
+  z-index: 1;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg-elevated);
+  color: var(--text);
+  font-size: 11px;
+  pointer-events: none;
+}
+
+.status:empty {
+  padding: 0;
+  border: 0;
+}
+
+.find {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.findInput {
+  flex: 1;
+  min-width: 0;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 11px;
 }
 
 .notice {

@@ -426,7 +426,7 @@ describe("Codex ServerRequest reply path (#1171)", () => {
     );
   });
 
-  it("JSON-RPC-errors fileChange and writeStdin", async () => {
+  it("JSON-RPC-errors fileChange without its item/started, and writeStdin", async () => {
     const thread = await startAsk();
     assert.equal(
       runner.handleCodexServerRequest(thread.id, {
