@@ -148,7 +148,12 @@ import {
   replySourceUnavailable,
   type ReplyTarget,
 } from "../replyContext";
-import { quoteChipAsReply, type TerminalChip } from "../contextChips";
+import {
+  elementChip,
+  quoteChipAsReply,
+  type InspectPick,
+  type TerminalChip,
+} from "../contextChips";
 import { waitWhatPrompt } from "../waitWhat";
 import { sessionImagePathsFromMessages } from "../sessionImages";
 import { PathLinkProvider, ThreadLinkContext } from "./PathLinks";
@@ -1843,6 +1848,28 @@ export const ThreadView = memo(function ThreadView({
     screenshotHandoffGen,
     screenshotHandoffThreadId,
   });
+
+  // Bound to the thread whose Browser pane captured it (#1193).
+  const attachBrowserElement = useCallback(
+    async (
+      pick: InspectPick,
+      comment: string,
+      originThreadId: string,
+    ) => {
+      const cropAttached = pick.crop
+        ? await attachBrowserScreenshot(pick.crop, originThreadId)
+        : false;
+      const id =
+        typeof crypto !== "undefined" && crypto.randomUUID
+          ? crypto.randomUUID()
+          : `element-${Date.now()}`;
+      setContextChips(originThreadId, (prev) => [
+        ...prev,
+        elementChip(id, originThreadId, pick, cropAttached, comment),
+      ]);
+    },
+    [attachBrowserScreenshot],
+  );
 
   /**
    * Fork one thread per selected provider or profile, then start the same
@@ -3768,6 +3795,7 @@ export const ThreadView = memo(function ThreadView({
                 onAttachScreenshot={
                   onSaveAttachmentImage ? attachBrowserScreenshot : undefined
                 }
+                onAttachElement={attachBrowserElement}
               />
             );
           }
@@ -3839,6 +3867,22 @@ export const ThreadView = memo(function ThreadView({
                 api={terminalApi}
                 reveal={terminalReveal}
                 onFix={onFixSuggestion}
+                onAddToPrompt={
+                  isArchived
+                    ? undefined
+                    : (tid, text) =>
+                        setContextChips(tid, (prev) => [
+                          ...prev,
+                          {
+                            id:
+                              typeof crypto !== "undefined" && crypto.randomUUID
+                                ? crypto.randomUUID()
+                                : `term-${Date.now()}`,
+                            kind: "terminal",
+                            text,
+                          },
+                        ])
+                }
               />
             );
           }

@@ -449,6 +449,15 @@ function createCodexRun(ctx) {
           return;
         }
 
+        // item/fileChange/requestApproval names only the itemId (#1189):
+        // keep each item's changes until it completes so the ask can show them.
+        if (ev.item && ev.item.type === "file_change" && ev.item.id) {
+          const live = active.get(threadId);
+          if (!live.codexFileChanges) live.codexFileChanges = new Map();
+          if (ev.type === "item.completed") live.codexFileChanges.delete(ev.item.id);
+          else live.codexFileChanges.set(ev.item.id, ev.item.changes);
+        }
+
         if (ev.type === "server_request.resolved") {
           const live = active.get(threadId);
           live.pendingPermissions = live.pendingPermissions.filter((p) => p.rpcId !== ev.requestId);

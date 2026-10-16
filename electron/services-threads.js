@@ -1733,17 +1733,21 @@ function threadSummaries(store, input) {
 }
 
 /**
- * Full-content search across titles and message text.
+ * Full-content search across titles and message text. Hidden rows and,
+ * when given, ids outside threadIds (the sidebar's active filters) are
+ * dropped before the result cap so they never crowd out a match (#1201).
  * @param {import('./store').Store} store
- * @param {{ query?: string }} [input]
+ * @param {{ query?: string, threadIds?: string[] }} [input]
  */
 async function searchThreads(store, input) {
   const query =
     input && input.query != null ? String(input.query) : "";
-  const hits = await store.searchThreads(query);
-  return hits.filter(
-    (t) => !(t && t.memoryConsolidate === true) && !isTrashed(t),
-  );
+  const ids =
+    input && Array.isArray(input.threadIds) ? new Set(input.threadIds) : null;
+  return store.searchThreads(query, {
+    include: (t) =>
+      t.memoryConsolidate !== true && !isTrashed(t) && (!ids || ids.has(t.id)),
+  });
 }
 
 /**

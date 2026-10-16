@@ -53,7 +53,7 @@ describe("threads search", () => {
       makeThread({ id: "a", title: "Fix Auth Bug", updatedAt: 10 }),
       makeThread({ id: "b", title: "Unrelated work", updatedAt: 20 }),
     ]);
-    const hits = await store.searchThreads("auth");
+    const { threads: hits } = await store.searchThreads("auth");
     assert.equal(hits.length, 1);
     assert.equal(hits[0].id, "a");
   });
@@ -76,7 +76,7 @@ describe("threads search", () => {
     store.setMessages("a", [
       { id: "m1", role: "user", text: "please refactor the parser", createdAt: 1 },
     ]);
-    const hits = await store.searchThreads("merge after #42");
+    const { threads: hits } = await store.searchThreads("merge after #42");
     assert.equal(hits.length, 1);
     assert.equal(hits[0].id, "a");
   });
@@ -92,7 +92,7 @@ describe("threads search", () => {
     store.setMessages("b", [
       { id: "m2", role: "assistant", text: "done with styles", createdAt: 2 },
     ]);
-    const hits = await store.searchThreads("PARSER");
+    const { threads: hits } = await store.searchThreads("PARSER");
     assert.equal(hits.length, 1);
     assert.equal(hits[0].id, "a");
   });
@@ -105,7 +105,7 @@ describe("threads search", () => {
       { id: "m1", role: "user", text: "parser details", createdAt: 1 },
       { id: "m2", role: "assistant", text: "more parser notes", createdAt: 2 },
     ]);
-    const hits = await store.searchThreads("parser");
+    const { threads: hits } = await store.searchThreads("parser");
     assert.equal(hits.length, 1);
     assert.equal(hits[0].id, "a");
   });
@@ -125,7 +125,7 @@ describe("threads search", () => {
         updatedAt: 10,
       }),
     ]);
-    const hits = await store.searchThreads("auth");
+    const { threads: hits } = await store.searchThreads("auth");
     assert.equal(hits.length, 1);
     assert.equal(hits[0].id, "arch");
     assert.equal(hits[0].archived, true);
@@ -143,33 +143,90 @@ describe("threads search", () => {
       );
     }
     store.setThreads(threads);
-    const hits = await store.searchThreads("unique-marker");
+    const { threads: hits, truncated } = await store.searchThreads("unique-marker");
     assert.equal(hits.length, 50);
+    assert.equal(truncated, true);
     assert.equal(hits[0].id, "t59");
     assert.equal(hits[49].id, "t10");
+    assert.equal((await store.searchThreads("Hit 5")).truncated, false);
     for (let i = 0; i < hits.length - 1; i++) {
       assert.ok(hits[i].updatedAt >= hits[i + 1].updatedAt);
     }
   });
 
-  it("returns [] for empty or 1-char queries", async () => {
+  it("returns no hits for empty or 1-char queries", async () => {
     store.setThreads([makeThread({ id: "a", title: "Anything" })]);
-    assert.deepEqual(await store.searchThreads(""), []);
-    assert.deepEqual(await store.searchThreads(" "), []);
-    assert.deepEqual(await store.searchThreads("a"), []);
-    assert.deepEqual(await store.searchThreads(null), []);
-    assert.deepEqual(await store.searchThreads(undefined), []);
+    assert.deepEqual(await store.searchThreads(""), { threads: [], truncated: false });
+    assert.deepEqual(await store.searchThreads(" "), { threads: [], truncated: false });
+    assert.deepEqual(await store.searchThreads("a"), { threads: [], truncated: false });
+    assert.deepEqual(await store.searchThreads(null), { threads: [], truncated: false });
+    assert.deepEqual(await store.searchThreads(undefined), { threads: [], truncated: false });
   });
 
   it("services.searchThreads wires store and input shape", async () => {
     store.setThreads([
       makeThread({ id: "a", title: "Budget cap notes", updatedAt: 3 }),
     ]);
-    const hits = await services.searchThreads(store, { query: "budget" });
+    const { threads: hits } = await services.searchThreads(store, { query: "budget" });
     assert.equal(hits.length, 1);
     assert.equal(hits[0].id, "a");
-    assert.deepEqual(await services.searchThreads(store, { query: "x" }), []);
-    assert.deepEqual(await services.searchThreads(store, {}), []);
+    assert.deepEqual(await services.searchThreads(store, { query: "x" }), { threads: [], truncated: false });
+    assert.deepEqual(await services.searchThreads(store, {}), { threads: [], truncated: false });
+  });
+
+  it("scopes by threadIds before the cap; hidden rows spend no budget (#1201)", async () => {
+    const threads = [];
+    for (let i = 0; i < 50; i++) {
+      threads.push(
+        makeThread({ id: `a${i}`, title: `release prep ${i}`, updatedAt: 1000 + i }),
+      );
+    }
+    for (let i = 0; i < 5; i++) {
+      threads.push(
+        makeThread({
+          id: `mem${i}`,
+          title: `release memory ${i}`,
+          updatedAt: 2000 + i,
+          memoryConsolidate: true,
+        }),
+      );
+    }
+    const target = makeThread({
+      id: "b-old",
+      projectId: "p2",
+      title: "older",
+      notes: "release blocker",
+      status: "failed",
+      provider: "grok",
+      archived: true,
+      tags: ["release"],
+      updatedAt: 1,
+    });
+    threads.push(target);
+    store.setThreads(threads);
+
+    const all = await services.searchThreads(store, { query: "release" });
+    assert.equal(all.threads.length, 50, "hidden rows never fill the page");
+    assert.equal(all.truncated, true);
+    assert.equal(all.threads.some((t) => t.memoryConsolidate), false);
+    assert.equal(all.threads.some((t) => t.id === "b-old"), false);
+
+    const scoped = await services.searchThreads(store, {
+      query: "release",
+      threadIds: ["b-old", "a3", "mem0"],
+    });
+    assert.deepEqual(
+      scoped.threads.map((t) => t.id),
+      ["a3", "b-old"],
+      "in-scope match survives, updatedAt DESC, hidden id ignored",
+    );
+    assert.equal(scoped.truncated, false);
+
+    const none = await services.searchThreads(store, {
+      query: "release",
+      threadIds: [],
+    });
+    assert.deepEqual(none, { threads: [], truncated: false });
   });
 
   it("does not hydrate persisted shards on a no-match search (#1122)", async () => {
@@ -198,7 +255,7 @@ describe("threads search", () => {
     const reloaded = new Store(filePath);
     assert.equal(Object.keys(reloaded._messagesHydrated).length, 0);
 
-    const hits = await reloaded.searchThreads("no-such-token-zz");
+    const { threads: hits } = await reloaded.searchThreads("no-such-token-zz");
     assert.deepEqual(hits, []);
     assert.equal(
       Object.keys(reloaded._messagesHydrated).length,
@@ -226,7 +283,7 @@ describe("threads search", () => {
     ]);
     store.saveNow();
     const reloaded = new Store(filePath);
-    const hits = await reloaded.searchThreads("UNIQUE-archive-needle");
+    const { threads: hits } = await reloaded.searchThreads("UNIQUE-archive-needle");
     assert.equal(hits.length, 1);
     assert.equal(hits[0].id, "arch");
     assert.equal(hits[0].archived, true);
@@ -243,7 +300,7 @@ describe("threads search", () => {
     store.setMessages("live", [
       { id: "m1", role: "user", text: "unsaved-needle-xyz", createdAt: 1 },
     ]);
-    const hits = await store.searchThreads("unsaved-needle-xyz");
+    const { threads: hits } = await store.searchThreads("unsaved-needle-xyz");
     assert.equal(hits.length, 1);
     assert.equal(hits[0].id, "live");
   });
@@ -259,10 +316,10 @@ describe("threads search", () => {
     store.saveNow();
     store.removeThread("gone");
     store.saveNow();
-    const hits = await store.searchThreads("delete-me-later");
+    const { threads: hits } = await store.searchThreads("delete-me-later");
     assert.equal(hits.some((t) => t.id === "gone"), false);
     const reloaded = new Store(filePath);
-    const afterRestart = await reloaded.searchThreads("delete-me-later");
+    const { threads: afterRestart } = await reloaded.searchThreads("delete-me-later");
     assert.equal(afterRestart.some((t) => t.id === "gone"), false);
   });
 
@@ -275,7 +332,7 @@ describe("threads search", () => {
     ]);
     store.saveNow();
     const reloaded = new Store(filePath);
-    const hits = await reloaded.searchThreads("restart-persist-needle");
+    const { threads: hits } = await reloaded.searchThreads("restart-persist-needle");
     assert.equal(hits.length, 1);
     assert.equal(hits[0].id, "t1");
   });
@@ -296,7 +353,7 @@ describe("threads search", () => {
     const beforeMtime = fs.statSync(shardPath).mtimeMs;
 
     const reloaded = new Store(filePath);
-    const hits = await reloaded.searchThreads("healthy-needle");
+    const { threads: hits } = await reloaded.searchThreads("healthy-needle");
     assert.equal(hits.length, 1);
     assert.equal(hits[0].id, "ok");
     assert.equal(fs.readFileSync(shardPath, "utf8"), corrupt);
@@ -319,7 +376,7 @@ describe("threads search", () => {
       "search must be async so renderer guards are not the only cancel path",
     );
     const second = store.searchThreads("beta-unique-title");
-    const [a, b] = await Promise.all([first, second]);
+    const [{ threads: a }, { threads: b }] = await Promise.all([first, second]);
     assert.deepEqual(
       a.map((t) => t.id),
       [],
@@ -358,7 +415,7 @@ describe("threads search", () => {
     const histogram = monitorEventLoopDelay({ resolution: 1 });
     histogram.enable();
     const t0 = process.hrtime.bigint();
-    const hits = await reloaded.searchThreads("no-such-loop-token");
+    const { threads: hits } = await reloaded.searchThreads("no-such-loop-token");
     const elapsedMs = Number(process.hrtime.bigint() - t0) / 1e6;
     histogram.disable();
     const p95Ms = histogram.percentile(95) / 1e6;

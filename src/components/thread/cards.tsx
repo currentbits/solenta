@@ -26,7 +26,10 @@ import {
   type DivergenceField,
 } from "../../divergence";
 import { Markdown } from "../Markdown";
+import { FileHunks } from "../TurnDiffPanel";
+import { parsePatch } from "../../reviewItinerary";
 import styles from "../ThreadView.module.css";
+import diffStyles from "../TurnDiffPanel.module.css";
 
 /**
  * Plan approval (ExitPlanMode): the plan rendered as markdown in the prompt
@@ -227,6 +230,11 @@ export function PermissionPrompt({
   const edited =
     editable && original !== null && command.trim() !== original.trim();
   const empty = editable && command.trim() === "";
+  const fileChange = pending.fileChange ?? null;
+  const patches = useMemo(
+    () => parsePatch(fileChange?.diff ?? ""),
+    [fileChange?.diff],
+  );
 
   const answer = (decision: PermissionDecision) => {
     if (sent) return;
@@ -262,7 +270,27 @@ export function PermissionPrompt({
           {guardrailSource ? ` (${guardrailSource})` : ""}
         </div>
       ) : null}
-      {hasCommand ? (
+      {fileChange ? (
+        <>
+          {fileChange.reason ? (
+            <div data-permission-reason="">{fileChange.reason}</div>
+          ) : null}
+          {fileChange.grantRoot ? (
+            <div className={styles.permissionGuardrail} data-permission-grant-root="">
+              ⚠ Also asks to allow writes under <code>{fileChange.grantRoot}</code> for
+              this session
+            </div>
+          ) : null}
+          <div className={diffStyles.patch} data-permission-diff="">
+            {patches.map((p) => (
+              <Fragment key={p.path}>
+                <div className={diffStyles.hunkHead}>{p.path}</div>
+                <FileHunks patch={p} mode="unified" />
+              </Fragment>
+            ))}
+          </div>
+        </>
+      ) : hasCommand ? (
         <>
           <textarea
             className={`${styles.permissionInput} ${styles.permissionCommand}`}
