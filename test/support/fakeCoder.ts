@@ -2051,6 +2051,8 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       },
       setPermissionMode: (input: unknown) =>
         rec("threads.setPermissionMode", [input], thread()),
+      applyAgentProfile: (input: unknown) =>
+        rec("threads.applyAgentProfile", [input], thread()),
       setArchived: (input: unknown) => {
         const i = input as { threadId: string; archived: boolean };
         return rec(
@@ -3015,6 +3017,11 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           [],
           [...trashed.values()].map(({ thread: _thread, ...row }) => row),
         ),
+    },
+    governance: {
+      listAudit: (input?: unknown) => rec("governance.listAudit", [input], []),
+      verifyAudit: () =>
+        rec("governance.verifyAudit", [], { ok: true as const, entries: 0 }),
     },
     activity: {
       list: () => {

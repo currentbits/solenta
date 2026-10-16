@@ -336,8 +336,12 @@ export function createThreads(ctx: DevCtx): Pick<CoderApi, "threads"> {
       async setPermissionMode(input) {
         return patchThread(input.threadId, {
           permissionMode: input.mode,
+          agentProfileId: null,
           updatedAt: now(),
         });
+      },
+      async applyAgentProfile(input) {
+        return patchThread(input.threadId, { agentProfileId: input.profileId });
       },
       async savePlan(input) {
         if (!details.has(input.threadId)) {

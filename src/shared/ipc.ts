@@ -914,6 +914,13 @@ export interface ThreadInfo {
   provider: string;
   /** Named instance of `provider` (#453); absent on the base provider. */
   providerInstance?: string | null;
+  /**
+   * AgentProfile the thread is running under (#262). Set by
+   * threads.applyAgentProfile; cleared by a manual provider / effort /
+   * permission pick. Its `policy` gates Claude tool calls. An id that no
+   * longer matches a saved profile means "no profile".
+   */
+  agentProfileId?: string | null;
   /** Model override passed to the provider CLI when set (e.g. claude --model). */
   model: string | null;
   /** Provider session id, persisted after the first turn so follow-ups resume context. */
@@ -1967,8 +1974,11 @@ export interface PendingPermissionInfo {
    * Present when the guardrail policy (#409) rated this call risky but not
    * deniable — show the reason so the user isn't approving blind. Denied
    * calls never reach here; they are answered without asking.
+   * `layer` (#262) names who asked: "builtin", "profile.ask",
+   * "profile.default". On "profile.ask" hide Allow always: a session grant
+   * cannot mute an always-confirm rule.
    */
-  guardrail?: { rule: string | null; reason: string } | null;
+  guardrail?: { rule: string | null; reason: string; layer?: GovernanceLayer } | null;
 }
 
 /**
@@ -3469,7 +3479,81 @@ export interface AgentProfile {
   /** null = provider default (no --effort flag). */
   reasoningEffort: ReasoningEffort | null;
   permissionMode: PermissionMode;
+  /** Permission matrix (#262). Absent = no rules, default "ask". */
+  policy?: GovernancePolicy;
 }
+
+/**
+ * Governance matrix (#262). `block` and `deny` both auto-deny; `block` is the
+ * floor ("never, not a prompt"), `deny` a visible rejection. Deny wins:
+ * every matching rule is collected and the most severe action decides.
+ */
+export type GovernanceAction = "block" | "deny" | "ask" | "allow";
+
+export interface GovernanceRule {
+  /**
+   * tool: glob vs tool name. bash: glob vs normalized command.
+   * write: glob vs canonical absolute path of a write tool.
+   * network: glob vs any hostname the call reaches.
+   */
+  kind: "tool" | "bash" | "write" | "network";
+  /** Case-insensitive glob, `*` and `?` only. 1-200 chars after trim. */
+  match: string;
+  action: GovernanceAction;
+}
+
+export interface GovernancePolicy {
+  /** What an unmatched call does. */
+  defaultAction: "ask" | "allow";
+  /** At most 40. */
+  rules: GovernanceRule[];
+}
+
+/** Who decided a governed tool call. */
+export type GovernanceLayer =
+  | "builtin"
+  | "normalize"
+  | "profile.block"
+  | "profile.deny"
+  | "profile.ask"
+  | "profile.allow"
+  | "profile.default"
+  | "session"
+  | "seatbelt";
+
+/** Canonical form of a tool call, as the matcher saw it. */
+export interface GovernanceCall {
+  tool: string;
+  command: string | null;
+  path: string | null;
+  hosts: string[];
+}
+
+/** One HMAC-chained audit row, as listed to the renderer (no hmac / prev). */
+export interface GovernanceAuditEntry {
+  v: 1;
+  /** 1-based position in the chain. */
+  seq: number;
+  /** Epoch ms. */
+  ts: number;
+  threadId: string;
+  profileId: string | null;
+  provider: string;
+  toolName: string;
+  /** SHA-256 of the canonical declared action. */
+  actionHash: string;
+  declared: GovernanceCall;
+  /** What actually ran; null on ask / deny rows. */
+  executed: GovernanceCall | null;
+  decision: "allow" | "ask" | "deny";
+  layer: GovernanceLayer;
+  rule: string | null;
+  reason: string;
+}
+
+export type GovernanceVerifyResult =
+  | { ok: true; entries: number }
+  | { ok: false; seq?: number; reason: string };
 
 /**
  * One described candidate in the worker-model pool. The lead picks by
@@ -4797,6 +4881,13 @@ export interface CoderApi {
      */
     setPermissionMode(input: { threadId: string; mode: PermissionMode }): Promise<ThreadInfo>;
     /**
+     * Apply a saved AgentProfile (#262): provider, model, effort, permission
+     * mode (snapped to what the provider honours) and `agentProfileId`.
+     * Rejects "Unknown agent profile" before touching the thread. The manual
+     * setProvider / setReasoningEffort / setPermissionMode clear the id.
+     */
+    applyAgentProfile(input: { threadId: string; profileId: string }): Promise<ThreadInfo>;
+    /**
      * Answer the pending permission prompt (ThreadDetail.pendingPermission).
      * For claude this is the live control_request. For Codex it is an
      * app-server JSON-RPC ServerRequest (issue #1171); `updatedCommand` is
@@ -5292,6 +5383,12 @@ export interface CoderApi {
   activity: {
     /** Cross-thread newest-first feed of created/started/done/failed. */
     list(): Promise<ActivityItem[]>;
+  };
+  governance: {
+    /** Newest-first audit rows (#262). Default and max limit 50. */
+    listAudit(input?: { threadId?: string; limit?: number }): Promise<GovernanceAuditEntry[]>;
+    /** Walk the whole HMAC chain; the first bad link fails it. */
+    verifyAudit(): Promise<GovernanceVerifyResult>;
   };
   usage: {
     /** Per-day usage ledger, by provider/model and by thread (90 days). */
