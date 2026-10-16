@@ -265,7 +265,8 @@ function GovernanceAuditSection() {
     <section className={styles.section} data-governance-audit="">
       <h3 className={styles.sectionLabel}>Governance audit</h3>
       <p className={styles.note}>
-        Last 50 tool calls an agent profile&apos;s rules decided, newest first.
+        Last 50 governed Claude tool-call decisions (built-in guardrails and
+        profile rules), newest first. HMAC-chained; Verify walks the whole log.
       </p>
       {rows != null && rows.length === 0 && (
         <p className={styles.note}>No governed tool calls yet.</p>

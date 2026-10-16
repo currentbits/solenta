@@ -1478,8 +1478,9 @@ function PolicyFields({
       ))}
       <p className={styles.note}>
         Built-in Solenta guardrails still apply and cannot be lifted. Rules
-        gate Claude&apos;s permission prompts only; other agents are not
-        confined until the OS sandbox (#803).
+        gate Claude&apos;s permission prompts only, so Accept edits and Bypass
+        modes skip what they would check; other agents are not confined until
+        the OS sandbox (#803).
       </p>
     </>
   );
