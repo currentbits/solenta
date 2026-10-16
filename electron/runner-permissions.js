@@ -31,6 +31,7 @@ const {
 } = require("./permissionCommand.js");
 const { normalizeQuestions } = require("./questions.js");
 const threadSecrets = require("./threadSecrets.js");
+const { writeGrants } = require("./projectFolders.js");
 const {
   PLAN_TRUNCATE,
   planText,
@@ -120,6 +121,7 @@ function createPermissions(ctx) {
           fileChange: p.fileChange || null,
           plan: planText(p.toolName, p.rawInput),
           guardrail: p.guardrail || null,
+          folderGrant: p.folderGrant || null,
         };
       }
     }
@@ -313,7 +315,7 @@ function createPermissions(ctx) {
    * allow-always after an edit keys the session rule on the edited prefix.
    * Codex JSON-RPC ignores `updatedCommand` (the reply cannot rewrite the
    * command).
-   * @param {{ threadId: string, requestId: string, decision: "allow" | "allowAlways" | "deny", answers?: Record<string, string>, updatedCommand?: string }} input
+   * @param {{ threadId: string, requestId: string, decision: "allow" | "allowAlways" | "allowFolder" | "deny", answers?: Record<string, string>, updatedCommand?: string }} input
    */
   function respondPermission(input) {
     const { threadId, requestId, decision, answers, updatedCommand } =
@@ -386,6 +388,20 @@ function createPermissions(ctx) {
       pushDetail(threadId, e.claudeState);
       pushThreadsChanged();
       return;
+    }
+    // #514: "allowFolder" allows this edit and grants the whole secondary
+    // folder for the rest of the thread (the next spawn drops its ask rule).
+    if (decision === "allowFolder") {
+      if (!pending.folderGrant) throw new Error("This request has no folder to grant");
+      const t = store.getThread(threadId);
+      const grants = writeGrants(t);
+      if (!grants.includes(pending.folderGrant)) {
+        store.updateThread(threadId, {
+          folderWriteGrants: [...grants, pending.folderGrant],
+        });
+      }
+      appendMessage(threadId, "event", `Writes allowed in ${pending.folderGrant}`, e.runId);
+      return respondPermission({ ...input, decision: "allow" });
     }
     const resolved = resolveEditedCommand(pending.rawInput, updatedCommand);
     if (

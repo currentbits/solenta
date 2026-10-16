@@ -45,6 +45,7 @@ const BY_SCOPE = {
     "memory:maintenance",
     "mcp:list",
     "mcp:catalog",
+    "mcp:xcodeStatus",
     "skills:list",
     "skills:commands",
     "threads:listAgents",
@@ -308,6 +309,7 @@ const BY_SCOPE = {
     // mcp:save registers a command to spawn; pairing:* mints or approves tokens.
     "mcp:save",
     "mcp:installImport",
+    "mcp:pairXcode",
     "pairing:create",
     "pairing:revoke",
     "pairing:approve",

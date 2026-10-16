@@ -60,6 +60,13 @@ export interface ProjectInfo {
   slug: string;
   name: string;
   path: string;
+  /**
+   * Multi-folder projects (#514): extra absolute folders, in order. `path`
+   * stays the primary (git, worktrees, AGENTS.md / skills / memory); agents
+   * may read and search these, and write only after a per-folder grant on
+   * the permission card. Local projects only.
+   */
+  folders?: string[];
   /** When set, the project lives on this host (user@host) and agents run over ssh. */
   remoteHost?: string;
   /** Absolute path on the remote host. Required when remoteHost is set. */
@@ -385,6 +392,8 @@ export interface ProjectUpdateInput {
   autoPr?: boolean;
   /** Worktree retention (#316 / #559): 0 keeps everything, N > 0 sets the keep count. Default 10. */
   worktreeRetention?: number;
+  /** Secondary folders (#514), absolute paths. Empty / null clears them. */
+  folders?: string[] | null;
   /**
    * Relative project file to use as the icon, or null to restore
    * Automatic detection (#610).
@@ -1997,6 +2006,12 @@ export interface PendingPermissionInfo {
    * cannot mute an always-confirm rule.
    */
   guardrail?: { rule: string | null; reason: string; layer?: GovernanceLayer } | null;
+  /**
+   * Multi-folder projects (#514): the edit lands in this secondary folder,
+   * which the thread may not write yet. "allowFolder" grants it for the
+   * rest of the thread.
+   */
+  folderGrant?: string | null;
 }
 
 /**
@@ -2050,7 +2065,13 @@ export interface PendingQuestion {
 }
 
 /** User decision on a PendingPermissionInfo. "allowAlways" also allows the tool for the rest of the CLI session. */
-export type PermissionDecision = "allow" | "allowAlways" | "deny" | "cancel";
+export type PermissionDecision =
+  | "allow"
+  | "allowAlways"
+  /** #514: allow, and grant writes to pending.folderGrant for this thread. */
+  | "allowFolder"
+  | "deny"
+  | "cancel";
 export type InputValues = Record<string, string | number | boolean | string[]>;
 export interface PendingInputRequest {
   source: string;
@@ -3978,6 +3999,18 @@ export interface McpCatalogEntry {
   installed: boolean;
 }
 
+/** One-click Xcode MCP pairing (#488). */
+export interface XcodeMcpStatus {
+  project: { kind: "workspace" | "project" | "package"; name: string };
+  /** `xcrun --find mcpbridge` succeeded (Xcode 26.3+). */
+  bridge: boolean;
+  /** MobileBuildMCP binary on PATH (`mobilebuildmcp` or legacy `xcodebuildmcp`). */
+  buildMcp: string | null;
+  /** Name of an MCP server that already drives Xcode. */
+  paired: string | null;
+  recommended: "mobilebuildmcp" | "xcode" | null;
+}
+
 export type McpImportKind = "local" | "github" | "catalog" | "json";
 
 export type McpPreviewImportInput =
@@ -4715,6 +4748,10 @@ export interface CoderApi {
       enabled: boolean;
     }): Promise<McpServerDefinition>;
     catalog(): Promise<McpCatalogEntry[]>;
+    /** Xcode MCP doctor card (#488); null off macOS or with no Apple project. */
+    xcodeStatus(input: { projectPath: string }): Promise<XcodeMcpStatus | null>;
+    /** Add the recommended Xcode server; rejects if one is already paired. */
+    pairXcode(input: { projectPath: string }): Promise<McpServerDefinition>;
     pickImport(): Promise<McpImportPreview | null>;
     previewImport(input: McpPreviewImportInput): Promise<McpImportPreview>;
     installImport(input: McpInstallRequest): Promise<McpInstallResult>;
@@ -6516,6 +6553,13 @@ export interface CoderApi {
       }[],
       position?: { x: number; y: number },
     ): Promise<string | null>;
+  };
+  /**
+   * Desktop only (#519): open the thread in its own window, or focus the one
+   * already open. Absent on web/dev.
+   */
+  windows?: {
+    detachThread(threadId: string): Promise<void>;
   };
   /** Returns an unsubscribe function. */
   on(channel: "threads:changed", cb: (push: ThreadListPush) => void): () => void;

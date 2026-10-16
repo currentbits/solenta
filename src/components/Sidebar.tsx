@@ -1771,6 +1771,15 @@ export const Sidebar = memo(function Sidebar({
                             />
                           ) : null}
                           <span className={styles.filterGroupTitle}>{title}</span>
+                          {g.project?.folders?.length ? (
+                            <span
+                              className={styles.folderChip}
+                              data-project-folders={g.project.folders.length}
+                              title={g.project.folders.join("\n")}
+                            >
+                              +{g.project.folders.length}
+                            </span>
+                          ) : null}
                           <span className={styles.filterGroupCount}>
                             {g.threads.length}
                           </span>
