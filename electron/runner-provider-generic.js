@@ -377,8 +377,9 @@ function createGenericRun(ctx) {
 
     const crossing = crossesBoundary(project);
     const spawn = crossing
-      ? resolveSpawn(project, command, [...args, String(prompt ?? "")], localCwd)
-      : { binary: command, args, cwd: localCwd };
+      ? resolveSpawn(project, command, [...args, String(prompt ?? "")], localCwd, undefined, threadId)
+      : // Local: same seam so a Seatbelt-governed thread is wrapped (#803).
+        resolveSpawn(project, command, args, localCwd, undefined, threadId);
     if (abortIfCancelled(threadId, runId)) return { runId };
     const handle = runAgentFn({
       command: spawn.binary,

@@ -15,6 +15,7 @@ const {
 } = require("./worktrees.js");
 const { readPrTemplate } = require("./prWorkspace.js");
 const { fmRun } = require("./fm.js");
+const { kimiNoToolsAgentFile } = require("./ask.js");
 
 const TIMEOUT_MS = 60000;
 /** Diff body is truncated well under the IPC 100k cap; models need the shape, not every hunk. */
@@ -61,8 +62,9 @@ function buildSuggestArgs(providerId, opts) {
       return args;
     }
     case "kimi": {
-      // -p prints text by default (stream-json is opt-in).
-      const args = [];
+      // -p prints text by default (stream-json is opt-in). It also runs
+      // tools unprompted in this cwd (the worktree): no-tools agent (#698).
+      const args = ["--agent-file", kimiNoToolsAgentFile()];
       if (model) args.push("-m", String(model));
       args.push("-p", String(prompt));
       return args;

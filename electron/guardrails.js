@@ -505,7 +505,24 @@ function redact(s) {
   return `${head}…(${str.length} chars)`;
 }
 
+/**
+ * Replace every secret hit in place with its redact form. Not gated on the
+ * guardrails toggle: it guards Solenta's own logs (#262 audit), not the agent.
+ * @param {string} text
+ */
+function redactSecrets(text) {
+  let s = String(text || "");
+  for (const [re, rule] of SECRET_RULES) {
+    s = s.replace(new RegExp(re.source, `${re.flags}g`), (m) =>
+      rule === "secret.assignment" && PLACEHOLDER.test(m) ? m : redact(m),
+    );
+  }
+  return s;
+}
+
 module.exports = {
+  redactSecrets,
+  WRITE_TOOLS,
   guardrailsEnabled,
   setGuardrailsEnabled,
   classifyTool,

@@ -23,10 +23,16 @@
  *   ssh remote → another host; WSL UNC on win32 → inside the distro;
  *   otherwise the process is a plain local child with the user's filesystem.
  *
+ * Seatbelt (#803): on macOS a local thread whose agent profile has write or
+ * network rules runs under sandbox-exec (runner-seatbelt.js). That, and only
+ * that, makes a non-Codex run sandboxed here. The predicate is the same one
+ * the runner uses, so the badge cannot claim a wrap the spawn did not do.
+ *
  * Pure: no spawning, platform injected (defaults to process.platform).
  */
 
 const { wslTarget } = require("./wsl.js");
+const { seatbeltApplies } = require("./seatbelt.js");
 
 /**
  * @typedef {object} SandboxInfo
@@ -145,10 +151,26 @@ function agentSandbox(provider, permissionMode) {
 }
 
 /**
+ * @param {{ rules: Array<{ kind: string }> }} policy
+ */
+function seatbeltReason(policy) {
+  const writes = policy.rules.filter((r) => r.kind === "write").length;
+  const nets = policy.rules.filter((r) => r.kind === "network").length;
+  const parts = [
+    `writes confined to the worktree${writes ? ` and ${writes} write rule${writes === 1 ? "" : "s"}` : ""}`,
+  ];
+  if (nets) {
+    parts.push(`egress via Solenta's proxy (${nets} network rule${nets === 1 ? "" : "s"})`);
+  }
+  return `Seatbelt: ${parts.join(", ")}`;
+}
+
+/**
  * @param {{
  *   provider?: string | null,
  *   permissionMode?: string | null,
  *   project?: { remoteHost?: string, path?: string } | null,
+ *   policy?: { rules: Array<{ kind: string }> } | null,
  * } | null | undefined} input
  * @param {NodeJS.Platform} [platform]
  * @returns {SandboxInfo}
@@ -158,9 +180,17 @@ function resolveSandbox(input, platform = process.platform) {
     input && input.provider,
     input && input.permissionMode,
   );
+  const where = locationReason(input && input.project, platform);
+  const policy = input && input.policy;
+  if (policy && seatbeltApplies(policy, input && input.project, platform)) {
+    return {
+      sandboxed: true,
+      reason: `${seatbeltReason(policy)}; ${agent.reason.replace(/; no OS sandbox$/, "")}; ${where}`,
+    };
+  }
   return {
     sandboxed: agent.sandboxed,
-    reason: `${agent.reason}; ${locationReason(input && input.project, platform)}`,
+    reason: `${agent.reason}; ${where}`,
   };
 }
 

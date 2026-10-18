@@ -397,6 +397,8 @@ const PROVIDERS = [
       fast,
       agent,
       forkSessionAt,
+      addDirs,
+      askWriteDirs,
     }) {
       // NO trailing prompt: the runner delivers it on stdin (stream-json
       // input), which is what lets the CLI route permission prompts to us
@@ -445,10 +447,27 @@ const PROVIDERS = [
           args.push("--effort", level);
         },
       );
+      // Secondary project folders (#514): `=` form so the variadic flag
+      // takes exactly one value each.
+      for (const dir of Array.isArray(addDirs) ? addDirs : []) {
+        args.push(`--add-dir=${dir}`);
+      }
+      /** @type {Record<string, unknown>} */
+      const settings = {};
       // 2.1.283: init reports fast_mode_state; without this it is off with
       // sdk_opt_in_required. Account limits can still refuse (runner notes it).
       if (fast === true && modelSupportsFast(getProvider("claude"), model)) {
-        args.push("--settings", JSON.stringify({ fastMode: true }));
+        settings.fastMode = true;
+      }
+      // Ungranted folders: an ask rule routes every edit there to the
+      // permission card, even under acceptEdits / bypassPermissions (live on
+      // 2.1.283). Edit(path) covers Write/MultiEdit/NotebookEdit too.
+      const ask = (Array.isArray(askWriteDirs) ? askWriteDirs : []).map(
+        (dir) => `Edit(/${dir.replace(/\\/g, "/").replace(/\/+$/, "")}/**)`,
+      );
+      if (ask.length) settings.permissions = { ask };
+      if (Object.keys(settings).length) {
+        args.push("--settings", JSON.stringify(settings));
       }
       return args;
     },

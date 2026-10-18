@@ -1170,6 +1170,12 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       },
       catalog: () =>
         rec("mcp.catalog", [], devMcpCatalogRows(settingsState.mcpServers)),
+      xcodeStatus: (input: { projectPath: string }) =>
+        rec("mcp.xcodeStatus", [input], null),
+      pairXcode: (input: { projectPath: string }) => {
+        calls.push({ channel: "mcp.pairXcode", args: [input] });
+        return Promise.reject(new Error("No Xcode project or Swift package in this project."));
+      },
       pickImport: () => rec("mcp.pickImport", [], null),
       previewImport: (input: McpPreviewImportInput) => {
         try {
@@ -1917,7 +1923,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
             receipts: [],
           } as CrewIntegration,
         ),
-      search: (input: unknown) => rec("threads.search", [input], [] as ThreadInfo[]),
+      search: (input: unknown) => rec("threads.search", [input], { threads: [] as ThreadInfo[], truncated: false }),
       create: (input: unknown) => {
         const createdAt = Date.now();
         const wantWorktree =
@@ -2051,6 +2057,8 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       },
       setPermissionMode: (input: unknown) =>
         rec("threads.setPermissionMode", [input], thread()),
+      applyAgentProfile: (input: unknown) =>
+        rec("threads.applyAgentProfile", [input], thread()),
       setArchived: (input: unknown) => {
         const i = input as { threadId: string; archived: boolean };
         return rec(
@@ -3015,6 +3023,11 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           [],
           [...trashed.values()].map(({ thread: _thread, ...row }) => row),
         ),
+    },
+    governance: {
+      listAudit: (input?: unknown) => rec("governance.listAudit", [input], []),
+      verifyAudit: () =>
+        rec("governance.verifyAudit", [], { ok: true as const, entries: 0 }),
     },
     activity: {
       list: () => {

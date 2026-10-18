@@ -30,7 +30,6 @@ import {
   permissionPickerModes,
   providerDisplayName,
   providerPermissionModes,
-  snapToHonouredPermissionMode,
 } from "../format";
 import {
   buildPickerRows,
@@ -183,6 +182,8 @@ export interface ComposerProps {
   providers: ProviderInfo[];
   /** Saved named profiles from settings. Empty hides the Profiles section. */
   agentProfiles?: AgentProfile[];
+  /** thread.agentProfileId (#262): marks that profile row as selected. */
+  agentProfileId?: string | null;
   /** Workflow templates from workflows.list(). */
   workflows: WorkflowTemplateInfo[];
   onSetProvider: (input: {
@@ -190,6 +191,8 @@ export interface ComposerProps {
     model?: string | null;
   }) => void | Promise<void>;
   onSetReasoningEffort: (effort: ReasoningEffort | null) => void | Promise<void>;
+  /** Apply a saved profile in one write (#262); stamps thread.agentProfileId. */
+  onApplyAgentProfile: (profileId: string) => void | Promise<void>;
   onSetWebSearch?: (webSearch: boolean) => void | Promise<void>;
   onSetFast?: (fast: boolean) => void | Promise<void>;
   /** Pending first-turn route (#246); "auto" shows the pill as Auto. */
@@ -364,6 +367,26 @@ const STATIC = {
 const DEFAULT_TEMPLATE_ID = "standard";
 const NO_PLAN_MODE = "This provider has no plan mode";
 
+const PASTE_READ_FAILED =
+  "Couldn't read the pasted image. Copy it again, or attach it from a file.";
+// ponytail: mirrors EXT_BY_MEDIA / MAX_IMAGE_BYTES in electron/attachments.js,
+// which returns null without a reason. Only used to explain a rejection.
+const PASTE_IMAGE_TYPES = ["png", "jpeg", "gif", "webp", "bmp", "svg+xml"];
+const PASTE_IMAGE_MAX_MB = 20;
+
+/** Why the host likely refused a pasted image, phrased as what to do next. */
+function pasteRejectReason(blob: Blob): string {
+  const sub = blob.type.toLowerCase().replace(/^image\//, "");
+  if (!PASTE_IMAGE_TYPES.includes(sub)) {
+    return `Can't attach ${sub.toUpperCase() || "this"} images. Paste a PNG, JPEG, GIF, WebP, BMP or SVG.`;
+  }
+  const mb = blob.size / (1024 * 1024);
+  if (mb > PASTE_IMAGE_MAX_MB) {
+    return `The pasted image is ${mb.toFixed(1)} MB; the limit is ${PASTE_IMAGE_MAX_MB} MB. Paste a smaller image.`;
+  }
+  return "Couldn't save the pasted image. Try pasting again, or attach it from a file.";
+}
+
 /** Capped cascade index: row 30 shouldn't wait half a second to appear. */
 const rowEnterStyle = (index: number): CSSProperties =>
   ({ "--i": String(Math.min(index, 10)) }) as CSSProperties;
@@ -383,9 +406,11 @@ export const Composer = memo(function Composer({
   onSetAgent,
   providers,
   agentProfiles = [],
+  agentProfileId = null,
   workflows,
   onSetProvider,
   onSetReasoningEffort,
+  onApplyAgentProfile,
   onSetWebSearch,
   onSetFast,
   route = null,
@@ -1482,18 +1507,47 @@ export const Composer = memo(function Composer({
       // still pastes its text. preventDefault would swallow that too.
       if (!canAttachImages) return;
       e.preventDefault();
+      // The paste is consumed, so every image must end as a chip or a
+      // visible reason (#1211). addAttachments is this render's, so chips
+      // land on the originating thread; its errors stay there too.
+      const originThreadId = threadId;
+      const failures: string[] = [];
+      let pending = items.length;
+      const settle = (failure?: string) => {
+        if (failure) failures.push(failure);
+        if (--pending > 0 || liveThreadIdRef.current !== originThreadId) return;
+        if (!failures.length) return setLocalError(null);
+        const reasons = [...new Set(failures)].join(" ");
+        setLocalError(
+          items.length > 1
+            ? `${failures.length} of ${items.length} pasted images weren't attached. ${reasons}`
+            : reasons,
+        );
+      };
       for (const item of items) {
         const blob = item.getAsFile();
-        if (!blob) continue;
+        if (!blob) {
+          settle(PASTE_READ_FAILED);
+          continue;
+        }
         const reader = new FileReader();
+        reader.onerror = reader.onabort = () => settle(PASTE_READ_FAILED);
         reader.onload = () => {
           const dataUrl = typeof reader.result === "string" ? reader.result : "";
-          if (!dataUrl) return;
+          if (!dataUrl) return settle(PASTE_READ_FAILED);
           onSaveAttachmentImage(dataUrl)
             .then((attachment) => {
-              if (attachment) addAttachments([attachment]);
+              if (!attachment) return settle(pasteRejectReason(blob));
+              addAttachments([attachment]);
+              settle();
             })
-            .catch(() => {});
+            .catch((err) =>
+              settle(
+                err instanceof Error && err.message
+                  ? err.message
+                  : pasteRejectReason(blob),
+              ),
+            );
         };
         reader.readAsDataURL(blob);
       }
@@ -1556,16 +1610,7 @@ export const Composer = memo(function Composer({
     if (row.disabled) return;
     closeModelPicker(true);
     try {
-      // setProvider clears effort on a harness switch; effort then permission.
-      await onSetProvider({ provider: row.provider, model: row.model });
-      await onSetReasoningEffort(row.reasoningEffort);
-      const next = providers.find((p) => p.id === row.provider);
-      await onPermissionModeChange(
-        snapToHonouredPermissionMode(
-          providerPermissionModes(next),
-          row.permissionMode,
-        ),
-      );
+      await onApplyAgentProfile(row.id);
     } catch (err) {
       const msg =
         err instanceof Error && err.message
@@ -1855,7 +1900,9 @@ export const Composer = memo(function Composer({
             onEditComment={(id, comment) =>
               setContextChips(threadId, (prev) =>
                 prev.map((c) =>
-                  c.id === id && c.kind === "quote" ? { ...c, comment } : c,
+                  c.id === id && (c.kind === "quote" || c.kind === "element")
+                    ? { ...c, comment }
+                    : c,
                 ),
               )
             }
@@ -2169,8 +2216,10 @@ export const Composer = memo(function Composer({
                       {modelRows.map((row, index) => {
                         const selected = row.auto
                           ? route != null
-                          : route == null &&
-                            isRowSelected(row, provider, model);
+                          : row.profile
+                            ? row.profile.id === agentProfileId
+                            : route == null &&
+                              isRowSelected(row, provider, model);
                         const highlighted = index === hi;
                         const starrable = canFavourite(row);
                         const starred =

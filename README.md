@@ -98,7 +98,10 @@ it.
 - **Terminal and Browser panes** — a long-lived shell in the thread's worktree
   (`cd` and exports persist), and an embedded loopback-only browser on your dev
   server. Screenshot the page into the composer, or let the agent navigate,
-  click, type and screenshot it through the `preview` tool.
+  click, type and screenshot it through the `preview` tool, read a page
+  snapshot and console/network diagnostics, and switch viewport presets.
+  Inspect picks an element and attaches it as a composer chip. The terminal
+  has Find, Clear, Copy and send-selection-to-composer.
 - **Planboard** — a project's plan as its GitHub or GitLab issues. Agents on a GitHub
   origin use the coder-threads tools `issue_create`, `issue_list`,
   `issue_set_plan`, `issue_complete`, `issue_comment`, and `issue_label` (omitted when
@@ -323,7 +326,17 @@ The root `package.json` already allows scripts for the pinned Electron version.
   speedup. OTel GenAI spans ship to your tracing backend.
 - **Morning digest** — one summary of everything that ran unattended.
 - **Agent profiles** — save a provider + model + effort + permission combination
-  and apply it in one click.
+  and apply it in one click. A profile can carry a governance policy
+  (block / deny / ask / allow rules on tools, bash, writes and network) that
+  gates Claude's permission asks and writes a signed audit log.
+- **Detached windows** — open any thread in its own window (⌘⇧O, the
+  sidebar menu, or drag the card out) while the main window stays the fleet
+  view.
+- **Multi-folder projects** — list extra folders next to the repo; agents
+  read and search them, and Claude writes there only after you grant the
+  folder on the permission card.
+- **Xcode MCP** — Apple projects get a one-click MobileBuildMCP or
+  `xcrun mcpbridge` pairing in Settings, Skills & MCP.
 - **Spec mode** — gated requirements → design → tasks artifacts, each approved
   before the next unlocks. tasks.md becomes a dispatch DAG (`needs:`);
   converge appends missing work back onto the file.

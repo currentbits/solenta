@@ -334,7 +334,8 @@
         <li><strong>Agent</strong> picks a custom CLI agent for the thread on Claude and OpenCode (passed as <code>--agent</code>), from the project's and your own agent files.</li>
         <li><strong>Fork and hand off</strong> copies a thread, optionally onto another provider, and starts it on a new prompt. <strong>Fork from here</strong> on an assistant message copies the conversation only up to that message; on Claude the native session is forked at that point.</li>
         <li><strong>Best of N</strong> sends one prompt to several providers at once so you can compare the results. Tick <strong>Plan only</strong> to have each one draft a plan without building. On the plan card you like, pick a provider next to <strong>Implement in a new thread</strong> to build it there.</li>
-        <li><strong>Agent profiles</strong> save a provider + model + effort + permission combination under a name, so a thread can be set up in one click instead of four.</li>
+        <li><strong>Agent profiles</strong> save a provider + model + effort + permission combination under a name, so a thread can be set up in one click instead of four. A profile can also carry a <a href="#governance">governance policy</a>.</li>
+        <li><strong>Open in new window</strong> in a sidebar thread's menu, <kbd>⌘⇧O</kbd>, or dragging the card out of the window detaches the thread into a window of its own, while the main window stays the fleet overview. A thread that already has a window gets that window focused, and notifications for it open there.</li>
         <li><strong>Edit and resubmit</strong> rewinds to any past message of yours, lets you change it, and runs again from that point.</li>
         <li><strong>Scratch notes</strong> are a free-text field per thread, edited from the header and previewed in the sidebar, for the context that is not worth a memory entry.</li>
         <li><strong>Rename</strong> a thread from its header or the sidebar menu when the auto-generated title stops describing the work.</li>
@@ -555,6 +556,13 @@
         types are rejected rather than silently approved.
       </p>
       <p>
+        When Codex asks to write files, the approval card shows the proposed
+        change as a diff, with its reason and a warning when it asks for
+        session-wide write access under a folder. A sandbox permission ask
+        shows the folder and what it wants, and Accept grants exactly that.
+        An ask whose diff never arrived is refused, never approved blind.
+      </p>
+      <p>
         First-party memory and Planboard tools are bound to the selected
         project. Planboard writes run on the host. Workspace-write also grants
         the Git metadata paths needed to stage and commit in a checkout or
@@ -726,6 +734,17 @@
         They apply to agent runs on every provider, workflow phase agents,
         the thread terminal, verify, setup and quick-action commands, and
         dev servers, locally and over SSH.
+      </p>
+      <p>
+        <strong>Other folders</strong> in Edit Project adds up to eight
+        more folders next to the project's repo, one path per line (local
+        projects only). The repo still owns git, worktrees, memory and
+        skills. Agents can read and search the other folders, and a
+        <strong>+N folders</strong> badge marks the project. On Claude, an
+        edit in one of them asks first, and <strong>Allow writes to
+        &lt;folder&gt;</strong> on the card grants that folder for the
+        thread. Other providers can read them but not write there, and
+        shell commands are not gated.
       </p>
       <p>
         Coming from Vibe Kanban: Settings → <em>Your data</em> reads the local
@@ -943,6 +962,27 @@
         build regressed.
       </p>
 
+      <h3 id="governance">Governance policies</h3>
+      <p>
+        An agent profile can carry a <strong>policy</strong>: a default of
+        ask or allow, plus up to 40 rules. Each rule matches a tool, a bash
+        command, a write path or a network target by glob, and blocks,
+        denies, asks or allows. The most severe matching rule wins. A bash
+        rule matches each subcommand, so <code>npm publish</code> also
+        catches <code>cd x &amp;&amp; npm publish</code>. A denied call is
+        logged in the transcript with no card; an ask card says which rule
+        raised it. If you edit a command on the card, the edited version is
+        checked again before Allow goes through.
+      </p>
+      <p>
+        Every decision is written to a signed, chained audit log. Settings,
+        Advanced shows the last 50 entries and a <strong>Verify
+        chain</strong> button that detects tampering. Secrets are redacted
+        before anything is written. In v1 policies apply to Claude threads,
+        and only to calls the CLI asks about: Accept edits, Full access, and
+        allow lists in your Claude settings skip the check.
+      </p>
+
       <h2 id="spec">Spec mode</h2>
       <p>
         For work where the plan matters more than the first patch, a thread can
@@ -1033,6 +1073,14 @@
         paths and values containing spaces, or a JSON array of strings. Invalid
         quoting shows an error and preserves the draft. Trust the local command
         only after reviewing what it launches.
+      </p>
+      <p>
+        On a project with an Xcode workspace or project, or a
+        <code>Package.swift</code> for an Apple platform, Settings, Skills
+        &amp; MCP shows an <strong>Xcode</strong> card. One click adds
+        MobileBuildMCP when it is on your <code>PATH</code>, otherwise
+        Apple's <code>xcrun mcpbridge</code>. The card shows the exact
+        command first, and offers install hints for whatever is missing.
       </p>
 
       <h2 id="automations">Automations</h2>
@@ -1131,6 +1179,13 @@
         out of scope, and closing the pane kills the shell and its scrollback.
       </p>
       <p>
+        The toolbar has <strong>Find</strong> (Enter searches up from the
+        newest output, <kbd>⇧Enter</kbd> down), <strong>Clear</strong> (the
+        display only, the shell keeps running), <strong>Copy</strong>, and
+        <strong>To composer</strong>, which adds the selected output to
+        your draft as a chip you can review before sending.
+      </p>
+      <p>
         When the terminal or a dev server prints a build error, a failing
         test or a merge conflict, a card appears at that line.
         <strong>Fix it</strong> asks this thread's agent to fix it,
@@ -1147,6 +1202,24 @@
         own tool: navigate, reload, click and type by CSS selector, and take a
         screenshot it can actually see, which closes the loop between changing
         a page and checking it.
+      </p>
+      <p>
+        The agent can also read the page instead of only looking at it: a
+        size-capped snapshot of the visible roles, names and states, whose
+        refs it can click and type into, and diagnostics with the console
+        messages and request results since the pane opened (no headers or
+        bodies). The viewport picker switches between mobile, tablet,
+        desktop and fill, and agents can switch it too. The
+        <strong>Diagnostics</strong> toggle shows you the same console and
+        network data, with a count of problems.
+      </p>
+      <p>
+        <strong>Inspect</strong> (⌖) lets you pick an element on the page:
+        click it, or Tab to it and press Enter, with ↑ for the parent and
+        Esc to cancel. The picked element goes to the composer as a chip
+        with an optional comment and a cropped screenshot. The picker never
+        reads text field values, redacts secret-looking attributes, and
+        clicking a submit button does not submit the form.
       </p>
 
       <h2 id="spend">Spend guardrails</h2>

@@ -52,6 +52,7 @@ const KIMI_HOME_LINKS = [
   "sessions",
   "cache",
   "plugins",
+  "skills",
   "updates",
   "device_id",
   "session_index.jsonl",
@@ -209,7 +210,7 @@ function deployKimiGuardrailOverlay(opts) {
       "config.toml": toml,
     },
     [
-      `for f in credentials oauth sessions cache plugins updates device_id session_index.jsonl; do src="$HOME/.kimi-code/$f"; dst=${posixQuote(dest)}/"$f"; if [ -e "$src" ] && [ ! -e "$dst" ]; then ln -s "$src" "$dst"; fi; done`,
+      `for f in credentials oauth sessions cache plugins skills updates device_id session_index.jsonl; do src="$HOME/.kimi-code/$f"; dst=${posixQuote(dest)}/"$f"; if [ -e "$src" ] && [ ! -e "$dst" ]; then ln -s "$src" "$dst"; fi; done`,
     ],
   );
   return dest;

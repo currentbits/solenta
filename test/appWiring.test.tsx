@@ -1409,26 +1409,10 @@ describe("App planboard wiring (#207)", () => {
       };
       assert.equal(create.orchestrate, true);
 
-      const setProvider = fake.only("threads.setProvider").args[0] as {
-        threadId: string;
-        provider: string;
-        model: string | null;
-      };
-      assert.deepEqual(setProvider, {
+      assert.deepEqual(fake.only("threads.applyAgentProfile").args[0], {
         threadId: "t-new",
-        provider: "claude",
-        model: "claude-sonnet-4",
+        profileId: "p-scout",
       });
-      const effort = fake.only("threads.setReasoningEffort").args[0] as {
-        threadId: string;
-        effort: string | null;
-      };
-      assert.deepEqual(effort, { threadId: "t-new", effort: "low" });
-      const perm = fake.only("threads.setPermissionMode").args[0] as {
-        threadId: string;
-        mode: string;
-      };
-      assert.deepEqual(perm, { threadId: "t-new", mode: "plan" });
 
       const channels = fake.channels().filter((c) =>
         [
@@ -1436,14 +1420,13 @@ describe("App planboard wiring (#207)", () => {
           "threads.setProvider",
           "threads.setReasoningEffort",
           "threads.setPermissionMode",
+          "threads.applyAgentProfile",
           "runs.start",
         ].includes(c),
       );
       assert.deepEqual(channels, [
         "threads.create",
-        "threads.setProvider",
-        "threads.setReasoningEffort",
-        "threads.setPermissionMode",
+        "threads.applyAgentProfile",
         "runs.start",
       ]);
     } finally {
@@ -1504,15 +1487,9 @@ describe("App planboard wiring (#207)", () => {
       await m.flush();
       await m.flush();
 
-      const setProvider = fake.only("threads.setProvider").args[0] as {
-        threadId: string;
-        provider: string;
-        model: string | null;
-      };
-      assert.deepEqual(setProvider, {
+      assert.deepEqual(fake.only("threads.applyAgentProfile").args[0], {
         threadId: "t-new",
-        provider: "claude",
-        model: "claude-sonnet-4",
+        profileId: "p-scout",
       });
     } finally {
       m.unmount();

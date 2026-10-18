@@ -678,7 +678,10 @@ export function profileSummary(
   const effort = effortDisplayLabel(profile.reasoningEffort);
   const permission =
     PERMISSION_MODE_LABELS[profile.permissionMode] ?? profile.permissionMode;
-  return `${info?.name ?? profile.provider} · ${model} · ${effort} · ${permission}`;
+  const ruleCount = profile.policy?.rules.length ?? 0;
+  const rules =
+    ruleCount > 0 ? ` · ${ruleCount} ${ruleCount === 1 ? "rule" : "rules"}` : "";
+  return `${info?.name ?? profile.provider} · ${model} · ${effort} · ${permission}${rules}`;
 }
 
 /**

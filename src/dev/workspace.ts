@@ -3,7 +3,9 @@ import type {
   CoderApi,
   DevServerState,
   TerminalState,
+  PreviewInspectResult,
   PreviewSnapshot,
+  PreviewViewportPreset,
   LocalServerInfo,
   FileTreeEntry,
   FilePreview,
@@ -192,8 +194,14 @@ export function createWorkspace(): Pick<CoderApi, "servers" | "simulator" | "pre
       async goForward(_input: { threadId: string }): Promise<PreviewSnapshot> {
         return { url: "", title: "", canGoBack: false, canGoForward: false };
       },
-      async info(_input: { threadId: string }): Promise<PreviewSnapshot> {
-        return { url: "", title: "", canGoBack: false, canGoForward: false };
+      async info(_input: { threadId: string }) {
+        return {
+          url: "",
+          title: "",
+          canGoBack: false,
+          canGoForward: false,
+          viewportPreset: "fill" as const,
+        };
       },
       async screenshot(_input: { threadId: string }) {
         return {
@@ -204,15 +212,59 @@ export function createWorkspace(): Pick<CoderApi, "servers" | "simulator" | "pre
           dataUrl: "data:image/png;base64,aaa",
         };
       },
-      async click(_input: { threadId: string; selector: string }): Promise<PreviewSnapshot> {
-        return { url: "", title: "", canGoBack: false, canGoForward: false };
+      async click(_input: { threadId: string; selector?: string; ref?: string }) {
+        return { url: "", title: "", canGoBack: false, canGoForward: false, ok: true, completion: "done" as const };
       },
-      async type(_input: {
-        threadId: string;
-        selector: string;
-        text: string;
-      }): Promise<PreviewSnapshot> {
-        return { url: "", title: "", canGoBack: false, canGoForward: false };
+      async type(_input: { threadId: string; selector?: string; ref?: string; text: string }) {
+        return { url: "", title: "", canGoBack: false, canGoForward: false, ok: true, completion: "done" as const };
+      },
+      async snapshot(_input: { threadId: string }) {
+        return {
+          url: "http://localhost:5173/",
+          title: "",
+          canGoBack: false,
+          canGoForward: false,
+          snapshotId: 1,
+          documentGeneration: 1,
+          viewport: { preset: "fill" as const, width: 800, height: 600, devicePixelRatio: 2 },
+          nodes: [],
+          truncated: null,
+          limits: { maxNodes: 250, maxDepth: 48, maxBytes: 32000 },
+        };
+      },
+      async diagnostics(_input: { threadId: string }) {
+        const at = Date.now();
+        return {
+          url: "http://localhost:5173/",
+          title: "",
+          canGoBack: false,
+          canGoForward: false,
+          viewportPreset: "fill" as const,
+          documentGeneration: 1,
+          console: [
+            { seq: 1, at, doc: 1, level: "error", text: "Uncaught TypeError: user is undefined", source: "http://localhost:5173/src/App.tsx:42" },
+          ],
+          network: [
+            { seq: 2, at, doc: 1, method: "GET", url: "http://localhost:5173/", type: "mainFrame", status: 200, durationMs: 12 },
+            { seq: 3, at, doc: 1, method: "POST", url: "http://localhost:5173/api/signup?token=redacted", type: "xhr", status: 500, durationMs: 87 },
+          ],
+          dropped: { console: 0, network: 0 },
+        };
+      },
+      async viewport(input: { threadId: string; preset: PreviewViewportPreset }) {
+        return {
+          url: "",
+          title: "",
+          canGoBack: false,
+          canGoForward: false,
+          viewport: { preset: input.preset },
+        };
+      },
+      async inspect(_input: { threadId: string }): Promise<PreviewInspectResult> {
+        return { cancelled: true, url: "", title: "", canGoBack: false, canGoForward: false };
+      },
+      async cancelInspect(_input: { threadId: string }) {
+        return { ok: true };
       },
     },
     devserver: {

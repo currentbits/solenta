@@ -9,9 +9,16 @@
  */
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import { createRequire } from "node:module";
+import os from "node:os";
+import path from "node:path";
 import { describe, it } from "node:test";
 import { inAct, mount } from "./support/dom";
-import type { ProviderInfo, ThreadInfo } from "../src/shared/ipc";
+import type {
+  ProviderInfo,
+  ThreadInfo,
+  ThreadSearchInput,
+} from "../src/shared/ipc";
 import {
   p1,
   p2,
@@ -603,7 +610,8 @@ describe("Sidebar filters (#553)", () => {
         projects: [p1, p2],
         searchThreads: async ({ query }) => {
           calls += 1;
-          return filterThreadsList.filter((t) => t.title.includes(query));
+          const threads = filterThreadsList.filter((t) => t.title.includes(query));
+          return { threads, truncated: false };
         },
       }),
     );
@@ -1051,6 +1059,160 @@ describe("Sidebar saved filter views (#939)", () => {
       m.query('[data-saved-view-label="Failed"]'),
       null,
     );
+    m.unmount();
+  });
+});
+
+describe("Sidebar search applies filters before the cap (#1201)", () => {
+  const require = createRequire(import.meta.url);
+  const { Store } = require("../electron/store.js");
+  const services = require("../electron/services.js");
+
+  // 50 newer p1 matches fill the backend cap; the one failed p2 match is older.
+  const newer = Array.from({ length: 50 }, (_, i) =>
+    thread({
+      id: `rel-${i}`,
+      title: `release prep ${i}`,
+      status: "idle",
+      updatedAt: FRESH + 100 + i,
+      projectId: "p1",
+    }),
+  );
+  const target = thread({
+    id: "rel-old",
+    title: "release blocker",
+    status: "failed",
+    provider: "grok",
+    updatedAt: FRESH,
+    projectId: "p2",
+    tags: ["release"],
+  });
+  const rows = [...newer, target];
+
+  function realSearch() {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sidebar-search-"));
+    const store = new Store(path.join(dir, "coder-store.json"));
+    store.setThreads(rows.map((t) => ({ ...t })));
+    const calls: ThreadSearchInput[] = [];
+    let gate: Promise<void> | null = null;
+    return {
+      calls,
+      hold(p: Promise<void> | null) {
+        gate = p;
+      },
+      cleanup() {
+        store._cancelSearchWorker();
+        fs.rmSync(dir, { recursive: true, force: true });
+      },
+      searchThreads: async (input: ThreadSearchInput) => {
+        calls.push(input);
+        const wait = gate;
+        const res = await services.searchThreads(store, input);
+        if (wait) await wait;
+        return res;
+      },
+    };
+  }
+
+  // Debounce, then wait out the store's worker scan (slow on loaded CI).
+  async function settle(m: Awaited<ReturnType<typeof mount>>) {
+    await inAct(async () => {
+      await new Promise((r) => setTimeout(r, 350));
+    });
+    for (let i = 0; i < 50 && /Searching/.test(m.text()); i++) {
+      await inAct(async () => {
+        await new Promise((r) => setTimeout(r, 50));
+      });
+    }
+    await m.flush();
+  }
+
+  async function pickStatus(m: Awaited<ReturnType<typeof mount>>, id: string) {
+    if (!m.query("[data-status-filter-menu]")) {
+      await m.click(m.query("[data-status-filter-trigger]")!);
+      await m.flush();
+    }
+    await m.click(m.query(`[data-status-filter="${id}"]`)!);
+    await m.flush();
+  }
+
+  it("a filtered match older than 50 out-of-scope hits stays findable", async () => {
+    await clearSidebarStorage();
+    const s = realSearch();
+    const m = await mount(
+      sidebar(rows, { projects: [p1, p2], searchThreads: s.searchThreads }),
+    );
+    await m.type(searchInput(m), "release");
+    await settle(m);
+    assert.equal(cardTitles(m).length, 50);
+    assert.ok(!cardTitles(m).includes("rel-old"), "capped out");
+    assert.ok(m.query("[data-search-truncated]"), "truncation is visible");
+    assert.equal(s.calls.at(-1)!.threadIds, undefined);
+
+    await pickStatus(m, "failed");
+    await settle(m);
+    assert.deepEqual(cardTitles(m), ["rel-old"]);
+    assert.deepEqual(s.calls.at(-1)!.threadIds, ["rel-old"]);
+    assert.equal(m.query("[data-search-truncated]"), null);
+    assert.doesNotMatch(m.text(), /No threads match/);
+
+    await pickStatus(m, "all");
+    await openScopeMenu(m);
+    await m.click(m.query('[data-scope-item="p2"]')!);
+    await settle(m);
+    assert.deepEqual(cardTitles(m), ["rel-old"], "project scope too");
+    m.unmount();
+    s.cleanup();
+  });
+
+  it("a late reply for an abandoned scope does not overwrite the current one", async () => {
+    await clearSidebarStorage();
+    const s = realSearch();
+    const m = await mount(
+      sidebar(rows, { projects: [p1, p2], searchThreads: s.searchThreads }),
+    );
+    await m.type(searchInput(m), "release");
+    await settle(m);
+    const calls = s.calls.length;
+
+    let release!: () => void;
+    s.hold(new Promise<void>((r) => (release = r)));
+    await pickStatus(m, "failed");
+    await inAct(async () => {
+      await new Promise((r) => setTimeout(r, 350));
+    });
+    await m.flush();
+    assert.equal(s.calls.length, calls + 1, "scoped rescan started");
+    assert.match(m.text(), /Searching/);
+
+    await pickStatus(m, "all");
+    await settle(m);
+    assert.equal(s.calls.length, calls + 1, "cached unscoped reply reused");
+    await inAct(async () => {
+      release();
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    await m.flush();
+    assert.equal(cardTitles(m).length, 50, "stale failed-only reply dropped");
+    assert.ok(m.query("[data-search-truncated]"));
+    m.unmount();
+    s.cleanup();
+  });
+
+  it("a failed request is not shown as no matches", async () => {
+    await clearSidebarStorage();
+    const m = await mount(
+      sidebar(rows, {
+        projects: [p1, p2],
+        searchThreads: async () => {
+          throw new Error("ipc down");
+        },
+      }),
+    );
+    await m.type(searchInput(m), "release");
+    await settle(m);
+    assert.ok(m.query("[data-search-failed]"));
+    assert.doesNotMatch(m.text(), /No threads match/);
     m.unmount();
   });
 });

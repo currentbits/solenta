@@ -305,14 +305,20 @@ function windowIcon() {
   return fs.existsSync(p) ? p : null;
 }
 
-function createWindow() {
+/**
+ * @param {{ threadId?: string }} [opts] threadId: a detached window locked
+ * to that one thread (#519). The renderer reads it from `?thread=`.
+ */
+function createWindow(opts = {}) {
+  const threadId = opts.threadId || null;
   const backgroundColor = applyNativeAndWindowTheme(null);
   const icon = windowIcon();
   const win = new BrowserWindow({
     ...(icon ? { icon } : {}),
-    width: 1440,
+    // Detached: above the 900 CSS px narrow breakpoint so no drawers.
+    width: threadId ? 960 : 1440,
     height: 900,
-    minWidth: 1100,
+    minWidth: threadId ? 920 : 1100,
     minHeight: 700,
     backgroundColor,
     titleBarStyle: "hiddenInset",
@@ -325,6 +331,7 @@ function createWindow() {
       webviewTag: true,
     },
   });
+  if (threadId) win.solentaThreadId = threadId;
 
   // A PR link is target=_blank. Without a policy Electron answers it with a
   // bare chrome-less window pointed at github.com. links.js owns the decision
@@ -359,6 +366,7 @@ function createWindow() {
   // hides the window and leaves the app running.
   win.on("close", (event) => {
     if (
+      threadId ||
       !shouldBlockWindowClose({
         platform: process.platform,
         serveWeb: serveOpts.enabled,
@@ -373,11 +381,65 @@ function createWindow() {
   });
 
   if (isDev) {
-    win.loadURL(process.env.VITE_DEV_SERVER_URL || "http://localhost:5173");
+    const url = new URL(process.env.VITE_DEV_SERVER_URL || "http://localhost:5173");
+    if (threadId) url.searchParams.set("thread", threadId);
+    win.loadURL(url.toString());
   } else {
-    win.loadFile(path.join(__dirname, "../dist/index.html"));
+    win.loadFile(
+      path.join(__dirname, "../dist/index.html"),
+      threadId ? { query: { thread: threadId } } : undefined,
+    );
   }
   if (process.platform === "win32" && attentionBadge) applyTaskbarOverlay();
+  return win;
+}
+
+/** Focus a window (restoring it if minimized) and return it. */
+function focusWindow(win) {
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
+  return win;
+}
+
+/** The detached window for a thread, if one is open (#519). */
+function threadWindow(threadId) {
+  return BrowserWindow.getAllWindows().find(
+    (w) => !w.isDestroyed() && w.solentaThreadId === threadId,
+  );
+}
+
+/** Detach a thread: focus its window, or open one (#519). */
+function openThreadWindow(threadId) {
+  if (typeof threadId !== "string" || !store || !store.getThread(threadId)) {
+    throw new Error("Thread not found.");
+  }
+  const existing = threadWindow(threadId);
+  if (existing) focusWindow(existing);
+  else createWindow({ threadId });
+}
+
+/**
+ * Show a thread: its detached window when it has one, else the main window
+ * with the thread selected.
+ */
+function focusThread(threadId) {
+  const detached = threadWindow(threadId);
+  if (detached) {
+    focusWindow(detached);
+    return;
+  }
+  sendWhenLoaded(focusMainWindow(), "thread:select", threadId);
+}
+
+/** A reopened main window drops pushes sent before its page loads. */
+function sendWhenLoaded(win, channel, payload) {
+  if (!win || win.webContents.isDestroyed()) return;
+  if (win.webContents.isLoading()) {
+    win.webContents.once("did-finish-load", () => win.webContents.send(channel, payload));
+  } else {
+    win.webContents.send(channel, payload);
+  }
 }
 
 const encodeThreadList = createThreadListEncoder();
@@ -404,13 +466,19 @@ function isAnyWindowFocused() {
   return false;
 }
 
+function findMainWindow() {
+  return BrowserWindow.getAllWindows().find(
+    (w) => !w.isDestroyed() && !w.solentaRemote && !w.solentaThreadId,
+  );
+}
+
+/**
+ * Focus the fleet window. Reopens it when only detached thread windows are
+ * left (macOS keeps the app alive after the main window closes).
+ */
 function focusMainWindow() {
-  const win = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && !w.solentaRemote);
-  if (!win) return null;
-  if (win.isMinimized()) win.restore();
-  win.show();
-  win.focus();
-  return win;
+  const win = findMainWindow() || (store ? createWindow() : null);
+  return win ? focusWindow(win) : null;
 }
 
 /**
@@ -432,10 +500,8 @@ function openDeepLink(link) {
     focusMainWindow();
     return;
   }
-  const win = focusMainWindow();
-  if (win && !win.webContents.isDestroyed()) {
-    win.webContents.send(`${link.kind}:select`, link.id);
-  }
+  if (link.kind === "thread") focusThread(link.id);
+  else sendWhenLoaded(focusMainWindow(), "project:select", link.id);
 }
 
 /**
@@ -461,12 +527,7 @@ function notifyThreadComplete(thread) {
   const n = new Notification(
     notificationOptions(thread.title, notifyBody(notifyEvent(threadNotifyState(thread)))),
   );
-  n.on("click", () => {
-    const win = focusMainWindow();
-    if (win && win.webContents && !win.webContents.isDestroyed()) {
-      win.webContents.send("thread:select", thread.id);
-    }
-  });
+  n.on("click", () => focusThread(thread.id));
   n.show();
 }
 
@@ -514,12 +575,7 @@ function notifyPairingLaunch(event) {
   });
   const threadId = event && event.threadId;
   if (threadId) {
-    n.on("click", () => {
-      const win = focusMainWindow();
-      if (win && win.webContents && !win.webContents.isDestroyed()) {
-        win.webContents.send("thread:select", threadId);
-      }
-    });
+    n.on("click", () => focusThread(threadId));
   }
   n.show();
 }
@@ -670,6 +726,7 @@ app.whenReady().then(async () => {
       configureDefaultSecrets({
         auditPath: path.join(userData, "secrets-audit.jsonl"),
       });
+      require("./governanceAudit.js").configureGovernanceAudit({ dir: userData });
       const loaded = new Store(path.join(userData, "coder-store.json"));
       require("./guardrails.js").setGuardrailsEnabled(loaded.getSettings().guardrailsEnabled);
       return loaded;
@@ -692,9 +749,8 @@ app.whenReady().then(async () => {
   });
 
   app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow();
-    }
+    // Dock click with only detached thread windows left brings the fleet back.
+    if (!findMainWindow()) createWindow();
   });
 
   artifactStore = createRunArtifactStore({
@@ -871,6 +927,8 @@ app.whenReady().then(async () => {
     openRemoteConnection,
     forgetRemoteConnection,
   });
+  // Desktop-only like contextMenu:show: windows are main's, never the web bridge's.
+  ipcMain.handle("window:detachThread", (_event, threadId) => openThreadWindow(threadId));
   // Recently deleted expiry (#940): reclaim after restart even if the
   // renderer has not listed threads yet.
   const { expireTrashedThreads } = require("./services.js");

@@ -183,7 +183,7 @@ function createMuseRun(ctx) {
       museEnv = { SOLENTA_WORKTREE: localCwd };
     }
 
-    const spawn = resolveSpawn(project, binary, args, localCwd, museEnv);
+    const spawn = resolveSpawn(project, binary, args, localCwd, museEnv, threadId);
 
     if (abortIfCancelled(threadId, runId)) return { runId };
     const entry = claimPreparingRun(threadId, runId, {

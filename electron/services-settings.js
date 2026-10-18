@@ -608,7 +608,13 @@ function updateAutomation(store, input) {
     ...(reEnabled ? { consecutiveFailures: 0, lastError: null } : {}),
     ...(triggerChanged ? { triggerCursor: null } : {}),
     nextRunAt: scheduleChanged
-      ? nextFire(fields.preset, fields.hour, Date.now())
+      ? nextFire(
+          fields.preset,
+          fields.hour,
+          Date.now(),
+          // An hour edit on a weekly job keeps its weekday (#931).
+          existing.preset === "weekly" ? base.nextRunAt : null,
+        )
       : base.nextRunAt,
   };
   store.setAutomations(
