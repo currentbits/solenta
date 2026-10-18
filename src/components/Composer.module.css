@@ -1101,6 +1101,12 @@
   white-space: nowrap;
 }
 
+.attachmentNote {
+  flex: none;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
 .attachmentRemove {
   display: grid;
   place-items: center;
