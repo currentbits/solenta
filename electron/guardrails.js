@@ -529,6 +529,8 @@ module.exports = {
   classifyCommand,
   scanInjection,
   scanSecrets,
+  SECRET_RULES,
+  PLACEHOLDER,
   insideRoot,
   PROTECTED_WRITE,
   SECRET_PATH,

@@ -780,6 +780,8 @@ export interface UseCoderResult {
   setVerifyCommand: (threadId: string, command: string | null) => Promise<void>;
   /** Run the thread's verification command now. Rejects on an active run. */
   runVerify: (threadId: string) => Promise<VerifyResult>;
+  /** Save a redacted HTML bug report (#394); null when the dialog was cancelled. */
+  exportReport: CoderApi["threads"]["exportReport"];
   /** Run the project's setup command or a named quick action (issue #153). */
   runCommand: (
     threadId: string,
@@ -2287,6 +2289,7 @@ export function useCoder(): UseCoderResult {
     simulatorStatus,
     setVerifyCommand,
     runVerify,
+    exportReport: api.threads.exportReport,
     runCommand,
     runShell,
     appStatus,

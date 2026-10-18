@@ -5584,6 +5584,12 @@ export interface CoderApi {
      */
     runVerify(input: { threadId: string }): Promise<VerifyResult>;
     /**
+     * Save the thread as one redacted, self-contained HTML bug report
+     * (#394). Resolves the written path, or null when the save dialog was
+     * cancelled. Desktop only: web mode has no save dialog.
+     */
+    exportReport(input: { threadId: string }): Promise<string | null>;
+    /**
      * Run the project's setupCommand (`actionId: "setup"` or omitted) or a
      * named quick action (issue #153). Rejects when no command is set, the
      * action is unknown, a run is active, or another command is in flight.
