@@ -1,0 +1,155 @@
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: var(--scrim-heavy);
+}
+
+.dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(1100px, 100%);
+  max-height: 100%;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-modal);
+  overflow: hidden;
+  outline: none;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.spacer {
+  flex: 1;
+}
+
+.tool,
+.primary,
+.secondary {
+  height: 28px;
+  padding: 0 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 550;
+  cursor: pointer;
+}
+
+.tool:hover:not(:disabled),
+.secondary:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--card-hover);
+}
+
+.tool[aria-pressed="true"] {
+  color: var(--text);
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+}
+
+.primary {
+  border-color: transparent;
+  background: var(--btn-primary-bg);
+  color: var(--text-on-accent);
+}
+
+.primary:hover:not(:disabled) {
+  background: var(--btn-primary-hover);
+}
+
+.tool:disabled,
+.primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.body {
+  display: flex;
+  gap: 12px;
+  padding: 12px;
+  min-height: 0;
+  flex: 1;
+}
+
+.stage {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  place-items: center;
+}
+
+/* Canvas holds native pixels; CSS only scales it to fit. */
+.canvas {
+  max-width: 100%;
+  max-height: calc(100vh - 200px);
+  border-radius: 6px;
+  touch-action: none;
+  cursor: crosshair;
+}
+
+.pins {
+  width: 240px;
+  flex-shrink: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow: auto;
+}
+
+.pinRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pinBadge {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-pill);
+  background: #ff3b30;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.pinInput {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--text);
+  font-size: 12px;
+}
+
+.pinInput:focus-visible {
+  outline: none;
+  border-color: var(--blue-border);
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 12px 12px;
+}
