@@ -3,7 +3,6 @@
 const { runJsonLines, SIGKILL_AFTER_MS } = require("./agent.js");
 const { harvestToolResult } = require("./tool-images.js");
 const fs = require("node:fs");
-const os = require("node:os");
 const path = require("node:path");
 const { reclaimOverlayHomes } = require("./overlayHomes.js");
 const { posixQuote } = require("./ssh.js");
@@ -28,16 +27,6 @@ const OUTPUT_TRUNCATE = 4000;
 function truncate(s, max) {
   const str = String(s ?? "");
   return str.length <= max ? str : str.slice(0, max);
-}
-
-/**
- * Kimi home dir. KIMI_CODE_HOME is kimi's own override (tests, and Solenta's
- * per-run overlay so one project cannot inherit another's MCP/workspaces).
- * @param {NodeJS.ProcessEnv} [env]
- */
-function kimiConfigPath(env = process.env) {
-  const home = env.KIMI_CODE_HOME || path.join(os.homedir(), ".kimi-code");
-  return path.join(home, "config.toml");
 }
 
 /**
@@ -235,72 +224,23 @@ function reclaimKimiHomes(opts) {
 }
 
 /**
- * Set [thinking].effort in kimi's config.toml and return a restore function.
+ * Per-spawn effort env for one kimi turn (#451), or null.
  *
- * kimi 0.31.1 has no per-invocation effort mechanism: no CLI flag (probed
- * --effort/--thinking-effort/--reasoning-effort/--thinking, all rejected) and
- * no env var. The value lives only in config.toml and is read once at process
- * start, so the flip only needs to hold until the child produces output.
- *
- * Restore is idempotent and crash-safe: the original file is kept in a
- * .coder-effort-backup sidecar, and a leftover sidecar (previous crash) is
- * restored before reading, so the user's real config is never lost.
- *
- * If the [thinking] effort line is missing, or the config cannot be read, the
- * turn runs on the user's default rather than Solenta inventing a section in a
- * file it does not own.
- *
- * ponytail: concurrent kimi turns that share one config.toml race the flip
- * window. Solenta-spawned turns use a per-run KIMI_CODE_HOME (#671) so the
- * flip is local to that overlay; this path is the no-isolation fallback.
+ * kimi 0.39 reads KIMI_MODEL_THINKING_EFFORT per process, so effort rides
+ * the child env (and wrapCommand on ssh/WSL) instead of a config.toml edit.
+ * The override deliberately bypasses the model's support_efforts, so the
+ * caller passes honouredEfforts(entry, model): an effort the model does not
+ * declare must not reach the wire. kimi still ignores it when the user's
+ * config has thinking off.
  *
  * @param {string | null | undefined} effort
- * @param {NodeJS.ProcessEnv} [env]
- * @returns {() => void} restore
+ * @param {string[]} honoured
+ * @returns {{ KIMI_MODEL_THINKING_EFFORT: string } | null}
  */
-function flipKimiEffort(effort, env = process.env) {
-  const noop = () => {};
-  const configPath = kimiConfigPath(env);
-  const backupPath = `${configPath}.coder-effort-backup`;
-  try {
-    // Crash recovery runs on EVERY kimi turn, including effortless ones: a
-    // leftover backup means a previous flip never restored, and the backup is
-    // the user's real config. Behind the !effort return it was dead code for
-    // the default case, leaving the user on the wrong effort indefinitely.
-    if (fs.existsSync(backupPath)) {
-      fs.copyFileSync(backupPath, configPath);
-      fs.unlinkSync(backupPath);
-    }
-  } catch {
-    return noop;
-  }
-  if (!effort) return noop;
-  try {
-    const original = fs.readFileSync(configPath, "utf8");
-    const flipped = original.replace(
-      // The effort line inside the [thinking] section only: ^ anchors the
-      // header so "[thinking]" inside a quoted value cannot match, and [^[]*?
-      // stops the match from crossing into the next TOML section.
-      /(^\[thinking\][^[]*?^[ \t]*effort[ \t]*=[ \t]*")[^"]*(")/m,
-      `$1${effort}$2`,
-    );
-    if (flipped === original) return noop;
-    fs.writeFileSync(backupPath, original);
-    fs.writeFileSync(configPath, flipped);
-    let restored = false;
-    return () => {
-      if (restored) return;
-      restored = true;
-      try {
-        fs.writeFileSync(configPath, original);
-        fs.unlinkSync(backupPath);
-      } catch {
-        // Backup stays; the next flip's crash recovery reinstates it.
-      }
-    };
-  } catch {
-    return noop; // no config at all: kimi runs on its own defaults
-  }
+function kimiEffortEnv(effort, honoured) {
+  return effort && honoured.includes(String(effort))
+    ? { KIMI_MODEL_THINKING_EFFORT: String(effort) }
+    : null;
 }
 
 /**
@@ -942,7 +882,6 @@ function runKimi(opts) {
     binary = process.env.CODER_KIMI_BIN || "kimi",
     args = [],
     cwd,
-    reasoningEffort = null,
     env: envOverride,
     onEvent,
     onExit,
@@ -977,10 +916,6 @@ function runKimi(opts) {
     emitEvent({ reasoning_content: thinking });
   }
 
-  // Kimi reads config.toml once at startup; the flip holds until first
-  // output (proof the child is past startup), with finish as the backstop.
-  const restoreEffort = flipKimiEffort(reasoningEffort, childEnv || process.env);
-
   const run = runJsonLines({
     binary,
     args,
@@ -989,7 +924,6 @@ function runKimi(opts) {
     keepStdout: true,
     onEvent,
     onExit: (info) => {
-      restoreEffort();
       if (stderrLineBuf.trim()) {
         emitStderrThinking(stderrLineBuf);
         stderrLineBuf = "";
@@ -1001,9 +935,6 @@ function runKimi(opts) {
   const child = run.child;
   if (!child) return { kill() {} };
 
-  // prepend: restore before the shared listeners parse the chunk.
-  child.stdout.prependListener("data", () => restoreEffort());
-  child.stderr.prependListener("data", () => restoreEffort());
   child.stderr.on("data", (chunk) => {
     stderrLineBuf += String(chunk);
     let nl;
@@ -1036,8 +967,7 @@ function extractSessionId(obj) {
 
 module.exports = {
   runKimi,
-  flipKimiEffort,
-  kimiConfigPath,
+  kimiEffortEnv,
   materializeKimiHome,
   deployKimiGuardrailOverlay,
   reclaimKimiHomes,

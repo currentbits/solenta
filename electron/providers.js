@@ -23,9 +23,9 @@ const { posixQuote } = require("./ssh.js");
  *   low|medium|high|xhigh (no max, no ultra). Live web search is
  *   `-c web_search=live` (issue #799; `--search` after exec is rejected),
  *   gated by thread.webSearch (issue #174).
- * - kimi: no effort flag, but [thinking].effort in config.toml (low/high/max
- *   on the k3 family) → efforts listed with effortVia "config"; kimi.js flips
- *   the config around the spawn. kimi-for-coding aliases have no support_efforts.
+ * - kimi: no effort flag; KIMI_MODEL_THINKING_EFFORT per spawn (low/high/max
+ *   on the k3 family) → efforts listed with effortVia "env" (#451).
+ *   kimi-for-coding aliases have no support_efforts.
  * - opencode: `run --variant <level>` from per-model variants. Provider-wide
  *   efforts stay empty so a model with no variants hides the pill.
  * - cursor: effort is baked into the model id (e.g. gpt-5.3-codex-high);
@@ -73,8 +73,8 @@ const { posixQuote } = require("./ssh.js");
  * @property {string[]} models
  * @property {ModelInfo[]} modelInfo
  * @property {Array<"low"|"medium"|"high"|"xhigh"|"max"|"ultra"|"ultracode">} efforts
- * @property {"config"} [effortVia] - efforts applied outside argv (kimi:
- *   config.toml flip in kimi.js); absent means buildArgs emits the flag
+ * @property {"env"} [effortVia] - efforts applied outside argv (kimi:
+ *   kimiEffortEnv in kimi.js); absent means buildArgs emits the flag
  * @property {boolean} [supportsSearch] - CLI accepts `-c web_search=live`
  *   (live web search). Absent/false hides the composer Search pill.
  * @property {boolean} [supportsSteer] - live process accepts a second stdin
@@ -983,10 +983,10 @@ const PROVIDERS = [
     // From per-model support_efforts in ~/.kimi-code/config.toml (k3 family).
     // kimi-for-coding aliases have no support_efforts. kimi has NO CLI
     // effort flag (verified 0.31.1: --effort etc. all rejected); effortVia
-    // "config" means kimi.js flips [thinking].effort in config.toml around
-    // the spawn instead of emitting argv.
+    // "env" means the runner sets KIMI_MODEL_THINKING_EFFORT (kimi 0.39,
+    // #451) instead of emitting argv.
     efforts: KIMI_K3_EFFORTS.slice(),
-    effortVia: "config",
+    effortVia: "env",
     // -p cannot combine with -y/--auto/--plan (verified live). Prompt mode
     // always runs tools unprompted, so the only honest label is full access.
     permissionModes: ["bypassPermissions"],
@@ -1014,7 +1014,7 @@ const PROVIDERS = [
       if (sessionId && sessionId !== "cwd") {
         args.push("-S", String(sessionId));
       }
-      // Effort goes via config.toml (effortVia "config"), NEVER argv: kimi
+      // Effort goes via env (effortVia "env"), NEVER argv: kimi
       // 0.31.1 rejects every effort-shaped flag with "unknown option".
       maybeEmitEffort([], reasoningEffort, () => {
         args.push("--effort", "should-not-appear");

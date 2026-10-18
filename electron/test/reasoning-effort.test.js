@@ -141,11 +141,11 @@ describe("reasoning effort: provider modelInfo + efforts", () => {
     assert.deepEqual(byId.grok.efforts, ["low", "medium", "high", "xhigh"]);
     assert.deepEqual(byId.opencode.efforts, []);
     // kimi's levels come from config.toml support_efforts, not a CLI flag:
-    // low/high/max, with no medium. Applied via config flip (effortVia).
+    // low/high/max, with no medium. Applied via env (effortVia).
     assert.deepEqual(byId.kimi.efforts, ["low", "high", "max"]);
     // effortVia is registry-internal (runner concern), not IPC surface.
     assert.equal(byId.kimi.effortVia, undefined);
-    assert.equal(getProvider("kimi").effortVia, "config");
+    assert.equal(getProvider("kimi").effortVia, "env");
     assert.deepEqual(byId.simulate.efforts, []);
     assert.deepEqual(byId.simulate.modelInfo, []);
 
@@ -243,8 +243,8 @@ describe("reasoning effort: provider modelInfo + efforts", () => {
             !args.some((a) => String(a).startsWith("model_reasoning_effort=")),
           `${entry.id} with empty efforts must not emit effort flags: ${JSON.stringify(args)}`,
         );
-      } else if (entry.effortVia === "config") {
-        // Efforts applied outside argv (kimi config flip): the level must
+      } else if (entry.effortVia === "env") {
+        // Efforts applied outside argv (kimi env): the level must
         // NEVER leak into argv, same assertions as the empty-efforts case.
         const args = entry.buildArgs({
           prompt: "p",
@@ -255,7 +255,7 @@ describe("reasoning effort: provider modelInfo + efforts", () => {
             !args.includes("--reasoning-effort") &&
             !args.includes("--variant") &&
             !args.some((a) => String(a).startsWith("model_reasoning_effort=")),
-          `${entry.id} with effortVia config must not emit effort flags: ${JSON.stringify(args)}`,
+          `${entry.id} with effortVia env must not emit effort flags: ${JSON.stringify(args)}`,
         );
       } else {
         const level = entry.efforts[0];
