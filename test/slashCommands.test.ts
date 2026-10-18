@@ -42,6 +42,7 @@ describe("matchSlashCommands", () => {
       "/undo",
       "/usage",
       "/context",
+      "/copy",
       "/model",
       "/effort",
       "/permissions",
@@ -58,9 +59,9 @@ describe("matchSlashCommands", () => {
     }
   });
 
-  it("filters by prefix: /co hits compact, committee, context", () => {
+  it("filters by prefix: /co hits compact, context, copy, committee", () => {
     const names = matchSlashCommands("/co").map((c) => c.name);
-    assert.deepEqual(names, ["/compact", "/context", "/committee"]);
+    assert.deepEqual(names, ["/compact", "/context", "/copy", "/committee"]);
   });
 
   it("does not invent a match for an unknown /foo", () => {

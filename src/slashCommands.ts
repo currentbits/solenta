@@ -14,6 +14,7 @@ export const NATIVE_COMPACT_PROVIDERS: readonly string[] = ["claude", "codex"];
 
 /** Immediate actions the palette can fire. Insert verbs have no action. */
 export type SlashAction =
+  | "copy"
   | "compact"
   | "rewind"
   | "usage"
@@ -78,6 +79,12 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
     hint: "Open the context breakdown",
     kind: "run",
     action: "context",
+  },
+  {
+    name: "/copy",
+    hint: "Copy the last reply as Markdown",
+    kind: "run",
+    action: "copy",
   },
   {
     name: "/model",
