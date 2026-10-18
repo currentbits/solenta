@@ -192,6 +192,14 @@ export function commandQuery(text: string): string | null {
 }
 
 /**
+ * Composer shell mode (#470): a leading `!` makes the draft a command for
+ * the thread's checkout, not a prompt. The command (maybe empty) or null.
+ */
+export function shellCommand(text: string): string | null {
+  return text.startsWith("!") ? text.slice(1).trim() : null;
+}
+
+/**
  * Commands whose name starts with the live token. `extras` are CLI skills
  * and custom commands (#606); a name Solenta already owns stays ours.
  */

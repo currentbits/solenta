@@ -2287,6 +2287,10 @@ export interface CommandRunResult {
   at: number;
   /** Checkout the command ran in (#1216). */
   cwd?: string;
+  /** Typed in the composer as `!command` (#470). */
+  shell?: boolean;
+  /** Still going: `log` is the output so far (`!` commands only). */
+  running?: boolean;
 }
 
 /**
@@ -5549,11 +5553,14 @@ export interface CoderApi {
      * A solenta.json command rejects with REPO_CONFIG_UNTRUSTED until
      * `trustRepoConfig` carries the ProjectRepoConfig.hash the user approved
      * (#1506); that approval is stored on the project.
+     * `command` instead runs a typed composer `!` line (#470) in the
+     * thread's checkout: 60s cap, one transcript card that fills in live.
      */
     runCommand(input: {
       threadId: string;
       actionId?: string;
       trustRepoConfig?: string;
+      command?: string;
     }): Promise<CommandRunResult>;
     /**
      * Move an eligible thread to Recently deleted for seven days (#940).
