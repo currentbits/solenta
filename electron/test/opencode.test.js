@@ -70,6 +70,7 @@ if (process.env.CODER_FAKE_OPENCODE_ARGV_FILE) {
     JSON.stringify({
       OPENCODE_CONFIG_DIR: process.env.OPENCODE_CONFIG_DIR || "",
       SOLENTA_WORKTREE: process.env.SOLENTA_WORKTREE || "",
+      OPENCODE_CLIENT: process.env.OPENCODE_CLIENT || "",
     }),
     "utf8",
   );
@@ -610,6 +611,8 @@ describe("opencode runner integration", () => {
     const env = JSON.parse(fs.readFileSync(argvFile + ".env.json", "utf8"));
     const dest = path.resolve(tmpDir, "opencode-guardrails");
     assert.equal(env.OPENCODE_CONFIG_DIR, dest);
+    // #451: non-cli client also drops the headless-unanswerable question tool.
+    assert.equal(env.OPENCODE_CLIENT, "solenta");
     assert.ok(
       fs.existsSync(path.join(dest, "plugins", "solenta-guardrail.js")),
     );

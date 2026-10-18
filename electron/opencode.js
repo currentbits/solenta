@@ -252,6 +252,15 @@ function extractToolEvent(obj) {
 }
 
 /**
+ * Thread and workflow turns name their client (#451). opencode 1.17 only
+ * registers the `question` tool for clients app/cli/desktop, and a headless
+ * `opencode run` has no one to answer it, so "solenta" also keeps the model
+ * from stalling a turn on a question. Callers merge this before
+ * resolveSpawn so ssh/WSL children get it through wrapCommand too.
+ */
+const OPENCODE_CLIENT_ENV = Object.freeze({ OPENCODE_CLIENT: "solenta" });
+
+/**
  * Spawn the OpenCode CLI with NDJSON (--format json) output.
  *
  * @param {object} opts
@@ -289,6 +298,7 @@ function runOpencode(opts) {
 
 module.exports = {
   runOpencode,
+  OPENCODE_CLIENT_ENV,
   extractSessionId,
   extractTerminalError,
   extractTextPart,

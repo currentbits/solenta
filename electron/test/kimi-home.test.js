@@ -231,7 +231,8 @@ const m = cfg.match(/effort[ \\t]*=[ \\t]*"([^"]*)"/);
 fs.writeFileSync(process.env.CODER_FAKE_KIMI_SEEN_FILE, JSON.stringify({
   home,
   mcp,
-  effort: m ? m[1] : "none",
+  // #451: effort rides the env, the config.toml stays the user's.
+  effort: process.env.KIMI_MODEL_THINKING_EFFORT || (m ? m[1] : "none"),
 }));
 function emit(obj) { process.stdout.write(JSON.stringify(obj) + "\\n"); }
 emit({ type: "text", text: "ok" });
@@ -293,7 +294,7 @@ emit({ type: "usage", input_tokens: 1, output_tokens: 1 });
       assert.match(
         fs.readFileSync(path.join(sourceHome, "config.toml"), "utf8"),
         /effort = "high"/,
-        "the user's kimi home must not be flipped",
+        "the user's kimi home must not be edited",
       );
       const mcp = JSON.parse(seen.mcp);
       assert.ok(!mcp.mcpServers || !mcp.mcpServers.girder);
