@@ -106,6 +106,7 @@ import {
   type MentionExtra,
 } from "../contextChips";
 import {
+  parseJumpCommand,
   pickerVerb,
   type SlashAction,
   type SlashCommand,
@@ -340,6 +341,8 @@ export interface ComposerProps {
    * here. Absent: those verbs still clear the token so they never send.
    */
   onSlashAction?: (action: SlashAction) => void;
+  /** `/jump [filter]` on send opens the prompt outline instead (#487). */
+  onJump?: (query: string) => void;
   /**
    * Extra `/` rows from the underlying CLI (#606): skills and custom
    * commands. Insert-only; Solenta-owned names in the static palette win.
@@ -458,6 +461,7 @@ export const Composer = memo(function Composer({
   incomingAttachmentThreadId,
   onIncomingAttachmentsConsumed,
   onSlashAction,
+  onJump,
   cliCommands,
   onStopRun,
   dropHostRef,
@@ -1119,6 +1123,13 @@ export const Composer = memo(function Composer({
 
   const submitSend = () => {
     if (!canSend) return;
+    const jump = ask ? null : parseJumpCommand(readDraft());
+    if (jump !== null && onJump) {
+      writeDraft("", 0);
+      closeCommand();
+      onJump(jump);
+      return;
+    }
     // `/workflow …` and `/bestof …` open the picker instead of sending.
     const verb = ask ? null : pickerVerb(readDraft());
     if (verb && (verb.picker === "workflow" || onBestOfN)) {
