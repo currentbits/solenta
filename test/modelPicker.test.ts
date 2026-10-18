@@ -209,6 +209,29 @@ describe("buildUnifiedModelRows", () => {
   });
 });
 
+describe("custom CLI rows (#458)", () => {
+  const custom = provider({
+    id: "generic:goose",
+    name: "Goose",
+    models: [],
+    modelInfo: [],
+    efforts: [],
+    bestEffort: true,
+  });
+
+  it("collapse to one row with no Custom... (the CLI never gets a model)", () => {
+    const rows = buildModelRows(custom);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0]!.id, null);
+    assert.equal(rows[0]!.groupHeading, "Goose");
+    assert.match(rows[0]!.description, /Best effort/);
+  });
+
+  it("name the CLI on the trigger, not Default", () => {
+    assert.equal(modelTriggerLabel(null, custom), "Goose");
+  });
+});
+
 describe("modelTriggerLabel", () => {
   it("uses the modelInfo label when known", () => {
     assert.equal(modelTriggerLabel("claude-sonnet-5", provider()), "Sonnet 5");

@@ -1,7 +1,7 @@
 "use strict";
 
 /**
- * Workflow kimi phases must get the same effort flip and KIMI_CODE_HOME
+ * Workflow kimi phases must get the same effort env and KIMI_CODE_HOME
  * overlay as a normal kimi turn (issue #699). spawnAgentKimi used to drop
  * both: no reasoningEffort to runKimi, and no materializeKimiHome.
  */
@@ -83,7 +83,8 @@ const m = cfg.match(/effort[ \\t]*=[ \\t]*"([^"]*)"/);
 fs.writeFileSync(process.env.CODER_FAKE_KIMI_SEEN_FILE, JSON.stringify({
   home,
   mcp,
-  effort: m ? m[1] : "none",
+  // #451: effort rides the env, the config.toml stays the user's.
+  effort: process.env.KIMI_MODEL_THINKING_EFFORT || (m ? m[1] : "none"),
 }));
 function emit(obj) { process.stdout.write(JSON.stringify(obj) + "\\n"); }
 emit({ type: "text", text: "KIMI_PHASE_OK" });
@@ -136,7 +137,7 @@ describe("workflow kimi phases get effort and MCP overlay (#699)", () => {
     }
   });
 
-  it("spawnPhaseAgent flips effort on an isolated overlay, not the user home", async () => {
+  it("spawnPhaseAgent passes effort via env on an isolated overlay, not the user home", async () => {
     const projectDir = path.join(tmpDir, "proj");
     fs.mkdirSync(projectDir);
     const { done } = spawnPhaseAgent({
@@ -169,7 +170,7 @@ describe("workflow kimi phases get effort and MCP overlay (#699)", () => {
     assert.match(
       fs.readFileSync(path.join(sourceHome, "config.toml"), "utf8"),
       /effort = "high"/,
-      "the user's kimi home must not be flipped",
+      "the user's kimi home must not be edited",
     );
   });
 

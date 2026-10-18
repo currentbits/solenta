@@ -19,6 +19,8 @@ const {
 function runnableRef(ref, settings) {
   const { provider, instance } = parseProviderRef(ref);
   if (!getProvider(provider)) return false;
+  // A custom CLI (#458) only exists as an instance.
+  if (!instance && provider === "generic") return false;
   return !instance || Boolean(findInstance(settings, provider, instance));
 }
 

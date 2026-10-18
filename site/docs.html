@@ -674,6 +674,18 @@
         sessions</a> for their approval controls.
       </p>
       <p>
+        Answer permission and plan cards from the keyboard, like the CLIs:
+        <kbd>y</kbd> accepts (or approves the plan), <kbd>n</kbd> denies (or
+        keeps planning), and <kbd>a</kbd> always allows for the rest of the
+        session. A pending permission outranks typing: the keys work even
+        while the composer has focus, and are not typed into it. The card's
+        own fields (the command, the rule, plan notes) keep their keys, and a
+        card the guardrail flagged as risky never takes keys from the
+        composer. Always-allow on a shell command is a prefix rule such as
+        <code>npm test:*</code>, not all of Bash; edit it, or allow the whole
+        tool, under <strong>Always-allow options</strong>.
+      </p>
+      <p>
         PR state is live: checks show as badges on the thread card, and merging
         is a button, not a terminal command. Worktree merge and delete are
         guarded, so you cannot drop unmerged work by accident. Automatic

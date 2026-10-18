@@ -79,7 +79,8 @@ function validateWorkflowTemplate(template) {
       throw new Error(`Phase "${phaseName}": provider is required`);
     }
     const entry = getProvider(providerId);
-    if (!entry || entry.kind === "simulate") {
+    // Custom CLIs (#458) have no workflow adapter.
+    if (!entry || entry.kind === "simulate" || entry.kind === "generic") {
       throw new Error(
         `Phase "${phaseName}": unknown provider "${providerId}"`,
       );

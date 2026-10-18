@@ -3201,6 +3201,21 @@ button.diffLineGutter:focus-visible {
   text-decoration: underline;
 }
 
+/* y / n / a key hint on a permission button (#477). */
+.permissionKey {
+  display: inline-block;
+  min-width: 1.4em;
+  margin-right: 2px;
+  padding: 0 4px;
+  border: 1px solid currentColor;
+  border-radius: 3px;
+  font: inherit;
+  font-size: 10.5px;
+  line-height: 1.4;
+  text-align: center;
+  opacity: 0.7;
+}
+
 /* Always-allow overflow (#479): edit the session rule, or whole tool. */
 .permissionMore {
   font-size: 11px;

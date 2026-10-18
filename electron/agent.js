@@ -6,8 +6,44 @@
 // prompt travels in argv (#442).
 const spawn = require("cross-spawn");
 const { killTree, agentSpawnOptions } = require("./proc.js");
+const { stripAnsi } = require("./catalogDivergence.js");
 
 const CHUNK_THROTTLE_MS = 250;
+// A wide PTY so CLIs that wrap to the terminal width rarely do.
+const PTY_COLS = 200;
+const PTY_ROWS = 50;
+
+/** @type {any} undefined = not tried yet, null = unavailable */
+let ptyModule;
+function loadPty() {
+  if (ptyModule === undefined) {
+    try {
+      ptyModule = require("@lydell/node-pty");
+    } catch {
+      ptyModule = null;
+    }
+  }
+  return ptyModule;
+}
+
+/**
+ * Raw terminal output as transcript text (#458): drop escape sequences,
+ * keep what a carriage-return redraw (spinner, progress bar) left last on
+ * each line, and drop the remaining control bytes.
+ * ponytail: no cursor-movement emulation; a full-screen TUI comes out as
+ * its last-drawn lines. A headless terminal emulator would fix that.
+ * @param {string} raw
+ */
+function ptyText(raw) {
+  return stripAnsi(raw)
+    .split("\n")
+    .map((line) => {
+      const body = line.replace(/\r+$/, "");
+      return body.slice(body.lastIndexOf("\r") + 1);
+    })
+    .join("\n")
+    .replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "");
+}
 const SIGKILL_AFTER_MS = 3000;
 // Max stderr retained per child process (tail), for error reporting.
 const STDERR_TAIL_CHARS = 64 * 1024;
@@ -22,6 +58,11 @@ const STDERR_TAIL_CHARS = 64 * 1024;
  * stderrText) fires when the process exits. kill() sends SIGTERM, then
  * SIGKILL after 3s if the group is still alive.
  *
+ * `pty: true` runs the CLI in a pseudo-terminal instead (for CLIs that
+ * buffer or refuse to run without a TTY). stdout and stderr then arrive
+ * merged, cleaned by ptyText; stderrText stays empty. Falls back to pipes
+ * when the native addon does not load, like the Terminal pane.
+ *
  * @param {object} opts
  * @param {string} opts.command
  * @param {string[]} [opts.args]
@@ -29,6 +70,7 @@ const STDERR_TAIL_CHARS = 64 * 1024;
  * @param {boolean} [opts.appendPrompt=true]
  * @param {string} opts.cwd
  * @param {NodeJS.ProcessEnv} [opts.env] - full child env; undefined inherits
+ * @param {boolean} [opts.pty=false]
  * @param {(text: string) => void} opts.onChunk
  * @param {(exitCode: number | null, fullText: string, stderrText: string) => void} opts.onDone
  * @param {(err: Error) => void} [opts.onError]
@@ -42,6 +84,7 @@ function runAgent(opts) {
     appendPrompt = true,
     cwd,
     env,
+    pty = false,
     onChunk,
     onDone,
     onError,
@@ -103,6 +146,41 @@ function runAgent(opts) {
   const spawnArgs = appendPrompt
     ? [...args, String(prompt ?? "")]
     : [...args];
+
+  const ptyLib = pty ? loadPty() : null;
+  if (ptyLib) {
+    // ponytail: node-pty takes the binary as-is; on Windows a .cmd shim
+    // needs its .exe (or `cmd /c`) in the command, cross-spawn is pipes-only.
+    let proc;
+    try {
+      proc = ptyLib.spawn(command, spawnArgs, {
+        name: "xterm-256color",
+        cols: PTY_COLS,
+        rows: PTY_ROWS,
+        cwd,
+        env: { ...(env || process.env), TERM: "xterm-256color" },
+      });
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error(String(err));
+      if (typeof onError === "function") onError(error);
+      if (typeof onDone === "function") onDone(1, fullText, error.message);
+      return { kill() {} };
+    }
+    let raw = "";
+    proc.onData((/** @type {string} */ chunk) => {
+      raw += chunk;
+      fullText = ptyText(raw);
+      scheduleChunk();
+    });
+    proc.onExit((/** @type {{ exitCode: number }} */ e) => finish(e ? e.exitCode : null));
+    return {
+      kill() {
+        if (killed || finished) return;
+        killed = true;
+        killTimer = killTree(proc, SIGKILL_AFTER_MS);
+      },
+    };
+  }
 
   let child;
   try {
@@ -321,6 +399,7 @@ module.exports = {
   runAgent,
   runJsonLines,
   parseAgentCommand,
+  ptyText,
   CHUNK_THROTTLE_MS,
   SIGKILL_AFTER_MS,
 };

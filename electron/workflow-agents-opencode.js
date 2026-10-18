@@ -16,6 +16,7 @@ const {
   extractTextPart: opencodeExtractText,
   extractSessionId: opencodeExtractSessionId,
   extractToolEvent: opencodeExtractTool,
+  OPENCODE_CLIENT_ENV,
 } = require("./opencode.js");
 const {
   crossesBoundary,
@@ -110,6 +111,7 @@ function spawnAgentOpencode(opts) {
       // Deploy miss must not kill the phase; stream notice remains.
     }
   }
+  opencodeEnv = { ...opencodeEnv, ...OPENCODE_CLIENT_ENV };
 
   const opencodeBin = binary || resolveBin(entry);
   const spawn = resolveWorkflowSpawn(

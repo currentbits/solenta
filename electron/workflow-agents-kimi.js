@@ -11,10 +11,12 @@ const {
   extractUsage: kimiExtractUsage,
   extractToolEvents: kimiExtractTools,
   extractSessionId: kimiExtractSessionId,
+  kimiEffortEnv,
 } = require("./kimi.js");
 const {
   getProvider,
   resolveBin,
+  honouredEfforts,
 } = require("./providers.js");
 const { kimiMcpServersForRun } = require("./memory-sup.js");
 const { guardrailsEnabled } = require("./guardrails.js");
@@ -78,8 +80,7 @@ function spawnAgentKimi(opts) {
   });
 
   // Same overlay runner uses for normal kimi turns (#671 / #699): isolated
-  // KIMI_CODE_HOME so the phase cannot inherit foreign MCP, and so
-  // flipKimiEffort writes a local config.toml. Nested under threadId so
+  // KIMI_CODE_HOME so the phase cannot inherit foreign MCP. Nested under threadId so
   // parallel phase agents do not race one file and reclaim still keys off
   // the thread. Local only. ssh/WSL: deploy PreToolUse onto the far side
   // and pass KIMI_CODE_HOME through wrapCommand (#834 / #836).
@@ -118,6 +119,12 @@ function spawnAgentKimi(opts) {
     }
   }
 
+  const effortEnv = kimiEffortEnv(
+    reasoningEffort,
+    honouredEfforts(entry, model || null),
+  );
+  if (effortEnv) kimiEnv = { ...kimiEnv, ...effortEnv };
+
   const kimiBin = binary || resolveBin(entry);
   const spawn = resolveWorkflowSpawn(project, kimiBin, args, cwd, kimiEnv);
   const handle = runKimi({
@@ -125,7 +132,6 @@ function spawnAgentKimi(opts) {
     args: spawn.args,
     cwd: spawn.cwd,
     env: withProjectEnv(project, kimiEnv),
-    reasoningEffort: reasoningEffort || null,
     onEvent: (ev) => {
       gotJson = true;
       if (!ev || typeof ev !== "object") return;

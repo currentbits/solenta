@@ -7,7 +7,11 @@ const services = require("./services.js");
 const { runAgent } = require("./agent.js");
 const { whenPathReady } = require("./pathEnv.js");
 const { truncate, toolSummary } = require("./claude.js");
-const { threadInstanceEnv, threadProviderRef } = require("./providerInstances.js");
+const {
+  threadInstanceEnv,
+  threadProviderRef,
+  findInstance,
+} = require("./providerInstances.js");
 const { runCodexAppServerTurn } = require("./codex-appserver.js");
 const { isNativeCompactTurn } = require("./compaction.js");
 const { heartbeatLane } = require("./mergeQueue.js");
@@ -549,6 +553,29 @@ function providerBinAvailable(providerId) {
   const entry = getProvider(providerId);
   if (!entry || entry.kind === "simulate") return true;
   return isBinAvailable(resolveBin(entry));
+}
+
+/**
+ * A custom CLI thread (#458) can start: its row still exists, runs here
+ * (its env overlay cannot travel over ssh/WSL), and the binary resolves.
+ * @param {object} settings
+ * @param {{ provider?: string, providerInstance?: string | null }} thread
+ * @param {{ remoteHost?: string, path?: string } | null} project
+ */
+function assertCustomCliRunnable(settings, thread, project) {
+  const inst = findInstance(settings, "generic", thread.providerInstance);
+  if (!inst) {
+    throw new Error(
+      "This thread's custom CLI was removed. Pick a provider in the model picker to continue.",
+    );
+  }
+  if (crossesBoundary(project)) {
+    throw new Error("Custom CLIs run on this machine only. Pick a built-in provider for remote projects.");
+  }
+  const bin = (inst.command || [])[0];
+  if (!isBinAvailable(bin)) {
+    throw new Error(`Custom CLI binary not found: ${bin}. Fix the command in Settings › Agents.`);
+  }
 }
 
 /**
@@ -1965,7 +1992,13 @@ function createRunner(opts) {
     const provider = resolveProvider(thread);
     const projectForGate = store.getProject(thread.projectId);
     // Fail before mutating thread state when the CLI is missing.
-    if (provider !== "simulate" && provider !== "generic") {
+    if (
+      provider === "generic" &&
+      !process.env.CODER_AGENT_CMD &&
+      thread.provider === "generic"
+    ) {
+      assertCustomCliRunnable(store.getSettings(), thread, projectForGate);
+    } else if (provider !== "simulate" && provider !== "generic") {
       const entryDef = getProvider(provider) || getProvider("claude");
       assertProviderBinary(entryDef, projectForGate);
       if (thread.providerInstance) {
