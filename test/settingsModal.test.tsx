@@ -2928,6 +2928,74 @@ describe("SettingsModal Agents › named provider instances (#453)", () => {
     assert.deepEqual(saved.at(-1), { providerInstances: [] });
   });
 
+  it("adds a custom CLI (#458): argv parsed, no config folder", async () => {
+    const saved: Array<Partial<AppSettings>> = [];
+    const m = await mount(
+      modal({
+        initialPane: "agents",
+        providers: [CLAUDE],
+        settings: { providerInstances: [] } as Partial<AppSettings> as AppSettings,
+        onSaveSettings: async (patch) => {
+          saved.push(patch);
+          return patch as AppSettings;
+        },
+      }),
+    );
+    await m.click(m.query("[data-add-instance]"));
+    await m.change(m.query("#instance-provider"), "generic");
+    assert.equal(m.query("#instance-dir"), null, "a custom CLI has no config folder");
+    await m.type(m.query("#instance-name"), "Goose");
+    await m.type(m.query("#instance-command"), `"/opt/my tools/goose" run -t`);
+    await m.type(m.query("#instance-full-access"), "--yolo");
+    await m.type(m.query("#instance-cwd"), "packages/app");
+    await m.change(m.query("#instance-transcript"), "pty");
+    await m.click(m.queryAll("[data-instance-form] button").find((b) => b.textContent === "Add"));
+    const row = saved.at(-1)?.providerInstances?.[0];
+    assert.deepEqual({ ...row, id: "x" }, {
+      id: "x",
+      name: "Goose",
+      provider: "generic",
+      configDir: null,
+      env: {},
+      command: ["/opt/my tools/goose", "run", "-t"],
+      fullAccessArgs: ["--yolo"],
+      cwd: "packages/app",
+      transcript: "pty",
+    });
+  });
+
+  it("a custom CLI row says best effort, never sign-in state, and edits back to its argv", async () => {
+    const GOOSE = {
+      id: "g1",
+      name: "Goose",
+      provider: "generic",
+      configDir: null,
+      env: {},
+      command: ["/opt/my tools/goose", "run", "-t"],
+      fullAccessArgs: [],
+    };
+    const m = await mount(
+      modal({
+        initialPane: "agents",
+        providers: [
+          CLAUDE,
+          { ...KIMI, id: "generic:g1", name: "Goose", baseProvider: "generic", instanceId: "g1", bestEffort: true },
+        ],
+        settings: { providerInstances: [GOOSE] } as Partial<AppSettings> as AppSettings,
+      }),
+    );
+    assert.match(
+      m.query('[data-provider-row="generic:g1"] [data-auth-state]')?.textContent ?? "",
+      /Best effort/,
+    );
+    await m.click(m.query('[data-instance-edit="g1"]'));
+    assert.equal(
+      (m.query("#instance-command") as HTMLInputElement).value,
+      JSON.stringify(GOOSE.command),
+      "a path with a space round-trips through JSON form",
+    );
+  });
+
   it("Connect ChatGPT account adds a codex instance with its own CODEX_HOME and signs in", async () => {
     const saved: Array<Partial<AppSettings>> = [];
     const signIns: Array<[string, { name?: string } | undefined]> = [];

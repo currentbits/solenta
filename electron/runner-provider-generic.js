@@ -5,8 +5,11 @@
 
 const { parseAgentCommand } = require("./agent.js");
 const { normalizeProjectEnv } = require("./worktreeEnv.js");
+const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const threadSecrets = require("./threadSecrets.js");
+const { findInstance, instanceEnv } = require("./providerInstances.js");
 
 /**
  * @param {object} ctx - createRunner context (see runner-watchdogs.js header)
@@ -201,7 +204,57 @@ function createGenericRun(ctx) {
   }
 
   /**
-   * Start a real generic agent child-process run (CODER_AGENT_CMD).
+   * Argv + env overlay for this thread. CODER_AGENT_CMD (tests / smoke)
+   * wins; otherwise the thread's custom CLI row (#458), whose full-access
+   * flags join only in bypassPermissions. The prompt is appended last.
+   * The row's working folder resolves inside `worktree` when relative.
+   * @param {object} thread
+   * @param {string} worktree
+   */
+  function genericCommand(thread, worktree) {
+    const inst =
+      !process.env.CODER_AGENT_CMD && thread.provider === "generic"
+        ? findInstance(store.getSettings(), "generic", thread.providerInstance)
+        : null;
+    if (!inst) {
+      return {
+        ...parseAgentCommand(process.env.CODER_AGENT_CMD),
+        env: {},
+        custom: false,
+        cwd: worktree,
+        pty: false,
+      };
+    }
+    const [command, ...args] = inst.command;
+    if (thread.permissionMode === "bypassPermissions") {
+      args.push(...(inst.fullAccessArgs || []));
+    }
+    const cwd = !inst.cwd
+      ? worktree
+      : inst.cwd.startsWith("~/")
+        ? path.join(os.homedir(), inst.cwd.slice(2))
+        : path.resolve(worktree, inst.cwd);
+    // Before any thread state moves: a spawn with a missing cwd reports
+    // ENOENT, which reads like the binary is missing.
+    if (!fs.existsSync(cwd)) {
+      throw new Error(`Custom CLI working folder not found: ${cwd}`);
+    }
+    return {
+      command,
+      args,
+      env: instanceEnv(inst),
+      custom: true,
+      cwd,
+      pty: inst.transcript === "pty",
+    };
+  }
+
+  /**
+   * Start a real generic agent child-process run (CODER_AGENT_CMD or a
+   * custom CLI row). Raw stdout, or cleaned PTY output, is the
+   * transcript: no work-log cards, usage or resume. No MCP config is
+   * passed, so the CLI cannot write to shared memory; it still gets the
+   * scanned bootstrap note in the prompt.
    */
   function startGenericRun(threadId, prompt, runId, name) {
     if (abortIfCancelled(threadId, runId)) return { runId };
@@ -211,7 +264,14 @@ function createGenericRun(ctx) {
       throw new Error(`Unknown project for thread: ${threadId}`);
     }
 
-    const { command, args } = parseAgentCommand(process.env.CODER_AGENT_CMD);
+    const {
+      command,
+      args,
+      env: overlay,
+      custom,
+      cwd: localCwd,
+      pty,
+    } = genericCommand(thread, thread.worktreePath || project.path);
     const model = path.basename(command);
 
     /** Mutable real-run state (also used as lastWorkflow source). */
@@ -240,7 +300,6 @@ function createGenericRun(ctx) {
     /** @type {ReturnType<typeof setTimeout> | null} */
     let pushTimer = null;
 
-    const localCwd = thread.worktreePath || project.path;
 
     const entry = claimPreparingRun(threadId, runId, {
       kind: "generic",
@@ -328,9 +387,11 @@ function createGenericRun(ctx) {
       prompt,
       appendPrompt: !crossing,
       cwd: spawn.cwd,
+      pty,
       env: threadSecrets.withEnv(threadId, {
         ...process.env,
         ...normalizeProjectEnv(project && project.env),
+        ...overlay,
       }),
       onChunk: (text) => {
         if (!guard()) return;
@@ -350,6 +411,9 @@ function createGenericRun(ctx) {
         applyPendingText();
 
         clearRun(threadId);
+        // No session to resume: the next turn replays the retained tail
+        // (buildHandoffPrefix), or every follow-up would start blind.
+        if (custom) store.updateThread(threadId, { replayContext: true });
 
         completeWorkLogStep(threadId, e.startingId);
         completeWorkLogStep(threadId, e.respondingId);

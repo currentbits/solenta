@@ -582,6 +582,7 @@ function alignCatalogWithLive(providers, opts = {}) {
 }
 
 module.exports = {
+  stripAnsi,
   NOTE_ID_CAP,
   FILE_BYTE_CAP,
   diffCatalog,

@@ -36,6 +36,7 @@ import {
   canFavourite,
   clampHighlightIndex,
   CUSTOM_MODEL_ID,
+  BEST_EFFORT_NOTE,
   buildProfileRows,
   effortDisplayLabel,
   effortHint,
@@ -2342,7 +2343,9 @@ export const Composer = memo(function Composer({
                         const groupInfo = row.groupHeading
                           ? providers.find((p) => p.id === row.providerId)
                           : undefined;
-                        const note = groupInfo?.catalogNote ?? null;
+                        const note =
+                          groupInfo?.catalogNote ??
+                          (groupInfo?.bestEffort ? BEST_EFFORT_NOTE : null);
                         const signedOut = groupInfo?.auth === "signedOut";
                         const hint =
                           row.setup && setupFor === row.providerId

@@ -79,6 +79,10 @@ export function sessionSwitchWarning(currentProviderName: string): string {
  *
  * Does not apply session lock (caller does via buildUnifiedModelRows).
  */
+/** What a custom CLI row (#458) does not have, said wherever it is picked. */
+export const BEST_EFFORT_NOTE =
+  "Best effort: plain text output, no work log, usage or resume";
+
 /** Sentinel row id: selecting it opens the free-text field, not a model. */
 export const CUSTOM_MODEL_ID = "__custom__";
 
@@ -158,6 +162,12 @@ export function buildModelRows(
       groupHeading: provider.name,
     },
   ];
+
+  // A custom CLI (#458) never receives a model id: one row, no Custom...
+  if (provider.bestEffort) {
+    rows[0] = { ...rows[0]!, label: "Run as configured", description: BEST_EFFORT_NOTE };
+    return rows;
+  }
 
   const infos = Array.isArray(provider.modelInfo) ? provider.modelInfo : [];
   const models = Array.isArray(provider.models) ? provider.models : [];
@@ -250,6 +260,7 @@ export function modelTriggerLabel(
   model: string | null,
   provider: ProviderInfo | undefined | null,
 ): string {
+  if (provider?.bestEffort) return provider.name;
   if (model == null || model === "") return "Default";
   const infos = provider?.modelInfo;
   const hit = Array.isArray(infos)

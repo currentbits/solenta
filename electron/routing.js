@@ -126,7 +126,7 @@ function applyRoute(store, threadId, prompt) {
   try {
     const { parseProviderRef } = require("./providerInstances.js");
     const base = parseProviderRef(profile.provider).provider;
-    if (!services.providerInstalledFor(project, base)) {
+    if (!services.providerInstalledFor(project, profile.provider, settings)) {
       store.save();
       return `${head}; ${profile.name} needs ${base}, which is not installed, kept ${thread.provider}`;
     }
