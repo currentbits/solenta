@@ -212,6 +212,7 @@ function composer(
     agentProfileId?: string | null;
     onListFiles?: (query: string) => Promise<string[]>;
     onProviderSignIn?: (providerId: string) => Promise<void>;
+    onShell?: (command: string) => Promise<unknown>;
   } = {},
 ) {
   // Seed the emulation from the thread this element renders with, so the
@@ -237,6 +238,7 @@ function composer(
       fast={over.fast === true}
       providers={over.providers ?? PROVIDERS}
       onProviderSignIn={over.onProviderSignIn}
+      onShell={over.onShell}
       ask={over.ask ?? false}
       agentProfiles={over.agentProfiles}
       agentProfileId={over.agentProfileId}
@@ -2429,6 +2431,49 @@ describe("Composer keyboard send", () => {
     await m.press(m.query("textarea"), "Enter", { altKey: true });
     assert.deepEqual(h.sends, ["/btw where is createThread"]);
     m.unmount();
+  });
+
+  it("runs a leading ! as a shell command, not a prompt (#470)", async () => {
+    const h = makeHarness();
+    const shells: string[] = [];
+    const m = await mount(
+      composer(h, { busy: true, onShell: async (c) => void shells.push(c) }),
+    );
+    const box = m.query<HTMLTextAreaElement>("textarea");
+    assert.equal(m.query("[data-shell-mode]"), null);
+    await m.type(box, "!  npm test ");
+    assert.ok(m.query("[data-shell-mode]"), "shell chrome is on");
+    // Busy + steer-capable: still no model turn, no steer, no queue.
+    await m.press(box, "Enter", { metaKey: true });
+    assert.deepEqual(shells, ["npm test"]);
+    assert.deepEqual(h.sends, []);
+    assert.deepEqual(h.steers, []);
+    assert.equal(box.value, "", "the line leaves the box");
+    assert.equal(m.query("[data-shell-mode]"), null);
+    m.unmount();
+  });
+
+  it("puts a ! line back when it fails to start, and keeps ! literal without onShell", async () => {
+    const h = makeHarness();
+    const m = await mount(
+      composer(h, {
+        onShell: () => Promise.reject(new Error("A run is already active on this thread")),
+      }),
+    );
+    const box = m.query<HTMLTextAreaElement>("textarea");
+    await m.type(box, "!git status");
+    await m.press(box, "Enter", { metaKey: true });
+    assert.equal(box.value, "!git status");
+    assert.match(m.query("[role=alert]")?.textContent ?? "", /already active/);
+    m.unmount();
+
+    const h2 = makeHarness();
+    const m2 = await mount(composer(h2));
+    await m2.type(m2.query("textarea"), "!important: fix it");
+    assert.equal(m2.query("[data-shell-mode]"), null);
+    await m2.press(m2.query("textarea"), "Enter", { metaKey: true });
+    assert.deepEqual(h2.sends, ["!important: fix it"]);
+    m2.unmount();
   });
 
   it("does not double-prefix an already-/btw draft on Alt+Enter", async () => {

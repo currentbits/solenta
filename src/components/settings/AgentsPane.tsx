@@ -24,6 +24,7 @@ import type {
   SubagentPool,
   SubagentPoolEntry,
 } from "../../shared/ipc";
+import { accountLine, addChatGptAccount } from "../../providerAccounts";
 import styles from "../SettingsModal.module.css";
 import type { SettingsModalProps } from "../SettingsModal";
 
@@ -163,7 +164,7 @@ export function AgentsPane({
   persistPool: (next: SubagentPool) => Promise<boolean>;
   onSaveSettings: SettingsModalProps["onSaveSettings"];
   onRefreshProviders?: () => void;
-  onProviderSignIn?: (providerId: string) => Promise<void>;
+  onProviderSignIn?: (providerId: string, opts?: { name?: string }) => Promise<void>;
 }) {
   // Mounted only while this pane shows: opening it re-probes sign-in state.
   useEffect(() => {
@@ -213,6 +214,21 @@ export function AgentsPane({
       ? instances.map((i) => (i.id === instanceDraft.id ? next : i))
       : [...instances, next];
     if (await persistInstances(list)) setInstanceDraft(null);
+  };
+
+  // A Codex instance with its own CODEX_HOME, then its `codex login` (#1659).
+  const connectChatGpt = async () => {
+    if (!onProviderSignIn) return;
+    const { list, ref } = addChatGptAccount(instances);
+    if (!(await persistInstances(list))) return;
+    const codexName = providers.find((p) => p.id === "codex")?.name ?? "Codex";
+    try {
+      await onProviderSignIn(ref, { name: `${codexName} (${list[list.length - 1].name})` });
+    } catch (err) {
+      setError(
+        err instanceof Error && err.message ? err.message : "Could not start sign in",
+      );
+    }
   };
 
   const submitDraft = async () => {
@@ -345,6 +361,18 @@ export function AgentsPane({
             />
           ) : (
             <div className={styles.fieldRow}>
+              {onProviderSignIn &&
+                providers.some((p) => p.id === "codex" && p.available) && (
+                  <button
+                    type="button"
+                    className={styles.btn}
+                    data-connect-chatgpt=""
+                    disabled={saving || settings == null}
+                    onClick={() => void connectChatGpt()}
+                  >
+                    Connect ChatGPT account
+                  </button>
+                )}
               <button
                 type="button"
                 className={styles.btn}
@@ -940,7 +968,7 @@ function ProviderStatusList({
                   ? "Not installed"
                   : state === "checking"
                     ? "Checking sign-in…"
-                    : AUTH_LABELS[state]}
+                    : (accountLine(p) ?? AUTH_LABELS[state])}
               </p>
             </div>
             {(canSignIn || p.instanceId) && (

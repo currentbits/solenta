@@ -26,6 +26,7 @@ const {
   kickWorktreeSetup,
   eventText,
   formatDuration,
+  SHELL_TIMEOUT_MS,
 } = require("../projectCommands.js");
 const { VERIFY_COMMAND_MAX } = require("../verify.js");
 
@@ -432,6 +433,62 @@ describe("runCommand", () => {
     );
     release();
     await first;
+  });
+
+  it("runs a typed `!` line as one live card, capped at 60s (#470)", async () => {
+    // Real shell + real runner: output must reach the card before exit.
+    const pushes = [];
+    const broadcast = (channel, payload) => {
+      if (channel !== "thread:updated") return;
+      const card = payload.messages.find((m) => m.commandResult);
+      if (card) pushes.push(card.commandResult);
+    };
+    const result = await runCommand(
+      store,
+      { threadId, command: "  printf first; sleep 1; printf second; exit 3  " },
+      { runner: { isRunning: () => false }, broadcast },
+    );
+    assert.equal(result.ok, false);
+    assert.equal(result.exitCode, 3);
+    assert.equal(result.shell, true);
+    assert.equal(result.cwd, project.path);
+    assert.equal(result.log, "firstsecond");
+    assert.ok(
+      pushes.some((r) => r.running && r.log === "first"),
+      "partial output was pushed while the command ran",
+    );
+    const cards = store.getMessages(threadId);
+    assert.equal(cards.length, 1, "start and end share one event");
+    assert.match(cards[0].text, /^\$ printf first; sleep 1; printf second; exit 3 · exit 3 · /);
+    assert.equal(cards[0].commandResult.running, undefined);
+    assert.equal(SHELL_TIMEOUT_MS, 60_000);
+  });
+
+  it("passes the 60s cap to the runner and rejects an empty `!` (#470)", async () => {
+    const calls = [];
+    setRunCommandFn((input) => {
+      calls.push(input);
+      return Promise.resolve({ ok: true, exitCode: 0, timedOut: false, log: "", durationMs: 1 });
+    });
+    const deps = { runner: { isRunning: () => false } };
+    await runCommand(store, { threadId, command: "git status" }, deps);
+    assert.equal(calls[0].timeoutMs, SHELL_TIMEOUT_MS);
+    assert.equal(calls[0].command, "git status");
+    await assert.rejects(
+      () => runCommand(store, { threadId, command: "   " }, deps),
+      /type a command/i,
+    );
+    await assert.rejects(
+      () => runCommand(store, { threadId, command: "x".repeat(VERIFY_COMMAND_MAX + 1) }, deps),
+      /limited to/i,
+      "never runs a silently truncated line",
+    );
+    assert.equal(calls.length, 1);
+    await assert.rejects(
+      () =>
+        runCommand(store, { threadId, command: "ls" }, { runner: { isRunning: () => true } }),
+      /run is already active/i,
+    );
   });
 });
 

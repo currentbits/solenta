@@ -90,6 +90,7 @@ function tailLog(text, max = VERIFY_LOG_MAX) {
  *   platform?: NodeJS.Platform,
  *   spawn?: typeof spawn,
  *   signal?: AbortSignal,
+ *   onOutput?: (soFar: string) => void,
  * }} input
  * @returns {Promise<{ ok: boolean, exitCode: number | null, timedOut: boolean, log: string, durationMs: number }>}
  */
@@ -152,6 +153,7 @@ function runVerifyCommand(input) {
     const keep = (chunk) => {
       out += String(chunk);
       if (out.length > VERIFY_LOG_MAX * 4) out = out.slice(-VERIFY_LOG_MAX * 2);
+      if (input.onOutput) input.onOutput(out);
     };
     if (child.stdout) child.stdout.on("data", keep);
     if (child.stderr) child.stderr.on("data", keep);
