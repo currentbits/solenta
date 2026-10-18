@@ -4,6 +4,8 @@
  */
 const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 const {
   askNoteFor,
   formatMemoryHits,
@@ -16,6 +18,7 @@ const {
   buildAskPrompt,
   retrievalFallback,
   buildAskArgs,
+  kimiNoToolsAgentFile,
   extractAskText,
   completeAsk,
   ASK_NOTE,
@@ -287,6 +290,22 @@ describe("buildAskArgs", () => {
       "sonnet",
       "q",
     ]);
+  });
+
+  it("kimi: no-tools agent file, since -p runs tools unprompted (#698)", () => {
+    const args = buildAskArgs("kimi", { prompt: "q", model: "kimi-code/k3" });
+    assert.deepEqual(args, [
+      "--agent-file",
+      kimiNoToolsAgentFile(),
+      "-m",
+      "kimi-code/k3",
+      "-p",
+      "q",
+    ]);
+    assert.match(fs.readFileSync(args[1], "utf8"), /^---\nname: [a-z-]+\n[\s\S]*\ntools: \[\]\n---\n/);
+    fs.rmSync(path.dirname(args[1]), { recursive: true });
+    const again = kimiNoToolsAgentFile();
+    assert.ok(fs.existsSync(again), "rewritten after tmp cleanup");
   });
 
   it("returns null for an unknown provider", () => {

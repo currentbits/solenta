@@ -32,6 +32,18 @@ function threadDetailFor(ctx, id, markVisited) {
   });
 }
 
+/**
+ * A manual provider / effort / permission pick leaves the applied profile
+ * (#262): its matrix stops gating the thread. Returns the updated row.
+ */
+function leaveProfile(ctx, threadId, updated) {
+  const t = ctx.store.getThread(threadId);
+  if (!t || !t.agentProfileId) return updated;
+  ctx.store.updateThread(threadId, { agentProfileId: null });
+  ctx.store.save();
+  return updated ? { ...updated, agentProfileId: null } : updated;
+}
+
 /** IPC_HANDLERS rows for threads:*; ipc.js spreads them in. */
 module.exports = {
   "threads:list": async (ctx) => {
@@ -228,10 +240,23 @@ module.exports = {
     ctx.runner.answerSecret(input);
   },
   "threads:setPermissionMode": async (ctx, input) => {
-    const updated = services.setPermissionMode(ctx.store, input);
+    const updated = leaveProfile(
+      ctx,
+      input.threadId,
+      services.setPermissionMode(ctx.store, input),
+    );
     services.recordLastUsedDefaults(ctx.store, input.threadId);
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
     // Drop a synthesized plan card from the open thread (issue #707).
+    if (ctx.runner.refreshDetail) ctx.runner.refreshDetail(input.threadId);
+    return updated;
+  },
+  "threads:applyAgentProfile": async (ctx, input) => {
+    // A profile pick beats a pending Auto route, same as setProvider (#246).
+    services.setRoute(ctx.store, { threadId: input.threadId, route: null });
+    const updated = services.applyAgentProfile(ctx.store, input);
+    services.recordLastUsedDefaults(ctx.store, input.threadId);
+    ctx.broadcast("threads:changed", services.listThreads(ctx.store));
     if (ctx.runner.refreshDetail) ctx.runner.refreshDetail(input.threadId);
     return updated;
   },
@@ -500,13 +525,21 @@ module.exports = {
   "threads:setProvider": async (ctx, input) => {
     // A manual pick beats a pending Auto route (#246).
     services.setRoute(ctx.store, { threadId: input.threadId, route: null });
-    const updated = services.setProvider(ctx.store, input);
+    const updated = leaveProfile(
+      ctx,
+      input.threadId,
+      services.setProvider(ctx.store, input),
+    );
     services.recordLastUsedDefaults(ctx.store, input.threadId);
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
     return updated;
   },
   "threads:setReasoningEffort": async (ctx, input) => {
-    const updated = services.setReasoningEffort(ctx.store, input);
+    const updated = leaveProfile(
+      ctx,
+      input.threadId,
+      services.setReasoningEffort(ctx.store, input),
+    );
     services.recordLastUsedDefaults(ctx.store, input.threadId);
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
     return updated;

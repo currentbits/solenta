@@ -16,9 +16,17 @@ import { buildActivity } from "../activity.ts";
 import type { DevCtx } from "./context.ts";
 import { now } from "./util.ts";
 
-export function createUsage(ctx: DevCtx): Pick<CoderApi, "activity" | "usage" | "fleet" | "insights" | "digest"> {
+export function createUsage(ctx: DevCtx): Pick<CoderApi, "activity" | "governance" | "usage" | "fleet" | "insights" | "digest"> {
   const { details } = ctx;
   return {
+    governance: {
+      async listAudit() {
+        return [];
+      },
+      async verifyAudit() {
+        return { ok: true as const, entries: 0 };
+      },
+    },
     activity: {
       async list(): Promise<ActivityItem[]> {
         const workLogByThread: Record<string, WorkLogItem[]> = {};

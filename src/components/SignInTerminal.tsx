@@ -12,12 +12,15 @@ import styles from "./SignInTerminal.module.css";
  */
 export function SignInTerminal({
   providerName,
+  install = false,
   nonce,
   api,
   load,
   onClose,
 }: {
   providerName: string;
+  /** The install command is typed but not run: the user presses Enter. */
+  install?: boolean;
   nonce: number;
   api: TerminalApi;
   load?: XtermLoader;
@@ -33,19 +36,24 @@ export function SignInTerminal({
         className={styles.sheet}
         role="dialog"
         aria-modal="true"
-        aria-label={`Sign in to ${providerName}`}
+        aria-label={`${install ? "Install" : "Sign in to"} ${providerName}`}
         tabIndex={-1}
         data-signin-terminal=""
         onMouseDown={(e) => e.stopPropagation()}
       >
         <header className={styles.header}>
-          <h2 className={styles.title}>Sign in to {providerName}</h2>
+          <h2 className={styles.title}>
+            {install ? "Install" : "Sign in to"} {providerName}
+          </h2>
           <button type="button" className={styles.done} onClick={onClose}>
             Done
           </button>
         </header>
         <p className={styles.hint}>
-          Follow the prompts below. Solenta checks again when you close this.
+          {install
+            ? "Review the command below, then press Enter to run it."
+            : "Follow the prompts below."}{" "}
+          Solenta checks again when you close this.
         </p>
         <div className={styles.term}>
           <TerminalPane

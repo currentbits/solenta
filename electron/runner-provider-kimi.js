@@ -381,7 +381,7 @@ function createKimiRun(ctx) {
         // Deploy miss must not kill the run; stream notice remains.
       }
     }
-    const spawn = resolveSpawn(project, binary, args, localCwd, kimiEnv);
+    const spawn = resolveSpawn(project, binary, args, localCwd, kimiEnv, threadId);
 
     if (abortIfCancelled(threadId, runId)) return { runId };
     const handle = runKimi({

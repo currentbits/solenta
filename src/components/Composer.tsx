@@ -30,7 +30,6 @@ import {
   permissionPickerModes,
   providerDisplayName,
   providerPermissionModes,
-  snapToHonouredPermissionMode,
 } from "../format";
 import {
   buildPickerRows,
@@ -107,7 +106,9 @@ import {
   type MentionExtra,
 } from "../contextChips";
 import {
+  parseJumpCommand,
   pickerVerb,
+  shellCommand,
   type SlashAction,
   type SlashCommand,
 } from "../slashCommands";
@@ -134,6 +135,7 @@ import {
 } from "../uiPrefs";
 import { applyComposerVim } from "../composerVim";
 import { AttachmentChip } from "./composer/AttachmentChip";
+import { ImageMarkup } from "./composer/ImageMarkup";
 import { CommandList, MentionList } from "./composer/ComposerPopups";
 import { ReplyChip } from "./composer/ReplyChip";
 import { ReviewCommentChips } from "./composer/ReviewCommentChips";
@@ -182,6 +184,8 @@ export interface ComposerProps {
   providers: ProviderInfo[];
   /** Saved named profiles from settings. Empty hides the Profiles section. */
   agentProfiles?: AgentProfile[];
+  /** thread.agentProfileId (#262): marks that profile row as selected. */
+  agentProfileId?: string | null;
   /** Workflow templates from workflows.list(). */
   workflows: WorkflowTemplateInfo[];
   onSetProvider: (input: {
@@ -189,6 +193,8 @@ export interface ComposerProps {
     model?: string | null;
   }) => void | Promise<void>;
   onSetReasoningEffort: (effort: ReasoningEffort | null) => void | Promise<void>;
+  /** Apply a saved profile in one write (#262); stamps thread.agentProfileId. */
+  onApplyAgentProfile: (profileId: string) => void | Promise<void>;
   onSetWebSearch?: (webSearch: boolean) => void | Promise<void>;
   onSetFast?: (fast: boolean) => void | Promise<void>;
   /** Pending first-turn route (#246); "auto" shows the pill as Auto. */
@@ -242,6 +248,11 @@ export interface ComposerProps {
   } | null;
   /** The restore landed; the parent drops it so a remount cannot replay it. */
   onRestoreDraftConsumed?: () => void;
+  /**
+   * `!command` (#470): run it in the thread's checkout instead of sending a
+   * prompt. Resolves when the command ends. Absent: `!` is plain text.
+   */
+  onShell?: (command: string) => Promise<unknown>;
   /** Multi-phase workflow. The Build action inside Options calls this. */
   onBuild: (prompt: string, templateId: string) => void | Promise<void>;
   /**
@@ -337,6 +348,8 @@ export interface ComposerProps {
    * here. Absent: those verbs still clear the token so they never send.
    */
   onSlashAction?: (action: SlashAction) => void;
+  /** `/jump [filter]` on send opens the prompt outline instead (#487). */
+  onJump?: (query: string) => void;
   /**
    * Extra `/` rows from the underlying CLI (#606): skills and custom
    * commands. Insert-only; Solenta-owned names in the static palette win.
@@ -363,6 +376,26 @@ const STATIC = {
 const DEFAULT_TEMPLATE_ID = "standard";
 const NO_PLAN_MODE = "This provider has no plan mode";
 
+const PASTE_READ_FAILED =
+  "Couldn't read the pasted image. Copy it again, or attach it from a file.";
+// ponytail: mirrors EXT_BY_MEDIA / MAX_IMAGE_BYTES in electron/attachments.js,
+// which returns null without a reason. Only used to explain a rejection.
+const PASTE_IMAGE_TYPES = ["png", "jpeg", "gif", "webp", "bmp", "svg+xml"];
+const PASTE_IMAGE_MAX_MB = 20;
+
+/** Why the host likely refused a pasted image, phrased as what to do next. */
+function pasteRejectReason(blob: Blob): string {
+  const sub = blob.type.toLowerCase().replace(/^image\//, "");
+  if (!PASTE_IMAGE_TYPES.includes(sub)) {
+    return `Can't attach ${sub.toUpperCase() || "this"} images. Paste a PNG, JPEG, GIF, WebP, BMP or SVG.`;
+  }
+  const mb = blob.size / (1024 * 1024);
+  if (mb > PASTE_IMAGE_MAX_MB) {
+    return `The pasted image is ${mb.toFixed(1)} MB; the limit is ${PASTE_IMAGE_MAX_MB} MB. Paste a smaller image.`;
+  }
+  return "Couldn't save the pasted image. Try pasting again, or attach it from a file.";
+}
+
 /** Capped cascade index: row 30 shouldn't wait half a second to appear. */
 const rowEnterStyle = (index: number): CSSProperties =>
   ({ "--i": String(Math.min(index, 10)) }) as CSSProperties;
@@ -382,9 +415,11 @@ export const Composer = memo(function Composer({
   onSetAgent,
   providers,
   agentProfiles = [],
+  agentProfileId = null,
   workflows,
   onSetProvider,
   onSetReasoningEffort,
+  onApplyAgentProfile,
   onSetWebSearch,
   onSetFast,
   route = null,
@@ -402,6 +437,7 @@ export const Composer = memo(function Composer({
   onSend,
   restoreDraft = null,
   onRestoreDraftConsumed,
+  onShell,
   onBuild,
   onBestOfN,
   ask = false,
@@ -433,6 +469,7 @@ export const Composer = memo(function Composer({
   incomingAttachmentThreadId,
   onIncomingAttachmentsConsumed,
   onSlashAction,
+  onJump,
   cliCommands,
   onStopRun,
   dropHostRef,
@@ -472,9 +509,11 @@ export const Composer = memo(function Composer({
     el.classList.toggle(styles.overflowWarn, overflowWarn(used));
   }, []);
   const [hasPrompt, setHasPrompt] = useState(false);
+  const [bang, setBang] = useState(false);
   const syncHasPrompt = useCallback((text: string) => {
     const next = text.trim().length > 0;
     setHasPrompt((prev) => (prev === next ? prev : next));
+    setBang(text.startsWith("!"));
   }, []);
   const rememberDraft = useCallback(
     (text: string) => {
@@ -535,8 +574,13 @@ export const Composer = memo(function Composer({
     syncOverflow,
     setLocalError,
   });
-  const { attachments, addAttachments, removeAttachment, clearAttachments } =
-    useComposerAttachments({
+  const {
+    attachments,
+    addAttachments,
+    removeAttachment,
+    replaceAttachment,
+    clearAttachments,
+  } = useComposerAttachments({
       threadId,
       canAttachImages,
       incomingAttachments,
@@ -1062,11 +1106,44 @@ export const Composer = memo(function Composer({
     [contextChipLoader, contextChips, pasteCards, replyTo, reviewComments],
   );
 
+  const shellMode = bang && Boolean(onShell);
+
+  /**
+   * `!` line (#470): no model turn, no chips or attachments consumed (they
+   * wait for the next prompt). The box clears at once and stays live while
+   * the command runs (main refuses a second one); a rejected start puts the
+   * line back if nothing replaced it.
+   */
+  const runShell = async (typed: string, command: string) => {
+    if (!onShell || disabled) return;
+    if (!command) {
+      setLocalError("Type a command after !");
+      return;
+    }
+    setLocalError(null);
+    recordSent(threadId, typed);
+    recallIndexRef.current = null;
+    writeDraft("");
+    try {
+      await onShell(command);
+    } catch (err) {
+      if (!readDraft()) writeDraft(typed, typed.length);
+      setLocalError(
+        err instanceof Error && err.message ? err.message : "Command failed to start",
+      );
+    }
+  };
+
   const runAction = async (
     action: (prompt: string) => void | Promise<void>,
     failLabel: string,
   ) => {
     const typed = readDraft();
+    const shellLine = onShell ? shellCommand(typed) : null;
+    if (shellLine !== null) {
+      await runShell(typed, shellLine);
+      return;
+    }
     const prompt = await composeOutgoing(typed);
     if (!prompt.trim() || disabled || sending) return;
     setSending(true);
@@ -1094,6 +1171,13 @@ export const Composer = memo(function Composer({
 
   const submitSend = () => {
     if (!canSend) return;
+    const jump = ask ? null : parseJumpCommand(readDraft());
+    if (jump !== null && onJump) {
+      writeDraft("", 0);
+      closeCommand();
+      onJump(jump);
+      return;
+    }
     // `/workflow …` and `/bestof …` open the picker instead of sending.
     const verb = ask ? null : pickerVerb(readDraft());
     if (verb && (verb.picker === "workflow" || onBestOfN)) {
@@ -1470,6 +1554,40 @@ export const Composer = memo(function Composer({
     runAttachmentPick(onPickAttachments);
   };
 
+  /** Image chip open in the markup editor (#460), with its loaded bytes. */
+  const [markup, setMarkup] = useState<{
+    attachment: AttachmentInfo;
+    src: string;
+  } | null>(null);
+  const openMarkup = (attachment: AttachmentInfo) => {
+    void onLoadAttachmentImage?.(attachment.path)
+      .then((src) => {
+        if (src) setMarkup({ attachment, src });
+      })
+      .catch(() => {});
+  };
+  /** The flattened PNG replaces its chip; pin notes go into the draft. */
+  const saveMarkup = (dataUrl: string, notes: string) => {
+    const source = markup?.attachment;
+    setMarkup(null);
+    if (!source || !onSaveAttachmentImage) return;
+    onSaveAttachmentImage(dataUrl)
+      .then((next) => {
+        if (!next) {
+          setLocalError("Could not save the marked-up image");
+          return;
+        }
+        replaceAttachment(source.path, next);
+        if (notes) {
+          const text = [readDraft().trimEnd(), notes]
+            .filter(Boolean)
+            .join("\n\n");
+          writeDraft(text, text.length);
+        }
+      })
+      .catch(() => setLocalError("Could not save the marked-up image"));
+  };
+
   /** Clipboard images become saved attachments; large text pastes become cards. */
   const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
     if (disabled || sending) return;
@@ -1481,18 +1599,47 @@ export const Composer = memo(function Composer({
       // still pastes its text. preventDefault would swallow that too.
       if (!canAttachImages) return;
       e.preventDefault();
+      // The paste is consumed, so every image must end as a chip or a
+      // visible reason (#1211). addAttachments is this render's, so chips
+      // land on the originating thread; its errors stay there too.
+      const originThreadId = threadId;
+      const failures: string[] = [];
+      let pending = items.length;
+      const settle = (failure?: string) => {
+        if (failure) failures.push(failure);
+        if (--pending > 0 || liveThreadIdRef.current !== originThreadId) return;
+        if (!failures.length) return setLocalError(null);
+        const reasons = [...new Set(failures)].join(" ");
+        setLocalError(
+          items.length > 1
+            ? `${failures.length} of ${items.length} pasted images weren't attached. ${reasons}`
+            : reasons,
+        );
+      };
       for (const item of items) {
         const blob = item.getAsFile();
-        if (!blob) continue;
+        if (!blob) {
+          settle(PASTE_READ_FAILED);
+          continue;
+        }
         const reader = new FileReader();
+        reader.onerror = reader.onabort = () => settle(PASTE_READ_FAILED);
         reader.onload = () => {
           const dataUrl = typeof reader.result === "string" ? reader.result : "";
-          if (!dataUrl) return;
+          if (!dataUrl) return settle(PASTE_READ_FAILED);
           onSaveAttachmentImage(dataUrl)
             .then((attachment) => {
-              if (attachment) addAttachments([attachment]);
+              if (!attachment) return settle(pasteRejectReason(blob));
+              addAttachments([attachment]);
+              settle();
             })
-            .catch(() => {});
+            .catch((err) =>
+              settle(
+                err instanceof Error && err.message
+                  ? err.message
+                  : pasteRejectReason(blob),
+              ),
+            );
         };
         reader.readAsDataURL(blob);
       }
@@ -1555,16 +1702,7 @@ export const Composer = memo(function Composer({
     if (row.disabled) return;
     closeModelPicker(true);
     try {
-      // setProvider clears effort on a harness switch; effort then permission.
-      await onSetProvider({ provider: row.provider, model: row.model });
-      await onSetReasoningEffort(row.reasoningEffort);
-      const next = providers.find((p) => p.id === row.provider);
-      await onPermissionModeChange(
-        snapToHonouredPermissionMode(
-          providerPermissionModes(next),
-          row.permissionMode,
-        ),
-      );
+      await onApplyAgentProfile(row.id);
     } catch (err) {
       const msg =
         err instanceof Error && err.message
@@ -1794,7 +1932,16 @@ export const Composer = memo(function Composer({
           {statusTab}
         </div>
       ) : null}
-      <div className={styles.card}>
+      <div
+        className={`${styles.card}${shellMode ? ` ${styles.shellCard}` : ""}`}
+        data-shell-mode={shellMode ? "" : undefined}
+      >
+        {shellMode && (
+          <div className={styles.shellHint} data-shell-hint="">
+            Shell: Enter runs this in the thread&apos;s checkout, no model
+            turn. 60s limit.
+          </div>
+        )}
         {mentionOpen && (
           <MentionList
             snippetMatches={snippetMatches}
@@ -1854,7 +2001,9 @@ export const Composer = memo(function Composer({
             onEditComment={(id, comment) =>
               setContextChips(threadId, (prev) =>
                 prev.map((c) =>
-                  c.id === id && c.kind === "quote" ? { ...c, comment } : c,
+                  c.id === id && (c.kind === "quote" || c.kind === "element")
+                    ? { ...c, comment }
+                    : c,
                 ),
               )
             }
@@ -1882,9 +2031,22 @@ export const Composer = memo(function Composer({
                 attachment={a}
                 onRemove={() => removeAttachment(a.path)}
                 onLoadImage={onLoadAttachmentImage}
+                onMarkup={
+                  onSaveAttachmentImage && !disabled && !sending
+                    ? () => openMarkup(a)
+                    : undefined
+                }
               />
             ))}
           </div>
+        )}
+        {markup && (
+          <ImageMarkup
+            src={markup.src}
+            name={markup.attachment.name}
+            onCancel={() => setMarkup(null)}
+            onSave={saveMarkup}
+          />
         )}
         <textarea
           key={threadId}
@@ -2168,8 +2330,10 @@ export const Composer = memo(function Composer({
                       {modelRows.map((row, index) => {
                         const selected = row.auto
                           ? route != null
-                          : route == null &&
-                            isRowSelected(row, provider, model);
+                          : row.profile
+                            ? row.profile.id === agentProfileId
+                            : route == null &&
+                              isRowSelected(row, provider, model);
                         const highlighted = index === hi;
                         const starrable = canFavourite(row);
                         const starred =

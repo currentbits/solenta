@@ -6,6 +6,11 @@
 // support buys nothing — turn it off for the whole main process.
 process.noAsar = true;
 
+// V8 code cache for every module required below (#418): ~10-15% off the
+// main-process require graph on warm launches. Keyed by file content and
+// runtime version, so app updates never load stale bytecode.
+require("node:module").enableCompileCache?.();
+
 const { app, BrowserWindow, ipcMain, dialog, shell, Notification, nativeTheme, nativeImage, protocol, net, powerSaveBlocker, powerMonitor, session } = require("electron");
 const { overlayLabel, overlayDescription, overlayBitmap } = require("./taskbarOverlay.js");
 const { windowBackgroundColor, nativeThemeSource } = require("./theme.js");
@@ -65,7 +70,7 @@ const {
   parseServeWebArgs,
   startWebServer,
   loadOrCreateToken,
-  HOST_FLAG_HELP,
+  serveBanner,
   DEFAULT_PORT: WEB_DEFAULT_PORT,
 } = require("./webServer.js");
 const { createWebDevices } = require("./webDevices.js");
@@ -92,6 +97,7 @@ const { createIOSSimulatorStreamBroker } = require("./ios-simulator-stream.js");
 const {
   openRemoteConnection,
   forgetRemoteConnection,
+  installRemoteSolenta,
   closeRemoteConnections,
 } = require("./remoteConnections.js");
 
@@ -120,6 +126,10 @@ installCrashGuard({
 startLoopLag();
 
 const serveOpts = parseServeWebArgs(process.argv);
+// --headless: no window ever. On Linux without a display Chromium already
+// picked its headless platform from the same switch; GPU init would still
+// crash there, and nothing is drawn anyway.
+if (serveOpts.headless) app.disableHardwareAcceleration();
 
 // GUI launches get a bare launchd PATH; rebuild the user's real PATH before
 // any provider binary resolution (`which`) or agent spawn happens. The last
@@ -140,7 +150,24 @@ let pendingDeepLink = deepLinkFromArgv(process.argv);
 if (app.isPackaged) {
   app.setAsDefaultProtocolClient(DEEP_LINK_SCHEME);
   // exit, not quit: quit lets whenReady boot a second store writer first.
-  if (process.platform !== "darwin" && !app.requestSingleInstanceLock()) {
+  // macOS holds the lock too, so `Solenta --serve-web` from a terminal (or
+  // Remote Connections over SSH) hands off to the running app instead of
+  // opening a second writer. A plain second launch there is the other
+  // release channel (prod and nightly share userData) and runs as before.
+  const gotLock = app.requestSingleInstanceLock();
+  // --handoff-only (Remote Connections): pass --serve-web to a running
+  // copy, never boot. Holding the lock means no copy took it, e.g. one too
+  // old to hold the lock on macOS; booting now would be a second writer.
+  if (gotLock && process.argv.includes("--handoff-only")) {
+    process.stdout.write("solenta-web: no running Solenta took the hand-off; restart Solenta and try again\n");
+    app.exit(5);
+  } else if (!gotLock && (process.platform !== "darwin" || serveOpts.enabled)) {
+    if (serveOpts.enabled) {
+      // The running app turns web access on (second-instance below) and
+      // adopts this same file, so the token printed here is the live one.
+      const token = loadOrCreateToken(app.getPath("userData"));
+      process.stdout.write(`solenta-web: token ${token}\nSolenta is already running; turned on Solenta Web there.\n`);
+    }
     app.exit(0);
   }
 }
@@ -150,8 +177,28 @@ app.on("open-url", (event, url) => {
 });
 app.on("second-instance", (_event, argv) => {
   const link = deepLinkFromArgv(argv);
+  let serve = { enabled: false };
+  try {
+    serve = parseServeWebArgs(argv);
+  } catch {
+    // a bad --serve-web=PORT from the other launch; just focus
+  }
   if (link) openDeepLink(link);
-  else focusMainWindow();
+  else if (serve.enabled) {
+    // ponytail: turns the saved switch on (saved LAN choice, default port);
+    // the other launch's --serve-web=PORT / --serve-host are not applied.
+    if (webAccess) {
+      void webAccess.setEnabled({ enabled: true }).catch((err) =>
+        console.warn(`solenta-web: ${err && err.message ? err.message : err}`),
+      );
+    } else {
+      // Still booting: the --serve-web branch after webAccess exists runs it.
+      serveOpts.enabled = true;
+    }
+  } else if (process.platform === "darwin") {
+    // The other release channel starting up, not a relaunch of this one
+    // (those arrive as "activate"). Leave its window alone.
+  } else if (!focusMainWindow() && !serveOpts.headless) createWindow();
 });
 
 /** @type {ReturnType<typeof createMemorySupervisor> | null} */
@@ -305,14 +352,20 @@ function windowIcon() {
   return fs.existsSync(p) ? p : null;
 }
 
-function createWindow() {
+/**
+ * @param {{ threadId?: string }} [opts] threadId: a detached window locked
+ * to that one thread (#519). The renderer reads it from `?thread=`.
+ */
+function createWindow(opts = {}) {
+  const threadId = opts.threadId || null;
   const backgroundColor = applyNativeAndWindowTheme(null);
   const icon = windowIcon();
   const win = new BrowserWindow({
     ...(icon ? { icon } : {}),
-    width: 1440,
+    // Detached: above the 900 CSS px narrow breakpoint so no drawers.
+    width: threadId ? 960 : 1440,
     height: 900,
-    minWidth: 1100,
+    minWidth: threadId ? 920 : 1100,
     minHeight: 700,
     backgroundColor,
     titleBarStyle: "hiddenInset",
@@ -325,6 +378,7 @@ function createWindow() {
       webviewTag: true,
     },
   });
+  if (threadId) win.solentaThreadId = threadId;
 
   // A PR link is target=_blank. Without a policy Electron answers it with a
   // bare chrome-less window pointed at github.com. links.js owns the decision
@@ -359,6 +413,7 @@ function createWindow() {
   // hides the window and leaves the app running.
   win.on("close", (event) => {
     if (
+      threadId ||
       !shouldBlockWindowClose({
         platform: process.platform,
         serveWeb: serveOpts.enabled,
@@ -373,11 +428,65 @@ function createWindow() {
   });
 
   if (isDev) {
-    win.loadURL(process.env.VITE_DEV_SERVER_URL || "http://localhost:5173");
+    const url = new URL(process.env.VITE_DEV_SERVER_URL || "http://localhost:5173");
+    if (threadId) url.searchParams.set("thread", threadId);
+    win.loadURL(url.toString());
   } else {
-    win.loadFile(path.join(__dirname, "../dist/index.html"));
+    win.loadFile(
+      path.join(__dirname, "../dist/index.html"),
+      threadId ? { query: { thread: threadId } } : undefined,
+    );
   }
   if (process.platform === "win32" && attentionBadge) applyTaskbarOverlay();
+  return win;
+}
+
+/** Focus a window (restoring it if minimized) and return it. */
+function focusWindow(win) {
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
+  return win;
+}
+
+/** The detached window for a thread, if one is open (#519). */
+function threadWindow(threadId) {
+  return BrowserWindow.getAllWindows().find(
+    (w) => !w.isDestroyed() && w.solentaThreadId === threadId,
+  );
+}
+
+/** Detach a thread: focus its window, or open one (#519). */
+function openThreadWindow(threadId) {
+  if (typeof threadId !== "string" || !store || !store.getThread(threadId)) {
+    throw new Error("Thread not found.");
+  }
+  const existing = threadWindow(threadId);
+  if (existing) focusWindow(existing);
+  else createWindow({ threadId });
+}
+
+/**
+ * Show a thread: its detached window when it has one, else the main window
+ * with the thread selected.
+ */
+function focusThread(threadId) {
+  const detached = threadWindow(threadId);
+  if (detached) {
+    focusWindow(detached);
+    return;
+  }
+  sendWhenLoaded(focusMainWindow(), "thread:select", threadId);
+}
+
+/** A reopened main window drops pushes sent before its page loads. */
+function sendWhenLoaded(win, channel, payload) {
+  if (!win || win.webContents.isDestroyed()) return;
+  if (win.webContents.isLoading()) {
+    win.webContents.once("did-finish-load", () => win.webContents.send(channel, payload));
+  } else {
+    win.webContents.send(channel, payload);
+  }
 }
 
 const encodeThreadList = createThreadListEncoder();
@@ -404,13 +513,19 @@ function isAnyWindowFocused() {
   return false;
 }
 
+function findMainWindow() {
+  return BrowserWindow.getAllWindows().find(
+    (w) => !w.isDestroyed() && !w.solentaRemote && !w.solentaThreadId,
+  );
+}
+
+/**
+ * Focus the fleet window. Reopens it when only detached thread windows are
+ * left (macOS keeps the app alive after the main window closes).
+ */
 function focusMainWindow() {
-  const win = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && !w.solentaRemote);
-  if (!win) return null;
-  if (win.isMinimized()) win.restore();
-  win.show();
-  win.focus();
-  return win;
+  const win = findMainWindow() || (store ? createWindow() : null);
+  return win ? focusWindow(win) : null;
 }
 
 /**
@@ -432,10 +547,8 @@ function openDeepLink(link) {
     focusMainWindow();
     return;
   }
-  const win = focusMainWindow();
-  if (win && !win.webContents.isDestroyed()) {
-    win.webContents.send(`${link.kind}:select`, link.id);
-  }
+  if (link.kind === "thread") focusThread(link.id);
+  else sendWhenLoaded(focusMainWindow(), "project:select", link.id);
 }
 
 /**
@@ -461,12 +574,7 @@ function notifyThreadComplete(thread) {
   const n = new Notification(
     notificationOptions(thread.title, notifyBody(notifyEvent(threadNotifyState(thread)))),
   );
-  n.on("click", () => {
-    const win = focusMainWindow();
-    if (win && win.webContents && !win.webContents.isDestroyed()) {
-      win.webContents.send("thread:select", thread.id);
-    }
-  });
+  n.on("click", () => focusThread(thread.id));
   n.show();
 }
 
@@ -514,12 +622,7 @@ function notifyPairingLaunch(event) {
   });
   const threadId = event && event.threadId;
   if (threadId) {
-    n.on("click", () => {
-      const win = focusMainWindow();
-      if (win && win.webContents && !win.webContents.isDestroyed()) {
-        win.webContents.send("thread:select", threadId);
-      }
-    });
+    n.on("click", () => focusThread(threadId));
   }
   n.show();
 }
@@ -598,8 +701,9 @@ app.whenReady().then(async () => {
   // #618: paint the empty window before store load / memory supervision.
   // Assigns the module-level `store` (not a new binding): applyUiScale and
   // currentUiScale read it from outside this function.
+  if (serveOpts.headless && process.platform === "darwin") app.dock?.hide();
   store = await bootFirstPaint({
-    createWindow,
+    createWindow: serveOpts.headless ? () => {} : createWindow,
     async beforeStore() {
       // Which build is this? A stale packaged bundle missing recent fixes looks
       // exactly like a broken feature, so say it out loud once at boot.
@@ -670,6 +774,7 @@ app.whenReady().then(async () => {
       configureDefaultSecrets({
         auditPath: path.join(userData, "secrets-audit.jsonl"),
       });
+      require("./governanceAudit.js").configureGovernanceAudit({ dir: userData });
       const loaded = new Store(path.join(userData, "coder-store.json"));
       require("./guardrails.js").setGuardrailsEnabled(loaded.getSettings().guardrailsEnabled);
       return loaded;
@@ -692,7 +797,11 @@ app.whenReady().then(async () => {
   });
 
   app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
+    // Dock click with only detached thread windows left brings the fleet back.
+    // A headless host on macOS still has a display: opening the app from
+    // Finder gives it a window, and the Dock icon comes back with it.
+    if (!findMainWindow()) {
+      if (serveOpts.headless) app.dock?.show();
       createWindow();
     }
   });
@@ -832,6 +941,7 @@ app.whenReady().then(async () => {
   const webStaticDir = path.join(__dirname, "../dist");
   webAccess = createWebAccess({
     devices: createWebDevices(userData),
+    fileToken: () => loadOrCreateToken(userData),
     defaultPort: WEB_DEFAULT_PORT,
     startServer: (opts) =>
       startWebServer({
@@ -870,7 +980,10 @@ app.whenReady().then(async () => {
     getMcpFunnel: () => mcpFunnel,
     openRemoteConnection,
     forgetRemoteConnection,
+    installRemoteSolenta,
   });
+  // Desktop-only like contextMenu:show: windows are main's, never the web bridge's.
+  ipcMain.handle("window:detachThread", (_event, threadId) => openThreadWindow(threadId));
   // Recently deleted expiry (#940): reclaim after restart even if the
   // renderer has not listed threads yet.
   const { expireTrashedThreads } = require("./services.js");
@@ -908,26 +1021,25 @@ app.whenReady().then(async () => {
   );
 
   if (serveOpts.enabled) {
-    const token = loadOrCreateToken(userData);
-    // --serve-web keeps printing one token; it is the Legacy device row.
-    webAccess.adoptLegacy(token);
-    // Contract: print the token to stdout when serve mode starts.
-    process.stdout.write(`solenta-web: token ${token}\n`);
-    if (serveOpts.host !== "127.0.0.1") {
-      process.stdout.write(`solenta-web: ${HOST_FLAG_HELP}\n`);
-    }
     // The port is fixed, so EADDRINUSE is routine (a previous instance still
     // holds it). Never let that reject out of whenReady: the rest of boot
     // (IPC ready push, schedulers) would be skipped even though the window
     // is already up.
+    // start() writes and adopts <userData>/web-token, the printed token.
     try {
       await webAccess.start({ host: serveOpts.host, port: serveOpts.port });
+      const st = await webAccess.status();
+      process.stdout.write(
+        serveBanner({ token: loadOrCreateToken(userData), urls: st.urls, tailnetUrl: st.tailscale.url }),
+      );
     } catch (err) {
       // No listener means nothing to keep the process alive headless either.
       serveOpts.enabled = false;
       process.stdout.write(
         `solenta-web: cannot listen on ${serveOpts.host}:${serveOpts.port} (${err && err.message ? err.message : err}); continuing without web serve\n`,
       );
+      // Headless has no window to continue with.
+      if (serveOpts.headless) app.exit(1);
     }
   } else {
     // The Settings switch, if the user left it on. Loopback unless they

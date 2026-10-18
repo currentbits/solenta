@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useReducer, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import type {
   PendingPermissionInfo,
   PermissionDecision,
@@ -12,6 +12,7 @@ import type {
 import { SPEC_ARTIFACTS, FELT_ESTIMATE_BUCKETS_MS } from "../../shared/ipc";
 import { resolveCoderApi } from "../../coderApi";
 import { TEACH_AUTONOMY_LABELS } from "../../teach";
+import { loadFlag, saveFlag } from "../sidebar/storage";
 import type { TeachAutonomy } from "../../shared/ipc";
 import {
   comparePeerLabel,
@@ -26,7 +27,11 @@ import {
   type DivergenceField,
 } from "../../divergence";
 import { Markdown } from "../Markdown";
+import { FileHunks } from "../TurnDiffPanel";
+import { parsePatch } from "../../reviewItinerary";
+import { commandPrefix, WHOLE_TOOL_RULE } from "../../permissionRule";
 import styles from "../ThreadView.module.css";
+import diffStyles from "../TurnDiffPanel.module.css";
 
 /**
  * Plan approval (ExitPlanMode): the plan rendered as markdown in the prompt
@@ -193,6 +198,9 @@ type PermissionRespond = (
   decision: PermissionDecision,
   answers?: Record<string, string>,
   updatedCommand?: string,
+  inputValues?: undefined,
+  feedback?: undefined,
+  alwaysRule?: string,
 ) => void | Promise<void>;
 
 /**
@@ -204,6 +212,12 @@ type PermissionRespond = (
  * Codex command asks set commandEditable=false: the JSON-RPC reply cannot
  * rewrite the command (issue #1171). Accept all hides when acceptAlways
  * is false.
+ *
+ * Always-allow on an editable command is a session rule, not the whole tool
+ * (#479): the button shows the derived prefix (`npm test:*`), which follows
+ * command edits until the user types their own rule; "any <tool>" sits
+ * behind the overflow. Codex keeps plain Accept all: acceptForSession is its
+ * own exact-command cache and takes no rule.
  */
 export function PermissionPrompt({
   pending,
@@ -215,14 +229,30 @@ export function PermissionPrompt({
   const original = pending.command ?? null;
   const hasCommand = original !== null;
   const editable = hasCommand && pending.commandEditable !== false;
-  const acceptAlways = pending.acceptAlways !== false;
+  const guardrail = pending.guardrail ?? null;
+  // A session grant cannot mute an always-confirm profile rule (#262).
+  const acceptAlways =
+    pending.acceptAlways !== false && guardrail?.layer !== "profile.ask";
+  const guardrailSource = guardrail
+    ? [guardrail.layer, guardrail.rule].filter(Boolean).join(" / ")
+    : "";
   const [command, setCommand] = useState(original ?? "");
   const [sent, setSent] = useState(false);
   const edited =
     editable && original !== null && command.trim() !== original.trim();
   const empty = editable && command.trim() === "";
+  const fileChange = pending.fileChange ?? null;
+  const patches = useMemo(
+    () => parsePatch(fileChange?.diff ?? ""),
+    [fileChange?.diff],
+  );
+  // null: follow the command; a string once the user edits the rule.
+  const [ruleDraft, setRuleDraft] = useState<string | null>(null);
+  const rule = ruleDraft ?? commandPrefix(command) ?? "";
+  const scoped = editable && acceptAlways;
+  const ruleEmpty = scoped && rule.trim() === "";
 
-  const answer = (decision: PermissionDecision) => {
+  const answer = (decision: PermissionDecision, alwaysRule?: string) => {
     if (sent) return;
     if (decision !== "deny" && empty) return;
     setSent(true);
@@ -231,6 +261,9 @@ export function PermissionPrompt({
       decision,
       undefined,
       editable ? command : undefined,
+      undefined,
+      undefined,
+      alwaysRule,
     );
   };
 
@@ -250,12 +283,38 @@ export function PermissionPrompt({
           </span>
         ) : null}
       </div>
-      {pending.guardrail ? (
-        <div className={styles.permissionGuardrail}>
-          ⚠ {pending.guardrail.reason} ({pending.guardrail.rule})
+      {guardrail ? (
+        <div className={styles.permissionGuardrail} data-permission-guardrail="">
+          ⚠ {guardrail.reason}
+          {guardrailSource ? ` (${guardrailSource})` : ""}
         </div>
       ) : null}
-      {hasCommand ? (
+      {pending.folderGrant ? (
+        <div className={styles.permissionGuardrail} data-permission-folder="">
+          Writes to {pending.folderGrant}, a read-only project folder
+        </div>
+      ) : null}
+      {fileChange ? (
+        <>
+          {fileChange.reason ? (
+            <div data-permission-reason="">{fileChange.reason}</div>
+          ) : null}
+          {fileChange.grantRoot ? (
+            <div className={styles.permissionGuardrail} data-permission-grant-root="">
+              ⚠ Also asks to allow writes under <code>{fileChange.grantRoot}</code> for
+              this session
+            </div>
+          ) : null}
+          <div className={diffStyles.patch} data-permission-diff="">
+            {patches.map((p) => (
+              <Fragment key={p.path}>
+                <div className={diffStyles.hunkHead}>{p.path}</div>
+                <FileHunks patch={p} mode="unified" />
+              </Fragment>
+            ))}
+          </div>
+        </>
+      ) : hasCommand ? (
         <>
           <textarea
             className={`${styles.permissionInput} ${styles.permissionCommand}`}
@@ -299,7 +358,17 @@ export function PermissionPrompt({
         >
           Accept
         </button>
-        {acceptAlways ? (
+        {scoped ? (
+          <button
+            type="button"
+            className={styles.permissionAllow}
+            disabled={sent || empty || ruleEmpty}
+            data-permission-always=""
+            onClick={() => answer("allowAlways", rule.trim())}
+          >
+            Always allow <code>{rule}</code>
+          </button>
+        ) : acceptAlways ? (
           <button
             type="button"
             className={styles.permissionAllow}
@@ -307,6 +376,18 @@ export function PermissionPrompt({
             onClick={() => answer("allowAlways")}
           >
             Accept all
+          </button>
+        ) : null}
+        {pending.folderGrant ? (
+          <button
+            type="button"
+            className={styles.permissionAllow}
+            disabled={sent || empty}
+            data-permission-allow-folder=""
+            title={`Allow this thread to write anywhere in ${pending.folderGrant}`}
+            onClick={() => answer("allowFolder")}
+          >
+            Allow writes to {pending.folderGrant.split(/[\\/]/).pop()}
           </button>
         ) : null}
         <button
@@ -318,6 +399,32 @@ export function PermissionPrompt({
           Deny
         </button>
       </div>
+      {scoped ? (
+        <details className={styles.permissionMore} data-permission-more="">
+          <summary>Always-allow options</summary>
+          <div className={styles.permissionRule}>
+            <input
+              className={`${styles.permissionInput} ${styles.permissionCommand}`}
+              data-permission-rule=""
+              aria-label="Always-allow rule"
+              value={rule}
+              spellCheck={false}
+              autoComplete="off"
+              autoCorrect="off"
+              onChange={(ev) => setRuleDraft(ev.target.value)}
+            />
+            <button
+              type="button"
+              className={styles.permissionDeny}
+              disabled={sent || empty}
+              data-permission-any-tool=""
+              onClick={() => answer("allowAlways", WHOLE_TOOL_RULE)}
+            >
+              Allow any {pending.toolName} this session
+            </button>
+          </div>
+        </details>
+      ) : null}
     </div>
   );
 }
@@ -393,10 +500,6 @@ export function ExternalApprovalCard({ thread }: { thread: ThreadInfo }) {
   );
 }
 
-// Hide/show choice per thread, so switching away and back doesn't reopen it.
-// ponytail: session-only; move to localStorage if it should survive relaunch.
-const planOpenByThread = new Map<string, boolean>();
-
 export function PlanCard({
   thread,
   forceOpen = false,
@@ -405,16 +508,19 @@ export function PlanCard({
   forceOpen?: boolean;
 }) {
   const steps = thread.planSteps ?? [];
-  const [, rerender] = useReducer((n: number) => n + 1, 0);
   // No steps yet means the prose IS the overview, so it starts expanded.
-  const open = planOpenByThread.get(thread.id) ?? steps.length === 0;
-  const setOpen = (next: boolean) => {
-    planOpenByThread.set(thread.id, next);
-    rerender();
+  // A Hide/Show click is remembered per thread across switches and relaunches.
+  // ponytail: one localStorage key per toggled thread, never pruned.
+  const storeKey = `coder.planOpen.${thread.id}`;
+  const [open, setOpen] = useState(() =>
+    loadFlag(storeKey, steps.length === 0),
+  );
+  const toggle = () => {
+    saveFlag(storeKey, !open);
+    setOpen(!open);
   };
   useEffect(() => {
     if (forceOpen) setOpen(true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [forceOpen]);
   const done = steps.filter((s) => s.status === "done").length;
   return (
@@ -433,7 +539,7 @@ export function PlanCard({
           <button
             type="button"
             className={styles.planToggle}
-            onClick={() => setOpen(!open)}
+            onClick={toggle}
           >
             {open ? "Hide full plan" : "Show full plan"}
           </button>

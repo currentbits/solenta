@@ -1802,8 +1802,14 @@ describe("quick-action output through the real service (#1216)", () => {
           { threadId, actionId, trustRepoConfig: trust },
           { runner: { isRunning: () => Boolean(opts.busy) } },
         ),
-      done() {
+      /**
+       * saveNow supersedes any in-flight async flush, so it cannot log a
+       * failed mkdir into the next test once the dir is gone (Windows CI).
+       */
+      async done() {
         pc.setRunCommandFn(null);
+        store.saveNow();
+        await store.flushPending();
         fs.rmSync(dir, { recursive: true, force: true });
       },
     };
@@ -1876,7 +1882,7 @@ describe("quick-action output through the real service (#1216)", () => {
       assert.equal(svc.spawned(), 3, "inspecting and adding never reruns");
       r.unmount();
     } finally {
-      svc.done();
+      await svc.done();
     }
   });
 
@@ -1893,7 +1899,7 @@ describe("quick-action output through the real service (#1216)", () => {
       assert.deepEqual(svc.store.getMessages("t1"), []);
       m.unmount();
     } finally {
-      svc.done();
+      await svc.done();
     }
   });
 });

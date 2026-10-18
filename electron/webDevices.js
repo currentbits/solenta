@@ -8,10 +8,11 @@
  * treatment as pairings.json). The same file remembers whether the user
  * turned the web server on, and whether it may listen beyond loopback.
  *
- * The pre-device single token (<userData>/web-token) is adopted as
- * "Legacy device". That file stays while the row is active: --serve-web
- * prints it and Remote Connections reads it over SSH. Revoking the legacy
- * row deletes the file.
+ * The single file token (<userData>/web-token) is adopted as the
+ * "SSH and command line" row. Whenever the server starts, webAccess makes
+ * sure the file exists: --serve-web prints it and Remote Connections reads
+ * it over SSH (anyone who can do that already runs code as this user).
+ * Revoking the row deletes the file; the next start writes a new one.
  *
  * Each row carries scopes (#1530, see webScopes.js), fixed at pairing time.
  * Rows from before scopes existed were issued as full access and stay so.
@@ -24,7 +25,7 @@ const { sanitizeScopes } = require("./webScopes.js");
 
 const FILE_NAME = "web-access.json";
 const LEGACY_TOKEN_FILE = "web-token";
-const LEGACY_NAME = "Legacy device";
+const LEGACY_NAME = "SSH and command line";
 const NAME_MAX = 60;
 const MAX_DEVICES = 30;
 // lastSeenAt only needs minute precision; skip the disk write otherwise.
@@ -59,7 +60,8 @@ function load(file) {
 function toPublic(row) {
   return {
     id: row.id,
-    name: String(row.name || "Device"),
+    // Rows adopted before the rename still say "Legacy device" on disk.
+    name: row.legacy === true ? LEGACY_NAME : String(row.name || "Device"),
     createdAt: Number.isFinite(row.createdAt) ? row.createdAt : 0,
     lastSeenAt: Number.isFinite(row.lastSeenAt) ? row.lastSeenAt : null,
     legacy: row.legacy === true,

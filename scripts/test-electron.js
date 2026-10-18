@@ -50,6 +50,8 @@ const WIN32_FILES = [
   "electron/test/fork-handoff.test.js",
   "electron/test/grok.test.js",
   "electron/test/guardrails-runner.test.js",
+  "electron/test/governance-runner.test.js", // writeFakeBin, same seam as guardrails-runner
+  "electron/test/governance-audit.test.js", // pure fs; mode checks skip on win32
   // Simulator lifecycle: platform, process adapter, timers, and signals are
   // all injected and the runner cases inject runAgentFn, so nothing here
   // spawns an agent. Only git.exe is used, same as the entries above. #248

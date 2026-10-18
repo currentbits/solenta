@@ -16,6 +16,7 @@ import type {
   HarnessCommandRow,
   HarnessMcpRow,
   HarnessTextRow,
+  XcodeMcpStatus,
 } from "../shared/ipc";
 import styles from "./SkillsTab.module.css";
 
@@ -742,6 +743,84 @@ export function CuratedMcpsSection({
             </li>
           ))}
         </ul>
+      )}
+    </section>
+  );
+}
+
+const XCODE_SERVER_LABEL = { mobilebuildmcp: "MobileBuildMCP", xcode: "Xcode MCP" } as const;
+
+/** Doctor card for an Apple project (#488): what is installed, one Add button. */
+export function XcodeMcpCard({
+  status,
+  busy,
+  onPair,
+}: {
+  status: XcodeMcpStatus;
+  busy: boolean;
+  onPair: () => void;
+}) {
+  const { project, bridge, buildMcp, paired, recommended } = status;
+  const checks = [
+    {
+      id: "mobilebuildmcp",
+      name: "MobileBuildMCP",
+      ok: Boolean(buildMcp),
+      detail: buildMcp
+        ? `${buildMcp} is on PATH · build, test, UI automation, logs`
+        : "Not installed · npm install -g mobilebuildmcp@latest",
+    },
+    {
+      id: "mcpbridge",
+      name: "Apple mcpbridge",
+      ok: bridge,
+      detail: bridge
+        ? "xcrun mcpbridge found · turn on Xcode → Settings → Intelligence → Allow external agents"
+        : "Not found · needs Xcode 26.3 or later",
+    },
+  ];
+  return (
+    <section
+      className={styles.subSection}
+      aria-label="Xcode MCP"
+      data-mcp-section="xcode"
+    >
+      <div className={styles.sectionLabel}>Xcode · {project.name}</div>
+      <ul className={styles.list}>
+        {checks.map((c) => (
+          <li key={c.id} className={styles.row} data-xcode-check={c.id}>
+            <div className={styles.rowMain}>
+              <span className={styles.rowName}>{c.name}</span>
+              <span className={styles.rowDetail}>{c.detail}</span>
+            </div>
+            <div className={styles.rowSide}>
+              <span className={styles.badge}>{c.ok ? "Found" : "Missing"}</span>
+            </div>
+          </li>
+        ))}
+      </ul>
+      {paired ? (
+        <p className={styles.rowDetail}>Paired as {paired}.</p>
+      ) : recommended ? (
+        <div className={styles.addActions}>
+          <button
+            type="button"
+            className={styles.primaryBtn}
+            disabled={busy}
+            onClick={onPair}
+          >
+            Add {XCODE_SERVER_LABEL[recommended]}
+          </button>
+          <span className={styles.formHint}>
+            Runs{" "}
+            <code>
+              {recommended === "mobilebuildmcp" ? `${buildMcp} mcp` : "xcrun mcpbridge"}
+            </code>{" "}
+            locally for every agent.
+          </span>
+        </div>
+      ) : (
+        <p className={styles.rowDetail}>Install one of the servers above to pair Xcode.</p>
       )}
     </section>
   );

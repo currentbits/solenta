@@ -8,6 +8,8 @@ import type {
   SpecArtifact,
   ThreadDetail,
   ThreadInfo,
+  ThreadSearchInput,
+  ThreadSearchResult,
   ThreadMessagePin,
   ThreadSummariesInput,
   TrashedThreadInfo,
@@ -124,17 +126,19 @@ export function createThreads(ctx: DevCtx): Pick<CoderApi, "threads"> {
       /**
        * Full-content search: title + notes + message text, case-insensitive
        * substring, newest activity first, max 50. Includes archived. 0–1
-       * char → [].
+       * char → no hits. threadIds scopes before the cap.
        */
-      async search(input: { query: string }): Promise<ThreadInfo[]> {
+      async search(input: ThreadSearchInput): Promise<ThreadSearchResult> {
         const q = input.query.trim().toLowerCase();
-        if (q.length < 2) return [];
+        if (q.length < 2) return { threads: [], truncated: false };
+        const scope = input.threadIds ? new Set(input.threadIds) : null;
 
         const seen = new Set<string>();
         const hits: ThreadInfo[] = [];
 
         for (const t of ctx.threads) {
           if (seen.has(t.id)) continue;
+          if (scope && !scope.has(t.id)) continue;
           let match = t.title.toLowerCase().includes(q);
           if (!match) {
             match = (t.notes || "").toLowerCase().includes(q);
@@ -153,7 +157,7 @@ export function createThreads(ctx: DevCtx): Pick<CoderApi, "threads"> {
         }
 
         hits.sort((a, b) => b.updatedAt - a.updatedAt);
-        return hits.slice(0, 50);
+        return { threads: hits.slice(0, 50), truncated: hits.length > 50 };
       },
       async create(input) {
         const source = input.taskGroupFrom
@@ -336,6 +340,26 @@ export function createThreads(ctx: DevCtx): Pick<CoderApi, "threads"> {
       async setPermissionMode(input) {
         return patchThread(input.threadId, {
           permissionMode: input.mode,
+          agentProfileId: null,
+          updatedAt: now(),
+        });
+      },
+      async applyAgentProfile(input) {
+        const { agentProfiles = [] } = await ctx.api().settings.get();
+        const profile = agentProfiles.find((p) => p.id === input.profileId);
+        if (!profile) throw new Error("Unknown agent profile");
+        const thread = details.get(input.threadId)?.thread;
+        if (!thread) throw new Error(`Thread not found: ${input.threadId}`);
+        // ponytail: fixture skips the honoured-mode snap; electron does it.
+        return patchThread(input.threadId, {
+          provider: profile.provider,
+          providerInstance: null,
+          model: profile.model,
+          reasoningEffort: profile.reasoningEffort,
+          permissionMode: profile.permissionMode,
+          agentProfileId: profile.id,
+          route: null,
+          ...(profile.provider !== thread.provider ? { sessionId: null } : {}),
           updatedAt: now(),
         });
       },
@@ -784,7 +808,10 @@ export function createThreads(ctx: DevCtx): Pick<CoderApi, "threads"> {
         threadId: string;
         effort: ReasoningEffort | null;
       }) {
-        return patchThread(input.threadId, { reasoningEffort: input.effort });
+        return patchThread(input.threadId, {
+          reasoningEffort: input.effort,
+          agentProfileId: null,
+        });
       },
       async setWebSearch(input: {
         threadId: string;
@@ -849,10 +876,39 @@ export function createThreads(ctx: DevCtx): Pick<CoderApi, "threads"> {
         if (!details.has(input.threadId)) throw new Error(`Thread not found: ${input.threadId}`);
         return null;
       },
-      async runCommand(input: { threadId: string; actionId?: string }) {
+      async runCommand(input: {
+        threadId: string;
+        actionId?: string;
+        command?: string;
+      }) {
         const detail = details.get(input.threadId);
         if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
         const project = ctx.projects.find((p) => p.id === detail.thread.projectId);
+        if (input.command !== undefined) {
+          // `!` shell line (#470): the real runner is electron/projectCommands.js.
+          const command = input.command.trim();
+          if (!command) throw new Error("Type a command after !");
+          const result: CommandRunResult = {
+            name: "shell",
+            command,
+            ok: true,
+            exitCode: 0,
+            timedOut: false,
+            log: `(dev fixture) ${command}`,
+            durationMs: 12,
+            at: now(),
+            cwd: detail.thread.worktreePath || project?.path,
+            shell: true,
+          };
+          detail.messages.push({
+            id: id("evt"),
+            role: "event",
+            text: `$ ${command} · 0.0s`,
+            createdAt: now(),
+            commandResult: result,
+          });
+          return result;
+        }
         const actionId = input.actionId || "setup";
         let name = "setup";
         let command = project?.setupCommand || "";
@@ -893,7 +949,7 @@ export function createThreads(ctx: DevCtx): Pick<CoderApi, "threads"> {
         // run-active refusal, session drop, effort reset) live in
         // electron/services.js setProvider and are exercised by npm run dev.
         // A manual pick clears a pending Auto route (#246).
-        const patch: Partial<ThreadInfo> = { route: null };
+        const patch: Partial<ThreadInfo> = { route: null, agentProfileId: null };
         if (Object.prototype.hasOwnProperty.call(input, "provider")) {
           // A ref "claude:work" is base + named instance (#453).
           const [base = "", instance = null] = String(input.provider).split(":");

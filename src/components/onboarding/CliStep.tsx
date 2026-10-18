@@ -1,17 +1,30 @@
 import { useState } from "react";
+import type { ProviderInfo } from "../../shared/ipc";
+import { accountLine, addChatGptAccount } from "../../providerAccounts";
 import type { OnboardingStepProps } from "./OnboardingModal";
-import { hintFor } from "./installHints";
+import { INSTALL_HINTS, hintFor } from "./installHints";
 import styles from "./OnboardingModal.module.css";
 
 const COPY_FAIL = "Could not copy. Select and copy the command.";
 
-function errorMessage(err: unknown): string {
-  return err instanceof Error && err.message ? err.message : "Could not recheck";
+function errorMessage(err: unknown, fallback = "Could not recheck"): string {
+  return err instanceof Error && err.message ? err.message : fallback;
+}
+
+/** "✓ Ready" only on a verified sign-in; "unknown" CLIs stay "✓ Installed". */
+function rowState(p: ProviderInfo): string {
+  if (!p.available) return "Not installed";
+  if (p.auth === "signedIn") return "✓ Ready";
+  if (p.auth === "signedOut") return "Signed out";
+  return "✓ Installed";
 }
 
 export default function CliStep({
   providers,
   refreshProviders,
+  onProviderSignIn,
+  settings,
+  onSaveSettings,
 }: OnboardingStepProps) {
   const refresh: (options?: { throwOnError?: boolean }) => Promise<void> =
     refreshProviders;
@@ -20,11 +33,42 @@ export default function CliStep({
   const [error, setError] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [copyError, setCopyError] = useState<string | null>(null);
+  const [acting, setActing] = useState<string | null>(null);
 
   const rows = providers
     .filter((p) => p.id !== "simulate")
     .sort((a, b) => Number(b.available) - Number(a.available));
   const anyInstalled = rows.some((p) => p.available);
+  const codex = rows.find((p) => p.id === "codex");
+  const canConnectChatGpt =
+    onProviderSignIn != null && settings != null && codex?.auth === "signedIn";
+
+  async function act(key: string, run: () => Promise<void>, fallback: string) {
+    setActing(key);
+    setError(null);
+    try {
+      await run();
+    } catch (err) {
+      setError(errorMessage(err, fallback));
+    } finally {
+      setActing(null);
+    }
+  }
+
+  function connectChatGpt() {
+    if (!onProviderSignIn || !settings) return;
+    void act(
+      "chatgpt",
+      async () => {
+        const { list, ref } = addChatGptAccount(settings.providerInstances ?? []);
+        await onSaveSettings({ providerInstances: list });
+        await refreshProviders();
+        const name = `${codex?.name ?? "Codex"} (${list[list.length - 1].name})`;
+        await onProviderSignIn(ref, { name });
+      },
+      "Could not connect a ChatGPT account",
+    );
+  }
 
   async function recheck() {
     setChecking(true);
@@ -75,9 +119,9 @@ export default function CliStep({
         </button>
       </div>
       <p className={styles.stepBody}>
-        Installed means Solenta found the agent on the machine running the
-        app, not that you are signed in. Sign in using a terminal on that
-        machine.
+        Ready means the agent is installed and signed in on the machine
+        running Solenta. Install and Sign in open a terminal there with the
+        command typed in; Solenta checks again when you close it.
       </p>
       {checking ? (
         <p
@@ -103,8 +147,7 @@ export default function CliStep({
           data-onboarding-cli-status="ok"
           role="status"
         >
-          Installation detected. Sign in using a terminal on the machine
-          running Solenta.
+          Rechecked installs and sign-ins on the machine running Solenta.
         </p>
       ) : null}
       {copyError ? (
@@ -128,19 +171,65 @@ export default function CliStep({
         <ul className={styles.cliList}>
           {rows.map((p) => {
             const hint = p.available ? null : hintFor(p.id);
+            const account = accountLine(p);
+            const canInstall =
+              onProviderSignIn != null && !p.available && !p.instanceId &&
+              INSTALL_HINTS[p.id]?.command != null;
+            const canSignIn =
+              onProviderSignIn != null && p.available && p.auth === "signedOut";
             return (
               <li
                 key={p.id}
                 className={styles.cliRow}
                 data-onboarding-cli-row={p.id}
                 data-available={p.available ? "true" : "false"}
+                data-auth-state={p.available ? (p.auth ?? "checking") : "missing"}
               >
                 <div className={styles.cliRowMain}>
                   <span className={styles.cliName}>{p.name}</span>
-                  <span className={styles.cliState}>
-                    {p.available ? "✓ Installed" : "Not installed"}
+                  <span className={styles.cliRowEnd}>
+                    <span className={styles.cliState}>{rowState(p)}</span>
+                    {canInstall ? (
+                      <button
+                        type="button"
+                        className={styles.btn}
+                        data-onboarding-cli-install={p.id}
+                        disabled={acting != null}
+                        onClick={() =>
+                          void act(
+                            p.id,
+                            () => onProviderSignIn(p.id, { install: true }),
+                            "Could not open a terminal",
+                          )
+                        }
+                      >
+                        Install
+                      </button>
+                    ) : null}
+                    {canSignIn ? (
+                      <button
+                        type="button"
+                        className={`${styles.btn} ${styles.btnPrimary}`}
+                        data-onboarding-cli-signin={p.id}
+                        disabled={acting != null}
+                        onClick={() =>
+                          void act(
+                            p.id,
+                            () => onProviderSignIn(p.id),
+                            "Could not start sign in",
+                          )
+                        }
+                      >
+                        Sign in
+                      </button>
+                    ) : null}
                   </span>
                 </div>
+                {account ? (
+                  <span className={styles.cliAccount} data-onboarding-cli-account="">
+                    {account}
+                  </span>
+                ) : null}
                 {hint ? (
                   <>
                     <div className={styles.cliHintRow}>
@@ -175,6 +264,17 @@ export default function CliStep({
           })}
         </ul>
       )}
+      {canConnectChatGpt ? (
+        <button
+          type="button"
+          className={styles.cliConnect}
+          data-onboarding-connect-chatgpt=""
+          disabled={acting != null}
+          onClick={connectChatGpt}
+        >
+          {acting === "chatgpt" ? "Connecting…" : "Connect another ChatGPT account"}
+        </button>
+      ) : null}
       {rows.length > 0 && !anyInstalled ? (
         <p className={styles.cliWarning} data-onboarding-cli-warning="" role="status">
           Install one agent using its instructions, then Recheck.

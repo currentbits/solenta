@@ -10,6 +10,7 @@ const {
 } = require("./mcp.js");
 const mcpCatalog = require("./mcpCatalog.js");
 const mcpImports = require("./mcpImports.js");
+const xcodeMcp = require("./xcodeMcp.js");
 const pairing = require("./pairing.js");
 const oauth = require("./mcpOauth.js");
 
@@ -105,6 +106,26 @@ module.exports = {
   "mcp:catalog": async (ctx) => {
     const settings = services.getSettings(ctx.store);
     return mcpCatalog.listCatalog({ servers: settings.mcpServers });
+  },
+  "mcp:xcodeStatus": async (ctx, input) => {
+    const projectPath = input && typeof input.projectPath === "string" ? input.projectPath : "";
+    return xcodeMcp.xcodeMcpStatus(projectPath, services.getSettings(ctx.store).mcpServers);
+  },
+  "mcp:pairXcode": async (ctx, input) => {
+    const projectPath = input && typeof input.projectPath === "string" ? input.projectPath : "";
+    const current = services.getSettings(ctx.store).mcpServers;
+    const clean = xcodeMcp.xcodePairInput(projectPath, current);
+    const next = services.setSettings(
+      ctx.store,
+      { mcpServers: upsertMcpServer(current, clean) },
+      { replaceMcpServers: true },
+    );
+    try {
+      syncUserMcpServers(next.mcpServers, { userDataPath: ctx.userDataPath });
+    } catch {
+      // ignore
+    }
+    return redactMcpServer(next.mcpServers.find((s) => s.name === clean.name));
   },
   "mcp:pickImport": async (ctx) => {
     const current = services.getSettings(ctx.store).mcpServers;

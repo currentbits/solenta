@@ -1002,6 +1002,20 @@
   padding: 2px 2px 8px;
 }
 
+.contextPreview {
+  margin: 0 2px 8px;
+  padding: 6px 8px;
+  max-height: 180px;
+  overflow: auto;
+  font: 11px/1.45 var(--mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text-muted);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
 .reviewCommentChip {
   display: inline-flex;
   align-items: center;
@@ -1065,6 +1079,20 @@
   border-radius: 6px;
   object-fit: cover;
   flex-shrink: 0;
+}
+
+.attachmentMarkup {
+  display: inline-flex;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  cursor: pointer;
+}
+
+.attachmentMarkup:hover .attachmentThumb,
+.attachmentMarkup:focus-visible .attachmentThumb {
+  outline: 2px solid var(--accent-border);
 }
 
 .attachmentName {
@@ -1385,4 +1413,22 @@
 
 .setupPanel a {
   text-decoration: none;
+}
+
+/* `!` shell mode (#470): green edge and a mono line, so a command never
+   reads as a prompt. */
+.shellCard,
+.shellCard:has(.textarea:focus) {
+  border-color: var(--green-border);
+  box-shadow: 0 0 0 3px var(--green-soft);
+}
+
+.shellCard .textarea {
+  font-family: var(--mono);
+}
+
+.shellHint {
+  margin-bottom: 6px;
+  color: var(--green);
+  font-size: 12px;
 }

@@ -5,6 +5,7 @@ import {
   type WireClientMessage,
   type WireServerMessage,
 } from "./shared/wire";
+import { setWireStatus } from "./wireStatus";
 
 export type CreateWireCoderOptions = {
   url: string;
@@ -29,6 +30,15 @@ const MAX_QUEUED = 64;
 // ponytail: one timeout for every channel. Raise it if a legitimately slow
 // handler (gh network calls) starts tripping instead of per-channel budgets.
 const INVOKE_TIMEOUT_MS = 120_000;
+// Mirrors electron/webBridge.js close codes.
+const CLOSE_TOKEN_REJECTED = 4401;
+const CLOSE_RATE_LIMITED = 4429;
+const TOKEN_REJECTED_ERROR = "Not authorized: Solenta rejected this device's token";
+// Calls that carry a user's message; queuing one is worth telling them about.
+const SEND_CHANNELS = new Set(["runs:start", "runs:steer", "runs:sendQueued"]);
+// Only side-effect-free reads may share one reply on reconnect. ponytail:
+// method-name allowlist; an unlisted read just costs one extra request.
+const COALESCE_SAFE = /^[a-zA-Z]+:(list\w*|get|status|summaries|search|recent)$/;
 
 function unref(timer: unknown): void {
   if (typeof timer === "object" && timer && "unref" in timer) {
@@ -46,6 +56,7 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
   let backoffMs = MIN_BACKOFF_MS;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let everAuthed = false;
+  let rejected = false;
 
   const inflight = new Map<number, Pending>();
   const queued: Pending[] = [];
@@ -66,6 +77,13 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
     const batch = queued.splice(0);
     const bySig = new Map<string, Pending>();
     for (const p of batch) {
+      if (!COALESCE_SAFE.test(p.channel)) {
+        // A mutation runs as queued, and a read queued after it must not
+        // borrow a reply from before it (#928).
+        bySig.clear();
+        sendPending(p);
+        continue;
+      }
       const sig = JSON.stringify([p.channel, p.args]);
       const first = bySig.get(sig);
       if (!first) {
@@ -125,7 +143,10 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
       };
       if (ready && socket && socket.readyState === WS.OPEN) {
         sendPending(p);
+      } else if (rejected) {
+        reject(new Error(TOKEN_REJECTED_ERROR));
       } else {
+        if (SEND_CHANNELS.has(channel)) setWireStatus({ queuedSend: true });
         while (queued.length >= MAX_QUEUED) {
           queued.shift()!.reject(new Error(QUEUE_FULL_ERROR));
         }
@@ -158,6 +179,7 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
       backoffMs = MIN_BACKOFF_MS;
       const reconnecting = everAuthed;
       everAuthed = true;
+      setWireStatus({ state: "connected", queuedSend: false });
       flushQueue();
       if (reconnecting) resyncThreads();
       return;
@@ -213,13 +235,25 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
     // WebSocket) emit an 'error' that becomes uncaughtException with no
     // listener — same close path either way, so swallow here.
     ws.onerror = () => {};
-    ws.onclose = () => {
+    ws.onclose = (ev?: CloseEvent) => {
       ready = false;
       rejectInflight(TRANSPORT_ERROR);
+      const code = ev && typeof ev.code === "number" ? ev.code : 0;
+      // A wrong or revoked token will not heal by retrying: stop, and let
+      // the token gate ask for a new one.
+      if (code === CLOSE_TOKEN_REJECTED) {
+        rejected = true;
+        rejectQueued(TOKEN_REJECTED_ERROR);
+        setWireStatus({ state: "rejected" });
+        return;
+      }
       // Queued invokes sit here until auth-ok. A close before the first
       // auth-ok (wrong token, refused, drop) used to leave them pending
       // forever — the integration harness hung on a bad token.
       if (!everAuthed) rejectQueued(TRANSPORT_ERROR);
+      setWireStatus({
+        state: code === CLOSE_RATE_LIMITED ? "rateLimited" : everAuthed ? "reconnecting" : "connecting",
+      });
       scheduleReconnect();
     };
   }

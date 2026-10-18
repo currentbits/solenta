@@ -10,6 +10,7 @@
  * Desktop-only extras that are NOT in this table:
  *   attachments.droppedFilePath  (webUtils.getPathForFile, not IPC)
  *   contextMenu.show             (needs event.sender; registerIpc wires it)
+ *   windows.detachThread         (main.js owns windows; #519)
  *
  * After editing: `node --experimental-strip-types scripts/sync-ipc-preload.js`
  * (`--check` is part of `npm run typecheck`).
@@ -43,6 +44,7 @@ export const IPC_CHANNELS = [
   { ns: "app", method: "feedback" },
   { ns: "app", method: "openRemoteConnection" },
   { ns: "app", method: "forgetRemoteConnection" },
+  { ns: "app", method: "installRemoteSolenta" },
   { ns: "memory", method: "search" },
   { ns: "memory", method: "recent" },
   { ns: "memory", method: "get" },
@@ -61,6 +63,8 @@ export const IPC_CHANNELS = [
   { ns: "mcp", method: "remove" },
   { ns: "mcp", method: "setEnabled" },
   { ns: "mcp", method: "catalog" },
+  { ns: "mcp", method: "xcodeStatus" },
+  { ns: "mcp", method: "pairXcode" },
   { ns: "mcp", method: "pickImport" },
   { ns: "mcp", method: "previewImport" },
   { ns: "mcp", method: "installImport" },
@@ -138,6 +142,7 @@ export const IPC_CHANNELS = [
   { ns: "threads", method: "get" },
   { ns: "threads", method: "peek" },
   { ns: "threads", method: "setPermissionMode" },
+  { ns: "threads", method: "applyAgentProfile" },
   { ns: "threads", method: "respondPermission" },
   { ns: "threads", method: "clearQuestion" },
   { ns: "threads", method: "answerSecret" },
@@ -196,6 +201,8 @@ export const IPC_CHANNELS = [
   { ns: "threads", method: "purge" },
   { ns: "threads", method: "listTrashed" },
   { ns: "activity", method: "list" },
+  { ns: "governance", method: "listAudit" },
+  { ns: "governance", method: "verifyAudit" },
   { ns: "usage", method: "byDay" },
   { ns: "usage", method: "providerLimits" },
   { ns: "insights", method: "failureModes" },
@@ -315,6 +322,11 @@ export const IPC_CHANNELS = [
   { ns: "preview", method: "screenshot" },
   { ns: "preview", method: "click" },
   { ns: "preview", method: "type" },
+  { ns: "preview", method: "snapshot" },
+  { ns: "preview", method: "diagnostics" },
+  { ns: "preview", method: "viewport" },
+  { ns: "preview", method: "inspect" },
+  { ns: "preview", method: "cancelInspect" },
   { ns: "simulator", method: "capabilities" },
   { ns: "simulator", method: "selectDeveloperDir" },
   { ns: "simulator", method: "listDevices" },
@@ -356,7 +368,7 @@ export function ipcChannelName(row: {
 }
 
 /** Namespaces on CoderApi that are not invoke-channel tables. */
-type ApiExtra = "on" | "contextMenu";
+type ApiExtra = "on" | "contextMenu" | "windows";
 /** Methods on CoderApi that are not invoke channels. */
 type ExtraMethod = { attachments: "droppedFilePath" };
 

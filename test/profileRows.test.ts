@@ -124,6 +124,18 @@ describe("profileSummary", () => {
       "nope · Default · Low · Plan mode",
     );
   });
+
+  it("counts policy rules (#262), and says nothing for none", () => {
+    const rule = { kind: "bash" as const, match: "npm publish", action: "deny" as const };
+    const withRules = (n: number) =>
+      profileSummary(
+        profile({ policy: { defaultAction: "ask", rules: Array(n).fill(rule) } }),
+        LIST,
+      );
+    assert.equal(withRules(0), "Claude Code · haiku · Low · Plan mode");
+    assert.equal(withRules(1), "Claude Code · haiku · Low · Plan mode · 1 rule");
+    assert.equal(withRules(3), "Claude Code · haiku · Low · Plan mode · 3 rules");
+  });
 });
 
 describe("keyboard across profiles then providers", () => {
