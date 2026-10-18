@@ -1081,6 +1081,20 @@
   flex-shrink: 0;
 }
 
+.attachmentMarkup {
+  display: inline-flex;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  cursor: pointer;
+}
+
+.attachmentMarkup:hover .attachmentThumb,
+.attachmentMarkup:focus-visible .attachmentThumb {
+  outline: 2px solid var(--accent-border);
+}
+
 .attachmentName {
   overflow: hidden;
   text-overflow: ellipsis;

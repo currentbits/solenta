@@ -365,6 +365,7 @@ interface ThreadViewProps {
     updatedCommand?: string,
     inputValues?: InputValues,
     feedback?: string,
+    alwaysRule?: string,
   ) => void | Promise<void>;
   /** "Implement in a new thread" from the plan prompt (#1501). */
   onImplementPlan?: (plan: string, provider?: string) => void | Promise<void>;
