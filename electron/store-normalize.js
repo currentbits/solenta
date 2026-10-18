@@ -367,6 +367,9 @@ function validateQuotaFailover(raw) {
  * resumeInterruptedRuns: opt-in (issue #1512 I3); only an explicit true
  * resumes interrupted runs after a restart.
  *
+ * combineQueuedFollowUps: default on (#468); only an explicit false drains
+ * the type-ahead queue one item per turn.
+ *
  * prDiffCapLines: absent/junk → DEFAULT_PR_DIFF_CAP_LINES (400); only an
  * explicit null disables the PR-size cap (issue #402).
  *
@@ -414,6 +417,7 @@ function normalizeSettings(raw) {
     quotaWaitAutoResume: true,
     confirmQuitWithActiveWork: true,
     resumeInterruptedRuns: false,
+    combineQueuedFollowUps: true,
     guardrailsEnabled: true,
     prDiffCapLines: DEFAULT_PR_DIFF_CAP_LINES,
     maxConcurrentRuns: DEFAULT_MAX_CONCURRENT_RUNS,
@@ -577,6 +581,9 @@ function normalizeSettings(raw) {
   settings.resumeInterruptedRuns =
     /** @type {{ resumeInterruptedRuns?: unknown }} */ (obj)
       .resumeInterruptedRuns === true;
+  settings.combineQueuedFollowUps =
+    /** @type {{ combineQueuedFollowUps?: unknown }} */ (obj)
+      .combineQueuedFollowUps !== false;
   settings.guardrailsEnabled =
     /** @type {{ guardrailsEnabled?: unknown }} */ (obj).guardrailsEnabled !== false;
   settings.autoSettleOnMerge =
