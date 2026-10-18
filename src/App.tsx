@@ -367,6 +367,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     setVerifyCommand,
     runVerify,
     runCommand,
+    runShell,
     appStatus,
     updateStatus,
     checkUpdate,
@@ -2177,6 +2178,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         gitSyncInfo={gitSyncInfo}
         gitFetch={gitFetch}
         onRunCommand={runCommand}
+        onRunShell={runShell}
         runError={error?.scope === "run" ? error.message : null}
         onDismissRunError={clearError}
         onFork={handleForkOpen}

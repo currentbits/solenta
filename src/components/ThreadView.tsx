@@ -674,6 +674,8 @@ interface ThreadViewProps {
     actionId?: string,
     trustRepoConfig?: string,
   ) => Promise<unknown>;
+  /** Run a composer `!` line in this thread's checkout (#470). */
+  onRunShell?: (threadId: string, command: string) => Promise<unknown>;
   runError?: string | null;
   onDismissRunError?: () => void;
   /**
@@ -906,6 +908,7 @@ export const ThreadView = memo(function ThreadView({
   onOpenWorkers,
   onRefreshWorkerSnapshot,
   onRunCommand,
+  onRunShell,
   runError = null,
   onDismissRunError,
   onNewThread,
@@ -4990,6 +4993,11 @@ export const ThreadView = memo(function ThreadView({
                 : undefined
         }
         onSend={handleComposerSend}
+        onShell={
+          onRunShell && !thread.ask
+            ? (command) => onRunShell(thread.id, command)
+            : undefined
+        }
         restoreDraft={restoreDraft}
         onRestoreDraftConsumed={onRestoreDraftConsumed}
         onBuild={onStartWorkflow}
