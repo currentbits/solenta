@@ -1,8 +1,15 @@
 /**
- * Default allow-always rule shown on the permission card (#477): the prefix
- * glob the main process would derive (`npm test:*`). Mirrors commandPrefix
- * in electron/permissionCommand.js; keep the two in step.
+ * Default allow-always rule for a command permission (#479): the Claude
+ * session-rule prefix glob (`npm test:*`) the "Always allow" button shows
+ * and the user may edit before confirming.
+ *
+ * Twin of commandPrefix in electron/permissionCommand.js; keep them in
+ * lockstep (test/permissionRuleParity.test.ts). The main process derives
+ * the same rule itself when no `alwaysRule` is sent.
  */
+
+/** `alwaysRule` sentinel for "this tool, anything" (WHOLE_TOOL_RULE). */
+export const WHOLE_TOOL_RULE = "*";
 
 /** Bins whose second token is the verb (`npm test`, `git status`). */
 const TWO_TOKEN_BINS = new Set([
@@ -26,10 +33,10 @@ const TWO_TOKEN_BINS = new Set([
   "mise",
 ]);
 
-export function commandPrefix(command: string): string | null {
-  const withoutEnv = command
-    .trim()
-    .replace(/^(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)+/, "");
+export function commandPrefix(command: string | null | undefined): string | null {
+  const trimmed = String(command || "").trim();
+  if (!trimmed) return null;
+  const withoutEnv = trimmed.replace(/^(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)+/, "");
   const tokens = withoutEnv.split(/\s+/).filter(Boolean);
   if (tokens.length === 0) return null;
   const bin = tokens[0].replace(/^.*[/\\]/, "");

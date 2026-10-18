@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import { describe, it, afterEach, before, after } from "node:test";
 import { inAct, mount, unmountAll } from "./support/dom.ts";
 import { Composer } from "../src/components/Composer";
+import { normalizeRect } from "../src/components/composer/ImageMarkup";
 import type {
   AttachmentInfo,
   ProviderInfo,
@@ -158,6 +159,7 @@ function composer(
     incomingThreadId?: string | null;
     onIncomingConsumed?: () => void;
     onSaveImage?: (dataUrl: string) => Promise<AttachmentInfo | null>;
+    onLoadImage?: (path: string) => Promise<string | null>;
     folderPicks?: AttachmentInfo[];
     provider?: string;
     model?: string | null;
@@ -206,7 +208,7 @@ function composer(
         over.onSaveImage ??
         (async () => (over.savedImage === undefined ? null : over.savedImage))
       }
-      onLoadAttachmentImage={async () => null}
+      onLoadAttachmentImage={over.onLoadImage ?? (async () => null)}
       onDropAttachmentFiles={over.onDrop}
       incomingAttachments={over.incoming}
       incomingAttachmentThreadId={over.incomingThreadId}
@@ -823,6 +825,99 @@ describe("Composer attachments", () => {
       "a successful send must not come back after remount",
     );
     third.unmount();
+  });
+
+  it("marks up an image chip: flattened PNG replaces it, pin notes join the draft (#460)", async () => {
+    // jsdom has no Image loading and no 2D canvas: fake both so the real
+    // editor runs and Save hands back a recognisable data URL.
+    const g = globalThis as unknown as Record<string, unknown>;
+    const proto = (
+      window as unknown as { HTMLCanvasElement: { prototype: object } }
+    ).HTMLCanvasElement.prototype as Record<string, unknown>;
+    const saved = {
+      Image: g.Image,
+      getContext: proto.getContext,
+      toDataURL: proto.toDataURL,
+    };
+    g.Image = class {
+      naturalWidth = 200;
+      naturalHeight = 100;
+      onload: (() => void) | null = null;
+      set src(_v: string) {
+        setTimeout(() => this.onload?.(), 0);
+      }
+    };
+    const ctx = new Proxy({}, { get: () => () => {}, set: () => true });
+    proto.getContext = () => ctx;
+    proto.toDataURL = () => "data:image/png;base64,MARKED";
+    const MARKED: AttachmentInfo = {
+      kind: "image",
+      path: "/tmp/marked.png",
+      name: "marked.png",
+    };
+    const uploads: string[] = [];
+    const h: Harness = { sends: [] };
+    const m = await mount(
+      composer(h, {
+        incoming: [IMAGE],
+        onLoadImage: async () => "data:image/png;base64,AAA",
+        onSaveImage: async (dataUrl) => {
+          uploads.push(dataUrl);
+          return MARKED;
+        },
+      }),
+    );
+    try {
+      await m.flush();
+      await m.click(m.query('button[aria-label="Mark up pic.png"]'));
+      await m.flush();
+      const canvas = document.querySelector('[role="dialog"] canvas');
+      assert.ok(canvas, "markup editor must open on the chip");
+      const save = () =>
+        Array.from(document.querySelectorAll("button")).find(
+          (b) => b.textContent === "Save markup",
+        );
+      assert.equal(save()?.disabled, true, "nothing to save before a mark");
+      await inAct(() => {
+        canvas.dispatchEvent(
+          new MouseEvent("pointerdown", {
+            bubbles: true,
+            button: 0,
+            clientX: 10,
+            clientY: 10,
+          }),
+        );
+      });
+      const note = document.querySelector('input[aria-label="Note for pin 1"]');
+      assert.ok(note, "a click drops pin 1 with a note field");
+      await m.type(note, "padding too big");
+      await m.click(save() ?? null);
+      await m.flush();
+      assert.deepEqual(uploads, ["data:image/png;base64,MARKED"]);
+      assert.equal(document.querySelector('[role="dialog"]'), null);
+      assert.deepEqual(
+        m.queryAll("[data-attachment-kind]").map((c) => c.getAttribute("title")),
+        ["/tmp/marked.png"],
+        "the marked copy replaces the source chip",
+      );
+      const draft = (m.query("textarea") as HTMLTextAreaElement).value;
+      assert.equal(
+        draft,
+        "Markup on pic.png (numbered red pins):\n1. padding too big",
+      );
+    } finally {
+      g.Image = saved.Image;
+      proto.getContext = saved.getContext;
+      proto.toDataURL = saved.toDataURL;
+      m.unmount();
+    }
+  });
+
+  it("normalizeRect turns any drag direction into a clamped crop", () => {
+    assert.deepEqual(
+      normalizeRect({ x: 150, y: 80 }, { x: -20, y: 10.4 }, 120, 100),
+      { x: 0, y: 10, w: 120, h: 70 },
+    );
   });
 });
 

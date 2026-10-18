@@ -1539,8 +1539,7 @@ describe("runner claude provider", () => {
 
       await waitFor(() => store.getThread(thread.id).status === "done");
 
-      // The CLI received a well-formed allow with a session-scoped rule on
-      // the command prefix, not all of Bash (#477).
+      // The CLI received a well-formed allow with a session-scoped rule.
       const ctrl = JSON.parse(fs.readFileSync(ctrlFile, "utf8"));
       assert.equal(ctrl.type, "control_response");
       assert.equal(ctrl.response.subtype, "success");
@@ -1573,7 +1572,7 @@ describe("runner claude provider", () => {
         msgs.some(
           (m) =>
             m.role === "event" &&
-            m.text === "Allowed for session: Bash: npm test",
+            m.text === "Allowed for session: Bash: npm test (rule: npm test:*)",
         ),
       );
     } finally {
@@ -1658,13 +1657,48 @@ describe("runner claude provider", () => {
           (m) =>
             m.role === "event" &&
             m.text ===
-              "Allowed for session (edited): npm test → npm build --watch",
+              "Allowed for session (edited): npm test → npm build --watch (rule: npm build:*)",
         ),
       );
     } finally {
       delete process.env.CODER_FAKE_CLAUDE_CTRL_FILE;
     }
   });
+
+  for (const [alwaysRule, rule, note] of [
+    ["npm run *", { toolName: "Bash", ruleContent: "npm run *" }, "npm run *"],
+    ["*", { toolName: "Bash" }, "any Bash"],
+  ]) {
+    it(`allow-always with alwaysRule ${JSON.stringify(alwaysRule)} sends that rule (#479)`, async () => {
+      process.env.CODER_FAKE_CLAUDE_SCENARIO = "permission";
+      const ctrlFile = path.join(tmpDir, `ctrl-rule-${note.length}.json`);
+      process.env.CODER_FAKE_CLAUDE_CTRL_FILE = ctrlFile;
+      try {
+        const thread = store.getThreads()[0];
+        await runner.startRun({ threadId: thread.id, prompt: "guarded work" });
+        await waitFor(() => runner.getPendingPermission(thread.id) != null);
+        const pending = runner.getPendingPermission(thread.id);
+        runner.respondPermission({
+          threadId: thread.id,
+          requestId: pending.requestId,
+          decision: "allowAlways",
+          alwaysRule,
+        });
+        await waitFor(() => store.getThread(thread.id).status === "done");
+        const ctrl = JSON.parse(fs.readFileSync(ctrlFile, "utf8"));
+        assert.deepEqual(ctrl.response.response.updatedPermissions, [
+          { type: "addRules", rules: [rule], behavior: "allow", destination: "session" },
+        ]);
+        assert.ok(
+          store.getMessages(thread.id).some(
+            (m) => m.text === `Allowed for session: Bash: npm test (rule: ${note})`,
+          ),
+        );
+      } finally {
+        delete process.env.CODER_FAKE_CLAUDE_CTRL_FILE;
+      }
+    });
+  }
 
   it("rejects an empty edited command without consuming the prompt (#509)", async () => {
     process.env.CODER_FAKE_CLAUDE_SCENARIO = "permission";

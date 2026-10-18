@@ -106,7 +106,9 @@ import {
   type MentionExtra,
 } from "../contextChips";
 import {
+  parseJumpCommand,
   pickerVerb,
+  shellCommand,
   type SlashAction,
   type SlashCommand,
 } from "../slashCommands";
@@ -133,6 +135,7 @@ import {
 } from "../uiPrefs";
 import { applyComposerVim } from "../composerVim";
 import { AttachmentChip } from "./composer/AttachmentChip";
+import { ImageMarkup } from "./composer/ImageMarkup";
 import { CommandList, MentionList } from "./composer/ComposerPopups";
 import { ReplyChip } from "./composer/ReplyChip";
 import { ReviewCommentChips } from "./composer/ReviewCommentChips";
@@ -245,6 +248,11 @@ export interface ComposerProps {
   } | null;
   /** The restore landed; the parent drops it so a remount cannot replay it. */
   onRestoreDraftConsumed?: () => void;
+  /**
+   * `!command` (#470): run it in the thread's checkout instead of sending a
+   * prompt. Resolves when the command ends. Absent: `!` is plain text.
+   */
+  onShell?: (command: string) => Promise<unknown>;
   /** Multi-phase workflow. The Build action inside Options calls this. */
   onBuild: (prompt: string, templateId: string) => void | Promise<void>;
   /**
@@ -340,6 +348,8 @@ export interface ComposerProps {
    * here. Absent: those verbs still clear the token so they never send.
    */
   onSlashAction?: (action: SlashAction) => void;
+  /** `/jump [filter]` on send opens the prompt outline instead (#487). */
+  onJump?: (query: string) => void;
   /**
    * Extra `/` rows from the underlying CLI (#606): skills and custom
    * commands. Insert-only; Solenta-owned names in the static palette win.
@@ -427,6 +437,7 @@ export const Composer = memo(function Composer({
   onSend,
   restoreDraft = null,
   onRestoreDraftConsumed,
+  onShell,
   onBuild,
   onBestOfN,
   ask = false,
@@ -458,6 +469,7 @@ export const Composer = memo(function Composer({
   incomingAttachmentThreadId,
   onIncomingAttachmentsConsumed,
   onSlashAction,
+  onJump,
   cliCommands,
   onStopRun,
   dropHostRef,
@@ -497,9 +509,11 @@ export const Composer = memo(function Composer({
     el.classList.toggle(styles.overflowWarn, overflowWarn(used));
   }, []);
   const [hasPrompt, setHasPrompt] = useState(false);
+  const [bang, setBang] = useState(false);
   const syncHasPrompt = useCallback((text: string) => {
     const next = text.trim().length > 0;
     setHasPrompt((prev) => (prev === next ? prev : next));
+    setBang(text.startsWith("!"));
   }, []);
   const rememberDraft = useCallback(
     (text: string) => {
@@ -560,8 +574,13 @@ export const Composer = memo(function Composer({
     syncOverflow,
     setLocalError,
   });
-  const { attachments, addAttachments, removeAttachment, clearAttachments } =
-    useComposerAttachments({
+  const {
+    attachments,
+    addAttachments,
+    removeAttachment,
+    replaceAttachment,
+    clearAttachments,
+  } = useComposerAttachments({
       threadId,
       canAttachImages,
       incomingAttachments,
@@ -1087,11 +1106,44 @@ export const Composer = memo(function Composer({
     [contextChipLoader, contextChips, pasteCards, replyTo, reviewComments],
   );
 
+  const shellMode = bang && Boolean(onShell);
+
+  /**
+   * `!` line (#470): no model turn, no chips or attachments consumed (they
+   * wait for the next prompt). The box clears at once and stays live while
+   * the command runs (main refuses a second one); a rejected start puts the
+   * line back if nothing replaced it.
+   */
+  const runShell = async (typed: string, command: string) => {
+    if (!onShell || disabled) return;
+    if (!command) {
+      setLocalError("Type a command after !");
+      return;
+    }
+    setLocalError(null);
+    recordSent(threadId, typed);
+    recallIndexRef.current = null;
+    writeDraft("");
+    try {
+      await onShell(command);
+    } catch (err) {
+      if (!readDraft()) writeDraft(typed, typed.length);
+      setLocalError(
+        err instanceof Error && err.message ? err.message : "Command failed to start",
+      );
+    }
+  };
+
   const runAction = async (
     action: (prompt: string) => void | Promise<void>,
     failLabel: string,
   ) => {
     const typed = readDraft();
+    const shellLine = onShell ? shellCommand(typed) : null;
+    if (shellLine !== null) {
+      await runShell(typed, shellLine);
+      return;
+    }
     const prompt = await composeOutgoing(typed);
     if (!prompt.trim() || disabled || sending) return;
     setSending(true);
@@ -1119,6 +1171,13 @@ export const Composer = memo(function Composer({
 
   const submitSend = () => {
     if (!canSend) return;
+    const jump = ask ? null : parseJumpCommand(readDraft());
+    if (jump !== null && onJump) {
+      writeDraft("", 0);
+      closeCommand();
+      onJump(jump);
+      return;
+    }
     // `/workflow …` and `/bestof …` open the picker instead of sending.
     const verb = ask ? null : pickerVerb(readDraft());
     if (verb && (verb.picker === "workflow" || onBestOfN)) {
@@ -1495,6 +1554,40 @@ export const Composer = memo(function Composer({
     runAttachmentPick(onPickAttachments);
   };
 
+  /** Image chip open in the markup editor (#460), with its loaded bytes. */
+  const [markup, setMarkup] = useState<{
+    attachment: AttachmentInfo;
+    src: string;
+  } | null>(null);
+  const openMarkup = (attachment: AttachmentInfo) => {
+    void onLoadAttachmentImage?.(attachment.path)
+      .then((src) => {
+        if (src) setMarkup({ attachment, src });
+      })
+      .catch(() => {});
+  };
+  /** The flattened PNG replaces its chip; pin notes go into the draft. */
+  const saveMarkup = (dataUrl: string, notes: string) => {
+    const source = markup?.attachment;
+    setMarkup(null);
+    if (!source || !onSaveAttachmentImage) return;
+    onSaveAttachmentImage(dataUrl)
+      .then((next) => {
+        if (!next) {
+          setLocalError("Could not save the marked-up image");
+          return;
+        }
+        replaceAttachment(source.path, next);
+        if (notes) {
+          const text = [readDraft().trimEnd(), notes]
+            .filter(Boolean)
+            .join("\n\n");
+          writeDraft(text, text.length);
+        }
+      })
+      .catch(() => setLocalError("Could not save the marked-up image"));
+  };
+
   /** Clipboard images become saved attachments; large text pastes become cards. */
   const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
     if (disabled || sending) return;
@@ -1839,7 +1932,16 @@ export const Composer = memo(function Composer({
           {statusTab}
         </div>
       ) : null}
-      <div className={styles.card}>
+      <div
+        className={`${styles.card}${shellMode ? ` ${styles.shellCard}` : ""}`}
+        data-shell-mode={shellMode ? "" : undefined}
+      >
+        {shellMode && (
+          <div className={styles.shellHint} data-shell-hint="">
+            Shell: Enter runs this in the thread&apos;s checkout, no model
+            turn. 60s limit.
+          </div>
+        )}
         {mentionOpen && (
           <MentionList
             snippetMatches={snippetMatches}
@@ -1929,9 +2031,22 @@ export const Composer = memo(function Composer({
                 attachment={a}
                 onRemove={() => removeAttachment(a.path)}
                 onLoadImage={onLoadAttachmentImage}
+                onMarkup={
+                  onSaveAttachmentImage && !disabled && !sending
+                    ? () => openMarkup(a)
+                    : undefined
+                }
               />
             ))}
           </div>
+        )}
+        {markup && (
+          <ImageMarkup
+            src={markup.src}
+            name={markup.attachment.name}
+            onCancel={() => setMarkup(null)}
+            onSave={saveMarkup}
+          />
         )}
         <textarea
           key={threadId}

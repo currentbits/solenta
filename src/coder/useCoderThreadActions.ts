@@ -94,7 +94,7 @@ export function useCoderThreadActions({
       updatedCommand?: string,
       inputValues?: InputValues,
       feedback?: string,
-      alwaysRule?: string | null,
+      alwaysRule?: string,
     ) => {
       if (!selectedThreadId) return;
       const threadId = selectedThreadId;
@@ -109,7 +109,7 @@ export function useCoderThreadActions({
           updatedCommand,
           inputValues,
           ...(feedback ? { feedback } : {}),
-          ...(alwaysRule !== undefined ? { alwaysRule } : {}),
+          ...(alwaysRule ? { alwaysRule } : {}),
         });
         setError(null);
       } catch (err) {

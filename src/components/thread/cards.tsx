@@ -29,7 +29,7 @@ import {
 import { Markdown } from "../Markdown";
 import { FileHunks } from "../TurnDiffPanel";
 import { parsePatch } from "../../reviewItinerary";
-import { commandPrefix } from "../../permissionRule";
+import { commandPrefix, WHOLE_TOOL_RULE } from "../../permissionRule";
 import styles from "../ThreadView.module.css";
 import diffStyles from "../TurnDiffPanel.module.css";
 
@@ -255,7 +255,7 @@ type PermissionRespond = (
   updatedCommand?: string,
   inputValues?: undefined,
   feedback?: undefined,
-  alwaysRule?: string | null,
+  alwaysRule?: string,
 ) => void | Promise<void>;
 
 /**
@@ -265,12 +265,14 @@ type PermissionRespond = (
  * should reuse — the IPC already accepts updatedCommand.
  *
  * Codex command asks set commandEditable=false: the JSON-RPC reply cannot
- * rewrite the command (issue #1171). Accept for session hides when
- * acceptAlways is false.
+ * rewrite the command (issue #1171). Accept all hides when acceptAlways
+ * is false.
  *
- * Allow-always on an editable command keys on a prefix glob the user can
- * edit (#477), defaulting to the command's prefix as it is edited; "any
- * <tool>" is the explicit whole-tool escape hatch, with no key.
+ * Always-allow on an editable command is a session rule, not the whole tool
+ * (#479): the button shows the derived prefix (`npm test:*`), which follows
+ * command edits until the user types their own rule; "any <tool>" sits
+ * behind the overflow. Codex keeps plain Accept all: acceptForSession is its
+ * own exact-command cache and takes no rule.
  */
 export function PermissionPrompt({
   pending,
@@ -299,13 +301,13 @@ export function PermissionPrompt({
     () => parsePatch(fileChange?.diff ?? ""),
     [fileChange?.diff],
   );
-  const ruleEditable = editable && acceptAlways;
-  // null: follow the command's prefix until the user types a rule.
+  // null: follow the command; a string once the user edits the rule.
   const [ruleDraft, setRuleDraft] = useState<string | null>(null);
   const rule = ruleDraft ?? commandPrefix(command) ?? "";
-  const noRule = ruleEditable && rule.trim() === "";
+  const scoped = editable && acceptAlways;
+  const ruleEmpty = scoped && rule.trim() === "";
 
-  const answer = (decision: PermissionDecision, alwaysRule?: string | null) => {
+  const answer = (decision: PermissionDecision, alwaysRule?: string) => {
     if (sent) return;
     if (decision !== "deny" && empty) return;
     setSent(true);
@@ -319,16 +321,18 @@ export function PermissionPrompt({
       alwaysRule,
     );
   };
-  const always = () => answer("allowAlways", ruleEditable ? rule.trim() : undefined);
+  const always = scoped
+    ? () => answer("allowAlways", rule.trim())
+    : () => answer("allowAlways");
   usePermissionKeys(
     sent
       ? {}
       : {
           n: () => answer("deny"),
           ...(empty ? {} : { y: () => answer("allow") }),
-          ...(acceptAlways && !empty && !noRule ? { a: always } : {}),
+          ...(acceptAlways && !empty && !ruleEmpty ? { a: always } : {}),
         },
-    !pending.guardrail,
+    !guardrail,
   );
 
   return (
@@ -423,23 +427,26 @@ export function PermissionPrompt({
         >
           <KeyHint k="y" /> Accept
         </button>
-        {acceptAlways ? (
+        {scoped ? (
           <button
             type="button"
             className={styles.permissionAllow}
-            disabled={sent || empty || noRule}
+            disabled={sent || empty || ruleEmpty}
+            data-permission-always=""
             onClick={always}
             aria-keyshortcuts="a"
-            data-permission-always=""
           >
-            <KeyHint k="a" />{" "}
-            {ruleEditable ? (
-              <>
-                Always allow <code>{rule.trim()}</code>
-              </>
-            ) : (
-              "Accept for session"
-            )}
+            <KeyHint k="a" /> Always allow <code>{rule}</code>
+          </button>
+        ) : acceptAlways ? (
+          <button
+            type="button"
+            className={styles.permissionAllow}
+            disabled={sent || empty}
+            onClick={always}
+            aria-keyshortcuts="a"
+          >
+            <KeyHint k="a" /> Accept all
           </button>
         ) : null}
         {pending.folderGrant ? (
@@ -464,30 +471,31 @@ export function PermissionPrompt({
           <KeyHint k="n" /> Deny
         </button>
       </div>
-      {ruleEditable ? (
-        <div className={styles.permissionRule}>
-          <label>
-            Always-allow rule{" "}
+      {scoped ? (
+        <details className={styles.permissionMore} data-permission-more="">
+          <summary>Always-allow options</summary>
+          <div className={styles.permissionRule}>
             <input
-              className={styles.permissionRuleInput}
+              className={`${styles.permissionInput} ${styles.permissionCommand}`}
               data-permission-rule=""
+              aria-label="Always-allow rule"
               value={rule}
-              disabled={sent}
               spellCheck={false}
               autoComplete="off"
+              autoCorrect="off"
               onChange={(ev) => setRuleDraft(ev.target.value)}
             />
-          </label>
-          <button
-            type="button"
-            className={styles.permissionReset}
-            disabled={sent || empty}
-            onClick={() => answer("allowAlways", null)}
-            data-permission-any-tool=""
-          >
-            or allow any {pending.toolName} this session
-          </button>
-        </div>
+            <button
+              type="button"
+              className={styles.permissionDeny}
+              disabled={sent || empty}
+              data-permission-any-tool=""
+              onClick={() => answer("allowAlways", WHOLE_TOOL_RULE)}
+            >
+              Allow any {pending.toolName} this session
+            </button>
+          </div>
+        </details>
       ) : null}
     </div>
   );
