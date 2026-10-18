@@ -2064,7 +2064,11 @@ export interface PendingQuestion {
   customAnswer?: boolean;
 }
 
-/** User decision on a PendingPermissionInfo. "allowAlways" also allows the tool for the rest of the CLI session. */
+/**
+ * User decision on a PendingPermissionInfo. "allowAlways" also allows matching
+ * calls for the rest of the CLI session: for a command, the `alwaysRule` glob
+ * (default: its prefix, e.g. `npm test:*`), not the whole tool (#479).
+ */
 export type PermissionDecision =
   | "allow"
   | "allowAlways"
@@ -5099,6 +5103,12 @@ export interface CoderApi {
        * pending tool has no command field.
        */
       updatedCommand?: string;
+      /**
+       * allowAlways on a command (#479): the session-rule glob the user
+       * confirmed, e.g. `npm test:*`; "*" allows the whole tool. Absent:
+       * the prefix of the command that runs. Ignored by Codex.
+       */
+      alwaysRule?: string;
       inputValues?: InputValues;
       /**
        * "Keep planning" notes (#1501). Deny on a plan prompt only: a live
