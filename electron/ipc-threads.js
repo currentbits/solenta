@@ -550,6 +550,10 @@ module.exports = {
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
     return result;
   },
+  "threads:exportReport": async (ctx, input) => {
+    const { exportThreadReport } = require("./threadReport.js");
+    return exportThreadReport(ctx, input && input.threadId);
+  },
   "threads:runCommand": async (ctx, input) => {
     return services.runCommand(ctx.store, input, {
       runner: ctx.runner,

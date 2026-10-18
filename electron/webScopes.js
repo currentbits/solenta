@@ -192,7 +192,7 @@ const BY_SCOPE = {
     "speech:stop",
     "speech:cancel",
   ],
-  files: ["projects:writeAgentConfig", "workflows:exportToRepo"],
+  files: ["projects:writeAgentConfig", "workflows:exportToRepo", "threads:exportReport"],
   git: [
     "git:setupWorktree",
     "git:commit",

@@ -174,6 +174,7 @@ function view(props: {
     opts?: { worktree?: boolean; orchestrate?: boolean },
   ) => void;
   onRenameThread?: (title: string) => void | Promise<void>;
+  onExportReport?: (input: { threadId: string }) => Promise<string | null>;
   onSetCrossThreadInbound?: (
     policy: "accept" | "queue-only" | "refuse",
   ) => void | Promise<void>;
@@ -225,6 +226,7 @@ function view(props: {
       onAddProject={() => {}}
       onCreateThread={props.onCreateThread}
       onRenameThread={props.onRenameThread}
+      onExportReport={props.onExportReport}
       onStartRun={props.onStartRun ?? (() => {})}
       onStartWorkflow={() => {}}
       onSaveWorkflow={noopSave}
@@ -1579,6 +1581,34 @@ describe("copy thread id", () => {
       "Copied",
       "inline confirmation",
     );
+    m.unmount();
+  });
+});
+
+describe("export bug report (#394)", () => {
+  it("exports this thread and flashes Saved; a cancel stays quiet", async () => {
+    const asked: string[] = [];
+    let result: string | null = null;
+    const m = await mount(
+      view({
+        onExportReport: async ({ threadId }) => {
+          asked.push(threadId);
+          return result;
+        },
+      }),
+    );
+    await m.flush();
+    await m.click(m.query("[aria-label='Thread actions']"));
+    const label = () => (m.query("[data-export-report]")?.textContent || "").trim();
+    assert.equal(label(), "Export bug report…");
+    await m.click(m.query("[data-export-report]"));
+    await m.flush();
+    assert.equal(label(), "Export bug report…", "cancelled dialog: no flash");
+    result = "/tmp/t1-report.html";
+    await m.click(m.query("[data-export-report]"));
+    await m.flush();
+    assert.deepEqual(asked, ["t1", "t1"]);
+    assert.equal(label(), "Saved");
     m.unmount();
   });
 });

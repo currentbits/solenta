@@ -397,6 +397,8 @@ interface ThreadViewProps {
   ) => void | Promise<void>;
   /** Rename the open thread (header overflow). */
   onRenameThread?: (title: string) => void | Promise<void>;
+  /** Save a redacted HTML bug report (#394); null = dialog cancelled. */
+  onExportReport?: (input: { threadId: string }) => Promise<string | null>;
   /**
    * New thread in this project, same default as the sidebar "New thread"
    * button (Settings defaultWorktree / orchestrator; remotes stay plain).
@@ -803,6 +805,7 @@ export const ThreadView = memo(function ThreadView({
   onSetArchived,
   onSetCrossThreadInbound,
   onRenameThread,
+  onExportReport,
   onCreateThread,
   onRepeatSchedule,
   onDistillWorkflow,
@@ -1045,7 +1048,7 @@ export const ThreadView = memo(function ThreadView({
   /** Bumps after a successful push so the sync pill refetches. */
   const [syncRefreshNonce, setSyncRefreshNonce] = useState(0);
   /** Brief inline confirmation after copying the thread id. */
-  const [copied, setCopied] = useState<"id" | "link" | null>(null);
+  const [copied, setCopied] = useState<"id" | "link" | "report" | "report-failed" | null>(null);
   /** Header quick action currently in flight (issue #153). */
   const [commandRunningId, setCommandRunningId] = useState<string | null>(null);
   const [commandError, setCommandError] = useState<string | null>(null);
@@ -2626,6 +2629,19 @@ export const ThreadView = memo(function ThreadView({
     } catch {
       return;
     }
+    flashCopied(what);
+  };
+
+  const handleExportReport = async () => {
+    if (!onExportReport) return;
+    try {
+      if (await onExportReport({ threadId: thread.id })) flashCopied("report");
+    } catch {
+      flashCopied("report-failed");
+    }
+  };
+
+  const flashCopied = (what: NonNullable<typeof copied>) => {
     setCopied(what);
     if (copyFlashTimer.current != null) {
       clearTimeout(copyFlashTimer.current);
@@ -3010,6 +3026,22 @@ export const ThreadView = memo(function ThreadView({
                       >
                         {copied === "link" ? "Copied" : "Copy link"}
                       </button>
+                      {onExportReport && (
+                        <button
+                          type="button"
+                          className={styles.menuItem}
+                          role="menuitem"
+                          data-export-report=""
+                          title="Transcript, tool calls, diffs and versions as one HTML file, with secrets redacted"
+                          onClick={() => void handleExportReport()}
+                        >
+                          {copied === "report"
+                            ? "Saved"
+                            : copied === "report-failed"
+                              ? "Export failed"
+                              : "Export bug report…"}
+                        </button>
+                      )}
                       {onRenameThread && !isWorking && (
                         <button
                           type="button"

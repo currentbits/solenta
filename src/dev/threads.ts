@@ -845,6 +845,10 @@ export function createThreads(ctx: DevCtx): Pick<CoderApi, "threads"> {
         patchThread(input.threadId, { verify: result });
         return result;
       },
+      async exportReport(input: { threadId: string }) {
+        if (!details.has(input.threadId)) throw new Error(`Thread not found: ${input.threadId}`);
+        return null;
+      },
       async runCommand(input: { threadId: string; actionId?: string }) {
         const detail = details.get(input.threadId);
         if (!detail) throw new Error(`Thread not found: ${input.threadId}`);

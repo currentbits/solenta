@@ -359,6 +359,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     simulatorStatus,
     setVerifyCommand,
     runVerify,
+    exportReport,
     runCommand,
     appStatus,
     updateStatus,
@@ -2051,6 +2052,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
             : undefined
         }
         onRenameThread={handleRenameOpenThread}
+        onExportReport={exportReport}
         onRepeatSchedule={handleRepeatSchedule}
         onDistillWorkflow={handleDistillWorkflow}
         onDistillMemory={handleDistillMemory}
