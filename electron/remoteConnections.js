@@ -105,6 +105,15 @@ function explainSshFailure(host, stderr, code) {
   if (/Permission denied/.test(text)) {
     return `SSH refused the login to ${host}. Connections need key-based login (an SSH key or agent); passwords cannot be entered here.`;
   }
+  if (/Could not resolve hostname/.test(text)) {
+    return `Cannot find ${host}. Check the name, or add it as a Host in ~/.ssh/config.`;
+  }
+  if (/Connection refused/.test(text)) {
+    return `${host} is not accepting SSH. On a Mac, turn on Remote Login in System Settings > General > Sharing; on Linux, start sshd.`;
+  }
+  if (/timed out|No route to host|Network is unreachable/i.test(text)) {
+    return `${host} did not answer. Check that it is awake and on your network or tailnet.`;
+  }
   return text || `SSH exited (${code ?? "unknown"}).`;
 }
 
@@ -128,34 +137,61 @@ function sshArgs(host, localPort, remotePort) {
 
 // Run on the host before every connect: start Solenta if nothing answers on
 // the web port, then print <userData>/web-token (webAccess writes it on
-// every start). macOS goes through `open -n` so a running app gets the
-// flags via second-instance and turns Solenta Web on instead of a second
-// copy starting; Linux starts the tarball headless (no display needed, and
-// no renderer to sandbox). Both channels keep productName "Solenta", so one
-// userData path. sh -c, single-quoted, so a fish or zsh login shell on the
-// host does not change the syntax: no single quotes inside.
+// every start). Nothing running: macOS `open -n`s the app headless (a GUI
+// process spawned by sshd has no window server), Linux starts the tarball
+// headless (no display needed, and no renderer to sandbox). Already running
+// with web access off: launch the same build with --handoff-only, which
+// passes --serve-web to it via second-instance and never boots itself. A
+// build without that flag predates the macOS single-instance lock and would
+// boot a second writer on the same store, so it is refused (exit 5).
+// Both channels keep productName "Solenta", so one userData path. sh -c,
+// single-quoted, so a fish or zsh login shell on the host does not change
+// the syntax: no single quotes inside. `ps`, not pgrep, on macOS: pgrep
+// misses GUI apps from some contexts.
 const NOT_INSTALLED_EXIT = 3;
 const DID_NOT_START_EXIT = 4;
+const TOO_OLD_EXIT = 5;
 const HEADLESS_LOG = "$HOME/.solenta-headless.log";
 function prepareHostCommand(port) {
   const p = Number(port);
   return `sh -c '
 tok() { cat "$HOME/Library/Application Support/Solenta/web-token" 2>/dev/null || cat "\${XDG_CONFIG_HOME:-$HOME/.config}/Solenta/web-token" 2>/dev/null; }
 up() { command -v curl >/dev/null 2>&1 || return 0; curl -s -o /dev/null -m 2 "http://127.0.0.1:${p}/"; }
+running() {
+  if [ "$(uname -s)" = Darwin ]; then ps -axo comm= | grep -E "/Contents/MacOS/Solenta( Nightly)?$" | head -n 1; return; fi
+  for n in solenta solenta-nightly; do
+    pid="$(pgrep -x "$n" 2>/dev/null | head -n 1)"
+    if [ -n "$pid" ]; then readlink "/proc/$pid/exe"; return; fi
+  done
+}
 if ! up; then
   app=""
-  for a in /Applications/Solenta.app "$HOME/Applications/Solenta.app" "/Applications/Solenta Nightly.app"; do
-    if [ -d "$a" ]; then app="$a"; break; fi
-  done
-  if [ -n "$app" ]; then
-    open -n -g -a "$app" --args --headless --serve-web=${p} || exit ${DID_NOT_START_EXIT}
+  exe="$(running)"
+  if [ -n "$exe" ]; then
+    case "$exe" in
+      */Contents/MacOS/*) app="\${exe%/Contents/MacOS/*}"; res="$app/Contents/Resources/app" ;;
+      *) res="$(dirname "$exe")/resources/app" ;;
+    esac
+    grep -q -- --handoff-only "$res/electron/main.js" 2>/dev/null || exit ${TOO_OLD_EXIT}
+    if [ -n "$app" ]; then
+      open -n -g -a "$app" --args --serve-web=${p} --handoff-only || exit ${DID_NOT_START_EXIT}
+    else
+      nohup "$exe" --headless --serve-web=${p} --handoff-only --no-sandbox >"${HEADLESS_LOG}" 2>&1 </dev/null &
+    fi
   else
-    bin="$(command -v solenta 2>/dev/null || command -v solenta-nightly 2>/dev/null)"
-    for b in "$HOME/solenta/solenta" "$HOME/solenta/solenta-nightly" "$HOME/.local/share/solenta/solenta" /opt/solenta/solenta; do
-      if [ -z "$bin" ] && [ -x "$b" ]; then bin="$b"; fi
+    for a in /Applications/Solenta.app "$HOME/Applications/Solenta.app" "/Applications/Solenta Nightly.app"; do
+      if [ -d "$a" ]; then app="$a"; break; fi
     done
-    [ -n "$bin" ] || exit ${NOT_INSTALLED_EXIT}
-    nohup "$bin" --headless --serve-web=${p} --no-sandbox >"${HEADLESS_LOG}" 2>&1 </dev/null &
+    if [ -n "$app" ]; then
+      open -n -g -a "$app" --args --headless --serve-web=${p} || exit ${DID_NOT_START_EXIT}
+    else
+      bin="$(command -v solenta 2>/dev/null || command -v solenta-nightly 2>/dev/null)"
+      for b in "$HOME/solenta/solenta" "$HOME/solenta/solenta-nightly" "$HOME/.local/share/solenta/solenta" /opt/solenta/solenta; do
+        if [ -z "$bin" ] && [ -x "$b" ]; then bin="$b"; fi
+      done
+      [ -n "$bin" ] || exit ${NOT_INSTALLED_EXIT}
+      nohup "$bin" --headless --serve-web=${p} --no-sandbox >"${HEADLESS_LOG}" 2>&1 </dev/null &
+    fi
   fi
   i=0
   until up; do
@@ -190,7 +226,10 @@ function readRemoteToken(host, remotePort = DEFAULT_REMOTE_PORT, deps = {}) {
       }
       if (err && err.code === DID_NOT_START_EXIT) {
         const tail = String(stderr || "").trim();
-        return reject(new Error(`Solenta did not start on ${host}. On a Mac someone must be logged in to the desktop; on Linux see ~/.solenta-headless.log there.${tail ? `\n${tail}` : ""}`));
+        return reject(new Error(`Solenta did not start on ${host}. On a Mac someone must be logged in to the desktop; on Linux see ~/.solenta-headless.log there. If Solenta was already open there, restart it and connect again.${tail ? `\n${tail}` : ""}`));
+      }
+      if (err && err.code === TOO_OLD_EXIT) {
+        return reject(new Error(`Solenta is open on ${host} with web access off, and that version cannot turn it on remotely. On ${host}, turn on Settings > Connections > Serve Solenta Web, or update Solenta there, then connect again.`));
       }
       const token = err ? "" : String(stdout).trim();
       resolve(token.length <= 1024 ? token : "");

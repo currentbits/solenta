@@ -1420,7 +1420,10 @@
         Solenta checks the other computer over SSH. If Solenta is not running
         there it starts it: on a Mac through <code>open</code> (someone must be
         logged in to the desktop), and on Linux without a window. If it is
-        open but Solenta Web is off, it turns Solenta Web on. It then reads
+        open but Solenta Web is off, it turns Solenta Web on; a copy older
+        than this release cannot be asked to, so Connect tells you to turn on
+        <strong>Serve Solenta Web</strong> there yourself rather than start
+        a second copy on the same data. It then reads
         the token over SSH, forwards the port through an SSH tunnel, and opens
         the window. The host key must match <code>known_hosts</code>, the
         tunnel reconnects if it drops, and a remembered token is encrypted

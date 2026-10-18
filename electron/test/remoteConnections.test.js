@@ -53,8 +53,11 @@ describe("remote Connections", () => {
       /host key for work changed/,
     );
     assert.match(explainSshFailure("work", "user@work: Permission denied (publickey).", 255), /key-based login/);
-    assert.equal(explainSshFailure("work", "ssh: connect to host work port 22: Connection refused\n", 255),
-      "ssh: connect to host work port 22: Connection refused");
+    assert.match(explainSshFailure("work", "ssh: connect to host work port 22: Connection refused\n", 255), /Remote Login/);
+    assert.match(explainSshFailure("wrok", "ssh: Could not resolve hostname wrok: nodename nor servname provided\n", 255), /Cannot find wrok/);
+    assert.match(explainSshFailure("work", "ssh: connect to host work port 22: Operation timed out\n", 255), /did not answer/);
+    assert.equal(explainSshFailure("work", "kex_exchange_identification: read: Connection reset\n", 255),
+      "kex_exchange_identification: read: Connection reset");
     assert.equal(explainSshFailure("work", "", null), "SSH exited (unknown).");
   });
 
@@ -67,6 +70,14 @@ describe("remote Connections", () => {
     assert.match(cmd, /http:\/\/127\.0\.0\.1:4700\//);
     assert.match(cmd, /open -n -g -a "\$app" --args --headless --serve-web=4700/);
     assert.match(cmd, /nohup "\$bin" --headless --serve-web=4700 --no-sandbox/);
+    // Already running with web off: hand off, and only to a build that knows how.
+    assert.match(cmd, /grep -q -- --handoff-only "\$res\/electron\/main\.js" 2>\/dev\/null \|\| exit 5/);
+    assert.match(cmd, /open -n -g -a "\$app" --args --serve-web=4700 --handoff-only/);
+    assert.match(cmd, /nohup "\$exe" --headless --serve-web=4700 --handoff-only --no-sandbox/);
+    assert.ok(
+      cmd.indexOf("--handoff-only\" ") < cmd.indexOf("--args --headless"),
+      "the running-app check comes before any cold start",
+    );
 
     const run = (code, stdout = "", stderr = "") => (cmdName, args, opts, cb) => {
       assert.equal(cmdName, "ssh");
@@ -83,6 +94,10 @@ describe("remote Connections", () => {
     await assert.rejects(
       readRemoteToken("me@box", 4620, { execFile: run(4, "", "libnss3.so: cannot open\n") }),
       /Solenta did not start on me@box[\s\S]*libnss3/,
+    );
+    await assert.rejects(
+      readRemoteToken("me@box", 4620, { execFile: run(5) }),
+      /open on me@box with web access off[\s\S]*Serve Solenta Web/,
     );
   });
 
@@ -345,7 +360,7 @@ describe("remote Connections", () => {
       await assert.rejects(fetch(opened.url), "the front port closes with the window");
       assert.equal(ports.length, 8, "one initial, one recovery, six failed retries");
       assert.match(dialogs[0].message, /SSH connection to user@work ended/);
-      assert.match(dialogs[0].detail, /Connection refused/);
+      assert.match(dialogs[0].detail, /not accepting SSH/);
       down = false;
 
       // A blank token reuses the saved one.
