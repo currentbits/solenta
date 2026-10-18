@@ -201,6 +201,8 @@ import { useQueuedEdit } from "./thread/useQueuedEdit";
 import { usePaneLayoutActions } from "./thread/usePaneLayoutActions";
 import { useAppSnap } from "./thread/useAppSnap";
 import { useStickToBottom } from "./thread/useStickToBottom";
+import { TurnRail, turnLabel, type RailTurn } from "./thread/TurnRail";
+import { offsetTopWithin } from "../scrollNearest";
 import { bindingLabel } from "../keybindings";
 import styles from "./ThreadView.module.css";
 import type { TaskGroupRollup } from "../taskGroup";
@@ -405,6 +407,8 @@ interface ThreadViewProps {
   ) => void | Promise<void>;
   /** Rename the open thread (header overflow). */
   onRenameThread?: (title: string) => void | Promise<void>;
+  /** Save a redacted HTML bug report (#394); null = dialog cancelled. */
+  onExportReport?: (input: { threadId: string }) => Promise<string | null>;
   /**
    * New thread in this project, same default as the sidebar "New thread"
    * button (Settings defaultWorktree / orchestrator; remotes stay plain).
@@ -674,6 +678,8 @@ interface ThreadViewProps {
     actionId?: string,
     trustRepoConfig?: string,
   ) => Promise<unknown>;
+  /** Run a composer `!` line in this thread's checkout (#470). */
+  onRunShell?: (threadId: string, command: string) => Promise<unknown>;
   runError?: string | null;
   onDismissRunError?: () => void;
   /**
@@ -812,6 +818,7 @@ export const ThreadView = memo(function ThreadView({
   onSetArchived,
   onSetCrossThreadInbound,
   onRenameThread,
+  onExportReport,
   onCreateThread,
   onRepeatSchedule,
   onDistillWorkflow,
@@ -906,6 +913,7 @@ export const ThreadView = memo(function ThreadView({
   onOpenWorkers,
   onRefreshWorkerSnapshot,
   onRunCommand,
+  onRunShell,
   runError = null,
   onDismissRunError,
   onNewThread,
@@ -999,6 +1007,10 @@ export const ThreadView = memo(function ThreadView({
   const [pinLabelDraft, setPinLabelDraft] = useState("");
   // Shared reveal target for pinned messages and reply-source navigation.
   const [jumpMessageId, setJumpMessageId] = useState<string | null>(null);
+  /** `/jump` filter text; null while the prompt outline is closed (#487). */
+  const [jumpQuery, setJumpQuery] = useState<string | null>(null);
+  /** Rail jump still waiting for its prompt to mount and land on top. */
+  const [topJump, setTopJump] = useState<{ id: string } | null>(null);
   const pinDraftRef = useRef<ThreadMessagePin[] | null>(null);
   pinDraftRef.current = pinDraft;
   const pinWriteGenRef = useRef<Record<string, number>>({});
@@ -1053,8 +1065,8 @@ export const ThreadView = memo(function ThreadView({
   );
   /** Bumps after a successful push so the sync pill refetches. */
   const [syncRefreshNonce, setSyncRefreshNonce] = useState(0);
-  /** Brief inline confirmation after copying the thread id or `/copy`. */
-  const [copied, setCopied] = useState<"id" | "link" | "reply" | null>(null);
+  /** Brief inline confirmation after copying the thread id, `/copy`, or exporting a report. */
+  const [copied, setCopied] = useState<"id" | "link" | "reply" | "report" | "report-failed" | null>(null);
   /** Header quick action currently in flight (issue #153). */
   const [commandRunningId, setCommandRunningId] = useState<string | null>(null);
   const [commandError, setCommandError] = useState<string | null>(null);
@@ -1248,6 +1260,8 @@ export const ThreadView = memo(function ThreadView({
     setWindowThreadId(threadId);
     setWindowStart(windowAt);
     setJumpMessageId(null);
+    setJumpQuery(null);
+    setTopJump(null);
   } else if (windowAt !== windowStart) {
     setWindowStart(windowAt);
   }
@@ -1706,7 +1720,7 @@ export const ThreadView = memo(function ThreadView({
     onNewThread?.();
   }, [isWorking, onSettleThread, onNewThread]);
 
-  const flashCopied = useCallback((what: "id" | "link" | "reply") => {
+  const flashCopied = useCallback((what: NonNullable<typeof copied>) => {
     setCopied(what);
     if (copyFlashTimer.current != null) {
       clearTimeout(copyFlashTimer.current);
@@ -2359,6 +2373,47 @@ export const ThreadView = memo(function ThreadView({
     setWindowStart,
   });
 
+  /** One rail mark per user prompt (#487); a pin label (#342) wins. */
+  const railTurns = useMemo(() => {
+    const labels = new Map(
+      (pinDraft ?? pinsOf(detail?.thread)).map((p) => [p.messageId, p.label]),
+    );
+    const turns: RailTurn[] = [];
+    timeline.forEach((entry, index) => {
+      if (entry.kind !== "message" || entry.message.role !== "user") return;
+      const { id, text } = entry.message;
+      turns.push({ id, index, label: labels.get(id) || turnLabel(text) });
+    });
+    return turns;
+  }, [timeline, pinDraft, detail?.thread]);
+  const flashTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  useEffect(() => () => clearTimeout(flashTimer.current), []);
+  /** Mount the prompt through the shared reveal, then flash it briefly. */
+  const handleTurnJump = useCallback((id: string) => {
+    stickToBottom.current = false;
+    forceStick.current = false;
+    setJumpQuery(null);
+    setJumpMessageId(id);
+    setTopJump({ id });
+    clearTimeout(flashTimer.current);
+    flashTimer.current = setTimeout(
+      () => setJumpMessageId((cur) => (cur === id ? null : cur)),
+      1600,
+    );
+  }, []);
+  // Declared after useStickToBottom so its nearest-reveal cannot pull a tall
+  // prompt back down to its bottom edge.
+  useLayoutEffect(() => {
+    const body = bodyRef.current;
+    if (!topJump || !body) return;
+    const el = Array.from(
+      body.querySelectorAll<HTMLElement>("[data-message-id]"),
+    ).find((node) => node.dataset.messageId === topJump.id);
+    if (!el) return;
+    body.scrollTop = Math.max(0, offsetTopWithin(body, el) - 8);
+    setTopJump(null);
+  }, [topJump, start]);
+
   /**
    * Delegated: any image in the timeline (tool output, attachment thumb,
    * markdown) opens the lightbox, so new image sources need no extra wiring.
@@ -2687,6 +2742,15 @@ export const ThreadView = memo(function ThreadView({
       return;
     }
     flashCopied(what);
+  };
+
+  const handleExportReport = async () => {
+    if (!onExportReport) return;
+    try {
+      if (await onExportReport({ threadId: thread.id })) flashCopied("report");
+    } catch {
+      flashCopied("report-failed");
+    }
   };
 
   const hasVersionControl =
@@ -3067,6 +3131,22 @@ export const ThreadView = memo(function ThreadView({
                       >
                         {copied === "link" ? "Copied" : "Copy link"}
                       </button>
+                      {onExportReport && (
+                        <button
+                          type="button"
+                          className={styles.menuItem}
+                          role="menuitem"
+                          data-export-report=""
+                          title="Transcript, tool calls, diffs and versions as one HTML file, with secrets redacted"
+                          onClick={() => void handleExportReport()}
+                        >
+                          {copied === "report"
+                            ? "Saved"
+                            : copied === "report-failed"
+                              ? "Export failed"
+                              : "Export bug report…"}
+                        </button>
+                      )}
                       {onRenameThread && !isWorking && (
                         <button
                           type="button"
@@ -4047,6 +4127,16 @@ export const ThreadView = memo(function ThreadView({
       )}
 
       {find.bar}
+      {detail && (
+        <TurnRail
+          turns={railTurns}
+          bodyRef={bodyRef}
+          start={start}
+          query={jumpQuery}
+          onQueryChange={setJumpQuery}
+          onJump={handleTurnJump}
+        />
+      )}
 
       {detail && (
         <DivergenceCard
@@ -4990,6 +5080,11 @@ export const ThreadView = memo(function ThreadView({
                 : undefined
         }
         onSend={handleComposerSend}
+        onShell={
+          onRunShell && !thread.ask
+            ? (command) => onRunShell(thread.id, command)
+            : undefined
+        }
         restoreDraft={restoreDraft}
         onRestoreDraftConsumed={onRestoreDraftConsumed}
         onBuild={onStartWorkflow}
@@ -5040,6 +5135,7 @@ export const ThreadView = memo(function ThreadView({
         incomingAttachmentThreadId={incomingHandoff?.threadId ?? null}
         onIncomingAttachmentsConsumed={() => setIncomingHandoff(null)}
         onSlashAction={handleSlashAction}
+        onJump={setJumpQuery}
         cliCommands={cliCommands}
         onStopRun={onStopRun}
         dropHostRef={dropHostRef}

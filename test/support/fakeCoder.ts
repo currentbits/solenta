@@ -773,6 +773,13 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         }),
       forgetRemoteConnection: (input: unknown) =>
         rec("app.forgetRemoteConnection", [input], undefined),
+      installRemoteSolenta: (input: unknown) =>
+        rec("app.installRemoteSolenta", [input], {
+          tag: "v0.25.0",
+          missingLibraries: [],
+          aptCommand: null,
+          restartNeeded: false,
+        }),
     },
     memory: {
       search: (input: unknown) => rec("memory.search", [input], [] as MemoryEntryInfo[]),
@@ -1860,6 +1867,8 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
     },
     threads: {
       list: () => rec("threads.list", [], threads.map((t) => ({ ...t }))),
+      exportReport: (input: { threadId: string }) =>
+        rec("threads.exportReport", [input], `/tmp/${input.threadId}-report.html`),
       /** Mirror electron services.threadSummaries (team view). */
       summaries: (input?: ThreadSummariesInput) =>
         rec(

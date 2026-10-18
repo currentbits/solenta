@@ -872,10 +872,43 @@ export function createThreads(ctx: DevCtx): Pick<CoderApi, "threads"> {
         patchThread(input.threadId, { verify: result });
         return result;
       },
-      async runCommand(input: { threadId: string; actionId?: string }) {
+      async exportReport(input: { threadId: string }) {
+        if (!details.has(input.threadId)) throw new Error(`Thread not found: ${input.threadId}`);
+        return null;
+      },
+      async runCommand(input: {
+        threadId: string;
+        actionId?: string;
+        command?: string;
+      }) {
         const detail = details.get(input.threadId);
         if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
         const project = ctx.projects.find((p) => p.id === detail.thread.projectId);
+        if (input.command !== undefined) {
+          // `!` shell line (#470): the real runner is electron/projectCommands.js.
+          const command = input.command.trim();
+          if (!command) throw new Error("Type a command after !");
+          const result: CommandRunResult = {
+            name: "shell",
+            command,
+            ok: true,
+            exitCode: 0,
+            timedOut: false,
+            log: `(dev fixture) ${command}`,
+            durationMs: 12,
+            at: now(),
+            cwd: detail.thread.worktreePath || project?.path,
+            shell: true,
+          };
+          detail.messages.push({
+            id: id("evt"),
+            role: "event",
+            text: `$ ${command} · 0.0s`,
+            createdAt: now(),
+            commandResult: result,
+          });
+          return result;
+        }
         const actionId = input.actionId || "setup";
         let name = "setup";
         let command = project?.setupCommand || "";

@@ -197,7 +197,7 @@ const BY_SCOPE = {
     "speech:stop",
     "speech:cancel",
   ],
-  files: ["projects:writeAgentConfig", "workflows:exportToRepo"],
+  files: ["projects:writeAgentConfig", "workflows:exportToRepo", "threads:exportReport"],
   git: [
     "git:setupWorktree",
     "git:commit",
@@ -336,6 +336,7 @@ const BY_SCOPE = {
     "app:applyUpdate",
     "app:openRemoteConnection",
     "app:forgetRemoteConnection",
+    "app:installRemoteSolenta",
     // Host-side effects: open apps, read arbitrary host paths, capture windows.
     "shell:reveal",
     "shell:openPath",

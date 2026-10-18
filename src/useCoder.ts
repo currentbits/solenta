@@ -780,11 +780,15 @@ export interface UseCoderResult {
   setVerifyCommand: (threadId: string, command: string | null) => Promise<void>;
   /** Run the thread's verification command now. Rejects on an active run. */
   runVerify: (threadId: string) => Promise<VerifyResult>;
+  /** Save a redacted HTML bug report (#394); null when the dialog was cancelled. */
+  exportReport: CoderApi["threads"]["exportReport"];
   /** Run the project's setup command or a named quick action (issue #153). */
   runCommand: (
     threadId: string,
     actionId?: string,
   ) => Promise<CommandRunResult>;
+  /** Run a composer `!` line in the thread's checkout (#470). */
+  runShell: (threadId: string, command: string) => Promise<CommandRunResult>;
   /** Live spend + memory server status. */
   appStatus: AppStatus | null;
   /** Persisted app settings (daily budget). */
@@ -1982,6 +1986,12 @@ export function useCoder(): UseCoderResult {
     [api],
   );
 
+  const runShell = useCallback(
+    (threadId: string, command: string) =>
+      api.threads.runCommand({ threadId, command }),
+    [api],
+  );
+
   const saveSettings = useCallback(
     async (patch: Partial<AppSettings>) => {
       const next = await api.settings.set(patch);
@@ -2279,7 +2289,9 @@ export function useCoder(): UseCoderResult {
     simulatorStatus,
     setVerifyCommand,
     runVerify,
+    exportReport: api.threads.exportReport,
     runCommand,
+    runShell,
     appStatus,
     settings,
     saveSettings,
