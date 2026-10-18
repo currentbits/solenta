@@ -70,6 +70,11 @@ export function AttachmentChip({
         </svg>
       )}
       <span className={styles.attachmentName}>{attachment.name}</span>
+      {attachment.convertedFrom ? (
+        <span className={styles.attachmentNote}>
+          converted from {attachment.convertedFrom}
+        </span>
+      ) : null}
       {onRemove ? (
         <button
           type="button"

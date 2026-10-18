@@ -1437,6 +1437,8 @@ export interface AttachmentInfo {
   path: string;
   /** Display name (basename of path). */
   name: string;
+  /** Source format when the host transcoded it, e.g. "HEIC" -> JPEG (#463). */
+  convertedFrom?: string;
 }
 
 /** Per-thread inbound policy for cross-thread messages (issue #551). */
@@ -5950,12 +5952,17 @@ export interface CoderApi {
      */
     pick(input?: {
       includeImages?: boolean;
+      /** Where HEIC/HEIF picks get their JPEG copy; without it they stay kind=file. */
+      threadId?: string;
     }): Promise<{ attachments: AttachmentInfo[] }>;
     /**
      * Classify absolute paths (e.g. resolved from a drag-drop) as image,
      * file, or folder via statSync; missing / relative / non-file paths skip.
      */
-    fromPaths(input: { paths: string[] }): Promise<{ attachments: AttachmentInfo[] }>;
+    fromPaths(input: {
+      paths: string[];
+      threadId?: string;
+    }): Promise<{ attachments: AttachmentInfo[] }>;
     /**
      * Persist a pasted image (data URL) under userData/attachments/<threadId>
      * and return its AttachmentInfo. null when the payload is not an image.

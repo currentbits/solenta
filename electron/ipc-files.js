@@ -249,6 +249,17 @@ async function readPreview(root, raw) {
   return { kind: "text", size, text: buf.toString("utf8") };
 }
 
+/** A web-uploaded HEIC (saveImage / saveFile) gets the same JPEG swap as a native pick (#463). */
+async function transcodeOne(ctx, input, attachment) {
+  if (!attachment) return null;
+  const [out] = await attachments.transcodeHeic(
+    [attachment],
+    ctx.userDataPath,
+    input && input.threadId,
+  );
+  return out;
+}
+
 /** IPC_HANDLERS rows for files:*, attachments:*, shell:*; ipc.js spreads them in. */
 module.exports = {
   "files:list": async (ctx, input) => {
@@ -298,32 +309,48 @@ module.exports = {
       throw new Error("Attachment picker is not available in this mode");
     }
     return {
-      attachments: await attachments.pickAttachments(ctx.dialog, {
-        includeImages: !input || input.includeImages !== false,
-      }),
+      attachments: await attachments.transcodeHeic(
+        await attachments.pickAttachments(ctx.dialog, {
+          includeImages: !input || input.includeImages !== false,
+        }),
+        ctx.userDataPath,
+        input && input.threadId,
+      ),
     };
   },
   "attachments:fromPaths": async (ctx, input) => {
     return {
-      attachments: attachments.classifyPaths(input && input.paths),
+      attachments: await attachments.transcodeHeic(
+        attachments.classifyPaths(input && input.paths),
+        ctx.userDataPath,
+        input && input.threadId,
+      ),
     };
   },
   "attachments:saveImage": async (ctx, input) => {
     return {
-      attachment: attachments.saveImage(
-        ctx.userDataPath,
-        input && input.threadId,
-        input && input.dataUrl,
+      attachment: await transcodeOne(
+        ctx,
+        input,
+        attachments.saveImage(
+          ctx.userDataPath,
+          input && input.threadId,
+          input && input.dataUrl,
+        ),
       ),
     };
   },
   "attachments:saveFile": async (ctx, input) => {
     return {
-      attachment: attachments.saveFile(
-        ctx.userDataPath,
-        input && input.threadId,
-        input && input.name,
-        input && input.dataUrl,
+      attachment: await transcodeOne(
+        ctx,
+        input,
+        attachments.saveFile(
+          ctx.userDataPath,
+          input && input.threadId,
+          input && input.name,
+          input && input.dataUrl,
+        ),
       ),
     };
   },

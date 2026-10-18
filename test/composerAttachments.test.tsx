@@ -385,6 +385,21 @@ describe("Composer attachments", () => {
     m.unmount();
   });
 
+  it("says so on the chip when the host converted a HEIC (#463)", async () => {
+    const h: Harness = { sends: [] };
+    const heic: AttachmentInfo = {
+      kind: "image",
+      path: "/u/attachments/t1/1-ab.jpg",
+      name: "IMG_0001.HEIC",
+      convertedFrom: "HEIC",
+    };
+    const m = await mount(composer(h, { picks: [heic, IMAGE] }));
+    await m.click(m.query('button[aria-label="Attach files or folders"]'));
+    assert.ok(m.text().includes("IMG_0001.HEICconverted from HEIC"));
+    assert.equal(m.text().split("converted from").length, 2, "plain images get no note");
+    m.unmount();
+  });
+
   it("does not add duplicate chips for the same path", async () => {
     const h: Harness = { sends: [] };
     const m = await mount(composer(h, { picks: [IMAGE] }));
