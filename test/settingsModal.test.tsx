@@ -1750,6 +1750,36 @@ describe("SettingsModal resume interrupted runs (#1512 I3)", () => {
   });
 });
 
+describe("SettingsModal combine queued follow-ups (#468)", () => {
+  it("is on by default and saves the toggle", async () => {
+    const patches: Partial<AppSettings>[] = [];
+    const m = await mount(
+      modal({
+        initialPane: "threads",
+        settings: {
+          dailyBudgetUsd: null,
+          autoSettleAfterDays: 3,
+        } as AppSettings,
+        onSaveSettings: async (patch) => {
+          patches.push(patch);
+          return {
+            dailyBudgetUsd: null,
+            autoSettleAfterDays: 3,
+            combineQueuedFollowUps: patch.combineQueuedFollowUps !== false,
+          } as AppSettings;
+        },
+      }),
+    );
+    const box = m.query("[data-combine-queued-follow-ups]") as HTMLInputElement;
+    assert.ok(box, "combine checkbox");
+    assert.equal(box.checked, true);
+    await m.click(box);
+    assert.equal(patches.length, 1);
+    assert.equal(patches[0].combineQueuedFollowUps, false);
+    m.unmount();
+  });
+});
+
 describe("SettingsModal worker model pool (issue #467)", () => {
   const namedPool: SubagentPool = {
     defaultAlias: "fast",

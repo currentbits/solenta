@@ -382,6 +382,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
     quotaWaitAutoResume: true,
     confirmQuitWithActiveWork: true,
     resumeInterruptedRuns: false,
+    combineQueuedFollowUps: true,
     prDiffCapLines: 400,
     maxConcurrentRuns: 4,
     onboardingSeen: true,

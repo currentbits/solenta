@@ -6,6 +6,11 @@
 // support buys nothing — turn it off for the whole main process.
 process.noAsar = true;
 
+// V8 code cache for every module required below (#418): ~10-15% off the
+// main-process require graph on warm launches. Keyed by file content and
+// runtime version, so app updates never load stale bytecode.
+require("node:module").enableCompileCache?.();
+
 const { app, BrowserWindow, ipcMain, dialog, shell, Notification, nativeTheme, nativeImage, protocol, net, powerSaveBlocker, powerMonitor, session } = require("electron");
 const { overlayLabel, overlayDescription, overlayBitmap } = require("./taskbarOverlay.js");
 const { windowBackgroundColor, nativeThemeSource } = require("./theme.js");

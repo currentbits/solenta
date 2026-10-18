@@ -358,6 +358,32 @@ export function ThreadsPane({
             automatic turn to continue, two at a time. Runs interrupted
             more than 12 hours ago are left alone.
           </p>
+          <label className={styles.fieldRow}>
+            <input
+              type="checkbox"
+              data-combine-queued-follow-ups=""
+              checked={settings?.combineQueuedFollowUps !== false}
+              disabled={saving || settings == null}
+              onChange={(e) => {
+                setError(null);
+                void onSaveSettings({
+                  combineQueuedFollowUps: e.target.checked,
+                }).catch((err) => {
+                  setError(
+                    err instanceof Error && err.message
+                      ? err.message
+                      : "Failed to save settings",
+                  );
+                });
+              }}
+            />
+            <span>Combine queued follow-ups into one turn</span>
+          </label>
+          <p className={styles.note}>
+            Messages queued while the agent works are sent together, numbered,
+            when the turn finishes. Off = one turn each. Send now still sends
+            only the next one.
+          </p>
         </div>
         {providers.length > 0 && (
           <div className={styles.field} data-quota-failover="">
