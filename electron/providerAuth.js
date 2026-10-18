@@ -1,6 +1,9 @@
 "use strict";
 
 const { execFile } = require("node:child_process");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
 const { getProvider, resolveBin } = require("./providers.js");
 
 /**
@@ -19,11 +22,34 @@ const TTL_MS = 30_000;
 const PROBE_TIMEOUT_MS = 5_000;
 
 /** @typedef {"signedIn" | "signedOut" | "unknown"} AuthState */
+/** @typedef {{ email?: string, plan?: string }} AuthAccount */
+
+/** @param {unknown} v */
+const str = (v) => (typeof v === "string" && v ? v : undefined);
+
+/**
+ * Codex's ChatGPT login keeps an OIDC id_token in $CODEX_HOME/auth.json.
+ * Its payload names the account; decoded for display only, never trusted
+ * for anything (codex wrote the file, codex checks the token).
+ *
+ * @param {NodeJS.ProcessEnv} env
+ * @returns {AuthAccount | undefined}
+ */
+function codexAccount(env) {
+  const home = env.CODEX_HOME || path.join(env.HOME || os.homedir(), ".codex");
+  const auth = JSON.parse(fs.readFileSync(path.join(home, "auth.json"), "utf8"));
+  const jwt = auth && auth.tokens && auth.tokens.id_token;
+  if (typeof jwt !== "string") return undefined;
+  const claims = JSON.parse(Buffer.from(jwt.split(".")[1] || "", "base64url").toString("utf8"));
+  const openai = claims["https://api.openai.com/auth"] || {};
+  return { email: str(claims.email), plan: str(openai.chatgpt_plan_type) };
+}
 
 /**
  * @type {Record<string, {
  *   args: string[],
  *   parse: (r: { code: number | null, stdout: string, stderr: string }) => AuthState,
+ *   account?: (r: { stdout: string }, env: NodeJS.ProcessEnv) => AuthAccount | undefined,
  *   keyEnv?: string[],
  * }>}
  */
@@ -36,6 +62,10 @@ const PROBES = {
       if (j.loggedIn === true) return "signedIn";
       return j.loggedIn === false ? "signedOut" : "unknown";
     },
+    account: ({ stdout }) => {
+      const j = JSON.parse(stdout);
+      return { email: str(j.email), plan: str(j.subscriptionType) };
+    },
   },
   // "Logged in using ChatGPT" / exit 0, "Not logged in" / exit 1, on stderr.
   codex: {
@@ -45,6 +75,8 @@ const PROBES = {
       if (/not logged in/i.test(text)) return "signedOut";
       return code === 0 && /logged in/i.test(text) ? "signedIn" : "unknown";
     },
+    // "Logged in using an API key" has no auth.json tokens: no account.
+    account: (_r, env) => codexAccount(env),
     // The status command ignores these, but runs still authenticate with them.
     keyEnv: ["OPENAI_API_KEY", "CODEX_API_KEY"],
   },
@@ -79,8 +111,25 @@ const LOGIN_ARGS = {
   muse: ["login"],
 };
 
+/**
+ * What the Install button types (without Enter) into a terminal. Same
+ * strings as the onboarding copy hints in src/components/onboarding/installHints.ts.
+ */
+const INSTALL_COMMANDS = {
+  claude: "npm install -g @anthropic-ai/claude-code",
+  codex: "npm install -g @openai/codex",
+  cursor: "curl https://cursor.com/install -fsS | bash",
+};
+
+/** @param {string} id @returns {string | null} */
+function installCommand(id) {
+  return INSTALL_COMMANDS[/** @type {keyof typeof INSTALL_COMMANDS} */ (id)] || null;
+}
+
 /** @type {Map<string, AuthState>} */
 const cache = new Map();
+/** @type {Map<string, AuthAccount>} */
+const accounts = new Map();
 let probedAt = 0;
 /** @type {Promise<void> | null} */
 let inflight = null;
@@ -118,24 +167,39 @@ function run(bin, args, env) {
 /**
  * @param {string} id
  * @param {NodeJS.ProcessEnv} env
- * @returns {Promise<AuthState>}
+ * @returns {Promise<{ state: AuthState, account?: AuthAccount }>}
  */
 async function probeOne(id, env) {
   const probe = PROBES[id];
   const entry = getProvider(id);
-  if (!probe || !entry) return "unknown";
+  if (!probe || !entry) return { state: "unknown" };
   const res = await run(resolveBin(entry, env), probe.args, env);
-  if (!res) return "unknown";
+  if (!res) return { state: "unknown" };
   let state;
   try {
     state = probe.parse(res);
   } catch {
-    return "unknown";
+    return { state: "unknown" };
   }
   if (state === "signedOut" && (probe.keyEnv || []).some((k) => env[k])) {
-    return "unknown";
+    return { state: "unknown" };
   }
-  return state;
+  let account;
+  if (state === "signedIn" && probe.account) {
+    try {
+      account = probe.account(res, env);
+    } catch {
+      // No readable identity: still signed in, just nameless.
+    }
+  }
+  return account && (account.email || account.plan) ? { state, account } : { state };
+}
+
+/** @param {string} key @param {{ state: AuthState, account?: AuthAccount }} r */
+function remember(key, r) {
+  cache.set(key, r.state);
+  if (r.account) accounts.set(key, r.account);
+  else accounts.delete(key);
 }
 
 /**
@@ -163,10 +227,10 @@ function refresh(opts = {}) {
   probedAt = now;
   inflight = Promise.all([
     ...Object.keys(PROBES).map(async (id) => {
-      cache.set(id, await probeOne(id, env));
+      remember(id, await probeOne(id, env));
     }),
     ...instances.map(async (i) => {
-      cache.set(i.ref, await probeOne(i.provider, { ...env, ...i.env }));
+      remember(i.ref, await probeOne(i.provider, { ...env, ...i.env }));
     }),
   ]).finally(() => {
     inflight = null;
@@ -192,6 +256,16 @@ function invalidate() {
 function get(id) {
   if (cache.has(id)) return cache.get(id);
   return started() && getProvider(id.split(":")[0]) ? "unknown" : undefined;
+}
+
+/**
+ * Who a signed-in provider is signed in as, when its CLI says (claude,
+ * codex with a ChatGPT login).
+ * @param {string} id
+ * @returns {AuthAccount | undefined}
+ */
+function account(id) {
+  return accounts.get(id);
 }
 
 /**
@@ -223,6 +297,7 @@ function loginCommand(id, opts = {}) {
 /** Test hook: drop all state. */
 function reset() {
   cache.clear();
+  accounts.clear();
   probedAt = 0;
   inflight = null;
 }
@@ -232,7 +307,9 @@ module.exports = {
   started,
   invalidate,
   get,
+  account,
   loginCommand,
+  installCommand,
   setExecFile,
   reset,
   TTL_MS,

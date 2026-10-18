@@ -3105,6 +3105,8 @@ export interface ProviderInfo {
    * the picker or Settings › Agents opens.
    */
   auth?: "signedIn" | "signedOut" | "unknown";
+  /** Who `auth: "signedIn"` is signed in as, when the CLI says (claude, codex via ChatGPT). */
+  account?: { email?: string; plan?: string };
   /**
    * Set on a named instance row (#453): `id` is then the ref
    * `<baseProvider>:<instanceId>` and every capability is the base's.
@@ -6373,10 +6375,12 @@ export interface CoderApi {
      * Type a provider's login command into a fresh "signin" shell (#1501):
      * the thread's when one is given, else a dedicated one in the home
      * directory (threadId SIGNIN_TERMINAL_ID). Returns where it runs.
+     * `install` types the CLI's install command instead, without Enter.
      */
     signIn(input: {
       provider: string;
       threadId?: string | null;
+      install?: boolean;
     }): Promise<{ threadId: string; termId: string }>;
   };
   /**

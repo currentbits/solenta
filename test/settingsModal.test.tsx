@@ -2897,6 +2897,48 @@ describe("SettingsModal Agents › named provider instances (#453)", () => {
     await m.click(m.query('[data-instance-delete="w1"]'));
     assert.deepEqual(saved.at(-1), { providerInstances: [] });
   });
+
+  it("Connect ChatGPT account adds a codex instance with its own CODEX_HOME and signs in", async () => {
+    const saved: Array<Partial<AppSettings>> = [];
+    const signIns: Array<[string, { name?: string } | undefined]> = [];
+    const CODEX: ProviderInfo = {
+      ...KIMI,
+      id: "codex",
+      name: "Codex",
+      auth: "signedIn",
+      account: { email: "dev@example.com", plan: "pro" },
+    };
+    const m = await mount(
+      cloneElement(
+        modal({
+          initialPane: "agents",
+          providers: [CLAUDE, CODEX],
+          settings: { providerInstances: [INSTANCE] } as Partial<AppSettings> as AppSettings,
+          onSaveSettings: async (patch) => {
+            saved.push(patch);
+            return patch as AppSettings;
+          },
+        }),
+        {
+          onProviderSignIn: async (id: string, opts?: { name?: string }) =>
+            void signIns.push([id, opts]),
+        },
+      ),
+    );
+    assert.equal(
+      m.query('[data-provider-row="codex"] [data-auth-state]')?.textContent,
+      "Signed in as dev@example.com · Pro",
+    );
+    await m.click(m.query("[data-connect-chatgpt]"));
+    const list = saved.at(-1)?.providerInstances;
+    assert.equal(list?.length, 2, "keeps the existing instance");
+    const added = list![1]!;
+    assert.deepEqual(
+      { ...added, id: "x", configDir: added.configDir?.replace(added.id, "x") },
+      { id: "x", name: "ChatGPT 2", provider: "codex", configDir: "~/.codex-x", env: {} },
+    );
+    assert.deepEqual(signIns, [[`codex:${added.id}`, { name: "Codex (ChatGPT 2)" }]]);
+  });
 });
 
 describe("SettingsModal model prices (#1531)", () => {
