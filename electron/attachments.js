@@ -344,35 +344,32 @@ async function readImage(filePath) {
 const PDF_NATIVE_PROVIDERS = new Set(["claude", "opencode"]);
 const PDF_TEXT_MAX_PAGES = 100;
 const PDF_TEXT_TIMEOUT_MS = 30_000;
+/** pdf-text.js reads the whole file into memory; refuse slide-deck monsters. */
+const PDF_TEXT_MAX_BYTES = 100 * 1024 * 1024;
 
-// PDFKit through JXA: macOS ships it, so no bundled parser. Pages end in \f.
-const PDFKIT_JXA = `function run(argv) {
-  ObjC.import("PDFKit");
-  const d = $.PDFDocument.alloc.initWithURL($.NSURL.fileURLWithPath(argv[0]));
-  if (d.isNil()) return "";
-  const n = Math.min(d.pageCount, Number(argv[1]));
-  let s = "";
-  for (let i = 0; i < n; i++) {
-    const p = d.pageAtIndex(i);
-    s += (p.isNil() ? "" : ObjC.unwrap(p.string) || "") + "\\n\\f";
+/** pdfjs in a child (pdf-text.js): off the main thread, killable on timeout. */
+async function runPdfToText(pdfPath) {
+  try {
+    const st = await fs.promises.stat(pdfPath);
+    if (!st.isFile() || st.size > PDF_TEXT_MAX_BYTES) return "";
+  } catch {
+    return "";
   }
-  return s;
-}`;
-
-function runPdfToText(pdfPath) {
   const { execFile } = require("node:child_process");
-  const max = String(PDF_TEXT_MAX_PAGES);
-  // ponytail: Windows/Linux need poppler's pdftotext on PATH; bundle
-  // pdfjs-dist (35 MB) if users there need it without poppler.
-  const [cmd, args] =
-    process.platform === "darwin"
-      ? ["osascript", ["-l", "JavaScript", "-e", PDFKIT_JXA, pdfPath, max]]
-      : ["pdftotext", ["-l", max, "-enc", "UTF-8", pdfPath, "-"]];
   return new Promise((resolve) => {
     execFile(
-      cmd,
-      args,
-      { timeout: PDF_TEXT_TIMEOUT_MS, maxBuffer: 64 * 1024 * 1024 },
+      process.execPath,
+      [
+        path.join(__dirname, "pdf-text.js"),
+        pdfPath,
+        String(PDF_TEXT_MAX_PAGES),
+      ],
+      {
+        env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+        timeout: PDF_TEXT_TIMEOUT_MS,
+        maxBuffer: 64 * 1024 * 1024,
+        windowsHide: true,
+      },
       (err, stdout) => resolve(err ? "" : String(stdout)),
     );
   });
@@ -381,8 +378,8 @@ function runPdfToText(pdfPath) {
 /**
  * Extract an attached PDF's text to userData/attachments/<threadId>/ so a
  * provider that cannot read PDFs gets something it can (#466). Capped at
- * PDF_TEXT_MAX_PAGES. Null when nothing came out (scanned, encrypted, no
- * extractor on this OS).
+ * PDF_TEXT_MAX_PAGES. Null when nothing came out (scanned, encrypted,
+ * corrupt, over PDF_TEXT_MAX_BYTES, or timed out).
  * @param {string} userDataPath
  * @param {unknown} threadId
  * @param {string} pdfPath

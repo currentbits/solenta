@@ -141,7 +141,7 @@ import {
 } from "../uiPrefs";
 import { DROP_OVERLAY_MESSAGE, type DroppedFolder } from "../dropFiles";
 import { Composer, type ComposerProps } from "./Composer";
-import { AttachmentChip } from "./composer/AttachmentChip";
+import { AttachmentChip, pdfAsTextFor } from "./composer/AttachmentChip";
 import { repoRelativeDir } from "../mention";
 import {
   makeReplyTarget,
@@ -4591,6 +4591,7 @@ export const ThreadView = memo(function ThreadView({
                                   key={f.path}
                                   attachment={f}
                                   onLoadImage={onLoadAttachmentImage}
+                                  pdfAsText={pdfAsTextFor(agentProvider)}
                                 />
                               ))}
                             </span>

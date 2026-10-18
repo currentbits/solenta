@@ -161,7 +161,7 @@ done
 # @lydell/node-pty-<platform>-<arch>; this bundle is arm64 only (see the
 # speech runtime below). pty.node + the executable spawn-helper are loose
 # Mach-O files, signed by the nested-binary walk at the end of this script.
-ROOT_NM_PKGS=(ws cross-spawn path-key shebang-command shebang-regex which isexe yauzl pend @lydell/node-pty @lydell/node-pty-darwin-arm64)
+ROOT_NM_PKGS=(ws cross-spawn path-key shebang-command shebang-regex which isexe yauzl pend @lydell/node-pty @lydell/node-pty-darwin-arm64 pdfjs-dist)
 mkdir -p "$APP_DIR/node_modules"
 for pkg in "${ROOT_NM_PKGS[@]}"; do
   if [[ ! -d "node_modules/$pkg" ]]; then
@@ -173,6 +173,12 @@ for pkg in "${ROOT_NM_PKGS[@]}"; do
   cp -R "node_modules/$pkg" "$APP_DIR/node_modules/$pkg"
 done
 echo "packaged node_modules: ${ROOT_NM_PKGS[*]}"
+# pdfjs-dist (#466 PDF text for PDF-blind providers) is 35 MB; pdf-text.js
+# only loads the two minified legacy files, so ship just those.
+PDFJS_DIR="$APP_DIR/node_modules/pdfjs-dist"
+find "$PDFJS_DIR" -mindepth 1 -maxdepth 1 ! -name package.json ! -name legacy -exec rm -rf {} +
+find "$PDFJS_DIR/legacy" -mindepth 1 -maxdepth 1 ! -name build -exec rm -rf {} +
+find "$PDFJS_DIR/legacy/build" -type f ! -name pdf.min.mjs ! -name pdf.worker.min.mjs -delete
 
 # vite build output
 cp -R dist "$APP_DIR/dist"

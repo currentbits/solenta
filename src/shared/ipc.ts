@@ -1481,6 +1481,11 @@ export interface ChatMessage {
    */
   steer?: boolean;
   /**
+   * The provider could not read PDFs, so the runner sent their locally
+   * extracted text (#466). PDF chips on this row say "text only".
+   */
+  pdfText?: boolean;
+  /**
    * Setup / quick action outcome (#1216), on that invocation's end event.
    * The transcript shows its output with Copy and Add to prompt.
    */

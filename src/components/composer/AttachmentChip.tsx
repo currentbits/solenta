@@ -2,6 +2,26 @@ import { useEffect, useState } from "react";
 import type { AttachmentInfo } from "../../shared/ipc";
 import styles from "../Composer.module.css";
 
+/** Mirrors PDF_NATIVE_PROVIDERS in electron/attachments.js. */
+export function pdfAsTextFor(provider: string | undefined): boolean {
+  return provider !== "claude" && provider !== "opencode";
+}
+
+export function isPdfAttachment(a: AttachmentInfo): boolean {
+  return a.kind === "file" && /\.pdf$/i.test(a.path);
+}
+
+export function PdfTextNote() {
+  return (
+    <span
+      className={styles.attachmentNote}
+      title="This model cannot read PDFs. Its text is extracted and sent instead."
+    >
+      text only
+    </span>
+  );
+}
+
 /**
  * One attachment: thumbnail for images, glyph for files/folders. Without
  * onRemove it is read-only (the queued strip, #1212). `pdfAsText` marks a
@@ -18,10 +38,7 @@ export function AttachmentChip({
   onLoadImage?: (path: string) => Promise<string | null>;
   pdfAsText?: boolean;
 }) {
-  const textOnly =
-    pdfAsText &&
-    attachment.kind === "file" &&
-    /\.pdf$/i.test(attachment.path);
+  const textOnly = pdfAsText && isPdfAttachment(attachment);
   const [thumb, setThumb] = useState<string | null>(null);
   useEffect(() => {
     if (attachment.kind !== "image" || !onLoadImage) return;
@@ -77,14 +94,7 @@ export function AttachmentChip({
         </svg>
       )}
       <span className={styles.attachmentName}>{attachment.name}</span>
-      {textOnly ? (
-        <span
-          className={styles.attachmentNote}
-          title="This model cannot read PDFs. Its text is extracted and sent instead."
-        >
-          text only
-        </span>
-      ) : null}
+      {textOnly ? <PdfTextNote /> : null}
       {onRemove ? (
         <button
           type="button"

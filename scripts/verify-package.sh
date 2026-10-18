@@ -159,6 +159,14 @@ NODE
 )
 rm -rf "$RESOLVE_CWD"
 
+# pdf-text.js loads pdfjs via import(), which the require() scan above misses.
+for f in pdf.min.mjs pdf.worker.min.mjs; do
+  if [[ ! -f "$APP_RES/node_modules/pdfjs-dist/legacy/build/$f" ]]; then
+    echo "ERROR: packaged app missing pdfjs-dist/legacy/build/$f (PDF attachments, #466)" >&2
+    exit 1
+  fi
+done
+
 # Terminal PTY: the native addon must LOAD and fork under the packaged,
 # signed binary (hardened runtime, re-signed pty.node + spawn-helper), not
 # just resolve. Running the bundle as plain Node exercises exactly that.

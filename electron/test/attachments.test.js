@@ -127,17 +127,29 @@ describe("attachments module", () => {
     );
   });
 
-  it("extracts real PDF text with the platform extractor (#466)", async (t) => {
-    if (process.platform !== "darwin") return t.skip("PDFKit is macOS only");
-    const src = path.join(tmpDir, "spec.txt");
+  it("extracts real PDF text through the pdfjs child process (#466)", async () => {
+    const stream = "BT /F1 12 Tf 72 720 Td (Build the widget.) Tj ET";
+    const objs = [
+      "<< /Type /Catalog /Pages 2 0 R >>",
+      "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+      "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+      `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`,
+      "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    ];
+    let body = "%PDF-1.4\n";
+    const offsets = objs.map((o, i) => {
+      const at = body.length;
+      body += `${i + 1} 0 obj\n${o}\nendobj\n`;
+      return at;
+    });
+    const xref = body.length;
+    body +=
+      `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n` +
+      offsets.map((o) => `${String(o).padStart(10, "0")} 00000 n \n`).join("") +
+      `trailer\n<< /Size ${objs.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
     const pdf = path.join(tmpDir, "spec.pdf");
-    fs.writeFileSync(src, "Build the widget.\n");
-    fs.writeFileSync(
-      pdf,
-      execFileSync("/usr/sbin/cupsfilter", ["-m", "application/pdf", src], {
-        stdio: ["ignore", "pipe", "ignore"],
-      }),
-    );
+    fs.writeFileSync(pdf, body);
+
     const out = await attachments.extractPdfText(tmpDir, "t1", pdf);
     assert.ok(out);
     assert.match(fs.readFileSync(out.path, "utf8"), /Build the widget\./);
@@ -558,6 +570,8 @@ describe("runner attachments", () => {
     assert.ok(dispatchPrompt.includes(`- File: ${pdf}`));
     assert.ok(dispatchPrompt.includes("This model cannot read PDF files"));
     assert.ok(dispatchPrompt.includes(`- ${pdf}: no text could be extracted`));
+    const userMsg = store.getMessages(thread.id).find((m) => m.role === "user");
+    assert.equal(userMsg.pdfText, true, "transcript chip says text only");
   });
 
   it("leaves prompt and message untouched without attachments", async () => {

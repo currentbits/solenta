@@ -133,7 +133,7 @@ import {
   type ComposerBusyAction,
 } from "../uiPrefs";
 import { applyComposerVim } from "../composerVim";
-import { AttachmentChip } from "./composer/AttachmentChip";
+import { AttachmentChip, pdfAsTextFor } from "./composer/AttachmentChip";
 import { CommandList, MentionList } from "./composer/ComposerPopups";
 import { ReplyChip } from "./composer/ReplyChip";
 import { ReviewCommentChips } from "./composer/ReviewCommentChips";
@@ -1882,7 +1882,7 @@ export const Composer = memo(function Composer({
                 attachment={a}
                 onRemove={() => removeAttachment(a.path)}
                 onLoadImage={onLoadAttachmentImage}
-                pdfAsText={provider !== "claude" && provider !== "opencode"}
+                pdfAsText={pdfAsTextFor(provider)}
               />
             ))}
           </div>

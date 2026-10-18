@@ -111,6 +111,7 @@ function msg(over: Partial<ChatMessage> & Pick<ChatMessage, "role" | "text">): C
     attachments: over.attachments,
     thinking: over.thinking,
     steer: over.steer,
+    pdfText: over.pdfText,
     fromNotice: over.fromNotice,
   };
 }
@@ -2217,6 +2218,31 @@ describe("ThreadView file attachments (issue #653)", () => {
     );
     assert.ok(m.text().includes("notes.md"));
     m.unmount();
+  });
+
+  it("marks a PDF chip text only when the runner sent extracted text (#466)", async () => {
+    const pdf = { kind: "file" as const, path: "/tmp/spec.pdf", name: "spec.pdf" };
+    for (const pdfText of [true, false]) {
+      const m = await mount(
+        view({
+          detail: detail({
+            messages: [
+              msg({
+                id: "u1",
+                role: "user",
+                text: "build it",
+                createdAt: 10,
+                attachments: [pdf],
+                ...(pdfText ? { pdfText } : {}),
+              }),
+            ],
+          }),
+        }),
+      );
+      assert.ok(m.text().includes("spec.pdf"));
+      assert.equal(m.text().includes("text only"), pdfText);
+      m.unmount();
+    }
   });
 });
 
