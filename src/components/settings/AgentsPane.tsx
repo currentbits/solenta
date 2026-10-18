@@ -214,6 +214,8 @@ export function AgentsPane({
       next.configDir = null;
       next.command = command.args;
       next.fullAccessArgs = fullAccess.args;
+      next.cwd = instanceDraft.cwd.trim() || null;
+      next.transcript = instanceDraft.transcript;
     }
     const list = instanceDraft.id
       ? instances.map((i) => (i.id === instanceDraft.id ? next : i))
@@ -725,6 +727,8 @@ interface InstanceDraft {
   /** generic (#458): argv text, parsed by parseMcpArgv on submit. */
   command: string;
   fullAccess: string;
+  cwd: string;
+  transcript: "stdout" | "pty";
 }
 
 function emptyInstanceDraft(providers: readonly ProviderInfo[]): InstanceDraft {
@@ -739,6 +743,8 @@ function emptyInstanceDraft(providers: readonly ProviderInfo[]): InstanceDraft {
     env: [],
     command: "",
     fullAccess: "",
+    cwd: "",
+    transcript: "stdout",
   };
 }
 
@@ -757,6 +763,8 @@ function draftFromInstance(inst: ProviderInstance): InstanceDraft {
     env: Object.entries(inst.env).map(([key, value]) => ({ key, value })),
     command: argvText(inst.command),
     fullAccess: argvText(inst.fullAccessArgs),
+    cwd: inst.cwd ?? "",
+    transcript: inst.transcript ?? "stdout",
   };
 }
 
@@ -862,6 +870,47 @@ function InstanceForm({
             <p className={styles.note}>
               Added when the thread is set to Full access. Empty leaves
               permissions to the CLI and hides the permission picker.
+            </p>
+          </div>
+          <div className={styles.field}>
+            <label className={styles.fieldLabel} htmlFor="instance-cwd">
+              Working folder
+            </label>
+            <input
+              id="instance-cwd"
+              className={styles.input}
+              value={draft.cwd}
+              disabled={saving}
+              autoComplete="off"
+              spellCheck={false}
+              placeholder="packages/app"
+              onChange={(e) => onChange({ ...draft, cwd: e.target.value })}
+            />
+            <p className={styles.note}>
+              A relative path is inside the thread&apos;s worktree. Empty runs
+              in the worktree itself.
+            </p>
+          </div>
+          <div className={styles.field}>
+            <label className={styles.fieldLabel} htmlFor="instance-transcript">
+              Output
+            </label>
+            <select
+              id="instance-transcript"
+              className={styles.input}
+              value={draft.transcript}
+              disabled={saving}
+              onChange={(e) =>
+                onChange({ ...draft, transcript: e.target.value as "stdout" | "pty" })
+              }
+            >
+              <option value="stdout">Plain output (pipes)</option>
+              <option value="pty">Terminal (PTY)</option>
+            </select>
+            <p className={styles.note}>
+              Terminal is for CLIs that hold output or refuse to run without
+              one. Colours and spinner redraws are stripped, and errors
+              appear in the reply.
             </p>
           </div>
         </>

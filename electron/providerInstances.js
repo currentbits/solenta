@@ -43,6 +43,10 @@ const NAME_MAX = 40;
  * @property {string[]} [command] - generic only: argv, binary first
  * @property {string[]} [fullAccessArgs] - generic only: appended in
  *   bypassPermissions; empty means the CLI handles permissions itself
+ * @property {string | null} [cwd] - generic only: working folder; relative
+ *   resolves inside the thread's worktree, null is the worktree itself
+ * @property {"stdout" | "pty"} [transcript] - generic only: plain pipes, or
+ *   a pseudo-terminal for CLIs that need a TTY
  */
 
 /** @param {string} id */
@@ -166,7 +170,28 @@ function parseInstance(item, strict) {
   }
   const fullAccessArgs = argvList(rec.fullAccessArgs);
   if (!fullAccessArgs) return fail("Full access flags must be a list of strings");
-  return { id, name, provider, configDir: null, env, command, fullAccessArgs };
+  let cwd = null;
+  if (rec.cwd != null && rec.cwd !== "") {
+    if (typeof rec.cwd !== "string" || rec.cwd.includes("\0")) {
+      return fail("Working folder must be a path");
+    }
+    cwd = rec.cwd.trim() || null;
+  }
+  const transcript = rec.transcript == null ? "stdout" : rec.transcript;
+  if (transcript !== "stdout" && transcript !== "pty") {
+    return fail('Transcript must be "stdout" or "pty"');
+  }
+  return {
+    id,
+    name,
+    provider,
+    configDir: null,
+    env,
+    command,
+    fullAccessArgs,
+    cwd,
+    transcript,
+  };
 }
 
 /**

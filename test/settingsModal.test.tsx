@@ -2795,6 +2795,8 @@ describe("SettingsModal Agents › named provider instances (#453)", () => {
     await m.type(m.query("#instance-name"), "Goose");
     await m.type(m.query("#instance-command"), `"/opt/my tools/goose" run -t`);
     await m.type(m.query("#instance-full-access"), "--yolo");
+    await m.type(m.query("#instance-cwd"), "packages/app");
+    await m.change(m.query("#instance-transcript"), "pty");
     await m.click(m.queryAll("[data-instance-form] button").find((b) => b.textContent === "Add"));
     const row = saved.at(-1)?.providerInstances?.[0];
     assert.deepEqual({ ...row, id: "x" }, {
@@ -2805,6 +2807,8 @@ describe("SettingsModal Agents › named provider instances (#453)", () => {
       env: {},
       command: ["/opt/my tools/goose", "run", "-t"],
       fullAccessArgs: ["--yolo"],
+      cwd: "packages/app",
+      transcript: "pty",
     });
   });
 

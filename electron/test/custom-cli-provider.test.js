@@ -47,7 +47,13 @@ describe("custom CLI rows parse", () => {
       env: {},
       command: ["goose", "run", "-t"],
       fullAccessArgs: [],
+      cwd: null,
+      transcript: "stdout",
     });
+    assert.throws(
+      () => inst.validateProviderInstances([{ id: "x", name: "X", provider: "generic", command: ["x"], transcript: "tty" }]),
+      /Transcript/,
+    );
     assert.throws(
       () => inst.validateProviderInstances([{ id: "x", name: "X", provider: "generic", command: [] }]),
       /command cannot be empty/,
@@ -96,6 +102,8 @@ describe("custom CLI threads", () => {
 process.stdout.write(JSON.stringify({
   args: process.argv.slice(2),
   key: process.env.FAKE_AGENT_KEY || null,
+  cwd: process.cwd(),
+  tty: Boolean(process.stdout.isTTY),
 }));
 `,
     );
@@ -204,6 +212,49 @@ process.stdout.write(JSON.stringify({
     assert.deepEqual(second.args.slice(0, 3), ["run", "-t", "--yolo"]);
     assert.match(second.args.at(-1), /hello agent/, "no session: the prior turn is replayed");
     assert.match(second.args.at(-1), /second/);
+  });
+
+  async function send(threadId, prompt) {
+    const before = replies(threadId).length;
+    await runner.startRun({ threadId, prompt });
+    await waitFor(
+      () => replies(threadId).length > before && store.getThread(threadId).status === "done",
+    );
+    return replies(threadId).at(-1);
+  }
+
+  function patchRow(patch) {
+    const [only] = store.getSettings().providerInstances;
+    store.setSettings({ providerInstances: [{ ...only, ...patch }] });
+  }
+
+  it("runs in a working folder inside the worktree; a missing one fails clearly", async () => {
+    const t = services.createThread(store, { projectId: project.id, title: "t", provider: "generic:fake" });
+    const first = await send(t.id, "where");
+    assert.equal(first.tty, false, "pipes by default");
+    const sub = path.join(first.cwd, "packages", "app");
+    patchRow({ cwd: "packages/app" });
+    await assert.rejects(runner.startRun({ threadId: t.id, prompt: "x" }), /working folder not found/);
+    fs.mkdirSync(sub, { recursive: true });
+    const second = await send(t.id, "again");
+    assert.equal(fs.realpathSync(second.cwd), fs.realpathSync(sub));
+  });
+
+  it("a PTY row runs on a terminal and the reply has no escape codes", { skip: process.platform === "win32" && "node-pty cannot exec a shebang script" }, async () => {
+    writeFakeBin(
+      bin,
+      `"use strict";
+process.stdout.write("\\x1b[32mtty=" + Boolean(process.stdout.isTTY) + "\\x1b[0m\\n");
+process.stdout.write("working 10%\\rworking 100%\\n");
+process.stderr.write("warn: from stderr\\n");
+`,
+    );
+    patchRow({ transcript: "pty" });
+    const t = services.createThread(store, { projectId: project.id, title: "t", provider: "generic:fake" });
+    await runner.startRun({ threadId: t.id, prompt: "hi" });
+    await waitFor(() => store.getThread(t.id).status === "done");
+    const text = store.getMessages(t.id).filter((m) => m.role === "assistant").at(-1).text;
+    assert.equal(text, "tty=true\nworking 100%\nwarn: from stderr\n");
   });
 
   it("fails the send clearly when the row or binary is gone", async () => {

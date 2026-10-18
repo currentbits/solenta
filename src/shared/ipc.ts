@@ -2963,6 +2963,10 @@ export interface ProviderInstance {
   command?: string[];
   /** generic only: appended in Full access. Empty = the CLI decides. */
   fullAccessArgs?: string[];
+  /** generic only: working folder; relative is inside the thread's worktree. */
+  cwd?: string | null;
+  /** generic only: plain pipes, or a pseudo-terminal for CLIs that need a TTY. */
+  transcript?: "stdout" | "pty";
 }
 
 /** A checkout found by first-run discovery (#1501). */
