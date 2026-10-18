@@ -10,12 +10,14 @@
  *   ("threads:changed", "thread:updated", "thread:select", "boot:ready",
  *   "terminal:data").
  *   Simulator and speech pushes are desktop-only and must not ride this list.
- * - Auth: the FIRST client message must be {kind:"auth", token}. The token
- *   is generated (crypto-random) when serve mode starts, printed to stdout
- *   and persisted next to the store. Any other first message closes the
- *   socket. Invokes before auth-ok are dropped with an error reply.
- * - Security defaults: the HTTP+WS server binds 127.0.0.1 unless an
- *   explicit --host flag widens it. There is no TLS in v1 — LAN exposure
+ * - Auth: the FIRST client message must be {kind:"auth", token}: a device
+ *   token from Settings > Connections, or the file token --serve-web prints.
+ *   Any other first message closes the socket. Invokes before auth-ok are
+ *   dropped with an error reply. A wrong or revoked token closes with 4401
+ *   (the client stops retrying and shows the token gate); too many failures
+ *   from one address close with 4429.
+ * - Security defaults: the HTTP+WS server binds 127.0.0.1 unless
+ *   --serve-host or the "Allow devices on my network" switch widens it. There is no TLS in v1 — LAN exposure
  *   is the operator's informed choice, and the flag's help text says so.
  * - Errors: service throws become {kind:"reply", id, error: message}, the
  *   same string the IPC path would reject with; the client rethrows as

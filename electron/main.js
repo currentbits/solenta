@@ -65,7 +65,7 @@ const {
   parseServeWebArgs,
   startWebServer,
   loadOrCreateToken,
-  HOST_FLAG_HELP,
+  serveBanner,
   DEFAULT_PORT: WEB_DEFAULT_PORT,
 } = require("./webServer.js");
 const { createWebDevices } = require("./webDevices.js");
@@ -92,6 +92,7 @@ const { createIOSSimulatorStreamBroker } = require("./ios-simulator-stream.js");
 const {
   openRemoteConnection,
   forgetRemoteConnection,
+  installRemoteSolenta,
   closeRemoteConnections,
 } = require("./remoteConnections.js");
 
@@ -120,6 +121,10 @@ installCrashGuard({
 startLoopLag();
 
 const serveOpts = parseServeWebArgs(process.argv);
+// --headless: no window ever. On Linux without a display Chromium already
+// picked its headless platform from the same switch; GPU init would still
+// crash there, and nothing is drawn anyway.
+if (serveOpts.headless) app.disableHardwareAcceleration();
 
 // GUI launches get a bare launchd PATH; rebuild the user's real PATH before
 // any provider binary resolution (`which`) or agent spawn happens. The last
@@ -140,7 +145,16 @@ let pendingDeepLink = deepLinkFromArgv(process.argv);
 if (app.isPackaged) {
   app.setAsDefaultProtocolClient(DEEP_LINK_SCHEME);
   // exit, not quit: quit lets whenReady boot a second store writer first.
-  if (process.platform !== "darwin" && !app.requestSingleInstanceLock()) {
+  // macOS holds it too: `Solenta --serve-web` from a terminal (or Remote
+  // Connections starting the host over SSH) must hand off to the running
+  // app, not open a second writer on the same store.
+  if (!app.requestSingleInstanceLock()) {
+    if (serveOpts.enabled) {
+      // The running app turns web access on (second-instance below) and
+      // adopts this same file, so the token printed here is the live one.
+      const token = loadOrCreateToken(app.getPath("userData"));
+      process.stdout.write(`solenta-web: token ${token}\nSolenta is already running; turned on Solenta Web there.\n`);
+    }
     app.exit(0);
   }
 }
@@ -150,8 +164,22 @@ app.on("open-url", (event, url) => {
 });
 app.on("second-instance", (_event, argv) => {
   const link = deepLinkFromArgv(argv);
+  let serve = { enabled: false };
+  try {
+    serve = parseServeWebArgs(argv);
+  } catch {
+    // a bad --serve-web=PORT from the other launch; just focus
+  }
   if (link) openDeepLink(link);
-  else focusMainWindow();
+  else if (serve.enabled) {
+    // ponytail: turns the saved switch on (saved LAN choice, default port);
+    // the other launch's --serve-web=PORT / --serve-host are not applied.
+    if (webAccess) {
+      void webAccess.setEnabled({ enabled: true }).catch((err) =>
+        console.warn(`solenta-web: ${err && err.message ? err.message : err}`),
+      );
+    }
+  } else if (!focusMainWindow() && !serveOpts.headless) createWindow();
 });
 
 /** @type {ReturnType<typeof createMemorySupervisor> | null} */
@@ -654,8 +682,9 @@ app.whenReady().then(async () => {
   // #618: paint the empty window before store load / memory supervision.
   // Assigns the module-level `store` (not a new binding): applyUiScale and
   // currentUiScale read it from outside this function.
+  if (serveOpts.headless && process.platform === "darwin") app.dock?.hide();
   store = await bootFirstPaint({
-    createWindow,
+    createWindow: serveOpts.headless ? () => {} : createWindow,
     async beforeStore() {
       // Which build is this? A stale packaged bundle missing recent fixes looks
       // exactly like a broken feature, so say it out loud once at boot.
@@ -750,7 +779,12 @@ app.whenReady().then(async () => {
 
   app.on("activate", () => {
     // Dock click with only detached thread windows left brings the fleet back.
-    if (!findMainWindow()) createWindow();
+    // A headless host on macOS still has a display: opening the app from
+    // Finder gives it a window, and the Dock icon comes back with it.
+    if (!findMainWindow()) {
+      if (serveOpts.headless) app.dock?.show();
+      createWindow();
+    }
   });
 
   artifactStore = createRunArtifactStore({
@@ -888,6 +922,7 @@ app.whenReady().then(async () => {
   const webStaticDir = path.join(__dirname, "../dist");
   webAccess = createWebAccess({
     devices: createWebDevices(userData),
+    fileToken: () => loadOrCreateToken(userData),
     defaultPort: WEB_DEFAULT_PORT,
     startServer: (opts) =>
       startWebServer({
@@ -926,6 +961,7 @@ app.whenReady().then(async () => {
     getMcpFunnel: () => mcpFunnel,
     openRemoteConnection,
     forgetRemoteConnection,
+    installRemoteSolenta,
   });
   // Desktop-only like contextMenu:show: windows are main's, never the web bridge's.
   ipcMain.handle("window:detachThread", (_event, threadId) => openThreadWindow(threadId));
@@ -966,26 +1002,25 @@ app.whenReady().then(async () => {
   );
 
   if (serveOpts.enabled) {
-    const token = loadOrCreateToken(userData);
-    // --serve-web keeps printing one token; it is the Legacy device row.
-    webAccess.adoptLegacy(token);
-    // Contract: print the token to stdout when serve mode starts.
-    process.stdout.write(`solenta-web: token ${token}\n`);
-    if (serveOpts.host !== "127.0.0.1") {
-      process.stdout.write(`solenta-web: ${HOST_FLAG_HELP}\n`);
-    }
     // The port is fixed, so EADDRINUSE is routine (a previous instance still
     // holds it). Never let that reject out of whenReady: the rest of boot
     // (IPC ready push, schedulers) would be skipped even though the window
     // is already up.
+    // start() writes and adopts <userData>/web-token, the printed token.
     try {
       await webAccess.start({ host: serveOpts.host, port: serveOpts.port });
+      const st = await webAccess.status();
+      process.stdout.write(
+        serveBanner({ token: loadOrCreateToken(userData), urls: st.urls, tailnetUrl: st.tailscale.url }),
+      );
     } catch (err) {
       // No listener means nothing to keep the process alive headless either.
       serveOpts.enabled = false;
       process.stdout.write(
         `solenta-web: cannot listen on ${serveOpts.host}:${serveOpts.port} (${err && err.message ? err.message : err}); continuing without web serve\n`,
       );
+      // Headless has no window to continue with.
+      if (serveOpts.headless) app.exit(1);
     }
   } else {
     // The Settings switch, if the user left it on. Loopback unless they

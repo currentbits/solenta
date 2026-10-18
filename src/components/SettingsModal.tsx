@@ -109,7 +109,7 @@ const PANE_META: Record<
   },
   connections: {
     label: "Connections",
-    hint: "Open Solenta from your phone or a browser, or run it on another machine through SSH.",
+    hint: "Use this Solenta from your phone or a browser, or open the Solenta running on another computer.",
     keywords: "remote ssh host server tunnel workstation web token phone device qr pair tailscale https lan network browser",
   },
   integrations: {
@@ -169,6 +169,7 @@ export interface SettingsModalProps {
   onShowOnboarding?: () => void;
   onOpenConnection?: CoderApi["app"]["openRemoteConnection"];
   onForgetConnection?: CoderApi["app"]["forgetRemoteConnection"];
+  onInstallSolenta?: CoderApi["app"]["installRemoteSolenta"];
   /** Optional memory-scope rename seam (#179). When omitted reads window.coder. */
   onRenameMemoryScope?: CoderApi["memory"]["renameScope"];
   /** Project picker default for Spotlight and Project tools: the selected thread's project. */
@@ -269,6 +270,7 @@ export function SettingsModal({
   onShowOnboarding,
   onOpenConnection,
   onForgetConnection,
+  onInstallSolenta,
   onRenameMemoryScope,
   currentProjectId = null,
   onSetSpotlight,
@@ -797,8 +799,13 @@ export function SettingsModal({
           {pane === "connections" && !isWebMode() && (
           <>
           <WebAccessSection active={open && pane === "connections"} />
-          <p className={styles.sectionLabel}>Remote hosts</p>
-          <ConnectionsSection onOpen={onOpenConnection} onForget={onForgetConnection} />
+          <p className={styles.sectionLabel}>Connect to another computer</p>
+          <ConnectionsSection onOpen={onOpenConnection} onForget={onForgetConnection} onInstall={onInstallSolenta} />
+          <p className={styles.note} data-connections-remote-project-hint="">
+            Only need one repo from a server, in this window? Add it as a
+            project with a Remote host instead (Add project, then Remote
+            host). Its git and agents run there over SSH.
+          </p>
           </>
           )}
 

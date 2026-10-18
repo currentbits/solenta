@@ -90,6 +90,12 @@ module.exports = {
     }
     ctx.forgetRemoteConnection(input);
   },
+  "app:installRemoteSolenta": async (ctx, input) => {
+    if (ctx.transport !== "desktop" || !ctx.installRemoteSolenta) {
+      throw new Error("Remote Connections require the desktop app.");
+    }
+    return ctx.installRemoteSolenta(input);
+  },
   "memory:search": async (ctx, input) => {
     return ctx.memory.search(input || { query: "" });
   },

@@ -13,6 +13,12 @@ const {
   sshArgs,
   explainSshFailure,
   createTokenStore,
+  readRemoteToken,
+  prepareHostCommand,
+  installHostCommand,
+  installRemoteSolenta,
+  inspectHost,
+  compareVersions,
   openRemoteConnection,
   closeRemoteConnections,
 } = require("../remoteConnections.js");
@@ -50,6 +56,126 @@ describe("remote Connections", () => {
     assert.equal(explainSshFailure("work", "ssh: connect to host work port 22: Connection refused\n", 255),
       "ssh: connect to host work port 22: Connection refused");
     assert.equal(explainSshFailure("work", "", null), "SSH exited (unknown).");
+  });
+
+  it("prepares the host over SSH: starts Solenta when nothing answers, then prints the token", async () => {
+    const cmd = prepareHostCommand(4700);
+    // One single-quoted sh -c, so fish or zsh login shells parse it the same.
+    assert.match(cmd, /^sh -c '/);
+    assert.ok(cmd.endsWith("'"));
+    assert.equal(cmd.slice(7, -1).includes("'"), false, "no inner single quotes");
+    assert.match(cmd, /http:\/\/127\.0\.0\.1:4700\//);
+    assert.match(cmd, /open -n -g -a "\$app" --args --headless --serve-web=4700/);
+    assert.match(cmd, /nohup "\$bin" --headless --serve-web=4700 --no-sandbox/);
+
+    const run = (code, stdout = "", stderr = "") => (cmdName, args, opts, cb) => {
+      assert.equal(cmdName, "ssh");
+      assert.equal(args.at(-1), prepareHostCommand(4620));
+      assert.ok(opts.timeout >= 60_000, "leaves time for the host to start");
+      cb(code ? Object.assign(new Error("exit"), { code }) : null, stdout, stderr);
+    };
+    assert.equal(await readRemoteToken("me@box", 4620, { execFile: run(0, "tok\n") }), "tok");
+    assert.equal(await readRemoteToken("me@box", 4620, { execFile: run(1) }), "", "no token file");
+    await assert.rejects(
+      readRemoteToken("me@box", 4620, { execFile: run(3) }),
+      /Solenta is not installed on me@box/,
+    );
+    await assert.rejects(
+      readRemoteToken("me@box", 4620, { execFile: run(4, "", "libnss3.so: cannot open\n") }),
+      /Solenta did not start on me@box[\s\S]*libnss3/,
+    );
+  });
+
+  it("installs this build's Linux release over SSH, checksum-pinned, and reports missing libraries", async () => {
+    const sha = "c".repeat(64);
+    const url = "https://github.com/currentbits/solenta/releases/download/v0.26.0/Solenta-v0.26.0-linux-x64.tar.gz";
+    const fetched = [];
+    const updater = {
+      buildStamp: () => ({ channel: "prod", tag: "v0.26.0" }),
+      fetchTag: async (tag) => {
+        fetched.push(tag);
+        return { tag_name: tag, assets: [{ name: "Solenta-v0.26.0-linux-x64.tar.gz", browser_download_url: url, digest: `sha256:${sha}` }] };
+      },
+      fetchLatest: async () => assert.fail("a tagged build installs its own tag"),
+      pickAsset: require("../updater.js").pickAsset,
+    };
+    const ran = [];
+    const ok = (out) => (cmd, args, opts, cb) => {
+      ran.push(args);
+      assert.ok(opts.timeout >= 5 * 60_000, "room for a 170 MB download");
+      cb(null, out, "");
+    };
+    const result = await installRemoteSolenta({ host: "me@server" }, {
+      updater,
+      execFile: ok("missing libnss3.so\nmissing libgbm.so.1\nmissing libweird.so.9\nrestart\ninstalled\n"),
+    });
+    assert.deepEqual(fetched, ["v0.26.0"]);
+    assert.equal(ran[0].at(-2), "me@server");
+    assert.equal(ran[0].at(-1), installHostCommand(url, sha));
+    assert.deepEqual(result, {
+      tag: "v0.26.0",
+      missingLibraries: ["libnss3.so", "libgbm.so.1", "libweird.so.9"],
+      aptCommand: "sudo apt install libnss3 libgbm1",
+      restartNeeded: true,
+    });
+
+    const fail = (code) => (cmd, args, opts, cb) => cb(Object.assign(new Error("x"), { code }), "", "");
+    await assert.rejects(installRemoteSolenta({ host: "me@mac" }, { updater, execFile: fail(10) }), /Linux only[\s\S]*solenta\.app/);
+    await assert.rejects(installRemoteSolenta({ host: "me@pi" }, { updater, execFile: fail(11) }), /x86_64 only/);
+    await assert.rejects(installRemoteSolenta({ host: "me@server" }, { updater, execFile: fail(14) }), /did not match the release checksum/);
+    await assert.rejects(
+      installRemoteSolenta({ host: "-oProxyCommand=x" }, { updater, execFile: ok("installed\n") }),
+      /SSH host/,
+    );
+    const unsigned = { ...updater, fetchTag: async () => ({ tag_name: "v0.26.0", assets: [{ name: "Solenta-v0.26.0-linux-x64.tar.gz", browser_download_url: url }] }) };
+    await assert.rejects(installRemoteSolenta({ host: "me@server" }, { updater: unsigned, execFile: ok("installed\n") }), /no checksum/);
+  });
+
+  it("the install script only interpolates a plain https URL and a hex digest", () => {
+    const cmd = installHostCommand("https://example.com/a.tar.gz", "d".repeat(64));
+    assert.match(cmd, /^sh -c '/);
+    assert.equal(cmd.slice(7, -1).includes("'"), false);
+    assert.match(cmd, /sha256sum/);
+    assert.throws(() => installHostCommand('https://x/"$(id)"', "d".repeat(64)), /download URL/);
+    assert.throws(() => installHostCommand("http://x/a.tar.gz", "d".repeat(64)), /download URL/);
+    assert.throws(() => installHostCommand("https://x/a.tar.gz", "nothex"), /checksum/);
+  });
+
+  it("compares dotted versions", () => {
+    assert.equal(compareVersions("0.25.0", "0.26.0"), -1);
+    assert.equal(compareVersions("v0.26.0", "0.26.0"), 0);
+    assert.equal(compareVersions("0.26.1", "0.26.0"), 1);
+    assert.equal(compareVersions("0.26", "0.26.0"), 0);
+  });
+
+  it("inspectHost reads the version and agents over the forwarded socket", async () => {
+    const wss = new WebSocketServer({ port: 0, host: "127.0.0.1" });
+    wss.on("connection", (ws) => {
+      ws.on("message", (raw) => {
+        const msg = JSON.parse(String(raw));
+        if (msg.kind === "auth") return ws.send(JSON.stringify(msg.token === "t" ? { kind: "auth-ok" } : { kind: "x" }));
+        if (msg.channel === "app:status") {
+          return ws.send(JSON.stringify({ kind: "reply", id: msg.id, result: { build: { version: "0.25.0", platform: "linux" } } }));
+        }
+        ws.send(JSON.stringify({
+          kind: "reply",
+          id: msg.id,
+          result: [{ id: "claude", name: "Claude Code", available: true, auth: "signedIn", account: { plan: "max" }, models: ["x"] }],
+        }));
+      });
+    });
+    await new Promise((resolve) => wss.once("listening", resolve));
+    try {
+      const info = await inspectHost(wss.address().port, "t");
+      assert.deepEqual(info, {
+        version: "0.25.0",
+        platform: "linux",
+        agents: [{ id: "claude", name: "Claude Code", available: true, auth: "signedIn", account: { plan: "max" } }],
+      });
+      assert.equal(await inspectHost(wss.address().port, "t", 300).then(() => "ok"), "ok");
+    } finally {
+      wss.close();
+    }
   });
 
   it("stores tokens only as keychain ciphertext and refuses plaintext backends", () => {
@@ -176,6 +302,8 @@ describe("remote Connections", () => {
         if (remoteFile) return cb(null, `${remoteFile}\n`, "");
         cb(Object.assign(new Error("cat"), { code: 1 }), "", "");
       },
+      inspectHost: async () => ({ version: "0.25.0", platform: "linux", agents: [] }),
+      localVersion: "0.26.0",
       electron: {
         BrowserWindow: FakeWindow,
         shell: { openExternal() {} },
@@ -184,7 +312,13 @@ describe("remote Connections", () => {
     };
     try {
       const result = await openRemoteConnection({ host: "user@work", token }, deps);
-      assert.deepEqual(result, { host: "user@work", remotePort: 4620, tokenSaved: true });
+      assert.deepEqual(result, {
+        host: "user@work",
+        remotePort: 4620,
+        tokenSaved: true,
+        remote: { version: "0.25.0", platform: "linux", agents: [], outdated: true },
+        localVersion: "0.26.0",
+      });
       assert.equal(saved.get("user@work:4620"), token);
       assert.equal(window.shown, true);
       assert.match(window.url, /\/\?token=remote-secret$/);

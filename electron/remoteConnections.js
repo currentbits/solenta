@@ -126,14 +126,51 @@ function sshArgs(host, localPort, remotePort) {
   ];
 }
 
-// The host persists its token in userData/web-token (webServer.js). Both
-// release channels keep productName "Solenta": macOS, then Linux/XDG. sh -c
-// so a fish or zsh login shell on the host does not change the syntax.
-const READ_TOKEN_COMMAND = `sh -c 'cat "$HOME/Library/Application Support/Solenta/web-token" 2>/dev/null || cat "\${XDG_CONFIG_HOME:-$HOME/.config}/Solenta/web-token" 2>/dev/null'`;
+// Run on the host before every connect: start Solenta if nothing answers on
+// the web port, then print <userData>/web-token (webAccess writes it on
+// every start). macOS goes through `open -n` so a running app gets the
+// flags via second-instance and turns Solenta Web on instead of a second
+// copy starting; Linux starts the tarball headless (no display needed, and
+// no renderer to sandbox). Both channels keep productName "Solenta", so one
+// userData path. sh -c, single-quoted, so a fish or zsh login shell on the
+// host does not change the syntax: no single quotes inside.
+const NOT_INSTALLED_EXIT = 3;
+const DID_NOT_START_EXIT = 4;
+const HEADLESS_LOG = "$HOME/.solenta-headless.log";
+function prepareHostCommand(port) {
+  const p = Number(port);
+  return `sh -c '
+tok() { cat "$HOME/Library/Application Support/Solenta/web-token" 2>/dev/null || cat "\${XDG_CONFIG_HOME:-$HOME/.config}/Solenta/web-token" 2>/dev/null; }
+up() { command -v curl >/dev/null 2>&1 || return 0; curl -s -o /dev/null -m 2 "http://127.0.0.1:${p}/"; }
+if ! up; then
+  app=""
+  for a in /Applications/Solenta.app "$HOME/Applications/Solenta.app" "/Applications/Solenta Nightly.app"; do
+    if [ -d "$a" ]; then app="$a"; break; fi
+  done
+  if [ -n "$app" ]; then
+    open -n -g -a "$app" --args --headless --serve-web=${p} || exit ${DID_NOT_START_EXIT}
+  else
+    bin="$(command -v solenta 2>/dev/null || command -v solenta-nightly 2>/dev/null)"
+    for b in "$HOME/solenta/solenta" "$HOME/solenta/solenta-nightly" "$HOME/.local/share/solenta/solenta" /opt/solenta/solenta; do
+      if [ -z "$bin" ] && [ -x "$b" ]; then bin="$b"; fi
+    done
+    [ -n "$bin" ] || exit ${NOT_INSTALLED_EXIT}
+    nohup "$bin" --headless --serve-web=${p} --no-sandbox >"${HEADLESS_LOG}" 2>&1 </dev/null &
+  fi
+  i=0
+  until up; do
+    i=$((i+1))
+    if [ "$i" -gt 60 ]; then tail -n 5 "${HEADLESS_LOG}" >&2 2>/dev/null; exit ${DID_NOT_START_EXIT}; fi
+    sleep 1
+  done
+fi
+tok'`;
+}
 
 // "" when the host has no token file; throws on ssh failures (exit 255) so
-// host-key and login problems surface before any tunnel is opened.
-function readRemoteToken(host, deps = {}) {
+// host-key and login problems surface before any tunnel is opened, and when
+// Solenta is missing on the host or would not start.
+function readRemoteToken(host, remotePort = DEFAULT_REMOTE_PORT, deps = {}) {
   return new Promise((resolve, reject) => {
     (deps.execFile || execFile)("ssh", [
       "-T",
@@ -141,17 +178,194 @@ function readRemoteToken(host, deps = {}) {
       "-o", "StrictHostKeyChecking=yes",
       "-o", "ConnectTimeout=10",
       host,
-      READ_TOKEN_COMMAND,
-    ], { timeout: 20_000, maxBuffer: 64 * 1024 }, (err, stdout, stderr) => {
+      prepareHostCommand(remotePort),
+    ], { timeout: 90_000, maxBuffer: 64 * 1024 }, (err, stdout, stderr) => {
       if (err && (err.code === 255 || err.killed)) {
         return reject(new Error(err.killed
-          ? `Timed out reading the web token from ${host}.`
+          ? `Timed out preparing Solenta on ${host}.`
           : explainSshFailure(host, String(stderr || ""), err.code)));
+      }
+      if (err && err.code === NOT_INSTALLED_EXIT) {
+        return reject(new Error(`Solenta is not installed on ${host}. Install it there first: the app in /Applications on a Mac, or the Linux tarball unpacked to ~/solenta or on PATH as "solenta".`));
+      }
+      if (err && err.code === DID_NOT_START_EXIT) {
+        const tail = String(stderr || "").trim();
+        return reject(new Error(`Solenta did not start on ${host}. On a Mac someone must be logged in to the desktop; on Linux see ~/.solenta-headless.log there.${tail ? `\n${tail}` : ""}`));
       }
       const token = err ? "" : String(stdout).trim();
       resolve(token.length <= 1024 ? token : "");
     });
   });
+}
+
+// Install or update the Linux tarball in ~/solenta over SSH (#1660). The
+// archive comes from this build's own GitHub release and is checked against
+// the sha256 GitHub stamps on it before it replaces anything. A headless
+// copy running from ~/solenta is stopped so the next connect starts the new
+// one; a desktop copy keeps running the old files until it restarts.
+const INSTALL_EXITS = {
+  10: "Installing over SSH works for Linux only. On a Mac, install Solenta from solenta.app on that Mac.",
+  11: "There is no Solenta build for this processor yet; Linux builds are x86_64 only.",
+  12: "The download failed on the remote computer. Check that it can reach github.com.",
+  13: "The remote computer has neither curl nor wget to download Solenta with.",
+  14: "The download did not match the release checksum, so nothing was installed.",
+  15: "The download could not be unpacked on the remote computer.",
+};
+function installHostCommand(url, sha256) {
+  if (!/^https:\/\/[\w./%:-]+$/.test(url)) throw new Error("Unexpected release download URL.");
+  if (!/^[0-9a-f]{64}$/.test(sha256)) throw new Error("Unexpected release checksum.");
+  return `sh -c '
+[ "$(uname -s)" = Linux ] || exit 10
+case "$(uname -m)" in x86_64|amd64) ;; *) exit 11 ;; esac
+tmp="$HOME/.solenta-download.tar.gz"
+if command -v curl >/dev/null 2>&1; then curl -fsSL -o "$tmp" "${url}" || exit 12
+elif command -v wget >/dev/null 2>&1; then wget -qO "$tmp" "${url}" || exit 12
+else exit 13; fi
+got="$(sha256sum "$tmp" 2>/dev/null | cut -d " " -f 1)"
+if [ "$got" != "${sha256}" ]; then rm -f "$tmp"; exit 14; fi
+rm -rf "$HOME/.solenta-new" && mkdir -p "$HOME/.solenta-new"
+tar -xzf "$tmp" -C "$HOME/.solenta-new" 2>/dev/null || exit 15
+rm -f "$tmp"
+src=""
+for d in "$HOME"/.solenta-new/*/; do
+  if [ -x "$d/solenta" ] || [ -x "$d/solenta-nightly" ]; then src="\${d%/}"; fi
+done
+[ -n "$src" ] || exit 15
+pkill -TERM -f "$HOME/solenta/solenta[a-z-]* --headless" 2>/dev/null
+i=0
+while pgrep -f "$HOME/solenta/solenta[a-z-]* --headless" >/dev/null 2>&1 && [ "$i" -lt 15 ]; do i=$((i+1)); sleep 1; done
+if ps -eo args 2>/dev/null | grep "^$HOME/solenta/solenta" | grep -qv -- "--type="; then echo restart; fi
+rm -rf "$HOME/solenta.old"
+if [ -d "$HOME/solenta" ]; then mv "$HOME/solenta" "$HOME/solenta.old"; fi
+mv "$src" "$HOME/solenta" && rm -rf "$HOME/.solenta-new"
+bin="$HOME/solenta/solenta"; [ -x "$bin" ] || bin="$HOME/solenta/solenta-nightly"
+ldd "$bin" 2>/dev/null | sed -n "s/^[[:space:]]*\\([^[:space:]]*\\) => not found.*/missing \\1/p" | sort -u
+echo installed'`;
+}
+
+// Missing shared object -> Debian/Ubuntu package. apt resolves the t64
+// renames (libasound2 -> libasound2t64) on its own.
+const APT_PACKAGES = {
+  "libnss3.so": "libnss3", "libnssutil3.so": "libnss3", "libsmime3.so": "libnss3", "libnspr4.so": "libnspr4",
+  "libgtk-3.so.0": "libgtk-3-0", "libgdk-3.so.0": "libgtk-3-0", "libgbm.so.1": "libgbm1",
+  "libasound.so.2": "libasound2", "libatk-1.0.so.0": "libatk1.0-0", "libatk-bridge-2.0.so.0": "libatk-bridge2.0-0",
+  "libatspi.so.0": "libatspi2.0-0", "libcups.so.2": "libcups2", "libdrm.so.2": "libdrm2",
+  "libxkbcommon.so.0": "libxkbcommon0", "libXcomposite.so.1": "libxcomposite1", "libXdamage.so.1": "libxdamage1",
+  "libXrandr.so.2": "libxrandr2", "libXfixes.so.3": "libxfixes3", "libpango-1.0.so.0": "libpango-1.0-0",
+  "libcairo.so.2": "libcairo2", "libdbus-1.so.3": "libdbus-1-3", "libexpat.so.1": "libexpat1",
+  "libXext.so.6": "libxext6", "libX11.so.6": "libx11-6", "libxcb.so.1": "libxcb1",
+  "libglib-2.0.so.0": "libglib2.0-0", "libgio-2.0.so.0": "libglib2.0-0", "libgobject-2.0.so.0": "libglib2.0-0",
+};
+
+async function linuxReleaseAsset(deps = {}) {
+  const updater = deps.updater || require("./updater.js");
+  const { tag, channel } = updater.buildStamp();
+  // A dev tree has no tag: fall back to the newest release of its channel.
+  const release = tag
+    ? await updater.fetchTag(tag, deps.fetch)
+    : await updater.fetchLatest(channel || "prod", deps.fetch);
+  const asset = release ? updater.pickAsset(release, "linux", "x64") : null;
+  if (!asset) throw new Error(`No Linux build was published for ${tag || "the latest release"}.`);
+  const sha = /^sha256:([0-9a-f]{64})$/.exec(String(asset.digest || ""));
+  if (!sha) throw new Error("The Linux build carries no checksum, so it cannot be installed safely.");
+  return { url: String(asset.browser_download_url), sha256: sha[1], tag: String(release.tag_name || tag || "") };
+}
+
+async function installRemoteSolenta(input, deps = {}) {
+  const { host } = validateConnection({ host: input && input.host, token: "" });
+  const asset = await linuxReleaseAsset(deps);
+  const stdout = await new Promise((resolve, reject) => {
+    (deps.execFile || execFile)("ssh", [
+      "-T",
+      "-o", "BatchMode=yes",
+      "-o", "StrictHostKeyChecking=yes",
+      "-o", "ConnectTimeout=10",
+      host,
+      installHostCommand(asset.url, asset.sha256),
+    ], { timeout: 10 * 60_000, maxBuffer: 256 * 1024 }, (err, out, stderr) => {
+      if (!err) return resolve(String(out));
+      if (err.killed) return reject(new Error(`Timed out installing Solenta on ${host}.`));
+      if (err.code === 255) return reject(new Error(explainSshFailure(host, String(stderr || ""), err.code)));
+      reject(new Error(INSTALL_EXITS[err.code] || `Installing on ${host} failed: ${String(stderr || "").trim() || `exit ${err.code}`}`));
+    });
+  });
+  const lines = stdout.split(/\r?\n/);
+  if (!lines.includes("installed")) throw new Error(`Installing on ${host} did not finish.`);
+  const missingLibraries = lines.filter((l) => l.startsWith("missing ")).map((l) => l.slice(8));
+  const packages = [...new Set(missingLibraries.map((lib) => APT_PACKAGES[lib]).filter(Boolean))];
+  return {
+    tag: asset.tag,
+    missingLibraries,
+    aptCommand: packages.length ? `sudo apt install ${packages.join(" ")}` : null,
+    restartNeeded: lines.includes("restart"),
+  };
+}
+
+// After the token check: which Solenta and which agents the host has, for
+// the Connections row. One extra socket; null when the host is too old to
+// answer or slow, never an error.
+function inspectHost(port, token, timeoutMs = 8_000) {
+  return new Promise((resolve) => {
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+    const replies = new Map();
+    const done = (value) => {
+      clearTimeout(timer);
+      ws.terminate();
+      resolve(value);
+    };
+    const timer = setTimeout(() => done(null), timeoutMs);
+    ws.once("open", () => ws.send(JSON.stringify({ kind: "auth", token })));
+    ws.on("message", (raw) => {
+      let msg;
+      try {
+        msg = JSON.parse(String(raw));
+      } catch {
+        return done(null);
+      }
+      if (msg.kind === "auth-ok") {
+        ws.send(JSON.stringify({ kind: "invoke", id: 1, channel: "app:status", args: [] }));
+        ws.send(JSON.stringify({ kind: "invoke", id: 2, channel: "providers:list", args: [] }));
+        return;
+      }
+      if (msg.kind !== "reply") return;
+      replies.set(msg.id, msg.error ? null : msg.result);
+      if (replies.size < 2) return;
+      const build = replies.get(1) && replies.get(1).build;
+      const providers = Array.isArray(replies.get(2)) ? replies.get(2) : [];
+      done({
+        version: build ? String(build.version || "") : "",
+        platform: build ? String(build.platform || "") : "",
+        agents: providers.map((p) => ({
+          id: String(p.id),
+          name: String(p.name || p.id),
+          available: p.available === true,
+          ...(p.auth ? { auth: String(p.auth) } : {}),
+          ...(p.account ? { account: p.account } : {}),
+        })),
+      });
+    });
+    ws.once("error", () => done(null));
+    ws.once("close", () => done(null));
+  });
+}
+
+/** -1, 0 or 1 comparing dotted numeric versions ("0.25.0" vs "0.24.3"). */
+function compareVersions(a, b) {
+  const pa = String(a).replace(/^v/, "").split(/[.-]/).map((n) => parseInt(n, 10) || 0);
+  const pb = String(b).replace(/^v/, "").split(/[.-]/).map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const d = (pa[i] || 0) - (pb[i] || 0);
+    if (d) return d < 0 ? -1 : 1;
+  }
+  return 0;
+}
+
+function localVersion() {
+  try {
+    return String(require("../package.json").version || "");
+  } catch {
+    return "";
+  }
 }
 
 function freeLoopbackPort() {
@@ -226,15 +440,17 @@ async function openRemoteConnection(input, deps = {}) {
   const tokens = tokenStoreFor(deps);
   // Typed, then the host's own token file over SSH (always current), then
   // the keychain copy for hosts whose token file cannot be read.
-  let token = typed;
+  // Always prepare the host, even with a typed token: it is what starts
+  // Solenta there when nothing is listening yet.
+  const fileToken = await readRemoteToken(host, remotePort, deps);
+  let token = typed || fileToken;
   let fromKeychain = false;
-  if (!token) token = await readRemoteToken(host, deps);
   if (!token) {
     token = tokens.get(key);
     fromKeychain = !!token;
   }
   if (!token) {
-    throw new Error(`No web token found on ${host}. Start Solenta there with --serve-web once, or paste its token.`);
+    throw new Error(`No web token found on ${host}. In Solenta there, open Settings > Connections, add a device and paste its token here.`);
   }
   const prior = active.get(key);
   if (prior) {
@@ -295,7 +511,7 @@ async function openRemoteConnection(input, deps = {}) {
       // The forward is up but nothing listens on the remote port. Connect
       // never starts the host (#245): say so instead of timing out.
       if (/open failed: connect failed/.test(line) && !child.failure) {
-        child.failure = new Error(`Nothing is listening on port ${remotePort} on ${host}. Start Solenta there with --serve-web${remotePort === DEFAULT_REMOTE_PORT ? "" : `=${remotePort}`}, then connect again.`);
+        child.failure = new Error(`Nothing is listening on port ${remotePort} on ${host}. Start Solenta there with --serve-web${remotePort === DEFAULT_REMOTE_PORT ? "" : `=${remotePort}`} (add --headless on a server without a display), then connect again.`);
       }
     };
     child.stderr?.on("data", (chunk) => {
@@ -356,6 +572,8 @@ async function openRemoteConnection(input, deps = {}) {
       const child = await startTunnel();
       await waitForHost(child, token);
       entry.backPort = child.backPort;
+      // Runs while the window loads; only the Connections row waits for it.
+      const inspected = (deps.inspectHost || inspectHost)(port, token).catch(() => null);
       const { BrowserWindow, shell } = deps.electron || require("electron");
       const win = new BrowserWindow({
         width: 1440,
@@ -406,7 +624,12 @@ async function openRemoteConnection(input, deps = {}) {
       } catch {
         // The window is open; a failed save only means asking next time.
       }
-      return { host, remotePort, tokenSaved };
+      const info = await inspected;
+      const mine = deps.localVersion ?? localVersion();
+      const remote = info && info.version
+        ? { ...info, outdated: Boolean(mine) && compareVersions(info.version, mine) < 0 }
+        : null;
+      return { host, remotePort, tokenSaved, remote, localVersion: mine };
     } catch (err) {
       active.delete(key);
       if (entry.win && !entry.win.isDestroyed()) entry.win.destroy();
@@ -450,6 +673,11 @@ module.exports = {
   sshArgs,
   explainSshFailure,
   readRemoteToken,
+  prepareHostCommand,
+  installHostCommand,
+  installRemoteSolenta,
+  inspectHost,
+  compareVersions,
   probeToken,
   createTokenStore,
   openRemoteConnection,
