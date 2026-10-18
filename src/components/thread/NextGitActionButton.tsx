@@ -144,10 +144,15 @@ export function NextGitActionButton({
       const existing = (window as unknown as { coder?: CoderApi }).coder;
       const discover = existing?.sourceControl?.discover;
       if (typeof discover !== "function") return;
+      const id = threadRef.current;
       const next: SourceControlDiscovery = await discover(
         rescan ? { rescan: true } : undefined,
       );
-      setGithub(forgeReadiness(next, "github"));
+      // Gate on the origin's own forge (#456): a Bitbucket repo needs the
+      // Bitbucket token, not gh. Unknown origin keeps the GitHub gate.
+      const repo = await existing?.git?.repoInfo?.({ threadId: id }).catch(() => null);
+      const kind = repo?.ok && repo.forge ? repo.forge : "github";
+      if (threadRef.current === id) setGithub(forgeReadiness(next, kind));
     } catch {
       // Probe failed: leave the button on the click-and-fail path.
     }

@@ -206,6 +206,56 @@ describe("next-git-action button", () => {
     }
   });
 
+  it("gates Create PR on the origin's forge, not gh (#456)", async () => {
+    const shell = await mount(<div />);
+    const prev = (window as unknown as { coder?: unknown }).coder;
+    const provider = (kind: string, ready: boolean) => ({
+      kind,
+      label: kind,
+      status: ready ? "available" : "missing",
+      installHint: `install ${kind}`,
+      version: null,
+      auth: { status: ready ? "authenticated" : "unauthenticated", detail: null },
+    });
+    let bitbucketReady = true;
+    (window as unknown as { coder: unknown }).coder = {
+      sourceControl: {
+        discover: async () => ({
+          probedAt: 1,
+          sourceControlProviders: [provider("github", false), provider("bitbucket", bitbucketReady)],
+        }),
+      },
+      git: {
+        repoInfo: async () => ({
+          ok: true,
+          owner: "acme",
+          repo: "demo",
+          webUrl: "https://bitbucket.org/acme/demo",
+          forge: "bitbucket",
+        }),
+      },
+    };
+    shell.unmount();
+    try {
+      let m = await mount(view({}));
+      await m.flush();
+      let btn = m.query('[data-next-git-action="create-pr"]') as HTMLButtonElement | null;
+      assert.ok(btn, "create-pr action");
+      assert.equal(btn!.disabled, false, "gh missing must not block a Bitbucket repo");
+      m.unmount();
+
+      bitbucketReady = false;
+      m = await mount(view({}));
+      await m.flush();
+      btn = m.query('[data-next-git-action="create-pr"]') as HTMLButtonElement | null;
+      assert.equal(btn!.disabled, true);
+      assert.equal(btn!.getAttribute("title"), "install bitbucket");
+      m.unmount();
+    } finally {
+      (window as unknown as { coder?: unknown }).coder = prev;
+    }
+  });
+
   it("sums per-file additions and deletions for the commit button", () => {
     assert.deepEqual(
       diffLineTotals([
