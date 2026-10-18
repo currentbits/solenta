@@ -228,6 +228,9 @@ function createWebAccess(deps) {
 
   async function start(opts) {
     await stop();
+    // Remote Connections read this file over SSH, so every way of turning
+    // the server on (switch, restore, --serve-web) has to leave one behind.
+    if (deps.fileToken) devices.adoptLegacy(deps.fileToken());
     host = opts.host || LOOPBACK;
     server = await deps.startServer({
       host,

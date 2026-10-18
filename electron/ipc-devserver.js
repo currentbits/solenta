@@ -192,8 +192,11 @@ module.exports = {
   },
   // Sign in (#1501): a fresh "signin" shell with the provider's login
   // command typed in. The command comes from a fixed table, never the caller.
+  // `install` types the install command instead, without Enter, so the
+  // user reviews it before it runs.
   "terminal:signIn": async (ctx, input) => {
     const provider = String((input && input.provider) || "");
+    const install = Boolean(input && input.install);
     // A named instance (#453) logs in under its own config dir.
     const { provider: base, instance } = parseProviderRef(provider);
     const inst = instance
@@ -202,16 +205,20 @@ module.exports = {
     if (instance && !inst) throw new Error(`Unknown provider instance: ${provider}`);
     const dirVar = CONFIG_DIR_ENV[/** @type {"claude" | "codex"} */ (base)];
     const configEnv = inst ? instanceEnv(inst) : {};
-    const command = providerAuth.loginCommand(base, {
-      configEnv: inst && configEnv[dirVar] ? { [dirVar]: configEnv[dirVar] } : undefined,
-    });
-    if (!command) throw new Error(`No sign-in command for ${provider || "this provider"}`);
+    const command = install
+      ? providerAuth.installCommand(base)
+      : providerAuth.loginCommand(base, {
+          configEnv: inst && configEnv[dirVar] ? { [dirVar]: configEnv[dirVar] } : undefined,
+        });
+    if (!command) {
+      throw new Error(`No ${install ? "install" : "sign-in"} command for ${provider || "this provider"}`);
+    }
     const threadId = (input && input.threadId) || SIGNIN_TERMINAL_ID;
     const { root, project, logDir } = terminalRoot(ctx, threadId);
     const termId = "signin";
     terminal.close(threadId, termId, logDir);
     terminal.open(threadId, root, { project, termId, logDir, broadcast: ctx.broadcast });
-    terminal.write(threadId, `${command}\r`, termId);
+    terminal.write(threadId, install ? command : `${command}\r`, termId);
     // The next list re-probes instead of serving the signed-out cache.
     providerAuth.invalidate();
     return { threadId, termId };

@@ -32,6 +32,10 @@ async function boot(
   fake: ReturnType<typeof createFakeCoder>,
 ): Promise<Awaited<ReturnType<typeof mount>>> {
   const shell = await mount(<div />);
+  // The sign-in terminal mounts real xterm; jsdom has no canvas and logs
+  // "Not implemented", which the console gate fails. A null context is quiet.
+  shell.container.ownerDocument.defaultView!.HTMLCanvasElement.prototype.getContext =
+    (() => null) as never;
   installFakeCoder(fake);
   shell.unmount();
   return mount(<App />);
@@ -77,8 +81,8 @@ describe("Onboarding CLI step (#629)", () => {
       /One coding agent is enough/,
     );
     assert.ok(
-      !/Ready/i.test(m.query("[data-onboarding-step]")?.textContent || ""),
-      "must not use Ready as an authentication claim",
+      !m.queryAll("[data-onboarding-cli-row]").some((r) => /Ready/.test(r.textContent || "")),
+      "Ready only on a verified sign-in, never on bare installs",
     );
 
     const claude = m.query('[data-onboarding-cli-row="claude"]');
@@ -333,7 +337,7 @@ describe("Onboarding CLI step (#629)", () => {
       "ok",
     );
     const ok = m.query("[data-onboarding-cli-status]")?.textContent || "";
-    assert.match(ok, /Installation detected/);
+    assert.match(ok, /Rechecked/);
     assert.match(ok, /machine running Solenta/);
     assert.ok(
       !/ready|auth/i.test(ok),
@@ -364,6 +368,83 @@ describe("Onboarding CLI step (#629)", () => {
       )?.textContent,
       CLAUDE_NPM,
       "verified install command must stay unchanged",
+    );
+    m.unmount();
+  });
+
+  it("a signed-out row offers Sign in in the dedicated shell, not a thread terminal", async () => {
+    const fake = createFakeCoder({
+      settings: { onboardingSeen: false },
+      providers: [{ ...prov("codex", "Codex", true), auth: "signedOut" }],
+    });
+    const m = await openCli(fake);
+    const row = m.query('[data-onboarding-cli-row="codex"]');
+    assert.equal(row?.getAttribute("data-auth-state"), "signedOut");
+    assert.match(row?.textContent || "", /Signed out/);
+    await m.click(m.query('[data-onboarding-cli-signin="codex"]'));
+    assert.deepEqual(fake.of("terminal.signIn").at(-1)?.args, [
+      { provider: "codex", threadId: null },
+    ]);
+    assert.ok(m.query("[data-signin-terminal]"), "sign-in terminal opens");
+    assert.ok(
+      m.query("[data-onboarding-suspended]"),
+      "onboarding steps aside while the terminal is up",
+    );
+    m.unmount();
+  });
+
+  it("Install types the install command for a missing claude", async () => {
+    const fake = createFakeCoder({
+      settings: { onboardingSeen: false },
+      providers: [prov("claude", "Claude Code", false), prov("grok", "Grok", false)],
+    });
+    const m = await openCli(fake);
+    assert.equal(
+      m.query('[data-onboarding-cli-install="grok"]'),
+      null,
+      "no verified install command: copy hint only",
+    );
+    await m.click(m.query('[data-onboarding-cli-install="claude"]'));
+    assert.deepEqual(fake.of("terminal.signIn").at(-1)?.args, [
+      { provider: "claude", threadId: null, install: true },
+    ]);
+    assert.match(m.query("[data-signin-terminal]")?.textContent || "", /Install Claude Code/);
+    m.unmount();
+  });
+
+  it("a signed-in row is Ready with the account, and connects another ChatGPT account", async () => {
+    const fake = createFakeCoder({
+      settings: { onboardingSeen: false },
+      providers: [
+        {
+          ...prov("codex", "Codex", true),
+          auth: "signedIn",
+          account: { email: "dev@example.com", plan: "plus" },
+        },
+      ],
+    });
+    const m = await openCli(fake);
+    const row = m.query('[data-onboarding-cli-row="codex"]');
+    assert.match(row?.textContent || "", /✓ Ready/);
+    assert.equal(
+      row?.querySelector("[data-onboarding-cli-account]")?.textContent,
+      "Signed in as dev@example.com · Plus",
+    );
+    await m.click(m.query("[data-onboarding-connect-chatgpt]"));
+    const patch = fake.of("settings.set").at(-1)?.args[0] as {
+      providerInstances?: Array<{ id: string; name: string; provider: string; configDir: string }>;
+    };
+    const inst = patch.providerInstances?.[0];
+    assert.ok(inst, "saves a new codex instance");
+    assert.equal(inst.provider, "codex");
+    assert.equal(inst.name, "ChatGPT 2");
+    assert.equal(inst.configDir, `~/.codex-${inst.id}`, "own CODEX_HOME, never the default");
+    assert.deepEqual(fake.of("terminal.signIn").at(-1)?.args, [
+      { provider: `codex:${inst.id}`, threadId: null },
+    ]);
+    assert.match(
+      m.query("[data-signin-terminal]")?.textContent || "",
+      /Sign in to Codex \(ChatGPT 2\)/,
     );
     m.unmount();
   });

@@ -8,7 +8,7 @@ import {
   type CSSProperties,
 } from "react";
 import { useCoder } from "./useCoder";
-import { isDevBuild, needsWebTokenGate } from "./coderApi";
+import { isDevBuild } from "./coderApi";
 import { demoProviderLimits } from "./providerUsageDemo";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Sidebar } from "./components/Sidebar";
@@ -46,7 +46,7 @@ import {
   PALETTE_ACTIONS,
   type PaletteMode,
 } from "./commandPalette";
-import { WebTokenGate } from "./components/WebTokenGate";
+import { ConnectionBanner } from "./components/ConnectionBanner";
 import { OauthConsentDialog } from "./components/OauthConsentDialog";
 import { isWebMode } from "./shared/wire";
 import { isBuildMismatch } from "./buildMismatch";
@@ -1368,22 +1368,34 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   } | null>(null);
   const [signInShell, setSignInShell] = useState<{
     providerName: string;
+    install?: boolean;
     nonce: number;
   } | null>(null);
   const signInThreadId =
     view === "thread" && visibleDetail ? visibleDetail.thread.id : null;
   const handleProviderSignIn = useCallback(
-    async (providerId: string) => {
+    async (
+      providerId: string,
+      // `shell`: always the dedicated sign-in shell, never a thread's
+      // terminal (onboarding covers the thread view).
+      opts?: { install?: boolean; shell?: boolean; name?: string },
+    ) => {
+      const install = opts?.install === true;
       const res = await terminal.signIn({
         provider: providerId,
-        threadId: signInThreadId,
+        threadId: opts?.shell ? null : signInThreadId,
+        ...(install ? { install } : {}),
       });
       // Either way Settings closes: two modal focus traps fight each other.
       setSettingsOpen(false);
       if (res.threadId === SIGNIN_TERMINAL_ID) {
         const providerName =
-          providers.find((p) => p.id === providerId)?.name ?? providerId;
-        setSignInShell((cur) => ({ providerName, nonce: (cur?.nonce ?? 0) + 1 }));
+          providers.find((p) => p.id === providerId)?.name ?? opts?.name ?? providerId;
+        setSignInShell((cur) => ({
+          providerName,
+          install,
+          nonce: (cur?.nonce ?? 0) + 1,
+        }));
         return;
       }
       setTerminalReveal((cur) => ({
@@ -1393,6 +1405,11 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       }));
     },
     [terminal, signInThreadId, providers],
+  );
+  const handleOnboardingSignIn = useCallback(
+    (providerId: string, opts?: { install?: boolean; name?: string }) =>
+      handleProviderSignIn(providerId, { ...opts, shell: true }),
+    [handleProviderSignIn],
   );
   const closeSignInShell = useCallback(() => {
     setSignInShell(null);
@@ -1673,7 +1690,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
 
   return (
     <div className={styles.shell}>
-      {needsWebTokenGate() && <WebTokenGate />}
+      <ConnectionBanner />
       <div
         className={styles.app}
         data-layout="app"
@@ -2372,6 +2389,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
           onShowOnboarding={showOnboarding}
           onOpenConnection={(input) => api.app.openRemoteConnection(input)}
           onForgetConnection={(input) => api.app.forgetRemoteConnection(input)}
+          onInstallSolenta={(input) => api.app.installRemoteSolenta(input)}
           projects={projects}
           currentProjectId={project?.id ?? null}
           onSetSpotlight={setSpotlight}
@@ -2412,6 +2430,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         {signInShell && (
           <SignInTerminal
             providerName={signInShell.providerName}
+            install={signInShell.install}
             nonce={signInShell.nonce}
             api={terminal}
             onClose={closeSignInShell}
@@ -2422,10 +2441,11 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         {onboardingLoaded && (
         <OnboardingModal
           open={onboardingOpen}
-          suspended={addPathOpen}
+          suspended={addPathOpen || signInShell != null}
           onFinish={finishOnboarding}
           providers={providers}
           refreshProviders={refreshProviders}
+          onProviderSignIn={handleOnboardingSignIn}
           discoverRecentRepos={discoverRecentRepos}
           onAddProjectPaths={addProjectPaths}
           projects={projects}

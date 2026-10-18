@@ -3050,6 +3050,37 @@ export interface SourceControlDiscovery {
   probedAt: number;
 }
 
+/** One agent CLI as the remote Solenta sees it (Connect, #1660). */
+export type RemoteAgentInfo = Pick<ProviderInfo, "id" | "name" | "available" | "auth" | "account">;
+
+/** What Connect learned about the other computer; null when it did not answer. */
+export interface RemoteHostInfo {
+  version: string;
+  platform: string;
+  /** Older than this app. */
+  outdated: boolean;
+  agents: RemoteAgentInfo[];
+}
+
+export interface RemoteConnectionResult {
+  host: string;
+  remotePort: number;
+  tokenSaved: boolean;
+  remote?: RemoteHostInfo | null;
+  localVersion?: string;
+}
+
+export interface RemoteInstallResult {
+  /** Release tag that was installed. */
+  tag: string;
+  /** Shared libraries the binary cannot find on the host. */
+  missingLibraries: string[];
+  /** `sudo apt install …` covering the libraries above, when known. */
+  aptCommand: string | null;
+  /** A desktop copy of Solenta there still runs the old files. */
+  restartNeeded: boolean;
+}
+
 export interface ProviderInfo {
   id: string;
   /** Display name, e.g. "Claude Code". */
@@ -3113,6 +3144,8 @@ export interface ProviderInfo {
    * the picker or Settings › Agents opens.
    */
   auth?: "signedIn" | "signedOut" | "unknown";
+  /** Who `auth: "signedIn"` is signed in as, when the CLI says (claude, codex via ChatGPT). */
+  account?: { email?: string; plan?: string };
   /**
    * Set on a named instance row (#453): `id` is then the ref
    * `<baseProvider>:<instanceId>` and every capability is the base's.
@@ -4676,9 +4709,14 @@ export interface CoderApi {
       token: string;
       /** Save the verified token encrypted with the OS keychain (default true). */
       remember?: boolean;
-    }): Promise<{ host: string; remotePort: number; tokenSaved: boolean }>;
+    }): Promise<RemoteConnectionResult>;
     /** Delete the saved web token for host:port. */
     forgetRemoteConnection(input: { host: string; remotePort?: number }): Promise<void>;
+    /**
+     * Install or update this build's Linux tarball in ~/solenta on an SSH
+     * host, checked against the release's sha256. Linux x86_64 only.
+     */
+    installRemoteSolenta(input: { host: string }): Promise<RemoteInstallResult>;
   };
   /**
    * Proxied to the local shared-memory server by the main process (the
@@ -6396,10 +6434,12 @@ export interface CoderApi {
      * Type a provider's login command into a fresh "signin" shell (#1501):
      * the thread's when one is given, else a dedicated one in the home
      * directory (threadId SIGNIN_TERMINAL_ID). Returns where it runs.
+     * `install` types the CLI's install command instead, without Enter.
      */
     signIn(input: {
       provider: string;
       threadId?: string | null;
+      install?: boolean;
     }): Promise<{ threadId: string; termId: string }>;
   };
   /**
