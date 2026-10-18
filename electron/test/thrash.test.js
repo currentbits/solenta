@@ -106,11 +106,13 @@ const fs = require("fs");
 const emit = (o) => process.stdout.write(JSON.stringify(o) + "\\n");
 emit({ type: "system", subtype: "init", session_id: "sess-thrash", model: "m" });
 if (process.env.CODER_FAKE_THRASH_EDIT_ONLY) {
-  // One "fix" per turn; the verify gate does the failing.
+  // One "fix" per turn; the verify gate does the failing. One id: a clock
+  // tick between two Date.now() calls unpairs the result on slow CI.
+  const id = "edit-" + process.pid + "-" + Date.now();
   emit({ type: "assistant", message: { content: [
-    { type: "tool_use", id: "edit-" + Date.now(), name: "Edit", input: { file_path: "a.js" } } ] } });
+    { type: "tool_use", id, name: "Edit", input: { file_path: "a.js" } } ] } });
   emit({ type: "user", message: { content: [
-    { type: "tool_result", tool_use_id: "edit-" + Date.now(), content: "ok" } ] } });
+    { type: "tool_result", tool_use_id: id, content: "ok" } ] } });
   emit({ type: "result", subtype: "success", result: "fixed", session_id: "sess-thrash",
     usage: { input_tokens: 1, output_tokens: 1 } });
   process.exit(0);
