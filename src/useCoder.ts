@@ -338,6 +338,7 @@ export interface UseCoderResult {
     updatedCommand?: string,
     inputValues?: InputValues,
     feedback?: string,
+    alwaysRule?: string,
   ) => Promise<void>;
   /** Write plan markdown into the thread's checkout; resolves the path (#1501). */
   savePlan: (plan: string, threadId?: string) => Promise<string>;
@@ -784,6 +785,8 @@ export interface UseCoderResult {
     threadId: string,
     actionId?: string,
   ) => Promise<CommandRunResult>;
+  /** Run a composer `!` line in the thread's checkout (#470). */
+  runShell: (threadId: string, command: string) => Promise<CommandRunResult>;
   /** Live spend + memory server status. */
   appStatus: AppStatus | null;
   /** Persisted app settings (daily budget). */
@@ -1981,6 +1984,12 @@ export function useCoder(): UseCoderResult {
     [api],
   );
 
+  const runShell = useCallback(
+    (threadId: string, command: string) =>
+      api.threads.runCommand({ threadId, command }),
+    [api],
+  );
+
   const saveSettings = useCallback(
     async (patch: Partial<AppSettings>) => {
       const next = await api.settings.set(patch);
@@ -2279,6 +2288,7 @@ export function useCoder(): UseCoderResult {
     setVerifyCommand,
     runVerify,
     runCommand,
+    runShell,
     appStatus,
     settings,
     saveSettings,

@@ -2064,7 +2064,11 @@ export interface PendingQuestion {
   customAnswer?: boolean;
 }
 
-/** User decision on a PendingPermissionInfo. "allowAlways" also allows the tool for the rest of the CLI session. */
+/**
+ * User decision on a PendingPermissionInfo. "allowAlways" also allows matching
+ * calls for the rest of the CLI session: for a command, the `alwaysRule` glob
+ * (default: its prefix, e.g. `npm test:*`), not the whole tool (#479).
+ */
 export type PermissionDecision =
   | "allow"
   | "allowAlways"
@@ -2283,6 +2287,10 @@ export interface CommandRunResult {
   at: number;
   /** Checkout the command ran in (#1216). */
   cwd?: string;
+  /** Typed in the composer as `!command` (#470). */
+  shell?: boolean;
+  /** Still going: `log` is the output so far (`!` commands only). */
+  running?: boolean;
 }
 
 /**
@@ -3042,6 +3050,37 @@ export interface SourceControlDiscovery {
   probedAt: number;
 }
 
+/** One agent CLI as the remote Solenta sees it (Connect, #1660). */
+export type RemoteAgentInfo = Pick<ProviderInfo, "id" | "name" | "available" | "auth" | "account">;
+
+/** What Connect learned about the other computer; null when it did not answer. */
+export interface RemoteHostInfo {
+  version: string;
+  platform: string;
+  /** Older than this app. */
+  outdated: boolean;
+  agents: RemoteAgentInfo[];
+}
+
+export interface RemoteConnectionResult {
+  host: string;
+  remotePort: number;
+  tokenSaved: boolean;
+  remote?: RemoteHostInfo | null;
+  localVersion?: string;
+}
+
+export interface RemoteInstallResult {
+  /** Release tag that was installed. */
+  tag: string;
+  /** Shared libraries the binary cannot find on the host. */
+  missingLibraries: string[];
+  /** `sudo apt install …` covering the libraries above, when known. */
+  aptCommand: string | null;
+  /** A desktop copy of Solenta there still runs the old files. */
+  restartNeeded: boolean;
+}
+
 export interface ProviderInfo {
   id: string;
   /** Display name, e.g. "Claude Code". */
@@ -3105,6 +3144,8 @@ export interface ProviderInfo {
    * the picker or Settings › Agents opens.
    */
   auth?: "signedIn" | "signedOut" | "unknown";
+  /** Who `auth: "signedIn"` is signed in as, when the CLI says (claude, codex via ChatGPT). */
+  account?: { email?: string; plan?: string };
   /**
    * Set on a named instance row (#453): `id` is then the ref
    * `<baseProvider>:<instanceId>` and every capability is the base's.
@@ -3475,6 +3516,11 @@ export interface AppSettings {
    * automatic follow-up turn (issue #1512 I3). Default off.
    */
   resumeInterruptedRuns: boolean;
+  /**
+   * When a turn finishes, send every waiting queued follow-up as ONE turn
+   * (#468). Default on; false runs them one per turn (#1501).
+   */
+  combineQueuedFollowUps: boolean;
   /** Solenta tool, injection, and secret checks. Default on; false opts out. */
   guardrailsEnabled: boolean;
   /**
@@ -4676,9 +4722,14 @@ export interface CoderApi {
       token: string;
       /** Save the verified token encrypted with the OS keychain (default true). */
       remember?: boolean;
-    }): Promise<{ host: string; remotePort: number; tokenSaved: boolean }>;
+    }): Promise<RemoteConnectionResult>;
     /** Delete the saved web token for host:port. */
     forgetRemoteConnection(input: { host: string; remotePort?: number }): Promise<void>;
+    /**
+     * Install or update this build's Linux tarball in ~/solenta on an SSH
+     * host, checked against the release's sha256. Linux x86_64 only.
+     */
+    installRemoteSolenta(input: { host: string }): Promise<RemoteInstallResult>;
   };
   /**
    * Proxied to the local shared-memory server by the main process (the
@@ -5107,6 +5158,12 @@ export interface CoderApi {
        * pending tool has no command field.
        */
       updatedCommand?: string;
+      /**
+       * allowAlways on a command (#479): the session-rule glob the user
+       * confirmed, e.g. `npm test:*`; "*" allows the whole tool. Absent:
+       * the prefix of the command that runs. Ignored by Codex.
+       */
+      alwaysRule?: string;
       inputValues?: InputValues;
       /**
        * "Keep planning" notes (#1501). Deny on a plan prompt only: a live
@@ -5547,11 +5604,14 @@ export interface CoderApi {
      * A solenta.json command rejects with REPO_CONFIG_UNTRUSTED until
      * `trustRepoConfig` carries the ProjectRepoConfig.hash the user approved
      * (#1506); that approval is stored on the project.
+     * `command` instead runs a typed composer `!` line (#470) in the
+     * thread's checkout: 60s cap, one transcript card that fills in live.
      */
     runCommand(input: {
       threadId: string;
       actionId?: string;
       trustRepoConfig?: string;
+      command?: string;
     }): Promise<CommandRunResult>;
     /**
      * Move an eligible thread to Recently deleted for seven days (#940).
@@ -5668,7 +5728,8 @@ export interface CoderApi {
     }): Promise<{ runId: string }>;
     /**
      * "Send now" on a parked queue (#1501): start the next queued item as
-     * its own turn; the rest drain one per successful turn after it.
+     * its own turn; the rest drain after it, combined into one turn unless
+     * combineQueuedFollowUps is off (#468).
      * Rejects while a run is active; a failed start puts the item back.
      */
     sendQueued(input: { threadId: string }): Promise<void>;
@@ -6386,10 +6447,12 @@ export interface CoderApi {
      * Type a provider's login command into a fresh "signin" shell (#1501):
      * the thread's when one is given, else a dedicated one in the home
      * directory (threadId SIGNIN_TERMINAL_ID). Returns where it runs.
+     * `install` types the CLI's install command instead, without Enter.
      */
     signIn(input: {
       provider: string;
       threadId?: string | null;
+      install?: boolean;
     }): Promise<{ threadId: string; termId: string }>;
   };
   /**

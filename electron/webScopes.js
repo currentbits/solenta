@@ -336,6 +336,7 @@ const BY_SCOPE = {
     "app:applyUpdate",
     "app:openRemoteConnection",
     "app:forgetRemoteConnection",
+    "app:installRemoteSolenta",
     // Host-side effects: open apps, read arbitrary host paths, capture windows.
     "shell:reveal",
     "shell:openPath",

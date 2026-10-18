@@ -483,3 +483,52 @@ describe("createWireCoder reconnect", () => {
     assert.deepEqual(delays.slice(0, 7), [1000, 2000, 4000, 8000, 16000, 30000, 30000]);
   });
 });
+
+describe("connection status (#1660)", () => {
+  it("tracks connected → reconnecting → connected, and flags a message queued while down", async () => {
+    const { getWireStatus } = await import("../src/wireStatus.ts");
+    const timers: Array<() => void> = [];
+    const { api, ws } = connect({ setTimeout: (fn) => (timers.push(fn), 0) });
+    authOk(ws);
+    assert.equal(getWireStatus().state, "connected");
+    ws.close();
+    assert.deepEqual(getWireStatus(), { state: "reconnecting", queuedSend: false });
+    void (api.runs.start as (...a: unknown[]) => Promise<unknown>)({ threadId: "t1", prompt: "hi" }).catch(() => {});
+    assert.equal(getWireStatus().queuedSend, true, "a send while down is flagged");
+    timers.find((fn) => fn.toString().includes("openSocket"))?.();
+    const next = lastSocket();
+    assert.notEqual(next, ws, "reconnects");
+    next.open();
+    authOk(next);
+    assert.deepEqual(getWireStatus(), { state: "connected", queuedSend: false });
+    assert.ok(next.sent.some((m) => m.kind === "invoke" && m.channel === "runs:start"), "queued send goes out");
+  });
+
+  it("a 4401 close stops retrying, rejects calls, and reports rejected", async () => {
+    const { getWireStatus } = await import("../src/wireStatus.ts");
+    const timers: Array<() => void> = [];
+    const { api, ws } = connect({ setTimeout: (fn) => (timers.push(fn), 0) });
+    const pending = api.threads.list();
+    ws.readyState = FakeWebSocket.CLOSED;
+    ws.onclose?.({ code: 4401 });
+    assert.equal(getWireStatus().state, "rejected");
+    await assert.rejects(pending, /rejected this device's token/);
+    await assert.rejects(api.threads.list(), /rejected this device's token/);
+    const before = FakeWebSocket.instances.length;
+    for (const fn of timers) fn();
+    assert.equal(FakeWebSocket.instances.length, before, "no reconnect after a rejected token");
+  });
+
+  it("a 4429 close reports rate limiting and keeps retrying", async () => {
+    const { getWireStatus } = await import("../src/wireStatus.ts");
+    const timers: Array<() => void> = [];
+    const { ws } = connect({ setTimeout: (fn) => (timers.push(fn), 0) });
+    authOk(ws);
+    ws.readyState = FakeWebSocket.CLOSED;
+    ws.onclose?.({ code: 4429 });
+    assert.equal(getWireStatus().state, "rateLimited");
+    const before = FakeWebSocket.instances.length;
+    timers.find((fn) => fn.toString().includes("openSocket"))?.();
+    assert.equal(FakeWebSocket.instances.length, before + 1);
+  });
+});

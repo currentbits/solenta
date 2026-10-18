@@ -311,14 +311,15 @@ function createPermissions(ctx) {
   /**
    * Answer a pending permission prompt. For question prompts, `answers`
    * (question text -> chosen label) rides back as updatedInput.answers.
-   * `updatedCommand` (#509) replaces the shell command in updatedInput;
-   * allow-always after an edit keys the session rule on the edited prefix.
-   * Codex JSON-RPC ignores `updatedCommand` (the reply cannot rewrite the
-   * command).
-   * @param {{ threadId: string, requestId: string, decision: "allow" | "allowAlways" | "allowFolder" | "deny", answers?: Record<string, string>, updatedCommand?: string }} input
+   * `updatedCommand` (#509) replaces the shell command in updatedInput.
+   * Allow-always on a command keys the session rule on `alwaysRule` (#479:
+   * the user's glob, or "*" for the whole tool), else on the prefix of the
+   * command that runs. Codex JSON-RPC ignores both (the reply cannot rewrite
+   * the command; acceptForSession is Codex's own exact-command cache).
+   * @param {{ threadId: string, requestId: string, decision: "allow" | "allowAlways" | "allowFolder" | "deny", answers?: Record<string, string>, updatedCommand?: string, alwaysRule?: string }} input
    */
   function respondPermission(input) {
-    const { threadId, requestId, decision, answers, updatedCommand } =
+    const { threadId, requestId, decision, answers, updatedCommand, alwaysRule } =
       input || {};
     // "Keep planning" may carry the user's notes for the next plan (#1501).
     const feedback =
@@ -493,6 +494,7 @@ function createPermissions(ctx) {
         : null;
     const isPlan = pending.toolName === "ExitPlanMode";
     let response;
+    let ruleNote = "";
     if (decision === "allow" || decision === "allowAlways") {
       response = {
         behavior: "allow",
@@ -510,13 +512,12 @@ function createPermissions(ctx) {
       // A governed thread keeps the CLI asking: a Claude session rule would
       // stop can_use_tool for that tool and skip the matrix next time.
       if (decision === "allowAlways" && !governed) {
-        // Unedited: whole-tool session rule (matches today's Accept all).
-        // Edited: prefix of the *edited* command, never the original (#509).
-        response.updatedPermissions = [
-          sessionAllowRule(pending.toolName, resolved.next, {
-            edited: resolved.edited,
-          }),
-        ];
+        // Prefix of the command that runs (the edit, never the original,
+        // #509) unless the user typed a rule; whole tool only on "*" (#479).
+        const rule = sessionAllowRule(pending.toolName, resolved.next, alwaysRule);
+        response.updatedPermissions = [rule];
+        const content = rule.rules[0].ruleContent;
+        ruleNote = ` (rule: ${content ? truncate(content, 200) : `any ${pending.toolName}`})`;
       }
     } else {
       response = {
@@ -558,9 +559,9 @@ function createPermissions(ctx) {
                 decision === "allowAlways"
                   ? "Allowed for session (edited)"
                   : "Allowed (edited)"
-              }: ${truncate(resolved.original, 200)} → ${truncate(resolved.next, 200)}`
+              }: ${truncate(resolved.original, 200)} → ${truncate(resolved.next, 200)}${ruleNote}`
             : decision === "allowAlways"
-              ? `Allowed for session: ${pending.summary}`
+              ? `Allowed for session: ${pending.summary}${ruleNote}`
               : `Allowed: ${pending.summary}`;
     appendMessage(threadId, "event", label, e.runId);
     if (e.pendingPermissions.length === 0) {

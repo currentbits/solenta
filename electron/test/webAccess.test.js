@@ -34,7 +34,7 @@ const { WebSocket } = require("ws");
 }
 
 const { startWebServer } = require("../webServer.js");
-const { WS_PATH, CLOSE_RATE_LIMITED, createAuthLimiter } = require("../webBridge.js");
+const { WS_PATH, CLOSE_RATE_LIMITED, CLOSE_TOKEN_REJECTED, createAuthLimiter } = require("../webBridge.js");
 const { createWebDevices } = require("../webDevices.js");
 const { createWebAccess, createMcpFunnel, listenUrls, MCP_FUNNEL_HTTPS_PORT } = require("../webAccess.js");
 
@@ -204,10 +204,46 @@ describe("webAccess", () => {
     assert.equal(b.ws.readyState, WebSocket.OPEN, "other devices stay connected");
 
     const again = await auth(port, phone.token);
-    assert.notEqual(again.result, "ok", "revoked token cannot re-auth");
+    assert.equal(again.result, CLOSE_TOKEN_REJECTED, "revoked token cannot re-auth, and the client is told why");
     assert.equal(await get(artifactUrl(phone.token)), 401, "revoked token loses artifact links");
     assert.equal(await get(artifactUrl(laptop.token)), 200);
     b.ws.close();
+  });
+
+  it("every start leaves the SSH-readable file token behind and accepts it", async () => {
+    const { loadOrCreateToken, TOKEN_FILENAME } = require("../webServer.js");
+    const withFile = createWebAccess({
+      devices,
+      defaultPort: 0,
+      networkInterfaces: () => IFACES,
+      fileToken: () => loadOrCreateToken(tmp),
+      startServer: (opts) => startWebServer({ ...opts, ctx: {}, handlers: {} }),
+      exec: async () => {
+        throw Object.assign(new Error("spawn ENOENT"), { code: "ENOENT" });
+      },
+    });
+    try {
+      // The Settings switch, not --serve-web: Remote Connections must still find a token.
+      const st = await withFile.setEnabled({ enabled: true });
+      const token = fs.readFileSync(path.join(tmp, TOKEN_FILENAME), "utf8").trim();
+      assert.ok(token.length > 20);
+      const row = st.devices.find((d) => d.legacy);
+      assert.equal(row && row.name, "SSH and command line");
+      const r = await auth(Number(st.urls[0].url.split(":").at(-1)), token);
+      assert.equal(r.result, "ok");
+      r.ws.close();
+
+      // Revoking deletes the file; the next start writes a new, different one.
+      await withFile.revokeDevice({ id: row.id });
+      assert.equal(fs.existsSync(path.join(tmp, TOKEN_FILENAME)), false);
+      await withFile.setEnabled({ enabled: false });
+      await withFile.setEnabled({ enabled: true });
+      const next = fs.readFileSync(path.join(tmp, TOKEN_FILENAME), "utf8").trim();
+      assert.notEqual(next, token);
+      assert.equal(devices.list().filter((d) => d.legacy).length, 1);
+    } finally {
+      await withFile.stop();
+    }
   });
 
   it("rate-limits failed auth per address, even a later correct token", async () => {

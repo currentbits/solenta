@@ -1222,6 +1222,8 @@ async function listProvidersForApi(store, opts) {
   for (const p of list) {
     const auth = providerAuth.get(p.id);
     if (auth && p.available) p.auth = auth;
+    const account = p.auth === "signedIn" ? providerAuth.account(p.id) : undefined;
+    if (account) p.account = account;
   }
   return list;
 }

@@ -181,7 +181,7 @@
 
 .cliRowMain {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
 }
@@ -198,8 +198,39 @@
   flex-shrink: 0;
 }
 
-.cliRow[data-available="true"] .cliState {
+.cliRow[data-auth-state="signedIn"] .cliState,
+.cliRow[data-auth-state="unknown"] .cliState,
+.cliRow[data-auth-state="checking"] .cliState {
   color: var(--green);
+}
+
+.cliRowEnd {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.cliAccount {
+  font-size: 11px;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.cliConnect {
+  align-self: flex-start;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.cliConnect:hover:not(:disabled) {
+  color: var(--text);
+  text-decoration: underline;
 }
 
 .cliHintRow {

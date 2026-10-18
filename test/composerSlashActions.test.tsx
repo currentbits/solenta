@@ -513,6 +513,60 @@ describe("ThreadView / palette actions", () => {
     assert.equal(opened, 1);
   });
 
+  describe("copy (#493)", () => {
+    let copied: string[] = [];
+    const stubClipboard = () => {
+      copied = [];
+      Object.defineProperty(navigator, "clipboard", {
+        value: {
+          writeText: async (text: string) => {
+            copied.push(text);
+          },
+        },
+        configurable: true,
+      });
+    };
+    const twoTurns = () =>
+      detail({
+        messages: [
+          msg({ id: "u1", role: "user", text: "first", createdAt: 1 }),
+          msg({ id: "a1", role: "assistant", text: "older **reply**", createdAt: 2 }),
+          msg({ id: "u2", role: "user", text: "second", createdAt: 3 }),
+          msg({ id: "a2", role: "assistant", text: "latest reply", createdAt: 4 }),
+          msg({ id: "t1", role: "tool", text: "ran ls", createdAt: 5 }),
+        ],
+      });
+
+    it("/copy copies the latest assistant reply and flashes", async () => {
+      stubClipboard();
+      const m = await mountView({ detail: twoTurns() });
+      await acceptSlash(m, "/copy");
+      await m.flush();
+      assert.deepEqual(copied, ["latest reply"]);
+      assert.match(m.query("[data-copied-reply]")?.textContent ?? "", /Copied last reply/);
+      assert.equal(textarea(m).value, "", "token cleared");
+    });
+
+    it("the per-message button copies that older turn's Markdown", async () => {
+      stubClipboard();
+      const m = await mountView({ detail: twoTurns() });
+      const btn = m.query('[data-msg="a1"] [data-msg-copy]');
+      assert.ok(btn, "copy button on the older reply");
+      await m.click(btn as HTMLElement);
+      await m.flush();
+      assert.deepEqual(copied, ["older **reply**"]);
+    });
+
+    it("/copy on an empty thread is a no-op", async () => {
+      stubClipboard();
+      const m = await mountView({ detail: detail({ messages: [] }) });
+      await acceptSlash(m, "/copy");
+      await m.flush();
+      assert.deepEqual(copied, []);
+      assert.equal(m.query("[data-copied-reply]"), null);
+    });
+  });
+
   it("/rewind opens the last-user-message confirm when there is no undo bar", async () => {
     const m = await mountView({
       onRewindAndResubmit: async () => {},

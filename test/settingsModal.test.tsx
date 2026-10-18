@@ -1750,6 +1750,36 @@ describe("SettingsModal resume interrupted runs (#1512 I3)", () => {
   });
 });
 
+describe("SettingsModal combine queued follow-ups (#468)", () => {
+  it("is on by default and saves the toggle", async () => {
+    const patches: Partial<AppSettings>[] = [];
+    const m = await mount(
+      modal({
+        initialPane: "threads",
+        settings: {
+          dailyBudgetUsd: null,
+          autoSettleAfterDays: 3,
+        } as AppSettings,
+        onSaveSettings: async (patch) => {
+          patches.push(patch);
+          return {
+            dailyBudgetUsd: null,
+            autoSettleAfterDays: 3,
+            combineQueuedFollowUps: patch.combineQueuedFollowUps !== false,
+          } as AppSettings;
+        },
+      }),
+    );
+    const box = m.query("[data-combine-queued-follow-ups]") as HTMLInputElement;
+    assert.ok(box, "combine checkbox");
+    assert.equal(box.checked, true);
+    await m.click(box);
+    assert.equal(patches.length, 1);
+    assert.equal(patches[0].combineQueuedFollowUps, false);
+    m.unmount();
+  });
+});
+
 describe("SettingsModal worker model pool (issue #467)", () => {
   const namedPool: SubagentPool = {
     defaultAlias: "fast",
@@ -2964,6 +2994,48 @@ describe("SettingsModal Agents › named provider instances (#453)", () => {
       JSON.stringify(GOOSE.command),
       "a path with a space round-trips through JSON form",
     );
+  });
+
+  it("Connect ChatGPT account adds a codex instance with its own CODEX_HOME and signs in", async () => {
+    const saved: Array<Partial<AppSettings>> = [];
+    const signIns: Array<[string, { name?: string } | undefined]> = [];
+    const CODEX: ProviderInfo = {
+      ...KIMI,
+      id: "codex",
+      name: "Codex",
+      auth: "signedIn",
+      account: { email: "dev@example.com", plan: "pro" },
+    };
+    const m = await mount(
+      cloneElement(
+        modal({
+          initialPane: "agents",
+          providers: [CLAUDE, CODEX],
+          settings: { providerInstances: [INSTANCE] } as Partial<AppSettings> as AppSettings,
+          onSaveSettings: async (patch) => {
+            saved.push(patch);
+            return patch as AppSettings;
+          },
+        }),
+        {
+          onProviderSignIn: async (id: string, opts?: { name?: string }) =>
+            void signIns.push([id, opts]),
+        },
+      ),
+    );
+    assert.equal(
+      m.query('[data-provider-row="codex"] [data-auth-state]')?.textContent,
+      "Signed in as dev@example.com · Pro",
+    );
+    await m.click(m.query("[data-connect-chatgpt]"));
+    const list = saved.at(-1)?.providerInstances;
+    assert.equal(list?.length, 2, "keeps the existing instance");
+    const added = list![1]!;
+    assert.deepEqual(
+      { ...added, id: "x", configDir: added.configDir?.replace(added.id, "x") },
+      { id: "x", name: "ChatGPT 2", provider: "codex", configDir: "~/.codex-x", env: {} },
+    );
+    assert.deepEqual(signIns, [[`codex:${added.id}`, { name: "Codex (ChatGPT 2)" }]]);
   });
 });
 

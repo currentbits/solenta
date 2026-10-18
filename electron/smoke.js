@@ -365,6 +365,34 @@ async function waitForCoder(webContents) {
 }
 
 /**
+ * Startup-time gate (#418): process start to the renderer's first React
+ * mount, through the real module graph, preload and dist bundle. CI runners
+ * vary ~3x, so the budget only catches gross regressions (a sync scan or a
+ * big eager import at boot), not 50 ms drift. SOLENTA_STARTUP_BUDGET_MS
+ * overrides it.
+ * ponytail: fixed budget, not a stored baseline; add a per-OS baseline
+ * artifact if real regressions slip under it.
+ * @param {import('electron').WebContents} webContents
+ */
+async function assertStartupBudget(webContents) {
+  const budgetMs = Number(process.env.SOLENTA_STARTUP_BUDGET_MS) || 15000;
+  while (
+    !(await webContents.executeJavaScript(
+      `document.getElementById("root")?.childElementCount > 0`,
+      true,
+    ))
+  ) {
+    if (performance.now() > budgetMs) break;
+    await sleep(20);
+  }
+  const ms = Math.round(performance.now());
+  logStep("startup", { ok: ms <= budgetMs, ms, budgetMs });
+  if (ms > budgetMs) {
+    throw new Error(`startup took ${ms} ms, over the ${budgetMs} ms budget`);
+  }
+}
+
+/**
  * Assert new work-log shape: no "… started"/"… settled" labels; every item has runId.
  * @param {Array<{label: string, runId?: string, done: boolean}>} workLog
  * @param {string} [runId]
@@ -457,6 +485,7 @@ app
 
     await win.loadFile(distIndex);
     await waitForCoder(win.webContents);
+    await assertStartupBudget(win.webContents);
 
     const projectPath = process.cwd();
 
