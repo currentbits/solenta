@@ -28,6 +28,12 @@ import { ArchiveToast } from "./components/ArchiveToast";
 import { ResumeNotice } from "./components/ResumeNotice";
 import { UNDO_WINDOW_MS, useUndoLast } from "./app/useUndoLast";
 import { bindingLabel, matchesBinding } from "./keybindings";
+import {
+  canDetachThread,
+  detachThread,
+  detachedThreadId,
+  detachedWindowTitle,
+} from "./detachedWindow";
 import { isShortcutBlocked } from "./sidebarSelection";
 import {
   EMPTY_HISTORY,
@@ -230,6 +236,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     answerSecret,
     setProvider,
     setReasoningEffort,
+    applyAgentProfile,
     setWebSearch,
     setFast,
     setRoute,
@@ -389,6 +396,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     removeMcpServer,
     setMcpEnabled,
     listMcpCatalog,
+    xcodeMcpStatus,
+    pairXcodeMcp,
     pickMcpImport,
     previewMcpImport,
     installMcpImport,
@@ -514,8 +523,11 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     initialSidebarWidth,
   );
   const [agentsCollapsed, setAgentsCollapsed] = useState(true);
+  /** Detached thread window (#519): no sidebar, selection locked. */
+  const [detachedId] = useState(detachedThreadId);
   /** Wide layouts: the thread sidebar folds to a rail (#1411, ⌘B). */
   const [sidebarHidden, setSidebarHidden] = useState(() => {
+    if (detachedId) return true;
     try {
       return window.localStorage.getItem("app:sidebarHidden") === "1";
     } catch {
@@ -523,6 +535,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     }
   });
   const toggleSidebar = useCallback(() => {
+    if (detachedId) return;
     setSidebarHidden((hidden) => {
       const next = !hidden;
       try {
@@ -532,7 +545,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       }
       return next;
     });
-  }, []);
+  }, [detachedId]);
   /** Manual inspector tabs for this renderer session. Collapse unmounts the panel. */
   const [inspectorChoices, setInspectorChoices] = useState<
     Record<string, PanelTab>
@@ -586,6 +599,11 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
 
   const handleSelectThread = useCallback(
     (id: string, origin?: ThreadOpenOrigin) => {
+      // A detached window stays on its thread; links elsewhere get their own.
+      if (detachedId && id !== detachedId) {
+        detachThread(id);
+        return;
+      }
       const current = viewRef.current;
       if (isReturnableView(current)) {
         const projectId =
@@ -616,7 +634,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       setDrawer(null);
       selectThread(id);
     },
-    [selectThread],
+    [selectThread, detachedId],
   );
   const liveThreadIds = useMemo(
     () => (loading ? undefined : threads.map((t) => t.id)),
@@ -757,6 +775,34 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       offProject();
     };
   }, [api, handleSelectThread]);
+
+  // Detached window (#519): the title carries the attention dot (Window menu,
+  // Mission Control, taskbar), and the window closes once its thread is gone.
+  const detachedThread = detachedId
+    ? threads.find((t) => t.id === detachedId)
+    : undefined;
+  const detachedTitle = detachedId ? detachedWindowTitle(detachedThread) : null;
+  useEffect(() => {
+    if (detachedTitle) document.title = detachedTitle;
+  }, [detachedTitle]);
+  const detachedGone = Boolean(detachedId) && !loading && !detachedThread;
+  useEffect(() => {
+    if (detachedGone) window.close();
+  }, [detachedGone]);
+
+  // Main window: open the selected thread in its own window.
+  useEffect(() => {
+    if (!canDetachThread()) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (!matchesBinding(e, "thread.detach")) return;
+      const id = selectedThreadIdRef.current;
+      if (!id || viewRef.current !== "thread") return;
+      e.preventDefault();
+      detachThread(id);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   const handleCreateThread = useCallback(
     (projectId?: string, opts?: { worktree?: boolean; orchestrate?: boolean; teach?: boolean; ask?: boolean; issueNumber?: number | null; baseBranch?: string | null }) => {
@@ -1423,9 +1469,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     createThread,
     startRun,
     setIssuePlanStatus,
-    setProvider,
-    setReasoningEffort,
-    setPermissionMode,
+    applyAgentProfile,
     checkoutPr,
     setView,
     setRevealThreadId,
@@ -1650,6 +1694,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
             type="button"
             ref={threadsBtnRef}
             className={styles.narrowBtn}
+            hidden={Boolean(detachedId)}
             data-drawer-open="sidebar"
             aria-expanded={drawer === "sidebar"}
             aria-controls="pane-sidebar"
@@ -1696,6 +1741,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
           {!narrow && sidebarHidden ? (
             <div className={styles.sidebarRail} data-sidebar-rail="">
               <div className={styles.sidebarRailDrag} />
+              {!detachedId && (
               <button
                 type="button"
                 className={styles.sidebarRailBtn}
@@ -1719,8 +1765,10 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
                   <path d="M6 2.5v11" />
                 </svg>
               </button>
+              )}
             </div>
           ) : null}
+          {!detachedId && (
           <div
             className={styles.sidebarBody}
             hidden={!narrow && sidebarHidden}
@@ -1798,6 +1846,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
             />
           </ErrorBoundary>
           </div>
+          )}
         </div>
         {!narrow && !sidebarHidden && (
           <div
@@ -2039,6 +2088,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onAnswerSecret={answerSecret}
         onSetProvider={setProvider}
         onSetReasoningEffort={setReasoningEffort}
+        onApplyAgentProfile={applyAgentProfile}
         onSetWebSearch={setWebSearch}
         onSetFast={setFast}
         onSetRoute={setRoute}
@@ -2335,6 +2385,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
             removeMcpServer,
             setMcpEnabled,
             listMcpCatalog,
+            xcodeMcpStatus,
+            pairXcodeMcp,
             pickMcpImport,
             previewMcpImport,
             installMcpImport,

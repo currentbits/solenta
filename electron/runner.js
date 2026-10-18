@@ -46,6 +46,7 @@ const cliCommands = require("./cliCommands.js");
 const ask = require("./ask.js");
 const btw = require("./btw.js");
 const { applyRoute } = require("./routing.js");
+const { foldersNoteFor } = require("./projectFolders.js");
 const {
   getMemoryStatus,
   looksGrokConfigCorrupt,
@@ -59,6 +60,8 @@ const workflowEngine = require("./workflow.js");
 const { wrapCommand } = require("./ssh.js");
 const { wslTarget } = require("./wsl.js");
 const { resolveSandbox } = require("./sandbox.js");
+const { createSeatbelt } = require("./runner-seatbelt.js");
+const { stopWatching } = require("./seatbeltWatch.js");
 const { killTree } = require("./proc.js");
 const { stop: stopDevServer } = require("./devservers.js");
 const {
@@ -1683,7 +1686,30 @@ function createRunner(opts) {
     if (pending && pending.runId === runId) Object.assign(pending, steps);
   }
 
+  /**
+   * A fresh user turn folds the idle queue into its prompt up front (#924).
+   * Until the turn is accepted (fork launched, run-queued, or user message
+   * appended) any throw — budget, missing CLI, worktree setup — puts that
+   * queue back in front of whatever was queued since.
+   */
   async function startRun(input) {
+    const fold = { taken: null };
+    try {
+      return await startRunFolded(input, fold);
+    } catch (err) {
+      if (fold.taken) {
+        services.restoreQueuedHead(store, {
+          threadId: input.threadId,
+          taken: fold.taken,
+        });
+        pushDetail(input.threadId);
+        pushThreadsChanged();
+      }
+      throw err;
+    }
+  }
+
+  async function startRunFolded(input, fold) {
     // First spawn after launch waits for the login-shell PATH (#1475).
     const pathWait = whenPathReady();
     if (pathWait) await pathWait;
@@ -1788,6 +1814,8 @@ function createRunner(opts) {
     // Fold a held inbound (or leftover follow-up) into this turn so a
     // queue-only message sitting on an idle thread is actually read.
     // After intercepts: /btw, ask, and /handoff must not consume the queue.
+    const ownPrompt = prompt;
+    const ownAttachments = attachments;
     if (!input.fromQueue && !input.fromNotice && !isReplayTurn(input)) {
       let taken = null;
       try {
@@ -1796,6 +1824,7 @@ function createRunner(opts) {
         taken = null;
       }
       if (taken && taken.prompt) {
+        fold.taken = taken;
         const takenCli = formatQueuedPrompt(taken);
         prompt = prompt ? `${takenCli}\n\n${prompt}` : takenCli;
         attachments = [
@@ -1891,6 +1920,7 @@ function createRunner(opts) {
         throw err;
       }
 
+      fold.taken = null;
       otel.endRun({ threadId, runId: forkRunId, status: "done" });
       appendMessage(threadId, "user", prompt, forkRunId, null, attachments);
       const dirty = services.dirtySnapshotWarning(worker);
@@ -1946,6 +1976,7 @@ function createRunner(opts) {
         (store.getSettings().maxConcurrentRuns != null &&
           (!runSlotsFree() || runQueueOrder().length > 0)))
     ) {
+      fold.taken = null;
       return enqueueRun(threadId, input, prompt, attachments);
     }
 
@@ -1962,7 +1993,9 @@ function createRunner(opts) {
       try {
         materializePendingWorktree(threadId);
       } catch (err) {
-        failWorktreeSetup(threadId, prompt, attachments, err, {
+        // Record only this turn's own prompt: the folded queue goes back
+        // to the queue, so a Retry cannot deliver it twice.
+        failWorktreeSetup(threadId, ownPrompt, ownAttachments, err, {
           fromQuotaWait: input.fromQuotaWait,
           fromQuotaFailover: input.fromQuotaFailover,
         });
@@ -1997,6 +2030,7 @@ function createRunner(opts) {
     // exists yet. A quota-wait resume is the SAME turn: do not append again.
     // skipUserAppend: inbound card was already posted while the previous
     // turn was running (issue #551).
+    fold.taken = null;
     if (!isReplayTurn(input) && !skipUserAppend) {
       appendMessage(
         threadId,
@@ -2154,6 +2188,7 @@ function createRunner(opts) {
           (projectForGate && projectForGate.path) ||
           null,
       ) +
+      foldersNoteFor(projectForGate, dispatchThread) +
       services.suggestedWorkNoteFor() +
       services.automationNoteFor() +
       services.subagentPoolNoteFor(
@@ -2615,6 +2650,8 @@ function createRunner(opts) {
   function stopAll() {
     disposeWatchdogs();
     stopAllBtw();
+    // The Seatbelt denial follower (#803) is a `log stream` child.
+    stopWatching();
     // Clean app quit (main.js before-quit). Mark each active run idle with an
     // interruption event so the next launch's recoverInterruptedRuns (crash
     // path only) does not re-stamp them as generic failures. Kill + flush
@@ -2845,6 +2882,17 @@ function createRunner(opts) {
     clearQuestion,
     maybePersistPlanApproval,
   } = createPermissions(ctx);
+
+  // #803: every provider spawns through ctx.resolveSpawn; a thread whose
+  // profile has write/network rules runs under sandbox-exec (macOS, local).
+  // Before the provider seams below destructure ctx.
+  const { confineSpawn } = createSeatbelt(ctx);
+  ctx.resolveSpawn = (project, binary, args, localCwd, env, threadId) =>
+    confineSpawn(resolveSpawn(project, binary, args, localCwd, env), {
+      threadId,
+      project,
+      env,
+    });
 
   const {
     afterFailedTurn,

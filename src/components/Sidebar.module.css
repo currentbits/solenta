@@ -158,6 +158,16 @@
   line-height: 16px;
 }
 
+/* #514: "+N folders" on multi-folder projects. Neutral, unlike scmChip. */
+.folderChip {
+  composes: scmChip;
+  border-color: var(--border-soft);
+  color: var(--text-muted);
+  background: transparent;
+  font-weight: 550;
+  letter-spacing: 0;
+}
+
 .viewRow {
   display: flex;
   align-items: center;

@@ -53,6 +53,12 @@ export const KEYBINDINGS: readonly KeybindingDef[] = [
     scope: "list",
     keys: "mod+1…9",
   },
+  {
+    id: "thread.detach",
+    label: "Open thread in new window",
+    scope: "window",
+    chord: "mod+shift+o",
+  },
   { id: "thread.next", label: "Next thread", scope: "list", chord: "mod+j" },
   {
     id: "thread.prev",

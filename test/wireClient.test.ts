@@ -305,6 +305,57 @@ describe("createWireCoder offline queue", () => {
     assert.deepEqual(await other, []);
   });
 
+  it("never coalesces queued writes, and reads do not borrow across a write (#928)", async () => {
+    const api = createWireCoder({
+      url: "ws://127.0.0.1:8787",
+      token: "tok-secret",
+      WebSocket: FakeWebSocket as unknown as typeof WebSocket,
+      setTimeout: () => 0,
+    });
+    const ws = lastSocket();
+    ws.open();
+    authOk(ws);
+    ws.readyState = FakeWebSocket.CLOSING;
+    const calls = [
+      api.threads.summaries(),
+      api.threads.summaries(),
+      api.settings.set({ notifications: true } as never),
+      api.settings.set({ notifications: false } as never),
+      api.settings.set({ notifications: true } as never),
+      api.threads.summaries(),
+    ];
+    ws.readyState = FakeWebSocket.OPEN;
+    authOk(ws);
+
+    // threads:list is the reconnect resync, not one of ours.
+    const invokes = ws.sent.filter(
+      (m) => m.kind === "invoke" && m.channel !== "threads:list",
+    );
+    assert.deepEqual(
+      invokes.map((m) => m.kind === "invoke" && [m.channel, m.args]),
+      [
+        ["threads:summaries", []],
+        ["settings:set", [{ notifications: true }]],
+        ["settings:set", [{ notifications: false }]],
+        ["settings:set", [{ notifications: true }]],
+        ["threads:summaries", []],
+      ],
+      "every write in order; polls coalesce only up to the next write",
+    );
+    for (const m of invokes) {
+      ws.deliver({ kind: "reply", id: m.id, result: m.id });
+    }
+    const ids = invokes.map((m) => m.id);
+    assert.deepEqual(await Promise.all(calls), [
+      ids[0],
+      ids[0],
+      ids[1],
+      ids[2],
+      ids[3],
+      ids[4],
+    ]);
+  });
+
   it("rejects an invoke whose reply never arrives", async () => {
     const fire: Array<() => void> = [];
     const { api, ws } = connect({

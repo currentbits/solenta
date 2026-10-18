@@ -76,6 +76,38 @@ describe("nextFire", () => {
     assert.equal(new Date(from).getDay(), 1);
     assert.equal(new Date(at(2026, 6, 6, 9, 0, 0)).getDay(), 1);
   });
+
+  it("weekly: anchor keeps the scheduled weekday on a later catch-up (#931)", () => {
+    const monday = at(2026, 5, 8, 9, 0, 0);
+    // Tuesday catch-up: next Monday, not next Tuesday.
+    assert.equal(
+      nextFire("weekly", 9, at(2026, 5, 9, 10, 0, 0), monday),
+      at(2026, 5, 15, 9, 0, 0),
+    );
+    // Three weeks offline: skips the backlog to the next Monday.
+    assert.equal(
+      nextFire("weekly", 9, at(2026, 5, 30, 12, 0, 0), monday),
+      at(2026, 6, 6, 9, 0, 0),
+    );
+    // Run by hand on Wednesday before the slot: the Monday slot stands.
+    assert.equal(
+      nextFire("weekly", 9, at(2026, 5, 3, 12, 0, 0), monday),
+      monday,
+    );
+  });
+
+  it("weekly: anchored slots keep the local hour across DST", () => {
+    // Spans the US (Mar 8) and EU (Mar 29) spring-forward and the
+    // Oct 25 / Nov 1 fall-back; whatever TZ the suite runs in.
+    let slot = at(2026, 1, 2, 9, 0, 0); // Monday
+    for (let i = 0; i < 45; i++) {
+      slot = nextFire("weekly", 9, slot + 3_600_000, slot);
+      const d = new Date(slot);
+      assert.equal(d.getDay(), 1);
+      assert.equal(d.getHours(), 9);
+      assert.equal(d.getMinutes(), 0);
+    }
+  });
 });
 
 describe("dueAutomations", () => {
@@ -279,6 +311,62 @@ describe("automation CRUD + scheduler", () => {
     assert.ok(after.nextRunAt > Date.now());
     assert.equal(after.lastError, null);
     assert.ok(broadcasts.some((b) => b[0] === "threads:changed"));
+  });
+
+  it("weekly: Monday-due, Tuesday catch-up stays on Monday (#931)", async () => {
+    const created = services.addAutomation(store, {
+      projectId: "p1",
+      name: "Weekly",
+      prompt: "go",
+      provider: "claude",
+      preset: "weekly",
+      hour: 9,
+    });
+    store.setAutomations([
+      { ...store.getAutomation(created.id), nextRunAt: at(2026, 5, 8, 9) },
+    ]);
+    store.saveNow();
+    const started = [];
+    const sched = startScheduler({
+      store,
+      runner: { startRun: async (input) => started.push(input) },
+      intervalMs: 60 * 60 * 1000,
+      now: () => at(2026, 5, 9, 10),
+    });
+    try {
+      await sched.tick();
+    } finally {
+      sched.stop();
+    }
+    assert.equal(started.length, 1);
+    assert.equal(store.getAutomation(created.id).nextRunAt, at(2026, 5, 15, 9));
+  });
+
+  it("weekly: runNow and hour edits keep the scheduled weekday (#931)", async () => {
+    const created = services.addAutomation(store, {
+      projectId: "p1",
+      name: "Weekly",
+      prompt: "go",
+      provider: "claude",
+      preset: "weekly",
+      hour: 9,
+    });
+    // A slot three days of the week away from today, so neither path can
+    // pass by landing on today's weekday.
+    const d = new Date();
+    d.setDate(d.getDate() + 3);
+    d.setHours(9, 0, 0, 0);
+    const weekday = d.getDay();
+    store.setAutomations([
+      { ...store.getAutomation(created.id), nextRunAt: d.getTime() },
+    ]);
+    store.saveNow();
+    await runNow({ store, runner: { startRun: async () => ({}) } }, created.id);
+    assert.equal(store.getAutomation(created.id).nextRunAt, d.getTime());
+
+    const updated = services.updateAutomation(store, { id: created.id, hour: 14 });
+    assert.equal(new Date(updated.nextRunAt).getDay(), weekday);
+    assert.equal(new Date(updated.nextRunAt).getHours(), 14);
   });
 
   it("runNow fires immediately and advances nextRunAt", async () => {

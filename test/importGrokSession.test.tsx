@@ -87,7 +87,7 @@ function sidebarProps(over: Partial<React.ComponentProps<typeof Sidebar>> = {}) 
     onSelectThread: () => {},
     onCreateThread: () => {},
     onAddProject: () => {},
-    searchThreads: async () => [],
+    searchThreads: async () => ({ threads: [], truncated: false }),
     ...over,
   };
 }

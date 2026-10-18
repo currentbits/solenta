@@ -131,6 +131,52 @@ describe("thread:updated tail merge", () => {
 });
 
 /**
+ * A run that ends while the web socket is down loses its final thread:updated,
+ * and no later push exposes the seq gap. The reconnect resync (a bare-array
+ * threads:changed from wireClient) must refetch the open transcript (#929).
+ */
+describe("web reconnect resync (#929)", () => {
+  function DetailProbe({ onState }: { onState: (s: ReturnType<typeof useCoder>) => void }) {
+    const state = useCoder();
+    onState(state);
+    return <div />;
+  }
+
+  it("converges sidebar and transcript after a lost final push", async () => {
+    const working = thread({ id: "t-web", title: "web run", status: "working" });
+    const fake = createFakeCoder({
+      projects: [project()],
+      threads: [working],
+      details: { "t-web": detail({ thread: working, messages: [] }) },
+    });
+    let latest = {} as ReturnType<typeof useCoder>;
+    const shell = await mount(<div />);
+    installFakeCoder(fake);
+    shell.unmount();
+    const m = await mount(<DetailProbe onState={(s) => (latest = s)} />);
+    await m.flush();
+    assert.equal(latest.detail?.thread.status, "working");
+
+    // The run finished on the host while we were offline.
+    const done = { ...working, status: "done" as const };
+    const get = fake.api.threads.get;
+    fake.api.threads.get = async (id: string) => {
+      await get(id);
+      return detail({ thread: done, messages: [msg("m-final", "final reply")] });
+    };
+    const before = fake.of("threads.get").length;
+    await inAct(() => fake.emitThreads([done]));
+    await m.flush();
+
+    assert.equal(latest.threads[0]?.status, "done", "sidebar converges");
+    assert.equal(fake.of("threads.get").length, before + 1, "detail refetched once");
+    assert.equal(latest.detail?.thread.status, "done", "transcript converges");
+    assert.equal(latest.detail?.messages.at(-1)?.text, "final reply");
+    m.unmount();
+  });
+});
+
+/**
  * threads:changed used to replace the whole list with cloned rows, so every
  * memo keyed on `threads` and every memo'd card reran (issue #617). applyThreads
  * now reconciles by value; these probes read the live list identity.

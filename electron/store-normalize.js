@@ -7,6 +7,7 @@ const { getProvider, honouredEfforts } = require("./providers.js");
 const { normalizeMcpServers } = require("./mcp.js");
 const { normalizeProviderInstances } = require("./providerInstances.js");
 const { normalizeModelPrices } = require("./modelPrices.js");
+const { parsePolicy } = require("./governance.js");
 
 /**
  * @param {unknown} u
@@ -96,6 +97,10 @@ function parseAgentProfile(item, strict) {
       "agentProfiles entry permissionMode must be one of default, acceptEdits, plan, auto, bypassPermissions",
     );
   }
+  // Governance matrix (#262). Junk heals to absent on read (the profile
+  // stays); settings:set throws. Absent stays absent so fixtures deepEqual.
+  const policy =
+    rec.policy === undefined ? null : parsePolicy(rec.policy, strict);
   return {
     id,
     name,
@@ -103,6 +108,7 @@ function parseAgentProfile(item, strict) {
     model,
     reasoningEffort: /** @type {string | null} */ (effort),
     permissionMode: /** @type {string} */ (permissionMode),
+    ...(policy ? { policy } : {}),
   };
 }
 

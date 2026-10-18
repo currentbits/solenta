@@ -156,7 +156,7 @@ function Host({
             snoozedAt: until == null ? null : Date.now(),
           }));
         }}
-        searchThreads={async () => threads}
+        searchThreads={async () => ({ threads, truncated: false })}
       />
     </div>
   );
@@ -325,7 +325,7 @@ describe("Sidebar multi-select (round 46)", () => {
             );
           }}
           onSetSettled={() => {}}
-          searchThreads={async () => threads}
+          searchThreads={async () => ({ threads, truncated: false })}
         />
       );
     }
@@ -392,7 +392,7 @@ describe("Sidebar multi-select (round 46)", () => {
               ),
             );
           }}
-          searchThreads={async () => threads}
+          searchThreads={async () => ({ threads, truncated: false })}
         />
       );
     }
