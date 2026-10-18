@@ -1882,6 +1882,7 @@ export const Composer = memo(function Composer({
                 attachment={a}
                 onRemove={() => removeAttachment(a.path)}
                 onLoadImage={onLoadAttachmentImage}
+                pdfAsText={provider !== "claude" && provider !== "opencode"}
               />
             ))}
           </div>

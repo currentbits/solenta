@@ -55,6 +55,7 @@ const { recordConsolidateOutcome } = require("./memory-consolidate.js");
 const { recordRunOutcome } = require("./memory-record.js");
 const { createOtel } = require("./otel.js");
 const { saveToolImages } = require("./tool-images.js");
+const { pdfTextSection } = require("./attachments.js");
 const workflowEngine = require("./workflow.js");
 const { wrapCommand } = require("./ssh.js");
 const { wslTarget } = require("./wsl.js");
@@ -2239,6 +2240,14 @@ function createRunner(opts) {
         bootstrapMemory,
       });
       if (abortIfCancelled(threadId, runId)) return { runId };
+      // Extracted after active.set so a slow PDF never opens a double-send gap.
+      const pdfNote = await pdfTextSection({
+        userDataPath,
+        threadId,
+        provider,
+        attachments,
+      });
+      if (abortIfCancelled(threadId, runId)) return { runId };
 
       // Native `/compact` goes out bare: Claude reads any trailing text as
       // summary instructions, and Codex swaps the turn for thread/compact/start.
@@ -2248,7 +2257,7 @@ function createRunner(opts) {
         dispatchThread.sessionId,
       )
         ? "/compact"
-        : promptPrefix + bootNote;
+        : promptPrefix + pdfNote + bootNote;
 
       const name = workflowNameFromThreadId(threadId);
 

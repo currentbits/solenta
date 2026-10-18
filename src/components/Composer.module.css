@@ -1073,6 +1073,11 @@
   white-space: nowrap;
 }
 
+.attachmentNote {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
 .attachmentRemove {
   display: grid;
   place-items: center;

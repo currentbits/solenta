@@ -289,6 +289,22 @@ describe("Composer attachments", () => {
     m.unmount();
   });
 
+  it("marks a PDF chip text only on providers that cannot read PDFs (#466)", async () => {
+    const pdf = { kind: "file" as const, path: "/u/spec.pdf", name: "spec.pdf" };
+    for (const [provider, textOnly] of [
+      ["codex", true],
+      ["claude", false],
+    ] as const) {
+      const m = await mount(
+        composer({ sends: [] }, { provider, incoming: [pdf] }),
+      );
+      await m.flush();
+      assert.ok(m.text().includes("spec.pdf"));
+      assert.equal(m.text().includes("text only"), textOnly, provider);
+      m.unmount();
+    }
+  });
+
   it("does not pin incoming attachments from another thread (issue #1206)", async () => {
     const h: Harness = { sends: [] };
     const consumed: number[] = [];

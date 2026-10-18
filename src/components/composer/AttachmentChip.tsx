@@ -4,17 +4,24 @@ import styles from "../Composer.module.css";
 
 /**
  * One attachment: thumbnail for images, glyph for files/folders. Without
- * onRemove it is read-only (the queued strip, #1212).
+ * onRemove it is read-only (the queued strip, #1212). `pdfAsText` marks a
+ * PDF the provider cannot read: the runner sends extracted text (#466).
  */
 export function AttachmentChip({
   attachment,
   onRemove,
   onLoadImage,
+  pdfAsText,
 }: {
   attachment: AttachmentInfo;
   onRemove?: () => void;
   onLoadImage?: (path: string) => Promise<string | null>;
+  pdfAsText?: boolean;
 }) {
+  const textOnly =
+    pdfAsText &&
+    attachment.kind === "file" &&
+    /\.pdf$/i.test(attachment.path);
   const [thumb, setThumb] = useState<string | null>(null);
   useEffect(() => {
     if (attachment.kind !== "image" || !onLoadImage) return;
@@ -70,6 +77,14 @@ export function AttachmentChip({
         </svg>
       )}
       <span className={styles.attachmentName}>{attachment.name}</span>
+      {textOnly ? (
+        <span
+          className={styles.attachmentNote}
+          title="This model cannot read PDFs. Its text is extracted and sent instead."
+        >
+          text only
+        </span>
+      ) : null}
       {onRemove ? (
         <button
           type="button"
