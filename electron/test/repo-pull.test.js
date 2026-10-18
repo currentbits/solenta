@@ -121,6 +121,7 @@ describe("gitRepoInfo", () => {
       owner: "acme",
       repo: "widgets",
       webUrl: "https://github.com/acme/widgets",
+      forge: "github",
     });
   });
 });
