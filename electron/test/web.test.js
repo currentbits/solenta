@@ -542,9 +542,12 @@ describe("one map, two transports + packaging", () => {
     const main = fs.readFileSync(path.join(__dirname, "../main.js"), "utf8");
     assert.match(main, /if \(serveOpts\.headless\) app\.disableHardwareAcceleration\(\);/);
     assert.match(main, /createWindow: serveOpts\.headless \? \(\) => \{\} : createWindow/);
-    // macOS holds the lock too, or a terminal --serve-web opens a second store writer.
-    assert.match(main, /if \(!app\.requestSingleInstanceLock\(\)\) \{/);
-    assert.doesNotMatch(main, /process\.platform !== "darwin" && !app\.requestSingleInstanceLock/);
+    // macOS takes the lock too, or a terminal --serve-web opens a second store
+    // writer; only --serve-web launches exit there (prod and nightly co-run).
+    assert.match(main, /const gotLock = app\.requestSingleInstanceLock\(\);/);
+    assert.match(main, /!gotLock && \(process\.platform !== "darwin" \|\| serveOpts\.enabled\)/);
+    // --handoff-only never boots: holding the lock means nobody took it.
+    assert.match(main, /if \(gotLock && process\.argv\.includes\("--handoff-only"\)\) \{[^}]*app\.exit\(5\)/);
     const handler = main.slice(main.indexOf('app.on("second-instance"'));
     assert.match(handler.slice(0, 900), /parseServeWebArgs\(argv\)[\s\S]*webAccess\.setEnabled\(\{ enabled: true \}\)/);
     assert.match(main, /if \(serveOpts\.headless\) app\.exit\(1\);/, "headless with no listener exits");

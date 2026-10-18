@@ -145,10 +145,18 @@ let pendingDeepLink = deepLinkFromArgv(process.argv);
 if (app.isPackaged) {
   app.setAsDefaultProtocolClient(DEEP_LINK_SCHEME);
   // exit, not quit: quit lets whenReady boot a second store writer first.
-  // macOS holds it too: `Solenta --serve-web` from a terminal (or Remote
-  // Connections starting the host over SSH) must hand off to the running
-  // app, not open a second writer on the same store.
-  if (!app.requestSingleInstanceLock()) {
+  // macOS holds the lock too, so `Solenta --serve-web` from a terminal (or
+  // Remote Connections over SSH) hands off to the running app instead of
+  // opening a second writer. A plain second launch there is the other
+  // release channel (prod and nightly share userData) and runs as before.
+  const gotLock = app.requestSingleInstanceLock();
+  // --handoff-only (Remote Connections): pass --serve-web to a running
+  // copy, never boot. Holding the lock means no copy took it, e.g. one too
+  // old to hold the lock on macOS; booting now would be a second writer.
+  if (gotLock && process.argv.includes("--handoff-only")) {
+    process.stdout.write("solenta-web: no running Solenta took the hand-off; restart Solenta and try again\n");
+    app.exit(5);
+  } else if (!gotLock && (process.platform !== "darwin" || serveOpts.enabled)) {
     if (serveOpts.enabled) {
       // The running app turns web access on (second-instance below) and
       // adopts this same file, so the token printed here is the live one.
@@ -178,7 +186,13 @@ app.on("second-instance", (_event, argv) => {
       void webAccess.setEnabled({ enabled: true }).catch((err) =>
         console.warn(`solenta-web: ${err && err.message ? err.message : err}`),
       );
+    } else {
+      // Still booting: the --serve-web branch after webAccess exists runs it.
+      serveOpts.enabled = true;
     }
+  } else if (process.platform === "darwin") {
+    // The other release channel starting up, not a relaunch of this one
+    // (those arrive as "activate"). Leave its window alone.
   } else if (!focusMainWindow() && !serveOpts.headless) createWindow();
 });
 
