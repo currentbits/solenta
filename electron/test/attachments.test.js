@@ -82,6 +82,76 @@ describe("attachments module", () => {
     ]);
   });
 
+  it("swaps HEIC/HEIF for a JPEG copy and keeps the original (#463)", async (t) => {
+    const heic = path.join(tmpDir, "IMG_0001.HEIC");
+    const png = path.join(tmpDir, "shot.png");
+    fs.writeFileSync(heic, "heic-bytes");
+    fs.writeFileSync(png, "x");
+    const calls = [];
+    attachments.setExecFile((bin, args, _opts, cb) => {
+      calls.push(bin);
+      if (bin !== "heif-convert") return cb(new Error("ENOENT"));
+      fs.writeFileSync(args[args.length - 1], "jpeg-bytes");
+      cb(null);
+    });
+    t.after(() => attachments.setExecFile(null));
+
+    const [img, plain] = await attachments.transcodeHeic(
+      attachments.classifyPaths([heic, png]),
+      tmpDir,
+      "t1",
+    );
+    assert.deepEqual(calls, ["sips", "heif-convert"]);
+    assert.equal(img.kind, "image");
+    assert.equal(img.name, "IMG_0001.HEIC");
+    assert.equal(img.convertedFrom, "HEIC");
+    assert.equal(path.dirname(img.path), path.join(tmpDir, "attachments", "t1"));
+    assert.equal(path.extname(img.path), ".jpg");
+    assert.equal(fs.readFileSync(img.path, "utf8"), "jpeg-bytes");
+    assert.equal(fs.readFileSync(heic, "utf8"), "heic-bytes");
+    assert.deepEqual(plain, { kind: "image", path: png, name: "shot.png" });
+  });
+
+  it("leaves an undecodable HEIC as a plain file, not an image (#463)", async (t) => {
+    const heif = path.join(tmpDir, "photo.heif");
+    fs.writeFileSync(heif, "x");
+    attachments.setExecFile((_bin, _args, _opts, cb) => cb(new Error("ENOENT")));
+    t.after(() => attachments.setExecFile(null));
+    const picked = attachments.classifyPaths([heif]);
+    assert.deepEqual(await attachments.transcodeHeic(picked, tmpDir, "t1"), [
+      { kind: "file", path: heif, name: "photo.heif" },
+    ]);
+    // No thread to store the JPEG under: same fallback, decoder never runs.
+    assert.equal((await attachments.transcodeHeic(picked, tmpDir, "../x"))[0].kind, "file");
+    assert.deepEqual(fs.readdirSync(path.join(tmpDir, "attachments", "t1")), []);
+  });
+
+  it(
+    "transcodes a real HEIC with sips (#463)",
+    { skip: process.platform !== "darwin" },
+    async () => {
+      const png = path.join(tmpDir, "src.png");
+      fs.writeFileSync(
+        png,
+        Buffer.from(
+          "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==",
+          "base64",
+        ),
+      );
+      const heic = path.join(tmpDir, "real.heic");
+      execFileSync("sips", ["-s", "format", "heic", png, "--out", heic], { stdio: "ignore" });
+      const [img] = await attachments.transcodeHeic(
+        attachments.classifyPaths([heic]),
+        tmpDir,
+        "t1",
+      );
+      assert.equal(img.kind, "image");
+      // JPEG SOI marker, and the thumbnail path now serves it.
+      assert.deepEqual([...fs.readFileSync(img.path).subarray(0, 2)], [0xff, 0xd8]);
+      assert.equal((await attachments.resolveImageFile(img.path)).mediaType, "image/jpeg");
+    },
+  );
+
   it("labels video frames by clip and time in the dispatch section (#266)", () => {
     const { attachmentPromptSection } = require("../runnerHelpers.js");
     const section = attachmentPromptSection([

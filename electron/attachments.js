@@ -3,6 +3,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { randomUUID } = require("node:crypto");
+const childProcess = require("node:child_process");
 
 /**
  * Outbound counterpart to tool-images.js: files/images/folders the USER
@@ -12,9 +13,14 @@ const { randomUUID } = require("node:crypto");
  */
 const DIR_NAME = "attachments";
 
-/** Extensions treated as image attachments (thumbnails); other files stay kind "file". */
-const IMAGE_EXTS = ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"];
+/**
+ * Extensions treated as image attachments (thumbnails); other files stay
+ * kind "file". HEIC/HEIF only stays an image once transcodeHeic swapped it
+ * for a JPEG: no provider and no <img> reads it (#463).
+ */
+const IMAGE_EXTS = ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "heic", "heif"];
 const IMAGE_EXT_SET = new Set(IMAGE_EXTS);
+const HEIC_EXT_SET = new Set(["heic", "heif"]);
 
 const MEDIA_BY_EXT = {
   png: "image/png",
@@ -38,6 +44,8 @@ const EXT_BY_MEDIA = {
   "image/webp": "webp",
   "image/bmp": "bmp",
   "image/svg+xml": "svg",
+  "image/heic": "heic",
+  "image/heif": "heif",
 };
 
 /** Refuse to base64 a huge file into an IPC reply / store-bound thumbnail. */
@@ -287,6 +295,80 @@ function saveFolder(userDataPath, threadId, name, files) {
 }
 
 /**
+ * HEIC -> JPEG decoders, first that writes the file wins. sips ships with
+ * macOS; heif-convert (libheif) and ImageMagick cover Linux/Windows when
+ * installed. ponytail: no bundled decoder, add one if non-mac users hit it.
+ */
+const HEIC_DECODERS = [
+  ["sips", (src, out) => ["-s", "format", "jpeg", src, "--out", out]],
+  ["heif-convert", (src, out) => ["-q", "90", src, out]],
+  ["magick", (src, out) => [src, out]],
+];
+
+/** @type {typeof childProcess.execFile | null} */
+let execFileImpl = null;
+
+/** Test hook. Pass null to restore node's execFile. */
+function setExecFile(fn) {
+  execFileImpl = fn;
+}
+
+function runDecoder(bin, args) {
+  const exec = execFileImpl || childProcess.execFile;
+  return new Promise((resolve, reject) => {
+    exec(bin, args, { timeout: 30000, windowsHide: true }, (err) =>
+      err ? reject(err) : resolve(),
+    );
+  });
+}
+
+async function heicToJpeg(src, dir) {
+  const out = path.join(dir, `${Date.now()}-${randomUUID().slice(0, 8)}.jpg`);
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+  } catch {
+    return null;
+  }
+  for (const [bin, args] of HEIC_DECODERS) {
+    try {
+      await runDecoder(bin, args(src, out));
+      if (fs.statSync(out).size > 0) return out;
+    } catch {
+      // missing binary or decode failure: try the next one
+    }
+  }
+  fs.rmSync(out, { force: true });
+  return null;
+}
+
+/**
+ * Claude, Codex and most CLIs reject image/heic, the iPhone camera default
+ * (#463). Swap each HEIC/HEIF attachment for a JPEG under
+ * userData/attachments/<threadId>/. The original stays on disk where it
+ * was. No decoder (or no thread) leaves it a plain kind "file", never an
+ * image the provider will refuse.
+ * @param {{ kind: string, path: string, name: string }[]} list
+ * @param {string} userDataPath
+ * @param {unknown} threadId
+ */
+async function transcodeHeic(list, userDataPath, threadId) {
+  const tid = validThreadId(threadId);
+  return Promise.all(
+    list.map(async (a) => {
+      const ext = a && a.kind !== "folder" && path.extname(a.path).slice(1).toLowerCase();
+      if (!ext || !HEIC_EXT_SET.has(ext)) return a;
+      const out =
+        userDataPath && tid
+          ? await heicToJpeg(a.path, threadDir(userDataPath, tid))
+          : null;
+      return out
+        ? { kind: "image", path: out, name: a.name, convertedFrom: ext.toUpperCase() }
+        : { ...a, kind: "file" };
+    }),
+  );
+}
+
+/**
  * Stat + type/size gate for an attached image. `filePath` is an arbitrary
  * absolute path by design: the user picks images anywhere on disk.
  * @param {unknown} filePath
@@ -462,6 +544,8 @@ module.exports = {
   readImage,
   resolveImageFile,
   resolveVideoFile,
+  transcodeHeic,
+  setExecFile,
   IMAGE_EXTS,
   MAX_IMAGE_BYTES,
   DIR_NAME,

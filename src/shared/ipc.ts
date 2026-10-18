@@ -1465,6 +1465,8 @@ export interface AttachmentInfo {
   path: string;
   /** Display name (basename of path). */
   name: string;
+  /** Source format when the host transcoded it, e.g. "HEIC" -> JPEG (#463). */
+  convertedFrom?: string;
 }
 
 /** Per-thread inbound policy for cross-thread messages (issue #551). */
@@ -3157,6 +3159,11 @@ export interface ProviderInfo {
    */
   baseProvider?: string;
   instanceId?: string;
+  /**
+   * A custom CLI row (#458): raw stdout transcript, no work-log cards,
+   * usage, resume or sign-in state. The UI labels it so.
+   */
+  bestEffort?: boolean;
 }
 
 /**
@@ -3169,12 +3176,20 @@ export interface ProviderInstance {
   id: string;
   /** Short label shown as "Claude (<name>)". 1-40 chars. */
   name: string;
-  /** Base provider: "claude" or "codex". */
+  /** Base provider: "claude", "codex", or "generic" for a custom CLI (#458). */
   provider: string;
   /** CLAUDE_CONFIG_DIR / CODEX_HOME. null = the CLI's default folder. */
   configDir: string | null;
   /** Extra env for this instance's spawns only. Stored like MCP secrets. */
   env: Record<string, string>;
+  /** generic only: argv, binary first. The prompt is appended last. */
+  command?: string[];
+  /** generic only: appended in Full access. Empty = the CLI decides. */
+  fullAccessArgs?: string[];
+  /** generic only: working folder; relative is inside the thread's worktree. */
+  cwd?: string | null;
+  /** generic only: plain pipes, or a pseudo-terminal for CLIs that need a TTY. */
+  transcript?: "stdout" | "pty";
 }
 
 /** A checkout found by first-run discovery (#1501). */
@@ -6301,12 +6316,17 @@ export interface CoderApi {
      */
     pick(input?: {
       includeImages?: boolean;
+      /** Where HEIC/HEIF picks get their JPEG copy; without it they stay kind=file. */
+      threadId?: string;
     }): Promise<{ attachments: AttachmentInfo[] }>;
     /**
      * Classify absolute paths (e.g. resolved from a drag-drop) as image,
      * file, or folder via statSync; missing / relative / non-file paths skip.
      */
-    fromPaths(input: { paths: string[] }): Promise<{ attachments: AttachmentInfo[] }>;
+    fromPaths(input: {
+      paths: string[];
+      threadId?: string;
+    }): Promise<{ attachments: AttachmentInfo[] }>;
     /**
      * Persist a pasted image (data URL) under userData/attachments/<threadId>
      * and return its AttachmentInfo. null when the payload is not an image.

@@ -1102,8 +1102,9 @@
 }
 
 .attachmentNote {
-  flex-shrink: 0;
-  color: var(--text-muted);
+  flex: none;
+  color: var(--text-dim);
+  white-space: nowrap;
 }
 
 .attachmentRemove {

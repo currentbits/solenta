@@ -362,7 +362,10 @@ export function useCoderWorkspace({
       });
     }
     const includeImages = opts?.includeImages !== false;
-    const result = await api.attachments.pick({ includeImages });
+    const result = await api.attachments.pick({
+      includeImages,
+      threadId: selectedThreadId ?? undefined,
+    });
     return includeImages
       ? withVideoFrames(result.attachments, saveImageOrNull)
       : result.attachments;
@@ -413,7 +416,10 @@ export function useCoderWorkspace({
           })
           .filter((p) => p.length > 0);
         if (!paths.length) return [];
-        const result = await api.attachments.fromPaths({ paths });
+        const result = await api.attachments.fromPaths({
+          paths,
+          threadId: selectedThreadId ?? undefined,
+        });
         return withVideoFrames(result.attachments, saveImageOrNull);
       }
       const out: AttachmentInfo[] = [];
