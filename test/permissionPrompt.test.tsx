@@ -403,3 +403,92 @@ describe("PermissionPrompt folder grant (#514)", () => {
     assert.equal(view.query("[data-permission-allow-folder]"), null);
   });
 });
+
+/** Press a key; true when the card took it (the field never saw the keydown). */
+async function key(view: Mounted, el: Element, k: string): Promise<boolean> {
+  let reached = false;
+  const seen = () => {
+    reached = true;
+  };
+  el.addEventListener("keydown", seen);
+  await view.press(el, k);
+  el.removeEventListener("keydown", seen);
+  return !reached;
+}
+
+describe("PermissionPrompt keyboard (#477)", () => {
+  const npmPending: PendingPermissionInfo = {
+    ...bashPending,
+    summary: "Bash: npm test -- foo",
+    command: "npm test -- foo",
+  };
+
+  for (const [k, decision] of [
+    ["y", "allow"],
+    ["n", "deny"],
+    ["a", "allowAlways"],
+  ] as const) {
+    it(`${k} answers ${decision} from a focused composer and is not typed`, async () => {
+      const { m, spy } = mountView(npmPending);
+      const view = await m;
+      const composer = view.query(
+        "[data-composer-input]",
+      ) as HTMLTextAreaElement;
+      assert.ok(composer, "composer textarea");
+      composer.focus();
+      assert.equal(await key(view, composer, k), true);
+      assert.equal(composer.value, "");
+      assert.equal(spy.calls.length, 1);
+      assert.equal(spy.calls[0].decision, decision);
+      if (k === "a") assert.equal(spy.calls[0].alwaysRule, "npm test:*");
+    });
+  }
+
+  it("a sends the edited rule, like the button", async () => {
+    const { m, spy } = mountView(npmPending);
+    const view = await m;
+    await view.type(view.query("[data-permission-rule]"), "npm *");
+    await key(view, view.query("[data-composer-input]")!, "a");
+    assert.equal(spy.calls[0].alwaysRule, "npm *");
+  });
+
+  it("the card's own fields keep their keys; answered cards release them", async () => {
+    const { m, spy } = mountView(npmPending);
+    const view = await m;
+    const ta = view.query("[data-permission-command]")!;
+    const rule = view.query("[data-permission-rule]")!;
+    assert.equal(await key(view, ta, "y"), false);
+    assert.equal(await key(view, rule, "a"), false);
+    assert.equal(spy.calls.length, 0);
+    const composer = view.query("[data-composer-input]")!;
+    assert.equal(await key(view, composer, "n"), true);
+    assert.equal(await key(view, composer, "y"), false);
+    assert.equal(spy.calls.length, 1);
+  });
+
+  it("a guardrail-flagged call never takes keys from the composer", async () => {
+    const { m, spy } = mountView({
+      ...npmPending,
+      guardrail: { rule: "RISKY", reason: "touches prod" },
+    });
+    const view = await m;
+    assert.equal(await key(view, view.query("[data-composer-input]")!, "y"), false);
+    assert.equal(spy.calls.length, 0);
+    // Outside any text field the keys still answer.
+    assert.equal(await key(view, view.query("[data-permission-card]")!, "y"), true);
+    assert.equal(spy.calls[0].decision, "allow");
+  });
+
+  it("modifiers pass through (Cmd+A still selects all)", async () => {
+    const { m, spy } = mountView(npmPending);
+    const view = await m;
+    await view.press(view.query("[data-composer-input]"), "a", { metaKey: true });
+    assert.equal(spy.calls.length, 0);
+  });
+
+  it("buttons show their keys", async () => {
+    const view = await mountView(npmPending).m;
+    const keys = view.queryAll("[data-permission-card] kbd").map((k) => k.textContent);
+    assert.deepEqual(keys, ["y", "a", "n"]);
+  });
+});

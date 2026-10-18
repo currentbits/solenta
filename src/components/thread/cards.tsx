@@ -33,6 +33,56 @@ import { commandPrefix, WHOLE_TOOL_RULE } from "../../permissionRule";
 import styles from "../ThreadView.module.css";
 import diffStyles from "../TurnDiffPanel.module.css";
 
+type PermissionKey = "y" | "n" | "a";
+
+/**
+ * y / n / a answer a pending permission or plan card, like the CLIs (#477).
+ * Pending permission outranks typing: the keys are taken from a focused
+ * composer too, in the capture phase so the composer never sees them.
+ * Every other text field (the card's own command / rule / notes, search
+ * boxes) keeps its keys. A key with no handler (answered, empty command)
+ * passes through untouched. `fromComposer: false` (guardrail-flagged calls,
+ * CI sign-off) leaves the composer alone too: a stray `y` mid-sentence must
+ * not approve something the guardrail called risky.
+ */
+function usePermissionKeys(
+  keys: Partial<Record<PermissionKey, () => void>>,
+  fromComposer = true,
+) {
+  useEffect(() => {
+    const onKey = (ev: KeyboardEvent) => {
+      if (ev.metaKey || ev.ctrlKey || ev.altKey || ev.isComposing) return;
+      const run = keys[ev.key as PermissionKey];
+      if (!run) return;
+      const t = ev.target as HTMLElement | null;
+      if (
+        t &&
+        !(fromComposer && t.hasAttribute?.("data-composer-input")) &&
+        (t.tagName === "INPUT" ||
+          t.tagName === "TEXTAREA" ||
+          t.tagName === "SELECT" ||
+          t.isContentEditable)
+      ) {
+        return;
+      }
+      ev.preventDefault();
+      ev.stopPropagation();
+      run();
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  });
+}
+
+/** Key hint on a card button: `y` Accept. */
+function KeyHint({ k }: { k: PermissionKey }) {
+  return (
+    <kbd className={styles.permissionKey} aria-hidden="true">
+      {k}
+    </kbd>
+  );
+}
+
 /**
  * Plan approval (ExitPlanMode): the plan rendered as markdown in the prompt
  * panel, approve or send the agent back to planning (with optional notes),
@@ -81,6 +131,9 @@ export function PlanPrompt({
       notes || undefined,
     );
   };
+  usePermissionKeys(
+    sent ? {} : { y: () => answer("allow"), n: () => answer("deny") },
+  );
   const save = async () => {
     if (!onSave || saving) return;
     setSaving(true);
@@ -128,17 +181,19 @@ export function PlanPrompt({
           className={styles.permissionAllow}
           disabled={sent}
           onClick={() => answer("allow")}
+          aria-keyshortcuts="y"
         >
-          Approve plan
+          <KeyHint k="y" /> Approve plan
         </button>
         <button
           type="button"
           className={styles.permissionDeny}
           disabled={sent}
           onClick={() => answer("deny")}
+          aria-keyshortcuts="n"
           data-keep-planning=""
         >
-          Keep planning
+          <KeyHint k="n" /> Keep planning
         </button>
         {onImplement ? (
           <button
@@ -266,6 +321,19 @@ export function PermissionPrompt({
       alwaysRule,
     );
   };
+  const always = scoped
+    ? () => answer("allowAlways", rule.trim())
+    : () => answer("allowAlways");
+  usePermissionKeys(
+    sent
+      ? {}
+      : {
+          n: () => answer("deny"),
+          ...(empty ? {} : { y: () => answer("allow") }),
+          ...(acceptAlways && !empty && !ruleEmpty ? { a: always } : {}),
+        },
+    !guardrail,
+  );
 
   return (
     <div
@@ -355,8 +423,9 @@ export function PermissionPrompt({
           className={styles.permissionAllow}
           disabled={sent || empty}
           onClick={() => answer("allow")}
+          aria-keyshortcuts="y"
         >
-          Accept
+          <KeyHint k="y" /> Accept
         </button>
         {scoped ? (
           <button
@@ -364,18 +433,20 @@ export function PermissionPrompt({
             className={styles.permissionAllow}
             disabled={sent || empty || ruleEmpty}
             data-permission-always=""
-            onClick={() => answer("allowAlways", rule.trim())}
+            onClick={always}
+            aria-keyshortcuts="a"
           >
-            Always allow <code>{rule}</code>
+            <KeyHint k="a" /> Always allow <code>{rule}</code>
           </button>
         ) : acceptAlways ? (
           <button
             type="button"
             className={styles.permissionAllow}
             disabled={sent || empty}
-            onClick={() => answer("allowAlways")}
+            onClick={always}
+            aria-keyshortcuts="a"
           >
-            Accept all
+            <KeyHint k="a" /> Accept all
           </button>
         ) : null}
         {pending.folderGrant ? (
@@ -395,8 +466,9 @@ export function PermissionPrompt({
           className={styles.permissionDeny}
           disabled={sent}
           onClick={() => answer("deny")}
+          aria-keyshortcuts="n"
         >
-          Deny
+          <KeyHint k="n" /> Deny
         </button>
       </div>
       {scoped ? (

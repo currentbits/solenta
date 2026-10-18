@@ -2074,6 +2074,7 @@ export const Composer = memo(function Composer({
           disabled={disabled || sending}
           readOnly={dictating}
           data-vim-mode={vimEnabled ? vimMode : undefined}
+          data-composer-input=""
         />
         <div
           ref={overflowRef}
