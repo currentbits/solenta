@@ -110,6 +110,11 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
     kind: "insert",
   },
   {
+    name: "/jump",
+    hint: "Jump to an earlier prompt (/jump auth filters)",
+    kind: "insert",
+  },
+  {
     name: "/fork",
     hint: "Fork this thread onto a fresh session",
     kind: "run",
@@ -187,6 +192,15 @@ export function parseGoalCommand(text: string): { goal: string | null } | null {
   if (!m) return null;
   const tail = (m[1] ?? "").trim();
   return { goal: tail && !/^(clear|off)$/i.test(tail) ? tail : null };
+}
+
+/**
+ * `/jump [filter]` opens the prompt outline filtered by the tail (#487). The
+ * composer intercepts it so it never reaches the model. Null when not a jump.
+ */
+export function parseJumpCommand(text: string): string | null {
+  const m = /^\s*\/jump(?:\s+([\s\S]*))?$/.exec(text);
+  return m ? (m[1] ?? "").trim() : null;
 }
 
 /**
