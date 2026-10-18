@@ -3201,6 +3201,47 @@ button.diffLineGutter:focus-visible {
   text-decoration: underline;
 }
 
+/* y / n / a key hint on a permission button (#477). */
+.permissionKey {
+  display: inline-block;
+  min-width: 1.4em;
+  margin-right: 2px;
+  padding: 0 4px;
+  border: 1px solid currentColor;
+  border-radius: 3px;
+  font: inherit;
+  font-size: 10.5px;
+  line-height: 1.4;
+  text-align: center;
+  opacity: 0.7;
+}
+
+/* Editable allow-always glob under the actions (#477). */
+.permissionRule {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.permissionRuleInput {
+  width: 22ch;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", monospace;
+  font-size: 11px;
+  outline: none;
+}
+
+.permissionRuleInput:focus {
+  border-color: var(--text-muted);
+}
+
 /* Plan approval (ExitPlanMode): rendered markdown, scrolls when long. */
 .planBody {
   padding: 10px 12px;

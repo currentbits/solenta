@@ -29,8 +29,59 @@ import {
 import { Markdown } from "../Markdown";
 import { FileHunks } from "../TurnDiffPanel";
 import { parsePatch } from "../../reviewItinerary";
+import { commandPrefix } from "../../permissionRule";
 import styles from "../ThreadView.module.css";
 import diffStyles from "../TurnDiffPanel.module.css";
+
+type PermissionKey = "y" | "n" | "a";
+
+/**
+ * y / n / a answer a pending permission or plan card, like the CLIs (#477).
+ * Pending permission outranks typing: the keys are taken from a focused
+ * composer too, in the capture phase so the composer never sees them.
+ * Every other text field (the card's own command / rule / notes, search
+ * boxes) keeps its keys. A key with no handler (answered, empty command)
+ * passes through untouched. `fromComposer: false` (guardrail-flagged calls,
+ * CI sign-off) leaves the composer alone too: a stray `y` mid-sentence must
+ * not approve something the guardrail called risky.
+ */
+function usePermissionKeys(
+  keys: Partial<Record<PermissionKey, () => void>>,
+  fromComposer = true,
+) {
+  useEffect(() => {
+    const onKey = (ev: KeyboardEvent) => {
+      if (ev.metaKey || ev.ctrlKey || ev.altKey || ev.isComposing) return;
+      const run = keys[ev.key as PermissionKey];
+      if (!run) return;
+      const t = ev.target as HTMLElement | null;
+      if (
+        t &&
+        !(fromComposer && t.hasAttribute?.("data-composer-input")) &&
+        (t.tagName === "INPUT" ||
+          t.tagName === "TEXTAREA" ||
+          t.tagName === "SELECT" ||
+          t.isContentEditable)
+      ) {
+        return;
+      }
+      ev.preventDefault();
+      ev.stopPropagation();
+      run();
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  });
+}
+
+/** Key hint on a card button: `y` Accept. */
+function KeyHint({ k }: { k: PermissionKey }) {
+  return (
+    <kbd className={styles.permissionKey} aria-hidden="true">
+      {k}
+    </kbd>
+  );
+}
 
 /**
  * Plan approval (ExitPlanMode): the plan rendered as markdown in the prompt
@@ -80,6 +131,9 @@ export function PlanPrompt({
       notes || undefined,
     );
   };
+  usePermissionKeys(
+    sent ? {} : { y: () => answer("allow"), n: () => answer("deny") },
+  );
   const save = async () => {
     if (!onSave || saving) return;
     setSaving(true);
@@ -127,17 +181,19 @@ export function PlanPrompt({
           className={styles.permissionAllow}
           disabled={sent}
           onClick={() => answer("allow")}
+          aria-keyshortcuts="y"
         >
-          Approve plan
+          <KeyHint k="y" /> Approve plan
         </button>
         <button
           type="button"
           className={styles.permissionDeny}
           disabled={sent}
           onClick={() => answer("deny")}
+          aria-keyshortcuts="n"
           data-keep-planning=""
         >
-          Keep planning
+          <KeyHint k="n" /> Keep planning
         </button>
         {onImplement ? (
           <button
@@ -197,6 +253,9 @@ type PermissionRespond = (
   decision: PermissionDecision,
   answers?: Record<string, string>,
   updatedCommand?: string,
+  inputValues?: undefined,
+  feedback?: undefined,
+  alwaysRule?: string | null,
 ) => void | Promise<void>;
 
 /**
@@ -206,8 +265,12 @@ type PermissionRespond = (
  * should reuse — the IPC already accepts updatedCommand.
  *
  * Codex command asks set commandEditable=false: the JSON-RPC reply cannot
- * rewrite the command (issue #1171). Accept all hides when acceptAlways
- * is false.
+ * rewrite the command (issue #1171). Accept for session hides when
+ * acceptAlways is false.
+ *
+ * Allow-always on an editable command keys on a prefix glob the user can
+ * edit (#477), defaulting to the command's prefix as it is edited; "any
+ * <tool>" is the explicit whole-tool escape hatch, with no key.
  */
 export function PermissionPrompt({
   pending,
@@ -236,8 +299,13 @@ export function PermissionPrompt({
     () => parsePatch(fileChange?.diff ?? ""),
     [fileChange?.diff],
   );
+  const ruleEditable = editable && acceptAlways;
+  // null: follow the command's prefix until the user types a rule.
+  const [ruleDraft, setRuleDraft] = useState<string | null>(null);
+  const rule = ruleDraft ?? commandPrefix(command) ?? "";
+  const noRule = ruleEditable && rule.trim() === "";
 
-  const answer = (decision: PermissionDecision) => {
+  const answer = (decision: PermissionDecision, alwaysRule?: string | null) => {
     if (sent) return;
     if (decision !== "deny" && empty) return;
     setSent(true);
@@ -246,8 +314,22 @@ export function PermissionPrompt({
       decision,
       undefined,
       editable ? command : undefined,
+      undefined,
+      undefined,
+      alwaysRule,
     );
   };
+  const always = () => answer("allowAlways", ruleEditable ? rule.trim() : undefined);
+  usePermissionKeys(
+    sent
+      ? {}
+      : {
+          n: () => answer("deny"),
+          ...(empty ? {} : { y: () => answer("allow") }),
+          ...(acceptAlways && !empty && !noRule ? { a: always } : {}),
+        },
+    !pending.guardrail,
+  );
 
   return (
     <div
@@ -337,17 +419,27 @@ export function PermissionPrompt({
           className={styles.permissionAllow}
           disabled={sent || empty}
           onClick={() => answer("allow")}
+          aria-keyshortcuts="y"
         >
-          Accept
+          <KeyHint k="y" /> Accept
         </button>
         {acceptAlways ? (
           <button
             type="button"
             className={styles.permissionAllow}
-            disabled={sent || empty}
-            onClick={() => answer("allowAlways")}
+            disabled={sent || empty || noRule}
+            onClick={always}
+            aria-keyshortcuts="a"
+            data-permission-always=""
           >
-            Accept all
+            <KeyHint k="a" />{" "}
+            {ruleEditable ? (
+              <>
+                Always allow <code>{rule.trim()}</code>
+              </>
+            ) : (
+              "Accept for session"
+            )}
           </button>
         ) : null}
         {pending.folderGrant ? (
@@ -367,10 +459,36 @@ export function PermissionPrompt({
           className={styles.permissionDeny}
           disabled={sent}
           onClick={() => answer("deny")}
+          aria-keyshortcuts="n"
         >
-          Deny
+          <KeyHint k="n" /> Deny
         </button>
       </div>
+      {ruleEditable ? (
+        <div className={styles.permissionRule}>
+          <label>
+            Always-allow rule{" "}
+            <input
+              className={styles.permissionRuleInput}
+              data-permission-rule=""
+              value={rule}
+              disabled={sent}
+              spellCheck={false}
+              autoComplete="off"
+              onChange={(ev) => setRuleDraft(ev.target.value)}
+            />
+          </label>
+          <button
+            type="button"
+            className={styles.permissionReset}
+            disabled={sent || empty}
+            onClick={() => answer("allowAlways", null)}
+            data-permission-any-tool=""
+          >
+            or allow any {pending.toolName} this session
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }

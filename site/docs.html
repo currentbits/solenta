@@ -549,8 +549,8 @@
       </p>
       <p>
         A Codex command approval shows <strong>Accept</strong> and
-        <strong>Deny</strong>. <strong>Accept all</strong> appears only when
-        Codex offers approval for the session. The displayed command is
+        <strong>Deny</strong>. <strong>Accept for session</strong> appears only
+        when Codex offers approval for the session. The displayed command is
         read-only because this provider cannot change it through the approval
         response. Stop cancels pending requests. Unsupported approval request
         types are rejected rather than silently approved.
@@ -668,6 +668,19 @@
         Claude shell-command permission cards allow editing before approval.
         Codex command cards are read-only; see <a href="#codex">Codex
         sessions</a> for their approval controls.
+      </p>
+      <p>
+        Answer permission and plan cards from the keyboard, like the CLIs:
+        <kbd>y</kbd> accepts (or approves the plan), <kbd>n</kbd> denies (or
+        keeps planning), and <kbd>a</kbd> always allows for the rest of the
+        session. A pending permission outranks typing: the keys work even
+        while the composer has focus, and are not typed into it. The card's
+        own fields (the command, the rule, plan notes) keep their keys, and a
+        card the guardrail flagged as risky never takes keys from the
+        composer.
+        Always-allow on a shell command is a prefix rule such as
+        <code>npm test:*</code>, not all of Bash. Edit the rule on the card,
+        or pick <strong>allow any Bash</strong> explicitly.
       </p>
       <p>
         PR state is live: checks show as badges on the thread card, and merging

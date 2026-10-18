@@ -338,6 +338,7 @@ export interface UseCoderResult {
     updatedCommand?: string,
     inputValues?: InputValues,
     feedback?: string,
+    alwaysRule?: string | null,
   ) => Promise<void>;
   /** Write plan markdown into the thread's checkout; resolves the path (#1501). */
   savePlan: (plan: string, threadId?: string) => Promise<string>;

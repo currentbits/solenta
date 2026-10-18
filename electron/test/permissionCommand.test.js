@@ -73,21 +73,24 @@ describe("permissionCommand", () => {
     assert.equal(commandPrefix("  "), null);
   });
 
-  it("sessionAllowRule keys edited allow-always on the edited prefix", () => {
-    assert.deepEqual(sessionAllowRule("Bash", "npm test", { edited: false }), {
+  it("sessionAllowRule keys allow-always on the command prefix, not the tool (#477)", () => {
+    const rules = (toolName, command, alwaysRule) =>
+      sessionAllowRule(toolName, command, alwaysRule).rules;
+    assert.deepEqual(sessionAllowRule("Bash", "npm test -- foo"), {
       type: "addRules",
-      rules: [{ toolName: "Bash" }],
+      rules: [{ toolName: "Bash", ruleContent: "npm test:*" }],
       behavior: "allow",
       destination: "session",
     });
-    assert.deepEqual(
-      sessionAllowRule("Bash", "npm build", { edited: true }),
-      {
-        type: "addRules",
-        rules: [{ toolName: "Bash", ruleContent: "npm build:*" }],
-        behavior: "allow",
-        destination: "session",
-      },
-    );
+    // The user's glob wins; blank falls back to the prefix.
+    assert.deepEqual(rules("Bash", "npm test", "npm *"), [
+      { toolName: "Bash", ruleContent: "npm *" },
+    ]);
+    assert.deepEqual(rules("Bash", "npm test", "  "), [
+      { toolName: "Bash", ruleContent: "npm test:*" },
+    ]);
+    // Whole tool only when asked, or when the tool has no command.
+    assert.deepEqual(rules("Bash", "npm test", null), [{ toolName: "Bash" }]);
+    assert.deepEqual(rules("Edit", null), [{ toolName: "Edit" }]);
   });
 });

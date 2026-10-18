@@ -313,9 +313,10 @@ function createPermissions(ctx) {
    * (question text -> chosen label) rides back as updatedInput.answers.
    * `updatedCommand` (#509) replaces the shell command in updatedInput;
    * allow-always after an edit keys the session rule on the edited prefix.
-   * Codex JSON-RPC ignores `updatedCommand` (the reply cannot rewrite the
-   * command).
-   * @param {{ threadId: string, requestId: string, decision: "allow" | "allowAlways" | "allowFolder" | "deny", answers?: Record<string, string>, updatedCommand?: string }} input
+   * `alwaysRule` (#477) overrides that prefix; null asks for the whole tool.
+   * Codex JSON-RPC ignores `updatedCommand` and `alwaysRule` (the reply
+   * cannot rewrite the command).
+   * @param {{ threadId: string, requestId: string, decision: "allow" | "allowAlways" | "allowFolder" | "deny", answers?: Record<string, string>, updatedCommand?: string, alwaysRule?: string | null }} input
    */
   function respondPermission(input) {
     const { threadId, requestId, decision, answers, updatedCommand } =
@@ -510,12 +511,13 @@ function createPermissions(ctx) {
       // A governed thread keeps the CLI asking: a Claude session rule would
       // stop can_use_tool for that tool and skip the matrix next time.
       if (decision === "allowAlways" && !governed) {
-        // Unedited: whole-tool session rule (matches today's Accept all).
-        // Edited: prefix of the *edited* command, never the original (#509).
+        // Command prefix (or the user's glob), not the whole tool (#477).
         response.updatedPermissions = [
-          sessionAllowRule(pending.toolName, resolved.next, {
-            edited: resolved.edited,
-          }),
+          sessionAllowRule(
+            pending.toolName,
+            resolved.field ? resolved.next : null,
+            input.alwaysRule,
+          ),
         ];
       }
     } else {

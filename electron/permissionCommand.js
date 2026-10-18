@@ -7,7 +7,8 @@
  * Claude's addRules `ruleContent` for Bash is a prefix glob (`npm test:*`),
  * not the whole tool. After a human amends the command, that glob must key
  * on the *edited* command — never the original, and never a blank cheque
- * for Bash. Unedited allow-always stays whole-tool; narrowing that is #479.
+ * for Bash. The renderer mirrors commandPrefix in src/permissionRule.ts to
+ * show the rule before it is sent (#477); keep the two in step.
  */
 
 const COMMAND_KEYS = ["command", "cmd", "script"];
@@ -128,20 +129,25 @@ function commandPrefix(command) {
 }
 
 /**
- * Session addRules payload. After an edit, `ruleContent` is the edited
- * command's prefix so allow-always never keys on the original. Unedited
- * stays `{ toolName }` (whole tool) — #479 owns narrowing that default.
+ * Session addRules payload for allow-always (#477/#479). A command tool keys
+ * on a prefix glob: the user's rule when given, else the prefix of the
+ * command that actually runs (the edited one after #509, never the
+ * original). Whole tool only when asked: `alwaysRule === null` is the
+ * explicit "any Bash". Tools without a command (Edit/Write) stay whole-tool,
+ * like the CLI's "allow all edits this session".
  *
  * @param {string} toolName
- * @param {string | null} command
- * @param {{ edited: boolean }} opts
+ * @param {string | null} command  null for tools without a command field
+ * @param {string | null} [alwaysRule]
  */
-function sessionAllowRule(toolName, command, opts) {
+function sessionAllowRule(toolName, command, alwaysRule) {
   /** @type {{ toolName: string, ruleContent?: string }} */
   const rule = { toolName };
-  if (opts && opts.edited) {
-    const prefix = commandPrefix(command);
-    if (prefix) rule.ruleContent = prefix;
+  if (command !== null && alwaysRule !== null) {
+    const content =
+      (typeof alwaysRule === "string" && alwaysRule.trim()) ||
+      commandPrefix(command);
+    if (content) rule.ruleContent = content;
   }
   return {
     type: "addRules",

@@ -1539,7 +1539,8 @@ describe("runner claude provider", () => {
 
       await waitFor(() => store.getThread(thread.id).status === "done");
 
-      // The CLI received a well-formed allow with a session-scoped rule.
+      // The CLI received a well-formed allow with a session-scoped rule on
+      // the command prefix, not all of Bash (#477).
       const ctrl = JSON.parse(fs.readFileSync(ctrlFile, "utf8"));
       assert.equal(ctrl.type, "control_response");
       assert.equal(ctrl.response.subtype, "success");
@@ -1551,7 +1552,7 @@ describe("runner claude provider", () => {
       assert.deepEqual(ctrl.response.response.updatedPermissions, [
         {
           type: "addRules",
-          rules: [{ toolName: "Bash" }],
+          rules: [{ toolName: "Bash", ruleContent: "npm test:*" }],
           behavior: "allow",
           destination: "session",
         },
