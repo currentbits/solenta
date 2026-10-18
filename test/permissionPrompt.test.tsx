@@ -1,7 +1,8 @@
 /**
  * Tool permission card (#509): the proposed command is an editable field;
- * Accept / Accept all send the edited command, not the original. Non-command
- * tools keep the JSON preview.
+ * Accept / Always allow send the edited command, not the original. Non-command
+ * tools keep the JSON preview. Always allow is a command-prefix rule, never
+ * the whole tool unless the overflow says so (#479).
  *
  * Run: node --import=./test/support/render.mjs --test test/permissionPrompt.test.tsx
  */
@@ -99,6 +100,7 @@ interface Spy {
     decision: PermissionDecision;
     answers?: Record<string, string>;
     updatedCommand?: string;
+    alwaysRule?: string;
   }>;
 }
 
@@ -121,8 +123,14 @@ function mountView(pending: PendingPermissionInfo): {
       onRemoveWorkflow={async () => {}}
       onStopRun={() => {}}
       onSetPermissionMode={() => {}}
-      onRespondPermission={(requestId, decision, answers, updatedCommand) => {
-        spy.calls.push({ requestId, decision, answers, updatedCommand });
+      onRespondPermission={(requestId, decision, answers, updatedCommand, _iv, _fb, alwaysRule) => {
+        spy.calls.push({
+          requestId,
+          decision,
+          answers,
+          updatedCommand,
+          ...(alwaysRule !== undefined ? { alwaysRule } : {}),
+        });
       }}
       onSetProvider={() => {}}
       onSetReasoningEffort={() => {}}
@@ -143,7 +151,7 @@ describe("PermissionPrompt (#509)", () => {
     assert.ok(ta, "command textarea");
     assert.equal(ta.value, "rm -rf dist && npm build");
     assert.ok(view.byText("Accept"));
-    assert.ok(view.byText("Accept all"));
+    assert.match(view.query("[data-permission-always]")?.textContent ?? "", /Always allow rm:\*/);
     assert.ok(view.byText("Deny"));
     assert.equal(view.query("[data-edited]"), null);
   });
@@ -180,7 +188,7 @@ describe("PermissionPrompt (#509)", () => {
     ]);
   });
 
-  it("Accept all after an edit sends allowAlways with the edited command", async () => {
+  it("Always allow after an edit sends the edited command and its prefix", async () => {
     const { m, spy } = mountView(bashPending);
     const view = await m;
     const ta = view.query(
@@ -188,9 +196,46 @@ describe("PermissionPrompt (#509)", () => {
     ) as HTMLTextAreaElement | null;
     assert.ok(ta);
     await view.type(ta, "npm build");
-    await view.click(view.byText("Accept all"));
+    const always = view.query("[data-permission-always]");
+    assert.match(always?.textContent ?? "", /Always allow npm build:\*/);
+    await view.click(always);
     assert.equal(spy.calls[0].decision, "allowAlways");
     assert.equal(spy.calls[0].updatedCommand, "npm build");
+    assert.equal(spy.calls[0].alwaysRule, "npm build:*");
+  });
+
+  it("Always allow on `npm test -- foo` scopes to npm test:*, not the whole tool (#479)", async () => {
+    const { m, spy } = mountView({ ...bashPending, command: "npm test -- foo" });
+    const view = await m;
+    assert.ok(!view.text().includes("Accept all"));
+    await view.click(view.query("[data-permission-always]"));
+    assert.equal(spy.calls[0].decision, "allowAlways");
+    assert.equal(spy.calls[0].alwaysRule, "npm test:*");
+  });
+
+  it("a typed rule wins and survives later command edits (#479)", async () => {
+    const { m, spy } = mountView({ ...bashPending, command: "npm test -- foo" });
+    const view = await m;
+    await view.type(view.query("[data-permission-rule]"), "npm run *");
+    await view.type(view.query("[data-permission-command]"), "npm run lint");
+    const always = view.query("[data-permission-always]");
+    assert.match(always?.textContent ?? "", /Always allow npm run \*/);
+    await view.click(always);
+    assert.equal(spy.calls[0].alwaysRule, "npm run *");
+    assert.equal(spy.calls[0].updatedCommand, "npm run lint");
+  });
+
+  it("an empty rule disables Always allow; the overflow allows the whole tool", async () => {
+    const { m, spy } = mountView(bashPending);
+    const view = await m;
+    await view.type(view.query("[data-permission-rule]"), "  ");
+    const always = view.query("[data-permission-always]") as HTMLButtonElement;
+    assert.equal(always.disabled, true);
+    const any = view.query("[data-permission-any-tool]");
+    assert.match(any?.textContent ?? "", /Allow any Bash this session/);
+    await view.click(any);
+    assert.equal(spy.calls[0].decision, "allowAlways");
+    assert.equal(spy.calls[0].alwaysRule, "*");
   });
 
   it("Reset restores the original command", async () => {
@@ -206,7 +251,7 @@ describe("PermissionPrompt (#509)", () => {
     assert.equal(view.query("[data-edited]"), null);
   });
 
-  it("empty command disables Accept / Accept all; Deny still works", async () => {
+  it("empty command disables Accept / Always allow; Deny still works", async () => {
     const { m, spy } = mountView(bashPending);
     const view = await m;
     const ta = view.query(
@@ -215,7 +260,7 @@ describe("PermissionPrompt (#509)", () => {
     assert.ok(ta);
     await view.type(ta, "   ");
     const accept = view.byText("Accept") as HTMLButtonElement;
-    const always = view.byText("Accept all") as HTMLButtonElement;
+    const always = view.query("[data-permission-always]") as HTMLButtonElement;
     assert.equal(accept.disabled, true);
     assert.equal(always.disabled, true);
     await view.click(view.byText("Deny"));
@@ -236,6 +281,9 @@ describe("PermissionPrompt (#509)", () => {
     ) as HTMLTextAreaElement | null;
     assert.ok(ta);
     assert.equal(ta.readOnly, true);
+    // Codex acceptForSession takes no rule: plain Accept all, no rule editor.
+    assert.ok(view.byText("Accept all"));
+    assert.equal(view.query("[data-permission-rule]"), null);
     await view.click(view.byText("Accept"));
     assert.equal(spy.calls[0].decision, "allow");
     assert.equal(spy.calls[0].updatedCommand, undefined);
@@ -249,6 +297,8 @@ describe("PermissionPrompt (#509)", () => {
     const view = await m;
     assert.ok(view.byText("Accept"));
     assert.ok(!view.text().includes("Accept all"));
+    assert.equal(view.query("[data-permission-always]"), null);
+    assert.equal(view.query("[data-permission-more]"), null);
   });
 
   it("Codex fileChange shows the diff, reason and grantRoot instead of JSON (#1189)", async () => {
@@ -298,10 +348,10 @@ describe("PermissionPrompt governance strip (#262)", () => {
       view.query("[data-permission-guardrail]")?.textContent,
       "⚠ Deletes files recursively (rm-rf)",
     );
-    assert.ok(view.text().includes("Accept all"));
+    assert.ok(view.query("[data-permission-always]"));
   });
 
-  it("shows reason (layer / rule) and keeps Accept all for builtin", async () => {
+  it("shows reason (layer / rule) and keeps Always allow for builtin", async () => {
     const view = await mountView({
       ...bashPending,
       guardrail: { ...risky, layer: "builtin" },
@@ -310,10 +360,10 @@ describe("PermissionPrompt governance strip (#262)", () => {
       view.query("[data-permission-guardrail]")?.textContent,
       "⚠ Deletes files recursively (builtin / rm-rf)",
     );
-    assert.ok(view.text().includes("Accept all"));
+    assert.ok(view.query("[data-permission-always]"));
   });
 
-  it("hides Accept all on profile.ask", async () => {
+  it("hides every always-allow on profile.ask", async () => {
     const view = await mountView({
       ...bashPending,
       guardrail: {
@@ -328,6 +378,8 @@ describe("PermissionPrompt governance strip (#262)", () => {
     );
     assert.ok(view.byText("Accept"));
     assert.ok(!view.text().includes("Accept all"));
+    assert.equal(view.query("[data-permission-always]"), null);
+    assert.equal(view.query("[data-permission-any-tool]"), null);
   });
 });
 

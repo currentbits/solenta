@@ -29,6 +29,7 @@ import {
 import { Markdown } from "../Markdown";
 import { FileHunks } from "../TurnDiffPanel";
 import { parsePatch } from "../../reviewItinerary";
+import { commandPrefix, WHOLE_TOOL_RULE } from "../../permissionRule";
 import styles from "../ThreadView.module.css";
 import diffStyles from "../TurnDiffPanel.module.css";
 
@@ -197,6 +198,9 @@ type PermissionRespond = (
   decision: PermissionDecision,
   answers?: Record<string, string>,
   updatedCommand?: string,
+  inputValues?: undefined,
+  feedback?: undefined,
+  alwaysRule?: string,
 ) => void | Promise<void>;
 
 /**
@@ -208,6 +212,12 @@ type PermissionRespond = (
  * Codex command asks set commandEditable=false: the JSON-RPC reply cannot
  * rewrite the command (issue #1171). Accept all hides when acceptAlways
  * is false.
+ *
+ * Always-allow on an editable command is a session rule, not the whole tool
+ * (#479): the button shows the derived prefix (`npm test:*`), which follows
+ * command edits until the user types their own rule; "any <tool>" sits
+ * behind the overflow. Codex keeps plain Accept all: acceptForSession is its
+ * own exact-command cache and takes no rule.
  */
 export function PermissionPrompt({
   pending,
@@ -236,8 +246,13 @@ export function PermissionPrompt({
     () => parsePatch(fileChange?.diff ?? ""),
     [fileChange?.diff],
   );
+  // null: follow the command; a string once the user edits the rule.
+  const [ruleDraft, setRuleDraft] = useState<string | null>(null);
+  const rule = ruleDraft ?? commandPrefix(command) ?? "";
+  const scoped = editable && acceptAlways;
+  const ruleEmpty = scoped && rule.trim() === "";
 
-  const answer = (decision: PermissionDecision) => {
+  const answer = (decision: PermissionDecision, alwaysRule?: string) => {
     if (sent) return;
     if (decision !== "deny" && empty) return;
     setSent(true);
@@ -246,6 +261,9 @@ export function PermissionPrompt({
       decision,
       undefined,
       editable ? command : undefined,
+      undefined,
+      undefined,
+      alwaysRule,
     );
   };
 
@@ -340,7 +358,17 @@ export function PermissionPrompt({
         >
           Accept
         </button>
-        {acceptAlways ? (
+        {scoped ? (
+          <button
+            type="button"
+            className={styles.permissionAllow}
+            disabled={sent || empty || ruleEmpty}
+            data-permission-always=""
+            onClick={() => answer("allowAlways", rule.trim())}
+          >
+            Always allow <code>{rule}</code>
+          </button>
+        ) : acceptAlways ? (
           <button
             type="button"
             className={styles.permissionAllow}
@@ -371,6 +399,32 @@ export function PermissionPrompt({
           Deny
         </button>
       </div>
+      {scoped ? (
+        <details className={styles.permissionMore} data-permission-more="">
+          <summary>Always-allow options</summary>
+          <div className={styles.permissionRule}>
+            <input
+              className={`${styles.permissionInput} ${styles.permissionCommand}`}
+              data-permission-rule=""
+              aria-label="Always-allow rule"
+              value={rule}
+              spellCheck={false}
+              autoComplete="off"
+              autoCorrect="off"
+              onChange={(ev) => setRuleDraft(ev.target.value)}
+            />
+            <button
+              type="button"
+              className={styles.permissionDeny}
+              disabled={sent || empty}
+              data-permission-any-tool=""
+              onClick={() => answer("allowAlways", WHOLE_TOOL_RULE)}
+            >
+              Allow any {pending.toolName} this session
+            </button>
+          </div>
+        </details>
+      ) : null}
     </div>
   );
 }
