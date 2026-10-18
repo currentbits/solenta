@@ -1056,8 +1056,8 @@ export const ThreadView = memo(function ThreadView({
   );
   /** Bumps after a successful push so the sync pill refetches. */
   const [syncRefreshNonce, setSyncRefreshNonce] = useState(0);
-  /** Brief inline confirmation after copying the thread id. */
-  const [copied, setCopied] = useState<"id" | "link" | null>(null);
+  /** Brief inline confirmation after copying the thread id or `/copy`. */
+  const [copied, setCopied] = useState<"id" | "link" | "reply" | null>(null);
   /** Header quick action currently in flight (issue #153). */
   const [commandRunningId, setCommandRunningId] = useState<string | null>(null);
   const [commandError, setCommandError] = useState<string | null>(null);
@@ -1709,8 +1709,39 @@ export const ThreadView = memo(function ThreadView({
     onNewThread?.();
   }, [isWorking, onSettleThread, onNewThread]);
 
+  const flashCopied = useCallback((what: "id" | "link" | "reply") => {
+    setCopied(what);
+    if (copyFlashTimer.current != null) {
+      clearTimeout(copyFlashTimer.current);
+    }
+    copyFlashTimer.current = setTimeout(() => {
+      setCopied(null);
+      copyFlashTimer.current = null;
+    }, COPY_FLASH_MS);
+  }, []);
+
+  // `/copy` (#493): the latest finished assistant reply, as Markdown source.
+  // A still-streaming reply is skipped; no reply at all is a no-op.
+  const handleCopyLastReply = useCallback(() => {
+    const reply = [...(detail?.messages ?? [])].reverse().find(
+      (m) =>
+        m.role === "assistant" &&
+        !m.thinking &&
+        m.id !== streamingMessageId &&
+        m.text.trim() !== "",
+    );
+    if (!reply) return;
+    void navigator.clipboard
+      ?.writeText(reply.text)
+      .then(() => flashCopied("reply"), () => {});
+  }, [detail?.messages, streamingMessageId, flashCopied]);
+
   const handleSlashAction = useCallback(
     (action: SlashAction) => {
+      if (action === "copy") {
+        handleCopyLastReply();
+        return;
+      }
       if (action === "usage") {
         setContextOpen(false);
         setQuotaOpen(true);
@@ -1746,6 +1777,7 @@ export const ThreadView = memo(function ThreadView({
       }
     },
     [
+      handleCopyLastReply,
       ring,
       handleCompact,
       handleForkFresh,
@@ -2657,14 +2689,7 @@ export const ThreadView = memo(function ThreadView({
     } catch {
       return;
     }
-    setCopied(what);
-    if (copyFlashTimer.current != null) {
-      clearTimeout(copyFlashTimer.current);
-    }
-    copyFlashTimer.current = setTimeout(() => {
-      setCopied(null);
-      copyFlashTimer.current = null;
-    }, COPY_FLASH_MS);
+    flashCopied(what);
   };
 
   const hasVersionControl =
@@ -2749,7 +2774,11 @@ export const ThreadView = memo(function ThreadView({
   });
   // Run status rides on the composer's top edge (#1429), not the transcript.
   const composerStatus =
-    detail.thread.status === "quota-wait" ? (
+    copied === "reply" ? (
+      <div className={styles.statusStrip} data-copied-reply="" role="status">
+        <span className={styles.statusText}>Copied last reply</span>
+      </div>
+    ) : detail.thread.status === "quota-wait" ? (
       <div
         className={`${styles.statusStrip} ${styles.statusStripQuotaWait}`}
         data-quota-wait-strip=""
