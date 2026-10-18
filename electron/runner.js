@@ -78,7 +78,9 @@ const {
   formatQuotaWaitClock,
 } = require("./quotaWait.js");
 const { startWithPoolFailover } = require("./subagentPool.js");
+const { normalizeQueued } = require("./queued.js");
 const {
+  combinedQueuedPrompt,
   formatQueuedPrompt,
   firstChanged,
   cancelCodexServerRequests,
@@ -949,20 +951,28 @@ function createRunner(opts) {
   }
 
   /**
-   * Deliver the next type-ahead item that survived the just-finished turn
-   * (issue #314). One item per turn (#1501): the rest stay queued and the
-   * next "done" terminal drains the next one, so a failed or stopped turn
-   * leaves them parked. take-and-clear so the same item cannot fire twice.
+   * Deliver the type-ahead that survived the just-finished turn (issue
+   * #314). By default every waiting item goes as ONE numbered turn (#468);
+   * with combineQueuedFollowUps off, or for "Send now" (opts.head), only the
+   * head goes and the next "done" terminal drains the rest (#1501). Either
+   * way a failed or stopped turn leaves what is left parked. take-and-clear
+   * is synchronous, so the same item cannot fire twice and anything queued
+   * after the take waits for the next turn.
    * On throw, put it back in front with error so the renderer can Retry;
    * "already active" (a notice or user turn won the idle slot) is not an
    * error, that run's own terminal drains again.
    * @param {string} threadId
-   * @param {{ rethrow?: boolean }} [opts] - "Send now" surfaces the failure
+   * @param {{ rethrow?: boolean, head?: boolean }} [opts] - "Send now"
+   *   surfaces the failure and sends only the head
    */
   async function drainQueued(threadId, opts = {}) {
+    const combine =
+      !opts.head && store.getSettings().combineQueuedFollowUps !== false;
     let taken;
     try {
-      taken = services.takeQueuedHead(store, { threadId });
+      taken = combine
+        ? normalizeQueued(services.takeQueued(store, { threadId }))
+        : services.takeQueuedHead(store, { threadId });
     } catch (err) {
       if (opts.rethrow) throw err;
       return;
@@ -971,7 +981,10 @@ function createRunner(opts) {
     try {
       await startRun({
         threadId,
-        prompt: formatQueuedPrompt(taken),
+        prompt: formatQueuedPrompt({
+          ...taken,
+          prompt: combinedQueuedPrompt(taken.items),
+        }),
         displayPrompt: taken.prompt,
         attachments: taken.attachments,
         fromThread: taken.fromThread || null,
@@ -994,7 +1007,8 @@ function createRunner(opts) {
 
   /**
    * "Send now" on a parked queue (#1501): start its next item as its own
-   * turn and resume draining from there. Rejects while a run is active.
+   * turn and resume draining from there (combined, #468). Rejects while a
+   * run is active.
    * @param {{ threadId: string }} input
    */
   async function sendQueued(input) {
@@ -1004,7 +1018,7 @@ function createRunner(opts) {
     if (active.has(threadId)) {
       throw new Error("A run is already active on this thread");
     }
-    await drainQueued(threadId, { rethrow: true });
+    await drainQueued(threadId, { rethrow: true, head: true });
   }
 
   /**

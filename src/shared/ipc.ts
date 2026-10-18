@@ -3462,6 +3462,11 @@ export interface AppSettings {
    * automatic follow-up turn (issue #1512 I3). Default off.
    */
   resumeInterruptedRuns: boolean;
+  /**
+   * When a turn finishes, send every waiting queued follow-up as ONE turn
+   * (#468). Default on; false runs them one per turn (#1501).
+   */
+  combineQueuedFollowUps: boolean;
   /** Solenta tool, injection, and secret checks. Default on; false opts out. */
   guardrailsEnabled: boolean;
   /**
@@ -5655,7 +5660,8 @@ export interface CoderApi {
     }): Promise<{ runId: string }>;
     /**
      * "Send now" on a parked queue (#1501): start the next queued item as
-     * its own turn; the rest drain one per successful turn after it.
+     * its own turn; the rest drain after it, combined into one turn unless
+     * combineQueuedFollowUps is off (#468).
      * Rejects while a run is active; a failed start puts the item back.
      */
     sendQueued(input: { threadId: string }): Promise<void>;
