@@ -143,7 +143,7 @@ export interface SettingsModalProps {
   /** Re-list providers (re-probes sign-in) when Settings › Agents opens. */
   onRefreshProviders?: () => void;
   /** Start a provider's login command in a terminal (#1501). */
-  onProviderSignIn?: (providerId: string) => Promise<void>;
+  onProviderSignIn?: (providerId: string, opts?: { name?: string }) => Promise<void>;
   /** Live app status for the memory section. */
   status: AppStatus | null;
   /** Auto-update check result for the build section. */
