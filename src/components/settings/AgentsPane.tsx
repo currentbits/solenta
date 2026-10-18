@@ -5,6 +5,7 @@ import {
   snapToHonouredPermissionMode,
 } from "../../format";
 import {
+  BEST_EFFORT_NOTE,
   CUSTOM_MODEL_ID,
   effortDisplayLabel,
   effortHint,
@@ -22,6 +23,7 @@ import type {
   SubagentPool,
   SubagentPoolEntry,
 } from "../../shared/ipc";
+import { parseMcpArgv } from "../../parseMcpArgv";
 import styles from "../SettingsModal.module.css";
 import type { SettingsModalProps } from "../SettingsModal";
 
@@ -198,6 +200,21 @@ export function AgentsPane({
       configDir: instanceDraft.configDir.trim() || null,
       env,
     };
+    if (instanceDraft.provider === "generic") {
+      const command = parseMcpArgv(instanceDraft.command);
+      const fullAccess = parseMcpArgv(instanceDraft.fullAccess);
+      if (!command.ok || !fullAccess.ok) {
+        setError(!command.ok ? command.error : (fullAccess as { error: string }).error);
+        return;
+      }
+      if (command.args.length === 0) {
+        setError("Command is required");
+        return;
+      }
+      next.configDir = null;
+      next.command = command.args;
+      next.fullAccessArgs = fullAccess.args;
+    }
     const list = instanceDraft.id
       ? instances.map((i) => (i.id === instanceDraft.id ? next : i))
       : [...instances, next];
@@ -705,13 +722,30 @@ interface InstanceDraft {
   provider: string;
   configDir: string;
   env: Array<{ key: string; value: string }>;
+  /** generic (#458): argv text, parsed by parseMcpArgv on submit. */
+  command: string;
+  fullAccess: string;
 }
 
 function emptyInstanceDraft(providers: readonly ProviderInfo[]): InstanceDraft {
   const base =
     providers.find((p) => p.available && !p.instanceId && p.id in INSTANCE_PROVIDERS)?.id ??
     "claude";
-  return { id: null, name: "", provider: base, configDir: "", env: [] };
+  return {
+    id: null,
+    name: "",
+    provider: base,
+    configDir: "",
+    env: [],
+    command: "",
+    fullAccess: "",
+  };
+}
+
+/** argv back to text parseMcpArgv reads the same way; JSON when quoting matters. */
+function argvText(argv: readonly string[] | undefined): string {
+  const list = argv ?? [];
+  return list.every((a) => /^[^\s'"\\]+$/.test(a)) ? list.join(" ") : JSON.stringify(list);
 }
 
 function draftFromInstance(inst: ProviderInstance): InstanceDraft {
@@ -721,6 +755,8 @@ function draftFromInstance(inst: ProviderInstance): InstanceDraft {
     provider: inst.provider,
     configDir: inst.configDir ?? "",
     env: Object.entries(inst.env).map(([key, value]) => ({ key, value })),
+    command: argvText(inst.command),
+    fullAccess: argvText(inst.fullAccessArgs),
   };
 }
 
@@ -742,6 +778,7 @@ function InstanceForm({
 }) {
   const bases = providers.filter((p) => !p.instanceId && p.id in INSTANCE_PROVIDERS);
   const dirVar = INSTANCE_PROVIDERS[draft.provider] ?? "config folder";
+  const generic = draft.provider === "generic";
   const setRow = (i: number, patch: Partial<{ key: string; value: string }>) =>
     onChange({
       ...draft,
@@ -767,6 +804,7 @@ function InstanceForm({
               {!p.available ? " (not installed)" : ""}
             </option>
           ))}
+          <option value="generic">Custom CLI (best effort)</option>
         </select>
       </div>
       <div className={styles.field}>
@@ -780,10 +818,54 @@ function InstanceForm({
           maxLength={40}
           disabled={saving}
           autoComplete="off"
-          placeholder="work"
+          placeholder={generic ? "Goose" : "work"}
           onChange={(e) => onChange({ ...draft, name: e.target.value })}
         />
       </div>
+      {generic ? (
+        <>
+          <div className={styles.field}>
+            <label className={styles.fieldLabel} htmlFor="instance-command">
+              Command
+            </label>
+            <input
+              id="instance-command"
+              className={styles.input}
+              value={draft.command}
+              disabled={saving}
+              autoComplete="off"
+              spellCheck={false}
+              placeholder="goose run -t"
+              onChange={(e) => onChange({ ...draft, command: e.target.value })}
+            />
+            <p className={styles.note}>
+              Runs in the thread&apos;s worktree with the prompt appended as the
+              last argument. Its plain output becomes the reply: no work log,
+              usage or resume, and each turn starts a new process. Put keys in
+              Environment, not here.
+            </p>
+          </div>
+          <div className={styles.field}>
+            <label className={styles.fieldLabel} htmlFor="instance-full-access">
+              Full access flags
+            </label>
+            <input
+              id="instance-full-access"
+              className={styles.input}
+              value={draft.fullAccess}
+              disabled={saving}
+              autoComplete="off"
+              spellCheck={false}
+              placeholder="--yolo"
+              onChange={(e) => onChange({ ...draft, fullAccess: e.target.value })}
+            />
+            <p className={styles.note}>
+              Added when the thread is set to Full access. Empty leaves
+              permissions to the CLI and hides the permission picker.
+            </p>
+          </div>
+        </>
+      ) : (
       <div className={styles.field}>
         <label className={styles.fieldLabel} htmlFor="instance-dir">
           Config folder
@@ -803,6 +885,7 @@ function InstanceForm({
           settings and sessions. Empty uses the CLI&apos;s usual folder.
         </p>
       </div>
+      )}
       <div className={styles.field}>
         <span className={styles.fieldLabel}>Environment</span>
         {draft.env.map((row, i) => (
@@ -900,10 +983,15 @@ function ProviderStatusList({
       <p className={styles.note}>
         Sign-in state comes from each CLI&apos;s own status command. Unknown
         means the CLI has no way to ask. An instance runs Claude Code or
-        Codex with its own config folder, for a second account.
+        Codex with its own config folder, for a second account, or any other
+        agent CLI as a best-effort custom provider.
       </p>
       {rows.map((p) => {
-        const state = !p.available ? "missing" : (p.auth ?? "checking");
+        const state = !p.available
+          ? "missing"
+          : p.bestEffort
+            ? "bestEffort"
+            : (p.auth ?? "checking");
         const canSignIn =
           onSignIn != null && p.available && p.auth != null && p.auth !== "signedIn";
         return (
@@ -919,8 +1007,12 @@ function ProviderStatusList({
                 data-auth-state={state}
               >
                 {state === "missing"
-                  ? "Not installed"
-                  : state === "checking"
+                  ? p.bestEffort
+                    ? "Command not found"
+                    : "Not installed"
+                  : state === "bestEffort"
+                    ? BEST_EFFORT_NOTE
+                    : state === "checking"
                     ? "Checking sign-in…"
                     : AUTH_LABELS[state]}
               </p>

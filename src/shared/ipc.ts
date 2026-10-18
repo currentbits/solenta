@@ -2936,6 +2936,11 @@ export interface ProviderInfo {
    */
   baseProvider?: string;
   instanceId?: string;
+  /**
+   * A custom CLI row (#458): raw stdout transcript, no work-log cards,
+   * usage, resume or sign-in state. The UI labels it so.
+   */
+  bestEffort?: boolean;
 }
 
 /**
@@ -2948,12 +2953,16 @@ export interface ProviderInstance {
   id: string;
   /** Short label shown as "Claude (<name>)". 1-40 chars. */
   name: string;
-  /** Base provider: "claude" or "codex". */
+  /** Base provider: "claude", "codex", or "generic" for a custom CLI (#458). */
   provider: string;
   /** CLAUDE_CONFIG_DIR / CODEX_HOME. null = the CLI's default folder. */
   configDir: string | null;
   /** Extra env for this instance's spawns only. Stored like MCP secrets. */
   env: Record<string, string>;
+  /** generic only: argv, binary first. The prompt is appended last. */
+  command?: string[];
+  /** generic only: appended in Full access. Empty = the CLI decides. */
+  fullAccessArgs?: string[];
 }
 
 /** A checkout found by first-run discovery (#1501). */

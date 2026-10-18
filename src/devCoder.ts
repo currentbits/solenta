@@ -453,7 +453,26 @@ function buildDevCoder(): CoderApi {
               baseProvider: p.id,
               instanceId: i.id,
             })),
-        ]);
+        ]).concat(
+          // Custom CLIs (#458) have no base row; they trail the list.
+          providerInstances
+            .filter((i) => i.provider === "generic")
+            .map((i) => ({
+              id: `generic:${i.id}`,
+              name: i.name,
+              available: true,
+              supportsResume: false,
+              models: [],
+              modelInfo: [],
+              efforts: [],
+              permissionModes: i.fullAccessArgs?.length
+                ? ["default", "bypassPermissions"]
+                : [],
+              baseProvider: "generic",
+              instanceId: i.id,
+              bestEffort: true,
+            })),
+        );
       },
     },
     ...createSourceControl(),

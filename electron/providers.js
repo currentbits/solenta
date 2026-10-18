@@ -87,7 +87,7 @@ const { posixQuote } = require("./ssh.js");
  * @property {Array<"default"|"acceptEdits"|"plan"|"auto"|"bypassPermissions">} permissionModes
  *   Modes this adapter actually honours (changes argv / CLI behaviour).
  *   The composer only offers these; setPermissionMode rejects the rest.
- * @property {"claude-stream" | "codex-json" | "kimi-stream" | "opencode-json" | "cursor-stream" | "muse-json" | "simulate"} kind
+ * @property {"claude-stream" | "codex-json" | "kimi-stream" | "opencode-json" | "cursor-stream" | "muse-json" | "simulate" | "generic"} kind
  * @property {(opts: {
  *   prompt: string,
  *   sessionId?: string | null,
@@ -230,6 +230,9 @@ function snapPermissionMode(entry, mode) {
   const requested = String(mode || "default");
   if (allowed.length === 0) return requested;
   if (allowed.includes(requested)) return requested;
+  // A custom CLI's full access is user-supplied flags (#458): only an
+  // explicit Full access pick may add them, never a snap from acceptEdits.
+  if (entry && entry.kind === "generic") return "default";
 
   if (requested === "acceptEdits") {
     if (allowed.includes("bypassPermissions")) return "bypassPermissions";
@@ -1600,6 +1603,29 @@ const SIMULATE_ENTRY = {
 };
 
 /**
+ * Base of user-defined CLIs (#458). Never listed itself: each
+ * providerInstances row with provider "generic" is one picker entry, and
+ * the binary lives in that row's `command`. Best-effort by design: no
+ * resume, models, efforts or work-log parsing. Only two coarse modes; a
+ * row without full-access flags hides the picker (the CLI decides).
+ */
+const GENERIC_ENTRY = {
+  id: "generic",
+  name: "Custom CLI",
+  binEnv: "",
+  defaultBin: "",
+  supportsResume: false,
+  models: [],
+  modelInfo: [],
+  efforts: [],
+  permissionModes: ["default", "bypassPermissions"],
+  kind: "generic",
+  buildArgs() {
+    return [];
+  },
+};
+
+/**
  * Resolve binary path: env override then default.
  * @param {ProviderEntry} entry
  * @param {NodeJS.ProcessEnv} [env]
@@ -1718,6 +1744,7 @@ function isBinAvailable(bin, whichFn = defaultWhich, env = process.env) {
 function getProvider(id) {
   if (!id) return null;
   if (id === "simulate") return SIMULATE_ENTRY;
+  if (id === "generic") return GENERIC_ENTRY;
   return PROVIDERS.find((p) => p.id === id) || null;
 }
 
@@ -2034,6 +2061,7 @@ module.exports = {
   PROVIDERS,
   CATALOG_REV,
   SIMULATE_ENTRY,
+  GENERIC_ENTRY,
   ALL_PERMISSION_MODES,
   getProvider,
   sessionIdForResume,

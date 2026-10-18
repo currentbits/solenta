@@ -82,6 +82,8 @@ function resolveNewThreadProvider(input, settings, projectProvider = null) {
  */
 function isKnownProviderRef(ref, settings) {
   const { provider, instance } = parseProviderRef(ref);
+  // A custom CLI (#458) is only ever an instance; bare "generic" has no argv.
+  if (provider === "generic") return Boolean(findInstance(settings, provider, instance));
   if (!isKnownProviderId(provider)) return false;
   return !instance || Boolean(findInstance(settings, provider, instance));
 }
@@ -123,12 +125,19 @@ function resolveNewThreadModel(input, settings, provider) {
  * True when a provider's CLI can run for this project. Remote projects run
  * the CLI on the other host, so the local PATH says nothing there.
  * @param {any} project
- * @param {string} id
+ * @param {string} ref - provider id or instance ref
+ * @param {{ providerInstances?: unknown } | null} [settings] - resolves a
+ *   custom CLI's own binary (#458)
  */
-function providerInstalledFor(project, id) {
+function providerInstalledFor(project, ref, settings = null) {
   if (project && project.remoteHost) return true;
-  if (id === "simulate") return true;
-  return isBinAvailable(resolveBin(getProvider(id)));
+  const { provider, instance } = parseProviderRef(ref);
+  if (provider === "simulate") return true;
+  if (provider === "generic") {
+    const inst = findInstance(settings, provider, instance);
+    return Boolean(inst && inst.command && isBinAvailable(inst.command[0]));
+  }
+  return isBinAvailable(resolveBin(getProvider(provider)));
 }
 
 /**
@@ -166,7 +175,7 @@ function projectDefaultsFor(input, project, settings = null) {
   if (
     !out.provider ||
     !isKnownProviderRef(out.provider, settings) ||
-    !providerInstalledFor(project, parseProviderRef(out.provider).provider)
+    !providerInstalledFor(project, out.provider, settings)
   ) {
     delete out.provider;
     delete out.model;
@@ -1002,10 +1011,14 @@ function setProvider(store, input) {
   // input.provider is a ref: "claude" or "claude:<instanceId>" (#453).
   const ref = providerProvided ? parseProviderRef(input.provider) : null;
   if (ref) {
-    if (!isKnownProviderId(ref.provider)) {
+    const generic = ref.provider === "generic";
+    if (!generic && !isKnownProviderId(ref.provider)) {
       throw new Error(`Unknown provider: ${input.provider}`);
     }
-    if (ref.instance && !findInstance(store.getSettings(), ref.provider, ref.instance)) {
+    if (
+      (ref.instance || generic) &&
+      !findInstance(store.getSettings(), ref.provider, ref.instance)
+    ) {
       throw new Error(`Unknown provider instance: ${input.provider}`);
     }
   }
@@ -1138,6 +1151,10 @@ async function listProvidersForApi(store, opts) {
   // Each instance sits right after its base, so the picker groups them.
   /** @type {import('../src/shared/ipc').ProviderInfo[]} */
   const list = [];
+  // Custom CLIs (#458) have no base row; they trail the first-class list.
+  const generic = instances
+    .filter((inst) => inst.provider === "generic")
+    .map((inst) => genericProviderInfo(inst));
   for (const p of base) {
     list.push(p);
     for (const inst of instances) {
@@ -1151,6 +1168,7 @@ async function listProvidersForApi(store, opts) {
       });
     }
   }
+  list.push(...generic);
   for (const p of list) {
     const auth = providerAuth.get(p.id);
     if (auth && p.available) p.auth = auth;
@@ -1159,12 +1177,45 @@ async function listProvidersForApi(store, opts) {
 }
 
 /**
+ * Picker row for a custom CLI (#458). Capabilities are the honest floor:
+ * no resume, models, efforts, search, steer or agents, and permission
+ * modes only when the row maps full access to flags.
+ * @param {import('./providerInstances').ProviderInstance} inst
+ * @returns {import('../src/shared/ipc').ProviderInfo}
+ */
+function genericProviderInfo(inst) {
+  const command = inst.command || [];
+  return {
+    id: providerRef("generic", inst.id),
+    name: instanceDisplayName("", inst),
+    available: command.length > 0 && isBinAvailable(command[0]),
+    supportsResume: false,
+    models: [],
+    modelInfo: [],
+    efforts: [],
+    supportsSearch: false,
+    supportsSteer: false,
+    supportsAgents: false,
+    permissionModes:
+      inst.fullAccessArgs && inst.fullAccessArgs.length > 0
+        ? honouredPermissionModes(getProvider("generic"))
+        : [],
+    baseProvider: "generic",
+    instanceId: inst.id,
+    bestEffort: true,
+  };
+}
+
+/**
  * Sign-in probe inputs for every named instance (#453).
  * @param {import('./store').Store} store
  * @returns {Array<{ ref: string, provider: string, env: Record<string, string> }>}
  */
 function instanceAuthProbes(store) {
-  const instances = store.getSettings().providerInstances || [];
+  // Custom CLIs (#458) have no sign-in command to probe.
+  const instances = (store.getSettings().providerInstances || []).filter(
+    (inst) => inst.provider !== "generic",
+  );
   return instances.map((inst) => ({
     ref: providerRef(inst.provider, inst.id),
     provider: inst.provider,
