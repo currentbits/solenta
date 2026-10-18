@@ -82,6 +82,17 @@ export function useComposerAttachments({
       })),
     [threadId],
   );
+  /** Swap one chip in place (a marked-up copy replaces its source, #460). */
+  const replaceAttachment = useCallback(
+    (path: string, next: AttachmentInfo) =>
+      setAttachmentsByThread((prev) => ({
+        ...prev,
+        [threadId]: (prev[threadId] ?? []).map((a) =>
+          a.path === path ? next : a,
+        ),
+      })),
+    [threadId],
+  );
   const clearAttachments = useCallback(
     () =>
       setAttachmentsByThread((prev) =>
@@ -89,5 +100,11 @@ export function useComposerAttachments({
       ),
     [threadId],
   );
-  return { attachments, addAttachments, removeAttachment, clearAttachments };
+  return {
+    attachments,
+    addAttachments,
+    removeAttachment,
+    replaceAttachment,
+    clearAttachments,
+  };
 }
