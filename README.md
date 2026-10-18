@@ -98,7 +98,10 @@ it.
 - **Terminal and Browser panes** — a long-lived shell in the thread's worktree
   (`cd` and exports persist), and an embedded loopback-only browser on your dev
   server. Screenshot the page into the composer, or let the agent navigate,
-  click, type and screenshot it through the `preview` tool.
+  click, type and screenshot it through the `preview` tool, read a page
+  snapshot and console/network diagnostics, and switch viewport presets.
+  Inspect picks an element and attaches it as a composer chip. The terminal
+  has Find, Clear, Copy and send-selection-to-composer.
 - **Planboard** — a project's plan as its GitHub or GitLab issues. Agents on a GitHub
   origin use the coder-threads tools `issue_create`, `issue_list`,
   `issue_set_plan`, `issue_complete`, `issue_comment`, and `issue_label` (omitted when
@@ -166,19 +169,30 @@ renamed, the app name inside it is not.
 
 ### Remote access
 
+- **Phones and browsers:** Settings > Connections > Let other devices in. Turn
+  on Solenta Web, add a device, scan its QR code. Tailscale gives HTTPS.
+- **Another computer:** Settings > Connections > Connect to another computer.
+  Enter its SSH host (key login, host key accepted). Solenta starts there if
+  needed and the token is read over SSH. A Linux host without Solenta gets an
+  Install button (this version, checksum-verified, into `~/solenta`); an older
+  one gets Update. Its agents and their sign-ins are listed after connecting.
+- **Linux server without a display:** `~/solenta/solenta --headless --no-sandbox`
+  (implies `--serve-web`; systemd unit in site/docs.html#headless).
+
 ```bash
 /Applications/Solenta.app/Contents/MacOS/Solenta --serve-web        # 127.0.0.1:4620
 /Applications/Solenta.app/Contents/MacOS/Solenta --serve-web=4700 --serve-host 0.0.0.0
 ```
 
-The session token is printed to stdout on start (`solenta-web: token …`) and
-persisted at `<userData>/web-token`. There is no TLS in v1. Binding beyond
-loopback puts a token-gated API on your LAN, which is your call to make.
+Starting from a terminal prints the address, token, a sign-in link and a QR
+code (first line `solenta-web: token …`). The token is persisted at
+`<userData>/web-token`, written whenever Solenta Web starts, and is what
+Connect reads over SSH. If Solenta is already running, the flag turns Solenta
+Web on there instead of starting a second copy. There is no TLS on the LAN
+bind.
 
-Settings, Connections opens that same UI on another machine through SSH:
-its own window, a saved token, a pinned host key, and a reconnect if the
-tunnel drops. A remote project is different. It keeps this window and runs
-the agent CLI on the remote host.
+A remote project is different from Connect: it keeps this window and runs one
+repo's git and agent CLIs on the remote host.
 
 ## How it works
 
@@ -323,7 +337,17 @@ The root `package.json` already allows scripts for the pinned Electron version.
   speedup. OTel GenAI spans ship to your tracing backend.
 - **Morning digest** — one summary of everything that ran unattended.
 - **Agent profiles** — save a provider + model + effort + permission combination
-  and apply it in one click.
+  and apply it in one click. A profile can carry a governance policy
+  (block / deny / ask / allow rules on tools, bash, writes and network) that
+  gates Claude's permission asks and writes a signed audit log.
+- **Detached windows** — open any thread in its own window (⌘⇧O, the
+  sidebar menu, or drag the card out) while the main window stays the fleet
+  view.
+- **Multi-folder projects** — list extra folders next to the repo; agents
+  read and search them, and Claude writes there only after you grant the
+  folder on the permission card.
+- **Xcode MCP** — Apple projects get a one-click MobileBuildMCP or
+  `xcrun mcpbridge` pairing in Settings, Skills & MCP.
 - **Spec mode** — gated requirements → design → tasks artifacts, each approved
   before the next unlocks. tasks.md becomes a dispatch DAG (`needs:`);
   converge appends missing work back onto the file.

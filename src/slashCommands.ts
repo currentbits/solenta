@@ -14,6 +14,7 @@ export const NATIVE_COMPACT_PROVIDERS: readonly string[] = ["claude", "codex"];
 
 /** Immediate actions the palette can fire. Insert verbs have no action. */
 export type SlashAction =
+  | "copy"
   | "compact"
   | "rewind"
   | "usage"
@@ -80,6 +81,12 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
     action: "context",
   },
   {
+    name: "/copy",
+    hint: "Copy the last reply as Markdown",
+    kind: "run",
+    action: "copy",
+  },
+  {
     name: "/model",
     hint: "Pick provider and model",
     kind: "run",
@@ -100,6 +107,11 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
   {
     name: "/goal",
     hint: "Set a standing thread goal (bare /goal clears it)",
+    kind: "insert",
+  },
+  {
+    name: "/jump",
+    hint: "Jump to an earlier prompt (/jump auth filters)",
     kind: "insert",
   },
   {
@@ -183,12 +195,29 @@ export function parseGoalCommand(text: string): { goal: string | null } | null {
 }
 
 /**
+ * `/jump [filter]` opens the prompt outline filtered by the tail (#487). The
+ * composer intercepts it so it never reaches the model. Null when not a jump.
+ */
+export function parseJumpCommand(text: string): string | null {
+  const m = /^\s*\/jump(?:\s+([\s\S]*))?$/.exec(text);
+  return m ? (m[1] ?? "").trim() : null;
+}
+
+/**
  * The `/` token being typed, or null. Only at the very start of the draft,
  * and only while it is still one token — the first space ends the command
  * and everything after it belongs to the task.
  */
 export function commandQuery(text: string): string | null {
   return text.startsWith("/") && !/\s/.test(text) ? text : null;
+}
+
+/**
+ * Composer shell mode (#470): a leading `!` makes the draft a command for
+ * the thread's checkout, not a prompt. The command (maybe empty) or null.
+ */
+export function shellCommand(text: string): string | null {
+  return text.startsWith("!") ? text.slice(1).trim() : null;
 }
 
 /**

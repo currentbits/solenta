@@ -12,6 +12,7 @@ import assert from "node:assert/strict";
 import { describe, it, afterEach } from "node:test";
 import { act, cloneElement, useState } from "react";
 import { mount, unmountAll } from "./support/dom.ts";
+import { createFakeCoder, installFakeCoder } from "./support/fakeCoder.ts";
 import { SettingsModal, type SettingsPane } from "../src/components/SettingsModal";
 import type { MemoryProjectToolsApi } from "../src/components/MemoryTab";
 import type { SkillsManagerProps } from "../src/components/SkillsTab";
@@ -1749,6 +1750,36 @@ describe("SettingsModal resume interrupted runs (#1512 I3)", () => {
   });
 });
 
+describe("SettingsModal combine queued follow-ups (#468)", () => {
+  it("is on by default and saves the toggle", async () => {
+    const patches: Partial<AppSettings>[] = [];
+    const m = await mount(
+      modal({
+        initialPane: "threads",
+        settings: {
+          dailyBudgetUsd: null,
+          autoSettleAfterDays: 3,
+        } as AppSettings,
+        onSaveSettings: async (patch) => {
+          patches.push(patch);
+          return {
+            dailyBudgetUsd: null,
+            autoSettleAfterDays: 3,
+            combineQueuedFollowUps: patch.combineQueuedFollowUps !== false,
+          } as AppSettings;
+        },
+      }),
+    );
+    const box = m.query("[data-combine-queued-follow-ups]") as HTMLInputElement;
+    assert.ok(box, "combine checkbox");
+    assert.equal(box.checked, true);
+    await m.click(box);
+    assert.equal(patches.length, 1);
+    assert.equal(patches[0].combineQueuedFollowUps, false);
+    m.unmount();
+  });
+});
+
 describe("SettingsModal worker model pool (issue #467)", () => {
   const namedPool: SubagentPool = {
     defaultAlias: "fast",
@@ -2187,6 +2218,127 @@ describe("SettingsModal default orchestrator profile (#725)", () => {
     assert.deepEqual(patches[0].agentProfiles, []);
     assert.equal(patches[0].defaultOrchestratorProfileId, null);
     m.unmount();
+  });
+});
+
+describe("SettingsModal governance (#262)", () => {
+  const scout = {
+    id: "p-scout",
+    name: "Cheap scout",
+    provider: "kimi",
+    model: "kimi-code/kimi-for-coding-highspeed",
+    reasoningEffort: null,
+    permissionMode: "default" as const,
+  };
+
+  it("saves a bash deny row on the profile policy", async () => {
+    const patches: Partial<AppSettings>[] = [];
+    const settings = {
+      dailyBudgetUsd: null,
+      autoSettleAfterDays: 3,
+      agentProfiles: [scout],
+    } as AppSettings;
+    const m = await mount(
+      modal({
+        initialPane: "agents",
+        providers: [KIMI],
+        settings,
+        onSaveSettings: async (patch) => {
+          patches.push(patch);
+          return { ...settings, ...patch };
+        },
+      }),
+    );
+    const edit = Array.from(m.queryAll("button")).find(
+      (b) => (b.textContent || "").trim() === "Edit",
+    );
+    await m.click(edit!);
+    await m.click(m.query('[data-policy-add="bash"]'));
+    await m.click(m.query('[data-policy-add="tool"]')); // left empty: dropped
+    const bash = m.query('[data-policy-list="bash"] [data-policy-rule]')!;
+    await m.type(bash.querySelector("input"), "  npm publish ");
+    await m.change(bash.querySelector("select"), "deny");
+    await m.click(m.byText("Update"));
+    assert.equal(patches.length, 1);
+    assert.deepEqual(patches[0].agentProfiles?.[0]?.policy, {
+      defaultAction: "ask",
+      rules: [{ kind: "bash", match: "npm publish", action: "deny" }],
+    });
+    m.unmount();
+  });
+
+  it("omits policy when there are no rules and the default is Ask", async () => {
+    const patches: Partial<AppSettings>[] = [];
+    const settings = {
+      dailyBudgetUsd: null,
+      autoSettleAfterDays: 3,
+      agentProfiles: [scout],
+    } as AppSettings;
+    const m = await mount(
+      modal({
+        initialPane: "agents",
+        providers: [KIMI],
+        settings,
+        onSaveSettings: async (patch) => {
+          patches.push(patch);
+          return { ...settings, ...patch };
+        },
+      }),
+    );
+    const edit = Array.from(m.queryAll("button")).find(
+      (b) => (b.textContent || "").trim() === "Edit",
+    );
+    await m.click(edit!);
+    await m.click(m.byText("Update"));
+    assert.equal(patches.length, 1);
+    assert.equal("policy" in patches[0].agentProfiles![0]!, false);
+    m.unmount();
+  });
+
+  it("Advanced lists audit rows and verifies the chain", async () => {
+    const fake = createFakeCoder();
+    fake.api.governance.listAudit = async () => [
+      {
+        v: 1,
+        seq: 7,
+        ts: Date.UTC(2026, 9, 16, 9, 0),
+        threadId: "abcdef12-3456",
+        profileId: "p-scout",
+        provider: "claude",
+        toolName: "Bash",
+        actionHash: "h",
+        declared: { tool: "Bash", command: "npm publish", path: null, hosts: [] },
+        executed: null,
+        decision: "deny",
+        layer: "profile.deny",
+        rule: "bash:npm publish",
+        reason: "Profile denies npm publish",
+      },
+    ];
+    fake.api.governance.verifyAudit = async () => ({
+      ok: false,
+      seq: 7,
+      reason: "hmac mismatch",
+    });
+    const shell = await mount(<div />);
+    installFakeCoder(fake);
+    shell.unmount();
+    try {
+      const m = await mount(modal({ initialPane: "advanced" }));
+      await m.flush();
+      const row = m.query('[data-audit-row="7"]');
+      assert.ok(row, `audit row, got: ${m.text()}`);
+      assert.match(row.textContent || "", /abcdef12 · Bash · deny · profile\.deny/);
+      await m.click(m.query("[data-audit-verify]"));
+      await m.flush();
+      assert.equal(
+        m.query("[data-audit-verdict]")?.textContent,
+        "Chain broken at #7: hmac mismatch",
+      );
+      m.unmount();
+    } finally {
+      delete (window as unknown as { coder?: unknown }).coder;
+    }
   });
 });
 
@@ -2774,6 +2926,48 @@ describe("SettingsModal Agents › named provider instances (#453)", () => {
 
     await m.click(m.query('[data-instance-delete="w1"]'));
     assert.deepEqual(saved.at(-1), { providerInstances: [] });
+  });
+
+  it("Connect ChatGPT account adds a codex instance with its own CODEX_HOME and signs in", async () => {
+    const saved: Array<Partial<AppSettings>> = [];
+    const signIns: Array<[string, { name?: string } | undefined]> = [];
+    const CODEX: ProviderInfo = {
+      ...KIMI,
+      id: "codex",
+      name: "Codex",
+      auth: "signedIn",
+      account: { email: "dev@example.com", plan: "pro" },
+    };
+    const m = await mount(
+      cloneElement(
+        modal({
+          initialPane: "agents",
+          providers: [CLAUDE, CODEX],
+          settings: { providerInstances: [INSTANCE] } as Partial<AppSettings> as AppSettings,
+          onSaveSettings: async (patch) => {
+            saved.push(patch);
+            return patch as AppSettings;
+          },
+        }),
+        {
+          onProviderSignIn: async (id: string, opts?: { name?: string }) =>
+            void signIns.push([id, opts]),
+        },
+      ),
+    );
+    assert.equal(
+      m.query('[data-provider-row="codex"] [data-auth-state]')?.textContent,
+      "Signed in as dev@example.com · Pro",
+    );
+    await m.click(m.query("[data-connect-chatgpt]"));
+    const list = saved.at(-1)?.providerInstances;
+    assert.equal(list?.length, 2, "keeps the existing instance");
+    const added = list![1]!;
+    assert.deepEqual(
+      { ...added, id: "x", configDir: added.configDir?.replace(added.id, "x") },
+      { id: "x", name: "ChatGPT 2", provider: "codex", configDir: "~/.codex-x", env: {} },
+    );
+    assert.deepEqual(signIns, [[`codex:${added.id}`, { name: "Codex (ChatGPT 2)" }]]);
   });
 });
 

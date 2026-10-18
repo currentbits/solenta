@@ -95,6 +95,7 @@ const IPC_CHANNELS = Object.freeze([
   { ns: "app", method: "feedback" },
   { ns: "app", method: "openRemoteConnection" },
   { ns: "app", method: "forgetRemoteConnection" },
+  { ns: "app", method: "installRemoteSolenta" },
   { ns: "memory", method: "search" },
   { ns: "memory", method: "recent" },
   { ns: "memory", method: "get" },
@@ -113,6 +114,8 @@ const IPC_CHANNELS = Object.freeze([
   { ns: "mcp", method: "remove" },
   { ns: "mcp", method: "setEnabled" },
   { ns: "mcp", method: "catalog" },
+  { ns: "mcp", method: "xcodeStatus" },
+  { ns: "mcp", method: "pairXcode" },
   { ns: "mcp", method: "pickImport" },
   { ns: "mcp", method: "previewImport" },
   { ns: "mcp", method: "installImport" },
@@ -190,6 +193,7 @@ const IPC_CHANNELS = Object.freeze([
   { ns: "threads", method: "get" },
   { ns: "threads", method: "peek" },
   { ns: "threads", method: "setPermissionMode" },
+  { ns: "threads", method: "applyAgentProfile" },
   { ns: "threads", method: "respondPermission" },
   { ns: "threads", method: "clearQuestion" },
   { ns: "threads", method: "answerSecret" },
@@ -247,6 +251,8 @@ const IPC_CHANNELS = Object.freeze([
   { ns: "threads", method: "purge" },
   { ns: "threads", method: "listTrashed" },
   { ns: "activity", method: "list" },
+  { ns: "governance", method: "listAudit" },
+  { ns: "governance", method: "verifyAudit" },
   { ns: "usage", method: "byDay" },
   { ns: "usage", method: "providerLimits" },
   { ns: "insights", method: "failureModes" },
@@ -366,6 +372,11 @@ const IPC_CHANNELS = Object.freeze([
   { ns: "preview", method: "screenshot" },
   { ns: "preview", method: "click" },
   { ns: "preview", method: "type" },
+  { ns: "preview", method: "snapshot" },
+  { ns: "preview", method: "diagnostics" },
+  { ns: "preview", method: "viewport" },
+  { ns: "preview", method: "inspect" },
+  { ns: "preview", method: "cancelInspect" },
   { ns: "simulator", method: "capabilities" },
   { ns: "simulator", method: "selectDeveloperDir" },
   { ns: "simulator", method: "listDevices" },
@@ -415,6 +426,9 @@ const coder = bindChannels(invoke, IPC_CHANNELS);
 coder.attachments.droppedFilePath = (file) => webUtils.getPathForFile(file);
 coder.contextMenu = {
   show: (items, position) => invoke("contextMenu:show", items, position),
+};
+coder.windows = {
+  detachThread: (threadId) => invoke("window:detachThread", threadId),
 };
 coder.on = on;
 

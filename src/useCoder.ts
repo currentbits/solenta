@@ -37,6 +37,7 @@ import type {
   MergeLaneRestore,
   MergeSpotlight,
   McpCatalogEntry,
+  XcodeMcpStatus,
   McpImportPreview,
   McpInstallRequest,
   McpInstallResult,
@@ -104,6 +105,8 @@ import type {
   WorkflowTemplateInfo,
   WorkSuggestionStatus,
   ModelRoute,
+  ThreadSearchInput,
+  ThreadSearchResult,
 } from "./shared/ipc";
 import { resolveCoderApi } from "./coderApi";
 import {
@@ -121,6 +124,7 @@ import {
   saveCachedThreadDetail,
   whenIdle,
 } from "./bootSnapshot";
+import { detachedThreadId } from "./detachedWindow";
 import { prunePaneLayouts } from "./paneLayout";
 import { pruneComposerDrafts } from "./composerSession";
 import { createThreadDetailCache } from "./threadDetailCache";
@@ -334,6 +338,7 @@ export interface UseCoderResult {
     updatedCommand?: string,
     inputValues?: InputValues,
     feedback?: string,
+    alwaysRule?: string,
   ) => Promise<void>;
   /** Write plan markdown into the thread's checkout; resolves the path (#1501). */
   savePlan: (plan: string, threadId?: string) => Promise<string>;
@@ -359,6 +364,11 @@ export interface UseCoderResult {
     effort: ReasoningEffort | null,
     threadId?: string,
   ) => Promise<void>;
+  /**
+   * Apply a saved AgentProfile (#262) in one write. Defaults to the selected
+   * thread; pass threadId for a fork that is not selected.
+   */
+  applyAgentProfile: (profileId: string, threadId?: string) => Promise<void>;
   /**
    * Enable or disable Codex live web search. Defaults to the selected thread.
    * Pass threadId when applying to a fork that is not selected.
@@ -572,7 +582,7 @@ export interface UseCoderResult {
   }) => Promise<AttachmentInfo[]>;
   /** Web-only folder pick via showDirectoryPicker; persists through saveFolder. */
   pickFolderAttachments: () => Promise<AttachmentInfo[]>;
-  /** Persist a pasted image for the selected thread; null when rejected. */
+  /** Persist a pasted image for the selected thread; null when refused, rejects with the host error. */
   saveAttachmentImage: (dataUrl: string) => Promise<AttachmentInfo | null>;
   /** Data URL for one attached image; null when it is gone. */
   loadAttachmentImage: (path: string) => Promise<string | null>;
@@ -775,6 +785,8 @@ export interface UseCoderResult {
     threadId: string,
     actionId?: string,
   ) => Promise<CommandRunResult>;
+  /** Run a composer `!` line in the thread's checkout (#470). */
+  runShell: (threadId: string, command: string) => Promise<CommandRunResult>;
   /** Live spend + memory server status. */
   appStatus: AppStatus | null;
   /** Persisted app settings (daily budget). */
@@ -860,6 +872,8 @@ export interface UseCoderResult {
     enabled: boolean;
   }) => Promise<McpServerDefinition>;
   listMcpCatalog: () => Promise<McpCatalogEntry[]>;
+  xcodeMcpStatus: (input: { projectPath: string }) => Promise<XcodeMcpStatus | null>;
+  pairXcodeMcp: (input: { projectPath: string }) => Promise<McpServerDefinition>;
   pickMcpImport: () => Promise<McpImportPreview | null>;
   previewMcpImport: (input: McpPreviewImportInput) => Promise<McpImportPreview>;
   installMcpImport: (input: McpInstallRequest) => Promise<McpInstallResult>;
@@ -907,7 +921,7 @@ export interface UseCoderResult {
     provider?: "codex" | "grok" | "claude" | "cursor" | "opencode" | "kimi" | "muse";
   }) => Promise<ThreadInfo>;
   /** Full-content thread search (titles + message text); Sidebar owns debounce/state. */
-  searchThreads: (input: { query: string }) => Promise<ThreadInfo[]>;
+  searchThreads: (input: ThreadSearchInput) => Promise<ThreadSearchResult>;
   /** Load another thread's transcript without marking it visited (#393). */
   peekThread: (id: string) => Promise<ThreadDetail>;
 }
@@ -930,8 +944,10 @@ export function useCoder(): UseCoderResult {
     null,
   );
   const [automations, setAutomations] = useState<AutomationInfo[]>([]);
+  // A detached window (#519) is locked to its thread from the first paint.
+  const detachedId = useMemo(detachedThreadId, []);
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(
-    () => bootSnapshot?.selectedThreadId ?? null,
+    () => detachedId ?? bootSnapshot?.selectedThreadId ?? null,
   );
   const [detail, setDetail] = useState<ThreadDetail | null>(null);
   /** Last threads.get failure for the selected thread; retry bumps the nonce. */
@@ -946,7 +962,7 @@ export function useCoder(): UseCoderResult {
   const [simulatorStatus, setSimulatorStatus] =
     useState<SimulatorStatus | null>(null);
   const selectedRef = useRef<string | null>(
-    bootSnapshot?.selectedThreadId ?? null,
+    detachedId ?? bootSnapshot?.selectedThreadId ?? null,
   );
   /** Bumped on every threads:changed push so a late initial list cannot clobber it. */
   const threadsListGen = useRef(0);
@@ -1001,12 +1017,14 @@ export function useCoder(): UseCoderResult {
   // Render-first boot (#364): persist the boot inputs so the next launch can
   // paint the last-known lists before IPC answers. Fire-and-forget
   // localStorage writes; the threadsListGen guards do not apply here.
+  // Detached windows skip it: the snapshot is the main window's selection.
   useEffect(() => {
+    if (detachedId) return;
     const handle = window.setTimeout(() => {
       saveBootSnapshot({ projects, threads, selectedThreadId });
     }, BOOT_SNAPSHOT_DEBOUNCE_MS);
     return () => window.clearTimeout(handle);
-  }, [projects, threads, selectedThreadId]);
+  }, [projects, threads, selectedThreadId, detachedId]);
 
   // Same for the open transcript, so a relaunch (or a switch to a thread not
   // yet fetched this session) can paint it before threads.get answers.
@@ -1358,6 +1376,12 @@ export function useCoder(): UseCoderResult {
         // Missed a push (boot race, web reconnect): the patch has no base.
         resyncThreads();
       }
+      // Main always seq-encodes (#1475), so a bare array is the web
+      // reconnect resync: the open thread's final push may be lost with
+      // nothing after it to expose the gap (#929). Refetch it too.
+      if (Array.isArray(push) && selectedRef.current) {
+        reloadDetail(selectedRef.current);
+      }
       refreshTrashed();
       // Import (and any other main-process mint) can add projects without
       // going through projects.add. Refresh so the sidebar sees them.
@@ -1574,6 +1598,7 @@ export function useCoder(): UseCoderResult {
     answerSecret,
     setProvider,
     setReasoningEffort,
+    applyAgentProfile,
     setWebSearch,
     setAgent,
     listAgents,
@@ -1959,6 +1984,12 @@ export function useCoder(): UseCoderResult {
     [api],
   );
 
+  const runShell = useCallback(
+    (threadId: string, command: string) =>
+      api.threads.runCommand({ threadId, command }),
+    [api],
+  );
+
   const saveSettings = useCallback(
     async (patch: Partial<AppSettings>) => {
       const next = await api.settings.set(patch);
@@ -2014,6 +2045,8 @@ export function useCoder(): UseCoderResult {
     removeMcpServer,
     setMcpEnabled,
     listMcpCatalog,
+    xcodeMcpStatus,
+    pairXcodeMcp,
     pickMcpImport,
     previewMcpImport,
     installMcpImport,
@@ -2058,7 +2091,7 @@ export function useCoder(): UseCoderResult {
   );
 
   const searchThreads = useCallback(
-    async (input: { query: string }) => {
+    async (input: ThreadSearchInput) => {
       return api.threads.search(input);
     },
     [api],
@@ -2123,6 +2156,7 @@ export function useCoder(): UseCoderResult {
     answerSecret,
     setProvider,
     setReasoningEffort,
+    applyAgentProfile,
     setWebSearch,
     setAgent,
     listAgents,
@@ -2254,6 +2288,7 @@ export function useCoder(): UseCoderResult {
     setVerifyCommand,
     runVerify,
     runCommand,
+    runShell,
     appStatus,
     settings,
     saveSettings,
@@ -2284,6 +2319,8 @@ export function useCoder(): UseCoderResult {
     removeMcpServer,
     setMcpEnabled,
     listMcpCatalog,
+    xcodeMcpStatus,
+    pairXcodeMcp,
     pickMcpImport,
     previewMcpImport,
     installMcpImport,

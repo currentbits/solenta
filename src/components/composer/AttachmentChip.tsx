@@ -4,16 +4,19 @@ import styles from "../Composer.module.css";
 
 /**
  * One attachment: thumbnail for images, glyph for files/folders. Without
- * onRemove it is read-only (the queued strip, #1212).
+ * onRemove it is read-only (the queued strip, #1212). onMarkup turns an
+ * image thumbnail into a button that opens the markup editor (#460).
  */
 export function AttachmentChip({
   attachment,
   onRemove,
   onLoadImage,
+  onMarkup,
 }: {
   attachment: AttachmentInfo;
   onRemove?: () => void;
   onLoadImage?: (path: string) => Promise<string | null>;
+  onMarkup?: () => void;
 }) {
   const [thumb, setThumb] = useState<string | null>(null);
   useEffect(() => {
@@ -34,7 +37,17 @@ export function AttachmentChip({
       data-attachment-kind={attachment.kind}
       title={attachment.path}
     >
-      {attachment.kind === "image" && thumb ? (
+      {attachment.kind === "image" && thumb && onMarkup ? (
+        <button
+          type="button"
+          className={styles.attachmentMarkup}
+          aria-label={`Mark up ${attachment.name}`}
+          title="Pin, draw or crop"
+          onClick={onMarkup}
+        >
+          <img className={styles.attachmentThumb} src={thumb} alt="" />
+        </button>
+      ) : attachment.kind === "image" && thumb ? (
         <img
           className={styles.attachmentThumb}
           src={thumb}

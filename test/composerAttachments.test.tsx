@@ -5,9 +5,10 @@
  * Run: node --import=./test/support/render.mjs --test test/composerAttachments.test.tsx
  */
 import assert from "node:assert/strict";
-import { describe, it, afterEach } from "node:test";
+import { describe, it, afterEach, before, after } from "node:test";
 import { inAct, mount, unmountAll } from "./support/dom.ts";
 import { Composer } from "../src/components/Composer";
+import { normalizeRect } from "../src/components/composer/ImageMarkup";
 import type {
   AttachmentInfo,
   ProviderInfo,
@@ -147,6 +148,7 @@ function composer(
   harness: Harness,
   over: {
     picks?: AttachmentInfo[];
+    threadId?: string;
     withPicker?: boolean;
     savedImage?: AttachmentInfo | null;
     onDrop?: (
@@ -157,6 +159,7 @@ function composer(
     incomingThreadId?: string | null;
     onIncomingConsumed?: () => void;
     onSaveImage?: (dataUrl: string) => Promise<AttachmentInfo | null>;
+    onLoadImage?: (path: string) => Promise<string | null>;
     folderPicks?: AttachmentInfo[];
     provider?: string;
     model?: string | null;
@@ -167,7 +170,7 @@ function composer(
   const picks = over.picks ?? [];
   return (
     <Composer
-      threadId="t1"
+      threadId={over.threadId ?? "t1"}
       branch={null}
       permissionMode="default"
       onPermissionModeChange={() => {}}
@@ -205,7 +208,7 @@ function composer(
         over.onSaveImage ??
         (async () => (over.savedImage === undefined ? null : over.savedImage))
       }
-      onLoadAttachmentImage={async () => null}
+      onLoadAttachmentImage={over.onLoadImage ?? (async () => null)}
       onDropAttachmentFiles={over.onDrop}
       incomingAttachments={over.incoming}
       incomingAttachmentThreadId={over.incomingThreadId}
@@ -837,5 +840,220 @@ describe("Composer attachments", () => {
       "a successful send must not come back after remount",
     );
     third.unmount();
+  });
+
+  it("marks up an image chip: flattened PNG replaces it, pin notes join the draft (#460)", async () => {
+    // jsdom has no Image loading and no 2D canvas: fake both so the real
+    // editor runs and Save hands back a recognisable data URL.
+    const g = globalThis as unknown as Record<string, unknown>;
+    const proto = (
+      window as unknown as { HTMLCanvasElement: { prototype: object } }
+    ).HTMLCanvasElement.prototype as Record<string, unknown>;
+    const saved = {
+      Image: g.Image,
+      getContext: proto.getContext,
+      toDataURL: proto.toDataURL,
+    };
+    g.Image = class {
+      naturalWidth = 200;
+      naturalHeight = 100;
+      onload: (() => void) | null = null;
+      set src(_v: string) {
+        setTimeout(() => this.onload?.(), 0);
+      }
+    };
+    const ctx = new Proxy({}, { get: () => () => {}, set: () => true });
+    proto.getContext = () => ctx;
+    proto.toDataURL = () => "data:image/png;base64,MARKED";
+    const MARKED: AttachmentInfo = {
+      kind: "image",
+      path: "/tmp/marked.png",
+      name: "marked.png",
+    };
+    const uploads: string[] = [];
+    const h: Harness = { sends: [] };
+    const m = await mount(
+      composer(h, {
+        incoming: [IMAGE],
+        onLoadImage: async () => "data:image/png;base64,AAA",
+        onSaveImage: async (dataUrl) => {
+          uploads.push(dataUrl);
+          return MARKED;
+        },
+      }),
+    );
+    try {
+      await m.flush();
+      await m.click(m.query('button[aria-label="Mark up pic.png"]'));
+      await m.flush();
+      const canvas = document.querySelector('[role="dialog"] canvas');
+      assert.ok(canvas, "markup editor must open on the chip");
+      const save = () =>
+        Array.from(document.querySelectorAll("button")).find(
+          (b) => b.textContent === "Save markup",
+        );
+      assert.equal(save()?.disabled, true, "nothing to save before a mark");
+      await inAct(() => {
+        canvas.dispatchEvent(
+          new MouseEvent("pointerdown", {
+            bubbles: true,
+            button: 0,
+            clientX: 10,
+            clientY: 10,
+          }),
+        );
+      });
+      const note = document.querySelector('input[aria-label="Note for pin 1"]');
+      assert.ok(note, "a click drops pin 1 with a note field");
+      await m.type(note, "padding too big");
+      await m.click(save() ?? null);
+      await m.flush();
+      assert.deepEqual(uploads, ["data:image/png;base64,MARKED"]);
+      assert.equal(document.querySelector('[role="dialog"]'), null);
+      assert.deepEqual(
+        m.queryAll("[data-attachment-kind]").map((c) => c.getAttribute("title")),
+        ["/tmp/marked.png"],
+        "the marked copy replaces the source chip",
+      );
+      const draft = (m.query("textarea") as HTMLTextAreaElement).value;
+      assert.equal(
+        draft,
+        "Markup on pic.png (numbered red pins):\n1. padding too big",
+      );
+    } finally {
+      g.Image = saved.Image;
+      proto.getContext = saved.getContext;
+      proto.toDataURL = saved.toDataURL;
+      m.unmount();
+    }
+  });
+
+  it("normalizeRect turns any drag direction into a clamped crop", () => {
+    assert.deepEqual(
+      normalizeRect({ x: 150, y: 80 }, { x: -20, y: 10.4 }, 120, 100),
+      { x: 0, y: 10, w: 120, h: 70 },
+    );
+  });
+});
+
+describe("Composer image paste failures (#1211)", () => {
+  /** Instant FileReader; `readFails` makes it fire onerror instead. */
+  let readFails = false;
+  const realReader = globalThis.FileReader;
+  before(() => {
+    globalThis.FileReader = class {
+      result: string | null = null;
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      readAsDataURL(blob: Blob) {
+        if (readFails) return this.onerror?.();
+        this.result = `data:${blob.type};base64,AQ==`;
+        this.onload?.();
+      }
+    } as unknown as typeof FileReader;
+  });
+  after(() => {
+    globalThis.FileReader = realReader;
+  });
+
+  async function pasteBlobs(el: Element | null, blobs: Blob[]) {
+    assert.ok(el, "paste target must exist");
+    const ev = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(ev, "clipboardData", {
+      value: {
+        items: blobs.map((b) => ({
+          kind: "file",
+          type: b.type,
+          getAsFile: () => b,
+        })),
+        getData: () => "",
+      },
+    });
+    await inAct(() => {
+      el.dispatchEvent(ev);
+    });
+  }
+  const png = () => new File([Uint8Array.from([1])], "a.png", { type: "image/png" });
+  const alertText = (m: { query(s: string): Element | null }) =>
+    m.query('[role="alert"]')?.textContent ?? "";
+
+  it("a reader failure shows an error instead of silently eating the paste", async () => {
+    readFails = true;
+    let saves = 0;
+    const h: Harness = { sends: [] };
+    const m = await mount(
+      composer(h, {
+        onSaveImage: async () => {
+          saves += 1;
+          return IMAGE;
+        },
+      }),
+    );
+    try {
+      await pasteBlobs(m.query("textarea"), [png()]);
+      await m.flush();
+      assert.equal(saves, 0, "nothing was read, so nothing is saved");
+      assert.equal(m.query('[data-attachment-kind="image"]'), null);
+      assert.match(alertText(m), /Couldn't read the pasted image/);
+    } finally {
+      readFails = false;
+      m.unmount();
+    }
+  });
+
+  it("multiple images show partial success and name every rejection", async () => {
+    let n = 0;
+    const h: Harness = { sends: [] };
+    const m = await mount(
+      composer(h, {
+        // Items read in order: only the first PNG saves.
+        onSaveImage: async () =>
+          n++ === 0 ? { ...IMAGE, path: "/tmp/ok.png" } : null,
+      }),
+    );
+    const big = new File([new Uint8Array(21 * 1024 * 1024)], "big.png", {
+      type: "image/png",
+    });
+    const heic = new File([Uint8Array.from([1])], "x.heic", {
+      type: "image/heic",
+    });
+    await pasteBlobs(m.query("textarea"), [png(), heic, big]);
+    await m.flush();
+    assert.equal(m.queryAll('[data-attachment-kind="image"]').length, 1);
+    const text = alertText(m);
+    assert.match(text, /2 of 3 pasted images weren't attached/);
+    assert.match(text, /Can't attach HEIC images/);
+    assert.match(text, /21\.0 MB; the limit is 20 MB/);
+    m.unmount();
+  });
+
+  it("a save that settles after a thread switch stays with its thread", async () => {
+    const pending: ((a: AttachmentInfo | null) => void)[] = [];
+    const save = () =>
+      new Promise<AttachmentInfo | null>((r) => pending.push(r));
+    const h: Harness = { sends: [] };
+    const m = await mount(composer(h, { threadId: "t1", onSaveImage: save }));
+    await pasteBlobs(m.query("textarea"), [png()]);
+    await pasteBlobs(m.query("textarea"), [png()]);
+    await m.flush();
+    assert.equal(pending.length, 2);
+
+    await m.rerender(composer(h, { threadId: "t2", onSaveImage: save }));
+    await inAct(() => {
+      pending[0]!(IMAGE);
+      pending[1]!(null);
+    });
+    await m.flush();
+    assert.equal(
+      m.query('[data-attachment-kind="image"]'),
+      null,
+      "t1's chip must not land on t2",
+    );
+    assert.equal(m.query('[role="alert"]'), null, "t1's error must not show on t2");
+
+    await m.rerender(composer(h, { threadId: "t1", onSaveImage: save }));
+    await m.flush();
+    assert.equal(m.queryAll('[data-attachment-kind="image"]').length, 1);
+    m.unmount();
   });
 });

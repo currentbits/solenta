@@ -1,6 +1,6 @@
 /**
  * Edit-before-approve helpers (#509): command field extract/apply, prefix
- * glob for allow-always-after-edit, session addRules shape.
+ * glob for allow-always (#479), session addRules shape.
  *
  * Run: node --test electron/test/permissionCommand.test.js
  */
@@ -13,6 +13,7 @@ const {
   resolveEditedCommand,
   commandPrefix,
   sessionAllowRule,
+  WHOLE_TOOL_RULE,
 } = require("../permissionCommand.js");
 
 describe("permissionCommand", () => {
@@ -73,21 +74,41 @@ describe("permissionCommand", () => {
     assert.equal(commandPrefix("  "), null);
   });
 
-  it("sessionAllowRule keys edited allow-always on the edited prefix", () => {
-    assert.deepEqual(sessionAllowRule("Bash", "npm test", { edited: false }), {
-      type: "addRules",
-      rules: [{ toolName: "Bash" }],
-      behavior: "allow",
-      destination: "session",
-    });
+  const addRules = (rule) => ({
+    type: "addRules",
+    rules: [rule],
+    behavior: "allow",
+    destination: "session",
+  });
+
+  it("sessionAllowRule keys allow-always on the command prefix, never whole-tool (#479)", () => {
+    // Accept all on `npm test -- foo` must not become a blank cheque for `rm`.
+    const rule = sessionAllowRule("Bash", "npm test -- foo");
+    assert.deepEqual(rule, addRules({ toolName: "Bash", ruleContent: "npm test:*" }));
     assert.deepEqual(
-      sessionAllowRule("Bash", "npm build", { edited: true }),
-      {
-        type: "addRules",
-        rules: [{ toolName: "Bash", ruleContent: "npm build:*" }],
-        behavior: "allow",
-        destination: "session",
-      },
+      sessionAllowRule("Bash", "npm build"),
+      addRules({ toolName: "Bash", ruleContent: "npm build:*" }),
     );
+  });
+
+  it("sessionAllowRule honours a typed rule; '*' is the explicit whole tool", () => {
+    assert.deepEqual(
+      sessionAllowRule("Bash", "npm test -- foo", "  npm run test:*  "),
+      addRules({ toolName: "Bash", ruleContent: "npm run test:*" }),
+    );
+    // Blank typed rule falls back to the derived prefix, not whole-tool.
+    assert.deepEqual(
+      sessionAllowRule("Bash", "git status", "   "),
+      addRules({ toolName: "Bash", ruleContent: "git status:*" }),
+    );
+    assert.deepEqual(
+      sessionAllowRule("Bash", "npm test", WHOLE_TOOL_RULE),
+      addRules({ toolName: "Bash" }),
+    );
+  });
+
+  it("sessionAllowRule stays whole-tool for tools without a command", () => {
+    assert.deepEqual(sessionAllowRule("Edit", null), addRules({ toolName: "Edit" }));
+    assert.deepEqual(sessionAllowRule("Edit", null, "src/*"), addRules({ toolName: "Edit" }));
   });
 });

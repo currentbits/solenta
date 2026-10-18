@@ -59,6 +59,30 @@
         Every notable change to Solenta, newest first.
       </p>
 
+      <h2 id="v0-26-0">0.26.0 <small>2026-10-16</small></h2>
+      <h3>Added</h3>
+      <ul>
+        <li><strong>Governance policies.</strong> Each agent profile can carry a permission matrix: rules for tools, bash commands, writes and network that block, deny, ask or allow, with the most severe match winning. Claude runs are checked before the card and again on the command you edit and approve. Every decision lands in a signed, tamper-evident audit log you can verify in Settings › Advanced.</li>
+        <li><strong>Detached thread windows.</strong> Open a thread in its own window from the sidebar menu, with ⌘⇧O, or by dragging its card out of the app. The main window stays the fleet overview and both stay in sync.</li>
+        <li><strong>Multi-folder projects.</strong> A project can list extra folders next to its repo. Agents read and search them freely, and writes there ask first, with an Allow writes to this folder button on the card.</li>
+        <li><strong>Pick an element in the Browser pane.</strong> Inspect mode lets you click an element on the previewed page and add it to the composer with a comment and a cropped screenshot.</li>
+        <li><strong>Agents see more of the page.</strong> The Browser pane tool gains a compact accessibility snapshot with clickable refs, console and network diagnostics, and mobile, tablet and desktop viewports.</li>
+        <li><strong>Terminal tools.</strong> Find in the terminal, clear the display, copy the selection, or send it to the composer as a chip.</li>
+        <li><strong>Xcode MCP in one click.</strong> Apple projects get an Xcode card in Settings › Skills &amp; MCP that pairs MobileBuildMCP or Apple's own Xcode MCP bridge.</li>
+        <li><strong>Codex file approvals.</strong> Codex file-change and permission requests now show up as a reviewable card instead of failing the turn.</li>
+        <li><strong>Anonymous usage ping.</strong> Release builds send one anonymous ping a day: a random install id, version, OS and which agent providers were used. No prompts, paths, repo names or usernames, and no IPs are stored. Set DO_NOT_TRACK=1 or SOLENTA_TELEMETRY=0 to turn it off.</li>
+      </ul>
+      <h3>Fixed</h3>
+      <ul>
+        <li><strong>Search with filters.</strong> Thread search applies the sidebar's status, provider, project and tag filters before it caps results, so older matching threads no longer get pushed out.</li>
+        <li><strong>Queued messages stick.</strong> A failed queue write keeps your composer draft, a fresh turn that fails its preflight keeps the queue, and a reconnect no longer merges separate queued writes.</li>
+        <li><strong>Solenta Web reconnects.</strong> The open transcript is refetched after a reconnect, so nothing from the gap goes missing.</li>
+        <li><strong>Weekly automations.</strong> They stay on their weekday after catch-up runs, Run now and hour edits.</li>
+        <li><strong>Plan cards.</strong> A plan you hid stays hidden when you switch threads or relaunch.</li>
+        <li><strong>Kimi.</strong> Skills now reach kimi-cli, and Ask mode and commit or PR message fallbacks run kimi without tools.</li>
+        <li><strong>Pasted images.</strong> An image that can't be attached shows an error that says why and what to do.</li>
+      </ul>
+
       <h2 id="v0-25-0">0.25.0 <small>2026-10-13</small></h2>
       <h3>Added</h3>
       <ul>

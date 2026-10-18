@@ -5,10 +5,16 @@
  * permission, and derive the session-rule prefix for allow-always-after-edit.
  *
  * Claude's addRules `ruleContent` for Bash is a prefix glob (`npm test:*`),
- * not the whole tool. After a human amends the command, that glob must key
- * on the *edited* command — never the original, and never a blank cheque
- * for Bash. Unedited allow-always stays whole-tool; narrowing that is #479.
+ * not the whole tool. Allow-always keys on the prefix of the command that
+ * actually runs (the edit, never the original), or on a rule the user typed
+ * (#479). Whole-tool is only the explicit WHOLE_TOOL_RULE overflow.
+ *
+ * Keep commandPrefix in lockstep with src/permissionRule.ts (parity test:
+ * test/permissionRuleParity.test.ts).
  */
+
+/** `alwaysRule` sentinel for "this tool, anything" (#479 overflow). */
+const WHOLE_TOOL_RULE = "*";
 
 const COMMAND_KEYS = ["command", "cmd", "script"];
 
@@ -128,20 +134,22 @@ function commandPrefix(command) {
 }
 
 /**
- * Session addRules payload. After an edit, `ruleContent` is the edited
- * command's prefix so allow-always never keys on the original. Unedited
- * stays `{ toolName }` (whole tool) — #479 owns narrowing that default.
+ * Session addRules payload. Command tools get `ruleContent`: the user's
+ * `alwaysRule` when given, else the prefix of `command` (the one that runs).
+ * `alwaysRule === WHOLE_TOOL_RULE`, or a tool with no command (Edit/Write),
+ * stays `{ toolName }` — the whole tool.
  *
  * @param {string} toolName
  * @param {string | null} command
- * @param {{ edited: boolean }} opts
+ * @param {unknown} [alwaysRule]
  */
-function sessionAllowRule(toolName, command, opts) {
+function sessionAllowRule(toolName, command, alwaysRule) {
   /** @type {{ toolName: string, ruleContent?: string }} */
   const rule = { toolName };
-  if (opts && opts.edited) {
-    const prefix = commandPrefix(command);
-    if (prefix) rule.ruleContent = prefix;
+  const typed = typeof alwaysRule === "string" ? alwaysRule.trim() : "";
+  if (command !== null && typed !== WHOLE_TOOL_RULE) {
+    const content = typed || commandPrefix(command);
+    if (content) rule.ruleContent = content;
   }
   return {
     type: "addRules",
@@ -152,6 +160,7 @@ function sessionAllowRule(toolName, command, opts) {
 }
 
 module.exports = {
+  WHOLE_TOOL_RULE,
   commandField,
   extractCommand,
   applyCommand,
