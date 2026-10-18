@@ -134,6 +134,7 @@ import {
 } from "../uiPrefs";
 import { applyComposerVim } from "../composerVim";
 import { AttachmentChip } from "./composer/AttachmentChip";
+import { ImageMarkup } from "./composer/ImageMarkup";
 import { CommandList, MentionList } from "./composer/ComposerPopups";
 import { ReplyChip } from "./composer/ReplyChip";
 import { ReviewCommentChips } from "./composer/ReviewCommentChips";
@@ -564,8 +565,13 @@ export const Composer = memo(function Composer({
     syncOverflow,
     setLocalError,
   });
-  const { attachments, addAttachments, removeAttachment, clearAttachments } =
-    useComposerAttachments({
+  const {
+    attachments,
+    addAttachments,
+    removeAttachment,
+    replaceAttachment,
+    clearAttachments,
+  } = useComposerAttachments({
       threadId,
       canAttachImages,
       incomingAttachments,
@@ -1506,6 +1512,40 @@ export const Composer = memo(function Composer({
     runAttachmentPick(onPickAttachments);
   };
 
+  /** Image chip open in the markup editor (#460), with its loaded bytes. */
+  const [markup, setMarkup] = useState<{
+    attachment: AttachmentInfo;
+    src: string;
+  } | null>(null);
+  const openMarkup = (attachment: AttachmentInfo) => {
+    void onLoadAttachmentImage?.(attachment.path)
+      .then((src) => {
+        if (src) setMarkup({ attachment, src });
+      })
+      .catch(() => {});
+  };
+  /** The flattened PNG replaces its chip; pin notes go into the draft. */
+  const saveMarkup = (dataUrl: string, notes: string) => {
+    const source = markup?.attachment;
+    setMarkup(null);
+    if (!source || !onSaveAttachmentImage) return;
+    onSaveAttachmentImage(dataUrl)
+      .then((next) => {
+        if (!next) {
+          setLocalError("Could not save the marked-up image");
+          return;
+        }
+        replaceAttachment(source.path, next);
+        if (notes) {
+          const text = [readDraft().trimEnd(), notes]
+            .filter(Boolean)
+            .join("\n\n");
+          writeDraft(text, text.length);
+        }
+      })
+      .catch(() => setLocalError("Could not save the marked-up image"));
+  };
+
   /** Clipboard images become saved attachments; large text pastes become cards. */
   const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
     if (disabled || sending) return;
@@ -1940,9 +1980,22 @@ export const Composer = memo(function Composer({
                 attachment={a}
                 onRemove={() => removeAttachment(a.path)}
                 onLoadImage={onLoadAttachmentImage}
+                onMarkup={
+                  onSaveAttachmentImage && !disabled && !sending
+                    ? () => openMarkup(a)
+                    : undefined
+                }
               />
             ))}
           </div>
+        )}
+        {markup && (
+          <ImageMarkup
+            src={markup.src}
+            name={markup.attachment.name}
+            onCancel={() => setMarkup(null)}
+            onSave={saveMarkup}
+          />
         )}
         <textarea
           key={threadId}

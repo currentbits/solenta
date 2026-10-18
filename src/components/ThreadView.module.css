@@ -3201,6 +3201,30 @@ button.diffLineGutter:focus-visible {
   text-decoration: underline;
 }
 
+/* Always-allow overflow (#479): edit the session rule, or whole tool. */
+.permissionMore {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.permissionMore summary {
+  width: fit-content;
+  cursor: pointer;
+}
+
+.permissionRule {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.permissionRule input {
+  flex: 1;
+  width: auto;
+  min-width: 0;
+}
+
 /* Plan approval (ExitPlanMode): rendered markdown, scrolls when long. */
 .planBody {
   padding: 10px 12px;

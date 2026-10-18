@@ -51,6 +51,21 @@ function noticePrompt(notes) {
   return headed + NOTICE_FOOTER_LINE;
 }
 
+/**
+ * Several queued follow-ups sent as one turn (#468): number them so the
+ * model reads one request in the order typed, not one run-on message.
+ * @param {string[]} items
+ * @returns {string}
+ */
+function combinedQueuedPrompt(items) {
+  if (items.length <= 1) return items.join("");
+  const n = items.length;
+  return [
+    `${n} follow-ups queued while you were working, oldest first. Handle them together as one request:`,
+    ...items.map((t, i) => `[${i + 1}/${n}] ${t}`),
+  ].join("\n\n");
+}
+
 function formatQueuedPrompt(queued) {
   if (queued && queued.fromThread && queued.fromThread.id) {
     const { attributedPrompt } = require("./crossThread.js");
@@ -199,6 +214,7 @@ module.exports = {
   PLAN_TRUNCATE,
   shouldRecordSession,
   noticePrompt,
+  combinedQueuedPrompt,
   formatQueuedPrompt,
   firstChanged,
   planText,

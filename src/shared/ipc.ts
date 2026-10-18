@@ -2064,7 +2064,11 @@ export interface PendingQuestion {
   customAnswer?: boolean;
 }
 
-/** User decision on a PendingPermissionInfo. "allowAlways" also allows the tool for the rest of the CLI session. */
+/**
+ * User decision on a PendingPermissionInfo. "allowAlways" also allows matching
+ * calls for the rest of the CLI session: for a command, the `alwaysRule` glob
+ * (default: its prefix, e.g. `npm test:*`), not the whole tool (#479).
+ */
 export type PermissionDecision =
   | "allow"
   | "allowAlways"
@@ -3462,6 +3466,11 @@ export interface AppSettings {
    * automatic follow-up turn (issue #1512 I3). Default off.
    */
   resumeInterruptedRuns: boolean;
+  /**
+   * When a turn finishes, send every waiting queued follow-up as ONE turn
+   * (#468). Default on; false runs them one per turn (#1501).
+   */
+  combineQueuedFollowUps: boolean;
   /** Solenta tool, injection, and secret checks. Default on; false opts out. */
   guardrailsEnabled: boolean;
   /**
@@ -5094,6 +5103,12 @@ export interface CoderApi {
        * pending tool has no command field.
        */
       updatedCommand?: string;
+      /**
+       * allowAlways on a command (#479): the session-rule glob the user
+       * confirmed, e.g. `npm test:*`; "*" allows the whole tool. Absent:
+       * the prefix of the command that runs. Ignored by Codex.
+       */
+      alwaysRule?: string;
       inputValues?: InputValues;
       /**
        * "Keep planning" notes (#1501). Deny on a plan prompt only: a live
@@ -5655,7 +5670,8 @@ export interface CoderApi {
     }): Promise<{ runId: string }>;
     /**
      * "Send now" on a parked queue (#1501): start the next queued item as
-     * its own turn; the rest drain one per successful turn after it.
+     * its own turn; the rest drain after it, combined into one turn unless
+     * combineQueuedFollowUps is off (#468).
      * Rejects while a run is active; a failed start puts the item back.
      */
     sendQueued(input: { threadId: string }): Promise<void>;

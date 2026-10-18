@@ -90,6 +90,7 @@ class StoreSettingsMethods {
       quotaWaitAutoResume: n.quotaWaitAutoResume,
       confirmQuitWithActiveWork: n.confirmQuitWithActiveWork,
       resumeInterruptedRuns: n.resumeInterruptedRuns,
+      combineQueuedFollowUps: n.combineQueuedFollowUps,
       guardrailsEnabled: n.guardrailsEnabled,
       prDiffCapLines: n.prDiffCapLines,
       maxConcurrentRuns: n.maxConcurrentRuns,
@@ -404,6 +405,13 @@ class StoreSettingsMethods {
         throw new Error("resumeInterruptedRuns must be a boolean");
       }
       this.data.settings.resumeInterruptedRuns = v;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "combineQueuedFollowUps")) {
+      const v = patch.combineQueuedFollowUps;
+      if (typeof v !== "boolean") {
+        throw new Error("combineQueuedFollowUps must be a boolean");
+      }
+      this.data.settings.combineQueuedFollowUps = v;
     }
     if (Object.prototype.hasOwnProperty.call(patch, "guardrailsEnabled")) {
       const v = patch.guardrailsEnabled;
