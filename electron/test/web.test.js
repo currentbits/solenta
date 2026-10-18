@@ -188,6 +188,35 @@ describe("parseServeWebArgs", () => {
     assert.equal(space.host, "10.0.0.4");
   });
 
+  it("--headless implies --serve-web", () => {
+    const got = parseServeWebArgs(["/opt/solenta/solenta", "--headless", "--no-sandbox"]);
+    assert.deepEqual(got, { enabled: true, headless: true, host: "127.0.0.1", port: 4620 });
+    assert.equal(parseServeWebArgs(["--serve-web=4700"]).headless, false);
+  });
+
+  it("serveBanner: loopback gets no QR and a pointer to the LAN flag", () => {
+    const { serveBanner } = require("../webServer.js");
+    const out = serveBanner({ token: "t0k", urls: [{ kind: "local", url: "http://127.0.0.1:4620" }] });
+    assert.match(out, /^solenta-web: token t0k\n/, "first line stays machine-readable");
+    assert.match(out, /Address {2}http:\/\/127\.0\.0\.1:4620 {2}\(this machine only\)/);
+    assert.match(out, /Link {5}http:\/\/127\.0\.0\.1:4620\/\?token=t0k/);
+    assert.match(out, /--serve-host 0\.0\.0\.0/);
+    assert.doesNotMatch(out, /Scan/);
+  });
+
+  it("serveBanner: a reachable address gets the link as a QR code and the no-TLS note", () => {
+    const { serveBanner } = require("../webServer.js");
+    const out = serveBanner({
+      token: "a b",
+      urls: [{ kind: "local", url: "http://127.0.0.1:4620" }, { kind: "lan", url: "http://192.168.1.20:4620" }],
+    });
+    assert.match(out, /Link {5}http:\/\/192\.168\.1\.20:4620\/\?token=a%20b/);
+    assert.match(out, /Scan to open it on a phone:\n[\u2580\u2584\u2588 ]+\n/);
+    assert.ok(out.includes(HOST_FLAG_HELP));
+    const tailnet = serveBanner({ token: "x", urls: [], tailnetUrl: "https://mac.tail1.ts.net" });
+    assert.match(tailnet, /Link {5}https:\/\/mac\.tail1\.ts\.net\/\?token=x/);
+  });
+
   it("HOST_FLAG_HELP names no TLS and LAN as an informed choice", () => {
     assert.match(HOST_FLAG_HELP, /no TLS/i);
     assert.match(HOST_FLAG_HELP, /LAN/);
@@ -501,11 +530,24 @@ describe("one map, two transports + packaging", () => {
     assert.match(main, /loadOrCreateToken/);
     assert.match(main, /serveOpts\.enabled/);
     assert.match(main, /registered\.ctx/);
-    assert.match(main, /HOST_FLAG_HELP/);
+    assert.match(main, /serveBanner\(/);
     assert.doesNotMatch(main, /parseServeArgs\(/);
     assert.match(main, /process\.stdout\.write\(`solenta-web: token/);
-    assert.match(main, /webAccess\.adoptLegacy\(token\)/);
+    // Every start adopts the file token (webAccess fileToken), not just --serve-web.
+    assert.match(main, /fileToken: \(\) => loadOrCreateToken\(userData\)/);
     assert.match(main, /\} else \{[^}]*await webAccess\.restore\(\);/);
+  });
+
+  it("main.js: --headless opens no window, and a second --serve-web launch hands off", () => {
+    const main = fs.readFileSync(path.join(__dirname, "../main.js"), "utf8");
+    assert.match(main, /if \(serveOpts\.headless\) app\.disableHardwareAcceleration\(\);/);
+    assert.match(main, /createWindow: serveOpts\.headless \? \(\) => \{\} : createWindow/);
+    // macOS holds the lock too, or a terminal --serve-web opens a second store writer.
+    assert.match(main, /if \(!app\.requestSingleInstanceLock\(\)\) \{/);
+    assert.doesNotMatch(main, /process\.platform !== "darwin" && !app\.requestSingleInstanceLock/);
+    const handler = main.slice(main.indexOf('app.on("second-instance"'));
+    assert.match(handler.slice(0, 900), /parseServeWebArgs\(argv\)[\s\S]*webAccess\.setEnabled\(\{ enabled: true \}\)/);
+    assert.match(main, /if \(serveOpts\.headless\) app\.exit\(1\);/, "headless with no listener exits");
   });
 
   it("main.js survives a web-server bind failure and still opens a window", async () => {

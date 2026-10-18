@@ -166,7 +166,13 @@ export function WebAccessSection({ active }: { active: boolean }) {
 
   return (
     <section className={styles.section} data-web-access="">
-      <p className={styles.sectionLabel}>Solenta Web</p>
+      <p className={styles.sectionLabel}>Let other devices in</p>
+      <p className={styles.note} data-web-howto="">
+        Solenta Web serves this app to a browser or phone. Turn it on, add a
+        device below, then scan its QR code or open its link on that device.
+        Other computers running Solenta can connect over SSH without a device
+        (Connect to another computer, below).
+      </p>
       <div className={styles.memoryRow} data-web-state={status.running ? "on" : "off"}>
         <span className={styles.memoryDot} data-on={status.running ? "true" : undefined} aria-hidden />
         {status.running ? (
@@ -374,7 +380,7 @@ export function WebAccessSection({ active }: { active: boolean }) {
                   <span data-web-device-scopes="">{scopeSummary(d.scopes)}</span>
                   {" · "}
                   {seenLabel(d)}
-                  {d.legacy ? " · the token from before devices" : ""}
+                  {d.legacy ? " · read over SSH when another computer connects; revoking it makes a new one the next time Solenta Web starts" : ""}
                 </p>
               </div>
               <button

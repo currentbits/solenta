@@ -71,6 +71,18 @@ describe("webDevices", () => {
     assert.equal(createWebDevices(tmp).list().length, 1, "no duplicate on reload");
   });
 
+  it("shows rows adopted under the old name as SSH and command line", () => {
+    fs.writeFileSync(
+      path.join(tmp, FILE_NAME),
+      JSON.stringify({
+        server: { enabled: false, lan: false },
+        devices: [{ id: "x", name: "Legacy device", tokenHash: hashToken("t"), createdAt: 1, lastSeenAt: null, legacy: true }],
+      }),
+    );
+    assert.deepEqual(createWebDevices(tmp).list().map((d) => d.name), [LEGACY_NAME]);
+    assert.equal(LEGACY_NAME, "SSH and command line");
+  });
+
   it("revoking Legacy device deletes the web-token file", () => {
     fs.writeFileSync(path.join(tmp, "web-token"), "old-token");
     const devices = createWebDevices(tmp);

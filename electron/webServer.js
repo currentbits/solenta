@@ -65,12 +65,17 @@ function artifactSecurityHeaders(extra = {}) {
 }
 
 /**
+ * --headless implies --serve-web and opens no window. On Linux it is also
+ * Chromium's own switch, which selects the display-less ozone platform
+ * before any JS runs; that is why it must come from the command line.
+ *
  * @param {string[]} argv
- * @returns {{ enabled: boolean, host: string, port: number }}
+ * @returns {{ enabled: boolean, headless: boolean, host: string, port: number }}
  */
 function parseServeWebArgs(argv) {
   const args = Array.isArray(argv) ? argv : [];
-  let enabled = false;
+  const headless = args.includes("--headless");
+  let enabled = headless;
   let host = DEFAULT_HOST;
   let port = DEFAULT_PORT;
   for (let i = 0; i < args.length; i++) {
@@ -90,7 +95,7 @@ function parseServeWebArgs(argv) {
       host = val;
     }
   }
-  return { enabled, host, port };
+  return { enabled, headless, host, port };
 }
 
 /**
@@ -129,6 +134,74 @@ function loadOrCreateToken(userDataPath) {
     // mode is best-effort on some filesystems
   }
   return token;
+}
+
+/**
+ * The QR code as half-block rows (two modules per character), dark on the
+ * terminal's light-on-dark default, with the 2-module quiet zone phones need.
+ *
+ * @param {string} text
+ * @returns {string}
+ */
+function terminalQr(text) {
+  const qrcode = require("qrcode-generator");
+  const qr = qrcode(0, "L");
+  qr.addData(text);
+  qr.make();
+  const n = qr.getModuleCount();
+  const pad = 2;
+  // Light = printed block, so the code reads as dark-on-light when scanned.
+  const light = (r, c) => r < 0 || c < 0 || r >= n || c >= n || !qr.isDark(r, c);
+  const rows = [];
+  for (let r = -pad; r < n + pad; r += 2) {
+    let line = "";
+    for (let c = -pad; c < n + pad; c++) {
+      const top = light(r, c);
+      const bottom = r + 1 >= n + pad ? false : light(r + 1, c);
+      line += top && bottom ? "\u2588" : top ? "\u2580" : bottom ? "\u2584" : " ";
+    }
+    rows.push(line);
+  }
+  return rows.join("\n");
+}
+
+/**
+ * What --serve-web / --headless print once listening. The first line is the
+ * old machine-readable contract; the rest tells a person what to do next.
+ *
+ * @param {{ token: string, urls: { kind: string, url: string }[], tailnetUrl?: string | null }} opts
+ * @returns {string}
+ */
+function serveBanner(opts) {
+  const { token } = opts;
+  const urls = opts.urls || [];
+  const reachable = [
+    ...(opts.tailnetUrl ? [{ kind: "tailnet", url: opts.tailnetUrl }] : []),
+    ...urls.filter((u) => u.kind !== "local"),
+  ];
+  const best = reachable[0] || urls[0];
+  const link = best ? `${best.url}/?token=${encodeURIComponent(token)}` : "";
+  const lines = [`solenta-web: token ${token}`, "", "Solenta Web is ready."];
+  for (const u of [...reachable, ...urls.filter((x) => x.kind === "local")]) {
+    const note = u.kind === "local" ? "this machine only" : u.kind === "tailnet" ? "your tailnet, HTTPS" : "your network, plain HTTP";
+    lines.push(`  Address  ${u.url}  (${note})`);
+  }
+  lines.push(`  Token    ${token}`);
+  if (link) lines.push(`  Link     ${link}`);
+  if (urls.some((u) => u.kind === "lan")) lines.push(`  Note     ${HOST_FLAG_HELP}`);
+  if (reachable.length) {
+    lines.push("", "Scan to open it on a phone:", terminalQr(link));
+  }
+  lines.push(
+    "",
+    "From another computer running Solenta: Settings > Connections > Connect to",
+    "another computer, then enter this machine's SSH host. The token is read",
+    "over SSH, so you do not need to copy it.",
+  );
+  if (!reachable.length) {
+    lines.push("For phones and browsers on your network, restart with --serve-host 0.0.0.0.");
+  }
+  return `${lines.join("\n")}\n`;
 }
 
 /**
@@ -498,6 +571,8 @@ module.exports = {
   HOST_FLAG_HELP,
   parseServeWebArgs,
   loadOrCreateToken,
+  terminalQr,
+  serveBanner,
   startWebServer,
   tokensEqual,
   serveRunArtifact,

@@ -871,3 +871,9 @@
   white-space: nowrap;
   justify-self: end;
 }
+
+.connectionSteps {
+  padding-left: 18px;
+  display: grid;
+  gap: 4px;
+}
