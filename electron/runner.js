@@ -24,6 +24,7 @@ const threadSecrets = require("./threadSecrets.js");
 const { createClaudeSessions } = require("./runner-claude-sessions.js");
 const { createVerifyGate } = require("./runner-verify-gate.js");
 const { createQuotaWait } = require("./runner-quota-wait.js");
+const { createThrash } = require("./runner-thrash.js");
 const { createAutoResume } = require("./runner-auto-resume.js");
 const { createOrchNotices } = require("./runner-orch-notices.js");
 const { createPermissions } = require("./runner-permissions.js");
@@ -759,6 +760,8 @@ function createRunner(opts) {
       endedAt: at,
       isError: Boolean(isError),
     });
+    // Thrash detector (#391); ctx is built after this function is declared.
+    ctx.noteThrashTool(threadId, runId, String(toolId), name, Boolean(isError));
   }
 
   /** Last known workflow (core Workflow or real state) per thread. */
@@ -2958,6 +2961,8 @@ function createRunner(opts) {
     refreshAllQuotaWaits,
     cancelAll: cancelAllQuotaWakes,
   } = createQuotaWait(ctx);
+  // Read lazily by noteToolSpan and runner-verify-gate.js.
+  Object.assign(ctx, createThrash(ctx));
 
   const {
     startAskRun,
