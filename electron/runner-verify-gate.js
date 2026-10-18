@@ -234,6 +234,7 @@ function createVerifyGate(ctx) {
   }
 
   function finishSuccessfulTurn(threadId) {
+    ctx.noteThrashSuccess(threadId);
     void maybeAutoPr({
       store,
       threadId,
@@ -362,13 +363,30 @@ function createVerifyGate(ctx) {
       );
       store.updateThread(
         threadId,
-        { verify: result, status: "done", runStartedAt: null },
+        {
+          verify: result,
+          status: "done",
+          runStartedAt: null,
+          // Thrash rollback target (#391); `verify` is overwritten by failures.
+          ...(sha ? { lastGreenSha: sha } : {}),
+        },
         { touch: true },
       );
       store.save();
       pushDetail(threadId);
       pushThreadsChanged();
       finishSuccessfulTurn(threadId);
+      return;
+    }
+
+    // Same failure after a fix each time (#391): hand over to the thrash
+    // detector instead of another fix prompt or a plain "failed".
+    const hit = ctx.noteThrashVerifyFailure(threadId, prepared.command, result.log);
+    if (hit) {
+      appendMessage(threadId, "event", `Verification failed: ${prepared.command}`);
+      store.updateThread(threadId, { verify: result }, { touch: true });
+      store.save();
+      void ctx.thrashInterrupt(threadId, hit);
       return;
     }
 
