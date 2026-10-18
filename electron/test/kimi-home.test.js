@@ -130,6 +130,15 @@ describe("materializeKimiHome", () => {
     assert.ok(fs.lstatSync(path.join(dest, "device_id")).isSymbolicLink());
   });
 
+  it("links the user's skills dir so installed skills reach the CLI (#695)", () => {
+    fs.mkdirSync(path.join(source, "skills", "demo"), { recursive: true });
+    materializeKimiHome({ dest, sourceHome: source, cwd: "/tmp/alpha" });
+    assert.equal(
+      fs.realpathSync(path.join(dest, "skills")),
+      fs.realpathSync(path.join(source, "skills")),
+    );
+  });
+
   it("workspaceId is stable for the same path", () => {
     assert.equal(workspaceId("/tmp/alpha"), workspaceId("/tmp/alpha"));
     assert.notEqual(workspaceId("/tmp/alpha"), workspaceId("/tmp/beta"));
@@ -222,7 +231,8 @@ const m = cfg.match(/effort[ \\t]*=[ \\t]*"([^"]*)"/);
 fs.writeFileSync(process.env.CODER_FAKE_KIMI_SEEN_FILE, JSON.stringify({
   home,
   mcp,
-  effort: m ? m[1] : "none",
+  // #451: effort rides the env, the config.toml stays the user's.
+  effort: process.env.KIMI_MODEL_THINKING_EFFORT || (m ? m[1] : "none"),
 }));
 function emit(obj) { process.stdout.write(JSON.stringify(obj) + "\\n"); }
 emit({ type: "text", text: "ok" });
@@ -284,7 +294,7 @@ emit({ type: "usage", input_tokens: 1, output_tokens: 1 });
       assert.match(
         fs.readFileSync(path.join(sourceHome, "config.toml"), "utf8"),
         /effort = "high"/,
-        "the user's kimi home must not be flipped",
+        "the user's kimi home must not be edited",
       );
       const mcp = JSON.parse(seen.mcp);
       assert.ok(!mcp.mcpServers || !mcp.mcpServers.girder);

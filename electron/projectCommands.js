@@ -14,6 +14,7 @@ const { randomUUID } = require("node:crypto");
 const {
   normalizeCommand,
   runVerifyCommand,
+  VERIFY_COMMAND_MAX,
   VERIFY_TIMEOUT_MS,
   tailLog,
 } = require("./verify.js");
@@ -23,6 +24,12 @@ const { effectiveCommands } = require("./repoConfig.js");
 const SETUP_ID = "setup";
 /** Reserved actionId for solenta.json `onSettle` (#1531). */
 const ON_SETTLE_ID = "onSettle";
+/** Reserved actionId for a composer `!` shell command (#470). */
+const SHELL_ID = "shell";
+/** `!` is foreground-only on day one: a hard cap, no backgrounding (#470). */
+const SHELL_TIMEOUT_MS = 60_000;
+/** How often a running `!` command's card is repainted with new output. */
+const SHELL_PAINT_MS = 250;
 /** Teardown should be quick; the merged-PR cleanup waits on it. */
 const ON_SETTLE_TIMEOUT_MS = 2 * 60_000;
 const QUICK_ACTION_MAX = 8;
@@ -76,7 +83,9 @@ function normalizeQuickActions(raw) {
     const command = normalizeCommand(row.command);
     if (!name || !command) continue;
     let id = typeof row.id === "string" ? row.id.trim() : "";
-    if (!id || id === SETUP_ID || id === ON_SETTLE_ID || seen.has(id)) id = randomUUID();
+    if (!id || id === SETUP_ID || id === ON_SETTLE_ID || id === SHELL_ID || seen.has(id)) {
+      id = randomUUID();
+    }
     seen.add(id);
     out.push({ id, name, command });
     if (out.length >= QUICK_ACTION_MAX) break;
@@ -150,29 +159,62 @@ function eventText(name, phase, ran) {
 }
 
 /**
+ * `!` card summary (#470): the command itself, then how it ended.
+ *
+ * @param {{ command: string, running?: boolean, ok?: boolean, timedOut?: boolean, exitCode?: number | null, durationMs?: number }} ran
+ */
+function shellText(ran) {
+  const head = `$ ${ran.command.split(/\r?\n/)[0]}`;
+  if (ran.running) return `${head} · running`;
+  const took = formatDuration(ran.durationMs || 0);
+  if (ran.timedOut) return `${head} · timed out after ${took}`;
+  if (ran.ok) return `${head} · ${took}`;
+  return `${head} · exit ${ran.exitCode == null ? "?" : ran.exitCode} · ${took}`;
+}
+
+/**
  * @param {import("./store").Store} store
  * @param {string} threadId
  * @param {string} text
  * @param {object} [extra] fields merged onto the message
+ * @returns {string} the new event's id
  */
 function appendEvent(store, threadId, text, extra) {
   const list = (store.getMessages(threadId) || []).slice();
+  const id = randomUUID();
   list.push({
-    id: randomUUID(),
+    id,
     role: "event",
     text,
     createdAt: Date.now(),
     ...extra,
   });
   store.setMessages(threadId, list);
+  return id;
+}
+
+/**
+ * @param {import("./store").Store} store
+ * @param {string} threadId
+ * @param {string} id
+ * @param {object} patch
+ */
+function patchEvent(store, threadId, id, patch) {
+  store.setMessages(
+    threadId,
+    (store.getMessages(threadId) || []).map((m) =>
+      m.id === id ? { ...m, ...patch } : m,
+    ),
+  );
 }
 
 /**
  * @param {import("./store").Store} store
  * @param {string} threadId
  * @param {(channel: string, payload: unknown) => void} [broadcast]
+ * @param {{ detailOnly?: boolean }} [opts] live output repaints skip the list
  */
-function pushCommandState(store, threadId, broadcast) {
+function pushCommandState(store, threadId, broadcast, opts) {
   if (typeof broadcast !== "function") return;
   try {
     const { getThreadDetail, listThreads } = require("./services.js");
@@ -180,6 +222,7 @@ function pushCommandState(store, threadId, broadcast) {
       "thread:updated",
       getThreadDetail(store, threadId, null, { markVisited: false }),
     );
+    if (opts && opts.detailOnly) return;
     broadcast("threads:changed", listThreads(store));
   } catch {
     // thread gone mid-run
@@ -414,13 +457,50 @@ function enqueue(store, args) {
  */
 async function runOne(store, args) {
   const { threadId, cwd, project, resolved, broadcast, env } = args;
-  appendEvent(
-    store,
-    threadId,
-    eventText(resolved.name, "start", { command: resolved.command }),
-  );
+  // `!` (#470) is one card that fills in as output arrives; setup and quick
+  // actions keep their start line plus an end event.
+  const shell = resolved.id === SHELL_ID;
+  const live = {
+    name: resolved.name,
+    command: resolved.command,
+    ok: false,
+    exitCode: null,
+    timedOut: false,
+    log: "",
+    durationMs: 0,
+    at: Date.now(),
+    cwd,
+    shell: true,
+    running: true,
+  };
+  const startId = shell
+    ? appendEvent(store, threadId, shellText(live), { commandResult: live })
+    : appendEvent(
+        store,
+        threadId,
+        eventText(resolved.name, "start", { command: resolved.command }),
+      );
   store.save();
   pushCommandState(store, threadId, broadcast);
+
+  /** @type {string | null} */
+  let soFar = null;
+  /** @type {ReturnType<typeof setTimeout> | null} */
+  let paintTimer = null;
+  const paint = () => {
+    paintTimer = null;
+    if (soFar == null) return;
+    patchEvent(store, threadId, startId, {
+      commandResult: { ...live, log: tailLog(soFar) },
+    });
+    pushCommandState(store, threadId, broadcast, { detailOnly: true });
+  };
+  const onOutput = shell
+    ? (/** @type {string} */ out) => {
+        soFar = out;
+        if (!paintTimer) paintTimer = setTimeout(paint, SHELL_PAINT_MS);
+      }
+    : undefined;
 
   let ran;
   try {
@@ -430,6 +510,7 @@ async function runOne(store, args) {
       project,
       timeoutMs: resolved.timeoutMs,
       ...(env ? { env } : {}),
+      ...(onOutput ? { onOutput } : {}),
     });
   } catch (err) {
     ran = {
@@ -453,12 +534,21 @@ async function runOne(store, args) {
     durationMs: ran && typeof ran.durationMs === "number" ? ran.durationMs : 0,
     at: Date.now(),
     cwd,
+    ...(shell ? { shell: true } : {}),
   };
-  // The output rides on this invocation's own event (#1216), so two runs of
-  // one action stay apart and a remount reads it back from the transcript.
-  appendEvent(store, threadId, eventText(resolved.name, "end", result), {
-    commandResult: result,
-  });
+  if (paintTimer) clearTimeout(paintTimer);
+  if (shell) {
+    patchEvent(store, threadId, startId, {
+      text: shellText(result),
+      commandResult: result,
+    });
+  } else {
+    // The output rides on this invocation's own event (#1216), so two runs
+    // of one action stay apart and a remount reads it back from the transcript.
+    appendEvent(store, threadId, eventText(resolved.name, "end", result), {
+      commandResult: result,
+    });
+  }
   store.save();
   pushCommandState(store, threadId, broadcast);
   return result;
@@ -480,6 +570,7 @@ async function runOne(store, args) {
  */
 async function runCommand(store, input, deps) {
   const threadId = input && input.threadId;
+  const typed = input && input.command !== undefined;
   const thread = store.getThread(threadId);
   if (!thread) {
     throw new Error(`Unknown thread: ${threadId}`);
@@ -494,7 +585,27 @@ async function runCommand(store, input, deps) {
   if (!project) {
     throw new Error(`Unknown project for thread: ${threadId}`);
   }
-  const resolved = resolveCommand(project, input && input.actionId);
+  // A typed `!` command (#470) is the user's own, so it needs no repo-config
+  // approval, and it runs as the user: the thread's permission mode is never
+  // consulted, so bypassPermissions does not carry over.
+  const shellCommand = typed ? normalizeCommand(input.command) : null;
+  if (typed && !shellCommand) throw new Error("Type a command after !");
+  // normalizeCommand cuts at the cap; running half a typed line is worse
+  // than refusing it.
+  if (shellCommand && String(input.command).trim().length > VERIFY_COMMAND_MAX) {
+    throw new Error(`Commands are limited to ${VERIFY_COMMAND_MAX} characters`);
+  }
+  const resolved = shellCommand
+    ? {
+        id: SHELL_ID,
+        name: "shell",
+        command: shellCommand,
+        timeoutMs: SHELL_TIMEOUT_MS,
+        fromRepo: false,
+        hash: null,
+        trusted: true,
+      }
+    : resolveCommand(project, input && input.actionId);
   if (!resolved) {
     if (!input || !input.actionId || input.actionId === SETUP_ID) {
       throw new Error("No setup command set for this project");
@@ -531,6 +642,8 @@ module.exports = {
   SETUP_ID,
   ON_SETTLE_ID,
   ON_SETTLE_TIMEOUT_MS,
+  SHELL_ID,
+  SHELL_TIMEOUT_MS,
   QUICK_ACTION_MAX,
   ACTION_NAME_MAX,
   SETUP_TIMEOUT_MS,
@@ -547,4 +660,5 @@ module.exports = {
   setRunCommandFn,
   formatDuration,
   eventText,
+  shellText,
 };

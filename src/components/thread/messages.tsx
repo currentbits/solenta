@@ -569,7 +569,8 @@ function CommandResultEvent({
   animateIn: boolean;
   onAddToPrompt?: (chip: TerminalChip) => void;
 }) {
-  const [open, setOpen] = useState(!result.ok);
+  // A typed `!` command (#470) is run to be read: open, and live while running.
+  const [open, setOpen] = useState(!result.ok || result.shell === true);
   const [done, setDone] = useState<"copied" | "added" | null>(null);
   const preRef = useRef<HTMLPreElement>(null);
   const summary = message.text.split(/\r?\n/)[0] ?? "";
@@ -593,7 +594,15 @@ function CommandResultEvent({
     <section
       className={`${styles.eventLine}${animateIn ? ` ${styles.streamIn}` : ""}`}
       data-stream-in={animateIn ? "" : undefined}
-      data-command-result={result.ok ? "ok" : result.timedOut ? "timeout" : "failed"}
+      data-command-result={
+        result.running
+          ? "running"
+          : result.ok
+            ? "ok"
+            : result.timedOut
+              ? "timeout"
+              : "failed"
+      }
     >
       <div className={styles.eventRow}>
         <StepLine icon="tool" open={open} onToggle={() => setOpen((v) => !v)}>
@@ -615,7 +624,7 @@ function CommandResultEvent({
           >
             {done === "copied" ? "Copied" : "Copy"}
           </button>
-          {onAddToPrompt && (
+          {onAddToPrompt && !result.running && (
             <button
               type="button"
               className={styles.retryBtn}
@@ -638,7 +647,7 @@ function CommandResultEvent({
           className={`${styles.toolPre} ${styles.commandOutput}`}
           data-command-output=""
         >
-          {result.log || "(no output)"}
+          {result.log || (result.running ? "…" : "(no output)")}
         </pre>
       )}
     </section>

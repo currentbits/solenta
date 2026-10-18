@@ -45,6 +45,7 @@ const BY_SCOPE = {
     "memory:maintenance",
     "mcp:list",
     "mcp:catalog",
+    "mcp:xcodeStatus",
     "skills:list",
     "skills:commands",
     "threads:listAgents",
@@ -71,6 +72,8 @@ const BY_SCOPE = {
     "threads:specArtifact",
     "threads:listTrashed",
     "activity:list",
+    "governance:listAudit",
+    "governance:verifyAudit",
     "usage:byDay",
     "usage:providerLimits",
     "insights:failureModes",
@@ -114,6 +117,8 @@ const BY_SCOPE = {
     "devserver:status",
     "preview:info",
     "preview:screenshot",
+    "preview:snapshot",
+    "preview:diagnostics",
     "speech:status",
   ],
   steer: [
@@ -192,7 +197,7 @@ const BY_SCOPE = {
     "speech:stop",
     "speech:cancel",
   ],
-  files: ["projects:writeAgentConfig", "workflows:exportToRepo"],
+  files: ["projects:writeAgentConfig", "workflows:exportToRepo", "threads:exportReport"],
   git: [
     "git:setupWorktree",
     "git:commit",
@@ -248,6 +253,10 @@ const BY_SCOPE = {
     "preview:goForward",
     "preview:click",
     "preview:type",
+    "preview:viewport",
+    // Inspect reads the guest DOM the user points at (#1193).
+    "preview:inspect",
+    "preview:cancelInspect",
     "devserver:start",
     "devserver:stop",
   ],
@@ -300,6 +309,7 @@ const BY_SCOPE = {
     // mcp:save registers a command to spawn; pairing:* mints or approves tokens.
     "mcp:save",
     "mcp:installImport",
+    "mcp:pairXcode",
     "pairing:create",
     "pairing:revoke",
     "pairing:approve",
@@ -317,6 +327,8 @@ const BY_SCOPE = {
     "threads:purge",
     // Bypass mode would let a steer device skip the terminal/files/git grants.
     "threads:setPermissionMode",
+    // Applies a profile's permission mode too (#262).
+    "threads:applyAgentProfile",
     // A secret lands in the agent's run env (#1531); host or full devices only.
     "threads:answerSecret",
     "app:checkUpdate",
@@ -324,6 +336,7 @@ const BY_SCOPE = {
     "app:applyUpdate",
     "app:openRemoteConnection",
     "app:forgetRemoteConnection",
+    "app:installRemoteSolenta",
     // Host-side effects: open apps, read arbitrary host paths, capture windows.
     "shell:reveal",
     "shell:openPath",

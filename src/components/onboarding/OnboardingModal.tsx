@@ -19,6 +19,15 @@ export type RefreshProviders = (
 export interface OnboardingStepProps {
   providers: ProviderInfo[];
   refreshProviders: RefreshProviders;
+  /**
+   * Opens a terminal with the provider's login (or, with `install`, its
+   * install) command typed in. Absent: rows show state without actions.
+   */
+  onProviderSignIn?: (
+    providerId: string,
+    /** `name`: terminal title when the row is too new for the provider list. */
+    opts?: { install?: boolean; name?: string },
+  ) => Promise<void>;
   projects: ProjectInfo[];
   onAddProject: () => void;
   /** First-run discovery (#1501). Absent: the step offers the folder picker only. */

@@ -60,6 +60,13 @@ export interface ProjectInfo {
   slug: string;
   name: string;
   path: string;
+  /**
+   * Multi-folder projects (#514): extra absolute folders, in order. `path`
+   * stays the primary (git, worktrees, AGENTS.md / skills / memory); agents
+   * may read and search these, and write only after a per-folder grant on
+   * the permission card. Local projects only.
+   */
+  folders?: string[];
   /** When set, the project lives on this host (user@host) and agents run over ssh. */
   remoteHost?: string;
   /** Absolute path on the remote host. Required when remoteHost is set. */
@@ -385,6 +392,8 @@ export interface ProjectUpdateInput {
   autoPr?: boolean;
   /** Worktree retention (#316 / #559): 0 keeps everything, N > 0 sets the keep count. Default 10. */
   worktreeRetention?: number;
+  /** Secondary folders (#514), absolute paths. Empty / null clears them. */
+  folders?: string[] | null;
   /**
    * Relative project file to use as the icon, or null to restore
    * Automatic detection (#610).
@@ -914,6 +923,13 @@ export interface ThreadInfo {
   provider: string;
   /** Named instance of `provider` (#453); absent on the base provider. */
   providerInstance?: string | null;
+  /**
+   * AgentProfile the thread is running under (#262). Set by
+   * threads.applyAgentProfile; cleared by a manual provider / effort /
+   * permission pick. Its `policy` gates Claude tool calls. An id that no
+   * longer matches a saved profile means "no profile".
+   */
+  agentProfileId?: string | null;
   /** Model override passed to the provider CLI when set (e.g. claude --model). */
   model: string | null;
   /** Provider session id, persisted after the first turn so follow-ups resume context. */
@@ -1072,6 +1088,18 @@ export interface ThreadInfo {
    * Absent → none. Dismiss removes a row; promote queues it as a follow-up.
    */
   btw?: BtwCard[];
+}
+
+/** threads.search input. threadIds scopes the scan before the cap (#1201). */
+export interface ThreadSearchInput {
+  query: string;
+  threadIds?: string[];
+}
+
+/** threads.search reply: up to 50 hits; truncated when more matched. */
+export interface ThreadSearchResult {
+  threads: ThreadInfo[];
+  truncated: boolean;
 }
 
 /** One `/btw` side-question card (issue #471). */
@@ -1964,6 +1992,12 @@ export interface PendingPermissionInfo {
   /** Typed input for Codex questions and MCP elicitation. Ephemeral, never persisted. */
   inputRequest?: PendingInputRequest | null;
   /**
+   * Codex item/fileChange/requestApproval (#1189): the correlated
+   * fileChange item as a git-style patch, plus the ask's optional reason
+   * and (unstable) grantRoot. The card shows the diff, not `input`.
+   */
+  fileChange?: { diff: string; reason: string | null; grantRoot: string | null } | null;
+  /**
    * Present when the agent is asking to leave plan mode (ExitPlanMode): the
    * plan markdown, rendered in the prompt panel instead of the raw JSON.
    */
@@ -1972,8 +2006,17 @@ export interface PendingPermissionInfo {
    * Present when the guardrail policy (#409) rated this call risky but not
    * deniable — show the reason so the user isn't approving blind. Denied
    * calls never reach here; they are answered without asking.
+   * `layer` (#262) names who asked: "builtin", "profile.ask",
+   * "profile.default". On "profile.ask" hide Allow always: a session grant
+   * cannot mute an always-confirm rule.
    */
-  guardrail?: { rule: string | null; reason: string } | null;
+  guardrail?: { rule: string | null; reason: string; layer?: GovernanceLayer } | null;
+  /**
+   * Multi-folder projects (#514): the edit lands in this secondary folder,
+   * which the thread may not write yet. "allowFolder" grants it for the
+   * rest of the thread.
+   */
+  folderGrant?: string | null;
 }
 
 /**
@@ -2026,8 +2069,18 @@ export interface PendingQuestion {
   customAnswer?: boolean;
 }
 
-/** User decision on a PendingPermissionInfo. "allowAlways" also allows the tool for the rest of the CLI session. */
-export type PermissionDecision = "allow" | "allowAlways" | "deny" | "cancel";
+/**
+ * User decision on a PendingPermissionInfo. "allowAlways" also allows matching
+ * calls for the rest of the CLI session: for a command, the `alwaysRule` glob
+ * (default: its prefix, e.g. `npm test:*`), not the whole tool (#479).
+ */
+export type PermissionDecision =
+  | "allow"
+  | "allowAlways"
+  /** #514: allow, and grant writes to pending.folderGrant for this thread. */
+  | "allowFolder"
+  | "deny"
+  | "cancel";
 export type InputValues = Record<string, string | number | boolean | string[]>;
 export interface PendingInputRequest {
   source: string;
@@ -2239,6 +2292,10 @@ export interface CommandRunResult {
   at: number;
   /** Checkout the command ran in (#1216). */
   cwd?: string;
+  /** Typed in the composer as `!command` (#470). */
+  shell?: boolean;
+  /** Still going: `log` is the output so far (`!` commands only). */
+  running?: boolean;
 }
 
 /**
@@ -2445,10 +2502,136 @@ export interface PreviewSnapshot {
   canGoForward: boolean;
 }
 
+export type PreviewViewportPreset = "fill" | "mobile" | "tablet" | "desktop";
+
+/**
+ * Viewport as the page measured it (CSS px). `displayScale` is set when a
+ * preset larger than the pane is drawn shrunk to fit it (#1191).
+ */
+export interface PreviewViewport {
+  preset: PreviewViewportPreset;
+  width?: number;
+  height?: number;
+  devicePixelRatio?: number;
+  displayScale?: number;
+}
+
 export interface PreviewScreenshot extends PreviewSnapshot {
   /** PNG data URL of the visible page. */
   dataUrl: string;
+  viewport?: PreviewViewport;
+  /** Pixel size of the PNG. */
+  image?: { width: number; height: number };
 }
+
+export interface PreviewActionResult extends PreviewSnapshot {
+  ok: boolean;
+  /** "uncertain": the page never answered, so observe it before retrying a mutation. */
+  completion: "done" | "uncertain";
+  tag?: string;
+  text?: string;
+  message?: string;
+}
+
+/** One visible control or landmark in a semantic snapshot. */
+export interface PreviewSnapshotNode {
+  /** Valid only for this snapshot of this document, e.g. "s3e12". */
+  ref: string;
+  role: string;
+  name: string;
+  /** Nesting among snapshot nodes; omitted at the top level. */
+  depth?: number;
+  level?: number;
+  value?: string;
+  /** Password fields report only whether they are filled. */
+  filled?: boolean;
+  disabled?: boolean;
+  checked?: boolean | "mixed";
+  expanded?: boolean;
+  selected?: boolean;
+  required?: boolean;
+  readonly?: boolean;
+  invalid?: boolean;
+  validationMessage?: string;
+  focused?: boolean;
+  offscreen?: boolean;
+}
+
+export interface PreviewPageSnapshot extends PreviewSnapshot {
+  snapshotId: number;
+  documentGeneration: number;
+  viewport: PreviewViewport;
+  nodes: PreviewSnapshotNode[];
+  truncated: { nodes?: boolean; depth?: boolean; bytes?: boolean } | null;
+  limits: { maxNodes: number; maxDepth: number; maxBytes: number };
+}
+
+export interface PreviewConsoleEntry {
+  seq: number;
+  at: number;
+  /** Document generation the entry was recorded in. */
+  doc: number;
+  level: string;
+  text: string;
+  source: string;
+}
+
+/** Request outcome only: no headers or bodies, query values redacted. */
+export interface PreviewNetworkEntry {
+  seq: number;
+  at: number;
+  doc: number;
+  method: string;
+  url: string;
+  type: string;
+  status?: number;
+  error?: string;
+  durationMs: number | null;
+  fromCache?: boolean;
+}
+
+export interface PreviewDiagnostics extends PreviewSnapshot {
+  viewportPreset: PreviewViewportPreset;
+  documentGeneration: number;
+  console: PreviewConsoleEntry[];
+  network: PreviewNetworkEntry[];
+  /** Entries evicted from each bounded ring. */
+  dropped: { console: number; network: number };
+}
+
+/** One element picked in the Browser pane (#1193). Guest-reported, capped. */
+export interface PreviewInspectElement {
+  tag: string;
+  role: string;
+  /** Accessible name; never a text field's value. */
+  name: string;
+  selectorHint: string;
+  /** outerHTML with password/hidden values and secret-looking attributes redacted. */
+  html: string;
+  htmlTruncated: boolean;
+  styles: Record<string, string>;
+  /** CSS px, relative to the viewport at capture time. */
+  rect: { x: number; y: number; width: number; height: number };
+  viewport: { width: number; height: number };
+  /** Source hint from data-* attributes; null when the page exposes none. */
+  source: string | null;
+  /** An iframe was picked; its contents are not inspected. */
+  frame: boolean;
+  password: boolean;
+}
+
+export type PreviewInspectResult =
+  | (PreviewSnapshot & { cancelled: true })
+  | (PreviewSnapshot & {
+      cancelled: false;
+      capturedAt: number;
+      element: PreviewInspectElement;
+      /** PNG data URL of the element crop, at most 800px per edge. */
+      crop: string | null;
+      cropRect: { x: number; y: number; width: number; height: number } | null;
+      /** Why there is no crop. */
+      cropNote?: string;
+    });
 
 export interface PrInfo {
   number: number;
@@ -2872,6 +3055,37 @@ export interface SourceControlDiscovery {
   probedAt: number;
 }
 
+/** One agent CLI as the remote Solenta sees it (Connect, #1660). */
+export type RemoteAgentInfo = Pick<ProviderInfo, "id" | "name" | "available" | "auth" | "account">;
+
+/** What Connect learned about the other computer; null when it did not answer. */
+export interface RemoteHostInfo {
+  version: string;
+  platform: string;
+  /** Older than this app. */
+  outdated: boolean;
+  agents: RemoteAgentInfo[];
+}
+
+export interface RemoteConnectionResult {
+  host: string;
+  remotePort: number;
+  tokenSaved: boolean;
+  remote?: RemoteHostInfo | null;
+  localVersion?: string;
+}
+
+export interface RemoteInstallResult {
+  /** Release tag that was installed. */
+  tag: string;
+  /** Shared libraries the binary cannot find on the host. */
+  missingLibraries: string[];
+  /** `sudo apt install …` covering the libraries above, when known. */
+  aptCommand: string | null;
+  /** A desktop copy of Solenta there still runs the old files. */
+  restartNeeded: boolean;
+}
+
 export interface ProviderInfo {
   id: string;
   /** Display name, e.g. "Claude Code". */
@@ -2935,6 +3149,8 @@ export interface ProviderInfo {
    * the picker or Settings › Agents opens.
    */
   auth?: "signedIn" | "signedOut" | "unknown";
+  /** Who `auth: "signedIn"` is signed in as, when the CLI says (claude, codex via ChatGPT). */
+  account?: { email?: string; plan?: string };
   /**
    * Set on a named instance row (#453): `id` is then the ref
    * `<baseProvider>:<instanceId>` and every capability is the base's.
@@ -3292,6 +3508,11 @@ export interface AppSettings {
    * automatic follow-up turn (issue #1512 I3). Default off.
    */
   resumeInterruptedRuns: boolean;
+  /**
+   * When a turn finishes, send every waiting queued follow-up as ONE turn
+   * (#468). Default on; false runs them one per turn (#1501).
+   */
+  combineQueuedFollowUps: boolean;
   /** Solenta tool, injection, and secret checks. Default on; false opts out. */
   guardrailsEnabled: boolean;
   /**
@@ -3474,7 +3695,81 @@ export interface AgentProfile {
   /** null = provider default (no --effort flag). */
   reasoningEffort: ReasoningEffort | null;
   permissionMode: PermissionMode;
+  /** Permission matrix (#262). Absent = no rules, default "ask". */
+  policy?: GovernancePolicy;
 }
+
+/**
+ * Governance matrix (#262). `block` and `deny` both auto-deny; `block` is the
+ * floor ("never, not a prompt"), `deny` a visible rejection. Deny wins:
+ * every matching rule is collected and the most severe action decides.
+ */
+export type GovernanceAction = "block" | "deny" | "ask" | "allow";
+
+export interface GovernanceRule {
+  /**
+   * tool: glob vs tool name. bash: glob vs normalized command.
+   * write: glob vs canonical absolute path of a write tool.
+   * network: glob vs any hostname the call reaches.
+   */
+  kind: "tool" | "bash" | "write" | "network";
+  /** Case-insensitive glob, `*` and `?` only. 1-200 chars after trim. */
+  match: string;
+  action: GovernanceAction;
+}
+
+export interface GovernancePolicy {
+  /** What an unmatched call does. */
+  defaultAction: "ask" | "allow";
+  /** At most 40. */
+  rules: GovernanceRule[];
+}
+
+/** Who decided a governed tool call. */
+export type GovernanceLayer =
+  | "builtin"
+  | "normalize"
+  | "profile.block"
+  | "profile.deny"
+  | "profile.ask"
+  | "profile.allow"
+  | "profile.default"
+  | "session"
+  | "seatbelt";
+
+/** Canonical form of a tool call, as the matcher saw it. */
+export interface GovernanceCall {
+  tool: string;
+  command: string | null;
+  path: string | null;
+  hosts: string[];
+}
+
+/** One HMAC-chained audit row, as listed to the renderer (no hmac / prev). */
+export interface GovernanceAuditEntry {
+  v: 1;
+  /** 1-based position in the chain. */
+  seq: number;
+  /** Epoch ms. */
+  ts: number;
+  threadId: string;
+  profileId: string | null;
+  provider: string;
+  toolName: string;
+  /** SHA-256 of the canonical declared action. */
+  actionHash: string;
+  declared: GovernanceCall;
+  /** What actually ran; null on ask / deny rows. */
+  executed: GovernanceCall | null;
+  decision: "allow" | "ask" | "deny";
+  layer: GovernanceLayer;
+  rule: string | null;
+  reason: string;
+}
+
+export type GovernanceVerifyResult =
+  | { ok: true; entries: number }
+  | { ok: false; seq?: number; reason: string };
 
 /**
  * One described candidate in the worker-model pool. The lead picks by
@@ -3753,6 +4048,18 @@ export interface McpCatalogEntry {
   risk?: string;
   requiredSecrets?: Array<{ id: string; label: string }>;
   installed: boolean;
+}
+
+/** One-click Xcode MCP pairing (#488). */
+export interface XcodeMcpStatus {
+  project: { kind: "workspace" | "project" | "package"; name: string };
+  /** `xcrun --find mcpbridge` succeeded (Xcode 26.3+). */
+  bridge: boolean;
+  /** MobileBuildMCP binary on PATH (`mobilebuildmcp` or legacy `xcodebuildmcp`). */
+  buildMcp: string | null;
+  /** Name of an MCP server that already drives Xcode. */
+  paired: string | null;
+  recommended: "mobilebuildmcp" | "xcode" | null;
 }
 
 export type McpImportKind = "local" | "github" | "catalog" | "json";
@@ -4407,9 +4714,14 @@ export interface CoderApi {
       token: string;
       /** Save the verified token encrypted with the OS keychain (default true). */
       remember?: boolean;
-    }): Promise<{ host: string; remotePort: number; tokenSaved: boolean }>;
+    }): Promise<RemoteConnectionResult>;
     /** Delete the saved web token for host:port. */
     forgetRemoteConnection(input: { host: string; remotePort?: number }): Promise<void>;
+    /**
+     * Install or update this build's Linux tarball in ~/solenta on an SSH
+     * host, checked against the release's sha256. Linux x86_64 only.
+     */
+    installRemoteSolenta(input: { host: string }): Promise<RemoteInstallResult>;
   };
   /**
    * Proxied to the local shared-memory server by the main process (the
@@ -4492,6 +4804,10 @@ export interface CoderApi {
       enabled: boolean;
     }): Promise<McpServerDefinition>;
     catalog(): Promise<McpCatalogEntry[]>;
+    /** Xcode MCP doctor card (#488); null off macOS or with no Apple project. */
+    xcodeStatus(input: { projectPath: string }): Promise<XcodeMcpStatus | null>;
+    /** Add the recommended Xcode server; rejects if one is already paired. */
+    pairXcode(input: { projectPath: string }): Promise<McpServerDefinition>;
     pickImport(): Promise<McpImportPreview | null>;
     previewImport(input: McpPreviewImportInput): Promise<McpImportPreview>;
     installImport(input: McpInstallRequest): Promise<McpInstallResult>;
@@ -4723,9 +5039,10 @@ export interface CoderApi {
     /**
      * Full-content search: matches thread titles, notes, AND message text
      * (case-insensitive substring), newest activity first, max 50. Includes
-     * archived threads; the renderer styles them as usual.
+     * archived threads; the renderer styles them as usual. threadIds limits
+     * the scan to those ids before the cap.
      */
-    search(input: { query: string }): Promise<ThreadInfo[]>;
+    search(input: ThreadSearchInput): Promise<ThreadSearchResult>;
     /**
      * Create a thread. With `worktree: true` the thread immediately gets its
      * own git worktree + `coder/<slug>-<id>` branch (local projects only);
@@ -4802,6 +5119,13 @@ export interface CoderApi {
      */
     setPermissionMode(input: { threadId: string; mode: PermissionMode }): Promise<ThreadInfo>;
     /**
+     * Apply a saved AgentProfile (#262): provider, model, effort, permission
+     * mode (snapped to what the provider honours) and `agentProfileId`.
+     * Rejects "Unknown agent profile" before touching the thread. The manual
+     * setProvider / setReasoningEffort / setPermissionMode clear the id.
+     */
+    applyAgentProfile(input: { threadId: string; profileId: string }): Promise<ThreadInfo>;
+    /**
      * Answer the pending permission prompt (ThreadDetail.pendingPermission).
      * For claude this is the live control_request. For Codex it is an
      * app-server JSON-RPC ServerRequest (issue #1171); `updatedCommand` is
@@ -4826,6 +5150,12 @@ export interface CoderApi {
        * pending tool has no command field.
        */
       updatedCommand?: string;
+      /**
+       * allowAlways on a command (#479): the session-rule glob the user
+       * confirmed, e.g. `npm test:*`; "*" allows the whole tool. Absent:
+       * the prefix of the command that runs. Ignored by Codex.
+       */
+      alwaysRule?: string;
       inputValues?: InputValues;
       /**
        * "Keep planning" notes (#1501). Deny on a plan prompt only: a live
@@ -5259,6 +5589,12 @@ export interface CoderApi {
      */
     runVerify(input: { threadId: string }): Promise<VerifyResult>;
     /**
+     * Save the thread as one redacted, self-contained HTML bug report
+     * (#394). Resolves the written path, or null when the save dialog was
+     * cancelled. Desktop only: web mode has no save dialog.
+     */
+    exportReport(input: { threadId: string }): Promise<string | null>;
+    /**
      * Run the project's setupCommand (`actionId: "setup"` or omitted) or a
      * named quick action (issue #153). Rejects when no command is set, the
      * action is unknown, a run is active, or another command is in flight.
@@ -5266,11 +5602,14 @@ export interface CoderApi {
      * A solenta.json command rejects with REPO_CONFIG_UNTRUSTED until
      * `trustRepoConfig` carries the ProjectRepoConfig.hash the user approved
      * (#1506); that approval is stored on the project.
+     * `command` instead runs a typed composer `!` line (#470) in the
+     * thread's checkout: 60s cap, one transcript card that fills in live.
      */
     runCommand(input: {
       threadId: string;
       actionId?: string;
       trustRepoConfig?: string;
+      command?: string;
     }): Promise<CommandRunResult>;
     /**
      * Move an eligible thread to Recently deleted for seven days (#940).
@@ -5297,6 +5636,12 @@ export interface CoderApi {
   activity: {
     /** Cross-thread newest-first feed of created/started/done/failed. */
     list(): Promise<ActivityItem[]>;
+  };
+  governance: {
+    /** Newest-first audit rows (#262). Default and max limit 50. */
+    listAudit(input?: { threadId?: string; limit?: number }): Promise<GovernanceAuditEntry[]>;
+    /** Walk the whole HMAC chain; the first bad link fails it. */
+    verifyAudit(): Promise<GovernanceVerifyResult>;
   };
   usage: {
     /** Per-day usage ledger, by provider/model and by thread (90 days). */
@@ -5381,7 +5726,8 @@ export interface CoderApi {
     }): Promise<{ runId: string }>;
     /**
      * "Send now" on a parked queue (#1501): start the next queued item as
-     * its own turn; the rest drain one per successful turn after it.
+     * its own turn; the rest drain after it, combined into one turn unless
+     * combineQueuedFollowUps is off (#468).
      * Rejects while a run is active; a failed start puts the item back.
      */
     sendQueued(input: { threadId: string }): Promise<void>;
@@ -6099,10 +6445,12 @@ export interface CoderApi {
      * Type a provider's login command into a fresh "signin" shell (#1501):
      * the thread's when one is given, else a dedicated one in the home
      * directory (threadId SIGNIN_TERMINAL_ID). Returns where it runs.
+     * `install` types the CLI's install command instead, without Enter.
      */
     signIn(input: {
       provider: string;
       threadId?: string | null;
+      install?: boolean;
     }): Promise<{ threadId: string; termId: string }>;
   };
   /**
@@ -6118,14 +6466,32 @@ export interface CoderApi {
     reload(input: { threadId: string }): Promise<PreviewSnapshot>;
     goBack(input: { threadId: string }): Promise<PreviewSnapshot>;
     goForward(input: { threadId: string }): Promise<PreviewSnapshot>;
-    info(input: { threadId: string }): Promise<PreviewSnapshot>;
+    info(
+      input: { threadId: string },
+    ): Promise<PreviewSnapshot & { viewportPreset: PreviewViewportPreset }>;
     screenshot(input: { threadId: string }): Promise<PreviewScreenshot>;
-    click(input: { threadId: string; selector: string }): Promise<PreviewSnapshot>;
+    /** Pass a CSS selector, or a ref from the latest snapshot (#1191). */
+    click(input: { threadId: string; selector?: string; ref?: string }): Promise<PreviewActionResult>;
     type(input: {
       threadId: string;
-      selector: string;
+      selector?: string;
+      ref?: string;
       text: string;
-    }): Promise<PreviewSnapshot>;
+    }): Promise<PreviewActionResult>;
+    /** Bounded semantic snapshot of visible roles, names and states (#1191). */
+    snapshot(input: { threadId: string }): Promise<PreviewPageSnapshot>;
+    /** Bounded console and request-outcome rings since the pane bound. */
+    diagnostics(input: { threadId: string }): Promise<PreviewDiagnostics>;
+    viewport(input: {
+      threadId: string;
+      preset: PreviewViewportPreset;
+    }): Promise<PreviewSnapshot & { viewport: PreviewViewport }>;
+    /**
+     * Pick one element on the visible page (#1193). Settles when the user
+     * selects or cancels (Escape, cancelInspect, navigation, pane closed).
+     */
+    inspect(input: { threadId: string }): Promise<PreviewInspectResult>;
+    cancelInspect(input: { threadId: string }): Promise<{ ok: boolean }>;
   };
   /**
    * Desktop-only iOS Simulator pane (#248). Web invokes are denied before
@@ -6261,6 +6627,13 @@ export interface CoderApi {
       }[],
       position?: { x: number; y: number },
     ): Promise<string | null>;
+  };
+  /**
+   * Desktop only (#519): open the thread in its own window, or focus the one
+   * already open. Absent on web/dev.
+   */
+  windows?: {
+    detachThread(threadId: string): Promise<void>;
   };
   /** Returns an unsubscribe function. */
   on(channel: "threads:changed", cb: (push: ThreadListPush) => void): () => void;

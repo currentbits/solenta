@@ -78,7 +78,7 @@ function Host({ days }: { days: number | null | undefined }) {
       onCreateThread={() => {}}
       onAddProject={() => {}}
       autoSettleAfterDays={days}
-      searchThreads={async () => threads}
+      searchThreads={async () => ({ threads, truncated: false })}
     />
   );
 }

@@ -26,14 +26,19 @@ const MAX_MEMORY_CHARS = 4000;
  *
  * hourly: next top of the hour (strictly after fromMs).
  * daily: next occurrence of `hour` (0-23), today if still upcoming else tomorrow.
- * weekly: next occurrence of `hour` on the same weekday as fromMs.
+ * weekly: next occurrence of `hour` on the weekday of anchorMs (the slot
+ * being replaced), or of fromMs when there is no anchor. Anchoring keeps a
+ * Monday job on Mondays when it is caught up or run by hand on Tuesday (#931).
+ * Missed slots are skipped, never replayed. Days move by calendar date, so
+ * the local wall-clock hour survives DST.
  *
  * @param {"hourly" | "daily" | "weekly"} preset
  * @param {number | null} hour
  * @param {number} fromMs
+ * @param {number | null} [anchorMs]
  * @returns {number}
  */
-function nextFire(preset, hour, fromMs) {
+function nextFire(preset, hour, fromMs, anchorMs) {
   const from = new Date(fromMs);
   if (Number.isNaN(from.getTime())) {
     throw new Error(`Invalid fromMs: ${fromMs}`);
@@ -51,9 +56,15 @@ function nextFire(preset, hour, fromMs) {
   }
   const h = hour == null ? 0 : Number(hour);
   const next = new Date(from);
+  const anchor = new Date(anchorMs == null ? NaN : anchorMs);
+  if (preset === "weekly" && !Number.isNaN(anchor.getTime())) {
+    next.setDate(next.getDate() + ((anchor.getDay() - next.getDay() + 7) % 7));
+  }
   next.setHours(h, 0, 0, 0);
   if (next.getTime() <= fromMs) {
     next.setDate(next.getDate() + (preset === "weekly" ? 7 : 1));
+    // A DST gap can push setHours past h; re-pin on the new date.
+    next.setHours(h, 0, 0, 0);
   }
   return next.getTime();
 }
@@ -264,7 +275,7 @@ function pruneAutomationThreads(store, automationId) {
  */
 async function runAutomation(ctx, auto, now, opts) {
   const services = require("./services.js");
-  const nextRunAt = nextFire(auto.preset, auto.hour, now);
+  const nextRunAt = nextFire(auto.preset, auto.hour, now, auto.nextRunAt);
   patchAutomation(ctx.store, auto.id, {
     lastRunAt: now,
     nextRunAt,

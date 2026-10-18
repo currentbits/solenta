@@ -166,6 +166,22 @@ describe("PlanPrompt", () => {
     ]);
   });
 
+  it("y approves and n keeps planning, even from the composer (#477)", async () => {
+    for (const [k, decision] of [["y", "allow"], ["n", "deny"]] as const) {
+      const { m, spy } = mountView();
+      const view = await m;
+      const composer = view.query("[data-composer-input]")!;
+      await view.press(composer, k);
+      assert.deepEqual(spy.calls, [{ requestId: "req-plan-1", decision }]);
+      view.unmount();
+    }
+    // Typing notes keeps its keys.
+    const { m, spy } = mountView();
+    const view = await m;
+    await view.press(view.query("textarea[data-plan-feedback]"), "n");
+    assert.deepEqual(spy.calls, []);
+  });
+
   it("sends Keep planning notes, and Approve ignores them (#1501)", async () => {
     const { m, spy } = mountView();
     const view = await m;

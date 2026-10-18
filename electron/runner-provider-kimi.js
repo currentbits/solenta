@@ -3,7 +3,7 @@
 // createRunner seam: Kimi provider run (#1447, seam 11).
 // Follows the seam convention in the header of electron/runner-watchdogs.js.
 
-const { resolveBin } = require("./providers.js");
+const { resolveBin, honouredEfforts } = require("./providers.js");
 const { withProjectEnv } = require("./worktreeEnv.js");
 const { truncate } = require("./claude.js");
 const path = require("node:path");
@@ -381,7 +381,12 @@ function createKimiRun(ctx) {
         // Deploy miss must not kill the run; stream notice remains.
       }
     }
-    const spawn = resolveSpawn(project, binary, args, localCwd, kimiEnv);
+    const effortEnv = kimiParse.kimiEffortEnv(
+      thread.reasoningEffort,
+      honouredEfforts(providerEntry, thread.model || null),
+    );
+    if (effortEnv) kimiEnv = { ...kimiEnv, ...effortEnv };
+    const spawn = resolveSpawn(project, binary, args, localCwd, kimiEnv, threadId);
 
     if (abortIfCancelled(threadId, runId)) return { runId };
     const handle = runKimi({
@@ -389,8 +394,6 @@ function createKimiRun(ctx) {
       args: spawn.args,
       cwd: spawn.cwd,
       env: threadSecrets.withEnv(threadId, withProjectEnv(project, kimiEnv)),
-      // No argv route for kimi effort; runKimi flips config.toml (effortVia).
-      reasoningEffort: thread.reasoningEffort || null,
       onEvent: (ev) => {
         if (!guard()) return;
 

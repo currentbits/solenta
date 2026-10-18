@@ -53,7 +53,7 @@ describe("settled tail Clear", () => {
         onSelectThread={() => {}}
         onCreateThread={() => {}}
         onAddProject={() => {}}
-        searchThreads={async () => threads}
+        searchThreads={async () => ({ threads, truncated: false })}
         onClearSettled={(ids) => {
           cleared = ids;
         }}
@@ -84,7 +84,7 @@ describe("settled tail Clear", () => {
         onSelectThread={() => {}}
         onCreateThread={() => {}}
         onAddProject={() => {}}
-        searchThreads={async () => []}
+        searchThreads={async () => ({ threads: [], truncated: false })}
       />,
     );
     assert.equal(m.query("[data-settled-clear-all]"), null);

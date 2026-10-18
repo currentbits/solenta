@@ -40,6 +40,8 @@ const AUTH_MAX_FAILURES = 10;
 const AUTH_WINDOW_MS = 60 * 1000;
 // Close code for "too many failed attempts" (4000-4999 is app-defined).
 const CLOSE_RATE_LIMITED = 4429;
+// Wrong or revoked token: the client stops retrying and asks for a new one.
+const CLOSE_TOKEN_REJECTED = 4401;
 
 /**
  * Failed-auth counter per key (remote address), sliding window.
@@ -189,7 +191,7 @@ function attachWebBridge(httpServer, opts) {
         const device = authorize(msg.token);
         if (!device) {
           limiter.fail(remote);
-          ws.close();
+          ws.close(CLOSE_TOKEN_REJECTED, "Token rejected");
           return;
         }
         isAuthed = true;
@@ -306,5 +308,6 @@ module.exports = {
   resolveAuthorize,
   tokensEqual,
   CLOSE_RATE_LIMITED,
+  CLOSE_TOKEN_REJECTED,
   WS_PATH,
 };

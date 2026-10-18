@@ -1,6 +1,6 @@
 {
   "name": "solenta",
-  "version": "0.25.0",
+  "version": "0.26.0",
   "private": true,
   "license": "MIT",
   "description": "Solenta - desktop agentic development tool",
@@ -14,6 +14,7 @@
     "electron": "electron .",
     "package": "bash scripts/package-app.sh",
     "acceptance": "electron scripts/acceptance.js",
+    "verify:browser-inspect": "electron scripts/verify-browser-inspect.js",
     "beachball": "electron electron/beachball.js",
     "test": "node scripts/test-all.js",
     "test:core": "npm run build --prefix core && npm test --prefix core",

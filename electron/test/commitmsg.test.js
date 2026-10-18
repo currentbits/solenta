@@ -15,6 +15,7 @@ const {
   PROMPT_PATCH_LIMIT,
 } = require("../commitmsg.js");
 const { buildPrompt, suggestPrText, parsePrText } = require("../commitmsg.js");
+const { kimiNoToolsAgentFile } = require("../ask.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
 const { rmTree } = require("./support/rmTree.js");
 
@@ -49,6 +50,8 @@ describe("buildSuggestArgs", () => {
 
   it("kimi/grok: -p value form; opencode: run", () => {
     assert.deepEqual(buildSuggestArgs("kimi", { model: null, prompt: "P" }), [
+      "--agent-file",
+      kimiNoToolsAgentFile(),
       "-p",
       "P",
     ]);

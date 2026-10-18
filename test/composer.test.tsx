@@ -161,7 +161,13 @@ interface Harness {
    * "switch first, then effort" was asserted by a test that passed with the
    * awaits swapped (round 38 review, M1).
    */
-  callOrder: ("setProvider" | "setReasoningEffort" | "setPermissionMode")[];
+  callOrder: (
+    | "setProvider"
+    | "setReasoningEffort"
+    | "setPermissionMode"
+    | "applyAgentProfile"
+  )[];
+  appliedProfiles: string[];
   effectiveEffort: ReasoningEffort | null;
   harnessProvider: string;
 }
@@ -177,6 +183,7 @@ function makeHarness(provider = "claude"): Harness {
     webSearches: [],
     fasts: [],
     callOrder: [],
+    appliedProfiles: [],
     effectiveEffort: null,
     harnessProvider: provider,
   };
@@ -202,8 +209,10 @@ function composer(
     buildError?: string;
     providers?: ProviderInfo[];
     agentProfiles?: AgentProfile[];
+    agentProfileId?: string | null;
     onListFiles?: (query: string) => Promise<string[]>;
     onProviderSignIn?: (providerId: string) => Promise<void>;
+    onShell?: (command: string) => Promise<unknown>;
   } = {},
 ) {
   // Seed the emulation from the thread this element renders with, so the
@@ -229,8 +238,10 @@ function composer(
       fast={over.fast === true}
       providers={over.providers ?? PROVIDERS}
       onProviderSignIn={over.onProviderSignIn}
+      onShell={over.onShell}
       ask={over.ask ?? false}
       agentProfiles={over.agentProfiles}
+      agentProfileId={over.agentProfileId}
       workflows={over.workflows ?? WORKFLOWS}
       onSetProvider={(input) => {
         harness.providerSets.push(input);
@@ -247,6 +258,10 @@ function composer(
         harness.efforts.push(effort);
         harness.callOrder.push("setReasoningEffort");
         harness.effectiveEffort = effort;
+      }}
+      onApplyAgentProfile={(profileId) => {
+        harness.appliedProfiles.push(profileId);
+        harness.callOrder.push("applyAgentProfile");
       }}
       onSetWebSearch={(enabled) => {
         harness.webSearches.push(enabled);
@@ -2418,6 +2433,49 @@ describe("Composer keyboard send", () => {
     m.unmount();
   });
 
+  it("runs a leading ! as a shell command, not a prompt (#470)", async () => {
+    const h = makeHarness();
+    const shells: string[] = [];
+    const m = await mount(
+      composer(h, { busy: true, onShell: async (c) => void shells.push(c) }),
+    );
+    const box = m.query<HTMLTextAreaElement>("textarea");
+    assert.equal(m.query("[data-shell-mode]"), null);
+    await m.type(box, "!  npm test ");
+    assert.ok(m.query("[data-shell-mode]"), "shell chrome is on");
+    // Busy + steer-capable: still no model turn, no steer, no queue.
+    await m.press(box, "Enter", { metaKey: true });
+    assert.deepEqual(shells, ["npm test"]);
+    assert.deepEqual(h.sends, []);
+    assert.deepEqual(h.steers, []);
+    assert.equal(box.value, "", "the line leaves the box");
+    assert.equal(m.query("[data-shell-mode]"), null);
+    m.unmount();
+  });
+
+  it("puts a ! line back when it fails to start, and keeps ! literal without onShell", async () => {
+    const h = makeHarness();
+    const m = await mount(
+      composer(h, {
+        onShell: () => Promise.reject(new Error("A run is already active on this thread")),
+      }),
+    );
+    const box = m.query<HTMLTextAreaElement>("textarea");
+    await m.type(box, "!git status");
+    await m.press(box, "Enter", { metaKey: true });
+    assert.equal(box.value, "!git status");
+    assert.match(m.query("[role=alert]")?.textContent ?? "", /already active/);
+    m.unmount();
+
+    const h2 = makeHarness();
+    const m2 = await mount(composer(h2));
+    await m2.type(m2.query("textarea"), "!important: fix it");
+    assert.equal(m2.query("[data-shell-mode]"), null);
+    await m2.press(m2.query("textarea"), "Enter", { metaKey: true });
+    assert.deepEqual(h2.sends, ["!important: fix it"]);
+    m2.unmount();
+  });
+
   it("does not double-prefix an already-/btw draft on Alt+Enter", async () => {
     const h = makeHarness();
     const m = await mount(composer(h));
@@ -2679,24 +2737,32 @@ describe("Composer agent profiles", () => {
     m.unmount();
   });
 
-  it("applies provider, then effort, then permission", async () => {
+  it("applies the profile in one applyAgentProfile call (#262)", async () => {
     const h = makeHarness();
     const m = await mount(composer(h, { agentProfiles: [scout] }));
     await m.click(m.query('button[aria-label^="Model:"]'));
     const btn = m.query('button[aria-label="Profile Cheap scout"]');
     assert.ok(btn, "the saved profile must be in the picker");
     await m.click(btn);
-    assert.deepEqual(h.providerSets, [
-      { provider: "claude", model: "claude-sonnet-4" },
-    ]);
-    assert.deepEqual(h.efforts, ["low"]);
-    assert.deepEqual(h.modes, ["plan"]);
-    assert.deepEqual(h.callOrder, [
-      "setProvider",
-      "setReasoningEffort",
-      "setPermissionMode",
-    ]);
+    assert.deepEqual(h.appliedProfiles, ["p1"]);
+    assert.deepEqual(h.callOrder, ["applyAgentProfile"]);
     m.unmount();
+  });
+
+  it("marks the thread's profile row selected (#262)", async () => {
+    const h = makeHarness();
+    const m = await mount(
+      composer(h, { agentProfiles: [scout], agentProfileId: "p1" }),
+    );
+    await m.click(m.query('button[aria-label^="Model:"]'));
+    const btn = m.query('button[aria-label="Profile Cheap scout"]');
+    assert.equal(btn?.getAttribute("data-selected"), "true");
+    m.unmount();
+    const m2 = await mount(composer(makeHarness(), { agentProfiles: [scout] }));
+    await m2.click(m2.query('button[aria-label^="Model:"]'));
+    const off = m2.query('button[aria-label="Profile Cheap scout"]');
+    assert.equal(off?.getAttribute("data-selected"), null);
+    m2.unmount();
   });
 
   it("activates a highlighted profile with Enter", async () => {
@@ -2708,37 +2774,7 @@ describe("Composer agent profiles", () => {
     // Opens on the current model (after the profile row). Arrow up reaches it.
     await m.press(list, "ArrowUp");
     await m.press(list, "Enter");
-    assert.deepEqual(h.callOrder, [
-      "setProvider",
-      "setReasoningEffort",
-      "setPermissionMode",
-    ]);
-    m.unmount();
-  });
-
-  it("snaps a leftover Grok profile mode to Full access instead of sending Accept edits", async () => {
-    const grokOk: ProviderInfo = { ...GROK, available: true };
-    const leftover: AgentProfile = {
-      id: "p3",
-      name: "Grok leftover",
-      provider: "grok",
-      model: "grok-4",
-      reasoningEffort: "high",
-      permissionMode: "acceptEdits",
-    };
-    const h = makeHarness();
-    const m = await mount(
-      composer(h, {
-        providers: [CLAUDE_WITH_INFO, grokOk],
-        agentProfiles: [leftover],
-      }),
-    );
-    await m.click(m.query('button[aria-label^="Model:"]'));
-    const btn = m.query('button[aria-label="Profile Grok leftover"]');
-    assert.ok(btn);
-    await m.click(btn);
-    assert.deepEqual(h.providerSets, [{ provider: "grok", model: "grok-4" }]);
-    assert.deepEqual(h.modes, ["bypassPermissions"]);
+    assert.deepEqual(h.callOrder, ["applyAgentProfile"]);
     m.unmount();
   });
 

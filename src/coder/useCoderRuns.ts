@@ -332,6 +332,8 @@ export function useCoderRuns({
           setError(null);
         } catch (err) {
           setError({ scope: "run", message: errorMessage(err) });
+          // Composer clears on fulfil; nothing was queued (#922).
+          throw err;
         }
         return;
       }

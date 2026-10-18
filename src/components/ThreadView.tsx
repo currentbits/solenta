@@ -148,7 +148,12 @@ import {
   replySourceUnavailable,
   type ReplyTarget,
 } from "../replyContext";
-import { quoteChipAsReply, type TerminalChip } from "../contextChips";
+import {
+  elementChip,
+  quoteChipAsReply,
+  type InspectPick,
+  type TerminalChip,
+} from "../contextChips";
 import { waitWhatPrompt } from "../waitWhat";
 import { sessionImagePathsFromMessages } from "../sessionImages";
 import { PathLinkProvider, ThreadLinkContext } from "./PathLinks";
@@ -196,6 +201,8 @@ import { useQueuedEdit } from "./thread/useQueuedEdit";
 import { usePaneLayoutActions } from "./thread/usePaneLayoutActions";
 import { useAppSnap } from "./thread/useAppSnap";
 import { useStickToBottom } from "./thread/useStickToBottom";
+import { TurnRail, turnLabel, type RailTurn } from "./thread/TurnRail";
+import { offsetTopWithin } from "../scrollNearest";
 import { bindingLabel } from "../keybindings";
 import styles from "./ThreadView.module.css";
 import type { TaskGroupRollup } from "../taskGroup";
@@ -360,6 +367,7 @@ interface ThreadViewProps {
     updatedCommand?: string,
     inputValues?: InputValues,
     feedback?: string,
+    alwaysRule?: string,
   ) => void | Promise<void>;
   /** "Implement in a new thread" from the plan prompt (#1501). */
   onImplementPlan?: (plan: string, provider?: string) => void | Promise<void>;
@@ -380,6 +388,8 @@ interface ThreadViewProps {
     effort: ReasoningEffort | null,
     threadId?: string,
   ) => void | Promise<void>;
+  /** Apply a saved AgentProfile in one write (#262). */
+  onApplyAgentProfile: (profileId: string, threadId?: string) => void | Promise<void>;
   onSetWebSearch?: (webSearch: boolean, threadId?: string) => void | Promise<void>;
   onSetFast?: (fast: boolean, threadId?: string) => void | Promise<void>;
   onSetRoute?: (route: ModelRoute | null, threadId?: string) => void | Promise<void>;
@@ -397,6 +407,8 @@ interface ThreadViewProps {
   ) => void | Promise<void>;
   /** Rename the open thread (header overflow). */
   onRenameThread?: (title: string) => void | Promise<void>;
+  /** Save a redacted HTML bug report (#394); null = dialog cancelled. */
+  onExportReport?: (input: { threadId: string }) => Promise<string | null>;
   /**
    * New thread in this project, same default as the sidebar "New thread"
    * button (Settings defaultWorktree / orchestrator; remotes stay plain).
@@ -666,6 +678,8 @@ interface ThreadViewProps {
     actionId?: string,
     trustRepoConfig?: string,
   ) => Promise<unknown>;
+  /** Run a composer `!` line in this thread's checkout (#470). */
+  onRunShell?: (threadId: string, command: string) => Promise<unknown>;
   runError?: string | null;
   onDismissRunError?: () => void;
   /**
@@ -795,6 +809,7 @@ export const ThreadView = memo(function ThreadView({
   onAnswerSecret,
   onSetProvider,
   onSetReasoningEffort,
+  onApplyAgentProfile,
   onSetWebSearch,
   onSetFast,
   onSetRoute,
@@ -803,6 +818,7 @@ export const ThreadView = memo(function ThreadView({
   onSetArchived,
   onSetCrossThreadInbound,
   onRenameThread,
+  onExportReport,
   onCreateThread,
   onRepeatSchedule,
   onDistillWorkflow,
@@ -897,6 +913,7 @@ export const ThreadView = memo(function ThreadView({
   onOpenWorkers,
   onRefreshWorkerSnapshot,
   onRunCommand,
+  onRunShell,
   runError = null,
   onDismissRunError,
   onNewThread,
@@ -990,6 +1007,10 @@ export const ThreadView = memo(function ThreadView({
   const [pinLabelDraft, setPinLabelDraft] = useState("");
   // Shared reveal target for pinned messages and reply-source navigation.
   const [jumpMessageId, setJumpMessageId] = useState<string | null>(null);
+  /** `/jump` filter text; null while the prompt outline is closed (#487). */
+  const [jumpQuery, setJumpQuery] = useState<string | null>(null);
+  /** Rail jump still waiting for its prompt to mount and land on top. */
+  const [topJump, setTopJump] = useState<{ id: string } | null>(null);
   const pinDraftRef = useRef<ThreadMessagePin[] | null>(null);
   pinDraftRef.current = pinDraft;
   const pinWriteGenRef = useRef<Record<string, number>>({});
@@ -1044,8 +1065,8 @@ export const ThreadView = memo(function ThreadView({
   );
   /** Bumps after a successful push so the sync pill refetches. */
   const [syncRefreshNonce, setSyncRefreshNonce] = useState(0);
-  /** Brief inline confirmation after copying the thread id. */
-  const [copied, setCopied] = useState<"id" | "link" | null>(null);
+  /** Brief inline confirmation after copying the thread id, `/copy`, or exporting a report. */
+  const [copied, setCopied] = useState<"id" | "link" | "reply" | "report" | "report-failed" | null>(null);
   /** Header quick action currently in flight (issue #153). */
   const [commandRunningId, setCommandRunningId] = useState<string | null>(null);
   const [commandError, setCommandError] = useState<string | null>(null);
@@ -1239,6 +1260,8 @@ export const ThreadView = memo(function ThreadView({
     setWindowThreadId(threadId);
     setWindowStart(windowAt);
     setJumpMessageId(null);
+    setJumpQuery(null);
+    setTopJump(null);
   } else if (windowAt !== windowStart) {
     setWindowStart(windowAt);
   }
@@ -1697,8 +1720,39 @@ export const ThreadView = memo(function ThreadView({
     onNewThread?.();
   }, [isWorking, onSettleThread, onNewThread]);
 
+  const flashCopied = useCallback((what: NonNullable<typeof copied>) => {
+    setCopied(what);
+    if (copyFlashTimer.current != null) {
+      clearTimeout(copyFlashTimer.current);
+    }
+    copyFlashTimer.current = setTimeout(() => {
+      setCopied(null);
+      copyFlashTimer.current = null;
+    }, COPY_FLASH_MS);
+  }, []);
+
+  // `/copy` (#493): the latest finished assistant reply, as Markdown source.
+  // A still-streaming reply is skipped; no reply at all is a no-op.
+  const handleCopyLastReply = useCallback(() => {
+    const reply = [...(detail?.messages ?? [])].reverse().find(
+      (m) =>
+        m.role === "assistant" &&
+        !m.thinking &&
+        m.id !== streamingMessageId &&
+        m.text.trim() !== "",
+    );
+    if (!reply) return;
+    void navigator.clipboard
+      ?.writeText(reply.text)
+      .then(() => flashCopied("reply"), () => {});
+  }, [detail?.messages, streamingMessageId, flashCopied]);
+
   const handleSlashAction = useCallback(
     (action: SlashAction) => {
+      if (action === "copy") {
+        handleCopyLastReply();
+        return;
+      }
       if (action === "usage") {
         setContextOpen(false);
         setQuotaOpen(true);
@@ -1734,6 +1788,7 @@ export const ThreadView = memo(function ThreadView({
       }
     },
     [
+      handleCopyLastReply,
       ring,
       handleCompact,
       handleForkFresh,
@@ -1841,12 +1896,34 @@ export const ThreadView = memo(function ThreadView({
     screenshotHandoffThreadId,
   });
 
+  // Bound to the thread whose Browser pane captured it (#1193).
+  const attachBrowserElement = useCallback(
+    async (
+      pick: InspectPick,
+      comment: string,
+      originThreadId: string,
+    ) => {
+      const cropAttached = pick.crop
+        ? await attachBrowserScreenshot(pick.crop, originThreadId)
+        : false;
+      const id =
+        typeof crypto !== "undefined" && crypto.randomUUID
+          ? crypto.randomUUID()
+          : `element-${Date.now()}`;
+      setContextChips(originThreadId, (prev) => [
+        ...prev,
+        elementChip(id, originThreadId, pick, cropAttached, comment),
+      ]);
+    },
+    [attachBrowserScreenshot],
+  );
+
   /**
    * Fork one thread per selected provider or profile, then start the same
    * prompt on each new fork. Sequential: a run cannot start until its fork
    * exists. Failures throw so Composer and the run-error banner both surface
-   * them. Profile forks set effort then permission on the new thread before
-   * the run, same order as pickProfile. planOnly (#241) starts every fork in
+   * them. Profile forks apply the profile to the new thread before the run
+   * (#262: stamps agentProfileId so its policy gates the fork). planOnly (#241) starts every fork in
    * plan mode and drops providers that cannot plan; the user then builds the
    * winning plan from its card ("Implement in a new thread").
    */
@@ -1875,12 +1952,9 @@ export const ThreadView = memo(function ThreadView({
         }
         created.push(forked.id);
         if (entry.kind === "profile") {
-          await onSetReasoningEffort(entry.reasoningEffort, forked.id);
+          await onApplyAgentProfile(entry.id, forked.id);
         }
         if (planOnly) await onSetPermissionMode("plan", forked.id);
-        else if (entry.kind === "profile") {
-          await onSetPermissionMode(entry.permissionMode, forked.id);
-        }
         await onStartRun(prompt, forked.id);
       }
       if (created[0]) onSelectThread?.(created[0]);
@@ -1891,7 +1965,7 @@ export const ThreadView = memo(function ThreadView({
       onFork,
       onSelectThread,
       onSetPermissionMode,
-      onSetReasoningEffort,
+      onApplyAgentProfile,
       onStartRun,
       providers,
     ],
@@ -2299,6 +2373,47 @@ export const ThreadView = memo(function ThreadView({
     setWindowStart,
   });
 
+  /** One rail mark per user prompt (#487); a pin label (#342) wins. */
+  const railTurns = useMemo(() => {
+    const labels = new Map(
+      (pinDraft ?? pinsOf(detail?.thread)).map((p) => [p.messageId, p.label]),
+    );
+    const turns: RailTurn[] = [];
+    timeline.forEach((entry, index) => {
+      if (entry.kind !== "message" || entry.message.role !== "user") return;
+      const { id, text } = entry.message;
+      turns.push({ id, index, label: labels.get(id) || turnLabel(text) });
+    });
+    return turns;
+  }, [timeline, pinDraft, detail?.thread]);
+  const flashTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  useEffect(() => () => clearTimeout(flashTimer.current), []);
+  /** Mount the prompt through the shared reveal, then flash it briefly. */
+  const handleTurnJump = useCallback((id: string) => {
+    stickToBottom.current = false;
+    forceStick.current = false;
+    setJumpQuery(null);
+    setJumpMessageId(id);
+    setTopJump({ id });
+    clearTimeout(flashTimer.current);
+    flashTimer.current = setTimeout(
+      () => setJumpMessageId((cur) => (cur === id ? null : cur)),
+      1600,
+    );
+  }, []);
+  // Declared after useStickToBottom so its nearest-reveal cannot pull a tall
+  // prompt back down to its bottom edge.
+  useLayoutEffect(() => {
+    const body = bodyRef.current;
+    if (!topJump || !body) return;
+    const el = Array.from(
+      body.querySelectorAll<HTMLElement>("[data-message-id]"),
+    ).find((node) => node.dataset.messageId === topJump.id);
+    if (!el) return;
+    body.scrollTop = Math.max(0, offsetTopWithin(body, el) - 8);
+    setTopJump(null);
+  }, [topJump, start]);
+
   /**
    * Delegated: any image in the timeline (tool output, attachment thumb,
    * markdown) opens the lightbox, so new image sources need no extra wiring.
@@ -2626,14 +2741,16 @@ export const ThreadView = memo(function ThreadView({
     } catch {
       return;
     }
-    setCopied(what);
-    if (copyFlashTimer.current != null) {
-      clearTimeout(copyFlashTimer.current);
+    flashCopied(what);
+  };
+
+  const handleExportReport = async () => {
+    if (!onExportReport) return;
+    try {
+      if (await onExportReport({ threadId: thread.id })) flashCopied("report");
+    } catch {
+      flashCopied("report-failed");
     }
-    copyFlashTimer.current = setTimeout(() => {
-      setCopied(null);
-      copyFlashTimer.current = null;
-    }, COPY_FLASH_MS);
   };
 
   const hasVersionControl =
@@ -2718,7 +2835,11 @@ export const ThreadView = memo(function ThreadView({
   });
   // Run status rides on the composer's top edge (#1429), not the transcript.
   const composerStatus =
-    detail.thread.status === "quota-wait" ? (
+    copied === "reply" ? (
+      <div className={styles.statusStrip} data-copied-reply="" role="status">
+        <span className={styles.statusText}>Copied last reply</span>
+      </div>
+    ) : detail.thread.status === "quota-wait" ? (
       <div
         className={`${styles.statusStrip} ${styles.statusStripQuotaWait}`}
         data-quota-wait-strip=""
@@ -3010,6 +3131,22 @@ export const ThreadView = memo(function ThreadView({
                       >
                         {copied === "link" ? "Copied" : "Copy link"}
                       </button>
+                      {onExportReport && (
+                        <button
+                          type="button"
+                          className={styles.menuItem}
+                          role="menuitem"
+                          data-export-report=""
+                          title="Transcript, tool calls, diffs and versions as one HTML file, with secrets redacted"
+                          onClick={() => void handleExportReport()}
+                        >
+                          {copied === "report"
+                            ? "Saved"
+                            : copied === "report-failed"
+                              ? "Export failed"
+                              : "Export bug report…"}
+                        </button>
+                      )}
                       {onRenameThread && !isWorking && (
                         <button
                           type="button"
@@ -3768,6 +3905,7 @@ export const ThreadView = memo(function ThreadView({
                 onAttachScreenshot={
                   onSaveAttachmentImage ? attachBrowserScreenshot : undefined
                 }
+                onAttachElement={attachBrowserElement}
               />
             );
           }
@@ -3839,6 +3977,22 @@ export const ThreadView = memo(function ThreadView({
                 api={terminalApi}
                 reveal={terminalReveal}
                 onFix={onFixSuggestion}
+                onAddToPrompt={
+                  isArchived
+                    ? undefined
+                    : (tid, text) =>
+                        setContextChips(tid, (prev) => [
+                          ...prev,
+                          {
+                            id:
+                              typeof crypto !== "undefined" && crypto.randomUUID
+                                ? crypto.randomUUID()
+                                : `term-${Date.now()}`,
+                            kind: "terminal",
+                            text,
+                          },
+                        ])
+                }
               />
             );
           }
@@ -3973,6 +4127,16 @@ export const ThreadView = memo(function ThreadView({
       )}
 
       {find.bar}
+      {detail && (
+        <TurnRail
+          turns={railTurns}
+          bodyRef={bodyRef}
+          start={start}
+          query={jumpQuery}
+          onQueryChange={setJumpQuery}
+          onJump={handleTurnJump}
+        />
+      )}
 
       {detail && (
         <DivergenceCard
@@ -4397,7 +4561,11 @@ export const ThreadView = memo(function ThreadView({
         {/* A pending plan prompt already shows the plan — don't show it twice. */}
         {(thread.planSteps?.length || thread.plan) &&
         !detail.pendingPermission?.plan ? (
-          <PlanCard thread={thread} forceOpen={revealPlan} />
+          <PlanCard
+            key={thread.id}
+            thread={thread}
+            forceOpen={revealPlan}
+          />
         ) : null}
 
         {/*
@@ -4846,9 +5014,11 @@ export const ThreadView = memo(function ThreadView({
         onSetAgent={onSetAgent}
         providers={providers}
         agentProfiles={agentProfiles}
+        agentProfileId={thread.agentProfileId ?? null}
         workflows={workflows}
         onSetProvider={onSetProvider}
         onSetReasoningEffort={onSetReasoningEffort}
+        onApplyAgentProfile={onApplyAgentProfile}
         onSetWebSearch={onSetWebSearch}
         onSetFast={onSetFast}
         onSetRoute={onSetRoute}
@@ -4911,6 +5081,11 @@ export const ThreadView = memo(function ThreadView({
                 : undefined
         }
         onSend={handleComposerSend}
+        onShell={
+          onRunShell && !thread.ask
+            ? (command) => onRunShell(thread.id, command)
+            : undefined
+        }
         restoreDraft={restoreDraft}
         onRestoreDraftConsumed={onRestoreDraftConsumed}
         onBuild={onStartWorkflow}
@@ -4961,6 +5136,7 @@ export const ThreadView = memo(function ThreadView({
         incomingAttachmentThreadId={incomingHandoff?.threadId ?? null}
         onIncomingAttachmentsConsumed={() => setIncomingHandoff(null)}
         onSlashAction={handleSlashAction}
+        onJump={setJumpQuery}
         cliCommands={cliCommands}
         onStopRun={onStopRun}
         dropHostRef={dropHostRef}

@@ -294,7 +294,13 @@ function queueItems(store, threadId, items) {
   for (const prompt of items) services.setQueued(store, { threadId, prompt });
 }
 
-describe("queue drains one item per turn (#1501)", () => {
+async function perTurnFixture() {
+  const f = await makeFixture();
+  f.store.setSettings({ combineQueuedFollowUps: false });
+  return f;
+}
+
+describe("queue drains one item per turn with combining off (#1501)", () => {
   let prevSimulate;
   let prevAgentCmd;
   let fx;
@@ -316,7 +322,7 @@ describe("queue drains one item per turn (#1501)", () => {
   it("runs each queued item as its own turn, in order", async () => {
     process.env.CODER_SIMULATE = "1";
     delete process.env.CODER_AGENT_CMD;
-    fx = await makeFixture();
+    fx = await perTurnFixture();
     const { store, runner, thread } = fx;
 
     await runner.startRun({ threadId: thread.id, prompt: "first turn" });
@@ -335,7 +341,7 @@ describe("queue drains one item per turn (#1501)", () => {
   it("a stop mid-queue keeps the rest queued", async () => {
     delete process.env.CODER_SIMULATE;
     process.env.CODER_AGENT_CMD = `${process.execPath} -e ${fakeAgentSuccessScript()}`;
-    fx = await makeFixture();
+    fx = await perTurnFixture();
     const { store, runner, thread } = fx;
 
     await runner.startRun({ threadId: thread.id, prompt: "first turn" });
@@ -361,7 +367,7 @@ describe("queue drains one item per turn (#1501)", () => {
   it("a failure mid-queue keeps the rest queued", async () => {
     delete process.env.CODER_SIMULATE;
     process.env.CODER_AGENT_CMD = `${process.execPath} -e ${fakeAgentSuccessScript()}`;
-    fx = await makeFixture();
+    fx = await perTurnFixture();
     const { store, runner, thread } = fx;
 
     await runner.startRun({ threadId: thread.id, prompt: "first turn" });
@@ -383,7 +389,7 @@ describe("queue drains one item per turn (#1501)", () => {
   it("a notice arriving mid-queue runs first and the queue resumes after it", async () => {
     process.env.CODER_SIMULATE = "1";
     delete process.env.CODER_AGENT_CMD;
-    fx = await makeFixture();
+    fx = await perTurnFixture();
     const { store, runner, thread } = fx;
 
     await runner.startRun({ threadId: thread.id, prompt: "first turn" });
@@ -409,7 +415,7 @@ describe("queue drains one item per turn (#1501)", () => {
   it("Send now on a parked queue resumes one item at a time", async () => {
     delete process.env.CODER_SIMULATE;
     process.env.CODER_AGENT_CMD = `${process.execPath} -e ${fakeAgentFailScript()}`;
-    fx = await makeFixture();
+    fx = await perTurnFixture();
     const { store, runner, thread } = fx;
 
     await runner.startRun({ threadId: thread.id, prompt: "first turn" });
@@ -427,6 +433,103 @@ describe("queue drains one item per turn (#1501)", () => {
     );
     assert.deepEqual(userTexts(store, thread.id), ["first turn", "a", "b"]);
     assert.equal(store.getThread(thread.id).queued, null);
+  });
+});
+
+describe("queued follow-ups combine into one turn (#468)", () => {
+  let prevSimulate;
+  let prevAgentCmd;
+  let fx;
+
+  beforeEach(() => {
+    prevSimulate = process.env.CODER_SIMULATE;
+    prevAgentCmd = process.env.CODER_AGENT_CMD;
+  });
+
+  afterEach(async () => {
+    if (fx) {
+      fx.runner.stopAll();
+      await rmTree(fx.tmpDir);
+      fx = null;
+    }
+    restoreEnv(prevSimulate, prevAgentCmd);
+  });
+
+  it("is on by default", async () => {
+    fx = await makeFixture();
+    assert.equal(fx.store.getSettings().combineQueuedFollowUps, true);
+  });
+
+  it("sends every waiting item as one run", async () => {
+    process.env.CODER_SIMULATE = "1";
+    delete process.env.CODER_AGENT_CMD;
+    fx = await makeFixture();
+    const { store, runner, thread } = fx;
+
+    await runner.startRun({ threadId: thread.id, prompt: "first turn" });
+    queueItems(store, thread.id, ["a", "b", "c"]);
+
+    await waitFor(() => {
+      const live = store.getThread(thread.id);
+      return userTexts(store, thread.id).length === 2 && live.status === "done";
+    });
+    assert.deepEqual(userTexts(store, thread.id), ["first turn", "a\n\nb\n\nc"]);
+    const runIds = userRows(store, thread.id).map((m) => m.runId);
+    assert.equal(new Set(runIds).size, 2);
+    assert.equal(store.getThread(thread.id).queued, null);
+  });
+
+  it("an item queued after the take waits for the next turn", async () => {
+    delete process.env.CODER_SIMULATE;
+    process.env.CODER_AGENT_CMD = `${process.execPath} -e ${fakeAgentSuccessScript()}`;
+    fx = await makeFixture();
+    const { store, runner, thread } = fx;
+
+    await runner.startRun({ threadId: thread.id, prompt: "first turn" });
+    queueItems(store, thread.id, ["a", "b"]);
+    process.env.CODER_AGENT_CMD = `${process.execPath} -e ${fakeAgentSlowScript()}`;
+    await waitFor(
+      () =>
+        userTexts(store, thread.id).includes("a\n\nb") &&
+        store.getThread(thread.id).status === "working",
+    );
+    services.setQueued(store, { threadId: thread.id, prompt: "c" });
+    await runner.stopRun({ threadId: thread.id });
+    await settle();
+
+    assert.deepEqual(store.getThread(thread.id).queued.items, ["c"]);
+    assert.deepEqual(userTexts(store, thread.id), ["first turn", "a\n\nb"]);
+  });
+
+  it("Send now sends only the head; the rest follow as one turn", async () => {
+    delete process.env.CODER_SIMULATE;
+    process.env.CODER_AGENT_CMD = `${process.execPath} -e ${fakeAgentFailScript()}`;
+    fx = await makeFixture();
+    const { store, runner, thread } = fx;
+
+    await runner.startRun({ threadId: thread.id, prompt: "first turn" });
+    queueItems(store, thread.id, ["a", "b", "c"]);
+    await waitFor(() => store.getThread(thread.id).status === "failed");
+    await settle();
+
+    process.env.CODER_AGENT_CMD = `${process.execPath} -e ${fakeAgentSuccessScript()}`;
+    await runner.sendQueued({ threadId: thread.id });
+    await waitFor(
+      () =>
+        userTexts(store, thread.id).length === 3 &&
+        store.getThread(thread.id).status === "done",
+    );
+    assert.deepEqual(userTexts(store, thread.id), ["first turn", "a", "b\n\nc"]);
+    assert.equal(store.getThread(thread.id).queued, null);
+  });
+
+  it("numbers the items for the model", () => {
+    const { combinedQueuedPrompt } = require("../runnerHelpers.js");
+    assert.equal(combinedQueuedPrompt(["only"]), "only");
+    assert.equal(
+      combinedQueuedPrompt(["fix X", "add a test"]),
+      "2 follow-ups queued while you were working, oldest first. Handle them together as one request:\n\n[1/2] fix X\n\n[2/2] add a test",
+    );
   });
 });
 
@@ -516,6 +619,117 @@ describe("takeQueuedHead / restoreQueuedHead (#1501)", () => {
     assert.deepEqual(swapped.queued.itemAttachments, [[], [x]]);
     const head = services.takeQueuedHead(store, { threadId });
     assert.equal(head.attachments, undefined);
+  });
+});
+
+describe("a fresh turn that fails preflight keeps the queue (#924)", () => {
+  const shot = { kind: "image", path: "/tmp/q.png", name: "q.png" };
+  const envKeys = ["CODER_SIMULATE", "CODER_AGENT_CMD", "CODER_CLAUDE_BIN"];
+  let prevEnv;
+  let fx;
+
+  beforeEach(() => {
+    prevEnv = Object.fromEntries(envKeys.map((k) => [k, process.env[k]]));
+    for (const k of envKeys) delete process.env[k];
+  });
+
+  afterEach(async () => {
+    if (fx) {
+      fx.runner.stopAll();
+      await rmTree(fx.tmpDir);
+      fx = null;
+    }
+    for (const k of envKeys) {
+      if (prevEnv[k] === undefined) delete process.env[k];
+      else process.env[k] = prevEnv[k];
+    }
+  });
+
+  async function queuedFixture() {
+    fx = await makeFixture();
+    services.setQueued(fx.store, {
+      threadId: fx.thread.id,
+      prompt: "old queued",
+      attachments: [shot],
+    });
+    return fx;
+  }
+
+  function assertQueueKept(store, threadId, items) {
+    const check = (q) => {
+      assert.deepEqual(q && q.items, items);
+      assert.deepEqual(q.itemAttachments[0], [shot]);
+    };
+    check(store.getThread(threadId).queued);
+    store.saveNow();
+    check(new Store(path.join(fx.tmpDir, "store.json")).getThread(threadId).queued);
+  }
+
+  it("budget rejection", async () => {
+    const { store, runner, thread } = await queuedFixture();
+    services.setSettings(store, { dailyBudgetUsd: 1 });
+    store.recordSpend(1);
+    await assert.rejects(
+      () => runner.startRun({ threadId: thread.id, prompt: "new" }),
+      /Daily budget reached/,
+    );
+    assertQueueKept(store, thread.id, ["old queued"]);
+    assert.deepEqual(userTexts(store, thread.id), []);
+  });
+
+  it("missing provider binary", async () => {
+    const { store, runner, thread } = await queuedFixture();
+    process.env.CODER_CLAUDE_BIN = path.join(fx.tmpDir, "no-such-claude");
+    await assert.rejects(
+      () => runner.startRun({ threadId: thread.id, prompt: "new" }),
+      /Provider binary not found/,
+    );
+    assertQueueKept(store, thread.id, ["old queued"]);
+  });
+
+  it("worktree setup failure records only the new prompt", async () => {
+    const { store, runner, thread } = await queuedFixture();
+    process.env.CODER_CLAUDE_BIN = process.execPath;
+    store.updateThread(thread.id, { pendingWorktree: true });
+    await assert.rejects(
+      () => runner.startRun({ threadId: thread.id, prompt: "new" }),
+      /worktreeBase is not configured/,
+    );
+    assertQueueKept(store, thread.id, ["old queued"]);
+    // Retry re-sends this row; the queue is not folded into it twice.
+    assert.deepEqual(userTexts(store, thread.id), ["new"]);
+  });
+
+  it("puts the taken queue in front of a follow-up queued meanwhile", async () => {
+    const { store, runner, thread } = await queuedFixture();
+    const real = services.assertUnderDailyBudget;
+    services.assertUnderDailyBudget = () => {
+      services.setQueued(store, { threadId: thread.id, prompt: "meanwhile" });
+      throw new Error("Daily budget reached");
+    };
+    try {
+      await assert.rejects(
+        () => runner.startRun({ threadId: thread.id, prompt: "new" }),
+        /Daily budget reached/,
+      );
+    } finally {
+      services.assertUnderDailyBudget = real;
+    }
+    assertQueueKept(store, thread.id, ["old queued", "meanwhile"]);
+  });
+
+  it("an accepted turn takes the queue exactly once", async () => {
+    process.env.CODER_SIMULATE = "1";
+    const { store, runner, thread } = await queuedFixture();
+    await runner.startRun({ threadId: thread.id, prompt: "new" });
+    assert.equal(store.getThread(thread.id).queued, null);
+    await waitFor(() => store.getThread(thread.id).status === "done");
+    await settle();
+    assert.equal(store.getThread(thread.id).queued, null);
+    assert.deepEqual(userTexts(store, thread.id), ["new"]);
+    store.saveNow();
+    const reloaded = new Store(path.join(fx.tmpDir, "store.json"));
+    assert.equal(reloaded.getThread(thread.id).queued, null);
   });
 });
 

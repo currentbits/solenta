@@ -24,19 +24,23 @@ export function PdfTextNote() {
 
 /**
  * One attachment: thumbnail for images, glyph for files/folders. Without
- * onRemove it is read-only (the queued strip, #1212). `pdfAsText` marks a
- * PDF the provider cannot read: the runner sends extracted text (#466).
+ * onRemove it is read-only (the queued strip, #1212). onMarkup turns an
+ * image thumbnail into a button that opens the markup editor (#460).
+ * `pdfAsText` marks a PDF the provider cannot read: the runner sends
+ * extracted text (#466).
  */
 export function AttachmentChip({
   attachment,
   onRemove,
   onLoadImage,
   pdfAsText,
+  onMarkup,
 }: {
   attachment: AttachmentInfo;
   onRemove?: () => void;
   onLoadImage?: (path: string) => Promise<string | null>;
   pdfAsText?: boolean;
+  onMarkup?: () => void;
 }) {
   const textOnly = pdfAsText && isPdfAttachment(attachment);
   const [thumb, setThumb] = useState<string | null>(null);
@@ -58,7 +62,17 @@ export function AttachmentChip({
       data-attachment-kind={attachment.kind}
       title={attachment.path}
     >
-      {attachment.kind === "image" && thumb ? (
+      {attachment.kind === "image" && thumb && onMarkup ? (
+        <button
+          type="button"
+          className={styles.attachmentMarkup}
+          aria-label={`Mark up ${attachment.name}`}
+          title="Pin, draw or crop"
+          onClick={onMarkup}
+        >
+          <img className={styles.attachmentThumb} src={thumb} alt="" />
+        </button>
+      ) : attachment.kind === "image" && thumb ? (
         <img
           className={styles.attachmentThumb}
           src={thumb}

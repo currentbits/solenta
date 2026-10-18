@@ -75,7 +75,7 @@ describe("Sidebar issue form", () => {
         onSelectThread={() => {}}
         onCreateThread={() => {}}
         onAddProject={() => {}}
-        searchThreads={async () => []}
+        searchThreads={async () => ({ threads: [], truncated: false })}
         onCreateThreadFromIssue={async (input) => {
           calls.push(input);
           return { ok: false, reason: "issue not found" };
@@ -139,7 +139,7 @@ describe("Sidebar issue form", () => {
         onSelectThread={() => {}}
         onCreateThread={() => {}}
         onAddProject={() => {}}
-        searchThreads={async () => []}
+        searchThreads={async () => ({ threads: [], truncated: false })}
       />,
     );
     await m.click(m.query("[data-new-thread-caret]"));

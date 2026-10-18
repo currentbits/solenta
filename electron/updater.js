@@ -134,6 +134,14 @@ async function fetchLatest(channel, fetchImpl) {
   return res.json();
 }
 
+/** One release by tag (what this build was cut from), or null. */
+async function fetchTag(tag, fetchImpl) {
+  const res = await (fetchImpl || fetch)(`${API}/tags/${encodeURIComponent(tag)}`, { headers: HEADERS });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`GitHub releases: HTTP ${res.status}`);
+  return res.json();
+}
+
 /** @type {Promise<any> | null} */
 let checking = null;
 /** @type {Promise<any> | null} */
@@ -488,5 +496,6 @@ module.exports = {
   bundlePath,
   pickAsset,
   fetchLatest,
+  fetchTag,
   stage,
 };
