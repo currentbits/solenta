@@ -1,7 +1,7 @@
 import type { ProviderInfo, ProviderInstance } from "./shared/ipc";
 
 /** "Signed in as a@b.c · Plus", or null when the CLI did not say who. */
-export function accountLine(p: ProviderInfo): string | null {
+export function accountLine(p: Pick<ProviderInfo, "auth" | "account">): string | null {
   const a = p.auth === "signedIn" ? p.account : undefined;
   if (!a?.email && !a?.plan) return null;
   const plan = a.plan ? a.plan[0].toUpperCase() + a.plan.slice(1) : null;

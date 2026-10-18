@@ -8,7 +8,7 @@ import {
   type CSSProperties,
 } from "react";
 import { useCoder } from "./useCoder";
-import { isDevBuild, needsWebTokenGate } from "./coderApi";
+import { isDevBuild } from "./coderApi";
 import { demoProviderLimits } from "./providerUsageDemo";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Sidebar } from "./components/Sidebar";
@@ -46,7 +46,7 @@ import {
   PALETTE_ACTIONS,
   type PaletteMode,
 } from "./commandPalette";
-import { WebTokenGate } from "./components/WebTokenGate";
+import { ConnectionBanner } from "./components/ConnectionBanner";
 import { OauthConsentDialog } from "./components/OauthConsentDialog";
 import { isWebMode } from "./shared/wire";
 import { isBuildMismatch } from "./buildMismatch";
@@ -1690,7 +1690,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
 
   return (
     <div className={styles.shell}>
-      {needsWebTokenGate() && <WebTokenGate />}
+      <ConnectionBanner />
       <div
         className={styles.app}
         data-layout="app"
@@ -2389,6 +2389,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
           onShowOnboarding={showOnboarding}
           onOpenConnection={(input) => api.app.openRemoteConnection(input)}
           onForgetConnection={(input) => api.app.forgetRemoteConnection(input)}
+          onInstallSolenta={(input) => api.app.installRemoteSolenta(input)}
           projects={projects}
           currentProjectId={project?.id ?? null}
           onSetSpotlight={setSpotlight}
