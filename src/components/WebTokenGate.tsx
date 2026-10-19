@@ -5,15 +5,17 @@ import { useModalFocus } from "../useModalFocus";
 import styles from "./SettingsModal.module.css";
 
 /**
- * Visual token gate for Solenta Web. Open only when needsWebTokenGate()
- * is true (production web, no token). Vite DEV and a resolved token
- * both stay closed. Submitting persists via the same persistWebToken
- * path boot.tsx's gate uses and reloads so the wire client picks it up.
+ * Token gate for Solenta Web. Without a reason it opens only when
+ * needsWebTokenGate() is true (production web, no token); Vite DEV and a
+ * resolved token stay closed. With a reason (the host rejected the saved
+ * token) it always opens. Submitting persists the token and reloads so the
+ * wire client picks it up.
  */
-export function WebTokenGate() {
+export function WebTokenGate({ reason }: { reason?: string } = {}) {
   const [token, setToken] = useState("");
   const dialogRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(() => {
+    if (reason) return true;
     try {
       return needsWebTokenGate();
     } catch {
@@ -54,9 +56,16 @@ export function WebTokenGate() {
           </h2>
         </div>
         <div className={styles.body}>
+          {reason ? (
+            <p className={styles.note} data-web-token-reason="">
+              {reason}
+            </p>
+          ) : null}
           <p className={styles.note}>
-            This browser session needs the token printed when the web server
-            started.
+            Open the pairing link or scan the QR code from the computer running
+            Solenta, or paste its token here. On that computer, Settings &gt;
+            Connections &gt; Add device makes a token for this device. If
+            Solenta was started from a terminal, the token is printed there.
           </p>
           <div className={styles.field}>
             <label className={styles.fieldLabel} htmlFor="web-token-input">

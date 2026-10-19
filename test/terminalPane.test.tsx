@@ -10,6 +10,7 @@ import { describe, it, afterEach } from "node:test";
 import { inAct, mount, unmountAll } from "./support/dom.ts";
 import {
   TerminalPane,
+  findMatch,
   type TerminalApi,
   type XtermLike,
 } from "../src/components/TerminalPane";
@@ -44,6 +45,9 @@ class FakeTerm implements XtermLike {
   dataCb: (d: string) => void = () => {};
   resizeCb: (s: { cols: number; rows: number }) => void = () => {};
   keyHandler: (e: KeyboardEvent) => boolean = () => true;
+  selCb: () => void = () => {};
+  finds: [string, boolean][] = [];
+  hits = true;
   open() {}
   write(d: string) {
     this.screen += d;
@@ -63,6 +67,21 @@ class FakeTerm implements XtermLike {
   }
   getSelection() {
     return this.selection;
+  }
+  select(text: string) {
+    this.selection = text;
+    this.selCb();
+  }
+  clear() {
+    this.screen = "";
+  }
+  find(query: string, back: boolean) {
+    this.finds.push([query, back]);
+    return this.hits;
+  }
+  onSelectionChange(cb: () => void) {
+    this.selCb = cb;
+    return { dispose() {} };
   }
   onData(cb: (d: string) => void) {
     this.dataCb = cb;
@@ -413,5 +432,113 @@ describe("TerminalPane", () => {
     assert.equal(t.keyHandler(key({ metaKey: true })), false);
     assert.equal(t.keyHandler(key({ ctrlKey: true })), true, "plain Ctrl+C is SIGINT");
     assert.deepEqual(copied, ["hello"]);
+  });
+
+  it("sends only the selection to this thread's composer, never the buffer (#1185)", async () => {
+    const h = harness({ open: async () => state({ text: "whole buffer", cursor: 12 }) });
+    const sent: [string, string][] = [];
+    const m = await mount(
+      <TerminalPane threadId="t1" api={h.api} load={h.load} onAddToPrompt={(...a) => sent.push(a)} />,
+    );
+    await settle();
+    const button = m.query("[data-terminal-send]") as HTMLButtonElement;
+    assert.equal(button.getAttribute("aria-label"), "Send selection to composer");
+    assert.equal(button.disabled, true, "nothing selected: disabled");
+    assert.match(button.title, /Select output/);
+    await inAct(() => h.terms[0].select(" FAIL  sum.test.ts\n  expected 3, got 4"));
+    assert.equal(button.disabled, false);
+    await m.click(button);
+    assert.deepEqual(sent, [["t1", " FAIL  sum.test.ts\n  expected 3, got 4"]]);
+    assert.equal(h.calls.some((c) => c.call === "write"), false, "nothing typed into the shell");
+    assert.equal(m.query("[data-terminal-status]")!.textContent, "Added to composer");
+    await inAct(() => h.terms[0].select(""));
+    assert.equal(button.disabled, true);
+  });
+
+  it("has no send button without a composer to send to", async () => {
+    const h = harness();
+    const m = await mount(<TerminalPane threadId="t1" api={h.api} load={h.load} />);
+    await settle();
+    assert.equal(m.query("[data-terminal-send]"), null);
+    assert.ok(m.query("[data-terminal-copy]"));
+  });
+
+  it("Copy writes the selection to the clipboard", async () => {
+    const h = harness();
+    const m = await mount(<TerminalPane threadId="t1" api={h.api} load={h.load} />);
+    await settle();
+    const copied: string[] = [];
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: async (s: string) => void copied.push(s) },
+      configurable: true,
+    });
+    assert.equal((m.query("[data-terminal-copy]") as HTMLButtonElement).disabled, true);
+    await inAct(() => h.terms[0].select("line"));
+    await m.click(m.query("[data-terminal-copy]"));
+    await settle();
+    assert.deepEqual(copied, ["line"]);
+    assert.equal(m.query("[data-terminal-status]")!.textContent, "Copied");
+  });
+
+  it("Clear wipes the display only; the shell keeps running and new output lands once", async () => {
+    const h = harness({ open: async () => state({ text: "old\r\n$ ", cursor: 7 }) });
+    const m = await mount(<TerminalPane threadId="t1" api={h.api} load={h.load} />);
+    await settle();
+    await m.click(m.query("[data-terminal-clear]"));
+    assert.equal(h.terms[0].screen, "");
+    await h.push({ from: 7, data: "new", cursor: 10 });
+    await h.push({ from: 7, data: "new", cursor: 10 });
+    assert.equal(h.terms[0].screen, "new");
+    assert.equal(h.calls.some((c) => c.call === "close" || c.call === "write"), false);
+    assert.equal(h.calls.filter((c) => c.call === "open").length, 1);
+    assert.equal(m.query("[data-running]")!.getAttribute("data-running"), "true");
+  });
+
+  it("Find searches up on Enter, down on Shift+Enter, reports no matches, closes on Escape", async () => {
+    const h = harness();
+    const m = await mount(<TerminalPane threadId="t1" api={h.api} load={h.load} />);
+    await settle();
+    const toggle = m.query("[data-terminal-find]")!;
+    assert.equal(toggle.getAttribute("aria-expanded"), "false");
+    await m.click(toggle);
+    assert.equal(toggle.getAttribute("aria-expanded"), "true");
+    const input = m.query("[data-terminal-findbar] input") as HTMLInputElement;
+    assert.equal(document.activeElement, input, "focus lands in the field");
+    assert.equal(input.getAttribute("aria-label"), "Find in terminal output");
+    await m.type(input, "FAIL");
+    await m.pressFocused("Enter");
+    await m.pressFocused("Enter", { shiftKey: true });
+    await m.click(m.query("[data-terminal-find-next]"));
+    assert.deepEqual(h.terms[0].finds, [
+      ["FAIL", true],
+      ["FAIL", false],
+      ["FAIL", false],
+    ]);
+    assert.equal(m.query("[data-terminal-status]")!.textContent, "");
+    h.terms[0].hits = false;
+    await m.click(m.query("[data-terminal-find-prev]"));
+    assert.equal(m.query("[data-terminal-status]")!.textContent, "No matches");
+    input.focus();
+    await m.pressFocused("Escape");
+    assert.equal(m.query("[data-terminal-findbar]"), null);
+    assert.equal(m.query("[data-terminal-status]")!.textContent, "");
+  });
+});
+
+describe("findMatch", () => {
+  const lines = ["ok a", "FAIL one", "ok b", "fail two  FAIL"];
+  it("starts at the bottom going up, the top going down, case-insensitive", () => {
+    assert.deepEqual(findMatch(lines, "fail", null, true), { y: 3, x: 10 });
+    assert.deepEqual(findMatch(lines, "fail", null, false), { y: 1, x: 0 });
+  });
+  it("steps from the last match and wraps", () => {
+    assert.deepEqual(findMatch(lines, "fail", { y: 3, x: 10 }, true), { y: 3, x: 0 });
+    assert.deepEqual(findMatch(lines, "fail", { y: 3, x: 0 }, true), { y: 1, x: 0 });
+    assert.deepEqual(findMatch(lines, "fail", { y: 1, x: 0 }, true), { y: 3, x: 10 });
+    assert.deepEqual(findMatch(lines, "fail", { y: 3, x: 10 }, false), { y: 1, x: 0 });
+  });
+  it("reports no matches and ignores an empty query", () => {
+    assert.equal(findMatch(lines, "panic", null, true), null);
+    assert.equal(findMatch(lines, "", null, true), null);
   });
 });

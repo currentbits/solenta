@@ -271,18 +271,22 @@ export function useCoderWorkspace({
     [api],
   );
 
+  /**
+   * Rejects with the host's error so a paste or screenshot can say why
+   * (#1211). Batch pick/drop paths use saveImageOrNull and skip the item.
+   */
   const saveAttachmentImage = useCallback(
     async (dataUrl: string) => {
       if (!selectedThreadId) return null;
       const threadId = selectedThreadId;
-      try {
-        const result = await api.attachments.saveImage({ threadId, dataUrl });
-        return result.attachment;
-      } catch {
-        return null;
-      }
+      const result = await api.attachments.saveImage({ threadId, dataUrl });
+      return result.attachment;
     },
     [api, selectedThreadId],
+  );
+  const saveImageOrNull = useCallback(
+    (dataUrl: string) => saveAttachmentImage(dataUrl).catch(() => null),
+    [saveAttachmentImage],
   );
 
   const saveAttachmentFile = useCallback(
@@ -353,16 +357,19 @@ export function useCoderWorkspace({
     if (isWebMode()) {
       if (!selectedThreadId) return [];
       return filesToAttachments(await pickWebFiles(), {
-        image: saveAttachmentImage,
+        image: saveImageOrNull,
         file: saveAttachmentFile,
       });
     }
     const includeImages = opts?.includeImages !== false;
-    const result = await api.attachments.pick({ includeImages });
+    const result = await api.attachments.pick({
+      includeImages,
+      threadId: selectedThreadId ?? undefined,
+    });
     return includeImages
-      ? withVideoFrames(result.attachments, saveAttachmentImage)
+      ? withVideoFrames(result.attachments, saveImageOrNull)
       : result.attachments;
-  }, [api, saveAttachmentFile, saveAttachmentImage, selectedThreadId]);
+  }, [api, saveAttachmentFile, saveImageOrNull, selectedThreadId]);
 
   const pickFolderAttachments = useCallback(async () => {
     if (!selectedThreadId) return [];
@@ -409,8 +416,11 @@ export function useCoderWorkspace({
           })
           .filter((p) => p.length > 0);
         if (!paths.length) return [];
-        const result = await api.attachments.fromPaths({ paths });
-        return withVideoFrames(result.attachments, saveAttachmentImage);
+        const result = await api.attachments.fromPaths({
+          paths,
+          threadId: selectedThreadId ?? undefined,
+        });
+        return withVideoFrames(result.attachments, saveImageOrNull);
       }
       const out: AttachmentInfo[] = [];
       if (folders?.length && selectedThreadId) {
@@ -431,13 +441,13 @@ export function useCoderWorkspace({
       const loose = files.filter((file) => !folderNames.has(file.name));
       out.push(
         ...(await filesToAttachments(loose, {
-          image: saveAttachmentImage,
+          image: saveImageOrNull,
           file: saveAttachmentFile,
         })),
       );
       return out;
     },
-    [api, saveAttachmentFile, saveAttachmentImage, selectedThreadId],
+    [api, saveAttachmentFile, saveImageOrNull, selectedThreadId],
   );
 
   return {

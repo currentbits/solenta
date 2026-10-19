@@ -43,7 +43,8 @@ export type ThreadActionMenuId =
   | "mute"
   | "unmute"
   | "eject"
-  | "reclaim";
+  | "reclaim"
+  | "detach";
 
 export function buildThreadActionMenuItems(input: {
   thread: ThreadInfo;
@@ -66,9 +67,19 @@ export function buildThreadActionMenuItems(input: {
   /** Eject the provider session so the raw CLI/Desktop can own it (#554). */
   showEject?: boolean;
   showSettle: boolean;
+  /** Open in a window of its own (#519); desktop main window only. */
+  showDetach?: boolean;
 }): ContextMenuItem[] {
   const { thread } = input;
   const items: ContextMenuItem[] = [];
+
+  if (input.showDetach) {
+    items.push({
+      id: "detach",
+      label: "Open in new window",
+      attrs: { "data-detach-thread": thread.id },
+    });
+  }
 
   if (input.showSnooze) {
     if (thread.snoozedUntil != null) {

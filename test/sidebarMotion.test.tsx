@@ -103,7 +103,7 @@ function view() {
     onSelectThread() {},
     onCreateThread() {},
     onAddProject() {},
-    searchThreads: async (): Promise<ThreadInfo[]> => [],
+    searchThreads: async () => ({ threads: [] as ThreadInfo[], truncated: false }),
   });
 }
 

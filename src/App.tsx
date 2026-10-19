@@ -8,7 +8,7 @@ import {
   type CSSProperties,
 } from "react";
 import { useCoder } from "./useCoder";
-import { isDevBuild, needsWebTokenGate } from "./coderApi";
+import { isDevBuild } from "./coderApi";
 import { demoProviderLimits } from "./providerUsageDemo";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Sidebar } from "./components/Sidebar";
@@ -28,6 +28,12 @@ import { ArchiveToast } from "./components/ArchiveToast";
 import { ResumeNotice } from "./components/ResumeNotice";
 import { UNDO_WINDOW_MS, useUndoLast } from "./app/useUndoLast";
 import { bindingLabel, matchesBinding } from "./keybindings";
+import {
+  canDetachThread,
+  detachThread,
+  detachedThreadId,
+  detachedWindowTitle,
+} from "./detachedWindow";
 import { isShortcutBlocked } from "./sidebarSelection";
 import {
   EMPTY_HISTORY,
@@ -40,7 +46,7 @@ import {
   PALETTE_ACTIONS,
   type PaletteMode,
 } from "./commandPalette";
-import { WebTokenGate } from "./components/WebTokenGate";
+import { ConnectionBanner } from "./components/ConnectionBanner";
 import { OauthConsentDialog } from "./components/OauthConsentDialog";
 import { isWebMode } from "./shared/wire";
 import { isBuildMismatch } from "./buildMismatch";
@@ -230,6 +236,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     answerSecret,
     setProvider,
     setReasoningEffort,
+    applyAgentProfile,
     setWebSearch,
     setFast,
     setRoute,
@@ -359,7 +366,9 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     simulatorStatus,
     setVerifyCommand,
     runVerify,
+    exportReport,
     runCommand,
+    runShell,
     appStatus,
     updateStatus,
     checkUpdate,
@@ -389,6 +398,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     removeMcpServer,
     setMcpEnabled,
     listMcpCatalog,
+    xcodeMcpStatus,
+    pairXcodeMcp,
     pickMcpImport,
     previewMcpImport,
     installMcpImport,
@@ -514,8 +525,11 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     initialSidebarWidth,
   );
   const [agentsCollapsed, setAgentsCollapsed] = useState(true);
+  /** Detached thread window (#519): no sidebar, selection locked. */
+  const [detachedId] = useState(detachedThreadId);
   /** Wide layouts: the thread sidebar folds to a rail (#1411, ⌘B). */
   const [sidebarHidden, setSidebarHidden] = useState(() => {
+    if (detachedId) return true;
     try {
       return window.localStorage.getItem("app:sidebarHidden") === "1";
     } catch {
@@ -523,6 +537,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     }
   });
   const toggleSidebar = useCallback(() => {
+    if (detachedId) return;
     setSidebarHidden((hidden) => {
       const next = !hidden;
       try {
@@ -532,7 +547,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       }
       return next;
     });
-  }, []);
+  }, [detachedId]);
   /** Manual inspector tabs for this renderer session. Collapse unmounts the panel. */
   const [inspectorChoices, setInspectorChoices] = useState<
     Record<string, PanelTab>
@@ -586,6 +601,11 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
 
   const handleSelectThread = useCallback(
     (id: string, origin?: ThreadOpenOrigin) => {
+      // A detached window stays on its thread; links elsewhere get their own.
+      if (detachedId && id !== detachedId) {
+        detachThread(id);
+        return;
+      }
       const current = viewRef.current;
       if (isReturnableView(current)) {
         const projectId =
@@ -616,7 +636,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       setDrawer(null);
       selectThread(id);
     },
-    [selectThread],
+    [selectThread, detachedId],
   );
   const liveThreadIds = useMemo(
     () => (loading ? undefined : threads.map((t) => t.id)),
@@ -757,6 +777,34 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       offProject();
     };
   }, [api, handleSelectThread]);
+
+  // Detached window (#519): the title carries the attention dot (Window menu,
+  // Mission Control, taskbar), and the window closes once its thread is gone.
+  const detachedThread = detachedId
+    ? threads.find((t) => t.id === detachedId)
+    : undefined;
+  const detachedTitle = detachedId ? detachedWindowTitle(detachedThread) : null;
+  useEffect(() => {
+    if (detachedTitle) document.title = detachedTitle;
+  }, [detachedTitle]);
+  const detachedGone = Boolean(detachedId) && !loading && !detachedThread;
+  useEffect(() => {
+    if (detachedGone) window.close();
+  }, [detachedGone]);
+
+  // Main window: open the selected thread in its own window.
+  useEffect(() => {
+    if (!canDetachThread()) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (!matchesBinding(e, "thread.detach")) return;
+      const id = selectedThreadIdRef.current;
+      if (!id || viewRef.current !== "thread") return;
+      e.preventDefault();
+      detachThread(id);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   const handleCreateThread = useCallback(
     (projectId?: string, opts?: { worktree?: boolean; orchestrate?: boolean; teach?: boolean; ask?: boolean; issueNumber?: number | null; baseBranch?: string | null }) => {
@@ -1321,22 +1369,34 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   } | null>(null);
   const [signInShell, setSignInShell] = useState<{
     providerName: string;
+    install?: boolean;
     nonce: number;
   } | null>(null);
   const signInThreadId =
     view === "thread" && visibleDetail ? visibleDetail.thread.id : null;
   const handleProviderSignIn = useCallback(
-    async (providerId: string) => {
+    async (
+      providerId: string,
+      // `shell`: always the dedicated sign-in shell, never a thread's
+      // terminal (onboarding covers the thread view).
+      opts?: { install?: boolean; shell?: boolean; name?: string },
+    ) => {
+      const install = opts?.install === true;
       const res = await terminal.signIn({
         provider: providerId,
-        threadId: signInThreadId,
+        threadId: opts?.shell ? null : signInThreadId,
+        ...(install ? { install } : {}),
       });
       // Either way Settings closes: two modal focus traps fight each other.
       setSettingsOpen(false);
       if (res.threadId === SIGNIN_TERMINAL_ID) {
         const providerName =
-          providers.find((p) => p.id === providerId)?.name ?? providerId;
-        setSignInShell((cur) => ({ providerName, nonce: (cur?.nonce ?? 0) + 1 }));
+          providers.find((p) => p.id === providerId)?.name ?? opts?.name ?? providerId;
+        setSignInShell((cur) => ({
+          providerName,
+          install,
+          nonce: (cur?.nonce ?? 0) + 1,
+        }));
         return;
       }
       setTerminalReveal((cur) => ({
@@ -1346,6 +1406,11 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       }));
     },
     [terminal, signInThreadId, providers],
+  );
+  const handleOnboardingSignIn = useCallback(
+    (providerId: string, opts?: { install?: boolean; name?: string }) =>
+      handleProviderSignIn(providerId, { ...opts, shell: true }),
+    [handleProviderSignIn],
   );
   const closeSignInShell = useCallback(() => {
     setSignInShell(null);
@@ -1423,9 +1488,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     createThread,
     startRun,
     setIssuePlanStatus,
-    setProvider,
-    setReasoningEffort,
-    setPermissionMode,
+    applyAgentProfile,
     checkoutPr,
     setView,
     setRevealThreadId,
@@ -1628,7 +1691,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
 
   return (
     <div className={styles.shell}>
-      {needsWebTokenGate() && <WebTokenGate />}
+      <ConnectionBanner />
       <div
         className={styles.app}
         data-layout="app"
@@ -1650,6 +1713,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
             type="button"
             ref={threadsBtnRef}
             className={styles.narrowBtn}
+            hidden={Boolean(detachedId)}
             data-drawer-open="sidebar"
             aria-expanded={drawer === "sidebar"}
             aria-controls="pane-sidebar"
@@ -1696,6 +1760,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
           {!narrow && sidebarHidden ? (
             <div className={styles.sidebarRail} data-sidebar-rail="">
               <div className={styles.sidebarRailDrag} />
+              {!detachedId && (
               <button
                 type="button"
                 className={styles.sidebarRailBtn}
@@ -1719,8 +1784,10 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
                   <path d="M6 2.5v11" />
                 </svg>
               </button>
+              )}
             </div>
           ) : null}
+          {!detachedId && (
           <div
             className={styles.sidebarBody}
             hidden={!narrow && sidebarHidden}
@@ -1798,6 +1865,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
             />
           </ErrorBoundary>
           </div>
+          )}
         </div>
         {!narrow && !sidebarHidden && (
           <div
@@ -2039,6 +2107,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onAnswerSecret={answerSecret}
         onSetProvider={setProvider}
         onSetReasoningEffort={setReasoningEffort}
+        onApplyAgentProfile={applyAgentProfile}
         onSetWebSearch={setWebSearch}
         onSetFast={setFast}
         onSetRoute={setRoute}
@@ -2051,6 +2120,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
             : undefined
         }
         onRenameThread={handleRenameOpenThread}
+        onExportReport={exportReport}
         onRepeatSchedule={handleRepeatSchedule}
         onDistillWorkflow={handleDistillWorkflow}
         onDistillMemory={handleDistillMemory}
@@ -2127,6 +2197,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         gitSyncInfo={gitSyncInfo}
         gitFetch={gitFetch}
         onRunCommand={runCommand}
+        onRunShell={runShell}
         runError={error?.scope === "run" ? error.message : null}
         onDismissRunError={clearError}
         onFork={handleForkOpen}
@@ -2320,6 +2391,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
           onShowOnboarding={showOnboarding}
           onOpenConnection={(input) => api.app.openRemoteConnection(input)}
           onForgetConnection={(input) => api.app.forgetRemoteConnection(input)}
+          onInstallSolenta={(input) => api.app.installRemoteSolenta(input)}
           projects={projects}
           currentProjectId={project?.id ?? null}
           onSetSpotlight={setSpotlight}
@@ -2335,6 +2407,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
             removeMcpServer,
             setMcpEnabled,
             listMcpCatalog,
+            xcodeMcpStatus,
+            pairXcodeMcp,
             pickMcpImport,
             previewMcpImport,
             installMcpImport,
@@ -2358,6 +2432,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         {signInShell && (
           <SignInTerminal
             providerName={signInShell.providerName}
+            install={signInShell.install}
             nonce={signInShell.nonce}
             api={terminal}
             onClose={closeSignInShell}
@@ -2368,10 +2443,11 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         {onboardingLoaded && (
         <OnboardingModal
           open={onboardingOpen}
-          suspended={addPathOpen}
+          suspended={addPathOpen || signInShell != null}
           onFinish={finishOnboarding}
           providers={providers}
           refreshProviders={refreshProviders}
+          onProviderSignIn={handleOnboardingSignIn}
           discoverRecentRepos={discoverRecentRepos}
           onAddProjectPaths={addProjectPaths}
           projects={projects}

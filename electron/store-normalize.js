@@ -7,6 +7,7 @@ const { getProvider, honouredEfforts } = require("./providers.js");
 const { normalizeMcpServers } = require("./mcp.js");
 const { normalizeProviderInstances } = require("./providerInstances.js");
 const { normalizeModelPrices } = require("./modelPrices.js");
+const { parsePolicy } = require("./governance.js");
 
 /**
  * @param {unknown} u
@@ -96,6 +97,10 @@ function parseAgentProfile(item, strict) {
       "agentProfiles entry permissionMode must be one of default, acceptEdits, plan, auto, bypassPermissions",
     );
   }
+  // Governance matrix (#262). Junk heals to absent on read (the profile
+  // stays); settings:set throws. Absent stays absent so fixtures deepEqual.
+  const policy =
+    rec.policy === undefined ? null : parsePolicy(rec.policy, strict);
   return {
     id,
     name,
@@ -103,6 +108,7 @@ function parseAgentProfile(item, strict) {
     model,
     reasoningEffort: /** @type {string | null} */ (effort),
     permissionMode: /** @type {string} */ (permissionMode),
+    ...(policy ? { policy } : {}),
   };
 }
 
@@ -361,6 +367,9 @@ function validateQuotaFailover(raw) {
  * resumeInterruptedRuns: opt-in (issue #1512 I3); only an explicit true
  * resumes interrupted runs after a restart.
  *
+ * combineQueuedFollowUps: default on (#468); only an explicit false drains
+ * the type-ahead queue one item per turn.
+ *
  * prDiffCapLines: absent/junk → DEFAULT_PR_DIFF_CAP_LINES (400); only an
  * explicit null disables the PR-size cap (issue #402).
  *
@@ -408,6 +417,7 @@ function normalizeSettings(raw) {
     quotaWaitAutoResume: true,
     confirmQuitWithActiveWork: true,
     resumeInterruptedRuns: false,
+    combineQueuedFollowUps: true,
     guardrailsEnabled: true,
     prDiffCapLines: DEFAULT_PR_DIFF_CAP_LINES,
     maxConcurrentRuns: DEFAULT_MAX_CONCURRENT_RUNS,
@@ -571,6 +581,9 @@ function normalizeSettings(raw) {
   settings.resumeInterruptedRuns =
     /** @type {{ resumeInterruptedRuns?: unknown }} */ (obj)
       .resumeInterruptedRuns === true;
+  settings.combineQueuedFollowUps =
+    /** @type {{ combineQueuedFollowUps?: unknown }} */ (obj)
+      .combineQueuedFollowUps !== false;
   settings.guardrailsEnabled =
     /** @type {{ guardrailsEnabled?: unknown }} */ (obj).guardrailsEnabled !== false;
   settings.autoSettleOnMerge =

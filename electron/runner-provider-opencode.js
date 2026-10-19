@@ -13,7 +13,7 @@ const {
 const path = require("node:path");
 const threadSecrets = require("./threadSecrets.js");
 const opencodeParse = require("./opencode.js");
-const { runOpencode } = opencodeParse;
+const { runOpencode, OPENCODE_CLIENT_ENV } = opencodeParse;
 const { guardrailNotice } = require("./guardrail-hook-core.js");
 
 /**
@@ -148,7 +148,8 @@ function createOpencodeRun(ctx) {
         // Overlay is best-effort; a failed isolate must not block the turn.
       }
     }
-    const spawn = resolveSpawn(project, binary, args, localCwd, opencodeEnv);
+    opencodeEnv = { ...opencodeEnv, ...OPENCODE_CLIENT_ENV };
+    const spawn = resolveSpawn(project, binary, args, localCwd, opencodeEnv, threadId);
 
     if (abortIfCancelled(threadId, runId)) return { runId };
     const entry = claimPreparingRun(threadId, runId, {

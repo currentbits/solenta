@@ -5,6 +5,7 @@ import {
   snapToHonouredPermissionMode,
 } from "../../format";
 import {
+  BEST_EFFORT_NOTE,
   CUSTOM_MODEL_ID,
   effortDisplayLabel,
   effortHint,
@@ -14,6 +15,8 @@ import {
 import type {
   AgentProfile,
   AppSettings,
+  GovernanceAction,
+  GovernanceRule,
   PermissionMode,
   PromptSnippet,
   ProviderInfo,
@@ -22,6 +25,8 @@ import type {
   SubagentPool,
   SubagentPoolEntry,
 } from "../../shared/ipc";
+import { parseMcpArgv } from "../../parseMcpArgv";
+import { accountLine, addChatGptAccount } from "../../providerAccounts";
 import styles from "../SettingsModal.module.css";
 import type { SettingsModalProps } from "../SettingsModal";
 
@@ -33,7 +38,12 @@ export interface ProfileDraft {
   reasoningEffort: ReasoningEffort | null;
   permissionMode: PermissionMode;
   customModel: boolean;
+  defaultAction: "ask" | "allow";
+  rules: GovernanceRule[];
 }
+
+/** Per-profile rule cap; the store rejects more (#262). */
+const MAX_POLICY_RULES = 40;
 
 function defaultProviderId(providers: readonly ProviderInfo[]): string {
   return providers.find((p) => p.available)?.id ?? providers[0]?.id ?? "";
@@ -100,6 +110,8 @@ function emptyDraft(providers: readonly ProviderInfo[]): ProfileDraft {
       "default",
     ),
     customModel: false,
+    defaultAction: "ask",
+    rules: [],
   };
 }
 
@@ -122,6 +134,8 @@ function draftFromProfile(
       profile.permissionMode,
     ),
     customModel: profile.model != null && !known,
+    defaultAction: profile.policy?.defaultAction ?? "ask",
+    rules: profile.policy?.rules.map((r) => ({ ...r })) ?? [],
   };
 }
 
@@ -152,7 +166,7 @@ export function AgentsPane({
   persistPool: (next: SubagentPool) => Promise<boolean>;
   onSaveSettings: SettingsModalProps["onSaveSettings"];
   onRefreshProviders?: () => void;
-  onProviderSignIn?: (providerId: string) => Promise<void>;
+  onProviderSignIn?: (providerId: string, opts?: { name?: string }) => Promise<void>;
 }) {
   // Mounted only while this pane shows: opening it re-probes sign-in state.
   useEffect(() => {
@@ -198,10 +212,42 @@ export function AgentsPane({
       configDir: instanceDraft.configDir.trim() || null,
       env,
     };
+    if (instanceDraft.provider === "generic") {
+      const command = parseMcpArgv(instanceDraft.command);
+      const fullAccess = parseMcpArgv(instanceDraft.fullAccess);
+      if (!command.ok || !fullAccess.ok) {
+        setError(!command.ok ? command.error : (fullAccess as { error: string }).error);
+        return;
+      }
+      if (command.args.length === 0) {
+        setError("Command is required");
+        return;
+      }
+      next.configDir = null;
+      next.command = command.args;
+      next.fullAccessArgs = fullAccess.args;
+      next.cwd = instanceDraft.cwd.trim() || null;
+      next.transcript = instanceDraft.transcript;
+    }
     const list = instanceDraft.id
       ? instances.map((i) => (i.id === instanceDraft.id ? next : i))
       : [...instances, next];
     if (await persistInstances(list)) setInstanceDraft(null);
+  };
+
+  // A Codex instance with its own CODEX_HOME, then its `codex login` (#1659).
+  const connectChatGpt = async () => {
+    if (!onProviderSignIn) return;
+    const { list, ref } = addChatGptAccount(instances);
+    if (!(await persistInstances(list))) return;
+    const codexName = providers.find((p) => p.id === "codex")?.name ?? "Codex";
+    try {
+      await onProviderSignIn(ref, { name: `${codexName} (${list[list.length - 1].name})` });
+    } catch (err) {
+      setError(
+        err instanceof Error && err.message ? err.message : "Could not start sign in",
+      );
+    }
   };
 
   const submitDraft = async () => {
@@ -237,6 +283,13 @@ export function AgentsPane({
         draft.permissionMode,
       ),
     };
+    const rules = draft.rules
+      .map((r) => ({ ...r, match: r.match.trim() }))
+      .filter((r) => r.match !== "");
+    // Absent policy = today's behavior; only store one that changes something.
+    if (rules.length > 0 || draft.defaultAction !== "ask") {
+      nextProfile.policy = { defaultAction: draft.defaultAction, rules };
+    }
     const list = settings?.agentProfiles ?? [];
     const next = draft.id
       ? list.map((p) => (p.id === draft.id ? nextProfile : p))
@@ -327,6 +380,18 @@ export function AgentsPane({
             />
           ) : (
             <div className={styles.fieldRow}>
+              {onProviderSignIn &&
+                providers.some((p) => p.id === "codex" && p.available) && (
+                  <button
+                    type="button"
+                    className={styles.btn}
+                    data-connect-chatgpt=""
+                    disabled={saving || settings == null}
+                    onClick={() => void connectChatGpt()}
+                  >
+                    Connect ChatGPT account
+                  </button>
+                )}
               <button
                 type="button"
                 className={styles.btn}
@@ -705,13 +770,34 @@ interface InstanceDraft {
   provider: string;
   configDir: string;
   env: Array<{ key: string; value: string }>;
+  /** generic (#458): argv text, parsed by parseMcpArgv on submit. */
+  command: string;
+  fullAccess: string;
+  cwd: string;
+  transcript: "stdout" | "pty";
 }
 
 function emptyInstanceDraft(providers: readonly ProviderInfo[]): InstanceDraft {
   const base =
     providers.find((p) => p.available && !p.instanceId && p.id in INSTANCE_PROVIDERS)?.id ??
     "claude";
-  return { id: null, name: "", provider: base, configDir: "", env: [] };
+  return {
+    id: null,
+    name: "",
+    provider: base,
+    configDir: "",
+    env: [],
+    command: "",
+    fullAccess: "",
+    cwd: "",
+    transcript: "stdout",
+  };
+}
+
+/** argv back to text parseMcpArgv reads the same way; JSON when quoting matters. */
+function argvText(argv: readonly string[] | undefined): string {
+  const list = argv ?? [];
+  return list.every((a) => /^[^\s'"\\]+$/.test(a)) ? list.join(" ") : JSON.stringify(list);
 }
 
 function draftFromInstance(inst: ProviderInstance): InstanceDraft {
@@ -721,6 +807,10 @@ function draftFromInstance(inst: ProviderInstance): InstanceDraft {
     provider: inst.provider,
     configDir: inst.configDir ?? "",
     env: Object.entries(inst.env).map(([key, value]) => ({ key, value })),
+    command: argvText(inst.command),
+    fullAccess: argvText(inst.fullAccessArgs),
+    cwd: inst.cwd ?? "",
+    transcript: inst.transcript ?? "stdout",
   };
 }
 
@@ -742,6 +832,7 @@ function InstanceForm({
 }) {
   const bases = providers.filter((p) => !p.instanceId && p.id in INSTANCE_PROVIDERS);
   const dirVar = INSTANCE_PROVIDERS[draft.provider] ?? "config folder";
+  const generic = draft.provider === "generic";
   const setRow = (i: number, patch: Partial<{ key: string; value: string }>) =>
     onChange({
       ...draft,
@@ -767,6 +858,7 @@ function InstanceForm({
               {!p.available ? " (not installed)" : ""}
             </option>
           ))}
+          <option value="generic">Custom CLI (best effort)</option>
         </select>
       </div>
       <div className={styles.field}>
@@ -780,10 +872,95 @@ function InstanceForm({
           maxLength={40}
           disabled={saving}
           autoComplete="off"
-          placeholder="work"
+          placeholder={generic ? "Goose" : "work"}
           onChange={(e) => onChange({ ...draft, name: e.target.value })}
         />
       </div>
+      {generic ? (
+        <>
+          <div className={styles.field}>
+            <label className={styles.fieldLabel} htmlFor="instance-command">
+              Command
+            </label>
+            <input
+              id="instance-command"
+              className={styles.input}
+              value={draft.command}
+              disabled={saving}
+              autoComplete="off"
+              spellCheck={false}
+              placeholder="goose run -t"
+              onChange={(e) => onChange({ ...draft, command: e.target.value })}
+            />
+            <p className={styles.note}>
+              Runs in the thread&apos;s worktree with the prompt appended as the
+              last argument. Its plain output becomes the reply: no work log,
+              usage or resume, and each turn starts a new process. Put keys in
+              Environment, not here.
+            </p>
+          </div>
+          <div className={styles.field}>
+            <label className={styles.fieldLabel} htmlFor="instance-full-access">
+              Full access flags
+            </label>
+            <input
+              id="instance-full-access"
+              className={styles.input}
+              value={draft.fullAccess}
+              disabled={saving}
+              autoComplete="off"
+              spellCheck={false}
+              placeholder="--yolo"
+              onChange={(e) => onChange({ ...draft, fullAccess: e.target.value })}
+            />
+            <p className={styles.note}>
+              Added when the thread is set to Full access. Empty leaves
+              permissions to the CLI and hides the permission picker.
+            </p>
+          </div>
+          <div className={styles.field}>
+            <label className={styles.fieldLabel} htmlFor="instance-cwd">
+              Working folder
+            </label>
+            <input
+              id="instance-cwd"
+              className={styles.input}
+              value={draft.cwd}
+              disabled={saving}
+              autoComplete="off"
+              spellCheck={false}
+              placeholder="packages/app"
+              onChange={(e) => onChange({ ...draft, cwd: e.target.value })}
+            />
+            <p className={styles.note}>
+              A relative path is inside the thread&apos;s worktree. Empty runs
+              in the worktree itself.
+            </p>
+          </div>
+          <div className={styles.field}>
+            <label className={styles.fieldLabel} htmlFor="instance-transcript">
+              Output
+            </label>
+            <select
+              id="instance-transcript"
+              className={styles.input}
+              value={draft.transcript}
+              disabled={saving}
+              onChange={(e) =>
+                onChange({ ...draft, transcript: e.target.value as "stdout" | "pty" })
+              }
+            >
+              <option value="stdout">Plain output (pipes)</option>
+              <option value="pty">Terminal (PTY)</option>
+            </select>
+            <p className={styles.note}>
+              Terminal is for CLIs that hold output or refuse to run without
+              one. Colours and spinner redraws are stripped, and errors
+              appear in the reply.
+            </p>
+          </div>
+        </>
+      ) : (
       <div className={styles.field}>
         <label className={styles.fieldLabel} htmlFor="instance-dir">
           Config folder
@@ -803,6 +980,7 @@ function InstanceForm({
           settings and sessions. Empty uses the CLI&apos;s usual folder.
         </p>
       </div>
+      )}
       <div className={styles.field}>
         <span className={styles.fieldLabel}>Environment</span>
         {draft.env.map((row, i) => (
@@ -900,10 +1078,15 @@ function ProviderStatusList({
       <p className={styles.note}>
         Sign-in state comes from each CLI&apos;s own status command. Unknown
         means the CLI has no way to ask. An instance runs Claude Code or
-        Codex with its own config folder, for a second account.
+        Codex with its own config folder, for a second account, or any other
+        agent CLI as a best-effort custom provider.
       </p>
       {rows.map((p) => {
-        const state = !p.available ? "missing" : (p.auth ?? "checking");
+        const state = !p.available
+          ? "missing"
+          : p.bestEffort
+            ? "bestEffort"
+            : (p.auth ?? "checking");
         const canSignIn =
           onSignIn != null && p.available && p.auth != null && p.auth !== "signedIn";
         return (
@@ -919,10 +1102,14 @@ function ProviderStatusList({
                 data-auth-state={state}
               >
                 {state === "missing"
-                  ? "Not installed"
-                  : state === "checking"
+                  ? p.bestEffort
+                    ? "Command not found"
+                    : "Not installed"
+                  : state === "bestEffort"
+                    ? BEST_EFFORT_NOTE
+                    : state === "checking"
                     ? "Checking sign-in…"
-                    : AUTH_LABELS[state]}
+                    : (accountLine(p) ?? AUTH_LABELS[state])}
               </p>
             </div>
             {(canSignIn || p.instanceId) && (
@@ -1314,6 +1501,7 @@ function ProfileForm({
           ))}
         </select>
       </div>
+      <PolicyFields draft={draft} saving={saving} onChange={onChange} />
       <div className={styles.fieldRow}>
         <button
           type="button"
@@ -1333,6 +1521,139 @@ function ProfileForm({
         </button>
       </div>
     </div>
+  );
+}
+
+const POLICY_LISTS: Array<{
+  kind: GovernanceRule["kind"];
+  label: string;
+  placeholder: string;
+}> = [
+  { kind: "tool", label: "Tools", placeholder: "WebFetch" },
+  { kind: "bash", label: "Bash", placeholder: "npm publish*" },
+  { kind: "write", label: "Write paths", placeholder: "/etc/*" },
+  { kind: "network", label: "Network", placeholder: "*.example.com" },
+];
+
+const GOVERNANCE_ACTIONS: GovernanceAction[] = ["block", "deny", "ask", "allow"];
+
+/** Permission matrix rows for a profile (#262), one list per rule kind. */
+function PolicyFields({
+  draft,
+  saving,
+  onChange,
+}: {
+  draft: ProfileDraft;
+  saving: boolean;
+  onChange: (draft: ProfileDraft) => void;
+}) {
+  const setRule = (i: number, patch: Partial<GovernanceRule>) =>
+    onChange({
+      ...draft,
+      rules: draft.rules.map((r, j) => (j === i ? { ...r, ...patch } : r)),
+    });
+  const full = draft.rules.length >= MAX_POLICY_RULES;
+  return (
+    <>
+      <div className={styles.field}>
+        <label className={styles.fieldLabel} htmlFor="profile-default-action">
+          Default action
+        </label>
+        <select
+          id="profile-default-action"
+          className={styles.input}
+          value={draft.defaultAction}
+          disabled={saving}
+          onChange={(e) =>
+            onChange({
+              ...draft,
+              defaultAction: e.target.value as ProfileDraft["defaultAction"],
+            })
+          }
+        >
+          <option value="ask">Ask</option>
+          <option value="allow">Allow</option>
+        </select>
+      </div>
+      {POLICY_LISTS.map((list) => (
+        <div key={list.kind} className={styles.field} data-policy-list={list.kind}>
+          <span className={styles.fieldLabel}>{list.label}</span>
+          {draft.rules.map((rule, i) =>
+            rule.kind !== list.kind ? null : (
+              <div key={i} className={styles.fieldRow} data-policy-rule="">
+                <input
+                  className={styles.input}
+                  aria-label={`${list.label} match`}
+                  value={rule.match}
+                  maxLength={200}
+                  disabled={saving}
+                  autoComplete="off"
+                  spellCheck={false}
+                  placeholder={list.placeholder}
+                  onChange={(e) => setRule(i, { match: e.target.value })}
+                />
+                <select
+                  className={styles.input}
+                  aria-label={`Action for ${rule.match || list.label}`}
+                  value={rule.action}
+                  disabled={saving}
+                  onChange={(e) =>
+                    setRule(i, { action: e.target.value as GovernanceAction })
+                  }
+                >
+                  {GOVERNANCE_ACTIONS.map((action) => (
+                    <option key={action} value={action}>
+                      {action}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  className={styles.btn}
+                  aria-label={`Remove ${rule.match || list.label} rule`}
+                  disabled={saving}
+                  onClick={() =>
+                    onChange({
+                      ...draft,
+                      rules: draft.rules.filter((_, j) => j !== i),
+                    })
+                  }
+                >
+                  Remove
+                </button>
+              </div>
+            ),
+          )}
+          <div className={styles.fieldRow}>
+            <button
+              type="button"
+              className={styles.btn}
+              data-policy-add={list.kind}
+              disabled={saving || full}
+              onClick={() =>
+                onChange({
+                  ...draft,
+                  rules: [
+                    ...draft.rules,
+                    { kind: list.kind, match: "", action: "deny" },
+                  ],
+                })
+              }
+            >
+              Add rule
+            </button>
+          </div>
+        </div>
+      ))}
+      <p className={styles.note}>
+        Built-in Solenta guardrails still apply and cannot be lifted. Rules
+        gate Claude&apos;s permission prompts, which Accept edits and Bypass
+        modes skip. On macOS, any Write path or Network rule also runs the
+        agent (every provider, local projects) under Seatbelt: writes are
+        confined to the worktree plus allow/ask paths, and network rules
+        filter egress through Solenta&apos;s proxy.
+      </p>
+    </>
   );
 }
 

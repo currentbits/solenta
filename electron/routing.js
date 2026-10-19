@@ -126,7 +126,7 @@ function applyRoute(store, threadId, prompt) {
   try {
     const { parseProviderRef } = require("./providerInstances.js");
     const base = parseProviderRef(profile.provider).provider;
-    if (!services.providerInstalledFor(project, base)) {
+    if (!services.providerInstalledFor(project, profile.provider, settings)) {
       store.save();
       return `${head}; ${profile.name} needs ${base}, which is not installed, kept ${thread.provider}`;
     }
@@ -145,6 +145,8 @@ function applyRoute(store, threadId, prompt) {
         // Effort the routed model cannot honour: provider default.
       }
     }
+    // The routed profile's matrix gates this thread's tool calls (#262).
+    store.updateThread(threadId, { agentProfileId: profile.id });
   } catch (err) {
     store.save();
     const msg = err instanceof Error ? err.message : String(err);

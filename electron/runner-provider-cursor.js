@@ -213,7 +213,7 @@ function createCursorRun(ctx) {
         // not kill the run.
       }
     }
-    const spawn = resolveSpawn(project, binary, args, localCwd, cursorWrapEnv);
+    const spawn = resolveSpawn(project, binary, args, localCwd, cursorWrapEnv, threadId);
 
     if (abortIfCancelled(threadId, runId)) return { runId };
     const entry = claimPreparingRun(threadId, runId, {

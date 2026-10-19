@@ -82,6 +82,8 @@ function resolveNewThreadProvider(input, settings, projectProvider = null) {
  */
 function isKnownProviderRef(ref, settings) {
   const { provider, instance } = parseProviderRef(ref);
+  // A custom CLI (#458) is only ever an instance; bare "generic" has no argv.
+  if (provider === "generic") return Boolean(findInstance(settings, provider, instance));
   if (!isKnownProviderId(provider)) return false;
   return !instance || Boolean(findInstance(settings, provider, instance));
 }
@@ -123,12 +125,19 @@ function resolveNewThreadModel(input, settings, provider) {
  * True when a provider's CLI can run for this project. Remote projects run
  * the CLI on the other host, so the local PATH says nothing there.
  * @param {any} project
- * @param {string} id
+ * @param {string} ref - provider id or instance ref
+ * @param {{ providerInstances?: unknown } | null} [settings] - resolves a
+ *   custom CLI's own binary (#458)
  */
-function providerInstalledFor(project, id) {
+function providerInstalledFor(project, ref, settings = null) {
   if (project && project.remoteHost) return true;
-  if (id === "simulate") return true;
-  return isBinAvailable(resolveBin(getProvider(id)));
+  const { provider, instance } = parseProviderRef(ref);
+  if (provider === "simulate") return true;
+  if (provider === "generic") {
+    const inst = findInstance(settings, provider, instance);
+    return Boolean(inst && inst.command && isBinAvailable(inst.command[0]));
+  }
+  return isBinAvailable(resolveBin(getProvider(provider)));
 }
 
 /**
@@ -166,7 +175,7 @@ function projectDefaultsFor(input, project, settings = null) {
   if (
     !out.provider ||
     !isKnownProviderRef(out.provider, settings) ||
-    !providerInstalledFor(project, parseProviderRef(out.provider).provider)
+    !providerInstalledFor(project, out.provider, settings)
   ) {
     delete out.provider;
     delete out.model;
@@ -444,6 +453,46 @@ function setPermissionMode(store, input) {
 }
 
 /**
+ * Apply a saved AgentProfile (#262): provider, model, effort, permission
+ * mode (snapped to what the provider honours), then stamp agentProfileId.
+ * An unknown id throws before anything changes. Goes through the service
+ * setters (not the IPC handlers, which clear the id on a manual pick).
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string, profileId: string }} input
+ */
+function applyAgentProfile(store, input) {
+  const { threadId, profileId } = input || {};
+  const thread = store.getThread(threadId);
+  if (!thread) throw new Error(`Unknown thread: ${threadId}`);
+  const profile = (store.getSettings().agentProfiles || []).find(
+    (p) => p.id === profileId,
+  );
+  if (!profile) throw new Error("Unknown agent profile");
+  setProvider(store, { threadId, provider: profile.provider, model: profile.model });
+  const live = store.getThread(threadId);
+  setReasoningEffort(store, {
+    threadId,
+    effort: honouredEfforts(getProvider(live.provider), live.model).includes(
+      profile.reasoningEffort,
+    )
+      ? profile.reasoningEffort
+      : null,
+  });
+  const mode = snapPermissionModeForThread(
+    getProvider(live.provider),
+    profile.permissionMode,
+    live.teach,
+  );
+  if (mode !== store.getThread(threadId).permissionMode) {
+    setPermissionMode(store, { threadId, mode });
+  }
+  const updated = store.updateThread(threadId, { agentProfileId: profile.id });
+  store.save();
+  return decorateThread(store, updated || store.getThread(threadId));
+}
+
+/**
  * Set reasoning effort for a thread. null always means "provider default".
  * Rejects levels the thread's provider does not honour so a setting that
  * would never reach the CLI cannot be stored.
@@ -678,6 +727,16 @@ function forkThread(store, input) {
   // and must not grow a worktree (issue #392).
   if (source.ask === true) {
     forkPatch.ask = true;
+  }
+  // The profile's matrix follows the fork (#262) only while the profile
+  // still exists and the fork stays on its provider.
+  const profile = source.agentProfileId
+    ? (store.getSettings().agentProfiles || []).find(
+        (p) => p.id === source.agentProfileId,
+      )
+    : null;
+  if (profile && parseProviderRef(profile.provider).provider === nextProvider) {
+    forkPatch.agentProfileId = profile.id;
   }
   // Opt-in worktree for user-facing forks (issue #550 chips). Same guards
   // as forkWorkerThread: not an Ask thread, project can host a worktree.
@@ -1002,10 +1061,14 @@ function setProvider(store, input) {
   // input.provider is a ref: "claude" or "claude:<instanceId>" (#453).
   const ref = providerProvided ? parseProviderRef(input.provider) : null;
   if (ref) {
-    if (!isKnownProviderId(ref.provider)) {
+    const generic = ref.provider === "generic";
+    if (!generic && !isKnownProviderId(ref.provider)) {
       throw new Error(`Unknown provider: ${input.provider}`);
     }
-    if (ref.instance && !findInstance(store.getSettings(), ref.provider, ref.instance)) {
+    if (
+      (ref.instance || generic) &&
+      !findInstance(store.getSettings(), ref.provider, ref.instance)
+    ) {
       throw new Error(`Unknown provider instance: ${input.provider}`);
     }
   }
@@ -1138,6 +1201,10 @@ async function listProvidersForApi(store, opts) {
   // Each instance sits right after its base, so the picker groups them.
   /** @type {import('../src/shared/ipc').ProviderInfo[]} */
   const list = [];
+  // Custom CLIs (#458) have no base row; they trail the first-class list.
+  const generic = instances
+    .filter((inst) => inst.provider === "generic")
+    .map((inst) => genericProviderInfo(inst));
   for (const p of base) {
     list.push(p);
     for (const inst of instances) {
@@ -1151,11 +1218,44 @@ async function listProvidersForApi(store, opts) {
       });
     }
   }
+  list.push(...generic);
   for (const p of list) {
     const auth = providerAuth.get(p.id);
     if (auth && p.available) p.auth = auth;
+    const account = p.auth === "signedIn" ? providerAuth.account(p.id) : undefined;
+    if (account) p.account = account;
   }
   return list;
+}
+
+/**
+ * Picker row for a custom CLI (#458). Capabilities are the honest floor:
+ * no resume, models, efforts, search, steer or agents, and permission
+ * modes only when the row maps full access to flags.
+ * @param {import('./providerInstances').ProviderInstance} inst
+ * @returns {import('../src/shared/ipc').ProviderInfo}
+ */
+function genericProviderInfo(inst) {
+  const command = inst.command || [];
+  return {
+    id: providerRef("generic", inst.id),
+    name: instanceDisplayName("", inst),
+    available: command.length > 0 && isBinAvailable(command[0]),
+    supportsResume: false,
+    models: [],
+    modelInfo: [],
+    efforts: [],
+    supportsSearch: false,
+    supportsSteer: false,
+    supportsAgents: false,
+    permissionModes:
+      inst.fullAccessArgs && inst.fullAccessArgs.length > 0
+        ? honouredPermissionModes(getProvider("generic"))
+        : [],
+    baseProvider: "generic",
+    instanceId: inst.id,
+    bestEffort: true,
+  };
 }
 
 /**
@@ -1164,7 +1264,10 @@ async function listProvidersForApi(store, opts) {
  * @returns {Array<{ ref: string, provider: string, env: Record<string, string> }>}
  */
 function instanceAuthProbes(store) {
-  const instances = store.getSettings().providerInstances || [];
+  // Custom CLIs (#458) have no sign-in command to probe.
+  const instances = (store.getSettings().providerInstances || []).filter(
+    (inst) => inst.provider !== "generic",
+  );
   return instances.map((inst) => ({
     ref: providerRef(inst.provider, inst.id),
     provider: inst.provider,
@@ -1558,23 +1661,35 @@ function listTrashed(store, opts) {
  * @param {import('./store').Store} store
  * @param {object} thread
  */
-function decorateThread(store, thread) {
+function decorateThread(store, thread, profiles = agentProfilesOf(store)) {
   if (!thread) return thread;
   const project = store.getProject(thread.projectId);
+  const profile = thread.agentProfileId
+    ? profiles.find((p) => p.id === thread.agentProfileId)
+    : null;
   return {
     ...thread,
     sandbox: resolveSandbox({
       provider: thread.provider,
       permissionMode: thread.permissionMode,
       project,
+      // Seatbelt wraps follow the profile's matrix (#803).
+      policy: (profile && profile.policy) || null,
     }),
   };
+}
+
+/** @param {import('./store').Store} store */
+function agentProfilesOf(store) {
+  return typeof store.getSettings === "function"
+    ? store.getSettings().agentProfiles || []
+    : [];
 }
 
 /**
  * listThreads cache, keyed per store (WeakMap so a discarded store — tests
  * create plenty — never leaks). See listThreads for the invariants.
- * @type {WeakMap<import('./store').Store, { threads: object[], projects: object[], value: object[], rows: Map<object, object> }>}
+ * @type {WeakMap<import('./store').Store, { threads: object[], projects: object[], policyKey: string, value: object[], rows: Map<object, object> }>}
  */
 const listThreadsCache = new WeakMap();
 
@@ -1600,11 +1715,20 @@ function listThreads(store) {
   // reuse decorated rows keyed on the thread object so an updateThread that
   // only patched one row skips re-decorating the rest. Row identity does
   // not survive IPC; the renderer restores it in reconcileThreadList.
+  // Settings are re-normalized per read, so key the badge's inputs (#803:
+  // profile policies decide Seatbelt) by value, not identity.
+  const profiles = agentProfilesOf(store);
+  const policyKey = JSON.stringify(profiles.map((p) => [p.id, p.policy || null]));
   const cache = listThreadsCache.get(store);
-  if (cache && cache.threads === threads && cache.projects === projects) {
+  if (
+    cache &&
+    cache.threads === threads &&
+    cache.projects === projects &&
+    cache.policyKey === policyKey
+  ) {
     return cache.value;
   }
-  const prevRows = cache ? cache.rows : null;
+  const prevRows = cache && cache.policyKey === policyKey ? cache.rows : null;
   /** @type {Map<object, object>} */
   const rows = new Map();
   /** @type {object[]} */
@@ -1620,11 +1744,11 @@ function listThreads(store) {
       value.push(prev);
       continue;
     }
-    const decorated = listRow(decorateThread(store, t));
+    const decorated = listRow(decorateThread(store, t, profiles));
     rows.set(t, decorated);
     value.push(decorated);
   }
-  listThreadsCache.set(store, { threads, projects, value, rows });
+  listThreadsCache.set(store, { threads, projects, policyKey, value, rows });
   return value;
 }
 
@@ -1683,17 +1807,21 @@ function threadSummaries(store, input) {
 }
 
 /**
- * Full-content search across titles and message text.
+ * Full-content search across titles and message text. Hidden rows and,
+ * when given, ids outside threadIds (the sidebar's active filters) are
+ * dropped before the result cap so they never crowd out a match (#1201).
  * @param {import('./store').Store} store
- * @param {{ query?: string }} [input]
+ * @param {{ query?: string, threadIds?: string[] }} [input]
  */
 async function searchThreads(store, input) {
   const query =
     input && input.query != null ? String(input.query) : "";
-  const hits = await store.searchThreads(query);
-  return hits.filter(
-    (t) => !(t && t.memoryConsolidate === true) && !isTrashed(t),
-  );
+  const ids =
+    input && Array.isArray(input.threadIds) ? new Set(input.threadIds) : null;
+  return store.searchThreads(query, {
+    include: (t) =>
+      t.memoryConsolidate !== true && !isTrashed(t) && (!ids || ids.has(t.id)),
+  });
 }
 
 /**
@@ -1747,6 +1875,7 @@ function getThreadDetail(store, threadId, workflow = null, opts) {
 
 module.exports = {
   savePlanFile,
+  applyAgentProfile,
   normalizeBaseBranch,
   createThread,
   recordLastUsedDefaults,

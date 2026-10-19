@@ -135,6 +135,9 @@ export function EditProjectModal({
       .map(([k, v]) => `${k}=${v}`)
       .join("\n"),
   );
+  const [foldersText, setFoldersText] = useState(() =>
+    (project.folders ?? []).join("\n"),
+  );
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -198,6 +201,13 @@ export function EditProjectModal({
           .filter((a) => a.name && a.command),
         env,
       };
+      // Remote projects cannot have extra folders (#514); main clears them.
+      if (!host) {
+        payload.folders = foldersText
+          .split("\n")
+          .map((f) => f.trim())
+          .filter(Boolean);
+      }
       if (iconDirty) payload.iconPath = iconPath;
       if (defaultsDirty) {
         payload.threadDefaults = Object.fromEntries(
@@ -585,6 +595,32 @@ export function EditProjectModal({
               </p>
             ) : null}
           </div>
+          {!host ? (
+            <div className={styles.field}>
+              <label className={styles.fieldLabel} htmlFor="edit-project-folders">
+                Other folders
+              </label>
+              <textarea
+                id="edit-project-folders"
+                className={`${styles.textarea} ${styles.monoInput}`}
+                data-edit-project-folders=""
+                value={foldersText}
+                onChange={(e) => setFoldersText(e.target.value)}
+                placeholder="/absolute/path/to/shared-lib"
+                rows={2}
+                autoComplete="off"
+                spellCheck={false}
+                disabled={pending}
+              />
+              <p className={styles.note}>
+                One absolute path per line. Agents can read and search these
+                folders. Writes there are blocked; on a Claude thread the
+                permission card can allow one folder for that thread. Git,
+                worktrees, AGENTS.md, skills and memory stay with the local
+                path above.
+              </p>
+            </div>
+          ) : null}
           <div className={styles.field}>
             <label
               className={styles.fieldLabel}

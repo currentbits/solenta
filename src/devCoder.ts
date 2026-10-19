@@ -20,6 +20,8 @@ import type {
   CoderApi,
   McpServerInfo,
   PrInfo,
+  RemoteConnectionResult,
+  RemoteInstallResult,
   SpeechStatus,
   ThreadDetail,
   ThreadInfo,
@@ -414,10 +416,13 @@ function buildDevCoder(): CoderApi {
         return this.checkUpdate();
       },
       async applyUpdate(): Promise<void> {},
-      async openRemoteConnection(): Promise<{ host: string; remotePort: number; tokenSaved: boolean }> {
+      async openRemoteConnection(): Promise<RemoteConnectionResult> {
         throw new Error("Remote Connections require the desktop app.");
       },
       async forgetRemoteConnection(): Promise<void> {},
+      async installRemoteSolenta(): Promise<RemoteInstallResult> {
+        throw new Error("Remote Connections require the desktop app.");
+      },
       async feedback(input: {
         text: string;
         threadId?: string;
@@ -453,7 +458,26 @@ function buildDevCoder(): CoderApi {
               baseProvider: p.id,
               instanceId: i.id,
             })),
-        ]);
+        ]).concat(
+          // Custom CLIs (#458) have no base row; they trail the list.
+          providerInstances
+            .filter((i) => i.provider === "generic")
+            .map((i) => ({
+              id: `generic:${i.id}`,
+              name: i.name,
+              available: true,
+              supportsResume: false,
+              models: [],
+              modelInfo: [],
+              efforts: [],
+              permissionModes: i.fullAccessArgs?.length
+                ? ["default", "bypassPermissions"]
+                : [],
+              baseProvider: "generic",
+              instanceId: i.id,
+              bestEffort: true,
+            })),
+        );
       },
     },
     ...createSourceControl(),

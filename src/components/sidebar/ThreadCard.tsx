@@ -14,6 +14,11 @@ import { formatRelativeAge } from "../../format";
 import { isCrewWorker } from "../../sidebarGroups";
 import { ProviderMark } from "../ProviderMark";
 import { showContextMenu } from "../../contextMenu";
+import {
+  canDetachThread,
+  detachThread,
+  droppedOutsideWindow,
+} from "../../detachedWindow";
 import { buildThreadActionMenuItems } from "../../threadActionMenu";
 import { isPinned, resolveSnoozePresets } from "../../threadSnooze";
 import { isUnread } from "../../threadUnread";
@@ -299,6 +304,7 @@ export const ThreadCard = memo(function ThreadCard({
     else if (id === "unmute") void onSetMuted?.(thread.id, false);
     else if (id === "eject") void onSetEjected?.(thread.id, true);
     else if (id === "reclaim") void onSetEjected?.(thread.id, false);
+    else if (id === "detach") detachThread(thread.id);
   };
 
   const openThreadMenu = async (position: { x: number; y: number }) => {
@@ -321,6 +327,7 @@ export const ThreadCard = memo(function ThreadCard({
       showMute: Boolean(onSetMuted),
       showEject: Boolean(onSetEjected),
       showSettle: Boolean(onSetSettled),
+      showDetach: canDetachThread(),
     });
     if (items.length === 0) return;
     menuBusy.current = true;
@@ -383,6 +390,15 @@ export const ThreadCard = memo(function ThreadCard({
           if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
           e.preventDefault();
           startRename();
+        }}
+        // Drag a card out of the window to detach it (#519).
+        draggable={canDetachThread() && !renaming}
+        onDragStart={(e) => {
+          e.dataTransfer.setData("application/x-solenta-thread", thread.id);
+          e.dataTransfer.effectAllowed = "move";
+        }}
+        onDragEnd={(e) => {
+          if (droppedOutsideWindow(e)) detachThread(thread.id);
         }}
         aria-label={selectLabel}
       />

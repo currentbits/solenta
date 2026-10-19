@@ -11,6 +11,10 @@
  *
  * The overlay env is built per spawn and never written to process.env, so
  * one instance's config dir or keys cannot reach another provider's child.
+ *
+ * `generic` (#458) has no base row: each instance IS a user-defined CLI
+ * (argv + env), run best-effort through runner-provider-generic.js with the
+ * prompt appended last and raw stdout as the transcript.
  */
 
 const fs = require("node:fs");
@@ -36,11 +40,40 @@ const NAME_MAX = 40;
  * @property {string} provider
  * @property {string | null} configDir
  * @property {Record<string, string>} env
+ * @property {string[]} [command] - generic only: argv, binary first
+ * @property {string[]} [fullAccessArgs] - generic only: appended in
+ *   bypassPermissions; empty means the CLI handles permissions itself
+ * @property {string | null} [cwd] - generic only: working folder; relative
+ *   resolves inside the thread's worktree, null is the worktree itself
+ * @property {"stdout" | "pty"} [transcript] - generic only: plain pipes, or
+ *   a pseudo-terminal for CLIs that need a TTY
  */
 
 /** @param {string} id */
 function supportsInstances(id) {
-  return Object.prototype.hasOwnProperty.call(CONFIG_DIR_ENV, id);
+  return id === "generic" || Object.prototype.hasOwnProperty.call(CONFIG_DIR_ENV, id);
+}
+
+/**
+ * A custom CLI may not borrow a first-class adapter's id or name (#458): a
+ * "Claude Code" row that is really raw stdout would pass for the real one.
+ * @param {string} name
+ */
+function isReservedProviderName(name) {
+  const key = name.trim().toLowerCase();
+  return require("./providers.js").PROVIDERS.some(
+    (p) => p.id === key || p.name.toLowerCase() === key,
+  );
+}
+
+/**
+ * @param {unknown} raw
+ * @returns {string[] | null} null when not an array of strings
+ */
+function argvList(raw) {
+  if (raw == null) return [];
+  if (!Array.isArray(raw) || !raw.every((a) => typeof a === "string")) return null;
+  return raw.slice();
 }
 
 /**
@@ -94,8 +127,11 @@ function parseInstance(item, strict) {
   if (!supportsInstances(provider)) {
     return fail(`Instances are not supported for provider "${provider}"`);
   }
+  if (provider === "generic" && isReservedProviderName(name)) {
+    return fail(`"${name}" is reserved for a built-in provider`);
+  }
   let configDir = null;
-  if (rec.configDir != null && rec.configDir !== "") {
+  if (provider !== "generic" && rec.configDir != null && rec.configDir !== "") {
     if (typeof rec.configDir !== "string") return fail("Config folder must be a path");
     const dir = rec.configDir.trim();
     if (dir && !path.isAbsolute(dir) && !dir.startsWith("~/")) {
@@ -127,7 +163,35 @@ function parseInstance(item, strict) {
       env[k] = v;
     }
   }
-  return { id, name, provider, configDir, env };
+  if (provider !== "generic") return { id, name, provider, configDir, env };
+  const command = argvList(rec.command);
+  if (!command || command.length === 0 || !command[0].trim()) {
+    return fail("Custom CLI command cannot be empty");
+  }
+  const fullAccessArgs = argvList(rec.fullAccessArgs);
+  if (!fullAccessArgs) return fail("Full access flags must be a list of strings");
+  let cwd = null;
+  if (rec.cwd != null && rec.cwd !== "") {
+    if (typeof rec.cwd !== "string" || rec.cwd.includes("\0")) {
+      return fail("Working folder must be a path");
+    }
+    cwd = rec.cwd.trim() || null;
+  }
+  const transcript = rec.transcript == null ? "stdout" : rec.transcript;
+  if (transcript !== "stdout" && transcript !== "pty") {
+    return fail('Transcript must be "stdout" or "pty"');
+  }
+  return {
+    id,
+    name,
+    provider,
+    configDir: null,
+    env,
+    command,
+    fullAccessArgs,
+    cwd,
+    transcript,
+  };
 }
 
 /**
@@ -231,7 +295,7 @@ function threadInstanceEnv(settings, thread) {
  * @param {ProviderInstance} inst
  */
 function instanceDisplayName(baseName, inst) {
-  return `${baseName} (${inst.name})`;
+  return inst.provider === "generic" ? inst.name : `${baseName} (${inst.name})`;
 }
 
 module.exports = {

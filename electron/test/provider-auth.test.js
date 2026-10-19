@@ -117,6 +117,49 @@ describe("providerAuth", () => {
     assert.equal(providerAuth.loginCommand("cursor", { env: {} }), "cursor-agent login");
     assert.equal(providerAuth.loginCommand("nope", { env: {} }), null);
   });
+
+  it("reads who is signed in: claude from its status JSON, codex from CODEX_HOME/auth.json", async () => {
+    const fs = require("node:fs");
+    const os = require("node:os");
+    const path = require("node:path");
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "codex-home-"));
+    const b64 = (o) => Buffer.from(JSON.stringify(o)).toString("base64url");
+    const idToken = `${b64({ alg: "RS256" })}.${b64({
+      email: "dev@example.com",
+      "https://api.openai.com/auth": { chatgpt_plan_type: "plus" },
+    })}.sig`;
+    fs.writeFileSync(path.join(home, "auth.json"), JSON.stringify({ tokens: { id_token: idToken } }));
+    try {
+      providerAuth.setExecFile(
+        fakeExec({
+          ...SIGNED_IN,
+          "auth status --json": [0, '{"loggedIn": true, "email": "me@example.com", "subscriptionType": "max"}'],
+        }).fn,
+      );
+      await providerAuth.refresh({
+        // A HOME with no .codex: the base codex row must not read the real one.
+        env: { HOME: home },
+        instances: [{ ref: "codex:work", provider: "codex", env: { CODEX_HOME: home } }],
+      });
+      assert.deepEqual(providerAuth.account("claude"), { email: "me@example.com", plan: "max" });
+      assert.deepEqual(providerAuth.account("codex:work"), { email: "dev@example.com", plan: "plus" });
+      // Signed in with no readable auth.json (API key login): signed in, nameless.
+      assert.equal(providerAuth.get("cursor"), "signedIn");
+      assert.equal(providerAuth.account("cursor"), undefined);
+
+      providerAuth.setExecFile(fakeExec(SIGNED_OUT).fn);
+      await providerAuth.refresh({ env: {}, force: true, instances: [] });
+      assert.equal(providerAuth.account("claude"), undefined, "sign out drops the account");
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("install commands come from a fixed table", () => {
+    assert.equal(providerAuth.installCommand("codex"), "npm install -g @openai/codex");
+    assert.equal(providerAuth.installCommand("grok"), null);
+    assert.equal(providerAuth.installCommand("rm -rf"), null);
+  });
 });
 
 describe("terminal:signIn", () => {
@@ -145,6 +188,25 @@ describe("terminal:signIn", () => {
       providerAuth.setExecFile(null);
       if (saved === undefined) delete process.env.CODER_CODEX_BIN;
       else process.env.CODER_CODEX_BIN = saved;
+    }
+  });
+
+  it("install types the install command without pressing Enter", async () => {
+    const writes = [];
+    const orig = { open: terminal.open, write: terminal.write, close: terminal.close };
+    terminal.open = () => {};
+    terminal.close = () => {};
+    terminal.write = (_t, data) => writes.push(data);
+    try {
+      const ctx = { store: { getThread: () => null }, broadcast: () => {} };
+      await handlers["terminal:signIn"](ctx, { provider: "claude", install: true });
+      assert.deepEqual(writes, ["npm install -g @anthropic-ai/claude-code"]);
+      await assert.rejects(
+        handlers["terminal:signIn"](ctx, { provider: "grok", install: true }),
+        /No install command/,
+      );
+    } finally {
+      Object.assign(terminal, orig);
     }
   });
 

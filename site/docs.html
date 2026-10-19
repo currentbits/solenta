@@ -77,8 +77,8 @@
       <a href="#analytics">Usage and fleet analytics</a>
       <a href="#updates">Notifications and updates</a>
       <a href="#integrations">External MCP pairing</a>
-      <a href="#web-mode">Web mode</a>
-      <a href="#ssh">SSH and Connections</a>
+      <a href="#web-mode">Phones and browsers</a>
+      <a href="#ssh">Other computers and SSH</a>
       <a href="#windows">Windows</a>
       <a href="#performance">Performance and memory use</a>
       <a href="#architecture">Architecture</a>
@@ -122,7 +122,7 @@
         browsable; a folder that is not a git repository yet is initialized
         on add. Remove a project from that same menu when you no longer want
         it in the list. A project is local, or a remote one (see
-        <a href="#ssh">SSH and Connections</a>). <strong>New thread</strong>
+        <a href="#ssh">Other computers and SSH</a>). <strong>New thread</strong>
         is the button on the search row. Type a prompt and the run streams
         in live.
       </p>
@@ -334,7 +334,8 @@
         <li><strong>Agent</strong> picks a custom CLI agent for the thread on Claude and OpenCode (passed as <code>--agent</code>), from the project's and your own agent files.</li>
         <li><strong>Fork and hand off</strong> copies a thread, optionally onto another provider, and starts it on a new prompt. <strong>Fork from here</strong> on an assistant message copies the conversation only up to that message; on Claude the native session is forked at that point.</li>
         <li><strong>Best of N</strong> sends one prompt to several providers at once so you can compare the results. Tick <strong>Plan only</strong> to have each one draft a plan without building. On the plan card you like, pick a provider next to <strong>Implement in a new thread</strong> to build it there.</li>
-        <li><strong>Agent profiles</strong> save a provider + model + effort + permission combination under a name, so a thread can be set up in one click instead of four.</li>
+        <li><strong>Agent profiles</strong> save a provider + model + effort + permission combination under a name, so a thread can be set up in one click instead of four. A profile can also carry a <a href="#governance">governance policy</a>.</li>
+        <li><strong>Open in new window</strong> in a sidebar thread's menu, <kbd>⌘⇧O</kbd>, or dragging the card out of the window detaches the thread into a window of its own, while the main window stays the fleet overview. A thread that already has a window gets that window focused, and notifications for it open there.</li>
         <li><strong>Edit and resubmit</strong> rewinds to any past message of yours, lets you change it, and runs again from that point.</li>
         <li><strong>Scratch notes</strong> are a free-text field per thread, edited from the header and previewed in the sidebar, for the context that is not worth a memory entry.</li>
         <li><strong>Rename</strong> a thread from its header or the sidebar menu when the auto-generated title stops describing the work.</li>
@@ -390,7 +391,11 @@
         <kbd>⌘F</kbd> finds text in the open thread, including messages
         outside the rendered tail and collapsed tool groups, and in loaded
         diffs in the Git pane. Enter and <kbd>⇧Enter</kbd> step through
-        matches. <kbd>⌘⇧T</kbd> reopens the last closed pane.
+        matches. Threads with eight or more prompts get a tick rail on the
+        right edge, one mark per prompt; hover it for the labeled outline
+        and click to put that prompt at the top. <code>/jump auth</code>
+        opens the same outline filtered to prompts containing "auth".
+        <kbd>⌘⇧T</kbd> reopens the last closed pane.
         <strong>Copy link</strong> in the thread header menu or the sidebar
         menu copies a <code>solenta://thread/&lt;id&gt;</code> link that
         opens the thread; the project filter menu copies
@@ -555,6 +560,13 @@
         types are rejected rather than silently approved.
       </p>
       <p>
+        When Codex asks to write files, the approval card shows the proposed
+        change as a diff, with its reason and a warning when it asks for
+        session-wide write access under a folder. A sandbox permission ask
+        shows the folder and what it wants, and Accept grants exactly that.
+        An ask whose diff never arrived is refused, never approved blind.
+      </p>
+      <p>
         First-party memory and Planboard tools are bound to the selected
         project. Planboard writes run on the host. Workspace-write also grants
         the Git metadata paths needed to stage and commit in a checkout or
@@ -662,6 +674,18 @@
         sessions</a> for their approval controls.
       </p>
       <p>
+        Answer permission and plan cards from the keyboard, like the CLIs:
+        <kbd>y</kbd> accepts (or approves the plan), <kbd>n</kbd> denies (or
+        keeps planning), and <kbd>a</kbd> always allows for the rest of the
+        session. A pending permission outranks typing: the keys work even
+        while the composer has focus, and are not typed into it. The card's
+        own fields (the command, the rule, plan notes) keep their keys, and a
+        card the guardrail flagged as risky never takes keys from the
+        composer. Always-allow on a shell command is a prefix rule such as
+        <code>npm test:*</code>, not all of Bash; edit it, or allow the whole
+        tool, under <strong>Always-allow options</strong>.
+      </p>
+      <p>
         PR state is live: checks show as badges on the thread card, and merging
         is a button, not a terminal command. Worktree merge and delete are
         guarded, so you cannot drop unmerged work by accident. Automatic
@@ -726,6 +750,17 @@
         They apply to agent runs on every provider, workflow phase agents,
         the thread terminal, verify, setup and quick-action commands, and
         dev servers, locally and over SSH.
+      </p>
+      <p>
+        <strong>Other folders</strong> in Edit Project adds up to eight
+        more folders next to the project's repo, one path per line (local
+        projects only). The repo still owns git, worktrees, memory and
+        skills. Agents can read and search the other folders, and a
+        <strong>+N folders</strong> badge marks the project. On Claude, an
+        edit in one of them asks first, and <strong>Allow writes to
+        &lt;folder&gt;</strong> on the card grants that folder for the
+        thread. Other providers can read them but not write there, and
+        shell commands are not gated.
       </p>
       <p>
         Coming from Vibe Kanban: Settings → <em>Your data</em> reads the local
@@ -943,6 +978,27 @@
         build regressed.
       </p>
 
+      <h3 id="governance">Governance policies</h3>
+      <p>
+        An agent profile can carry a <strong>policy</strong>: a default of
+        ask or allow, plus up to 40 rules. Each rule matches a tool, a bash
+        command, a write path or a network target by glob, and blocks,
+        denies, asks or allows. The most severe matching rule wins. A bash
+        rule matches each subcommand, so <code>npm publish</code> also
+        catches <code>cd x &amp;&amp; npm publish</code>. A denied call is
+        logged in the transcript with no card; an ask card says which rule
+        raised it. If you edit a command on the card, the edited version is
+        checked again before Allow goes through.
+      </p>
+      <p>
+        Every decision is written to a signed, chained audit log. Settings,
+        Advanced shows the last 50 entries and a <strong>Verify
+        chain</strong> button that detects tampering. Secrets are redacted
+        before anything is written. In v1 policies apply to Claude threads,
+        and only to calls the CLI asks about: Accept edits, Full access, and
+        allow lists in your Claude settings skip the check.
+      </p>
+
       <h2 id="spec">Spec mode</h2>
       <p>
         For work where the plan matters more than the first patch, a thread can
@@ -1033,6 +1089,14 @@
         paths and values containing spaces, or a JSON array of strings. Invalid
         quoting shows an error and preserves the draft. Trust the local command
         only after reviewing what it launches.
+      </p>
+      <p>
+        On a project with an Xcode workspace or project, or a
+        <code>Package.swift</code> for an Apple platform, Settings, Skills
+        &amp; MCP shows an <strong>Xcode</strong> card. One click adds
+        MobileBuildMCP when it is on your <code>PATH</code>, otherwise
+        Apple's <code>xcrun mcpbridge</code>. The card shows the exact
+        command first, and offers install hints for whatever is missing.
       </p>
 
       <h2 id="automations">Automations</h2>
@@ -1131,6 +1195,13 @@
         out of scope, and closing the pane kills the shell and its scrollback.
       </p>
       <p>
+        The toolbar has <strong>Find</strong> (Enter searches up from the
+        newest output, <kbd>⇧Enter</kbd> down), <strong>Clear</strong> (the
+        display only, the shell keeps running), <strong>Copy</strong>, and
+        <strong>To composer</strong>, which adds the selected output to
+        your draft as a chip you can review before sending.
+      </p>
+      <p>
         When the terminal or a dev server prints a build error, a failing
         test or a merge conflict, a card appears at that line.
         <strong>Fix it</strong> asks this thread's agent to fix it,
@@ -1147,6 +1218,24 @@
         own tool: navigate, reload, click and type by CSS selector, and take a
         screenshot it can actually see, which closes the loop between changing
         a page and checking it.
+      </p>
+      <p>
+        The agent can also read the page instead of only looking at it: a
+        size-capped snapshot of the visible roles, names and states, whose
+        refs it can click and type into, and diagnostics with the console
+        messages and request results since the pane opened (no headers or
+        bodies). The viewport picker switches between mobile, tablet,
+        desktop and fill, and agents can switch it too. The
+        <strong>Diagnostics</strong> toggle shows you the same console and
+        network data, with a count of problems.
+      </p>
+      <p>
+        <strong>Inspect</strong> (⌖) lets you pick an element on the page:
+        click it, or Tab to it and press Enter, with ↑ for the parent and
+        Esc to cancel. The picked element goes to the composer as a chip
+        with an optional comment and a cropped screenshot. The picker never
+        reads text field values, redacts secret-looking attributes, and
+        clicking a submit button does not submit the form.
       </p>
 
       <h2 id="spend">Spend guardrails</h2>
@@ -1268,38 +1357,161 @@
         from a dev tree carry no channel stamp and never self-update.
       </p>
 
-      <h2 id="web-mode">Web mode</h2>
+      <h2 id="web-mode">Phones and browsers</h2>
       <p>
-        Start the app with <code>--serve-web</code> and the same UI is served
-        over HTTP and WebSocket, gated by a session token that is printed once
-        at startup:
+        Solenta Web serves the whole app to a browser, so you can check on
+        runs from your phone or another device. It runs on the computer that
+        has your projects and agents. Everything is set up in
+        <strong>Settings &gt; Connections &gt; Let other devices in</strong>:
       </p>
-      <pre><code>solenta --serve-web            # 127.0.0.1 only, default port 4620
-solenta --serve-web --serve-host 0.0.0.0   # LAN, your call</code></pre>
+      <ol>
+        <li>Turn on <strong>Serve Solenta Web</strong>. It listens on
+          <code>127.0.0.1:4620</code>, which only this computer can reach.</li>
+        <li>To reach it from another device, either turn on <strong>Allow
+          devices on my network</strong> (plain HTTP on your LAN) or, with
+          Tailscale installed, press <strong>Expose over Tailscale
+          (HTTPS)</strong> to reach it from anywhere on your tailnet.</li>
+        <li>Under <strong>Devices</strong>, name the device, pick its access
+          and press <strong>Add device</strong>. Scan the QR code with the
+          device's camera or open the link on it. The token is shown once and
+          the browser remembers it.</li>
+      </ol>
       <p>
-        This is how you check in on runs from a phone or another machine.
-        There is no TLS in v1, so the default bind is loopback; widening it is
-        the operator's informed choice.
+        Access is per device: <strong>Read only</strong>, <strong>Steer
+        threads</strong> (the default) or <strong>Full access</strong>, plus
+        grants for files, git, the terminal (watch or type), preview control
+        and settings. Solenta checks every request against them on the host.
+        Steer threads can approve the agent's tool requests. To change a
+        device's access, revoke it and pair again. Revoking signs the device
+        out at once and its browser asks for a new token.
       </p>
       <p>
-        When you pair a device under <strong>Solenta Web</strong> in
-        Settings, pick its access: <strong>Read only</strong>,
-        <strong>Steer threads</strong> (the default) or <strong>Full
-        access</strong>, plus grants for files, git, the terminal (watch or
-        type), preview control and settings. Solenta checks every request
-        against them on the host. Steer threads can approve the agent's
-        tool requests. To change a device's access, revoke it and pair
-        again.
+        If the connection drops, the page says so and reconnects on its own.
+        A message you send in the meantime waits and goes out once the
+        connection is back.
+      </p>
+      <p>
+        You can also start Solenta Web from a terminal. It prints the
+        address, the token, a sign-in link and a QR code:
+      </p>
+      <pre><code># macOS
+/Applications/Solenta.app/Contents/MacOS/Solenta --serve-web
+# Linux (the unpacked tarball)
+~/solenta/solenta --serve-web --serve-host 0.0.0.0   # LAN, plain HTTP</code></pre>
+      <p>
+        If Solenta is already open, this turns Solenta Web on in that app and
+        prints its token. There is no TLS on the LAN bind; use Tailscale for
+        HTTPS.
       </p>
 
-      <h2 id="ssh">SSH and Connections</h2>
+      <h2 id="ssh">Other computers and SSH</h2>
       <p>
-        <strong>Connections</strong> (Settings) opens another machine's
-        Solenta in its own window. Solenta tunnels to that host over SSH,
-        pins the host key, and reconnects if the tunnel drops. A saved token
-        stays in the OS keychain. This is the whole app on the remote
-        machine, not one project.
+        There are two ways to use a second computer, such as a workstation or
+        a Linux server:
       </p>
+      <ul>
+        <li><strong>Connect to another computer</strong> opens the whole
+          Solenta on that computer in its own window. Its projects, threads,
+          agents and worktrees stay there.</li>
+        <li>A <strong>remote project</strong> keeps one repo from that
+          computer in this window. Git and the agent CLIs run there over SSH.
+          It is described further down.</li>
+      </ul>
+
+      <h3 id="ssh-connect">Connect to another computer</h3>
+      <ol>
+        <li>On a Mac, install Solenta in <code>/Applications</code> there. On
+          a Linux server you can skip this: Connect offers <strong>Install
+          Solenta on &lt;host&gt;</strong>, which downloads this version into
+          <code>~/solenta</code> over SSH and checks it against the release
+          checksum (x86_64 only).</li>
+        <li>Make sure <code>ssh user@host</code> works from a terminal on this
+          computer without a password prompt, using an SSH key or agent, and
+          that you have accepted the host key once.</li>
+        <li>In <strong>Settings &gt; Connections &gt; Connect to another
+          computer</strong>, enter the SSH host and press
+          <strong>Connect</strong>. Leave Token blank.</li>
+      </ol>
+      <p>
+        Solenta checks the other computer over SSH. If Solenta is not running
+        there it starts it: on a Mac through <code>open</code> (someone must be
+        logged in to the desktop), and on Linux without a window. If it is
+        open but Solenta Web is off, it turns Solenta Web on; a copy older
+        than this release cannot be asked to, so Connect tells you to turn on
+        <strong>Serve Solenta Web</strong> there yourself rather than start
+        a second copy on the same data. It then reads
+        the token over SSH, forwards the port through an SSH tunnel, and opens
+        the window. The host key must match <code>known_hosts</code>, the
+        tunnel reconnects if it drops, and a remembered token is encrypted
+        with the system keychain.
+      </p>
+      <p>
+        After connecting, Connections shows which Solenta version the other
+        computer runs and which agent CLIs it has and is signed in to. If a
+        Linux host is older than this app, <strong>Update Solenta on
+        &lt;host&gt;</strong> installs this version the same way; a copy
+        running without a window is restarted on the next connect. If the
+        install finds missing system libraries, it shows the
+        <code>sudo apt install</code> line to run there. Agents sign in on
+        the computer they run on: open Settings &gt; Agents in the remote
+        window and press Sign in.
+      </p>
+
+      <h3 id="headless">Linux servers without a display</h3>
+      <p>
+        <code>--headless</code> runs Solenta without a window and implies
+        <code>--serve-web</code>. It needs no X server or Wayland session, only
+        the libraries Electron loads (on Ubuntu: <code>libnss3 libgtk-3-0t64
+        libgbm1 libasound2t64</code>). Use <code>--no-sandbox</code> unless
+        <code>chrome-sandbox</code> is owned by root with mode 4755.
+      </p>
+      <pre><code>~/solenta/solenta --headless --no-sandbox</code></pre>
+      <p>
+        Connect starts it this way for you, and the log goes to
+        <code>~/.solenta-headless.log</code>. To keep it running after logout
+        and across reboots, use a systemd user service:
+      </p>
+      <pre><code># ~/.config/systemd/user/solenta.service
+[Unit]
+Description=Solenta (headless)
+
+[Service]
+ExecStart=%h/solenta/solenta --headless --no-sandbox
+Restart=on-failure
+
+[Install]
+WantedBy=default.target</code></pre>
+      <pre><code>systemctl --user daemon-reload
+systemctl --user enable --now solenta
+sudo loginctl enable-linger "$USER"   # keep it running after you log out</code></pre>
+      <p>
+        The agent CLIs and their sign-ins live on the server. Install and log
+        in to them there (<code>claude</code>, <code>codex login</code>, and so
+        on) before you start threads.
+      </p>
+
+      <h3 id="ssh-trouble">If Connect fails</h3>
+      <ul>
+        <li><strong>not in known_hosts yet</strong>: run <code>ssh user@host</code>
+          in a terminal once and accept the host key.</li>
+        <li><strong>SSH refused the login</strong>: Connect cannot type a
+          password. Add your key with <code>ssh-copy-id user@host</code> or
+          load it into your SSH agent.</li>
+        <li><strong>Solenta is not installed</strong>: on Linux, press
+          <strong>Install Solenta on &lt;host&gt;</strong>. On a Mac, install
+          it in <code>/Applications</code> there.</li>
+        <li><strong>Solenta did not start</strong>: on a Mac, log in to the
+          desktop once. On Linux, read <code>~/.solenta-headless.log</code> on
+          the server. A missing library shows up there.</li>
+        <li><strong>Nothing is listening on port</strong>: the other computer
+          uses a different port. Set the same port in the form, or start it
+          with <code>--serve-web=PORT</code>.</li>
+        <li>On Windows hosts, Solenta cannot be started or its token read over
+          SSH. Start Solenta Web there and paste a device token from its
+          Settings.</li>
+      </ul>
+
+      <h3 id="ssh-projects">Remote projects</h3>
       <p>
         A project can also live on another machine while you stay in this
         window. Set <strong>remote host</strong>

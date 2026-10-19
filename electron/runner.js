@@ -7,7 +7,11 @@ const services = require("./services.js");
 const { runAgent } = require("./agent.js");
 const { whenPathReady } = require("./pathEnv.js");
 const { truncate, toolSummary } = require("./claude.js");
-const { threadInstanceEnv, threadProviderRef } = require("./providerInstances.js");
+const {
+  threadInstanceEnv,
+  threadProviderRef,
+  findInstance,
+} = require("./providerInstances.js");
 const { runCodexAppServerTurn } = require("./codex-appserver.js");
 const { isNativeCompactTurn } = require("./compaction.js");
 const { heartbeatLane } = require("./mergeQueue.js");
@@ -20,6 +24,7 @@ const threadSecrets = require("./threadSecrets.js");
 const { createClaudeSessions } = require("./runner-claude-sessions.js");
 const { createVerifyGate } = require("./runner-verify-gate.js");
 const { createQuotaWait } = require("./runner-quota-wait.js");
+const { createThrash } = require("./runner-thrash.js");
 const { createAutoResume } = require("./runner-auto-resume.js");
 const { createOrchNotices } = require("./runner-orch-notices.js");
 const { createPermissions } = require("./runner-permissions.js");
@@ -46,6 +51,7 @@ const cliCommands = require("./cliCommands.js");
 const ask = require("./ask.js");
 const btw = require("./btw.js");
 const { applyRoute } = require("./routing.js");
+const { foldersNoteFor } = require("./projectFolders.js");
 const {
   getMemoryStatus,
   looksGrokConfigCorrupt,
@@ -59,6 +65,8 @@ const workflowEngine = require("./workflow.js");
 const { wrapCommand } = require("./ssh.js");
 const { wslTarget } = require("./wsl.js");
 const { resolveSandbox } = require("./sandbox.js");
+const { createSeatbelt } = require("./runner-seatbelt.js");
+const { stopWatching } = require("./seatbeltWatch.js");
 const { killTree } = require("./proc.js");
 const { stop: stopDevServer } = require("./devservers.js");
 const {
@@ -75,7 +83,9 @@ const {
   formatQuotaWaitClock,
 } = require("./quotaWait.js");
 const { startWithPoolFailover } = require("./subagentPool.js");
+const { normalizeQueued } = require("./queued.js");
 const {
+  combinedQueuedPrompt,
   formatQueuedPrompt,
   firstChanged,
   cancelCodexServerRequests,
@@ -547,6 +557,29 @@ function providerBinAvailable(providerId) {
 }
 
 /**
+ * A custom CLI thread (#458) can start: its row still exists, runs here
+ * (its env overlay cannot travel over ssh/WSL), and the binary resolves.
+ * @param {object} settings
+ * @param {{ provider?: string, providerInstance?: string | null }} thread
+ * @param {{ remoteHost?: string, path?: string } | null} project
+ */
+function assertCustomCliRunnable(settings, thread, project) {
+  const inst = findInstance(settings, "generic", thread.providerInstance);
+  if (!inst) {
+    throw new Error(
+      "This thread's custom CLI was removed. Pick a provider in the model picker to continue.",
+    );
+  }
+  if (crossesBoundary(project)) {
+    throw new Error("Custom CLIs run on this machine only. Pick a built-in provider for remote projects.");
+  }
+  const bin = (inst.command || [])[0];
+  if (!isBinAvailable(bin)) {
+    throw new Error(`Custom CLI binary not found: ${bin}. Fix the command in Settings › Agents.`);
+  }
+}
+
+/**
  * Ensure the provider CLI binary is available; throw a clear Error if not.
  * Across a boundary the CLI runs on the other side (the ssh host, or inside
  * the WSL distro), so a missing local binary is fine.
@@ -727,6 +760,8 @@ function createRunner(opts) {
       endedAt: at,
       isError: Boolean(isError),
     });
+    // Thrash detector (#391); ctx is built after this function is declared.
+    ctx.noteThrashTool(threadId, runId, String(toolId), name, Boolean(isError));
   }
 
   /** Last known workflow (core Workflow or real state) per thread. */
@@ -946,20 +981,28 @@ function createRunner(opts) {
   }
 
   /**
-   * Deliver the next type-ahead item that survived the just-finished turn
-   * (issue #314). One item per turn (#1501): the rest stay queued and the
-   * next "done" terminal drains the next one, so a failed or stopped turn
-   * leaves them parked. take-and-clear so the same item cannot fire twice.
+   * Deliver the type-ahead that survived the just-finished turn (issue
+   * #314). By default every waiting item goes as ONE numbered turn (#468);
+   * with combineQueuedFollowUps off, or for "Send now" (opts.head), only the
+   * head goes and the next "done" terminal drains the rest (#1501). Either
+   * way a failed or stopped turn leaves what is left parked. take-and-clear
+   * is synchronous, so the same item cannot fire twice and anything queued
+   * after the take waits for the next turn.
    * On throw, put it back in front with error so the renderer can Retry;
    * "already active" (a notice or user turn won the idle slot) is not an
    * error, that run's own terminal drains again.
    * @param {string} threadId
-   * @param {{ rethrow?: boolean }} [opts] - "Send now" surfaces the failure
+   * @param {{ rethrow?: boolean, head?: boolean }} [opts] - "Send now"
+   *   surfaces the failure and sends only the head
    */
   async function drainQueued(threadId, opts = {}) {
+    const combine =
+      !opts.head && store.getSettings().combineQueuedFollowUps !== false;
     let taken;
     try {
-      taken = services.takeQueuedHead(store, { threadId });
+      taken = combine
+        ? normalizeQueued(services.takeQueued(store, { threadId }))
+        : services.takeQueuedHead(store, { threadId });
     } catch (err) {
       if (opts.rethrow) throw err;
       return;
@@ -968,7 +1011,10 @@ function createRunner(opts) {
     try {
       await startRun({
         threadId,
-        prompt: formatQueuedPrompt(taken),
+        prompt: formatQueuedPrompt({
+          ...taken,
+          prompt: combinedQueuedPrompt(taken.items),
+        }),
         displayPrompt: taken.prompt,
         attachments: taken.attachments,
         fromThread: taken.fromThread || null,
@@ -991,7 +1037,8 @@ function createRunner(opts) {
 
   /**
    * "Send now" on a parked queue (#1501): start its next item as its own
-   * turn and resume draining from there. Rejects while a run is active.
+   * turn and resume draining from there (combined, #468). Rejects while a
+   * run is active.
    * @param {{ threadId: string }} input
    */
   async function sendQueued(input) {
@@ -1001,7 +1048,7 @@ function createRunner(opts) {
     if (active.has(threadId)) {
       throw new Error("A run is already active on this thread");
     }
-    await drainQueued(threadId, { rethrow: true });
+    await drainQueued(threadId, { rethrow: true, head: true });
   }
 
   /**
@@ -1683,7 +1730,30 @@ function createRunner(opts) {
     if (pending && pending.runId === runId) Object.assign(pending, steps);
   }
 
+  /**
+   * A fresh user turn folds the idle queue into its prompt up front (#924).
+   * Until the turn is accepted (fork launched, run-queued, or user message
+   * appended) any throw — budget, missing CLI, worktree setup — puts that
+   * queue back in front of whatever was queued since.
+   */
   async function startRun(input) {
+    const fold = { taken: null };
+    try {
+      return await startRunFolded(input, fold);
+    } catch (err) {
+      if (fold.taken) {
+        services.restoreQueuedHead(store, {
+          threadId: input.threadId,
+          taken: fold.taken,
+        });
+        pushDetail(input.threadId);
+        pushThreadsChanged();
+      }
+      throw err;
+    }
+  }
+
+  async function startRunFolded(input, fold) {
     // First spawn after launch waits for the login-shell PATH (#1475).
     const pathWait = whenPathReady();
     if (pathWait) await pathWait;
@@ -1788,6 +1858,8 @@ function createRunner(opts) {
     // Fold a held inbound (or leftover follow-up) into this turn so a
     // queue-only message sitting on an idle thread is actually read.
     // After intercepts: /btw, ask, and /handoff must not consume the queue.
+    const ownPrompt = prompt;
+    const ownAttachments = attachments;
     if (!input.fromQueue && !input.fromNotice && !isReplayTurn(input)) {
       let taken = null;
       try {
@@ -1796,6 +1868,7 @@ function createRunner(opts) {
         taken = null;
       }
       if (taken && taken.prompt) {
+        fold.taken = taken;
         const takenCli = formatQueuedPrompt(taken);
         prompt = prompt ? `${takenCli}\n\n${prompt}` : takenCli;
         attachments = [
@@ -1891,6 +1964,7 @@ function createRunner(opts) {
         throw err;
       }
 
+      fold.taken = null;
       otel.endRun({ threadId, runId: forkRunId, status: "done" });
       appendMessage(threadId, "user", prompt, forkRunId, null, attachments);
       const dirty = services.dirtySnapshotWarning(worker);
@@ -1921,7 +1995,13 @@ function createRunner(opts) {
     const provider = resolveProvider(thread);
     const projectForGate = store.getProject(thread.projectId);
     // Fail before mutating thread state when the CLI is missing.
-    if (provider !== "simulate" && provider !== "generic") {
+    if (
+      provider === "generic" &&
+      !process.env.CODER_AGENT_CMD &&
+      thread.provider === "generic"
+    ) {
+      assertCustomCliRunnable(store.getSettings(), thread, projectForGate);
+    } else if (provider !== "simulate" && provider !== "generic") {
       const entryDef = getProvider(provider) || getProvider("claude");
       assertProviderBinary(entryDef, projectForGate);
       if (thread.providerInstance) {
@@ -1946,6 +2026,7 @@ function createRunner(opts) {
         (store.getSettings().maxConcurrentRuns != null &&
           (!runSlotsFree() || runQueueOrder().length > 0)))
     ) {
+      fold.taken = null;
       return enqueueRun(threadId, input, prompt, attachments);
     }
 
@@ -1962,7 +2043,9 @@ function createRunner(opts) {
       try {
         materializePendingWorktree(threadId);
       } catch (err) {
-        failWorktreeSetup(threadId, prompt, attachments, err, {
+        // Record only this turn's own prompt: the folded queue goes back
+        // to the queue, so a Retry cannot deliver it twice.
+        failWorktreeSetup(threadId, ownPrompt, ownAttachments, err, {
           fromQuotaWait: input.fromQuotaWait,
           fromQuotaFailover: input.fromQuotaFailover,
         });
@@ -1997,6 +2080,7 @@ function createRunner(opts) {
     // exists yet. A quota-wait resume is the SAME turn: do not append again.
     // skipUserAppend: inbound card was already posted while the previous
     // turn was running (issue #551).
+    fold.taken = null;
     if (!isReplayTurn(input) && !skipUserAppend) {
       appendMessage(
         threadId,
@@ -2154,6 +2238,7 @@ function createRunner(opts) {
           (projectForGate && projectForGate.path) ||
           null,
       ) +
+      foldersNoteFor(projectForGate, dispatchThread) +
       services.suggestedWorkNoteFor() +
       services.automationNoteFor() +
       services.subagentPoolNoteFor(
@@ -2615,6 +2700,8 @@ function createRunner(opts) {
   function stopAll() {
     disposeWatchdogs();
     stopAllBtw();
+    // The Seatbelt denial follower (#803) is a `log stream` child.
+    stopWatching();
     // Clean app quit (main.js before-quit). Mark each active run idle with an
     // interruption event so the next launch's recoverInterruptedRuns (crash
     // path only) does not re-stamp them as generic failures. Kill + flush
@@ -2846,6 +2933,17 @@ function createRunner(opts) {
     maybePersistPlanApproval,
   } = createPermissions(ctx);
 
+  // #803: every provider spawns through ctx.resolveSpawn; a thread whose
+  // profile has write/network rules runs under sandbox-exec (macOS, local).
+  // Before the provider seams below destructure ctx.
+  const { confineSpawn } = createSeatbelt(ctx);
+  ctx.resolveSpawn = (project, binary, args, localCwd, env, threadId) =>
+    confineSpawn(resolveSpawn(project, binary, args, localCwd, env), {
+      threadId,
+      project,
+      env,
+    });
+
   const {
     afterFailedTurn,
     afterSuccessfulTurn,
@@ -2863,6 +2961,8 @@ function createRunner(opts) {
     refreshAllQuotaWaits,
     cancelAll: cancelAllQuotaWakes,
   } = createQuotaWait(ctx);
+  // Read lazily by noteToolSpan and runner-verify-gate.js.
+  Object.assign(ctx, createThrash(ctx));
 
   const {
     startAskRun,

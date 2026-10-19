@@ -81,6 +81,7 @@ export const DEV_PROVIDERS: ProviderInfo[] = [
     supportsSteer: true,
     supportsAgents: true,
     auth: "signedIn",
+    account: { email: "dev@example.com", plan: "max" },
   },
   {
     ...devProvider("codex", "Codex", ["gpt-5.3-codex", "gpt-5.3"]),

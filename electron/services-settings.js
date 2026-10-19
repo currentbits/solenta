@@ -79,7 +79,8 @@ function validateWorkflowTemplate(template) {
       throw new Error(`Phase "${phaseName}": provider is required`);
     }
     const entry = getProvider(providerId);
-    if (!entry || entry.kind === "simulate") {
+    // Custom CLIs (#458) have no workflow adapter.
+    if (!entry || entry.kind === "simulate" || entry.kind === "generic") {
       throw new Error(
         `Phase "${phaseName}": unknown provider "${providerId}"`,
       );
@@ -607,7 +608,13 @@ function updateAutomation(store, input) {
     ...(reEnabled ? { consecutiveFailures: 0, lastError: null } : {}),
     ...(triggerChanged ? { triggerCursor: null } : {}),
     nextRunAt: scheduleChanged
-      ? nextFire(fields.preset, fields.hour, Date.now())
+      ? nextFire(
+          fields.preset,
+          fields.hour,
+          Date.now(),
+          // An hour edit on a weekly job keeps its weekday (#931).
+          existing.preset === "weekly" ? base.nextRunAt : null,
+        )
       : base.nextRunAt,
   };
   store.setAutomations(
