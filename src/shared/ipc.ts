@@ -2188,7 +2188,14 @@ export type GitSyncInfo = (
  * failure: no repo, no origin, or an unparseable remote is `{ ok: false }`.
  */
 export type GitRepoInfo =
-  | { ok: true; owner: string; repo: string; webUrl: string }
+  | {
+      ok: true;
+      owner: string;
+      repo: string;
+      webUrl: string;
+      /** Forge that drives PRs for this origin (#456); null = none. */
+      forge?: SourceControlProviderKind | null;
+    }
   | { ok: false };
 
 /**
