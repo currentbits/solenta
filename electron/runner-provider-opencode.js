@@ -3,7 +3,7 @@
 // createRunner seam: OpenCode provider run (#1447, seam 11).
 // Follows the seam convention in the header of electron/runner-watchdogs.js.
 
-const { resolveBin } = require("./providers.js");
+const { resolveBin, honouredEfforts, opencodeAuto } = require("./providers.js");
 const { withProjectEnv } = require("./worktreeEnv.js");
 const { guardrailsEnabled } = require("./guardrails.js");
 const {
@@ -14,7 +14,20 @@ const path = require("node:path");
 const threadSecrets = require("./threadSecrets.js");
 const opencodeParse = require("./opencode.js");
 const { runOpencode, OPENCODE_CLIENT_ENV } = opencodeParse;
+const { runOpencodeServeTurn } = require("./opencode-serve.js");
+const {
+  pendingFromOpencode,
+  REPLY_ONCE,
+} = require("./opencodeApprovals.js");
+const { opencodeMcpConfigForRun } = require("./memory-sup.js");
 const { guardrailNotice } = require("./guardrail-hook-core.js");
+
+/**
+ * Default mode asks before edits and shell commands; the serve adapter
+ * routes each ask to the permission card (#451). Full access leaves the
+ * user's rules alone and answers asks with "once", like `run --auto`.
+ */
+const OPENCODE_DEFAULT_PERMISSION = JSON.stringify({ edit: "ask", bash: "ask" });
 
 /**
  * @param {object} ctx - createRunner context (see runner-watchdogs.js header)
@@ -51,7 +64,9 @@ function createOpencodeRun(ctx) {
   } = ctx;
 
   /**
-   * Start an OpenCode NDJSON (--format json) session turn with resume via -s.
+   * Start an OpenCode turn. Local projects run on a private `opencode serve`
+   * (opencode-serve.js, #451); ssh/WSL projects, and CODER_OPENCODE_TRANSPORT=run,
+   * keep `opencode run --format json` with resume via -s.
    * @param {string} threadId
    * @param {string} prompt
    * @param {string} runId
@@ -105,6 +120,12 @@ function createOpencodeRun(ctx) {
     let pushTimer = null;
     /** Run-local usage for memory footers (not cumulative store totals). */
     const runUsage = { tokensIn: 0, tokensOut: 0, costUsd: 0 };
+    /** Summed step_finish usage; null keeps the length estimate. */
+    /** @type {{ inputTokens: number, outputTokens: number, costUsd: number } | null} */
+    let stepUsage = null;
+    // ponytail: a serve on a remote host binds its own 127.0.0.1; needs a port forward.
+    const useServe =
+      !crossesBoundary(project) && process.env.CODER_OPENCODE_TRANSPORT !== "run";
 
     const localCwd = thread.worktreePath || project.path;
     const binary = resolveBin(providerEntry);
@@ -149,6 +170,22 @@ function createOpencodeRun(ctx) {
       }
     }
     opencodeEnv = { ...opencodeEnv, ...OPENCODE_CLIENT_ENV };
+    if (useServe) {
+      try {
+        opencodeEnv.OPENCODE_CONFIG_CONTENT = JSON.stringify(
+          opencodeMcpConfigForRun({
+            projectId: thread.projectId,
+            projectPath: localCwd || project.path,
+            threadId,
+          }),
+        );
+      } catch {
+        // No Solenta MCP this turn; the run itself still works.
+      }
+      if (!opencodeAuto(thread.permissionMode)) {
+        opencodeEnv.OPENCODE_PERMISSION = OPENCODE_DEFAULT_PERMISSION;
+      }
+    }
     const spawn = resolveSpawn(project, binary, args, localCwd, opencodeEnv, threadId);
 
     if (abortIfCancelled(threadId, runId)) return { runId };
@@ -158,6 +195,8 @@ function createOpencodeRun(ctx) {
       workingId,
       opencodeState,
       runUsage,
+      /** permission.asked requests awaiting the user (serve only). */
+      pendingPermissions: [],
     });
     if (!entry) {
       completeWorkLogStep(threadId, startingId);
@@ -254,16 +293,57 @@ function createOpencodeRun(ctx) {
       });
     }
 
+    function setPending(list) {
+      entry.pendingPermissions = list;
+      store.updateThread(threadId, { awaitingInput: list.length > 0 });
+      store.save();
+      pushDetail(threadId, opencodeState);
+      pushThreadsChanged();
+    }
+
+    function onPermission(req) {
+      const e = guard();
+      if (!e || !e.handle) return;
+      if (opencodeAuto(thread.permissionMode)) {
+        void e.handle.replyPermission(String(req.id || ""), REPLY_ONCE);
+        return;
+      }
+      const pending = pendingFromOpencode(req);
+      pending.input = opencodeParse.truncate(pending.input, opencodeParse.INPUT_TRUNCATE);
+      setPending([...e.pendingPermissions, pending]);
+    }
+
+    function onPermissionReplied(requestId) {
+      const e = guard();
+      if (!e || !e.pendingPermissions.some((p) => p.id === requestId)) return;
+      setPending(e.pendingPermissions.filter((p) => p.id !== requestId));
+    }
+
+    /** Terminal paths: a dead server leaves no prompt to answer. */
+    function dropPending() {
+      if (entry.pendingPermissions.length) {
+        entry.pendingPermissions = [];
+        store.updateThread(threadId, { awaitingInput: false });
+      }
+    }
+
     completeWorkLogStep(threadId, startingId);
 
     if (abortIfCancelled(threadId, runId)) return { runId };
-    const handle = runOpencode({
-      binary: spawn.binary,
-      args: spawn.args,
-      cwd: spawn.cwd,
-      env: threadSecrets.withEnv(threadId, withProjectEnv(project, opencodeEnv)),
+    const efforts = honouredEfforts(providerEntry, thread.model || null);
+    const runEnv = threadSecrets.withEnv(threadId, withProjectEnv(project, opencodeEnv));
+    const handlers = {
       onEvent: (ev) => {
         if (!guard()) return;
+
+        const usage = opencodeParse.extractStepUsage(ev);
+        if (usage) {
+          stepUsage = {
+            inputTokens: (stepUsage ? stepUsage.inputTokens : 0) + usage.inputTokens,
+            outputTokens: (stepUsage ? stepUsage.outputTokens : 0) + usage.outputTokens,
+            costUsd: (stepUsage ? stepUsage.costUsd : 0) + usage.costUsd,
+          };
+        }
 
         const structuredError = opencodeParse.extractTerminalError(ev);
         if (structuredError) terminalError = structuredError;
@@ -443,6 +523,7 @@ function createOpencodeRun(ctx) {
         if (e.kind !== "opencode") return;
 
         clearRun(threadId);
+        dropPending();
         completeWorkLogStep(threadId, e.startingId);
         completeWorkLogStep(threadId, e.workingId);
 
@@ -455,13 +536,11 @@ function createOpencodeRun(ctx) {
           ensureAssistant(assistantText);
         }
 
-        // Usage unknown: estimate tokens like text kind.
         if (code === 0 && !terminalError) {
+          // step_finish carries real usage; otherwise estimate like text kind.
           const tokens = Math.ceil((assistantText || "").length / 4) || 0;
           applyUsage({
-            inputTokens: 0,
-            outputTokens: tokens,
-            costUsd: 0,
+            ...(stepUsage || { inputTokens: 0, outputTokens: tokens, costUsd: 0 }),
             model: thread.model || null,
           });
 
@@ -512,6 +591,7 @@ function createOpencodeRun(ctx) {
         if (e.kind !== "opencode") return;
 
         clearRun(threadId);
+        dropPending();
         completeWorkLogStep(threadId, e.startingId);
         completeWorkLogStep(threadId, e.workingId);
         const msg = err && err.message ? err.message : String(err);
@@ -527,7 +607,29 @@ function createOpencodeRun(ctx) {
           costUsd: runUsage.costUsd,
         });
       },
-    });
+    };
+    const handle = useServe
+      ? runOpencodeServeTurn({
+          binary: spawn.binary,
+          cwd: spawn.cwd,
+          env: runEnv,
+          prompt,
+          files,
+          sessionId: thread.sessionId || null,
+          model: thread.model || null,
+          agent: thread.agent || null,
+          variant: efforts.includes(thread.reasoningEffort) ? thread.reasoningEffort : null,
+          onPermission,
+          onPermissionReplied,
+          ...handlers,
+        })
+      : runOpencode({
+          binary: spawn.binary,
+          args: spawn.args,
+          cwd: spawn.cwd,
+          env: runEnv,
+          ...handlers,
+        });
 
     entry.handle = handle;
     store.save();

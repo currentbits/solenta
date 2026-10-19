@@ -20,6 +20,7 @@ const {
   mapSolentaDecision,
   unsupportedError,
 } = require("./codexApprovals.js");
+const { mapOpencodeDecision } = require("./opencodeApprovals.js");
 const { getProvider, snapPermissionMode } = require("./providers.js");
 const { classifyTool } = require("./guardrails.js");
 const { evaluate, threadPolicy } = require("./governance.js");
@@ -102,7 +103,7 @@ function createPermissions(ctx) {
     const e = active.get(threadId);
     if (
       e &&
-      (e.kind === "claude" || e.kind === "codex") &&
+      (e.kind === "claude" || e.kind === "codex" || e.kind === "opencode") &&
       Array.isArray(e.pendingPermissions)
     ) {
       const p = e.pendingPermissions[0];
@@ -309,6 +310,41 @@ function createPermissions(ctx) {
   }
 
   /**
+   * opencode serve (#451): POST /permission/:id/reply. The prompt leaves the
+   * card now; a failed reply is logged, and the turn's own error ends the run.
+   */
+  function respondOpencodePermission(e, threadId, input) {
+    const { requestId, decision } = input || {};
+    const pending = e.pendingPermissions.find((p) => p.id === requestId);
+    if (!pending) throw new Error("Permission request no longer pending");
+    const reply = mapOpencodeDecision(decision);
+    e.pendingPermissions = e.pendingPermissions.filter((p) => p !== pending);
+    const runId = e.runId;
+    void e.handle.replyPermission(pending.id, reply).then((ok) => {
+      if (ok) return;
+      appendMessage(threadId, "event", `OpenCode did not take the reply: ${pending.summary}`, runId);
+      store.save();
+      pushDetail(threadId, e.opencodeState || null);
+    });
+    appendMessage(
+      threadId,
+      "event",
+      reply === "reject"
+        ? `Denied: ${pending.summary}`
+        : reply === "always"
+          ? `Allowed for session: ${pending.summary}`
+          : `Allowed: ${pending.summary}`,
+      runId,
+    );
+    if (e.pendingPermissions.length === 0) {
+      store.updateThread(threadId, { awaitingInput: false });
+    }
+    store.save();
+    pushDetail(threadId, e.opencodeState || null);
+    pushThreadsChanged();
+  }
+
+  /**
    * Answer a pending permission prompt. For question prompts, `answers`
    * (question text -> chosen label) rides back as updatedInput.answers.
    * `updatedCommand` (#509) replaces the shell command in updatedInput.
@@ -358,6 +394,9 @@ function createPermissions(ctx) {
     }
     if (e.kind === "codex") {
       return respondCodexPermission(e, threadId, input);
+    }
+    if (e.kind === "opencode" && Array.isArray(e.pendingPermissions)) {
+      return respondOpencodePermission(e, threadId, input);
     }
     if (e.kind !== "claude") {
       return respondPersistedPlan(threadId, requestId, decision, feedback);

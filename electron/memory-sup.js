@@ -699,6 +699,43 @@ function kimiMcpServersForRun(opts = {}) {
 }
 
 /**
+ * Solenta MCP servers for one opencode serve turn, as the `mcp` block of
+ * OPENCODE_CONFIG_CONTENT (#451). That layer merges over the user's own
+ * opencode config, so their servers stay; nothing is written to disk.
+ * Shapes from the 1.17.12 /doc McpRemoteConfig / McpLocalConfig schemas.
+ *
+ * @param {{ projectId?: string, projectPath?: string, threadId?: string }} [opts]
+ * @returns {{ mcp: Record<string, object> }}
+ */
+function opencodeMcpConfigForRun(opts = {}) {
+  /** @type {Record<string, object>} */
+  const mcp = {};
+  for (const s of activeServers()) {
+    if (isStdioServer(s)) {
+      /** @type {Record<string, unknown>} */
+      const entry = {
+        type: "local",
+        command: [s.command, ...(Array.isArray(s.args) ? s.args : [])],
+        environment: s.env && typeof s.env === "object" ? { ...s.env } : {},
+      };
+      if (typeof s.cwd === "string" && s.cwd) entry.cwd = s.cwd;
+      mcp[s.name] = entry;
+      continue;
+    }
+    const headers = { ...(s.headers && typeof s.headers === "object" ? s.headers : {}) };
+    if (s.token) headers.Authorization = `Bearer ${s.token}`;
+    mcp[s.name] = {
+      type: "remote",
+      url: boundSolentaMcpUrl(s.url, s.name, opts),
+      headers,
+      // A bearer server must not trip opencode's OAuth auto-detection.
+      ...(s.token ? { oauth: false } : {}),
+    };
+  }
+  return { mcp };
+}
+
+/**
  * When at least one MCP server is up and kimi binary is available, MERGE our
  * servers into kimi's mcp.json (never overwrite whole file). Backup once
  * before first edit of an existing file. On parse failure of an existing
@@ -2045,6 +2082,7 @@ module.exports = {
   mergeGrokSpawnEnv,
   ensureKimiMcpConfig,
   kimiMcpServersForRun,
+  opencodeMcpConfigForRun,
   withQuery,
   boundSolentaMcpUrl,
   ensureGrokMcpConfig,

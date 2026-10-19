@@ -492,6 +492,7 @@ describe("opencode runner integration", () => {
   let prevArgv;
   let prevSimulate;
   let prevAgentCmd;
+  let prevTransport;
 
   beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-opencode-"));
@@ -512,6 +513,10 @@ describe("opencode runner integration", () => {
     prevArgv = process.env.CODER_FAKE_OPENCODE_ARGV_FILE;
     prevSimulate = process.env.CODER_SIMULATE;
     prevAgentCmd = process.env.CODER_AGENT_CMD;
+    prevTransport = process.env.CODER_OPENCODE_TRANSPORT;
+    // These fakes speak `run --format json` (the ssh/WSL path);
+    // opencode-serve.test.js covers the local serve transport.
+    process.env.CODER_OPENCODE_TRANSPORT = "run";
     delete process.env.CODER_SIMULATE;
     delete process.env.CODER_AGENT_CMD;
     process.env.CODER_OPENCODE_BIN = fakeBin;
@@ -550,6 +555,8 @@ describe("opencode runner integration", () => {
     else process.env.CODER_SIMULATE = prevSimulate;
     if (prevAgentCmd === undefined) delete process.env.CODER_AGENT_CMD;
     else process.env.CODER_AGENT_CMD = prevAgentCmd;
+    if (prevTransport === undefined) delete process.env.CODER_OPENCODE_TRANSPORT;
+    else process.env.CODER_OPENCODE_TRANSPORT = prevTransport;
     await rmTree(tmpDir);
   });
 

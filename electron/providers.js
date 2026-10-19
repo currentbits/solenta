@@ -876,7 +876,9 @@ const PROVIDERS = [
     efforts: [],
     supportsAgents: true,
     // `opencode run --auto` auto-approves non-denied permissions. No plan
-    // flag. Accept-edits is the same lever as full access.
+    // flag. Accept-edits is the same lever as full access. Interactive
+    // local turns use `opencode serve` instead (opencode-serve.js, #451):
+    // default asks via the permission card, full access answers "once".
     permissionModes: ["default", "bypassPermissions"],
     kind: "opencode-json",
     /**
@@ -2100,4 +2102,5 @@ module.exports = {
   honouredPermissionModes,
   snapPermissionMode,
   codexSandboxFor,
+  opencodeAuto,
 };

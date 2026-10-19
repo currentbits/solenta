@@ -2611,6 +2611,8 @@ function createRunner(opts) {
       null;
 
     entry.stopping = true;
+    // Read before the kill: cancelCodexServerRequests empties the list.
+    const hadPending = Boolean(entry.pendingPermissions?.length);
 
     if (entry.kind === "workflow") {
       workflowEngine.stopWorkflowEntry(entry);
@@ -2678,7 +2680,13 @@ function createRunner(opts) {
       // stoppedAt distinguishes a user-stopped worker from a fork that never
       // ran (both idle, runStartedAt null) so the parent's wait state can
       // count it (issue #183). Cleared when a new run starts on the thread.
-      { status: "idle", runStartedAt: null, stoppedAt: Date.now() },
+      {
+        status: "idle",
+        runStartedAt: null,
+        stoppedAt: Date.now(),
+        // A killed run's permission prompts can never be answered.
+        ...(hadPending ? { awaitingInput: false } : {}),
+      },
       { touch: true },
     );
     store.save();

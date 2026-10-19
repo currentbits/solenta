@@ -252,6 +252,27 @@ function extractToolEvent(obj) {
 }
 
 /**
+ * Real usage from a step_finish event (`run --format json` and the serve
+ * adapter both carry part.tokens + part.cost). Cache reads/writes count as
+ * input, like claudeContextTokens.
+ * @param {object} obj
+ * @returns {{ inputTokens: number, outputTokens: number, costUsd: number } | null}
+ */
+function extractStepUsage(obj) {
+  if (!obj || typeof obj !== "object" || obj.type !== "step_finish") return null;
+  const part = obj.part && typeof obj.part === "object" ? obj.part : null;
+  const t = part && part.tokens && typeof part.tokens === "object" ? part.tokens : null;
+  if (!t) return null;
+  const cache = t.cache && typeof t.cache === "object" ? t.cache : {};
+  return {
+    inputTokens:
+      (Number(t.input) || 0) + (Number(cache.read) || 0) + (Number(cache.write) || 0),
+    outputTokens: Number(t.output) || 0,
+    costUsd: Number(part.cost) || 0,
+  };
+}
+
+/**
  * Thread and workflow turns name their client (#451). opencode 1.17 only
  * registers the `question` tool for clients app/cli/desktop, and a headless
  * `opencode run` has no one to answer it, so "solenta" also keeps the model
@@ -299,6 +320,7 @@ function runOpencode(opts) {
 module.exports = {
   runOpencode,
   OPENCODE_CLIENT_ENV,
+  extractStepUsage,
   extractSessionId,
   extractTerminalError,
   extractTextPart,
