@@ -42,9 +42,10 @@ export interface NextGitActionInput {
   /** null until fetched, or when there is no open PR. */
   checks: PrChecksResult | null;
   /**
-   * GitHub forge probe (#608). null/absent = not loaded yet, so the
-   * button keeps its old click-and-fail path. When ready is false, gh
-   * actions (Create PR / checks / merge) disable with the hint as title.
+   * Forge probe (#608) for the origin's forge (#456; GitHub when unknown).
+   * null/absent = not loaded yet, so the button keeps its old
+   * click-and-fail path. When ready is false, forge actions (Create PR /
+   * checks / merge) disable with the hint as title.
    */
   github?: { ready: boolean; hint: string | null } | null;
 }

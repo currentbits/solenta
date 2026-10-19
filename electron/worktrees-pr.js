@@ -166,6 +166,24 @@ function gitlabOrigin(url) {
   return require("./gitlab.js").gitlabRemote(url);
 }
 
+/**
+ * Non-gh PR backend for origin as `{ api, remote }`, or null: GitLab (#193),
+ * Bitbucket Cloud and Azure DevOps (#456). Each api exports viewPr,
+ * viewPrByNumber, createPr, prChecks and mergePr with the gh paths' shapes.
+ * Bitbucket and Azure stop at PRs: no planboard, issues, PR list or checkout.
+ * @param {string} url
+ */
+function prForge(url) {
+  for (const file of ["./gitlab.js", "./bitbucket.js", "./azureDevops.js"]) {
+    const api = require(file);
+    const remote = api.parseRemote(url);
+    if (remote) return { api, remote };
+  }
+  return null;
+}
+
+const FORGE_NAMES = "GitHub, GitLab, Bitbucket or Azure DevOps";
+
 /** True when origin is a forge Solenta can drive PRs/issues on (sync check). */
 function isForgeRemote(url) {
   return isGitHubRemote(url) || gitlabOrigin(url) != null;
@@ -799,11 +817,11 @@ async function resolveThreadGit(store, threadId) {
  * @param {string} action error wording, e.g. "PR status"
  */
 async function viewBranchPr(cwd, branch, originUrl, action) {
-  const gl = gitlabOrigin(originUrl);
-  if (gl) return require("./gitlab.js").viewMr(cwd, gl, branch);
+  const forge = prForge(originUrl);
+  if (forge) return forge.api.viewPr(cwd, forge.remote, branch);
   if (!(await isGitHubPrRemote(originUrl))) {
     throw new Error(
-      `Remote origin is not a GitHub or GitLab repository (got: ${originUrl}). ${action} requires github.com or GitLab.`,
+      `Remote origin is not a ${FORGE_NAMES} repository (got: ${originUrl}). ${action} requires one of them.`,
     );
   }
 
@@ -1067,8 +1085,8 @@ async function prChecks(opts) {
     };
   }
 
-  const gl = gitlabOrigin(originUrl);
-  if (gl) return require("./gitlab.js").mrChecks(cwd, gl, branch);
+  const forge = prForge(originUrl);
+  if (forge) return forge.api.prChecks(cwd, forge.remote, branch);
   if (!(await isGitHubPrRemote(originUrl))) {
     return { ok: false, reason: "not a GitHub repo" };
   }
@@ -1454,10 +1472,10 @@ async function mergePr(opts) {
     }
   }
 
-  const gl = gitlabOrigin(originUrl);
-  if (gl) {
-    // ponytail: GitLab always squash-merges now; method/auto are gh-only.
-    await require("./gitlab.js").mergeMr(cwd, gl, info.number);
+  const forge = prForge(originUrl);
+  if (forge) {
+    // ponytail: non-gh forges always squash-merge; method/auto are gh-only.
+    await forge.api.mergePr(cwd, forge.remote, info.number);
   } else {
     const merged = await ghApiTryAsync(cwd, [
       "pr",
@@ -1652,11 +1670,12 @@ async function refreshPrStates(store, opts) {
         info = batched.get(threadId);
         // Unresolvable PR: skip, same as a failed gh view.
         if (!info) continue;
-      } else if (gitlabOrigin(originUrl)) {
+      } else if (prForge(originUrl)) {
+        const forge = prForge(originUrl);
         spawned += 1;
-        info = await require("./gitlab.js").viewMrByNumber(
+        info = await forge.api.viewPrByNumber(
           cwd,
-          gitlabOrigin(originUrl),
+          forge.remote,
           Number(snapshot.prNumber),
           timeoutMs,
         );
@@ -1961,10 +1980,10 @@ async function createPr(opts) {
     threadId,
   );
 
-  const gl = gitlabOrigin(originUrl);
-  if (!gl && !(await isGitHubPrRemote(originUrl))) {
+  const forge = prForge(originUrl);
+  if (!forge && !(await isGitHubPrRemote(originUrl))) {
     throw new Error(
-      `Remote origin is not a GitHub or GitLab repository (got: ${originUrl}). PR creation requires github.com or GitLab.`,
+      `Remote origin is not a ${FORGE_NAMES} repository (got: ${originUrl}). PR creation requires one of them.`,
     );
   }
 
@@ -2000,10 +2019,9 @@ async function createPr(opts) {
   // Reuse push for remote/branch/timeout/prompt discipline; no intermediate broadcast.
   push({ store, threadId });
 
-  if (gl) {
-    const gitlab = require("./gitlab.js");
-    // Same idempotency as gh below: only an OPEN MR short-circuits.
-    let info = await gitlab.viewMr(cwd, gl, branch);
+  if (forge) {
+    // Same idempotency as gh below: only an OPEN PR/MR short-circuits.
+    let info = await forge.api.viewPr(cwd, forge.remote, branch);
     if (!info || info.state !== "OPEN") {
       const titleText = String(title ?? "");
       const bodyText = require("./taskGroups.js").withTaskGroupFooter(
@@ -2012,7 +2030,7 @@ async function createPr(opts) {
         body,
       );
       assertNoOutboundSecrets(`${titleText}\n${bodyText}`, "PR");
-      info = await gitlab.createMr(cwd, gl, {
+      info = await forge.api.createPr(cwd, forge.remote, {
         branch,
         baseBranch,
         title: titleText,
@@ -2196,6 +2214,7 @@ module.exports = {
   isGitHubRemote,
   isGitHubRemoteAsync,
   gitlabOrigin,
+  prForge,
   isForgeRemote,
   normalizeCheckBucket,
   summarizeCheckRollup,
