@@ -32,6 +32,7 @@ const {
   gcClean,
 } = require("./worktrees.js");
 const { suggestCommitMessage, suggestPrText } = require("./commitmsg.js");
+const { publishRepo } = require("./publish.js");
 const {
   claimLane,
   listLanes,
@@ -477,11 +478,16 @@ module.exports = {
       if (!project || project.remoteHost) return { ok: false };
       const root = thread.worktreePath || project.path;
       if (!root) return { ok: false };
-      return await services.gitRepoInfo(root);
+      const info = await services.gitRepoInfo(root);
+      // Worktree folders are thread ids; name the new repo after the project checkout.
+      if (info.noOrigin) info.suggestedName = require("node:path").basename(project.path || root);
+      return info;
     } catch {
       return { ok: false };
     }
   },
+  "git:publish": async (ctx, input) =>
+    publishRepo({ ...input, store: ctx.store, broadcast: ctx.broadcast }),
   "git:pull": async (ctx, input) => {
     // Never throws: failure modes come back in-band as { ok: false, reason }.
     try {

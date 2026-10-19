@@ -3472,6 +3472,12 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           repo: "repo",
           webUrl: "https://github.com/owner/repo",
         } as GitRepoInfo),
+      publish: (input: unknown) =>
+        rec("git.publish", [input], {
+          forge: "github",
+          webUrl: "https://github.com/owner/repo",
+          branch: "main",
+        }),
       pull: (input: unknown) =>
         rec("git.pull", [input], {
           ok: true,

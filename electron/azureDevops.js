@@ -204,6 +204,7 @@ async function mergePr(cwd, remote, id) {
 
 module.exports = {
   kind: "azure-devops",
+  az,
   parseRemote,
   prInfoFromPr,
   viewPr,

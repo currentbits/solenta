@@ -341,6 +341,14 @@ export function createGit(ctx: DevCtx): Pick<CoderApi, "git" | "mergeQueue"> {
           webUrl: `https://github.com/${owner}/${repo}`,
         };
       },
+      async publish(input: { threadId: string; forge: string; name: string }) {
+        // Dev mock: nothing is created; just echo the would-be repo.
+        return {
+          forge: input.forge,
+          webUrl: `https://example.com/${input.name}`,
+          branch: details.get(input.threadId)?.thread.branch ?? "main",
+        };
+      },
       async pull(_input: { threadId: string }) {
         // Dev mock: local fixture repos have no upstream to pull from.
         return { ok: true as const, summary: "Already up to date" };

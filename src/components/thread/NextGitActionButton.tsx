@@ -3,6 +3,7 @@ import type {
   BlastRadiusInfo,
   CoderApi,
   DiffResult,
+  GitPublishInput,
   GitSyncInfo,
   MergeMethod,
   MergeOptionsResult,
@@ -15,6 +16,7 @@ import type {
 import { isEmptyDiff } from "../../diffView";
 import { createPrPrompt, isPrTooLargeMessage, splitPrPrompt } from "../../prUi";
 import { CreatePrDialog } from "../CreatePrDialog";
+import { PublishDialog } from "../PublishDialog";
 import {
   blastRadiusLabel,
   blastRadiusTitle,
@@ -135,6 +137,11 @@ export function NextGitActionButton({
     ready: boolean;
     hint: string | null;
   } | null>(null);
+  const [discovery, setDiscovery] = useState<SourceControlDiscovery | null>(null);
+  /** Repo name to suggest when the checkout has no origin (#456); null = has one. */
+  const [publishName, setPublishName] = useState<string | null>(null);
+  const [publishOpen, setPublishOpen] = useState(false);
+  const [publishError, setPublishError] = useState<string | null>(null);
   const threadRef = useRef(thread.id);
   threadRef.current = thread.id;
   const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -152,7 +159,10 @@ export function NextGitActionButton({
       // Bitbucket token, not gh. Unknown origin keeps the GitHub gate.
       const repo = await existing?.git?.repoInfo?.({ threadId: id }).catch(() => null);
       const kind = repo?.ok && repo.forge ? repo.forge : "github";
-      if (threadRef.current === id) setGithub(forgeReadiness(next, kind));
+      if (threadRef.current !== id) return;
+      setGithub(forgeReadiness(next, kind));
+      setDiscovery(next);
+      setPublishName(repo && !repo.ok && repo.noOrigin ? (repo.suggestedName ?? "") : null);
     } catch {
       // Probe failed: leave the button on the click-and-fail path.
     }
@@ -178,6 +188,9 @@ export function NextGitActionButton({
     setComposerOpen(false);
     setComposerError(null);
     setMethod(null);
+    setPublishName(null);
+    setPublishOpen(false);
+    setPublishError(null);
     signOffAuto.current = false;
     lastSubmit.current = { title: thread.title, body: "", draft: false };
   }, [thread.id]);
@@ -333,6 +346,7 @@ export function NextGitActionButton({
     mergeable: thread.prMergeable,
     checks,
     github,
+    noOrigin: publishName != null,
   });
   const action =
     decided.kind === "merge" && !onPrMerge
@@ -377,6 +391,11 @@ export function NextGitActionButton({
       } finally {
         setPending(false);
       }
+      return;
+    }
+    if (action.kind === "publish") {
+      setPublishError(null);
+      setPublishOpen(true);
       return;
     }
     if (action.kind === "create-pr") {
@@ -503,6 +522,27 @@ export function NextGitActionButton({
     }
   };
 
+  const submitPublish = async (input: Omit<GitPublishInput, "threadId">) => {
+    const publish = coderGit()?.publish;
+    if (typeof publish !== "function" || pending || isWorking) return;
+    setPending(true);
+    setPublishError(null);
+    try {
+      await publish({ threadId: thread.id, ...input });
+      setPublishOpen(false);
+      showFlash("Published");
+      onPushed();
+      await loadForge(false);
+      await loadGit();
+    } catch (err) {
+      // A create that landed but failed to push still added origin: reload.
+      setPublishError(err instanceof Error ? err.message : String(err));
+      void loadForge(false);
+    } finally {
+      setPending(false);
+    }
+  };
+
   /** Retry PR creation with the explicit size-cap override (issue #402). */
   const createOversizePr = async () => {
     if (!onCreatePr || pending || isWorking) return;
@@ -536,6 +576,21 @@ export function NextGitActionButton({
     />
   ) : null;
 
+  const publishDialog = publishOpen ? (
+    <PublishDialog
+      initialName={publishName ?? ""}
+      discovery={discovery}
+      pending={pending}
+      error={publishError}
+      onSubmit={(input) => void submitPublish(input)}
+      onClose={() => {
+        if (pending) return;
+        setPublishOpen(false);
+        setPublishError(null);
+      }}
+    />
+  ) : null;
+
   // Nothing to suggest: no button, but a PR asked for from Thread details
   // still gets its dialog.
   if (action.kind === "idle") return prDialog;
@@ -546,6 +601,8 @@ export function NextGitActionButton({
       ? "Pushing…"
       : action.kind === "create-pr"
         ? "Creating PR…"
+        : action.kind === "publish"
+          ? "Publishing…"
         : action.kind === "merge"
           ? action.label === "Update from main"
             ? "Updating…"
@@ -789,6 +846,7 @@ export function NextGitActionButton({
         </span>
       ) : null}
       {prDialog}
+      {publishDialog}
     </>
   );
 }

@@ -119,11 +119,26 @@ function assertNoOutboundSecrets(text, where) {
  * Diff of the commits about to be pushed. Prefer origin/<branch>..HEAD;
  * if that ref is missing (first push), fall back to HEAD~1..HEAD, then
  * `git show HEAD`. Returns null when the range cannot be determined.
+ * wholeHistory (publish to a brand-new origin, #456): every commit reachable
+ * from HEAD leaves the machine, so scan `git log -p HEAD`, else HEAD's tree.
  * @param {string} cwd
  * @param {string} branch
+ * @param {boolean} [wholeHistory]
  * @returns {string | null}
  */
-function pushDiffText(cwd, branch) {
+function pushDiffText(cwd, branch, wholeHistory) {
+  if (wholeHistory) {
+    let result = gitTry(cwd, ["log", "-p", "--format=%B", "HEAD"], {
+      timeout: OUTBOUND_SCAN_TIMEOUT_MS,
+    });
+    // Too big for the buffer or too slow: at least scan what HEAD ships.
+    if (!result.ok) {
+      result = gitTry(cwd, ["diff", EMPTY_TREE, "HEAD"], {
+        timeout: OUTBOUND_SCAN_TIMEOUT_MS,
+      });
+    }
+    return scanText(result, "HEAD history");
+  }
   const remoteRef = `origin/${branch}`;
   const haveRemote = gitTry(cwd, ["rev-parse", "--verify", remoteRef], {
     timeout: OUTBOUND_SCAN_TIMEOUT_MS,
@@ -148,6 +163,18 @@ function pushDiffText(cwd, branch) {
       timeout: OUTBOUND_SCAN_TIMEOUT_MS,
     });
   }
+  return scanText(result, range);
+}
+
+/** git's well-known empty tree: diffing against it lists every file at HEAD. */
+const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+
+/**
+ * @param {{ ok: boolean, stdout?: string }} result
+ * @param {string} range for the warning only
+ * @returns {string | null}
+ */
+function scanText(result, range) {
   if (!result.ok) {
     console.warn(
       `solenta: guardrails: could not determine push diff range (${range}); skipping secret scan`,
@@ -171,11 +198,12 @@ function pushDiffText(cwd, branch) {
  * proceed; hits throw on the same Error channel as other push failures.
  * @param {string} cwd
  * @param {string} branch
+ * @param {{ wholeHistory?: boolean }} [opts]
  */
-function scanOutgoingPush(cwd, branch) {
+function scanOutgoingPush(cwd, branch, opts) {
   let text;
   try {
-    text = pushDiffText(cwd, branch);
+    text = pushDiffText(cwd, branch, Boolean(opts && opts.wholeHistory));
   } catch (err) {
     const msg = err && err.message ? String(err.message) : String(err);
     console.warn(

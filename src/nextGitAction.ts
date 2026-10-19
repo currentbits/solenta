@@ -13,6 +13,7 @@ export type NextGitActionKind =
   | "watch-checks"
   | "checks-failed"
   | "merge"
+  | "publish"
   | "idle";
 
 export interface NextGitAction {
@@ -48,6 +49,8 @@ export interface NextGitActionInput {
    * checks / merge) disable with the hint as title.
    */
   github?: { ready: boolean; hint: string | null } | null;
+  /** Local repo with no origin remote (#456): suggest Publish, not Create PR. */
+  noOrigin?: boolean;
 }
 
 const IDLE: NextGitAction = {
@@ -243,6 +246,16 @@ function suggestNextGitActionUngated(input: NextGitActionInput): NextGitAction {
       kind: "merge",
       label: `Merge PR #${input.prNumber}`,
       title: "Squash-merge this pull request",
+      actionable: true,
+      primary: true,
+    };
+  }
+
+  if (input.noOrigin) {
+    return {
+      kind: "publish",
+      label: "Publish",
+      title: "Create a repository on a forge, add it as origin, and push",
       actionable: true,
       primary: true,
     };

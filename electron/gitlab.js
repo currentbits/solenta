@@ -435,6 +435,7 @@ async function createIssue(cwd, remote, title, body) {
 }
 
 module.exports = {
+  glabBin,
   gitlabRemote,
   glabApi,
   prListItemFromMr,

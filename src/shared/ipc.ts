@@ -2196,7 +2196,28 @@ export type GitRepoInfo =
       /** Forge that drives PRs for this origin (#456); null = none. */
       forge?: SourceControlProviderKind | null;
     }
-  | { ok: false };
+  | {
+      ok: false;
+      /** A local repo with no `origin` remote: offer Publish (#456). */
+      noOrigin?: boolean;
+      /** With noOrigin: default repo name (the project checkout's folder). */
+      suggestedName?: string;
+    };
+
+/** Create a repo on a forge for a checkout with no origin, add it, push (#456). */
+export interface GitPublishInput {
+  threadId: string;
+  forge: "github" | "gitlab" | "bitbucket" | "azure-devops";
+  /** Repo name; `owner/name` is allowed for GitHub and GitLab. */
+  name: string;
+  /** Ignored by Azure DevOps, where visibility is per project. */
+  visibility: "private" | "public";
+  /** Bitbucket workspace. */
+  workspace?: string;
+  /** Azure DevOps organization name or URL, and project. */
+  org?: string;
+  project?: string;
+}
 
 /**
  * `git pull --ff-only` outcome. Never rejects: dirty tree, no upstream,
@@ -6132,6 +6153,14 @@ export interface CoderApi {
      * upstream, diverged, and not-a-repo come back as `{ ok: false, reason }`.
      */
     pull(input: { threadId: string }): Promise<GitPullResult>;
+    /**
+     * Publish a checkout that has no origin (#456): create the repo on the
+     * forge, add it as origin, push the current branch. The whole history
+     * is secret-scanned first. Rejects with a readable message.
+     */
+    publish(
+      input: GitPublishInput,
+    ): Promise<{ forge: string; webUrl: string; branch: string }>;
     /**
      * Per-checkpoint-pair shortstat for a thread. Checkpoint N diffs against
      * N-1 (first checkpoint diffs against its parent). Empty when the thread

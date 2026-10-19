@@ -108,9 +108,9 @@ describe("gitRepoInfo", () => {
     assert.deepEqual(await gitRepoInfo(dir), { ok: false });
   });
 
-  it("returns ok:false for a repo with no origin", async () => {
+  it("returns ok:false + noOrigin for a repo with no origin (Publish, #456)", async () => {
     const repo = initRepo(path.join(tmp, "repo"));
-    assert.deepEqual(await gitRepoInfo(repo), { ok: false });
+    assert.deepEqual(await gitRepoInfo(repo), { ok: false, noOrigin: true });
   });
 
   it("returns owner/repo and webUrl for a repo with an origin", async () => {

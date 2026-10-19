@@ -207,6 +207,7 @@ const BY_SCOPE = {
     "git:integrateWorker",
     "git:removeWorktree",
     "git:push",
+    "git:publish",
     "git:createPr",
     "git:prMerge",
     "git:checkoutPr",

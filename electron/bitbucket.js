@@ -183,6 +183,7 @@ module.exports = {
   kind: "bitbucket",
   parseRemote,
   authHeader,
+  bbApi,
   prInfoFromPr,
   viewPr,
   viewPrByNumber,

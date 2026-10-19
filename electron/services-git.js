@@ -177,7 +177,7 @@ function repoInfoFromRemote(url) {
  * origin, or an unparseable remote all come back as { ok: false }.
  *
  * @param {string} cwd
- * @returns {Promise<{ ok: true, owner: string, repo: string, webUrl: string, forge: string | null } | { ok: false }>}
+ * @returns {Promise<{ ok: true, owner: string, repo: string, webUrl: string, forge: string | null } | { ok: false, noOrigin?: true }>}
  */
 async function gitRepoInfo(cwd) {
   if (!cwd) return { ok: false };
@@ -192,7 +192,10 @@ async function gitRepoInfo(cwd) {
   try {
     remote = await gitOutAsync(resolved, ["remote", "get-url", "origin"]);
   } catch {
-    return { ok: false };
+    // No origin at all (vs a failed lookup): the header offers Publish (#456).
+    const names = await gitOutAsync(resolved, ["remote"]).catch(() => null);
+    if (names == null || names.split("\n").includes("origin")) return { ok: false };
+    return { ok: false, noOrigin: true };
   }
   const info = repoInfoFromRemote(remote);
   if (!info) return { ok: false };
