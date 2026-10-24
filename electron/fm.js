@@ -31,13 +31,19 @@ function fmBin(env = process.env) {
 }
 
 /**
- * argv for a one-shot prompt. Prompt is LAST, matching the convention every
- * provider in providers.js follows, so no flag can swallow it.
+ * argv for a one-shot prompt: `fm respond [flags] <prompt>`, per Apple's
+ * WWDC26 session 334 ("fm respond \"...\" --model pcc"). Prompt is LAST,
+ * matching every provider in providers.js, so no flag can swallow it.
  *
- * ponytail: the flag-free positional form is a best guess — macOS 27 is not out
- * yet and this could not be run against the real binary. CODER_FM_ARGS (space
- * separated) prepends flags so a wrong guess is an env var, not a release.
- * Fold the real flags in here once `fm --help` can actually be read.
+ * No --model: the default is the on-device "system" model (free, offline, no
+ * quota); `pcc` is opt-in only, so nothing here silently spends PCC quota.
+ * No --instructions: callers want different shapes (JSON for distill, two
+ * lines for recap, free prose for Ask), and each prompt already says so.
+ *
+ * ponytail: argv comes from Apple's docs, not a run of the real binary (the
+ * dev Mac is still on macOS 26). CODER_FM_ARGS (space separated) goes between
+ * `respond` and the prompt — e.g. "--model pcc" — so a wrong detail is an env
+ * var, not a release. Drop it once a real `fm respond --help` confirms this.
  *
  * @param {string} prompt
  * @param {NodeJS.ProcessEnv} [env]
@@ -47,7 +53,7 @@ function buildFmArgs(prompt, env = process.env) {
   const extra = String(env.CODER_FM_ARGS || "")
     .split(" ")
     .filter(Boolean);
-  return [...extra, String(prompt)];
+  return ["respond", ...extra, String(prompt)];
 }
 
 /**

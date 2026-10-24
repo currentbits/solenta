@@ -13,15 +13,15 @@ function writeFakeFm(dir, body) {
 }
 
 describe("buildFmArgs", () => {
-  it("prompt is the last argv element", () => {
-    assert.deepEqual(buildFmArgs("hello", {}), ["hello"]);
+  it("runs the respond subcommand with the prompt last", () => {
+    assert.deepEqual(buildFmArgs("hello", {}), ["respond", "hello"]);
   });
 
-  it("CODER_FM_ARGS prepends flags, prompt still last", () => {
-    assert.deepEqual(buildFmArgs("hello", { CODER_FM_ARGS: "--quiet -m small" }), [
-      "--quiet",
-      "-m",
-      "small",
+  it("CODER_FM_ARGS goes after respond, prompt still last", () => {
+    assert.deepEqual(buildFmArgs("hello", { CODER_FM_ARGS: "--model  pcc" }), [
+      "respond",
+      "--model",
+      "pcc",
       "hello",
     ]);
   });
@@ -65,6 +65,7 @@ console.log("  chore: tidy up  ");`,
     const out = await fmRun("summarise this", { env: { ...process.env, CODER_FM_BIN: bin } });
     assert.equal(out, "chore: tidy up");
     assert.deepEqual(JSON.parse(fs.readFileSync(logPath, "utf8")), [
+      "respond",
       "summarise this",
     ]);
   });
