@@ -31,14 +31,15 @@ fixtures all the way down.
 
 - `claude-stream`: `electron/claude.js` (stream-json tool events, session resume); Grok also uses `claude-stream` via `electron/grok.js`
 - `codex-json`: `electron/codex.js`
-- `kimi-stream`: `electron/kimi.js` (cwd-scoped continue via sentinel session id)
+- `kimi-stream`: `electron/kimi.js` (per-session resume via `-S <session_id>` since #220; never `-c`)
 - `opencode-json`: `electron/opencode.js`
 - `cursor-stream`: `electron/cursor.js`
 - `muse-json`: `electron/muse.js`
 - `simulate`: fakes single-turn runs only (`startSimulatedRun`); Build workflows reject it
 
-Empty `models` means free-form model ids (composer Custom… + CLI `-m` / `--model`).
-Non-empty lists are membership-checked on `threads.setProvider`.
+`models` is a suggestion, not an allowlist: `threads.setProvider` accepts any
+non-empty id up to 100 chars (`normalizeModelForProvider`), and a bad id fails at
+the CLI.
 
 Binary resolution: env override (`CODER_*_BIN`) then `which` / path existence.
 
@@ -758,8 +759,10 @@ or reorder, do not `spec_submit`. Also build-stage only.
 
 ## Renderer notes
 
-- Composer model pill: always shown. Empty `models` → Default + Custom… (inline
-  input, Enter commits, Escape cancels). Non-empty → Default + list only.
+- Composer model pill: always shown. Rows are Default + the provider's list +
+  Custom… (inline input, Enter commits, Escape cancels), so an id the list does
+  not know is always reachable. A custom CLI (#458) gets one "Run as
+  configured" row instead.
 
 ## UI motion convention
 
