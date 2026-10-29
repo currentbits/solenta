@@ -108,11 +108,69 @@ function validateHooksConfig(text) {
   return { hooks, error: null };
 }
 
+const sha256 = (buf) => crypto.createHash("sha256").update(buf).digest("hex");
+
+/** True when `child` is strictly below `root` (both resolved). */
+function isInside(root, child, p = path) {
+  const rel = p.relative(root, child);
+  return rel !== "" && rel !== ".." && !rel.startsWith(`..${p.sep}`) && !p.isAbsolute(rel);
+}
+
+/**
+ * #1737: argv elements that name a plain file inside the project, resolved
+ * (symlinks followed) against the checkout. Flags and words that are not
+ * files are skipped; a bare argv[0] is a PATH lookup on POSIX, not a file.
+ * @param {string} root  project checkout
+ * @param {string[]} command
+ * `--flag=path` values count too (`node --require=./x.js`); `prefix` keeps
+ * the `--flag=` part for the argv rewrite.
+ * @returns {Array<{ index: number, prefix: string, path: string, abs: string, sha256: string }>}
+ */
+function scriptRefs(root, command) {
+  let realRoot;
+  try {
+    realRoot = fs.realpathSync(root);
+  } catch {
+    return [];
+  }
+  const refs = [];
+  command.forEach((arg, index) => {
+    if (!arg) return;
+    let prefix = "";
+    let target = arg;
+    if (arg.startsWith("-")) {
+      const eq = arg.indexOf("=");
+      if (eq < 0) return;
+      prefix = arg.slice(0, eq + 1);
+      target = arg.slice(eq + 1);
+      if (!target) return;
+    }
+    if (index === 0 && process.platform !== "win32" && path.basename(arg) === arg) return;
+    try {
+      const abs = fs.realpathSync(path.resolve(realRoot, target));
+      if (!isInside(realRoot, abs) || !fs.statSync(abs).isFile()) return;
+      const rel = path.relative(realRoot, abs).split(path.sep).join("/");
+      refs.push({ index, prefix, path: rel, abs, sha256: sha256(fs.readFileSync(abs)) });
+    } catch {
+      // missing or unreadable: not a script reference
+    }
+  });
+  return refs;
+}
+
+/** Every distinct script the project hooks reference, sorted by path. */
+function allScripts(hooks) {
+  const byPath = new Map();
+  for (const h of hooks) for (const s of h.scripts || []) byPath.set(s.path, s);
+  return [...byPath.values()].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+}
+
 /**
  * @param {string} file
  * @param {"user" | "project"} source
+ * @param {string} [root]  project checkout: hash the repo scripts too (#1737)
  */
-function readSource(file, source) {
+function readSource(file, source, root) {
   /** @type {{ source: string, path: string, exists: boolean, hash: string | null, hooks: any[], error: string | null }} */
   const out = { source, path: file, exists: false, hash: null, hooks: [], error: null };
   let raw;
@@ -123,10 +181,18 @@ function readSource(file, source) {
     return out;
   }
   out.exists = true;
-  out.hash = crypto.createHash("sha256").update(raw).digest("hex");
   const v = validateHooksConfig(raw.toString("utf8"));
-  out.hooks = v.hooks.map((h, i) => ({ ...h, id: `${source}:${i}`, source }));
+  out.hooks = v.hooks.map((h, i) => ({
+    ...h,
+    id: `${source}:${i}`,
+    source,
+    ...(root ? { scripts: scriptRefs(root, h.command) } : {}),
+  }));
   out.error = v.error;
+  // No scripts → plain sha256 of hooks.json, so approvals from before #1737 hold.
+  const h = crypto.createHash("sha256").update(raw);
+  for (const s of allScripts(out.hooks)) h.update(`\0${s.path}\0${s.sha256}`);
+  out.hash = h.digest("hex");
   return out;
 }
 
@@ -150,7 +216,7 @@ function projectFile(projectPath) {
 function loadHooks(opts) {
   const user = readSource(path.join(opts.userDataPath, USER_FILE), "user");
   const project = opts.projectPath
-    ? readSource(projectFile(opts.projectPath), "project")
+    ? readSource(projectFile(opts.projectPath), "project", opts.projectPath)
     : null;
   let trusted = false;
   if (project && project.hash) {
@@ -159,11 +225,27 @@ function loadHooks(opts) {
   return { user, project: project ? { ...project, trusted } : null };
 }
 
-/** Hooks a run may execute: valid user hooks + approved project hooks. */
+/**
+ * Hooks a run may execute: valid user hooks + approved project hooks.
+ * Project script arguments point at the checkout copy, never the thread's
+ * worktree, and carry every approved script hash so the runtime can refuse
+ * to run once any of them changes (#1737).
+ */
 function effectiveHooks(opts) {
   const { user, project } = loadHooks(opts);
   const out = user.error ? [] : user.hooks.slice();
-  if (project && project.trusted && !project.error) out.push(...project.hooks);
+  if (project && project.trusted && !project.error) {
+    const verify = allScripts(project.hooks).map(({ path: p, abs, sha256: s }) => ({
+      path: p,
+      abs,
+      sha256: s,
+    }));
+    for (const { scripts, ...h } of project.hooks) {
+      const command = h.command.slice();
+      for (const s of scripts || []) command[s.index] = `${s.prefix || ""}${s.abs}`;
+      out.push({ ...h, command, ...(verify.length ? { verify } : {}) });
+    }
+  }
   return out;
 }
 
@@ -172,10 +254,12 @@ function effectiveHooks(opts) {
  * @param {{ userDataPath: string, projectPath: string, hash: string }} opts
  */
 function approveProjectHooks(opts) {
-  const project = readSource(projectFile(opts.projectPath), "project");
+  const project = readSource(projectFile(opts.projectPath), "project", opts.projectPath);
   if (!project.hash) throw new Error("This project has no .solenta/hooks.json");
   if (project.hash !== opts.hash) {
-    throw new Error("hooks.json changed since you reviewed it. Review it again.");
+    throw new Error(
+      "hooks.json or a script it runs changed since you reviewed it. Review it again.",
+    );
   }
   const trust = readTrust(opts.userDataPath);
   trust[project.path] = project.hash;
@@ -247,6 +331,9 @@ function listHooks(opts) {
         matcher: h.matcher ?? null,
         command: h.command,
         timeoutMs: h.timeoutMs,
+        ...(src.source === "project"
+          ? { scripts: (h.scripts || []).map((s) => ({ path: s.path, sha256: s.sha256 })) }
+          : {}),
         lastRun: last[h.id] || null,
       })),
     };
@@ -408,6 +495,8 @@ module.exports = {
   NATIVE_PRE_TOOL,
   PROJECT_FILE,
   validateHooksConfig,
+  isInside,
+  scriptRefs,
   loadHooks,
   effectiveHooks,
   approveProjectHooks,

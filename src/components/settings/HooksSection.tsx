@@ -110,6 +110,17 @@ export function HooksSection({
         {h.matcher ? ` [${h.matcher}]` : ""} · {h.command.join(" ")} ·{" "}
         {h.timeoutMs / 1000}s
       </span>
+      {h.scripts && h.scripts.length > 0 && (
+        <span className={styles.note} data-hook-scripts={h.id}>
+          Runs from the project checkout:{" "}
+          {h.scripts.map((s, i) => (
+            <span key={s.path} className={styles.monoNote}>
+              {i > 0 && ", "}
+              {s.path} ({s.sha256.slice(0, 8)})
+            </span>
+          ))}
+        </span>
+      )}
       {h.event === "PreToolUse" && (
         <span className={styles.note} data-hook-best-effort="">
           Blocks before the tool on {native.join(" and ")}; best effort on
@@ -166,9 +177,10 @@ export function HooksSection({
         warning. They run after Solenta&apos;s guardrails and can only add a
         block. Project hooks in .solenta/hooks.json come from the repo and run
         only after you approve the file; any change needs a new approval.
-        Approval covers hooks.json only: a hook that runs a script from the
-        repo (./scripts/check.sh) runs the thread&apos;s copy, which the agent
-        can edit. Prefer commands installed outside the repo.
+        Approval also covers repo scripts a hook runs; they run from the
+        project checkout, not the thread&apos;s worktree. It does not cover
+        files those scripts load in turn, scripts named inside inline code
+        (bash -c), or package.json scripts run through npm or npx.
       </p>
       {local.length > 0 && (
         <ProjectPicker

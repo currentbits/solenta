@@ -47,6 +47,7 @@ function listing(trusted: boolean): UserHooksList {
           matcher: "Bash",
           command: ["./scripts/check.sh", "--strict"],
           timeoutMs: 5000,
+          scripts: [{ path: "scripts/check.sh", sha256: "0123456789abcdef" }],
           lastRun: trusted
             ? {
                 id: "project:0",
@@ -95,6 +96,22 @@ describe("HooksSection", () => {
       m.query('[data-hook-last-run="project:0"]')?.textContent || "",
       /exit 2 \(blocked\) · 42 ms[\s\S]*no deploys/,
     );
+  });
+
+  it("lists each hook's repo scripts with a short hash and says what approval covers (#1737)", async () => {
+    const fake = createFakeCoder();
+    fake.api.hooks.list = async () => listing(false);
+    await install(fake);
+    const m = await mount(<HooksSection projects={[project]} currentProjectId="p1" />);
+    await m.flush();
+    assert.match(
+      m.query('[data-hook-scripts="project:0"]')?.textContent || "",
+      /Runs from the project checkout: scripts\/check\.sh \(01234567\)/,
+    );
+    const intro = m.query("[data-hooks-settings] > p")?.textContent || "";
+    assert.match(intro, /Approval also covers repo scripts a hook runs; they run from the\s+project checkout, not the thread.s worktree/);
+    assert.match(intro, /package\.json scripts run through npm or npx/);
+    assert.doesNotMatch(intro, /Approval covers hooks\.json only/);
   });
 
   it("Test runs that hook and refreshes", async () => {

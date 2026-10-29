@@ -150,6 +150,167 @@ describe("project trust", () => {
   });
 });
 
+describe("project trust covers repo scripts (#1737)", () => {
+  let project;
+  let worktree;
+  let opts;
+  const hooksFile = () => path.join(project, ".solenta", "hooks.json");
+  const writeHooks = (hooks) => writeJson(hooksFile(), { hooks });
+  const approve = () =>
+    userHooks.approveProjectHooks({ ...opts, hash: userHooks.listHooks(opts).project.hash });
+  // Prints which copy ran and from where.
+  const script = (who) =>
+    `process.stdout.write(JSON.stringify({who:${JSON.stringify(who)},cwd:process.cwd()}))`;
+
+  beforeEach(() => {
+    // realpath: macOS tmp is a symlink, and refs resolve through it
+    project = path.join(fs.realpathSync(tmp), "repo");
+    worktree = path.join(tmp, "worktree");
+    for (const [root, who] of [[project, "checkout"], [worktree, "worktree"]]) {
+      writeJson(path.join(root, "tools", "hook.js"), script(who));
+      writeJson(path.join(root, "scripts", "check.sh"), "#!/bin/sh\necho ok\n");
+      fs.chmodSync(path.join(root, "scripts", "check.sh"), 0o755);
+    }
+    opts = { userDataPath: tmp, projectPath: project };
+  });
+
+  it("script-free hooks keep the plain hooks.json hash, so old approvals hold", () => {
+    writeHooks([{ event: "Stop", command: [NODE, "-e", "console.log(1)"] }, { event: "Stop", command: ["echo", "hi"] }]);
+    const plain = require("node:crypto").createHash("sha256").update(fs.readFileSync(hooksFile())).digest("hex");
+    const list = userHooks.listHooks(opts);
+    assert.equal(list.project.hash, plain);
+    assert.deepEqual(list.project.hooks.map((h) => h.scripts), [[], []]);
+    // a trust.json written before #1737
+    writeJson(path.join(tmp, "user-hooks", "trust.json"), { [list.project.path]: plain });
+    assert.equal(userHooks.listHooks(opts).project.trusted, true);
+    assert.equal(userHooks.effectiveHooks(opts)[0].verify, undefined);
+  });
+
+  it("finds script arguments in every interpreter form and skips flags and words", () => {
+    const outside = path.join(tmp, "outside.js");
+    fs.writeFileSync(outside, "");
+    const refs = (command) => userHooks.scriptRefs(project, command).map((r) => [r.index, r.path]);
+    assert.deepEqual(refs(["./scripts/check.sh"]), [[0, "scripts/check.sh"]]);
+    assert.deepEqual(refs(["bash", "scripts/check.sh", "--strict"]), [[1, "scripts/check.sh"]]);
+    assert.deepEqual(refs(["node", "-r", "./tools/hook.js", "tools/hook.js"]), [[2, "tools/hook.js"], [3, "tools/hook.js"]]);
+    assert.deepEqual(refs([NODE, path.join(project, "tools", "hook.js")]), [[1, "tools/hook.js"]]);
+    // inline code is already in hooks.json; flags, missing files, dirs and outside paths are not scripts
+    assert.deepEqual(refs(["bash", "-c", "./scripts/check.sh && echo done"]), []);
+    assert.deepEqual(refs([NODE, "-e", "require('./tools/hook.js')"]), []);
+    assert.deepEqual(refs(["node", "--require=missing.js", "missing.js", "tools", `--x=${outside}`, outside]), []);
+    // --flag=path pins the value and keeps the flag for the rewrite
+    const [flagRef] = userHooks.scriptRefs(project, ["node", "--require=./tools/hook.js", "-e", "1"]);
+    assert.deepEqual([flagRef.index, flagRef.path, flagRef.prefix], [1, "tools/hook.js", "--require="]);
+    assert.deepEqual(refs(["npx", "eslint", "."]), []);
+    if (process.platform !== "win32") {
+      // a bare argv[0] is a PATH lookup, not the repo file of that name
+      writeJson(path.join(project, "make"), "");
+      assert.deepEqual(refs(["make", "lint"]), []);
+    }
+  });
+
+  it("a symlink escaping the project is not a repo script; one inside resolves to its target", { skip: process.platform === "win32" }, () => {
+    const outside = path.join(tmp, "outside.sh");
+    fs.writeFileSync(outside, "echo outside\n");
+    fs.symlinkSync(outside, path.join(project, "scripts", "escape.sh"));
+    fs.symlinkSync(path.join(project, "scripts", "check.sh"), path.join(project, "scripts", "alias.sh"));
+    assert.deepEqual(userHooks.scriptRefs(project, ["sh", "scripts/escape.sh"]), []);
+    const [ref] = userHooks.scriptRefs(project, ["sh", "scripts/alias.sh"]);
+    assert.equal(ref.path, "scripts/check.sh");
+    assert.equal(ref.abs, path.join(project, "scripts", "check.sh"));
+  });
+
+  it("containment follows Windows path rules", () => {
+    const w = path.win32;
+    assert.equal(userHooks.isInside("C:\\repo", "C:\\repo\\scripts\\check.ps1", w), true);
+    assert.equal(userHooks.isInside("C:\\repo", "c:\\REPO\\scripts\\check.ps1", w), true);
+    assert.equal(userHooks.isInside("C:\\repo", "C:\\repo2\\check.ps1", w), false);
+    assert.equal(userHooks.isInside("C:\\repo", "D:\\repo\\check.ps1", w), false);
+    assert.equal(userHooks.isInside("C:\\repo", "C:\\repo", w), false);
+    assert.equal(userHooks.isInside("/repo", "/repo/..x/y", path.posix), true);
+    assert.equal(userHooks.isInside("/repo", "/other/y", path.posix), false);
+  });
+
+  it("editing a referenced script in the checkout drops trust; a vanished one too", () => {
+    writeHooks([{ event: "Stop", command: [NODE, "tools/hook.js"] }]);
+    const before = userHooks.listHooks(opts).project;
+    assert.notEqual(before.hash, require("node:crypto").createHash("sha256").update(fs.readFileSync(hooksFile())).digest("hex"));
+    approve();
+    assert.equal(userHooks.listHooks(opts).project.trusted, true);
+
+    fs.writeFileSync(path.join(project, "tools", "hook.js"), "require('child_process').exec('curl evil')");
+    assert.equal(userHooks.listHooks(opts).project.trusted, false);
+    assert.deepEqual(userHooks.effectiveHooks(opts), []);
+    approve();
+    assert.equal(userHooks.listHooks(opts).project.trusted, true);
+
+    fs.rmSync(path.join(project, "tools", "hook.js"));
+    assert.equal(userHooks.listHooks(opts).project.trusted, false);
+  });
+
+  it("refuses an approval when a script changed after review", () => {
+    writeHooks([{ event: "Stop", command: [NODE, "tools/hook.js"] }]);
+    const seen = userHooks.listHooks(opts).project.hash;
+    fs.writeFileSync(path.join(project, "tools", "hook.js"), "// swapped");
+    assert.throws(
+      () => userHooks.approveProjectHooks({ ...opts, hash: seen }),
+      /a script it runs changed since you reviewed it/,
+    );
+  });
+
+  it("rewrites script arguments to the checkout copy and runs it, never the worktree's", async () => {
+    writeHooks([{ event: "Stop", command: [NODE, "tools/hook.js"] }, { event: "Stop", command: ["./scripts/check.sh", "-v"] }]);
+    approve();
+    const prepared = userHooks.prepareRunHooks({ ...opts, threadId: "t1", cwd: worktree });
+    assert.deepEqual(prepared.hooks.map((h) => h.command), [
+      [NODE, path.join(project, "tools", "hook.js")],
+      [path.join(project, "scripts", "check.sh"), "-v"],
+    ]);
+    assert.deepEqual(prepared.hooks[0].verify.map((s) => s.path), ["scripts/check.sh", "tools/hook.js"]);
+
+    // the agent edits the worktree copy: no effect on what runs
+    fs.writeFileSync(path.join(worktree, "tools", "hook.js"), script("tampered"));
+    const out = await userHooks.runThreadEvent({ userDataPath: tmp, threadId: "t1", event: "Stop" });
+    const got = JSON.parse(out.results[0].stdout);
+    assert.equal(got.who, "checkout");
+    assert.equal(fs.realpathSync(got.cwd), fs.realpathSync(worktree));
+  });
+
+  it("re-checks script hashes before spawning: a swapped script does not run", async () => {
+    const marker = path.join(tmp, "ran");
+    writeJson(path.join(project, "tools", "hook.js"), `require("fs").writeFileSync(${JSON.stringify(marker)}, "x")`);
+    writeHooks([{ event: "Stop", command: [NODE, "tools/hook.js"] }, { event: "Stop", command: ["echo", "plain"] }]);
+    approve();
+    userHooks.prepareRunHooks({ ...opts, threadId: "t1", cwd: worktree });
+
+    // swapped in the checkout after the run resolved its hooks
+    fs.writeFileSync(path.join(project, "tools", "hook.js"), `require("fs").writeFileSync(${JSON.stringify(marker)}, "evil")`);
+    const out = await userHooks.runThreadEvent({ userDataPath: tmp, threadId: "t1", event: "Stop" });
+    assert.equal(fs.existsSync(marker), false);
+    // the whole approved set is void, so the script-free project hook stops too
+    assert.deepEqual(out.results.map((r) => r.exitCode), [null, null]);
+    assert.match(out.warnings[0], /Hook project:0 did not run: tools\/hook\.js changed since the project hooks were approved\. Re-approve/);
+    assert.equal(userHooks.listHooks(opts).project.trusted, false);
+    assert.match(userHooks.lastResults(tmp)["project:0"].error, /Re-approve/);
+  });
+
+  it("user hooks are never rewritten", () => {
+    writeJson(path.join(tmp, "hooks.json"), { hooks: [{ event: "Stop", command: [NODE, "tools/hook.js"] }] });
+    const [h] = userHooks.effectiveHooks(opts);
+    assert.deepEqual(h.command, [NODE, "tools/hook.js"]);
+    assert.equal(h.verify, undefined);
+    assert.equal(userHooks.listHooks(opts).user.hooks[0].scripts, undefined);
+  });
+
+  it("the list shows each hook's scripts with their hashes", () => {
+    writeHooks([{ event: "Stop", command: ["bash", "scripts/check.sh"] }]);
+    const [row] = userHooks.listHooks(opts).project.hooks;
+    const sha = require("node:crypto").createHash("sha256").update(fs.readFileSync(path.join(project, "scripts", "check.sh"))).digest("hex");
+    assert.deepEqual(row.scripts, [{ path: "scripts/check.sh", sha256: sha }]);
+    assert.deepEqual(row.command, ["bash", "scripts/check.sh"]);
+  });
+});
+
 describe("contract", () => {
   const hook = (src, extra = {}) => ({ id: "user:0", event: "PreToolUse", command: nodeHook(src), ...extra });
 

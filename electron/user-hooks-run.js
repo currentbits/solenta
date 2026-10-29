@@ -15,6 +15,7 @@
  *   node user-hooks-run.js PreToolUse   (resolved file in SOLENTA_USER_HOOKS)
  */
 
+const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const { spawn, spawnSync } = require("node:child_process");
@@ -70,6 +71,24 @@ function snippet(text) {
 }
 
 /**
+ * #1737: the first approved repo script whose checkout copy no longer has
+ * its approved hash (edited, swapped or gone), or null.
+ * @param {{ verify?: Array<{ path: string, abs: string, sha256: string }> }} hook
+ */
+function changedScript(hook) {
+  for (const s of hook.verify || []) {
+    let hash = null;
+    try {
+      hash = crypto.createHash("sha256").update(fs.readFileSync(s.abs)).digest("hex");
+    } catch {
+      // gone
+    }
+    if (hash !== s.sha256) return s.path;
+  }
+  return null;
+}
+
+/**
  * Run one hook. Never rejects.
  * @param {{ id?: string, event: string, command: string[], timeoutMs?: number }} hook
  * @param {object} payload
@@ -107,6 +126,14 @@ function runOne(hook, payload, cwd) {
         at,
       });
     };
+    const changed = changedScript(hook);
+    if (changed) {
+      finish(
+        null,
+        `did not run: ${changed} changed since the project hooks were approved. Re-approve them in Settings › Hooks.`,
+      );
+      return;
+    }
     let child;
     try {
       const argv = hook.command;
@@ -273,6 +300,7 @@ module.exports = {
   MAX_TIMEOUT_MS,
   TOOL_EVENTS,
   hookMatches,
+  changedScript,
   runOne,
   runHooks,
   runResolved,

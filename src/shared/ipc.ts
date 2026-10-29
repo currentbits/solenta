@@ -4175,13 +4175,18 @@ export interface UserHookRow {
   matcher: string | null;
   command: string[];
   timeoutMs: number;
+  /**
+   * Project hooks only: repo files the command runs (path relative to the
+   * project, sha256 of the checkout copy). Approval pins them too (#1737).
+   */
+  scripts?: Array<{ path: string; sha256: string }>;
   lastRun: UserHookRunResult | null;
 }
 
 export interface UserHookSource {
   path: string;
   exists: boolean;
-  /** sha256 of the file bytes; what Approve pins. */
+  /** sha256 of the file bytes plus any repo scripts it runs; what Approve pins. */
   hash: string | null;
   /** Validation error; an invalid file runs no hooks. */
   error: string | null;
