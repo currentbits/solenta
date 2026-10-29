@@ -325,6 +325,27 @@ export function getFilesystemBrowsePath(query: string, platform = "") {
   };
 }
 
+/**
+ * Rank how `name` matches `lowerQuery` (#1747): 0 exact, 1 prefix,
+ * 2 word-boundary prefix (after - _ . space or a camelCase hump),
+ * 3 substring, 4 in-order subsequence, -1 no match. Case-insensitive.
+ */
+export function browseMatchTier(name: string, lowerQuery: string): number {
+  const lower = name.toLowerCase();
+  if (lower === lowerQuery) return 0;
+  if (lower.startsWith(lowerQuery)) return 1;
+  for (let i = 1; i < name.length; i++) {
+    const boundary =
+      "-_. ".includes(name[i - 1]) ||
+      (/[a-z]/.test(name[i - 1]) && /[A-Z]/.test(name[i]));
+    if (boundary && lower.startsWith(lowerQuery, i)) return 2;
+  }
+  if (lower.includes(lowerQuery)) return 3;
+  let at = 0;
+  for (const ch of lower) if (ch === lowerQuery[at]) at++;
+  return at === lowerQuery.length ? 4 : -1;
+}
+
 export function filterFilesystemBrowseEntries(
   entries: ReadonlyArray<FilesystemBrowseEntry>,
   query: string,
@@ -334,11 +355,16 @@ export function filterFilesystemBrowseEntries(
 } {
   const lowerQuery = query.toLowerCase();
   const showHidden = query.startsWith(".");
-  const visibleEntries = entries.filter(
-    (entry) =>
-      entry.name.toLowerCase().startsWith(lowerQuery) &&
-      (showHidden || !entry.name.startsWith(".") || Boolean(entry.recent)),
-  );
+  const visibleEntries = entries
+    .filter(
+      (entry) =>
+        showHidden || !entry.name.startsWith(".") || Boolean(entry.recent),
+    )
+    .map((entry) => ({ entry, tier: browseMatchTier(entry.name, lowerQuery) }))
+    .filter((ranked) => ranked.tier >= 0)
+    // Array#sort is stable, so listing order holds within a tier.
+    .sort((a, b) => a.tier - b.tier)
+    .map((ranked) => ranked.entry);
   const exactEntry =
     query.length > 0
       ? (visibleEntries.find((entry) => entry.name === query) ?? null)
