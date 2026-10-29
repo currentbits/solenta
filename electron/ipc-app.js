@@ -10,6 +10,7 @@ const feedback = require("./feedback.js");
 const { discoverSourceControl } = require("./sourceControl.js");
 const { applyZoom } = require("./zoom.js");
 const { whenPathReady } = require("./pathEnv.js");
+const { KINDS } = require("./channels/index.js");
 
 // Read-only: setSettings ignores the key if the renderer echoes it back.
 function withSecretStorage(ctx, settings) {
@@ -27,9 +28,9 @@ const { appVersion } = feedback;
  */
 function channelsFor(ctx, input) {
   const name = input && typeof input === "object" ? /** @type {any} */ (input).channel : null;
-  if (name !== "telegram") throw new Error(`Unknown channel: ${name}`);
+  if (!KINDS.includes(name)) throw new Error(`Unknown channel: ${name}`);
   if (!ctx.channels) throw new Error("Chat channels run in the desktop app only");
-  return ctx.channels;
+  return { channels: ctx.channels, name };
 }
 
 module.exports = {
@@ -232,18 +233,22 @@ module.exports = {
       recordSecretUse,
     });
   },
-  // Chat channels (#1718). Only "telegram" exists today.
+  // Chat channels (#1718), one per KINDS entry.
   "settings:channelStatus": async (ctx) => {
     if (!ctx.channels) {
-      return { telegram: { state: "off", botUsername: null, error: null } };
+      return Object.fromEntries(
+        KINDS.map((k) => [k, { state: "off", botUsername: null, error: null }]),
+      );
     }
     return ctx.channels.status();
   },
   "settings:connectChannel": async (ctx, input) => {
-    return channelsFor(ctx, input).connect();
+    const { channels, name } = channelsFor(ctx, input);
+    return channels.connect(name);
   },
   "settings:disconnectChannel": async (ctx, input) => {
-    return channelsFor(ctx, input).disconnect();
+    const { channels, name } = channelsFor(ctx, input);
+    return channels.disconnect(name);
   },
   "providers:list": async (ctx) => {
     // First launch: `which` each CLI only once the login-shell PATH is in (#1475).

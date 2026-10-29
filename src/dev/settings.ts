@@ -17,6 +17,8 @@ import type {
   PrivacyGatewaySettings,
   WebhookSettings,
   TelegramSettings,
+  SlackSettings,
+  ChannelKind,
   ChannelStatus,
   ThreadInfo,
   WebAccessStatus,
@@ -90,16 +92,14 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
   let otel: OtelSettings = { endpoint: null, headers: {}, claudeMetrics: false };
   let modelPrices: Record<string, ModelPrice> = {};
   let privacyGateway: PrivacyGatewaySettings = { default: "off", providers: {}, patterns: [] };
-  let telegram: TelegramSettings = {
-    enabled: false,
-    hasToken: false,
-    allowedSenderIds: [],
-    projectId: null,
-    agentProfileId: null,
+  const channelOff = () => ({ enabled: false, hasToken: false, allowedSenderIds: [], projectId: null, agentProfileId: null });
+  const chats: { telegram: TelegramSettings; slack: SlackSettings; discord: TelegramSettings } = {
+    telegram: channelOff(),
+    slack: { ...channelOff(), hasAppToken: false },
+    discord: channelOff(),
   };
-  let channelStatus: ChannelStatus = {
-    telegram: { state: "off", botUsername: null, error: null },
-  };
+  const off = { state: "off", botUsername: null, error: null } as const;
+  let channelStatus: ChannelStatus = { telegram: off, slack: off, discord: off };
   let webhook: WebhookSettings = {
     url: null,
     onDone: true,
@@ -218,7 +218,9 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           },
           otel: { ...otel, headers: { ...otel.headers } },
           webhook: { ...webhook },
-          telegram: { ...telegram },
+          telegram: { ...chats.telegram },
+          slack: { ...chats.slack },
+          discord: { ...chats.discord },
           modelPrices: { ...modelPrices },
           privacyGateway: { ...privacyGateway },
         }) as AppSettings;
@@ -530,12 +532,18 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
             onWaiting: v.onWaiting !== false,
           };
         }
-        if (patch.telegram) {
-          const { botToken, hasToken: _h, ...rest } = patch.telegram;
-          telegram = {
-            ...telegram,
+        for (const kind of ["telegram", "slack", "discord"] as const) {
+          const p = patch[kind] as SlackSettings | undefined;
+          if (!p) continue;
+          const { botToken, appToken, hasToken: _h, hasAppToken: _a, ...rest } = p;
+          const prev = chats[kind] as SlackSettings;
+          chats[kind] = {
+            ...prev,
             ...rest,
-            hasToken: botToken === undefined ? telegram.hasToken : Boolean(botToken),
+            hasToken: botToken === undefined ? prev.hasToken : Boolean(botToken),
+            ...(kind === "slack"
+              ? { hasAppToken: appToken === undefined ? prev.hasAppToken : Boolean(appToken) }
+              : {}),
           };
         }
         if (Object.prototype.hasOwnProperty.call(patch, "modelPrices")) {
@@ -594,7 +602,9 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           },
           otel: { ...otel, headers: { ...otel.headers } },
           webhook: { ...webhook },
-          telegram: { ...telegram },
+          telegram: { ...chats.telegram },
+          slack: { ...chats.slack },
+          discord: { ...chats.discord },
           modelPrices: { ...modelPrices },
           privacyGateway: { ...privacyGateway },
         };
@@ -605,22 +615,25 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
         if (!webhook.url) return { ok: false, error: "Save an http(s) webhook URL first" };
         return { ok: true, status: 200 };
       },
-      // ponytail: no main process to poll Telegram from; fake the states.
+      // ponytail: no main process to run the chat transports from; fake the states.
       async channelStatus() {
         return channelStatus;
       },
-      async connectChannel() {
-        if (!telegram.hasToken) throw new Error("Add a bot token first");
-        if (telegram.allowedSenderIds.length === 0) {
+      async connectChannel({ channel }: { channel: ChannelKind }) {
+        const c = chats[channel] as SlackSettings;
+        if (!c.hasToken || (channel === "slack" && !c.hasAppToken)) {
+          throw new Error(channel === "slack" ? "Add both tokens first" : "Add a bot token first");
+        }
+        if (c.allowedSenderIds.length === 0) {
           throw new Error("Add at least one allowed sender ID first");
         }
-        telegram = { ...telegram, enabled: true };
-        channelStatus = { telegram: { state: "connected", botUsername: "solenta_dev_bot", error: null } };
+        chats[channel] = { ...c, enabled: true };
+        channelStatus = { ...channelStatus, [channel]: { state: "connected", botUsername: "solenta_dev_bot", error: null } };
         return channelStatus;
       },
-      async disconnectChannel() {
-        telegram = { ...telegram, enabled: false };
-        channelStatus = { telegram: { state: "off", botUsername: null, error: null } };
+      async disconnectChannel({ channel }: { channel: ChannelKind }) {
+        chats[channel] = { ...chats[channel], enabled: false };
+        channelStatus = { ...channelStatus, [channel]: off };
         return channelStatus;
       },
     },

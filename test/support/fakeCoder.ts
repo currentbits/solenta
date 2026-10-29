@@ -111,6 +111,8 @@ import type {
   GcScanResult,
   WebhookTestResult,
   ChannelStatus,
+  ChannelKind,
+  SlackSettings,
 } from "../../src/shared/ipc";
 import { normalizeMessagePins } from "../../src/messagePins";
 import { queuedItemFiles, queuedRow } from "../../src/queuedFiles";
@@ -379,8 +381,11 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
   const checkpoints: Record<string, CheckpointInfo[]> = {
     ...(opts.checkpoints ?? {}),
   };
+  const channelOff = { state: "off", botUsername: null, error: null } as const;
   let channelStatus: ChannelStatus = opts.channelStatus ?? {
-    telegram: { state: "off", botUsername: null, error: null },
+    telegram: channelOff,
+    slack: channelOff,
+    discord: channelOff,
   };
   let settingsState: AppSettings = {
     dailyBudgetUsd: null,
@@ -1113,11 +1118,13 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           }
           next.modelPrices = { ...p.modelPrices };
         }
-        if (p.telegram) {
+        for (const kind of ["telegram", "slack", "discord"] as const) {
           // Same write-only token contract as main's redactSettings (#1718).
-          const { botToken, hasToken: _h, ...rest } = p.telegram;
-          const prev = next.telegram;
-          next.telegram = {
+          const patchRow = p[kind] as SlackSettings | undefined;
+          if (!patchRow) continue;
+          const { botToken, appToken, hasToken: _h, hasAppToken: _a, ...rest } = patchRow;
+          const prev = next[kind] as SlackSettings | undefined;
+          next[kind] = {
             enabled: false,
             allowedSenderIds: [],
             projectId: null,
@@ -1125,6 +1132,9 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
             ...prev,
             ...rest,
             hasToken: botToken === undefined ? Boolean(prev?.hasToken) : Boolean(botToken),
+            ...(kind === "slack"
+              ? { hasAppToken: appToken === undefined ? Boolean(prev?.hasAppToken) : Boolean(appToken) }
+              : {}),
           };
         }
         settingsState = next;
@@ -1142,18 +1152,19 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         ),
       channelStatus: () =>
         rec("settings.channelStatus", [], channelStatus),
-      connectChannel: (input: { channel: "telegram" }) => {
+      connectChannel: (input: { channel: ChannelKind }) => {
         if (opts.connectChannelError) {
           calls.push({ channel: "settings.connectChannel", args: [input] });
           return Promise.reject(new Error(opts.connectChannelError));
         }
         channelStatus = {
-          telegram: { state: "connected", botUsername: "solenta_test_bot", error: null },
+          ...channelStatus,
+          [input.channel]: { state: "connected", botUsername: "solenta_test_bot", error: null },
         };
         return rec("settings.connectChannel", [input], channelStatus);
       },
-      disconnectChannel: (input: { channel: "telegram" }) => {
-        channelStatus = { telegram: { state: "off", botUsername: null, error: null } };
+      disconnectChannel: (input: { channel: ChannelKind }) => {
+        channelStatus = { ...channelStatus, [input.channel]: channelOff };
         return rec("settings.disconnectChannel", [input], channelStatus);
       },
     },

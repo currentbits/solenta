@@ -630,7 +630,7 @@ export interface ThreadInfo {
   projectId: string;
   title: string;
   /** Started from a chat channel (#1718); results go back to that chat. */
-  channel?: { kind: "telegram"; chatId: string } | null;
+  channel?: { kind: ChannelKind; chatId: string } | null;
   branch: string | null;
   /**
    * Recorded merge/PR base (#187). Null/absent = repo default
@@ -3867,6 +3867,10 @@ export interface AppSettings {
    * send `botToken` to replace it, null to clear, omit to keep.
    */
   telegram?: TelegramSettings;
+  /** Slack chat channel (Socket Mode). Tokens read back as `hasAppToken` / `hasToken`. */
+  slack?: SlackSettings;
+  /** Discord chat channel (Gateway). Read back with `hasToken` only. */
+  discord?: DiscordSettings;
   /**
    * Outbound webhook (issue #167). POSTs a small JSON payload when a thread
    * finishes or waits for permission. Independent of the desktop-notification
@@ -3949,15 +3953,32 @@ export interface TelegramSettings {
   agentProfileId: string | null;
 }
 
-/** Live state of each chat channel (settings.channelStatus). */
-export interface ChannelStatus {
-  telegram: {
-    state: "off" | "connecting" | "connected" | "error";
-    /** Bot username without the @, once getMe succeeded. */
-    botUsername: string | null;
-    error: string | null;
-  };
+/** Chat channel kinds (issue #1718). */
+export type ChannelKind = "telegram" | "slack" | "discord";
+
+/**
+ * Slack chat channel config (Socket Mode). `allowedSenderIds` are Slack
+ * member ids (U…). Both tokens are write-only.
+ */
+export interface SlackSettings extends TelegramSettings {
+  /** Write-only xapp- app-level token (opens the socket). */
+  appToken?: string | null;
+  /** Read-only: an app-level token is saved. */
+  hasAppToken?: boolean;
 }
+
+/** Discord chat channel config: Telegram's shape, with Discord user ids. */
+export type DiscordSettings = TelegramSettings;
+
+export interface ChannelState {
+  state: "off" | "connecting" | "connected" | "error";
+  /** Bot username without the @, once the token check succeeded. */
+  botUsername: string | null;
+  error: string | null;
+}
+
+/** Live state of each chat channel (settings.channelStatus). */
+export type ChannelStatus = Record<ChannelKind, ChannelState>;
 
 /** Outcome of settings.testWebhook. `status` is absent on a transport error. */
 export interface WebhookTestResult {
@@ -5239,9 +5260,9 @@ export interface CoderApi {
     testWebhook(): Promise<WebhookTestResult>;
     /** Chat channel connection state (issue #1718). */
     channelStatus(): Promise<ChannelStatus>;
-    /** Check the saved bot token and start polling; rejects on a bad token. */
-    connectChannel(input: { channel: "telegram" }): Promise<ChannelStatus>;
-    disconnectChannel(input: { channel: "telegram" }): Promise<ChannelStatus>;
+    /** Check the saved token(s) and start listening; rejects on a bad token. */
+    connectChannel(input: { channel: ChannelKind }): Promise<ChannelStatus>;
+    disconnectChannel(input: { channel: ChannelKind }): Promise<ChannelStatus>;
   };
   /**
    * Stay-awake state (issue #364). The mode itself lives in settings

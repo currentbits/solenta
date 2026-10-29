@@ -866,10 +866,16 @@ function redactSettings(settings) {
       hasElevenlabsKey: Boolean(settings.speech.elevenlabsApiKey),
     };
   }
-  // Same for the Telegram bot token (#1718).
-  if (settings.telegram && typeof settings.telegram === "object") {
-    const { botToken, ...rest } = settings.telegram;
-    out.telegram = { ...rest, hasToken: Boolean(botToken) };
+  // Same for chat channel tokens (#1718).
+  for (const kind of ["telegram", "slack", "discord"]) {
+    const c = settings[kind];
+    if (!c || typeof c !== "object") continue;
+    const { botToken, appToken, ...rest } = c;
+    out[kind] = {
+      ...rest,
+      hasToken: Boolean(botToken),
+      ...(kind === "slack" ? { hasAppToken: Boolean(appToken) } : {}),
+    };
   }
   return out;
 }

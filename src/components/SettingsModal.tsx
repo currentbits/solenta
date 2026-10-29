@@ -123,7 +123,7 @@ const PANE_META: Record<
   },
   integrations: {
     label: "Integrations",
-    hint: "Pair an external MCP client, or start threads from a Telegram chat.",
+    hint: "Pair an external MCP client, or start threads from Telegram, Slack or Discord.",
     keywords:
       "mcp pairing claude desktop claude code token integrations external agent connect telegram chat bot channel slack discord phone message",
   },
