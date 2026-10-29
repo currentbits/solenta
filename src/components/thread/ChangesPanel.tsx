@@ -44,10 +44,12 @@ import {
   setDiffScope,
   setDiffSplit,
   setDiffWrap,
+  useDiffHideTests,
   useDiffIgnoreWhitespace,
   useDiffSplit,
   useDiffWrap,
 } from "../../uiPrefs";
+import { TestFilesBar, filterTestFiles } from "../TurnDiffPanel";
 import { blastRadiusTitle, isCiWorkflowPath } from "../../blastRadius";
 import {
   buildReviewItinerary,
@@ -773,6 +775,17 @@ export function ChangesPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- focus is the trigger
   }, [focus]);
 
+  // Display only: staging, find and lazy fetches keep the full diff.files.
+  const hideTests = useDiffHideTests();
+  const testFilter = useMemo(
+    () => filterTestFiles(diff?.files ?? [], hideTests, focus?.path),
+    [diff, hideTests, focus],
+  );
+  const shownPaths = useMemo(
+    () => new Set(testFilter.shown.map((f) => f.path)),
+    [testFilter],
+  );
+
   useEffect(() => {
     if (!diff || diff.files.length === 0) {
       setSelectedPath(null);
@@ -784,9 +797,9 @@ export function ChangesPanel({
       setSelectedPath(want);
       return;
     }
-    if (selectedPath && diff.files.some((f) => f.path === selectedPath)) return;
-    setSelectedPath(diff.files[0]!.path);
-  }, [diff, selectedPath]);
+    if (selectedPath && shownPaths.has(selectedPath)) return;
+    setSelectedPath(testFilter.shown[0]?.path ?? null);
+  }, [diff, selectedPath, testFilter, shownPaths]);
 
   useEffect(() => {
     if (open) void load();
@@ -821,8 +834,11 @@ export function ChangesPanel({
     [itinerary],
   );
   const visiblePatches = useMemo(
-    () => (selectedPath ? patches.filter((p) => p.path === selectedPath) : patches),
-    [patches, selectedPath],
+    () =>
+      patches.filter((p) =>
+        selectedPath ? p.path === selectedPath : shownPaths.has(p.path),
+      ),
+    [patches, selectedPath, shownPaths],
   );
   const find = useDiffFind(
     diff?.files ?? [],
@@ -1211,16 +1227,18 @@ export function ChangesPanel({
                 {stagedPaths.size}/{diff.files.length} staged
               </div>
               ) : null}
+              <TestFilesBar {...testFilter} />
               <ReviewItineraryView
                 itinerary={itinerary}
                 testsFirst={testsFirst}
                 onToggleTestsFirst={() => setTestsFirst((v) => !v)}
               />
-              {itinerary.chunks.map((chunk) => (
+              {itinerary.chunks.map((chunk) =>
+                chunk.files.some((f) => shownPaths.has(f.path)) ? (
                 <div key={chunk.area}>
                   <ChunkRationale itinerary={itinerary} area={chunk.area} />
                   <ul className={styles.fileList}>
-                    {chunk.files.map((f) => (
+                    {chunk.files.filter((f) => shownPaths.has(f.path)).map((f) => (
                       <FileRow
                         key={f.path}
                         file={f}
@@ -1240,7 +1258,8 @@ export function ChangesPanel({
                     ))}
                   </ul>
                 </div>
-              ))}
+                ) : null,
+              )}
             </div>
             <div className={styles.changesDiff}>
               {imageFile ? null : (
