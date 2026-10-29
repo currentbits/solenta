@@ -3,24 +3,93 @@
 /**
  * Two-way chat channels (#1718): a chat message starts or continues a
  * thread, and the thread's result, approval prompts and questions go back
- * to the chat. Telegram is the only transport today. A transport needs:
- * sendText, sendButtons, answerButton, getMe, start/stop, and to hand
- * onMessage({ chatId, senderId, text }) / onButton({ id, chatId, senderId,
- * data }) normalized events in here.
+ * to the chat. One transport per kind (TRANSPORTS below), each with its own
+ * settings key, channel state and status. A transport needs: sendText,
+ * sendButtons, answerButton, getMe, start/stop, and to hand
+ * onMessage({ chatId, chatType, senderId, text }) / onButton({ id, chatId,
+ * chatType, senderId, data }) normalized events in here. Direct messages
+ * report chatType "private"; anything else is ignored.
  *
  * Chat text is untrusted: it only ever becomes a prompt (never a shell
  * argument), senders off the allowlist and group chats get no reply at all, and threads run
  * with the project's / profile's normal permission mode.
  *
- * State: store.getChannelState("telegram") holds the poll offset and the
- * chat -> thread map; the thread carries `channel: { kind, chatId }` so a
- * finished turn finds its chat.
+ * State: store.getChannelState(kind) holds the transport's cursor (Telegram's
+ * poll offset) and the chat -> thread map; the thread carries
+ * `channel: { kind, chatId }` so a finished turn finds its chat.
  */
 
 const services = require("../services.js");
 const { createTelegram } = require("./telegram.js");
+const { createSlack } = require("./slack.js");
+const { createDiscord } = require("./discord.js");
 
-const KIND = "telegram";
+/**
+ * @typedef {{ sendText(chatId: string, text: string): Promise<void>, sendButtons(chatId: string, text: string, buttons: Array<{ text: string, data: string }>): Promise<void>, answerButton(id: string, text?: string): Promise<unknown>, getMe(): Promise<any>, start(): void, stop(): Promise<void> }} Transport
+ * @typedef {{ fetch?: typeof fetch, state: { offset: number }, save: () => void, onMessage: (m: any) => Promise<void>, onButton: (p: any) => Promise<void>, onState: (s: { state: string, error?: string }) => void, log: (msg: string) => void }} TransportHooks
+ */
+
+/**
+ * Per kind: settings fields holding tokens (all required to connect), and
+ * how to build the transport from saved settings.
+ * @type {Record<string, { label: string, tokens: string[], create: (c: any, h: TransportHooks, deps: any) => Transport }>}
+ */
+const TRANSPORTS = {
+  telegram: {
+    label: "Telegram",
+    tokens: ["botToken"],
+    create: (c, h, deps) =>
+      createTelegram({
+        token: c.botToken,
+        fetch: h.fetch,
+        offset: h.state.offset,
+        onOffset: (offset) => {
+          h.state.offset = offset;
+          h.save();
+        },
+        onMessage: h.onMessage,
+        onButton: h.onButton,
+        onState: /** @type {any} */ (h.onState),
+        log: h.log,
+        pollTimeoutSec: deps.pollTimeoutSec,
+        backoffMs: deps.backoffMs,
+      }),
+  },
+  slack: {
+    label: "Slack",
+    tokens: ["appToken", "botToken"],
+    create: (c, h, deps) =>
+      createSlack({
+        appToken: c.appToken,
+        botToken: c.botToken,
+        fetch: h.fetch,
+        WebSocket: deps.WebSocket,
+        onMessage: h.onMessage,
+        onButton: h.onButton,
+        onState: /** @type {any} */ (h.onState),
+        log: h.log,
+        backoffMs: deps.backoffMs,
+      }),
+  },
+  discord: {
+    label: "Discord",
+    tokens: ["botToken"],
+    create: (c, h, deps) =>
+      createDiscord({
+        token: c.botToken,
+        fetch: h.fetch,
+        WebSocket: deps.WebSocket,
+        gatewayUrl: deps.discordGatewayUrl,
+        onMessage: h.onMessage,
+        onButton: h.onButton,
+        onState: /** @type {any} */ (h.onState),
+        log: h.log,
+        backoffMs: deps.backoffMs,
+      }),
+  },
+};
+const KINDS = Object.keys(TRANSPORTS);
+
 const HELP =
   "Send a message to start a thread. Later messages continue it.\n" +
   "/new starts a fresh thread, /status shows the current one.";
@@ -40,116 +109,126 @@ function errText(err) {
  * @param {(msg: string) => void} [deps.log]
  * @param {number} [deps.pollTimeoutSec]
  * @param {number} [deps.backoffMs]
+ * @param {typeof WebSocket} [deps.WebSocket]
+ * @param {string} [deps.discordGatewayUrl] test seam
  */
 function createChannels(deps) {
   const { store, runner } = deps;
   const broadcast = deps.broadcast || (() => {});
   const log = deps.log || ((msg) => console.warn(msg));
-  /** @type {{ client: ReturnType<typeof createTelegram> | null, state: string, botUsername: string | null, error: string | null }} */
-  const tg = { client: null, state: "off", botUsername: null, error: null };
+  /** @type {Record<string, { client: Transport | null, state: string, botUsername: string | null, error: string | null }>} */
+  const live = Object.fromEntries(
+    KINDS.map((k) => [k, { client: null, state: "off", botUsername: null, error: null }]),
+  );
   const warnedSenders = new Set();
   // Button key -> what it answers. Lost on restart: a stale press says so.
   // ponytail: grows by one per unanswered prompt; prune if that ever matters.
-  /** @type {Map<string, { chatId: string, threadId: string, requestId?: string, questionId?: string }>} */
+  /** @type {Map<string, { kind: string, chatId: string, threadId: string, requestId?: string, questionId?: string }>} */
   const buttons = new Map();
   let nextKey = 1;
   const sentPrompts = new Set();
   /** @type {Map<string, unknown>} threadId -> last assistant message posted */
   const posted = new Map();
 
-  const cfg = () => store.getSettings().telegram;
-  const allowed = (/** @type {string} */ senderId) =>
-    cfg().allowedSenderIds.includes(String(senderId));
-  const chats = () => store.getChannelState(KIND).chats;
+  const cfg = (/** @type {string} */ kind) => /** @type {any} */ (store.getSettings())[kind];
+  const allowed = (/** @type {string} */ kind, /** @type {string} */ senderId) =>
+    cfg(kind).allowedSenderIds.includes(String(senderId));
+  const chats = (/** @type {string} */ kind) => store.getChannelState(kind).chats;
   const changed = () => broadcast("threads:changed", services.listThreads(store));
 
-  /** @param {string} chatId @param {string} text */
-  async function send(chatId, text) {
-    if (!tg.client) return;
+  /** @param {string} kind @param {string} chatId @param {string} text */
+  async function send(kind, chatId, text) {
+    const client = live[kind] && live[kind].client;
+    if (!client) return;
     try {
-      await tg.client.sendText(chatId, text);
+      await client.sendText(chatId, text);
     } catch (err) {
-      log(`telegram: send failed: ${errText(err)}`);
+      log(`${kind}: send failed: ${errText(err)}`);
     }
   }
 
-  /** @param {string} chatId @param {string} text @param {Array<{ text: string, data: string }>} list */
-  async function sendButtons(chatId, text, list) {
-    if (!tg.client) return;
+  /** @param {string} kind @param {string} chatId @param {string} text @param {Array<{ text: string, data: string }>} list */
+  async function sendButtons(kind, chatId, text, list) {
+    const client = live[kind] && live[kind].client;
+    if (!client) return;
     try {
-      await tg.client.sendButtons(chatId, text, list);
+      await client.sendButtons(chatId, text, list);
     } catch (err) {
-      log(`telegram: send failed: ${errText(err)}`);
+      log(`${kind}: send failed: ${errText(err)}`);
     }
   }
 
-  /** @param {string} chatId @param {string} text */
-  async function startThread(chatId, text) {
-    const c = cfg();
+  /** @param {string} kind @param {string} chatId @param {string} text */
+  async function startThread(kind, chatId, text) {
+    const c = cfg(kind);
     const project = c.projectId ? store.getProject(c.projectId) : null;
     if (!project) {
-      await send(chatId, "No default project is set. Pick one in Solenta: Settings → Integrations → Telegram.");
+      await send(
+        kind,
+        chatId,
+        `No default project is set. Pick one in Solenta: Settings → Integrations → ${TRANSPORTS[kind].label}.`,
+      );
       return;
     }
     const thread = services.createThread(store, {
       projectId: project.id,
       title: text.split("\n")[0],
-      channel: { kind: KIND, chatId },
+      channel: { kind, chatId },
     });
     if (c.agentProfileId) {
       try {
         services.applyAgentProfile(store, { threadId: thread.id, profileId: c.agentProfileId });
       } catch (err) {
-        log(`telegram: agent profile not applied: ${errText(err)}`);
+        log(`${kind}: agent profile not applied: ${errText(err)}`);
       }
     }
     // Same lazy worktree intent as a New Thread with the default on.
     if (store.getSettings().defaultWorktree && !project.scratch && !project.remoteHost) {
       store.updateThread(thread.id, { pendingWorktree: true });
     }
-    chats()[chatId] = thread.id;
+    chats(kind)[chatId] = thread.id;
     store.save();
     changed();
     try {
       await runner.startRun({ threadId: thread.id, prompt: text });
-      await send(chatId, `Started "${thread.title}". I'll reply here when it's done.`);
+      await send(kind, chatId, `Started "${thread.title}". I'll reply here when it's done.`);
     } catch (err) {
-      await send(chatId, `Could not start the thread: ${errText(err)}`);
+      await send(kind, chatId, `Could not start the thread: ${errText(err)}`);
     }
   }
 
-  /** @param {any} thread @param {string} chatId @param {string} text */
-  async function continueThread(thread, chatId, text) {
+  /** @param {string} kind @param {any} thread @param {string} chatId @param {string} text */
+  async function continueThread(kind, thread, chatId, text) {
     const queue = async () => {
       services.setQueued(store, { threadId: thread.id, prompt: text });
       changed();
-      await send(chatId, "Queued. It runs when the current turn finishes.");
+      await send(kind, chatId, "Queued. It runs when the current turn finishes.");
     };
     if (runner.isRunning(thread.id) || thread.status === "working") return queue();
     try {
       await runner.startRun({ threadId: thread.id, prompt: text });
     } catch (err) {
       if (/already active/i.test(errText(err))) return queue();
-      await send(chatId, `Could not send: ${errText(err)}`);
+      await send(kind, chatId, `Could not send: ${errText(err)}`);
     }
   }
 
-  /** @param {{ chatId: string, chatType: string, senderId: string, text: string }} msg */
-  async function onMessage({ chatId, chatType, senderId, text }) {
+  /** @param {string} kind @param {{ chatId: string, chatType: string, senderId: string, text: string }} msg */
+  async function onMessage(kind, { chatId, chatType, senderId, text }) {
     // Private chats only: in a group, every member would read the agent's
     // output (code, diffs, maybe secrets) even if only the sender is allowed.
     if (chatType !== "private") {
-      if (!warnedSenders.has(`chat:${chatId}`)) {
-        warnedSenders.add(`chat:${chatId}`);
-        log(`telegram: ignored a message in ${chatType || "a non-private"} chat ${chatId}. Message the bot directly.`);
+      if (!warnedSenders.has(`${kind}:chat:${chatId}`)) {
+        warnedSenders.add(`${kind}:chat:${chatId}`);
+        log(`${kind}: ignored a message in ${chatType || "a non-private"} chat ${chatId}. Message the bot directly.`);
       }
       return;
     }
-    if (!allowed(senderId)) {
-      if (!warnedSenders.has(senderId)) {
-        warnedSenders.add(senderId);
+    if (!allowed(kind, senderId)) {
+      if (!warnedSenders.has(`${kind}:${senderId}`)) {
+        warnedSenders.add(`${kind}:${senderId}`);
         log(
-          `telegram: ignored a message from sender id ${senderId}. ` +
+          `${kind}: ignored a message from sender id ${senderId}. ` +
             "Add it to Allowed sender IDs in Settings to let it start threads.",
         );
       }
@@ -157,70 +236,71 @@ function createChannels(deps) {
     }
     const body = text.trim();
     if (!body) {
-      await send(chatId, "Only text messages are supported.");
+      await send(kind, chatId, "Only text messages are supported.");
       return;
     }
     const cmd = /^\/(\w+)(?:@\w+)?(?:\s+([\s\S]*))?$/.exec(body);
     const name = cmd ? cmd[1].toLowerCase() : null;
     if (name === "start" || name === "help") {
-      await send(chatId, HELP);
+      await send(kind, chatId, HELP);
       return;
     }
     if (name === "new") {
-      delete chats()[chatId];
+      delete chats(kind)[chatId];
       store.save();
       const rest = (cmd && cmd[2] ? cmd[2] : "").trim();
-      if (rest) await startThread(chatId, rest);
-      else await send(chatId, "OK. Your next message starts a new thread.");
+      if (rest) await startThread(kind, chatId, rest);
+      else await send(kind, chatId, "OK. Your next message starts a new thread.");
       return;
     }
-    const threadId = chats()[chatId];
+    const threadId = chats(kind)[chatId];
     const thread = threadId ? store.getThread(threadId) : null;
-    const live = thread && !services.isTrashed(thread) ? thread : null;
+    const current = thread && !services.isTrashed(thread) ? thread : null;
     if (name === "status") {
-      if (!live) await send(chatId, "No thread yet. Send a message to start one.");
+      if (!current) await send(kind, chatId, "No thread yet. Send a message to start one.");
       else {
-        const s = live.status === "working" && live.awaitingInput ? "waiting for you" : live.status;
-        await send(chatId, `${live.title}: ${s}`);
+        const s = current.status === "working" && current.awaitingInput ? "waiting for you" : current.status;
+        await send(kind, chatId, `${current.title}: ${s}`);
       }
       return;
     }
-    if (live) await continueThread(live, chatId, body);
-    else await startThread(chatId, body);
+    if (current) await continueThread(kind, current, chatId, body);
+    else await startThread(kind, chatId, body);
   }
 
-  /** @param {{ id: string, chatId: string, chatType: string, senderId: string, data: string }} press */
-  async function onButton({ id, chatId, chatType, senderId, data }) {
-    if (chatType !== "private" || !allowed(senderId)) return;
+  /** @param {string} kind @param {{ id: string, chatId: string, chatType: string, senderId: string, data: string }} press */
+  async function onButton(kind, { id, chatId, chatType, senderId, data }) {
+    if (chatType !== "private" || !allowed(kind, senderId)) return;
     const answer = async (/** @type {string} */ text) => {
       try {
-        if (tg.client) await tg.client.answerButton(id, text);
+        const client = live[kind].client;
+        if (client) await client.answerButton(id, text);
       } catch {
         // The spinner times out on its own.
       }
     };
-    const [kind, key, idx] = data.split(":");
+    const [verb, key, idx] = data.split(":");
     const b = buttons.get(key);
-    if (!b || b.chatId !== chatId) {
+    if (!b || b.kind !== kind || b.chatId !== chatId) {
       await answer("This button has expired. Answer in Solenta.");
       return;
     }
-    if ((kind === "ok" || kind === "no") && b.requestId) {
+    if ((verb === "ok" || verb === "no") && b.requestId) {
       buttons.delete(key);
       try {
         // Same call the approvals inbox and the thread's permission card make.
         await runner.respondPermission({
           threadId: b.threadId,
           requestId: b.requestId,
-          decision: kind === "ok" ? "allow" : "deny",
+          decision: verb === "ok" ? "allow" : "deny",
         });
-        await answer(kind === "ok" ? "Allowed" : "Denied");
+        await answer(verb === "ok" ? "Allowed" : "Denied");
       } catch (err) {
         await answer(errText(err).slice(0, 180));
       }
       return;
     }
-    if (kind === "q" && b.questionId) {
+    if (verb === "q" && b.questionId) {
       const thread = store.getThread(b.threadId);
       const card = thread && thread.pendingQuestion;
       const q = card && card.id === b.questionId ? card.questions[0] : null;
@@ -233,7 +313,7 @@ function createChannels(deps) {
       buttons.delete(key);
       await answer(opt.label);
       // The desktop question card answers through the normal send path too.
-      await continueThread(thread, chatId, `${QUESTION_PREFIX}${q.question}\n→ ${opt.label}`);
+      await continueThread(kind, thread, chatId, `${QUESTION_PREFIX}${q.question}\n→ ${opt.label}`);
       return;
     }
     await answer("Unknown button.");
@@ -241,7 +321,7 @@ function createChannels(deps) {
 
   /** @param {any} thread */
   async function sendApprovals(thread) {
-    const chatId = thread.channel.chatId;
+    const { kind, chatId } = thread.channel;
     const list = typeof runner.listPendingApprovals === "function" ? runner.listPendingApprovals() : [];
     for (const a of list) {
       if (a.threadId !== thread.id) continue;
@@ -249,13 +329,13 @@ function createChannels(deps) {
       if (sentPrompts.has(seen)) continue;
       sentPrompts.add(seen);
       if ((a.questions && a.questions.length) || a.inputRequest) {
-        await send(chatId, `${thread.title} is asking: ${a.summary}\nAnswer this in Solenta.`);
+        await send(kind, chatId, `${thread.title} is asking: ${a.summary}\nAnswer this in Solenta.`);
         continue;
       }
       const key = String(nextKey++);
-      buttons.set(key, { chatId, threadId: thread.id, requestId: a.requestId });
+      buttons.set(key, { kind, chatId, threadId: thread.id, requestId: a.requestId });
       const detail = a.plan ? `Plan:\n${a.plan}` : a.command || a.summary;
-      await sendButtons(chatId, `${thread.title} needs approval:\n${detail}`, [
+      await sendButtons(kind, chatId, `${thread.title} needs approval:\n${detail}`, [
         { text: "Allow", data: `ok:${key}` },
         { text: "Deny", data: `no:${key}` },
       ]);
@@ -267,14 +347,15 @@ function createChannels(deps) {
     const card = thread.pendingQuestion;
     if (!card || sentPrompts.has(card.id)) return;
     sentPrompts.add(card.id);
-    const chatId = thread.channel.chatId;
+    const { kind, chatId } = thread.channel;
     const qs = Array.isArray(card.questions) ? card.questions : [];
     const one = qs.length === 1 && !qs[0].multiSelect && qs[0].options.length > 0 ? qs[0] : null;
     if (one) {
       const key = String(nextKey++);
-      buttons.set(key, { chatId, threadId: thread.id, questionId: card.id });
+      buttons.set(key, { kind, chatId, threadId: thread.id, questionId: card.id });
       const tail = one.customAnswer === false ? "" : "\n\nOr reply with your own answer.";
       await sendButtons(
+        kind,
         chatId,
         `${one.question}${tail}`,
         one.options.map((/** @type {any} */ o, /** @type {number} */ i) => ({
@@ -288,21 +369,21 @@ function createChannels(deps) {
       (/** @type {any} */ q) =>
         `${q.question}\n${q.options.map((/** @type {any} */ o) => `• ${o.label}`).join("\n")}`,
     );
-    await send(chatId, `${lines.join("\n\n")}\n\nReply with your answers here, or answer in Solenta.`);
+    await send(kind, chatId, `${lines.join("\n\n")}\n\nReply with your answers here, or answer in Solenta.`);
   }
 
   /** @param {any} thread @param {string} next */
   async function deliver(thread, next) {
-    const chatId = thread.channel.chatId;
+    const { kind, chatId } = thread.channel;
     if (next === "done") {
       const msg = store.getLastAssistantMessage(thread.id);
       const mark = msg && (msg.id ?? msg.text);
       if (msg && posted.get(thread.id) !== mark) {
         posted.set(thread.id, mark);
-        await send(chatId, msg.text);
+        await send(kind, chatId, msg.text);
       }
     } else if (next === "failed") {
-      await send(chatId, `${thread.title} failed: ${thread.lastError || "unknown error"}`);
+      await send(kind, chatId, `${thread.title} failed: ${thread.lastError || "unknown error"}`);
     } else if (next === "waiting") {
       await sendApprovals(thread);
     }
@@ -311,93 +392,119 @@ function createChannels(deps) {
 
   /**
    * Thread state transition hook (main.js pushFn, same gate as the webhook):
-   * next is "done" | "failed" | "waiting".
+   * next is "done" | "failed" | "waiting". Routed by thread.channel.kind.
    * @param {any} thread
    * @param {string} next
    */
   function onThreadUpdate(thread, next) {
-    if (!thread || !thread.channel || thread.channel.kind !== KIND || !tg.client) return;
-    void deliver(thread, next).catch((err) => log(`telegram: deliver failed: ${errText(err)}`));
+    const kind = thread && thread.channel && thread.channel.kind;
+    if (!kind || !live[kind] || !live[kind].client) return;
+    void deliver(thread, next).catch((err) => log(`${kind}: deliver failed: ${errText(err)}`));
   }
 
-  async function stopClient() {
-    const client = tg.client;
-    tg.client = null;
+  /** @param {string} kind */
+  async function stopClient(kind) {
+    const client = live[kind].client;
+    live[kind].client = null;
     if (client) await client.stop();
   }
 
   function status() {
-    return { telegram: { state: tg.state, botUsername: tg.botUsername, error: tg.error } };
+    return Object.fromEntries(
+      KINDS.map((k) => [k, { state: live[k].state, botUsername: live[k].botUsername, error: live[k].error }]),
+    );
   }
 
-  /** Validate the token with getMe, then poll. Persists enabled so a relaunch reconnects. */
-  async function connect() {
-    const c = cfg();
-    if (!c.botToken) throw new Error("Add a bot token first");
+  /** @param {string} kind */
+  function known(kind) {
+    if (!Object.prototype.hasOwnProperty.call(TRANSPORTS, kind)) {
+      throw new Error(`Unknown channel: ${kind}`);
+    }
+    return TRANSPORTS[kind];
+  }
+
+  /**
+   * Validate the token(s) with getMe, then listen. Persists enabled so a
+   * relaunch reconnects.
+   * @param {string} [kind]
+   */
+  async function connect(kind = "telegram") {
+    const t = known(kind);
+    const c = cfg(kind);
+    if (t.tokens.some((f) => !c[f])) {
+      throw new Error(t.tokens.length > 1 ? "Add both tokens first" : "Add a bot token first");
+    }
     if (c.allowedSenderIds.length === 0) {
       throw new Error("Add at least one allowed sender ID first");
     }
-    await stopClient();
-    const client = createTelegram({
-      token: c.botToken,
-      fetch: deps.fetch,
-      offset: store.getChannelState(KIND).offset,
-      onOffset: (offset) => {
-        store.getChannelState(KIND).offset = offset;
-        store.save();
+    await stopClient(kind);
+    const st = live[kind];
+    /** @type {Transport} */
+    const client = t.create(
+      c,
+      {
+        fetch: deps.fetch,
+        state: store.getChannelState(kind),
+        save: () => store.save(),
+        onMessage: (m) => onMessage(kind, m),
+        onButton: (p) => onButton(kind, p),
+        onState: (s) => {
+          if (st.client !== client) return;
+          st.state = s.state;
+          st.error = s.error || null;
+        },
+        log,
       },
-      onMessage,
-      onButton,
-      onState: (s) => {
-        if (tg.client !== client) return;
-        tg.state = s.state;
-        tg.error = s.error || null;
-      },
-      log,
-      pollTimeoutSec: deps.pollTimeoutSec,
-      backoffMs: deps.backoffMs,
-    });
-    tg.state = "connecting";
-    tg.error = null;
+      deps,
+    );
+    st.state = "connecting";
+    st.error = null;
     try {
-      require("../secrets.js").recordSecretUse({ purpose: "telegram", key: "telegram.botToken" });
+      const { recordSecretUse } = require("../secrets.js");
+      for (const f of t.tokens) recordSecretUse({ purpose: kind, key: `${kind}.${f}` });
       const me = await client.getMe();
-      tg.botUsername = me && me.username ? String(me.username) : null;
+      st.botUsername = me && me.username ? String(me.username) : null;
     } catch (err) {
-      tg.state = "error";
-      tg.error = errText(err);
+      st.state = "error";
+      st.error = errText(err);
       throw err;
     }
-    tg.client = client;
-    tg.state = "connected";
+    st.client = client;
+    st.state = "connected";
     client.start();
     if (!c.enabled) {
-      store.setSettings({ telegram: { enabled: true } });
+      store.setSettings({ [kind]: { enabled: true } });
       store.save();
     }
     return status();
   }
 
-  async function disconnect() {
-    await stopClient();
-    tg.state = "off";
-    tg.error = null;
-    if (cfg().enabled) {
-      store.setSettings({ telegram: { enabled: false } });
+  /** @param {string} [kind] */
+  async function disconnect(kind = "telegram") {
+    known(kind);
+    await stopClient(kind);
+    live[kind].state = "off";
+    live[kind].error = null;
+    if (cfg(kind).enabled) {
+      store.setSettings({ [kind]: { enabled: false } });
       store.save();
     }
     return status();
   }
 
   return {
-    /** App start: reconnect if the user left it connected. */
+    /** App start: reconnect every channel the user left connected. */
     start() {
-      const c = cfg();
-      if (!c.enabled || !c.botToken || c.allowedSenderIds.length === 0) return;
-      connect().catch((err) => log(`telegram: connect failed: ${errText(err)}`));
+      for (const kind of KINDS) {
+        const c = cfg(kind);
+        if (!c || !c.enabled || TRANSPORTS[kind].tokens.some((f) => !c[f]) || c.allowedSenderIds.length === 0) continue;
+        connect(kind).catch((err) => log(`${kind}: connect failed: ${errText(err)}`));
+      }
     },
-    /** App quit: stop polling, keep the enabled flag. */
-    stopAll: stopClient,
+    /** App quit: stop every transport, keep the enabled flags. */
+    async stopAll() {
+      await Promise.all(KINDS.map(stopClient));
+    },
     connect,
     disconnect,
     status,
@@ -405,4 +512,4 @@ function createChannels(deps) {
   };
 }
 
-module.exports = { createChannels };
+module.exports = { createChannels, KINDS };

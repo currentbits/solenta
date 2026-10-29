@@ -236,7 +236,7 @@ let wedgedLaneWatchdog = null;
 /** @type {ReturnType<typeof startScheduler> | null} */
 let automationScheduler = null;
 
-/** Chat channels (#1718): Telegram long polling. */
+/** Chat channels (#1718): one transport per kind (channels/index.js). */
 /** @type {ReturnType<typeof import("./channels/index.js").createChannels> | null} */
 let channels = null;
 

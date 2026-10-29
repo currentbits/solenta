@@ -127,8 +127,15 @@ function secretGroups(settings) {
   if (isPlainObject(settings.speech)) {
     field("speech", settings.speech, ["openaiApiKey", "elevenlabsApiKey"], true);
   }
+  // Chat channel tokens (#1718).
   if (isPlainObject(settings.telegram)) {
     field("telegram", settings.telegram, ["botToken"], true);
+  }
+  if (isPlainObject(settings.slack)) {
+    field("slack", settings.slack, ["appToken", "botToken"], true);
+  }
+  if (isPlainObject(settings.discord)) {
+    field("discord", settings.discord, ["botToken"], true);
   }
   // Provider instance env (#453): every value may be a key or token.
   for (const inst of rows(settings.providerInstances)) {

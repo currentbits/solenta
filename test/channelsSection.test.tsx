@@ -1,5 +1,5 @@
 /**
- * Settings → Integrations → Telegram (#1718).
+ * Settings → Integrations → Telegram, Slack and Discord (#1718).
  *
  * Run: node --import=./test/support/render.mjs --experimental-strip-types --test test/channelsSection.test.tsx
  */
@@ -83,5 +83,61 @@ describe("ChannelsSection", () => {
     await view.flush();
     assert.match(view.query("[data-telegram-error]")!.textContent!, /Unauthorized/);
     assert.match(view.query("[data-telegram-status]")!.textContent!, /Error: Unauthorized/);
+  });
+
+  it("shows all three channels with DMs-only copy", async () => {
+    const { view } = await setup();
+    for (const kind of ["telegram", "slack", "discord"]) {
+      assert.ok(view.query(`[data-channels-${kind}]`), kind);
+      assert.match(view.query(`[data-${kind}-status]`)!.textContent!, /Not connected/);
+    }
+    assert.match(view.query("[data-channels-slack]")!.textContent!, /DMs only; group\/channel messages are ignored/);
+    assert.match(view.query("[data-channels-discord]")!.textContent!, /DMs only; group\/channel messages are ignored/);
+  });
+
+  it("Slack saves both tokens write-only and connects its own channel", async () => {
+    const { fake, view, saved } = await setup();
+    await view.type(view.query("[data-slack-app-token]"), "xapp-1-abc");
+    await view.type(view.query("[data-slack-token]"), "xoxb-1-abc");
+    await view.type(view.query("[data-slack-allowed-ids]"), "U0ME, U0YOU");
+    await view.change(view.query("[data-slack-project]"), "p1");
+    await view.click(view.query("[data-slack-connect]"));
+    await view.flush();
+
+    assert.deepEqual(fake.only("settings.set").args[0], {
+      slack: {
+        allowedSenderIds: ["U0ME", "U0YOU"],
+        projectId: "p1",
+        agentProfileId: null,
+        appToken: "xapp-1-abc",
+        botToken: "xoxb-1-abc",
+      },
+    });
+    assert.equal(saved().slack?.hasAppToken, true);
+    assert.equal(saved().slack?.hasToken, true);
+    assert.equal(saved().slack?.appToken, undefined);
+    assert.deepEqual(fake.only("settings.connectChannel").args, [{ channel: "slack" }]);
+    assert.match(view.query("[data-slack-status]")!.textContent!, /Connected as @solenta_test_bot/);
+    // Telegram's card is untouched.
+    assert.match(view.query("[data-telegram-status]")!.textContent!, /Not connected/);
+
+    await view.click(view.query("[data-slack-disconnect]"));
+    await view.flush();
+    assert.deepEqual(fake.only("settings.disconnectChannel").args, [{ channel: "slack" }]);
+    assert.match(view.query("[data-slack-status]")!.textContent!, /Not connected/);
+  });
+
+  it("Discord connect failure shows on its own card", async () => {
+    const { fake, view } = await setup({ connectChannelError: "Discord token check failed (HTTP 401)" });
+    await view.type(view.query("[data-discord-token]"), "MTA.abc");
+    await view.type(view.query("[data-discord-allowed-ids]"), "222");
+    await view.click(view.query("[data-discord-connect]"));
+    await view.flush();
+    assert.deepEqual(fake.of("settings.set")[0].args[0], {
+      discord: { allowedSenderIds: ["222"], projectId: null, agentProfileId: null, botToken: "MTA.abc" },
+    });
+    assert.match(view.query("[data-discord-error]")!.textContent!, /HTTP 401/);
+    assert.match(view.query("[data-discord-status]")!.textContent!, /Error: Discord token check failed/);
+    assert.equal(view.query("[data-telegram-error]"), null);
   });
 });

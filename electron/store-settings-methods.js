@@ -23,7 +23,8 @@ const {
   normalizeNotifyEvents,
   normalizeSpeechSettings,
   SPEECH_PROVIDERS,
-  normalizeTelegram,
+  normalizeChannel,
+  CHANNEL_KINDS,
   normalizeGithubHosts,
 } = require("./store-normalize.js");
 
@@ -113,7 +114,7 @@ class StoreSettingsMethods {
       speech: n.speech,
       githubHosts: n.githubHosts,
       webhook: n.webhook,
-      telegram: n.telegram,
+      ...Object.fromEntries(CHANNEL_KINDS.map((k) => [k, /** @type {any} */ (n)[k]])),
       modelPrices: n.modelPrices,
       worktreeRoot: n.worktreeRoot,
       privacyGateway: n.privacyGateway,
@@ -542,16 +543,19 @@ class StoreSettingsMethods {
         ...v,
       });
     }
-    if (Object.prototype.hasOwnProperty.call(patch, "telegram")) {
-      // The renderer never sees botToken (redactSettings), so a patch
-      // without the key keeps the saved token; null or "" clears it.
-      const v = patch.telegram;
+    for (const kind of CHANNEL_KINDS) {
+      if (!Object.prototype.hasOwnProperty.call(patch, kind)) continue;
+      // Chat channels (#1718). The renderer never sees tokens
+      // (redactSettings), so a patch without a token key keeps the saved
+      // one; null or "" clears it.
+      const v = /** @type {any} */ (patch)[kind];
       if (!v || typeof v !== "object" || Array.isArray(v)) {
-        throw new Error("telegram must be an object");
+        throw new Error(`${kind} must be an object`);
       }
-      const { hasToken: _hasToken, ...rest } = /** @type {any} */ (v);
-      this.data.settings.telegram = normalizeTelegram(
-        { ...this.data.settings.telegram, ...rest },
+      const { hasToken: _hasToken, hasAppToken: _hasAppToken, ...rest } = v;
+      /** @type {any} */ (this.data.settings)[kind] = normalizeChannel(
+        kind,
+        { .../** @type {any} */ (this.data.settings)[kind], ...rest },
         true,
       );
     }

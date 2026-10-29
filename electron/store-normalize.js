@@ -478,7 +478,7 @@ function normalizeSettings(raw) {
     speech: normalizeSpeechSettings(null),
     githubHosts: [],
     webhook: { url: null, onDone: true, onFailed: true, onWaiting: true },
-    telegram: normalizeTelegram(null, false),
+    ...Object.fromEntries(CHANNEL_KINDS.map((k) => [k, normalizeChannel(k, null, false)])),
     modelPrices: {},
     worktreeRoot: null,
     privacyGateway: normalizePrivacyGateway(null),
@@ -678,10 +678,9 @@ function normalizeSettings(raw) {
   settings.speech = normalizeSpeechSettings(
     /** @type {{ speech?: unknown }} */ (obj).speech,
   );
-  settings.telegram = normalizeTelegram(
-    /** @type {{ telegram?: unknown }} */ (obj).telegram,
-    false,
-  );
+  for (const k of CHANNEL_KINDS) {
+    /** @type {any} */ (settings)[k] = normalizeChannel(k, /** @type {any} */ (obj)[k], false);
+  }
   const root = /** @type {{ worktreeRoot?: unknown }} */ (obj).worktreeRoot;
   settings.worktreeRoot =
     typeof root === "string" && path.isAbsolute(root.trim()) ? root.trim() : null;
@@ -784,23 +783,47 @@ function normalizeWebhook(raw) {
 }
 
 /**
- * Telegram chat channel (#1718). `allowedSenderIds` are numeric Telegram
- * user ids as strings; nothing runs until one is set. strict (settings:set)
- * throws on junk; lenient (load) drops it.
+ * Chat channels (#1718), one settings key per kind. `allowedSenderIds` are
+ * the platform's user ids as strings; nothing runs until one is set.
+ * strict (settings:set) throws on junk; lenient (load) drops it. Token
+ * prefixes are only checked on set: a load may still see sealed values.
+ */
+const CHANNEL_SPECS = {
+  telegram: {
+    label: "Telegram",
+    tokens: /** @type {Record<string, string | null>} */ ({ botToken: null }),
+    id: /^\d{1,20}$/,
+    idError: "Telegram sender id must be a number",
+  },
+  slack: {
+    label: "Slack",
+    tokens: /** @type {Record<string, string | null>} */ ({ appToken: "xapp-", botToken: "xoxb-" }),
+    id: /^[UW][A-Z0-9]{2,20}$/,
+    idError: "Slack member id must look like U012AB3CD",
+  },
+  discord: {
+    label: "Discord",
+    tokens: /** @type {Record<string, string | null>} */ ({ botToken: null }),
+    id: /^\d{1,20}$/,
+    idError: "Discord user id must be a number",
+  },
+};
+const CHANNEL_KINDS = Object.keys(CHANNEL_SPECS);
+
+/**
+ * @param {string} kind a CHANNEL_KINDS entry
  * @param {unknown} raw
  * @param {boolean} strict
- * @returns {{ enabled: boolean, botToken: string | null, allowedSenderIds: string[], projectId: string | null, agentProfileId: string | null }}
+ * @returns {{ enabled: boolean, allowedSenderIds: string[], projectId: string | null, agentProfileId: string | null } & Record<string, any>}
  */
-function normalizeTelegram(raw, strict) {
-  const out = {
-    enabled: false,
-    botToken: null,
-    allowedSenderIds: [],
-    projectId: null,
-    agentProfileId: null,
-  };
+function normalizeChannel(kind, raw, strict) {
+  const spec = CHANNEL_SPECS[/** @type {keyof typeof CHANNEL_SPECS} */ (kind)];
+  /** @type {any} */
+  const out = { enabled: false };
+  for (const f of Object.keys(spec.tokens)) out[f] = null;
+  Object.assign(out, { allowedSenderIds: [], projectId: null, agentProfileId: null });
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-    if (strict) throw new Error("telegram must be an object");
+    if (strict) throw new Error(`${kind} must be an object`);
     return out;
   }
   const r = /** @type {Record<string, unknown>} */ (raw);
@@ -808,23 +831,29 @@ function normalizeTelegram(raw, strict) {
     const v = r[name];
     if (v == null || v === "") return null;
     if (typeof v !== "string") {
-      if (strict) throw new Error(`telegram.${name} must be a string or null`);
+      if (strict) throw new Error(`${kind}.${name} must be a string or null`);
       return null;
     }
     return v.trim() || null;
   };
   out.enabled = r.enabled === true;
-  out.botToken = str("botToken");
+  for (const [f, prefix] of Object.entries(spec.tokens)) {
+    out[f] = str(f);
+    if (strict && prefix && out[f] && !out[f].startsWith(prefix)) {
+      throw new Error(`${spec.label} ${f === "appToken" ? "app-level token" : "bot token"} must start with ${prefix}`);
+    }
+  }
   out.projectId = str("projectId");
   out.agentProfileId = str("agentProfileId");
   const ids = Array.isArray(r.allowedSenderIds) ? r.allowedSenderIds : [];
   if (strict && r.allowedSenderIds != null && !Array.isArray(r.allowedSenderIds)) {
-    throw new Error("telegram.allowedSenderIds must be an array");
+    throw new Error(`${kind}.allowedSenderIds must be an array`);
   }
   for (const v of ids) {
-    const id = String(v ?? "").trim();
-    if (!/^\d{1,20}$/.test(id)) {
-      if (strict) throw new Error(`Telegram sender id must be a number: ${id || "(empty)"}`);
+    let id = String(v ?? "").trim();
+    if (kind === "slack") id = id.toUpperCase();
+    if (!spec.id.test(id)) {
+      if (strict) throw new Error(`${spec.idError}: ${id || "(empty)"}`);
       continue;
     }
     if (!out.allowedSenderIds.includes(id)) out.allowedSenderIds.push(id);
@@ -887,5 +916,6 @@ module.exports = {
   normalizeSpeechSettings,
   SPEECH_PROVIDERS,
   normalizeGithubHosts,
-  normalizeTelegram,
+  normalizeChannel,
+  CHANNEL_KINDS,
 };

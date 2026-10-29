@@ -117,7 +117,12 @@ function redactSettings(settings, text) {
       return REDACTED;
     });
   }
-  if (isPlainObject(s.telegram)) delete s.telegram.botToken;
+  for (const kind of ["telegram", "slack", "discord"]) {
+    if (isPlainObject(s[kind])) {
+      delete s[kind].botToken;
+      delete s[kind].appToken;
+    }
+  }
   // Snippets are prompt text.
   if (Array.isArray(s.promptSnippets)) s.promptSnippets = { count: s.promptSnippets.length };
   return deepText(s, text);
