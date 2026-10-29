@@ -288,7 +288,7 @@ function opencodeAuto(permissionMode) {
  * to main, and installed apps apply it only when it beats their own rev
  * (electron/remoteCatalog.js, #1529).
  */
-const CATALOG_REV = 1;
+const CATALOG_REV = 2;
 
 /** @type {ProviderEntry[]} */
 const PROVIDERS = [
