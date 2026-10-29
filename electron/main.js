@@ -818,6 +818,8 @@ app.whenReady().then(async () => {
         auditPath: path.join(userData, "secrets-audit.jsonl"),
       });
       require("./governanceAudit.js").configureGovernanceAudit({ dir: userData });
+      // Before the store too: appends redact with these values (#1744).
+      require("./threadSecrets.js").configure({ file: path.join(userData, "thread-secrets.json") });
       const loaded = new Store(path.join(userData, "coder-store.json"));
       require("./guardrails.js").setGuardrailsEnabled(loaded.getSettings().guardrailsEnabled);
       return loaded;

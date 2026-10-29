@@ -98,12 +98,14 @@ describe("secret_request (#1531)", () => {
       threadId: thread.id,
       projectId: project.id,
       name: "DB_PASSWORD",
+      title: "Staging DB password",
       prompt: "Staging database password",
     });
     assert.equal(out.requested, true);
     assert.match(out.note, /End your turn/);
     const card = store.getThread(thread.id).pendingSecret;
     assert.equal(card.name, "DB_PASSWORD");
+    assert.equal(card.title, "Staging DB password");
     assert.equal(store.getThread(thread.id).awaitingInput, true);
 
     assert.throws(

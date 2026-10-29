@@ -420,9 +420,11 @@
         as a page inside the transcript. It runs in a sandboxed frame with
         no network access. When an agent calls <code>secret_request</code>,
         a masked <strong>Secret requested</strong> card asks for the value.
-        Provide puts it only in the environment of that thread's next runs,
-        never in the transcript or on disk, and the value is redacted from
-        any output that echoes it. When an MCP server asks a Claude run for
+        Provide puts it only in the environment of that thread's runs for
+        24 hours, never in the transcript, and the value is redacted from
+        any output that echoes it. It survives a restart in its own
+        owner-only file in the app's data folder, encrypted only when OS
+        credential encryption is turned on. When an MCP server asks a Claude run for
         input mid-turn, the question shows as an input card instead of
         failing.
       </p>

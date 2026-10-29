@@ -2138,6 +2138,8 @@ export interface PendingSecretCard {
   id: string;
   /** Env var name the value is exposed as, e.g. STRIPE_API_KEY. */
   name: string;
+  /** Optional short heading, e.g. "Tailscale auth key for test VMs". */
+  title?: string;
   prompt: string;
   askedAt: number;
 }

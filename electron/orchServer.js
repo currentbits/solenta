@@ -974,6 +974,7 @@ function createToolHandlers(deps) {
     const result = runner.requestSecret({
       threadId: args.threadId,
       name: args.name,
+      title: args.title,
       prompt: args.prompt,
     });
     return {
@@ -981,7 +982,8 @@ function createToolHandlers(deps) {
       note:
         "The secret prompt is now on screen. End your turn here. When the " +
         `user provides it, your next turn starts with $${result.name} set in ` +
-        "your environment. You will never see the value; do not ask for it in chat.",
+        "your environment, and it stays set for this thread's runs for 24 hours. " +
+        "You will never see the value; do not ask for it in chat.",
     };
   }
 
@@ -1930,15 +1932,19 @@ function buildMcpServer(sdk, handlers, opts = {}) {
       description:
         "Ask the user for a secret (API key, token, password) on YOUR OWN " +
         "thread. threadId and projectId are your own. name is the env var it " +
-        "will be exposed as (e.g. STRIPE_API_KEY); prompt says what it is for. " +
+        "will be exposed as (e.g. STRIPE_API_KEY); title is an optional short " +
+        "heading (e.g. \"Tailscale auth key for test VMs\"); prompt says what " +
+        "it is for. " +
         "The user types it into a masked field. You never see the value: it " +
-        "is only set as $NAME in the environment of your next turns. Never " +
+        "is only set as $NAME in the environment of this thread's runs for " +
+        "24 hours (it survives an app restart). Never " +
         "ask for secrets in chat. This call RETURNS IMMEDIATELY: end your " +
         "turn right after it; the user's answer starts your next turn.",
       inputSchema: {
         threadId: z.string().min(1),
         projectId: z.string().min(1),
         name: z.string().regex(/^[A-Z_][A-Z0-9_]*$/),
+        title: z.string().optional(),
         prompt: z.string().optional(),
       },
     },

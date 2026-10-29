@@ -3490,6 +3490,12 @@ button.diffLineGutter:focus-visible {
   color: var(--text-dim);
 }
 
+/* Secret card prompt (#1744): long setup URLs wrap and stay copyable. */
+.secretPromptText {
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
 .questionOtherRow {
   display: flex;
   align-items: center;

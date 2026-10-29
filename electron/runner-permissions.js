@@ -875,8 +875,9 @@ function createPermissions(ctx) {
 
   /**
    * Ask the user for a secret (issue #1531, #289). Non-blocking like askUser.
-   * Only the request (name + prompt) is persisted; the value never is.
-   * @param {{ threadId: string, name: string, prompt?: string }} input
+   * Only the request (name, title, prompt) goes in the store; the value only
+   * ever goes to threadSecrets (its own file, 24h).
+   * @param {{ threadId: string, name: string, title?: string, prompt?: string }} input
    */
   function requestSecret(input) {
     const threadId = String((input && input.threadId) || "");
@@ -893,6 +894,7 @@ function createPermissions(ctx) {
         pendingSecret: {
           id: randomUUID(),
           name,
+          title: truncate(String((input && input.title) || ""), 120),
           prompt: truncate(String((input && input.prompt) || ""), 500),
           askedAt: Date.now(),
         },
