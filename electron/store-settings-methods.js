@@ -17,6 +17,7 @@ const {
   normalizeDefaultProvider,
   normalizeDefaultModel,
   validateQuotaFailover,
+  normalizeQuotaFailover,
   normalizeSettings,
   normalizeOtel,
   normalizeWebhook,
@@ -88,6 +89,7 @@ class StoreSettingsMethods {
       notifications: n.notifications,
       notificationSound: n.notificationSound,
       notifyEvents: n.notifyEvents,
+      notificationProjects: n.notificationProjects,
       feltEstimatePrompt: n.feltEstimatePrompt,
       uiScale: n.uiScale,
       theme: n.theme,
@@ -353,6 +355,13 @@ class StoreSettingsMethods {
         throw new Error("notificationSound must be a boolean");
       }
       this.data.settings.notificationSound = v;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "notificationProjects")) {
+      const v = patch.notificationProjects;
+      if (!Array.isArray(v) || v.some((id) => typeof id !== "string")) {
+        throw new Error("notificationProjects must be an array of project ids");
+      }
+      this.data.settings.notificationProjects = normalizeQuotaFailover(v);
     }
     if (Object.prototype.hasOwnProperty.call(patch, "promptSnippets")) {
       this.data.settings.promptSnippets = parsePromptSnippets(

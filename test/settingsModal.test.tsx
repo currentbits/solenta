@@ -1781,6 +1781,50 @@ describe("SettingsModal voice input provider (#1725)", () => {
   });
 });
 
+describe("SettingsModal notification projects (#1746)", () => {
+  const base = { dailyBudgetUsd: null, autoSettleAfterDays: 3 };
+
+  it("summarises the list, ignores deleted ids, and saves checks and reset", async () => {
+    const patches: Partial<AppSettings>[] = [];
+    let current = { ...base, notificationProjects: ["p1", "gone"] } as AppSettings;
+    const m = await mount(
+      modal({
+        initialPane: "general",
+        settings: current,
+        projects: [proj(), proj({ id: "p2", name: "two", path: "/tmp/two" })],
+        onSaveSettings: async (patch) => {
+          patches.push(patch);
+          current = { ...current, ...patch };
+          return current;
+        },
+      }),
+    );
+    assert.equal(m.query("[data-notification-projects-summary]")?.textContent, "1 project");
+    await m.click(m.query('[data-notification-project="p2"]'));
+    assert.deepEqual(patches.at(-1), { notificationProjects: ["p1", "p2"] });
+    await m.click(m.query("[data-notification-projects-reset]"));
+    assert.deepEqual(patches.at(-1), { notificationProjects: [] });
+    m.unmount();
+  });
+
+  it("reads All projects when empty and hides while every mode is off", async () => {
+    const on = await mount(
+      modal({ initialPane: "general", settings: { ...base, notificationProjects: [] } as unknown as AppSettings, projects: [proj()] }),
+    );
+    assert.equal(on.query("[data-notification-projects-summary]")?.textContent, "All projects");
+    on.unmount();
+    const off = await mount(
+      modal({
+        initialPane: "general",
+        settings: { ...base, notifications: false, notificationSound: false } as unknown as AppSettings,
+        projects: [proj()],
+      }),
+    );
+    assert.equal(off.query("[data-notification-projects]"), null);
+    off.unmount();
+  });
+});
+
 describe("SettingsModal quota-wait auto-resume (#462)", () => {
   it("saves the continue-at-usage-limit toggle", async () => {
     const patches: Partial<AppSettings>[] = [];

@@ -608,3 +608,39 @@ describe("per-event notification switches (#1725)", () => {
     assert.deepEqual(seen, [{ threadId: "t1", number: 7, checks: [{ name: "test", link: "" }] }]);
   });
 });
+
+describe("notification projects (#1746)", () => {
+  const { shouldNotifyForProject, threadAlerts } = require("../notify.js");
+
+  it("empty or absent list notifies every project", () => {
+    assert.equal(shouldNotifyForProject({}, "p1"), true);
+    assert.equal(shouldNotifyForProject({ notificationProjects: [] }, "p1"), true);
+    assert.equal(shouldNotifyForProject(null, "p1"), true);
+  });
+
+  it("a list limits notifications to its projects", () => {
+    const s = { notificationProjects: ["p1"] };
+    assert.equal(shouldNotifyForProject(s, "p1"), true);
+    assert.equal(shouldNotifyForProject(s, "p2"), false);
+    assert.equal(shouldNotifyForProject(s, undefined), false);
+  });
+
+  it("deleted project ids are ignored", () => {
+    const exists = (id) => id !== "gone";
+    assert.equal(shouldNotifyForProject({ notificationProjects: ["gone"] }, "p2", exists), true);
+    assert.equal(shouldNotifyForProject({ notificationProjects: ["gone", "p1"] }, "p2", exists), false);
+  });
+
+  it("a completion in an unchosen project raises no notification or sound", () => {
+    const settings = { notifications: true, notificationSound: true, notificationProjects: ["p1"] };
+    assert.deepEqual(threadAlerts(settings, { projectId: "p2" }, "working", "done", false), { notify: false, sound: false });
+    assert.deepEqual(threadAlerts(settings, { projectId: "p2" }, "working", "done", true), { notify: false, sound: false });
+  });
+
+  it("a completion in a chosen project still notifies", () => {
+    const settings = { notifications: true, notificationSound: true, notificationProjects: ["p1"] };
+    assert.deepEqual(threadAlerts(settings, { projectId: "p1" }, "working", "done", false), { notify: true, sound: false });
+    assert.deepEqual(threadAlerts(settings, { projectId: "p1" }, "working", "done", true), { notify: false, sound: true });
+    assert.equal(threadAlerts({ ...settings, notifications: false }, { projectId: "p1" }, "working", "done", false).notify, false);
+  });
+});

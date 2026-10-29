@@ -406,6 +406,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       automationFinished: true,
       ciFailed: false,
     },
+    notificationProjects: [],
     theme: "dark",
     agentsPanelDefault: "closed",
     agentsPanelRememberLast: false,

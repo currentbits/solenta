@@ -35,6 +35,26 @@ describe("notifications setting", () => {
   });
 });
 
+describe("notificationProjects setting (#1746)", () => {
+  it("defaults to all projects and persists a deduped id list", () => {
+    assert.deepEqual(normalizeSettings({}).notificationProjects, []);
+    assert.deepEqual(normalizeSettings({ notificationProjects: "p1" }).notificationProjects, []);
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "coder-notifproj-"));
+    try {
+      const store = new Store(path.join(tmp, "store.json"));
+      assert.deepEqual(
+        store.setSettings({ notificationProjects: ["p1", "p1", "p2"] }).notificationProjects,
+        ["p1", "p2"],
+      );
+      store.saveNow();
+      assert.deepEqual(new Store(path.join(tmp, "store.json")).getSettings().notificationProjects, ["p1", "p2"]);
+      assert.throws(() => store.setSettings({ notificationProjects: [1] }), /array of project ids/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("mute", () => {
   let tmpDir;
   let store;
