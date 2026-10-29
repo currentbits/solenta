@@ -69,10 +69,29 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y apparmor apparmor-profiles bubblewrap
           if sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null | grep -qx 1; then
-            sudo install -m 0644 \
-              /usr/share/apparmor/extra-profiles/bwrap-userns-restrict \
-              /etc/apparmor.d/bwrap-userns-restrict
-            sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict
+            # 24.04 ships the profile under extra-profiles; the 26.04 runner
+            # image (apparmor-profiles 5.0.2) no longer does. Use whichever
+            # bwrap profile the image has.
+            profile=""
+            for p in /usr/share/apparmor/extra-profiles/bwrap-userns-restrict \
+                     /etc/apparmor.d/bwrap-userns-restrict; do
+              if [ -f "$p" ]; then profile="$p"; break; fi
+            done
+            if [ -z "$profile" ]; then
+              profile="$(find /usr/share/apparmor /etc/apparmor.d -type f -name 'bwrap*' 2>/dev/null | head -n 1 || true)"
+            fi
+            if [ -n "$profile" ]; then
+              echo "Using AppArmor profile $profile"
+              if [ "$profile" != /etc/apparmor.d/bwrap-userns-restrict ]; then
+                sudo install -m 0644 "$profile" /etc/apparmor.d/bwrap-userns-restrict
+              fi
+              sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict
+            else
+              # Last resort, this CI job only: the probe below still fails
+              # the job if the real sandbox cannot start.
+              echo "::warning::No bwrap AppArmor profile on this runner image; allowing unprivileged user namespaces for this job"
+              sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+            fi
           fi
           bwrap --ro-bind / / --dev /dev --proc /proc --unshare-net /bin/true
           probe="${HOME}/.cache/solenta-codex-bwrap-probe"
