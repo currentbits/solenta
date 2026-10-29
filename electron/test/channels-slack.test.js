@@ -67,8 +67,9 @@ describe("slack channel", () => {
     assert.equal(slack.sent[0].channel, DM);
     assert.equal(runner.starts.length, 0);
     assert.equal(store.getThreads().length, 0);
+    // Acks go over the socket, the reply over HTTP: either can land first.
+    await waitFor(() => slack.acks.length === 3, "three acks");
     assert.ok(slack.acks.includes(e1));
-    assert.equal(slack.acks.length, 3);
     assert.equal(logs.filter((l) => l.includes("U0STRANGER")).length, 1);
   });
 
