@@ -304,6 +304,46 @@ describe("ProviderQuota", () => {
     m.unmount();
   });
 
+  it("draws an even-pace tick at the right position, and omits it when unknown", async () => {
+    const m = await mount(
+      <ProviderQuota
+        loadLimits={async () => [
+          quota({
+            provider: "grok",
+            windows: [
+              // Window is 5h; 1h elapsed since start (resetsAt is 4h out) -> 20% pace.
+              windowRow({
+                label: "5 hours",
+                usedPercent: 41,
+                resetsAt: NOW + 4 * 60 * 60 * 1000,
+                windowSeconds: FIVE_HOURS,
+              }),
+              windowRow({
+                label: "No pace data",
+                usedPercent: 10,
+                resetsAt: null,
+                windowSeconds: null,
+              }),
+            ],
+          }),
+        ]}
+        now={NOW}
+      />,
+    );
+    await m.flush();
+    const dated = m.query('[data-provider-quota-window="5 hours"]');
+    assert.ok(dated);
+    const tick = dated.querySelector("[data-provider-quota-pace]") as HTMLElement | null;
+    assert.ok(tick, "pace tick renders when resetsAt/windowSeconds are known");
+    assert.match(tick.getAttribute("style") || "", /left:\s*20%/);
+    assert.match(tick.getAttribute("title") || "", /Even pace: 20% used by now/);
+
+    const undated = m.query('[data-provider-quota-window="No pace data"]');
+    assert.ok(undated);
+    assert.equal(undated.querySelector("[data-provider-quota-pace]"), null);
+    m.unmount();
+  });
+
   it("does not tick the clock when a frozen now is passed", async () => {
     const m = await mount(
       <ProviderQuota

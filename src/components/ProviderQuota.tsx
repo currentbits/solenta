@@ -12,6 +12,7 @@ import type { ProviderInfo } from "../shared/ipc";
 import {
   QUOTA_CLOCK_MS,
   displayWindowLabel,
+  evenPacePercent,
   formatFetchedAt,
   formatResetAt,
   formatUsedPercent,
@@ -234,6 +235,7 @@ function QuotaRow({
             const width = pct == null ? 0 : usedBarWidth(pct);
             const expired = isResetExpired(win.resetsAt, now);
             const reset = formatResetAt(win.resetsAt, now);
+            const pace = evenPacePercent(win, now);
             return (
               <li
                 key={`${name}-${i}`}
@@ -254,6 +256,14 @@ function QuotaRow({
                     data-warn={width >= 80 && width < 95 ? "" : undefined}
                     data-high={width >= 95 ? "" : undefined}
                   />
+                  {pace != null ? (
+                    <div
+                      className={styles.pace}
+                      data-provider-quota-pace=""
+                      style={{ left: `${pace}%` }}
+                      title={`Even pace: ${Math.round(pace)}% used by now`}
+                    />
+                  ) : null}
                 </div>
                 <span className={styles.pct}>
                   {pct == null ? "unavailable" : formatUsedPercent(pct)}

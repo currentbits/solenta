@@ -15,6 +15,7 @@ import {
   isUnreported,
   processedTokens,
   summarizeUsage,
+  usageCostByType,
 } from "../src/usage.ts";
 
 const TODAY = new Date(2026, 7, 17); // 2026-08-17 local
@@ -475,5 +476,94 @@ describe("summarizeUsage", () => {
     assert.equal(isCostUnmetered(entry({ turns: 1, inputTokens: 10 })), true);
     assert.equal(isCostUnmetered(entry({ turns: 1 })), false);
     assert.equal(isCostUnmetered(entry({ turns: 1, costUsd: 0.02, inputTokens: 10 })), false);
+  });
+});
+
+describe("usageCostByType", () => {
+  const DAY = "2026-08-17";
+
+  it("the four parts sum to the total for a fully priced model", () => {
+    const price = { input: 2, output: 10, cacheRead: 1, cacheWrite: 3 };
+    const cell = entry({
+      inputTokens: 100_000,
+      cachedInputTokens: 50_000,
+      cacheWriteTokens: 20_000,
+      outputTokens: 30_000,
+      turns: 1,
+      // Matches priceCell's formula below: this is what applyModelPrices
+      // would already have filled in before the report reaches the client.
+      costUsd: (100_000 * 2 + 50_000 * 1 + 20_000 * 3 + 30_000 * 10) / 1e6,
+    });
+    const data: UsageByDay = { [DAY]: { claude: { opus: cell } } };
+    const prices = { opus: price };
+
+    const parts = usageCostByType(data, 7, TODAY, prices);
+    assert.ok(parts.inputUsd != null);
+    assert.equal(parts.inputUsd, 0.2);
+    assert.equal(parts.cachedInputUsd, 0.05);
+    assert.equal(parts.cacheWriteUsd, 0.06);
+    assert.equal(parts.outputUsd, 0.3);
+
+    const sum =
+      (parts.inputUsd ?? 0) +
+      (parts.cachedInputUsd ?? 0) +
+      (parts.cacheWriteUsd ?? 0) +
+      (parts.outputUsd ?? 0);
+    const summary = summarizeUsage(data, 7, TODAY);
+    assert.ok(Math.abs(sum - summary.totals.costUsd) < 1e-9);
+  });
+
+  it("is n/a across the board when there is no price table", () => {
+    const data: UsageByDay = {
+      [DAY]: {
+        claude: {
+          opus: entry({ inputTokens: 100, outputTokens: 50, costUsd: 1, turns: 1 }),
+        },
+      },
+    };
+    assert.deepEqual(usageCostByType(data, 7, TODAY, {}), {
+      inputUsd: null,
+      cachedInputUsd: null,
+      cacheWriteUsd: null,
+      outputUsd: null,
+    });
+    assert.deepEqual(usageCostByType(data, 7, TODAY, undefined), {
+      inputUsd: null,
+      cachedInputUsd: null,
+      cacheWriteUsd: null,
+      outputUsd: null,
+    });
+  });
+
+  it("skips a cell whose own reported cost disagrees with the price table, rather than inventing a split", () => {
+    const data: UsageByDay = {
+      [DAY]: {
+        claude: {
+          // Provider's own cost (e.g. Claude's total_cost_usd) does not
+          // match what `price` would compute for these tokens.
+          opus: entry({ inputTokens: 100_000, outputTokens: 30_000, costUsd: 5, turns: 1 }),
+        },
+      },
+    };
+    const prices = { opus: { input: 2, output: 10 } };
+    assert.deepEqual(usageCostByType(data, 7, TODAY, prices), {
+      inputUsd: null,
+      cachedInputUsd: null,
+      cacheWriteUsd: null,
+      outputUsd: null,
+    });
+  });
+
+  it("only counts days inside the selected range", () => {
+    const oldDay = "2026-07-01"; // well outside a 7-day window ending TODAY
+    const price = { input: 1, output: 1 };
+    const oldCell = entry({ inputTokens: 1_000_000, outputTokens: 0, costUsd: 1, turns: 1 });
+    const data: UsageByDay = { [oldDay]: { claude: { opus: oldCell } } };
+    assert.deepEqual(usageCostByType(data, 7, TODAY, { opus: price }), {
+      inputUsd: null,
+      cachedInputUsd: null,
+      cacheWriteUsd: null,
+      outputUsd: null,
+    });
   });
 });
