@@ -288,6 +288,8 @@ export interface SidebarProps {
     threadId: string,
     opts?: { provider?: string },
   ) => void | Promise<void>;
+  /** Duplicate: a fresh thread, same settings, no transcript (#1781). */
+  onDuplicate?: (threadId: string) => void | Promise<void>;
   /**
    * Which main view is showing. Pass the real view: collapsing other
    * destinations to "thread" marks Threads active while the user is elsewhere.
@@ -411,6 +413,7 @@ export const Sidebar = memo(function Sidebar({
   onRestoreThread,
   onPurgeThread,
   onFork,
+  onDuplicate,
   activeView = "thread",
   onOpenThreads,
   onOpenKanban,
@@ -1369,6 +1372,7 @@ export const Sidebar = memo(function Sidebar({
         onRegenerateTitle={onRegenerateTitle ? regenerateTitleRow : undefined}
         regeneratingTitle={regeneratingTitles.has(thread.id)}
         onFork={onFork}
+        onDuplicate={onDuplicate}
         listMoveProjects={listMoveProjects}
         nested={compact}
         compact={compact}

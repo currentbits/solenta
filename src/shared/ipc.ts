@@ -5297,6 +5297,11 @@ export type ThreadForkOpts = {
   /** Start the fork out of plan mode ("Implement in a new thread", #1501). */
   leavePlan?: boolean;
   /**
+   * Explicit title (issue #1781's Duplicate uses "<title> (copy)"); absent
+   * gets the ordinary "Fork: <source title>" naming.
+   */
+  title?: string;
+  /**
    * Fork from one of the source's turn checkpoints (#252): the new worktree
    * starts at that commit (recorded as leadSnapshotSha) and the transcript is
    * cut at the turn that made it. Rejects a sha that is not the source's.

@@ -34,6 +34,7 @@ export type ThreadActionMenuId =
   | "unpin"
   | "fork"
   | `handoff:${string}`
+  | "duplicate"
   | "rename"
   | "regenerateTitle"
   | "tags"
@@ -69,6 +70,8 @@ export function buildThreadActionMenuItems(input: {
   /** Pin lives in the menu since the flat sidebar retired the hover pin. */
   showPin?: boolean;
   showFork: boolean;
+  /** Duplicate: a fresh thread with the same settings, no transcript (#1781). */
+  showDuplicate?: boolean;
   showRename: boolean;
   /** Regenerate the title from current activity (issue #1774). */
   showRegenerateTitle?: boolean;
@@ -152,6 +155,15 @@ export function buildThreadActionMenuItems(input: {
         attrs: { "data-handoff-provider": p.id },
       });
     }
+  }
+
+  if (input.showDuplicate) {
+    items.push({
+      id: "duplicate",
+      label: "Duplicate",
+      separatorBefore: !input.showFork && items.length > 0,
+      attrs: { "data-duplicate-btn": thread.id },
+    });
   }
 
   if (input.showRename) {

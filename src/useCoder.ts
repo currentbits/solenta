@@ -250,8 +250,16 @@ export interface UseCoderResult {
       leavePlan?: boolean;
       messageId?: string;
       checkpointSha?: string;
+      title?: string;
     },
   ) => Promise<ThreadInfo | null>;
+  /**
+   * Duplicate (issue #1781): a new thread in the same project, same
+   * provider/model/mode and worktree-or-not as the source, titled
+   * "<title> (copy)", with no transcript — then started on the source's
+   * first user message and its attachments. Selects the new thread.
+   */
+  duplicateThread: (threadId: string) => Promise<ThreadInfo | null>;
   /**
    * Start a run, or queue the prompt when that thread is already working:
    * the queued text is delivered at the run's terminal (issue #92).
@@ -1602,6 +1610,7 @@ export function useCoder(): UseCoderResult {
   const {
     createThread,
     forkThread,
+    duplicateThread,
     startRun,
     rewindAndResubmit,
   } = useCoderRuns({
@@ -2198,6 +2207,7 @@ export function useCoder(): UseCoderResult {
     createThread,
     listBaseBranches,
     forkThread,
+    duplicateThread,
     startRun,
     rewindAndResubmit,
     queued,
