@@ -94,7 +94,7 @@ function FileEntry({
     >
       <button
         type="button"
-        className={diffStyles.fileBtn}
+        className={diffStyles.entryBtn}
         data-pr-code-file={file.path}
         data-selected={selected ? "" : undefined}
         data-viewed={file.viewed || "unseen"}

@@ -85,7 +85,36 @@
   gap: 4px;
 }
 
-/** Chip wrapping a file's select button + its copy-path button (#1772). */
+.fileBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11.5px;
+}
+
+.fileBtn[data-selected] {
+  color: var(--text);
+  border-color: var(--border);
+  background: var(--bg-elevated);
+}
+
+.fileBtn:hover {
+  color: var(--text);
+  background: var(--card-hover);
+}
+
+/**
+ * PR Code tab (#1772): a file's own chip wraps a select button (entryBtn,
+ * the same content .fileBtn used to hold) plus a copy-path button, so the
+ * pill styling (border/background) moves to the wrapping chip instead.
+ */
 .fileChip {
   display: inline-flex;
   align-items: center;
@@ -101,7 +130,7 @@
   width: 100%;
 }
 
-.fileChip:has(.fileBtn[data-selected]) {
+.fileChip:has(.entryBtn[data-selected]) {
   border-color: var(--border);
   background: var(--bg-elevated);
 }
@@ -110,7 +139,7 @@
   background: var(--card-hover);
 }
 
-.fileBtn {
+.entryBtn {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -124,7 +153,7 @@
   font-size: 11.5px;
 }
 
-.fileBtn[data-selected] {
+.entryBtn[data-selected] {
   color: var(--text);
 }
 
