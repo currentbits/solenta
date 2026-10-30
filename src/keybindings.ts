@@ -235,6 +235,20 @@ export const KEYBINDINGS: readonly KeybindingDef[] = [
     // mod+shift+s is composer.unstash; this is the next free slot.
     chord: "mod+shift+a",
   },
+  {
+    id: "turn.prev",
+    label: "Previous prompt",
+    scope: "window",
+    // Same chord as composer.editLastQueued on purpose: the composer owns
+    // it while focused, the rail owns it everywhere else.
+    chord: "alt+arrowup",
+  },
+  {
+    id: "turn.next",
+    label: "Next prompt",
+    scope: "window",
+    chord: "alt+arrowdown",
+  },
 ];
 
 const BY_ID = new Map(KEYBINDINGS.map((def) => [def.id, def]));
