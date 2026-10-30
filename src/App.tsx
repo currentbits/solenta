@@ -1764,6 +1764,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       <>
         {archiveToastIds && (
           <ArchiveToast
+            docked
             key={`archive-${archiveToastIds.join(",")}`}
             message={
               archiveToastIds.length > 1
@@ -1777,6 +1778,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         )}
         {undoMessage && (
           <ArchiveToast
+            docked
             key={`undo-${undoKey}`}
             message={undoMessage}
             onUndo={() => void runUndo()}
@@ -1786,6 +1788,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         )}
         {deleteToastId && (
           <ArchiveToast
+            docked
             key={`delete-${deleteToastId}`}
             message="Deleted"
             onUndo={() => void undoDelete()}
@@ -1794,6 +1797,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         )}
         {removeFailMessage && (
           <ArchiveToast
+            docked
             key={`remove-fail-${removeFailMessage}`}
             variant="error"
             title={removeFailMessage}
@@ -1802,6 +1806,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         )}
         {distillError && (
           <ArchiveToast
+            docked
             key={`distill-fail-${distillError}`}
             variant="error"
             title={distillError}
@@ -1810,6 +1815,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         )}
         {chipError && (
           <ArchiveToast
+            docked
             key={`chip-fail-${chipError}`}
             variant="error"
             title={chipError}
