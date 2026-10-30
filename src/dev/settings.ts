@@ -89,7 +89,8 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
   let agentsPanelRememberLast = false;
   let stayAwake: AppSettings["stayAwake"] = "agent";
   let confirmQuitWithActiveWork = true;
-  let resumeInterruptedRuns = false;
+  // #1788: default on for anyone who never chose, same as the electron store.
+  let resumeInterruptedRuns = true;
   let combineQueuedFollowUps = true;
   let agentBugReports = true;
   let worktreeRoot: string | null = null;

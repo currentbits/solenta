@@ -461,6 +461,9 @@ class StoreSettingsMethods {
         throw new Error("resumeInterruptedRuns must be a boolean");
       }
       this.data.settings.resumeInterruptedRuns = v;
+      // #1788: a real choice, either direction, so normalizeSettings must
+      // never again default this back to true underneath the user.
+      this.data.settings.resumeInterruptedRunsSet = true;
     }
     if (Object.prototype.hasOwnProperty.call(patch, "combineQueuedFollowUps")) {
       const v = patch.combineQueuedFollowUps;

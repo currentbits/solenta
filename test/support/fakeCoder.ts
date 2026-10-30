@@ -417,7 +417,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
     stayAwake: "agent",
     quotaWaitAutoResume: true,
     confirmQuitWithActiveWork: true,
-    resumeInterruptedRuns: false,
+    resumeInterruptedRuns: true,
     combineQueuedFollowUps: true,
     agentBugReports: true,
     prDiffCapLines: 400,

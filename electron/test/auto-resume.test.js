@@ -95,9 +95,9 @@ describe("resume interrupted runs after restart (#1512 I3)", () => {
     else process.env.CODER_SIMULATE = prevSimulate;
   });
 
-  it("setting is opt-in and validated", () => {
-    assert.equal(normalizeSettings({}).resumeInterruptedRuns, false);
-    assert.equal(normalizeSettings({ resumeInterruptedRuns: "yes" }).resumeInterruptedRuns, false);
+  it("defaults on for anyone who never chose; junk also heals to on (#1788)", () => {
+    assert.equal(normalizeSettings({}).resumeInterruptedRuns, true);
+    assert.equal(normalizeSettings({ resumeInterruptedRuns: "yes" }).resumeInterruptedRuns, true);
     assert.equal(normalizeSettings({ resumeInterruptedRuns: true }).resumeInterruptedRuns, true);
     assert.throws(
       () => services.setSettings(store, { resumeInterruptedRuns: 1 }),
@@ -105,7 +105,39 @@ describe("resume interrupted runs after restart (#1512 I3)", () => {
     );
   });
 
-  it("does nothing while the setting is off", async () => {
+  it("migration: a stored false with no touched marker is treated as never chosen (#1788)", () => {
+    // Pre-#1788 stores saved the old opt-in default (false) on every write,
+    // with no marker distinguishing it from a real choice. Heal those to on.
+    assert.equal(normalizeSettings({ resumeInterruptedRuns: false }).resumeInterruptedRuns, true);
+    // Once the marker is set, the stored boolean is a real choice either way.
+    assert.equal(
+      normalizeSettings({ resumeInterruptedRuns: false, resumeInterruptedRunsSet: true })
+        .resumeInterruptedRuns,
+      false,
+    );
+    assert.equal(
+      normalizeSettings({ resumeInterruptedRuns: true, resumeInterruptedRunsSet: true })
+        .resumeInterruptedRuns,
+      true,
+    );
+  });
+
+  it("setSettings stamps the touched marker so an explicit false survives reload (#1788)", () => {
+    services.setSettings(store, { resumeInterruptedRuns: false });
+    assert.equal(store.getSettings().resumeInterruptedRuns, false);
+    store.saveNow();
+    const reloaded = new Store(storePath);
+    assert.equal(reloaded.getSettings().resumeInterruptedRuns, false);
+  });
+
+  it("resumes by default now that nobody has opted out (#1788)", async () => {
+    const id = interrupted("a");
+    assert.deepEqual(await runner.resumeInterruptedRuns(FAST), [id]);
+    assert.ok(store.getThread(id).autoResumedAt > 0);
+  });
+
+  it("does nothing once a user has explicitly turned it off", async () => {
+    services.setSettings(store, { resumeInterruptedRuns: false });
     const id = interrupted("a");
     assert.deepEqual(await runner.resumeInterruptedRuns(FAST), []);
     assert.equal(store.getThread(id).autoResumedAt, undefined);
