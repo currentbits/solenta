@@ -397,3 +397,65 @@ describe("thread id links (#1531)", () => {
     assert.equal(m.query("[data-thread-link]"), null);
   });
 });
+
+describe("GitHub ref links (#1771)", () => {
+  function withRepo(text: string, repoSlug: string | null = "acme/demo") {
+    return (
+      <ThreadLinkContext.Provider value={{ titles: {}, open: () => {}, repoSlug }}>
+        <Markdown text={text} />
+      </ThreadLinkContext.Provider>
+    );
+  }
+
+  it("links a qualified owner/repo#123 ref to the issues URL", async () => {
+    const m = await mount(withRepo("see other/thing#9 for context"));
+    const link = m.query('[data-github-ref="other/thing#9"]');
+    assert.ok(link, "qualified ref is a link");
+    assert.equal(link!.getAttribute("href"), "https://github.com/other/thing/issues/9");
+  });
+
+  it("links a bare #482 against the project's GitHub remote", async () => {
+    const m = await mount(withRepo("fixed in #482 today"));
+    const link = m.query('[data-github-ref="acme/demo#482"]');
+    assert.ok(link, "bare ref is a link");
+    assert.equal(link!.getAttribute("href"), "https://github.com/acme/demo/issues/482");
+  });
+
+  it("leaves a bare single-digit ref alone (step #1)", async () => {
+    const m = await mount(withRepo("this is step #1 of 3"));
+    assert.equal(m.query("[data-github-ref]"), null);
+    assert.match(m.text(), /step #1 of 3/);
+  });
+
+  it("does not link a bare ref without a known GitHub remote", async () => {
+    const m = await mount(withRepo("fixed in #482 today", null));
+    assert.equal(m.query("[data-github-ref]"), null);
+    assert.match(m.text(), /#482/);
+  });
+
+  it("leaves refs inside inline code alone", async () => {
+    const m = await mount(withRepo("see `#482` and `other/thing#9`"));
+    assert.equal(m.query("[data-github-ref]"), null);
+    const code = m.query("code");
+    assert.match(code!.textContent || "", /#482/);
+  });
+
+  it("leaves refs inside a fenced code block alone", async () => {
+    const m = await mount(withRepo("```\n#482 other/thing#9\n```"));
+    assert.equal(m.query("[data-github-ref]"), null);
+  });
+
+  it("shows a GitHub mark before a literal github.com link", async () => {
+    const m = await mount(
+      <Markdown text="[the PR](https://github.com/acme/demo/pull/482)" />,
+    );
+    const anchor = m.query('a[href="https://github.com/acme/demo/pull/482"]');
+    assert.ok(anchor?.querySelector("svg"), "github mark rendered before the link");
+  });
+
+  it("does not show a GitHub mark on a non-github link", async () => {
+    const m = await mount(<Markdown text="[docs](https://example.com/docs)" />);
+    const anchor = m.query('a[href="https://example.com/docs"]');
+    assert.equal(anchor?.querySelector("svg"), null);
+  });
+});
