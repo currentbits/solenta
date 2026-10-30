@@ -1372,6 +1372,9 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   const swipeStateRef = useRef<SwipeState | null>(null);
   const handleThreadPaneWheel = useCallback(
     (e: ReactWheelEvent<HTMLDivElement>) => {
+      // Vertical scroll is most wheel traffic; skip the layout-reading
+      // ancestor walk for it.
+      if (Math.abs(e.deltaX) <= Math.abs(e.deltaY)) return;
       if (hasHorizontalScrollAncestor(e.target as Element)) return;
       const { state, commit } = accumulateSwipe(swipeStateRef.current, e, Date.now());
       swipeStateRef.current = state;
