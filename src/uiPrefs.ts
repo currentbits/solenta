@@ -299,6 +299,14 @@ export const useDiffIgnoreWhitespace = diffIgnoreWs.use;
 const diffHideTests = makeFlagPref("coder.diffHideTests", false);
 export const setDiffHideTests = diffHideTests.set;
 export const useDiffHideTests = diffHideTests.use;
+/**
+ * Flat List vs collapsible folder Tree (#1772), one setting shared by the
+ * Git pane and the PR Code tab, same pattern as `diffHideTests`. Default
+ * List: existing users see no change.
+ */
+const diffTreeView = makeFlagPref("coder.diffTreeView", false);
+export const setDiffTreeView = diffTreeView.set;
+export const useDiffTreeView = diffTreeView.use;
 
 /**
  * User keybinding overrides (#1506): binding id → chord, e.g.

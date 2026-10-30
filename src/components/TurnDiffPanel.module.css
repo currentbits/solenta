@@ -85,15 +85,40 @@
   gap: 4px;
 }
 
+/** Chip wrapping a file's select button + its copy-path button (#1772). */
+.fileChip {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  height: 24px;
+  padding-right: 2px;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  background: transparent;
+}
+
+.fileChip[data-tree] {
+  width: 100%;
+}
+
+.fileChip:has(.fileBtn[data-selected]) {
+  border-color: var(--border);
+  background: var(--bg-elevated);
+}
+
+.fileChip:hover {
+  background: var(--card-hover);
+}
+
 .fileBtn {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
   max-width: 100%;
   height: 24px;
   padding: 0 8px;
-  border-radius: var(--radius-sm);
-  border: 1px solid transparent;
+  border: none;
   background: transparent;
   color: var(--text-muted);
   font-size: 11.5px;
@@ -101,13 +126,6 @@
 
 .fileBtn[data-selected] {
   color: var(--text);
-  border-color: var(--border);
-  background: var(--bg-elevated);
-}
-
-.fileBtn:hover {
-  color: var(--text);
-  background: var(--card-hover);
 }
 
 .filePath {
@@ -129,6 +147,80 @@
 
 .dels {
   color: var(--danger-fg);
+}
+
+.fileCopy {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.fileCopy:hover {
+  background: var(--overlay-hover);
+  color: var(--text);
+}
+
+/** Tree view (#1772): column list instead of the List view's wrapped chips. */
+.fileTree {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.dirRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 4px 6px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  font-weight: 600;
+  text-align: left;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.dirRow:hover {
+  background: var(--card-hover);
+}
+
+.dirTwisty {
+  flex-shrink: 0;
+  width: 10px;
+  display: inline-block;
+  color: var(--text-dim);
+  transition: transform 0.12s ease;
+}
+
+.dirTwisty[data-open] {
+  transform: rotate(90deg);
+}
+
+.dirName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dirCount {
+  color: var(--text-dim);
+  font-weight: 400;
 }
 
 .patch {
