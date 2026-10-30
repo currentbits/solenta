@@ -3684,6 +3684,244 @@ describe("ThreadView permission redirect (#1762)", () => {
   });
 });
 
+describe("ThreadView deferred question/approval cards (#1789)", () => {
+  const pending: PendingPermissionInfo = {
+    requestId: "req-1789",
+    toolName: "Bash",
+    summary: "Bash: npm test",
+    input: '{"command":"npm test"}',
+    command: "npm test",
+  };
+
+  // Same caveat as the #1762 redirect tests: the permission card's own
+  // command editor is a textarea too.
+  const composerTextarea = (m: { container: HTMLElement }) =>
+    Array.from(m.container.querySelectorAll("textarea")).find(
+      (t) => !t.hasAttribute("data-permission-command"),
+    ) as HTMLTextAreaElement;
+
+  it("holds the card back while the composer is mid-type, with a notice in its place", async () => {
+    const m = await mount(
+      view({ detail: detail({ thread: thread({ status: "working" }) }) }),
+    );
+    const ta = composerTextarea(m);
+    await inAct(() => ta.focus());
+    await m.type(ta, "still writing this");
+
+    await m.rerender(
+      view({
+        detail: detail({
+          thread: thread({ status: "working" }),
+          pendingPermission: pending,
+        }),
+      }),
+    );
+
+    assert.equal(
+      m.query("[data-permission-redirect-hint]"),
+      null,
+      "the real card must not mount while the user is typing",
+    );
+    const notice = m.query("[data-deferred-card-notice]");
+    assert.ok(notice, "a compact notice must show in its place");
+    assert.match(notice!.textContent ?? "", /approval needed/i);
+    assert.match(
+      notice!.textContent ?? "",
+      /sending will decline and redirect/i,
+      "the notice must carry the #1762 redirect warning too",
+    );
+    m.unmount();
+  });
+
+  it("reveals the card once 1.5s pass with no further typing", async () => {
+    const m = await mount(
+      view({ detail: detail({ thread: thread({ status: "working" }) }) }),
+    );
+    const ta = composerTextarea(m);
+    await inAct(() => ta.focus());
+    await m.type(ta, "still writing this");
+
+    await m.rerender(
+      view({
+        detail: detail({
+          thread: thread({ status: "working" }),
+          pendingPermission: pending,
+        }),
+      }),
+    );
+    assert.ok(m.query("[data-deferred-card-notice]"), "deferred first");
+
+    // Real timer, not a fixed-offset fake: the component arms a real
+    // setTimeout off the last keystroke, same as the #607 idle-chain test
+    // above. 1.6s comfortably clears the 1.5s idle window.
+    await inAct(() => new Promise((r) => setTimeout(r, 1600)));
+
+    assert.ok(
+      m.query("[data-permission-redirect-hint]"),
+      "the idle timeout must reveal the real card",
+    );
+    assert.equal(m.query("[data-deferred-card-notice]"), null);
+    m.unmount();
+  });
+
+  it("shows the card immediately when the composer was not being typed into", async () => {
+    const m = await mount(
+      view({
+        detail: detail({
+          thread: thread({ status: "working" }),
+          pendingPermission: pending,
+        }),
+      }),
+    );
+    assert.ok(
+      m.query("[data-permission-redirect-hint]"),
+      "no typing happened, so the card must not be held back",
+    );
+    assert.equal(m.query("[data-deferred-card-notice]"), null);
+    m.unmount();
+  });
+
+  it("never holds back a card once the composer is cleared, even mid-typing-window", async () => {
+    const m = await mount(
+      view({ detail: detail({ thread: thread({ status: "working" }) }) }),
+    );
+    const ta = composerTextarea(m);
+    await inAct(() => ta.focus());
+    await m.type(ta, "still writing this");
+    await m.type(ta, "");
+
+    await m.rerender(
+      view({
+        detail: detail({
+          thread: thread({ status: "working" }),
+          pendingPermission: pending,
+        }),
+      }),
+    );
+
+    assert.ok(
+      m.query("[data-permission-redirect-hint]"),
+      "an empty composer must never defer the card",
+    );
+    assert.equal(m.query("[data-deferred-card-notice]"), null);
+    m.unmount();
+  });
+
+  it("clicking the notice opens the card right away", async () => {
+    const m = await mount(
+      view({ detail: detail({ thread: thread({ status: "working" }) }) }),
+    );
+    const ta = composerTextarea(m);
+    await inAct(() => ta.focus());
+    await m.type(ta, "still writing this");
+
+    await m.rerender(
+      view({
+        detail: detail({
+          thread: thread({ status: "working" }),
+          pendingPermission: pending,
+        }),
+      }),
+    );
+    assert.ok(m.query("[data-deferred-card-notice]"));
+
+    await m.click(m.query("[data-deferred-card-open]"));
+
+    assert.ok(
+      m.query("[data-permission-redirect-hint]"),
+      "clicking the notice must open the real card immediately",
+    );
+    assert.equal(m.query("[data-deferred-card-notice]"), null);
+    m.unmount();
+  });
+
+  it("still redirects a send while the card is deferred (#1762 semantics unchanged)", async () => {
+    const redirected: Array<{ requestId: string; prompt: string }> = [];
+    const started: string[] = [];
+    const m = await mount(
+      view({
+        onStartRun: (prompt) => {
+          started.push(prompt);
+        },
+        onRedirectPermission: (requestId, prompt) => {
+          redirected.push({ requestId, prompt });
+        },
+        detail: detail({ thread: thread({ status: "working" }) }),
+      }),
+    );
+    const ta = composerTextarea(m);
+    await inAct(() => ta.focus());
+    await m.type(ta, "do the other thing instead");
+
+    await m.rerender(
+      view({
+        onStartRun: (prompt) => {
+          started.push(prompt);
+        },
+        onRedirectPermission: (requestId, prompt) => {
+          redirected.push({ requestId, prompt });
+        },
+        detail: detail({
+          thread: thread({ status: "working" }),
+          pendingPermission: pending,
+        }),
+      }),
+    );
+    assert.ok(
+      m.query("[data-deferred-card-notice]"),
+      "sanity: the card is deferred for this send",
+    );
+
+    await m.click(m.query('button[aria-label="Send"]'));
+    assert.deepEqual(redirected, [
+      { requestId: "req-1789", prompt: "do the other thing instead" },
+    ]);
+    assert.equal(started.length, 0, "a deferred card still counts as open");
+    m.unmount();
+  });
+
+  it("labels a deferred persisted question without the redirect warning", async () => {
+    const m = await mount(
+      view({ detail: detail({ thread: thread({ status: "working" }) }) }),
+    );
+    const ta = composerTextarea(m);
+    await inAct(() => ta.focus());
+    await m.type(ta, "still writing this");
+
+    await m.rerender(
+      view({
+        detail: detail({
+          thread: thread({
+            status: "working",
+            pendingQuestion: {
+              id: "q-1",
+              askedAt: Date.now(),
+              questions: [
+                {
+                  question: "Which auth method?",
+                  header: "Auth method",
+                  multiSelect: false,
+                  options: [{ label: "OAuth", description: "" }],
+                },
+              ],
+            },
+          }),
+        }),
+      }),
+    );
+
+    const notice = m.query("[data-deferred-card-notice]");
+    assert.ok(notice);
+    assert.match(notice!.textContent ?? "", /agent is asking a question/i);
+    assert.equal(
+      m.query("[data-deferred-card-redirect-hint]"),
+      null,
+      "a question card never carries the #1762 redirect warning",
+    );
+    m.unmount();
+  });
+});
+
 /**
  * Issue #555: a tall review itinerary used to consume the whole 520px
  * Changes panel, clip the commit box, and leave no scrollbar to reach it.

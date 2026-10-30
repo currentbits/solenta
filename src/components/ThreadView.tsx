@@ -268,6 +268,12 @@ const EMPTY_TASK_TARGETS: { id: string; name: string }[] = [];
 
 const COPY_FLASH_MS = 1500;
 
+/**
+ * Question/approval cards grabbing the composer mid-type (#1789): a new
+ * card held back no longer than this after the last keystroke.
+ */
+const COMPOSER_TYPING_IDLE_MS = 1500;
+
 function shortSha(sha: string): string {
   return sha.length > 7 ? sha.slice(0, 7) : sha;
 }
@@ -1936,6 +1942,119 @@ export const ThreadView = memo(function ThreadView({
     [onStartRun, onRedirectPermission, pendingPlainPermission],
   );
 
+  // Question/approval cards grabbing the view mid-type (#1789): whichever
+  // card the render below would show right now (same precedence: a live
+  // permission prompt wins over a persisted question). `pendingPlainPermission`
+  // above is untouched by this — it reads the raw data, so a card held back
+  // here still counts as "open" for the #1762 redirect.
+  const activeCard = detail?.pendingPermission
+    ? {
+        key: detail.pendingPermission.requestId,
+        kind: detail.pendingPermission.plan
+          ? ("plan" as const)
+          : detail.pendingPermission.inputRequest ||
+              detail.pendingPermission.questions?.length
+            ? ("question" as const)
+            : ("permission" as const),
+      }
+    : detail?.thread.pendingQuestion
+      ? { key: detail.thread.pendingQuestion.id, kind: "question" as const }
+      : null;
+
+  /** Last keystroke / focus / emptiness, kept fresh by Composer (issue #1789). */
+  const composerActivityRef = useRef({ focused: false, empty: true, typedAt: 0 });
+  const lastCardKeyRef = useRef<string | null>(null);
+  const deferTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Mirrors deferredCardKey so handleComposerActivity (a native focus/blur
+  // listener, outside React's event system) can check "is anything even
+  // deferred right now" WITHOUT calling setState — a no-op setState still
+  // trips the act() warning. Every write below updates both together.
+  const deferredKeyRef = useRef<string | null>(null);
+  const [deferredCardKey, setDeferredCardKeyState] = useState<string | null>(
+    null,
+  );
+  const setDeferredCardKey = useCallback((key: string | null) => {
+    if (deferredKeyRef.current === key) return;
+    deferredKeyRef.current = key;
+    setDeferredCardKeyState(key);
+  }, []);
+
+  const armDeferTimer = useCallback(() => {
+    if (deferTimerRef.current) clearTimeout(deferTimerRef.current);
+    const elapsed = Date.now() - composerActivityRef.current.typedAt;
+    const wait = Math.max(0, COMPOSER_TYPING_IDLE_MS - elapsed);
+    deferTimerRef.current = setTimeout(() => {
+      deferTimerRef.current = null;
+      setDeferredCardKey(null);
+    }, wait);
+  }, [setDeferredCardKey]);
+
+  /** Click on the compact notice (or losing the conditions that earned the
+   * deferral): show the real card right away. */
+  const revealDeferredCard = useCallback(() => {
+    if (deferTimerRef.current) {
+      clearTimeout(deferTimerRef.current);
+      deferTimerRef.current = null;
+    }
+    setDeferredCardKey(null);
+  }, [setDeferredCardKey]);
+
+  const handleComposerActivity = useCallback(
+    (info: { typed: boolean; focused: boolean; empty: boolean }) => {
+      composerActivityRef.current.focused = info.focused;
+      composerActivityRef.current.empty = info.empty;
+      if (info.typed) composerActivityRef.current.typedAt = Date.now();
+      // Nothing is deferred: every keystroke/focus/blur in the whole app
+      // would otherwise reach here for nothing.
+      if (!deferredKeyRef.current) return;
+      // Blurred or cleared mid-defer: never hold back an unfocused or empty
+      // composer's card.
+      if (!info.focused || info.empty) {
+        if (deferTimerRef.current) {
+          clearTimeout(deferTimerRef.current);
+          deferTimerRef.current = null;
+        }
+        setDeferredCardKey(null);
+      } else if (info.typed) {
+        armDeferTimer();
+      }
+    },
+    [armDeferTimer, setDeferredCardKey],
+  );
+
+  // A genuinely NEW card (different id) decides whether to defer, once, at
+  // the moment it arrives; it does not re-arm on every render.
+  useEffect(() => {
+    const key = activeCard?.key ?? null;
+    if (key === lastCardKeyRef.current) return;
+    lastCardKeyRef.current = key;
+    if (deferTimerRef.current) {
+      clearTimeout(deferTimerRef.current);
+      deferTimerRef.current = null;
+    }
+    if (key == null) {
+      setDeferredCardKey(null);
+      return;
+    }
+    const { focused, empty, typedAt } = composerActivityRef.current;
+    if (focused && !empty && Date.now() - typedAt < COMPOSER_TYPING_IDLE_MS) {
+      setDeferredCardKey(key);
+      armDeferTimer();
+    } else {
+      setDeferredCardKey(null);
+    }
+  }, [activeCard?.key, armDeferTimer, setDeferredCardKey]);
+
+  useEffect(
+    () => () => {
+      if (deferTimerRef.current) clearTimeout(deferTimerRef.current);
+    },
+    [],
+  );
+
+  const cardDeferred =
+    deferredCardKey != null && deferredCardKey === activeCard?.key;
+
   // "Send in background" (#1778) only makes sense before this thread has
   // ever run: once there is a conversation (or a live run), the composer
   // belongs to THIS thread, not to spinning up a new one beside it.
@@ -3021,7 +3140,41 @@ export const ThreadView = memo(function ThreadView({
   });
   // Run status rides on the composer's top edge (#1429), not the transcript.
   const composerStatus =
-    copied === "reply" ? (
+    cardDeferred && activeCard ? (
+      // Question/approval card held back while the user is mid-type (#1789):
+      // compact notice here instead of the card itself, which otherwise
+      // mounts straight into the scrolled transcript the instant it arrives.
+      <div
+        className={styles.statusStrip}
+        data-deferred-card-notice=""
+        role="status"
+      >
+        <span className={styles.statusDiamond} aria-hidden />
+        <span className={styles.statusText}>
+          {activeCard.kind === "plan"
+            ? "Plan ready for review"
+            : activeCard.kind === "question"
+              ? "Agent is asking a question"
+              : "Approval needed"}
+        </span>
+        {activeCard.kind === "permission" ? (
+          <span
+            className={styles.permissionGuardrail}
+            data-deferred-card-redirect-hint=""
+          >
+            Sending will decline and redirect.
+          </span>
+        ) : null}
+        <button
+          type="button"
+          className={styles.statusAction}
+          onClick={revealDeferredCard}
+          data-deferred-card-open=""
+        >
+          Open now
+        </button>
+      </div>
+    ) : copied === "reply" ? (
       <div className={styles.statusStrip} data-copied-reply="" role="status">
         <span className={styles.statusText}>Copied last reply</span>
       </div>
@@ -4914,7 +5067,7 @@ export const ThreadView = memo(function ThreadView({
           asking, so answering is the next message — not a permission answer.
           A live permission prompt wins: that one is blocking a running CLI.
         */}
-        {!detail.pendingPermission && thread.pendingQuestion ? (
+        {!detail.pendingPermission && thread.pendingQuestion && !cardDeferred ? (
           <QuestionPrompt
             key={`${thread.id}:${thread.pendingQuestion.id}`}
             requestId={thread.pendingQuestion.id}
@@ -4940,7 +5093,7 @@ export const ThreadView = memo(function ThreadView({
           />
         ) : null}
 
-        {detail.pendingPermission?.inputRequest ? (
+        {cardDeferred ? null : detail.pendingPermission?.inputRequest ? (
           <InputPrompt
             key={`${thread.id}:${detail.pendingPermission.requestId}`}
             pending={detail.pendingPermission}
@@ -5512,6 +5665,7 @@ export const ThreadView = memo(function ThreadView({
         onStopRun={onStopRun}
         dropHostRef={dropHostRef}
         onFileDragChange={setFileDrag}
+        onComposerActivity={handleComposerActivity}
       />
       </div>
             </div>
