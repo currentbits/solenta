@@ -21,6 +21,7 @@ import {
   setPasteCardsEnabled,
   setRunDurationEnabled,
   setUsageLimitsStripEnabled,
+  setWrapCodeBlocksEnabled,
   useChatWidth,
   useComposerVimEnabled,
   useEnterSendsEnabled,
@@ -28,6 +29,7 @@ import {
   usePasteCardsEnabled,
   useRunDurationEnabled,
   useUsageLimitsStripEnabled,
+  useWrapCodeBlocksEnabled,
   type ChatWidth,
 } from "../../uiPrefs";
 import styles from "../SettingsModal.module.css";
@@ -921,6 +923,7 @@ function DisplayPrefsSection() {
   const composerVim = useComposerVimEnabled();
   const enterSends = useEnterSendsEnabled();
   const usageLimits = useUsageLimitsStripEnabled();
+  const wrapCode = useWrapCodeBlocksEnabled();
   const chatWidth = useChatWidth();
   return (
     <section className={styles.section} data-display-prefs="">
@@ -996,6 +999,15 @@ function DisplayPrefsSection() {
           onChange={(e) => setUsageLimitsStripEnabled(e.target.checked)}
         />
         <span>Show usage limits in thread</span>
+      </label>
+      <label className={styles.fieldRow}>
+        <input
+          type="checkbox"
+          data-wrap-code-pref=""
+          checked={wrapCode}
+          onChange={(e) => setWrapCodeBlocksEnabled(e.target.checked)}
+        />
+        <span>Wrap long lines in code blocks</span>
       </label>
       <p className={styles.note}>
         A quiet strip above the composer with the 5-hour, weekly and

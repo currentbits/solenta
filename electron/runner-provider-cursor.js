@@ -21,7 +21,7 @@ const {
 } = require("./guardrail-hook-core.js");
 const path = require("node:path");
 const threadSecrets = require("./threadSecrets.js");
-const { threadInstanceEnv } = require("./providerInstances.js");
+const { threadInstanceEnv, threadExtraArgv } = require("./providerInstances.js");
 const cursorParse = require("./cursor.js");
 const { materializeCursorHome, runCursor } = cursorParse;
 const {
@@ -128,6 +128,7 @@ function createCursorRun(ctx) {
       reasoningEffort: thread.reasoningEffort || null,
       webSearch: thread.webSearch === true,
       fast: thread.fast === true,
+      extraArgs: threadExtraArgv(store.getSettings(), thread),
     });
     // #686: pin Task/Agent workers to the parent model. #813: classifyTool
     // preToolUse. Prompt stays last. Local plugins live here. ssh/WSL:

@@ -175,6 +175,7 @@ function view(props: {
   ) => void;
   onRenameThread?: (title: string) => void | Promise<void>;
   onExportReport?: (input: { threadId: string }) => Promise<string | null>;
+  onExportReportMarkdown?: (input: { threadId: string }) => Promise<string | null>;
   onSetCrossThreadInbound?: (
     policy: "accept" | "queue-only" | "refuse",
   ) => void | Promise<void>;
@@ -227,6 +228,7 @@ function view(props: {
       onCreateThread={props.onCreateThread}
       onRenameThread={props.onRenameThread}
       onExportReport={props.onExportReport}
+      onExportReportMarkdown={props.onExportReportMarkdown}
       onStartRun={props.onStartRun ?? (() => {})}
       onStartWorkflow={() => {}}
       onSaveWorkflow={noopSave}
@@ -1053,6 +1055,75 @@ describe("Thread details card rows (#1411)", () => {
     m.unmount();
   });
 
+  it("shows the PR pill next to the branch when the thread has a linked PR (#1781)", async () => {
+    const m = await mount(
+      view({
+        detail: detail({
+          thread: thread({
+            prNumber: 4,
+            prUrl: "https://github.com/acme/repo/pull/4",
+            prState: "OPEN",
+          }),
+        }),
+        onSetupWorktree: async () => {},
+        onMergeWorktree: async () => {},
+        onRemoveWorktree: async () => {},
+      }),
+    );
+    await m.flush();
+    await m.click(m.query("[data-thread-details-btn]"));
+    const card = m.query("[data-thread-details]")!;
+    const pill = card.querySelector("[data-pr-pill]");
+    assert.ok(pill, "PR pill must be present");
+    assert.equal(pill!.getAttribute("data-pr-state"), "open");
+    assert.equal(pill!.getAttribute("href"), "https://github.com/acme/repo/pull/4");
+    assert.match(pill!.textContent ?? "", /#4/);
+    m.unmount();
+  });
+
+  it("hides the PR pill when the thread has no linked PR", async () => {
+    const m = await mount(
+      view({
+        onSetupWorktree: async () => {},
+        onMergeWorktree: async () => {},
+        onRemoveWorktree: async () => {},
+      }),
+    );
+    await m.flush();
+    await m.click(m.query("[data-thread-details-btn]"));
+    const card = m.query("[data-thread-details]")!;
+    assert.equal(card.querySelector("[data-pr-pill]"), null);
+    m.unmount();
+  });
+
+  it("copies the branch name from the row icon and flashes Copied (#1781)", async () => {
+    const copied: string[] = [];
+    Object.defineProperty(navigator, "clipboard", {
+      value: {
+        writeText: async (text: string) => {
+          copied.push(text);
+        },
+      },
+      configurable: true,
+    });
+    const m = await mount(
+      view({
+        onSetupWorktree: async () => {},
+        onMergeWorktree: async () => {},
+        onRemoveWorktree: async () => {},
+      }),
+    );
+    await m.flush();
+    await m.click(m.query("[data-thread-details-btn]"));
+    const btn = m.query("[data-copy-branch]") as HTMLButtonElement | null;
+    assert.ok(btn, "copy-branch row icon must be present");
+    await m.click(btn as HTMLElement);
+    await m.flush();
+    assert.deepEqual(copied, ["coder/header-features-abc123"]);
+    assert.equal(btn!.textContent, "Copied");
+    m.unmount();
+  });
+
   it("opens the worktree in a chosen editor and remembers it", async () => {
     globalThis.window?.localStorage.removeItem("solenta:openInEditor");
     const opened: string[] = [];
@@ -1693,6 +1764,48 @@ describe("export bug report (#394)", () => {
     await m.flush();
     assert.deepEqual(asked, ["t1", "t1"]);
     assert.equal(label(), "Saved");
+    m.unmount();
+  });
+});
+
+describe("export as Markdown (#1783)", () => {
+  it("calls the Markdown export IPC and flashes Saved; a cancel stays quiet", async () => {
+    const asked: string[] = [];
+    let result: string | null = null;
+    const m = await mount(
+      view({
+        onExportReportMarkdown: async ({ threadId }) => {
+          asked.push(threadId);
+          return result;
+        },
+      }),
+    );
+    await m.flush();
+    await m.click(m.query("[aria-label='Thread actions']"));
+    const label = () =>
+      (m.query("[data-export-report-markdown]")?.textContent || "").trim();
+    assert.equal(label(), "Export as Markdown…");
+    await m.click(m.query("[data-export-report-markdown]"));
+    await m.flush();
+    assert.equal(label(), "Export as Markdown…", "cancelled dialog: no flash");
+    result = "/tmp/t1-report.md";
+    await m.click(m.query("[data-export-report-markdown]"));
+    await m.flush();
+    assert.deepEqual(asked, ["t1", "t1"]);
+    assert.equal(label(), "Saved");
+    m.unmount();
+  });
+
+  it("sits next to the HTML export item and is absent when not wired", async () => {
+    const m = await mount(view({ onExportReport: async () => null }));
+    await m.flush();
+    await m.click(m.query("[aria-label='Thread actions']"));
+    assert.ok(m.query("[data-export-report]"), "HTML export present");
+    assert.equal(
+      m.query("[data-export-report-markdown]"),
+      null,
+      "Markdown export hidden without the handler",
+    );
     m.unmount();
   });
 });

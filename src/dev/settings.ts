@@ -49,6 +49,8 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
   let prCrossReview = false;
   /** Default true: delete the GitHub head branch after a merge/close. */
   let deleteBranchOnMergeOrClose = true;
+  /** Default merge method (#1781); null follows the repo's own default. */
+  let defaultMergeMethod: AppSettings["defaultMergeMethod"] = null;
   /** PR size cap in lines (issue #402); default 400, null disables. */
   let prDiffCapLines: number | null = 400;
   /** Run concurrency cap (issue #166); default 4, null disables. */
@@ -96,6 +98,7 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
   let titleInstructions = "";
   let commitMessageInstructions = "";
   let prInstructions = "";
+  let gitTextModel: { provider: string; model: string | null } | null = null;
   let otel: OtelSettings = { endpoint: null, headers: {}, claudeMetrics: false };
   let modelPrices: Record<string, ModelPrice> = {};
   let privacyGateway: PrivacyGatewaySettings = { default: "off", providers: {}, patterns: [] };
@@ -184,6 +187,7 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           stripAgentCoauthors,
           prCrossReview,
           deleteBranchOnMergeOrClose,
+          defaultMergeMethod,
           prDiffCapLines,
           maxConcurrentRuns,
           mcpServers: ctx.mcpServers,
@@ -220,6 +224,7 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           titleInstructions,
           commitMessageInstructions,
           prInstructions,
+          gitTextModel,
           agentProfiles: agentProfiles.map((p) => ({ ...p })),
           providerInstances: providerInstances.map((p) => ({ ...p, env: { ...p.env } })),
           providerModels: structuredClone(providerModels),
@@ -267,6 +272,13 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
             throw new Error("deleteBranchOnMergeOrClose must be a boolean");
           }
           deleteBranchOnMergeOrClose = patch.deleteBranchOnMergeOrClose;
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, "defaultMergeMethod")) {
+          const v = patch.defaultMergeMethod;
+          if (v !== null && v !== "squash" && v !== "merge" && v !== "rebase") {
+            throw new Error('defaultMergeMethod must be "squash", "merge", "rebase", or null');
+          }
+          defaultMergeMethod = v;
         }
         if (Object.prototype.hasOwnProperty.call(patch, "prDiffCapLines")) {
           const v = patch.prDiffCapLines;
@@ -499,6 +511,13 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           // Keep in sync with PR_INSTRUCTIONS_MAX in electron/store-normalize.js.
           prInstructions = patch.prInstructions.trim().slice(0, 1000);
         }
+        if (Object.prototype.hasOwnProperty.call(patch, "gitTextModel")) {
+          const v = patch.gitTextModel;
+          if (v != null && (typeof v !== "object" || !v.provider)) {
+            throw new Error("gitTextModel must be { provider, model } or null");
+          }
+          gitTextModel = v ? { provider: v.provider, model: v.model ?? null } : null;
+        }
         if (Object.prototype.hasOwnProperty.call(patch, "agentProfiles")) {
           if (!Array.isArray(patch.agentProfiles)) {
             throw new Error("agentProfiles must be an array");
@@ -624,6 +643,7 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           stripAgentCoauthors,
           prCrossReview,
           deleteBranchOnMergeOrClose,
+          defaultMergeMethod,
           prDiffCapLines,
           maxConcurrentRuns,
           mcpServers: ctx.mcpServers.map(redactDevMcp) as AppSettings["mcpServers"],
@@ -660,6 +680,7 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           titleInstructions,
           commitMessageInstructions,
           prInstructions,
+          gitTextModel,
           agentProfiles: agentProfiles.map((p) => ({ ...p })),
           providerInstances: providerInstances.map((p) => ({ ...p, env: { ...p.env } })),
           providerModels: structuredClone(providerModels),

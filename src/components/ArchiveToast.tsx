@@ -24,6 +24,18 @@ type ArchiveToastProps = (
       title: string;
       onDismiss: () => void;
     }
+  | {
+      /**
+       * Generic one-action toast, e.g. #1778 "Started in background: <title>"
+       * with an Open action instead of Undo.
+       */
+      variant: "action";
+      message: string;
+      actionLabel: string;
+      onAction: () => void;
+      onDismiss: () => void;
+      durationMs?: number;
+    }
 ) & {
   /**
    * Render inside a positioned dock instead of fixed to the viewport
@@ -53,6 +65,26 @@ export function ArchiveToast(props: ArchiveToastProps) {
   const toastClass = docked
     ? `${styles.toast} ${styles.toastDocked}`
     : styles.toast;
+
+  if (props.variant === "action") {
+    return (
+      <div className={toastClass} role="status" aria-live="polite" data-toast="action">
+        <span className={styles.message}>{props.message}</span>
+        <button type="button" className={styles.undo} onClick={props.onAction}>
+          {props.actionLabel}
+        </button>
+        <button
+          type="button"
+          className={styles.dismiss}
+          onClick={onDismiss}
+          aria-label="Dismiss"
+          title="Dismiss"
+        >
+          ×
+        </button>
+      </div>
+    );
+  }
 
   if (props.variant === "error") {
     return (

@@ -35,6 +35,19 @@ const NAME_MAX = 40;
 const HEADER_RE = /^[A-Za-z0-9-]{1,64}$/;
 
 /**
+ * Extra launch arguments (#1780): flags Solenta itself controls, so a user
+ * value cannot change the protocol a normal run depends on. Checked as
+ * exact tokens and as the `flag=value` form; everything else is free.
+ * claude: print/stream shape and resume identity. codex: the interactive
+ * app-server subcommand itself (runner-provider-codex.js hand-builds that
+ * argv; extraArgs only ever joins the end of it).
+ */
+const EXTRA_ARGS_DENYLIST = Object.freeze({
+  claude: ["-p", "--print", "--output-format", "--input-format", "--resume", "--session-id"],
+  codex: ["app-server", "--listen", "exec", "resume"],
+});
+
+/**
  * Providers whose base row can carry its own env (#1714): an instance whose
  * id equals the provider id, e.g. `{ id: "claude", provider: "claude" }`.
  * It is never a picker row; its env (an API key, a base URL) rides every
@@ -72,6 +85,8 @@ function isHttpUrl(v) {
  * @property {string} provider
  * @property {string | null} configDir
  * @property {Record<string, string>} env
+ * @property {string[]} [extraArgs] - appended to a normal run's argv
+ *   (#1780), filtered against EXTRA_ARGS_DENYLIST at parse time
  * @property {string[]} [command] - generic only: argv, binary first
  * @property {string[]} [fullAccessArgs] - generic only: appended in
  *   bypassPermissions; empty means the CLI handles permissions itself
@@ -264,12 +279,30 @@ function parseInstance(item, strict) {
       env[k] = v;
     }
   }
+  // Extra launch arguments (#1780): same argv-list shape as command /
+  // fullAccessArgs, filtered against the provider's denylist. Lenient
+  // (load from disk) drops only the bad tokens; strict (settings:set)
+  // rejects the whole save so the UI can show why.
+  const extraArgsRaw = argvList(rec.extraArgs);
+  if (!extraArgsRaw) return fail("Extra launch arguments must be a list of strings");
+  const denylist = EXTRA_ARGS_DENYLIST[provider] || [];
+  const extraArgs = [];
+  for (const a of extraArgsRaw) {
+    const banned = denylist.includes(a) || denylist.some((b) => a.startsWith(`${b}=`));
+    if (banned) {
+      if (strict) {
+        throw new Error(`"${a}" is controlled by Solenta and cannot be set as an extra launch argument`);
+      }
+      continue;
+    }
+    extraArgs.push(a);
+  }
   if (provider === "opencode") {
     const openaiCompatible = parseOpenAiCompat(rec.openaiCompatible, fail);
     if (!openaiCompatible) return null;
-    return { id, name, provider, configDir: null, env, openaiCompatible };
+    return { id, name, provider, configDir: null, env, extraArgs, openaiCompatible };
   }
-  if (provider !== "generic") return { id, name, provider, configDir, env };
+  if (provider !== "generic") return { id, name, provider, configDir, env, extraArgs };
   const command = argvList(rec.command);
   if (!command || command.length === 0 || !command[0].trim()) {
     return fail("Custom CLI command cannot be empty");
@@ -293,6 +326,7 @@ function parseInstance(item, strict) {
     provider,
     configDir: null,
     env,
+    extraArgs,
     command,
     fullAccessArgs,
     cwd,
@@ -405,6 +439,23 @@ function threadInstanceEnv(settings, thread, opts = {}) {
 }
 
 /**
+ * Extra launch arguments for a thread's normal run (#1780): the named
+ * instance's, or the base provider's overlay row when none is picked.
+ * Already denylist-filtered at save time, so this never throws. Argv-only
+ * (not a secret), so unlike threadInstanceEnv it applies across ssh/WSL too.
+ *
+ * @param {{ providerInstances?: unknown } | null | undefined} settings
+ * @param {{ provider?: string, providerInstance?: string | null }} thread
+ * @returns {string[]}
+ */
+function threadExtraArgv(settings, thread) {
+  const provider = String((thread && thread.provider) || "");
+  const id = (thread && thread.providerInstance) || provider;
+  const inst = findInstance(settings, provider, id);
+  return inst && Array.isArray(inst.extraArgs) ? inst.extraArgs.slice() : [];
+}
+
+/**
  * Display name: "Claude (work)".
  * @param {string} baseName
  * @param {ProviderInstance} inst
@@ -486,6 +537,7 @@ module.exports = {
   CONFIG_DIR_ENV,
   BASE_ENV_PROVIDERS,
   OPENAI_COMPAT_KEY_ENV,
+  EXTRA_ARGS_DENYLIST,
   isBaseOverlay,
   opencodeProviderConfig,
   parseProviderModels,
@@ -498,5 +550,6 @@ module.exports = {
   findInstance,
   instanceEnv,
   threadInstanceEnv,
+  threadExtraArgv,
   instanceDisplayName,
 };

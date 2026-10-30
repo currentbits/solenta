@@ -15,6 +15,7 @@ import { mount, unmountAll, inAct } from "./support/dom.ts";
 import { Composer } from "../src/components/Composer";
 import {
   setComposerBusyAction,
+  setComposerVimEnabled,
   setLastReasoningEffort,
   setTranscriptViewMode,
 } from "../src/uiPrefs";
@@ -147,6 +148,7 @@ const WORKFLOWS: WorkflowTemplateInfo[] = [
 
 interface Harness {
   sends: string[];
+  backgroundSends: string[];
   steers: boolean[];
   builds: { prompt: string; templateId: string }[];
   modes: PermissionMode[];
@@ -175,6 +177,7 @@ interface Harness {
 function makeHarness(provider = "claude"): Harness {
   return {
     sends: [],
+    backgroundSends: [],
     steers: [],
     builds: [],
     modes: [],
@@ -214,6 +217,7 @@ function composer(
     onProviderSignIn?: (providerId: string) => Promise<void>;
     onShell?: (command: string) => Promise<unknown>;
     onEditLastQueued?: () => void;
+    onSendInBackground?: boolean;
   } = {},
 ) {
   // Seed the emulation from the thread this element renders with, so the
@@ -285,6 +289,13 @@ function composer(
         harness.sends.push(prompt);
         harness.steers.push(opts?.steer === true);
       }}
+      onSendInBackground={
+        over.onSendInBackground
+          ? (prompt) => {
+              harness.backgroundSends.push(prompt);
+            }
+          : undefined
+      }
       onEditLastQueued={over.onEditLastQueued}
       onBuild={(prompt, templateId) => {
         harness.builds.push({ prompt, templateId });
@@ -2488,6 +2499,40 @@ describe("Composer keyboard send", () => {
   });
 });
 
+describe("Composer send in background (mod+alt+enter, issue #1778)", () => {
+  it("starts in the background and clears the draft, leaving onSend untouched", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h, { onSendInBackground: true }));
+    const ta = m.query<HTMLTextAreaElement>("textarea");
+    await m.type(ta, "write release notes");
+    await m.press(ta, "Enter", { metaKey: true, altKey: true });
+    assert.deepEqual(h.backgroundSends, ["write release notes"]);
+    assert.deepEqual(h.sends, [], "the normal send path must not also fire");
+    assert.equal(ta.value, "", "the draft clears for the next task");
+    m.unmount();
+  });
+
+  it("does nothing on an empty draft", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h, { onSendInBackground: true }));
+    const ta = m.query<HTMLTextAreaElement>("textarea");
+    await m.press(ta, "Enter", { metaKey: true, altKey: true });
+    assert.deepEqual(h.backgroundSends, []);
+    m.unmount();
+  });
+
+  it("without the callback (not a draft), the chord falls back to a normal send", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h));
+    const ta = m.query<HTMLTextAreaElement>("textarea");
+    await m.type(ta, "mid-conversation follow-up");
+    await m.press(ta, "Enter", { metaKey: true, altKey: true });
+    assert.deepEqual(h.backgroundSends, []);
+    assert.deepEqual(h.sends, ["mid-conversation follow-up"]);
+    m.unmount();
+  });
+});
+
 /**
  * Issue #1762: Alt+↑ is a fast path to the queued strip's own Edit button
  * (ThreadView opens the LAST item) instead of a dead key on an empty box.
@@ -3332,5 +3377,87 @@ describe("Composer live dictation (#845)", () => {
     assert.equal(fake.of("speech.cancel").length, 1);
     assert.ok(media.tracksStopped >= 1);
     assert.ok(media.contextClosed >= 1);
+  });
+});
+
+/**
+ * Issue #1783: typing a bracket/quote/emphasis char over a selection wraps
+ * it instead of replacing it, and keeps the selection on the inner text.
+ */
+describe("Composer surrounds a selection with a bracket/quote/emphasis pair (#1783)", () => {
+  afterEach(() => setComposerVimEnabled(false));
+
+  it("wraps a selection in each pair, keeping the selection on the inner text", async () => {
+    const pairs: Array<[string, string]> = [
+      ["(", ")"],
+      ["[", "]"],
+      ["{", "}"],
+      ["`", "`"],
+      ['"', '"'],
+      ["'", "'"],
+      ["*", "*"],
+      ["_", "_"],
+    ];
+    for (const [open, close] of pairs) {
+      const h = makeHarness();
+      const m = await mount(composer(h));
+      const ta = m.query("textarea") as HTMLTextAreaElement;
+      await m.type(ta, "hello world");
+      ta.setSelectionRange(0, 5); // "hello"
+      await m.press(ta, open);
+      assert.equal(ta.value, `${open}hello${close} world`, `wraps with ${open}${close}`);
+      assert.equal(ta.selectionStart, 1, `selection start after ${open}`);
+      assert.equal(ta.selectionEnd, 6, `selection end after ${open}`);
+      m.unmount();
+    }
+  });
+
+  it("does nothing without a selection (collapsed caret)", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h));
+    const ta = m.query("textarea") as HTMLTextAreaElement;
+    await m.type(ta, "hello");
+    ta.setSelectionRange(5, 5);
+    await m.press(ta, "(");
+    assert.equal(ta.value, "hello", "no wrap without a selection");
+    m.unmount();
+  });
+
+  it("replaces instead of wrapping when a quote key hits a whole-draft selection", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h));
+    const ta = m.query("textarea") as HTMLTextAreaElement;
+    await m.type(ta, "hello");
+    ta.setSelectionRange(0, 5);
+    await m.press(ta, '"');
+    assert.equal(
+      ta.value,
+      "hello",
+      "select-all + quote is left to the ordinary replace, not wrapped",
+    );
+    m.unmount();
+  });
+
+  it("still wraps a whole-draft selection for a bracket/emphasis key", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h));
+    const ta = m.query("textarea") as HTMLTextAreaElement;
+    await m.type(ta, "hello");
+    ta.setSelectionRange(0, 5);
+    await m.press(ta, "*");
+    assert.equal(ta.value, "*hello*");
+    m.unmount();
+  });
+
+  it("skips the wrap in vim mode", async () => {
+    setComposerVimEnabled(true);
+    const h = makeHarness();
+    const m = await mount(composer(h));
+    const ta = m.query("textarea") as HTMLTextAreaElement;
+    await m.type(ta, "hello world");
+    ta.setSelectionRange(0, 5);
+    await m.press(ta, "(");
+    assert.equal(ta.value, "hello world", "vim owns the keystroke, not the surround feature");
+    m.unmount();
   });
 });

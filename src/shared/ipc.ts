@@ -101,6 +101,14 @@ export interface ProjectInfo {
    */
   defaultWorktree?: boolean | null;
   /**
+   * Per-project override of settings.defaultMergeMethod (#1781): one of
+   * the three methods pins it; null/absent follows the app setting (which
+   * itself may follow the repo's own default). resolveMergeMethod is the
+   * single place that decides what actually runs, bounded by what the
+   * repo allows.
+   */
+  defaultMergeMethod?: MergeMethod | null;
+  /**
    * User override (#610): a path relative to the project checkout. Absent
    * means Automatic (detect from favicon / t3.json / HTML). Never an
    * absolute path.
@@ -417,6 +425,8 @@ export interface ProjectUpdateInput {
   worktreeRetention?: number;
   /** Per-project default-worktree override (#1775); null restores "use the global setting". */
   defaultWorktree?: boolean | null;
+  /** Per-project default-merge-method override (#1781); null restores "use the app setting". */
+  defaultMergeMethod?: MergeMethod | null;
   /** Secondary folders (#514), absolute paths. Empty / null clears them. */
   folders?: string[] | null;
   /**
@@ -3425,6 +3435,14 @@ export interface ProviderInstance {
   configDir: string | null;
   /** Extra env for this instance's spawns only. Stored like MCP secrets. */
   env: Record<string, string>;
+  /**
+   * Extra CLI flags appended to a normal run's argv (#1780), after the
+   * app's own flags and before the trailing prompt where one exists.
+   * Denylisted flags (claude: -p/--print/--output-format/--input-format/
+   * --resume/--session-id; codex: the app-server subcommand itself) are
+   * rejected on save.
+   */
+  extraArgs?: string[];
   /** generic only: argv, binary first. The prompt is appended last. */
   command?: string[];
   /** generic only: appended in Full access. Empty = the CLI decides. */
@@ -3747,6 +3765,16 @@ export interface AppSettings {
    */
   deleteBranchOnMergeOrClose: boolean;
   /**
+   * Default merge method for every Solenta merge site (issue #1781): the
+   * thread Merge button, the PR workspace panel, and the agent pr_merge
+   * tool. null (the default) follows the repo's own default. A per-project
+   * ProjectInfo.defaultMergeMethod overrides this; resolveMergeMethod picks
+   * project ?? this setting ?? the repo default, bounded by what the repo
+   * actually allows. The transient method picker on each merge action
+   * still overrides both for that one merge.
+   */
+  defaultMergeMethod: MergeMethod | null;
+  /**
    * User-registered MCP servers (Skills tab). Built-ins coder-memory and
    * coder-threads are app-owned and never appear here. Enabled entries are
    * folded into every provider's MCP injection on the next turn.
@@ -3913,6 +3941,13 @@ export interface AppSettings {
    * Trimmed, capped at PR_INSTRUCTIONS_MAX (~1000) chars. Default "".
    */
   prInstructions: string;
+  /**
+   * Provider/model used to generate commit messages and PR title/body
+   * (#1780, electron/commitmsg.js). null (the default) means the thread's
+   * own provider/model, as before. When set, that provider's CLI must be
+   * installed or the thread's is used instead (console warning).
+   */
+  gitTextModel: { provider: string; model: string | null } | null;
   /**
    * PR size cap in changed lines (additions + deletions vs the base branch),
    * enforced when a PR is created from the app (issue #402, DORA small
@@ -5277,6 +5312,11 @@ export type ThreadForkOpts = {
   /** Start the fork out of plan mode ("Implement in a new thread", #1501). */
   leavePlan?: boolean;
   /**
+   * Explicit title (issue #1781's Duplicate uses "<title> (copy)"); absent
+   * gets the ordinary "Fork: <source title>" naming.
+   */
+  title?: string;
+  /**
    * Fork from one of the source's turn checkpoints (#252): the new worktree
    * starts at that commit (recorded as leadSnapshotSha) and the transcript is
    * cut at the turn that made it. Rejects a sha that is not the source's.
@@ -6338,6 +6378,14 @@ export interface CoderApi {
      */
     exportReport(input: { threadId: string }): Promise<string | null>;
     /**
+     * Save the thread as a plain, redacted Markdown transcript (#1783):
+     * title, project, provider/model, date, then each message as a
+     * "## You" / "## Agent" section. Resolves the written path, or null
+     * when the save dialog was cancelled. Desktop only: web mode has no
+     * save dialog.
+     */
+    exportReportMarkdown(input: { threadId: string }): Promise<string | null>;
+    /**
      * Run the project's setupCommand (`actionId: "setup"` or omitted) or a
      * named quick action (issue #153). Rejects when no command is set, the
      * action is unknown, a run is active, or another command is in flight.
@@ -6511,6 +6559,13 @@ export interface CoderApi {
      */
     distillMemory(input: { threadId: string }): Promise<DistilledMemory>;
     stop(input: { threadId: string }): Promise<void>;
+    /**
+     * "Stop all running threads" (⌘K palette action + sidebar control,
+     * issue #1778): stops every thread with a live run in one round trip.
+     * Equivalent to calling stop() on each of listActiveThreadIds(); an
+     * orchestrator's crew is cascaded same as a single stop.
+     */
+    stopAll(): Promise<{ stopped: number }>;
     /**
      * Resume a parked quota-wait thread now (#462). Resends the last user
      * prompt without appending it again. Rejects if the thread is not

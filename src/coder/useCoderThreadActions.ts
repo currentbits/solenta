@@ -63,6 +63,20 @@ export function useCoderThreadActions({
     }
   }, [api, selectedThreadId, applyThreads]);
 
+  /**
+   * Stop every active run in one round trip (⌘K palette action + sidebar
+   * control). Backend stops each listActiveThreadIds() entry; cascading
+   * crew stops are the backend's job. Each stopped thread's own
+   * thread:updated push keeps the list/detail in sync here.
+   */
+  const stopAllRuns = useCallback(async () => {
+    try {
+      await api.runs.stopAll();
+    } catch (err) {
+      setError({ scope: "run", message: errorMessage(err) });
+    }
+  }, [api]);
+
   const setPermissionMode = useCallback(
     async (
       mode: PermissionMode,
@@ -1192,6 +1206,7 @@ export function useCoderThreadActions({
 
   return {
     stopRun,
+    stopAllRuns,
     setPermissionMode,
     respondPermission,
     redirectPermission,

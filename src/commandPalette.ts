@@ -237,4 +237,9 @@ export const PALETTE_ACTIONS: readonly PaletteAction[] = [
     title: "Restart agent session",
     keywords: "reload skills plugins mcp servers reconnect",
   },
+  {
+    id: "stop-all-threads",
+    title: "Stop all running threads",
+    keywords: "halt cancel kill abort",
+  },
 ];

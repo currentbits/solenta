@@ -23,6 +23,10 @@ import { isAbsolutePath } from "../pathLinks";
 import { languageForFence, useHighlightedBlock } from "../syntaxHighlight";
 import { markdownChunks } from "./markdownChunks";
 import {
+  setWrapCodeBlocksEnabled,
+  useWrapCodeBlocksEnabled,
+} from "../uiPrefs";
+import {
   GithubMark,
   isGithubUrl,
   linkifyNode,
@@ -156,6 +160,7 @@ function CodeBlock({ children }: { children?: ReactNode }) {
   // ponytail: the whole live chunk counts as unclosed, so a closed fence
   // stays code until the next block settles it or the reply ends.
   const live = useContext(LiveChunkContext);
+  const wrap = useWrapCodeBlocksEnabled();
 
   const copy = async () => {
     // jsdom and insecure contexts have no clipboard; keep the button inert.
@@ -183,6 +188,15 @@ function CodeBlock({ children }: { children?: ReactNode }) {
     <div className={styles.codeBlock}>
       <div className={styles.codeHead}>
         <span className={styles.codeLang}>{lang || "code"}</span>
+        <button
+          type="button"
+          className={styles.codeCopy}
+          aria-pressed={wrap}
+          title={wrap ? "Don't wrap long lines" : "Wrap long lines"}
+          onClick={() => setWrapCodeBlocksEnabled(!wrap)}
+        >
+          Wrap
+        </button>
         <button type="button" className={styles.codeCopy} onClick={() => void copy()}>
           {copied ? "Copied" : "Copy"}
         </button>
@@ -374,8 +388,9 @@ export function MarkdownBody({
   streaming?: boolean;
 }) {
   const chunks = streaming ? markdownChunks(text) : [text];
+  const wrap = useWrapCodeBlocksEnabled();
   return (
-    <div className={styles.md}>
+    <div className={styles.md} data-wrap-code={wrap ? "" : undefined}>
       {chunks.map((chunk, i) => (
         <Fragment key={i}>
           {i > 0 && "\n"}

@@ -64,6 +64,16 @@ module.exports = {
   "runs:stop": async (ctx, input) => {
     return ctx.runner.stopRun(input);
   },
+  // "Stop all running threads" (⌘K palette + sidebar): one round trip for
+  // every active run. stopRun already cascades crew, so stopping a worker
+  // whose orchestrator was stopped first in this same loop is a no-op.
+  "runs:stopAll": async (ctx) => {
+    const ids = ctx.runner.listActiveThreadIds();
+    for (const threadId of ids) {
+      await ctx.runner.stopRun({ threadId });
+    }
+    return { stopped: ids.length };
+  },
   "runs:resumeQuotaWait": async (ctx, input) => {
     return ctx.runner.resumeQuotaWait(input);
   },

@@ -11,7 +11,12 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const threadSecrets = require("../threadSecrets.js");
-const { buildThreadReport, exportThreadReport } = require("../threadReport.js");
+const {
+  buildThreadReport,
+  exportThreadReport,
+  buildThreadReportMarkdown,
+  exportThreadReportMarkdown,
+} = require("../threadReport.js");
 
 const GH = "ghp_" + "a".repeat(36);
 const CARD = "hunter2-very-secret";
@@ -114,6 +119,117 @@ describe("exportThreadReport", () => {
 
     fs.rmSync(file);
     const cancelled = await exportThreadReport(
+      { store, dialog: { showSaveDialog: async () => ({ canceled: true }) } },
+      "t-report",
+    );
+    assert.equal(cancelled, null);
+    assert.equal(fs.existsSync(file), false);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+describe("buildThreadReportMarkdown", () => {
+  it("redacts secrets, collapses tool calls to one line, lists attachments and keeps code fences verbatim", () => {
+    threadSecrets.set("t-report", "DB_PASSWORD", CARD);
+    const { markdown, counts } = buildThreadReportMarkdown({
+      detail: detail([
+        {
+          id: "1",
+          role: "user",
+          text: `use ${GH} and ${CARD}`,
+          createdAt: 1,
+          attachments: [{ kind: "image", path: "/x/screenshot.png", name: "screenshot.png" }],
+        },
+        {
+          id: "2",
+          role: "tool",
+          text: `Bash: curl ${GH}`,
+          createdAt: 2,
+          tool: {
+            id: "x",
+            name: "Bash",
+            input: "curl /some/long/command --with --many --flags",
+            output: "200 OK",
+            isError: true,
+            done: true,
+          },
+        },
+        {
+          id: "3",
+          role: "assistant",
+          text: "Here is the fix:\n```js\nconsole.log(1)\n```",
+          createdAt: 3,
+        },
+      ]),
+      projectName: "proj",
+      exportedAt: Date.UTC(2026, 9, 18),
+      home: "/Users/alice",
+    });
+    assert.ok(!markdown.includes(GH), "github token redacted everywhere it is printed");
+    assert.ok(!markdown.includes(CARD), "secret-card value redacted");
+    assert.ok(markdown.startsWith("# Fix <login> bug"), "title is plain text, not HTML-escaped");
+    assert.ok(markdown.includes("## You"), "user section heading");
+    assert.ok(markdown.includes("## Agent"), "assistant section heading");
+    assert.ok(
+      markdown.includes("```js\nconsole.log(1)\n```"),
+      "the assistant's own code fence survives untouched",
+    );
+    assert.match(markdown, /> tool: Bash - Bash: curl \[redacted:github-token\]\s*\(error\)/);
+    assert.ok(
+      !markdown.includes("curl /some/long/command"),
+      "full tool input is not dumped, only the one-line summary",
+    );
+    assert.ok(markdown.includes("Attachments: screenshot.png"), "attachment listed by name");
+    assert.deepEqual(counts, {
+      "secret.request-card": 1,
+      "secret.github-token": 2,
+    });
+    assert.match(markdown, /Redacted 3 secret\(s\)/);
+  });
+
+  it("renders a clean transcript with no secrets found", () => {
+    const { markdown, counts } = buildThreadReportMarkdown({
+      detail: detail([{ id: "1", role: "user", text: "hello", createdAt: 1 }]),
+      projectName: "proj",
+      exportedAt: Date.UTC(2026, 9, 18),
+    });
+    assert.deepEqual(counts, {});
+    assert.match(markdown, /No secrets matched the redaction rules\./);
+    assert.ok(markdown.includes("- **Project:** proj"));
+    assert.ok(markdown.includes("- **Provider:** claude"));
+    assert.ok(markdown.includes("- **Model:** claude-opus-5-5"));
+  });
+});
+
+describe("exportThreadReportMarkdown", () => {
+  it("writes the picked .md path and does nothing on cancel", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "solenta-report-md-"));
+    const store = {
+      getThread: (id) => (id === "t-report" ? { ...detail([]).thread, archived: false } : null),
+      getProject: () => ({ id: "p1", name: "proj", path: dir }),
+      getMessages: () => [{ id: "1", role: "user", text: `hi ${GH}`, createdAt: 1 }],
+      getWorkLog: () => [],
+      getUsage: () => null,
+      getRunArtifacts: () => [],
+      getThreads: () => [],
+      listThreads: () => [],
+    };
+    const file = path.join(dir, "out.md");
+    let opts = null;
+    const dialog = {
+      showSaveDialog: async (o) => {
+        opts = o;
+        return { canceled: false, filePath: file };
+      },
+    };
+    const written = await exportThreadReportMarkdown({ store, dialog }, "t-report");
+    assert.equal(written, file);
+    assert.equal(opts.defaultPath, "fix-login-bug-report.md");
+    const markdown = fs.readFileSync(file, "utf8");
+    assert.ok(markdown.includes("[redacted:github-token]") && !markdown.includes(GH));
+
+    fs.rmSync(file);
+    const cancelled = await exportThreadReportMarkdown(
       { store, dialog: { showSaveDialog: async () => ({ canceled: true }) } },
       "t-report",
     );

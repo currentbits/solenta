@@ -104,6 +104,7 @@ const { posixQuote } = require("./ssh.js");
  *   fast?: boolean,
  *   images?: string[],
  *   files?: string[],
+ *   extraArgs?: string[],
  * }) => string[]} buildArgs
  */
 
@@ -407,6 +408,7 @@ const PROVIDERS = [
       askWriteDirs,
       askReads,
       userHooks,
+      extraArgs,
     }) {
       // NO trailing prompt: the runner delivers it on stdin (stream-json
       // input), which is what lets the CLI route permission prompts to us
@@ -482,6 +484,9 @@ const PROVIDERS = [
       if (Object.keys(settings).length) {
         args.push("--settings", JSON.stringify(settings));
       }
+      // No trailing prompt to protect (stdin delivers it): extra launch
+      // arguments (#1780) join at the very end, already denylist-filtered.
+      if (Array.isArray(extraArgs) && extraArgs.length) args.push(...extraArgs);
       return args;
     },
   },
@@ -753,7 +758,7 @@ const PROVIDERS = [
      * (issue #578). plan passes through; explicit bypassPermissions is
      * already unprompted so the extra flag is not added.
      */
-    buildArgs({ prompt, sessionId, permissionMode, model, reasoningEffort }) {
+    buildArgs({ prompt, sessionId, permissionMode, model, reasoningEffort, extraArgs }) {
       const mode = String(permissionMode || "default");
       const asking = mode === "default" || mode === "acceptEdits";
       const headlessMode = asking ? "bypassPermissions" : mode;
@@ -792,6 +797,8 @@ const PROVIDERS = [
           args.push("--reasoning-effort", level);
         },
       );
+      // Extra launch arguments (#1780) join before the trailing prompt.
+      if (Array.isArray(extraArgs) && extraArgs.length) args.push(...extraArgs);
       // -p/--single takes the prompt as its value; keep it last.
       args.push("-p", String(prompt ?? ""));
       return args;
@@ -913,6 +920,7 @@ const PROVIDERS = [
       permissionMode,
       files,
       agent,
+      extraArgs,
     }) {
       const args = ["run"];
       const paths = [];
@@ -946,6 +954,8 @@ const PROVIDERS = [
       if (opencodeAuto(permissionMode)) {
         args.push("--auto");
       }
+      // Extra launch arguments (#1780) join before the trailing prompt.
+      if (Array.isArray(extraArgs) && extraArgs.length) args.push(...extraArgs);
       args.push(String(prompt ?? ""));
       return args;
     },
@@ -1540,7 +1550,7 @@ const PROVIDERS = [
      * owns worktrees / cwd). defaultBin is cursor-agent because grok
      * also ships `agent` on PATH.
      */
-    buildArgs({ prompt, sessionId, permissionMode, model, reasoningEffort }) {
+    buildArgs({ prompt, sessionId, permissionMode, model, reasoningEffort, extraArgs }) {
       const plan = String(permissionMode || "") === "plan";
       const args = [
         "-p",
@@ -1565,6 +1575,8 @@ const PROVIDERS = [
       maybeEmitEffort([], reasoningEffort, () => {
         args.push("--effort", "should-not-appear");
       });
+      // Extra launch arguments (#1780) join before the trailing prompt.
+      if (Array.isArray(extraArgs) && extraArgs.length) args.push(...extraArgs);
       args.push(String(prompt ?? ""));
       return args;
     },

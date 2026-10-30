@@ -18,6 +18,7 @@ import {
 import { mergeOntoLabel, sourceSnapshotLabel } from "../crewIntegration";
 import { middleTruncate } from "../format";
 import { useEscapeClose } from "../useEscapeClose";
+import { PrHoverTarget, repoFromGithubUrl } from "./PrHoverCard";
 import styles from "./WorktreeControl.module.css";
 import { EDITOR_PREF_KEY, type EditorId, type EditorOption } from "../shared/ipc";
 
@@ -116,6 +117,67 @@ function BranchGlyph() {
   );
 }
 
+/** Same glyph as the sidebar card's PR badge (#1771): filled path when merged. */
+function PrGlyph({ merged }: { merged: boolean }) {
+  return (
+    <svg
+      width="10"
+      height="10"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      aria-hidden="true"
+    >
+      <circle cx="4" cy="3.5" r="1.5" />
+      <circle cx="4" cy="12.5" r="1.5" />
+      <circle cx="12" cy="12.5" r="1.5" />
+      <path d={merged ? "M4 5v6M4 5c0 4 8 3 8 6" : "M4 5v6M12 11V6a2 2 0 0 0-2-2H8"} />
+    </svg>
+  );
+}
+
+/**
+ * PR pill next to the branch (#1781): same badge as the sidebar card's
+ * (data-pr-badge, #1771), with the same PrHoverTarget preview. Null when
+ * the thread has no linked PR.
+ */
+function BranchPrPill({
+  projectPath,
+  thread,
+}: {
+  projectPath: string | null;
+  thread: ThreadInfo;
+}) {
+  if (thread.prNumber == null || !thread.prUrl) return null;
+  return (
+    <PrHoverTarget
+      projectPath={projectPath}
+      repo={repoFromGithubUrl(thread.prUrl)}
+      number={thread.prNumber}
+    >
+      <a
+        className={styles.prPill}
+        data-pr-pill=""
+        data-pr-state={thread.prState?.toLowerCase()}
+        title={
+          thread.prState
+            ? `PR #${thread.prNumber} ${thread.prState.toLowerCase()}`
+            : undefined
+        }
+        href={thread.prUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <PrGlyph merged={thread.prState === "MERGED"} />#{thread.prNumber}
+      </a>
+    </PrHoverTarget>
+  );
+}
+
 function Spinner() {
   return <span className={styles.spinner} aria-hidden />;
 }
@@ -200,12 +262,14 @@ export function useWorktreeChrome(
   const [pendingMergeRetry, setPendingMergeRetry] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [copiedPath, setCopiedPath] = useState(false);
+  const [copiedBranch, setCopiedBranch] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const sawWorkingRef = useRef(false);
   const onMergeRef = useRef(onMergeWorktree);
   onMergeRef.current = onMergeWorktree;
   const menuRef = useRef<HTMLDivElement>(null);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const branchCopyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const hasWorktree = Boolean(thread?.worktreePath);
   const busy = isWorking || gitAction != null || resolving || refreshing;
@@ -224,12 +288,14 @@ export function useWorktreeChrome(
     setMenuOpen(false);
     setBasePicker(null);
     setCopiedPath(false);
+    setCopiedBranch(false);
     sawWorkingRef.current = false;
   }, [thread?.id]);
 
   useEffect(() => {
     return () => {
       if (copyTimer.current != null) clearTimeout(copyTimer.current);
+      if (branchCopyTimer.current != null) clearTimeout(branchCopyTimer.current);
     };
   }, []);
 
@@ -441,6 +507,24 @@ export function useWorktreeChrome(
     }, 1400);
   }, [thread?.worktreePath]);
 
+  /** Copy-branch action (#1781): same clipboard + "Copied" feedback as the path copy. */
+  const handleCopyBranch = useCallback(async () => {
+    const name = thread?.branch;
+    if (!name) return;
+    try {
+      await navigator.clipboard.writeText(name);
+    } catch {
+      return;
+    }
+    setCopiedBranch(true);
+    setMenuOpen(false);
+    if (branchCopyTimer.current != null) clearTimeout(branchCopyTimer.current);
+    branchCopyTimer.current = setTimeout(() => {
+      setCopiedBranch(false);
+      branchCopyTimer.current = null;
+    }, 1400);
+  }, [thread?.branch]);
+
   if (!visible || !thread) {
     return { toolbar: null, banner: null, rows: null };
   }
@@ -560,6 +644,19 @@ export function useWorktreeChrome(
             <path d="M1.5 2.75 4 5.25 6.5 2.75" />
           </svg>
         </button>
+        {branch ? (
+          <button
+            type="button"
+            className={styles.branchCopyBtn}
+            data-copy-branch=""
+            aria-label="Copy branch name"
+            title={copiedBranch ? "Copied" : "Copy branch name"}
+            onClick={() => void handleCopyBranch()}
+          >
+            {copiedBranch ? "Copied" : <CopyGlyph />}
+          </button>
+        ) : null}
+        <BranchPrPill projectPath={project?.path ?? null} thread={thread} />
         {menuOpen && (
           <div
             className={styles.menu}
@@ -589,6 +686,17 @@ export function useWorktreeChrome(
                 onClick={() => void handleCopyPath()}
               >
                 {copiedPath ? "Copied path" : "Copy path"}
+              </button>
+            )}
+            {branch && (
+              <button
+                type="button"
+                className={styles.menuItem}
+                role={basePicker ? undefined : "menuitem"}
+                data-copy-branch-menu=""
+                onClick={() => void handleCopyBranch()}
+              >
+                {copiedBranch ? "Copied branch name" : "Copy branch name"}
               </button>
             )}
             {onSetBaseBranch && !thread.prNumber && (
@@ -1022,6 +1130,7 @@ export function useWorktreeChrome(
         <span className={styles.rowMono} title={branch ?? undefined}>
           {branch ?? "worktree"}
         </span>
+        <BranchPrPill projectPath={project?.path ?? null} thread={thread} />
         <span className={styles.rowFaint}>
           →{" "}
           <span
@@ -1035,6 +1144,18 @@ export function useWorktreeChrome(
             {thread.baseBranch || "repo default"}
           </span>
         </span>
+        {branch ? (
+          <button
+            type="button"
+            className={styles.rowIcon}
+            data-copy-branch=""
+            aria-label="Copy branch name"
+            title={copiedBranch ? "Copied" : "Copy branch name"}
+            onClick={() => void handleCopyBranch()}
+          >
+            {copiedBranch ? "Copied" : <CopyGlyph />}
+          </button>
+        ) : null}
       </div>
       {startSnapshot || startDirty || refreshSnapshot || leadPointer ? (
         <div className={styles.row}>

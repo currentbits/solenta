@@ -16,7 +16,7 @@ const { withProjectEnv } = require("./worktreeEnv.js");
 const { codexWorkspaceWriteArgs } = require("./codexWorkspaceWrite.js");
 const { getCodexMcpArgs, getCodexMcpEnv } = require("./memory-sup.js");
 const { guardrailsEnabled } = require("./guardrails.js");
-const { threadInstanceEnv, threadProviderRef } = require("./providerInstances.js");
+const { threadInstanceEnv, threadProviderRef, threadExtraArgv } = require("./providerInstances.js");
 const {
   deployCodexGuardrailOverlay,
   materializeCodexGuardrailHome,
@@ -223,6 +223,9 @@ function createCodexRun(ctx) {
         // Overlay is best-effort; a failed isolate must not block the turn.
       }
     }
+    // Extra launch arguments (#1780): app-server takes no trailing prompt
+    // (turn/start carries it over JSON-RPC), so these join at the end.
+    args.push(...threadExtraArgv(store.getSettings(), thread));
     const spawn = resolveSpawn(project, binary, args, localCwd, codexWrapEnv, threadId);
 
     if (abortIfCancelled(threadId, runId)) return { runId };

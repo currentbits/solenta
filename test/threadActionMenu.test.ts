@@ -342,4 +342,59 @@ describe("buildThreadActionMenuItems (contract)", () => {
     assert.equal(buildThreadActionMenuItems({ ...base, thread: away })
       .some((i) => i.id === "teleportBack"), false, "hidden without an onTeleport");
   });
+
+  it("offers Duplicate next to Fork, and hides it when showDuplicate is off (#1781)", () => {
+    const withBoth = buildThreadActionMenuItems({
+      thread,
+      providers,
+      snoozePresets: presets,
+      isSettled: false,
+      canSettle: true,
+      showSnooze: false,
+      showFork: true,
+      showDuplicate: true,
+      showRename: false,
+      showMute: false,
+      showSettle: false,
+    });
+    const dup = withBoth.find((i) => i.id === "duplicate");
+    assert.ok(dup, "Duplicate item");
+    assert.equal(dup?.label, "Duplicate");
+    assert.ok(
+      withBoth.findIndex((i) => i.id === "fork") < withBoth.findIndex((i) => i.id === "duplicate"),
+      "Duplicate sits after Fork",
+    );
+
+    const withoutFork = buildThreadActionMenuItems({
+      thread,
+      providers,
+      snoozePresets: presets,
+      isSettled: false,
+      canSettle: true,
+      showSnooze: false,
+      showFork: false,
+      showDuplicate: true,
+      showRename: false,
+      showMute: false,
+      showSettle: false,
+    });
+    const dupOnly = withoutFork.find((i) => i.id === "duplicate");
+    assert.ok(dupOnly, "Duplicate still shows without Fork");
+    assert.equal(dupOnly?.separatorBefore, false, "no Fork above it to separate from");
+
+    const neither = buildThreadActionMenuItems({
+      thread,
+      providers,
+      snoozePresets: presets,
+      isSettled: false,
+      canSettle: true,
+      showSnooze: false,
+      showFork: false,
+      showDuplicate: false,
+      showRename: false,
+      showMute: false,
+      showSettle: false,
+    });
+    assert.equal(neither.some((i) => i.id === "duplicate"), false);
+  });
 });

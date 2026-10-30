@@ -257,6 +257,12 @@ function migrateProject(p) {
   if (next.defaultWorktree !== true && next.defaultWorktree !== false) {
     delete next.defaultWorktree;
   }
+  // #1781: tri-state override of settings.defaultMergeMethod. Anything but
+  // one of the three methods drops the key (use the app setting / repo
+  // default).
+  if (!["squash", "merge", "rebase"].includes(next.defaultMergeMethod)) {
+    delete next.defaultMergeMethod;
+  }
   // Derived at list time (#610 / #521). Never persist a data URL or scm probe.
   delete next.iconUrl;
   delete next.scm;

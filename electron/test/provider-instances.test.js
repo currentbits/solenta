@@ -88,8 +88,55 @@ describe("providerInstances parsing", () => {
       "junk",
     ]);
     assert.deepEqual(healed, [
-      { id: "ok", name: "Work", provider: "claude", configDir: "~/.claude-work", env: { A: "1" } },
+      { id: "ok", name: "Work", provider: "claude", configDir: "~/.claude-work", env: { A: "1" }, extraArgs: [] },
     ]);
+  });
+
+  it("extraArgs (#1780): denylisted flags reject on save, strip on load, free argv passes", () => {
+    for (const bad of ["-p", "--print", "--output-format", "--input-format", "--resume", "--session-id"]) {
+      assert.throws(
+        () => inst.validateProviderInstances([
+          { id: "x", name: "x", provider: "claude", extraArgs: [bad, "value"] },
+        ]),
+        /controlled by Solenta/,
+        bad,
+      );
+      // The `flag=value` form is caught too.
+      assert.throws(
+        () => inst.validateProviderInstances([
+          { id: "x", name: "x", provider: "claude", extraArgs: [`${bad}=value`] },
+        ]),
+        /controlled by Solenta/,
+        `${bad}=value`,
+      );
+    }
+    for (const bad of ["app-server", "--listen", "exec", "resume"]) {
+      assert.throws(
+        () => inst.validateProviderInstances([
+          { id: "x", name: "x", provider: "codex", extraArgs: [bad] },
+        ]),
+        /controlled by Solenta/,
+        bad,
+      );
+    }
+    // Free-form flags, including ones another provider's denylist bans,
+    // pass for a provider whose denylist does not name them.
+    const [free] = inst.validateProviderInstances([
+      { id: "x", name: "x", provider: "claude", extraArgs: ["--add-dir", "../shared"] },
+    ]);
+    assert.deepEqual(free.extraArgs, ["--add-dir", "../shared"]);
+    const [grokFree] = inst.validateProviderInstances([
+      { id: "grok", name: "x", provider: "grok", extraArgs: ["-p", "--resume", "x"] },
+    ]);
+    assert.deepEqual(grokFree.extraArgs, ["-p", "--resume", "x"]);
+
+    // Loading from disk (lenient) strips only the bad tokens, keeps the
+    // rest (a stripped flag's own value is not itself denylisted, so it
+    // survives as a free token - same tradeoff as the other argv fields).
+    const [healed] = inst.normalizeProviderInstances([
+      { id: "x", name: "x", provider: "claude", extraArgs: ["--add-dir", "../shared", "-p", "--resume", "s1"] },
+    ]);
+    assert.deepEqual(healed.extraArgs, ["--add-dir", "../shared", "s1"]);
   });
 
   it("builds the env overlay, expanding ~ and creating the folder", () => {
@@ -407,6 +454,49 @@ setInterval(() => {}, 500);
         fs.realpathSync(path.join(env.CODEX_HOME, "auth.json")),
         fs.realpathSync(path.join(codexHome, "auth.json")),
       );
+    } finally {
+      delete process.env.CODER_CODEX_BIN;
+    }
+  });
+
+  it("extra launch arguments (#1780) join the codex app-server argv; denylisted flags are rejected on save", async () => {
+    assert.throws(
+      () => inst.validateProviderInstances([
+        { id: "x", name: "x", provider: "codex", extraArgs: ["app-server"] },
+      ]),
+      /controlled by Solenta/,
+    );
+    store.setSettings({
+      providerInstances: [
+        { id: "cw2", name: "work2", provider: "codex", extraArgs: ["-c", "custom=1"] },
+      ],
+    });
+    /** @type {any[]} */
+    const seen = [];
+    runner.stopAll();
+    const core = await import(
+      pathToFileURL(path.join(__dirname, "../../core/dist/index.js")).href
+    );
+    process.env.CODER_CODEX_BIN = process.execPath;
+    try {
+      runner = createRunner({
+        store,
+        core,
+        pushFn() {},
+        tickMs: 15,
+        userDataPath: tmpDir,
+        runCodexFn: (opts) => {
+          seen.push(opts.args);
+          setImmediate(() => opts.onExit({ code: 0, stderr: "" }));
+          return { kill() {}, respondJsonRpc() {}, respondJsonRpcError() {} };
+        },
+      });
+      const t = services.createThread(store, { projectId: project.id, title: "c2", provider: "codex:cw2" });
+      await runner.startRun({ threadId: t.id, prompt: "hi" });
+      await waitFor(() => seen.length === 1);
+      const args = seen[0];
+      // No trailing prompt on the app-server argv: extraArgs is last.
+      assert.deepEqual(args.slice(-2), ["-c", "custom=1"]);
     } finally {
       delete process.env.CODER_CODEX_BIN;
     }

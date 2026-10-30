@@ -288,6 +288,8 @@ export interface SidebarProps {
     threadId: string,
     opts?: { provider?: string },
   ) => void | Promise<void>;
+  /** Duplicate: a fresh thread, same settings, no transcript (#1781). */
+  onDuplicate?: (threadId: string) => void | Promise<void>;
   /**
    * Which main view is showing. Pass the real view: collapsing other
    * destinations to "thread" marks Threads active while the user is elsewhere.
@@ -351,6 +353,12 @@ export interface SidebarProps {
    * unrelated App re-render (see the memo note above).
    */
   toast?: ReactNode;
+  /**
+   * "Stop all running threads" (issue #1778): opens the confirm dialog
+   * (caller owns it, same as the ⌘K palette action). The footer control
+   * only renders while a thread has status "working".
+   */
+  onStopAllRunning?: () => void;
 }
 
 /**
@@ -411,6 +419,7 @@ export const Sidebar = memo(function Sidebar({
   onRestoreThread,
   onPurgeThread,
   onFork,
+  onDuplicate,
   activeView = "thread",
   onOpenThreads,
   onOpenKanban,
@@ -432,6 +441,7 @@ export const Sidebar = memo(function Sidebar({
   onScopeRequestHandled,
   conflictForecast = null,
   toast = null,
+  onStopAllRunning,
 }: SidebarProps) {
   // Memoised: re-render when a chord is remapped so the ⌘K hint follows.
   useKeybindingOverrides();
@@ -584,6 +594,11 @@ export const Sidebar = memo(function Sidebar({
   }, [threads]);
 
   const waitStates = useMemo(() => buildWaitStates(threads), [threads]);
+
+  const workingCount = useMemo(
+    () => threads.reduce((n, t) => (t.status === "working" ? n + 1 : n), 0),
+    [threads],
+  );
 
   const keepThreadIds = useMemo(() => {
     const ids: (string | null | undefined)[] = [activeThreadId, revealThreadId];
@@ -1369,6 +1384,7 @@ export const Sidebar = memo(function Sidebar({
         onRegenerateTitle={onRegenerateTitle ? regenerateTitleRow : undefined}
         regeneratingTitle={regeneratingTitles.has(thread.id)}
         onFork={onFork}
+        onDuplicate={onDuplicate}
         listMoveProjects={listMoveProjects}
         nested={compact}
         compact={compact}
@@ -2259,6 +2275,17 @@ export const Sidebar = memo(function Sidebar({
             </span>
             <span className={styles.srOnly}>Settings</span>
           </button>
+          {workingCount > 0 && onStopAllRunning && (
+            <button
+              type="button"
+              className={styles.stopAllButton}
+              data-stop-all-button=""
+              title={`Stop ${workingCount} running ${workingCount === 1 ? "thread" : "threads"}`}
+              onClick={onStopAllRunning}
+            >
+              Stop all ({workingCount})
+            </button>
+          )}
           <nav className={styles.viewNav} aria-label="App">
         <button
           type="button"

@@ -21,6 +21,7 @@ import {
   getDivergenceCardEnabled,
   getPasteCardsEnabled,
   getUsageLimitsStripEnabled,
+  getWrapCodeBlocksEnabled,
   setChatWidth,
   setComposerVimEnabled,
   setEnterSendsEnabled,
@@ -28,6 +29,7 @@ import {
   setPasteCardsEnabled,
   setRunDurationEnabled,
   setUsageLimitsStripEnabled,
+  setWrapCodeBlocksEnabled,
 } from "../src/uiPrefs";
 import type {
   AgentConfigDoctorReport,
@@ -142,7 +144,10 @@ function modal(stubs: Stubs = {}) {
   );
 }
 
-afterEach(unmountAll);
+afterEach(() => {
+  unmountAll();
+  setWrapCodeBlocksEnabled(false);
+});
 
 describe("SettingsModal memory section", () => {
   it("shows the entry and vector counts it was given", async () => {
@@ -432,6 +437,46 @@ describe("SettingsModal delete branch on merge/close (#1763)", () => {
     await m.click(box);
     assert.equal(patches.length, 1);
     assert.equal(patches[0].deleteBranchOnMergeOrClose, false);
+    m.unmount();
+  });
+});
+
+describe("SettingsModal default merge method (#1781)", () => {
+  it("prefills from settings and saves the picked method", async () => {
+    const patches: Partial<AppSettings>[] = [];
+    const m = await mount(
+      modal({
+        initialPane: "git",
+        settings: { dailyBudgetUsd: null, autoSettleAfterDays: 3, defaultMergeMethod: "rebase" },
+        onSaveSettings: async (patch) => {
+          patches.push(patch);
+          return {
+            dailyBudgetUsd: null,
+            autoSettleAfterDays: 3,
+            defaultMergeMethod: patch.defaultMergeMethod ?? null,
+          };
+        },
+      }),
+    );
+    const select = m.query("[data-default-merge-method]") as HTMLSelectElement;
+    assert.ok(select, "default merge method select");
+    assert.equal(select.value, "rebase", "prefills from settings");
+    await m.change(select, "squash");
+    assert.equal(patches.length, 1);
+    assert.equal(patches[0].defaultMergeMethod, "squash");
+    m.unmount();
+  });
+
+  it("defaults to the repo-default option (empty value) when unset", async () => {
+    const m = await mount(
+      modal({
+        initialPane: "git",
+        settings: { dailyBudgetUsd: null, autoSettleAfterDays: 3 },
+      }),
+    );
+    const select = m.query("[data-default-merge-method]") as HTMLSelectElement;
+    assert.equal(select.value, "");
+    assert.match(select.options[0]!.textContent ?? "", /repo's default/);
     m.unmount();
   });
 });
@@ -2122,6 +2167,65 @@ describe("SettingsModal commit message and PR instructions (#1774)", () => {
   });
 });
 
+describe("SettingsModal git text model (#1780)", () => {
+  const CLAUDE: ProviderInfo = { ...KIMI, id: "claude", name: "Claude Code" };
+  const CODEX: ProviderInfo = {
+    ...KIMI,
+    id: "codex",
+    name: "Codex",
+    models: ["gpt-6.1-sol"],
+    modelInfo: [{ id: "gpt-6.1-sol", label: "GPT-6.1-Sol", description: "", vendor: "OpenAI" }],
+  };
+
+  it('defaults to "Same as the thread" and saves a provider then a model', async () => {
+    const patches: Partial<AppSettings>[] = [];
+    const m = await mount(
+      modal({
+        initialPane: "git",
+        providers: [CLAUDE, CODEX],
+        settings: { dailyBudgetUsd: null, autoSettleAfterDays: 3, gitTextModel: null } as AppSettings,
+        onSaveSettings: async (patch) => {
+          patches.push(patch);
+          return { dailyBudgetUsd: null, autoSettleAfterDays: 3 } as AppSettings;
+        },
+      }),
+    );
+    const providerSelect = m.query("[data-git-text-provider]") as HTMLSelectElement;
+    assert.equal(providerSelect.value, "");
+    assert.equal(m.query("[data-git-text-model]"), null, "no model picker until a provider is chosen");
+
+    await m.change(providerSelect, "codex");
+    assert.deepEqual(patches.at(-1), { gitTextModel: { provider: "codex", model: null } });
+
+    await m.rerender(
+      modal({
+        initialPane: "git",
+        providers: [CLAUDE, CODEX],
+        settings: {
+          dailyBudgetUsd: null,
+          autoSettleAfterDays: 3,
+          gitTextModel: { provider: "codex", model: null },
+        } as AppSettings,
+        onSaveSettings: async (patch) => {
+          patches.push(patch);
+          return { dailyBudgetUsd: null, autoSettleAfterDays: 3 } as AppSettings;
+        },
+      }),
+    );
+    const modelSelect = m.query("[data-git-text-model]") as HTMLSelectElement;
+    assert.ok(modelSelect, "model picker appears once a provider is chosen");
+    await m.change(modelSelect, "gpt-6.1-sol");
+    assert.deepEqual(patches.at(-1), {
+      gitTextModel: { provider: "codex", model: "gpt-6.1-sol" },
+    });
+
+    // Back to "Same as the thread" clears the whole setting, not just the model.
+    await m.change(providerSelect, "");
+    assert.deepEqual(patches.at(-1), { gitTextModel: null });
+    m.unmount();
+  });
+});
+
 describe("SettingsModal worker model pool (issue #467)", () => {
   const namedPool: SubagentPool = {
     defaultAlias: "fast",
@@ -3038,6 +3142,24 @@ describe("SettingsModal Display group (moved from Environment)", () => {
     m.unmount();
   });
 
+  it("offers wrap long lines in code blocks off by default (#1782)", async () => {
+    setWrapCodeBlocksEnabled(false);
+    const m = await mount(modal());
+    const card = m.query("[data-display-prefs]");
+    assert.ok(card, "Display group on General");
+    const box = card.querySelector(
+      "[data-wrap-code-pref]",
+    ) as HTMLInputElement | null;
+    assert.ok(box, "wrap code blocks checkbox");
+    assert.equal(box.checked, false);
+    assert.match(card.textContent || "", /Wrap long lines in code blocks/);
+    await m.click(box);
+    assert.equal(box.checked, true);
+    assert.equal(getWrapCodeBlocksEnabled(), true);
+    assert.equal(window.localStorage.getItem("coder.wrapCodeBlocks"), "on");
+    m.unmount();
+  });
+
   it("offers a Chat width select, Default/Wide/Full, defaulting to Default (#1767)", async () => {
     setChatWidth("default");
     const m = await mount(modal());
@@ -3623,6 +3745,7 @@ describe("SettingsModal Providers › add and custom providers (#453, #458, #171
     provider: "claude",
     configDir: "~/.claude-work",
     env: { ANTHROPIC_BASE_URL: "https://router.example" },
+    extraArgs: [],
   };
   function recorder() {
     const saved: Array<Partial<AppSettings>> = [];
@@ -3689,6 +3812,40 @@ describe("SettingsModal Providers › add and custom providers (#453, #458, #171
     assert.deepEqual({ ...list![0], id: "x" }, { ...INSTANCE, id: "x" });
   });
 
+  it("extra launch arguments (#1780): quoted argv parses, denylisted flags show a validation message", async () => {
+    const r = recorder();
+    const m = await mount(modal({ initialPane: "providers", providers: [CLAUDE], settings: { providerInstances: [] } as Partial<AppSettings> as AppSettings, onSaveSettings: r.onSaveSettings }));
+    await m.click(m.query("[data-add-provider]"));
+    await m.click(m.query('[data-add-kind="instance"]'));
+    await m.type(m.query("#instance-name"), "work");
+    await m.type(m.query("#instance-extra-args"), `--add-dir "../shared dir"`);
+    await m.click(m.queryAll("[data-instance-form] button").find((b) => b.textContent === "Add"));
+    const list = r.saved.at(-1)?.providerInstances;
+    assert.deepEqual(list?.[0]?.extraArgs, ["--add-dir", "../shared dir"]);
+
+    // The denylist itself is enforced server-side (electron/providerInstances.js);
+    // the renderer surfaces whatever message the save round-trip returns.
+    const denied = modal({
+      initialPane: "providers",
+      providers: [CLAUDE],
+      settings: { providerInstances: [] } as Partial<AppSettings> as AppSettings,
+      onSaveSettings: async () => {
+        throw new Error('"--resume" is controlled by Solenta and cannot be set as an extra launch argument');
+      },
+    });
+    const m2 = await mount(denied);
+    await m2.click(m2.query("[data-add-provider]"));
+    await m2.click(m2.query('[data-add-kind="instance"]'));
+    await m2.type(m2.query("#instance-name"), "work");
+    await m2.type(m2.query("#instance-extra-args"), "--resume s1");
+    await m2.click(m2.queryAll("[data-instance-form] button").find((b) => b.textContent === "Add"));
+    assert.match(
+      m2.query("[role=\"alert\"]")?.textContent ?? "",
+      /controlled by Solenta/,
+    );
+    m2.unmount();
+  });
+
   it("an instance row signs in under its ref, and edits or deletes", async () => {
     const r = recorder();
     const signIns: string[] = [];
@@ -3729,6 +3886,7 @@ describe("SettingsModal Providers › add and custom providers (#453, #458, #171
       provider: "generic",
       configDir: null,
       env: {},
+      extraArgs: [],
       command: ["/opt/my tools/goose", "run", "-t"],
       fullAccessArgs: ["--yolo"],
       cwd: "packages/app",

@@ -199,6 +199,7 @@ const BY_SCOPE = {
     "runs:startWorkflow",
     "runs:retryWorkflowAgent",
     "runs:stop",
+    "runs:stopAll",
     "runs:resumeQuotaWait",
     "runs:resumeCrew",
     "git:setReviewAccepted",
@@ -212,7 +213,12 @@ const BY_SCOPE = {
     "speech:stop",
     "speech:cancel",
   ],
-  files: ["projects:writeAgentConfig", "workflows:exportToRepo", "threads:exportReport"],
+  files: [
+    "projects:writeAgentConfig",
+    "workflows:exportToRepo",
+    "threads:exportReport",
+    "threads:exportReportMarkdown",
+  ],
   git: [
     "git:setupWorktree",
     "git:commit",

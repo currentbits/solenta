@@ -16,6 +16,7 @@ const {
   DEFAULT_AUTO_SETTLE_AFTER_DAYS,
   normalizeDefaultProvider,
   normalizeDefaultModel,
+  validateGitTextModel,
   validateQuotaFailover,
   normalizeQuotaFailover,
   normalizeSettings,
@@ -82,6 +83,7 @@ class StoreSettingsMethods {
       stripAgentCoauthors: n.stripAgentCoauthors,
       prCrossReview: n.prCrossReview,
       deleteBranchOnMergeOrClose: n.deleteBranchOnMergeOrClose,
+      defaultMergeMethod: n.defaultMergeMethod,
       mcpServers: n.mcpServers,
       defaultWorktree: n.defaultWorktree,
       defaultOrchestrate: n.defaultOrchestrate,
@@ -110,6 +112,7 @@ class StoreSettingsMethods {
       titleInstructions: n.titleInstructions,
       commitMessageInstructions: n.commitMessageInstructions,
       prInstructions: n.prInstructions,
+      gitTextModel: n.gitTextModel,
       prDiffCapLines: n.prDiffCapLines,
       maxConcurrentRuns: n.maxConcurrentRuns,
       agentProfiles: n.agentProfiles,
@@ -251,6 +254,13 @@ class StoreSettingsMethods {
         throw new Error("deleteBranchOnMergeOrClose must be a boolean");
       }
       this.data.settings.deleteBranchOnMergeOrClose = v;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "defaultMergeMethod")) {
+      const v = patch.defaultMergeMethod;
+      if (v !== null && v !== "squash" && v !== "merge" && v !== "rebase") {
+        throw new Error('defaultMergeMethod must be "squash", "merge", "rebase", or null');
+      }
+      this.data.settings.defaultMergeMethod = v;
     }
     if (Object.prototype.hasOwnProperty.call(patch, "mcpServers")) {
       this.data.settings.mcpServers = validateMcpServers(
@@ -502,6 +512,9 @@ class StoreSettingsMethods {
         throw new Error("prInstructions must be a string");
       }
       this.data.settings.prInstructions = v.trim().slice(0, PR_INSTRUCTIONS_MAX);
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "gitTextModel")) {
+      this.data.settings.gitTextModel = validateGitTextModel(patch.gitTextModel);
     }
     if (Object.prototype.hasOwnProperty.call(patch, "linearApiKey")) {
       const v = patch.linearApiKey;

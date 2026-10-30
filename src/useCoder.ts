@@ -231,6 +231,8 @@ export interface UseCoderResult {
       baseBranch?: string | null;
       inheritProvider?: boolean;
       taskGroupFrom?: string;
+      /** False keeps the current selection (issue #1778 background send). */
+      select?: boolean;
     },
   ) => Promise<ThreadInfo | null>;
   /**
@@ -250,8 +252,16 @@ export interface UseCoderResult {
       leavePlan?: boolean;
       messageId?: string;
       checkpointSha?: string;
+      title?: string;
     },
   ) => Promise<ThreadInfo | null>;
+  /**
+   * Duplicate (issue #1781): a new thread in the same project, same
+   * provider/model/mode and worktree-or-not as the source, titled
+   * "<title> (copy)", with no transcript — then started on the source's
+   * first user message and its attachments. Selects the new thread.
+   */
+  duplicateThread: (threadId: string) => Promise<ThreadInfo | null>;
   /**
    * Start a run, or queue the prompt when that thread is already working:
    * the queued text is delivered at the run's terminal (issue #92).
@@ -331,6 +341,8 @@ export interface UseCoderResult {
   /** Retained run threads for one automation; does not start a run. */
   listAutomationRuns: (id: string) => Promise<AutomationRunsResult>;
   stopRun: () => Promise<void>;
+  /** Stop every active run (⌘K palette action + sidebar "Stop all"). */
+  stopAllRuns: () => Promise<void>;
   /**
    * Sticky permission mode. Pass threadId to target a fork, not the open
    * thread. autoApprove (#1721) stores toggles with the mode; null clears.
@@ -832,6 +844,8 @@ export interface UseCoderResult {
   runVerify: (threadId: string) => Promise<VerifyResult>;
   /** Save a redacted HTML bug report (#394); null when the dialog was cancelled. */
   exportReport: CoderApi["threads"]["exportReport"];
+  /** Save a redacted Markdown transcript (#1783); null when the dialog was cancelled. */
+  exportReportMarkdown: CoderApi["threads"]["exportReportMarkdown"];
   /** Run the project's setup command or a named quick action (issue #153). */
   runCommand: (
     threadId: string,
@@ -1602,6 +1616,7 @@ export function useCoder(): UseCoderResult {
   const {
     createThread,
     forkThread,
+    duplicateThread,
     startRun,
     rewindAndResubmit,
   } = useCoderRuns({
@@ -1648,6 +1663,7 @@ export function useCoder(): UseCoderResult {
 
   const {
     stopRun,
+    stopAllRuns,
     setPermissionMode,
     respondPermission,
     redirectPermission,
@@ -2198,6 +2214,7 @@ export function useCoder(): UseCoderResult {
     createThread,
     listBaseBranches,
     forkThread,
+    duplicateThread,
     startRun,
     rewindAndResubmit,
     queued,
@@ -2220,6 +2237,7 @@ export function useCoder(): UseCoderResult {
     trustAutomationsFile,
     listAutomationRuns,
     stopRun,
+    stopAllRuns,
     setPermissionMode,
     respondPermission,
     redirectPermission,
@@ -2366,6 +2384,7 @@ export function useCoder(): UseCoderResult {
     setVerifyCommand,
     runVerify,
     exportReport: api.threads.exportReport,
+    exportReportMarkdown: api.threads.exportReportMarkdown,
     runCommand,
     runShell,
     appStatus,

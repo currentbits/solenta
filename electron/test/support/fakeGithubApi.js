@@ -5,7 +5,7 @@
  * Answers exactly the GraphQL/REST shapes electron/github.js ghPr sends.
  * `failWith: <status>` makes every request fail; `calls` logs each request.
  *
- * @param {{ prs?: object[], checks?: object[], failWith?: number }} [seed]
+ * @param {{ prs?: object[], checks?: object[], failWith?: number, repo?: { allowSquash?: boolean, allowMerge?: boolean, allowRebase?: boolean } }} [seed]
  */
 function fakeGithubApi(seed = {}) {
   const state = {
@@ -21,6 +21,13 @@ function fakeGithubApi(seed = {}) {
       ...p,
     })),
     checks: seed.checks || [],
+    // issue #1781: GET /repos/o/r for the allowed merge methods.
+    repo: {
+      allowSquash: true,
+      allowMerge: true,
+      allowRebase: true,
+      ...(seed.repo || {}),
+    },
     /** @type {Array<{ url: string, method: string, body: any }>} */
     calls: [],
   };
@@ -70,7 +77,15 @@ function fakeGithubApi(seed = {}) {
       return reply(200, { errors: [{ message: `fake: unhandled query ${q}` }] });
     }
 
-    const m = new URL(url).pathname.match(/\/repos\/[^/]+\/[^/]+\/(pulls|issues)(?:\/(\d+))?(\/merge|\/comments)?$/);
+    const pathname = new URL(url).pathname;
+    if (/^\/repos\/[^/]+\/[^/]+$/.test(pathname) && init.method === "GET") {
+      return reply(200, {
+        allow_squash_merge: state.repo.allowSquash !== false,
+        allow_merge_commit: state.repo.allowMerge !== false,
+        allow_rebase_merge: state.repo.allowRebase !== false,
+      });
+    }
+    const m = pathname.match(/\/repos\/[^/]+\/[^/]+\/(pulls|issues)(?:\/(\d+))?(\/merge|\/comments)?$/);
     if (!m) return reply(404, { message: "Not Found" });
     const [, kind, num, tail] = m;
     if (kind === "pulls" && !num && init.method === "POST") {

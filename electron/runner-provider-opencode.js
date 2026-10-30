@@ -14,7 +14,7 @@ const path = require("node:path");
 const threadSecrets = require("./threadSecrets.js");
 const opencodeParse = require("./opencode.js");
 const { runOpencode, OPENCODE_CLIENT_ENV } = opencodeParse;
-const { runOpencodeServeTurn } = require("./opencode-serve.js");
+const { runOpencodeServeTurn, DEFAULT_ARGS: OPENCODE_SERVE_ARGS } = require("./opencode-serve.js");
 const {
   pendingFromOpencode,
   REPLY_ONCE,
@@ -24,6 +24,7 @@ const {
   findInstance,
   instanceEnv,
   opencodeProviderConfig,
+  threadExtraArgv,
 } = require("./providerInstances.js");
 const { guardrailNotice } = require("./guardrail-hook-core.js");
 
@@ -134,6 +135,9 @@ function createOpencodeRun(ctx) {
 
     const localCwd = thread.worktreePath || project.path;
     const binary = resolveBin(providerEntry);
+    // Extra launch arguments (#1780): joins the one-shot `run` argv below
+    // and the `opencode serve` launch further down (useServe).
+    const extraArgv = threadExtraArgv(store.getSettings(), thread);
     const args = providerEntry.buildArgs({
       prompt,
       sessionId: thread.sessionId || null,
@@ -144,6 +148,7 @@ function createOpencodeRun(ctx) {
       agent: thread.agent || null,
       fast: thread.fast === true,
       files,
+      extraArgs: extraArgv,
     });
     /** @type {NodeJS.ProcessEnv | undefined} */
     let opencodeEnv;
@@ -637,6 +642,9 @@ function createOpencodeRun(ctx) {
     const handle = useServe
       ? runOpencodeServeTurn({
           binary: spawn.binary,
+          // Extra launch arguments (#1780) join the `opencode serve` launch
+          // itself: there is no per-prompt argv on this transport.
+          args: extraArgv.length ? [...OPENCODE_SERVE_ARGS, ...extraArgv] : undefined,
           cwd: spawn.cwd,
           env: runEnv,
           prompt,

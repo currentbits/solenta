@@ -260,6 +260,17 @@ export interface ComposerProps {
     opts?: { steer?: boolean },
   ) => void | Promise<void>;
   /**
+   * "Send in background" (mod+alt+enter, issue #1778): starts a brand NEW
+   * thread with the typed prompt instead of sending into this one, and
+   * leaves this draft untouched apart from clearing it on success. Absent
+   * hides the chord entirely — the caller only passes this on a fresh,
+   * never-run draft (ThreadView.isDraftThread).
+   */
+  onSendInBackground?: (
+    prompt: string,
+    attachments?: AttachmentInfo[],
+  ) => void | Promise<void>;
+  /**
    * Text and files pushed back toward the draft from outside (a cancelled
    * queued follow-up, issue #364 / #1212). Applied once, on its own thread
    * only; an in-progress draft is kept and the text appended after it.
@@ -415,6 +426,21 @@ const PASTE_READ_FAILED =
 const PASTE_IMAGE_TYPES = ["png", "jpeg", "gif", "webp", "bmp", "svg+xml"];
 const PASTE_IMAGE_MAX_MB = 20;
 
+/** Typing one of these over a selection wraps it instead of replacing it. */
+const SURROUND_PAIRS: Record<string, string> = {
+  "`": "`",
+  '"': '"',
+  "'": "'",
+  "(": ")",
+  "[": "]",
+  "{": "}",
+  "*": "*",
+  "_": "_",
+};
+// Selecting everything then typing a quote usually means "replace it all",
+// not "wrap the whole draft in quotes" — brackets/emphasis chars still wrap.
+const SURROUND_REPLACE_ALL_KEYS = new Set(["`", '"', "'"]);
+
 /** Why the host likely refused a pasted image, phrased as what to do next. */
 function pasteRejectReason(blob: Blob): string {
   const sub = blob.type.toLowerCase().replace(/^image\//, "");
@@ -471,6 +497,7 @@ export const Composer = memo(function Composer({
   disabled = false,
   busy = false,
   onSend,
+  onSendInBackground,
   restoreDraft = null,
   onRestoreDraftConsumed,
   onEditLastQueued,
@@ -1327,6 +1354,16 @@ export const Composer = memo(function Composer({
     }, "Failed to steer");
   };
 
+  const submitBackground = () => {
+    if (!canSend || !onSendInBackground) return;
+    void runAction(async (prompt) => {
+      await onSendInBackground(
+        prompt,
+        attachments.length ? attachments : undefined,
+      );
+    }, "Failed to start in background");
+  };
+
   const submitBtw = () => {
     if (!canSend) return;
     void runAction(async (prompt) => {
@@ -1567,6 +1604,11 @@ export const Composer = memo(function Composer({
       submitBtw();
       return;
     }
+    if (matchesBinding(e, "composer.sendBackground") && onSendInBackground) {
+      e.preventDefault();
+      submitBackground();
+      return;
+    }
     if (matchesBinding(e, "composer.steer")) {
       e.preventDefault();
       if (canSteer) submitSteer();
@@ -1594,6 +1636,44 @@ export const Composer = memo(function Composer({
       e.preventDefault();
       submitSend();
       return;
+    }
+    // Surround selection (#1783): typing a bracket/quote/emphasis char over
+    // a selection wraps it instead of replacing it, keeping the selection on
+    // the inner text. execCommand('insertText') goes through the browser's
+    // own undo manager; the textarea is uncontrolled (defaultValue) and its
+    // native "input" event drives onChange same as a real keystroke would.
+    const surroundClose = SURROUND_PAIRS[e.key];
+    if (
+      surroundClose !== undefined &&
+      !vimEnabled &&
+      !e.nativeEvent.isComposing &&
+      !e.metaKey &&
+      !e.ctrlKey &&
+      !e.altKey
+    ) {
+      const el = e.currentTarget;
+      const start = el.selectionStart ?? 0;
+      const end = el.selectionEnd ?? 0;
+      const replaceAll =
+        SURROUND_REPLACE_ALL_KEYS.has(e.key) && start === 0 && end === el.value.length;
+      if (start !== end && !replaceAll) {
+        e.preventDefault();
+        const inner = el.value.slice(start, end);
+        const wrapped = `${e.key}${inner}${surroundClose}`;
+        // execCommand fires a real "input" event (onChange handles the rest,
+        // same as a keystroke) and is undo-able. Older/headless DOMs that
+        // lack it (jsdom in tests) fall back to the same direct write the
+        // vim mode below uses, which still works, just without that undo step.
+        if (typeof document.execCommand === "function") {
+          document.execCommand("insertText", false, wrapped);
+        } else {
+          writeDraft(`${el.value.slice(0, start)}${wrapped}${el.value.slice(end)}`);
+          refreshMention();
+          refreshCommand();
+        }
+        el.setSelectionRange(start + 1, start + 1 + inner.length);
+        return;
+      }
     }
     if (!vimEnabled) return;
     const el = e.currentTarget;
@@ -3364,7 +3444,9 @@ export const Composer = memo(function Composer({
                   ? canSteer
                     ? "Queue for when this run lands (⌘Enter). ⌘⇧Enter steers. Esc stops the run."
                     : "Queue for when this run lands (⌘Enter). ⌥Enter asks a side question. Esc stops the run."
-                  : "Send (⌘Enter). ⌥Enter asks a side question. ⌘S stashes the draft."
+                  : onSendInBackground
+                    ? "Send (⌘Enter). ⌥Enter asks a side question. ⌘⌥Enter starts this in the background. ⌘S stashes the draft."
+                    : "Send (⌘Enter). ⌥Enter asks a side question. ⌘S stashes the draft."
             }
             onClick={() => submitSend()}
           >

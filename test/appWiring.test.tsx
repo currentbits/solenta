@@ -2121,6 +2121,88 @@ describe("App command palette (#150)", () => {
     }
   });
 
+  it("Stop all running threads (#1778): hidden while idle, shown while working, confirms before calling runs.stopAll", async () => {
+    const working = thread({ id: "t-busy", title: "Busy", status: "working" });
+    const idleOne = thread({ id: "t-idle", title: "Idle one" });
+    const fake = createFakeCoder({
+      threads: [idleOne],
+      details: { "t-idle": detail({ thread: idleOne }) },
+    });
+    const m = await boot(fake);
+    try {
+      await m.flush();
+      const ta = m.query("textarea") as HTMLElement;
+      ta.focus();
+      const openPalette = async () => {
+        await inAct(async () => {
+          window.dispatchEvent(
+            new KeyboardEvent("keydown", {
+              key: "k",
+              metaKey: true,
+              bubbles: true,
+              cancelable: true,
+            }),
+          );
+        });
+        await m.flush();
+      };
+
+      // Nothing working: the action is absent.
+      await openPalette();
+      assert.doesNotMatch(
+        m.text(),
+        /Stop all running threads/,
+        "hidden while every thread is idle",
+      );
+      await m.pressFocused("Escape");
+      await m.flush();
+
+      // A thread starts working: threads:changed push adds it to the list.
+      await inAct(async () => {
+        fake.emitThreads([idleOne, working]);
+      });
+      await m.flush();
+
+      ta.focus();
+      await openPalette();
+      const input = m.query("[data-command-palette-input]") as HTMLInputElement;
+      await m.type(input, "Stop all");
+      await m.flush();
+      assert.match(m.text(), /Stop all running threads/);
+      await m.press(input, "Enter");
+      await m.flush();
+
+      assert.equal(
+        m.query("[data-command-palette-dialog]"),
+        null,
+        "palette closes on running the action",
+      );
+      assert.equal(
+        fake.of("runs.stopAll").length,
+        0,
+        "must confirm before stopping",
+      );
+      const confirmDialog = m.query("[data-stop-all-confirm]");
+      assert.ok(confirmDialog, "confirm dialog opens");
+      assert.match(confirmDialog!.textContent ?? "", /Stop 1 running thread\?/);
+
+      const submit = m.query(
+        "[data-stop-all-confirm-submit]",
+      ) as HTMLElement;
+      await m.click(submit);
+      await m.flush();
+
+      assert.equal(fake.of("runs.stopAll").length, 1);
+      assert.equal(
+        m.query("[data-stop-all-confirm]"),
+        null,
+        "dialog closes after confirming",
+      );
+    } finally {
+      m.unmount();
+    }
+  });
+
   it("cmd+p opens file search against files.list", async () => {
     const t1 = thread({ id: "t-files", title: "Has a repo" });
     const fake = createFakeCoder({
@@ -2320,6 +2402,65 @@ describe("start without a project (#1411)", () => {
       const moves = fake.of("threads.setThreadProject");
       assert.equal(moves.length, 1);
       assert.deepEqual(moves[0]!.args[0], { threadId: "t-draft", projectId: "p-scratch" });
+    } finally {
+      m.unmount();
+    }
+  });
+});
+
+describe("Send in background (mod+alt+enter, issue #1778)", () => {
+  it("creates and starts a separate thread, keeps the draft selected, and clears it", async () => {
+    const draft = thread({ id: "t-draft", title: "New Thread" });
+    const fake = createFakeCoder({
+      threads: [draft],
+      details: { "t-draft": detail({ thread: draft, messages: [] }) },
+    });
+    const m = await boot(fake);
+    try {
+      await m.flush();
+      const ta = m.query("textarea") as HTMLTextAreaElement;
+      assert.ok(ta, "composer textarea");
+      await m.type(ta, "write release notes");
+      await inAct(async () => {
+        ta.dispatchEvent(
+          new KeyboardEvent("keydown", {
+            key: "Enter",
+            metaKey: true,
+            altKey: true,
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+      });
+      await m.flush();
+
+      assert.equal(fake.of("threads.create").length, 1, "a new thread is created");
+      const starts = fake.of("runs.start");
+      assert.equal(starts.length, 1, "the new thread's run is started");
+      const startInput = starts[0]!.args[0] as { threadId: string; prompt: string };
+      assert.notEqual(
+        startInput.threadId,
+        "t-draft",
+        "the run starts on the NEW thread, not the draft being viewed",
+      );
+      assert.equal(startInput.prompt, "write release notes");
+
+      // Selection never moved: the draft card stays active.
+      assert.equal(
+        m.query('[data-thread-card="t-draft"]')?.getAttribute("data-active"),
+        "true",
+      );
+      const newCard = m.query(`[data-thread-card="${startInput.threadId}"]`);
+      assert.ok(newCard, "the background thread shows up in the sidebar");
+      assert.equal(newCard?.getAttribute("data-active"), "false");
+
+      // The draft composer is cleared for the next task.
+      assert.equal((m.query("textarea") as HTMLTextAreaElement).value, "");
+
+      // Toast with an Open action lands.
+      assert.match(m.text(), /Started in background/);
+      const open = m.query('[data-toast="action"] button') as HTMLElement;
+      assert.ok(open, "toast Open action renders");
     } finally {
       m.unmount();
     }

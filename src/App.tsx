@@ -27,6 +27,7 @@ import { ClaimedLanesHeartbeat } from "./components/LaneHeartbeat";
 import type { SettingsPane } from "./components/SettingsModal";
 import { ArchiveToast } from "./components/ArchiveToast";
 import { ResumeNotice } from "./components/ResumeNotice";
+import { StopAllConfirm } from "./components/StopAllConfirm";
 import { UNDO_WINDOW_MS, useUndoLast } from "./app/useUndoLast";
 import { bindingLabel, matchesBinding } from "./keybindings";
 import { isPinned } from "./threadSnooze";
@@ -227,6 +228,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     createThread,
     listBaseBranches,
     forkThread,
+    duplicateThread,
     startRun,
     rewindAndResubmit,
     queued,
@@ -244,6 +246,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     refreshWorkflows,
     workflowListError,
     stopRun,
+    stopAllRuns,
     setPermissionMode,
     respondPermission,
     redirectPermission,
@@ -389,6 +392,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     setVerifyCommand,
     runVerify,
     exportReport,
+    exportReportMarkdown,
     runCommand,
     runShell,
     appStatus,
@@ -472,6 +476,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   const [paletteMode, setPaletteMode] = useState<PaletteMode>("command");
   const paletteModeRef = useRef<PaletteMode>("command");
   paletteModeRef.current = paletteMode;
+  /** "Stop all running threads" confirm (⌘K palette action + sidebar control). */
+  const [stopAllConfirmOpen, setStopAllConfirmOpen] = useState(false);
   /** Mid-session latch so finishing the tour does not wait on settings.set. */
   const [onboardingDismissed, setOnboardingDismissed] = useState(false);
   /** Relaunch from Settings even after onboardingSeen is true. */
@@ -480,6 +486,11 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   const [archiveToastIds, setArchiveToastIds] = useState<string[] | null>(null);
   /** Undo toast after moving a thread to Recently deleted (#940). */
   const [deleteToastId, setDeleteToastId] = useState<string | null>(null);
+  /** "Started in background: <title>" toast (#1778), with an Open action. */
+  const [backgroundToast, setBackgroundToast] = useState<{
+    id: string;
+    title: string;
+  } | null>(null);
   /**
    * Error toast after projects.remove rejects. Title reads:
    * Failed to remove "slug", plus the reason — swallowing it left the user
@@ -904,6 +915,56 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     },
     [createThread, selectedThreadId],
   );
+  /**
+   * "Send in background" (⌘⌥Enter on a fresh draft, issue #1778). Creates a
+   * SEPARATE thread for the typed prompt instead of running it on the draft
+   * being viewed, so the current view and selection never move. Provider +
+   * model are inherited for free by createThread (it reads the still-selected
+   * draft); permission mode is not, so it is copied explicitly.
+   */
+  const handleSendInBackground = useCallback(
+    async (prompt: string, attachments?: AttachmentInfo[]) => {
+      const draft = threadsRef.current.find((t) => t.id === selectedThreadId);
+      if (!draft) return;
+      const t = await createThread("New Thread", draft.projectId, {
+        select: false,
+      });
+      if (!t) return;
+      if (draft.permissionMode !== t.permissionMode) {
+        void setPermissionMode(
+          draft.permissionMode,
+          t.id,
+          draft.autoApprove ?? null,
+        ).catch(() => {});
+      }
+      try {
+        await startRun(prompt, t.id, attachments);
+      } catch {
+        // startRun already recorded the run-scope error; the thread still
+        // exists, so the toast (with Open) is still useful.
+      }
+      let title = t.title;
+      try {
+        title = (await api.threads.get(t.id)).thread.title;
+      } catch {
+        // Fall back to the pre-rename title.
+      }
+      setBackgroundToast({ id: t.id, title });
+    },
+    [createThread, startRun, setPermissionMode, selectedThreadId, api],
+  );
+
+  const dismissBackgroundToast = useCallback(() => {
+    setBackgroundToast(null);
+  }, []);
+
+  const openBackgroundThread = useCallback(() => {
+    if (!backgroundToast) return;
+    handleSelectThread(backgroundToast.id);
+    setRevealThreadId(backgroundToast.id);
+    setBackgroundToast(null);
+  }, [backgroundToast, handleSelectThread]);
+
   const { undoKey, undoMessage, offerUndo, dismissUndo, runUndo } =
     useUndoLast();
   const offerUndoOnly = useCallback(
@@ -1016,6 +1077,11 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     if (!selectedThreadId) return;
     void regenerateTitle([selectedThreadId]);
   }, [regenerateTitle, selectedThreadId]);
+
+  const handleDuplicateOpenThread = useCallback(() => {
+    if (!selectedThreadId) return;
+    void duplicateThread(selectedThreadId);
+  }, [duplicateThread, selectedThreadId]);
 
   // An inline arrow here would bust ThreadView's memo on every 700ms stream
   // tick (issue #91); keep it identity-stable per selected thread.
@@ -1205,6 +1271,13 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       void forkThread(threadId, opts);
     },
     [forkThread],
+  );
+
+  const handleRowDuplicate = useCallback(
+    (threadId: string) => {
+      void duplicateThread(threadId);
+    },
+    [duplicateThread],
   );
 
   const forkFromCheckpoint = useCallback(
@@ -1674,6 +1747,21 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     [resolvePaths, openWorkspacePath],
   );
 
+  /** At least one thread with a live run (⌘K action + sidebar control visibility). */
+  const workingCount = useMemo(
+    () => threads.reduce((n, t) => (t.status === "working" ? n + 1 : n), 0),
+    [threads],
+  );
+  const openStopAllConfirm = useCallback(() => setStopAllConfirmOpen(true), []);
+  /** PALETTE_ACTIONS plus "Stop all running threads" while any thread works. */
+  const paletteActions = useMemo(
+    () =>
+      workingCount > 0
+        ? PALETTE_ACTIONS
+        : PALETTE_ACTIONS.filter((a) => a.id !== "stop-all-threads"),
+    [workingCount],
+  );
+
   const runPaletteAction = useCallback(
     (id: string) => {
       if (id === "new-thread") handleCreateThreadPlain();
@@ -1689,6 +1777,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       else if (id === "approvals") openApprovals();
       else if (id === "add-project") handleAddProject();
       else if (id === "toggle-agents") toggleAgents();
+      else if (id === "stop-all-threads") openStopAllConfirm();
       else if (id === "reopen-pane") {
         window.dispatchEvent(new Event(REOPEN_PANE_EVENT));
       } else if (id === "restart-agent-session") {
@@ -1709,6 +1798,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       openApprovals,
       handleAddProject,
       toggleAgents,
+      openStopAllConfirm,
       restartAgentSession,
     ],
   );
@@ -1852,7 +1942,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       !deleteToastId &&
       !removeFailMessage &&
       !distillError &&
-      !chipError
+      !chipError &&
+      !backgroundToast
     ) {
       return null;
     }
@@ -1918,6 +2009,17 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
             onDismiss={dismissChipError}
           />
         )}
+        {backgroundToast && (
+          <ArchiveToast
+            docked
+            key={`background-${backgroundToast.id}`}
+            variant="action"
+            message={`Started in background: ${backgroundToast.title}`}
+            actionLabel="Open"
+            onAction={openBackgroundThread}
+            onDismiss={dismissBackgroundToast}
+          />
+        )}
       </>
     );
   }, [
@@ -1936,6 +2038,9 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     distillError,
     dismissDistillError,
     chipError,
+    backgroundToast,
+    openBackgroundThread,
+    dismissBackgroundToast,
     dismissChipError,
   ]);
   // Only one of these is ever non-null at a time: the toast moves between
@@ -2134,8 +2239,10 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onRestoreThread={(id) => void restoreThread(id)}
         onPurgeThread={(id) => void purgeThread(id)}
         onFork={handleRowFork}
+        onDuplicate={handleRowDuplicate}
         conflictForecast={forecast}
         toast={sidebarToast}
+        onStopAllRunning={openStopAllConfirm}
             />
           </ErrorBoundary>
           </div>
@@ -2327,6 +2434,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onAddProject={handleAddProject}
         onCreateThread={handleCreateThread}
         onStartRun={startRun}
+        onSendInBackground={handleSendInBackground}
         onSetupWorktree={setupWorktree}
         onMergeWorktree={mergeWorktree}
         onOpenCrewLead={handleSelectThread}
@@ -2414,7 +2522,9 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         }
         onRenameThread={handleRenameOpenThread}
         onRegenerateTitle={handleRegenerateOpenThread}
+        onDuplicateThread={handleDuplicateOpenThread}
         onExportReport={exportReport}
+        onExportReportMarkdown={exportReportMarkdown}
         onRepeatSchedule={handleRepeatSchedule}
         onDistillWorkflow={handleDistillWorkflow}
         onDistillMemory={handleDistillMemory}
@@ -2666,7 +2776,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
           onSelectProject={handlePaletteProject}
           onRunAction={runPaletteAction}
           onOpenFile={handlePaletteFile}
-          actions={PALETTE_ACTIONS}
+          actions={paletteActions}
         />
         )}
         </Suspense>
@@ -2767,6 +2877,12 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
             }
           }}
         />
+        <StopAllConfirm
+          open={stopAllConfirmOpen}
+          count={workingCount}
+          onConfirm={stopAllRuns}
+          onCancel={() => setStopAllConfirmOpen(false)}
+        />
         <Suspense fallback={null}>
         {addPathOpen && (
           <AddProjectPathModal
@@ -2795,6 +2911,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
             providers={providers}
             globalProvider={settings?.defaultProvider ?? null}
             globalDefaultWorktree={settings?.defaultWorktree ?? false}
+            globalDefaultMergeMethod={settings?.defaultMergeMethod ?? null}
             agentProfiles={settings?.agentProfiles ?? EMPTY_AGENT_PROFILES}
             onMoveConfigToRepo={() =>
               api.projects.moveConfigToRepo({ projectId: editProject.id })

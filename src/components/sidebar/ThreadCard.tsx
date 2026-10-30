@@ -146,6 +146,7 @@ export const ThreadCard = memo(function ThreadCard({
   onRegenerateTitle,
   regeneratingTitle = false,
   onFork,
+  onDuplicate,
   onToggleSnoozeMenu,
   nested = false,
   compact = false,
@@ -205,6 +206,8 @@ export const ThreadCard = memo(function ThreadCard({
     threadId: string,
     opts?: { provider?: string },
   ) => void | Promise<void>;
+  /** Duplicate: a fresh thread, same settings, no transcript (#1781). */
+  onDuplicate?: (threadId: string) => void | Promise<void>;
   /** Parent bookkeeping: which card has its (native/portal) menu open. */
   onToggleSnoozeMenu?: (threadId: string | null) => void;
   nested?: boolean;
@@ -343,6 +346,7 @@ export const ThreadCard = memo(function ThreadCard({
     } else if (id === "pin") void onSetPinned?.(thread.id, true);
     else if (id === "unpin") void onSetPinned?.(thread.id, false);
     else if (id === "fork") void onFork?.(thread.id);
+    else if (id === "duplicate") void onDuplicate?.(thread.id);
     else if (id.startsWith("handoff:")) {
       void onFork?.(thread.id, { provider: id.slice("handoff:".length) });
     } else if (id === "rename") startRename();
@@ -380,6 +384,7 @@ export const ThreadCard = memo(function ThreadCard({
       showSnooze: Boolean(onSetSnoozed),
       showPin: Boolean(onSetPinned),
       showFork: Boolean(onFork),
+      showDuplicate: Boolean(onDuplicate),
       showRename: Boolean(onRenameThread),
       showRegenerateTitle: Boolean(onRegenerateTitle),
       showTags: Boolean(onSetTags),
@@ -407,7 +412,7 @@ export const ThreadCard = memo(function ThreadCard({
   };
 
   const hasActions = Boolean(
-    onSetSettled || onSetPinned || onSetSnoozed || onSetTags || onSetThreadProject || onFork || onRenameThread || onRegenerateTitle || onSetMuted || onSetEjected || onTeleport,
+    onSetSettled || onSetPinned || onSetSnoozed || onSetTags || onSetThreadProject || onFork || onDuplicate || onRenameThread || onRegenerateTitle || onSetMuted || onSetEjected || onTeleport,
   );
 
   // Card is a non-interactive shell. Stretch select + hover actions are
@@ -601,7 +606,7 @@ export const ThreadCard = memo(function ThreadCard({
                     </Icon>
                   </button>
                 )}
-                {(onSetSnoozed || onFork || onRenameThread || onSetMuted || onSetEjected || onSetSettled || onSetPinned || onSetTags || onSetThreadProject) && (
+                {(onSetSnoozed || onFork || onDuplicate || onRenameThread || onSetMuted || onSetEjected || onSetSettled || onSetPinned || onSetTags || onSetThreadProject) && (
                   <button
                     type="button"
                     className={styles.iconBtn}

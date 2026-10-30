@@ -306,6 +306,17 @@ interface ThreadViewProps {
     opts?: { fromNotice?: boolean; steer?: boolean; fromQueue?: boolean },
   ) => void | Promise<void>;
   /**
+   * "Send in background" (issue #1778, mod+alt+enter): creates a NEW thread
+   * with the typed prompt, starts it, and leaves this draft's composer and
+   * selection untouched. Only wired up while this thread is itself a fresh,
+   * never-run draft (see isDraftThread below) — an existing conversation
+   * sends into itself, not into a side thread.
+   */
+  onSendInBackground?: (
+    prompt: string,
+    attachments?: AttachmentInfo[],
+  ) => void | Promise<void>;
+  /**
    * Edit-and-resubmit (#254): rewind to just before messageId, then start
    * a run with the edited prompt. Same start-run path as Composer.
    */
@@ -438,8 +449,17 @@ interface ThreadViewProps {
   onRenameThread?: (title: string) => void | Promise<void>;
   /** Regenerate the open thread's title from current activity (#1774). */
   onRegenerateTitle?: () => void | Promise<void>;
+  /**
+   * Duplicate the open thread (issue #1781, header overflow): same
+   * project/provider/model/mode/worktree-or-not, titled "<title> (copy)",
+   * no transcript, started on the source's first prompt. Selects the new
+   * thread.
+   */
+  onDuplicateThread?: () => void | Promise<void>;
   /** Save a redacted HTML bug report (#394); null = dialog cancelled. */
   onExportReport?: (input: { threadId: string }) => Promise<string | null>;
+  /** Save a redacted Markdown transcript (#1783); null = dialog cancelled. */
+  onExportReportMarkdown?: (input: { threadId: string }) => Promise<string | null>;
   /**
    * New thread in this project, same default as the sidebar "New thread"
    * button (Settings defaultWorktree / orchestrator; remotes stay plain).
@@ -819,6 +839,7 @@ export const ThreadView = memo(function ThreadView({
   hasProjects,
   onAddProject,
   onStartRun,
+  onSendInBackground,
   onRewindAndResubmit,
   onStartWorkflow,
   onRetryWorkflowAgent,
@@ -862,7 +883,9 @@ export const ThreadView = memo(function ThreadView({
   onSetCrossThreadInbound,
   onRenameThread,
   onRegenerateTitle,
+  onDuplicateThread,
   onExportReport,
+  onExportReportMarkdown,
   onCreateThread,
   onRepeatSchedule,
   onDistillWorkflow,
@@ -1123,7 +1146,9 @@ export const ThreadView = memo(function ThreadView({
   /** Bumps after a successful push so the sync pill refetches. */
   const [syncRefreshNonce, setSyncRefreshNonce] = useState(0);
   /** Brief inline confirmation after copying the thread id, `/copy`, or exporting a report. */
-  const [copied, setCopied] = useState<"id" | "link" | "reply" | "report" | "report-failed" | null>(null);
+  const [copied, setCopied] = useState<
+    "id" | "link" | "reply" | "report" | "report-failed" | "report-md" | "report-md-failed" | null
+  >(null);
   /** Header quick action currently in flight (issue #153). */
   const [commandRunningId, setCommandRunningId] = useState<string | null>(null);
   const [commandError, setCommandError] = useState<string | null>(null);
@@ -1911,6 +1936,11 @@ export const ThreadView = memo(function ThreadView({
     [onStartRun, onRedirectPermission, pendingPlainPermission],
   );
 
+  // "Send in background" (#1778) only makes sense before this thread has
+  // ever run: once there is a conversation (or a live run), the composer
+  // belongs to THIS thread, not to spinning up a new one beside it.
+  const isDraftThread = emptyMessages && detail?.thread.status !== "working";
+
   const storeReply = useCallback((target: ReplyTarget) => {
     const tid = target.threadId;
     if (!tid) return;
@@ -2501,17 +2531,18 @@ export const ThreadView = memo(function ThreadView({
     reviewUndoDialogRef,
   );
 
-  const { showEarlier, onBodyScroll } = useStickToBottom({
-    bodyRef,
-    stickToBottom,
-    forceStick,
-    detail,
-    timeline,
-    isWorking,
-    start,
-    revealTargetId,
-    setWindowStart,
-  });
+  const { showEarlier, onBodyScroll, jumpToLatest, pillVisible, pillNew } =
+    useStickToBottom({
+      bodyRef,
+      stickToBottom,
+      forceStick,
+      detail,
+      timeline,
+      isWorking,
+      start,
+      revealTargetId,
+      setWindowStart,
+    });
 
   /** One rail mark per user prompt (#487); a pin label (#342) wins. */
   const railTurns = useMemo(() => {
@@ -2899,6 +2930,15 @@ export const ThreadView = memo(function ThreadView({
     }
   };
 
+  const handleExportReportMarkdown = async () => {
+    if (!onExportReportMarkdown) return;
+    try {
+      if (await onExportReportMarkdown({ threadId: thread.id })) flashCopied("report-md");
+    } catch {
+      flashCopied("report-md-failed");
+    }
+  };
+
   const hasVersionControl =
     Boolean(gitSyncInfo && gitFetch) || headerCommands.length > 0;
   // A brand-new draft's header is just terminal + right panel (#1411): no
@@ -3222,6 +3262,15 @@ export const ThreadView = memo(function ThreadView({
                   setMenuOpen((v) => !v);
                   setDeleteConfirm(false);
                 }}
+                onDoubleClick={(e) => {
+                  if (!onRenameThread) return;
+                  // A real dblclick fires two clicks first (toggle cancels
+                  // itself out), then this handler: force-close the menu the
+                  // clicks may have left open and start the rename instead
+                  // of leaving the menu toggled (#1783, mirrors ThreadCard).
+                  e.preventDefault();
+                  startRename();
+                }}
               >
                 <span className={styles.threadTitle}>{thread.title}</span>
                 <svg
@@ -3347,6 +3396,22 @@ export const ThreadView = memo(function ThreadView({
                               : "Export bug report…"}
                         </button>
                       )}
+                      {onExportReportMarkdown && (
+                        <button
+                          type="button"
+                          className={styles.menuItem}
+                          role="menuitem"
+                          data-export-report-markdown=""
+                          title="Transcript as plain Markdown, with secrets redacted"
+                          onClick={() => void handleExportReportMarkdown()}
+                        >
+                          {copied === "report-md"
+                            ? "Saved"
+                            : copied === "report-md-failed"
+                              ? "Export failed"
+                              : "Export as Markdown…"}
+                        </button>
+                      )}
                       {onRenameThread && !isWorking && (
                         <button
                           type="button"
@@ -3370,6 +3435,20 @@ export const ThreadView = memo(function ThreadView({
                           }}
                         >
                           Regenerate title
+                        </button>
+                      )}
+                      {onDuplicateThread && (
+                        <button
+                          type="button"
+                          className={styles.menuItem}
+                          role="menuitem"
+                          data-duplicate-thread=""
+                          onClick={() => {
+                            setMenuOpen(false);
+                            void onDuplicateThread();
+                          }}
+                        >
+                          Duplicate
                         </button>
                       )}
                     <div className={styles.menuInbound} data-transcript-view-menu="">
@@ -5256,6 +5335,16 @@ export const ThreadView = memo(function ThreadView({
             )}
           </div>
         )}
+        {pillVisible && (
+          <button
+            type="button"
+            className={styles.jumpToLatest}
+            data-jump-to-latest=""
+            onClick={jumpToLatest}
+          >
+            Jump to latest{pillNew ? " · new" : ""}
+          </button>
+        )}
       </div>
 
       <div className={styles.composerColumn}>
@@ -5358,6 +5447,9 @@ export const ThreadView = memo(function ThreadView({
                 : undefined
         }
         onSend={handleComposerSend}
+        onSendInBackground={
+          isDraftThread && onSendInBackground ? onSendInBackground : undefined
+        }
         onShell={
           onRunShell && !thread.ask
             ? (command) => onRunShell(thread.id, command)

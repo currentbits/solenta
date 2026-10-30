@@ -1,5 +1,5 @@
 import { useState, type RefObject } from "react";
-import type { AppSettings, MergeSpotlight, ProjectInfo } from "../../shared/ipc";
+import type { AppSettings, MergeSpotlight, ProjectInfo, ProviderInfo } from "../../shared/ipc";
 import styles from "../SettingsModal.module.css";
 import type { SettingsDraftKey, SettingsModalProps } from "../SettingsModal";
 import { SourceControlSection } from "../SourceControlSection";
@@ -8,6 +8,7 @@ import { ProjectPicker } from "./shared";
 
 export function GitPane({
   settings,
+  providers,
   saving,
   error,
   setError,
@@ -31,6 +32,7 @@ export function GitPane({
   setToolsProjectId,
 }: {
   settings: AppSettings | null;
+  providers: ProviderInfo[];
   saving: boolean;
   error: string | null;
   setError: (error: string | null) => void;
@@ -120,6 +122,42 @@ export function GitPane({
             PRs created from the app larger than this are refused with an
             offer to split them into stacked PRs. Small batches keep
             human review affordable. Default 400; empty means no cap.
+          </p>
+        </div>
+        <div className={styles.field}>
+          <label className={styles.fieldLabel} htmlFor="default-merge-method">
+            Default merge method
+          </label>
+          <select
+            id="default-merge-method"
+            className={styles.input}
+            data-default-merge-method=""
+            value={settings?.defaultMergeMethod ?? ""}
+            disabled={saving || settings == null}
+            onChange={(e) => {
+              setError(null);
+              const v = e.target.value as "" | "squash" | "merge" | "rebase";
+              void onSaveSettings({
+                defaultMergeMethod: v === "" ? null : v,
+              }).catch((err) => {
+                setError(
+                  err instanceof Error && err.message
+                    ? err.message
+                    : "Failed to save settings",
+                );
+              });
+            }}
+          >
+            <option value="">Use the repo's default</option>
+            <option value="squash">Squash</option>
+            <option value="merge">Merge commit</option>
+            <option value="rebase">Rebase</option>
+          </select>
+          <p className={styles.note}>
+            Used at every merge site (thread Merge button, PR workspace
+            panel, agent pr_merge) when the method is not picked explicitly
+            for that merge. Only a method the repo allows is ever used; a
+            project can override this in its settings.
           </p>
         </div>
         <label className={styles.fieldRow}>
@@ -262,6 +300,82 @@ export function GitPane({
           Appended to the generated PR title/body prompt and takes
           precedence over the default style; the repo&apos;s PR template
           still applies. Empty uses the default prompt.
+        </p>
+        <label className={styles.fieldLabel} htmlFor="git-text-provider">
+          Model for commit messages and PR text
+        </label>
+        <div className={styles.fieldRow}>
+          <select
+            id="git-text-provider"
+            className={styles.input}
+            data-git-text-provider=""
+            value={settings?.gitTextModel?.provider ?? ""}
+            disabled={saving || settings == null}
+            onChange={(e) => {
+              const provider = e.target.value || null;
+              setError(null);
+              void onSaveSettings({
+                gitTextModel: provider ? { provider, model: null } : null,
+              }).catch((err) => {
+                setError(
+                  err instanceof Error && err.message
+                    ? err.message
+                    : "Failed to save settings",
+                );
+              });
+            }}
+          >
+            <option value="">Same as the thread</option>
+            {providers.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+                {!p.available ? " (not installed)" : ""}
+              </option>
+            ))}
+          </select>
+          {(() => {
+            const providerId = settings?.gitTextModel?.provider || "";
+            const selected = providers.find((p) => p.id === providerId);
+            const modelInfo = selected?.modelInfo ?? [];
+            if (!providerId) return null;
+            const current = settings?.gitTextModel?.model ?? "";
+            const known = modelInfo.some((m) => m.id === current);
+            return (
+              <select
+                id="git-text-model"
+                className={styles.input}
+                data-git-text-model=""
+                value={current}
+                disabled={saving || settings == null}
+                onChange={(e) => {
+                  const model = e.target.value || null;
+                  setError(null);
+                  void onSaveSettings({
+                    gitTextModel: { provider: providerId, model },
+                  }).catch((err) => {
+                    setError(
+                      err instanceof Error && err.message
+                        ? err.message
+                        : "Failed to save settings",
+                    );
+                  });
+                }}
+              >
+                <option value="">Provider default</option>
+                {modelInfo.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.label}
+                  </option>
+                ))}
+                {current && !known && <option value={current}>{current}</option>}
+              </select>
+            );
+          })()}
+        </div>
+        <p className={styles.note}>
+          When set, commit messages and PR text are generated with this
+          provider and model instead of the thread&apos;s own, falling back
+          to the thread&apos;s if the provider is not installed.
         </p>
       </section>
 

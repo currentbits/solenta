@@ -377,7 +377,7 @@ async function createProject(store, input) {
  * project local again. The local checkout path is never edited here.
  * @param {import('./store').Store} store
  * @param {string} projectId
- * @param {{ name?: string, remoteHost?: string, remotePath?: string, spaceId?: string, autoDispatch?: boolean, autoPr?: boolean, defaultWorktree?: boolean | null, worktreeRetention?: number, iconPath?: string | null, setupCommand?: string | null, quickActions?: Array<{ id?: string, name?: string, command?: string }>, env?: Record<string, string> | null }} patch
+ * @param {{ name?: string, remoteHost?: string, remotePath?: string, spaceId?: string, autoDispatch?: boolean, autoPr?: boolean, defaultWorktree?: boolean | null, defaultMergeMethod?: "squash" | "merge" | "rebase" | null, worktreeRetention?: number, iconPath?: string | null, setupCommand?: string | null, quickActions?: Array<{ id?: string, name?: string, command?: string }>, env?: Record<string, string> | null }} patch
  */
 function updateProject(store, projectId, patch) {
   const projects = store.getProjects().slice();
@@ -440,6 +440,16 @@ function updateProject(store, projectId, patch) {
     next.defaultWorktree = input.defaultWorktree;
   } else if (Object.prototype.hasOwnProperty.call(input, "defaultWorktree")) {
     delete next.defaultWorktree;
+  }
+
+  // #1781: tri-state override of settings.defaultMergeMethod. One of the
+  // three methods pins it; null (or any other value) restores "use the
+  // app setting / repo default" -- resolveMergeMethod is the only place
+  // that decides what actually runs.
+  if (["squash", "merge", "rebase"].includes(input.defaultMergeMethod)) {
+    next.defaultMergeMethod = input.defaultMergeMethod;
+  } else if (Object.prototype.hasOwnProperty.call(input, "defaultMergeMethod")) {
+    delete next.defaultMergeMethod;
   }
 
   if (Object.prototype.hasOwnProperty.call(input, "worktreeRetention")) {

@@ -180,6 +180,12 @@
   border-color: var(--border);
 }
 
+.codeCopy[aria-pressed="true"] {
+  color: var(--text);
+  border-color: var(--blue-border);
+  background: var(--blue-soft);
+}
+
 .mermaid {
   padding: 14px;
   overflow-x: auto;
@@ -203,4 +209,30 @@
   line-height: 1.55;
   color: var(--text);
   background: var(--input-fill);
+}
+
+/*
+ * Wrap long lines (issue #1782, Settings -> General -> Display, and the
+ * per-block Wrap button next to Copy). Switches code blocks from a
+ * horizontal scrollbar to wrapped lines, and lets wide tables wrap their
+ * cells instead of scrolling. Only a white-space/layout change: the
+ * highlighted spans inside <code> are untouched, so syntax colors survive.
+ */
+.md[data-wrap-code] .codePre,
+.md[data-wrap-code] .codePre code {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.md[data-wrap-code] table {
+  display: table;
+  table-layout: fixed;
+  width: 100%;
+  overflow-x: visible;
+}
+
+.md[data-wrap-code] th,
+.md[data-wrap-code] td {
+  white-space: normal;
+  word-break: break-word;
 }
