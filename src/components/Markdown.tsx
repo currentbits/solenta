@@ -228,8 +228,17 @@ const REMARK_PLUGINS = [remarkGfm];
 
 const COMPONENTS: Components = {
   pre: (props) => <CodeBlock>{props.children}</CodeBlock>,
+  // Double-click takes the whole span: word selection stops at `-` and `/`,
+  // so `migration-gate` would otherwise select only "migration" (#1754).
   code: (props) => (
-    <code className={styles.inlineCode}>{linkifyNode(props.children)}</code>
+    <code
+      className={styles.inlineCode}
+      onDoubleClick={(e) =>
+        window.getSelection()?.selectAllChildren(e.currentTarget)
+      }
+    >
+      {linkifyNode(props.children)}
+    </code>
   ),
   p: (props) => <p>{linkifyNode(props.children)}</p>,
   li: (props) => <li>{linkifyNode(props.children)}</li>,
