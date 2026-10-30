@@ -470,9 +470,10 @@ function parsePrJson(stdout, branch, created) {
 }
 
 // reviewDecision/mergeable/statusCheckRollup/changedFiles feed the PR
-// triage inbox (#260) from the same single list call.
+// triage inbox (#260); reviewRequests feeds reviewRequestedFromMe (#1763).
+// All from the same single list call.
 const PR_LIST_FIELDS =
-  "number,title,url,state,headRefName,isDraft,additions,deletions,updatedAt,changedFiles,mergeable,reviewDecision,statusCheckRollup";
+  "number,title,url,state,headRefName,isDraft,additions,deletions,updatedAt,changedFiles,mergeable,reviewDecision,statusCheckRollup,reviewRequests";
 const PR_LIST_FIELDS_FALLBACK = "number,title,url,state,headRefName";
 
 /**
@@ -507,8 +508,27 @@ function isGhAuthFailure(text) {
 }
 
 /**
+ * True when `row.reviewRequests` (gh pr list --json reviewRequests) names
+ * viewerLogin directly. Team review requests are not expanded against team
+ * membership here (no membership data is cached anywhere in the app), so a
+ * team-only request never flips this on — issue #1763 asks for "just the
+ * user" in that case.
+ * @param {unknown} reviewRequests
+ * @param {string | null} viewerLogin
+ * @returns {boolean}
+ */
+function reviewRequestedFromLogin(reviewRequests, viewerLogin) {
+  if (!viewerLogin || !Array.isArray(reviewRequests)) return false;
+  const login = viewerLogin.toLowerCase();
+  return reviewRequests.some(
+    (r) => r && typeof r.login === "string" && r.login.toLowerCase() === login,
+  );
+}
+
+/**
  * Normalize one `gh pr list --json` row into a PrListItem.
  * @param {any} row
+ * @param {string | null} [viewerLogin] current gh login, for reviewRequestedFromMe
  * @returns {{
  *   number: number,
  *   title: string,
@@ -523,9 +543,10 @@ function isGhAuthFailure(text) {
  *   mergeable?: "MERGEABLE" | "CONFLICTING" | "UNKNOWN",
  *   reviewDecision?: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED",
  *   checks?: "pass" | "fail" | "pending",
+ *   reviewRequestedFromMe?: boolean,
  * }}
  */
-function parsePrListItem(row) {
+function parsePrListItem(row, viewerLogin) {
   const number = Number(row && row.number);
   const url = row && row.url != null ? String(row.url) : "";
   if (!Number.isFinite(number) || number <= 0 || !url) {
@@ -574,7 +595,48 @@ function parsePrListItem(row) {
   if (PR_REVIEW_DECISIONS.has(decision)) item.reviewDecision = decision;
   const checks = summarizeCheckRollup(row && row.statusCheckRollup);
   if (checks) item.checks = checks;
+  if (reviewRequestedFromLogin(row && row.reviewRequests, viewerLogin)) {
+    item.reviewRequestedFromMe = true;
+  }
   return item;
+}
+
+/**
+ * The signed-in gh login for a project's origin host, for
+ * reviewRequestedFromMe (#1763). Reuses sourceControl's cached discovery
+ * probe (Settings › Source control already pays for it) instead of a
+ * second `gh api user` round trip. Null when gh is missing, not signed in,
+ * or the project runs on a REST token with no gh CLI at all.
+ * @param {string} projectPath
+ * @returns {Promise<string | null>}
+ */
+async function viewerLoginFor(projectPath) {
+  try {
+    const remote = await gitTryAsync(projectPath, ["remote", "get-url", "origin"]);
+    if (!remote.ok) return null;
+    const originUrl = String(remote.stdout || "").trim();
+    // GitLab/other forges: no gh login to look up, and no reason to pay for
+    // a gh --version/auth probe on a checkout that never calls gh.
+    if (!(await isGitHubPrRemote(originUrl))) return null;
+    const parsed = github.parseRemote(originUrl);
+    if (!parsed) return null;
+    const { discoverSourceControl } = require("./sourceControl.js");
+    const discovery = await discoverSourceControl();
+    const gh = (discovery.sourceControlProviders || []).find(
+      (p) => p.kind === "github",
+    );
+    if (!gh) return null;
+    const account = (gh.accounts || []).find(
+      (a) => a.host === parsed.host && a.active,
+    );
+    if (account) return account.login;
+    if (gh.auth && gh.auth.status === "authenticated" && gh.auth.detail) {
+      return gh.auth.detail;
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 const PR_REVIEW_DECISIONS = new Set([
@@ -730,7 +792,9 @@ function clampPrListLimit(value) {
  * can render a per-project error row.
  *
  * @param {string} projectPath
- * @param {{ limit?: number }} [opts]
+ * @param {{ limit?: number, viewerLogin?: string | null }} [opts] viewerLogin
+ *   (#1763): the signed-in gh login, for reviewRequestedFromMe; resolve it
+ *   with viewerLoginFor and pass it in, this does not fetch it itself.
  * @returns {Promise<{ ok: true, prs: ReturnType<typeof parsePrListItem>[], complete: boolean, limit: number } | { ok: false, reason: string }>}
  */
 async function listPrs(projectPath, opts) {
@@ -739,8 +803,13 @@ async function listPrs(projectPath, opts) {
     extraArgs: ["--limit", String(limit)],
   });
   if (!raw.ok) return raw;
+  // viewerLogin is caller-supplied (ipc-git.js resolves it via
+  // viewerLoginFor, cached) rather than looked up here: listPrs is a hot
+  // path hit by many narrow test fixtures, and viewerLoginFor's gh probe
+  // would be an unexpected extra call for every one of them.
+  const viewerLogin = (opts && opts.viewerLogin) || null;
   try {
-    const prs = raw.prs.map(parsePrListItem);
+    const prs = raw.prs.map((row) => parsePrListItem(row, viewerLogin));
     return { ok: true, prs, complete: prs.length < limit, limit };
   } catch (err) {
     return {
@@ -2362,6 +2431,8 @@ module.exports = {
   parsePrListJson,
   listPrsRaw,
   listPrs,
+  viewerLoginFor,
+  reviewRequestedFromLogin,
   prStatus,
   parsePrChecksJson,
   parsePrChecksText,
