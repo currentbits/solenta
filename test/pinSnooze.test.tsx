@@ -682,6 +682,111 @@ describe("fakeCoder setPinned/setSnoozed honesty (round 44)", () => {
     }
   });
 
+  it("App custom snooze (#1766): dialog submit records the chosen timestamp, a past time is rejected", async () => {
+    const frozen = new Date(2024, 5, 15, 14, 0, 0, 0).getTime();
+    const realNow = Date.now;
+    Date.now = () => frozen;
+    try {
+      const tMid = thread({
+        id: "t-snooze-mid",
+        projectId: "p1",
+        title: "snooze mid me",
+        updatedAt: frozen + 50,
+      });
+      const fake = createFakeCoder({
+        projects: [project({ id: "p1" })],
+        threads: [tMid],
+        details: { "t-snooze-mid": detail({ thread: tMid }) },
+      });
+      const m = await boot(fake);
+      try {
+        await m.flush();
+        const snoozeBtn = m.query('[data-snooze-btn="t-snooze-mid"]');
+        assert.ok(snoozeBtn, "data-snooze-btn opens the existing presets");
+        await m.click(snoozeBtn!);
+        await m.flush();
+
+        const custom = document.querySelector("[data-snooze-custom]");
+        assert.ok(custom, "Custom… item in the snooze menu");
+        await m.click(custom as HTMLElement);
+        await m.flush();
+
+        const dialog = document.querySelector("[data-custom-snooze-dialog]");
+        assert.ok(dialog, "custom snooze dialog opens");
+        const input = document.querySelector(
+          "[data-custom-snooze-input]",
+        ) as HTMLInputElement | null;
+        assert.ok(input, "datetime-local input");
+        assert.equal(
+          input!.min,
+          "2024-06-15T14:05",
+          "min is now + 5 minutes",
+        );
+
+        // Pick a concrete future time and submit.
+        await m.type(input, "2024-06-20T08:30");
+        const submit = document.querySelector("[data-custom-snooze-submit]");
+        assert.ok(submit, "Snooze submit button");
+        await m.click(submit as HTMLElement);
+        await m.flush();
+
+        const calls = fake.of("threads.setSnoozed");
+        const last = calls[calls.length - 1]!.args[0] as {
+          threadId: string;
+          until: number | null;
+        };
+        assert.equal(last.threadId, "t-snooze-mid");
+        assert.equal(last.until, new Date(2024, 5, 20, 8, 30, 0, 0).getTime());
+        assert.equal(
+          document.querySelector("[data-custom-snooze-dialog]"),
+          null,
+          "dialog closes after a successful submit",
+        );
+      } finally {
+        m.unmount();
+      }
+
+      // Second pass: a past time must be rejected, not sent.
+      const fake2 = createFakeCoder({
+        projects: [project({ id: "p1" })],
+        threads: [tMid],
+        details: { "t-snooze-mid": detail({ thread: tMid }) },
+      });
+      const m2 = await boot(fake2);
+      try {
+        await m2.flush();
+        await m2.click(m2.query('[data-snooze-btn="t-snooze-mid"]')!);
+        await m2.flush();
+        await m2.click(document.querySelector("[data-snooze-custom]") as HTMLElement);
+        await m2.flush();
+
+        const input2 = document.querySelector(
+          "[data-custom-snooze-input]",
+        ) as HTMLInputElement;
+        await m2.type(input2, "2024-06-10T08:00"); // in the past
+        const submit2 = document.querySelector(
+          "[data-custom-snooze-submit]",
+        ) as HTMLButtonElement;
+        assert.equal(submit2.disabled, true, "past time disables Snooze");
+        assert.ok(
+          document.querySelector("[data-custom-snooze-error]"),
+          "shows a rejection message",
+        );
+        await m2.click(submit2);
+        await m2.flush();
+        assert.equal(
+          fake2.of("threads.setSnoozed").length,
+          0,
+          "a past time is never sent",
+        );
+      } finally {
+        m2.unmount();
+      }
+    } finally {
+      Date.now = realNow;
+    }
+  });
+
   it("Woke pill shows after a timer wake until the thread is selected", async () => {
     const now = Date.now();
     const selected = th({

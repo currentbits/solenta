@@ -6,8 +6,12 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   compareSnoozedWakeSoonest,
+  CUSTOM_SNOOZE_MIN_LEAD_MS,
+  defaultCustomSnoozeValue,
   effectiveSnoozed,
   formatSnoozeWakeLabel,
+  minCustomSnoozeValue,
+  parseCustomSnoozeValue,
   resolveSnoozePresets,
   resolveSnoozeUntil,
   showWokePill,
@@ -375,5 +379,45 @@ describe("wake label = sort consistency", () => {
       ),
       "until tomorrow 9am",
     );
+  });
+});
+
+describe("custom snooze (#1766)", () => {
+  // 2024-06-15 14:00 local.
+  const now = new Date(2024, 5, 15, 14, 0, 0, 0).getTime();
+
+  it("defaults to tomorrow 9am local", () => {
+    assert.equal(defaultCustomSnoozeValue(now), "2024-06-16T09:00");
+  });
+
+  it("min is now + 5 minutes", () => {
+    assert.equal(minCustomSnoozeValue(now), "2024-06-15T14:05");
+  });
+
+  it("parses a valid future value to epoch ms", () => {
+    const until = parseCustomSnoozeValue("2024-06-20T08:30", now);
+    assert.equal(until, new Date(2024, 5, 20, 8, 30, 0, 0).getTime());
+  });
+
+  it("rejects a past value", () => {
+    assert.equal(parseCustomSnoozeValue("2024-06-10T08:00", now), null);
+  });
+
+  it("rejects a value inside the 5-minute floor", () => {
+    assert.equal(
+      parseCustomSnoozeValue("2024-06-15T14:04", now),
+      null,
+      "4 minutes out is short of CUSTOM_SNOOZE_MIN_LEAD_MS",
+    );
+    assert.equal(
+      parseCustomSnoozeValue("2024-06-15T14:05", now),
+      now + CUSTOM_SNOOZE_MIN_LEAD_MS,
+      "exactly 5 minutes out is accepted",
+    );
+  });
+
+  it("rejects malformed and empty values", () => {
+    assert.equal(parseCustomSnoozeValue("", now), null);
+    assert.equal(parseCustomSnoozeValue("not-a-date", now), null);
   });
 });

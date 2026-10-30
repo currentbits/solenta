@@ -8,6 +8,7 @@ const PUSH_CHANNELS = new Set([
   "thread:updated",
   "thread:select",
   "project:select",
+  "thread:newDraft",
   "boot:ready",
   "stayAwake:changed",
   "simulator:changed",

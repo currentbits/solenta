@@ -21,6 +21,7 @@ import {
   droppedOutsideWindow,
 } from "../../detachedWindow";
 import { buildThreadActionMenuItems } from "../../threadActionMenu";
+import { CustomSnoozeDialog } from "../CustomSnoozeDialog";
 import { loadHosts } from "../../remoteHosts";
 import { isPinned, resolveSnoozePresets } from "../../threadSnooze";
 import { isUnread } from "../../threadUnread";
@@ -233,6 +234,8 @@ export const ThreadCard = memo(function ThreadCard({
   const renamingRef = useRef(false);
   const [editingTags, setEditingTags] = useState(false);
   const [tagDraft, setTagDraft] = useState("");
+  /** "Custom…" snooze: native menus cannot host a date/time input (#1766). */
+  const [customSnoozeOpen, setCustomSnoozeOpen] = useState(false);
   const forecastPairs = pairsForThread(conflictForecast, thread.id);
   const providerId = thread.provider || "";
   const hasLine3 =
@@ -291,6 +294,7 @@ export const ThreadCard = memo(function ThreadCard({
     if (id === "settle") void onSetSettled?.(thread.id, "settled");
     else if (id === "unsettle") void onSetSettled?.(thread.id, "active");
     else if (id === "unsnooze") void onSetSnoozed?.(thread.id, null);
+    else if (id === "snooze:custom") setCustomSnoozeOpen(true);
     else if (id.startsWith("snooze:")) {
       const preset = presets.find((p) => `snooze:${p.id}` === id);
       if (preset) void onSetSnoozed?.(thread.id, preset.until);
@@ -366,6 +370,7 @@ export const ThreadCard = memo(function ThreadCard({
   // separate focusables. Content sits in a sibling with pointer-events:none
   // so clicks fall through to select; PR <a> and actions re-enable.
   return (
+    <>
     <div
       className={styles.card}
       data-thread-card={thread.id}
@@ -488,12 +493,20 @@ export const ThreadCard = memo(function ThreadCard({
                       setMenuOpen(true);
                       onToggleSnoozeMenu?.(thread.id);
                       void showContextMenu(
-                        presets.map((p) => ({
-                          id: `snooze:${p.id}`,
-                          label: p.label,
-                          whenLabel: p.whenLabel,
-                          attrs: { "data-snooze-preset": p.id },
-                        })),
+                        [
+                          ...presets.map((p) => ({
+                            id: `snooze:${p.id}`,
+                            label: p.label,
+                            whenLabel: p.whenLabel,
+                            attrs: { "data-snooze-preset": p.id },
+                          })),
+                          {
+                            id: "snooze:custom",
+                            label: "Custom…",
+                            separatorBefore: true,
+                            attrs: { "data-snooze-custom": "" },
+                          },
+                        ],
                         { x: rect.right, y: rect.bottom },
                       )
                         .then((id) => {
@@ -839,5 +852,15 @@ export const ThreadCard = memo(function ThreadCard({
         )}
       </div>
     </div>
+    {customSnoozeOpen && (
+      <CustomSnoozeDialog
+        onCancel={() => setCustomSnoozeOpen(false)}
+        onSnooze={(until) => {
+          void onSetSnoozed?.(thread.id, until);
+          setCustomSnoozeOpen(false);
+        }}
+      />
+    )}
+    </>
   );
 });

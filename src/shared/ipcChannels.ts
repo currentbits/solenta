@@ -24,6 +24,8 @@ export const PUSH_CHANNELS = [
   "thread:updated",
   "thread:select",
   "project:select",
+  /** solenta://new?prompt=...&project=... deep link (#1766). */
+  "thread:newDraft",
   "boot:ready",
   "stayAwake:changed",
   "simulator:changed",

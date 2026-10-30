@@ -819,11 +819,29 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       setDrawer(null);
       setScopeRequest(id);
     });
+    // solenta://new?prompt=...&project=... (#1766): a fresh draft thread
+    // with the prompt pre-filled in the composer, never sent — a link must
+    // not be able to start a run by itself. Reuses the same restoreDraft
+    // path as a discarded queued follow-up (#364/#1212).
+    const offNewDraft = api.on("thread:newDraft", (payload) => {
+      const prompt = payload?.prompt;
+      if (typeof prompt !== "string" || !prompt) return;
+      setView("thread");
+      setDrawer(null);
+      void createThread("New Thread", payload.projectId ?? undefined).then(
+        (t) => {
+          if (!t) return;
+          setRevealThreadId(t.id);
+          setQueuedDraftRestore({ threadId: t.id, text: prompt });
+        },
+      );
+    });
     return () => {
       offThread();
       offProject();
+      offNewDraft();
     };
-  }, [api, handleSelectThread]);
+  }, [api, handleSelectThread, createThread]);
 
   // Detached window (#519): the title carries the attention dot (Window menu,
   // Mission Control, taskbar), and the window closes once its thread is gone.

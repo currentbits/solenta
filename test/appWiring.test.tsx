@@ -418,6 +418,47 @@ describe("App deep link wiring (#186)", () => {
     assert.ok(m.query('[data-thread-card="tb"]'), "p2 thread listed");
     m.unmount();
   });
+
+  it("thread:newDraft (#1766) opens a fresh draft with the prompt pre-filled, never sent", async () => {
+    const fake = createFakeCoder({
+      projects: [
+        project({ id: "p1", slug: "owner/one" }),
+        project({ id: "p2", slug: "owner/two" }),
+      ],
+      threads: [],
+    });
+    const m = await boot(fake);
+    await inAct(() =>
+      fake.emitNewDraft({ prompt: "fix the thing", projectId: "p2" }),
+    );
+    await m.flush();
+    const create = fake.only("threads.create");
+    assert.equal((create.args[0] as { projectId?: string }).projectId, "p2");
+    const ta = m.query("textarea") as HTMLTextAreaElement | null;
+    assert.ok(ta, "composer");
+    assert.equal(ta?.value, "fix the thing");
+    assert.equal(fake.of("runs.start").length, 0, "a link must never auto-send");
+    m.unmount();
+  });
+
+  it("thread:newDraft falls back to the selected project when it names none", async () => {
+    const fake = createFakeCoder({
+      projects: [project({ id: "p1", slug: "owner/one" })],
+      threads: [],
+    });
+    const m = await boot(fake);
+    await inAct(() =>
+      fake.emitNewDraft({ prompt: "fix the thing", projectId: null }),
+    );
+    await m.flush();
+    const create = fake.only("threads.create");
+    assert.equal((create.args[0] as { projectId?: string }).projectId, "p1");
+    assert.equal(
+      (m.query("textarea") as HTMLTextAreaElement | null)?.value,
+      "fix the thing",
+    );
+    m.unmount();
+  });
 });
 
 describe("App memory wiring", () => {

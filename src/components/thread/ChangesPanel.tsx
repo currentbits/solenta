@@ -67,7 +67,76 @@ import {
 } from "../ReviewItinerary";
 import { useDiffFind } from "./useDiffFind";
 import { ImageDiff, isImagePath } from "./ImageDiff";
+import { showContextMenu, type ContextMenuItem } from "../../contextMenu";
+import { isMacPlatform } from "../../keybindings";
+import { isWindowsPlatform } from "../../browsePath";
+import type { CoderApi } from "../../shared/ipc";
 import styles from "../ThreadView.module.css";
+
+/** Desktop-only shell.reveal/openPath, same seam as coderGit() (#1766). */
+function coderShell(): CoderApi["shell"] | undefined {
+  if (typeof window === "undefined") return undefined;
+  return (window as unknown as { coder?: CoderApi }).coder?.shell;
+}
+
+/** "Reveal in Finder" on macOS, "Show in Explorer" on Windows, else "Show in folder". */
+export function revealFileLabel(
+  mac: boolean = isMacPlatform(),
+  platform: string = typeof navigator !== "undefined" ? navigator.platform || "" : "",
+): string {
+  if (mac) return "Reveal in Finder";
+  if (isWindowsPlatform(platform)) return "Show in Explorer";
+  return "Show in folder";
+}
+
+/** Parent folder of a repo-relative path; "." (the worktree root) for a top-level file. */
+function parentDir(relPath: string): string {
+  const i = relPath.lastIndexOf("/");
+  return i < 0 ? "." : relPath.slice(0, i);
+}
+
+/**
+ * Right-click a Changes row: open the file with the user's default editor
+ * (shell:openPath, same IPC the worktree-level "Open in Editor" button
+ * uses) or reveal it on disk (shell:reveal). Both already resolve a
+ * relative path against the thread's worktree and reject anything outside
+ * it (ipc-files.js resolveAllowedShellPath) — no new IPC needed. A deleted
+ * file has nothing to open, and nothing to reveal but its parent folder.
+ */
+function openFileContextMenu(
+  e: { preventDefault(): void; clientX: number; clientY: number },
+  file: FileChange,
+  threadId: string | null,
+): void {
+  e.preventDefault();
+  if (!threadId) return;
+  const deleted = file.status === "D";
+  const items: ContextMenuItem[] = [
+    {
+      id: "open",
+      label: "Open in editor",
+      disabled: deleted,
+      attrs: { "data-file-open-editor": "" },
+    },
+    {
+      id: "reveal",
+      label: revealFileLabel(),
+      attrs: { "data-file-reveal": "" },
+    },
+  ];
+  void showContextMenu(items, { x: e.clientX, y: e.clientY }).then((id) => {
+    const shell = coderShell();
+    if (!shell || !id) return;
+    if (id === "open" && !deleted) {
+      void shell.openPath({ threadId, path: file.path });
+    } else if (id === "reveal") {
+      void shell.reveal({
+        threadId,
+        path: deleted ? parentDir(file.path) : file.path,
+      });
+    }
+  });
+}
 
 const DiffLine = memo(function DiffLine({
   line,
@@ -205,6 +274,7 @@ function DiffCommentBox({
 
 function FileRow({
   file,
+  threadId,
   editable,
   selected,
   staged,
@@ -215,6 +285,8 @@ function FileRow({
   onRevert,
 }: {
   file: FileChange;
+  /** For the row's "Open in editor" / reveal context menu (#1766). */
+  threadId: string | null;
   /** Uncommitted scope: stage and discard apply. */
   editable: boolean;
   selected: boolean;
@@ -252,6 +324,7 @@ function FileRow({
         data-selected={selected ? "true" : undefined}
         aria-current={selected ? "true" : undefined}
         onClick={() => onSelect(file.path)}
+        onContextMenu={(e) => openFileContextMenu(e, file, threadId)}
       >
         <span className={styles.fileStatus}>{file.status}</span>
         <span className={styles.filePath}>{file.path}</span>
@@ -1242,6 +1315,7 @@ export function ChangesPanel({
                       <FileRow
                         key={f.path}
                         file={f}
+                        threadId={threadId}
                         editable={editable}
                         selected={selectedPath === f.path}
                         staged={

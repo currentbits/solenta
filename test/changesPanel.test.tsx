@@ -9,6 +9,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { inAct, mount, type Mounted } from "./support/dom.ts";
 import { ThreadView } from "../src/components/ThreadView";
+import { revealFileLabel } from "../src/components/thread/ChangesPanel";
 import type {
   DiffResult,
   ProjectInfo,
@@ -434,6 +435,134 @@ describe("ChangesPanel commit flow", () => {
       rows.filter((r) => r.getAttribute("data-selected") === "true").length,
       1,
     );
+  });
+});
+
+const DIFF_WITH_DELETED: DiffResult = {
+  files: [
+    { path: "src/a.ts", status: "M", additions: 3, deletions: 1 },
+    { path: "src/gone.ts", status: "D", additions: 0, deletions: 4 },
+  ],
+  patch: DIFF.patch,
+  truncated: false,
+};
+
+function fileRow(view: Mounted, filePath: string): HTMLElement {
+  const row = [...view.container.querySelectorAll("[data-file-row]")].find(
+    (r) => r.getAttribute("data-file-path") === filePath,
+  ) as HTMLElement | undefined;
+  assert.ok(row, `row for ${filePath}`);
+  return row!;
+}
+
+async function rightClick(view: Mounted, el: Element) {
+  await inAct(() => {
+    el.dispatchEvent(
+      new MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        clientX: 10,
+        clientY: 10,
+      }),
+    );
+  });
+  await view.flush();
+}
+
+describe("revealFileLabel platform branching (#1766)", () => {
+  it("Finder on macOS, Explorer on Windows, folder elsewhere", () => {
+    assert.equal(revealFileLabel(true, ""), "Reveal in Finder");
+    assert.equal(revealFileLabel(false, "Win32"), "Show in Explorer");
+    assert.equal(revealFileLabel(false, "Linux x86_64"), "Show in folder");
+  });
+});
+
+describe("ChangesPanel file row context menu (#1766)", () => {
+  async function withFakeShell<T>(
+    run: (calls: {
+      openPath: Array<{ threadId: string; path: string }>;
+      reveal: Array<{ threadId: string; path: string }>;
+    }) => Promise<T>,
+  ): Promise<T> {
+    const shell = await mount(<div />);
+    const prev = (window as unknown as { coder?: unknown }).coder;
+    const calls = {
+      openPath: [] as Array<{ threadId: string; path: string }>,
+      reveal: [] as Array<{ threadId: string; path: string }>,
+    };
+    (window as unknown as { coder: unknown }).coder = {
+      shell: {
+        openPath: async (input: { threadId: string; path: string }) => {
+          calls.openPath.push(input);
+        },
+        reveal: async (input: { threadId: string; path: string }) => {
+          calls.reveal.push(input);
+        },
+      },
+    };
+    shell.unmount();
+    try {
+      return await run(calls);
+    } finally {
+      (window as unknown as { coder?: unknown }).coder = prev;
+    }
+  }
+
+  it("Open in editor calls shell.openPath with the file's repo-relative path", async () => {
+    await withFakeShell(async (calls) => {
+      const { m } = mountPanel();
+      const view = await m;
+      await view.flush();
+      await rightClick(view, fileRow(view, "src/a.ts"));
+      const menu = document.querySelector("[data-context-menu]");
+      assert.ok(menu, "context menu opens");
+      const open = document.querySelector("[data-file-open-editor]") as HTMLButtonElement | null;
+      assert.ok(open, "Open in editor item");
+      assert.equal(open!.disabled, false);
+      await view.click(open);
+      await view.flush();
+      assert.deepEqual(calls.openPath, [{ threadId: "t1", path: "src/a.ts" }]);
+      assert.equal(calls.reveal.length, 0);
+    });
+  });
+
+  it("Reveal calls shell.reveal with the file's path, labeled for this platform", async () => {
+    await withFakeShell(async (calls) => {
+      const { m } = mountPanel();
+      const view = await m;
+      await view.flush();
+      await rightClick(view, fileRow(view, "src/a.ts"));
+      const reveal = document.querySelector("[data-file-reveal]") as HTMLButtonElement | null;
+      assert.ok(reveal, "reveal item");
+      assert.equal(reveal!.disabled, false);
+      await view.click(reveal);
+      await view.flush();
+      assert.deepEqual(calls.reveal, [{ threadId: "t1", path: "src/a.ts" }]);
+      assert.equal(calls.openPath.length, 0);
+    });
+  });
+
+  it("a deleted file disables Open in editor and reveals the parent folder instead", async () => {
+    await withFakeShell(async (calls) => {
+      const { m } = mountPanel({ diff: DIFF_WITH_DELETED });
+      const view = await m;
+      await view.flush();
+      await rightClick(view, fileRow(view, "src/gone.ts"));
+      const open = document.querySelector("[data-file-open-editor]") as HTMLButtonElement | null;
+      assert.ok(open, "Open in editor item still listed");
+      assert.equal(open!.disabled, true, "deleted file has nothing to open");
+      await view.click(open);
+      await view.flush();
+      assert.equal(calls.openPath.length, 0, "disabled item does not fire");
+
+      await rightClick(view, fileRow(view, "src/gone.ts"));
+      const reveal = document.querySelector("[data-file-reveal]") as HTMLButtonElement | null;
+      assert.ok(reveal);
+      assert.equal(reveal!.disabled, false);
+      await view.click(reveal);
+      await view.flush();
+      assert.deepEqual(calls.reveal, [{ threadId: "t1", path: "src" }]);
+    });
   });
 });
 
