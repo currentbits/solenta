@@ -37,6 +37,8 @@ const {
   addAutomation,
 } = require("./services.js");
 const { stop: stopDevServer } = require("./devservers.js");
+const prTools = require("./prTools.js");
+const { normalizePrLinks } = require("./prLinks.js");
 const { resolveThreadRoot } = require("./ipc-shared.js");
 const { appVersion, appendFeedbackEvent } = require("./feedback.js");
 const {
@@ -169,7 +171,10 @@ const INSTRUCTIONS =
   "missing, ask_user. Do not invent a trigger or schedule they did not ask for. " +
   "link_pull_request attaches a GitHub PR to this thread (including a PR " +
   "in another repo via repo=owner/name). The first link becomes the " +
-  "thread's primary PR.";
+  "thread's primary PR. " +
+  "pr_view, pr_update, pr_comment, pr_merge, ci_logs and ci_rerun work on " +
+  "this thread's linked PR through Solenta's GitHub API client; use them " +
+  "instead of gh.";
 
 function timingSafeEqualString(a, b) {
   const bufferA = Buffer.from(a);
@@ -969,6 +974,7 @@ function createToolHandlers(deps) {
     const result = runner.requestSecret({
       threadId: args.threadId,
       name: args.name,
+      title: args.title,
       prompt: args.prompt,
     });
     return {
@@ -976,7 +982,8 @@ function createToolHandlers(deps) {
       note:
         "The secret prompt is now on screen. End your turn here. When the " +
         `user provides it, your next turn starts with $${result.name} set in ` +
-        "your environment. You will never see the value; do not ask for it in chat.",
+        "your environment, and it stays set for this thread's runs for 24 hours. " +
+        "You will never see the value; do not ask for it in chat.",
     };
   }
 
@@ -1400,6 +1407,110 @@ function createToolHandlers(deps) {
   }
 
   /**
+   * Caller thread, GitHub client and PR number for the pr_* / ci_* tools
+   * (#1749). Default is the thread's own linked PR; an explicit number must
+   * be in the project repo and not linked to another thread (your workers'
+   * PRs excepted).
+   * @param {{ threadId?: string, projectId?: string, number?: unknown }} args
+   */
+  async function prTarget(args) {
+    const self = requireOwnThread({ ...args, threadId: resolveBoundCaller(args.threadId) });
+    const client = await (deps.githubClient || prTools.clientFor)(projectOf(self));
+    const slug = `${client.remote.owner}/${client.remote.repo}`.toLowerCase();
+    if (args.number != null) {
+      const number = Number(args.number);
+      const other = store.getThreads().find(
+        (t) =>
+          t.id !== self.id &&
+          String(t.projectId || "") === String(self.projectId || "") &&
+          Number(t.prNumber) === number &&
+          String(t.handoffFrom || "") !== self.id,
+      );
+      if (other) {
+        throw new Error(
+          `PR #${number} is linked to thread ${other.id}, not yours. Use your ` +
+            `own thread's PR, a worker's PR, or an unlinked PR in ${slug}.`,
+        );
+      }
+      return { self, client, number };
+    }
+    const number = Number(self.prNumber);
+    if (!Number.isInteger(number) || number <= 0) {
+      throw new Error(
+        "This thread has no linked PR. Open one (thread_pr), link one " +
+          "(link_pull_request), or pass number.",
+      );
+    }
+    const link = normalizePrLinks(self).find((l) => l.number === number);
+    if (link && link.repo && link.repo.toLowerCase() !== slug) {
+      throw new Error(
+        `This thread's PR #${number} is in ${link.repo}; these tools only ` +
+          `reach the project repo ${slug}.`,
+      );
+    }
+    return { self, client, number };
+  }
+
+  async function pr_view(args) {
+    const { client, number } = await prTarget(args);
+    return prTools.viewPr(client, number);
+  }
+
+  async function pr_update(args) {
+    const { client, number } = await prTarget(args);
+    return prTools.updatePr(client, number, args);
+  }
+
+  async function pr_comment(args) {
+    const { client, number } = await prTarget(args);
+    return prTools.commentPr(client, number, args);
+  }
+
+  /**
+   * Merging is outward-facing and not undoable. GitHub-side blockers (red or
+   * pending required checks, conflicts, draft) refuse first; then the host
+   * sign-off card (same map as CI_WORKFLOW) decides. Nothing in the tool
+   * arguments can grant it: only the user's Accept on this exact PR, method
+   * and head SHA, consumed by one merge on a human-started turn.
+   */
+  async function pr_merge(args) {
+    const { self, client, number } = await prTarget(args);
+    const method = args.method || "squash";
+    const pr = await prTools.mergeablePr(client, number);
+    if (typeof runner.requestPrMergeSignOff !== "function") {
+      throw new Error("PR merge sign-off is unavailable here; ask the user to merge it on GitHub.");
+    }
+    const review = {
+      repo: `${client.remote.owner}/${client.remote.repo}`,
+      number,
+      title: pr.title,
+      method,
+      headSha: pr.headRefOid,
+    };
+    if (!runner.requestPrMergeSignOff(self.id, review)) {
+      return {
+        merged: false,
+        signOff: "requested",
+        note:
+          `A "Merge pull request" card for #${number} (${method}) is on screen. ` +
+          "End your turn here and wait. Accept queues a turn that calls pr_merge " +
+          "again; a new push or another method needs a new sign-off.",
+      };
+    }
+    return prTools.mergePr(client, number, method, pr.headRefOid);
+  }
+
+  async function ci_logs(args) {
+    const { client, number } = await prTarget(args);
+    return prTools.ciLogs(client, number);
+  }
+
+  async function ci_rerun(args) {
+    const { client, number } = await prTarget(args);
+    return prTools.ciRerun(client, number, args.runId);
+  }
+
+  /**
    * Explicit lead-driven refresh onto the current committed snapshot (#1112).
    * Ownership matches git.integrateWorker: caller must be the worker's
    * handoffFrom. The rebase / pending-SHA work is services.refreshWorkerSnapshot.
@@ -1493,6 +1604,12 @@ function createToolHandlers(deps) {
     issue_label,
     issue_list,
     link_pull_request,
+    pr_view,
+    pr_update,
+    pr_comment,
+    pr_merge,
+    ci_logs,
+    ci_rerun,
   };
 }
 
@@ -1500,9 +1617,9 @@ function createToolHandlers(deps) {
  * Build the MCP server exposing the thread tools.
  * @param {{ McpServer: unknown, z: unknown }} sdk
  * @param {ReturnType<typeof createToolHandlers>} handlers
- * @param {{ planboard?: boolean, bugReports?: boolean }} [opts] - planboard:
- *   GitHub-origin sessions only (#849); bugReports: false hides
- *   solenta_bug_report (#1703)
+ * @param {{ planboard?: boolean, github?: boolean, bugReports?: boolean }} [opts] - planboard:
+ *   GitHub-origin sessions only (#849); github: PR/CI tools on GitHub
+ *   origins only (#1749); bugReports: false hides solenta_bug_report (#1703)
  */
 function buildMcpServer(sdk, handlers, opts = {}) {
   const { McpServer, z } = sdk;
@@ -1815,15 +1932,19 @@ function buildMcpServer(sdk, handlers, opts = {}) {
       description:
         "Ask the user for a secret (API key, token, password) on YOUR OWN " +
         "thread. threadId and projectId are your own. name is the env var it " +
-        "will be exposed as (e.g. STRIPE_API_KEY); prompt says what it is for. " +
+        "will be exposed as (e.g. STRIPE_API_KEY); title is an optional short " +
+        "heading (e.g. \"Tailscale auth key for test VMs\"); prompt says what " +
+        "it is for. " +
         "The user types it into a masked field. You never see the value: it " +
-        "is only set as $NAME in the environment of your next turns. Never " +
+        "is only set as $NAME in the environment of this thread's runs for " +
+        "24 hours (it survives an app restart). Never " +
         "ask for secrets in chat. This call RETURNS IMMEDIATELY: end your " +
         "turn right after it; the user's answer starts your next turn.",
       inputSchema: {
         threadId: z.string().min(1),
         projectId: z.string().min(1),
         name: z.string().regex(/^[A-Z_][A-Z0-9_]*$/),
+        title: z.string().optional(),
         prompt: z.string().optional(),
       },
     },
@@ -2183,6 +2304,94 @@ function buildMcpServer(sdk, handlers, opts = {}) {
     async (args) => json(await handlers.link_pull_request(args)),
   );
 
+  if (opts.github) {
+    // #1749: one shape for the PR tools. number defaults to the thread's PR.
+    const prArgs = {
+      threadId: z.string().min(1),
+      projectId: z.string().min(1),
+      number: z.number().int().positive().optional(),
+    };
+    server.registerTool(
+      "pr_view",
+      {
+        description:
+          "Your thread's PR: state, draft, mergeability, head/base, checks, " +
+          "review decision, latest reviews and review threads (unresolved " +
+          "first, capped). number defaults to the thread's linked PR.",
+        inputSchema: prArgs,
+      },
+      async (args) => json(await handlers.pr_view(args)),
+    );
+    server.registerTool(
+      "pr_update",
+      {
+        description:
+          "Edit your thread's PR: title, body, base, draft (false marks it " +
+          "ready for review).",
+        inputSchema: {
+          ...prArgs,
+          title: z.string().min(1).optional(),
+          body: z.string().optional(),
+          base: z.string().min(1).optional(),
+          draft: z.boolean().optional(),
+        },
+      },
+      async (args) => json(await handlers.pr_update(args)),
+    );
+    server.registerTool(
+      "pr_comment",
+      {
+        description:
+          "Comment on your thread's PR, or reply to a review thread with " +
+          "inReplyTo (from pr_view reviewThreads).",
+        inputSchema: {
+          ...prArgs,
+          body: z.string().min(1),
+          inReplyTo: z.number().int().positive().optional(),
+        },
+      },
+      async (args) => json(await handlers.pr_comment(args)),
+    );
+    server.registerTool(
+      "pr_merge",
+      {
+        description:
+          "Merge your thread's PR (method default squash). Refuses while " +
+          "checks fail or are pending, or the PR is a draft or conflicting. " +
+          "Otherwise it opens a sign-off card for the user: end your turn; " +
+          "their Accept queues a turn to call this again.",
+        inputSchema: {
+          ...prArgs,
+          method: z.enum(["merge", "squash", "rebase"]).optional(),
+        },
+      },
+      async (args) => json(await handlers.pr_merge(args)),
+    );
+    server.registerTool(
+      "ci_logs",
+      {
+        description:
+          "Failed CI jobs on your thread's PR head: name, runId, and the " +
+          "last 200 log lines of up to 3 jobs (ANSI and timestamps stripped).",
+        inputSchema: prArgs,
+      },
+      async (args) => json(await handlers.ci_logs(args)),
+    );
+    server.registerTool(
+      "ci_rerun",
+      {
+        description:
+          "Re-run the failed jobs of a workflow run on your thread's PR head " +
+          "(runId from ci_logs; omit to re-run every failed run).",
+        inputSchema: {
+          ...prArgs,
+          runId: z.number().int().positive().optional(),
+        },
+      },
+      async (args) => json(await handlers.ci_rerun(args)),
+    );
+  }
+
   if (opts.planboard) {
     server.registerTool(
       "issue_list",
@@ -2295,6 +2504,20 @@ function buildMcpServer(sdk, handlers, opts = {}) {
   }
 
   return server;
+}
+
+/**
+ * PR tools are only worth their prompt tokens on a GitHub origin (#1749).
+ * @param {object} project
+ */
+function isGitHubProject(project) {
+  try {
+    const { isGitHubRemote } = require("./worktrees.js");
+    const { originUrlOf } = require("./issues.js");
+    return isGitHubRemote(originUrlOf(project));
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -2457,6 +2680,7 @@ function createOrchServer(opts) {
               boundProject && planboardNoteFor(boundProject),
             ),
             bugReports: bugReportsEnabled(store),
+            github: Boolean(boundProject && isGitHubProject(boundProject)),
           });
         }
         const transport = new sdk.StreamableHTTPServerTransport({

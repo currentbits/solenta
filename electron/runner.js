@@ -3070,6 +3070,7 @@ function createRunner(opts) {
     requestSecret,
     answerSecret,
     requestCiWorkflowSignOff,
+    requestPrMergeSignOff,
     clearQuestion,
     maybePersistPlanApproval,
   } = createPermissions(ctx);
@@ -3231,6 +3232,7 @@ function createRunner(opts) {
     getPendingPermission,
     listPendingApprovals,
     requestCiWorkflowSignOff,
+    requestPrMergeSignOff,
     handleCodexServerRequest,
     respondPermission,
     askUser,

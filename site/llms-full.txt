@@ -105,7 +105,7 @@ The sidebar is a flat list, not per-project groups. Each card carries its projec
 
 Coming back to a thread that sat idle for half an hour or more shows a dismissible **Recap** card: what was asked, what changed, where it stands, and what is open. It is built locally after each turn, so no provider is billed. While the agent thinks, the working row shows the last line of its latest thought instead of just Thinking.
 
-Agents can render an `html` block, or an MCP tool's UI, as a page inside the transcript. It runs in a sandboxed frame with no network access. When an agent calls `secret_request`, a masked **Secret requested** card asks for the value. Provide puts it only in the environment of that thread's next runs, never in the transcript or on disk, and the value is redacted from any output that echoes it. When an MCP server asks a Claude run for input mid-turn, the question shows as an input card instead of failing.
+Agents can render an `html` block, or an MCP tool's UI, as a page inside the transcript. It runs in a sandboxed frame with no network access. When an agent calls `secret_request`, a masked **Secret requested** card asks for the value. Provide puts it only in the environment of that thread's runs for 24 hours, never in the transcript, and the value is redacted from any output that echoes it. It survives a restart in its own owner-only file in the app's data folder, encrypted only when OS credential encryption is turned on. When an MCP server asks a Claude run for input mid-turn, the question shows as an input card instead of failing.
 
 A thread that fails keeps its **failure reason** and shows it on the sidebar card and in the Agents panel, so a red thread says what went wrong without being opened.
 

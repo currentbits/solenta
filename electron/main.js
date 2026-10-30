@@ -28,15 +28,14 @@ const { createRunner } = require("./runner.js");
 const { registerIpc } = require("./ipc.js");
 const { refreshMcpTokens } = require("./ipc-mcp.js");
 const {
-  shouldNotify,
   isNotifyTransition,
   isEffectivelySnoozed,
   needsUser,
   notificationOptions,
-  shouldPlayAlert,
   notifyEventKey,
   notifyEventEnabled,
   ciFailedNotification,
+  threadAlerts,
   notifyEvent,
   notifyBody,
   dispatchWebhook,
@@ -605,6 +604,7 @@ function notifyChecksFailed(info) {
     thread,
     isAnyWindowFocused(),
     info,
+    (id) => store.getProject(id) != null,
   );
   if (!opts) return;
   const n = new Notification(opts);
@@ -818,6 +818,8 @@ app.whenReady().then(async () => {
         auditPath: path.join(userData, "secrets-audit.jsonl"),
       });
       require("./governanceAudit.js").configureGovernanceAudit({ dir: userData });
+      // Before the store too: appends redact with these values (#1744).
+      require("./threadSecrets.js").configure({ file: path.join(userData, "thread-secrets.json") });
       const loaded = new Store(path.join(userData, "coder-store.json"));
       require("./guardrails.js").setGuardrailsEnabled(loaded.getSettings().guardrailsEnabled);
       return loaded;
@@ -946,7 +948,6 @@ app.whenReady().then(async () => {
           !isEffectivelySnoozed(payload.thread, Date.now())
         ) {
           const settings = store.getSettings();
-          const focused = isAnyWindowFocused();
           // Per-event switches (#1725) gate the desktop alert and the sound;
           // the webhook keeps its own onDone/onFailed/onWaiting.
           const eventOn = notifyEventEnabled(
@@ -956,10 +957,18 @@ app.whenReady().then(async () => {
           // Auto-approve "Notify when an approval is needed" off (#1721).
           const quiet =
             next === "waiting" && payload.thread.autoApprove?.notify === false;
-          if (eventOn && !quiet && shouldNotify(prev, next, focused) && settings.notifications) {
-            notifyThreadComplete(payload.thread);
-          }
-          if (eventOn && !quiet && shouldPlayAlert(settings, focused)) shell.beep();
+          // Project filter (#1746). lastStatus still advances below for
+          // filtered projects, so adding a project later never replays old alerts.
+          const alerts = threadAlerts(
+            settings,
+            payload.thread,
+            prev,
+            next,
+            isAnyWindowFocused(),
+            (id) => store.getProject(id) != null,
+          );
+          if (eventOn && !quiet && alerts.notify) notifyThreadComplete(payload.thread);
+          if (eventOn && !quiet && alerts.sound) shell.beep();
           void dispatchWebhook({
             thread: payload.thread,
             prevStatus: prev,

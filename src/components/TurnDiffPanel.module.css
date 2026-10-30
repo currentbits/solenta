@@ -54,6 +54,31 @@
   background: var(--card-hover);
 }
 
+.testsBar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.testsHidden {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--blue);
+  font: inherit;
+  cursor: pointer;
+}
+
+.testsHidden:hover {
+  text-decoration: underline;
+}
+
+.testsBar .modeBtn {
+  margin-left: auto;
+}
+
 .files {
   display: flex;
   flex-wrap: wrap;

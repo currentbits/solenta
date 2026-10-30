@@ -382,6 +382,9 @@ function validateQuotaFailover(raw) {
  * notificationSound: absent/junk → false. The focused-window alert sound
  * (#1506) is opt-in; only an explicit true plays it.
  *
+ * notificationProjects: absent/junk → [] (every project notifies, #1746).
+ * Same id-list shape as quotaFailover.
+ *
  * promptSnippets: absent/junk → []; bad entries and duplicate names drop.
  *
  * feltEstimatePrompt: absent/junk → false. The "how much time did this save
@@ -452,6 +455,7 @@ function normalizeSettings(raw) {
     notifications: true,
     notificationSound: false,
     notifyEvents: normalizeNotifyEvents(null),
+    notificationProjects: [],
     feltEstimatePrompt: false,
     uiScale: UI_SCALE_DEFAULT,
     theme: "dark",
@@ -597,6 +601,9 @@ function normalizeSettings(raw) {
     true;
   settings.notifyEvents = normalizeNotifyEvents(
     /** @type {{ notifyEvents?: unknown }} */ (obj).notifyEvents,
+  );
+  settings.notificationProjects = normalizeQuotaFailover(
+    /** @type {{ notificationProjects?: unknown }} */ (obj).notificationProjects,
   );
   settings.feltEstimatePrompt =
     /** @type {{ feltEstimatePrompt?: unknown }} */ (obj).feltEstimatePrompt ===
@@ -909,6 +916,7 @@ module.exports = {
   normalizeDefaultProvider,
   normalizeDefaultModel,
   validateQuotaFailover,
+  normalizeQuotaFailover,
   normalizeSettings,
   normalizeOtel,
   normalizeWebhook,

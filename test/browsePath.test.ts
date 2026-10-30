@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   appendBrowsePathSegment,
+  browseMatchTier,
   canNavigateUp,
   createBrowseNavigationCoordinator,
   filterFilesystemBrowseEntries,
@@ -89,6 +90,61 @@ describe("add-project browse path", () => {
     assert.deepEqual(
       filterFilesystemBrowseEntries(entries, "Code").exactEntry,
       entries[1],
+    );
+  });
+
+  it("ranks fuzzy matches by tier, keeping listing order within a tier (#1747)", () => {
+    assert.equal(browseMatchTier("Web", "web"), 0);
+    assert.equal(browseMatchTier("website", "web"), 1);
+    for (const name of ["my-web", "my_web", "my.web", "my web", "myWeb"]) {
+      assert.equal(browseMatchTier(name, "web"), 2, name);
+    }
+    assert.equal(browseMatchTier("cobweb", "web"), 3);
+    assert.equal(browseMatchTier("artmann-web-next", "webnex"), 4);
+    assert.equal(browseMatchTier("artmann-web-next", "xenbew"), -1);
+
+    const entries = [
+      { name: "artmann-web-next", fullPath: "/p/artmann-web-next" },
+      { name: "cobweb", fullPath: "/p/cobweb" },
+      { name: "my-web", fullPath: "/p/my-web" },
+      { name: "website", fullPath: "/p/website" },
+      { name: "old-web", fullPath: "/p/old-web" },
+      { name: "web", fullPath: "/p/web" },
+      { name: "w-e-b", fullPath: "/p/w-e-b" },
+      { name: "unrelated", fullPath: "/p/unrelated" },
+    ];
+    assert.deepEqual(
+      filterFilesystemBrowseEntries(entries, "WEB").visibleEntries.map(
+        (e) => e.name,
+      ),
+      ["web", "website", "artmann-web-next", "my-web", "old-web", "cobweb", "w-e-b"],
+    );
+    const webnex = filterFilesystemBrowseEntries(entries, "webnex");
+    assert.deepEqual(
+      webnex.visibleEntries.map((e) => e.name),
+      ["artmann-web-next"],
+    );
+    // A fuzzy hit is never the exact entry, so Add still offers to create it.
+    assert.equal(webnex.exactEntry, null);
+  });
+
+  it("keeps the hidden-file rule under fuzzy matching (#1747)", () => {
+    const entries = [
+      { name: ".webpack", fullPath: "/p/.webpack" },
+      { name: ".web-recent", fullPath: "/p/.web-recent", recent: true },
+      { name: "webapp", fullPath: "/p/webapp" },
+    ];
+    assert.deepEqual(
+      filterFilesystemBrowseEntries(entries, "web").visibleEntries.map(
+        (e) => e.name,
+      ),
+      ["webapp", ".web-recent"],
+    );
+    assert.deepEqual(
+      filterFilesystemBrowseEntries(entries, ".wp").visibleEntries.map(
+        (e) => e.name,
+      ),
+      [".webpack"],
     );
   });
 

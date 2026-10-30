@@ -151,17 +151,59 @@ function notifyEventEnabled(events, key) {
 /**
  * Desktop notification for a newly failing check on a watched PR, or null
  * when settings, focus or mute say no. Same gates as a thread transition.
- * @param {{ notifications?: boolean, notifyEvents?: object }} settings
- * @param {{ title?: string, muted?: boolean } | null | undefined} thread
+ * @param {{ notifications?: boolean, notifyEvents?: object, notificationProjects?: string[] }} settings
+ * @param {{ title?: string, muted?: boolean, projectId?: string | null } | null | undefined} thread
  * @param {boolean} windowFocused
  * @param {{ number: number, checks: Array<{ name: string }> }} info
+ * @param {(id: string) => boolean} [projectExists]
  */
-function ciFailedNotification(settings, thread, windowFocused, info) {
+function ciFailedNotification(settings, thread, windowFocused, info, projectExists) {
   if (windowFocused || !thread || thread.muted) return null;
   if (settings.notifications === false) return null;
   if (!notifyEventEnabled(settings.notifyEvents, "ciFailed")) return null;
+  if (!shouldNotifyForProject(settings, thread.projectId, projectExists)) return null;
   const names = info.checks.map((c) => c.name).join(", ");
   return notificationOptions(thread.title, `PR #${info.number} checks failed: ${names}`);
+}
+
+/**
+ * Whether a thread in this project may notify (#1746): desktop
+ * notification and alert sound. An empty list means every project. Ids
+ * of deleted projects are ignored, so a list of only stale ids is "all"
+ * rather than "none".
+ * @param {{ notificationProjects?: string[] } | null | undefined} settings
+ * @param {string | null | undefined} projectId
+ * @param {(id: string) => boolean} [projectExists]
+ * @returns {boolean}
+ */
+function shouldNotifyForProject(settings, projectId, projectExists = () => true) {
+  const ids = Array.isArray(settings && settings.notificationProjects)
+    ? settings.notificationProjects.filter(projectExists)
+    : [];
+  return ids.length === 0 || (projectId != null && ids.includes(projectId));
+}
+
+/**
+ * Which local alerts a notify transition raises: the desktop notification
+ * (background) and the opt-in sound (focused). The one place main.js asks,
+ * so the project filter (#1746) covers both. Callers have already applied
+ * the transition, mute and snooze checks.
+ * @param {{ notifications?: boolean, notificationSound?: boolean, notificationProjects?: string[] }} settings
+ * @param {{ projectId?: string | null }} thread
+ * @param {string | undefined | null} prev
+ * @param {string | undefined | null} next
+ * @param {boolean} focused
+ * @param {(id: string) => boolean} [projectExists]
+ * @returns {{ notify: boolean, sound: boolean }}
+ */
+function threadAlerts(settings, thread, prev, next, focused, projectExists) {
+  if (!shouldNotifyForProject(settings, thread.projectId, projectExists)) {
+    return { notify: false, sound: false };
+  }
+  return {
+    notify: settings.notifications !== false && shouldNotify(prev, next, focused),
+    sound: shouldPlayAlert(settings, focused),
+  };
 }
 
 /**
@@ -432,6 +474,8 @@ module.exports = {
   notifyEventKey,
   notifyEventEnabled,
   ciFailedNotification,
+  shouldNotifyForProject,
+  threadAlerts,
   notifyEvent,
   notifyBody,
   shouldPostWebhook,

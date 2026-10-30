@@ -5,6 +5,7 @@ import type {
   NotifyEvents,
   SpeechProvider,
   SpeechSettings,
+  ProjectInfo,
   UpdateStatus,
   WebhookSettings,
   WebhookTestResult,
@@ -72,6 +73,7 @@ export function GeneralPane({
   onCheckUpdate,
   onDownloadUpdate,
   onApplyUpdate,
+  projects,
 }: {
   settings: AppSettings | null;
   status: AppStatus | null;
@@ -103,6 +105,7 @@ export function GeneralPane({
   onCheckUpdate: SettingsModalProps["onCheckUpdate"];
   onDownloadUpdate: SettingsModalProps["onDownloadUpdate"];
   onApplyUpdate: SettingsModalProps["onApplyUpdate"];
+  projects?: ProjectInfo[];
 }) {
   const webhookFromDrafts = (
     over: Partial<WebhookSettings> = {},
@@ -366,6 +369,24 @@ export function GeneralPane({
             stay quiet. The dock badge counts the threads waiting on you.
           </p>
         </div>
+        {(settings?.notifications !== false ||
+          settings?.notificationSound === true) && (
+          <NotificationProjectsField
+            selected={settings?.notificationProjects ?? []}
+            projects={projects ?? []}
+            disabled={saving || settings == null}
+            onChange={(notificationProjects) => {
+              setError(null);
+              void onSaveSettings({ notificationProjects }).catch((err) => {
+                setError(
+                  err instanceof Error && err.message
+                    ? err.message
+                    : "Failed to save settings",
+                );
+              });
+            }}
+          />
+        )}
         <div className={styles.field}>
           <label className={styles.fieldRow}>
             <input
@@ -795,6 +816,93 @@ function VoiceInputSection({
         </div>
       )}
     </section>
+  );
+}
+
+/**
+ * Which projects' threads notify (#1746). An empty list is "All projects";
+ * ids of deleted projects are dropped from the count and the next save.
+ */
+function NotificationProjectsField({
+  selected,
+  projects,
+  disabled,
+  onChange,
+}: {
+  selected: string[];
+  projects: ProjectInfo[];
+  disabled: boolean;
+  onChange: (ids: string[]) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const live = selected.filter((id) => projects.some((p) => p.id === id));
+  const all = live.length === 0;
+  const q = query.trim().toLowerCase();
+  const shown = q
+    ? projects.filter((p) => p.name.toLowerCase().includes(q))
+    : projects;
+  const toggle = (id: string, on: boolean) =>
+    onChange(on ? [...live, id] : live.filter((x) => x !== id));
+  return (
+    <details className={styles.field} data-notification-projects="">
+      <summary className={styles.fieldLabel}>
+        Notification projects:{" "}
+        <span data-notification-projects-summary="">
+          {all
+            ? "All projects"
+            : `${live.length} ${live.length === 1 ? "project" : "projects"}`}
+        </span>
+      </summary>
+      <label className={styles.fieldRow}>
+        <input
+          type="checkbox"
+          data-notification-projects-all=""
+          checked={all}
+          disabled={disabled || all}
+          onChange={() => onChange([])}
+        />
+        <span>All projects</span>
+      </label>
+      {/* ponytail: filter only for long lists; no fuzzy match */}
+      {projects.length > 8 && (
+        <input
+          type="search"
+          className={styles.input}
+          placeholder="Filter projects"
+          aria-label="Filter projects"
+          data-notification-projects-filter=""
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
+      )}
+      {shown.map((p) => (
+        <label key={p.id} className={styles.fieldRow}>
+          <input
+            type="checkbox"
+            data-notification-project={p.id}
+            checked={live.includes(p.id)}
+            disabled={disabled}
+            onChange={(e) => toggle(p.id, e.target.checked)}
+          />
+          <span>{p.name}</span>
+        </label>
+      ))}
+      {!all && (
+        <button
+          type="button"
+          className={styles.btn}
+          data-notification-projects-reset=""
+          disabled={disabled}
+          onClick={() => onChange([])}
+        >
+          Reset to all projects
+        </button>
+      )}
+      <p className={styles.note}>
+        Only threads in the checked projects send a desktop notification or
+        play the sound. Nothing checked means every project.
+      </p>
+    </details>
   );
 }
 

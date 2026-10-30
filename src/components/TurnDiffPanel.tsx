@@ -14,10 +14,66 @@ import {
   splitRowIndices,
   type DiffViewMode,
 } from "../turnDiff";
+import { isTestFile } from "../shared/testFiles";
+import { setDiffHideTests, useDiffHideTests } from "../uiPrefs";
 import { useDiffFind } from "./thread/useDiffFind";
 import styles from "./TurnDiffPanel.module.css";
 
 export type { DiffViewMode };
+
+/**
+ * The "Hide tests" cut of a diff's files (#1745). Display only: callers keep
+ * indexing and fetching against the full list. `pinned` (a linked file) stays.
+ */
+export function filterTestFiles<F extends { path: string }>(
+  files: F[],
+  hide: boolean,
+  pinned?: string | null,
+) {
+  const tests = files.filter((f) => isTestFile(f.path)).length;
+  const shown =
+    hide && tests > 0
+      ? files.filter((f) => !isTestFile(f.path) || f.path === pinned)
+      : files;
+  return { shown, tests, hidden: files.length - shown.length };
+}
+
+/** File count, "N test files hidden" and the Hide tests toggle; absent without tests. */
+export function TestFilesBar({
+  shown,
+  tests,
+  hidden,
+}: ReturnType<typeof filterTestFiles>) {
+  const hide = useDiffHideTests();
+  if (tests === 0) return null;
+  const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+  return (
+    <div className={styles.testsBar} data-tests-bar="">
+      <span>{plural(shown.length, "file")}</span>
+      {hidden > 0 ? (
+        <button
+          type="button"
+          className={styles.testsHidden}
+          data-tests-hidden=""
+          title="Show test files"
+          onClick={() => setDiffHideTests(false)}
+        >
+          {plural(hidden, "test file")} hidden
+        </button>
+      ) : null}
+      <button
+        type="button"
+        className={styles.modeBtn}
+        data-hide-tests=""
+        aria-pressed={hide}
+        title="Hide test files and test support"
+        onClick={() => setDiffHideTests(!hide)}
+      >
+        Hide tests
+      </button>
+    </div>
+  );
+}
 
 /** Diff text, or its highlighted code (prefix stripped) once that is ready. */
 function LineText({

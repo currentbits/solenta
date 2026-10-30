@@ -21,7 +21,7 @@ function retireAgent(ctx, threadId) {
   } else if (typeof ctx.runner.disposeClaudeSession === "function") {
     ctx.runner.disposeClaudeSession(threadId);
   }
-  // #1531: a secret request value lives until archive / settle / delete.
+  // #1531: a secret request value lives until archive / settle / delete (or 24h, #1744).
   threadSecrets.clear(threadId);
   // #315: leftover npm run dev is its own process group, not the CLI's.
   try {

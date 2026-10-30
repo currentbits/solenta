@@ -8,6 +8,7 @@
  */
 import type { BlastRadiusInfo, FileChange } from "./shared/ipc";
 import { blastRadiusFor, isCiWorkflowPath } from "./blastRadius";
+import { isTestFile } from "./shared/testFiles";
 
 export type ReviewArea =
   | "ci-config"
@@ -358,8 +359,7 @@ function isCiConfig(n: string): boolean {
 }
 
 function isTestPath(n: string): boolean {
-  if (/(^|\/)(test|tests|__tests__|spec)(\/|$)/.test(n)) return true;
-  return /\.(test|spec)\.[cm]?[jt]sx?$/.test(n);
+  return isTestFile(n) || /(^|\/)spec(\/|$)/.test(n);
 }
 
 function isCriticalPath(n: string): boolean {

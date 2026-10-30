@@ -7,7 +7,8 @@ import type {
 } from "../shared/ipc";
 import { isEmptyDiff } from "../diffView";
 import { parsePatch } from "../reviewItinerary";
-import { FileHunks } from "./TurnDiffPanel";
+import { FileHunks, TestFilesBar, filterTestFiles } from "./TurnDiffPanel";
+import { useDiffHideTests } from "../uiPrefs";
 import type { DiffViewMode } from "../turnDiff";
 import diffStyles from "./TurnDiffPanel.module.css";
 import styles from "./PrWorkspacePanel.module.css";
@@ -89,15 +90,18 @@ export function PrCodeTab({
   const files = result && result.ok ? result.files : [];
   const headSha = result && result.ok ? result.headSha : "";
   const commits: PrCommit[] = result && result.ok ? result.commits : [];
+  const hideTests = useDiffHideTests();
+  const testFilter = useMemo(() => filterTestFiles(files, hideTests), [files, hideTests]);
+  const shownFiles = testFilter.shown;
 
   useEffect(() => {
-    if (files.length === 0) {
+    if (shownFiles.length === 0) {
       setSelectedPath(null);
       return;
     }
-    if (selectedPath && files.some((f) => f.path === selectedPath)) return;
-    setSelectedPath(files[0]!.path);
-  }, [files, selectedPath]);
+    if (selectedPath && shownFiles.some((f) => f.path === selectedPath)) return;
+    setSelectedPath(shownFiles[0]!.path);
+  }, [shownFiles, selectedPath]);
 
   const fetchFile = async (path: string, full: boolean) => {
     const git = coderGit();
@@ -227,9 +231,10 @@ export function PrCodeTab({
       {loading && !result ? <p className={styles.hint}>Loading diff…</p> : null}
       {empty ? <p className={styles.hint}>No textual diff</p> : null}
 
-      {files.length > 0 ? (
+      <TestFilesBar {...testFilter} />
+      {shownFiles.length > 0 ? (
         <div className={diffStyles.files}>
-          {files.map((file) => (
+          {shownFiles.map((file) => (
             <button
               key={file.path}
               type="button"

@@ -227,6 +227,10 @@ export const useDiffWrap = diffWrap.use;
 const diffIgnoreWs = makeFlagPref("coder.diffIgnoreWhitespace", false);
 export const setDiffIgnoreWhitespace = diffIgnoreWs.set;
 export const useDiffIgnoreWhitespace = diffIgnoreWs.use;
+/** "Hide tests" (#1745), one setting for the Git pane and the PR Code tab. */
+const diffHideTests = makeFlagPref("coder.diffHideTests", false);
+export const setDiffHideTests = diffHideTests.set;
+export const useDiffHideTests = diffHideTests.use;
 
 /**
  * User keybinding overrides (#1506): binding id → chord, e.g.

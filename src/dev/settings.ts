@@ -77,6 +77,7 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
     automationFinished: true,
     ciFailed: false,
   };
+  let notificationProjects: string[] = [];
   let feltEstimatePrompt = false;
   let uiScale = 1;
   let theme: AppSettings["theme"] = "dark";
@@ -194,6 +195,7 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
             hasOpenaiKey: Boolean(speech.openaiApiKey),
             hasElevenlabsKey: Boolean(speech.elevenlabsApiKey),
           },
+          notificationProjects: notificationProjects.slice(),
           feltEstimatePrompt,
           uiScale,
           theme,
@@ -349,6 +351,17 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
         }
         if (patch.notifyEvents) {
           notifyEvents = { ...notifyEvents, ...patch.notifyEvents };
+        }
+        if (
+          Object.prototype.hasOwnProperty.call(patch, "notificationProjects")
+        ) {
+          if (
+            !Array.isArray(patch.notificationProjects) ||
+            patch.notificationProjects.some((id) => typeof id !== "string")
+          ) {
+            throw new Error("notificationProjects must be an array of project ids");
+          }
+          notificationProjects = [...new Set(patch.notificationProjects)];
         }
         if (
           Object.prototype.hasOwnProperty.call(patch, "feltEstimatePrompt")
@@ -578,6 +591,7 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
             hasOpenaiKey: Boolean(speech.openaiApiKey),
             hasElevenlabsKey: Boolean(speech.elevenlabsApiKey),
           },
+          notificationProjects: notificationProjects.slice(),
           feltEstimatePrompt,
           uiScale,
           theme,

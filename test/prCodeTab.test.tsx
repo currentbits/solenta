@@ -7,7 +7,10 @@ import { describe, it } from "node:test";
 import * as React from "react";
 import { mount } from "./support/dom.ts";
 import { PrWorkspacePanel } from "../src/components/PrWorkspacePanel";
-import type { PrDetail, PrDetailResult } from "../src/shared/ipc";
+import { PrCodeTab } from "../src/components/PrCodeTab";
+import { ChangesPanel } from "../src/components/thread/ChangesPanel";
+import { setDiffHideTests } from "../src/uiPrefs";
+import type { DiffResult, FileChange, PrDetail, PrDetailResult } from "../src/shared/ipc";
 
 const pr = {
   number: 11,
@@ -80,6 +83,75 @@ describe("PrWorkspacePanel Code tab", () => {
       assert.equal(diffs.length, 1);
       m.unmount();
     } finally {
+      w.coder = prev;
+    }
+  });
+});
+
+describe("PR Code tab Hide tests (#1745)", () => {
+  const file = (path: string): FileChange => ({ path, status: "M", additions: 1, deletions: 0 });
+  const files = [file("src/app.ts"), file("test/app.test.ts"), file("pkg/server_test.go")];
+
+  it("hides tests, restores them from the count, and shares the setting with the Git pane", async () => {
+    const shell = await mount(<div />);
+    const w = window as unknown as { coder?: unknown };
+    const prev = w.coder;
+    w.coder = {
+      git: {
+        prDiff: async () => ({
+          ok: true,
+          headSha: "abc1234",
+          commits: [],
+          files,
+          patch: "",
+          truncated: false,
+        }),
+      },
+    };
+    shell.unmount();
+    try {
+      const m = await mount(<PrCodeTab projectPath="/tmp/ledger" prNumber={11} />);
+      await m.flush();
+      const listed = () =>
+        m.queryAll("[data-pr-code-file]").map((el) => el.getAttribute("data-pr-code-file"));
+      assert.equal(listed().length, 3);
+
+      await m.click(m.query("[data-hide-tests]"));
+      await m.flush();
+      assert.deepEqual(listed(), ["src/app.ts"]);
+      assert.equal(m.query("[data-tests-hidden]")?.textContent, "2 test files hidden");
+      assert.equal(window.localStorage.getItem("coder.diffHideTests"), "on");
+
+      const diff: DiffResult = { files, patch: "", truncated: false };
+      const git = await mount(
+        <ChangesPanel
+          open
+          threadId="t-share"
+          threadTitle="share"
+          planText=""
+          openNonce={1}
+          onFetchDiff={async () => diff}
+          onCommit={async (message) => ({ subject: message })}
+          onRevert={async (path) => ({ path })}
+          onSuggest={async () => ({ message: "x" })}
+        />,
+      );
+      await git.flush();
+      assert.deepEqual(
+        git.queryAll("[data-file-row]").map((el) => el.getAttribute("data-file-path")),
+        ["src/app.ts"],
+        "the Git pane reads the same setting",
+      );
+
+      await m.click(m.query("[data-tests-hidden]"));
+      await m.flush();
+      await git.flush();
+      assert.equal(listed().length, 3);
+      assert.equal(git.queryAll("[data-file-row]").length, 3);
+      git.unmount();
+      m.unmount();
+    } finally {
+      setDiffHideTests(false);
       w.coder = prev;
     }
   });

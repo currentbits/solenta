@@ -17,6 +17,7 @@ import {
 import { diffHighlightGroups } from "../src/diffView";
 import {
   getDiffScope,
+  setDiffHideTests,
   setDiffIgnoreWhitespace,
   setDiffScope,
   setDiffSplit,
@@ -45,7 +46,10 @@ const DIFF: DiffResult = {
   truncated: false,
 };
 
-function mountPanel(respond: (opts?: DiffOptions) => DiffResult = () => DIFF) {
+function mountPanel(
+  respond: (opts?: DiffOptions) => DiffResult = () => DIFF,
+  focus: { path: string } | null = null,
+) {
   const calls: Array<DiffOptions | undefined> = [];
   const staged: Array<string[] | null> = [];
   const m = mount(
@@ -56,6 +60,7 @@ function mountPanel(respond: (opts?: DiffOptions) => DiffResult = () => DIFF) {
       threadBranch="coder/diffs"
       planText=""
       openNonce={1}
+      focus={focus}
       onFetchDiff={async (opts) => {
         calls.push(opts);
         return respond(opts);
@@ -86,6 +91,7 @@ afterEach(() => {
   setDiffSplit(false);
   setDiffWrap(false);
   setDiffIgnoreWhitespace(false);
+  setDiffHideTests(false);
 });
 
 describe("Git pane scope (#1493)", () => {
@@ -288,5 +294,69 @@ describe("multi-line highlighting (#1512)", () => {
       assert.ok(spanIn(view, i, "hljs-comment"), `comment on line ${i}`);
     }
     assert.ok(spanIn(view, 261, "hljs-keyword"), "code resumes after the comment");
+  });
+});
+
+const TEST_DIFF: DiffResult = {
+  files: [
+    { path: "src/a.ts", status: "M", additions: 1, deletions: 1 },
+    { path: "src/a.test.ts", status: "M", additions: 1, deletions: 1 },
+    { path: "src/__mocks__/fs.ts", status: "M", additions: 1, deletions: 1 },
+  ],
+  patch: ["src/a.ts", "src/a.test.ts", "src/__mocks__/fs.ts"]
+    .map((p) => patchFor(p, "const fresh = 3;"))
+    .join("\n"),
+  truncated: false,
+};
+
+describe("Git pane Hide tests (#1745)", () => {
+  const rows = (view: Mounted) =>
+    view.queryAll("[data-file-row]").map((el) => el.getAttribute("data-file-path"));
+
+  it("hides test files from the list, remembers it, and the hidden count restores them", async () => {
+    const view = await mountPanel(() => TEST_DIFF).m;
+    await view.flush();
+    assert.deepEqual(rows(view).sort(), ["src/__mocks__/fs.ts", "src/a.test.ts", "src/a.ts"]);
+    assert.equal(view.query("[data-tests-hidden]"), null);
+
+    await view.click(view.query("[data-hide-tests]"));
+    await view.flush();
+    assert.deepEqual(rows(view), ["src/a.ts"]);
+    assert.equal(pressed(view, "[data-hide-tests]"), "true");
+    assert.equal(view.query("[data-tests-hidden]")?.textContent, "2 test files hidden");
+    assert.equal(window.localStorage.getItem("coder.diffHideTests"), "on");
+    assert.ok(
+      view.queryAll("[data-file-row][data-selected]").every(
+        (el) => el.getAttribute("data-file-path") === "src/a.ts",
+      ),
+    );
+    assert.equal(
+      view.query("[data-stage-all]")?.parentElement?.textContent?.includes("3/3 staged"),
+      true,
+      "staging still counts the full list",
+    );
+
+    await view.click(view.query("[data-tests-hidden]"));
+    await view.flush();
+    assert.equal(rows(view).length, 3);
+    assert.equal(window.localStorage.getItem("coder.diffHideTests"), "off");
+  });
+
+  it("keeps a linked test file visible while hiding", async () => {
+    setDiffHideTests(true);
+    const view = await mountPanel(() => TEST_DIFF, { path: "src/a.test.ts" }).m;
+    await view.flush();
+    assert.deepEqual(rows(view).sort(), ["src/a.test.ts", "src/a.ts"]);
+    assert.equal(
+      view.query("[data-file-row][data-selected]")?.getAttribute("data-file-path"),
+      "src/a.test.ts",
+    );
+    assert.equal(view.query("[data-tests-hidden]")?.textContent, "1 test file hidden");
+  });
+
+  it("shows no toggle when the diff has no test files", async () => {
+    const view = await mountPanel().m;
+    await view.flush();
+    assert.equal(view.query("[data-hide-tests]"), null);
   });
 });
