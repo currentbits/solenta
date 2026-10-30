@@ -7,6 +7,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactNode,
 } from "react";
 import type {
   CliSessionCandidate,
@@ -327,6 +328,14 @@ export interface SidebarProps {
   onScopeRequestHandled?: () => void;
   /** Overlapping-edit forecast for the selected project (issue #249). */
   conflictForecast?: ConflictForecast | null;
+  /**
+   * Archive/settle/snooze undo (or error) toast, docked just above the
+   * footer row instead of covering the composer (#1758). Caller owns the
+   * toast's state/content; pass null/undefined when nothing is showing.
+   * Memoize this so it does not break the sidebar's memo on every
+   * unrelated App re-render (see the memo note above).
+   */
+  toast?: ReactNode;
 }
 
 /**
@@ -405,6 +414,7 @@ export const Sidebar = memo(function Sidebar({
   scopeRequest = null,
   onScopeRequestHandled,
   conflictForecast = null,
+  toast = null,
 }: SidebarProps) {
   // Memoised: re-render when a chord is remapped so the ⌘K hint follows.
   useKeybindingOverrides();
@@ -2124,6 +2134,7 @@ export const Sidebar = memo(function Sidebar({
       />
 
       <footer className={styles.footer}>
+        {toast && <div className={styles.toastDock}>{toast}</div>}
         {projectError && (
           <div className={styles.errorBanner} role="alert">
             <span className={styles.errorText}>{projectError}</span>

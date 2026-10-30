@@ -119,6 +119,26 @@
   overflow: hidden;
 }
 
+/* Positioned so .threadToastDock below can anchor to it. */
+.threadSlot {
+  position: relative;
+}
+
+/* Archive/settle/snooze undo toast fallback (#1758): used only when the
+   sidebar is collapsed/hidden/off-screen, so the toast still has somewhere
+   to land that isn't the window center over the composer. Sits below the
+   thread header rather than at the bottom. */
+.threadToastDock {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 56px;
+  z-index: 50;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+
 /* Out of flow so it does not become a grid column. `left` is from the app
    edge; do not assign grid-column or the offset becomes relative to the cell. */
 .sidebarResize {
