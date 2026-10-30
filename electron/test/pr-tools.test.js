@@ -6,7 +6,7 @@ const path = require("node:path");
 const { execFileSync } = require("node:child_process");
 
 const { createToolHandlers } = require("../orchServer.js");
-const { tailLog } = require("../prTools.js");
+const { tailLog, maybeDeleteHeadBranch } = require("../prTools.js");
 const { Store } = require("../store.js");
 const services = require("../services.js");
 const { createPermissions } = require("../runner-permissions.js");
@@ -348,6 +348,81 @@ describe("pr_merge sign-off (#1749)", () => {
     const client = makeClient({ rest: merged });
     await assert.rejects(handlersWith(client).pr_merge({ ...own, number: 9 }), /not yours/);
     assert.equal(client.calls.length, 0);
+  });
+
+  it("deletes the head branch once pr_merge lands, issue #1763", async () => {
+    const client = makeClient({
+      pr: prFixture(),
+      rest: { ...merged, "GET /pulls?head=acme%3Afeat&state=open": [] },
+    });
+    const h = createToolHandlers({ store, runner: perms, githubClient: async () => client });
+    const args = { threadId: thread.id, projectId: project.id };
+    await h.pr_merge(args);
+    perms.respondPermission({
+      threadId: thread.id,
+      requestId: perms.getPendingPermission(thread.id).requestId,
+      decision: "allow",
+    });
+    await h.pr_merge(args);
+    assert.deepEqual(client.calls.at(-1), ["rest", "DELETE", "/git/refs/heads/feat", undefined]);
+  });
+});
+
+describe("maybeDeleteHeadBranch (#1763)", () => {
+  it("deletes the head branch when nothing else needs it", async () => {
+    const client = makeClient({ rest: { "GET /pulls?head=acme%3Afeat&state=open": [] } });
+    await maybeDeleteHeadBranch(client, prFixture());
+    assert.deepEqual(client.calls.at(-1), ["rest", "DELETE", "/git/refs/heads/feat", undefined]);
+  });
+
+  it("skips when settings.deleteBranchOnMergeOrClose is false", async () => {
+    const client = makeClient({ rest: { "GET /pulls?head=acme%3Afeat&state=open": [] } });
+    const store = { getSettings: () => ({ deleteBranchOnMergeOrClose: false }) };
+    await maybeDeleteHeadBranch(client, prFixture(), { store });
+    assert.equal(client.calls.length, 0);
+  });
+
+  it("skips a fork PR (isCrossRepository)", async () => {
+    const client = makeClient({ rest: { "GET /pulls?head=acme%3Afeat&state=open": [] } });
+    await maybeDeleteHeadBranch(client, prFixture({ isCrossRepository: true }));
+    assert.equal(client.calls.length, 0);
+  });
+
+  it("skips the repo's default branch", async () => {
+    const client = makeClient({ rest: { "GET /pulls?head=acme%3Amain&state=open": [] } });
+    await maybeDeleteHeadBranch(
+      client,
+      prFixture({ headRefName: "main", defaultBranchRefName: "main" }),
+    );
+    assert.equal(client.calls.length, 0);
+  });
+
+  it("skips while another open PR still targets this head branch", async () => {
+    const client = makeClient({
+      rest: { "GET /pulls?head=acme%3Afeat&state=open": [{ number: 99 }] },
+    });
+    await maybeDeleteHeadBranch(client, prFixture());
+    assert.ok(!client.calls.some((c) => c[1] === "DELETE"));
+  });
+
+  it("a deletion failure is logged as a quiet event and never throws", async () => {
+    const client = makeClient({
+      rest: {
+        "GET /pulls?head=acme%3Afeat&state=open": [],
+        "DELETE /git/refs/heads/feat": () => {
+          throw new Error("422 Reference does not exist");
+        },
+      },
+    });
+    const messages = [];
+    const store = {
+      getSettings: () => ({ deleteBranchOnMergeOrClose: true }),
+      appendMessage: (threadId, msg) => messages.push({ threadId, msg }),
+    };
+    await maybeDeleteHeadBranch(client, prFixture(), { store, threadId: "t1" });
+    assert.equal(messages.length, 1);
+    assert.equal(messages[0].threadId, "t1");
+    assert.match(messages[0].msg.text, /Could not delete branch feat/);
   });
 });
 

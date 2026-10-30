@@ -22,6 +22,7 @@ const {
   assertNoOutboundSecrets,
   mergeFlags,
   squashBodyArgs,
+  maybeDeleteHeadBranch,
 } = require("./worktrees.js");
 const {
   budgetPatch,
@@ -515,6 +516,15 @@ async function closePr(projectPath, input, opts) {
     return { ok: false, reason: ghReason(closed, "gh pr close failed") };
   }
   const viewed = await viewPrDetail(projectPath, number, { repo: other });
+  if (viewed.ok) {
+    await maybeDeleteHeadBranch({
+      store: opts && opts.store,
+      cwd: repo.cwd,
+      prNumber: number,
+      headRefName: viewed.pr.headRefName,
+      repo: other,
+    });
+  }
   if (viewed.ok && opts && opts.store) {
     stampMatchingThreads(opts.store, projectPath, number, {
       prUrl: viewed.pr.url,
@@ -592,6 +602,15 @@ async function mergePrAt(projectPath, input, opts) {
     return { ok: false, reason: ghReason(merged, "gh pr merge failed") };
   }
   const viewed = await viewPrDetail(projectPath, number, { repo: other });
+  if (viewed.ok) {
+    await maybeDeleteHeadBranch({
+      store: opts && opts.store,
+      cwd: repo.cwd,
+      prNumber: number,
+      headRefName: viewed.pr.headRefName,
+      repo: other,
+    });
+  }
   if (viewed.ok && opts && opts.store) {
     stampMatchingThreads(opts.store, projectPath, number, {
       prUrl: viewed.pr.url,

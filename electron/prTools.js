@@ -8,6 +8,7 @@
  * `gh` spawn per call.
  */
 
+const { randomUUID } = require("node:crypto");
 const github = require("./github.js");
 
 const LOG_LINES = 200;
@@ -54,8 +55,8 @@ async function clientFor(project) {
   };
 }
 
-const PR_QUERY = `query($owner: String!, $name: String!, $n: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $n) {
-  id number url title state isDraft mergeable mergeStateStatus reviewDecision headRefName headRefOid baseRefName
+const PR_QUERY = `query($owner: String!, $name: String!, $n: Int!) { repository(owner: $owner, name: $name) { defaultBranchRef { name } pullRequest(number: $n) {
+  id number url title state isDraft mergeable mergeStateStatus reviewDecision headRefName headRefOid baseRefName isCrossRepository
   commits(last: 1) { nodes { commit { statusCheckRollup { state contexts(first: 100) { nodes { __typename
     ... on CheckRun { name status conclusion isRequired(pullRequestNumber: $n) }
     ... on StatusContext { context state isRequired(pullRequestNumber: $n) } } } } } } }
@@ -79,6 +80,9 @@ async function fetchPr(client, n) {
   const data = await client.gql(PR_QUERY, { owner: client.remote.owner, name: client.remote.repo, n });
   const pr = data && data.repository && data.repository.pullRequest;
   if (!pr) throw new Error(`PR #${n} not found in ${client.remote.owner}/${client.remote.repo}`);
+  // Carried for maybeDeleteHeadBranch's "never the default branch" guard.
+  pr.defaultBranchRefName =
+    (data.repository.defaultBranchRef && data.repository.defaultBranchRef.name) || null;
   return pr;
 }
 
@@ -250,6 +254,55 @@ async function mergePr(client, n, method, headSha) {
   return { number: n, merged: Boolean(res && res.merged), sha: (res && res.sha) || null, method };
 }
 
+/**
+ * Best-effort cleanup for issue #1763: delete the PR's GitHub head branch
+ * after pr_merge lands it. Never throws — the merge already succeeded.
+ * Skips silently when settings.deleteBranchOnMergeOrClose is off, the PR
+ * is a fork (isCrossRepository), the head IS the repo's default branch, or
+ * another open PR still has the same head branch. A real deletion failure
+ * is logged and left as a quiet event message on the calling thread.
+ *
+ * @param {{ remote: { owner: string }, rest: Function }} client
+ * @param {{ number: number, headRefName: string, isCrossRepository?: boolean, defaultBranchRefName?: string | null }} pr
+ * @param {{ store?: import('./store').Store, threadId?: string }} [opts]
+ */
+async function maybeDeleteHeadBranch(client, pr, opts) {
+  const store = opts && opts.store;
+  if (store && typeof store.getSettings === "function") {
+    const settings = store.getSettings();
+    if (settings && settings.deleteBranchOnMergeOrClose === false) return;
+  }
+  const branch = String((pr && pr.headRefName) || "").trim();
+  if (!branch || (pr && pr.isCrossRepository)) return;
+  if (pr && pr.defaultBranchRefName && pr.defaultBranchRefName === branch) return;
+  try {
+    const others = await client.rest(
+      "GET",
+      `/pulls?head=${encodeURIComponent(`${client.remote.owner}:${branch}`)}&state=open`,
+    );
+    const open = (Array.isArray(others) ? others : []).filter(
+      (row) => row && Number(row.number) !== Number(pr.number),
+    );
+    if (open.length) return;
+  } catch {
+    return; // can't confirm it's safe to delete; leave the branch alone
+  }
+  try {
+    await client.rest("DELETE", `/git/refs/heads/${branch}`);
+  } catch (err) {
+    const msg = err && err.message ? String(err.message) : String(err);
+    console.error(`[pr_merge] failed to delete branch ${branch} on GitHub: ${msg}`);
+    if (store && opts.threadId && typeof store.appendMessage === "function") {
+      store.appendMessage(opts.threadId, {
+        id: randomUUID(),
+        role: "event",
+        text: `Could not delete branch ${branch} on GitHub after merging #${pr.number}: ${msg}`,
+        createdAt: Date.now(),
+      });
+    }
+  }
+}
+
 /** @param {unknown} url */
 function runIdOf(url) {
   const m = String(url || "").match(/\/actions\/runs\/(\d+)/);
@@ -335,6 +388,7 @@ module.exports = {
   commentPr,
   mergeablePr,
   mergePr,
+  maybeDeleteHeadBranch,
   mergeBlockers,
   ciLogs,
   ciRerun,

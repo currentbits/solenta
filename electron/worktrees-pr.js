@@ -6,6 +6,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { execFile } = require("node:child_process");
+const { randomUUID } = require("node:crypto");
 const { GIT_MAX_BUFFER, gitTry, gitOutAsync, tailErr, gitTryAsync } = require("./worktrees-git.js");
 const {
   repoDefaultBranchAsync,
@@ -1487,6 +1488,13 @@ async function mergePr(opts) {
     if (!merged.ok) {
       throwGhFailure(merged, "gh pr merge failed");
     }
+    await maybeDeleteHeadBranch({
+      store,
+      cwd,
+      prNumber: info.number,
+      headRefName: branch,
+      threadId,
+    });
   }
 
   const live = await prStatus({ store, threadId });
@@ -1495,6 +1503,129 @@ async function mergePr(opts) {
     broadcast("threads:changed", listThreads(store));
   }
   return live;
+}
+
+/**
+ * REST DELETE of a head branch ref, using the project's own token when one
+ * exists (keeps the "runs entirely over the API" tests gh-call-free); `gh
+ * api` otherwise. A cross-repo (`-R`) delete always goes through `gh`: it
+ * is rare enough that shelling out is not worth a second client shape.
+ * @param {string} cwd
+ * @param {string} branch
+ * @param {string} [repoSlug] other-repo slug (`-R owner/repo`)
+ * @returns {Promise<string | null>} null on success, else a reason string
+ */
+async function deleteHeadBranchRef(cwd, branch, repoSlug) {
+  if (!repoSlug) {
+    const remote = await gitTryAsync(cwd, ["remote", "get-url", "origin"]);
+    const originUrl = remote.ok ? String(remote.stdout || "").trim() : "";
+    const target = originUrl ? await githubApiTarget(originUrl) : null;
+    if (target) {
+      try {
+        await github.rest({
+          host: target.remote.host,
+          token: target.token,
+          fetchFn: githubApiTestHook && githubApiTestHook.fetchFn,
+          method: "DELETE",
+          path: `/repos/${target.remote.owner}/${target.remote.repo}/git/refs/heads/${branch}`,
+        });
+        return null;
+      } catch (err) {
+        return err && err.message ? String(err.message) : String(err);
+      }
+    }
+  }
+  const apiArgs = [
+    "api",
+    "-X",
+    "DELETE",
+    ...(repoSlug ? ["-R", repoSlug] : []),
+    `repos/{owner}/{repo}/git/refs/heads/${branch}`,
+  ];
+  const deleted = await ghTryAsync(cwd, apiArgs, { timeout: GH_TIMEOUT_MS });
+  if (!deleted.ok) return tailErr(deleted.stderr || deleted.combined, "branch deletion failed");
+  return null;
+}
+
+/**
+ * Best-effort cleanup for issue #1763: delete a merged/closed PR's GitHub
+ * head branch, when settings.deleteBranchOnMergeOrClose is on (the
+ * default). Never throws — the merge/close already succeeded. Skips
+ * silently when the head IS the repo's default branch, another open PR
+ * still has the same head branch, or the PR is from a fork (head repo !=
+ * base repo). A real deletion failure is logged and left as a quiet event
+ * message on the thread, when one is given.
+ *
+ * @param {object} opts
+ * @param {import('./store').Store} [opts.store]
+ * @param {string} opts.cwd
+ * @param {number} opts.prNumber
+ * @param {string} opts.headRefName
+ * @param {string} [opts.repo] other-repo slug (`-R owner/repo`)
+ * @param {string} [opts.threadId] quiet event-message target
+ */
+async function maybeDeleteHeadBranch(opts) {
+  const store = opts.store;
+  if (store && typeof store.getSettings === "function") {
+    const settings = store.getSettings();
+    if (settings && settings.deleteBranchOnMergeOrClose === false) return;
+  }
+  const branch = String(opts.headRefName || "").trim();
+  if (!branch) return;
+  const cwd = opts.cwd;
+  const ghOpts = opts.repo
+    ? { timeout: GH_TIMEOUT_MS, ghRepo: opts.repo }
+    : { timeout: GH_TIMEOUT_MS };
+
+  // Fork PRs are never touched: deleting someone else's branch is not ours
+  // to do, and gh/the API would refuse it on the base repo anyway.
+  const viewed = await ghApiTryAsync(
+    cwd,
+    ["pr", "view", String(opts.prNumber), "--json", "isCrossRepository"],
+    ghOpts,
+  );
+  if (viewed.ok) {
+    try {
+      const data = JSON.parse(viewed.stdout);
+      if (data && data.isCrossRepository) return;
+    } catch {
+      /* best-effort guard; fall through to the delete attempt */
+    }
+  }
+
+  // Never the repo's default branch. Local git, no network round trip.
+  try {
+    const def = await repoDefaultBranchAsync(cwd);
+    if (def && def === branch) return;
+  } catch {
+    /* detached HEAD etc: the open-PR guard below still protects us */
+  }
+
+  // Skip while another open PR still targets this exact head branch.
+  const byBranch = await ghApiTryAsync(cwd, ["pr", "view", branch, "--json", "number,state"], ghOpts);
+  if (byBranch.ok) {
+    try {
+      const data = JSON.parse(byBranch.stdout);
+      if (data && data.state === "OPEN" && Number(data.number) !== Number(opts.prNumber)) {
+        return;
+      }
+    } catch {
+      /* best-effort guard; fall through */
+    }
+  }
+
+  const reason = await deleteHeadBranchRef(cwd, branch, opts.repo);
+  if (reason) {
+    console.error(`[pr] failed to delete branch ${branch} on GitHub: ${reason}`);
+    if (store && opts.threadId && typeof store.appendMessage === "function") {
+      store.appendMessage(opts.threadId, {
+        id: randomUUID(),
+        role: "event",
+        text: `Could not delete branch ${branch} on GitHub after PR #${opts.prNumber}: ${reason}`,
+        createdAt: Date.now(),
+      });
+    }
+  }
 }
 
 /**
@@ -2237,6 +2368,7 @@ module.exports = {
   rollupPrChecks,
   prChecks,
   mergePr,
+  maybeDeleteHeadBranch,
   mergeFlags,
   squashBodyArgs,
   repoMergeOptions,
