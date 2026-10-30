@@ -365,6 +365,18 @@ describe("Composer attachments", () => {
     m.unmount();
   });
 
+  it("sends attachments with no typed text (#1759)", async () => {
+    const h: Harness = { sends: [] };
+    const m = await mount(composer(h, { picks: [IMAGE] }));
+    const send = m.query('button[aria-label="Send"]') as HTMLButtonElement;
+    assert.equal(send.disabled, true, "nothing to send yet");
+    await m.click(m.query('button[aria-label="Attach files or folders"]'));
+    assert.equal(send.disabled, false, "an attachment alone is sendable");
+    await m.click(send);
+    assert.deepEqual(h.sends, [{ prompt: "", attachments: [IMAGE] }]);
+    m.unmount();
+  });
+
   it("sends without attachments when none were added", async () => {
     const h: Harness = { sends: [] };
     const m = await mount(composer(h));

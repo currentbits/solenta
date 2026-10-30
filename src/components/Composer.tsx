@@ -890,7 +890,8 @@ export const Composer = memo(function Composer({
     (hasPrompt ||
       pasteCards.length > 0 ||
       reviewComments.length > 0 ||
-      contextChips.length > 0);
+      contextChips.length > 0 ||
+      attachments.length > 0);
   /**
    * Everything that cannot be queued (workflow start, model, permission mode)
    * waits for the run to land; only the prompt and Send stay live while busy.
@@ -1232,7 +1233,10 @@ export const Composer = memo(function Composer({
       return;
     }
     const prompt = await composeOutgoing(typed);
-    if (!prompt.trim() || disabled || sending) return;
+    // Attachments alone are a message (#1759): the runner gives the agent
+    // a stand-in prompt and the transcript shows just the images.
+    if ((!prompt.trim() && attachments.length === 0) || disabled || sending)
+      return;
     setSending(true);
     setLocalError(null);
     try {

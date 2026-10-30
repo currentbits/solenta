@@ -740,19 +740,50 @@ function MemoryStepRow({ message }: { message: ChatMessage }) {
 }
 
 /**
- * Attachments on a user transcript message: image thumbnails load lazily as
- * img src (solenta-media:// on desktop, data URL on web); files/folders
- * render as icon + name.
+ * Lazy thumbnail load shared by every attachment render (chip, single image,
+ * collage tile): onLoadImage resolves to solenta-media:// on desktop or a
+ * data URL on web, null while unavailable.
+ */
+function useAttachmentThumb(
+  attachment: AttachmentInfo,
+  onLoadImage?: (path: string) => Promise<string | null>,
+): string | null {
+  const [thumb, setThumb] = useState<string | null>(null);
+  useEffect(() => {
+    if (attachment.kind !== "image" || !onLoadImage) return;
+    let live = true;
+    void onLoadImage(attachment.path)
+      .then((url) => {
+        if (live) setThumb(url);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [attachment.kind, attachment.path, onLoadImage]);
+  return thumb;
+}
+
+/**
+ * Attachments on a user transcript message. Default variant: image
+ * thumbnails + files/folders as icon-and-name chips. "images" variant
+ * (issue #1759) is for a message with no visible text and only image
+ * attachments: no chip pills, a right-aligned single image or collage.
  */
 function TranscriptAttachments({
   attachments,
   onLoadImage,
   pdfText,
+  variant = "chips",
 }: {
   attachments: AttachmentInfo[];
   onLoadImage?: (path: string) => Promise<string | null>;
   pdfText?: boolean;
+  variant?: "chips" | "images";
 }) {
+  if (variant === "images") {
+    return <ImageOnlyAttachments attachments={attachments} onLoadImage={onLoadImage} />;
+  }
   return (
     <div className={styles.attachmentChips}>
       {attachments.map((a) => (
@@ -767,6 +798,80 @@ function TranscriptAttachments({
   );
 }
 
+/**
+ * Single image: fixed 192px height, collage: fixed 320x192 grid of up to
+ * four tiles (2px gaps), "+N" overlay on the last tile when there are more.
+ * Layout keyed off tile count so CSS owns the grid shape per #1759.
+ */
+function ImageOnlyAttachments({
+  attachments,
+  onLoadImage,
+}: {
+  attachments: AttachmentInfo[];
+  onLoadImage?: (path: string) => Promise<string | null>;
+}) {
+  if (attachments.length === 1) {
+    return <SingleAttachmentImage attachment={attachments[0]} onLoadImage={onLoadImage} />;
+  }
+  const tiles = attachments.slice(0, 4);
+  const extra = attachments.length - tiles.length;
+  return (
+    <div
+      className={styles.imageCollage}
+      data-image-collage={tiles.length}
+    >
+      {tiles.map((a, i) => (
+        <div key={a.path} className={styles.collageTile}>
+          <AttachmentImageEl attachment={a} onLoadImage={onLoadImage} fill />
+          {extra > 0 && i === tiles.length - 1 && (
+            <div className={styles.collageMore} data-collage-more={extra} aria-hidden="true">
+              +{extra}
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function SingleAttachmentImage({
+  attachment,
+  onLoadImage,
+}: {
+  attachment: AttachmentInfo;
+  onLoadImage?: (path: string) => Promise<string | null>;
+}) {
+  return (
+    <div className={styles.singleImageFrame} data-attachment-image="">
+      <AttachmentImageEl attachment={attachment} onLoadImage={onLoadImage} className={styles.singleImage} />
+    </div>
+  );
+}
+
+/** The <img> itself, shared by the single-image and collage-tile frames. */
+function AttachmentImageEl({
+  attachment,
+  onLoadImage,
+  className,
+  fill,
+}: {
+  attachment: AttachmentInfo;
+  onLoadImage?: (path: string) => Promise<string | null>;
+  className?: string;
+  fill?: boolean;
+}) {
+  const thumb = useAttachmentThumb(attachment, onLoadImage);
+  if (!thumb) return null;
+  return (
+    <img
+      className={fill ? styles.collageImage : className}
+      src={thumb}
+      alt={attachment.name}
+      tabIndex={0}
+    />
+  );
+}
+
 function TranscriptAttachmentChip({
   attachment,
   onLoadImage,
@@ -776,19 +881,7 @@ function TranscriptAttachmentChip({
   onLoadImage?: (path: string) => Promise<string | null>;
   textOnly?: boolean;
 }) {
-  const [thumb, setThumb] = useState<string | null>(null);
-  useEffect(() => {
-    if (attachment.kind !== "image" || !onLoadImage) return;
-    let live = true;
-    void onLoadImage(attachment.path)
-      .then((url) => {
-        if (live) setThumb(url);
-      })
-      .catch(() => {});
-    return () => {
-      live = false;
-    };
-  }, [attachment.kind, attachment.path, onLoadImage]);
+  const thumb = useAttachmentThumb(attachment, onLoadImage);
   return (
     <span
       className={styles.attachmentChip}
@@ -1153,6 +1246,15 @@ const UserMessageBlock = memo(function UserMessageBlock({
     );
   }
 
+  // Image-only (issue #1759): no visible text, at least one attachment, and
+  // every attachment is an image. Mixed files (or any text) keep the chip
+  // rendering above inside the ordinary bubble.
+  const attachments = message.attachments ?? [];
+  const imagesOnly =
+    !message.text.trim() &&
+    attachments.length > 0 &&
+    attachments.every((a) => a.kind === "image");
+
   return (
     <article
       className={`${styles.message} ${styles.messageUser}${streamCls}`}
@@ -1175,21 +1277,36 @@ const UserMessageBlock = memo(function UserMessageBlock({
               Edit
             </button>
           )}
-          <div className={styles.userBubble}>
-            {message.steer && (
-              <div className={styles.steerLabel} data-steer-label="">
-                Steered
-              </div>
-            )}
-            {redactDisplay(message.text)}
-            {message.attachments && message.attachments.length > 0 && (
+          {imagesOnly ? (
+            <div className={styles.userImagesOnly} data-user-images-only="">
+              {message.steer && (
+                <div className={styles.steerLabel} data-steer-label="">
+                  Steered
+                </div>
+              )}
               <TranscriptAttachments
-                attachments={message.attachments}
+                attachments={attachments}
                 onLoadImage={onLoadAttachmentImage}
-                pdfText={message.pdfText}
+                variant="images"
               />
-            )}
-          </div>
+            </div>
+          ) : (
+            <div className={styles.userBubble}>
+              {message.steer && (
+                <div className={styles.steerLabel} data-steer-label="">
+                  Steered
+                </div>
+              )}
+              {redactDisplay(message.text)}
+              {attachments.length > 0 && (
+                <TranscriptAttachments
+                  attachments={attachments}
+                  onLoadImage={onLoadAttachmentImage}
+                  pdfText={message.pdfText}
+                />
+              )}
+            </div>
+          )}
         </div>
       </div>
       {onTogglePin && (

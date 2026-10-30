@@ -95,6 +95,7 @@ const {
   firstChanged,
   cancelCodexServerRequests,
   sanitizeAttachments,
+  attachmentOnlyPrompt,
   attachmentPromptSection,
 } = require("./runnerHelpers.js");
 
@@ -1785,6 +1786,11 @@ function createRunner(opts) {
     let attachments = sanitizeAttachments(input.attachments);
     let displayPrompt =
       input.displayPrompt != null ? input.displayPrompt : input.prompt;
+    const standIn = attachmentOnlyPrompt(prompt, attachments);
+    if (standIn) {
+      prompt = standIn;
+      if (input.displayPrompt == null) displayPrompt = "";
+    }
     let fromThread = input.fromThread || null;
     const skipUserAppend = input.skipUserAppend === true;
     // Side question (issue #471): intercept BEFORE the "already active"
@@ -2128,11 +2134,13 @@ function createRunner(opts) {
 
     let title = thread.title;
     if (title === "New Thread") {
-      const firstLine = String(displayPrompt || prompt)
+      const firstLine = String(standIn ? "" : displayPrompt || prompt)
         .split(/\r?\n/)[0]
         .trim();
       const max = services.THREAD_TITLE_MAX || 60;
-      title = firstLine.slice(0, max) || "New Thread";
+      title =
+        firstLine.slice(0, max) ||
+        (standIn ? attachments[0].name : "New Thread");
     }
 
     // A machine-delivered turn is not the user answering, so it must not
@@ -2591,7 +2599,11 @@ function createRunner(opts) {
    */
   async function steerRun(input) {
     const threadId = input && input.threadId;
-    const prompt = String((input && input.prompt) || "").trim();
+    const attachments = sanitizeAttachments(input && input.attachments);
+    const prompt =
+      String((input && input.prompt) || "").trim() ||
+      attachmentOnlyPrompt("", attachments) ||
+      "";
     if (!threadId) throw new Error("threadId is required");
     if (!prompt) throw new Error("prompt is required");
     const thread = store.getThread(threadId);
@@ -2609,7 +2621,6 @@ function createRunner(opts) {
     if (!entry.handle || typeof entry.handle.send !== "function") {
       throw new Error("Live process is not accepting input");
     }
-    const attachments = sanitizeAttachments(input.attachments);
     const pdfNote = await pdfTextSection({
       userDataPath,
       threadId,
