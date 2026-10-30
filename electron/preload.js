@@ -389,6 +389,7 @@ const IPC_CHANNELS = Object.freeze([
   { ns: "terminal", method: "read" },
   { ns: "terminal", method: "list" },
   { ns: "terminal", method: "close" },
+  { ns: "terminal", method: "isBusy" },
   { ns: "terminal", method: "signIn" },
   { ns: "mentions", method: "fetchUrl" },
   { ns: "mentions", method: "terminalTail" },

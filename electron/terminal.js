@@ -16,6 +16,7 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
+const { execFileSync } = require("node:child_process");
 // cross-spawn, not child_process: on Windows COMSPEC resolution and .cmd
 // shims need it. Same reason as devservers.js (#442).
 const spawn = require("cross-spawn");
@@ -210,6 +211,50 @@ function isAlive(pid) {
 /** @param {TerminalSession} sess */
 function isRunning(sess) {
   return !sess.dead && isAlive(sess.pid);
+}
+
+/**
+ * Best-effort "is something other than the login shell running here" check
+ * (issue #1773), used on demand when the user clicks Close - never on the
+ * EMIT_MS broadcast path, which would mean spawning `ps` dozens of times a
+ * second. POSIX: any live child of the shell's pid counts as busy, the same
+ * signal `ps`/Activity Monitor use; a backgrounded job (`sleep 5 &`) with no
+ * foreground child reads as idle, the same tradeoff the confirm dialog
+ * accepts elsewhere for "ask less than you think you need to." Windows
+ * ConPTY has no cheap child-process query, so there busy is always true:
+ * the confirm is the safe default instead of a silent close.
+ *
+ * @param {TerminalSession | undefined} sess
+ * @param {{ exec?: typeof execFileSync }} [opts]
+ * @returns {{ running: boolean, busy: boolean, command: string | null }}
+ */
+function foregroundCommand(sess, opts = {}) {
+  if (!sess || !isRunning(sess)) return { running: false, busy: false, command: null };
+  if (sess.platform === "win32") return { running: true, busy: true, command: null };
+  const exec = opts.exec || execFileSync;
+  try {
+    const out = String(
+      exec("ps", ["-axo", "pid=,ppid=,comm="], { timeout: 2000, windowsHide: true }),
+    );
+    for (const line of out.split("\n")) {
+      const m = /^\s*\d+\s+(\d+)\s+(.+?)\s*$/.exec(line);
+      if (m && Number(m[1]) === sess.pid) {
+        return { running: true, busy: true, command: path.basename(m[2]) };
+      }
+    }
+    return { running: true, busy: false, command: null };
+  } catch {
+    return { running: true, busy: false, command: null };
+  }
+}
+
+/**
+ * @param {string} threadId
+ * @param {string} [termId]
+ * @param {{ exec?: typeof execFileSync }} [opts]
+ */
+function isBusy(threadId, termId, opts) {
+  return foregroundCommand(sessions.get(keyOf(threadId, termIdOf(termId))), opts);
 }
 
 /**
@@ -679,6 +724,8 @@ module.exports = {
   logDirIn,
   listLive,
   ptyAvailable,
+  isBusy,
+  foregroundCommand,
   LINE_LIMIT,
   CHAR_LIMIT,
 };

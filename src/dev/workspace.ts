@@ -3,6 +3,7 @@ import type {
   CoderApi,
   DevServerState,
   TerminalState,
+  TerminalBusyState,
   PreviewInspectResult,
   PreviewSnapshot,
   PreviewViewportPreset,
@@ -316,6 +317,9 @@ export function createWorkspace(): Pick<CoderApi, "servers" | "simulator" | "pre
       async close(input: { threadId: string }): Promise<TerminalState> {
         demoTerminals.delete(input.threadId);
         return demoTerminal(input.threadId);
+      },
+      async isBusy(): Promise<TerminalBusyState> {
+        return { running: false, busy: false, command: null };
       },
       async signIn(input: { provider: string; threadId?: string | null }) {
         const threadId = input.threadId || SIGNIN_TERMINAL_ID;

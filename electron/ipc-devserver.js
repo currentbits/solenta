@@ -190,6 +190,14 @@ module.exports = {
     const { logDir } = terminalRoot(ctx, threadId);
     return terminal.close(threadId, input && input.termId, logDir, Boolean(input && input.keep));
   },
+  // Close confirm (#1773): the pane asks this right before tearing a
+  // terminal down, so an idle shell closes quietly and a running command
+  // gets a confirm naming it.
+  "terminal:isBusy": async (ctx, input) => {
+    const threadId = input && input.threadId;
+    terminalRoot(ctx, threadId);
+    return terminal.isBusy(threadId, input && input.termId);
+  },
   // Sign in (#1501): a fresh "signin" shell with the provider's login
   // command typed in. The command comes from a fixed table, never the caller.
   // `install` types the install command instead, without Enter, so the
