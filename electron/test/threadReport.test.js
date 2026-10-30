@@ -97,6 +97,10 @@ describe("exportThreadReport", () => {
       getThread: (id) => (id === "t-report" ? { ...detail([]).thread, archived: false } : null),
       getProject: () => ({ id: "p1", name: "proj", path: dir }),
       getMessages: () => [{ id: "1", role: "user", text: `hi ${GH}`, createdAt: 1 }],
+      getMessagesPage: (id) => {
+        const messages = store.getMessages(id);
+        return { messages, hasOlder: false, totalCount: messages.length };
+      },
       getWorkLog: () => [],
       getUsage: () => null,
       getRunArtifacts: () => [],
@@ -208,6 +212,10 @@ describe("exportThreadReportMarkdown", () => {
       getThread: (id) => (id === "t-report" ? { ...detail([]).thread, archived: false } : null),
       getProject: () => ({ id: "p1", name: "proj", path: dir }),
       getMessages: () => [{ id: "1", role: "user", text: `hi ${GH}`, createdAt: 1 }],
+      getMessagesPage: (id) => {
+        const messages = store.getMessages(id);
+        return { messages, hasOlder: false, totalCount: messages.length };
+      },
       getWorkLog: () => [],
       getUsage: () => null,
       getRunArtifacts: () => [],

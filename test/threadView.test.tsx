@@ -138,6 +138,8 @@ function detail(over: Partial<ThreadDetail> = {}): ThreadDetail {
     usage: over.usage ?? null,
     pendingPermission: over.pendingPermission,
     artifacts: over.artifacts,
+    hasOlderMessages: over.hasOlderMessages,
+    totalMessageCount: over.totalMessageCount,
   };
 }
 
@@ -160,6 +162,8 @@ function view(props: {
   detail?: ThreadDetail | null;
   detailError?: string | null;
   onRetryDetail?: () => void;
+  onLoadOlderMessages?: (threadId: string) => void;
+  onEnsureFullHistory?: (threadId: string) => void;
   hasProjects?: boolean;
   project?: ProjectInfo | null;
   changesOpen?: boolean;
@@ -231,6 +235,8 @@ function view(props: {
       detail={props.detail === undefined ? detail() : props.detail}
       detailError={props.detailError}
       onRetryDetail={props.onRetryDetail}
+      onLoadOlderMessages={props.onLoadOlderMessages}
+      onEnsureFullHistory={props.onEnsureFullHistory}
       project={props.project === undefined ? project : props.project}
       providers={providers}
       workflows={workflows}
@@ -4254,6 +4260,17 @@ function bulkMessages(n: number): ChatMessage[] {
   return rows;
 }
 
+/** Messages with a stable id (`m${i}`) over [start, end), for paging tests. */
+function rangeMessages(start: number, end: number): ChatMessage[] {
+  const rows: ChatMessage[] = [];
+  for (let i = start; i < end; i++) {
+    rows.push(
+      msg({ id: `m${i}`, role: "user", text: `#${i}#`, createdAt: i + 1 }),
+    );
+  }
+  return rows;
+}
+
 function renderedBulkIds(html: string, n: number): number[] {
   const ids: number[] = [];
   for (let i = 0; i < n; i++) {
@@ -4676,6 +4693,123 @@ describe("ThreadView transcript windowing (issue #564)", () => {
   });
 });
 
+describe("ThreadView server-paged messages (issue #1786)", () => {
+  it("renders no load-older control when hasOlderMessages is unset or false", () => {
+    const html = render({ detail: detail({ messages: bulkMessages(40) }) });
+    assert.ok(!html.includes("data-load-older"));
+  });
+
+  it("offers Load older messages once the local tail window is exhausted", () => {
+    const n = 40; // under TRANSCRIPT_WINDOW, so hiddenCount stays 0
+    const html = render({
+      detail: detail({
+        messages: bulkMessages(n),
+        hasOlderMessages: true,
+        totalMessageCount: 500,
+      }),
+    });
+    assert.ok(
+      !html.includes("data-show-earlier"),
+      "local window already shows everything loaded",
+    );
+    assert.ok(
+      html.includes("data-load-older"),
+      "server says there is more, so the fetch-more control must render",
+    );
+    assert.ok(html.includes("Load older messages"));
+  });
+
+  it("does not show Load older messages while Show earlier still has local entries to reveal", () => {
+    const html = render({
+      detail: detail({
+        messages: bulkMessages(500),
+        hasOlderMessages: true,
+        totalMessageCount: 5000,
+      }),
+    });
+    assert.ok(html.includes("data-show-earlier"));
+    assert.ok(
+      !html.includes("data-load-older"),
+      "the local window still has hidden entries; fetch-more is not needed yet",
+    );
+  });
+
+  it("clicking Load older messages calls onLoadOlderMessages with the thread id and prepends the result", async () => {
+    const calls: string[] = [];
+    const older = rangeMessages(0, 10); // the page "before" what's loaded
+    const loaded = rangeMessages(10, 50);
+    function Harness() {
+      const [d, setD] = useState(
+        detail({ messages: loaded, hasOlderMessages: true, totalMessageCount: 50 }),
+      );
+      return view({
+        detail: d,
+        onLoadOlderMessages: (threadId: string) => {
+          calls.push(threadId);
+          setD((prev) => ({
+            ...prev,
+            messages: [...older, ...prev.messages],
+            hasOlderMessages: false,
+            totalMessageCount: 50,
+          }));
+        },
+      });
+    }
+    const m = await mount(<Harness />);
+    const btn = m.query("[data-load-older]");
+    assert.ok(btn, "Load older messages button");
+    await m.click(btn);
+    assert.deepEqual(calls, ["t1"]);
+    assert.ok(m.html().includes("#0#"), "the fetched older page is now mounted");
+    assert.equal(
+      m.query("[data-load-older]"),
+      null,
+      "hasOlderMessages is now false, so the control is gone",
+    );
+    m.unmount();
+  });
+
+  it("fetches the whole transcript when a reveal target is not in the loaded page", async () => {
+    const calls: string[] = [];
+    const loaded = rangeMessages(100, 140);
+    const m = await mount(
+      view({
+        detail: detail({
+          thread: thread({ id: "t-reveal" }),
+          messages: loaded,
+          hasOlderMessages: true,
+          totalMessageCount: 140,
+        }),
+        revealMessageId: "m5",
+        onEnsureFullHistory: (threadId: string) => {
+          calls.push(threadId);
+        },
+      }),
+    );
+    assert.deepEqual(calls, ["t-reveal"]);
+    m.unmount();
+  });
+
+  it("does not call onEnsureFullHistory when the reveal target is already loaded", async () => {
+    const calls: string[] = [];
+    const loaded = rangeMessages(100, 140);
+    const m = await mount(
+      view({
+        detail: detail({
+          messages: loaded,
+          hasOlderMessages: true,
+          totalMessageCount: 140,
+        }),
+        revealMessageId: loaded[5]!.id,
+        onEnsureFullHistory: (threadId: string) => {
+          calls.push(threadId);
+        },
+      }),
+    );
+    assert.deepEqual(calls, []);
+    m.unmount();
+  });
+});
 
 describe("ThreadView stream-in animation", () => {
   it("marks nothing for stream-in on the initial render", () => {

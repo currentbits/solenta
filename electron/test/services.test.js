@@ -1279,6 +1279,63 @@ describe("services", () => {
     assert.equal(store.getThread(thread.id).sandbox, undefined);
   });
 
+  it("getThreadDetail pages messages, newest first, with hasOlderMessages/totalMessageCount (#1786)", async () => {
+    const repo = path.join(tmpDir, "page-repo");
+    fs.mkdirSync(repo);
+    git(repo, ["init"]);
+    const project = await services.addProject(store, repo);
+    const thread = services.createThread(store, { projectId: project.id, title: "T" });
+    const msgs = [];
+    for (let i = 0; i < 500; i += 1) {
+      msgs.push({ id: `m${i}`, role: "assistant", text: `msg ${i}`, createdAt: i });
+    }
+    store.setMessages(thread.id, msgs);
+
+    const defaultPage = services.getThreadDetail(store, thread.id, null, { markVisited: false });
+    assert.equal(defaultPage.messages.length, 300);
+    assert.deepEqual(defaultPage.messages, msgs.slice(200));
+    assert.equal(defaultPage.hasOlderMessages, true);
+    assert.equal(defaultPage.totalMessageCount, 500);
+
+    const fullPage = services.getThreadDetail(store, thread.id, null, {
+      markVisited: false,
+      limit: Infinity,
+    });
+    assert.deepEqual(fullPage.messages, msgs);
+    assert.equal(fullPage.hasOlderMessages, false);
+    assert.equal(fullPage.totalMessageCount, 500);
+  });
+
+  it("getOlderMessages pages backward from a before cursor (#1786)", async () => {
+    const repo = path.join(tmpDir, "older-repo");
+    fs.mkdirSync(repo);
+    git(repo, ["init"]);
+    const project = await services.addProject(store, repo);
+    const thread = services.createThread(store, { projectId: project.id, title: "T" });
+    const msgs = [];
+    for (let i = 0; i < 500; i += 1) {
+      msgs.push({ id: `m${i}`, role: "assistant", text: `msg ${i}`, createdAt: i });
+    }
+    store.setMessages(thread.id, msgs);
+
+    const page = services.getOlderMessages(store, thread.id, { before: "m200", limit: 50 });
+    assert.deepEqual(page.messages, msgs.slice(150, 200));
+    assert.equal(page.hasOlderMessages, true);
+    assert.equal(page.totalMessageCount, 500);
+
+    // Boundary: a page that reaches message 0 reports no more older.
+    const firstPage = services.getOlderMessages(store, thread.id, { before: "m30", limit: 50 });
+    assert.deepEqual(firstPage.messages, msgs.slice(0, 30));
+    assert.equal(firstPage.hasOlderMessages, false);
+  });
+
+  it("getOlderMessages rejects an unknown/trashed thread", async () => {
+    assert.throws(
+      () => services.getOlderMessages(store, "does-not-exist", { before: "m1" }),
+      /Unknown thread/,
+    );
+  });
+
   it("gitStatus reports branch and dirty flag", async () => {
     const repo = path.join(tmpDir, "g-repo");
     fs.mkdirSync(repo);
