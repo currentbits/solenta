@@ -5,7 +5,7 @@ import {
   type ThreadOpenOrigin,
   type ViewReturnState,
 } from "../viewReturn";
-import { formatRelativeAge } from "../format";
+import { formatRelativeAge, middleTruncate } from "../format";
 import {
   allPrsEmpty,
   filterPrGroups,
@@ -399,8 +399,8 @@ export function PrListView({
           </div>
           <div className={styles.rowMeta}>
             {pr.headRefName ? (
-              <span className={styles.branch}>
-                {pr.headRefName}
+              <span className={styles.branch} title={pr.headRefName}>
+                {middleTruncate(pr.headRefName, 30, 0.65)}
               </span>
             ) : null}
             {diff ? (

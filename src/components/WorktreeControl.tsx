@@ -16,6 +16,7 @@ import {
   type ConflictResolveInput,
 } from "../conflictResolve";
 import { mergeOntoLabel, sourceSnapshotLabel } from "../crewIntegration";
+import { middleTruncate } from "../format";
 import { useEscapeClose } from "../useEscapeClose";
 import styles from "./WorktreeControl.module.css";
 import { EDITOR_PREF_KEY, type EditorId, type EditorOption } from "../shared/ipc";
@@ -528,7 +529,7 @@ export function useWorktreeChrome(
         >
           <BranchGlyph />
           <span className={styles.branch} title={branch ?? undefined}>
-            {branch ?? "worktree"}
+            {branch ? middleTruncate(branch, 26, 0.65) : "worktree"}
           </span>
           <span className={styles.baseSep} aria-hidden>
             →
