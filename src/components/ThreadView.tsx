@@ -2501,17 +2501,18 @@ export const ThreadView = memo(function ThreadView({
     reviewUndoDialogRef,
   );
 
-  const { showEarlier, onBodyScroll } = useStickToBottom({
-    bodyRef,
-    stickToBottom,
-    forceStick,
-    detail,
-    timeline,
-    isWorking,
-    start,
-    revealTargetId,
-    setWindowStart,
-  });
+  const { showEarlier, onBodyScroll, jumpToLatest, pillVisible, pillNew } =
+    useStickToBottom({
+      bodyRef,
+      stickToBottom,
+      forceStick,
+      detail,
+      timeline,
+      isWorking,
+      start,
+      revealTargetId,
+      setWindowStart,
+    });
 
   /** One rail mark per user prompt (#487); a pin label (#342) wins. */
   const railTurns = useMemo(() => {
@@ -5255,6 +5256,16 @@ export const ThreadView = memo(function ThreadView({
               </>
             )}
           </div>
+        )}
+        {pillVisible && (
+          <button
+            type="button"
+            className={styles.jumpToLatest}
+            data-jump-to-latest=""
+            onClick={jumpToLatest}
+          >
+            Jump to latest{pillNew ? " · new" : ""}
+          </button>
         )}
       </div>
 

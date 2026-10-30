@@ -2814,7 +2814,7 @@ describe("ThreadView stick-to-bottom on content resize (issue #408)", () => {
 
     const layout = { clientHeight: 400, scrollHeight: 1000, scrollTop: 80 };
     fakeScrollMetrics(body, layout);
-    body.dispatchEvent(new Event("scroll"));
+    await inAct(async () => body.dispatchEvent(new Event("scroll")));
     layout.scrollHeight = 1400;
     fireObservedResizes();
 
@@ -2871,7 +2871,7 @@ describe("ThreadView stick-to-bottom on content resize (issue #408)", () => {
     assert.ok(firstBody, "thread A scroll body");
     const firstLayout = { clientHeight: 400, scrollHeight: 1000, scrollTop: 80 };
     fakeScrollMetrics(firstBody, firstLayout);
-    firstBody.dispatchEvent(new Event("scroll"));
+    await inAct(async () => firstBody.dispatchEvent(new Event("scroll")));
 
     await inAct(async () => {
       (m.query("[data-stick-null]") as HTMLButtonElement).click();
@@ -2887,7 +2887,7 @@ describe("ThreadView stick-to-bottom on content resize (issue #408)", () => {
 
     const layout = { clientHeight: 400, scrollHeight: 2000, scrollTop: 0 };
     fakeScrollMetrics(body, layout);
-    body.dispatchEvent(new Event("scroll"));
+    await inAct(async () => body.dispatchEvent(new Event("scroll")));
     fireObservedResizes();
 
     assert.equal(
@@ -3037,6 +3037,149 @@ describe("ThreadView stick-to-bottom on content resize (issue #408)", () => {
     assert.ok(m.text().includes("THREAD_B"));
     assert.equal(m.query(".body"), body, "a direct switch keeps the scroll body");
     assert.equal(layout.scrollTop, 3500, "a thread switch pins before paint");
+    m.unmount();
+  });
+});
+
+describe("ThreadView jump to latest pill (#1782)", () => {
+  const prevRO = (globalThis as { ResizeObserver?: typeof ResizeObserver })
+    .ResizeObserver;
+
+  beforeEach(() => {
+    installFakeResizeObserver();
+  });
+
+  afterEach(() => {
+    fakeObservers.length = 0;
+    if (prevRO) {
+      (
+        globalThis as unknown as { ResizeObserver: typeof ResizeObserver }
+      ).ResizeObserver = prevRO;
+    } else {
+      delete (globalThis as { ResizeObserver?: typeof ResizeObserver })
+        .ResizeObserver;
+    }
+  });
+
+  const twoMessages = () =>
+    detail({
+      messages: [
+        msg({ id: "u1", role: "user", text: "PILL_PROMPT", createdAt: 10 }),
+        msg({ id: "a1", role: "assistant", text: "PILL_REPLY", createdAt: 20 }),
+      ],
+    });
+
+  it("is hidden while the transcript is at (or near) the bottom", async () => {
+    const m = await mount(view({ detail: twoMessages() }));
+    const body = m.query(".body") as HTMLElement;
+    assert.ok(body, "scroll body must render");
+    const layout = { clientHeight: 400, scrollHeight: 1000, scrollTop: 620 };
+    fakeScrollMetrics(body, layout);
+    await inAct(async () => body.dispatchEvent(new Event("scroll")));
+    assert.equal(
+      m.query("[data-jump-to-latest]"),
+      null,
+      "within STICK_BOTTOM_PX of the bottom, no pill",
+    );
+    m.unmount();
+  });
+
+  it("appears once the user scrolls up more than about one screen", async () => {
+    const m = await mount(view({ detail: twoMessages() }));
+    const body = m.query(".body") as HTMLElement;
+    const layout = { clientHeight: 400, scrollHeight: 2000, scrollTop: 0 };
+    fakeScrollMetrics(body, layout);
+    await inAct(async () => body.dispatchEvent(new Event("scroll")));
+    const pill = m.query("[data-jump-to-latest]");
+    assert.ok(pill, "scrolled far past the bottom, the pill must show");
+    assert.match(pill!.textContent || "", /Jump to latest/);
+    m.unmount();
+  });
+
+  it("clicking the pill scrolls to the bottom, re-sticks, and hides itself", async () => {
+    const m = await mount(view({ detail: twoMessages() }));
+    const body = m.query(".body") as HTMLElement;
+    const layout = { clientHeight: 400, scrollHeight: 2000, scrollTop: 0 };
+    fakeScrollMetrics(body, layout);
+    await inAct(async () => body.dispatchEvent(new Event("scroll")));
+    const pill = m.query("[data-jump-to-latest]") as HTMLButtonElement;
+    assert.ok(pill, "pill must be showing before the click");
+
+    await m.click(pill);
+    assert.equal(
+      layout.scrollTop,
+      layout.scrollHeight,
+      "clicking the pill must land on the latest content",
+    );
+    assert.equal(
+      m.query("[data-jump-to-latest]"),
+      null,
+      "the pill hides itself once it has jumped",
+    );
+
+    // Re-stuck: a later append must pull the view along, same as #408. (The
+    // jump landed scrollTop on the OLD scrollHeight, same convention as
+    // pinIfStuck elsewhere in this file; grow past clientHeight too so the
+    // fake, unclamped scrollTop setter reports a genuinely positive distance.)
+    layout.scrollHeight = 3000;
+    fireObservedResizes();
+    assert.equal(
+      layout.scrollTop,
+      3000,
+      "re-sticking means the next append still pins to the bottom",
+    );
+    m.unmount();
+  });
+
+  it("marks new content once it arrives while the user is scrolled away", async () => {
+    function Harness() {
+      const [d, setD] = useState(twoMessages());
+      return (
+        <div>
+          <button
+            type="button"
+            data-append=""
+            onClick={() =>
+              setD((prev) => ({
+                ...prev,
+                messages: [
+                  ...prev.messages,
+                  msg({
+                    id: "a2",
+                    role: "assistant",
+                    text: "LATER_REPLY",
+                    createdAt: 30,
+                  }),
+                ],
+              }))
+            }
+          >
+            append
+          </button>
+          {view({ detail: d })}
+        </div>
+      );
+    }
+    const m = await mount(<Harness />);
+    const body = m.query(".body") as HTMLElement;
+    const layout = { clientHeight: 400, scrollHeight: 2000, scrollTop: 0 };
+    fakeScrollMetrics(body, layout);
+    await inAct(async () => body.dispatchEvent(new Event("scroll")));
+    const pillBefore = m.query("[data-jump-to-latest]");
+    assert.ok(pillBefore, "scrolled away: pill shows without 'new' yet");
+    assert.doesNotMatch(pillBefore!.textContent || "", /new/);
+
+    layout.scrollHeight = 2400;
+    await inAct(async () => {
+      (m.query("[data-append]") as HTMLButtonElement).click();
+    });
+    const pillAfter = m.query("[data-jump-to-latest]");
+    assert.ok(pillAfter, "still scrolled away after the append");
+    assert.match(
+      pillAfter!.textContent || "",
+      /· new/,
+      "content arrived while away: the pill flags it",
+    );
     m.unmount();
   });
 });
@@ -3825,7 +3968,7 @@ describe("ThreadView transcript windowing (issue #564)", () => {
     const m = await mount(<Harness />);
     const body = m.query(".body") as HTMLElement;
     fakeScrollMetrics(body, { clientHeight: 400, scrollHeight: 20_000, scrollTop: 100 });
-    body.dispatchEvent(new Event("scroll"));
+    await inAct(async () => body.dispatchEvent(new Event("scroll")));
     await m.click(m.query("[data-append-stream]"));
     assert.ok(m.text().includes("STREAMED_TAIL_1"));
     assert.ok(

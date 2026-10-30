@@ -2,6 +2,7 @@ import {
   useEffect,
   useLayoutEffect,
   useRef,
+  useState,
   type Dispatch,
   type RefObject,
   type SetStateAction,
@@ -10,6 +11,7 @@ import type { ThreadDetail } from "../../shared/ipc";
 import type { TimelineEntry } from "../../timeline";
 import { nearestScrollTop, offsetTopWithin } from "../../scrollNearest";
 import { extendWindowStart } from "../../transcriptWindow";
+import { prefersReducedMotion } from "../sidebar/motion";
 
 const STICK_BOTTOM_PX = 80;
 
@@ -67,6 +69,38 @@ export function useStickToBottom({
   };
   const pinIfStuckRef = useRef(pinIfStuck);
   pinIfStuckRef.current = pinIfStuck;
+
+  /**
+   * "Jump to latest" pill (#1782): shown once the user has scrolled up more
+   * than roughly one screen, with a "· new" suffix once content arrived
+   * while they were away. `hasNew` only latches on content changes, not on
+   * every scroll, so scrolling around inside the backlog does not flicker it.
+   */
+  const [pillVisible, setPillVisible] = useState(false);
+  const [hasNew, setHasNew] = useState(false);
+  const updatePill = (el: HTMLDivElement, contentChanged: boolean) => {
+    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const visible = distance > Math.max(el.clientHeight, 1);
+    setPillVisible(visible);
+    if (!visible) setHasNew(false);
+    else if (contentChanged) setHasNew(true);
+  };
+
+  const jumpToLatest = () => {
+    const el = bodyRef.current;
+    if (el) {
+      const behavior = prefersReducedMotion() ? "auto" : "smooth";
+      if (typeof el.scrollTo === "function") {
+        el.scrollTo({ top: el.scrollHeight, behavior });
+      } else {
+        el.scrollTop = el.scrollHeight;
+      }
+    }
+    stickToBottom.current = true;
+    forceStick.current = false;
+    setPillVisible(false);
+    setHasNew(false);
+  };
 
   const showEarlier = () => {
     stickToBottom.current = false;
@@ -144,6 +178,13 @@ export function useStickToBottom({
     }
     prevPermReq.current = req;
     if (opened || forceStick.current) pinIfStuck();
+    const el = bodyRef.current;
+    if (opened) {
+      setPillVisible(false);
+      setHasNew(false);
+    } else if (el && !stickToBottom.current) {
+      updatePill(el, true);
+    }
   }, [
     timeline,
     isWorking,
@@ -199,12 +240,14 @@ export function useStickToBottom({
       if (distance <= STICK_BOTTOM_PX) {
         forceStick.current = false;
         stickToBottom.current = true;
+        updatePill(el, false);
         return;
       }
       pinIfStuck();
       return;
     }
     stickToBottom.current = distance <= STICK_BOTTOM_PX;
+    updatePill(el, false);
   };
-  return { showEarlier, onBodyScroll };
+  return { showEarlier, onBodyScroll, jumpToLatest, pillVisible, pillNew: hasNew };
 }

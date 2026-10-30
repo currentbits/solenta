@@ -2089,6 +2089,10 @@ button.diffLineGutter:focus-visible {
 }
 
 .body {
+  /* Anchor for the "Jump to latest" pill (#1782): an absolutely positioned
+     direct child of a scrolling element is laid out against its padding
+     box, not its scrolled content, so the pill stays put under scroll. */
+  position: relative;
   flex: 1;
   min-height: 0;
   overflow-y: auto;
@@ -2102,6 +2106,37 @@ button.diffLineGutter:focus-visible {
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+/*
+ * Jump to latest (#1782). A direct child of .body, so the `.body > *` rule
+ * below (same specificity, same cascade) would otherwise stretch it to the
+ * thread column width; the compound selector outranks it. bottom:16px
+ * keeps clear of the composer, which is a sibling of .body, not inside it.
+ */
+.body > .jumpToLatest {
+  position: absolute;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 7px 14px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: var(--shadow-pop);
+}
+
+.body > .jumpToLatest:hover {
+  background: var(--card-hover);
+  border-color: var(--blue-border);
 }
 
 /* Comfortable reading column: every timeline block shares one centered measure. */
