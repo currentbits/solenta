@@ -375,3 +375,105 @@ describe("terminal safety", () => {
     assert.equal(terminal.read("t-none").running, false);
   });
 });
+
+describe("terminal busy check (#1773)", () => {
+  const posixSkip = !POSIX ? "POSIX shell only" : false;
+  const ptySkip = posixSkip || (!terminal.ptyAvailable() ? "node-pty unavailable" : false);
+
+  it("reports not running for a session that was never opened", () => {
+    assert.deepEqual(terminal.isBusy("t-nope"), {
+      running: false,
+      busy: false,
+      command: null,
+    });
+  });
+
+  it("reports idle for a session with a stubbed ps that finds no children", { skip: posixSkip }, () => {
+    const id = "pty-busy-idle";
+    terminal.open(id, os.tmpdir(), { env: ENV, pty: null });
+    assert.deepEqual(
+      terminal.isBusy(id, undefined, { exec: () => "" }),
+      { running: true, busy: false, command: null },
+    );
+    terminal.close(id);
+  });
+
+  it("spawns a sleep and reports it busy, then idle once it ends", { skip: ptySkip }, async () => {
+    const id = "pty-busy-real";
+    terminal.open(id, os.tmpdir(), { env: ENV });
+    assert.deepEqual(terminal.isBusy(id), { running: true, busy: false, command: null });
+    terminal.write(id, "sleep 30\r");
+    await waitFor(id, (t) => /sleep 30/.test(t));
+    let seen;
+    for (let i = 0; i < 100; i++) {
+      seen = terminal.isBusy(id);
+      if (seen.busy) break;
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    assert.equal(seen.busy, true);
+    assert.equal(seen.running, true);
+    assert.equal(seen.command, "sleep");
+    terminal.write(id, "\x03");
+    for (let i = 0; i < 100; i++) {
+      seen = terminal.isBusy(id);
+      if (!seen.busy) break;
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    assert.equal(seen.busy, false);
+    terminal.close(id);
+  });
+
+  // foregroundCommand takes a session object directly, so these use
+  // process.pid (always "alive" to the signal-0 probe isRunning makes,
+  // which never actually delivers a signal) rather than a fake spawned
+  // child - no real process is ever touched.
+  it("names the foreground process from a stubbed ps listing, by pid", () => {
+    const sess = { dead: false, pid: process.pid, platform: "darwin" };
+    const exec = () => `  42 ${process.pid}   vitest\n`;
+    assert.deepEqual(terminal.foregroundCommand(sess, { exec }), {
+      running: true,
+      busy: true,
+      command: "vitest",
+    });
+    assert.deepEqual(terminal.foregroundCommand(sess, { exec: () => "" }), {
+      running: true,
+      busy: false,
+      command: null,
+    });
+  });
+
+  it("always reports busy on win32: ConPTY has no cheap child-process query", () => {
+    const sess = { dead: false, pid: process.pid, platform: "win32" };
+    assert.deepEqual(terminal.foregroundCommand(sess, { exec: () => "" }), {
+      running: true,
+      busy: true,
+      command: null,
+    });
+  });
+
+  it("treats a dead session as not running, not busy", () => {
+    const sess = { dead: true, pid: process.pid, platform: "darwin" };
+    assert.deepEqual(terminal.foregroundCommand(sess), {
+      running: false,
+      busy: false,
+      command: null,
+    });
+    assert.deepEqual(terminal.foregroundCommand(undefined), {
+      running: false,
+      busy: false,
+      command: null,
+    });
+  });
+
+  it("falls back to not-busy when ps itself fails", () => {
+    const sess = { dead: false, pid: process.pid, platform: "darwin" };
+    const exec = () => {
+      throw new Error("ps: command not found");
+    };
+    assert.deepEqual(terminal.foregroundCommand(sess, { exec }), {
+      running: true,
+      busy: false,
+      command: null,
+    });
+  });
+});

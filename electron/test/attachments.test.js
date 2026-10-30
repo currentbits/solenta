@@ -51,6 +51,7 @@ describe("attachments module", () => {
   });
 
   afterEach(async () => {
+    attachments.setNativeImage(null);
     await rmTree(tmpDir);
   });
 
@@ -498,6 +499,170 @@ describe("attachments module", () => {
       { includeImages: false },
     );
     assert.deepEqual(out, [{ kind: "file", path: txt, name: "notes.txt" }]);
+  });
+});
+
+describe("downscaling oversize images (#1773)", () => {
+  let tmpDir;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-attach-shrink-"));
+  });
+
+  afterEach(async () => {
+    attachments.setNativeImage(null);
+    await rmTree(tmpDir);
+  });
+
+  /**
+   * A fake nativeImage: resize returns a same-shaped fake, toPNG/toJPEG
+   * fabricate a byte count proportional to pixel area (and JPEG quality) so
+   * the step-down plan has to actually iterate, like a real codec would.
+   */
+  function fakeNativeImage(width, height) {
+    const make = (w, h) => ({
+      getSize: () => ({ width: w, height: h }),
+      resize: ({ width: rw, height: rh }) => make(rw, rh),
+      // PNG never compresses enough to fit on its own (so hasAlpha callers
+      // still fall through to JPEG, like a real detailed screenshot would);
+      // JPEG shrinks far more per step, same as a real codec.
+      toPNG: () => Buffer.alloc(Math.max(1, Math.round(w * h * 0.5))),
+      toJPEG: (quality) =>
+        Buffer.alloc(Math.max(1, Math.round(w * h * 0.004 * (quality / 85)))),
+    });
+    return { createFromBuffer: () => make(width, height) };
+  }
+
+  it("plans a dimension step before quality steps, PNG only when alpha matters", () => {
+    const steps = attachments.planDownscaleSteps(6016, 3384, { hasAlpha: true });
+    assert.equal(steps[0].format, "png");
+    assert.equal(steps[0].width, attachments.DOWNSCALE_MAX_DIMENSION);
+    assert.equal(
+      steps[0].height,
+      Math.round((3384 * attachments.DOWNSCALE_MAX_DIMENSION) / 6016),
+    );
+    assert.ok(
+      steps.slice(1, 7).every((s) => s.format === "jpeg"),
+      "PNG step is tried once per size, then JPEG quality steps",
+    );
+    assert.deepEqual(
+      steps.slice(1, 7).map((s) => s.quality),
+      [85, 75, 65, 55, 45, 35],
+      "quality steps must run from high to low",
+    );
+
+    const noAlpha = attachments.planDownscaleSteps(6016, 3384, { hasAlpha: false });
+    assert.ok(noAlpha.every((s) => s.format === "jpeg"), "no PNG step without alpha");
+  });
+
+  it("imageNeedsDownscale triggers on byte size or either dimension, not both", () => {
+    assert.equal(attachments.imageNeedsDownscale(800, 600, 100_000), false);
+    assert.equal(attachments.imageNeedsDownscale(9000, 100, 100), true);
+    assert.equal(
+      attachments.imageNeedsDownscale(100, 100, attachments.MAX_IMAGE_BYTES + 1),
+      true,
+    );
+  });
+
+  it("downscaleImage shrinks a 6016x3384 capture under the byte budget", () => {
+    attachments.setNativeImage(fakeNativeImage(6016, 3384));
+    const result = attachments.downscaleImage(Buffer.alloc(25 * 1024 * 1024), {
+      hasAlpha: false,
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.changed, true);
+    assert.ok(result.buffer.length <= attachments.DOWNSCALE_TARGET_BYTES);
+    assert.equal(result.originalWidth, 6016);
+    assert.equal(result.originalHeight, 3384);
+    assert.ok(result.width <= attachments.DOWNSCALE_MAX_DIMENSION);
+  });
+
+  it("downscaleImage is a no-op when the image already fits", () => {
+    attachments.setNativeImage(fakeNativeImage(800, 600));
+    const result = attachments.downscaleImage(Buffer.alloc(1000), {});
+    assert.deepEqual(result, { ok: true, changed: false });
+  });
+
+  it("downscaleImage gives up when nothing fits, so callers keep today's reject", () => {
+    attachments.setNativeImage({
+      createFromBuffer: () => ({
+        getSize: () => ({ width: 20000, height: 20000 }),
+        resize: ({ width, height }) => ({
+          getSize: () => ({ width, height }),
+          toPNG: () => Buffer.alloc(99 * 1024 * 1024),
+          toJPEG: () => Buffer.alloc(99 * 1024 * 1024),
+        }),
+      }),
+    });
+    const result = attachments.downscaleImage(Buffer.alloc(30 * 1024 * 1024), {});
+    assert.deepEqual(result, { ok: false });
+  });
+
+  it("downscaleImage gives up gracefully with no nativeImage (plain node, e.g.)", () => {
+    assert.deepEqual(attachments.downscaleImage(Buffer.alloc(30 * 1024 * 1024), {}), {
+      ok: false,
+    });
+  });
+
+  it("saveImage downscales an oversize paste instead of rejecting it (#1773)", () => {
+    attachments.setNativeImage(fakeNativeImage(6016, 3384));
+    const dataUrl = `data:image/png;base64,${Buffer.alloc(25 * 1024 * 1024, 1).toString("base64")}`;
+    const saved = attachments.saveImage(tmpDir, "t1", dataUrl);
+    assert.ok(saved, "an oversize paste must still produce a chip");
+    assert.equal(saved.kind, "image");
+    assert.deepEqual(saved.resizedFrom, { width: 6016, height: 3384 });
+    assert.equal(path.extname(saved.path), ".jpg", "shrunk to fit as JPEG");
+    assert.ok(fs.statSync(saved.path).size <= attachments.DOWNSCALE_TARGET_BYTES);
+  });
+
+  it("saveImage still rejects when even the smallest step cannot fit", () => {
+    attachments.setNativeImage({
+      createFromBuffer: () => ({
+        getSize: () => ({ width: 20000, height: 20000 }),
+        resize: ({ width, height }) => ({
+          getSize: () => ({ width, height }),
+          toPNG: () => Buffer.alloc(99 * 1024 * 1024),
+          toJPEG: () => Buffer.alloc(99 * 1024 * 1024),
+        }),
+      }),
+    });
+    const dataUrl = `data:image/png;base64,${Buffer.alloc(25 * 1024 * 1024, 1).toString("base64")}`;
+    assert.equal(attachments.saveImage(tmpDir, "t1", dataUrl), null);
+  });
+
+  it("saveImage without a usable nativeImage keeps the plain reject for oversize bytes", () => {
+    const dataUrl = `data:image/png;base64,${Buffer.alloc(attachments.MAX_IMAGE_BYTES + 1, 1).toString("base64")}`;
+    assert.equal(attachments.saveImage(tmpDir, "t1", dataUrl), null);
+  });
+
+  it("savePng (window capture) downscales an oversize PNG the same way", () => {
+    attachments.setNativeImage(fakeNativeImage(6016, 3384));
+    const saved = attachments.savePng(tmpDir, "t1", Buffer.alloc(25 * 1024 * 1024, 2));
+    assert.ok(saved);
+    assert.deepEqual(saved.resizedFrom, { width: 6016, height: 3384 });
+    assert.equal(path.extname(saved.path), ".jpg");
+  });
+
+  it("downscales a converted HEIC when the JPEG itself is oversize (#463, #1773)", async (t) => {
+    const heic = path.join(tmpDir, "IMG_0001.HEIC");
+    fs.writeFileSync(heic, "heic-bytes");
+    attachments.setExecFile((bin, args, _opts, cb) => {
+      if (bin !== "sips") return cb(new Error("ENOENT"));
+      fs.writeFileSync(args[args.length - 1], Buffer.alloc(25 * 1024 * 1024, 3));
+      cb(null);
+    });
+    t.after(() => attachments.setExecFile(null));
+    attachments.setNativeImage(fakeNativeImage(8064, 6048));
+
+    const [img] = await attachments.transcodeHeic(
+      attachments.classifyPaths([heic]),
+      tmpDir,
+      "t1",
+    );
+    assert.equal(img.kind, "image");
+    assert.equal(img.convertedFrom, "HEIC");
+    assert.deepEqual(img.resizedFrom, { width: 8064, height: 6048 });
+    assert.ok(fs.statSync(img.path).size <= attachments.DOWNSCALE_TARGET_BYTES);
   });
 });
 

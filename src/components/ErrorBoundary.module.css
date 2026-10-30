@@ -22,6 +22,31 @@
   word-break: break-word;
 }
 
+.details {
+  max-width: 420px;
+  width: 100%;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.details summary {
+  cursor: pointer;
+}
+
+.stack {
+  margin: 6px 0 0;
+  max-height: 160px;
+  overflow: auto;
+  padding: 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-soft);
+  background: var(--bg-elevated);
+  text-align: left;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--mono);
+}
+
 .actions {
   display: flex;
   gap: 8px;
@@ -56,4 +81,19 @@
 
 .reload:hover {
   background: var(--blue-soft);
+}
+
+.copy {
+  padding: 5px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-soft);
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.copy:hover {
+  background: var(--bg-elevated);
 }

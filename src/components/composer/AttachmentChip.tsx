@@ -113,6 +113,11 @@ export function AttachmentChip({
           converted from {attachment.convertedFrom}
         </span>
       ) : null}
+      {attachment.resizedFrom ? (
+        <span className={styles.attachmentNote}>
+          resized from {attachment.resizedFrom.width}×{attachment.resizedFrom.height}
+        </span>
+      ) : null}
       {textOnly ? <PdfTextNote /> : null}
       {onRemove ? (
         <button

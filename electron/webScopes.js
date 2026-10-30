@@ -249,7 +249,12 @@ const BY_SCOPE = {
     "issues:setPlanStatus",
     "issues:create",
   ],
-  "terminal:observe": ["terminal:read", "terminal:list", "mentions:terminalTail"],
+  "terminal:observe": [
+    "terminal:read",
+    "terminal:list",
+    "terminal:isBusy",
+    "mentions:terminalTail",
+  ],
   "terminal:type": [
     "terminal:open",
     "terminal:write",

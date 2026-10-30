@@ -1566,6 +1566,8 @@ export interface AttachmentInfo {
   name: string;
   /** Source format when the host transcoded it, e.g. "HEIC" -> JPEG (#463). */
   convertedFrom?: string;
+  /** Original pixel size when the host downscaled an oversize image (#1773). */
+  resizedFrom?: { width: number; height: number };
 }
 
 /** Per-thread inbound policy for cross-thread messages (issue #551). */
@@ -2667,6 +2669,17 @@ export interface TerminalState {
   startedAt: number;
   /** The shell is still running in a checkout the thread has since left. */
   staleRoot: boolean;
+}
+
+/**
+ * Result of `terminal.isBusy`: whether anything other than the login shell
+ * is running right now (#1773), checked on demand before Close confirms.
+ */
+export interface TerminalBusyState {
+  running: boolean;
+  busy: boolean;
+  /** Foreground process name, e.g. "npm", when busy is true. */
+  command: string | null;
 }
 
 /** Batched live output for one terminal, pushed on "terminal:data". */
@@ -7145,6 +7158,8 @@ export interface CoderApi {
     list(input: { threadId: string }): Promise<string[]>;
     /** Kill the shell and drop its scrollback; `keep` ends it but keeps the scrollback. */
     close(input: { threadId: string; termId?: string; keep?: boolean }): Promise<TerminalState>;
+    /** Whether a foreground command (not just the login shell) is running, so Close can confirm (#1773). */
+    isBusy(input: { threadId: string; termId?: string }): Promise<TerminalBusyState>;
     /**
      * Type a provider's login command into a fresh "signin" shell (#1501):
      * the thread's when one is given, else a dedicated one in the home
