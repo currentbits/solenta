@@ -23,6 +23,9 @@ const {
   mergeFlags,
   squashBodyArgs,
   maybeDeleteHeadBranch,
+  parsePrChecksJson,
+  parsePrChecksText,
+  rollupPrChecks,
 } = require("./worktrees.js");
 const {
   budgetPatch,
@@ -44,9 +47,9 @@ const TEMPLATE_MAX_BYTES = 100 * 1024;
 const GH_USER = { timeout: GH_TIMEOUT_MS };
 
 const DETAIL_FIELDS =
-  "number,title,body,url,state,isDraft,headRefName,baseRefName,author,additions,deletions,changedFiles,mergeable,updatedAt,comments";
+  "number,title,body,url,state,isDraft,headRefName,baseRefName,author,additions,deletions,changedFiles,mergeable,updatedAt,reviewDecision,comments";
 const DETAIL_FIELDS_NO_COMMENTS =
-  "number,title,body,url,state,isDraft,headRefName,baseRefName,author,additions,deletions,changedFiles,mergeable,updatedAt";
+  "number,title,body,url,state,isDraft,headRefName,baseRefName,author,additions,deletions,changedFiles,mergeable,updatedAt,reviewDecision";
 const DETAIL_FIELDS_FALLBACK = "number,title,body,url,state,headRefName";
 
 function isTemplateFileName(name) {
@@ -219,6 +222,14 @@ function normalizeMergeable(value) {
   return undefined;
 }
 
+function normalizeReviewDecision(value) {
+  const raw = String(value || "").toUpperCase();
+  if (raw === "APPROVED" || raw === "CHANGES_REQUESTED" || raw === "REVIEW_REQUIRED") {
+    return raw;
+  }
+  return undefined;
+}
+
 function normalizeState(value) {
   const raw = String(value || "OPEN").toUpperCase();
   if (raw === "MERGED") return "MERGED";
@@ -315,7 +326,43 @@ function parsePrDetailJson(stdout) {
   if (data.updatedAt != null && String(data.updatedAt).trim()) {
     info.updatedAt = String(data.updatedAt).trim();
   }
+  const reviewDecision = normalizeReviewDecision(data.reviewDecision);
+  if (reviewDecision) info.reviewDecision = reviewDecision;
   return info;
+}
+
+/**
+ * Pass/fail/pending counts from a `gh pr checks --json` result, for the
+ * hover-card summary (#1771). `gh pr checks` exits non-zero when any check
+ * failed (1) or some are pending (8), so stdout is read regardless of the
+ * exit code; only enoent/timeout/empty stdout give up.
+ * @param {{ enoent?: boolean, timedOut?: boolean, stdout?: string }} checked
+ * @returns {{ passing: number, failing: number, pending: number } | undefined}
+ */
+function checksSummaryFromResult(checked) {
+  if (!checked || checked.enoent || checked.timedOut) return undefined;
+  const raw = checked.stdout != null ? String(checked.stdout).trim() : "";
+  if (!raw) return undefined;
+  let checks = null;
+  try {
+    checks = raw.startsWith("[") || raw.startsWith("{") ? parsePrChecksJson(raw) : null;
+  } catch {
+    checks = null;
+  }
+  if (!checks) {
+    try {
+      checks = parsePrChecksText(raw);
+    } catch {
+      return undefined;
+    }
+  }
+  if (!Array.isArray(checks) || checks.length === 0) return undefined;
+  const counts = rollupPrChecks(checks);
+  return {
+    passing: counts.pass + counts.skipping,
+    failing: counts.fail + counts.cancel,
+    pending: counts.pending,
+  };
 }
 
 function ghOpts(repo) {
@@ -363,14 +410,29 @@ async function viewPrDetail(projectPath, prNumber, opts) {
   if (!viewed.ok) {
     return { ok: false, reason: ghReason(viewed, "gh pr view failed") };
   }
+  let info;
   try {
-    return { ok: true, pr: parsePrDetailJson(viewed.stdout) };
+    info = parsePrDetailJson(viewed.stdout);
   } catch (err) {
     return {
       ok: false,
       reason: err && err.message ? String(err.message) : "gh returned unparseable PR JSON",
     };
   }
+  // Checks are best-effort: a hover card without CI data is still useful,
+  // and an older gh / a PR with no checks must never turn this ok:false.
+  try {
+    const checked = await ghApiTryAsync(
+      repo.cwd,
+      ["pr", "checks", String(number), "--json", "name,state,bucket,link"],
+      ghOpts(other),
+    );
+    const checks = checksSummaryFromResult(checked);
+    if (checks) info.checks = checks;
+  } catch {
+    // swallow; checks are a bonus field
+  }
+  return { ok: true, pr: info };
 }
 
 function scanOutbound(text, where) {

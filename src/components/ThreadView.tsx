@@ -1241,13 +1241,20 @@ export const ThreadView = memo(function ThreadView({
     [onResolvePaths, sessionImages],
   );
 
-  const threadLinks = useMemo(
-    () =>
-      threadTitles && onSelectThread
-        ? { titles: threadTitles, open: onSelectThread }
-        : null,
-    [threadTitles, onSelectThread],
-  );
+  const threadLinks = useMemo(() => {
+    // project.slug is "owner/repo" when derived from a git remote, a plain
+    // folder name otherwise (#1771) — the "/" is how a GitHub ref knows it
+    // has a real repo to resolve bare `#123` against.
+    const repoSlug = project?.slug && project.slug.includes("/") ? project.slug : null;
+    const projectPath = project?.path ?? null;
+    if (!threadTitles && !onSelectThread && !repoSlug && !projectPath) return null;
+    return {
+      titles: threadTitles ?? {},
+      open: onSelectThread ?? (() => {}),
+      repoSlug,
+      projectPath,
+    };
+  }, [threadTitles, onSelectThread, project]);
 
   const handleOpenWorkspacePath = useCallback(
     (abs: string, opts?: { reveal?: boolean; line?: number; col?: number }) => {

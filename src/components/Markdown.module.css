@@ -69,6 +69,12 @@
   text-decoration: underline;
 }
 
+.githubMark {
+  margin-right: 3px;
+  vertical-align: -1px;
+  flex-shrink: 0;
+}
+
 .md blockquote {
   margin: 8px 0;
   padding: 2px 12px;

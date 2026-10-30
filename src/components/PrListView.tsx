@@ -20,6 +20,7 @@ import {
   type PrTriage,
   type TriageDepth,
 } from "../prList";
+import { PrHoverTarget, repoFromGithubUrl } from "./PrHoverCard";
 import { forgeReadiness } from "../sourceControl";
 import type {
   MergeMethod,
@@ -391,7 +392,13 @@ export function PrListView({
         />
         <div className={styles.rowBody}>
           <div className={styles.rowTop}>
-            <span className={styles.number}>#{pr.number}</span>
+            <PrHoverTarget
+              projectPath={project.path}
+              repo={repoFromGithubUrl(pr.url)}
+              number={pr.number}
+            >
+              <span className={styles.number}>#{pr.number}</span>
+            </PrHoverTarget>
             <span className={styles.prTitle}>{pr.title}</span>
             {pr.isDraft ? (
               <span className={styles.draft}>Draft</span>

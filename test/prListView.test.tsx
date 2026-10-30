@@ -3,10 +3,11 @@
  * Run: npm run test:renderer
  */
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { afterEach, describe, it } from "node:test";
 import * as React from "react";
-import { mount } from "./support/dom.ts";
+import { inAct, mount } from "./support/dom.ts";
 import { PrListView } from "../src/components/PrListView";
+import { clearPrHoverCache, PrHoverFetchContext } from "../src/components/PrHoverCard";
 import type {
   CheckoutPrResult,
   ListPrsResult,
@@ -72,6 +73,60 @@ function thread(over: Partial<ThreadInfo> & Pick<ThreadInfo, "id">): ThreadInfo 
 }
 
 describe("PrListView", () => {
+  afterEach(() => clearPrHoverCache());
+
+  it("shows the PR hover card on the row number, from the repo in pr.url (#1771)", async () => {
+    const listPrs = async (): Promise<ListPrsResult> => ({
+      ok: true,
+      prs: [pr({ number: 11, title: "Ledger fix" })],
+    });
+    let calledWith: unknown = null;
+    const prDetail = async (input: {
+      projectPath: string;
+      prNumber: number;
+      repo?: string;
+    }): Promise<PrDetailResult> => {
+      calledWith = input;
+      return {
+        ok: true,
+        pr: {
+          number: 11,
+          title: "Ledger fix",
+          body: "",
+          url: "https://github.com/acme/ledger/pull/11",
+          state: "OPEN",
+          isDraft: false,
+          headRefName: "feat/11",
+          comments: [],
+        } satisfies PrDetail,
+      };
+    };
+    const m = await mount(
+      <PrHoverFetchContext.Provider value={prDetail}>
+        <PrListView
+          projects={[p1]}
+          threads={[]}
+          listPrs={listPrs}
+          onSelectThread={() => {}}
+          prDetail={prDetail}
+        />
+      </PrHoverFetchContext.Provider>,
+    );
+    await m.flush();
+    const number = m.query('[data-pr-row="11"] [data-pr-hover-target]');
+    assert.ok(number, "PR number is a hover target");
+    await m.hover(number);
+    await inAct(() => new Promise((r) => setTimeout(r, 500)));
+    await m.flush();
+    assert.ok(m.query("[data-pr-hover-card]"), "hover card shown");
+    assert.deepEqual(calledWith, {
+      projectPath: p1.path,
+      prNumber: 11,
+      repo: "acme/ledger",
+    });
+    m.unmount();
+  });
+
   it("groups rows under each project slug", async () => {
     const listPrs = async (projectPath: string): Promise<ListPrsResult> => {
       if (projectPath === p1.path) {

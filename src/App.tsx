@@ -57,6 +57,7 @@ import {
 } from "./commandPalette";
 import { ConnectionBanner } from "./components/ConnectionBanner";
 import { OauthConsentDialog } from "./components/OauthConsentDialog";
+import { PrHoverFetchContext } from "./components/PrHoverCard";
 import { isWebMode } from "./shared/wire";
 import { isBuildMismatch } from "./buildMismatch";
 import { BuildMismatchScreen } from "./components/BuildMismatchScreen";
@@ -1943,6 +1944,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   }
 
   return (
+    <PrHoverFetchContext.Provider value={prDetail}>
     <div className={styles.shell}>
       <ConnectionBanner />
       <div
@@ -2805,5 +2807,6 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         </Suspense>
       </div>
     </div>
+    </PrHoverFetchContext.Provider>
   );
 }

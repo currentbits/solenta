@@ -11,6 +11,37 @@ const {
 } = require("./threadSearch.js");
 const { isSafeThreadId } = require("./store-util.js");
 
+/**
+ * `notes` plus linked-PR numbers (both "#482" and "482") and titles, so
+ * ⌘K / sidebar search match a thread by its PR (issue #1771). Search-only:
+ * never written back to the thread.
+ * @param {object} thread
+ * @returns {string}
+ */
+function prSearchText(thread) {
+  const notes = thread.notes != null ? String(thread.notes) : "";
+  const numbers = new Set();
+  const addNumber = (value) => {
+    const n = Number(value);
+    if (Number.isInteger(n) && n > 0) numbers.add(n);
+  };
+  const titles = [];
+  addNumber(thread.prNumber);
+  if (thread.prTitle) titles.push(String(thread.prTitle));
+  if (Array.isArray(thread.prLinks)) {
+    for (const link of thread.prLinks) {
+      if (!link || typeof link !== "object") continue;
+      addNumber(link.number);
+      if (link.title) titles.push(String(link.title));
+    }
+  }
+  if (numbers.size === 0 && titles.length === 0) return notes;
+  const bits = [];
+  for (const n of numbers) bits.push(`#${n}`, String(n));
+  bits.push(...titles);
+  return `${notes} ${bits.join(" ")}`.trim();
+}
+
 /** Store full-content search methods; store.js copies them onto Store.prototype. */
 class StoreSearchMethods {
   /**
@@ -31,7 +62,7 @@ class StoreSearchMethods {
       const row = {
         id,
         title: thread.title != null ? String(thread.title) : "",
-        notes: thread.notes != null ? String(thread.notes) : "",
+        notes: prSearchText(thread),
         updatedAt: Number(thread.updatedAt) || 0,
         liveTexts: null,
         rawJson: null,
