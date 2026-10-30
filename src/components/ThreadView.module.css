@@ -4502,6 +4502,74 @@ a.menuItem {
   flex-shrink: 0;
 }
 
+/*
+ * Usage limits strip (issue #1755), opt-in via Settings -> Display. Rows
+ * read as percent LEFT, the inverse of the quota dialog's percent used, so
+ * a longer bar means more room.
+ */
+.usageStrip {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 2px 20px 6px;
+}
+
+.usageRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.usageLabel {
+  flex-shrink: 0;
+  width: 56px;
+  color: var(--text-muted);
+}
+
+.usageTrack {
+  flex: 1;
+  height: 3px;
+  border-radius: var(--radius-pill);
+  background: var(--border-soft);
+  overflow: hidden;
+}
+
+.usageFill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--text-dim);
+}
+
+.usageRow[data-usage-severity="warn"] .usageFill {
+  background: var(--amber);
+}
+
+.usageRow[data-usage-severity="warn"] .usagePct {
+  color: var(--amber);
+}
+
+.usageRow[data-usage-severity="danger"] .usageFill {
+  background: var(--danger);
+}
+
+.usageRow[data-usage-severity="danger"] .usagePct {
+  color: var(--danger);
+}
+
+.usagePct {
+  flex-shrink: 0;
+  width: 52px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.usageUnavailable {
+  color: var(--text-dim);
+  font-style: italic;
+}
+
 .chatSlot[data-draft-hero] {
   justify-content: center;
   padding-bottom: 6vh;

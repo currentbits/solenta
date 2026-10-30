@@ -23,6 +23,15 @@ import {
   formatRelativeAge,
   threadProviderRef,
 } from "../../format";
+import {
+  QUOTA_CLOCK_MS,
+  displayWindowLabel,
+  formatResetAt,
+  usagePercentLeft,
+  usageSeverity,
+  type ProviderLimitsLoader,
+  type ProviderUsage,
+} from "../../providerUsage";
 import { useEscapeClose } from "../../useEscapeClose";
 import styles from "../ThreadView.module.css";
 
@@ -253,6 +262,129 @@ export function ContextRingBadge({
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * Opt-in compact strip above the composer (issue #1755): one row per limit
+ * window the thread's provider reports, plus a Context row, all read as
+ * percent LEFT so a longer bar means more room. Reuses the quota dialog's
+ * own loader at its own QUOTA_CLOCK_MS cadence, no new polling.
+ */
+export function UsageLimitsStrip({
+  loadLimits,
+  activeProvider,
+  ring,
+  used,
+  now = Date.now(),
+}: {
+  loadLimits?: ProviderLimitsLoader;
+  activeProvider: string | null;
+  ring: ContextRingView | null;
+  used: number | null;
+  now?: number;
+}) {
+  const [rows, setRows] = useState<ProviderUsage[] | null>(null);
+  const loaderRef = useRef(loadLimits);
+  loaderRef.current = loadLimits;
+
+  useEffect(() => {
+    let alive = true;
+    const run = () => {
+      const loader = loaderRef.current;
+      if (!loader) return;
+      void loader()
+        .then((next) => {
+          if (alive) setRows(Array.isArray(next) ? next : []);
+        })
+        .catch(() => {
+          // Keep the last good read; a transient failure should not blank
+          // a strip that was already showing numbers.
+        });
+    };
+    run();
+    const id = window.setInterval(run, QUOTA_CLOCK_MS);
+    return () => {
+      alive = false;
+      window.clearInterval(id);
+    };
+  }, []);
+
+  const activeRow = rows?.find((r) => r.provider === activeProvider) ?? null;
+  let unavailableMessage: string | null = null;
+  const windowRows: Array<{ label: string; left: number; title: string }> = [];
+  if (rows != null) {
+    if (!activeRow || activeRow.status !== "ok" || activeRow.windows.length === 0) {
+      unavailableMessage =
+        (activeRow?.message && activeRow.message.trim()) ||
+        "No usage data from this provider.";
+    } else {
+      for (const win of activeRow.windows) {
+        const label = displayWindowLabel(win);
+        windowRows.push({
+          label,
+          left: usagePercentLeft(win.usedPercent),
+          title: formatResetAt(win.resetsAt, now) ?? "",
+        });
+      }
+    }
+  }
+
+  const contextRow =
+    ring && used != null
+      ? {
+          left: Math.round((1 - ring.fraction) * 100),
+          title: `${used.toLocaleString()} / ${ring.windowLabel} tokens`,
+        }
+      : null;
+
+  if (windowRows.length === 0 && !unavailableMessage && !contextRow) return null;
+
+  return (
+    <div className={styles.usageStrip} data-usage-limits-strip="">
+      {unavailableMessage ? (
+        <div
+          className={styles.usageRow}
+          data-usage-row="limits"
+          title={unavailableMessage}
+        >
+          <span className={styles.usageUnavailable}>Limits · Unavailable</span>
+        </div>
+      ) : (
+        windowRows.map((w) => (
+          <UsageLimitRow key={w.label} label={w.label} left={w.left} title={w.title} />
+        ))
+      )}
+      {contextRow && (
+        <UsageLimitRow label="Context" left={contextRow.left} title={contextRow.title} />
+      )}
+    </div>
+  );
+}
+
+function UsageLimitRow({
+  label,
+  left,
+  title,
+}: {
+  label: string;
+  left: number;
+  title: string;
+}) {
+  const severity = usageSeverity(left);
+  return (
+    <div
+      className={styles.usageRow}
+      data-usage-row={label}
+      data-usage-severity={severity || undefined}
+      title={title || undefined}
+    >
+      <span className={styles.usageLabel}>{label}</span>
+      <div className={styles.usageTrack} aria-hidden>
+        <div className={styles.usageFill} style={{ width: `${left}%` }} />
+      </div>
+      <span className={styles.usagePct}>{left}% left</span>
     </div>
   );
 }
