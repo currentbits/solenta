@@ -508,6 +508,9 @@ async function checkpointForkPoint(opts) {
  * @param {(threadId: string) => boolean} [opts.isRunning]
  * @param {() => string[]} [opts.listActiveThreadIds] every thread id with a
  *   live run, so a sibling sharing this thread's checkout can be detected.
+ * @param {(threadId: string, fn: () => Promise<any>) => Promise<any>} [opts.withRestoreHold]
+ *   holds this thread out of startRun for the duration of the file mutation
+ *   (#1788); omitted by callers with no runner (bare-store tests).
  * @param {boolean} [opts.rewindConversation] default true; false when
  *   threads.rewind already truncated (restoreFiles).
  * @param {() => unknown} [opts.cleanupRunArtifacts]
@@ -553,37 +556,45 @@ async function restoreCheckpoint(opts) {
     throw new Error(`Unknown checkpoint: ${sha}`);
   }
 
-  // Uncommitted work here (manual edits, or a run whose post-turn checkpoint
-  // failed) would be destroyed by the reset. Commit it first — best-effort,
-  // same as the post-turn path. ponytail: the safety commit is off-HEAD after
-  // the reset so it drops out of listCheckpoints; recovery is `git reflog` in
-  // the worktree. Surface it in the UI if anyone actually needs it back.
-  await maybeCreateCheckpoint(store, threadId);
+  // #1788: hold for the whole mutation, not just the reset — a message sent
+  // mid-restore must not spawn a turn into this worktree while it is being
+  // rewritten, and must not land its own post-turn checkpoint on a tree
+  // that restoreCheckpoint has only half put back. No-op when the caller
+  // (a bare store, no runner) never passed one.
+  const hold = opts.withRestoreHold || ((_id, fn) => fn());
+  await hold(threadId, async () => {
+    // Uncommitted work here (manual edits, or a run whose post-turn checkpoint
+    // failed) would be destroyed by the reset. Commit it first — best-effort,
+    // same as the post-turn path. ponytail: the safety commit is off-HEAD after
+    // the reset so it drops out of listCheckpoints; recovery is `git reflog` in
+    // the worktree. Surface it in the UI if anyone actually needs it back.
+    await maybeCreateCheckpoint(store, threadId);
 
-  const reset = await gitTryAsync(thread.worktreePath, [
-    "reset",
-    "--hard",
-    match.sha,
-  ]);
-  if (!reset.ok) {
-    throw new Error(
-      tailErr(reset.stderr || reset.combined, "git reset --hard failed"),
-    );
-  }
+    const reset = await gitTryAsync(thread.worktreePath, [
+      "reset",
+      "--hard",
+      match.sha,
+    ]);
+    if (!reset.ok) {
+      throw new Error(
+        tailErr(reset.stderr || reset.combined, "git reset --hard failed"),
+      );
+    }
 
-  // Files first: a failed reset must not leave a truncated transcript.
-  // rewindThread(restoreFiles) already cut the transcript, so skip.
-  if (opts.rewindConversation === false) return;
+    // Files first: a failed reset must not leave a truncated transcript.
+    // rewindThread(restoreFiles) already cut the transcript, so skip.
+    if (opts.rewindConversation === false) return;
 
-  const keepId = await readCheckpointMessageId(thread.worktreePath, match.sha);
-  rewindTranscriptToCheckpoint(store, threadId, keepId, match.at);
-  store.updateThread(threadId, {
-    sessionId: null,
-    replayContext: true,
+    const keepId = await readCheckpointMessageId(thread.worktreePath, match.sha);
+    rewindTranscriptToCheckpoint(store, threadId, keepId, match.at);
+    store.updateThread(threadId, {
+      sessionId: null,
+      replayContext: true,
+    });
+    // Reset is already on disk. Debounced save() would leave a crash window
+    // with files rewound and the old transcript resurrected.
+    store.saveNow();
   });
-  // Reset is already on disk. Debounced save() would leave a crash window
-  // with files rewound and the old transcript resurrected.
-  store.saveNow();
   if (typeof opts.cleanupRunArtifacts === "function") {
     Promise.resolve()
       .then(() => opts.cleanupRunArtifacts())

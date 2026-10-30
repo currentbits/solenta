@@ -728,6 +728,30 @@ function createRunner(opts) {
    * @type {Map<string, object>}
    */
   const active = new Map();
+  /**
+   * #1788: threads with a checkpoint/rewind file restore in flight. Separate
+   * from `active` (a real run) on purpose — Stop only ever inspects `active`,
+   * and a restore has no process to kill (the git calls are already
+   * near-instant), so folding this into `active` would let Stop clear the
+   * hold early and reopen the exact race this closes. startRun refuses a
+   * thread in this set so a message sent mid-restore cannot spawn into the
+   * worktree while `git reset --hard` is still running, and cannot land a
+   * post-turn checkpoint on a half-restored tree.
+   * @type {Set<string>}
+   */
+  const restoringThreads = new Set();
+  /**
+   * @param {string} threadId
+   * @param {() => Promise<any>} fn
+   */
+  async function withRestoreHold(threadId, fn) {
+    restoringThreads.add(threadId);
+    try {
+      return await fn();
+    } finally {
+      restoringThreads.delete(threadId);
+    }
+  }
   // Conditional memory ids already injected per thread (#271).
   // ponytail: in-memory; a restart re-sends each matched entry once.
   /** @type {Map<string, Set<string>>} */
@@ -1807,6 +1831,14 @@ function createRunner(opts) {
     }
     if (active.has(threadId)) {
       throw new Error("A run is already active on this thread");
+    }
+    // #1788: a checkpoint/rewind file restore is still hard-resetting this
+    // thread's worktree. Refuse instead of spawning into it mid-reset or
+    // landing this turn's own checkpoint on a half-restored tree.
+    if (restoringThreads.has(threadId)) {
+      throw new Error(
+        "A checkpoint restore is in progress on this thread. Try again in a moment.",
+      );
     }
 
     const thread = store.getThread(threadId);
@@ -3013,6 +3045,7 @@ function createRunner(opts) {
   const ctx = {
     store,
     active,
+    withRestoreHold,
     nowFn,
     userHookEvents,
     resolveProvider,
@@ -3267,6 +3300,7 @@ function createRunner(opts) {
     admitQueuedRuns,
     getActiveWorkflow,
     isRunning,
+    withRestoreHold,
     listActiveThreadIds,
     listActiveBtwCount,
     activeRunId,

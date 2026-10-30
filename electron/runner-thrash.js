@@ -32,7 +32,7 @@ const TOOL_LOOKBACK = 200;
  * @param {object} ctx - createRunner context (see runner-watchdogs.js header)
  */
 function createThrash(ctx) {
-  const { store, active, appendMessage, pushDetail, pushThreadsChanged, shortError } =
+  const { store, active, appendMessage, pushDetail, pushThreadsChanged, shortError, withRestoreHold } =
     ctx;
   const tracker = createThrashTracker();
   /** Threads mid-recovery, so a burst of hits cannot start two. */
@@ -188,6 +188,7 @@ function createThrash(ctx) {
             sha: target.sha,
             isRunning: (id) => active.has(id),
             listActiveThreadIds: () => [...active.keys()],
+            withRestoreHold,
             // Keep the transcript: the user needs to see what happened.
             rewindConversation: false,
           });

@@ -303,6 +303,7 @@ module.exports = {
     const result = await services.rewindThread(ctx.store, input, {
       isRunning: (id) => ctx.runner.isRunning(id),
       listActiveThreadIds: () => ctx.runner.listActiveThreadIds(),
+      withRestoreHold: (id, fn) => ctx.runner.withRestoreHold(id, fn),
       cleanupRunArtifacts: ctx.cleanupRunArtifacts,
       log: ctx.log,
     });
