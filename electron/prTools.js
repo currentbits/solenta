@@ -245,6 +245,34 @@ async function mergeablePr(client, n) {
   return pr;
 }
 
+const MERGE_METHODS = ["squash", "merge", "rebase"];
+
+/**
+ * Merge methods the repo allows, straight off `GET /repos/o/r` (issue
+ * #1781) -- no `gh` spawn, same client pr_merge already has. There is no
+ * REST equivalent of gh's viewerDefaultMergeMethod (that is a per-viewer
+ * GraphQL field), so the repo default here is just squash-if-allowed, else
+ * the first allowed method; a lookup failure keeps every method allowed
+ * and defaults to squash, same as pr_merge did before this existed.
+ * @param {{ rest: Function }} client
+ * @returns {Promise<{ methods: string[], defaultMethod: string }>}
+ */
+async function repoAllowedMethods(client) {
+  try {
+    const data = await client.rest("GET", "");
+    const allowed = {
+      squash: data.allow_squash_merge !== false,
+      merge: data.allow_merge_commit !== false,
+      rebase: data.allow_rebase_merge !== false,
+    };
+    const methods = MERGE_METHODS.filter((m) => allowed[m]);
+    if (!methods.length) methods.push("squash");
+    return { methods, defaultMethod: methods.includes("squash") ? "squash" : methods[0] };
+  } catch {
+    return { methods: MERGE_METHODS.slice(), defaultMethod: "squash" };
+  }
+}
+
 /**
  * @param {"merge" | "squash" | "rebase"} method
  * @param {string} headSha - the signed-off head; a newer push makes GitHub refuse
@@ -388,6 +416,7 @@ module.exports = {
   commentPr,
   mergeablePr,
   mergePr,
+  repoAllowedMethods,
   maybeDeleteHeadBranch,
   mergeBlockers,
   ciLogs,

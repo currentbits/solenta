@@ -2795,6 +2795,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
             providers={providers}
             globalProvider={settings?.defaultProvider ?? null}
             globalDefaultWorktree={settings?.defaultWorktree ?? false}
+            globalDefaultMergeMethod={settings?.defaultMergeMethod ?? null}
             agentProfiles={settings?.agentProfiles ?? EMPTY_AGENT_PROFILES}
             onMoveConfigToRepo={() =>
               api.projects.moveConfigToRepo({ projectId: editProject.id })

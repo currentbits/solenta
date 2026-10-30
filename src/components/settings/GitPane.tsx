@@ -122,6 +122,42 @@ export function GitPane({
             human review affordable. Default 400; empty means no cap.
           </p>
         </div>
+        <div className={styles.field}>
+          <label className={styles.fieldLabel} htmlFor="default-merge-method">
+            Default merge method
+          </label>
+          <select
+            id="default-merge-method"
+            className={styles.input}
+            data-default-merge-method=""
+            value={settings?.defaultMergeMethod ?? ""}
+            disabled={saving || settings == null}
+            onChange={(e) => {
+              setError(null);
+              const v = e.target.value as "" | "squash" | "merge" | "rebase";
+              void onSaveSettings({
+                defaultMergeMethod: v === "" ? null : v,
+              }).catch((err) => {
+                setError(
+                  err instanceof Error && err.message
+                    ? err.message
+                    : "Failed to save settings",
+                );
+              });
+            }}
+          >
+            <option value="">Use the repo's default</option>
+            <option value="squash">Squash</option>
+            <option value="merge">Merge commit</option>
+            <option value="rebase">Rebase</option>
+          </select>
+          <p className={styles.note}>
+            Used at every merge site (thread Merge button, PR workspace
+            panel, agent pr_merge) when the method is not picked explicitly
+            for that merge. Only a method the repo allows is ever used; a
+            project can override this in its settings.
+          </p>
+        </div>
         <label className={styles.fieldRow}>
           <input
             type="checkbox"

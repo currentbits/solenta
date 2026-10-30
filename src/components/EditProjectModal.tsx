@@ -3,6 +3,7 @@ import { useEscapeClose } from "../useEscapeClose";
 import { useModalFocus } from "../useModalFocus";
 import type {
   AgentProfile,
+  MergeMethod,
   ModelTier,
   PermissionMode,
   ProjectInfo,
@@ -57,11 +58,19 @@ interface EditProjectModalProps {
   globalProvider?: string | null;
   /** settings.defaultWorktree (#1775), named in the inherit option's label. */
   globalDefaultWorktree?: boolean;
+  /** settings.defaultMergeMethod (#1781), named in the inherit option's label. */
+  globalDefaultMergeMethod?: MergeMethod | null;
   /** Profiles the model routing tiers map to (#246). */
   agentProfiles?: AgentProfile[];
   /** #438: PR the stored setup + quick actions into solenta.json. */
   onMoveConfigToRepo?: () => Promise<{ prUrl: string; prNumber: number }>;
 }
+
+const MERGE_METHOD_LABELS: Record<string, string> = {
+  squash: "Squash",
+  merge: "Merge commit",
+  rebase: "Rebase",
+};
 
 const ROUTING_TIERS: { tier: ModelTier; label: string }[] = [
   { tier: "fast", label: "Fast (triage, reformat)" },
@@ -84,6 +93,7 @@ export function EditProjectModal({
   providers = [],
   globalProvider = null,
   globalDefaultWorktree = false,
+  globalDefaultMergeMethod = null,
   agentProfiles = [],
   onMoveConfigToRepo,
 }: EditProjectModalProps) {
@@ -97,6 +107,13 @@ export function EditProjectModal({
   const [defaultWorktree, setDefaultWorktree] = useState<boolean | null>(
     project.defaultWorktree === true || project.defaultWorktree === false
       ? project.defaultWorktree
+      : null,
+  );
+  const [defaultMergeMethod, setDefaultMergeMethod] = useState<MergeMethod | null>(
+    project.defaultMergeMethod === "squash" ||
+      project.defaultMergeMethod === "merge" ||
+      project.defaultMergeMethod === "rebase"
+      ? project.defaultMergeMethod
       : null,
   );
   const [retentionText, setRetentionText] = useState(
@@ -224,6 +241,7 @@ export function EditProjectModal({
         autoDispatch,
         autoPr,
         defaultWorktree,
+        defaultMergeMethod,
         setupCommand: setupCommand.trim() || null,
         waitForSetup,
         setupCacheOff: !setupCache,
@@ -685,6 +703,39 @@ export function EditProjectModal({
             <p className={styles.note}>
               Overrides Settings → New thread worktree default for new
               threads in this project.
+            </p>
+          </div>
+          <div className={styles.field}>
+            <label
+              className={styles.fieldLabel}
+              htmlFor="edit-project-default-merge-method"
+            >
+              Default merge method
+            </label>
+            <select
+              id="edit-project-default-merge-method"
+              className={styles.input}
+              data-edit-project-default-merge-method=""
+              value={defaultMergeMethod ?? ""}
+              disabled={pending}
+              onChange={(e) => {
+                const v = e.target.value as "" | MergeMethod;
+                setDefaultMergeMethod(v === "" ? null : v);
+              }}
+            >
+              <option value="">
+                Use app setting (currently:{" "}
+                {MERGE_METHOD_LABELS[globalDefaultMergeMethod ?? ""] ??
+                  "the repo's default"}
+                )
+              </option>
+              <option value="squash">Squash</option>
+              <option value="merge">Merge commit</option>
+              <option value="rebase">Rebase</option>
+            </select>
+            <p className={styles.note}>
+              Overrides Settings → Default merge method for merges in this
+              project, when a merge does not pick a method explicitly.
             </p>
           </div>
           <div className={styles.field}>

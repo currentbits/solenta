@@ -82,6 +82,7 @@ class StoreSettingsMethods {
       stripAgentCoauthors: n.stripAgentCoauthors,
       prCrossReview: n.prCrossReview,
       deleteBranchOnMergeOrClose: n.deleteBranchOnMergeOrClose,
+      defaultMergeMethod: n.defaultMergeMethod,
       mcpServers: n.mcpServers,
       defaultWorktree: n.defaultWorktree,
       defaultOrchestrate: n.defaultOrchestrate,
@@ -251,6 +252,13 @@ class StoreSettingsMethods {
         throw new Error("deleteBranchOnMergeOrClose must be a boolean");
       }
       this.data.settings.deleteBranchOnMergeOrClose = v;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "defaultMergeMethod")) {
+      const v = patch.defaultMergeMethod;
+      if (v !== null && v !== "squash" && v !== "merge" && v !== "rebase") {
+        throw new Error('defaultMergeMethod must be "squash", "merge", "rebase", or null');
+      }
+      this.data.settings.defaultMergeMethod = v;
     }
     if (Object.prototype.hasOwnProperty.call(patch, "mcpServers")) {
       this.data.settings.mcpServers = validateMcpServers(

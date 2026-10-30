@@ -284,6 +284,46 @@ describe("pr_merge sign-off (#1749)", () => {
     assert.equal(puts().length, 1);
   });
 
+  it("resolves settings.defaultMergeMethod when no method is given (#1781)", async () => {
+    services.setSettings(store, { defaultMergeMethod: "rebase" });
+    const client = makeClient({
+      rest: { ...merged, "GET ": { allow_squash_merge: true, allow_merge_commit: true, allow_rebase_merge: true } },
+    });
+    const h = createToolHandlers({ store, runner: perms, githubClient: async () => client });
+    const args = { threadId: thread.id, projectId: project.id };
+    await h.pr_merge(args);
+    const c = perms.getPendingPermission(thread.id);
+    assert.match(c.input, /Method: rebase/);
+    perms.respondPermission({ threadId: thread.id, requestId: c.requestId, decision: "allow" });
+    const out = await h.pr_merge(args);
+    assert.equal(out.method, "rebase");
+    assert.deepEqual(
+      client.calls.filter((call) => call[1] === "PUT"),
+      [["rest", "PUT", "/pulls/7/merge", { merge_method: "rebase", sha: "abc1234def" }]],
+    );
+  });
+
+  it("project.defaultMergeMethod wins over the app setting, and a repo-disallowed pick falls back to the repo default (#1781)", async () => {
+    services.setSettings(store, { defaultMergeMethod: "rebase" });
+    await services.updateProject(store, project.id, { defaultMergeMethod: "squash" });
+    const client = makeClient({
+      rest: {
+        ...merged,
+        "GET ": { allow_squash_merge: false, allow_merge_commit: true, allow_rebase_merge: true },
+      },
+    });
+    const h = createToolHandlers({ store, runner: perms, githubClient: async () => client });
+    const args = { threadId: thread.id, projectId: project.id };
+    await h.pr_merge(args);
+    const c = perms.getPendingPermission(thread.id);
+    // project picked squash, but the repo disallows it -> the repo default
+    // (merge, the first allowed method) wins, not the app setting (rebase).
+    assert.match(c.input, /Method: merge\n/);
+    perms.respondPermission({ threadId: thread.id, requestId: c.requestId, decision: "allow" });
+    const out = await h.pr_merge(args);
+    assert.equal(out.method, "merge");
+  });
+
   it("a moved head SHA or another method voids the Accept", async () => {
     const { h, args, puts, card, respond, pr } = setup();
     await h.pr_merge(args);

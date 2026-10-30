@@ -436,6 +436,46 @@ describe("SettingsModal delete branch on merge/close (#1763)", () => {
   });
 });
 
+describe("SettingsModal default merge method (#1781)", () => {
+  it("prefills from settings and saves the picked method", async () => {
+    const patches: Partial<AppSettings>[] = [];
+    const m = await mount(
+      modal({
+        initialPane: "git",
+        settings: { dailyBudgetUsd: null, autoSettleAfterDays: 3, defaultMergeMethod: "rebase" },
+        onSaveSettings: async (patch) => {
+          patches.push(patch);
+          return {
+            dailyBudgetUsd: null,
+            autoSettleAfterDays: 3,
+            defaultMergeMethod: patch.defaultMergeMethod ?? null,
+          };
+        },
+      }),
+    );
+    const select = m.query("[data-default-merge-method]") as HTMLSelectElement;
+    assert.ok(select, "default merge method select");
+    assert.equal(select.value, "rebase", "prefills from settings");
+    await m.change(select, "squash");
+    assert.equal(patches.length, 1);
+    assert.equal(patches[0].defaultMergeMethod, "squash");
+    m.unmount();
+  });
+
+  it("defaults to the repo-default option (empty value) when unset", async () => {
+    const m = await mount(
+      modal({
+        initialPane: "git",
+        settings: { dailyBudgetUsd: null, autoSettleAfterDays: 3 },
+      }),
+    );
+    const select = m.query("[data-default-merge-method]") as HTMLSelectElement;
+    assert.equal(select.value, "");
+    assert.match(select.options[0]!.textContent ?? "", /repo's default/);
+    m.unmount();
+  });
+});
+
 describe("SettingsModal late settings load (#930)", () => {
   const loaded = {
     dailyBudgetUsd: 5,

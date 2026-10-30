@@ -435,6 +435,10 @@ function validateQuotaFailover(raw) {
  * deleteBranchOnMergeOrClose: default on; only an explicit false opts out
  * of deleting the GitHub head branch after the app merges or closes a PR.
  *
+ * defaultMergeMethod: default null (follow the repo's own default via
+ * resolveMergeMethod). Anything but "squash"/"merge"/"rebase" collapses to
+ * null (issue #1781).
+ *
  * worktreeRoot: where new thread worktrees go (#1531). Absent/junk/relative
  * → null, the default userData/worktrees. Existence is checked on save.
  *
@@ -455,6 +459,7 @@ function normalizeSettings(raw) {
     stripAgentCoauthors: false,
     prCrossReview: false,
     deleteBranchOnMergeOrClose: true,
+    defaultMergeMethod: null,
     mcpServers: [],
     defaultWorktree: false,
     defaultOrchestrate: false,
@@ -699,6 +704,14 @@ function normalizeSettings(raw) {
   settings.deleteBranchOnMergeOrClose =
     /** @type {{ deleteBranchOnMergeOrClose?: unknown }} */ (obj)
       .deleteBranchOnMergeOrClose !== false;
+  const defaultMergeMethod = /** @type {{ defaultMergeMethod?: unknown }} */ (obj)
+    .defaultMergeMethod;
+  settings.defaultMergeMethod =
+    defaultMergeMethod === "squash" ||
+    defaultMergeMethod === "merge" ||
+    defaultMergeMethod === "rebase"
+      ? defaultMergeMethod
+      : null;
   settings.otel = normalizeOtel(/** @type {{ otel?: unknown }} */ (obj).otel);
   const linearKey = /** @type {{ linearApiKey?: unknown }} */ (obj).linearApiKey;
   if (typeof linearKey === "string" && linearKey.trim()) {

@@ -73,6 +73,7 @@ describe("edit project", () => {
       autoDispatch: false,
       autoPr: false,
       defaultWorktree: null,
+      defaultMergeMethod: null,
       setupCommand: null,
       waitForSetup: false,
       setupCacheOff: false,
@@ -600,6 +601,67 @@ describe("project default worktree (#1775)", () => {
     await m.click(m.query("[data-edit-project-submit]"));
     await m.flush();
     assert.equal(submitted[0]!.defaultWorktree, null);
+    m.unmount();
+  });
+});
+
+describe("project default merge method (#1781)", () => {
+  function modal(
+    over: Partial<Parameters<typeof EditProjectModal>[0]["project"]> = {},
+    globalDefaultMergeMethod: "squash" | "merge" | "rebase" | null = null,
+  ) {
+    const submitted: ProjectUpdateInput[] = [];
+    const el = (
+      <EditProjectModal
+        project={{
+          id: "p1",
+          slug: "ledger",
+          name: "ledger",
+          path: "/tmp/ledger",
+          ...over,
+        }}
+        globalDefaultMergeMethod={globalDefaultMergeMethod}
+        onClose={() => {}}
+        onSubmit={async (input) => {
+          submitted.push(input);
+          return input;
+        }}
+      />
+    );
+    return { el, submitted };
+  }
+
+  it("prefills the inherit option and names the current app setting", async () => {
+    const { el } = modal({}, "rebase");
+    const m = await mount(el);
+    const select = m.query(
+      "[data-edit-project-default-merge-method]",
+    ) as HTMLSelectElement;
+    assert.equal(select.value, "", "no project override prefills to inherit");
+    assert.match(select.options[0]!.textContent ?? "", /currently: Rebase/);
+    m.unmount();
+  });
+
+  it("saves an explicit override and null to go back to inherit", async () => {
+    const { el, submitted } = modal({ defaultMergeMethod: "squash" });
+    const m = await mount(el);
+    const select = m.query(
+      "[data-edit-project-default-merge-method]",
+    ) as HTMLSelectElement;
+    assert.equal(select.value, "squash", "prefills the stored override");
+    await m.change(select, "merge");
+    await m.click(m.query("[data-edit-project-submit]"));
+    await m.flush();
+    assert.equal(submitted[0]!.defaultMergeMethod, "merge");
+    m.unmount();
+  });
+
+  it("an unset project sends null (use the app setting)", async () => {
+    const { el, submitted } = modal();
+    const m = await mount(el);
+    await m.click(m.query("[data-edit-project-submit]"));
+    await m.flush();
+    assert.equal(submitted[0]!.defaultMergeMethod, null);
     m.unmount();
   });
 });

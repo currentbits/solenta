@@ -1462,12 +1462,79 @@ async function repoMergeOptions(cwd, opts) {
 }
 
 /**
+ * Default merge method (issue #1781): a project's own `defaultMergeMethod`
+ * wins over settings.defaultMergeMethod when set; null/absent falls through
+ * to the repo's own default. A pick the repo does not allow (per
+ * repoMergeOptions' `methods`) falls back to the repo default instead of
+ * erroring — repoMergeOptions is the only source of truth for what GitHub
+ * will accept.
+ * @param {{ defaultMergeMethod?: string | null } | null | undefined} project
+ * @param {{ defaultMergeMethod?: string | null } | null | undefined} settings
+ * @param {{ methods: string[], defaultMethod: string }} repo
+ * @returns {string}
+ */
+function resolveMergeMethod(project, settings, repo) {
+  const pick =
+    (project && project.defaultMergeMethod) ||
+    (settings && settings.defaultMergeMethod) ||
+    null;
+  return pick && repo.methods.includes(pick) ? pick : repo.defaultMethod;
+}
+
+/**
+ * repoMergeOptions, but routed through the GitHub REST API first when a
+ * token exists (same rule ghApiTryAsync applies to the merge call itself,
+ * #1534): a merge over the API must not shell out to `gh` just to learn
+ * the repo's allowed methods. Falls back to repoMergeOptions (gh CLI) when
+ * there is no token or the API call fails. There is no REST equivalent of
+ * gh's viewerDefaultMergeMethod, so the API path's default is
+ * squash-if-allowed, else the first allowed method.
+ * @param {string} cwd
+ * @param {string} originUrl
+ * @returns {Promise<{ ok: true, methods: string[], defaultMethod: string } | { ok: false, reason: string }>}
+ */
+async function repoMergeOptionsFor(cwd, originUrl) {
+  const target = originUrl ? await githubApiTarget(originUrl) : null;
+  if (target) {
+    try {
+      const data = await github.rest({
+        host: target.remote.host,
+        token: target.token,
+        method: "GET",
+        path: `/repos/${target.remote.owner}/${target.remote.repo}`,
+        fetchFn: githubApiTestHook && githubApiTestHook.fetchFn,
+      });
+      const allowed = {
+        squash: data.allow_squash_merge !== false,
+        merge: data.allow_merge_commit !== false,
+        rebase: data.allow_rebase_merge !== false,
+      };
+      const methods = MERGE_METHODS.filter((m) => allowed[m]);
+      if (!methods.length) methods.push("squash");
+      return {
+        ok: /** @type {const} */ (true),
+        methods,
+        defaultMethod: methods.includes("squash") ? "squash" : methods[0],
+      };
+    } catch {
+      // fall through to gh
+    }
+  }
+  return repoMergeOptions(cwd);
+}
+
+/**
  * repoMergeOptions for a thread's checkout, or a project checkout when
- * projectPath is given. Never throws.
+ * projectPath is given, with `defaultMethod` resolved through
+ * resolveMergeMethod (project ?? app setting ?? repo default). Never throws.
  * @param {{ store: import('./store').Store, threadId?: string, projectPath?: string }} opts
  */
 async function mergeOptions(opts) {
   try {
+    const settings =
+      opts.store && typeof opts.store.getSettings === "function"
+        ? opts.store.getSettings()
+        : null;
     if (opts.projectPath) {
       // PR list view: no bound thread, just the project checkout.
       const cwd = String(opts.projectPath);
@@ -1475,11 +1542,25 @@ async function mergeOptions(opts) {
       if (!remote.ok || !(await isGitHubRemoteAsync(remote.stdout.trim()))) {
         return { ok: false, reason: "not a GitHub repo" };
       }
-      return await repoMergeOptions(cwd);
+      const repoResult = await repoMergeOptions(cwd);
+      if (!repoResult.ok) return repoResult;
+      const project =
+        opts.store && typeof opts.store.getProjects === "function"
+          ? opts.store.getProjects().find((p) => p && p.path === cwd)
+          : null;
+      return {
+        ...repoResult,
+        defaultMethod: resolveMergeMethod(project, settings, repoResult),
+      };
     }
-    const { cwd, originUrl } = await resolveThreadGit(opts.store, opts.threadId);
+    const { cwd, originUrl, project } = await resolveThreadGit(opts.store, opts.threadId);
     if (!(await isGitHubRemoteAsync(originUrl))) return { ok: false, reason: "not a GitHub repo" };
-    return await repoMergeOptions(cwd);
+    const repoResult = await repoMergeOptions(cwd);
+    if (!repoResult.ok) return repoResult;
+    return {
+      ...repoResult,
+      defaultMethod: resolveMergeMethod(project, settings, repoResult),
+    };
   } catch (err) {
     return { ok: false, reason: err && err.message ? String(err.message) : "no repo" };
   }
@@ -1547,12 +1628,23 @@ async function mergePr(opts) {
     // ponytail: non-gh forges always squash-merge; method/auto are gh-only.
     await forge.api.mergePr(cwd, forge.remote, info.number);
   } else {
+    // #1781: an explicit method (the transient select) always wins; absent
+    // falls back to resolveMergeMethod (project ?? app setting ?? repo
+    // default), itself bounded by what the repo allows.
+    let method = opts.method != null ? String(opts.method) : null;
+    if (!method) {
+      const settings =
+        typeof store.getSettings === "function" ? store.getSettings() : null;
+      const repoResult = await repoMergeOptionsFor(cwd, originUrl);
+      method = repoResult.ok ? resolveMergeMethod(project, settings, repoResult) : "squash";
+    }
+    const mergeOpts = { ...opts, method };
     const merged = await ghApiTryAsync(cwd, [
       "pr",
       "merge",
       String(info.number),
-      ...mergeFlags(opts),
-      ...(await squashBodyArgs(store, cwd, info.number, opts)),
+      ...mergeFlags(mergeOpts),
+      ...(await squashBodyArgs(store, cwd, info.number, mergeOpts)),
     ]);
     if (!merged.ok) {
       throwGhFailure(merged, "gh pr merge failed");
@@ -2443,6 +2535,8 @@ module.exports = {
   mergeFlags,
   squashBodyArgs,
   repoMergeOptions,
+  resolveMergeMethod,
+  repoMergeOptionsFor,
   mergeOptions,
   isPrRefreshCandidate,
   refreshPrStates,

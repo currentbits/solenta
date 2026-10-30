@@ -49,6 +49,8 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
   let prCrossReview = false;
   /** Default true: delete the GitHub head branch after a merge/close. */
   let deleteBranchOnMergeOrClose = true;
+  /** Default merge method (#1781); null follows the repo's own default. */
+  let defaultMergeMethod: AppSettings["defaultMergeMethod"] = null;
   /** PR size cap in lines (issue #402); default 400, null disables. */
   let prDiffCapLines: number | null = 400;
   /** Run concurrency cap (issue #166); default 4, null disables. */
@@ -184,6 +186,7 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           stripAgentCoauthors,
           prCrossReview,
           deleteBranchOnMergeOrClose,
+          defaultMergeMethod,
           prDiffCapLines,
           maxConcurrentRuns,
           mcpServers: ctx.mcpServers,
@@ -267,6 +270,13 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
             throw new Error("deleteBranchOnMergeOrClose must be a boolean");
           }
           deleteBranchOnMergeOrClose = patch.deleteBranchOnMergeOrClose;
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, "defaultMergeMethod")) {
+          const v = patch.defaultMergeMethod;
+          if (v !== null && v !== "squash" && v !== "merge" && v !== "rebase") {
+            throw new Error('defaultMergeMethod must be "squash", "merge", "rebase", or null');
+          }
+          defaultMergeMethod = v;
         }
         if (Object.prototype.hasOwnProperty.call(patch, "prDiffCapLines")) {
           const v = patch.prDiffCapLines;
@@ -624,6 +634,7 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           stripAgentCoauthors,
           prCrossReview,
           deleteBranchOnMergeOrClose,
+          defaultMergeMethod,
           prDiffCapLines,
           maxConcurrentRuns,
           mcpServers: ctx.mcpServers.map(redactDevMcp) as AppSettings["mcpServers"],
