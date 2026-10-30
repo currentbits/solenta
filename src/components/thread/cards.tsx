@@ -484,6 +484,9 @@ export function PermissionPrompt({
           <KeyHint k="n" /> Deny
         </button>
       </div>
+      <div className={styles.permissionRedirectHint} data-permission-redirect-hint="">
+        Sending a message declines this and redirects the agent
+      </div>
       {scoped ? (
         <details className={styles.permissionMore} data-permission-more="">
           <summary>Always-allow options</summary>

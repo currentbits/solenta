@@ -347,6 +347,21 @@ export interface UseCoderResult {
     feedback?: string,
     alwaysRule?: string,
   ) => Promise<void>;
+  /**
+   * Decline the selected thread's pending plain permission card and hand
+   * the typed text to the agent as the new direction (#1762).
+   */
+  redirectPermission: (
+    requestId: string,
+    prompt: string,
+    attachments?: AttachmentInfo[],
+  ) => Promise<void>;
+  /**
+   * ⌘K "Restart agent session" (#1762): kill the selected thread's
+   * warm/idle provider process. Rejects (surfacing the run-error banner)
+   * while a run is active.
+   */
+  restartAgentSession: () => Promise<void>;
   /** Write plan markdown into the thread's checkout; resolves the path (#1501). */
   savePlan: (plan: string, threadId?: string) => Promise<string>;
   /** Dismiss the selected thread's persisted question card (issue #647). */
@@ -1617,6 +1632,8 @@ export function useCoder(): UseCoderResult {
     stopRun,
     setPermissionMode,
     respondPermission,
+    redirectPermission,
+    restartAgentSession,
     clearQuestion,
     answerSecret,
     setProvider,
@@ -2178,6 +2195,8 @@ export function useCoder(): UseCoderResult {
     stopRun,
     setPermissionMode,
     respondPermission,
+    redirectPermission,
+    restartAgentSession,
     clearQuestion,
     answerSecret,
     setProvider,

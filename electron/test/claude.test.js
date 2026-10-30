@@ -1584,6 +1584,52 @@ describe("runner claude provider", () => {
     }
   });
 
+  it("sending a redirect through a plain permission card declines it and keeps the turn going (#1762)", async () => {
+    process.env.CODER_FAKE_CLAUDE_SCENARIO = "permission";
+    const ctrlFile = path.join(tmpDir, "ctrl-redirect.json");
+    process.env.CODER_FAKE_CLAUDE_CTRL_FILE = ctrlFile;
+    try {
+      const thread = store.getThreads()[0];
+      await runner.startRun({ threadId: thread.id, prompt: "guarded work" });
+      await waitFor(() => runner.getPendingPermission(thread.id) != null);
+      const pending = runner.getPendingPermission(thread.id);
+      const runId = runner.activeRunId(thread.id);
+
+      runner.respondPermission({
+        threadId: thread.id,
+        requestId: pending.requestId,
+        decision: "deny",
+        redirect: "do the other thing instead",
+      });
+
+      // Claude's deny carries the redirect as the tool-denial reason, so
+      // the SAME live process keeps going — no second spawn, same runId.
+      await waitFor(() => fs.existsSync(ctrlFile));
+      const ctrl = JSON.parse(fs.readFileSync(ctrlFile, "utf8"));
+      assert.equal(ctrl.response.response.behavior, "deny");
+      assert.equal(
+        ctrl.response.response.message,
+        "Denied by user in Coder; the user wants this instead:\ndo the other thing instead",
+      );
+      assert.equal(runner.activeRunId(thread.id), runId);
+
+      // Shown as a plain user message (no steer badge) on that same run.
+      const redirectMsg = store
+        .getMessages(thread.id)
+        .find((m) => m.role === "user" && m.text === "do the other thing instead");
+      assert.ok(redirectMsg, "expected the redirect text as a user message");
+      assert.equal(redirectMsg.steer, undefined);
+      assert.equal(redirectMsg.runId, runId);
+
+      // Not queued: the agent already has it, in this turn.
+      assert.equal(store.getThread(thread.id).queued, null);
+
+      await waitFor(() => store.getThread(thread.id).status === "done");
+    } finally {
+      delete process.env.CODER_FAKE_CLAUDE_CTRL_FILE;
+    }
+  });
+
   it("a pending approval survives an app restart and Allow resumes it once (#349)", async () => {
     process.env.CODER_FAKE_CLAUDE_SCENARIO = "permission";
     const ctrlFile = path.join(tmpDir, "ctrl-restart.json");
@@ -2764,6 +2810,67 @@ describe("runner claude provider", () => {
       [true, true, true],
       "the three newest idle CLIs must survive",
     );
+  });
+
+  it("Restart agent session kills the warm CLI, keeps the session id, and resumes it next turn (#1762)", async () => {
+    process.env.CODER_FAKE_CLAUDE_SCENARIO = "multi-turn";
+    const markerDir = path.join(tmpDir, "restart-markers");
+    process.env.CODER_FAKE_CLAUDE_MARKER_DIR = markerDir;
+
+    const thread = store.getThreads()[0];
+    await runner.startRun({ threadId: thread.id, prompt: "turn one" });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+    assert.equal(store.getThread(thread.id).sessionId, "sess-multi");
+
+    // Refused while a run is active: nothing to kill, the live one is busy.
+    await runner.startRun({ threadId: thread.id, prompt: "turn two" });
+    assert.equal(store.getThread(thread.id).status, "working");
+    await assert.rejects(
+      async () => runner.restartAgentSession({ threadId: thread.id }),
+      /active/i,
+    );
+    await waitFor(() => store.getThread(thread.id).status === "done");
+
+    const spawnsFile = path.join(markerDir, "spawns");
+    const pid = Number(
+      fs.readFileSync(spawnsFile, "utf8").trim().split("\n")[0],
+    );
+    const alive = (p) => {
+      try {
+        process.kill(p, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    assert.equal(alive(pid), true, "the kept-alive CLI must still be warm");
+
+    runner.restartAgentSession({ threadId: thread.id });
+    await waitFor(() => !alive(pid), { timeoutMs: 5000 });
+
+    // The conversation continues: sessionId is untouched.
+    assert.equal(store.getThread(thread.id).sessionId, "sess-multi");
+    const msgs = store.getMessages(thread.id);
+    assert.ok(
+      msgs.some(
+        (m) =>
+          m.role === "event" &&
+          m.text ===
+            "Agent session restarted; skills and MCP servers reload on the next message",
+      ),
+    );
+
+    // The next turn spawns fresh and resumes the same session.
+    await runner.startRun({ threadId: thread.id, prompt: "turn three" });
+    await waitFor(() => {
+      const spawns = fs.readFileSync(spawnsFile, "utf8").trim().split("\n");
+      return spawns.length === 2;
+    });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+    const argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
+    const resumeAt = argv.indexOf("--resume");
+    assert.ok(resumeAt >= 0, "fresh spawn must resume the session");
+    assert.equal(argv[resumeAt + 1], "sess-multi");
   });
 
   describe("background subagents pin their idle CLI (#1443)", () => {

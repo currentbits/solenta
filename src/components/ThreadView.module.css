@@ -3209,6 +3209,13 @@ button.diffLineGutter:focus-visible {
   font-weight: 500;
 }
 
+/* Hint (#1762): the composer stays usable while this card is open, and
+   sending through it declines the card instead of queuing behind it. */
+.permissionRedirectHint {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
 /* Guardrail warning on an ask-tier prompt (#409): louder than the card it
    sits in, because the card is already amber. */
 .permissionGuardrail {

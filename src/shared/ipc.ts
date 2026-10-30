@@ -5710,7 +5710,26 @@ export interface CoderApi {
        * as the next planning turn.
        */
       feedback?: string;
+      /**
+       * Composer redirect (#1762): sending a normal message while a plain
+       * permission card is open. Deny on a plain tool card only — Claude
+       * reads this as the tool-denial reason and keeps going in the same
+       * turn; providers whose deny can't carry text queue it as the next
+       * prompt instead.
+       */
+      redirect?: string;
+      /** Attachments that rode along with `redirect`. */
+      attachments?: AttachmentInfo[];
     }): Promise<void>;
+    /**
+     * ⌘K "Restart agent session" (#1762): kill this thread's warm/idle
+     * provider process so the next turn spawns fresh and reloads newly
+     * installed skills, plugins and MCP servers. The thread's sessionId is
+     * untouched — the conversation resumes, it does not start over. Rejects
+     * while a run is active. The updated detail (with the confirmation
+     * event message) arrives via thread:updated.
+     */
+    restartAgentSession(input: { threadId: string }): Promise<void>;
     /**
      * "Save plan to file" (#1501): write plan markdown to
      * docs/plans/<date>-<slug>.md in the thread's checkout. Never
