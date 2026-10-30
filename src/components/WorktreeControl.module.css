@@ -129,6 +129,58 @@
   letter-spacing: -0.01em;
 }
 
+/* PR pill next to the branch (#1781): same convention as the sidebar
+   card's badge (Sidebar.module.css .prLink) -- GitHub's state colours. */
+.prPill {
+  pointer-events: auto;
+  flex-shrink: 0;
+  font: 11px var(--mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  text-decoration: none;
+}
+
+.prPill:hover {
+  text-decoration: underline;
+}
+
+.prPill svg {
+  margin-right: 2px;
+  vertical-align: -1px;
+}
+
+.prPill[data-pr-state="open"] {
+  color: var(--green);
+}
+
+.prPill[data-pr-state="merged"] {
+  color: var(--violet);
+}
+
+.prPill[data-pr-state="closed"] {
+  color: var(--danger);
+}
+
+.branchCopyBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.branchCopyBtn:hover {
+  background: var(--overlay-hover);
+  color: var(--text);
+}
+
 .snapshotDirty {
   min-width: 0;
   overflow: hidden;

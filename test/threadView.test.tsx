@@ -224,6 +224,7 @@ function view(props: {
   loadProviderLimits?: () => Promise<ProviderUsage[]>;
   onRenameThread?: (title: string) => void | Promise<void>;
   onRegenerateTitle?: () => void | Promise<void>;
+  onDuplicateThread?: () => void | Promise<void>;
 }) {
   return (
     <ThreadView
@@ -289,6 +290,7 @@ function view(props: {
       loadProviderLimits={props.loadProviderLimits}
       onRenameThread={props.onRenameThread}
       onRegenerateTitle={props.onRegenerateTitle}
+      onDuplicateThread={props.onDuplicateThread}
     />
   );
 }
@@ -1154,6 +1156,36 @@ describe("ThreadView mounted interactions", () => {
     await m.click(m.query("[data-thread-title-menu]"));
     assert.ok(m.query("[data-rename-thread]"));
     assert.equal(m.query("[data-regenerate-title]"), null);
+    m.unmount();
+  });
+
+  it("Duplicate sits in the header menu and closes the menu on click (#1781)", async () => {
+    let duplicated = 0;
+    const m = await mount(
+      view({
+        onDuplicateThread: () => {
+          duplicated += 1;
+        },
+      }),
+    );
+    await m.click(m.query("[data-thread-title-menu]"));
+    const dup = m.query("[data-duplicate-thread]");
+    assert.ok(dup, "Duplicate item");
+    assert.equal(dup?.textContent, "Duplicate");
+    await m.click(dup);
+    assert.equal(duplicated, 1);
+    assert.equal(
+      m.query("[data-duplicate-thread]"),
+      null,
+      "menu closes after the click",
+    );
+    m.unmount();
+  });
+
+  it("hides Duplicate when onDuplicateThread is not wired", async () => {
+    const m = await mount(view({}));
+    await m.click(m.query("[data-thread-title-menu]"));
+    assert.equal(m.query("[data-duplicate-thread]"), null);
     m.unmount();
   });
 

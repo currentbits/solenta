@@ -2953,6 +2953,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           model?: string | null;
           worktree?: boolean;
           leavePlan?: boolean;
+          title?: string;
         };
         calls.push({ channel: "threads.fork", args: [input] });
         const err = fail["threads.fork"];
@@ -3032,7 +3033,8 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           source.title != null && String(source.title) !== ""
             ? String(source.title)
             : "New Thread";
-        const rawTitle = `Fork: ${sourceTitle}`;
+        const explicitTitle = i.title != null ? String(i.title).trim() : "";
+        const rawTitle = explicitTitle || `Fork: ${sourceTitle}`;
         const title =
           rawTitle.length > THREAD_TITLE_MAX
             ? rawTitle.slice(0, THREAD_TITLE_MAX)

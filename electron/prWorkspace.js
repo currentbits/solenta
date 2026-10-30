@@ -22,6 +22,8 @@ const {
   assertNoOutboundSecrets,
   mergeFlags,
   squashBodyArgs,
+  repoMergeOptionsFor,
+  resolveMergeMethod,
   maybeDeleteHeadBranch,
   parsePrChecksJson,
   parsePrChecksText,
@@ -644,17 +646,36 @@ async function readyPr(projectPath, input, opts) {
 async function mergePrAt(projectPath, input, opts) {
   const number = parsePrNumber(input && input.prNumber);
   if (number == null) return { ok: false, reason: "invalid PR number" };
+  const repo = await requireGitHubRepo(projectPath);
+  if (!repo.ok) return repo;
+
+  // #1781: an explicit method (the transient select) always wins; absent
+  // falls back to resolveMergeMethod (project ?? app setting ?? repo
+  // default), itself bounded by what the repo allows.
+  let method = input && input.method != null ? String(input.method) : null;
+  if (!method) {
+    const store = opts && opts.store;
+    const settings =
+      store && typeof store.getSettings === "function" ? store.getSettings() : null;
+    const project =
+      store && typeof store.getProjects === "function"
+        ? store.getProjects().find((p) => p && p.path === projectPath)
+        : null;
+    const originRemote = await gitTryAsync(repo.cwd, ["remote", "get-url", "origin"]);
+    const originUrl = originRemote.ok ? String(originRemote.stdout || "").trim() : "";
+    const repoResult = await repoMergeOptionsFor(repo.cwd, originUrl);
+    method = repoResult.ok ? resolveMergeMethod(project, settings, repoResult) : "squash";
+  }
+  const mergeInput = { ...input, method };
   let flags;
   try {
-    flags = mergeFlags(input);
+    flags = mergeFlags(mergeInput);
   } catch (err) {
     return { ok: false, reason: String(err && err.message) };
   }
-  const repo = await requireGitHubRepo(projectPath);
-  if (!repo.ok) return repo;
   const other = parseRepoSlug(input && input.repo);
 
-  const body = await squashBodyArgs(opts && opts.store, repo.cwd, number, input);
+  const body = await squashBodyArgs(opts && opts.store, repo.cwd, number, mergeInput);
   const merged = await ghApiTryAsync(
     repo.cwd,
     ["pr", "merge", String(number), ...flags, ...body],

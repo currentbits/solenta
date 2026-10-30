@@ -1475,7 +1475,16 @@ function createToolHandlers(deps) {
    */
   async function pr_merge(args) {
     const { self, client, number } = await prTarget(args);
-    const method = args.method || "squash";
+    let method = args.method ? String(args.method) : null;
+    if (!method) {
+      // #1781: project.defaultMergeMethod ?? settings.defaultMergeMethod ??
+      // the repo default, bounded by what the repo actually allows.
+      const { resolveMergeMethod } = require("./worktrees-pr.js");
+      const repoOpts = await prTools.repoAllowedMethods(client);
+      const settings =
+        typeof store.getSettings === "function" ? store.getSettings() : null;
+      method = resolveMergeMethod(projectOf(self), settings, repoOpts);
+    }
     const pr = await prTools.mergeablePr(client, number);
     if (typeof runner.requestPrMergeSignOff !== "function") {
       throw new Error("PR merge sign-off is unavailable here; ask the user to merge it on GitHub.");

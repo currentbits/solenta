@@ -142,6 +142,7 @@ export function useCoderRuns({
         leavePlan?: boolean;
         messageId?: string;
         checkpointSha?: string;
+        title?: string;
       },
     ) => {
       try {
@@ -153,8 +154,10 @@ export function useCoderRuns({
           leavePlan?: boolean;
           messageId?: string;
           checkpointSha?: string;
+          title?: string;
         } = { threadId };
         if (opts?.leavePlan) input.leavePlan = true;
+        if (opts?.title) input.title = opts.title;
         if (opts?.messageId) input.messageId = opts.messageId;
         if (opts?.checkpointSha) input.checkpointSha = opts.checkpointSha;
         if (opts && Object.prototype.hasOwnProperty.call(opts, "provider")) {
@@ -369,6 +372,37 @@ export function useCoderRuns({
     [api, selectedThreadId, applyThreads],
   );
 
+  /**
+   * Duplicate (issue #1781): a new thread, same project/provider/model/mode
+   * and worktree-or-not as the source, titled "<title> (copy)" — but no
+   * transcript. forkThread with no messageId already yields an empty
+   * transcript and carries settings faithfully; this just names it and
+   * starts it on the source's first user message (and its attachments)
+   * instead of leaving it idle.
+   */
+  const duplicateThread = useCallback(
+    async (threadId: string) => {
+      let firstUser: { text: string; attachments?: AttachmentInfo[] } | null = null;
+      let worktree = false;
+      let title = "New Thread";
+      try {
+        const detail = await api.threads.get(threadId);
+        title = (detail.thread.title || "New Thread").trim();
+        worktree = Boolean(detail.thread.worktreePath) || Boolean(detail.thread.pendingWorktree);
+        firstUser = detail.messages.find((m) => m.role === "user") ?? null;
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+        return null;
+      }
+      const t = await forkThread(threadId, { title: `${title} (copy)`, worktree });
+      if (t && firstUser) {
+        await startRun(firstUser.text, t.id, firstUser.attachments);
+      }
+      return t;
+    },
+    [api, forkThread, startRun, setError],
+  );
+
   const rewindAndResubmit = useCallback(
     async (
       messageId: string,
@@ -423,6 +457,7 @@ export function useCoderRuns({
   return {
     createThread,
     forkThread,
+    duplicateThread,
     startRun,
     rewindAndResubmit,
   };

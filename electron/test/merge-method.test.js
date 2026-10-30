@@ -5,7 +5,7 @@
  */
 const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
-const { mergeFlags, repoMergeOptions } = require("../worktrees-pr.js");
+const { mergeFlags, repoMergeOptions, resolveMergeMethod } = require("../worktrees-pr.js");
 
 describe("mergeFlags", () => {
   it("defaults to squash and appends --auto on request", () => {
@@ -52,6 +52,37 @@ describe("repoMergeOptions", () => {
   });
 });
 
+describe("resolveMergeMethod (#1781)", () => {
+  const repo = { methods: ["squash", "merge", "rebase"], defaultMethod: "squash" };
+
+  it("falls back to the repo default when neither project nor app set a method", () => {
+    assert.equal(resolveMergeMethod(null, null, repo), "squash");
+    assert.equal(resolveMergeMethod({}, {}, repo), "squash");
+    assert.equal(resolveMergeMethod({ defaultMergeMethod: null }, { defaultMergeMethod: null }, repo), "squash");
+  });
+
+  it("the app setting wins when the project has no override", () => {
+    assert.equal(resolveMergeMethod(null, { defaultMergeMethod: "rebase" }, repo), "rebase");
+    assert.equal(
+      resolveMergeMethod({ defaultMergeMethod: null }, { defaultMergeMethod: "merge" }, repo),
+      "merge",
+    );
+  });
+
+  it("the project override wins over the app setting", () => {
+    assert.equal(
+      resolveMergeMethod({ defaultMergeMethod: "merge" }, { defaultMergeMethod: "rebase" }, repo),
+      "merge",
+    );
+  });
+
+  it("a pick the repo does not allow falls back to the repo default", () => {
+    const squashOnly = { methods: ["squash"], defaultMethod: "squash" };
+    assert.equal(resolveMergeMethod({ defaultMergeMethod: "rebase" }, null, squashOnly), "squash");
+    assert.equal(resolveMergeMethod(null, { defaultMergeMethod: "merge" }, squashOnly), "squash");
+  });
+});
+
 describe("mergeOptions for a project checkout", () => {
   it("refuses a non-GitHub origin without calling gh", async () => {
     const os = require("node:os");
@@ -67,5 +98,45 @@ describe("mergeOptions for a project checkout", () => {
       reason: "not a GitHub repo",
     });
     fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("resolves defaultMethod through the project's override, for the dropdown (#1781)", async () => {
+    const os = require("node:os");
+    const fs = require("node:fs");
+    const path = require("node:path");
+    const { execFileSync } = require("node:child_process");
+    const { writeFakeBin } = require("./support/fakeBin.js");
+    const { mergeOptions } = require("../worktrees-pr.js");
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "merge-opts-proj-b-"));
+    execFileSync("git", ["init"], { cwd: dir, stdio: "ignore" });
+    execFileSync("git", ["remote", "add", "origin", "https://github.com/acme/demo.git"], { cwd: dir });
+    const fakeGh = writeFakeBin(
+      path.join(dir, "fake-gh"),
+      `#!/usr/bin/env node
+process.stdout.write(JSON.stringify({
+  squashMergeAllowed: true,
+  mergeCommitAllowed: true,
+  rebaseMergeAllowed: true,
+  viewerDefaultMergeMethod: "SQUASH",
+}) + "\\n");
+`,
+    );
+    const prevGh = process.env.CODER_GH_BIN;
+    process.env.CODER_GH_BIN = fakeGh;
+    try {
+      const store = {
+        getSettings: () => ({ defaultMergeMethod: "merge" }),
+        getProjects: () => [{ id: "p1", path: dir, defaultMergeMethod: "rebase" }],
+      };
+      const result = await mergeOptions({ store, projectPath: dir });
+      assert.equal(result.ok, true);
+      assert.deepEqual(result.methods, ["squash", "merge", "rebase"]);
+      // project override (rebase) wins over the app setting (merge).
+      assert.equal(result.defaultMethod, "rebase");
+    } finally {
+      if (prevGh == null) delete process.env.CODER_GH_BIN;
+      else process.env.CODER_GH_BIN = prevGh;
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

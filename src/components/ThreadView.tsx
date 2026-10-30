@@ -449,6 +449,13 @@ interface ThreadViewProps {
   onRenameThread?: (title: string) => void | Promise<void>;
   /** Regenerate the open thread's title from current activity (#1774). */
   onRegenerateTitle?: () => void | Promise<void>;
+  /**
+   * Duplicate the open thread (issue #1781, header overflow): same
+   * project/provider/model/mode/worktree-or-not, titled "<title> (copy)",
+   * no transcript, started on the source's first prompt. Selects the new
+   * thread.
+   */
+  onDuplicateThread?: () => void | Promise<void>;
   /** Save a redacted HTML bug report (#394); null = dialog cancelled. */
   onExportReport?: (input: { threadId: string }) => Promise<string | null>;
   /**
@@ -874,6 +881,7 @@ export const ThreadView = memo(function ThreadView({
   onSetCrossThreadInbound,
   onRenameThread,
   onRegenerateTitle,
+  onDuplicateThread,
   onExportReport,
   onCreateThread,
   onRepeatSchedule,
@@ -3387,6 +3395,20 @@ export const ThreadView = memo(function ThreadView({
                           }}
                         >
                           Regenerate title
+                        </button>
+                      )}
+                      {onDuplicateThread && (
+                        <button
+                          type="button"
+                          className={styles.menuItem}
+                          role="menuitem"
+                          data-duplicate-thread=""
+                          onClick={() => {
+                            setMenuOpen(false);
+                            void onDuplicateThread();
+                          }}
+                        >
+                          Duplicate
                         </button>
                       )}
                     <div className={styles.menuInbound} data-transcript-view-menu="">

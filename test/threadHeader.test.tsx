@@ -1053,6 +1053,75 @@ describe("Thread details card rows (#1411)", () => {
     m.unmount();
   });
 
+  it("shows the PR pill next to the branch when the thread has a linked PR (#1781)", async () => {
+    const m = await mount(
+      view({
+        detail: detail({
+          thread: thread({
+            prNumber: 4,
+            prUrl: "https://github.com/acme/repo/pull/4",
+            prState: "OPEN",
+          }),
+        }),
+        onSetupWorktree: async () => {},
+        onMergeWorktree: async () => {},
+        onRemoveWorktree: async () => {},
+      }),
+    );
+    await m.flush();
+    await m.click(m.query("[data-thread-details-btn]"));
+    const card = m.query("[data-thread-details]")!;
+    const pill = card.querySelector("[data-pr-pill]");
+    assert.ok(pill, "PR pill must be present");
+    assert.equal(pill!.getAttribute("data-pr-state"), "open");
+    assert.equal(pill!.getAttribute("href"), "https://github.com/acme/repo/pull/4");
+    assert.match(pill!.textContent ?? "", /#4/);
+    m.unmount();
+  });
+
+  it("hides the PR pill when the thread has no linked PR", async () => {
+    const m = await mount(
+      view({
+        onSetupWorktree: async () => {},
+        onMergeWorktree: async () => {},
+        onRemoveWorktree: async () => {},
+      }),
+    );
+    await m.flush();
+    await m.click(m.query("[data-thread-details-btn]"));
+    const card = m.query("[data-thread-details]")!;
+    assert.equal(card.querySelector("[data-pr-pill]"), null);
+    m.unmount();
+  });
+
+  it("copies the branch name from the row icon and flashes Copied (#1781)", async () => {
+    const copied: string[] = [];
+    Object.defineProperty(navigator, "clipboard", {
+      value: {
+        writeText: async (text: string) => {
+          copied.push(text);
+        },
+      },
+      configurable: true,
+    });
+    const m = await mount(
+      view({
+        onSetupWorktree: async () => {},
+        onMergeWorktree: async () => {},
+        onRemoveWorktree: async () => {},
+      }),
+    );
+    await m.flush();
+    await m.click(m.query("[data-thread-details-btn]"));
+    const btn = m.query("[data-copy-branch]") as HTMLButtonElement | null;
+    assert.ok(btn, "copy-branch row icon must be present");
+    await m.click(btn as HTMLElement);
+    await m.flush();
+    assert.deepEqual(copied, ["coder/header-features-abc123"]);
+    assert.equal(btn!.textContent, "Copied");
+    m.unmount();
+  });
+
   it("opens the worktree in a chosen editor and remembers it", async () => {
     globalThis.window?.localStorage.removeItem("solenta:openInEditor");
     const opened: string[] = [];

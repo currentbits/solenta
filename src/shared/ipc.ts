@@ -101,6 +101,14 @@ export interface ProjectInfo {
    */
   defaultWorktree?: boolean | null;
   /**
+   * Per-project override of settings.defaultMergeMethod (#1781): one of
+   * the three methods pins it; null/absent follows the app setting (which
+   * itself may follow the repo's own default). resolveMergeMethod is the
+   * single place that decides what actually runs, bounded by what the
+   * repo allows.
+   */
+  defaultMergeMethod?: MergeMethod | null;
+  /**
    * User override (#610): a path relative to the project checkout. Absent
    * means Automatic (detect from favicon / t3.json / HTML). Never an
    * absolute path.
@@ -417,6 +425,8 @@ export interface ProjectUpdateInput {
   worktreeRetention?: number;
   /** Per-project default-worktree override (#1775); null restores "use the global setting". */
   defaultWorktree?: boolean | null;
+  /** Per-project default-merge-method override (#1781); null restores "use the app setting". */
+  defaultMergeMethod?: MergeMethod | null;
   /** Secondary folders (#514), absolute paths. Empty / null clears them. */
   folders?: string[] | null;
   /**
@@ -3755,6 +3765,16 @@ export interface AppSettings {
    */
   deleteBranchOnMergeOrClose: boolean;
   /**
+   * Default merge method for every Solenta merge site (issue #1781): the
+   * thread Merge button, the PR workspace panel, and the agent pr_merge
+   * tool. null (the default) follows the repo's own default. A per-project
+   * ProjectInfo.defaultMergeMethod overrides this; resolveMergeMethod picks
+   * project ?? this setting ?? the repo default, bounded by what the repo
+   * actually allows. The transient method picker on each merge action
+   * still overrides both for that one merge.
+   */
+  defaultMergeMethod: MergeMethod | null;
+  /**
    * User-registered MCP servers (Skills tab). Built-ins coder-memory and
    * coder-threads are app-owned and never appear here. Enabled entries are
    * folded into every provider's MCP injection on the next turn.
@@ -5291,6 +5311,11 @@ export type ThreadForkOpts = {
   leadSnapshotDirty?: boolean;
   /** Start the fork out of plan mode ("Implement in a new thread", #1501). */
   leavePlan?: boolean;
+  /**
+   * Explicit title (issue #1781's Duplicate uses "<title> (copy)"); absent
+   * gets the ordinary "Fork: <source title>" naming.
+   */
+  title?: string;
   /**
    * Fork from one of the source's turn checkpoints (#252): the new worktree
    * starts at that commit (recorded as leadSnapshotSha) and the transcript is

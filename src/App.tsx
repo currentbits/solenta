@@ -228,6 +228,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     createThread,
     listBaseBranches,
     forkThread,
+    duplicateThread,
     startRun,
     rewindAndResubmit,
     queued,
@@ -1076,6 +1077,11 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     void regenerateTitle([selectedThreadId]);
   }, [regenerateTitle, selectedThreadId]);
 
+  const handleDuplicateOpenThread = useCallback(() => {
+    if (!selectedThreadId) return;
+    void duplicateThread(selectedThreadId);
+  }, [duplicateThread, selectedThreadId]);
+
   // An inline arrow here would bust ThreadView's memo on every 700ms stream
   // tick (issue #91); keep it identity-stable per selected thread.
   const handleSettleOpenThread = useCallback(
@@ -1264,6 +1270,13 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       void forkThread(threadId, opts);
     },
     [forkThread],
+  );
+
+  const handleRowDuplicate = useCallback(
+    (threadId: string) => {
+      void duplicateThread(threadId);
+    },
+    [duplicateThread],
   );
 
   const forkFromCheckpoint = useCallback(
@@ -2225,6 +2238,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onRestoreThread={(id) => void restoreThread(id)}
         onPurgeThread={(id) => void purgeThread(id)}
         onFork={handleRowFork}
+        onDuplicate={handleRowDuplicate}
         conflictForecast={forecast}
         toast={sidebarToast}
         onStopAllRunning={openStopAllConfirm}
@@ -2507,6 +2521,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         }
         onRenameThread={handleRenameOpenThread}
         onRegenerateTitle={handleRegenerateOpenThread}
+        onDuplicateThread={handleDuplicateOpenThread}
         onExportReport={exportReport}
         onRepeatSchedule={handleRepeatSchedule}
         onDistillWorkflow={handleDistillWorkflow}
@@ -2894,6 +2909,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
             providers={providers}
             globalProvider={settings?.defaultProvider ?? null}
             globalDefaultWorktree={settings?.defaultWorktree ?? false}
+            globalDefaultMergeMethod={settings?.defaultMergeMethod ?? null}
             agentProfiles={settings?.agentProfiles ?? EMPTY_AGENT_PROFILES}
             onMoveConfigToRepo={() =>
               api.projects.moveConfigToRepo({ projectId: editProject.id })

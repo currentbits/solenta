@@ -230,14 +230,26 @@ if (args[0] === "pr" && args[1] === "merge") {
     process.stderr.write("no pull requests found\\n");
     process.exit(1);
   }
-  if (!args.includes("--squash")) {
-    process.stderr.write("fake-gh: expected --squash\\n");
+  const usedMethod = ["--squash", "--merge", "--rebase"].find(function (f) { return args.includes(f); });
+  if (!usedMethod) {
+    process.stderr.write("fake-gh: expected a merge method flag\\n");
     process.exit(1);
   }
   pr.state = "MERGED";
   pr.isDraft = false;
   save(state);
   process.stdout.write(pr.url + "\\n");
+  process.exit(0);
+}
+
+if (args[0] === "repo" && args[1] === "view") {
+  const r = state.repo || {};
+  process.stdout.write(JSON.stringify({
+    squashMergeAllowed: r.squashMergeAllowed !== false,
+    mergeCommitAllowed: r.mergeCommitAllowed !== false,
+    rebaseMergeAllowed: r.rebaseMergeAllowed !== false,
+    viewerDefaultMergeMethod: r.viewerDefaultMergeMethod || "SQUASH",
+  }) + "\\n");
   process.exit(0);
 }
 
@@ -477,6 +489,40 @@ describe("gh PR workspace actions", () => {
     assert.equal(result.pr.state, "MERGED");
     const mergeCall = calls().find((c) => c[0] === "pr" && c[1] === "merge");
     assert.ok(mergeCall.includes("--squash"));
+  });
+
+  it("mergePrAt falls back to settings.defaultMergeMethod when no method and no project override (#1781)", async () => {
+    const store = {
+      getSettings: () => ({ defaultMergeMethod: "rebase" }),
+      getProjects: () => [{ id: "p1", path: repo, defaultMergeMethod: null }],
+    };
+    const result = await mergePrAt(repo, { prNumber: 12 }, { store });
+    assert.equal(result.ok, true);
+    const mergeCall = calls().find((c) => c[0] === "pr" && c[1] === "merge");
+    assert.ok(mergeCall.includes("--rebase"));
+  });
+
+  it("mergePrAt: project.defaultMergeMethod wins over the app setting, and a repo-disallowed pick falls back to the repo default (#1781)", async () => {
+    const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+    state.repo = {
+      squashMergeAllowed: false,
+      mergeCommitAllowed: true,
+      rebaseMergeAllowed: true,
+      viewerDefaultMergeMethod: "MERGE",
+    };
+    fs.writeFileSync(statePath, JSON.stringify(state));
+    const store = {
+      getSettings: () => ({ defaultMergeMethod: "rebase" }),
+      getProjects: () => [{ id: "p1", path: repo, defaultMergeMethod: "squash" }],
+    };
+    const result = await mergePrAt(repo, { prNumber: 12 }, { store });
+    assert.equal(result.ok, true);
+    const mergeCall = calls().find((c) => c[0] === "pr" && c[1] === "merge");
+    // project picked squash, but this repo disallows it -> the repo
+    // default (merge) wins, not the app setting (rebase).
+    assert.ok(mergeCall.includes("--merge"));
+    assert.ok(!mergeCall.includes("--squash"));
+    assert.ok(!mergeCall.includes("--rebase"));
   });
 
   it("viewPrDetail includes a checks summary and review decision (#1771)", async () => {
