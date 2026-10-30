@@ -24,6 +24,11 @@
 // <install>.update; applyUpdate() starts a helper (cmd on win32, sh on
 // linux) that waits for quit, renames the live folder to .old, moves
 // .update into place, and relaunches.
+//
+// The GitHub response that decides "is there a newer release" (fetchLatest)
+// is already the full release object, so status.notesBody/publishedAt are
+// lifted straight off it (issue #1757's "what's new" popover) without a
+// second request.
 
 const crypto = require("node:crypto");
 const fs = require("node:fs");
@@ -154,12 +159,21 @@ let stagedDir = null;
 let stagedInstall = null;
 /** @type {string | null} */
 let stagedExe = null;
+/** @type {string | null} raw body of the staged release, for the "what's new" popover */
+let stagedNotesBody = null;
+/** @type {string | null} */
+let stagedPublishedAt = null;
+/** @type {string | null} */
+let stagedUrl = null;
 
 function resetStaged() {
   stagedTag = null;
   stagedDir = null;
   stagedInstall = null;
   stagedExe = null;
+  stagedNotesBody = null;
+  stagedPublishedAt = null;
+  stagedUrl = null;
 }
 
 /**
@@ -193,9 +207,26 @@ async function doCheck(deps, install) {
     ? stamp.channel
     : deps.channelOverride || stamp.channel;
   const tag = stamp.tag;
-  const status = { state: "disabled", channel, tag: null, url: null, error: null };
+  const status = {
+    state: "disabled",
+    channel,
+    tag: null,
+    url: null,
+    error: null,
+    notesBody: null,
+    publishedAt: null,
+  };
   if (!channel || !tag) return status;
-  if (stagedTag) return { ...status, state: "staged", tag: stagedTag };
+  if (stagedTag) {
+    return {
+      ...status,
+      state: "staged",
+      tag: stagedTag,
+      url: stagedUrl,
+      notesBody: stagedNotesBody,
+      publishedAt: stagedPublishedAt,
+    };
+  }
 
   try {
     const latest = await fetchLatest(channel, deps.fetch);
@@ -204,6 +235,11 @@ async function doCheck(deps, install) {
     }
     status.tag = String(latest.tag_name);
     status.url = latest.html_url ? String(latest.html_url) : null;
+    // The release list/latest endpoints already return the full release
+    // object (body + published_at included), so the "what's new" popover
+    // never needs a second fetch.
+    status.notesBody = typeof latest.body === "string" ? latest.body : null;
+    status.publishedAt = latest.published_at ? String(latest.published_at) : null;
 
     const asset = pickAsset(latest, deps.platform, deps.arch);
     const bundle =
@@ -214,6 +250,9 @@ async function doCheck(deps, install) {
 
     const ready = await stage(asset, bundle, status.tag, deps);
     stagedTag = status.tag;
+    stagedUrl = status.url;
+    stagedNotesBody = status.notesBody;
+    stagedPublishedAt = status.publishedAt;
     if (ready && ready.exe) {
       stagedDir = ready.dir || null;
       stagedInstall = bundle;

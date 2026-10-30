@@ -169,6 +169,8 @@ describe("App boot wiring", () => {
         tag: "v0.11.0",
         url: "https://github.com/currentbits/solenta/releases/tag/v0.11.0",
         error: null,
+        notesBody: null,
+        publishedAt: null,
       },
     });
     const m = await boot(fake);
@@ -650,6 +652,171 @@ describe("App archive undo toast wiring", () => {
       "Undo must restore the CAPTURED id, not whatever is selected after archive",
     );
     m.unmount();
+  });
+});
+
+function stubNarrow(): () => void {
+  const prev = window.matchMedia;
+  window.matchMedia = ((query: string) => ({
+    matches: query.includes("max-width: 900px"),
+    media: query,
+    onchange: null,
+    addEventListener() {},
+    removeEventListener() {},
+    addListener() {},
+    removeListener() {},
+    dispatchEvent() {
+      return false;
+    },
+  })) as typeof window.matchMedia;
+  return () => {
+    if (typeof prev === "function") window.matchMedia = prev;
+    else delete (window as { matchMedia?: unknown }).matchMedia;
+  };
+}
+
+describe("App archive toast docking (#1758)", () => {
+  // The toast used to float fixed over the window center, on top of the
+  // composer. It now docks above the sidebar footer when the sidebar is
+  // visible, so it never covers a clickable control there either.
+  function archiveOpenThread() {
+    return thread({
+      id: "t-to-archive",
+      title: "thread marked for archive undo",
+      projectId: "p1",
+    });
+  }
+
+  async function archiveViaMenu(m: Awaited<ReturnType<typeof boot>>) {
+    const menuBtn = m
+      .queryAll("button")
+      .find(
+        (b) =>
+          b.getAttribute("aria-label") === "Thread actions" &&
+          !b.hasAttribute("data-more-btn"),
+      );
+    assert.ok(menuBtn, "Thread actions menu must be present on the open thread");
+    await m.click(menuBtn as HTMLElement);
+    const archiveItem = m
+      .queryAll("button")
+      .find((b) => (b.textContent || "").includes("Archive thread"));
+    assert.ok(archiveItem, "Archive thread menu item must exist");
+    await m.click(archiveItem as HTMLElement);
+  }
+
+  it("mounts inside the sidebar pane's footer when the sidebar is visible", async () => {
+    const target = archiveOpenThread();
+    const fake = createFakeCoder({
+      projects: [project({ id: "p1" })],
+      threads: [target],
+      details: { "t-to-archive": detail({ thread: target }) },
+    });
+    const m = await boot(fake);
+
+    await archiveViaMenu(m);
+
+    const sidebarToast = m.query('[data-pane="sidebar"] [data-toast="archive"]');
+    assert.ok(sidebarToast, "toast must mount inside the sidebar pane");
+    assert.equal(
+      m.query('[data-pane="thread"] [data-toast="archive"]'),
+      null,
+      "toast must not also mount in the thread pane fallback",
+    );
+    // Docked above the footer row, not covering its Settings / nav buttons.
+    const footer = m.query('[data-pane="sidebar"] footer');
+    assert.ok(footer, "sidebar footer must exist");
+    assert.ok(
+      footer!.contains(sidebarToast),
+      "toast dock must be inside the footer element so it anchors above the footer row",
+    );
+
+    const undo = m.byText("Undo");
+    assert.ok(undo, "Undo control must still be present");
+    await m.click(undo!);
+    const unarchive = fake
+      .of("threads.setArchived")
+      .map((c) => c.args[0] as { threadId: string; archived: boolean })
+      .find((a) => a.archived === false);
+    assert.ok(unarchive, "Undo must still restore the archived thread");
+
+    m.unmount();
+  });
+
+  it("falls back to the thread pane when the sidebar is collapsed to a rail", async () => {
+    const target = archiveOpenThread();
+    const fake = createFakeCoder({
+      projects: [project({ id: "p1" })],
+      threads: [target],
+      details: { "t-to-archive": detail({ thread: target }) },
+    });
+    const m = await boot(fake);
+    try {
+      await m.click(m.query("[data-sidebar-collapse]") as HTMLElement);
+      assert.ok(m.query("[data-sidebar-rail]"), "sidebar must be collapsed to a rail");
+
+      await archiveViaMenu(m);
+
+      assert.equal(
+        m.query('[data-pane="sidebar"] [data-toast="archive"]'),
+        null,
+        "collapsed sidebar must not receive the toast",
+      );
+      const fallbackToast = m.query('[data-pane="thread"] [data-toast="archive"]');
+      assert.ok(fallbackToast, "toast must fall back to the thread pane");
+
+      const undo = m.byText("Undo");
+      assert.ok(undo, "Undo control must still be present in the fallback");
+      await m.click(undo!);
+      const unarchive = fake
+        .of("threads.setArchived")
+        .map((c) => c.args[0] as { threadId: string; archived: boolean })
+        .find((a) => a.archived === false);
+      assert.ok(unarchive, "Undo must still restore the archived thread from the fallback");
+    } finally {
+      m.unmount();
+      window.localStorage.removeItem("app:sidebarHidden");
+    }
+  });
+
+  it("falls back to the thread pane when narrow and the sidebar drawer is closed", async () => {
+    const target = archiveOpenThread();
+    const fake = createFakeCoder({
+      projects: [project({ id: "p1" })],
+      threads: [target],
+      details: { "t-to-archive": detail({ thread: target }) },
+    });
+    const shell = await mount(<div />);
+    installFakeCoder(fake);
+    const restoreMatchMedia = stubNarrow();
+    shell.unmount();
+    const m = await mount(<App />);
+    try {
+      // Drawer starts closed in narrow layout (#219): the sidebar pane is
+      // inert and not what the user sees.
+      assert.equal(m.query('[data-drawer-open="sidebar"]')?.getAttribute("aria-expanded"), "false");
+
+      await archiveViaMenu(m);
+
+      assert.equal(
+        m.query('[data-pane="sidebar"] [data-toast="archive"]'),
+        null,
+        "closed drawer must not receive the toast",
+      );
+      const fallbackToast = m.query('[data-pane="thread"] [data-toast="archive"]');
+      assert.ok(fallbackToast, "toast must fall back to the thread pane");
+
+      const undo = m.byText("Undo");
+      assert.ok(undo, "Undo control must still be present in the narrow fallback");
+      await m.click(undo!);
+      const unarchive = fake
+        .of("threads.setArchived")
+        .map((c) => c.args[0] as { threadId: string; archived: boolean })
+        .find((a) => a.archived === false);
+      assert.ok(unarchive, "Undo must still restore the archived thread from the narrow fallback");
+    } finally {
+      m.unmount();
+      restoreMatchMedia();
+    }
   });
 });
 

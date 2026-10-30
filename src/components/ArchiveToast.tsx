@@ -4,7 +4,7 @@ import styles from "./ArchiveToast.module.css";
 /** How long the undo / error window stays open (Synara-style). */
 export const ARCHIVE_TOAST_MS = 6000;
 
-type ArchiveToastProps =
+type ArchiveToastProps = (
   | {
       /** Default: archive undo after an immediate archive. */
       variant?: "archive";
@@ -23,7 +23,16 @@ type ArchiveToastProps =
       /** Title line, e.g. Failed to remove "acme/ledger". */
       title: string;
       onDismiss: () => void;
-    };
+    }
+) & {
+  /**
+   * Render inside a positioned dock instead of fixed to the viewport
+   * (#1758: App's sidebar-footer / thread-pane docks). Callers that mount
+   * their own toast without a dock (Composer's stash/restore toast) must
+   * leave this unset to keep the original fixed bottom-center placement.
+   */
+  docked?: boolean;
+};
 
 /**
  * Local toast. No toast framework: one component, one timer.
@@ -31,7 +40,7 @@ type ArchiveToastProps =
  * Error variant: titled failure (e.g. remove project) without an undo action.
  */
 export function ArchiveToast(props: ArchiveToastProps) {
-  const { onDismiss } = props;
+  const { onDismiss, docked } = props;
   const durationMs =
     (props.variant !== "error" && props.durationMs) || ARCHIVE_TOAST_MS;
   useEffect(() => {
@@ -41,10 +50,14 @@ export function ArchiveToast(props: ArchiveToastProps) {
     return () => window.clearTimeout(handle);
   }, [onDismiss, durationMs]);
 
+  const toastClass = docked
+    ? `${styles.toast} ${styles.toastDocked}`
+    : styles.toast;
+
   if (props.variant === "error") {
     return (
       <div
-        className={`${styles.toast} ${styles.toastError}`}
+        className={`${toastClass} ${styles.toastError}`}
         role="alert"
         aria-live="assertive"
         data-toast="error"
@@ -65,7 +78,7 @@ export function ArchiveToast(props: ArchiveToastProps) {
 
   return (
     <div
-      className={styles.toast}
+      className={toastClass}
       role="status"
       aria-live="polite"
       data-toast="archive"

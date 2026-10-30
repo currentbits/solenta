@@ -184,6 +184,21 @@ function sanitizeAttachments(input) {
 }
 
 /**
+ * Agent-side prompt for a send with attachments but no words (#1759). The
+ * transcript keeps the empty text so the message renders as just the images;
+ * the agent still gets an instruction instead of an empty turn.
+ * @param {string} prompt
+ * @param {{ kind: string }[]} attachments
+ * @returns {string | null} the stand-in prompt, or null when there is text
+ */
+function attachmentOnlyPrompt(prompt, attachments) {
+  if (String(prompt || "").trim() || !attachments.length) return null;
+  return attachments.every((a) => a.kind === "image")
+    ? "The user sent these images without a message. Look at them and respond."
+    : "The user sent these attachments without a message. Look at them and respond.";
+}
+
+/**
  * CLI-only section listing the user's attachments. The transcript message
  * keeps the raw prompt; agents read the paths with their own file tools.
  * @param {{ kind: string, path: string }[]} attachments
@@ -223,5 +238,6 @@ module.exports = {
   replyCodexJsonRpcError,
   cancelCodexServerRequests,
   sanitizeAttachments,
+  attachmentOnlyPrompt,
   attachmentPromptSection,
 };

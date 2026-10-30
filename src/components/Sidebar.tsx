@@ -7,6 +7,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactNode,
 } from "react";
 import type {
   CliSessionCandidate,
@@ -116,6 +117,7 @@ import { BatchBar } from "./sidebar/BatchBar";
 import { TrashedShelf } from "./sidebar/TrashedShelf";
 import { RemoveProjectConfirm } from "./sidebar/RemoveProjectConfirm";
 import { InsightsMenu } from "./sidebar/InsightsMenu";
+import { UpdateNotesPopover } from "./sidebar/UpdateNotesPopover";
 import {
   FilterBar,
   type FilterMenu,
@@ -148,6 +150,14 @@ export interface SidebarProps {
   channel?: "prod" | "nightly" | null;
   /** Update check result; a button next to Settings when an update is waiting. */
   updateState?: UpdateStatus["state"] | null;
+  /** Tag of the offered release, for the "what's new" popover. */
+  updateTag?: UpdateStatus["tag"];
+  /** Release page URL; the popover's "Full notes" link. */
+  updateUrl?: UpdateStatus["url"];
+  /** Raw release body; summarized client-side (see UpdateNotesPopover). */
+  updateNotesBody?: UpdateStatus["notesBody"];
+  /** Publish time of the offered release, for a relative-age label. */
+  updatePublishedAt?: UpdateStatus["publishedAt"];
   /** Download + stage the waiting release (updateState "available"). */
   onDownloadUpdate?: () => void | Promise<void>;
   /** Relaunch into the staged bundle (updateState "staged"). */
@@ -318,6 +328,14 @@ export interface SidebarProps {
   onScopeRequestHandled?: () => void;
   /** Overlapping-edit forecast for the selected project (issue #249). */
   conflictForecast?: ConflictForecast | null;
+  /**
+   * Archive/settle/snooze undo (or error) toast, docked just above the
+   * footer row instead of covering the composer (#1758). Caller owns the
+   * toast's state/content; pass null/undefined when nothing is showing.
+   * Memoize this so it does not break the sidebar's memo on every
+   * unrelated App re-render (see the memo note above).
+   */
+  toast?: ReactNode;
 }
 
 /**
@@ -331,6 +349,10 @@ export const Sidebar = memo(function Sidebar({
   appVersion,
   channel,
   updateState,
+  updateTag,
+  updateUrl,
+  updateNotesBody,
+  updatePublishedAt,
   onDownloadUpdate,
   onApplyUpdate,
   searchPlaceholder,
@@ -392,6 +414,7 @@ export const Sidebar = memo(function Sidebar({
   scopeRequest = null,
   onScopeRequestHandled,
   conflictForecast = null,
+  toast = null,
 }: SidebarProps) {
   // Memoised: re-render when a chord is remapped so the ⌘K hint follows.
   useKeybindingOverrides();
@@ -2111,6 +2134,7 @@ export const Sidebar = memo(function Sidebar({
       />
 
       <footer className={styles.footer}>
+        {toast && <div className={styles.toastDock}>{toast}</div>}
         {projectError && (
           <div className={styles.errorBanner} role="alert">
             <span className={styles.errorText}>{projectError}</span>
@@ -2213,6 +2237,14 @@ export const Sidebar = memo(function Sidebar({
               state={stayAwake}
               onSetMode={onSetStayAwakeMode}
               compact={memoryEntries != null}
+            />
+          )}
+          {(updateState === "available" || updateState === "staged") && (
+            <UpdateNotesPopover
+              tag={updateTag}
+              url={updateUrl}
+              notesBody={updateNotesBody}
+              publishedAt={updatePublishedAt}
             />
           )}
           {(updateState === "available" || updateState === "staged") && (

@@ -1616,12 +1616,28 @@
 }
 
 .footer {
+  position: relative;
   flex-shrink: 0;
   border-top: 1px solid var(--border-soft);
   padding: 8px;
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+
+/* Undo/error toast, docked just above the footer row (#1758) so it never
+   covers the Settings / nav / update buttons below it. bottom: 100% of the
+   footer's own box keeps it flush above regardless of footer height
+   (error banner, update button, etc. all change that height). */
+.toastDock {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: calc(100% + 8px);
+  z-index: 5;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
 }
 
 .errorBanner {
@@ -1810,6 +1826,66 @@
 /* Anchor to the footer row, not the 30px icon, so it never clips. */
 .footerRow {
   position: relative;
+}
+
+/* "What's new" popover beside the footer Update button (#1757). */
+.updateNotesHost {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.updateNotesTrigger {
+  font-size: 11px;
+  color: var(--text-muted);
+  padding: 0 4px;
+  height: 24px;
+}
+
+.updateNotesTrigger:hover,
+.updateNotesTrigger:focus-visible {
+  color: var(--text);
+}
+
+.updateNotesPopover {
+  position: absolute;
+  bottom: 100%;
+  right: 0;
+  z-index: 8;
+  width: 240px;
+  margin-bottom: 6px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-soft);
+  background: var(--card);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+  font-size: 12px;
+  color: var(--text);
+}
+
+.updateNotesHead {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.updateNotesAge {
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.updateNotesList {
+  margin: 0 0 8px;
+  padding-left: 16px;
+  color: var(--text-dim);
+  line-height: 1.4;
+}
+
+.updateNotesLink {
+  color: var(--blue);
+  font-size: 11px;
 }
 
 .footerRow .viewNav .filterMenuHost {

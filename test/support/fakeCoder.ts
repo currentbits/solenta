@@ -787,6 +787,8 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
               tag: null,
               url: null,
               error: null,
+              notesBody: null,
+              publishedAt: null,
             } as UpdateStatus),
         ),
       downloadUpdate: () =>
@@ -796,6 +798,8 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           tag: null,
           url: null,
           error: null,
+          notesBody: null,
+          publishedAt: null,
         } as UpdateStatus),
       applyUpdate: () => rec("app.applyUpdate", [], undefined),
       openRemoteConnection: (input: unknown) =>

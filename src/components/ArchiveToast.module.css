@@ -1,3 +1,8 @@
+/*
+ * Default: fixed to the viewport bottom-center. Other callers (Composer's
+ * own stash/restore toast) still rely on this self-positioning and are out
+ * of scope for #1758.
+ */
 .toast {
   position: fixed;
   bottom: 24px;
@@ -14,6 +19,24 @@
   box-shadow: 0 8px 24px var(--shadow-color);
   color: var(--text);
   font-size: 13px;
+}
+
+/*
+ * Docked variant (#1758): the archive/settle/snooze undo (and error) toast
+ * mounted from App.tsx. Positioning lives on the dock around it instead
+ * (anchored to the sidebar footer, or the thread-pane fallback) in
+ * App.module.css / Sidebar.module.css, so this cancels the fixed placement
+ * above and just lets the dock's flex row center the pill. The dock itself
+ * is pointer-events: none (it must not block clicks past it); the pill
+ * stays clickable.
+ */
+.toastDocked {
+  position: static;
+  bottom: auto;
+  left: auto;
+  transform: none;
+  z-index: auto;
+  pointer-events: auto;
 }
 
 .toastError {

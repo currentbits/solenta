@@ -236,6 +236,116 @@ describe("updater.checkUpdate", () => {
   });
 });
 
+describe("updater.checkUpdate: release notes (issue #1757)", () => {
+  afterEach(() => updater.resetStaged());
+
+  it("prod: lifts notesBody + publishedAt from the release the check already fetched", async () => {
+    const res = await updater.checkUpdate({
+      pkg: PROD_PKG,
+      bundlePath: null,
+      fetch: fakeFetch({
+        "/releases/latest": {
+          tag_name: "v0.2.0",
+          html_url: "https://github.com/currentbits/solenta/releases/tag/v0.2.0",
+          body: "## Highlights\n- Faster cold start\n",
+          published_at: "2026-08-22T20:49:07Z",
+          assets: [],
+        },
+      }),
+    });
+    assert.equal(res.state, "available");
+    assert.equal(res.notesBody, "## Highlights\n- Faster cold start\n");
+    assert.equal(res.publishedAt, "2026-08-22T20:49:07Z");
+  });
+
+  it("nightly: lifts notesBody + publishedAt from the newest prerelease in the list response", async () => {
+    const res = await updater.checkUpdate({
+      pkg: NIGHTLY_PKG,
+      bundlePath: null,
+      fetch: fakeFetch({
+        "/releases?": [
+          {
+            tag_name: "nightly-202608140000-def456",
+            prerelease: true,
+            draft: false,
+            html_url: "y",
+            body: "Nightly build from def456.",
+            published_at: "2026-08-14T00:00:00Z",
+            assets: [],
+          },
+        ],
+      }),
+    });
+    assert.equal(res.notesBody, "Nightly build from def456.");
+    assert.equal(res.publishedAt, "2026-08-14T00:00:00Z");
+  });
+
+  it("no body on the release: notesBody is null, not an empty string", async () => {
+    const res = await updater.checkUpdate({
+      pkg: PROD_PKG,
+      bundlePath: null,
+      fetch: fakeFetch({
+        "/releases/latest": { tag_name: "v0.2.0", html_url: "y", assets: [] },
+      }),
+    });
+    assert.equal(res.notesBody, null);
+    assert.equal(res.publishedAt, null);
+  });
+
+  it("already staged: a repeat check short-circuits on stagedTag but still carries the notes", async () => {
+    const install = fs.mkdtempSync(path.join(os.tmpdir(), "solenta-upd-notes-"));
+    const zip = makeWinZip();
+    try {
+      fs.mkdirSync(path.join(install, "resources", "app"), { recursive: true });
+      fs.writeFileSync(path.join(install, "solenta.exe"), "old-exe");
+
+      const base = { pkg: PROD_PKG, platform: "win32", arch: "x64", bundlePath: install };
+      const fetchRelease = async (url) =>
+        String(url).includes("example.invalid")
+          ? { ok: true, status: 200, body: Readable.toWeb(Readable.from(zip.bytes)) }
+          : {
+              ok: true,
+              status: 200,
+              json: async () => ({
+                tag_name: "v0.2.0",
+                html_url: "u",
+                body: "## Highlights\n- Faster cold start\n",
+                published_at: "2026-08-22T20:49:07Z",
+                assets: [
+                  {
+                    name: "Solenta-v0.2.0-win32-x64.zip",
+                    browser_download_url: "https://example.invalid/app.zip",
+                    digest: zip.digest,
+                  },
+                ],
+              }),
+            };
+      const staged = await updater.downloadUpdate({ ...base, fetch: fetchRelease });
+      assert.equal(staged.state, "staged");
+      assert.equal(staged.notesBody, "## Highlights\n- Faster cold start\n");
+
+      // A second check must short-circuit on stagedTag, never calling fetch
+      // again, yet still carry the same notes/publishedAt forward.
+      const repeat = await updater.checkUpdate({
+        ...base,
+        fetch: async () => assert.fail("checkUpdate re-fetched after already staging"),
+      });
+      assert.equal(repeat.state, "staged");
+      assert.equal(repeat.tag, "v0.2.0");
+      assert.equal(
+        repeat.notesBody,
+        "## Highlights\n- Faster cold start\n",
+        "the cached stagedTag path must carry the same notes forward",
+      );
+      assert.equal(repeat.publishedAt, "2026-08-22T20:49:07Z");
+    } finally {
+      fs.rmSync(install, { recursive: true, force: true });
+      fs.rmSync(`${install}.update`, { recursive: true, force: true });
+      fs.rmSync(zip.parent, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("updater.stage digest verification", () => {
   const bytes = Buffer.from("pretend this is a zip");
   const sum = require("node:crypto").createHash("sha256").update(bytes).digest("hex");

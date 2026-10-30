@@ -2283,6 +2283,165 @@ describe("ThreadView file attachments (issue #653)", () => {
   });
 });
 
+describe("ThreadView image-only user messages (issue #1759)", () => {
+  const img = (n: number): AttachmentInfo => ({
+    kind: "image",
+    path: `/tmp/shot${n}.png`,
+    name: `shot${n}.png`,
+  });
+  const loadDataUrl = async (p: string) => `data:image/png;base64,${p}`;
+
+  it("single image: no bubble background, a right-aligned image wrapper", async () => {
+    const m = await mount(
+      view({
+        onLoadAttachmentImage: loadDataUrl,
+        detail: detail({
+          messages: [
+            msg({ id: "u1", role: "user", text: "", createdAt: 10, attachments: [img(1)] }),
+          ],
+        }),
+      }),
+    );
+    await m.flush();
+    assert.equal(
+      m.query(".userBubble"),
+      null,
+      "an image-only message must not render the bubble background/padding",
+    );
+    assert.ok(m.query("[data-attachment-image]"), "a single-image wrapper must render");
+    assert.ok(m.query("img.singleImage"), "the loaded image renders inside it");
+    m.unmount();
+  });
+
+  it("three images collage with a layout attribute", async () => {
+    const m = await mount(
+      view({
+        onLoadAttachmentImage: loadDataUrl,
+        detail: detail({
+          messages: [
+            msg({
+              id: "u1",
+              role: "user",
+              text: "",
+              createdAt: 10,
+              attachments: [img(1), img(2), img(3)],
+            }),
+          ],
+        }),
+      }),
+    );
+    await m.flush();
+    const collage = m.query("[data-image-collage]");
+    assert.ok(collage, "a collage container must render for several images");
+    assert.equal(collage?.getAttribute("data-image-collage"), "3");
+    assert.equal(m.queryAll("img.collageImage").length, 3);
+    m.unmount();
+  });
+
+  it("five images collapse the fifth into a +1 overlay on the fourth tile", async () => {
+    const m = await mount(
+      view({
+        onLoadAttachmentImage: loadDataUrl,
+        detail: detail({
+          messages: [
+            msg({
+              id: "u1",
+              role: "user",
+              text: "",
+              createdAt: 10,
+              attachments: [img(1), img(2), img(3), img(4), img(5)],
+            }),
+          ],
+        }),
+      }),
+    );
+    await m.flush();
+    assert.equal(
+      m.queryAll("img.collageImage").length,
+      4,
+      "only the first four images get a tile",
+    );
+    assert.ok(m.text().includes("+1"), "the fifth image collapses into a +1 overlay");
+    m.unmount();
+  });
+
+  it("text plus images keeps the ordinary bubble and chip rendering", async () => {
+    const m = await mount(
+      view({
+        onLoadAttachmentImage: loadDataUrl,
+        detail: detail({
+          messages: [
+            msg({
+              id: "u1",
+              role: "user",
+              text: "check this out",
+              createdAt: 10,
+              attachments: [img(1)],
+            }),
+          ],
+        }),
+      }),
+    );
+    await m.flush();
+    assert.ok(m.query(".userBubble"), "a message with text keeps the bubble");
+    assert.equal(
+      m.query("[data-attachment-image]"),
+      null,
+      "text alongside an image must not switch to the image-only layout",
+    );
+    assert.ok(
+      m.query('[data-attachment-kind="image"]'),
+      "falls back to the existing chip rendering",
+    );
+    m.unmount();
+  });
+
+  it("a mix of an image and a non-image file keeps today's chip rendering", async () => {
+    const m = await mount(
+      view({
+        onLoadAttachmentImage: loadDataUrl,
+        detail: detail({
+          messages: [
+            msg({
+              id: "u1",
+              role: "user",
+              text: "",
+              createdAt: 10,
+              attachments: [img(1), { kind: "file", path: "/tmp/notes.md", name: "notes.md" }],
+            }),
+          ],
+        }),
+      }),
+    );
+    await m.flush();
+    assert.ok(m.query(".userBubble"), "mixed attachments must not switch to the image-only layout");
+    assert.equal(m.query("[data-attachment-image]"), null);
+    assert.equal(m.query("[data-image-collage]"), null);
+    m.unmount();
+  });
+
+  it("clicking an image-only attachment still opens the lightbox", async () => {
+    const dataUrl = "data:image/png;base64,ZZZZ";
+    const m = await mount(
+      view({
+        onLoadAttachmentImage: async () => dataUrl,
+        detail: detail({
+          messages: [
+            msg({ id: "u1", role: "user", text: "", createdAt: 10, attachments: [img(1)] }),
+          ],
+        }),
+      }),
+    );
+    await m.flush();
+    assert.equal(m.query("[data-image-lightbox]"), null, "closed by default");
+    await m.click(m.query("img.singleImage"));
+    const box = m.query("[data-image-lightbox]");
+    assert.ok(box, "clicking the image must open the lightbox");
+    assert.equal(m.query("img.lightboxImg")?.getAttribute("src"), dataUrl);
+    m.unmount();
+  });
+});
+
 describe("ThreadView file drop (issue #469)", () => {
   it("attaches a file dropped on the transcript, not only the composer", async () => {
     const seen: File[] = [];

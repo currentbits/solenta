@@ -644,6 +644,30 @@ describe("runner attachments", () => {
     assert.equal(userMsg.pdfText, true, "transcript chip says text only");
   });
 
+  it("sends images without words: empty transcript text, stand-in agent prompt (#1759)", async () => {
+    process.env.CODER_AGENT_CMD = `${process.execPath} -e require('fs').writeFileSync('argv.json',JSON.stringify(process.argv));process.stdout.write('ok');setTimeout(()=>process.exit(0),20)`;
+
+    const thread = store.getThreads()[0];
+    const image = path.join(tmpDir, "shot.png");
+    fs.writeFileSync(image, "x");
+    await runner.startRun({
+      threadId: thread.id,
+      prompt: "",
+      attachments: [{ kind: "image", path: image, name: "shot.png" }],
+    });
+    await waitFor(() => store.getThread(thread.id)?.status === "done");
+
+    const userMsg = store.getMessages(thread.id).find((m) => m.role === "user");
+    assert.equal(userMsg.text, "", "the transcript shows just the image");
+    assert.equal(store.getThread(thread.id).title, "shot.png");
+    const argv = JSON.parse(
+      fs.readFileSync(path.join(tmpDir, "app", "argv.json"), "utf8"),
+    );
+    const dispatchPrompt = argv[argv.length - 1];
+    assert.ok(dispatchPrompt.includes("sent these images without a message"));
+    assert.ok(dispatchPrompt.includes(`- Image: ${image}`));
+  });
+
   it("leaves prompt and message untouched without attachments", async () => {
     process.env.CODER_AGENT_CMD = `${process.execPath} -e require('fs').writeFileSync('argv.json',JSON.stringify(process.argv));process.stdout.write('ok');setTimeout(()=>process.exit(0),20)`;
 

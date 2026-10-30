@@ -19,6 +19,8 @@ export function useCoderUpdates({
       channel: prev?.channel ?? null,
       tag: prev?.tag ?? null,
       url: prev?.url ?? null,
+      notesBody: prev?.notesBody ?? null,
+      publishedAt: prev?.publishedAt ?? null,
       state: "error",
       error: err instanceof Error && err.message ? err.message : String(err),
     }));

@@ -2065,6 +2065,54 @@ describe("Sidebar update indicator (issue #138 / #673)", () => {
   });
 });
 
+describe("Sidebar update notes popover (issue #1757)", () => {
+  const NOTES = "## Highlights\n- Faster cold start\n- Fixed a crash on quit\n";
+  const PUBLISHED_AT = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
+
+  it("shows version, relative age and the notes summary on hover", async () => {
+    const m = await mount(
+      sidebar(THREADS, {
+        updateState: "available",
+        updateTag: "v0.11.0",
+        updateUrl: "https://github.com/currentbits/solenta/releases/tag/v0.11.0",
+        updateNotesBody: NOTES,
+        updatePublishedAt: PUBLISHED_AT,
+      }),
+    );
+    const trigger = m.byText("What's new");
+    assert.ok(trigger, "a What's new trigger renders beside the update button");
+    await m.hover(trigger);
+    assert.ok(m.text().includes("v0.11.0"), "version is shown");
+    assert.ok(m.text().includes("shipped 3h ago"), "relative age is shown");
+    assert.ok(m.text().includes("Faster cold start"), "summary bullet is shown");
+    const link = m.query("[data-update-notes] a") as HTMLAnchorElement | null;
+    assert.ok(link, "Full notes link renders");
+    assert.equal(
+      link?.getAttribute("href"),
+      "https://github.com/currentbits/solenta/releases/tag/v0.11.0",
+    );
+    assert.equal(link?.getAttribute("target"), "_blank");
+    m.unmount();
+  });
+
+  it("renders nothing when the update check carried no notes", async () => {
+    const m = await mount(
+      sidebar(THREADS, { updateState: "available", updateTag: "v0.11.0" }),
+    );
+    assert.equal(
+      m.byText("What's new"),
+      null,
+      "no popover trigger without a notes body",
+    );
+    assert.equal(
+      m.query("[data-settings-update]")?.textContent,
+      "Update",
+      "the Update button itself is unaffected",
+    );
+    m.unmount();
+  });
+});
+
 describe("Sidebar wordmark version (issue #673)", () => {
   it("renders the running version next to the app name", async () => {
     const m = await mount(sidebar(THREADS, { appVersion: "0.10.0" }));
