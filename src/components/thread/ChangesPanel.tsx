@@ -704,7 +704,7 @@ function emptyCopy(scope: DiffScope, diff: DiffResult | null): string {
   return "Working tree is clean";
 }
 
-export function ChangesPanel({
+export const ChangesPanel = memo(function ChangesPanel({
   open,
   embedded = false,
   threadId,
@@ -1807,4 +1807,4 @@ export function ChangesPanel({
       )}
     </section>
   );
-}
+});

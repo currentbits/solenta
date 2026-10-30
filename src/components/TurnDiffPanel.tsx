@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, memo, useEffect, useMemo, useRef, useState } from "react";
 import type { DiffResult, FileChange } from "../shared/ipc";
 import {
   annotateHunkLines,
@@ -255,7 +255,7 @@ function FileChip({
   );
 }
 
-export function TurnDiffPanel({
+export const TurnDiffPanel = memo(function TurnDiffPanel({
   threadId,
   sha,
   turn,
@@ -423,4 +423,4 @@ export function TurnDiffPanel({
       ) : null}
     </section>
   );
-}
+});
