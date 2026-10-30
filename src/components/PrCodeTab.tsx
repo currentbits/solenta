@@ -1,4 +1,11 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Fragment,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import type {
   CoderApi,
   FileChange,
@@ -7,8 +14,18 @@ import type {
 } from "../shared/ipc";
 import { isEmptyDiff } from "../diffView";
 import { parsePatch } from "../reviewItinerary";
-import { FileHunks, TestFilesBar, filterTestFiles } from "./TurnDiffPanel";
-import { useDiffHideTests } from "../uiPrefs";
+import {
+  FileHunks,
+  TestFilesBar,
+  TreeListToggle,
+  filterTestFiles,
+} from "./TurnDiffPanel";
+import { useDiffHideTests, useDiffTreeView } from "../uiPrefs";
+import {
+  buildFileTree,
+  type FileTreeDir,
+  type FileTreeNode,
+} from "../fileTree";
 import type { DiffViewMode } from "../turnDiff";
 import diffStyles from "./TurnDiffPanel.module.css";
 import styles from "./PrWorkspacePanel.module.css";
@@ -31,6 +48,129 @@ function viewedLabel(file: FileChange): string | null {
   return null;
 }
 
+/** Same glyph as the Git pane's copy-path button (#1772). */
+function CopyGlyph() {
+  return (
+    <svg
+      width="12"
+      height="12"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <rect x="5.5" y="5.5" width="8" height="8" rx="1.5" />
+      <path d="M10.5 5.5V4a1.5 1.5 0 0 0-1.5-1.5H4A1.5 1.5 0 0 0 2.5 4v5A1.5 1.5 0 0 0 4 10.5h1.5" />
+    </svg>
+  );
+}
+
+/** One file entry: a chip in List view, a full-width row in Tree view. */
+function FileEntry({
+  file,
+  selected,
+  tree = false,
+  depth = 0,
+  copied,
+  onSelect,
+  onCopy,
+}: {
+  file: FileChange;
+  selected: boolean;
+  tree?: boolean;
+  depth?: number;
+  copied: boolean;
+  onSelect: (path: string) => void;
+  onCopy: (path: string) => void;
+}) {
+  return (
+    <div
+      className={diffStyles.fileChip}
+      data-tree={tree ? "" : undefined}
+      style={tree && depth ? { paddingLeft: depth * 14 } : undefined}
+    >
+      <button
+        type="button"
+        className={diffStyles.entryBtn}
+        data-pr-code-file={file.path}
+        data-selected={selected ? "" : undefined}
+        data-viewed={file.viewed || "unseen"}
+        aria-pressed={selected}
+        onClick={() => onSelect(file.path)}
+      >
+        <span className={diffStyles.filePath} title={file.path}>
+          {file.path}
+        </span>
+        <span className={diffStyles.fileStats}>
+          <span className={diffStyles.adds}>+{file.additions}</span>
+          <span className={diffStyles.dels}>−{file.deletions}</span>
+        </span>
+        {viewedLabel(file) ? (
+          <span className={styles.viewedChip} data-pr-viewed-state={file.viewed}>
+            {viewedLabel(file)}
+          </span>
+        ) : null}
+      </button>
+      <button
+        type="button"
+        className={diffStyles.fileCopy}
+        data-file-copy-path={file.path}
+        aria-label={`Copy path ${file.path}`}
+        title="Copy path"
+        onClick={(e) => {
+          e.stopPropagation();
+          onCopy(file.path);
+        }}
+      >
+        {copied ? "✓" : <CopyGlyph />}
+      </button>
+    </div>
+  );
+}
+
+/** Tree view (#1772) directory row: file count, summed +/-, collapsible. */
+function DirEntry({
+  node,
+  depth,
+  collapsed,
+  onToggle,
+}: {
+  node: FileTreeDir<FileChange>;
+  depth: number;
+  collapsed: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={diffStyles.dirRow}
+      data-dir-row={node.path}
+      aria-expanded={!collapsed}
+      style={depth ? { paddingLeft: depth * 14 } : undefined}
+      onClick={onToggle}
+    >
+      <span
+        className={diffStyles.dirTwisty}
+        data-open={collapsed ? undefined : ""}
+        aria-hidden
+      >
+        ›
+      </span>
+      <span className={diffStyles.dirName} title={node.path}>
+        {node.name}
+      </span>
+      <span className={diffStyles.fileStats}>
+        <span className={diffStyles.dirCount}>{node.fileCount}</span>
+        <span className={diffStyles.adds}>+{node.additions}</span>
+        <span className={diffStyles.dels}>−{node.deletions}</span>
+      </span>
+    </button>
+  );
+}
+
 export function PrCodeTab({
   projectPath,
   prNumber,
@@ -49,6 +189,18 @@ export function PrCodeTab({
   const [filePatches, setFilePatches] = useState<Record<string, FilePatchState>>(
     {},
   );
+  /** Tree view (#1772) collapse state; kept while the tab stays mounted. */
+  const [collapsedDirs, setCollapsedDirs] = useState<Set<string>>(
+    () => new Set(),
+  );
+  /** Copy-path feedback: which path was just copied, if any. */
+  const [copiedPath, setCopiedPath] = useState<string | null>(null);
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    return () => {
+      if (copyTimerRef.current != null) clearTimeout(copyTimerRef.current);
+    };
+  }, []);
   const loadGen = useRef(0);
 
   const load = async (nextCommit = commit) => {
@@ -83,6 +235,8 @@ export function PrCodeTab({
 
   useEffect(() => {
     setCommit("");
+    setCollapsedDirs(new Set());
+    setCopiedPath(null);
     void load("");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectPath, prNumber, repo]);
@@ -91,8 +245,70 @@ export function PrCodeTab({
   const headSha = result && result.ok ? result.headSha : "";
   const commits: PrCommit[] = result && result.ok ? result.commits : [];
   const hideTests = useDiffHideTests();
+  const treeView = useDiffTreeView();
   const testFilter = useMemo(() => filterTestFiles(files, hideTests), [files, hideTests]);
   const shownFiles = testFilter.shown;
+  const tree = useMemo(() => buildFileTree(shownFiles), [shownFiles]);
+
+  const copyPath = (path: string) => {
+    navigator.clipboard?.writeText(path).then(
+      () => {
+        setCopiedPath(path);
+        if (copyTimerRef.current != null) clearTimeout(copyTimerRef.current);
+        copyTimerRef.current = setTimeout(() => {
+          setCopiedPath(null);
+          copyTimerRef.current = null;
+        }, 1400);
+      },
+      () => {},
+    );
+  };
+
+  const toggleDir = (path: string) => {
+    setCollapsedDirs((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  };
+
+  /** Tree view rows: same FileEntry as the chip list, nested under DirEntry. */
+  const renderTree = (
+    nodes: FileTreeNode<FileChange>[],
+    depth: number,
+  ): ReactNode[] => {
+    const rows: ReactNode[] = [];
+    for (const node of nodes) {
+      if (node.kind === "file") {
+        rows.push(
+          <FileEntry
+            key={node.path}
+            file={node.file}
+            selected={selectedPath === node.path}
+            tree
+            depth={depth}
+            copied={copiedPath === node.path}
+            onSelect={setSelectedPath}
+            onCopy={copyPath}
+          />,
+        );
+        continue;
+      }
+      const collapsed = collapsedDirs.has(node.path);
+      rows.push(
+        <DirEntry
+          key={node.path}
+          node={node}
+          depth={depth}
+          collapsed={collapsed}
+          onToggle={() => toggleDir(node.path)}
+        />,
+      );
+      if (!collapsed) rows.push(...renderTree(node.children, depth + 1));
+    }
+    return rows;
+  };
 
   useEffect(() => {
     if (shownFiles.length === 0) {
@@ -231,35 +447,27 @@ export function PrCodeTab({
       {loading && !result ? <p className={styles.hint}>Loading diff…</p> : null}
       {empty ? <p className={styles.hint}>No textual diff</p> : null}
 
+      <TreeListToggle />
       <TestFilesBar {...testFilter} />
       {shownFiles.length > 0 ? (
-        <div className={diffStyles.files}>
-          {shownFiles.map((file) => (
-            <button
-              key={file.path}
-              type="button"
-              className={diffStyles.fileBtn}
-              data-pr-code-file={file.path}
-              data-selected={selectedPath === file.path ? "" : undefined}
-              data-viewed={file.viewed || "unseen"}
-              aria-pressed={selectedPath === file.path}
-              onClick={() => setSelectedPath(file.path)}
-            >
-              <span className={diffStyles.filePath} title={file.path}>
-                {file.path}
-              </span>
-              <span className={diffStyles.fileStats}>
-                <span className={diffStyles.adds}>+{file.additions}</span>
-                <span className={diffStyles.dels}>−{file.deletions}</span>
-              </span>
-              {viewedLabel(file) ? (
-                <span className={styles.viewedChip} data-pr-viewed-state={file.viewed}>
-                  {viewedLabel(file)}
-                </span>
-              ) : null}
-            </button>
-          ))}
-        </div>
+        treeView ? (
+          <div className={diffStyles.fileTree} data-pr-code-tree="">
+            {renderTree(tree, 0)}
+          </div>
+        ) : (
+          <div className={diffStyles.files}>
+            {shownFiles.map((file) => (
+              <FileEntry
+                key={file.path}
+                file={file}
+                selected={selectedPath === file.path}
+                copied={copiedPath === file.path}
+                onSelect={setSelectedPath}
+                onCopy={copyPath}
+              />
+            ))}
+          </div>
+        )
       ) : null}
 
       {selected ? (

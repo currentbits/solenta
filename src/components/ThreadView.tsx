@@ -4091,6 +4091,7 @@ export const ThreadView = memo(function ThreadView({
                 threadTitle={detail?.thread.title ?? ""}
                 threadBranch={detail?.thread.branch ?? null}
                 threadBaseBranch={detail?.thread.baseBranch ?? null}
+                threadWorktreePath={detail?.thread.worktreePath ?? null}
                 planText={planTextOf(detail)}
                 openNonce={changesNonce}
                 focus={diffFocus}

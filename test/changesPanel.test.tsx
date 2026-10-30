@@ -6,10 +6,11 @@
  * Run: node --import=./test/support/render.mjs --test test/changesPanel.test.tsx
  */
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { afterEach, describe, it } from "node:test";
 import { inAct, mount, type Mounted } from "./support/dom.ts";
 import { ThreadView } from "../src/components/ThreadView";
 import { revealFileLabel } from "../src/components/thread/ChangesPanel";
+import { setDiffHideTests, setDiffTreeView } from "../src/uiPrefs";
 import type {
   DiffResult,
   ProjectInfo,
@@ -17,6 +18,16 @@ import type {
   ThreadDetail,
   ThreadInfo,
 } from "../src/shared/ipc";
+
+// Top-level, like changesDiffViews.test.tsx's reset: registered before any
+// describe()'s own hooks, so dom.ts's unmountAll (registered when it was
+// imported, above) runs first and these fire on an already-unmounted tree
+// instead of notifying a still-live useSyncExternalStore subscriber outside
+// act().
+afterEach(() => {
+  setDiffTreeView(false);
+  setDiffHideTests(false);
+});
 
 const project: ProjectInfo = {
   id: "p1",
@@ -763,5 +774,153 @@ describe("ChangesPanel inline comments (issue #162)", () => {
     const { m } = mountPanel({ archived: true });
     const view = await m;
     assert.equal(view.queryAll("[data-diff-comment-gutter]").length, 0);
+  });
+});
+
+const TREE_DIFF: DiffResult = {
+  files: [
+    { path: "src/components/thread/a.tsx", status: "M", additions: 2, deletions: 1 },
+    { path: "src/components/thread/b.tsx", status: "M", additions: 3, deletions: 0 },
+    { path: "README.md", status: "M", additions: 1, deletions: 1 },
+  ],
+  patch: "",
+  truncated: false,
+};
+
+describe("Git pane Tree view (#1772)", () => {
+  it("List is the default flat list; Tree groups under a compressed directory and collapses it", async () => {
+    const { m } = mountPanel({ diff: TREE_DIFF });
+    const view = await m;
+    await view.flush();
+
+    assert.equal(
+      view.query("[data-tree-toggle='list']")?.getAttribute("aria-pressed"),
+      "true",
+    );
+    assert.equal(view.query("[data-dir-row]"), null, "no directory rows in List");
+    assert.deepEqual(
+      view.queryAll("[data-file-row]").map((el) => el.getAttribute("data-file-path")),
+      ["src/components/thread/a.tsx", "src/components/thread/b.tsx", "README.md"],
+    );
+
+    await view.click(view.query("[data-tree-toggle='tree']"));
+    await view.flush();
+    assert.equal(
+      view.query("[data-tree-toggle='tree']")?.getAttribute("aria-pressed"),
+      "true",
+    );
+    const dir = view.query("[data-dir-row='src/components/thread']");
+    assert.ok(dir, "single-child chain compresses into one directory row");
+    assert.equal(dir!.querySelector(".fileStats")?.textContent, "2+5−1");
+    assert.deepEqual(
+      [...view.queryAll("[data-file-row]")]
+        .map((el) => el.getAttribute("data-file-path"))
+        .sort(),
+      ["README.md", "src/components/thread/a.tsx", "src/components/thread/b.tsx"].sort(),
+      "both views keep every file visible",
+    );
+
+    // Collapsing the directory hides its files but keeps the sibling file.
+    await view.click(dir!);
+    await view.flush();
+    assert.equal(dir!.getAttribute("aria-expanded"), "false");
+    assert.deepEqual(
+      view.queryAll("[data-file-row]").map((el) => el.getAttribute("data-file-path")),
+      ["README.md"],
+    );
+
+    // Expanding it again brings the files back.
+    await view.click(dir!);
+    await view.flush();
+    assert.equal(view.queryAll("[data-file-row]").length, 3);
+  });
+});
+
+describe("Git pane +/- total (#1772)", () => {
+  it("sums +/- across the visible files and respects Hide tests", async () => {
+    const diff: DiffResult = {
+      files: [
+        { path: "src/a.ts", status: "M", additions: 3, deletions: 1 },
+        { path: "src/b.ts", status: "M", additions: 2, deletions: 4 },
+        { path: "test/a.test.ts", status: "M", additions: 10, deletions: 10 },
+      ],
+      patch: "",
+      truncated: false,
+    };
+    const { m } = mountPanel({ diff });
+    const view = await m;
+    await view.flush();
+    const summary = view.query("[data-changes-summary]");
+    assert.ok(summary);
+    assert.equal(summary!.querySelector(".changesSummaryCount")?.textContent, "3 files");
+    assert.equal(summary!.querySelector(".fileStats")?.textContent, "+15−15");
+
+    await view.click(view.query("[data-hide-tests]"));
+    await view.flush();
+    assert.equal(summary!.querySelector(".changesSummaryCount")?.textContent, "2 files");
+    assert.equal(summary!.querySelector(".fileStats")?.textContent, "+5−5");
+  });
+});
+
+describe("Git pane copy path (#1772)", () => {
+  function stubClipboard(): string[] {
+    const copied: string[] = [];
+    Object.defineProperty(navigator, "clipboard", {
+      value: {
+        writeText: async (text: string) => {
+          copied.push(text);
+        },
+      },
+      configurable: true,
+    });
+    return copied;
+  }
+
+  it("copies the repo-relative path, and the absolute worktree path on Alt-click", async () => {
+    const copied = stubClipboard();
+    const { m } = mountPanel();
+    const view = await m;
+    await view.flush();
+    const btn = view.query("[data-file-copy-path='src/a.ts']") as HTMLButtonElement | null;
+    assert.ok(btn, "copy path button");
+
+    await view.click(btn);
+    assert.deepEqual(copied, ["src/a.ts"]);
+    assert.equal(btn!.textContent, "✓", "flips to a checkmark");
+
+    await inAct(() => {
+      btn!.dispatchEvent(
+        new MouseEvent("click", { bubbles: true, cancelable: true, altKey: true }),
+      );
+    });
+    await view.flush();
+    assert.deepEqual(copied, ["src/a.ts", "/tmp/wt/src/a.ts"]);
+  });
+
+  it("the file row context menu also has a Copy path item", async () => {
+    const copied = stubClipboard();
+    const { m } = mountPanel();
+    const view = await m;
+    await view.flush();
+    const row = view.query("[data-file-row][data-file-path='src/a.ts']");
+    assert.ok(row);
+    await inAct(() => {
+      row!.dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          clientX: 10,
+          clientY: 10,
+        }),
+      );
+    });
+    await view.flush();
+    const item = document.querySelector(
+      "[data-file-copy-path-menu]",
+    ) as HTMLButtonElement | null;
+    assert.ok(item, "Copy path menu item");
+    await view.click(item);
+    await view.flush();
+    assert.deepEqual(copied, ["src/a.ts"]);
   });
 });
