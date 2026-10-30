@@ -1602,27 +1602,33 @@ describe("runner claude provider", () => {
         redirect: "do the other thing instead",
       });
 
-      // Claude's deny carries the redirect as the tool-denial reason, so
-      // the SAME live process keeps going — no second spawn, same runId.
-      await waitFor(() => fs.existsSync(ctrlFile));
-      const ctrl = JSON.parse(fs.readFileSync(ctrlFile, "utf8"));
-      assert.equal(ctrl.response.response.behavior, "deny");
+      // respondPermission is synchronous: everything it does to the store
+      // (and the live run entry) is already true the instant it returns,
+      // before the child process has had a tick to read the reply and
+      // settle the turn. Check that here so a fast fake CLI cannot race
+      // these out from under the assertions (#1762 review fix).
       assert.equal(
-        ctrl.response.response.message,
-        "Denied by user in Coder; the user wants this instead:\ndo the other thing instead",
+        runner.activeRunId(thread.id),
+        runId,
+        "the SAME live process keeps the turn, no second spawn",
       );
-      assert.equal(runner.activeRunId(thread.id), runId);
-
-      // Shown as a plain user message (no steer badge) on that same run.
       const redirectMsg = store
         .getMessages(thread.id)
         .find((m) => m.role === "user" && m.text === "do the other thing instead");
       assert.ok(redirectMsg, "expected the redirect text as a user message");
       assert.equal(redirectMsg.steer, undefined);
       assert.equal(redirectMsg.runId, runId);
-
       // Not queued: the agent already has it, in this turn.
       assert.equal(store.getThread(thread.id).queued, null);
+
+      // Claude's deny carries the redirect as the tool-denial reason.
+      let ctrl;
+      await waitFor(() => (ctrl = readJsonIfComplete(ctrlFile)) !== undefined);
+      assert.equal(ctrl.response.response.behavior, "deny");
+      assert.equal(
+        ctrl.response.response.message,
+        "Denied by user in Coder; the user wants this instead:\ndo the other thing instead",
+      );
 
       await waitFor(() => store.getThread(thread.id).status === "done");
     } finally {
