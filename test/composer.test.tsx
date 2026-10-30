@@ -213,6 +213,7 @@ function composer(
     onListFiles?: (query: string) => Promise<string[]>;
     onProviderSignIn?: (providerId: string) => Promise<void>;
     onShell?: (command: string) => Promise<unknown>;
+    onEditLastQueued?: () => void;
   } = {},
 ) {
   // Seed the emulation from the thread this element renders with, so the
@@ -284,6 +285,7 @@ function composer(
         harness.sends.push(prompt);
         harness.steers.push(opts?.steer === true);
       }}
+      onEditLastQueued={over.onEditLastQueued}
       onBuild={(prompt, templateId) => {
         harness.builds.push({ prompt, templateId });
         if (over.buildError) throw new Error(over.buildError);
@@ -2482,6 +2484,61 @@ describe("Composer keyboard send", () => {
     await m.type(m.query("textarea"), "/btw which file owns parseBtw");
     await m.press(m.query("textarea"), "Enter", { altKey: true });
     assert.deepEqual(h.sends, ["/btw which file owns parseBtw"]);
+    m.unmount();
+  });
+});
+
+/**
+ * Issue #1762: Alt+↑ is a fast path to the queued strip's own Edit button
+ * (ThreadView opens the LAST item) instead of a dead key on an empty box.
+ */
+describe("Composer Alt+↑ edits the last queued follow-up (#1762)", () => {
+  it("opens edit with an empty draft", async () => {
+    const h = makeHarness();
+    let calls = 0;
+    const m = await mount(
+      composer(h, { busy: true, onEditLastQueued: () => { calls += 1; } }),
+    );
+    const ta = m.query<HTMLTextAreaElement>("textarea");
+    await m.press(ta, "ArrowUp", { altKey: true });
+    assert.equal(calls, 1);
+    m.unmount();
+  });
+
+  it("opens edit with the caret at position 0 and nothing selected", async () => {
+    const h = makeHarness();
+    let calls = 0;
+    const m = await mount(
+      composer(h, { busy: true, onEditLastQueued: () => { calls += 1; } }),
+    );
+    const ta = m.query<HTMLTextAreaElement>("textarea");
+    await m.type(ta, "already typing a follow-up");
+    ta.setSelectionRange(0, 0);
+    await m.press(ta, "ArrowUp", { altKey: true });
+    assert.equal(calls, 1);
+    m.unmount();
+  });
+
+  it("leaves the caret mid-draft alone (no selection, not at position 0)", async () => {
+    const h = makeHarness();
+    let calls = 0;
+    const m = await mount(
+      composer(h, { busy: true, onEditLastQueued: () => { calls += 1; } }),
+    );
+    const ta = m.query<HTMLTextAreaElement>("textarea");
+    await m.type(ta, "already typing a follow-up");
+    ta.setSelectionRange(5, 5);
+    await m.press(ta, "ArrowUp", { altKey: true });
+    assert.equal(calls, 0, "a non-empty, non-zero caret must not open edit");
+    m.unmount();
+  });
+
+  it("does nothing when there is no queued item to edit (absent callback)", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h, { busy: true }));
+    const ta = m.query<HTMLTextAreaElement>("textarea");
+    await m.press(ta, "ArrowUp", { altKey: true });
+    assert.deepEqual(h.sends, [], "Alt+Up must not fall through to a send");
     m.unmount();
   });
 });

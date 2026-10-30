@@ -133,6 +133,12 @@ export const KEYBINDINGS: readonly KeybindingDef[] = [
     chord: "mod+shift+enter",
   },
   {
+    id: "composer.editLastQueued",
+    label: "Edit the last queued follow-up (empty draft)",
+    scope: "composer",
+    chord: "alt+arrowup",
+  },
+  {
     id: "composer.stash",
     label: "Stash the draft",
     scope: "composer",
