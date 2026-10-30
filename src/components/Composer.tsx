@@ -101,9 +101,9 @@ import {
   getReviewComments,
   keptDrafts,
   recordSent,
-  scheduleDraftSave,
   sentHistory,
   setContextChips,
+  setDraftText,
   setReviewComments,
   subscribeContextChips,
   subscribeReviewComments,
@@ -555,8 +555,7 @@ export const Composer = memo(function Composer({
   }, []);
   const rememberDraft = useCallback(
     (text: string) => {
-      draftsRef.current[threadId] = text;
-      scheduleDraftSave();
+      setDraftText(threadId, text);
       syncHasPrompt(text);
       syncOverflow(text);
     },
@@ -564,8 +563,7 @@ export const Composer = memo(function Composer({
   );
   const writeDraft = useCallback(
     (text: string, caret?: number) => {
-      draftsRef.current[threadId] = text;
-      scheduleDraftSave();
+      setDraftText(threadId, text);
       const el = textareaRef.current;
       if (el) {
         el.value = text;

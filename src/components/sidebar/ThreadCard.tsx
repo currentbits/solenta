@@ -1,4 +1,4 @@
-import { memo, useRef, useState } from "react";
+import { memo, useRef, useState, useSyncExternalStore } from "react";
 import type {
   ConflictForecast,
   ProjectInfo,
@@ -13,6 +13,7 @@ import {
 } from "../../conflictForecast";
 import { formatRelativeAge, middleTruncate } from "../../format";
 import { isCrewWorker } from "../../sidebarGroups";
+import { hasNonEmptyDraft, subscribeDrafts } from "../../composerSession";
 import { ProviderMark } from "../ProviderMark";
 import { showContextMenu } from "../../contextMenu";
 import {
@@ -238,11 +239,17 @@ export const ThreadCard = memo(function ThreadCard({
   const [customSnoozeOpen, setCustomSnoozeOpen] = useState(false);
   const forecastPairs = pairsForThread(conflictForecast, thread.id);
   const providerId = thread.provider || "";
+  // Reactive (#1770): subscribes to composer writes rather than reading
+  // localStorage/keptDrafts on every row's render.
+  const hasDraft = useSyncExternalStore(subscribeDrafts, () =>
+    hasNonEmptyDraft(thread.id),
+  );
   const hasLine3 =
     Boolean(thread.branch) ||
     (thread.prNumber != null && Boolean(thread.prUrl)) ||
     forecastPairs.length > 0 ||
-    Boolean(providerId);
+    Boolean(providerId) ||
+    hasDraft;
 
   const startRename = () => {
     setRenameDraft(thread.title);
@@ -788,6 +795,29 @@ export const ThreadCard = memo(function ThreadCard({
                 providers={providers}
                 className={styles.cardProvider}
               />
+            ) : null}
+            {hasDraft ? (
+              <span
+                className={styles.cardDraft}
+                data-card-draft=""
+                role="img"
+                aria-label="Unsent draft"
+                title="Unsent draft"
+              >
+                <svg
+                  width="11"
+                  height="11"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M11.4 2.4a1.4 1.4 0 0 1 2 2L5 12.8l-3 .8.8-3Z" />
+                </svg>
+              </span>
             ) : null}
           </div>
         )}
