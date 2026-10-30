@@ -274,6 +274,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     resumeQuotaWait,
     resumeCrew,
     renameThread,
+    regenerateTitle,
     setNotes,
     setMessagePins,
     setBaseBranch,
@@ -1010,6 +1011,11 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     },
     [renameThread, selectedThreadId],
   );
+
+  const handleRegenerateOpenThread = useCallback(() => {
+    if (!selectedThreadId) return;
+    void regenerateTitle([selectedThreadId]);
+  }, [regenerateTitle, selectedThreadId]);
 
   // An inline arrow here would bust ThreadView's memo on every 700ms stream
   // tick (issue #91); keep it identity-stable per selected thread.
@@ -2121,6 +2127,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onSetEjected={handleSetEjected}
         onTeleport={teleport}
         onRenameThread={handleRenameThread}
+        onRegenerateTitle={regenerateTitle}
         onSetArchived={handleRowArchived}
         onClearSettled={handleClearSettled}
         trashedThreads={trashedThreads}
@@ -2406,6 +2413,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
             : undefined
         }
         onRenameThread={handleRenameOpenThread}
+        onRegenerateTitle={handleRegenerateOpenThread}
         onExportReport={exportReport}
         onRepeatSchedule={handleRepeatSchedule}
         onDistillWorkflow={handleDistillWorkflow}

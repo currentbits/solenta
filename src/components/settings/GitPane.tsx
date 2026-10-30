@@ -199,6 +199,70 @@ export function GitPane({
           a fork PR&apos;s branch. A deletion failure is logged and never
           fails the merge or close.
         </p>
+        <label className={styles.fieldLabel} htmlFor="commit-message-instructions">
+          Commit message instructions
+        </label>
+        <textarea
+          id="commit-message-instructions"
+          key={`commit-${settings?.commitMessageInstructions ?? ""}`}
+          className={styles.textarea}
+          rows={2}
+          maxLength={1000}
+          placeholder="e.g. Imperative mood, no prefix, under 60 chars"
+          defaultValue={settings?.commitMessageInstructions ?? ""}
+          disabled={saving || settings == null}
+          data-commit-message-instructions=""
+          onBlur={(e) => {
+            const next = e.target.value.trim();
+            if (next === (settings?.commitMessageInstructions ?? "")) return;
+            setError(null);
+            void onSaveSettings({ commitMessageInstructions: next }).catch(
+              (err) => {
+                setError(
+                  err instanceof Error && err.message
+                    ? err.message
+                    : "Failed to save settings",
+                );
+              },
+            );
+          }}
+        />
+        <p className={styles.note}>
+          Appended to the generated commit message prompt and takes
+          precedence over the default conventional-commits style. Empty
+          uses the default prompt.
+        </p>
+        <label className={styles.fieldLabel} htmlFor="pr-instructions">
+          PR title and body instructions
+        </label>
+        <textarea
+          id="pr-instructions"
+          key={`pr-${settings?.prInstructions ?? ""}`}
+          className={styles.textarea}
+          rows={2}
+          maxLength={1000}
+          placeholder="e.g. Start with the user-facing outcome; include a Testing section"
+          defaultValue={settings?.prInstructions ?? ""}
+          disabled={saving || settings == null}
+          data-pr-instructions=""
+          onBlur={(e) => {
+            const next = e.target.value.trim();
+            if (next === (settings?.prInstructions ?? "")) return;
+            setError(null);
+            void onSaveSettings({ prInstructions: next }).catch((err) => {
+              setError(
+                err instanceof Error && err.message
+                  ? err.message
+                  : "Failed to save settings",
+              );
+            });
+          }}
+        />
+        <p className={styles.note}>
+          Appended to the generated PR title/body prompt and takes
+          precedence over the default style; the repo&apos;s PR template
+          still applies. Empty uses the default prompt.
+        </p>
       </section>
 
       <section className={styles.section}>

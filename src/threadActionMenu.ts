@@ -35,6 +35,7 @@ export type ThreadActionMenuId =
   | "fork"
   | `handoff:${string}`
   | "rename"
+  | "regenerateTitle"
   | "tags"
   | "copyLink"
   | "move"
@@ -69,6 +70,8 @@ export function buildThreadActionMenuItems(input: {
   showPin?: boolean;
   showFork: boolean;
   showRename: boolean;
+  /** Regenerate the title from current activity (issue #1774). */
+  showRegenerateTitle?: boolean;
   showTags?: boolean;
   /** Copy solenta://thread/<id> (#186). */
   showCopyLink?: boolean;
@@ -160,11 +163,20 @@ export function buildThreadActionMenuItems(input: {
     });
   }
 
+  if (input.showRegenerateTitle) {
+    items.push({
+      id: "regenerateTitle",
+      label: "Regenerate title",
+      attrs: { "data-regenerate-title": thread.id },
+    });
+  }
+
   if (input.showTags) {
     items.push({
       id: "tags",
       label: "Edit tags",
-      separatorBefore: !input.showRename && items.length > 0,
+      separatorBefore:
+        !input.showRename && !input.showRegenerateTitle && items.length > 0,
       attrs: { "data-edit-tags": thread.id },
     });
   }
@@ -173,7 +185,11 @@ export function buildThreadActionMenuItems(input: {
     items.push({
       id: "copyLink",
       label: "Copy link",
-      separatorBefore: !input.showRename && !input.showTags && items.length > 0,
+      separatorBefore:
+        !input.showRename &&
+        !input.showRegenerateTitle &&
+        !input.showTags &&
+        items.length > 0,
       attrs: { "data-copy-thread-link": thread.id },
     });
   }
@@ -190,7 +206,11 @@ export function buildThreadActionMenuItems(input: {
         disabled: Boolean(block),
         whenLabel: block ?? undefined,
         separatorBefore:
-          !input.showRename && !input.showTags && !input.showCopyLink && items.length > 0,
+          !input.showRename &&
+          !input.showRegenerateTitle &&
+          !input.showTags &&
+          !input.showCopyLink &&
+          items.length > 0,
         attrs: { "data-move-project": thread.id },
         children: block
           ? undefined

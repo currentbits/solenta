@@ -222,6 +222,8 @@ function view(props: {
   onCancelQueued?: () => void;
   onRetryQueued?: () => void;
   loadProviderLimits?: () => Promise<ProviderUsage[]>;
+  onRenameThread?: (title: string) => void | Promise<void>;
+  onRegenerateTitle?: () => void | Promise<void>;
 }) {
   return (
     <ThreadView
@@ -285,6 +287,8 @@ function view(props: {
       onListSnapWindows={props.onListSnapWindows}
       onCaptureSnapWindow={props.onCaptureSnapWindow}
       loadProviderLimits={props.loadProviderLimits}
+      onRenameThread={props.onRenameThread}
+      onRegenerateTitle={props.onRegenerateTitle}
     />
   );
 }
@@ -1113,6 +1117,43 @@ describe("ThreadView mounted interactions", () => {
     await m.click(back);
     assert.equal(returned, 1);
     assert.equal(started, 0, "return must not submit a prompt");
+    m.unmount();
+  });
+
+  it("Regenerate title sits in the header menu next to Rename, and closes the menu (#1774)", async () => {
+    let regenerated = 0;
+    let renamed = 0;
+    const m = await mount(
+      view({
+        onRenameThread: () => {
+          renamed += 1;
+        },
+        onRegenerateTitle: () => {
+          regenerated += 1;
+        },
+      }),
+    );
+    await m.click(m.query("[data-thread-title-menu]"));
+    assert.ok(m.query("[data-rename-thread]"), "Rename thread item");
+    const regen = m.query("[data-regenerate-title]");
+    assert.ok(regen, "Regenerate title item");
+    assert.equal(regen?.textContent, "Regenerate title");
+    await m.click(regen);
+    assert.equal(regenerated, 1);
+    assert.equal(renamed, 0);
+    assert.equal(
+      m.query("[data-regenerate-title]"),
+      null,
+      "menu closes after the click",
+    );
+    m.unmount();
+  });
+
+  it("hides Regenerate title when onRegenerateTitle is not wired", async () => {
+    const m = await mount(view({ onRenameThread: () => {} }));
+    await m.click(m.query("[data-thread-title-menu]"));
+    assert.ok(m.query("[data-rename-thread]"));
+    assert.equal(m.query("[data-regenerate-title]"), null);
     m.unmount();
   });
 

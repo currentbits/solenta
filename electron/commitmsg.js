@@ -173,11 +173,11 @@ function extractSubject(providerId, stdout) {
 }
 
 /**
- * @param {string} prompt
  * @param {{ files: Array<{path: string, status: string, additions: number, deletions: number}>, patch: string }} d
+ * @param {string} [instructions] - user's commitMessageInstructions setting (#1774)
  * @returns {string}
  */
-function buildPrompt(d) {
+function buildPrompt(d, instructions) {
   const fileLines = d.files
     .slice(0, 50)
     .map((f) => `${f.status} ${f.path} (+${f.additions}/-${f.deletions})`)
@@ -186,16 +186,28 @@ function buildPrompt(d) {
     d.patch.length > PROMPT_PATCH_LIMIT
       ? d.patch.slice(0, PROMPT_PATCH_LIMIT) + "\n... (diff truncated)"
       : d.patch;
-  return [
+  const parts = [
     "Write a single-line git commit message (conventional commits style) for these changes.",
     "Reply with ONLY the message: no explanation, no quotes, no backticks, no trailing period, max 72 characters.",
+  ];
+  const extra = String(instructions || "").trim();
+  if (extra) {
+    parts.push(
+      "",
+      "Follow these instructions from the user:",
+      extra,
+      "These take precedence over the default style described above.",
+    );
+  }
+  parts.push(
     "",
     "Files changed:",
     fileLines || "(none listed)",
     "",
     "Diff:",
     patch || "(no patch body)",
-  ].join("\n");
+  );
+  return parts.join("\n");
 }
 
 /**
@@ -219,7 +231,10 @@ async function suggestCommitMessage(opts) {
   if (d.files.length === 0 && !d.patch.trim()) {
     throw new Error("No changes to describe");
   }
-  const prompt = buildPrompt(d);
+  const prompt = buildPrompt(
+    d,
+    store.getSettings ? store.getSettings().commitMessageInstructions : "",
+  );
 
   // Prefer free on-device fm (#340). Any failure is invisible; fall through.
   // Tried BEFORE the provider is resolved: fm needs no CLI, no key and no
@@ -277,7 +292,8 @@ async function providerText(thread, prompt, env) {
 }
 
 /**
- * @param {{ commits: string, stat: string, template: string, baseBranch: string }} input
+ * @param {{ commits: string, stat: string, template: string, baseBranch: string, instructions?: string }} input
+ *   instructions is the user's prInstructions setting (#1774).
  * @returns {string}
  */
 function buildPrPrompt(input) {
@@ -285,23 +301,37 @@ function buildPrPrompt(input) {
     input.stat.length > PROMPT_PATCH_LIMIT
       ? input.stat.slice(0, PROMPT_PATCH_LIMIT) + "\n... (truncated)"
       : input.stat;
-  return [
+  const parts = [
     `Write a GitHub pull request title and description for this branch (base: ${input.baseBranch}).`,
     "Reply in exactly this shape, nothing else:",
     "line 1: the title (max 72 characters, no quotes, no trailing period)",
     "line 2: empty",
     "line 3 onward: the description in Markdown. Explain what changed and why; do not invent details the commits and diffstat do not show.",
-    input.template.trim()
-      ? "Fill in this pull request template for the description, keeping its headings:\n\n" +
-        input.template.trim()
-      : "",
+  ];
+  const extra = String(input.instructions || "").trim();
+  if (extra) {
+    parts.push(
+      "",
+      "Follow these instructions from the user:",
+      extra,
+      "These take precedence over the default style described above; the pull request template below still applies.",
+    );
+  }
+  if (input.template.trim()) {
+    parts.push(
+      "Fill in this pull request template for the description, keeping its headings:\n\n" +
+        input.template.trim(),
+    );
+  }
+  parts.push(
     "",
     "Commits:",
     input.commits.trim() || "(none listed)",
     "",
     "Diffstat:",
     stat.trim() || "(none)",
-  ].join("\n");
+  );
+  return parts.join("\n");
 }
 
 /**
@@ -359,6 +389,7 @@ async function suggestPrText(opts) {
     stat: stat.ok ? stat.stdout : "",
     template: tpl.ok ? tpl.body : "",
     baseBranch,
+    instructions: store.getSettings ? store.getSettings().prInstructions : "",
   });
   const out = parsePrText(await providerText(thread, prompt, env));
   if (!out.title) {

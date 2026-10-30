@@ -28,6 +28,8 @@ const {
   CHANNEL_KINDS,
   normalizeGithubHosts,
   TITLE_INSTRUCTIONS_MAX,
+  COMMIT_MESSAGE_INSTRUCTIONS_MAX,
+  PR_INSTRUCTIONS_MAX,
 } = require("./store-normalize.js");
 
 /**
@@ -106,6 +108,8 @@ class StoreSettingsMethods {
       guardrailsEnabled: n.guardrailsEnabled,
       idleCompactClaudeThreads: n.idleCompactClaudeThreads,
       titleInstructions: n.titleInstructions,
+      commitMessageInstructions: n.commitMessageInstructions,
+      prInstructions: n.prInstructions,
       prDiffCapLines: n.prDiffCapLines,
       maxConcurrentRuns: n.maxConcurrentRuns,
       agentProfiles: n.agentProfiles,
@@ -482,6 +486,22 @@ class StoreSettingsMethods {
         throw new Error("titleInstructions must be a string");
       }
       this.data.settings.titleInstructions = v.trim().slice(0, TITLE_INSTRUCTIONS_MAX);
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "commitMessageInstructions")) {
+      const v = patch.commitMessageInstructions;
+      if (typeof v !== "string") {
+        throw new Error("commitMessageInstructions must be a string");
+      }
+      this.data.settings.commitMessageInstructions = v
+        .trim()
+        .slice(0, COMMIT_MESSAGE_INSTRUCTIONS_MAX);
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "prInstructions")) {
+      const v = patch.prInstructions;
+      if (typeof v !== "string") {
+        throw new Error("prInstructions must be a string");
+      }
+      this.data.settings.prInstructions = v.trim().slice(0, PR_INSTRUCTIONS_MAX);
     }
     if (Object.prototype.hasOwnProperty.call(patch, "linearApiKey")) {
       const v = patch.linearApiKey;

@@ -8,6 +8,7 @@ import type {
   PermissionDecision,
   PermissionMode,
   ReasoningEffort,
+  RegenerateTitleResult,
   SpecArtifact,
   ThreadDetail,
   ThreadBudget,
@@ -753,6 +754,47 @@ export function useCoderThreadActions({
     [api, applyThreads],
   );
 
+  /**
+   * Regenerate one or more thread titles (issue #1774). Always an explicit
+   * action (menu item, bulk action), so unlike the automatic one-shot
+   * title this is allowed to overwrite a user-set one. Applies successful
+   * titles locally; per-thread failures are reported to the caller so it
+   * can build a toast, rather than failing the whole batch.
+   */
+  const regenerateTitle = useCallback(
+    async (threadIds: string[]): Promise<RegenerateTitleResult[]> => {
+      try {
+        const results = await api.threads.regenerateTitle({ threadIds });
+        const titled = new Map(
+          results
+            .filter((r) => r.title)
+            .map((r) => [r.threadId, r.title as string]),
+        );
+        if (titled.size > 0) {
+          applyThreads(
+            threadsRef.current.map((t) =>
+              titled.has(t.id) ? { ...t, title: titled.get(t.id)! } : t,
+            ),
+          );
+          setDetail((prev) =>
+            prev && titled.has(prev.thread.id)
+              ? { ...prev, thread: { ...prev.thread, title: titled.get(prev.thread.id)! } }
+              : prev,
+          );
+        }
+        setError(null);
+        return results;
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+        return threadIds.map((threadId) => ({
+          threadId,
+          error: errorMessage(err),
+        }));
+      }
+    },
+    [api, applyThreads],
+  );
+
   const setNotes = useCallback(
     async (threadId: string, notes: string) => {
       try {
@@ -1180,6 +1222,7 @@ export function useCoderThreadActions({
     resumeQuotaWait,
     resumeCrew,
     renameThread,
+    regenerateTitle,
     setNotes,
     setMessagePins,
     setBaseBranch,

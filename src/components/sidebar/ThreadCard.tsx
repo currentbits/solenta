@@ -143,6 +143,8 @@ export const ThreadCard = memo(function ThreadCard({
   onSetEjected,
   onTeleport,
   onRenameThread,
+  onRegenerateTitle,
+  regeneratingTitle = false,
   onFork,
   onToggleSnoozeMenu,
   nested = false,
@@ -195,6 +197,10 @@ export const ThreadCard = memo(function ThreadCard({
   /** Teleport to a saved host, or back with null (#1702). */
   onTeleport?: (threadId: string, target: TeleportTarget | null) => void | Promise<void>;
   onRenameThread?: (threadId: string, title: string) => void | Promise<void>;
+  /** Regenerate the title from current activity (issue #1774). */
+  onRegenerateTitle?: (threadId: string) => void | Promise<void>;
+  /** This row's title is being regenerated (#1774); cheap inline state. */
+  regeneratingTitle?: boolean;
   onFork?: (
     threadId: string,
     opts?: { provider?: string },
@@ -337,6 +343,7 @@ export const ThreadCard = memo(function ThreadCard({
     else if (id.startsWith("handoff:")) {
       void onFork?.(thread.id, { provider: id.slice("handoff:".length) });
     } else if (id === "rename") startRename();
+    else if (id === "regenerateTitle") void onRegenerateTitle?.(thread.id);
     else if (id === "tags") startTagEdit();
     else if (id === "copyLink") {
       void navigator.clipboard?.writeText(`solenta://thread/${thread.id}`).catch(() => {});
@@ -371,6 +378,7 @@ export const ThreadCard = memo(function ThreadCard({
       showPin: Boolean(onSetPinned),
       showFork: Boolean(onFork),
       showRename: Boolean(onRenameThread),
+      showRegenerateTitle: Boolean(onRegenerateTitle),
       showTags: Boolean(onSetTags),
       showCopyLink: true,
       showMove: Boolean(onSetThreadProject),
@@ -396,7 +404,7 @@ export const ThreadCard = memo(function ThreadCard({
   };
 
   const hasActions = Boolean(
-    onSetSettled || onSetPinned || onSetSnoozed || onSetTags || onSetThreadProject || onFork || onRenameThread || onSetMuted || onSetEjected || onTeleport,
+    onSetSettled || onSetPinned || onSetSnoozed || onSetTags || onSetThreadProject || onFork || onRenameThread || onRegenerateTitle || onSetMuted || onSetEjected || onTeleport,
   );
 
   // Card is a non-interactive shell. Stretch select + hover actions are
@@ -650,8 +658,12 @@ export const ThreadCard = memo(function ThreadCard({
               }}
             />
           ) : (
-            <div className={styles.cardTitle} title={thread.title}>
-              {shownTitle}
+            <div
+              className={styles.cardTitle}
+              title={thread.title}
+              data-regenerating-title={regeneratingTitle ? "" : undefined}
+            >
+              {regeneratingTitle ? "Regenerating…" : shownTitle}
             </div>
           )}
           {contentMatch && (
