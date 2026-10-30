@@ -94,6 +94,37 @@ function specCwd(store, thread) {
 }
 
 /**
+ * Is another thread currently running (runner active) in the SAME effective
+ * checkout as `threadId` (its own worktree, or the project path for
+ * non-worktree threads)? Crew/orchestrator workers can share a worktree, and
+ * two threads with no worktree of their own both run directly in the
+ * project checkout (issue #1788). A hard reset (rewind/restoreCheckpoint)
+ * there while that other run is writing files would race it.
+ * @param {import('./store').Store} store
+ * @param {string} threadId
+ * @param {{ listActiveThreadIds?: () => string[] } | null | undefined} opts
+ * @returns {boolean}
+ */
+function siblingRunningSameCheckout(store, threadId, opts) {
+  const listActive =
+    opts && typeof opts.listActiveThreadIds === "function"
+      ? opts.listActiveThreadIds
+      : null;
+  if (!listActive) return false;
+  const thread = store.getThread(threadId);
+  const cwd = thread ? specCwd(store, thread) : "";
+  if (!cwd) return false;
+  const ids = listActive() || [];
+  for (const id of ids) {
+    if (!id || id === threadId) continue;
+    const other = store.getThread(id);
+    if (!other) continue;
+    if (specCwd(store, other) === cwd) return true;
+  }
+  return false;
+}
+
+/**
  * Drop a thread and every *ByThread map entry (messages, work log, usage).
  * Does not save; caller owns durability so bulk callers can save once.
  * @param {import('./store').Store} store
@@ -117,5 +148,6 @@ module.exports = {
   canHostWorktree,
   resolveDefaultWorktree,
   specCwd,
+  siblingRunningSameCheckout,
   purgeThread,
 };

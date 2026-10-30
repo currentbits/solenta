@@ -430,6 +430,8 @@ module.exports = {
       threadId: input.threadId,
       sha: input.sha,
       isRunning: (id) => ctx.runner.isRunning(id),
+      listActiveThreadIds: () => ctx.runner.listActiveThreadIds(),
+      withRestoreHold: (id, fn) => ctx.runner.withRestoreHold(id, fn),
       cleanupRunArtifacts: ctx.cleanupRunArtifacts,
     });
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));

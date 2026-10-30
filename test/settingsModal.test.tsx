@@ -1938,8 +1938,8 @@ describe("SettingsModal quota-wait auto-resume (#462)", () => {
   });
 });
 
-describe("SettingsModal resume interrupted runs (#1512 I3)", () => {
-  it("is off by default and saves the toggle", async () => {
+describe("SettingsModal resume interrupted runs (#1788)", () => {
+  it("is on by default for anyone who never chose, and saves an explicit off", async () => {
     const patches: Partial<AppSettings>[] = [];
     const m = await mount(
       modal({
@@ -1947,6 +1947,9 @@ describe("SettingsModal resume interrupted runs (#1512 I3)", () => {
         settings: {
           dailyBudgetUsd: null,
           autoSettleAfterDays: 3,
+          // The store now normalizes an untouched setting to true (#1788);
+          // the modal only ever reflects what it is handed.
+          resumeInterruptedRuns: true,
         } as AppSettings,
         onSaveSettings: async (patch) => {
           patches.push(patch);
@@ -1960,11 +1963,11 @@ describe("SettingsModal resume interrupted runs (#1512 I3)", () => {
     );
     const box = m.query("[data-resume-interrupted-runs]") as HTMLInputElement;
     assert.ok(box, "resume checkbox");
-    assert.equal(box.checked, false);
+    assert.equal(box.checked, true);
     assert.ok(m.text().includes("Resume interrupted runs after restart"));
     await m.click(box);
     assert.equal(patches.length, 1);
-    assert.equal(patches[0].resumeInterruptedRuns, true);
+    assert.equal(patches[0].resumeInterruptedRuns, false);
     m.unmount();
   });
 });

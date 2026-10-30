@@ -41,6 +41,7 @@ const {
   scheduleArtifactCleanup,
   scheduleSimulatorRelease,
   canHostWorktree,
+  siblingRunningSameCheckout,
   purgeThread,
 } = require("./services-shared.js");
 const terminal = require("./terminal.js");
@@ -1510,26 +1511,40 @@ async function undoRewindThread(store, threadId, opts) {
   if (!snap) {
     return { thread: { ...thread }, droppedMessages: 0, restoredSha: null };
   }
-  store.applyRewindRestore(threadId, snap);
-  store.clearRewindRestore(threadId);
-
-  let restoredSha = null;
-  const live = store.getThread(threadId) || thread;
-  if (snap.headSha && live.worktreePath) {
-    // Original HEAD is no longer first-parent reachable after restoreFiles
-    // reset, so listCheckpoints / restoreCheckpoint would reject it.
-    const { gitTryAsync } = require("./worktrees.js");
-    const reset = await gitTryAsync(live.worktreePath, [
-      "reset",
-      "--hard",
-      snap.headSha,
-    ]);
-    if (reset && reset.ok) restoredSha = snap.headSha;
+  if (
+    snap.headSha &&
+    thread.worktreePath &&
+    siblingRunningSameCheckout(store, threadId, opts)
+  ) {
+    throw new Error(
+      "Another thread is working in this checkout. Stop it before restoring files.",
+    );
   }
+  // #1788: same hold restoreCheckpoint takes — a message sent mid-undo must
+  // not spawn into this worktree while it is being hard-reset back.
+  const hold = (opts && opts.withRestoreHold) || ((_id, fn) => fn());
+  let restoredSha = null;
+  const next = await hold(threadId, async () => {
+    store.applyRewindRestore(threadId, snap);
+    store.clearRewindRestore(threadId);
 
-  store.saveNow();
+    const live = store.getThread(threadId) || thread;
+    if (snap.headSha && live.worktreePath) {
+      // Original HEAD is no longer first-parent reachable after restoreFiles
+      // reset, so listCheckpoints / restoreCheckpoint would reject it.
+      const { gitTryAsync } = require("./worktrees.js");
+      const reset = await gitTryAsync(live.worktreePath, [
+        "reset",
+        "--hard",
+        snap.headSha,
+      ]);
+      if (reset && reset.ok) restoredSha = snap.headSha;
+    }
+
+    store.saveNow();
+    return store.getThread(threadId) || live;
+  });
   scheduleArtifactCleanup(opts);
-  const next = store.getThread(threadId) || live;
   return { thread: { ...next }, droppedMessages: 0, restoredSha };
 }
 
@@ -1551,6 +1566,19 @@ async function rewindThread(store, input, opts) {
   }
   if (!String((input && input.prompt) ?? "").trim()) {
     throw new Error("Prompt cannot be empty");
+  }
+  // #1788: a hard reset onto a shared checkout (crew/orchestrator workers
+  // sharing a worktree, or two non-worktree threads sharing the project
+  // path) would race that other thread's own writes. Conversation-only
+  // rewind (no restoreFiles) never touches disk, so it stays allowed.
+  if (
+    input.restoreFiles &&
+    thread.worktreePath &&
+    siblingRunningSameCheckout(store, threadId, opts)
+  ) {
+    throw new Error(
+      "Another thread is working in this checkout. Stop it before restoring files.",
+    );
   }
 
   const msgs = store.getMessages(threadId);
@@ -1618,6 +1646,8 @@ async function rewindThread(store, input, opts) {
         threadId,
         sha: match.sha,
         isRunning: opts && opts.isRunning,
+        listActiveThreadIds: opts && opts.listActiveThreadIds,
+        withRestoreHold: opts && opts.withRestoreHold,
         rewindConversation: false,
       });
       restoredSha = match.sha;
