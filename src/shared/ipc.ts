@@ -1556,6 +1556,8 @@ export interface AttachmentInfo {
   name: string;
   /** Source format when the host transcoded it, e.g. "HEIC" -> JPEG (#463). */
   convertedFrom?: string;
+  /** Original pixel size when the host downscaled an oversize image (#1773). */
+  resizedFrom?: { width: number; height: number };
 }
 
 /** Per-thread inbound policy for cross-thread messages (issue #551). */

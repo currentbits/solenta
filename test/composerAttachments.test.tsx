@@ -431,6 +431,21 @@ describe("Composer attachments", () => {
     m.unmount();
   });
 
+  it("says so on the chip when the host downscaled an oversize image (#1773)", async () => {
+    const h: Harness = { sends: [] };
+    const resized: AttachmentInfo = {
+      kind: "image",
+      path: "/u/attachments/t1/1-ab.jpg",
+      name: "shot.png",
+      resizedFrom: { width: 6016, height: 3384 },
+    };
+    const m = await mount(composer(h, { picks: [resized, IMAGE] }));
+    await m.click(m.query('button[aria-label="Attach files or folders"]'));
+    assert.ok(m.text().includes("shot.pngresized from 6016×3384"));
+    assert.equal(m.text().split("resized from").length, 2, "plain images get no note");
+    m.unmount();
+  });
+
   it("does not add duplicate chips for the same path", async () => {
     const h: Harness = { sends: [] };
     const m = await mount(composer(h, { picks: [IMAGE] }));
