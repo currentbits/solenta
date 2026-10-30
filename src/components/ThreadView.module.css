@@ -2597,8 +2597,14 @@ button.diffLineGutter:focus-visible {
   background: var(--scrim-heavy);
 }
 
-/* margin auto, not justify/align: centring a zoomed image with those clips
-   the overflowing edges out of reach of the scrollbars. */
+/*
+ * margin auto, not justify/align: centring a zoomed image with those clips
+ * the overflowing edges out of reach of the scrollbars. The CSS box always
+ * stays at "fit" size (never upscaled past the natural image size); click,
+ * wheel/pinch, double-click and +/-/0 all zoom via the transform instead
+ * (#1782), so native/100% is just a particular scale rather than a second
+ * sizing system layered on top of this one.
+ */
 .lightboxImg {
   margin: auto;
   max-width: 100%;
@@ -2606,11 +2612,10 @@ button.diffLineGutter:focus-visible {
   object-fit: contain;
   border-radius: 6px;
   cursor: zoom-in;
+  touch-action: none;
 }
 
 .lightboxImg[data-zoom="1"] {
-  max-width: none;
-  max-height: none;
   cursor: zoom-out;
 }
 

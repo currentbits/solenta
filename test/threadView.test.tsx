@@ -1724,6 +1724,244 @@ describe("ThreadView mounted interactions", () => {
   });
 });
 
+describe("ThreadView image lightbox zoom and pan (#1782)", () => {
+  function pointerEvt(
+    type: string,
+    x: number,
+    y: number,
+    pointerId = 1,
+  ): PointerEvent {
+    return new window.PointerEvent(type, {
+      bubbles: true,
+      cancelable: true,
+      pointerId,
+      clientX: x,
+      clientY: y,
+    });
+  }
+
+  function wheelEvt(x: number, y: number, deltaY: number): WheelEvent {
+    return new window.WheelEvent("wheel", {
+      bubbles: true,
+      cancelable: true,
+      clientX: x,
+      clientY: y,
+      deltaY,
+    });
+  }
+
+  /** transform: "translate(Xpx, Ypx) scale(S)" -> {tx, ty, scale}. */
+  function parseTransform(img: HTMLImageElement) {
+    const t = img.style.transform;
+    const m = /translate\(([-\d.]+)px, ([-\d.]+)px\) scale\(([-\d.]+)\)/.exec(t);
+    assert.ok(m, `unexpected transform: "${t}"`);
+    return { tx: Number(m![1]), ty: Number(m![2]), scale: Number(m![3]) };
+  }
+
+  async function openLightbox() {
+    const dataUrl = "data:image/png;base64,AAAA";
+    const m = await mount(
+      view({
+        detail: detail({
+          messages: [
+            msg({
+              role: "assistant",
+              text: `![shot](${dataUrl})`,
+              createdAt: 1,
+              runId: "run-1",
+            }),
+          ],
+          workLog: [],
+        }),
+      }),
+    );
+    await m.flush();
+    const img = m.query("img.image") as HTMLElement;
+    await m.click(img);
+    const lightboxImg = m.query("img.lightboxImg") as HTMLImageElement;
+    assert.ok(lightboxImg, "lightbox image must render");
+    return { m, lightboxImg };
+  }
+
+  it("starts at scale 1 with no translate", async () => {
+    const { m, lightboxImg } = await openLightbox();
+    assert.deepEqual(parseTransform(lightboxImg), { tx: 0, ty: 0, scale: 1 });
+    m.unmount();
+  });
+
+  it("wheel zoom (plain or ctrl, i.e. trackpad pinch) changes the scale", async () => {
+    const { m, lightboxImg } = await openLightbox();
+    await inAct(async () => {
+      lightboxImg.dispatchEvent(wheelEvt(0, 0, -500));
+    });
+    const after = parseTransform(lightboxImg);
+    assert.ok(after.scale > 1, `scale must grow on zoom-in wheel, got ${after.scale}`);
+
+    const { m: m2, lightboxImg: img2 } = await openLightbox();
+    await inAct(async () => {
+      img2.dispatchEvent(
+        new window.WheelEvent("wheel", {
+          bubbles: true,
+          cancelable: true,
+          clientX: 0,
+          clientY: 0,
+          deltaY: -500,
+          ctrlKey: true,
+        }),
+      );
+    });
+    assert.ok(parseTransform(img2).scale > 1, "ctrl+wheel (pinch) must zoom too");
+    m.unmount();
+    m2.unmount();
+  });
+
+  it("clamps the scale between 1x and 8x of fit", async () => {
+    const { m, lightboxImg } = await openLightbox();
+    for (let i = 0; i < 20; i++) {
+      await inAct(async () => {
+        lightboxImg.dispatchEvent(wheelEvt(0, 0, -1000));
+      });
+    }
+    assert.equal(parseTransform(lightboxImg).scale, 8, "zooming in caps at 8x");
+
+    for (let i = 0; i < 20; i++) {
+      await inAct(async () => {
+        lightboxImg.dispatchEvent(wheelEvt(0, 0, 1000));
+      });
+    }
+    const out = parseTransform(lightboxImg);
+    assert.equal(out.scale, 1, "zooming out floors at 1x");
+    assert.equal(out.tx, 0, "landing back on 1x clears any leftover translate");
+    assert.equal(out.ty, 0);
+    m.unmount();
+  });
+
+  it("a pointer drag pans (changes translate) once zoomed in, and is not a click", async () => {
+    const { m, lightboxImg } = await openLightbox();
+    // Zoom centered at (0,0), same as the img's untransformed top-left in
+    // jsdom (no real layout, getBoundingClientRect is all zeros): the
+    // point-preserving math leaves tx/ty at exactly 0 after this.
+    await inAct(async () => {
+      lightboxImg.dispatchEvent(wheelEvt(0, 0, -500));
+    });
+    const zoomed = parseTransform(lightboxImg);
+    assert.ok(zoomed.scale > 1);
+    assert.equal(zoomed.tx, 0);
+    assert.equal(zoomed.ty, 0);
+
+    await inAct(async () => {
+      lightboxImg.dispatchEvent(pointerEvt("pointerdown", 100, 100));
+    });
+    await inAct(async () => {
+      lightboxImg.dispatchEvent(pointerEvt("pointermove", 150, 130));
+    });
+    await inAct(async () => {
+      lightboxImg.dispatchEvent(pointerEvt("pointerup", 150, 130));
+    });
+
+    const dragged = parseTransform(lightboxImg);
+    assert.equal(dragged.tx, 50, "drag dx must become the translate");
+    assert.equal(dragged.ty, 30, "drag dy must become the translate");
+    assert.equal(
+      dragged.scale,
+      zoomed.scale,
+      "a drag past the threshold must not also toggle fit/native",
+    );
+    assert.ok(
+      m.query("[data-image-lightbox]"),
+      "a drag must not close the lightbox either",
+    );
+    m.unmount();
+  });
+
+  it("a plain click (no movement) still toggles fit/native when not zoomed in via wheel first", async () => {
+    const { m, lightboxImg } = await openLightbox();
+    await inAct(async () => {
+      lightboxImg.dispatchEvent(pointerEvt("pointerdown", 40, 40));
+    });
+    await inAct(async () => {
+      lightboxImg.dispatchEvent(pointerEvt("pointerup", 40, 40));
+    });
+    const once = parseTransform(lightboxImg);
+    assert.ok(once.scale > 1, "a plain click zooms from fit to native");
+
+    await inAct(async () => {
+      lightboxImg.dispatchEvent(pointerEvt("pointerdown", 40, 40));
+    });
+    await inAct(async () => {
+      lightboxImg.dispatchEvent(pointerEvt("pointerup", 40, 40));
+    });
+    const twice = parseTransform(lightboxImg);
+    assert.equal(twice.scale, 1, "a second plain click returns to fit");
+    assert.ok(
+      m.query("[data-image-lightbox]"),
+      "toggling zoom by click must not close the lightbox",
+    );
+    m.unmount();
+  });
+
+  it("double-click toggles fit/2x", async () => {
+    const { m, lightboxImg } = await openLightbox();
+    await inAct(async () => {
+      lightboxImg.dispatchEvent(
+        new window.MouseEvent("dblclick", {
+          bubbles: true,
+          cancelable: true,
+          clientX: 0,
+          clientY: 0,
+        }),
+      );
+    });
+    assert.equal(parseTransform(lightboxImg).scale, 2, "double-click zooms to 2x");
+
+    await inAct(async () => {
+      lightboxImg.dispatchEvent(
+        new window.MouseEvent("dblclick", {
+          bubbles: true,
+          cancelable: true,
+          clientX: 0,
+          clientY: 0,
+        }),
+      );
+    });
+    assert.equal(
+      parseTransform(lightboxImg).scale,
+      1,
+      "a second double-click returns to fit",
+    );
+    m.unmount();
+  });
+
+  it("keyboard + / - zoom and 0 resets", async () => {
+    const { m, lightboxImg } = await openLightbox();
+    const box = m.query("[data-image-lightbox]") as HTMLElement;
+    await inAct(async () => box.dispatchEvent(
+      new window.KeyboardEvent("keydown", { key: "+", bubbles: true, cancelable: true }),
+    ));
+    const zoomedIn = parseTransform(lightboxImg);
+    assert.ok(zoomedIn.scale > 1, "+ must zoom in");
+
+    await inAct(async () => box.dispatchEvent(
+      new window.KeyboardEvent("keydown", { key: "-", bubbles: true, cancelable: true }),
+    ));
+    const zoomedOut = parseTransform(lightboxImg);
+    assert.ok(
+      zoomedOut.scale < zoomedIn.scale,
+      "- must zoom back out from the + level",
+    );
+
+    await inAct(async () => box.dispatchEvent(
+      new window.KeyboardEvent("keydown", { key: "0", bubbles: true, cancelable: true }),
+    ));
+    assert.deepEqual(
+      parseTransform(lightboxImg),
+      { tx: 0, ty: 0, scale: 1 },
+      "0 resets scale and pan",
+    );
+    m.unmount();
+  });
+});
+
 describe("ThreadView review bar", () => {
   const twoRunDetail = detail({
     thread: thread({ status: "idle", worktreePath: "/tmp/wt" }),
