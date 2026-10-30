@@ -1470,6 +1470,8 @@ export interface SubagentInfo {
   status: "running" | "done" | "failed";
   /** Latest progress the CLI reported for a running agent (#1522). */
   activity?: { text: string; at: number };
+  /** Row-creation timestamp (#1775), for the Background jobs list. Absent on rows written before this field existed. */
+  startedAt?: number;
 }
 
 /** Scope for threads:summaries (#1398). Omitted = every thread. */

@@ -1168,6 +1168,82 @@ describe("ThreadView mounted interactions", () => {
     m.unmount();
   });
 
+  it("shows a collapsed Background jobs row while working, expanding to name each job (#1775)", async () => {
+    const m = await mount(
+      view({
+        detail: detail({
+          thread: thread({
+            status: "working",
+            runStartedAt: 1,
+            subagents: [
+              { id: "a1", description: "Explore the repo", agentType: "Explore", status: "running", startedAt: 1 },
+            ],
+          }),
+          messages: [
+            msg({ id: "u1", role: "user", text: "work", createdAt: 1 }),
+            msg({
+              id: "t1",
+              role: "tool",
+              text: "Bash: npm run watch",
+              createdAt: 2,
+              tool: {
+                id: "tc1",
+                name: "Bash",
+                input: JSON.stringify({ command: "npm run watch", run_in_background: true }),
+                output: "Running in the background with ID: bash_1",
+                done: true,
+                isError: false,
+              },
+            }),
+          ],
+        }),
+      }),
+    );
+    const toggle = m.query("[data-bg-jobs-toggle]") as HTMLButtonElement | null;
+    assert.ok(toggle, "a collapsed Background row shows while jobs are running");
+    assert.match(toggle!.textContent ?? "", /Background: 2 running/);
+    assert.equal(m.query("[data-bg-jobs-list]"), null, "starts collapsed");
+
+    await m.click(toggle!);
+    const list = m.query("[data-bg-jobs-list]");
+    assert.ok(list, "expands on click");
+    assert.match(list!.textContent ?? "", /npm run watch/);
+    assert.match(list!.textContent ?? "", /Explore the repo/);
+    m.unmount();
+  });
+
+  it("the Background row disappears once the run ends", async () => {
+    const m = await mount(
+      view({
+        detail: detail({
+          thread: thread({ status: "done" }),
+          messages: [
+            msg({
+              id: "t1",
+              role: "tool",
+              text: "Bash: npm run watch",
+              createdAt: 2,
+              tool: {
+                id: "tc1",
+                name: "Bash",
+                input: JSON.stringify({ command: "npm run watch", run_in_background: true }),
+                output: "Running in the background with ID: bash_1",
+                done: true,
+                isError: false,
+              },
+            }),
+          ],
+        }),
+      }),
+    );
+    assert.equal(
+      m.query("[data-bg-jobs-toggle]"),
+      null,
+      "no Background row once the thread is not working",
+    );
+    m.unmount();
+  });
+
   it("expands every tool card from the composer Verbose toggle (issue #750)", async () => {
     const m = await mount(
       view({

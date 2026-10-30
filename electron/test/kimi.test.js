@@ -1359,12 +1359,12 @@ describe("kimi runner integration", () => {
         (store.getThread(thread.id).subagents || []).find((r) => r.id === id);
       await waitFor(() => row("Agent:fg")?.status === "done");
 
-      assert.deepEqual(row("Agent:bg"), {
-        id: "Agent:bg",
-        description: "survey repo",
-        agentType: "explore",
-        status: "running",
-      });
+      const bg = row("Agent:bg");
+      assert.equal(bg.id, "Agent:bg");
+      assert.equal(bg.description, "survey repo");
+      assert.equal(bg.agentType, "explore");
+      assert.equal(bg.status, "running");
+      assert.equal(typeof bg.startedAt, "number");
       assert.equal(store.getThread(thread.id).status, "working");
       store.updateThread(thread.id, { lastEventAt: Date.now() - 60_000 });
       runner.checkStalls();

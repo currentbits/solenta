@@ -29,10 +29,17 @@ function createSubagents(ctx) {
     return thread && Array.isArray(thread.subagents) ? thread.subagents : [];
   }
 
+  /**
+   * @param {string} threadId
+   * @param {{ id: string, description: string, agentType: string | null, status: string }} row
+   */
   function addSubagentRow(threadId, row) {
     if (!store.getThread(threadId)) return;
+    // #1775: stamp creation time here, once, so every caller's row feeds
+    // the Background jobs list without adding it at each call site.
+    const stamped = { startedAt: Date.now(), ...row };
     store.updateThread(threadId, {
-      subagents: [...subagentRows(threadId), row].slice(-SUBAGENT_ROWS_MAX),
+      subagents: [...subagentRows(threadId), stamped].slice(-SUBAGENT_ROWS_MAX),
     });
   }
 
