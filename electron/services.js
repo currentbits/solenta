@@ -8,6 +8,7 @@ const {
   PERMISSION_MODES,
   scheduleSimulatorRelease,
   canHostWorktree,
+  resolveDefaultWorktree,
   purgeThread,
 } = require("./services-shared.js");
 const {
@@ -221,6 +222,7 @@ module.exports = {
   forkFromCheckpoint,
   savePlanFile,
   canHostWorktree,
+  resolveDefaultWorktree,
   forkWorkerThread,
   dirtySnapshotWarning,
   setPermissionMode,

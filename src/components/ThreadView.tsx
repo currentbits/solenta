@@ -19,6 +19,7 @@ import type { TerminalApi } from "./TerminalPane";
 import type { FixHandler } from "../fixSuggest";
 import type { FilesPaneApi } from "./FilesPane";
 import { useWorktreeChrome } from "./WorktreeControl";
+import { resolveDefaultWorktree } from "../projectDefaults";
 import { WorkspaceStrip } from "./WorkspaceStrip";
 import { ProjectIcon } from "./ProjectIcon";
 import {
@@ -502,7 +503,10 @@ interface ThreadViewProps {
   ) => void | Promise<void>;
   /** Set or clear (null) the thread's hard budget cap (#286). Throws on rejection. */
   onSetBudget?: (threadId: string, budget: ThreadBudget | null) => Promise<void>;
-  /** Settings.defaultWorktree — Start work arms a pending worktree when set. */
+  /**
+   * Settings.defaultWorktree — Start work arms a pending worktree when set.
+   * The open thread's project.defaultWorktree (#1775) wins over this.
+   */
   defaultWorktree?: boolean;
   /** Permanently delete the open thread (caller already confirmed in UI). */
   onDeleteThread: () => void | Promise<void>;
@@ -4702,7 +4706,8 @@ export const ThreadView = memo(function ThreadView({
             thread={thread}
             onStopAsk={onStopAsk}
             promoteWorktree={
-              defaultWorktree === true && !project?.remoteHost
+              resolveDefaultWorktree(project, defaultWorktree === true) &&
+              !project?.remoteHost
             }
           />
         ) : null}

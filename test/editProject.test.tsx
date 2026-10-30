@@ -72,6 +72,7 @@ describe("edit project", () => {
       worktreeRetention: 10,
       autoDispatch: false,
       autoPr: false,
+      defaultWorktree: null,
       setupCommand: null,
       waitForSetup: false,
       setupCacheOff: false,
@@ -539,6 +540,67 @@ describe("new thread defaults (#1501)", () => {
         m.unmount();
       }
     }
+  });
+});
+
+describe("project default worktree (#1775)", () => {
+  function modal(
+    over: Partial<Parameters<typeof EditProjectModal>[0]["project"]> = {},
+    globalDefaultWorktree = false,
+  ) {
+    const submitted: ProjectUpdateInput[] = [];
+    const el = (
+      <EditProjectModal
+        project={{
+          id: "p1",
+          slug: "ledger",
+          name: "ledger",
+          path: "/tmp/ledger",
+          ...over,
+        }}
+        globalDefaultWorktree={globalDefaultWorktree}
+        onClose={() => {}}
+        onSubmit={async (input) => {
+          submitted.push(input);
+          return input;
+        }}
+      />
+    );
+    return { el, submitted };
+  }
+
+  it("prefills the inherit option and names the current global setting", async () => {
+    const { el } = modal({}, true);
+    const m = await mount(el);
+    const select = m.query(
+      "[data-edit-project-default-worktree]",
+    ) as HTMLSelectElement;
+    assert.equal(select.value, "", "no project override prefills to inherit");
+    assert.match(select.options[0]!.textContent ?? "", /currently: Worktree/);
+    m.unmount();
+  });
+
+  it("saves an explicit true/false override and null to go back to inherit", async () => {
+    const { el, submitted } = modal({ defaultWorktree: true });
+    const m = await mount(el);
+    const select = m.query(
+      "[data-edit-project-default-worktree]",
+    ) as HTMLSelectElement;
+    assert.equal(select.value, "true", "prefills the stored override");
+    await m.change(select, "false");
+    await m.click(m.query("[data-edit-project-submit]"));
+    await m.flush();
+    assert.equal(submitted[0]!.defaultWorktree, false);
+    m.unmount();
+  });
+
+  it("an unset project sends null (use the global setting)", async () => {
+    const { el, submitted } = modal();
+    const m = await mount(el);
+    await m.click(m.query("[data-edit-project-submit]"));
+    await m.flush();
+    assert.equal(submitted[0]!.defaultWorktree, null);
+    m.unmount();
   });
 });
 

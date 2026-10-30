@@ -95,6 +95,12 @@ export interface ProjectInfo {
    */
   worktreeRetention?: number;
   /**
+   * Per-project override of settings.defaultWorktree (#1775): true/false
+   * pins this project's new threads into/out of a worktree regardless of
+   * the global default; null/absent follows the global setting.
+   */
+  defaultWorktree?: boolean | null;
+  /**
    * User override (#610): a path relative to the project checkout. Absent
    * means Automatic (detect from favicon / t3.json / HTML). Never an
    * absolute path.
@@ -409,6 +415,8 @@ export interface ProjectUpdateInput {
   autoPr?: boolean;
   /** Worktree retention (#316 / #559): 0 keeps everything, N > 0 sets the keep count. Default 10. */
   worktreeRetention?: number;
+  /** Per-project default-worktree override (#1775); null restores "use the global setting". */
+  defaultWorktree?: boolean | null;
   /** Secondary folders (#514), absolute paths. Empty / null clears them. */
   folders?: string[] | null;
   /**

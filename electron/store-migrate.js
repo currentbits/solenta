@@ -252,6 +252,11 @@ function migrateProject(p) {
   } else {
     next.worktreeRetention = DEFAULT_WORKTREE_RETENTION;
   }
+  // #1775: tri-state override of settings.defaultWorktree. Anything but a
+  // strict boolean drops the key, which reads as "use the global setting".
+  if (next.defaultWorktree !== true && next.defaultWorktree !== false) {
+    delete next.defaultWorktree;
+  }
   // Derived at list time (#610 / #521). Never persist a data URL or scm probe.
   delete next.iconUrl;
   delete next.scm;
