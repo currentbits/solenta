@@ -51,6 +51,7 @@ const {
 } = require("./memory-sup.js");
 const { createOrchServer } = require("./orchServer.js");
 const { createPrStateRefresher, createRetentionSweeper } = require("./worktrees.js");
+const { createIdleCompactScheduler } = require("./idleCompact.js");
 const { createWedgedLaneWatchdog } = require("./mergeQueue.js");
 const {
   killAll: killAllDevServers,
@@ -228,6 +229,9 @@ let prStateRefresher = null;
 
 /** @type {ReturnType<typeof createRetentionSweeper> | null} */
 let retentionSweeper = null;
+
+/** @type {ReturnType<typeof createIdleCompactScheduler> | null} */
+let idleCompactScheduler = null;
 
 /** @type {ReturnType<typeof createWedgedLaneWatchdog> | null} */
 let wedgedLaneWatchdog = null;
@@ -1146,6 +1150,15 @@ app.whenReady().then(async () => {
   });
   prStateRefresher.start();
 
+  // Opt-in idle-thread compaction (#1765): off unless the user turns it on
+  // in Settings. Same unref'd-interval shape as the PR refresher above.
+  idleCompactScheduler = createIdleCompactScheduler({
+    store,
+    runner,
+    broadcast,
+  });
+  idleCompactScheduler.start();
+
   // Anonymous daily usage ping (installs, OS, agents) for the team's stats.
   if (app.isPackaged) {
     require("./telemetry.js").startTelemetry({
@@ -1367,6 +1380,14 @@ function teardownServices() {
       // ignore
     }
     retentionSweeper = null;
+  }
+  if (idleCompactScheduler) {
+    try {
+      idleCompactScheduler.stop();
+    } catch {
+      // ignore
+    }
+    idleCompactScheduler = null;
   }
   if (wedgedLaneWatchdog) {
     try {

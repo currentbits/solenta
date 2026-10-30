@@ -27,6 +27,7 @@ const {
   normalizeChannel,
   CHANNEL_KINDS,
   normalizeGithubHosts,
+  TITLE_INSTRUCTIONS_MAX,
 } = require("./store-normalize.js");
 
 /**
@@ -102,6 +103,8 @@ class StoreSettingsMethods {
       combineQueuedFollowUps: n.combineQueuedFollowUps,
       agentBugReports: n.agentBugReports,
       guardrailsEnabled: n.guardrailsEnabled,
+      idleCompactClaudeThreads: n.idleCompactClaudeThreads,
+      titleInstructions: n.titleInstructions,
       prDiffCapLines: n.prDiffCapLines,
       maxConcurrentRuns: n.maxConcurrentRuns,
       agentProfiles: n.agentProfiles,
@@ -455,6 +458,20 @@ class StoreSettingsMethods {
         throw new Error("guardrailsEnabled must be a boolean");
       }
       this.data.settings.guardrailsEnabled = v;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "idleCompactClaudeThreads")) {
+      const v = patch.idleCompactClaudeThreads;
+      if (typeof v !== "boolean") {
+        throw new Error("idleCompactClaudeThreads must be a boolean");
+      }
+      this.data.settings.idleCompactClaudeThreads = v;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "titleInstructions")) {
+      const v = patch.titleInstructions;
+      if (typeof v !== "string") {
+        throw new Error("titleInstructions must be a string");
+      }
+      this.data.settings.titleInstructions = v.trim().slice(0, TITLE_INSTRUCTIONS_MAX);
     }
     if (Object.prototype.hasOwnProperty.call(patch, "linearApiKey")) {
       const v = patch.linearApiKey;

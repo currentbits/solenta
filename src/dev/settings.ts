@@ -90,6 +90,8 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
   let agentBugReports = true;
   let worktreeRoot: string | null = null;
   let guardrailsEnabled = true;
+  let idleCompactClaudeThreads = false;
+  let titleInstructions = "";
   let otel: OtelSettings = { endpoint: null, headers: {}, claudeMetrics: false };
   let modelPrices: Record<string, ModelPrice> = {};
   let privacyGateway: PrivacyGatewaySettings = { default: "off", providers: {}, patterns: [] };
@@ -209,6 +211,8 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           agentBugReports,
           worktreeRoot,
           guardrailsEnabled,
+          idleCompactClaudeThreads,
+          titleInstructions,
           agentProfiles: agentProfiles.map((p) => ({ ...p })),
           providerInstances: providerInstances.map((p) => ({ ...p, env: { ...p.env } })),
           providerModels: structuredClone(providerModels),
@@ -449,6 +453,19 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           }
           guardrailsEnabled = patch.guardrailsEnabled;
         }
+        if (Object.prototype.hasOwnProperty.call(patch, "idleCompactClaudeThreads")) {
+          if (typeof patch.idleCompactClaudeThreads !== "boolean") {
+            throw new Error("idleCompactClaudeThreads must be a boolean");
+          }
+          idleCompactClaudeThreads = patch.idleCompactClaudeThreads;
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, "titleInstructions")) {
+          if (typeof patch.titleInstructions !== "string") {
+            throw new Error("titleInstructions must be a string");
+          }
+          // Keep in sync with TITLE_INSTRUCTIONS_MAX in electron/store-normalize.js.
+          titleInstructions = patch.titleInstructions.trim().slice(0, 500);
+        }
         if (Object.prototype.hasOwnProperty.call(patch, "agentProfiles")) {
           if (!Array.isArray(patch.agentProfiles)) {
             throw new Error("agentProfiles must be an array");
@@ -605,6 +622,8 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           agentBugReports,
           worktreeRoot,
           guardrailsEnabled,
+          idleCompactClaudeThreads,
+          titleInstructions,
           agentProfiles: agentProfiles.map((p) => ({ ...p })),
           providerInstances: providerInstances.map((p) => ({ ...p, env: { ...p.env } })),
           providerModels: structuredClone(providerModels),

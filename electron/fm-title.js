@@ -52,18 +52,19 @@ function sanitizeTitle(raw) {
 /**
  * @param {string} userText
  * @param {string} [assistantText]
+ * @param {string} [instructions] - user's titleInstructions setting (#1765)
  * @returns {string}
  */
-function buildTitlePrompt(userText, assistantText) {
+function buildTitlePrompt(userText, assistantText, instructions) {
   const user = String(userText || "").slice(0, TITLE_PROMPT_LIMIT);
   const asst = String(assistantText || "").slice(0, TITLE_PROMPT_LIMIT);
   const parts = [
     "Write a title of at most 6 words describing this task.",
     "Reply with ONLY the title: no quotes, no trailing period, no explanation.",
-    "",
-    "User:",
-    user || "(empty)",
   ];
+  const extra = String(instructions || "").trim();
+  if (extra) parts.push("", "Extra instructions:", extra);
+  parts.push("", "User:", user || "(empty)");
   if (asst) {
     parts.push("", "Assistant:", asst);
   }
@@ -99,9 +100,13 @@ async function maybeApplyFmTitle(store, threadId, opts = {}) {
     if (!userText) return null;
     if (!isPlaceholderTitle(thread, userText)) return null;
 
-    const raw = await fmRun(buildTitlePrompt(userText, assistantText), {
-      env: opts.env,
-    });
+    const instructions = store.getSettings
+      ? store.getSettings().titleInstructions
+      : "";
+    const raw = await fmRun(
+      buildTitlePrompt(userText, assistantText, instructions),
+      { env: opts.env },
+    );
     // No marker on failure: fm being absent (every pre-macOS-27 machine, every
     // non-Mac) must not permanently opt the thread out of ever being titled.
     // The cost of retrying is one cached-miss `which` per successful turn.

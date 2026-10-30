@@ -1849,6 +1849,15 @@ function createRunner(opts) {
     }
     cancelQuotaWake(threadId);
 
+    // Idle compaction (#1765) stamps idleCompactedAt to claim one idle
+    // window; any OTHER turn means the thread is live again, so it clears
+    // the claim and is eligible for idle-compaction next time it goes
+    // cold. The claiming call itself sets fromIdleCompact so it does not
+    // erase its own stamp.
+    if (!input.fromIdleCompact && thread.idleCompactedAt != null) {
+      store.updateThread(threadId, { idleCompactedAt: null });
+    }
+
     // Ask mode (issue #392): cheap no-tools Q&A. Intercept BEFORE orch
     // commands, budget, and worktree materialization so a `/advisor` on an
     // Ask thread is just a question and a defaultWorktree leftover cannot

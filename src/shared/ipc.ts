@@ -3803,6 +3803,21 @@ export interface AppSettings {
   /** Solenta tool, injection, and secret checks. Default on; false opts out. */
   guardrailsEnabled: boolean;
   /**
+   * Opt-in (issue #1765, default false): a main-process scheduler compacts
+   * an idle Claude thread (not working, 50-58 minutes since its last turn,
+   * context at/above COLD_COMPACT_MIN_TOKENS) before the hour prompt-cache
+   * TTL lapses, reusing the "Compact first" chip's own mechanism (a bare
+   * `/compact` turn). Each compaction spends one turn.
+   */
+  idleCompactClaudeThreads: boolean;
+  /**
+   * Extra instructions appended to the auto-generated thread title prompt
+   * (issue #1765, electron/fm-title.js buildTitlePrompt). Trimmed, capped
+   * at TITLE_INSTRUCTIONS_MAX (~500) chars. Default "" = the plain "6
+   * words" prompt.
+   */
+  titleInstructions: string;
+  /**
    * PR size cap in changed lines (additions + deletions vs the base branch),
    * enforced when a PR is created from the app (issue #402, DORA small
    * batches as a product default). Default 400; null disables the cap.
