@@ -2878,6 +2878,14 @@ export interface PrListItem {
   reviewDecision?: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED";
   /** One verdict over all checks; cancelled counts as "fail". */
   checks?: "pass" | "fail" | "pending";
+  /**
+   * True when the signed-in GitHub user is directly named in this PR's
+   * review requests (issue #1763). A team-only request never sets this:
+   * the app caches no team-membership data to expand it. Absent when the
+   * signed-in login could not be resolved (gh missing/signed out, or a
+   * REST-token-only setup with no gh CLI at all).
+   */
+  reviewRequestedFromMe?: boolean;
 }
 
 /** Optional page for `git.listPrs`. Absent limit keeps the historic 50-row page. */

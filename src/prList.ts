@@ -173,6 +173,9 @@ export function triagePr(
   const working = thread.status === "working";
   if (working) signals.push("Agent working");
   const blocked = signals.length > 0;
+  // Not pushed into `signals`: PrListView renders its own dedicated
+  // "Review requested" badge (#1763) next to the title on every row, not
+  // just triaged ones, and it must not itself count as a blocker bucket.
 
   const lines =
     pr.additions != null && pr.deletions != null
@@ -206,7 +209,10 @@ export function triagePr(
 
 /**
  * Open agent PRs (those with a Solenta thread) across loaded groups, sorted
- * by bucket, then longest-waiting first. Failed groups contribute nothing.
+ * by: a review explicitly requested from the signed-in user first (#1763,
+ * stronger than the bucket classification below it - GitHub asked for YOU
+ * by name), then bucket, then longest-waiting first. Failed groups
+ * contribute nothing.
  */
 export function triageInbox(
   groups: readonly PrGroup[],
@@ -225,8 +231,10 @@ export function triageInbox(
   }
   const order = TRIAGE_BUCKETS.map((b) => b.id);
   const age = (row: TriageRow) => prUpdatedMs(row.pr) ?? Infinity;
+  const reviewRequested = (row: TriageRow) => (row.pr.reviewRequestedFromMe ? 0 : 1);
   return rows.sort(
     (a, b) =>
+      reviewRequested(a) - reviewRequested(b) ||
       order.indexOf(a.triage.bucket) - order.indexOf(b.triage.bucket) ||
       age(a) - age(b),
   );

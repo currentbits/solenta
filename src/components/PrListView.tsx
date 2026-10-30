@@ -396,6 +396,11 @@ export function PrListView({
             {pr.isDraft ? (
               <span className={styles.draft}>Draft</span>
             ) : null}
+            {pr.reviewRequestedFromMe ? (
+              <span className={styles.reviewRequested} data-pr-review-requested="">
+                Review requested
+              </span>
+            ) : null}
           </div>
           <div className={styles.rowMeta}>
             {pr.headRefName ? (
