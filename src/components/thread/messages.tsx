@@ -13,11 +13,12 @@ import type {
   WorkSuggestion,
 } from "../../shared/ipc";
 import { commandOutputChip, type TerminalChip } from "../../contextChips";
-import { messageMetaLine } from "../../messageMeta";
+import { formatClock, messageMetaLine } from "../../messageMeta";
 import {
   liveGroupLabel,
   summarizeToolGroup,
   toolAction,
+  type DisplayEntry,
   type ToolGroup,
 } from "../../toolGroups";
 import {
@@ -1233,6 +1234,46 @@ function WorkerResultCard({
   );
 }
 
+export type BurstPosition = "single" | "first" | "middle" | "last";
+
+/**
+ * Back-to-back user messages (#1789): queued follow-ups, steer messages, and
+ * quick corrections with no agent output between them read as one bubble
+ * group instead of N separate ones (tighter spacing, chat-app corner radii,
+ * one shared meta row carrying the LAST message's time). Pure, over the
+ * same rendered row list ThreadView maps (`DisplayEntry[]`), so the
+ * run-breaking rule is unit-tested without a DOM: a tool group, a worklog
+ * group, or any non-user message ends the run, same as it visually would.
+ */
+export function userMessageBursts(
+  rows: readonly DisplayEntry[],
+): Map<string, BurstPosition> {
+  const positions = new Map<string, BurstPosition>();
+  let run: string[] = [];
+  const flush = () => {
+    if (run.length === 1) {
+      positions.set(run[0]!, "single");
+    } else if (run.length > 1) {
+      run.forEach((id, i) => {
+        positions.set(
+          id,
+          i === 0 ? "first" : i === run.length - 1 ? "last" : "middle",
+        );
+      });
+    }
+    run = [];
+  };
+  for (const row of rows) {
+    if (row.kind === "message" && row.message.role === "user") {
+      run.push(row.message.id);
+    } else {
+      flush();
+    }
+  }
+  flush();
+  return positions;
+}
+
 const UserMessageBlock = memo(function UserMessageBlock({
   message,
   canEdit,
@@ -1246,6 +1287,7 @@ const UserMessageBlock = memo(function UserMessageBlock({
   onIntegrateWorker,
   pinned = false,
   onTogglePin,
+  burstPosition = "single",
 }: {
   message: ChatMessage;
   canEdit: boolean;
@@ -1261,6 +1303,8 @@ const UserMessageBlock = memo(function UserMessageBlock({
   onSelectThread?: (id: string) => void;
   pinned?: boolean;
   onTogglePin?: () => void;
+  /** Back-to-back user messages (#1789): position within the bubble group. */
+  burstPosition?: BurstPosition;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(message.text);
@@ -1490,6 +1534,7 @@ const UserMessageBlock = memo(function UserMessageBlock({
     <article
       className={`${styles.message} ${styles.messageUser}${streamCls}`}
       data-stream-in={streamAttr}
+      data-burst={burstPosition}
     >
       <div className={styles.userBubbleWrap}>
         <div className={styles.userBubbleCluster}>
@@ -1540,8 +1585,13 @@ const UserMessageBlock = memo(function UserMessageBlock({
           )}
         </div>
       </div>
-      {(onTogglePin || message.text.trim()) && (
+      {(onTogglePin || message.text.trim() || burstPosition === "last") && (
         <footer className={styles.msgMeta}>
+          {burstPosition === "last" && (
+            // Burst (#1789): one shared time for the group, carried on the
+            // last message's footer; first/middle members show none.
+            <span data-burst-time="">{formatClock(message.createdAt)}</span>
+          )}
           <span className={styles.msgActions}>
             {message.text.trim() && (
               <button
@@ -1683,6 +1733,7 @@ export const MessageBlock = memo(function MessageBlock({
   onOpenAutomations,
   onShowUser,
   onAddCommandOutput,
+  burstPosition = "single",
 }: {
   message: ChatMessage;
   autoExpandTool: boolean;
@@ -1724,6 +1775,9 @@ export const MessageBlock = memo(function MessageBlock({
   onShowUser?: (action: ShowUserAction) => void;
   /** Attach a quick action's output to this thread's draft (#1216). */
   onAddCommandOutput?: (chip: TerminalChip) => void;
+  /** Back-to-back user messages (#1789): position within the bubble group;
+   * only the user-message branch below uses it. */
+  burstPosition?: BurstPosition;
 }) {
   // Latch at mount; see ToolCallCard for why.
   const [entered] = useState(Boolean(animateIn));
@@ -1782,6 +1836,7 @@ export const MessageBlock = memo(function MessageBlock({
         onIntegrateWorker={onIntegrateWorker}
         pinned={pinned}
         onTogglePin={onTogglePin}
+        burstPosition={burstPosition}
       />
     );
   }
