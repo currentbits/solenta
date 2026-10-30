@@ -3092,7 +3092,7 @@ button.diffLineGutter:focus-visible {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.45);
+  background: var(--scrim);
   color: #fff;
   font-size: 15px;
   font-weight: 600;
