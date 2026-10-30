@@ -12,8 +12,8 @@
  * Once main.js calls configure({ file }), values also live in their own
  * userData file (thread-secrets.json, mode 0600, written tmp + rename) so a
  * relaunch doesn't make the agent ask again. Values go through secrets.js
- * seal/open: encrypted when SOLENTA_ENABLE_SAFE_STORAGE is on, otherwise
- * PLAINTEXT protected only by the 0600 mode, same as stored provider keys.
+ * seal/open, same as stored provider keys: OS-keychain encrypted in
+ * packaged builds (#1726), PLAINTEXT behind the 0600 mode in dev runs.
  * Without configure (tests), it's memory-only.
  */
 

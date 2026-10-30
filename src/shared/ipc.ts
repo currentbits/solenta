@@ -3730,6 +3730,7 @@ export interface AppSettings {
    * fires when PR watch sees a new failing check.
    */
   notifyEvents: NotifyEvents;
+  /**
    * Project ids whose threads notify (#1746): desktop notification and
    * alert sound. Empty = every project. Deleted ids are ignored.
    */
