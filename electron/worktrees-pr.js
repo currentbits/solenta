@@ -2212,6 +2212,7 @@ module.exports = {
   PR_REFRESH_TIMEOUT_MS,
   GH_TIMEOUT_MS,
   ghApiTryAsync,
+  githubApiTarget,
   isGitHubPrRemote,
   setGithubApi,
   isGitHubRemote,

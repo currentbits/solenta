@@ -194,6 +194,16 @@ async function rest(req) {
 }
 
 /**
+ * One REST GET resolving the raw text body (job logs redirect to a blob URL;
+ * fetch follows it and drops Authorization on the cross-origin hop).
+ * @param {{ host: string, token: string, path: string, timeoutMs?: number, fetchFn?: typeof fetch }} req
+ */
+async function restText(req) {
+  const res = await send(req, restUrl(req.host) + req.path, "GET");
+  return res.text();
+}
+
+/**
  * One GraphQL request. Throws on transport/HTTP failure (err.status set) and
  * when the response carries no `data`. Partial `errors` (e.g. one PR number
  * that does not exist) are returned alongside data, not thrown.
@@ -604,6 +614,7 @@ module.exports = {
   forgetToken,
   graphql,
   rest,
+  restText,
   fetchPrStates,
   ghPr,
   ghIssue,

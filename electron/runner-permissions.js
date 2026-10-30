@@ -107,6 +107,14 @@ function createPermissions(ctx) {
   function pendingPermissionsFor(threadId) {
     const ci = ciWorkflowSignOffs.get(threadId);
     if (ci && !ci.approved) {
+      if (ci.card) {
+        return [{
+          requestId: ci.id, toolName: ci.card.toolName, summary: ci.card.summary,
+          input: ci.input, command: null, acceptAlways: false,
+          questions: null, plan: null,
+          guardrail: { rule: ci.card.rule, reason: ci.card.reason },
+        }];
+      }
       return [{
         requestId: ci.id, toolName: "CI workflow merge",
         summary: "Sign off the workflow patch and merge destination",
@@ -540,7 +548,10 @@ function createPermissions(ctx) {
       if (decision !== "allow" && decision !== "deny") {
         throw new Error("CI workflow sign-off requires a one-time Accept or Deny");
       }
-      if (decision === "allow") {
+      if (decision === "allow" && ci.card) {
+        ci.approved = true;
+        services.setQueued(store, { threadId, prompt: ci.card.resume });
+      } else if (decision === "allow") {
         ci.approved = true;
         const r = ci.review;
         services.setQueued(store, { threadId, prompt:
@@ -553,7 +564,8 @@ function createPermissions(ctx) {
       } else {
         ciWorkflowSignOffs.delete(threadId);
       }
-      appendMessage(threadId, "event", decision === "allow" ? "CI workflow merge signed off" : "CI workflow merge sign-off denied");
+      const what = ci.card ? ci.card.toolName : "CI workflow merge";
+      appendMessage(threadId, "event", decision === "allow" ? `${what} signed off` : `${what} sign-off denied`);
       store.updateThread(threadId, { awaitingInput: getPendingPermission(threadId) != null });
       store.save();
       pushDetail(threadId);
@@ -930,6 +942,37 @@ function createPermissions(ctx) {
 
   /** Called only by the host merge guard; renderer respondPermission grants it. */
   function requestCiWorkflowSignOff(threadId, review) {
+    const input = `Worker: ${review.workerThreadId}\nSource: ${review.sourceBranch} (${review.sourceSha})\n` +
+      `Destination: ${review.destinationPath}\nBranch: ${review.destinationBranch} (${review.destinationSha})\n` +
+      `Workflow files: ${review.files.join(", ")}\n\n${review.patch || "(No net workflow change at this destination.)"}`;
+    return requestHostSignOff(threadId, review, input);
+  }
+
+  /**
+   * pr_merge's sign-off (#1749), same host-only map: bound to thread, repo,
+   * PR, method and head SHA. A moved head or another method opens a new card.
+   * @param {string} threadId
+   * @param {{ repo: string, number: number, title: string, method: string, headSha: string }} review
+   */
+  function requestPrMergeSignOff(threadId, review) {
+    const input = `Repo: ${review.repo}\nPR: #${review.number} ${review.title}\n` +
+      `Method: ${review.method}\nHead: ${review.headSha}`;
+    const { repo, number, method, headSha } = review; // title is display-only
+    return requestHostSignOff(threadId, { repo, number, method, headSha }, input, {
+      toolName: "Merge pull request",
+      summary: `Merge ${review.repo}#${review.number} (${review.method})`,
+      rule: "PR_MERGE",
+      reason: "Accept signs off one merge of this PR at this head commit with this method. A new push or another method needs a new sign-off.",
+      resume: `I signed off merging ${review.repo}#${review.number} with ${review.method} at ${review.headSha}. ` +
+        `Call pr_merge again with number ${review.number} and method ${review.method}.`,
+    });
+  }
+
+  /**
+   * True once: the user Accepted this exact review and this turn is
+   * human-started. Otherwise (re)opens the card and returns false.
+   */
+  function requestHostSignOff(threadId, review, input, card) {
     const key = JSON.stringify(review);
     const previous = ciWorkflowSignOffs.get(threadId);
     if (previous?.key === key) {
@@ -937,10 +980,7 @@ function createPermissions(ctx) {
       ciWorkflowSignOffs.delete(threadId); // Single use, including failed merges.
       return true;
     }
-    const input = `Worker: ${review.workerThreadId}\nSource: ${review.sourceBranch} (${review.sourceSha})\n` +
-      `Destination: ${review.destinationPath}\nBranch: ${review.destinationBranch} (${review.destinationSha})\n` +
-      `Workflow files: ${review.files.join(", ")}\n\n${review.patch || "(No net workflow change at this destination.)"}`;
-    ciWorkflowSignOffs.set(threadId, { id: randomUUID(), key, review, input, approved: false });
+    ciWorkflowSignOffs.set(threadId, { id: randomUUID(), key, review, input, approved: false, ...(card ? { card } : {}) });
     store.updateThread(threadId, { awaitingInput: true });
     store.save();
     pushDetail(threadId);
@@ -1147,6 +1187,7 @@ function createPermissions(ctx) {
     requestSecret,
     answerSecret,
     requestCiWorkflowSignOff,
+    requestPrMergeSignOff,
     clearQuestion,
     maybePersistPlanApproval,
   };

@@ -1619,6 +1619,33 @@ describe("orch-server HTTP", () => {
     assert.ok(!payload.some((t) => t.id === "t3"));
   });
 
+  it("lists the PR + CI tools only for a GitHub-origin session (#1749)", async () => {
+    const { orch, deps } = await startOrch();
+    const repo = path.join(tmpDir, "gh-repo");
+    fs.mkdirSync(repo);
+    const { execFileSync } = require("node:child_process");
+    execFileSync("git", ["init", "-q", repo]);
+    execFileSync("git", ["-C", repo, "remote", "add", "origin", "https://github.com/acme/app.git"]);
+    deps.store.getProject("p1").path = repo;
+    const st = orch.getStatus();
+    const cfg = JSON.parse(
+      fs.readFileSync(path.join(tmpDir, "orch-server.json"), "utf8"),
+    );
+    const prTools = ["ci_logs", "ci_rerun", "pr_comment", "pr_merge", "pr_update", "pr_view"];
+    const listed = async (projectId) => {
+      const res = await mcpPost(
+        st.port,
+        cfg.token,
+        { jsonrpc: "2.0", id: 40, method: "tools/list", params: {} },
+        { query: `projectId=${projectId}` },
+      );
+      assert.equal(res.status, 200);
+      return res.body.result.tools.map((t) => t.name).filter((n) => prTools.includes(n)).sort();
+    };
+    assert.deepEqual(await listed("p1"), prTools);
+    assert.deepEqual(await listed("p2"), []);
+  });
+
   it("tools/call threads_list bound via ?projectId= ignores a claimed foreign project", async () => {
     const { orch } = await startOrch();
     const st = orch.getStatus();
