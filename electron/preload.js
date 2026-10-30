@@ -271,6 +271,7 @@ const IPC_CHANNELS = Object.freeze([
   { ns: "threads", method: "setVerifyCommand" },
   { ns: "threads", method: "runVerify" },
   { ns: "threads", method: "exportReport" },
+  { ns: "threads", method: "exportReportMarkdown" },
   { ns: "threads", method: "runCommand" },
   { ns: "threads", method: "delete" },
   { ns: "threads", method: "restore" },

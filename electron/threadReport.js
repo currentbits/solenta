@@ -5,6 +5,10 @@
  * transcript, tool calls, diffs, environment and agent version, for pasting
  * into a vendor issue tracker instead of a terminal screenshot.
  *
+ * Also exports a plain Markdown transcript (#1783): title, project,
+ * provider/model and date, then each message as a "## You" / "## Agent"
+ * section, for pasting into a doc or chat instead of a terminal screenshot.
+ *
  * Redaction runs on every string that reaches the file: this thread's
  * secret-card values (#289), the guardrail secret shapes, bearer tokens,
  * whole PEM private-key blocks, and the home directory (it names the user).
@@ -142,6 +146,68 @@ ${diffHtml}
   return { html, counts: r.counts };
 }
 
+/**
+ * Pure: everything it prints goes through the same redactor as the HTML
+ * report. Leaner than the HTML report on purpose: no environment table, no
+ * diff patches, no full tool input/output — just the title, a few headline
+ * facts, and the conversation, for pasting somewhere that renders Markdown.
+ * @param {{
+ *   detail: import("../src/shared/ipc").ThreadDetail,
+ *   projectName?: string,
+ *   exportedAt: number,
+ *   home?: string,
+ * }} input
+ * @returns {{ markdown: string, counts: Record<string, number> }}
+ */
+function buildThreadReportMarkdown({ detail, projectName, exportedAt, home }) {
+  const { thread, messages, usage } = detail;
+  const r = redactor(thread.id, home);
+  const t = (/** @type {unknown} */ v) => r.text(v);
+
+  const meta = [
+    ["Project", projectName],
+    ["Provider", thread.provider],
+    ["Model", (usage && usage.model) || thread.model],
+    ["Date", when(exportedAt)],
+  ]
+    .filter(([, v]) => v != null && v !== "")
+    .map(([k, v]) => `- **${k}:** ${t(v)}`)
+    .join("\n");
+
+  const transcript = messages
+    .map((m) => {
+      if (m.role === "tool" && m.tool) {
+        const tool = m.tool;
+        const summary = t(m.text || tool.name);
+        return `> tool: ${t(tool.name)} - ${summary}${tool.isError ? " (error)" : ""}`;
+      }
+      if (m.role === "event") {
+        return m.thinking ? `> thinking: ${t(m.text)}` : `> ${t(m.text)}`;
+      }
+      const heading = m.role === "user" ? "## You" : "## Agent";
+      const attachments =
+        m.attachments && m.attachments.length
+          ? `\n\nAttachments: ${m.attachments.map((a) => t(a.name)).join(", ")}`
+          : "";
+      // No fence of our own: the message text's own ``` code fences (if
+      // any) pass through untouched, unlike the HTML report's <pre>/esc.
+      return `${heading}\n\n${t(m.text)}${attachments}`;
+    })
+    .join("\n\n");
+
+  const tally = Object.entries(r.counts);
+  const summary = tally.length
+    ? `Redacted ${tally.reduce((n, [, c]) => n + c, 0)} secret(s): ${tally.map(([k, c]) => `${k.replace(/^secret\./, "")} ×${c}`).join(", ")}.`
+    : "No secrets matched the redaction rules.";
+
+  const markdown =
+    `# ${t(thread.title)}\n\n${meta}\n\n` +
+    `_Exported ${when(exportedAt)} from Solenta. ${summary} Review before sharing: redaction is pattern-based._\n\n` +
+    `${transcript || "_No messages._"}\n`;
+
+  return { markdown, counts: r.counts };
+}
+
 /** `<bin> --version`, first line; "" when it is missing or slow. */
 function cliVersion(/** @type {string} */ bin) {
   return new Promise((resolve) => {
@@ -150,6 +216,11 @@ function cliVersion(/** @type {string} */ bin) {
       resolve(err ? "" : String(stdout).trim().split("\n")[0]);
     });
   });
+}
+
+/** @param {string} title */
+function reportSlug(title) {
+  return String(title || "thread").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60) || "thread";
 }
 
 /**
@@ -167,7 +238,7 @@ async function exportThreadReport(ctx, threadId) {
   if (!ctx.dialog || typeof ctx.dialog.showSaveDialog !== "function") {
     throw new Error("Save dialog is not available in this mode");
   }
-  const slug = String(detail.thread.title || "thread").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60) || "thread";
+  const slug = reportSlug(detail.thread.title);
   const picked = await ctx.dialog.showSaveDialog({
     title: "Export bug report",
     defaultPath: `${slug}-report.html`,
@@ -211,4 +282,42 @@ async function exportThreadReport(ctx, threadId) {
   return picked.filePath;
 }
 
-module.exports = { buildThreadReport, exportThreadReport, redactor };
+/**
+ * Save dialog first, then write the plain Markdown transcript (#1783). No
+ * diffs/env to gather, so unlike exportThreadReport there is nothing worth
+ * doing before the dialog resolves.
+ * @param {{ store: any, dialog?: any }} ctx
+ * @param {string} threadId
+ * @returns {Promise<string | null>} written path, null when cancelled
+ */
+async function exportThreadReportMarkdown(ctx, threadId) {
+  const services = require("./services.js");
+  const detail = services.getThreadDetail(ctx.store, threadId, null, { markVisited: false });
+  if (!ctx.dialog || typeof ctx.dialog.showSaveDialog !== "function") {
+    throw new Error("Save dialog is not available in this mode");
+  }
+  const slug = reportSlug(detail.thread.title);
+  const picked = await ctx.dialog.showSaveDialog({
+    title: "Export as Markdown",
+    defaultPath: `${slug}-report.md`,
+    filters: [{ name: "Markdown", extensions: ["md"] }],
+  });
+  if (picked.canceled || !picked.filePath) return null;
+
+  const project = ctx.store.getProject(detail.thread.projectId);
+  const { markdown } = buildThreadReportMarkdown({
+    detail,
+    projectName: project && project.name,
+    exportedAt: Date.now(),
+  });
+  fs.writeFileSync(picked.filePath, markdown);
+  return picked.filePath;
+}
+
+module.exports = {
+  buildThreadReport,
+  exportThreadReport,
+  buildThreadReportMarkdown,
+  exportThreadReportMarkdown,
+  redactor,
+};

@@ -392,6 +392,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     setVerifyCommand,
     runVerify,
     exportReport,
+    exportReportMarkdown,
     runCommand,
     runShell,
     appStatus,
@@ -2523,6 +2524,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onRegenerateTitle={handleRegenerateOpenThread}
         onDuplicateThread={handleDuplicateOpenThread}
         onExportReport={exportReport}
+        onExportReportMarkdown={exportReportMarkdown}
         onRepeatSchedule={handleRepeatSchedule}
         onDistillWorkflow={handleDistillWorkflow}
         onDistillMemory={handleDistillMemory}

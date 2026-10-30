@@ -844,6 +844,8 @@ export interface UseCoderResult {
   runVerify: (threadId: string) => Promise<VerifyResult>;
   /** Save a redacted HTML bug report (#394); null when the dialog was cancelled. */
   exportReport: CoderApi["threads"]["exportReport"];
+  /** Save a redacted Markdown transcript (#1783); null when the dialog was cancelled. */
+  exportReportMarkdown: CoderApi["threads"]["exportReportMarkdown"];
   /** Run the project's setup command or a named quick action (issue #153). */
   runCommand: (
     threadId: string,
@@ -2382,6 +2384,7 @@ export function useCoder(): UseCoderResult {
     setVerifyCommand,
     runVerify,
     exportReport: api.threads.exportReport,
+    exportReportMarkdown: api.threads.exportReportMarkdown,
     runCommand,
     runShell,
     appStatus,

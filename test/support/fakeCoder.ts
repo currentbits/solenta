@@ -2015,6 +2015,8 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       list: () => rec("threads.list", [], threads.map((t) => ({ ...t }))),
       exportReport: (input: { threadId: string }) =>
         rec("threads.exportReport", [input], `/tmp/${input.threadId}-report.html`),
+      exportReportMarkdown: (input: { threadId: string }) =>
+        rec("threads.exportReportMarkdown", [input], `/tmp/${input.threadId}-report.md`),
       /** Mirror electron services.threadSummaries (team view). */
       summaries: (input?: ThreadSummariesInput) =>
         rec(

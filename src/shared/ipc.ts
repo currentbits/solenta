@@ -6378,6 +6378,14 @@ export interface CoderApi {
      */
     exportReport(input: { threadId: string }): Promise<string | null>;
     /**
+     * Save the thread as a plain, redacted Markdown transcript (#1783):
+     * title, project, provider/model, date, then each message as a
+     * "## You" / "## Agent" section. Resolves the written path, or null
+     * when the save dialog was cancelled. Desktop only: web mode has no
+     * save dialog.
+     */
+    exportReportMarkdown(input: { threadId: string }): Promise<string | null>;
+    /**
      * Run the project's setupCommand (`actionId: "setup"` or omitted) or a
      * named quick action (issue #153). Rejects when no command is set, the
      * action is unknown, a run is active, or another command is in flight.
