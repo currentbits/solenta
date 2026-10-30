@@ -139,6 +139,7 @@ import {
 import {
   setDiffSplit,
   setTranscriptViewMode,
+  useChatWidth,
   useDiffSplit,
   useTranscriptViewMode,
   useUsageLimitsStripEnabled,
@@ -1372,6 +1373,7 @@ export const ThreadView = memo(function ThreadView({
   const hiddenCount = start;
   const transcriptView = useTranscriptViewMode();
   const verboseTools = transcriptView === "verbose";
+  const chatWidth = useChatWidth();
   const summaryMode = transcriptView === "summary";
   const isWorking = detail?.thread.status === "working";
   /** Queued items can be steered into the live turn only where the CLI takes stdin. */
@@ -3024,6 +3026,7 @@ export const ThreadView = memo(function ThreadView({
       className={styles.main}
       ref={dropHostRef}
       data-thread-drop=""
+      data-chat-width={chatWidth}
     >
       {fileDrag && onDropAttachmentFiles ? (
         <div className={styles.dropOverlay} data-drop-overlay="" aria-hidden>

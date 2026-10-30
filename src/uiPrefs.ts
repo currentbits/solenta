@@ -129,6 +129,65 @@ export function useTranscriptViewMode(): TranscriptViewMode {
 }
 
 /**
+ * Transcript + composer column width (issue #1767). Default is today's
+ * fixed reading column (--thread-column in src/index.css); Wide and Full
+ * widen it via a CSS override scoped to the thread pane, which the
+ * composer column picks up too since both derive from the same variable.
+ */
+export const CHAT_WIDTH_MODES = ["default", "wide", "full"] as const;
+export type ChatWidth = (typeof CHAT_WIDTH_MODES)[number];
+
+export const CHAT_WIDTH_LABELS: Record<ChatWidth, string> = {
+  default: "Default",
+  wide: "Wide",
+  full: "Full",
+};
+
+const CHAT_WIDTH_KEY = "coder.chatWidth";
+let chatWidth: ChatWidth | null = null;
+const chatWidthListeners = new Set<() => void>();
+
+function parseChatWidth(raw: string | null): ChatWidth | null {
+  return CHAT_WIDTH_MODES.includes(raw as ChatWidth) ? (raw as ChatWidth) : null;
+}
+
+export function getChatWidth(): ChatWidth {
+  if (chatWidth != null) return chatWidth;
+  try {
+    const stored = parseChatWidth(window.localStorage.getItem(CHAT_WIDTH_KEY));
+    if (stored) {
+      chatWidth = stored;
+      return stored;
+    }
+  } catch {
+    // Private mode / quota: fall through to the default.
+  }
+  chatWidth = "default";
+  return "default";
+}
+
+export function setChatWidth(mode: ChatWidth): void {
+  chatWidth = mode;
+  try {
+    window.localStorage.setItem(CHAT_WIDTH_KEY, mode);
+  } catch {
+    // Private mode / quota: the choice just stops surviving a relaunch.
+  }
+  for (const l of chatWidthListeners) l();
+}
+
+export function useChatWidth(): ChatWidth {
+  return useSyncExternalStore(
+    (onChange) => {
+      chatWidthListeners.add(onChange);
+      return () => chatWidthListeners.delete(onChange);
+    },
+    getChatWidth,
+    () => "default",
+  );
+}
+
+/**
  * Collapse large pastes into labeled cards (issue #381). On by default;
  * Settings → General → Display can turn it off so a paste lands in the textarea as text.
  */

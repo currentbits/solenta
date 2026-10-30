@@ -47,7 +47,7 @@ import type {
   WorkSuggestion,
   WorkflowTemplateInfo,
 } from "../src/shared/ipc";
-import { setUsageLimitsStripEnabled } from "../src/uiPrefs";
+import { setChatWidth, setUsageLimitsStripEnabled } from "../src/uiPrefs";
 
 const project: ProjectInfo = {
   id: "p1",
@@ -322,6 +322,7 @@ afterEach(() => {
   setTranscriptViewMode("normal");
   resetComposerSession();
   setUsageLimitsStripEnabled(false);
+  setChatWidth("default");
 });
 
 describe("ThreadView empty states", () => {
@@ -2481,6 +2482,39 @@ describe("ThreadView file drop (issue #469)", () => {
       m.query('[data-attachment-kind="image"]'),
       "chip must appear on the composer after a transcript drop",
     );
+    m.unmount();
+  });
+
+  it("applies the chat-width pref as a data attribute on the thread pane (#1767)", async () => {
+    setChatWidth("wide");
+    const m = await mount(
+      view({
+        detail: detail({
+          messages: [
+            msg({ id: "u1", role: "user", text: "hi", createdAt: 10 }),
+          ],
+        }),
+      }),
+    );
+    const host = m.query("[data-thread-drop]");
+    assert.ok(host, "thread pane must render");
+    assert.equal(host!.getAttribute("data-chat-width"), "wide");
+    m.unmount();
+  });
+
+  it("defaults the chat-width attribute to default", async () => {
+    setChatWidth("default");
+    const m = await mount(
+      view({
+        detail: detail({
+          messages: [
+            msg({ id: "u1", role: "user", text: "hi", createdAt: 10 }),
+          ],
+        }),
+      }),
+    );
+    const host = m.query("[data-thread-drop]");
+    assert.equal(host!.getAttribute("data-chat-width"), "default");
     m.unmount();
   });
 

@@ -12,18 +12,23 @@ import type {
 } from "../../shared/ipc";
 import { syncTheme, type ThemePreference } from "../../theme";
 import {
+  CHAT_WIDTH_MODES,
+  CHAT_WIDTH_LABELS,
+  setChatWidth,
   setComposerVimEnabled,
   setEnterSendsEnabled,
   setDivergenceCardEnabled,
   setPasteCardsEnabled,
   setRunDurationEnabled,
   setUsageLimitsStripEnabled,
+  useChatWidth,
   useComposerVimEnabled,
   useEnterSendsEnabled,
   useDivergenceCardEnabled,
   usePasteCardsEnabled,
   useRunDurationEnabled,
   useUsageLimitsStripEnabled,
+  type ChatWidth,
 } from "../../uiPrefs";
 import styles from "../SettingsModal.module.css";
 import type { SettingsDraftKey, SettingsModalProps } from "../SettingsModal";
@@ -916,9 +921,28 @@ function DisplayPrefsSection() {
   const composerVim = useComposerVimEnabled();
   const enterSends = useEnterSendsEnabled();
   const usageLimits = useUsageLimitsStripEnabled();
+  const chatWidth = useChatWidth();
   return (
     <section className={styles.section} data-display-prefs="">
       <h3 className={styles.sectionLabel}>Display</h3>
+      <div className={styles.field}>
+        <label className={styles.fieldLabel} htmlFor="chat-width-pref">
+          Chat width
+        </label>
+        <select
+          id="chat-width-pref"
+          className={styles.input}
+          data-chat-width-pref=""
+          value={chatWidth}
+          onChange={(e) => setChatWidth(e.target.value as ChatWidth)}
+        >
+          {CHAT_WIDTH_MODES.map((mode) => (
+            <option key={mode} value={mode}>
+              {CHAT_WIDTH_LABELS[mode]}
+            </option>
+          ))}
+        </select>
+      </div>
       <label className={styles.fieldRow}>
         <input
           type="checkbox"
