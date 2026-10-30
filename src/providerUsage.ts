@@ -46,6 +46,24 @@ export function usedBarWidth(usedPercent: number): number {
   return Math.min(100, usedPercent);
 }
 
+/**
+ * Issue #1755: the thread-view strip reads every row as % LEFT, the inverse
+ * of the quota dialog's % used. Clamped to 0..100 (overage reads as 0 left).
+ */
+export function usagePercentLeft(usedPercent: number): number {
+  if (!Number.isFinite(usedPercent) || usedPercent < 0) return 0;
+  return Math.max(0, Math.min(100, 100 - usedPercent));
+}
+
+export type UsageSeverity = "" | "warn" | "danger";
+
+/** 20% left or less turns amber, 10% or less turns red. */
+export function usageSeverity(percentLeft: number): UsageSeverity {
+  if (percentLeft <= 10) return "danger";
+  if (percentLeft <= 20) return "warn";
+  return "";
+}
+
 export function isResetExpired(
   resetsAt: number | null,
   now = Date.now(),

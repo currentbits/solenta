@@ -37,14 +37,17 @@ import type {
   PendingPermissionInfo,
   ProjectInfo,
   ProviderInfo,
+  ProviderUsage,
   RunArtifactInfo,
   RunStatInfo,
+  SessionUsage,
   ThreadDetail,
   ThreadInfo,
   WorkLogItem,
   WorkSuggestion,
   WorkflowTemplateInfo,
 } from "../src/shared/ipc";
+import { setUsageLimitsStripEnabled } from "../src/uiPrefs";
 
 const project: ProjectInfo = {
   id: "p1",
@@ -213,6 +216,7 @@ function view(props: {
   onEditQueued?: (prompt: string, items?: string[]) => void | Promise<void>;
   onCancelQueued?: () => void;
   onRetryQueued?: () => void;
+  loadProviderLimits?: () => Promise<ProviderUsage[]>;
 }) {
   return (
     <ThreadView
@@ -274,6 +278,7 @@ function view(props: {
       onPickDirectory={props.onPickDirectory}
       onListSnapWindows={props.onListSnapWindows}
       onCaptureSnapWindow={props.onCaptureSnapWindow}
+      loadProviderLimits={props.loadProviderLimits}
     />
   );
 }
@@ -316,6 +321,7 @@ afterEach(() => {
   unmountAll();
   setTranscriptViewMode("normal");
   resetComposerSession();
+  setUsageLimitsStripEnabled(false);
 });
 
 describe("ThreadView empty states", () => {
@@ -5410,4 +5416,162 @@ describe("routine worker activity", () => {
     // Lines outside the fence (here a second worker) stay visible.
     assert.equal(noticeRest(text), workerDoneLine("w-8", "plain", "no block"));
   });
+});
+
+/** Issue #1755: opt-in 5h/weekly/context strip above the composer. */
+describe("ThreadView usage limits strip (#1755)", () => {
+  function sessionUsage(over: Partial<SessionUsage> = {}): SessionUsage {
+    return {
+      model: "claude-x",
+      inputTokens: 0,
+      outputTokens: 0,
+      costUsd: 0,
+      turns: 1,
+      ...over,
+    };
+  }
+
+  function quota(over: Partial<ProviderUsage> = {}): ProviderUsage {
+    return {
+      provider: "claude",
+      status: "ok",
+      windows: [],
+      fetchedAt: Date.now(),
+      ...over,
+    };
+  }
+
+  it("stays hidden when the setting is off, even with data available", async () => {
+    setUsageLimitsStripEnabled(false);
+    const m = await mount(
+      view({
+        detail: detail({
+          usage: sessionUsage({ contextTokens: 50_000, contextWindow: 100_000 }),
+        }),
+        loadProviderLimits: async () => [
+          quota({ windows: [{ label: "5 hours", usedPercent: 10, resetsAt: null, windowSeconds: null }] }),
+        ],
+      }),
+    );
+    await m.flush();
+    assert.equal(m.query("[data-usage-limits-strip]"), null);
+    m.unmount();
+  });
+
+  it("shows one row per window plus Context, each read as percent left", async () => {
+    setUsageLimitsStripEnabled(true);
+    const resetsAt = Date.now() + 3 * 60 * 60 * 1000;
+    const m = await mount(
+      view({
+        detail: detail({
+          usage: sessionUsage({ contextTokens: 80_000, contextWindow: 100_000 }),
+        }),
+        loadProviderLimits: async () => [
+          quota({
+            windows: [
+              { label: "5 hours", usedPercent: 72, resetsAt, windowSeconds: null },
+              { label: "Weekly", usedPercent: 95, resetsAt: null, windowSeconds: null },
+            ],
+          }),
+        ],
+      }),
+    );
+    await m.flush();
+    const strip = m.query("[data-usage-limits-strip]");
+    assert.ok(strip, "strip renders when the setting is on");
+    const rows = m.queryAll("[data-usage-row]");
+    assert.equal(rows.length, 3, "5 hours, Weekly and Context");
+
+    const fiveHour = rows.find((r) => r.getAttribute("data-usage-row") === "5 hours")!;
+    assert.match(fiveHour.textContent ?? "", /28% left/);
+    assert.equal(fiveHour.getAttribute("data-usage-severity"), null, "72% used is not near empty");
+    assert.match(fiveHour.getAttribute("title") ?? "", /resets in/);
+
+    const weekly = rows.find((r) => r.getAttribute("data-usage-row") === "Weekly")!;
+    assert.match(weekly.textContent ?? "", /5% left/);
+    assert.equal(weekly.getAttribute("data-usage-severity"), "danger", "5% left is at or under 10%");
+
+    const context = rows.find((r) => r.getAttribute("data-usage-row") === "Context")!;
+    assert.match(context.textContent ?? "", /20% left/);
+    assert.equal(context.getAttribute("data-usage-severity"), "warn", "20% left is at or under 20%");
+    assert.match(context.getAttribute("title") ?? "", /80,000 \/ 100k tokens/);
+    m.unmount();
+  });
+
+  it("turns amber at exactly 20% left and red at exactly 10% left", async () => {
+    setUsageLimitsStripEnabled(true);
+    const m = await mount(
+      view({
+        loadProviderLimits: async () => [
+          quota({
+            windows: [
+              { label: "Amber at 20", usedPercent: 80, resetsAt: null, windowSeconds: null },
+              { label: "Red at 10", usedPercent: 90, resetsAt: null, windowSeconds: null },
+              { label: "Still green at 21", usedPercent: 79, resetsAt: null, windowSeconds: null },
+            ],
+          }),
+        ],
+      }),
+    );
+    await m.flush();
+    const rows = m.queryAll("[data-usage-row]");
+    const byLabel = (label: string) =>
+      rows.find((r) => r.getAttribute("data-usage-row") === label)!;
+    assert.equal(byLabel("Amber at 20").getAttribute("data-usage-severity"), "warn");
+    assert.equal(byLabel("Red at 10").getAttribute("data-usage-severity"), "danger");
+    assert.equal(byLabel("Still green at 21").getAttribute("data-usage-severity"), null);
+    m.unmount();
+  });
+
+  it("shows a single Limits · Unavailable row with the provider's message as the tooltip", async () => {
+    setUsageLimitsStripEnabled(true);
+    const m = await mount(
+      view({
+        loadProviderLimits: async () => [
+          quota({ status: "unavailable", windows: [], message: "Not supported on this plan." }),
+        ],
+      }),
+    );
+    await m.flush();
+    const strip = m.query("[data-usage-limits-strip]");
+    assert.ok(strip, "strip still renders for the unavailable row");
+    const rows = m.queryAll("[data-usage-row]");
+    assert.equal(rows.length, 1, "one collapsed row, no Context (no usage data)");
+    assert.match(rows[0]?.textContent ?? "", /Limits · Unavailable/);
+    assert.equal(rows[0]?.getAttribute("title"), "Not supported on this plan.");
+    m.unmount();
+  });
+
+  it("stays hidden entirely with the setting on but no data yet", async () => {
+    setUsageLimitsStripEnabled(true);
+    const m = await mount(view({ detail: detail() }));
+    await m.flush();
+    assert.equal(m.query("[data-usage-limits-strip]"), null);
+    m.unmount();
+  });
+
+  it("drops a window without a reading instead of showing 0% left", async () => {
+    setUsageLimitsStripEnabled(true);
+    const m = await mount(
+      view({
+        loadProviderLimits: async () => [
+          quota({
+            windows: [
+              { label: "5 hours", usedPercent: Number.NaN, resetsAt: null, windowSeconds: null },
+              { label: "Weekly", usedPercent: 40, resetsAt: null, windowSeconds: null },
+            ],
+          }),
+        ],
+      }),
+    );
+    await m.flush();
+    const rows = m.queryAll("[data-usage-row]");
+    assert.deepEqual(
+      rows.map((r) => r.getAttribute("data-usage-row")),
+      ["Weekly"],
+    );
+    m.unmount();
+  });
+
+  afterEach(() => setUsageLimitsStripEnabled(false));
 });

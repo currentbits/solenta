@@ -14,7 +14,7 @@ import {
 } from "./support/fakeCoder.ts";
 import App from "../src/App";
 import { setMacPlatformForTests } from "../src/keybindings";
-import { EMPTY_HISTORY, stepThread, visitThread } from "../src/threadHistory";
+import { canStep, EMPTY_HISTORY, stepThread, visitThread } from "../src/threadHistory";
 
 setMacPlatformForTests(true);
 
@@ -44,6 +44,13 @@ describe("thread history stack", () => {
     for (let i = 0; i < 80; i++) h = visitThread(h, `t${i}`);
     assert.equal(h.stack.length, 50);
     assert.equal(h.stack[49], "t79");
+  });
+
+  it("canStep reports whether a direction has anywhere live to land (#1752)", () => {
+    const h = ["a", "b", "c"].reduce(visitThread, EMPTY_HISTORY);
+    assert.equal(canStep(h, -1, all), true);
+    assert.equal(canStep(h, 1, all), false, "already at the tip");
+    assert.equal(canStep(h, -1, (id) => id !== "a" && id !== "b"), false);
   });
 });
 
@@ -90,6 +97,72 @@ describe("thread history in the app", () => {
       assert.equal(active(), "b");
       await fire(new MouseEvent("mouseup", { button: 4, bubbles: true, cancelable: true }));
       assert.equal(active(), "c");
+    } finally {
+      m.unmount();
+    }
+  });
+
+  it("sidebar Back/Forward buttons and a trackpad swipe over the thread pane also walk the stack (#1752)", async () => {
+    const threads = ["a", "b", "c"].map((id, i) =>
+      thread({ id, title: `thread ${id}`, updatedAt: Date.now() - i }),
+    );
+    const fake = createFakeCoder({
+      projects: [project()],
+      threads,
+      details: Object.fromEntries(threads.map((t) => [t.id, detail({ thread: t })])),
+    });
+    const shell = await mount(<div />);
+    installFakeCoder(fake);
+    shell.unmount();
+    const m = await mount(<App />);
+    const active = () =>
+      m.query("[data-thread-card][data-active=true]")?.getAttribute("data-thread-card");
+    const open = async (id: string) => {
+      await m.click(m.query(`[data-thread-card="${id}"]`)!.querySelector("button"));
+      await m.flush();
+    };
+    const back = () => m.query("[data-history-back]") as HTMLButtonElement;
+    const forward = () => m.query("[data-history-forward]") as HTMLButtonElement;
+    // Several small wheel events, each inside the 150ms reset gap, so they
+    // build up into one gesture the way a real trackpad delivers them.
+    const swipe = async (deltaX: number) => {
+      const pane = m.query('[data-pane="thread"]')!;
+      for (const chunk of [deltaX * 0.4, deltaX * 0.4, deltaX * 0.4]) {
+        await inAct(() => {
+          pane.dispatchEvent(
+            new window.WheelEvent("wheel", {
+              deltaX: chunk,
+              deltaY: 0,
+              bubbles: true,
+              cancelable: true,
+            }),
+          );
+        });
+        await m.flush();
+      }
+    };
+    try {
+      await m.flush();
+      await open("a");
+      await open("b");
+      await open("c");
+      assert.equal(back().disabled, false);
+      assert.equal(forward().disabled, true, "nothing ahead of the tip");
+      await m.click(back());
+      assert.equal(active(), "b");
+      assert.equal(forward().disabled, false);
+      await m.click(back());
+      assert.equal(active(), "a");
+      assert.equal(back().disabled, true, "nothing further back than the first visit");
+      await m.click(forward());
+      assert.equal(active(), "b");
+      await swipe(-150); // swipe right: back
+      assert.equal(active(), "a");
+      // A real gap longer than SWIPE_RESET_MS: otherwise this reads as more
+      // of the gesture that already committed, same as a real trackpad.
+      await new Promise((r) => setTimeout(r, 200));
+      await swipe(150); // swipe left: forward
+      assert.equal(active(), "b");
     } finally {
       m.unmount();
     }

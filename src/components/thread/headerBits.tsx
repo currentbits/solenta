@@ -23,6 +23,14 @@ import {
   formatRelativeAge,
   threadProviderRef,
 } from "../../format";
+import {
+  displayWindowLabel,
+  formatResetAt,
+  usagePercentLeft,
+  usageSeverity,
+  type ProviderLimitsLoader,
+  type ProviderUsage,
+} from "../../providerUsage";
 import { useEscapeClose } from "../../useEscapeClose";
 import styles from "../ThreadView.module.css";
 
@@ -253,6 +261,141 @@ export function ContextRingBadge({
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * Opt-in compact strip above the composer (issue #1755): one row per limit
+ * window the thread's provider reports, plus a Context row, all read as
+ * percent LEFT so a longer bar means more room. Reuses the quota dialog's
+ * loader. Every load reads keychains and hits each provider's usage API
+ * uncached, so it refetches when `refreshKey` changes (a run starting or
+ * ending) and otherwise every STRIP_REFETCH_MS, not on the 30s clock.
+ */
+const STRIP_REFETCH_MS = 5 * 60_000;
+
+export function UsageLimitsStrip({
+  loadLimits,
+  activeProvider,
+  ring,
+  used,
+  refreshKey,
+  now = Date.now(),
+}: {
+  loadLimits?: ProviderLimitsLoader;
+  activeProvider: string | null;
+  ring: ContextRingView | null;
+  used: number | null;
+  refreshKey?: string;
+  now?: number;
+}) {
+  const [rows, setRows] = useState<ProviderUsage[] | null>(null);
+  const loaderRef = useRef(loadLimits);
+  loaderRef.current = loadLimits;
+
+  useEffect(() => {
+    let alive = true;
+    const run = () => {
+      const loader = loaderRef.current;
+      if (!loader) return;
+      void loader()
+        .then((next) => {
+          if (alive) setRows(Array.isArray(next) ? next : []);
+        })
+        .catch(() => {
+          // Keep the last good read; a transient failure should not blank
+          // a strip that was already showing numbers.
+        });
+    };
+    run();
+    const id = window.setInterval(run, STRIP_REFETCH_MS);
+    return () => {
+      alive = false;
+      window.clearInterval(id);
+    };
+  }, [refreshKey]);
+
+  const activeRow = rows?.find((r) => r.provider === activeProvider) ?? null;
+  let unavailableMessage: string | null = null;
+  const windowRows: Array<{ label: string; left: number; title: string }> = [];
+  if (rows != null) {
+    // A window without a reading would draw as a red "0% left"; drop it.
+    const readable =
+      activeRow?.status === "ok"
+        ? activeRow.windows.filter(
+            (w) => Number.isFinite(w.usedPercent) && w.usedPercent >= 0,
+          )
+        : [];
+    if (readable.length === 0) {
+      unavailableMessage =
+        (activeRow?.message && activeRow.message.trim()) ||
+        "No usage data from this provider.";
+    } else {
+      for (const win of readable) {
+        windowRows.push({
+          label: displayWindowLabel(win),
+          left: usagePercentLeft(win.usedPercent),
+          title: formatResetAt(win.resetsAt, now) ?? "",
+        });
+      }
+    }
+  }
+
+  const contextRow =
+    ring && used != null
+      ? {
+          left: Math.round((1 - ring.fraction) * 100),
+          title: `${used.toLocaleString()} / ${ring.windowLabel} tokens`,
+        }
+      : null;
+
+  if (windowRows.length === 0 && !unavailableMessage && !contextRow) return null;
+
+  return (
+    <div className={styles.usageStrip} data-usage-limits-strip="">
+      {unavailableMessage ? (
+        <div
+          className={styles.usageRow}
+          data-usage-row="limits"
+          title={unavailableMessage}
+        >
+          <span className={styles.usageUnavailable}>Limits · Unavailable</span>
+        </div>
+      ) : (
+        windowRows.map((w) => (
+          <UsageLimitRow key={w.label} label={w.label} left={w.left} title={w.title} />
+        ))
+      )}
+      {contextRow && (
+        <UsageLimitRow label="Context" left={contextRow.left} title={contextRow.title} />
+      )}
+    </div>
+  );
+}
+
+function UsageLimitRow({
+  label,
+  left,
+  title,
+}: {
+  label: string;
+  left: number;
+  title: string;
+}) {
+  const severity = usageSeverity(left);
+  return (
+    <div
+      className={styles.usageRow}
+      data-usage-row={label}
+      data-usage-severity={severity || undefined}
+      title={title || undefined}
+    >
+      <span className={styles.usageLabel}>{label}</span>
+      <div className={styles.usageTrack} aria-hidden>
+        <div className={styles.usageFill} style={{ width: `${left}%` }} />
+      </div>
+      <span className={styles.usagePct}>{left}% left</span>
     </div>
   );
 }

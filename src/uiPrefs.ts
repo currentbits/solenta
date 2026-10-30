@@ -154,6 +154,15 @@ export const setEnterSendsEnabled = enterSends.set;
 export const useEnterSendsEnabled = enterSends.use;
 
 /**
+ * Compact 5h/weekly/context strip above the composer (issue #1755). Off by
+ * default: the quota dialog and the header context ring already cover it.
+ */
+const usageLimitsStrip = makeFlagPref("coder.usageLimitsStrip", false);
+export const getUsageLimitsStripEnabled = usageLimitsStrip.get;
+export const setUsageLimitsStripEnabled = usageLimitsStrip.set;
+export const useUsageLimitsStripEnabled = usageLimitsStrip.use;
+
+/**
  * The last reasoning level the user picked, remembered across harness switches.
  *
  * Effort lives on the thread, and setProvider (electron/services.js) has to

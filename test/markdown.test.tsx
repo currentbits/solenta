@@ -56,6 +56,15 @@ describe("Markdown", () => {
     assert.equal(code.textContent, "npm test");
   });
 
+  it("double-click on inline code selects the whole span", async () => {
+    const m = await mount(<Markdown text={"run `migration-gate --dry` now"} />);
+    const code = m.container.querySelector("p code")!;
+    await inAct(() => {
+      code.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    });
+    assert.equal(window.getSelection()?.toString(), "migration-gate --dry");
+  });
+
   it("raw HTML in agent output is not rendered", async () => {
     const m = await mount(
       <Markdown text={"before<script>alert(1)</script>after"} />,

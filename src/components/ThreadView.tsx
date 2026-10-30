@@ -141,6 +141,7 @@ import {
   setTranscriptViewMode,
   useDiffSplit,
   useTranscriptViewMode,
+  useUsageLimitsStripEnabled,
 } from "../uiPrefs";
 import { DROP_OVERLAY_MESSAGE, type DroppedFolder } from "../dropFiles";
 import { Composer, type ComposerProps } from "./Composer";
@@ -172,6 +173,7 @@ import {
   DraftProjectChooser,
   HeaderForkControl,
   ReturnToViewButton,
+  UsageLimitsStrip,
   returnToHeader,
 } from "./thread/headerBits";
 import {
@@ -1546,6 +1548,7 @@ export const ThreadView = memo(function ThreadView({
       }),
     };
   }, [detail, providers]);
+  const showUsageLimitsStrip = useUsageLimitsStripEnabled();
   const handleForkFresh = useCallback(() => {
     if (isWorking || !onFork) return;
     void onFork();
@@ -5127,6 +5130,15 @@ export const ThreadView = memo(function ThreadView({
       </div>
 
       <div className={styles.composerColumn}>
+      {showUsageLimitsStrip ? (
+        <UsageLimitsStrip
+          loadLimits={loadProviderLimits}
+          activeProvider={thread.provider}
+          ring={ring?.view ?? null}
+          used={ring?.used ?? null}
+          refreshKey={`${thread.id}:${thread.status}`}
+        />
+      ) : null}
       <Composer
         threadId={thread.id}
         permissionMode={thread.permissionMode}
