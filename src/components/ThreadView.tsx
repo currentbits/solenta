@@ -188,6 +188,7 @@ import {
   SuggestedWorkStrip,
   FocusTurnRow,
   RunHeaderRow,
+  userMessageBursts,
 } from "./thread/messages";
 import { NextGitActionButton, coderGit } from "./thread/NextGitActionButton";
 import {
@@ -1490,6 +1491,13 @@ export const ThreadView = memo(function ThreadView({
       working: detail?.thread.status === "working",
     });
   }, [visibleTimeline, detail?.thread.status, summaryMode]);
+
+  // Back-to-back user messages (#1789): burst position per message id, over
+  // the same row list just built above.
+  const userBursts = useMemo(
+    () => userMessageBursts(displayTimeline),
+    [displayTimeline],
+  );
 
   /**
    * Stream-in gating: an entry plays its entrance animation only when it is
@@ -4824,6 +4832,7 @@ export const ThreadView = memo(function ThreadView({
                     >
                     <MessageBlock
                       message={entry.message}
+                      burstPosition={userBursts.get(entry.message.id)}
                       autoExpandTool={
                         verboseTools ||
                         entry.message.id === latestRunningToolId ||

@@ -3922,6 +3922,95 @@ describe("ThreadView deferred question/approval cards (#1789)", () => {
   });
 });
 
+describe("ThreadView back-to-back user message bursts (#1789)", () => {
+  it("tags a lone user message as a single burst", () => {
+    const html = render({
+      detail: detail({
+        messages: [msg({ id: "u1", role: "user", text: "one off", createdAt: 10 })],
+      }),
+    });
+    assert.ok(html.includes('data-burst="single"'));
+  });
+
+  it("tags consecutive user messages first/middle/last, and resets after agent output", () => {
+    const html = render({
+      detail: detail({
+        messages: [
+          msg({ id: "u1", role: "user", text: "QUEUED_ONE", createdAt: 10 }),
+          msg({ id: "u2", role: "user", text: "QUEUED_TWO", createdAt: 11 }),
+          msg({ id: "u3", role: "user", text: "QUEUED_THREE", createdAt: 12 }),
+          msg({
+            id: "a1",
+            role: "assistant",
+            text: "ASSISTANT_REPLY",
+            createdAt: 20,
+          }),
+          msg({ id: "u4", role: "user", text: "AFTER_REPLY", createdAt: 30 }),
+        ],
+      }),
+    });
+    // The burst members carry first/middle/last; the lone trailing message
+    // (an agent turn came between it and the burst) is single again.
+    const u1Idx = html.indexOf("QUEUED_ONE");
+    const u2Idx = html.indexOf("QUEUED_TWO");
+    const u3Idx = html.indexOf("QUEUED_THREE");
+    const u4Idx = html.indexOf("AFTER_REPLY");
+    const burstAttrNear = (idx: number) => {
+      const before = html.lastIndexOf("data-burst=", idx);
+      return html.slice(before, before + 20);
+    };
+    assert.match(burstAttrNear(u1Idx), /data-burst="first"/);
+    assert.match(burstAttrNear(u2Idx), /data-burst="middle"/);
+    assert.match(burstAttrNear(u3Idx), /data-burst="last"/);
+    assert.match(burstAttrNear(u4Idx), /data-burst="single"/);
+  });
+
+  it("shows the shared time only on the last message of a burst", () => {
+    const html = render({
+      detail: detail({
+        messages: [
+          msg({ id: "u1", role: "user", text: "QUEUED_ONE", createdAt: 10 }),
+          msg({ id: "u2", role: "user", text: "QUEUED_TWO", createdAt: 11 }),
+        ],
+      }),
+    });
+    const firstSlice = html.slice(
+      html.lastIndexOf("<article", html.indexOf("QUEUED_ONE")),
+      html.indexOf("QUEUED_ONE"),
+    );
+    assert.ok(
+      !firstSlice.includes("data-burst-time"),
+      "the first bubble of a burst must not carry its own time",
+    );
+    assert.ok(
+      html.includes("data-burst-time"),
+      "the group's shared time must render once, on the last bubble",
+    );
+  });
+
+  it("keeps steer badges per message inside a burst", () => {
+    const html = render({
+      detail: detail({
+        messages: [
+          msg({ id: "u1", role: "user", text: "QUEUED_ONE", createdAt: 10 }),
+          msg({
+            id: "u2",
+            role: "user",
+            text: "QUEUED_TWO",
+            createdAt: 11,
+            steer: true,
+          }),
+        ],
+      }),
+    });
+    assert.equal(
+      [...html.matchAll(/data-steer-label=""/g)].length,
+      1,
+      "only the steered message shows the badge, burst or not",
+    );
+  });
+});
+
 /**
  * Issue #555: a tall review itinerary used to consume the whole 520px
  * Changes panel, clip the commit box, and leave no scrollbar to reach it.
