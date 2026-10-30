@@ -51,6 +51,7 @@ import {
 } from "../../uiPrefs";
 import { TestFilesBar, filterTestFiles } from "../TurnDiffPanel";
 import { blastRadiusTitle, isCiWorkflowPath } from "../../blastRadius";
+import { middleTruncate } from "../../format";
 import {
   buildReviewItinerary,
   hunkPatch,
@@ -1188,7 +1189,7 @@ export function ChangesPanel({
           {embedded ? null : <span className={styles.changesTitle}>Git</span>}
           {threadBranch ? (
             <span className={styles.changesBranch} title={threadBranch}>
-              {threadBranch}
+              {middleTruncate(threadBranch, 34, 0.65)}
             </span>
           ) : null}
           {threadBranch ? (

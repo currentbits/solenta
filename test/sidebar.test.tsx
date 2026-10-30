@@ -1793,6 +1793,33 @@ describe("Sidebar card anatomy + hover actions", () => {
     m.unmount();
   });
 
+  it("middle-truncates a long branch name but keeps the full value in title", async () => {
+    await clearSidebarStorage();
+    const longBranch =
+      "coder/add-a-very-long-descriptive-branch-name-for-this-feature-35693f";
+    const t = thread({
+      id: "longbranch",
+      title: "long branch",
+      branch: longBranch,
+      createdAt: FRESH + 10,
+      updatedAt: FRESH + 10,
+    });
+    const m = await mount(sidebar([t], { projects: [p1] }));
+    const branchEl = m.query(
+      '[data-thread-card="longbranch"] [data-card-branch]',
+    );
+    assert.ok(branchEl);
+    const shown = branchEl!.textContent || "";
+    assert.ok(shown.length < longBranch.length, "display text is truncated");
+    assert.ok(shown.includes("…"), "shows the middle-ellipsis");
+    assert.equal(
+      branchEl!.getAttribute("title"),
+      longBranch,
+      "the full branch name stays in the tooltip",
+    );
+    m.unmount();
+  });
+
   it("pinned block sits above the inbox with a divider; pin-flag stays on the card", async () => {
     await clearSidebarStorage();
     const older = thread({

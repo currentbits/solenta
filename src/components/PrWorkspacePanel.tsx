@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { formatRelativeAge } from "../format";
+import { formatRelativeAge, middleTruncate } from "../format";
 import { normalizePrLinks } from "../prLinks";
 import { canSubmitComment, canSubmitPr } from "../prUi";
 import type {
@@ -320,7 +320,9 @@ export function PrWorkspacePanel({
             {pr.isDraft ? <span className={styles.draft}>Draft</span> : null}
             <span className={styles.state}>{pr.state.toLowerCase()}</span>
             {pr.headRefName ? (
-              <span className={styles.branch}>{pr.headRefName}</span>
+              <span className={styles.branch} title={pr.headRefName}>
+                {middleTruncate(pr.headRefName, 26, 0.65)}
+              </span>
             ) : null}
             {pr.updatedAt ? (
               <span className={styles.age}>

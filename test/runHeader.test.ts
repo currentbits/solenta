@@ -61,11 +61,15 @@ describe("mapRunHeaders", () => {
       runId: "r1",
       firstMessageId: "u1",
       label: "Worked for 2m 5s",
+      startedAt: 1_000,
+      endedAt: 126_000,
     });
     assert.deepEqual(headers[1], {
       runId: "r2",
       firstMessageId: "u2",
       label: "Worked for 10s",
+      startedAt: 200_000,
+      endedAt: 210_000,
     });
   });
 
@@ -90,7 +94,13 @@ describe("mapRunHeaders", () => {
       "idle",
     );
     assert.deepEqual(headers, [
-      { runId: "r1", firstMessageId: "a1", label: "Worked for <1s" },
+      {
+        runId: "r1",
+        firstMessageId: "a1",
+        label: "Worked for <1s",
+        startedAt: 5_000,
+        endedAt: 5_000,
+      },
     ]);
   });
 
@@ -103,7 +113,13 @@ describe("mapRunHeaders", () => {
       "idle",
     );
     assert.deepEqual(headers, [
-      { runId: "r1", firstMessageId: "early", label: "Worked for 20s" },
+      {
+        runId: "r1",
+        firstMessageId: "early",
+        label: "Worked for 20s",
+        startedAt: 10_000,
+        endedAt: 30_000,
+      },
     ]);
   });
 

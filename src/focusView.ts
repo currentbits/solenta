@@ -42,6 +42,9 @@ export interface FocusTurnSummary {
   label: string;
   live: boolean;
   runningToolName: string | null;
+  /** createdAt span of the folded activity, for a hover tooltip (#1767). */
+  startedAt: number;
+  endedAt: number;
 }
 
 export function cycleTranscriptViewMode(
@@ -167,6 +170,7 @@ export function mapFocusTurns(
     const running = [...activity]
       .reverse()
       .find((m) => m.tool && !m.tool.done);
+    const times = activity.map((m) => m.createdAt);
     return {
       key,
       firstActivityId: activity[0]!.id,
@@ -174,6 +178,8 @@ export function mapFocusTurns(
       label: summarizeActivity(activity),
       live: opts.liveTurnKey != null && opts.liveTurnKey === key,
       runningToolName: running?.tool?.name ?? null,
+      startedAt: Math.min(...times),
+      endedAt: Math.max(...times),
     };
   });
 }

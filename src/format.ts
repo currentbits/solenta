@@ -34,6 +34,61 @@ export function formatWorkingLabel(runStartedAt: number, now = Date.now()): stri
   return `Working ${formatElapsed(runStartedAt, now)}`;
 }
 
+/**
+ * Local clock time for a hover tooltip, e.g. "14:32:05". Dates other than
+ * `now`'s day get a short date prefix ("Oct 24 14:32:05") since "just a
+ * time" is ambiguous once it is not today.
+ */
+export function formatClockTime(ms: number, now = Date.now()): string {
+  const d = new Date(ms);
+  const time = d.toLocaleTimeString(undefined, { hour12: false });
+  const today = new Date(now);
+  const sameDay =
+    d.getFullYear() === today.getFullYear() &&
+    d.getMonth() === today.getMonth() &&
+    d.getDate() === today.getDate();
+  if (sameDay) return time;
+  const date = d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  return `${date} ${time}`;
+}
+
+/**
+ * Hover tooltip for a timed row: the local start time, plus a duration when
+ * an end time is known and past the start. "14:32:05" or "14:32:05 · 3m".
+ */
+export function formatTimeTooltip(
+  startedAt: number,
+  endedAt?: number | null,
+  now = Date.now(),
+): string {
+  const base = formatClockTime(startedAt, now);
+  if (endedAt == null || endedAt <= startedAt) return base;
+  return `${base} · ${formatElapsed(startedAt, endedAt)}`;
+}
+
+/**
+ * Keep the start and end of a long branch name or path, dropping the
+ * middle behind "…" (CSS text-overflow can only ellipsize one end).
+ * `endBias` (0..1) controls how much of the kept width goes to the tail;
+ * branches favour the end slightly since the distinguishing suffix (e.g.
+ * "-35693f") lives there. Splits on code points so a surrogate pair never
+ * gets cut in half.
+ */
+export function middleTruncate(s: string, max: number, endBias = 0.5): string {
+  if (max <= 0) return "";
+  const chars = Array.from(s);
+  if (chars.length <= max) return s;
+  if (max <= 1) return "…".slice(0, max);
+  const keep = max - 1;
+  const endLen = Math.round(keep * endBias);
+  const startLen = keep - endLen;
+  return (
+    chars.slice(0, startLen).join("") +
+    "…" +
+    chars.slice(chars.length - endLen).join("")
+  );
+}
+
 /** Report-style token count: "980", "1.5k", "2.68M", "1.20B". */
 export function formatTokenCount(tokens: number): string {
   if (!Number.isFinite(tokens) || tokens < 1000) {

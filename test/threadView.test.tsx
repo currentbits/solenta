@@ -47,7 +47,7 @@ import type {
   WorkSuggestion,
   WorkflowTemplateInfo,
 } from "../src/shared/ipc";
-import { setUsageLimitsStripEnabled } from "../src/uiPrefs";
+import { setChatWidth, setUsageLimitsStripEnabled } from "../src/uiPrefs";
 
 const project: ProjectInfo = {
   id: "p1",
@@ -328,6 +328,7 @@ afterEach(() => {
   setTranscriptViewMode("normal");
   resetComposerSession();
   setUsageLimitsStripEnabled(false);
+  setChatWidth("default");
 });
 
 describe("ThreadView empty states", () => {
@@ -2487,6 +2488,39 @@ describe("ThreadView file drop (issue #469)", () => {
       m.query('[data-attachment-kind="image"]'),
       "chip must appear on the composer after a transcript drop",
     );
+    m.unmount();
+  });
+
+  it("applies the chat-width pref as a data attribute on the thread pane (#1767)", async () => {
+    setChatWidth("wide");
+    const m = await mount(
+      view({
+        detail: detail({
+          messages: [
+            msg({ id: "u1", role: "user", text: "hi", createdAt: 10 }),
+          ],
+        }),
+      }),
+    );
+    const host = m.query("[data-thread-drop]");
+    assert.ok(host, "thread pane must render");
+    assert.equal(host!.getAttribute("data-chat-width"), "wide");
+    m.unmount();
+  });
+
+  it("defaults the chat-width attribute to default", async () => {
+    setChatWidth("default");
+    const m = await mount(
+      view({
+        detail: detail({
+          messages: [
+            msg({ id: "u1", role: "user", text: "hi", createdAt: 10 }),
+          ],
+        }),
+      }),
+    );
+    const host = m.query("[data-thread-drop]");
+    assert.equal(host!.getAttribute("data-chat-width"), "default");
     m.unmount();
   });
 
@@ -4725,6 +4759,33 @@ describe("ThreadView Focus / Summary mode (issue #461)", () => {
     assert.equal(m.queryAll("button.toolToggle").length, 2);
     assert.ok(m.text().includes("Read: foo.ts"));
     assert.ok(m.text().includes("Bash: npm test"));
+    m.unmount();
+  });
+
+  it("gives a tool row a hover tooltip with its local time (#1767)", async () => {
+    setTranscriptViewMode("summary");
+    const m = await mount(view({ detail: settledTools() }));
+    await m.click(m.query("[data-focus-turn='u1']"));
+    const toggle = m.query("button.toolToggle");
+    assert.ok(toggle, "tool card is open");
+    const header = toggle!.closest(".toolHeader");
+    assert.ok(header, "tool row has a header to hover");
+    assert.match(
+      header!.getAttribute("title") || "",
+      /\d{1,2}:\d{2}:\d{2}/,
+      "title carries a local clock time",
+    );
+    m.unmount();
+  });
+
+  it("gives the settled-turn fold a hover tooltip with its time span (#1767)", async () => {
+    setTranscriptViewMode("summary");
+    const m = await mount(view({ detail: settledTools() }));
+    const row = m.query("[data-focus-turn='u1']");
+    assert.ok(row, "one focus row for the turn");
+    const title = row!.getAttribute("title") || "";
+    assert.match(title, /^Show tool activity · /);
+    assert.match(title, /\d{1,2}:\d{2}:\d{2}/);
     m.unmount();
   });
 

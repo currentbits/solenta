@@ -8,6 +8,20 @@
   background: var(--bg);
 }
 
+/*
+ * Chat width setting (issue #1767, Settings → General → Display). Widens
+ * the shared --thread-column variable that .body > * and .composerColumn
+ * both read, so the transcript and composer stay aligned without a second
+ * knob. "full" is a large-but-finite cap rather than max-width: none, since
+ * the composer column's calc() needs a length to add 40px to.
+ */
+.main[data-chat-width="wide"] {
+  --thread-column: 980px;
+}
+.main[data-chat-width="full"] {
+  --thread-column: 10000px;
+}
+
 .chatSlot {
   flex: 1;
   min-width: 0;

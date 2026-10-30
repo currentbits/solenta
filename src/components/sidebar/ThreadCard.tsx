@@ -11,7 +11,7 @@ import {
   formatForecastHoverLine,
   pairsForThread,
 } from "../../conflictForecast";
-import { formatRelativeAge } from "../../format";
+import { formatRelativeAge, middleTruncate } from "../../format";
 import { isCrewWorker } from "../../sidebarGroups";
 import { ProviderMark } from "../ProviderMark";
 import { showContextMenu } from "../../contextMenu";
@@ -727,8 +727,12 @@ export const ThreadCard = memo(function ThreadCard({
               </span>
             ) : null}
             {thread.branch ? (
-              <span className={styles.cardBranch} data-card-branch="">
-                {thread.branch}
+              <span
+                className={styles.cardBranch}
+                data-card-branch=""
+                title={thread.branch}
+              >
+                {middleTruncate(thread.branch, 32, 0.65)}
               </span>
             ) : (
               <span className={styles.cardBranchSpacer} />
