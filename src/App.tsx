@@ -436,6 +436,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     listCliSessions,
     importCliSession,
     searchThreads,
+    searchMessages,
     peekThread,
     automations,
     addAutomation,
@@ -652,6 +653,28 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       selectThread(id);
     },
     [selectThread, detachedId],
+  );
+
+  /**
+   * Palette message hit (#1761): open the thread, then reveal the exact
+   * message the same way a pinned-message jump does (ThreadView's
+   * revealMessageId prop). Cleared after the flash so it does not pin the
+   * view there on a later, unrelated thread switch.
+   */
+  const [revealMessageId, setRevealMessageId] = useState<string | null>(null);
+  const revealMessageTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  useEffect(() => () => clearTimeout(revealMessageTimerRef.current), []);
+  const handleSelectMessage = useCallback(
+    (threadId: string, messageId: string) => {
+      handleSelectThread(threadId);
+      setRevealMessageId(messageId);
+      clearTimeout(revealMessageTimerRef.current);
+      revealMessageTimerRef.current = setTimeout(
+        () => setRevealMessageId(null),
+        1600,
+      );
+    },
+    [handleSelectThread],
   );
   const liveThreadIds = useMemo(
     () => (loading ? undefined : threads.map((t) => t.id)),
@@ -2218,6 +2241,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         detail={visibleDetail}
         detailError={selectedThreadId ? detailError : null}
         onRetryDetail={retryDetail}
+        revealMessageId={revealMessageId}
         project={project}
         providers={providers}
         agentProfiles={settings?.agentProfiles ?? EMPTY_AGENT_PROFILES}
@@ -2554,10 +2578,12 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
           threads={threads}
           projects={projects}
           searchThreads={searchThreads}
+          searchMessages={searchMessages}
           listFiles={listFiles}
           searchFileContents={searchFileContents}
           canSearchWorkspace={Boolean(selectedThreadId)}
           onSelectThread={handleSelectThread}
+          onSelectMessage={handleSelectMessage}
           onSelectProject={handlePaletteProject}
           onRunAction={runPaletteAction}
           onOpenFile={handlePaletteFile}

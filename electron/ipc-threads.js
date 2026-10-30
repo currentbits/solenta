@@ -66,6 +66,9 @@ module.exports = {
   "threads:search": async (ctx, input) => {
     return services.searchThreads(ctx.store, input || { query: "" });
   },
+  "threads:searchMessages": async (ctx, input) => {
+    return services.searchMessages(ctx.store, input || { query: "" });
+  },
   "threads:listCliSessions": async (_ctx, input) => {
     if (input && input.provider === "claude") {
       return cliSessions.listClaudeSessions();

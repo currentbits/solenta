@@ -110,6 +110,8 @@ import type {
   ModelRoute,
   ThreadSearchInput,
   ThreadSearchResult,
+  ThreadSearchMessagesInput,
+  ThreadSearchMessagesResult,
 } from "./shared/ipc";
 import { resolveCoderApi } from "./coderApi";
 import {
@@ -945,6 +947,10 @@ export interface UseCoderResult {
   }) => Promise<ThreadInfo>;
   /** Full-content thread search (titles + message text); Sidebar owns debounce/state. */
   searchThreads: (input: ThreadSearchInput) => Promise<ThreadSearchResult>;
+  /** Message-level search for the command palette (#1761); it owns debounce/state. */
+  searchMessages: (
+    input: ThreadSearchMessagesInput,
+  ) => Promise<ThreadSearchMessagesResult>;
   /** Load another thread's transcript without marking it visited (#393). */
   peekThread: (id: string) => Promise<ThreadDetail>;
 }
@@ -2123,6 +2129,13 @@ export function useCoder(): UseCoderResult {
     [api],
   );
 
+  const searchMessages = useCallback(
+    async (input: ThreadSearchMessagesInput) => {
+      return api.threads.searchMessages(input);
+    },
+    [api],
+  );
+
   /** Load another thread's transcript without marking it visited (#393). */
   const peekThread = useCallback(
     (id: string) => api.threads.peek(id),
@@ -2373,6 +2386,7 @@ export function useCoder(): UseCoderResult {
     listCliSessions,
     importCliSession,
     searchThreads,
+    searchMessages,
     peekThread,
   };
 }

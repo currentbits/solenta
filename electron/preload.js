@@ -200,6 +200,7 @@ const IPC_CHANNELS = Object.freeze([
   { ns: "threads", method: "crewTasks" },
   { ns: "threads", method: "crewIntegration" },
   { ns: "threads", method: "search" },
+  { ns: "threads", method: "searchMessages" },
   { ns: "threads", method: "listCliSessions" },
   { ns: "threads", method: "importCliSession" },
   { ns: "threads", method: "teleport" },

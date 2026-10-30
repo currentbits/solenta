@@ -408,6 +408,11 @@ class Store {
     this._atomicSeq = 0;
     this._searchGen = 0;
     this._searchWorker = null;
+    // Own slot for threads.searchMessages (#1761): runs alongside
+    // searchThreads from the palette, so it must not share a generation
+    // counter with it (store-search-methods.js _runMessageSearchScan).
+    this._messageSearchGen = 0;
+    this._messageSearchWorker = null;
     this.data = this._load();
     if (this._secretsMigrated > 0) {
       this._secrets.emit(

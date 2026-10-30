@@ -1171,6 +1171,26 @@ export interface ThreadSearchResult {
   truncated: boolean;
 }
 
+/** threads.searchMessages input (#1761): words ANDed, case-insensitive. */
+export interface ThreadSearchMessagesInput {
+  query: string;
+  threadIds?: string[];
+}
+
+/** One message-search hit: snippet is ~120 chars around the first match. */
+export interface ThreadSearchMessagesHit {
+  threadId: string;
+  messageId: string;
+  snippet: string;
+  createdAt: number;
+}
+
+/** threads.searchMessages reply: up to 30 hits, newest first, max 3/thread. */
+export interface ThreadSearchMessagesResult {
+  hits: ThreadSearchMessagesHit[];
+  truncated: boolean;
+}
+
 /** One `/btw` side-question card (issue #471). */
 export type BtwStatus = "running" | "done" | "error";
 export type BtwSource = "fm" | "print" | "retrieval";
@@ -5579,6 +5599,16 @@ export interface CoderApi {
      * the scan to those ids before the cap.
      */
     search(input: ThreadSearchInput): Promise<ThreadSearchResult>;
+    /**
+     * Message-level search for the command palette (#1761): user +
+     * assistant text only (tool/event skipped), words ANDed,
+     * case-insensitive. Up to 30 hits newest first, max 3 per thread.
+     * Same shard/worker scan as search() so a 190MB+ store never blocks
+     * the main process. Queries under 3 chars match nothing.
+     */
+    searchMessages(
+      input: ThreadSearchMessagesInput,
+    ): Promise<ThreadSearchMessagesResult>;
     /**
      * Create a thread. With `worktree: true` the thread immediately gets its
      * own git worktree + `coder/<slug>-<id>` branch (local projects only);

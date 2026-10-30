@@ -126,6 +126,14 @@
   font-size: 11px;
 }
 
+.match {
+  color: var(--text);
+  background: var(--overlay-hover);
+  border-radius: 3px;
+  padding: 0 1px;
+  font-weight: 600;
+}
+
 .shortcut {
   flex-shrink: 0;
   font-family: var(--mono);

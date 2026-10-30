@@ -11,6 +11,7 @@ export type PaletteMode = "command" | "files" | "content";
 export type PaletteItemKind =
   | "action"
   | "thread"
+  | "message"
   | "project"
   | "file"
   | "content";
@@ -41,9 +42,10 @@ export type FileContentHit = {
   text: string;
 };
 
-const KIND_ORDER: readonly PaletteItemKind[] = [
+export const KIND_ORDER: readonly PaletteItemKind[] = [
   "action",
   "thread",
+  "message",
   "project",
   "file",
   "content",
@@ -65,6 +67,36 @@ export function scoreMatch(query: string, ...fields: string[]): number | null {
     if (best == null || score > best) best = score;
   }
   return best;
+}
+
+/**
+ * Which slice of a message-search snippet to wrap in a highlight: the
+ * earliest occurrence of any query word. Null when the snippet (built
+ * server-side around the match) does not literally contain a query word,
+ * e.g. the snippet was truncated right at the boundary.
+ */
+export function splitSnippetMatch(
+  snippet: string,
+  query: string,
+): { pre: string; match: string; post: string } | null {
+  const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.length) return null;
+  const lower = snippet.toLowerCase();
+  let at = -1;
+  let len = 0;
+  for (const w of words) {
+    const i = lower.indexOf(w);
+    if (i >= 0 && (at < 0 || i < at)) {
+      at = i;
+      len = w.length;
+    }
+  }
+  if (at < 0) return null;
+  return {
+    pre: snippet.slice(0, at),
+    match: snippet.slice(at, at + len),
+    post: snippet.slice(at + len),
+  };
 }
 
 export function rankPaletteItems(
@@ -95,6 +127,7 @@ export function groupPaletteItems(
   const labels: Record<PaletteItemKind, string> = {
     action: "Actions",
     thread: "Threads",
+    message: "Messages",
     project: "Projects",
     file: "Files",
     content: "In files",

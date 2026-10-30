@@ -66,6 +66,7 @@ const BY_SCOPE = {
     "threads:crewTasks",
     "threads:crewIntegration",
     "threads:search",
+    "threads:searchMessages",
     "threads:listCliSessions",
     "threads:get",
     "threads:peek",

@@ -90,6 +90,7 @@ import type {
   ThreadInfo,
   ThreadListPush,
   ThreadMessagePin,
+  ThreadSearchMessagesHit,
   TrashedThreadInfo,
   ThreadSummariesInput,
   ThreadSummaryInfo,
@@ -2065,6 +2066,11 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           } as CrewIntegration,
         ),
       search: (input: unknown) => rec("threads.search", [input], { threads: [] as ThreadInfo[], truncated: false }),
+      searchMessages: (input: unknown) =>
+        rec("threads.searchMessages", [input], {
+          hits: [] as ThreadSearchMessagesHit[],
+          truncated: false,
+        }),
       create: (input: unknown) => {
         const createdAt = Date.now();
         const wantWorktree =
