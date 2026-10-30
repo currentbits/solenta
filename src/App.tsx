@@ -259,6 +259,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     setArchived,
     setSettled,
     setPinned,
+    setSortKey,
     setSnoozed,
     setTags,
     setThreadProject,
@@ -934,6 +935,13 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       void setPinned(threadId, pinned);
     },
     [setPinned],
+  );
+
+  const handleSetSortKey = useCallback(
+    (threadId: string, sortKey: number | null) => {
+      void setSortKey(threadId, sortKey);
+    },
+    [setSortKey],
   );
 
   const handleSetSnoozed = useCallback(
@@ -2068,6 +2076,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         searchThreads={searchThreads}
         onSetSettled={handleSetSettled}
         onSetPinned={handleSetPinned}
+        onSetSortKey={handleSetSortKey}
         onSetSnoozed={handleSetSnoozed}
         onSetTags={handleSetTags}
         onSetThreadProject={handleSetThreadProject}

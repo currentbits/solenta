@@ -67,6 +67,18 @@ export const KEYBINDINGS: readonly KeybindingDef[] = [
     chord: "mod+shift+j",
   },
   {
+    id: "thread.moveUp",
+    label: "Move thread up (pinned/active only)",
+    scope: "list",
+    chord: "alt+shift+arrowup",
+  },
+  {
+    id: "thread.moveDown",
+    label: "Move thread down (pinned/active only)",
+    scope: "list",
+    chord: "alt+shift+arrowdown",
+  },
+  {
     id: "history.back",
     label: "Back to the previous thread",
     scope: "window",

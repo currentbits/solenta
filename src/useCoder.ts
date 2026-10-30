@@ -427,6 +427,12 @@ export interface UseCoderResult {
   /** Pin or unpin a thread (sidebar hover). Does not require selection. */
   setPinned: (threadId: string, pinned: boolean) => Promise<void>;
   /**
+   * Persist a manual drag/keyboard reorder position within the pinned or
+   * active sidebar section (#1769), or clear it with null. Does not
+   * require selection.
+   */
+  setSortKey: (threadId: string, sortKey: number | null) => Promise<void>;
+  /**
    * Snooze until an epoch ms, or clear with null. Does not require selection.
    */
   setSnoozed: (threadId: string, until: number | null) => Promise<void>;
@@ -1654,6 +1660,7 @@ export function useCoder(): UseCoderResult {
     setArchived,
     setSettled,
     setPinned,
+    setSortKey,
     setSnoozed,
     setTags,
     setThreadProject,
@@ -2224,6 +2231,7 @@ export function useCoder(): UseCoderResult {
     setArchived,
     setSettled,
     setPinned,
+    setSortKey,
     setSnoozed,
     setTags,
     setThreadProject,

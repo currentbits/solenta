@@ -142,6 +142,7 @@ export function sidebar(
       ref: string;
     }) => Promise<{ ok: boolean; reason?: string }>;
     onSetPinned?: (threadId: string, pinned: boolean) => void;
+    onSetSortKey?: (threadId: string, sortKey: number | null) => void;
     onSetSnoozed?: (threadId: string, until: number | null) => void;
     onSetTags?: (threadId: string, tags: string[]) => void;
     onSetThreadProject?: (threadId: string, projectId: string) => void;
@@ -215,6 +216,7 @@ export function sidebar(
       onSetSettled={over.onSetSettled}
       onSetArchived={over.onSetArchived}
       onSetPinned={over.onSetPinned}
+      onSetSortKey={over.onSetSortKey}
       onSetSnoozed={over.onSetSnoozed}
       onSetTags={over.onSetTags}
       onSetThreadProject={over.onSetThreadProject}

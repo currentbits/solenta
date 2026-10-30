@@ -109,6 +109,7 @@ import { useStableThreadTitles } from "./sidebar/useStableThreadTitles";
 import { useProviderOptions } from "./sidebar/useProviderOptions";
 import { useListAnimation } from "./sidebar/useListAnimation";
 import { useSidebarRows } from "./sidebar/useSidebarRows";
+import { useThreadReorder } from "./sidebar/useThreadReorder";
 import { useMoreMenuFocus } from "./sidebar/useMoreMenuFocus";
 import { useThreadSearch } from "./sidebar/useThreadSearch";
 import { useSidebarShortcuts } from "./sidebar/useSidebarShortcuts";
@@ -241,6 +242,12 @@ export interface SidebarProps {
     override: "settled" | "active",
   ) => void | Promise<void>;
   onSetPinned?: (threadId: string, pinned: boolean) => void | Promise<void>;
+  /**
+   * Persist a manual drag/keyboard reorder position within the pinned or
+   * active section (#1769). Drag-and-drop and Alt+Shift+ArrowUp/Down both
+   * go through this.
+   */
+  onSetSortKey?: (threadId: string, sortKey: number | null) => void | Promise<void>;
   onSetSnoozed?: (threadId: string, until: number | null) => void | Promise<void>;
   /** Replace a thread's user-defined tags (chip editor on the card). */
   onSetTags?: (threadId: string, tags: string[]) => void | Promise<void>;
@@ -381,6 +388,7 @@ export const Sidebar = memo(function Sidebar({
   searchThreads,
   onSetSettled,
   onSetPinned,
+  onSetSortKey,
   onSetSnoozed,
   onSetTags,
   onSetThreadProject,
@@ -687,6 +695,22 @@ export const Sidebar = memo(function Sidebar({
     searchResults,
   });
 
+  const {
+    dragThreadId,
+    dropTarget,
+    onDragStartRow,
+    onDragOverRow,
+    onDropRow,
+    onDragEndRow,
+    moveThread,
+  } = useThreadReorder({
+    pinned: flat.pinned,
+    active: flat.active,
+    pinnedFamilies,
+    activeFamilies,
+    onSetSortKey,
+  });
+
   const toggleFamily = useCallback(
     (threadId: string, snap = false) => {
       if (snap) {
@@ -984,6 +1008,7 @@ export const Sidebar = memo(function Sidebar({
     setSelectAnchor,
     createInTargetProject,
     handleBrandCreate,
+    onMoveThread: moveThread,
   });
 
   const indexHintFor = (id: string): number | null => {
@@ -1247,6 +1272,7 @@ export const Sidebar = memo(function Sidebar({
   const renderCard = (
     thread: ThreadInfo,
     families: ReadonlyMap<string, string[]>,
+    reorderable = false,
   ) => {
     let compact = false;
     for (const kids of families.values()) {
@@ -1300,6 +1326,14 @@ export const Sidebar = memo(function Sidebar({
         }
         conflictForecast={conflictForecast}
         threadTitles={threadTitles}
+        dragging={reorderable && dragThreadId === thread.id}
+        dropIndicator={
+          reorderable && dropTarget?.id === thread.id ? dropTarget.edge : null
+        }
+        onDragStartRow={reorderable ? onDragStartRow : undefined}
+        onDragOverRow={reorderable ? onDragOverRow : undefined}
+        onDropRow={reorderable ? onDropRow : undefined}
+        onDragEndRow={reorderable ? onDragEndRow : undefined}
       />
     </Fragment>
     );
@@ -1950,7 +1984,7 @@ export const Sidebar = memo(function Sidebar({
                     : (
                     <>
                       {visiblePinned.map((thread) =>
-                        renderCard(thread, pinnedFamilies),
+                        renderCard(thread, pinnedFamilies, true),
                       )}
                       {visiblePinned.length > 0 && (
                         <div
@@ -1960,7 +1994,7 @@ export const Sidebar = memo(function Sidebar({
                         />
                       )}
                       {visibleActive.map((thread) =>
-                        renderCard(thread, activeFamilies),
+                        renderCard(thread, activeFamilies, true),
                       )}
                     </>
                   )}

@@ -4,8 +4,9 @@ import { isShortcutBlocked, stepVisibleId } from "../../sidebarSelection";
 
 /**
  * Window-level list shortcuts: ⌘/Ctrl held shows index hints, ⌘1–9 opens
- * the nth visible row, ⌘J / ⌘⇧J steps through the list, ⌘N / ⌘⇧N creates a
- * thread, and ? opens the keyboard sheet.
+ * the nth visible row, ⌘J / ⌘⇧J steps through the list, ⌥⇧↑ / ⌥⇧↓ moves the
+ * selected thread within its section (#1769), ⌘N / ⌘⇧N creates a thread,
+ * and ? opens the keyboard sheet.
  */
 export function useSidebarShortcuts({
   visibleIds,
@@ -18,6 +19,7 @@ export function useSidebarShortcuts({
   setSelectAnchor,
   createInTargetProject,
   handleBrandCreate,
+  onMoveThread,
 }: {
   visibleIds: string[];
   activeThreadId: string | null;
@@ -29,6 +31,8 @@ export function useSidebarShortcuts({
   setSelectAnchor: Dispatch<SetStateAction<string | null>>;
   createInTargetProject: () => void;
   handleBrandCreate: () => void;
+  /** Alt+Shift+ArrowUp/Down on the selected thread. */
+  onMoveThread?: (id: string, direction: "up" | "down") => void;
 }): void {
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -56,6 +60,19 @@ export function useSidebarShortcuts({
           onSelectThread(id);
         }
         return;
+      }
+
+      if (activeThreadId && onMoveThread) {
+        if (matchesBinding(e, "thread.moveUp")) {
+          e.preventDefault();
+          onMoveThread(activeThreadId, "up");
+          return;
+        }
+        if (matchesBinding(e, "thread.moveDown")) {
+          e.preventDefault();
+          onMoveThread(activeThreadId, "down");
+          return;
+        }
       }
 
       const step = matchesBinding(e, "thread.next")
@@ -103,5 +120,6 @@ export function useSidebarShortcuts({
     keyboardSheetOpen,
     createInTargetProject,
     handleBrandCreate,
+    onMoveThread,
   ]);
 }

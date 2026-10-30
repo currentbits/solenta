@@ -509,6 +509,26 @@ export function useCoderThreadActions({
     [api, applyThreads],
   );
 
+  const setSortKey = useCallback(
+    async (threadId: string, sortKey: number | null) => {
+      try {
+        const thread = await api.threads.setSortKey({ threadId, sortKey });
+        applyThreads(
+          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
+        );
+        setDetail((prev) =>
+          prev && prev.thread.id === thread.id
+            ? { ...prev, thread }
+            : prev,
+        );
+        setError(null);
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+      }
+    },
+    [api, applyThreads],
+  );
+
   const setSnoozed = useCallback(
     async (threadId: string, until: number | null) => {
       try {
@@ -1148,6 +1168,7 @@ export function useCoderThreadActions({
     setArchived,
     setSettled,
     setPinned,
+    setSortKey,
     setSnoozed,
     setTags,
     setThreadProject,

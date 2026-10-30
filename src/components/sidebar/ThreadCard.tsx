@@ -153,6 +153,12 @@ export const ThreadCard = memo(function ThreadCard({
   conflictForecast = null,
   threadTitles,
   listMoveProjects,
+  onDragStartRow,
+  onDragOverRow,
+  onDropRow,
+  onDragEndRow,
+  dropIndicator = null,
+  dragging = false,
 }: {
   thread: ThreadInfo;
   slug: string;
@@ -200,6 +206,22 @@ export const ThreadCard = memo(function ThreadCard({
   showSlug?: boolean;
   conflictForecast?: ConflictForecast | null;
   threadTitles?: ReadonlyMap<string, string>;
+  /**
+   * Manual drag reorder (#1769). The card only reports the native drag
+   * events on its outer row, passing its own id — same shape as
+   * onSetPinned etc. — so Sidebar can pass one stable function to every
+   * card without defeating this component's memo (#617). Sidebar owns the
+   * section order, the pure midpoint math (src/threadOrder.ts) and the
+   * persisted patch.
+   */
+  onDragStartRow?: (threadId: string) => void;
+  onDragOverRow?: (threadId: string, e: React.DragEvent<HTMLDivElement>) => void;
+  onDropRow?: (threadId: string, e: React.DragEvent<HTMLDivElement>) => void;
+  onDragEndRow?: (threadId: string) => void;
+  /** Drop indicator line rendered above/below this row while dragging. */
+  dropIndicator?: "before" | "after" | null;
+  /** This row is the one currently being dragged (reorder, not detach). */
+  dragging?: boolean;
 }) {
   const working = thread.status === "working";
   const settleOverride = isSettled ? ("active" as const) : ("settled" as const);
@@ -383,6 +405,8 @@ export const ThreadCard = memo(function ThreadCard({
       data-nested={nested ? "true" : undefined}
       data-compact={compact ? "true" : undefined}
       data-actions-open={actionsOpen ? "true" : undefined}
+      data-dragging={dragging ? "true" : undefined}
+      data-drop-indicator={dropIndicator ?? undefined}
       onContextMenu={(e) => {
         if (renaming || editingTags) return;
         if ((e.target as HTMLElement).closest("input, a, textarea")) return;
@@ -390,6 +414,8 @@ export const ThreadCard = memo(function ThreadCard({
         e.stopPropagation();
         void openThreadMenu({ x: e.clientX, y: e.clientY });
       }}
+      onDragOver={onDragOverRow && ((e) => onDragOverRow(thread.id, e))}
+      onDrop={onDropRow && ((e) => onDropRow(thread.id, e))}
     >
       {indexHint != null && (
         <span className={styles.indexHint} data-index-hint={indexHint} aria-hidden>
@@ -411,14 +437,20 @@ export const ThreadCard = memo(function ThreadCard({
           e.preventDefault();
           startRename();
         }}
-        // Drag a card out of the window to detach it (#519).
-        draggable={canDetachThread() && !renaming}
+        // Drag a card out of the window to detach it (#519), or drop it
+        // elsewhere in the pinned/active section to reorder it (#1769).
+        // canDetachThread() used to gate this attribute, so reordering
+        // never worked in web mode; dragging now always starts, and
+        // detach stays desktop-only at the onDragEnd check below.
+        draggable={!renaming}
         onDragStart={(e) => {
           e.dataTransfer.setData("application/x-solenta-thread", thread.id);
           e.dataTransfer.effectAllowed = "move";
+          onDragStartRow?.(thread.id);
         }}
         onDragEnd={(e) => {
-          if (droppedOutsideWindow(e)) detachThread(thread.id);
+          onDragEndRow?.(thread.id);
+          if (canDetachThread() && droppedOutsideWindow(e)) detachThread(thread.id);
         }}
         aria-label={selectLabel}
       />
