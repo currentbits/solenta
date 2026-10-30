@@ -2282,6 +2282,24 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         return rec("threads.setPinned", [input], next);
       },
       /**
+       * Honest manual reorder (#1769). Plain field write, same shape as
+       * setPinned; the ordering math lives in src/threadOrder.ts.
+       */
+      setSortKey: (input: unknown) => {
+        const i = input as { threadId: string; sortKey: number | null };
+        const existing = threads.find((t) => t.id === i.threadId);
+        if (!existing) {
+          return rec(
+            "threads.setSortKey",
+            [input],
+            thread({ id: i.threadId, sortKey: i.sortKey }),
+          );
+        }
+        const next: ThreadInfo = { ...existing, sortKey: i.sortKey };
+        threads = threads.map((t) => (t.id === i.threadId ? next : t));
+        return rec("threads.setSortKey", [input], next);
+      },
+      /**
        * Honest type-ahead queue (issue #137). prompt === null clears; a
        * non-null prompt appends, unless replace overwrites (issue #364).
        * Never bumps updatedAt.

@@ -382,6 +382,11 @@ module.exports = {
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
     return updated;
   },
+  "threads:setSortKey": async (ctx, input) => {
+    const updated = services.setSortKey(ctx.store, input);
+    ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+    return updated;
+  },
   "threads:setQueued": async (ctx, input) => {
     const updated = services.setQueued(ctx.store, input);
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));

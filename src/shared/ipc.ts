@@ -814,6 +814,16 @@ export interface ThreadInfo {
    */
   pinnedAt: number | null;
   /**
+   * Manual drag order within its section (#1769). Null/absent = unordered:
+   * the thread sorts after every keyed thread in that section, in today's
+   * order. Only read inside the pinned and active sections of the flat
+   * sidebar (buildFlatSidebar) — settled/snoozed/archived ignore it.
+   * Dragging (or Alt+Shift+ArrowUp/Down) assigns a fresh midpoint between
+   * its new neighbors; the section renumbers itself when keys collapse too
+   * close to divide further. See src/threadOrder.ts.
+   */
+  sortKey?: number | null;
+  /**
    * Snooze: hidden from the attention list until this epoch ms passes.
    * Snooze is VISIBILITY ONLY — it never touches the agent, suspends a pin
    * without clearing it, and beats settle classification. A live snooze
@@ -5834,6 +5844,16 @@ export interface CoderApi {
      * see pinnedAt doc); settling clears the pin. Never bumps updatedAt.
      */
     setPinned(input: { threadId: string; pinned: boolean }): Promise<ThreadInfo>;
+    /**
+     * Persist a manual drag/keyboard reorder position within the pinned or
+     * active section (#1769), or clear it with null. The caller computes the
+     * new key (src/threadOrder.ts); this is a plain field write, same as
+     * setPinned. Never bumps updatedAt.
+     */
+    setSortKey(input: {
+      threadId: string;
+      sortKey: number | null;
+    }): Promise<ThreadInfo>;
     /**
      * Persist or clear the type-ahead queue (issue #137). prompt === null
      * clears; a non-null prompt APPENDS to any existing queue so two mid-run

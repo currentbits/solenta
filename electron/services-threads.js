@@ -296,6 +296,7 @@ function createThread(store, input) {
     // Just-created is not unread: visit time matches creation.
     lastVisitedAt: now,
     pinnedAt: null,
+    sortKey: null,
     snoozedUntil: null,
     snoozedAt: null,
     notes: "",

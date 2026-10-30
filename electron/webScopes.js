@@ -141,6 +141,7 @@ const BY_SCOPE = {
     "threads:setArchived",
     "threads:setSettled",
     "threads:setPinned",
+    "threads:setSortKey",
     "threads:setQueued",
     "threads:setSnoozed",
     "threads:setTags",

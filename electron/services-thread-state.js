@@ -239,6 +239,30 @@ function setPinned(store, input) {
 }
 
 /**
+ * Persist (or clear) a manual drag/keyboard reorder position within the
+ * pinned or active sidebar section (#1769). The caller (src/threadOrder.ts,
+ * run in the renderer where the full section order is known) computes the
+ * new key; this is a plain field write, same shape as setPinned. Never
+ * bumps updatedAt: reordering is bookkeeping, not activity.
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string, sortKey: number | null }} input
+ */
+function setSortKey(store, input) {
+  const { threadId, sortKey } = input;
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  if (sortKey !== null && (typeof sortKey !== "number" || !Number.isFinite(sortKey))) {
+    throw new Error(`Invalid sortKey: ${JSON.stringify(sortKey)}. Expected a finite number or null`);
+  }
+  const updated = store.updateThread(threadId, { sortKey });
+  store.save();
+  return updated ? { ...updated } : { ...thread, sortKey };
+}
+
+/**
  * Persist or clear the type-ahead queue for a thread (issue #137).
  * prompt === null clears. A non-null prompt APPENDS to any existing queue
  * (same join as the old renderer startRun) so two mid-run sends cannot
@@ -1431,6 +1455,7 @@ module.exports = {
   clearSettledOnActivity,
   setSettled,
   setPinned,
+  setSortKey,
   setQueued,
   takeQueued,
   takeQueuedHead,

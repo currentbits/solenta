@@ -516,6 +516,41 @@ describe("services", () => {
     );
   });
 
+  it("setSortKey persists a manual drag/keyboard reorder position (#1769)", async () => {
+    const thread = await makeThread("sort-key");
+    store.updateThread(thread.id, { updatedAt: 1_700_000_000_000 });
+    assert.equal(thread.sortKey, null);
+
+    const moved = services.setSortKey(store, {
+      threadId: thread.id,
+      sortKey: 15,
+    });
+    assert.equal(moved.sortKey, 15);
+    assert.equal(store.getThread(thread.id).sortKey, 15);
+    // Reordering is bookkeeping, not activity.
+    assert.equal(moved.updatedAt, 1_700_000_000_000);
+
+    const cleared = services.setSortKey(store, {
+      threadId: thread.id,
+      sortKey: null,
+    });
+    assert.equal(cleared.sortKey, null);
+    assert.equal(store.getThread(thread.id).sortKey, null);
+  });
+
+  it("setSortKey rejects a non-finite key and an unknown thread", async () => {
+    const thread = await makeThread("sort-key-invalid");
+    assert.throws(
+      () => services.setSortKey(store, { threadId: thread.id, sortKey: NaN }),
+      /Invalid sortKey/,
+    );
+    assert.throws(
+      () =>
+        services.setSortKey(store, { threadId: "missing", sortKey: 1 }),
+      /Unknown thread: missing/,
+    );
+  });
+
   it("setTags normalizes (trim/lowercase/dedupe/cap) and never bumps updatedAt (#789)", async () => {
     const thread = await makeThread("tags-normalize");
     store.updateThread(thread.id, { updatedAt: 1_700_000_000_000 });

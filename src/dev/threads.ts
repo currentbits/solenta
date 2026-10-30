@@ -491,6 +491,9 @@ export function createThreads(ctx: DevCtx): Pick<CoderApi, "threads"> {
           pinnedAt: input.pinned ? now() : null,
         });
       },
+      async setSortKey(input: { threadId: string; sortKey: number | null }) {
+        return patchThread(input.threadId, { sortKey: input.sortKey });
+      },
       async setQueued(input: {
         threadId: string;
         prompt: string | null;
