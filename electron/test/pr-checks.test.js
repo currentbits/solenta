@@ -393,6 +393,16 @@ describe("prChecks / mergePr", () => {
     assert.ok(mergeCall.includes("--squash"));
   });
 
+  it("skips deleting the branch when deleteBranchOnMergeOrClose is off (#1763)", async () => {
+    services.setSettings(store, { deleteBranchOnMergeOrClose: false });
+    await mergePr({ store, threadId: thread.id });
+    const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+    assert.ok(
+      !state.calls.some((c) => c[0] === "api"),
+      "must not attempt a branch deletion while the setting is off",
+    );
+  });
+
   it("surfaces gh's own error for a CLOSED PR", async () => {
     const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
     const branch = Object.keys(state.prs)[0];
