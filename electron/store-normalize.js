@@ -425,6 +425,9 @@ function validateQuotaFailover(raw) {
  * autoSettleOnMerge: only an explicit false turns merge-settle off, so
  * absent/junk keeps the previous "MERGED = settled" behaviour.
  *
+ * deleteBranchOnMergeOrClose: default on; only an explicit false opts out
+ * of deleting the GitHub head branch after the app merges or closes a PR.
+ *
  * worktreeRoot: where new thread worktrees go (#1531). Absent/junk/relative
  * → null, the default userData/worktrees. Existence is checked on save.
  *
@@ -444,6 +447,7 @@ function normalizeSettings(raw) {
     autoSettleOnMerge: true,
     stripAgentCoauthors: false,
     prCrossReview: false,
+    deleteBranchOnMergeOrClose: true,
     mcpServers: [],
     defaultWorktree: false,
     defaultOrchestrate: false,
@@ -659,6 +663,9 @@ function normalizeSettings(raw) {
     true;
   settings.prCrossReview =
     /** @type {{ prCrossReview?: unknown }} */ (obj).prCrossReview === true;
+  settings.deleteBranchOnMergeOrClose =
+    /** @type {{ deleteBranchOnMergeOrClose?: unknown }} */ (obj)
+      .deleteBranchOnMergeOrClose !== false;
   settings.otel = normalizeOtel(/** @type {{ otel?: unknown }} */ (obj).otel);
   const linearKey = /** @type {{ linearApiKey?: unknown }} */ (obj).linearApiKey;
   if (typeof linearKey === "string" && linearKey.trim()) {

@@ -47,6 +47,8 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
   /** Opt-in: strip agent Co-authored-by trailers from squash merges. */
   let stripAgentCoauthors = false;
   let prCrossReview = false;
+  /** Default true: delete the GitHub head branch after a merge/close. */
+  let deleteBranchOnMergeOrClose = true;
   /** PR size cap in lines (issue #402); default 400, null disables. */
   let prDiffCapLines: number | null = 400;
   /** Run concurrency cap (issue #166); default 4, null disables. */
@@ -177,6 +179,7 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           autoSettleOnMerge,
           stripAgentCoauthors,
           prCrossReview,
+          deleteBranchOnMergeOrClose,
           prDiffCapLines,
           maxConcurrentRuns,
           mcpServers: ctx.mcpServers,
@@ -248,6 +251,14 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
             throw new Error("prCrossReview must be a boolean");
           }
           prCrossReview = patch.prCrossReview;
+        }
+        if (
+          Object.prototype.hasOwnProperty.call(patch, "deleteBranchOnMergeOrClose")
+        ) {
+          if (typeof patch.deleteBranchOnMergeOrClose !== "boolean") {
+            throw new Error("deleteBranchOnMergeOrClose must be a boolean");
+          }
+          deleteBranchOnMergeOrClose = patch.deleteBranchOnMergeOrClose;
         }
         if (Object.prototype.hasOwnProperty.call(patch, "prDiffCapLines")) {
           const v = patch.prDiffCapLines;
@@ -573,6 +584,7 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           autoSettleOnMerge,
           stripAgentCoauthors,
           prCrossReview,
+          deleteBranchOnMergeOrClose,
           prDiffCapLines,
           maxConcurrentRuns,
           mcpServers: ctx.mcpServers.map(redactDevMcp) as AppSettings["mcpServers"],

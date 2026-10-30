@@ -3666,6 +3666,14 @@ export interface AppSettings {
    */
   prCrossReview: boolean;
   /**
+   * When true (the default), the app deletes the GitHub head branch after
+   * it merges or closes a PR (merge/close from a thread, the PR workspace
+   * panel, the fleet/PR list, or the agent pr_merge tool). Never deletes
+   * the default branch, a branch with other open PRs, or a fork PR's
+   * branch. A deletion failure is logged and never fails the merge/close.
+   */
+  deleteBranchOnMergeOrClose: boolean;
+  /**
    * User-registered MCP servers (Skills tab). Built-ins coder-memory and
    * coder-threads are app-owned and never appear here. Enabled entries are
    * folded into every provider's MCP injection on the next turn.
