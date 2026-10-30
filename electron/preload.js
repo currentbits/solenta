@@ -213,6 +213,7 @@ const IPC_CHANNELS = Object.freeze([
   { ns: "threads", method: "applyAgentProfile" },
   { ns: "threads", method: "pendingApprovals" },
   { ns: "threads", method: "respondPermission" },
+  { ns: "threads", method: "restartAgentSession" },
   { ns: "threads", method: "clearQuestion" },
   { ns: "threads", method: "answerSecret" },
   { ns: "threads", method: "setArchived" },
