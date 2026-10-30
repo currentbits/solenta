@@ -32,3 +32,12 @@ export function stepThread(
   }
   return null;
 }
+
+/** Whether `stepThread` in that direction would land anywhere, for disabling nav buttons. */
+export function canStep(
+  h: ThreadHistory,
+  delta: 1 | -1,
+  exists: (id: string) => boolean,
+): boolean {
+  return stepThread(h, delta, exists) != null;
+}
