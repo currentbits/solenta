@@ -296,6 +296,7 @@ const IPC_CHANNELS = Object.freeze([
   { ns: "runs", method: "distill" },
   { ns: "runs", method: "distillMemory" },
   { ns: "runs", method: "stop" },
+  { ns: "runs", method: "stopAll" },
   { ns: "runs", method: "resumeQuotaWait" },
   { ns: "runs", method: "resumeCrew" },
   { ns: "git", method: "status" },

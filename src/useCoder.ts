@@ -331,6 +331,8 @@ export interface UseCoderResult {
   /** Retained run threads for one automation; does not start a run. */
   listAutomationRuns: (id: string) => Promise<AutomationRunsResult>;
   stopRun: () => Promise<void>;
+  /** Stop every active run (⌘K palette action + sidebar "Stop all"). */
+  stopAllRuns: () => Promise<void>;
   /**
    * Sticky permission mode. Pass threadId to target a fork, not the open
    * thread. autoApprove (#1721) stores toggles with the mode; null clears.
@@ -1648,6 +1650,7 @@ export function useCoder(): UseCoderResult {
 
   const {
     stopRun,
+    stopAllRuns,
     setPermissionMode,
     respondPermission,
     redirectPermission,
@@ -2220,6 +2223,7 @@ export function useCoder(): UseCoderResult {
     trustAutomationsFile,
     listAutomationRuns,
     stopRun,
+    stopAllRuns,
     setPermissionMode,
     respondPermission,
     redirectPermission,

@@ -6512,6 +6512,13 @@ export interface CoderApi {
     distillMemory(input: { threadId: string }): Promise<DistilledMemory>;
     stop(input: { threadId: string }): Promise<void>;
     /**
+     * "Stop all running threads" (⌘K palette action + sidebar control,
+     * issue #1778): stops every thread with a live run in one round trip.
+     * Equivalent to calling stop() on each of listActiveThreadIds(); an
+     * orchestrator's crew is cascaded same as a single stop.
+     */
+    stopAll(): Promise<{ stopped: number }>;
+    /**
      * Resume a parked quota-wait thread now (#462). Resends the last user
      * prompt without appending it again. Rejects if the thread is not
      * parked. Counts as the one-shot wake.

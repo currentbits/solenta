@@ -199,6 +199,7 @@ const BY_SCOPE = {
     "runs:startWorkflow",
     "runs:retryWorkflowAgent",
     "runs:stop",
+    "runs:stopAll",
     "runs:resumeQuotaWait",
     "runs:resumeCrew",
     "git:setReviewAccepted",

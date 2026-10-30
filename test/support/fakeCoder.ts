@@ -3362,6 +3362,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           },
         ),
       stop: (input: unknown) => rec("runs.stop", [input], undefined),
+      stopAll: () => rec("runs.stopAll", [], { stopped: 0 }),
       resumeQuotaWait: (input: unknown) =>
         rec("runs.resumeQuotaWait", [input], { runId: "r-quota" }),
       resumeCrew: (input: unknown) => rec("runs.resumeCrew", [input], undefined),

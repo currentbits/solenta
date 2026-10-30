@@ -1163,6 +1163,15 @@ export function createRuns(ctx: DevCtx): Pick<CoderApi, "runs"> {
         syncThreadRow(thread);
         emitDetail(detail);
       },
+      async stopAll() {
+        const ids = [...details.values()]
+          .filter((d) => d.thread.status === "working")
+          .map((d) => d.thread.id);
+        for (const threadId of ids) {
+          await api.runs.stop({ threadId });
+        }
+        return { stopped: ids.length };
+      },
       async distill() {
         return {
           name: "Distilled workflow",

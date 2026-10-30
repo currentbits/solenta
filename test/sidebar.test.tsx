@@ -2726,3 +2726,37 @@ describe("Sidebar recently deleted shelf (#940)", () => {
     m.unmount();
   });
 });
+
+describe("Sidebar footer Stop all control (#1778)", () => {
+  it("shows Stop all (N) only while a thread is working, and calls onStopAllRunning", async () => {
+    await clearSidebarStorage();
+    let requested = 0;
+    const m = await mount(
+      sidebar(THREADS, { onStopAllRunning: () => requested++ }),
+    );
+    // THREADS has exactly one "working" thread ("busy").
+    const btn = m.query("[data-stop-all-button]") as HTMLButtonElement;
+    assert.ok(btn, "Stop all control renders while a thread is working");
+    assert.match(btn.textContent ?? "", /Stop all \(1\)/);
+    await m.click(btn);
+    assert.equal(requested, 1);
+    m.unmount();
+  });
+
+  it("hides the control once nothing is working", async () => {
+    await clearSidebarStorage();
+    const idleOnly = THREADS.filter((t) => t.status !== "working");
+    const m = await mount(
+      sidebar(idleOnly, { onStopAllRunning: () => {} }),
+    );
+    assert.equal(m.query("[data-stop-all-button]"), null);
+    m.unmount();
+  });
+
+  it("hides the control when the caller passes no handler, even while working", async () => {
+    await clearSidebarStorage();
+    const m = await mount(sidebar(THREADS));
+    assert.equal(m.query("[data-stop-all-button]"), null);
+    m.unmount();
+  });
+});

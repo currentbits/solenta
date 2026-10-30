@@ -190,6 +190,7 @@ export function sidebar(
     onPurgeThread?: (threadId: string) => void;
     memoryEntries?: number | null;
     stayAwake?: import("../../src/shared/ipc").StayAwakeStatus | null;
+    onStopAllRunning?: () => void;
   } = {},
 ) {
   const projects = over.projects ?? [p1];
@@ -255,6 +256,7 @@ export function sidebar(
       trashedThreads={over.trashedThreads}
       onRestoreThread={over.onRestoreThread}
       onPurgeThread={over.onPurgeThread}
+      onStopAllRunning={over.onStopAllRunning}
     />
   );
 }

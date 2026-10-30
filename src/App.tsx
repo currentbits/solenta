@@ -27,6 +27,7 @@ import { ClaimedLanesHeartbeat } from "./components/LaneHeartbeat";
 import type { SettingsPane } from "./components/SettingsModal";
 import { ArchiveToast } from "./components/ArchiveToast";
 import { ResumeNotice } from "./components/ResumeNotice";
+import { StopAllConfirm } from "./components/StopAllConfirm";
 import { UNDO_WINDOW_MS, useUndoLast } from "./app/useUndoLast";
 import { bindingLabel, matchesBinding } from "./keybindings";
 import { isPinned } from "./threadSnooze";
@@ -244,6 +245,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     refreshWorkflows,
     workflowListError,
     stopRun,
+    stopAllRuns,
     setPermissionMode,
     respondPermission,
     redirectPermission,
@@ -472,6 +474,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   const [paletteMode, setPaletteMode] = useState<PaletteMode>("command");
   const paletteModeRef = useRef<PaletteMode>("command");
   paletteModeRef.current = paletteMode;
+  /** "Stop all running threads" confirm (⌘K palette action + sidebar control). */
+  const [stopAllConfirmOpen, setStopAllConfirmOpen] = useState(false);
   /** Mid-session latch so finishing the tour does not wait on settings.set. */
   const [onboardingDismissed, setOnboardingDismissed] = useState(false);
   /** Relaunch from Settings even after onboardingSeen is true. */
@@ -1674,6 +1678,21 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     [resolvePaths, openWorkspacePath],
   );
 
+  /** At least one thread with a live run (⌘K action + sidebar control visibility). */
+  const workingCount = useMemo(
+    () => threads.reduce((n, t) => (t.status === "working" ? n + 1 : n), 0),
+    [threads],
+  );
+  const openStopAllConfirm = useCallback(() => setStopAllConfirmOpen(true), []);
+  /** PALETTE_ACTIONS plus "Stop all running threads" while any thread works. */
+  const paletteActions = useMemo(
+    () =>
+      workingCount > 0
+        ? PALETTE_ACTIONS
+        : PALETTE_ACTIONS.filter((a) => a.id !== "stop-all-threads"),
+    [workingCount],
+  );
+
   const runPaletteAction = useCallback(
     (id: string) => {
       if (id === "new-thread") handleCreateThreadPlain();
@@ -1689,6 +1708,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       else if (id === "approvals") openApprovals();
       else if (id === "add-project") handleAddProject();
       else if (id === "toggle-agents") toggleAgents();
+      else if (id === "stop-all-threads") openStopAllConfirm();
       else if (id === "reopen-pane") {
         window.dispatchEvent(new Event(REOPEN_PANE_EVENT));
       } else if (id === "restart-agent-session") {
@@ -1709,6 +1729,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       openApprovals,
       handleAddProject,
       toggleAgents,
+      openStopAllConfirm,
       restartAgentSession,
     ],
   );
@@ -2136,6 +2157,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onFork={handleRowFork}
         conflictForecast={forecast}
         toast={sidebarToast}
+        onStopAllRunning={openStopAllConfirm}
             />
           </ErrorBoundary>
           </div>
@@ -2666,7 +2688,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
           onSelectProject={handlePaletteProject}
           onRunAction={runPaletteAction}
           onOpenFile={handlePaletteFile}
-          actions={PALETTE_ACTIONS}
+          actions={paletteActions}
         />
         )}
         </Suspense>
@@ -2766,6 +2788,12 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
               void api.runs.stop({ threadId }).catch(() => {});
             }
           }}
+        />
+        <StopAllConfirm
+          open={stopAllConfirmOpen}
+          count={workingCount}
+          onConfirm={stopAllRuns}
+          onCancel={() => setStopAllConfirmOpen(false)}
         />
         <Suspense fallback={null}>
         {addPathOpen && (

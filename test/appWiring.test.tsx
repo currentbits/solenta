@@ -2121,6 +2121,88 @@ describe("App command palette (#150)", () => {
     }
   });
 
+  it("Stop all running threads (#1778): hidden while idle, shown while working, confirms before calling runs.stopAll", async () => {
+    const working = thread({ id: "t-busy", title: "Busy", status: "working" });
+    const idleOne = thread({ id: "t-idle", title: "Idle one" });
+    const fake = createFakeCoder({
+      threads: [idleOne],
+      details: { "t-idle": detail({ thread: idleOne }) },
+    });
+    const m = await boot(fake);
+    try {
+      await m.flush();
+      const ta = m.query("textarea") as HTMLElement;
+      ta.focus();
+      const openPalette = async () => {
+        await inAct(async () => {
+          window.dispatchEvent(
+            new KeyboardEvent("keydown", {
+              key: "k",
+              metaKey: true,
+              bubbles: true,
+              cancelable: true,
+            }),
+          );
+        });
+        await m.flush();
+      };
+
+      // Nothing working: the action is absent.
+      await openPalette();
+      assert.doesNotMatch(
+        m.text(),
+        /Stop all running threads/,
+        "hidden while every thread is idle",
+      );
+      await m.pressFocused("Escape");
+      await m.flush();
+
+      // A thread starts working: threads:changed push adds it to the list.
+      await inAct(async () => {
+        fake.emitThreads([idleOne, working]);
+      });
+      await m.flush();
+
+      ta.focus();
+      await openPalette();
+      const input = m.query("[data-command-palette-input]") as HTMLInputElement;
+      await m.type(input, "Stop all");
+      await m.flush();
+      assert.match(m.text(), /Stop all running threads/);
+      await m.press(input, "Enter");
+      await m.flush();
+
+      assert.equal(
+        m.query("[data-command-palette-dialog]"),
+        null,
+        "palette closes on running the action",
+      );
+      assert.equal(
+        fake.of("runs.stopAll").length,
+        0,
+        "must confirm before stopping",
+      );
+      const confirmDialog = m.query("[data-stop-all-confirm]");
+      assert.ok(confirmDialog, "confirm dialog opens");
+      assert.match(confirmDialog!.textContent ?? "", /Stop 1 running thread\?/);
+
+      const submit = m.query(
+        "[data-stop-all-confirm-submit]",
+      ) as HTMLElement;
+      await m.click(submit);
+      await m.flush();
+
+      assert.equal(fake.of("runs.stopAll").length, 1);
+      assert.equal(
+        m.query("[data-stop-all-confirm]"),
+        null,
+        "dialog closes after confirming",
+      );
+    } finally {
+      m.unmount();
+    }
+  });
+
   it("cmd+p opens file search against files.list", async () => {
     const t1 = thread({ id: "t-files", title: "Has a repo" });
     const fake = createFakeCoder({
