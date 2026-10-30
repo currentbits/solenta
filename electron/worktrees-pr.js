@@ -6,6 +6,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { execFile } = require("node:child_process");
+const { randomUUID } = require("node:crypto");
 const { GIT_MAX_BUFFER, gitTry, gitOutAsync, tailErr, gitTryAsync } = require("./worktrees-git.js");
 const {
   repoDefaultBranchAsync,
@@ -469,9 +470,10 @@ function parsePrJson(stdout, branch, created) {
 }
 
 // reviewDecision/mergeable/statusCheckRollup/changedFiles feed the PR
-// triage inbox (#260) from the same single list call.
+// triage inbox (#260); reviewRequests feeds reviewRequestedFromMe (#1763).
+// All from the same single list call.
 const PR_LIST_FIELDS =
-  "number,title,url,state,headRefName,isDraft,additions,deletions,updatedAt,changedFiles,mergeable,reviewDecision,statusCheckRollup";
+  "number,title,url,state,headRefName,isDraft,additions,deletions,updatedAt,changedFiles,mergeable,reviewDecision,statusCheckRollup,reviewRequests";
 const PR_LIST_FIELDS_FALLBACK = "number,title,url,state,headRefName";
 
 /**
@@ -506,8 +508,27 @@ function isGhAuthFailure(text) {
 }
 
 /**
+ * True when `row.reviewRequests` (gh pr list --json reviewRequests) names
+ * viewerLogin directly. Team review requests are not expanded against team
+ * membership here (no membership data is cached anywhere in the app), so a
+ * team-only request never flips this on — issue #1763 asks for "just the
+ * user" in that case.
+ * @param {unknown} reviewRequests
+ * @param {string | null} viewerLogin
+ * @returns {boolean}
+ */
+function reviewRequestedFromLogin(reviewRequests, viewerLogin) {
+  if (!viewerLogin || !Array.isArray(reviewRequests)) return false;
+  const login = viewerLogin.toLowerCase();
+  return reviewRequests.some(
+    (r) => r && typeof r.login === "string" && r.login.toLowerCase() === login,
+  );
+}
+
+/**
  * Normalize one `gh pr list --json` row into a PrListItem.
  * @param {any} row
+ * @param {string | null} [viewerLogin] current gh login, for reviewRequestedFromMe
  * @returns {{
  *   number: number,
  *   title: string,
@@ -522,9 +543,10 @@ function isGhAuthFailure(text) {
  *   mergeable?: "MERGEABLE" | "CONFLICTING" | "UNKNOWN",
  *   reviewDecision?: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED",
  *   checks?: "pass" | "fail" | "pending",
+ *   reviewRequestedFromMe?: boolean,
  * }}
  */
-function parsePrListItem(row) {
+function parsePrListItem(row, viewerLogin) {
   const number = Number(row && row.number);
   const url = row && row.url != null ? String(row.url) : "";
   if (!Number.isFinite(number) || number <= 0 || !url) {
@@ -573,7 +595,48 @@ function parsePrListItem(row) {
   if (PR_REVIEW_DECISIONS.has(decision)) item.reviewDecision = decision;
   const checks = summarizeCheckRollup(row && row.statusCheckRollup);
   if (checks) item.checks = checks;
+  if (reviewRequestedFromLogin(row && row.reviewRequests, viewerLogin)) {
+    item.reviewRequestedFromMe = true;
+  }
   return item;
+}
+
+/**
+ * The signed-in gh login for a project's origin host, for
+ * reviewRequestedFromMe (#1763). Reuses sourceControl's cached discovery
+ * probe (Settings › Source control already pays for it) instead of a
+ * second `gh api user` round trip. Null when gh is missing, not signed in,
+ * or the project runs on a REST token with no gh CLI at all.
+ * @param {string} projectPath
+ * @returns {Promise<string | null>}
+ */
+async function viewerLoginFor(projectPath) {
+  try {
+    const remote = await gitTryAsync(projectPath, ["remote", "get-url", "origin"]);
+    if (!remote.ok) return null;
+    const originUrl = String(remote.stdout || "").trim();
+    // GitLab/other forges: no gh login to look up, and no reason to pay for
+    // a gh --version/auth probe on a checkout that never calls gh.
+    if (!(await isGitHubPrRemote(originUrl))) return null;
+    const parsed = github.parseRemote(originUrl);
+    if (!parsed) return null;
+    const { discoverSourceControl } = require("./sourceControl.js");
+    const discovery = await discoverSourceControl();
+    const gh = (discovery.sourceControlProviders || []).find(
+      (p) => p.kind === "github",
+    );
+    if (!gh) return null;
+    const account = (gh.accounts || []).find(
+      (a) => a.host === parsed.host && a.active,
+    );
+    if (account) return account.login;
+    if (gh.auth && gh.auth.status === "authenticated" && gh.auth.detail) {
+      return gh.auth.detail;
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 const PR_REVIEW_DECISIONS = new Set([
@@ -729,7 +792,9 @@ function clampPrListLimit(value) {
  * can render a per-project error row.
  *
  * @param {string} projectPath
- * @param {{ limit?: number }} [opts]
+ * @param {{ limit?: number, viewerLogin?: string | null }} [opts] viewerLogin
+ *   (#1763): the signed-in gh login, for reviewRequestedFromMe; resolve it
+ *   with viewerLoginFor and pass it in, this does not fetch it itself.
  * @returns {Promise<{ ok: true, prs: ReturnType<typeof parsePrListItem>[], complete: boolean, limit: number } | { ok: false, reason: string }>}
  */
 async function listPrs(projectPath, opts) {
@@ -738,8 +803,13 @@ async function listPrs(projectPath, opts) {
     extraArgs: ["--limit", String(limit)],
   });
   if (!raw.ok) return raw;
+  // viewerLogin is caller-supplied (ipc-git.js resolves it via
+  // viewerLoginFor, cached) rather than looked up here: listPrs is a hot
+  // path hit by many narrow test fixtures, and viewerLoginFor's gh probe
+  // would be an unexpected extra call for every one of them.
+  const viewerLogin = (opts && opts.viewerLogin) || null;
   try {
-    const prs = raw.prs.map(parsePrListItem);
+    const prs = raw.prs.map((row) => parsePrListItem(row, viewerLogin));
     return { ok: true, prs, complete: prs.length < limit, limit };
   } catch (err) {
     return {
@@ -1487,6 +1557,13 @@ async function mergePr(opts) {
     if (!merged.ok) {
       throwGhFailure(merged, "gh pr merge failed");
     }
+    await maybeDeleteHeadBranch({
+      store,
+      cwd,
+      prNumber: info.number,
+      headRefName: branch,
+      threadId,
+    });
   }
 
   const live = await prStatus({ store, threadId });
@@ -1495,6 +1572,129 @@ async function mergePr(opts) {
     broadcast("threads:changed", listThreads(store));
   }
   return live;
+}
+
+/**
+ * REST DELETE of a head branch ref, using the project's own token when one
+ * exists (keeps the "runs entirely over the API" tests gh-call-free); `gh
+ * api` otherwise. A cross-repo (`-R`) delete always goes through `gh`: it
+ * is rare enough that shelling out is not worth a second client shape.
+ * @param {string} cwd
+ * @param {string} branch
+ * @param {string} [repoSlug] other-repo slug (`-R owner/repo`)
+ * @returns {Promise<string | null>} null on success, else a reason string
+ */
+async function deleteHeadBranchRef(cwd, branch, repoSlug) {
+  if (!repoSlug) {
+    const remote = await gitTryAsync(cwd, ["remote", "get-url", "origin"]);
+    const originUrl = remote.ok ? String(remote.stdout || "").trim() : "";
+    const target = originUrl ? await githubApiTarget(originUrl) : null;
+    if (target) {
+      try {
+        await github.rest({
+          host: target.remote.host,
+          token: target.token,
+          fetchFn: githubApiTestHook && githubApiTestHook.fetchFn,
+          method: "DELETE",
+          path: `/repos/${target.remote.owner}/${target.remote.repo}/git/refs/heads/${branch}`,
+        });
+        return null;
+      } catch (err) {
+        return err && err.message ? String(err.message) : String(err);
+      }
+    }
+  }
+  const apiArgs = [
+    "api",
+    "-X",
+    "DELETE",
+    ...(repoSlug ? ["-R", repoSlug] : []),
+    `repos/{owner}/{repo}/git/refs/heads/${branch}`,
+  ];
+  const deleted = await ghTryAsync(cwd, apiArgs, { timeout: GH_TIMEOUT_MS });
+  if (!deleted.ok) return tailErr(deleted.stderr || deleted.combined, "branch deletion failed");
+  return null;
+}
+
+/**
+ * Best-effort cleanup for issue #1763: delete a merged/closed PR's GitHub
+ * head branch, when settings.deleteBranchOnMergeOrClose is on (the
+ * default). Never throws — the merge/close already succeeded. Skips
+ * silently when the head IS the repo's default branch, another open PR
+ * still has the same head branch, or the PR is from a fork (head repo !=
+ * base repo). A real deletion failure is logged and left as a quiet event
+ * message on the thread, when one is given.
+ *
+ * @param {object} opts
+ * @param {import('./store').Store} [opts.store]
+ * @param {string} opts.cwd
+ * @param {number} opts.prNumber
+ * @param {string} opts.headRefName
+ * @param {string} [opts.repo] other-repo slug (`-R owner/repo`)
+ * @param {string} [opts.threadId] quiet event-message target
+ */
+async function maybeDeleteHeadBranch(opts) {
+  const store = opts.store;
+  if (store && typeof store.getSettings === "function") {
+    const settings = store.getSettings();
+    if (settings && settings.deleteBranchOnMergeOrClose === false) return;
+  }
+  const branch = String(opts.headRefName || "").trim();
+  if (!branch) return;
+  const cwd = opts.cwd;
+  const ghOpts = opts.repo
+    ? { timeout: GH_TIMEOUT_MS, ghRepo: opts.repo }
+    : { timeout: GH_TIMEOUT_MS };
+
+  // Fork PRs are never touched: deleting someone else's branch is not ours
+  // to do, and gh/the API would refuse it on the base repo anyway.
+  const viewed = await ghApiTryAsync(
+    cwd,
+    ["pr", "view", String(opts.prNumber), "--json", "isCrossRepository"],
+    ghOpts,
+  );
+  if (viewed.ok) {
+    try {
+      const data = JSON.parse(viewed.stdout);
+      if (data && data.isCrossRepository) return;
+    } catch {
+      /* best-effort guard; fall through to the delete attempt */
+    }
+  }
+
+  // Never the repo's default branch. Local git, no network round trip.
+  try {
+    const def = await repoDefaultBranchAsync(cwd);
+    if (def && def === branch) return;
+  } catch {
+    /* detached HEAD etc: the open-PR guard below still protects us */
+  }
+
+  // Skip while another open PR still targets this exact head branch.
+  const byBranch = await ghApiTryAsync(cwd, ["pr", "view", branch, "--json", "number,state"], ghOpts);
+  if (byBranch.ok) {
+    try {
+      const data = JSON.parse(byBranch.stdout);
+      if (data && data.state === "OPEN" && Number(data.number) !== Number(opts.prNumber)) {
+        return;
+      }
+    } catch {
+      /* best-effort guard; fall through */
+    }
+  }
+
+  const reason = await deleteHeadBranchRef(cwd, branch, opts.repo);
+  if (reason) {
+    console.error(`[pr] failed to delete branch ${branch} on GitHub: ${reason}`);
+    if (store && opts.threadId && typeof store.appendMessage === "function") {
+      store.appendMessage(opts.threadId, {
+        id: randomUUID(),
+        role: "event",
+        text: `Could not delete branch ${branch} on GitHub after PR #${opts.prNumber}: ${reason}`,
+        createdAt: Date.now(),
+      });
+    }
+  }
 }
 
 /**
@@ -2231,12 +2431,15 @@ module.exports = {
   parsePrListJson,
   listPrsRaw,
   listPrs,
+  viewerLoginFor,
+  reviewRequestedFromLogin,
   prStatus,
   parsePrChecksJson,
   parsePrChecksText,
   rollupPrChecks,
   prChecks,
   mergePr,
+  maybeDeleteHeadBranch,
   mergeFlags,
   squashBodyArgs,
   repoMergeOptions,

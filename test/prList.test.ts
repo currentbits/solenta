@@ -357,4 +357,55 @@ describe("triage inbox (#260)", () => {
     );
     assert.equal(rows[1].thread.id, "c");
   });
+
+  it("a review request does not change the bucket, just the sort (#1763)", () => {
+    assert.equal(bucket({ checks: "pass", reviewRequestedFromMe: true }), "review");
+    assert.equal(
+      bucket({ checks: "fail", reviewRequestedFromMe: true }),
+      "agent",
+      "still blocked: a review request is not itself a blocker signal",
+    );
+    const t = triagePr(
+      pr({ number: 1, updatedAt: iso(1000), reviewRequestedFromMe: true }),
+      idle,
+      now,
+    );
+    assert.ok(
+      !t.signals.includes("Review requested"),
+      "the badge lives on the row, not the triage signal chips",
+    );
+  });
+
+  it("sorts a review-requested PR first, ahead of bucket order (#1763)", () => {
+    const threads = [
+      thread({ id: "a", prNumber: 1 }),
+      thread({ id: "b", projectId: "p2", prNumber: 9 }),
+    ];
+    const groups = groupPrsByProject(
+      [p1, p2],
+      new Map<string, ListPrsResult>([
+        ["p1", { ok: true, prs: [pr({ number: 1, updatedAt: iso(1000), checks: "fail" })] }],
+        [
+          "p2",
+          {
+            ok: true,
+            prs: [
+              pr({
+                number: 9,
+                updatedAt: iso(500),
+                checks: "fail",
+                reviewRequestedFromMe: true,
+              }),
+            ],
+          },
+        ],
+      ]),
+    );
+    const rows = triageInbox(groups, threads, now);
+    assert.deepEqual(
+      rows.map((r) => r.pr.number),
+      [9, 1],
+      "the review-requested PR (bucket agent, newer) still sorts ahead of the other agent-bucket PR",
+    );
+  });
 });

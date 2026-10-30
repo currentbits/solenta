@@ -395,6 +395,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
     autoSettleOnMerge: true,
     stripAgentCoauthors: false,
     prCrossReview: false,
+    deleteBranchOnMergeOrClose: true,
     mcpServers: [],
     defaultWorktree: false,
     updateChannel: null,

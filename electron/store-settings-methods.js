@@ -78,6 +78,7 @@ class StoreSettingsMethods {
       autoSettleOnMerge: n.autoSettleOnMerge,
       stripAgentCoauthors: n.stripAgentCoauthors,
       prCrossReview: n.prCrossReview,
+      deleteBranchOnMergeOrClose: n.deleteBranchOnMergeOrClose,
       mcpServers: n.mcpServers,
       defaultWorktree: n.defaultWorktree,
       defaultOrchestrate: n.defaultOrchestrate,
@@ -234,6 +235,15 @@ class StoreSettingsMethods {
         throw new Error("prCrossReview must be a boolean");
       }
       this.data.settings.prCrossReview = v;
+    }
+    if (
+      Object.prototype.hasOwnProperty.call(patch, "deleteBranchOnMergeOrClose")
+    ) {
+      const v = patch.deleteBranchOnMergeOrClose;
+      if (typeof v !== "boolean") {
+        throw new Error("deleteBranchOnMergeOrClose must be a boolean");
+      }
+      this.data.settings.deleteBranchOnMergeOrClose = v;
     }
     if (Object.prototype.hasOwnProperty.call(patch, "mcpServers")) {
       this.data.settings.mcpServers = validateMcpServers(

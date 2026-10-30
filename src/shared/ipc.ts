@@ -2898,6 +2898,14 @@ export interface PrListItem {
   reviewDecision?: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED";
   /** One verdict over all checks; cancelled counts as "fail". */
   checks?: "pass" | "fail" | "pending";
+  /**
+   * True when the signed-in GitHub user is directly named in this PR's
+   * review requests (issue #1763). A team-only request never sets this:
+   * the app caches no team-membership data to expand it. Absent when the
+   * signed-in login could not be resolved (gh missing/signed out, or a
+   * REST-token-only setup with no gh CLI at all).
+   */
+  reviewRequestedFromMe?: boolean;
 }
 
 /** Optional page for `git.listPrs`. Absent limit keeps the historic 50-row page. */
@@ -3685,6 +3693,14 @@ export interface AppSettings {
    * it; findings come back to the author thread to filter.
    */
   prCrossReview: boolean;
+  /**
+   * When true (the default), the app deletes the GitHub head branch after
+   * it merges or closes a PR (merge/close from a thread, the PR workspace
+   * panel, the fleet/PR list, or the agent pr_merge tool). Never deletes
+   * the default branch, a branch with other open PRs, or a fork PR's
+   * branch. A deletion failure is logged and never fails the merge/close.
+   */
+  deleteBranchOnMergeOrClose: boolean;
   /**
    * User-registered MCP servers (Skills tab). Built-ins coder-memory and
    * coder-threads are app-owned and never appear here. Enabled entries are

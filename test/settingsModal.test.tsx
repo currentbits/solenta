@@ -404,6 +404,36 @@ describe("SettingsModal PR size cap (#402)", () => {
   });
 });
 
+describe("SettingsModal delete branch on merge/close (#1763)", () => {
+  it("toggles immediately, default checked", async () => {
+    const patches: Partial<AppSettings>[] = [];
+    const m = await mount(
+      modal({
+        initialPane: "git",
+        settings: { dailyBudgetUsd: null, autoSettleAfterDays: 3 },
+        onSaveSettings: async (patch) => {
+          patches.push(patch);
+          return {
+            dailyBudgetUsd: null,
+            autoSettleAfterDays: 3,
+            deleteBranchOnMergeOrClose: patch.deleteBranchOnMergeOrClose ?? true,
+          };
+        },
+      }),
+    );
+    const box = m.query("[data-delete-branch-on-merge-or-close]") as HTMLInputElement;
+    assert.ok(box, "delete-branch checkbox");
+    assert.equal(box.checked, true, "on by default");
+    assert.ok(
+      m.text().includes("Delete the branch on GitHub after merging or closing a PR"),
+    );
+    await m.click(box);
+    assert.equal(patches.length, 1);
+    assert.equal(patches[0].deleteBranchOnMergeOrClose, false);
+    m.unmount();
+  });
+});
+
 describe("SettingsModal late settings load (#930)", () => {
   const loaded = {
     dailyBudgetUsd: 5,

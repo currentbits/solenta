@@ -22,6 +22,7 @@ const {
   mergeOptions,
   maybeCleanupMergedWorktree,
   listPrs,
+  viewerLoginFor,
   checkoutPr,
   listCheckpoints,
   restoreCheckpoint,
@@ -286,7 +287,12 @@ module.exports = {
     });
   },
   "git:listPrs": async (_ctx, projectPath, opts) => {
-    return listPrs(projectPath, opts);
+    // viewerLoginFor is resolved here, not inside listPrs: it rides
+    // sourceControl's cached discovery, so repeat calls are cheap, but a
+    // fresh probe is a real gh/glab/az spawn the first time — keep that
+    // off listPrs's own test-covered hot path (#1763).
+    const viewerLogin = await viewerLoginFor(projectPath);
+    return listPrs(projectPath, { ...opts, viewerLogin });
   },
   "git:checkoutPr": async (ctx, input) => {
     return checkoutPr({

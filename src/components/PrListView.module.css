@@ -203,6 +203,19 @@
   text-transform: uppercase;
 }
 
+.reviewRequested {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--blue-border);
+  background: var(--blue-soft);
+  color: var(--blue);
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
 .rowMeta {
   composes: rowMeta from "./pageShell.module.css";
 }
