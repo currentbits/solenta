@@ -7268,6 +7268,16 @@ export interface CoderApi {
   on(channel: "thread:select", cb: (threadId: string) => void): () => void;
   /** solenta://project/<id> deep link: scope the sidebar to it (#186). */
   on(channel: "project:select", cb: (projectId: string) => void): () => void;
+  /**
+   * solenta://new?prompt=...&project=... deep link (#1766): open a fresh
+   * draft thread with `prompt` pre-filled in the composer, focused, never
+   * sent. `projectId` is null when the link named no project or an unknown
+   * one; the renderer falls back to the currently selected project.
+   */
+  on(
+    channel: "thread:newDraft",
+    cb: (payload: { prompt: string; projectId: string | null }) => void,
+  ): () => void;
   /** Main-process store + IPC handlers are up; refetch boot lists (#618). */
   on(channel: "boot:ready", cb: () => void): () => void;
   /** Stay-awake derived state flipped (mode, blocking, battery) (#364). */
