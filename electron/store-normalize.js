@@ -211,6 +211,9 @@ function matchingProfileId(raw, profiles) {
 const SNIPPET_NAME_RE = /^[\w.-]{1,40}$/;
 const SNIPPET_TEXT_MAX = 8000;
 
+/** Thread-title prompt instructions cap (issue #1765). */
+const TITLE_INSTRUCTIONS_MAX = 500;
+
 /**
  * Prompt snippets (issue #189): named text the composer inserts via `@name`.
  * strict (settings:set) throws on the first problem; lenient (disk read)
@@ -472,6 +475,8 @@ function normalizeSettings(raw) {
     combineQueuedFollowUps: true,
     agentBugReports: true,
     guardrailsEnabled: true,
+    idleCompactClaudeThreads: false,
+    titleInstructions: "",
     prDiffCapLines: DEFAULT_PR_DIFF_CAP_LINES,
     maxConcurrentRuns: DEFAULT_MAX_CONCURRENT_RUNS,
     agentProfiles: [],
@@ -655,6 +660,15 @@ function normalizeSettings(raw) {
     /** @type {{ agentBugReports?: unknown }} */ (obj).agentBugReports !== false;
   settings.guardrailsEnabled =
     /** @type {{ guardrailsEnabled?: unknown }} */ (obj).guardrailsEnabled !== false;
+  settings.idleCompactClaudeThreads =
+    /** @type {{ idleCompactClaudeThreads?: unknown }} */ (obj)
+      .idleCompactClaudeThreads === true;
+  const titleInstructions =
+    /** @type {{ titleInstructions?: unknown }} */ (obj).titleInstructions;
+  settings.titleInstructions =
+    typeof titleInstructions === "string"
+      ? titleInstructions.trim().slice(0, TITLE_INSTRUCTIONS_MAX)
+      : "";
   settings.autoSettleOnMerge =
     /** @type {{ autoSettleOnMerge?: unknown }} */ (obj).autoSettleOnMerge !==
     false;
@@ -933,4 +947,5 @@ module.exports = {
   normalizeGithubHosts,
   normalizeChannel,
   CHANNEL_KINDS,
+  TITLE_INSTRUCTIONS_MAX,
 };
