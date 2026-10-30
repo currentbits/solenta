@@ -7,6 +7,9 @@ export interface RunHeader {
   firstMessageId: string;
   /** "Worked for 2m 5s" style label. */
   label: string;
+  /** createdAt span of the run, for a hover tooltip (#1767). */
+  startedAt: number;
+  endedAt: number;
 }
 
 /**
@@ -65,6 +68,8 @@ export function mapRunHeaders(
       runId,
       firstMessageId: span.firstId,
       label: formatRunDuration(span.lastAt - span.firstAt),
+      startedAt: span.firstAt,
+      endedAt: span.lastAt,
     });
   }
   return headers;

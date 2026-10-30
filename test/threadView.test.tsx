@@ -4668,6 +4668,33 @@ describe("ThreadView Focus / Summary mode (issue #461)", () => {
     m.unmount();
   });
 
+  it("gives a tool row a hover tooltip with its local time (#1767)", async () => {
+    setTranscriptViewMode("summary");
+    const m = await mount(view({ detail: settledTools() }));
+    await m.click(m.query("[data-focus-turn='u1']"));
+    const toggle = m.query("button.toolToggle");
+    assert.ok(toggle, "tool card is open");
+    const header = toggle!.closest(".toolHeader");
+    assert.ok(header, "tool row has a header to hover");
+    assert.match(
+      header!.getAttribute("title") || "",
+      /\d{1,2}:\d{2}:\d{2}/,
+      "title carries a local clock time",
+    );
+    m.unmount();
+  });
+
+  it("gives the settled-turn fold a hover tooltip with its time span (#1767)", async () => {
+    setTranscriptViewMode("summary");
+    const m = await mount(view({ detail: settledTools() }));
+    const row = m.query("[data-focus-turn='u1']");
+    assert.ok(row, "one focus row for the turn");
+    const title = row!.getAttribute("title") || "";
+    assert.match(title, /^Show tool activity · /);
+    assert.match(title, /\d{1,2}:\d{2}:\d{2}/);
+    m.unmount();
+  });
+
   it("leaves the live turn's tool cards open", async () => {
     setTranscriptViewMode("summary");
     const m = await mount(

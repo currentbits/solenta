@@ -27,6 +27,7 @@ import {
 } from "../../memorySteps";
 import { scheduleLabel, triggerLabel } from "../../automations";
 import { formatReviewBarText, type ReviewBar } from "../../reviewBar";
+import { formatTimeTooltip } from "../../format";
 import type { RunHeader } from "../../runHeader";
 import { useEscapeClose } from "../../useEscapeClose";
 import { useModalFocus } from "../../useModalFocus";
@@ -181,6 +182,7 @@ function ToolCallCard({
     >
       <div
         className={styles.toolHeader}
+        title={formatTimeTooltip(message.createdAt)}
         onClick={() => setManual(!open)}
       >
         <button
@@ -437,6 +439,11 @@ export function ToolGroupRow({
   const live = working ? liveGroupLabel(rest) : null;
   const label = live ?? summarizeToolGroup(rest);
   const restTools = rest.filter((m) => m.role === "tool");
+  const stepTimes = rest.map((m) => m.createdAt);
+  const stepTitle =
+    stepTimes.length > 0
+      ? formatTimeTooltip(Math.min(...stepTimes), Math.max(...stepTimes))
+      : undefined;
   return (
     <section
       className={`${styles.toolGroup}${entered ? ` ${styles.streamIn}` : ""}`}
@@ -462,6 +469,7 @@ export function ToolGroupRow({
           }
           open={open}
           onToggle={onToggle}
+          title={stepTitle}
         >
           {redactDisplay(label)}
         </StepLine>
@@ -552,11 +560,14 @@ function StepLine({
   icon,
   open,
   onToggle,
+  title,
   children,
 }: {
   icon: StepIconKind | "memory";
   open?: boolean;
   onToggle?: () => void;
+  /** Hover tooltip, e.g. the step's local time span (#1767). */
+  title?: string;
   children: ReactNode;
 }) {
   const glyph =
@@ -580,7 +591,7 @@ function StepLine({
     );
   if (!onToggle) {
     return (
-      <div className={styles.step} data-step={icon}>
+      <div className={styles.step} data-step={icon} title={title}>
         {glyph}
         <span className={styles.stepText}>{children}</span>
       </div>
@@ -591,6 +602,7 @@ function StepLine({
       type="button"
       className={`${styles.step} ${styles.toolGroupToggle}`}
       data-step={icon}
+      title={title}
       aria-expanded={open}
       onClick={onToggle}
     >
@@ -654,7 +666,12 @@ function CommandResultEvent({
       }
     >
       <div className={styles.eventRow}>
-        <StepLine icon="tool" open={open} onToggle={() => setOpen((v) => !v)}>
+        <StepLine
+          icon="tool"
+          open={open}
+          onToggle={() => setOpen((v) => !v)}
+          title={formatTimeTooltip(message.createdAt)}
+        >
           {redactDisplay(summary)}
         </StepLine>
         <span className={styles.commandActions}>
@@ -716,6 +733,7 @@ function MemoryStepRow({ message }: { message: ChatMessage }) {
         icon="memory"
         open={open}
         onToggle={items.length > 0 ? () => setOpen((v) => !v) : undefined}
+        title={formatTimeTooltip(message.createdAt)}
       >
         {text.before}
         {text.mark ? <span className={styles.mark}>{text.mark}</span> : null}
@@ -1563,6 +1581,7 @@ export const MessageBlock = memo(function MessageBlock({
             onToggle={
               kickoff && eventBody ? () => setEventOpen((v) => !v) : undefined
             }
+            title={formatTimeTooltip(message.createdAt)}
           >
             {redactDisplay(eventHead ?? "")}
           </StepLine>
@@ -1899,13 +1918,14 @@ export function FocusTurnRow({
   collapsed: boolean;
   onToggle: () => void;
 }) {
+  const timeTitle = formatTimeTooltip(turn.startedAt, turn.endedAt);
   return (
     <button
       type="button"
       className={styles.focusTurn}
       data-focus-turn={turn.key}
       aria-expanded={!collapsed}
-      title={collapsed ? "Show tool activity" : "Hide tool activity"}
+      title={`${collapsed ? "Show tool activity" : "Hide tool activity"} · ${timeTitle}`}
       onClick={onToggle}
     >
       {turn.live && (
@@ -1941,13 +1961,14 @@ export function RunHeaderRow({
   collapsed: boolean;
   onToggle: () => void;
 }) {
+  const timeTitle = formatTimeTooltip(header.startedAt, header.endedAt);
   return (
     <button
       type="button"
       className={styles.runHeader}
       data-run-header={header.runId}
       aria-expanded={!collapsed}
-      title={collapsed ? "Show this run" : "Hide this run"}
+      title={`${collapsed ? "Show this run" : "Hide this run"} · ${timeTitle}`}
       onClick={onToggle}
     >
       <span className={styles.chevron} data-open={!collapsed}>
