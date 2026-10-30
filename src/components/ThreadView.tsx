@@ -4668,6 +4668,13 @@ export const ThreadView = memo(function ThreadView({
                       data-revealed-message={
                         revealTargetId === entry.message.id ? "" : undefined
                       }
+                      className={
+                        entry.message.id !== streamingMessageId &&
+                        entry.message.id !== latestRunningToolId &&
+                        entry.message.id !== latestThinkingId
+                          ? styles.settledRow
+                          : undefined
+                      }
                     >
                     <MessageBlock
                       message={entry.message}

@@ -4676,6 +4676,109 @@ describe("ThreadView transcript windowing (issue #564)", () => {
   });
 });
 
+describe("ThreadView settled rows get content-visibility (issue #1785)", () => {
+  it("marks every mounted message row settled when the thread is idle", () => {
+    const html = render({
+      detail: detail({ messages: bulkMessages(5) }),
+    });
+    const count = (html.match(new RegExp(styles.settledRow, "g")) ?? []).length;
+    assert.equal(count, 5, "an idle thread has no live row to exclude");
+  });
+
+  it("excludes the live streaming message from settled, keeps earlier ones settled", () => {
+    const messages = [
+      ...bulkMessages(5),
+      msg({ id: "live", role: "assistant", text: "writing now", createdAt: 100 }),
+    ];
+    const html = render({
+      detail: detail({
+        thread: thread({ status: "working" }),
+        messages,
+      }),
+    });
+    const liveRow = html.slice(
+      html.indexOf('data-message-id="live"'),
+      html.indexOf('data-message-id="live"') + 400,
+    );
+    assert.ok(
+      !liveRow.includes(styles.settledRow),
+      "the message the live turn is currently writing stays un-contained",
+    );
+    const earlierRow = html.slice(
+      html.indexOf('data-message-id="bulk-0"'),
+      html.indexOf('data-message-id="bulk-0"') + 400,
+    );
+    assert.ok(
+      earlierRow.includes(styles.settledRow),
+      "earlier, finished rows get content-visibility",
+    );
+  });
+
+  it("excludes the running tool's group from settled, settles finished groups", () => {
+    const messages = [
+      msg({
+        id: "done-1",
+        role: "tool",
+        text: "Read: a.ts",
+        createdAt: 1,
+        runId: "run-old",
+        tool: { id: "tc1", name: "Read", input: "a.ts", output: "ok", done: true, isError: false },
+      }),
+      msg({
+        id: "done-2",
+        role: "tool",
+        text: "Read: b.ts",
+        createdAt: 2,
+        runId: "run-old",
+        tool: { id: "tc2", name: "Read", input: "b.ts", output: "ok", done: true, isError: false },
+      }),
+      msg({
+        id: "running-1",
+        role: "tool",
+        text: "Read: c.ts",
+        createdAt: 3,
+        runId: "run-live",
+        tool: { id: "tc3", name: "Read", input: "c.ts", output: "", done: false, isError: false },
+      }),
+    ];
+    const html = render({
+      detail: detail({
+        thread: thread({ status: "working" }),
+        messages,
+        workLog: [
+          { id: "wl-old", runId: "run-old", label: "Read 2 files", done: true, timestamp: 2 },
+          { id: "wl-live", runId: "run-live", label: "Read c.ts", done: false, timestamp: 3 },
+        ],
+      }),
+    });
+    const groups = [
+      ...html.matchAll(/<section class="([^"]*)" data-tool-group="([^"]*)"/g),
+    ];
+    assert.equal(groups.length, 2, "two separate run groups");
+    assert.ok(
+      groups[0]![1]!.split(" ").includes(styles.settledRow),
+      "the finished run's group is settled",
+    );
+    assert.ok(
+      !groups[1]![1]!.split(" ").includes(styles.settledRow),
+      "the run still being worked stays un-contained",
+    );
+  });
+
+  it("marks far-above rows settled once Show earlier mounts them", async () => {
+    const n = 500;
+    const m = await mount(
+      view({ detail: detail({ messages: bulkMessages(n) }) }),
+    );
+    await m.click(m.query("[data-show-earlier]"));
+    const settledRows = m.queryAll(`.${styles.settledRow}`);
+    assert.ok(
+      settledRows.length >= TRANSCRIPT_WINDOW * 2,
+      "every row paged in by Show earlier is far from the viewport and settled",
+    );
+    m.unmount();
+  });
+});
 
 describe("ThreadView stream-in animation", () => {
   it("marks nothing for stream-in on the initial render", () => {

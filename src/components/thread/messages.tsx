@@ -651,9 +651,14 @@ export function ToolGroupRow({
     stepTimes.length > 0
       ? formatTimeTooltip(Math.min(...stepTimes), Math.max(...stepTimes))
       : undefined;
+  // #1785: skip layout/paint for off-screen groups, but not the one the
+  // live turn is actively writing into (see .settledRow in ThreadView.module.css).
+  const settled = !group.messages.some(
+    (m) => m.id === latestRunningToolId || m.id === latestThinkingId,
+  );
   return (
     <section
-      className={`${styles.toolGroup}${entered ? ` ${styles.streamIn}` : ""}`}
+      className={`${styles.toolGroup}${entered ? ` ${styles.streamIn}` : ""}${settled ? ` ${styles.settledRow}` : ""}`}
       data-tool-group={group.id}
       data-status={group.hasError ? "error" : undefined}
       data-thinking={
