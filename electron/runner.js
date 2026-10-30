@@ -1301,8 +1301,18 @@ function createRunner(opts) {
     syncPersistedApproval(threadId);
     // Background refresh must never stamp lastVisitedAt — only IPC threads:get
     // (user selection) marks a thread visited. See services.getThreadDetail.
+    // limit: Infinity (#1786) keeps this on the FULL in-memory array: the
+    // messagesFrom diff below depends on comparing two full arrays by
+    // reference (firstChanged), which only finds the true tail when both
+    // sides are built the same way. A server-side sliding window here would
+    // shift relative to the renderer's independently-paginated copy (it can
+    // hold more than the default page after "load older") and corrupt the
+    // merge. The one-time full push for a thread with no prior push this
+    // process (first activity after boot) is bounded by the store's
+    // MAX_MESSAGES_PER_THREAD retention cap, same as before this issue.
     const detail = services.getThreadDetail(store, threadId, view, {
       markVisited: false,
+      limit: Infinity,
       pendingPermission: getPendingPermission(threadId),
     });
     // Keep the row's summaries snippet current (#1475). Every message write

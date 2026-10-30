@@ -22,12 +22,31 @@ import type {
   ModelRoute,
 } from "../shared/ipc";
 import { SPEC_ARTIFACTS, SPEC_DIR } from "../shared/ipc";
+import { pageMessages } from "../shared/messagePaging";
 import { normalizeMessagePins } from "../messagePins";
 import { queuedItemFiles, queuedRow } from "../queuedFiles";
 import { mockData } from "../mockData.ts";
 import type { DevCtx } from "./context.ts";
 import { DEV_SPEC_ARTIFACTS, SEED_CREW_TASKS } from "./seed.ts";
 import { TITLE_MAX, now, id, cloneDetail } from "./util.ts";
+
+/**
+ * threads.get/peek page the transcript (#1786): clone the thread then slice
+ * its message history, leaving the canonical `d.messages` in `details`
+ * untouched.
+ */
+function pagedDetail(
+  d: ThreadDetail,
+  opts?: { limit?: number; before?: string },
+): ThreadDetail {
+  const page = pageMessages(d.messages, opts);
+  return cloneDetail({
+    ...d,
+    messages: page.messages,
+    hasOlderMessages: page.hasOlderMessages,
+    totalMessageCount: page.totalMessageCount,
+  });
+}
 
 /** ~120 chars of context around the earliest matching word (#1761). */
 function snippetAround(text: string, lower: string, words: string[]): string {
@@ -373,7 +392,7 @@ export function createThreads(ctx: DevCtx): Pick<CoderApi, "threads"> {
         });
         return { thread, droppedMessages: dropped.length, restoredSha: null };
       },
-      async get(threadId) {
+      async get(threadId, opts) {
         const d = details.get(threadId);
         if (!d) throw new Error(`Thread not found: ${threadId}`);
         const row = ctx.threads.find((t) => t.id === threadId);
@@ -386,12 +405,25 @@ export function createThreads(ctx: DevCtx): Pick<CoderApi, "threads"> {
         } else {
           d.thread = { ...d.thread, lastVisitedAt: visitedAt };
         }
-        return cloneDetail(d);
+        return pagedDetail(d, opts);
       },
-      async peek(threadId) {
+      async peek(threadId, opts) {
         const d = details.get(threadId);
         if (!d) throw new Error(`Thread not found: ${threadId}`);
-        return cloneDetail(d);
+        return pagedDetail(d, opts);
+      },
+      async getOlderMessages(input) {
+        const d = details.get(input.threadId);
+        if (!d) throw new Error(`Thread not found: ${input.threadId}`);
+        const page = pageMessages(d.messages, {
+          limit: input.limit,
+          before: input.before,
+        });
+        return {
+          messages: page.messages,
+          hasOlderMessages: page.hasOlderMessages,
+          totalMessageCount: page.totalMessageCount,
+        };
       },
       async setPermissionMode(input) {
         // ponytail: fixture skips normalization; electron does it (#1721).

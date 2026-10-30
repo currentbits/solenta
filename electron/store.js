@@ -198,6 +198,14 @@ function sameNoteRefs(a, b) {
  */
 const MAX_MESSAGES_PER_THREAD = 1000;
 const MESSAGE_OVERFLOW_SLACK = 100;
+/**
+ * Default page size for getMessagesPage (issue #1786): big enough to cover
+ * the renderer's tail window (TRANSCRIPT_WINDOW=120 entries / 100k chars,
+ * src/transcriptWindow.ts) in one round trip for a typical thread, small
+ * enough that opening a thread near the MAX_MESSAGES_PER_THREAD cap no
+ * longer ships the whole transcript over IPC.
+ */
+const DEFAULT_MESSAGE_PAGE_SIZE = 300;
 const MAX_WORKLOG_ITEMS_PER_THREAD = 500;
 const WORKLOG_OVERFLOW_SLACK = 50;
 
@@ -2074,6 +2082,35 @@ class Store {
   getMessages(threadId) {
     const list = this._hydrateMessages(threadId);
     return list || [];
+  }
+
+  /**
+   * A page of a thread's messages, newest-first page ending at `before`
+   * (exclusive) or at the end of the transcript (issue #1786). Hydration
+   * cost (JSON.parse of the shard) is unchanged — getMessages already
+   * memoizes the full in-memory array per thread — this only bounds what
+   * gets copied out and sent over IPC.
+   * @param {string} threadId
+   * @param {{ limit?: number, before?: string | null }} [opts]
+   * @returns {{ messages: object[], hasOlder: boolean, totalCount: number }}
+   */
+  getMessagesPage(threadId, opts) {
+    const list = this.getMessages(threadId);
+    const limit =
+      opts && typeof opts.limit === "number" && opts.limit >= 0
+        ? opts.limit
+        : DEFAULT_MESSAGE_PAGE_SIZE;
+    let end = list.length;
+    if (opts && opts.before) {
+      const idx = list.findIndex((m) => m && m.id === opts.before);
+      end = idx === -1 ? list.length : idx;
+    }
+    const start = Math.max(0, end - limit);
+    return {
+      messages: list.slice(start, end),
+      hasOlder: start > 0,
+      totalCount: list.length,
+    };
   }
 
   /**

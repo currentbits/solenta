@@ -2269,7 +2269,17 @@ export interface ThreadRecap {
 
 export interface ThreadDetail {
   thread: ThreadInfo;
+  /**
+   * The loaded page (#1786): newest messages first fetch, or default to the
+   * full history on fixtures/wire clients that predate paging. Older pages
+   * come from threads.getOlderMessages. True history length and whether
+   * more is available are in totalMessageCount / hasOlderMessages.
+   */
   messages: ChatMessage[];
+  /** True when messages omits older history; fetch it with threads.getOlderMessages. */
+  hasOlderMessages?: boolean;
+  /** True transcript length, independent of how much of `messages` is loaded. */
+  totalMessageCount?: number;
   workLog: WorkLogItem[];
   /** Only populated by the simulate provider; null for real sessions. */
   workflow: WorkflowView | null;
@@ -5802,13 +5812,35 @@ export interface CoderApi {
       projectId: string;
       provider?: "codex" | "grok" | "claude" | "cursor" | "opencode" | "kimi" | "muse";
     }): Promise<ThreadInfo>;
-    get(id: string): Promise<ThreadDetail>;
+    /**
+     * `opts` (#1786) pages the transcript: by default (opts omitted) this
+     * returns only the newest page, with hasOlderMessages/totalMessageCount
+     * set; pass `{ limit: Infinity }` for the whole history (export, etc.),
+     * or `{ before: messageId }` to anchor the page just before a message
+     * (used by reload-after-reconnect, never by the "load older" control —
+     * that is threads.getOlderMessages).
+     */
+    get(id: string, opts?: { limit?: number; before?: string }): Promise<ThreadDetail>;
     /**
      * Same payload as get, but never stamps lastVisitedAt (issue #393).
      * Used to load a sibling run for the divergence compare so opening
      * the picker does not mark that thread read.
      */
-    peek(id: string): Promise<ThreadDetail>;
+    peek(id: string, opts?: { limit?: number; before?: string }): Promise<ThreadDetail>;
+    /**
+     * Previous page of messages (#1786), for ThreadView's "load older"
+     * control: the page ending just before `before` (a loaded message id),
+     * newest-first within the page. Default limit matches threads.get.
+     */
+    getOlderMessages(input: {
+      threadId: string;
+      before: string;
+      limit?: number;
+    }): Promise<{
+      messages: ChatMessage[];
+      hasOlderMessages: boolean;
+      totalMessageCount: number;
+    }>;
     /**
      * Sticky permission mode for future turns of this thread. Rejects when
      * the provider cannot honour the mode, rather than storing a setting

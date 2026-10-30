@@ -70,6 +70,7 @@ const BY_SCOPE = {
     "threads:listCliSessions",
     "threads:get",
     "threads:peek",
+    "threads:getOlderMessages",
     "threads:pendingApprovals",
     "threads:specArtifact",
     "threads:listTrashed",

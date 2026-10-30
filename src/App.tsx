@@ -217,6 +217,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     detail,
     detailError,
     retryDetail,
+    loadOlderMessages,
+    ensureFullHistory,
     selectedProjectId,
     error,
     clearError,
@@ -2425,6 +2427,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         detail={visibleDetail}
         detailError={selectedThreadId ? detailError : null}
         onRetryDetail={retryDetail}
+        onLoadOlderMessages={loadOlderMessages}
+        onEnsureFullHistory={ensureFullHistory}
         revealMessageId={revealMessageId}
         project={project}
         providers={providers}

@@ -292,6 +292,19 @@ interface ThreadViewProps {
   detailError?: string | null;
   /** Re-fetch the selected thread's detail after a load failure. */
   onRetryDetail?: () => void;
+  /**
+   * "Load older messages" (#1786): detail.messages is a page, not the whole
+   * transcript. Fetches and prepends the page before what's loaded; the
+   * button only renders when detail.hasOlderMessages and the local tail
+   * window (TRANSCRIPT_WINDOW) is already fully shown.
+   */
+  onLoadOlderMessages?: (threadId: string) => void;
+  /**
+   * Fetch the whole transcript once (#1786), for a feature that needs a
+   * message outside the loaded page: a reveal target (⌘K hit) not found in
+   * the current timeline.
+   */
+  onEnsureFullHistory?: (threadId: string) => void;
   project: ProjectInfo | null;
   providers: ProviderInfo[];
   /** Saved agent profiles from settings; passed through to Composer. */
@@ -832,6 +845,8 @@ export const ThreadView = memo(function ThreadView({
   revealMessageId = null,
   detailError = null,
   onRetryDetail,
+  onLoadOlderMessages,
+  onEnsureFullHistory,
   project,
   providers,
   agentProfiles = [],
@@ -1161,7 +1176,7 @@ export const ThreadView = memo(function ThreadView({
   const [cliAgents, setCliAgents] = useState<CliAgentInfo[]>([]);
   const copyFlashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const threadId = detail?.thread.id ?? null;
-  const find = useTranscriptFind(detail, threadId);
+  const find = useTranscriptFind(detail, threadId, onEnsureFullHistory);
   const [revealPlan, setRevealPlan] = useState(false);
   if (threadId !== focusThreadId) {
     setFocusThreadId(threadId);
@@ -1334,6 +1349,19 @@ export const ThreadView = memo(function ThreadView({
     );
   }, [timeline, revealTargetId]);
 
+  /**
+   * A reveal target (⌘K hit, pinned jump) can name a message older than the
+   * loaded page (#1786): fetch the whole transcript once rather than
+   * silently failing to scroll there.
+   */
+  useEffect(() => {
+    if (!revealTargetId || revealIndex >= 0) return;
+    if (!detail || detail.thread.id !== threadId || !detail.hasOlderMessages) {
+      return;
+    }
+    onEnsureFullHistory?.(threadId);
+  }, [revealTargetId, revealIndex, detail, threadId, onEnsureFullHistory]);
+
   const windowAt = clampWindowStart(
     ensureVisibleStart(
       threadId !== windowThreadId
@@ -1434,6 +1462,11 @@ export const ThreadView = memo(function ThreadView({
 
   const visibleTimeline = start === 0 ? timeline : timeline.slice(start);
   const hiddenCount = start;
+  /** "Load older messages" button in flight (#1786); resets on thread switch. */
+  const [loadingOlderMessages, setLoadingOlderMessages] = useState(false);
+  useEffect(() => {
+    setLoadingOlderMessages(false);
+  }, [threadId]);
   const transcriptView = useTranscriptViewMode();
   const verboseTools = transcriptView === "verbose";
   const chatWidth = useChatWidth();
@@ -4556,7 +4589,34 @@ export const ThreadView = memo(function ThreadView({
           </div>
         )}
 
-        {hiddenCount === 0 && worktreeLine}
+        {/*
+         * The local tail window (hiddenCount) is exhausted, but the server
+         * holds more (#1786): offer to fetch the previous page over IPC
+         * instead of silently having nothing further to show.
+         */}
+        {hiddenCount === 0 && detail?.hasOlderMessages && (
+          <div className={styles.showEarlier}>
+            <button
+              type="button"
+              className={styles.showEarlierBtn}
+              data-load-older=""
+              disabled={loadingOlderMessages}
+              onClick={() => {
+                if (!threadId || !onLoadOlderMessages || loadingOlderMessages) {
+                  return;
+                }
+                setLoadingOlderMessages(true);
+                Promise.resolve(onLoadOlderMessages(threadId)).finally(() =>
+                  setLoadingOlderMessages(false),
+                );
+              }}
+            >
+              {loadingOlderMessages ? "Loading…" : "Load older messages"}
+            </button>
+          </div>
+        )}
+
+        {hiddenCount === 0 && !detail?.hasOlderMessages && worktreeLine}
 
         {displayTimeline.map((entry) => {
           if (entry.kind === "group") {

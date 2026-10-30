@@ -99,6 +99,7 @@ const {
   searchThreads,
   searchMessages,
   getThreadDetail,
+  getOlderMessages,
 } = require("./services-threads.js");
 const {
   setArchived,
@@ -363,6 +364,7 @@ module.exports = {
   searchThreads,
   searchMessages,
   getThreadDetail,
+  getOlderMessages,
   gitStatus,
   parseRevListCount,
   gitSyncInfo,
