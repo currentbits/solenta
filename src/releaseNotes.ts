@@ -33,6 +33,7 @@ function cleanLine(text: string): string {
     .replace(/\s+by\s+@[\w-]+\s+in\s+https?:\/\/\S+\s*$/i, "")
     .replace(/\[([^\]]*)\]\(https?:\/\/\S+\)/g, "$1")
     .replace(/\s*\(#\d+\)/g, "")
+    .replace(/\s*[—–]\s*/g, ", ") // no em/en dashes in visible copy
     .replace(/\s+/g, " ")
     .trim();
 }

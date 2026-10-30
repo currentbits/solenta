@@ -412,6 +412,8 @@ function buildDevCoder(): CoderApi {
           tag: null,
           url: null,
           error: null,
+          notesBody: null,
+          publishedAt: null,
         };
       },
       async downloadUpdate(): Promise<UpdateStatus> {

@@ -116,6 +116,7 @@ import { BatchBar } from "./sidebar/BatchBar";
 import { TrashedShelf } from "./sidebar/TrashedShelf";
 import { RemoveProjectConfirm } from "./sidebar/RemoveProjectConfirm";
 import { InsightsMenu } from "./sidebar/InsightsMenu";
+import { UpdateNotesPopover } from "./sidebar/UpdateNotesPopover";
 import {
   FilterBar,
   type FilterMenu,
@@ -148,6 +149,14 @@ export interface SidebarProps {
   channel?: "prod" | "nightly" | null;
   /** Update check result; a button next to Settings when an update is waiting. */
   updateState?: UpdateStatus["state"] | null;
+  /** Tag of the offered release, for the "what's new" popover. */
+  updateTag?: UpdateStatus["tag"];
+  /** Release page URL; the popover's "Full notes" link. */
+  updateUrl?: UpdateStatus["url"];
+  /** Raw release body; summarized client-side (see UpdateNotesPopover). */
+  updateNotesBody?: UpdateStatus["notesBody"];
+  /** Publish time of the offered release, for a relative-age label. */
+  updatePublishedAt?: UpdateStatus["publishedAt"];
   /** Download + stage the waiting release (updateState "available"). */
   onDownloadUpdate?: () => void | Promise<void>;
   /** Relaunch into the staged bundle (updateState "staged"). */
@@ -331,6 +340,10 @@ export const Sidebar = memo(function Sidebar({
   appVersion,
   channel,
   updateState,
+  updateTag,
+  updateUrl,
+  updateNotesBody,
+  updatePublishedAt,
   onDownloadUpdate,
   onApplyUpdate,
   searchPlaceholder,
@@ -2213,6 +2226,14 @@ export const Sidebar = memo(function Sidebar({
               state={stayAwake}
               onSetMode={onSetStayAwakeMode}
               compact={memoryEntries != null}
+            />
+          )}
+          {(updateState === "available" || updateState === "staged") && (
+            <UpdateNotesPopover
+              tag={updateTag}
+              url={updateUrl}
+              notesBody={updateNotesBody}
+              publishedAt={updatePublishedAt}
             />
           )}
           {(updateState === "available" || updateState === "staged") && (

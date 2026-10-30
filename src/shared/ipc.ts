@@ -4883,6 +4883,16 @@ export interface UpdateStatus {
   /** Release page URL for manual installs. */
   url: string | null;
   error: string | null;
+  /**
+   * Raw markdown body of the offered release (from the same GitHub API
+   * response the update check already fetched), for the sidebar's "what's
+   * new" popover. summarizeReleaseNotes (src/releaseNotes.ts) turns this
+   * into display bullets. Null when there is no newer release, or GitHub
+   * sent no body.
+   */
+  notesBody: string | null;
+  /** Publish time (ISO 8601) of the offered release, for a relative-age label. */
+  publishedAt: string | null;
 }
 
 /** Evidence a memory entry is pinned to (#395). */

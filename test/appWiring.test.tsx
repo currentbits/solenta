@@ -169,6 +169,8 @@ describe("App boot wiring", () => {
         tag: "v0.11.0",
         url: "https://github.com/currentbits/solenta/releases/tag/v0.11.0",
         error: null,
+        notesBody: null,
+        publishedAt: null,
       },
     });
     const m = await boot(fake);

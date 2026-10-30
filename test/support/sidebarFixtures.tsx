@@ -174,6 +174,10 @@ export function sidebar(
     revealThreadId?: string | null;
     onRevealHandled?: () => void;
     updateState?: UpdateStatus["state"] | null;
+    updateTag?: UpdateStatus["tag"];
+    updateUrl?: UpdateStatus["url"];
+    updateNotesBody?: UpdateStatus["notesBody"];
+    updatePublishedAt?: UpdateStatus["publishedAt"];
     onDownloadUpdate?: () => void | Promise<void>;
     onApplyUpdate?: () => void | Promise<void>;
     onOpenSettings?: () => void;
@@ -232,6 +236,10 @@ export function sidebar(
       revealThreadId={over.revealThreadId ?? null}
       onRevealHandled={over.onRevealHandled}
       updateState={over.updateState}
+      updateTag={over.updateTag}
+      updateUrl={over.updateUrl}
+      updateNotesBody={over.updateNotesBody}
+      updatePublishedAt={over.updatePublishedAt}
       onDownloadUpdate={over.onDownloadUpdate}
       onApplyUpdate={over.onApplyUpdate}
       onOpenSettings={over.onOpenSettings}
