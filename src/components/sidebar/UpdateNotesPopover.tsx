@@ -47,7 +47,11 @@ export function UpdateNotesPopover({
         <div className={styles.updateNotesPopover} role="tooltip" data-update-notes="">
           <div className={styles.updateNotesHead}>
             {tag}
-            {age ? <span className={styles.updateNotesAge}>shipped {age} ago</span> : null}
+            {age ? (
+              <span className={styles.updateNotesAge}>
+                {age === "now" ? "shipped just now" : `shipped ${age} ago`}
+              </span>
+            ) : null}
           </div>
           <ul className={styles.updateNotesList}>
             {bullets.map((line, i) => (
