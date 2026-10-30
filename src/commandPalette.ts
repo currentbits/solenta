@@ -232,4 +232,9 @@ export const PALETTE_ACTIONS: readonly PaletteAction[] = [
     binding: "pane.reopen",
     keywords: "restore undo close terminal git",
   },
+  {
+    id: "restart-agent-session",
+    title: "Restart agent session",
+    keywords: "reload skills plugins mcp servers reconnect",
+  },
 ];

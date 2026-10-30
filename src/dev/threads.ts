@@ -450,6 +450,23 @@ export function createThreads(ctx: DevCtx): Pick<CoderApi, "threads"> {
         // Dev threads never spawn, so the value is simply dropped.
         patchThread(input.threadId, { pendingSecret: null });
       },
+      async restartAgentSession(input) {
+        const detail = details.get(input.threadId);
+        if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
+        if (detail.thread.status === "working") {
+          throw new Error("Cannot restart the agent session while a run is active");
+        }
+        // Dev threads never keep a warm process between turns (electron does
+        // via runner-claude-sessions.js), so there is nothing to kill — just
+        // mirror the confirmation event so the demo UI matches.
+        detail.messages.push({
+          id: id("evt"),
+          role: "event",
+          text: "Agent session restarted; skills and MCP servers reload on the next message",
+          createdAt: now(),
+        });
+        emitDetail(detail);
+      },
       // Bookkeeping setters below leave updatedAt alone: visiting, pinning and
       // settling are not activity. The rules they used to mirror (invalid
       // override, settle-while-working, pin/settle mutual exclusion, past

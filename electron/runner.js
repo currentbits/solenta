@@ -2844,6 +2844,35 @@ function createRunner(opts) {
     return entry && typeof entry.runId === "string" ? entry.runId : null;
   }
 
+  /**
+   * ⌘K "Restart agent session" (#1762): kill this thread's warm/idle
+   * provider process (today only Claude keeps one between turns,
+   * runner-claude-sessions.js) so the next turn spawns fresh and picks up
+   * newly installed skills, plugins and MCP servers. The thread's sessionId
+   * is untouched: Claude's next spawn still --resumes it, so the
+   * conversation continues. Refused while a run is active — there is no
+   * warm process to kill, the live one is doing the turn.
+   * @param {{ threadId: string }} input
+   */
+  function restartAgentSession(input) {
+    const threadId = input && input.threadId;
+    const thread = threadId ? store.getThread(threadId) : null;
+    if (!thread) throw new Error(`Unknown thread: ${threadId}`);
+    if (active.has(threadId)) {
+      throw new Error("Cannot restart the agent session while a run is active");
+    }
+    disposeClaudeSession(threadId);
+    appendMessage(
+      threadId,
+      "event",
+      "Agent session restarted; skills and MCP servers reload on the next message",
+    );
+    store.save();
+    pushDetail(threadId);
+    pushThreadsChanged();
+    return { restarted: true };
+  }
+
   function stopAll() {
     disposeWatchdogs();
     stopAllBtw();
@@ -3252,6 +3281,7 @@ function createRunner(opts) {
     clearQuestion,
     disposeClaudeSession,
     retireClaudeSession,
+    restartAgentSession,
     deliverNotice,
     appendInbound,
     checkStalls,

@@ -206,6 +206,11 @@ function view(props: {
     restoreFiles?: boolean,
     attachments?: AttachmentInfo[],
   ) => void | Promise<void>;
+  onRedirectPermission?: (
+    requestId: string,
+    prompt: string,
+    attachments?: AttachmentInfo[],
+  ) => void | Promise<void>;
   onPickDirectory?: () => Promise<string | null>;
   onListSnapWindows?: () => Promise<Array<{ id: string; name: string }>>;
   onCaptureSnapWindow?: (
@@ -241,6 +246,7 @@ function view(props: {
       onRetryQueued={props.onRetryQueued}
       onSetPermissionMode={() => {}}
       onRespondPermission={() => {}}
+      onRedirectPermission={props.onRedirectPermission}
       onSetProvider={() => {}}
       onSetReasoningEffort={() => {}}
       onSetArchived={() => {}}
@@ -2880,6 +2886,94 @@ describe("ThreadView stick-to-bottom on content resize (issue #408)", () => {
     assert.ok(m.text().includes("THREAD_B"));
     assert.equal(m.query(".body"), body, "a direct switch keeps the scroll body");
     assert.equal(layout.scrollTop, 3500, "a thread switch pins before paint");
+    m.unmount();
+  });
+});
+
+describe("ThreadView permission redirect (#1762)", () => {
+  const pending: PendingPermissionInfo = {
+    requestId: "req-1762",
+    toolName: "Bash",
+    summary: "Bash: npm test",
+    input: '{"command":"npm test"}',
+    command: "npm test",
+  };
+
+  // The permission card's own command editor is a textarea too, and (#509)
+  // it sits above the composer in the DOM — a bare querySelector("textarea")
+  // grabs that one instead.
+  const composerTextarea = (m: { container: HTMLElement }) =>
+    Array.from(m.container.querySelectorAll("textarea")).find(
+      (t) => !t.hasAttribute("data-permission-command"),
+    ) as HTMLTextAreaElement;
+
+  it("hints that sending declines the card and redirects the agent", async () => {
+    const m = await mount(
+      view({
+        detail: detail({
+          thread: thread({ status: "working" }),
+          pendingPermission: pending,
+        }),
+      }),
+    );
+    const hint = m.query("[data-permission-redirect-hint]");
+    assert.ok(hint, "permission card must show the redirect hint");
+    assert.match(
+      hint.textContent ?? "",
+      /sending a message declines this and redirects the agent/i,
+    );
+    m.unmount();
+  });
+
+  it("sending a normal message redirects instead of starting or queueing a run", async () => {
+    const started: string[] = [];
+    const redirected: Array<{ requestId: string; prompt: string }> = [];
+    const m = await mount(
+      view({
+        onStartRun: (prompt) => {
+          started.push(prompt);
+        },
+        onRedirectPermission: (requestId, prompt) => {
+          redirected.push({ requestId, prompt });
+        },
+        detail: detail({
+          thread: thread({ status: "working" }),
+          pendingPermission: pending,
+        }),
+      }),
+    );
+    const ta = composerTextarea(m);
+    await m.type(ta, "do the other thing instead");
+    await m.click(m.query('button[aria-label="Send"]'));
+    assert.deepEqual(redirected, [
+      { requestId: "req-1762", prompt: "do the other thing instead" },
+    ]);
+    assert.equal(started.length, 0, "a plain send must not start/queue a run");
+    m.unmount();
+  });
+
+  it("a /btw side question still goes through onStartRun, not the redirect", async () => {
+    const started: string[] = [];
+    const redirected: string[] = [];
+    const m = await mount(
+      view({
+        onStartRun: (prompt) => {
+          started.push(prompt);
+        },
+        onRedirectPermission: (_requestId, prompt) => {
+          redirected.push(prompt);
+        },
+        detail: detail({
+          thread: thread({ status: "working" }),
+          pendingPermission: pending,
+        }),
+      }),
+    );
+    const ta = composerTextarea(m);
+    await m.type(ta, "/btw is this safe?");
+    await m.click(m.query('button[aria-label="Send"]'));
+    assert.equal(redirected.length, 0, "/btw must not decline the permission card");
+    assert.deepEqual(started, ["/btw is this safe?"]);
     m.unmount();
   });
 });

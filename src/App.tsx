@@ -243,6 +243,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     stopRun,
     setPermissionMode,
     respondPermission,
+    redirectPermission,
+    restartAgentSession,
     clearQuestion,
     answerSecret,
     setProvider,
@@ -1621,6 +1623,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       else if (id === "toggle-agents") toggleAgents();
       else if (id === "reopen-pane") {
         window.dispatchEvent(new Event(REOPEN_PANE_EVENT));
+      } else if (id === "restart-agent-session") {
+        void restartAgentSession().catch(() => {});
       }
     },
     [
@@ -1637,6 +1641,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       openApprovals,
       handleAddProject,
       toggleAgents,
+      restartAgentSession,
     ],
   );
 
@@ -2317,6 +2322,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onRestoreDraftConsumed={clearQueuedDraftRestore}
         onSetPermissionMode={setPermissionMode}
         onRespondPermission={respondPermission}
+        onRedirectPermission={redirectPermission}
         onClearQuestion={clearQuestion}
         onAnswerSecret={answerSecret}
         onSetProvider={setProvider}

@@ -272,6 +272,13 @@ export interface ComposerProps {
   /** The restore landed; the parent drops it so a remount cannot replay it. */
   onRestoreDraftConsumed?: () => void;
   /**
+   * Alt+↑ with an empty draft (or the caret at position 0, no selection,
+   * issue #1762) opens edit on the LAST queued follow-up — same editor the
+   * queued strip's own Edit button opens. Absent when there is nothing to
+   * edit, mirroring the Edit button's own `onEditQueued` gate.
+   */
+  onEditLastQueued?: () => void;
+  /**
    * `!command` (#470): run it in the thread's checkout instead of sending a
    * prompt. Resolves when the command ends. Absent: `!` is plain text.
    */
@@ -466,6 +473,7 @@ export const Composer = memo(function Composer({
   onSend,
   restoreDraft = null,
   onRestoreDraftConsumed,
+  onEditLastQueued,
   onShell,
   onBuild,
   onBestOfN,
@@ -1566,6 +1574,17 @@ export const Composer = memo(function Composer({
       if (canSteer) submitSteer();
       else submitSend();
       return;
+    }
+    if (matchesBinding(e, "composer.editLastQueued") && onEditLastQueued) {
+      const el = e.currentTarget;
+      const atStart =
+        el.value === "" ||
+        (el.selectionStart === 0 && el.selectionEnd === el.selectionStart);
+      if (atStart) {
+        e.preventDefault();
+        onEditLastQueued();
+        return;
+      }
     }
     // Default: ⌘/Ctrl/⇧+Enter send, bare Enter is a newline. With the
     // Enter-sends preference, bare Enter sends and ⇧Enter is the newline.

@@ -136,6 +136,7 @@ const BY_SCOPE = {
     "threads:fork",
     "threads:rewind",
     "threads:respondPermission",
+    "threads:restartAgentSession",
     "threads:clearQuestion",
     "threads:setArchived",
     "threads:setSettled",

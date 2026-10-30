@@ -19,7 +19,7 @@ const { Store } = require("../store.js");
 const services = require("../services.js");
 const { createRunner } = require("../runner.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
-const { DECISION_ACCEPT, DECISION_CANCEL } = require("../codexApprovals.js");
+const { DECISION_ACCEPT, DECISION_CANCEL, DECISION_DECLINE } = require("../codexApprovals.js");
 const { rmTree } = require("./support/rmTree.js");
 
 function git(cwd, args) {
@@ -192,6 +192,41 @@ require(${JSON.stringify(helper)}).main();
     assert.equal(accept.result.updatedCommand, undefined);
     assert.equal(runner.getPendingPermission(thread.id), null);
     await waitFor(() => store.getThread(thread.id).status === "done");
+  });
+
+  it("sending a redirect through a plain command ask declines it and queues the typed text (#1762)", async () => {
+    const thread = store.getThreads()[0];
+    await runner.startRun({ threadId: thread.id, prompt: "do work" });
+    await waitFor(() => runner.getPendingPermission(thread.id));
+    const pending = runner.getPendingPermission(thread.id);
+
+    // Codex's JSON-RPC reply has no room for a message: decline, then queue
+    // the redirect so it runs as the thread's next turn.
+    runner.respondPermission({
+      threadId: thread.id,
+      requestId: pending.requestId,
+      decision: "deny",
+      redirect: "do the other thing instead",
+    });
+
+    // Declined, not accepted — the live tool call never ran.
+    await waitFor(() =>
+      readRpc(rpcFile).some((m) => m.id === "ask-1" && m.result),
+    );
+    const declined = readRpc(rpcFile).find((m) => m.id === "ask-1" && m.result);
+    assert.deepEqual(declined.result, { decision: DECISION_DECLINE });
+    assert.equal(runner.getPendingPermission(thread.id), null);
+
+    // Shown at once as a plain user message (no steer badge), and queued
+    // (not injected) so it is the next turn once this one settles.
+    const redirectMsg = store
+      .getMessages(thread.id)
+      .find((m) => m.role === "user" && m.text === "do the other thing instead");
+    assert.ok(redirectMsg, "expected the redirect text as a user message");
+    assert.equal(redirectMsg.steer, undefined);
+    const queued = store.getThread(thread.id).queued;
+    assert.equal(queued?.prompt, "do the other thing instead");
+    assert.equal(queued?.posted, true);
   });
 
   it("stop cancels an outstanding command ask then kills", async () => {

@@ -2206,6 +2206,8 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         rec("threads.setPermissionMode", [input], thread()),
       applyAgentProfile: (input: unknown) =>
         rec("threads.applyAgentProfile", [input], thread()),
+      restartAgentSession: (input: unknown) =>
+        rec("threads.restartAgentSession", [input], undefined),
       setArchived: (input: unknown) => {
         const i = input as { threadId: string; archived: boolean };
         return rec(

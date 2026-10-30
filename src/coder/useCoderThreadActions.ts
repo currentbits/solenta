@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import type { Dispatch, RefObject, SetStateAction } from "react";
 import type {
+  AttachmentInfo,
   AutoApprove,
   CoderApi,
   InputValues,
@@ -128,6 +129,54 @@ export function useCoderThreadActions({
     },
     [api, selectedThreadId],
   );
+
+  /**
+   * Sending a normal message while a plain permission card is open (#1762):
+   * decline it and hand the typed text to the agent as the new direction,
+   * instead of queuing behind the card or steering past it. ThreadView only
+   * calls this for a plain tool card (no questions, no plan, no
+   * inputRequest) — respondPermission re-checks the pending tool's shape
+   * before honouring `redirect`.
+   */
+  const redirectPermission = useCallback(
+    async (requestId: string, prompt: string, attachments?: AttachmentInfo[]) => {
+      if (!selectedThreadId) return;
+      const threadId = selectedThreadId;
+      try {
+        await api.threads.respondPermission({
+          threadId,
+          requestId,
+          decision: "deny",
+          redirect: prompt,
+          ...(attachments && attachments.length ? { attachments } : {}),
+        });
+        setError(null);
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+        throw err;
+      }
+    },
+    [api, selectedThreadId],
+  );
+
+  /**
+   * ⌘K "Restart agent session" (#1762): kill the selected thread's
+   * warm/idle provider process so the next turn spawns fresh and reloads
+   * skills, plugins and MCP servers. The thread's sessionId is untouched;
+   * main rejects while a run is active, which surfaces as the usual
+   * run-error banner.
+   */
+  const restartAgentSession = useCallback(async () => {
+    if (!selectedThreadId) return;
+    const threadId = selectedThreadId;
+    try {
+      await api.threads.restartAgentSession({ threadId });
+      setError(null);
+    } catch (err) {
+      setError({ scope: "run", message: errorMessage(err) });
+      throw err;
+    }
+  }, [api, selectedThreadId]);
 
   /**
    * Dismiss the persisted question card (issue #647). Answering it is an
@@ -1083,6 +1132,8 @@ export function useCoderThreadActions({
     stopRun,
     setPermissionMode,
     respondPermission,
+    redirectPermission,
+    restartAgentSession,
     clearQuestion,
     answerSecret,
     setProvider,

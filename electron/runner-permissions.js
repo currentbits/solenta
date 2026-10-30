@@ -44,6 +44,7 @@ const {
   questionInfo,
   replyCodexJsonRpc,
   replyCodexJsonRpcError,
+  sanitizeAttachments,
 } = require("./runnerHelpers.js");
 
 /**
@@ -480,6 +481,19 @@ function createPermissions(ctx) {
           ? `Allowed for session: ${pending.summary}`
           : `Allowed: ${pending.summary}`;
     appendMessage(threadId, "event", label, e.runId);
+    // Codex's JSON-RPC reply has no room for a message (#1762): deny, then
+    // queue the redirect so it runs as the next turn once this one ends.
+    if (decision === "deny" && !pending.inputRequest && input && typeof input.redirect === "string" && input.redirect.trim()) {
+      const redirect = input.redirect.trim();
+      const redirectAttachments = sanitizeAttachments(input.attachments);
+      appendMessage(threadId, "user", redirect, null, null, redirectAttachments);
+      services.setQueued(store, {
+        threadId,
+        prompt: redirect,
+        attachments: redirectAttachments || undefined,
+        posted: true,
+      });
+    }
     if (e.pendingPermissions.length === 0) {
       store.updateThread(threadId, { awaitingInput: false });
     }
@@ -517,6 +531,19 @@ function createPermissions(ctx) {
           : `Allowed: ${pending.summary}`,
       runId,
     );
+    // opencode/ACP replies are once/always/reject only, no message (#1762):
+    // deny, then queue the redirect for the next turn.
+    if (reply === "reject" && input && typeof input.redirect === "string" && input.redirect.trim()) {
+      const redirect = input.redirect.trim();
+      const redirectAttachments = sanitizeAttachments(input.attachments);
+      appendMessage(threadId, "user", redirect, null, null, redirectAttachments);
+      services.setQueued(store, {
+        threadId,
+        prompt: redirect,
+        attachments: redirectAttachments || undefined,
+        posted: true,
+      });
+    }
     if (e.pendingPermissions.length === 0) {
       store.updateThread(threadId, { awaitingInput: false });
     }
@@ -542,6 +569,16 @@ function createPermissions(ctx) {
     const feedback =
       decision === "deny" && input && typeof input.feedback === "string"
         ? input.feedback.trim()
+        : "";
+    // Composer redirect (#1762): sending a normal message while a plain
+    // tool-permission card is open declines it and hands the typed text to
+    // the agent as the new direction, instead of queuing behind the card.
+    // ThreadView only sets this on a plain card (no questions, no plan,
+    // no inputRequest) — the deny branches below still re-check the pending
+    // tool's shape before honouring it.
+    const redirect =
+      decision === "deny" && input && typeof input.redirect === "string"
+        ? input.redirect.trim()
         : "";
     const ci = ciWorkflowSignOffs.get(threadId);
     if (ci && !ci.approved && ci.id === requestId) {
@@ -726,6 +763,15 @@ function createPermissions(ctx) {
         ? answers
         : null;
     const isPlan = pending.toolName === "ExitPlanMode";
+    // Only the plain tool card redirects (#1762); a question card's deny
+    // is the user dismissing it, not a new instruction.
+    const redirectable = Boolean(redirect) && !isPlan && pending.toolName !== "AskUserQuestion";
+    const redirectAttachments = redirectable ? sanitizeAttachments(input.attachments) : null;
+    // Claude sees the redirect as the tool-denial reason and keeps going in
+    // this same turn; attachments cannot ride that message, so they fall
+    // back to the queued path like every other provider.
+    const redirectInline =
+      redirectable && !(redirectAttachments && redirectAttachments.length);
     let response;
     let ruleNote = "";
     if (decision === "allow" || decision === "allowAlways") {
@@ -767,7 +813,9 @@ function createPermissions(ctx) {
         message: isPlan
           ? "Plan rejected by user in Coder; keep planning" +
             (feedback ? `. User feedback on the plan:\n${feedback}` : "")
-          : "Denied by user in Coder",
+          : redirectInline
+            ? `Denied by user in Coder; the user wants this instead:\n${redirect}`
+            : "Denied by user in Coder",
       };
     }
     // A plan written on the plan model is implemented on the act model, in
@@ -818,6 +866,23 @@ function createPermissions(ctx) {
               : `Allowed: ${pending.summary}`;
     appendMessage(threadId, "event", label, e.runId);
     if (switchNote) appendMessage(threadId, "event", switchNote, e.runId);
+    if (redirectable) {
+      if (redirectInline) {
+        // Same turn, same runId: the model reads the redirect off the
+        // tool-denial message above, so this is just the transcript row.
+        appendMessage(threadId, "user", redirect, e.runId, null, redirectAttachments);
+      } else {
+        // No runId yet: mirrors appendInbound (runId null) until the queued
+        // item actually starts its own turn.
+        appendMessage(threadId, "user", redirect, null, null, redirectAttachments);
+        services.setQueued(store, {
+          threadId,
+          prompt: redirect,
+          attachments: redirectAttachments || undefined,
+          posted: true,
+        });
+      }
+    }
     if (e.pendingPermissions.length === 0) {
       store.updateThread(threadId, { awaitingInput: false });
     }
