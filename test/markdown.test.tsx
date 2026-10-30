@@ -6,7 +6,7 @@
  * Run: node --import=./test/support/render.mjs --test test/markdown.test.tsx
  */
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { afterEach, describe, it } from "node:test";
 import { useState } from "react";
 import { mount, inAct } from "./support/dom.ts";
 import { Markdown } from "../src/components/Markdown";
@@ -14,6 +14,12 @@ import {
   PathLinkProvider,
   ThreadLinkContext,
 } from "../src/components/PathLinks";
+import {
+  getWrapCodeBlocksEnabled,
+  setWrapCodeBlocksEnabled,
+} from "../src/uiPrefs";
+
+afterEach(() => setWrapCodeBlocksEnabled(false));
 
 describe("Markdown", () => {
   it("renders plain paragraphs", async () => {
@@ -46,6 +52,43 @@ describe("Markdown", () => {
     await m.click(m.byText("Copy"));
     assert.deepEqual(writes, ["hello code"]);
     assert.ok(m.byText("Copied"), "label flips after copy");
+  });
+
+  it("wrap long lines is off by default: no data-wrap-code, Wrap not pressed", async () => {
+    const m = await mount(<Markdown text={"```ts\nconst x = 1;\n```"} />);
+    assert.equal(m.container.querySelector(".md[data-wrap-code]"), null);
+    const btn = m.byText("Wrap") as HTMLButtonElement | null;
+    assert.ok(btn, "Wrap button present next to Copy");
+    assert.equal(btn.getAttribute("aria-pressed"), "false");
+  });
+
+  it("the code block Wrap button flips the global pref and persists it", async () => {
+    const m = await mount(<Markdown text={"```ts\nconst x = 1;\n```"} />);
+    const btn = m.byText("Wrap") as HTMLButtonElement;
+    await m.click(btn);
+    assert.equal(getWrapCodeBlocksEnabled(), true);
+    assert.equal(window.localStorage.getItem("coder.wrapCodeBlocks"), "on");
+    assert.ok(
+      m.container.querySelector(".md[data-wrap-code]"),
+      "the .md wrapper switches to pre-wrap once the pref is on",
+    );
+    assert.equal(btn.getAttribute("aria-pressed"), "true");
+
+    await m.click(btn);
+    assert.equal(getWrapCodeBlocksEnabled(), false);
+    assert.equal(m.container.querySelector(".md[data-wrap-code]"), null);
+  });
+
+  it("a second code block in the same reply reads the same persisted pref", async () => {
+    setWrapCodeBlocksEnabled(true);
+    const m = await mount(
+      <Markdown text={"```ts\nconst a = 1;\n```\n\n```ts\nconst b = 2;\n```"} />,
+    );
+    const btns = Array.from(m.container.querySelectorAll('[aria-pressed]'));
+    assert.equal(btns.length, 2, "both code blocks render a Wrap button");
+    for (const btn of btns) {
+      assert.equal(btn.getAttribute("aria-pressed"), "true");
+    }
   });
 
   it("inline code has no header or Copy button", async () => {

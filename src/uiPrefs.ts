@@ -222,6 +222,15 @@ export const setUsageLimitsStripEnabled = usageLimitsStrip.set;
 export const useUsageLimitsStripEnabled = usageLimitsStrip.use;
 
 /**
+ * Wrap long lines in chat code blocks and tables (issue #1782) instead of
+ * scrolling them horizontally. Off by default, same as diffWrap.
+ */
+const wrapCodeBlocks = makeFlagPref("coder.wrapCodeBlocks", false);
+export const getWrapCodeBlocksEnabled = wrapCodeBlocks.get;
+export const setWrapCodeBlocksEnabled = wrapCodeBlocks.set;
+export const useWrapCodeBlocksEnabled = wrapCodeBlocks.use;
+
+/**
  * The last reasoning level the user picked, remembered across harness switches.
  *
  * Effort lives on the thread, and setProvider (electron/services.js) has to
