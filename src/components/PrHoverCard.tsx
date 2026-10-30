@@ -4,8 +4,10 @@ import {
   useEffect,
   useRef,
   useState,
+  type CSSProperties,
   type ReactNode,
 } from "react";
+import { createPortal } from "react-dom";
 import type { PrDetailResult } from "../shared/ipc";
 import styles from "./PrHoverCard.module.css";
 
@@ -102,10 +104,28 @@ const REVIEW_LABEL: Record<string, string> = {
   REVIEW_REQUIRED: "Review required",
 };
 
+const CARD_WIDTH = 260;
+const CARD_GAP = 6;
+/** Below this much room above the target, the card drops underneath instead. */
+const MIN_ROOM_ABOVE = 140;
+
+/** Fixed-position placement off the target's rect, clamped to the viewport. */
+function cardPosition(rect: DOMRect): CSSProperties {
+  const left = Math.max(
+    8,
+    Math.min(rect.left, window.innerWidth - CARD_WIDTH - 8),
+  );
+  return rect.top >= MIN_ROOM_ABOVE
+    ? { left, bottom: window.innerHeight - rect.top + CARD_GAP }
+    : { left, top: rect.bottom + CARD_GAP };
+}
+
 function PrHoverCardBody({
   pr,
+  style,
 }: {
   pr: Extract<PrDetailResult, { ok: true }>["pr"];
+  style: CSSProperties;
 }) {
   const state = pr.isDraft ? "draft" : pr.state.toLowerCase();
   const checks = formatChecks(pr.checks);
@@ -114,7 +134,12 @@ function PrHoverCardBody({
       ? `+${pr.additions ?? 0} / -${pr.deletions ?? 0}`
       : null;
   return (
-    <div className={styles.card} role="tooltip" data-pr-hover-card="">
+    <div
+      className={styles.card}
+      style={style}
+      role="tooltip"
+      data-pr-hover-card=""
+    >
       <div className={styles.head}>
         <span>#{pr.number}</span>
         <span className={styles.state} data-pr-hover-state={state}>
@@ -163,7 +188,9 @@ export function PrHoverTarget({
   const fetchDetail = useContext(PrHoverFetchContext);
   const [open, setOpen] = useState(false);
   const [result, setResult] = useState<PrDetailResult | null>(null);
+  const [pos, setPos] = useState<CSSProperties>({});
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const targetRef = useRef<HTMLSpanElement | null>(null);
 
   const canHover = Boolean(fetchDetail && projectPath && repo && number && number > 0);
 
@@ -177,7 +204,12 @@ export function PrHoverTarget({
   const schedule = () => {
     if (!canHover) return;
     cancelTimer();
-    timerRef.current = setTimeout(() => setOpen(true), HOVER_DELAY_MS);
+    timerRef.current = setTimeout(() => {
+      if (targetRef.current) {
+        setPos(cardPosition(targetRef.current.getBoundingClientRect()));
+      }
+      setOpen(true);
+    }, HOVER_DELAY_MS);
   };
 
   const close = () => {
@@ -202,6 +234,7 @@ export function PrHoverTarget({
 
   return (
     <span
+      ref={targetRef}
       className={className ? `${styles.target} ${className}` : styles.target}
       data-pr-hover-target=""
       onMouseEnter={schedule}
@@ -213,7 +246,10 @@ export function PrHoverTarget({
       }}
     >
       {children}
-      {open && result && result.ok ? <PrHoverCardBody pr={result.pr} /> : null}
+      {/* Portaled: an absolute card inside the sidebar was clipped and painted under the next pane. */}
+      {open && result && result.ok
+        ? createPortal(<PrHoverCardBody pr={result.pr} style={pos} />, document.body)
+        : null}
     </span>
   );
 }

@@ -60,11 +60,12 @@ describe("PrHoverTarget", () => {
       return okResult();
     };
     const m = await mount(hovered(fetchDetail));
-    assert.equal(m.query('[data-pr-hover-card]'), null, "no card before hover");
+    assert.equal(document.querySelector("[data-pr-hover-card]"), null, "no card before hover");
     await m.hover(m.query("a"));
     await wait(HOVER_WAIT_MS);
-    const card = m.query("[data-pr-hover-card]");
+    const card = document.querySelector("[data-pr-hover-card]");
     assert.ok(card, "card shown after the hover delay");
+    assert.equal(card!.parentElement, document.body, "portaled out of clipping panes");
     assert.match(card!.textContent || "", /Ship the thing/);
     assert.match(card!.textContent || "", /#482/);
     assert.equal(calls, 1);
@@ -76,11 +77,11 @@ describe("PrHoverTarget", () => {
     const anchor = m.query("a");
     await m.hover(anchor);
     await wait(HOVER_WAIT_MS);
-    assert.ok(m.query("[data-pr-hover-card]"));
+    assert.ok(document.querySelector("[data-pr-hover-card]"));
     await inAct(() => {
       anchor!.dispatchEvent(new MouseEvent("mouseout", { bubbles: true }));
     });
-    assert.equal(m.query("[data-pr-hover-card]"), null);
+    assert.equal(document.querySelector("[data-pr-hover-card]"), null);
   });
 
   it("the cache prevents a second fetch for the same PR", async () => {
@@ -98,7 +99,11 @@ describe("PrHoverTarget", () => {
     await b.hover(b.query("a"));
     await wait(HOVER_WAIT_MS);
     assert.equal(calls, 1, "second hover on the same PR reused the cache");
-    assert.ok(b.query("[data-pr-hover-card]"), "cached result still renders");
+    assert.equal(
+      document.querySelectorAll("[data-pr-hover-card]").length,
+      2,
+      "cached result still renders",
+    );
   });
 
   it("fails quietly when the fetch rejects", async () => {
@@ -108,7 +113,7 @@ describe("PrHoverTarget", () => {
     const m = await mount(hovered(fetchDetail));
     await m.hover(m.query("a"));
     await wait(HOVER_WAIT_MS);
-    assert.equal(m.query("[data-pr-hover-card]"), null, "no card on a failed fetch");
+    assert.equal(document.querySelector("[data-pr-hover-card]"), null, "no card on a failed fetch");
     // The underlying link/children are still there and unaffected.
     assert.match(m.text(), /PR #482/);
   });
@@ -118,7 +123,7 @@ describe("PrHoverTarget", () => {
     const m = await mount(hovered(fetchDetail));
     await m.hover(m.query("a"));
     await wait(HOVER_WAIT_MS);
-    assert.equal(m.query("[data-pr-hover-card]"), null);
+    assert.equal(document.querySelector("[data-pr-hover-card]"), null);
   });
 
   it("does not fetch before the hover delay elapses", async () => {
@@ -132,6 +137,6 @@ describe("PrHoverTarget", () => {
     // Well under the 400ms delay.
     await wait(100);
     assert.equal(calls, 0, "no fetch until the hover delay elapses");
-    assert.equal(m.query("[data-pr-hover-card]"), null);
+    assert.equal(document.querySelector("[data-pr-hover-card]"), null);
   });
 });
