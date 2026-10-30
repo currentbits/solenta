@@ -15,6 +15,7 @@ import { mount, unmountAll, inAct } from "./support/dom.ts";
 import { Composer } from "../src/components/Composer";
 import {
   setComposerBusyAction,
+  setComposerVimEnabled,
   setLastReasoningEffort,
   setTranscriptViewMode,
 } from "../src/uiPrefs";
@@ -3332,5 +3333,87 @@ describe("Composer live dictation (#845)", () => {
     assert.equal(fake.of("speech.cancel").length, 1);
     assert.ok(media.tracksStopped >= 1);
     assert.ok(media.contextClosed >= 1);
+  });
+});
+
+/**
+ * Issue #1783: typing a bracket/quote/emphasis char over a selection wraps
+ * it instead of replacing it, and keeps the selection on the inner text.
+ */
+describe("Composer surrounds a selection with a bracket/quote/emphasis pair (#1783)", () => {
+  afterEach(() => setComposerVimEnabled(false));
+
+  it("wraps a selection in each pair, keeping the selection on the inner text", async () => {
+    const pairs: Array<[string, string]> = [
+      ["(", ")"],
+      ["[", "]"],
+      ["{", "}"],
+      ["`", "`"],
+      ['"', '"'],
+      ["'", "'"],
+      ["*", "*"],
+      ["_", "_"],
+    ];
+    for (const [open, close] of pairs) {
+      const h = makeHarness();
+      const m = await mount(composer(h));
+      const ta = m.query("textarea") as HTMLTextAreaElement;
+      await m.type(ta, "hello world");
+      ta.setSelectionRange(0, 5); // "hello"
+      await m.press(ta, open);
+      assert.equal(ta.value, `${open}hello${close} world`, `wraps with ${open}${close}`);
+      assert.equal(ta.selectionStart, 1, `selection start after ${open}`);
+      assert.equal(ta.selectionEnd, 6, `selection end after ${open}`);
+      m.unmount();
+    }
+  });
+
+  it("does nothing without a selection (collapsed caret)", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h));
+    const ta = m.query("textarea") as HTMLTextAreaElement;
+    await m.type(ta, "hello");
+    ta.setSelectionRange(5, 5);
+    await m.press(ta, "(");
+    assert.equal(ta.value, "hello", "no wrap without a selection");
+    m.unmount();
+  });
+
+  it("replaces instead of wrapping when a quote key hits a whole-draft selection", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h));
+    const ta = m.query("textarea") as HTMLTextAreaElement;
+    await m.type(ta, "hello");
+    ta.setSelectionRange(0, 5);
+    await m.press(ta, '"');
+    assert.equal(
+      ta.value,
+      "hello",
+      "select-all + quote is left to the ordinary replace, not wrapped",
+    );
+    m.unmount();
+  });
+
+  it("still wraps a whole-draft selection for a bracket/emphasis key", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h));
+    const ta = m.query("textarea") as HTMLTextAreaElement;
+    await m.type(ta, "hello");
+    ta.setSelectionRange(0, 5);
+    await m.press(ta, "*");
+    assert.equal(ta.value, "*hello*");
+    m.unmount();
+  });
+
+  it("skips the wrap in vim mode", async () => {
+    setComposerVimEnabled(true);
+    const h = makeHarness();
+    const m = await mount(composer(h));
+    const ta = m.query("textarea") as HTMLTextAreaElement;
+    await m.type(ta, "hello world");
+    ta.setSelectionRange(0, 5);
+    await m.press(ta, "(");
+    assert.equal(ta.value, "hello world", "vim owns the keystroke, not the surround feature");
+    m.unmount();
   });
 });
