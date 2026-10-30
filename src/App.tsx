@@ -2093,6 +2093,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
               }
               quotaDemo={quotaDemo}
               providers={providers}
+              modelPrices={settings?.modelPrices}
               onSelectThread={handleSelectThread}
               existingThreadIds={
                 loading ? undefined : threads.map((t) => t.id)
