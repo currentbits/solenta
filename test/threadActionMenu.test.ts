@@ -61,6 +61,10 @@ describe("buildThreadActionMenuItems (contract)", () => {
       "presets must not sit on the first level",
     );
     assert.ok(snooze.children?.some((c) => c.id === "snooze:hour"));
+    assert.ok(
+      snooze.children?.some((c) => c.id === "snooze:custom"),
+      "Custom… lives alongside the presets (#1766)",
+    );
     assert.ok(items.some((i) => i.id === "fork"));
     assert.ok(items.some((i) => i.id === "handoff:grok"));
   });
