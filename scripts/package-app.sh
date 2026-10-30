@@ -141,12 +141,12 @@ if [[ "$PKG_NAME" != "solenta" ]]; then
   exit 1
 fi
 
-# electron/ .js sources only (no tests). webBridge.js + webServer.js live at
-# this level so this loop ships them; a subdirectory would be silently dropped.
+# electron/ .js sources, subdirectories included (electron/channels/, #1718),
+# tests excluded. A top-level-only copy silently dropped channels/ and every
+# packaged build died at boot on require("./channels/index.js").
 mkdir -p "$APP_DIR/electron"
-for f in electron/*.js; do
-  cp "$f" "$APP_DIR/electron/"
-done
+rsync -a --prune-empty-dirs --exclude='/test/' --include='*/' --include='*.js' --exclude='*' \
+  electron/ "$APP_DIR/electron/"
 
 # Root node_modules is NOT copied into the bundle (only memory-server's is).
 # electron/webBridge.js `require("ws")`, the provider spawn path

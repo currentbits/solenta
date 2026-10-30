@@ -124,10 +124,10 @@ cat > "$PAYLOAD/package.json" <<EOF
 }
 EOF
 
+# Same as package-app.sh: every electron/ .js, subdirectories included, no tests.
 mkdir -p "$PAYLOAD/electron"
-for f in electron/*.js; do
-  cp "$f" "$PAYLOAD/electron/"
-done
+rsync -a --prune-empty-dirs --exclude='/test/' --include='*/' --include='*.js' --exclude='*' \
+  electron/ "$PAYLOAD/electron/"
 
 # Same explicit root deps as package-app.sh (ws + cross-spawn + yauzl trees,
 # node-pty wrapper). The per-target node-pty binary package is added below.
