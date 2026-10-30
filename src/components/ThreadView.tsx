@@ -5136,6 +5136,7 @@ export const ThreadView = memo(function ThreadView({
           activeProvider={thread.provider}
           ring={ring?.view ?? null}
           used={ring?.used ?? null}
+          refreshKey={`${thread.id}:${thread.status}`}
         />
       ) : null}
       <Composer

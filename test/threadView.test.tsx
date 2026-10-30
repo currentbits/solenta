@@ -5549,4 +5549,29 @@ describe("ThreadView usage limits strip (#1755)", () => {
     assert.equal(m.query("[data-usage-limits-strip]"), null);
     m.unmount();
   });
+
+  it("drops a window without a reading instead of showing 0% left", async () => {
+    setUsageLimitsStripEnabled(true);
+    const m = await mount(
+      view({
+        loadProviderLimits: async () => [
+          quota({
+            windows: [
+              { label: "5 hours", usedPercent: Number.NaN, resetsAt: null, windowSeconds: null },
+              { label: "Weekly", usedPercent: 40, resetsAt: null, windowSeconds: null },
+            ],
+          }),
+        ],
+      }),
+    );
+    await m.flush();
+    const rows = m.queryAll("[data-usage-row]");
+    assert.deepEqual(
+      rows.map((r) => r.getAttribute("data-usage-row")),
+      ["Weekly"],
+    );
+    m.unmount();
+  });
+
+  afterEach(() => setUsageLimitsStripEnabled(false));
 });

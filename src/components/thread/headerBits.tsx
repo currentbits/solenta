@@ -24,7 +24,6 @@ import {
   threadProviderRef,
 } from "../../format";
 import {
-  QUOTA_CLOCK_MS,
   displayWindowLabel,
   formatResetAt,
   usagePercentLeft,
@@ -270,19 +269,25 @@ export function ContextRingBadge({
  * Opt-in compact strip above the composer (issue #1755): one row per limit
  * window the thread's provider reports, plus a Context row, all read as
  * percent LEFT so a longer bar means more room. Reuses the quota dialog's
- * own loader at its own QUOTA_CLOCK_MS cadence, no new polling.
+ * loader. Every load reads keychains and hits each provider's usage API
+ * uncached, so it refetches when `refreshKey` changes (a run starting or
+ * ending) and otherwise every STRIP_REFETCH_MS, not on the 30s clock.
  */
+const STRIP_REFETCH_MS = 5 * 60_000;
+
 export function UsageLimitsStrip({
   loadLimits,
   activeProvider,
   ring,
   used,
+  refreshKey,
   now = Date.now(),
 }: {
   loadLimits?: ProviderLimitsLoader;
   activeProvider: string | null;
   ring: ContextRingView | null;
   used: number | null;
+  refreshKey?: string;
   now?: number;
 }) {
   const [rows, setRows] = useState<ProviderUsage[] | null>(null);
@@ -304,26 +309,32 @@ export function UsageLimitsStrip({
         });
     };
     run();
-    const id = window.setInterval(run, QUOTA_CLOCK_MS);
+    const id = window.setInterval(run, STRIP_REFETCH_MS);
     return () => {
       alive = false;
       window.clearInterval(id);
     };
-  }, []);
+  }, [refreshKey]);
 
   const activeRow = rows?.find((r) => r.provider === activeProvider) ?? null;
   let unavailableMessage: string | null = null;
   const windowRows: Array<{ label: string; left: number; title: string }> = [];
   if (rows != null) {
-    if (!activeRow || activeRow.status !== "ok" || activeRow.windows.length === 0) {
+    // A window without a reading would draw as a red "0% left"; drop it.
+    const readable =
+      activeRow?.status === "ok"
+        ? activeRow.windows.filter(
+            (w) => Number.isFinite(w.usedPercent) && w.usedPercent >= 0,
+          )
+        : [];
+    if (readable.length === 0) {
       unavailableMessage =
         (activeRow?.message && activeRow.message.trim()) ||
         "No usage data from this provider.";
     } else {
-      for (const win of activeRow.windows) {
-        const label = displayWindowLabel(win);
+      for (const win of readable) {
         windowRows.push({
-          label,
+          label: displayWindowLabel(win),
           left: usagePercentLeft(win.usedPercent),
           title: formatResetAt(win.resetsAt, now) ?? "",
         });
