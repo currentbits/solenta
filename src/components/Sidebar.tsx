@@ -1269,6 +1269,7 @@ export const Sidebar = memo(function Sidebar({
       <ThreadCard
         thread={thread}
         slug={slugFor(thread)}
+        projectPath={projectById.get(thread.projectId)?.path ?? null}
         iconUrl={iconUrlFor(thread)}
         providers={providers}
         active={thread.id === activeThreadId}

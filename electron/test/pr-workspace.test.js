@@ -113,11 +113,28 @@ if (args[0] === "pr" && args[1] === "view") {
   if (pr.additions != null) out.additions = pr.additions;
   if (pr.deletions != null) out.deletions = pr.deletions;
   if (pr.mergeable) out.mergeable = pr.mergeable;
+  if (pr.reviewDecision) out.reviewDecision = pr.reviewDecision;
   out.headRefOid = pr.headRefOid || "aaa1111";
   out.commits = pr.commits || [{ oid: "aaa1111", messageHeadline: "ship" }];
   out.files = pr.files || [{ path: "src/app.ts", additions: 1, deletions: 0, sha: "blob1" }];
   process.stdout.write(JSON.stringify(out) + "\\n");
   process.exit(0);
+}
+
+if (args[0] === "pr" && args[1] === "checks") {
+  const pr = findPr(args[2]);
+  if (!pr) {
+    process.stderr.write("no pull requests found\\n");
+    process.exit(1);
+  }
+  const checks = pr.checks || [];
+  process.stdout.write(JSON.stringify(checks) + "\\n");
+  const code = checks.some(function (c) { return c.bucket === "fail"; })
+    ? 1
+    : checks.some(function (c) { return c.bucket === "pending"; })
+      ? 8
+      : 0;
+  process.exit(code);
 }
 
 if (args[0] === "pr" && args[1] === "diff") {
@@ -460,6 +477,27 @@ describe("gh PR workspace actions", () => {
     assert.equal(result.pr.state, "MERGED");
     const mergeCall = calls().find((c) => c[0] === "pr" && c[1] === "merge");
     assert.ok(mergeCall.includes("--squash"));
+  });
+
+  it("viewPrDetail includes a checks summary and review decision (#1771)", async () => {
+    const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+    state.prs[12].reviewDecision = "CHANGES_REQUESTED";
+    state.prs[12].checks = [
+      { name: "build", state: "SUCCESS", bucket: "pass" },
+      { name: "lint", state: "FAILURE", bucket: "fail" },
+      { name: "deploy", state: "PENDING", bucket: "pending" },
+    ];
+    fs.writeFileSync(statePath, JSON.stringify(state), "utf8");
+    const result = await viewPrDetail(repo, 12);
+    assert.equal(result.ok, true);
+    assert.equal(result.pr.reviewDecision, "CHANGES_REQUESTED");
+    assert.deepEqual(result.pr.checks, { passing: 1, failing: 1, pending: 1 });
+  });
+
+  it("viewPrDetail omits checks when the PR has none, without failing", async () => {
+    const result = await viewPrDetail(repo, 12);
+    assert.equal(result.ok, true);
+    assert.equal(result.pr.checks, undefined);
   });
 
   it("viewPrDetail is in-band when the PR is missing", async () => {

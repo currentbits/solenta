@@ -10,7 +10,7 @@
  */
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { describe, it } from "node:test";
+import { afterEach, describe, it } from "node:test";
 import { inAct, mount } from "./support/dom";
 import App from "../src/App";
 import {
@@ -22,6 +22,11 @@ import {
   createFakeCoder,
   installFakeCoder,
 } from "./support/fakeCoder";
+import {
+  clearPrHoverCache,
+  PrHoverFetchContext,
+  type PrDetailFetcher,
+} from "../src/components/PrHoverCard";
 import {
   SETTLED_TAIL_INITIAL_COUNT,
   SETTLED_TAIL_PAGE_COUNT,
@@ -1723,6 +1728,8 @@ describe("Sidebar subagent rows (#542)", () => {
 });
 
 describe("Sidebar card anatomy + hover actions", () => {
+  afterEach(() => clearPrHoverCache());
+
   it("three lines: slug, title, branch/PR/provider; pin lives in the overflow", async () => {
     await clearSidebarStorage();
     const pinCalls: Array<[string, boolean]> = [];
@@ -1790,6 +1797,54 @@ describe("Sidebar card anatomy + hover actions", () => {
     await m.click(pinItem as HTMLElement);
     await m.flush();
     assert.deepEqual(pinCalls, [["meta", true]]);
+    m.unmount();
+  });
+
+  it("hovering the PR badge shows the PR hover card (#1771)", async () => {
+    await clearSidebarStorage();
+    const t = thread({
+      id: "withpr",
+      title: "has a pr",
+      prNumber: 12,
+      prUrl: "https://github.com/acme/ledger/pull/12",
+      prState: "OPEN",
+      createdAt: FRESH + 10,
+      updatedAt: FRESH + 10,
+    });
+    let calledWith: unknown = null;
+    const prDetail: PrDetailFetcher = async (input) => {
+      calledWith = input;
+      return {
+        ok: true,
+        pr: {
+          number: 12,
+          title: "Ship it",
+          body: "",
+          url: "https://github.com/acme/ledger/pull/12",
+          state: "OPEN",
+          isDraft: false,
+          headRefName: "feat/x",
+          comments: [],
+        },
+      };
+    };
+    const m = await mount(
+      <PrHoverFetchContext.Provider value={prDetail}>
+        {sidebar([t], { projects: [p1] })}
+      </PrHoverFetchContext.Provider>,
+    );
+    const target = m.query('[data-thread-card="withpr"] [data-pr-hover-target]');
+    assert.ok(target, "PR badge is a hover target");
+    await m.hover(target);
+    await inAct(() => new Promise((r) => setTimeout(r, 500)));
+    await m.flush();
+    assert.ok(m.query("[data-pr-hover-card]"), "hover card shown");
+    assert.match(m.text(), /Ship it/);
+    assert.deepEqual(calledWith, {
+      projectPath: "/tmp/ledger",
+      prNumber: 12,
+      repo: "acme/ledger",
+    });
     m.unmount();
   });
 

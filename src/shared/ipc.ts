@@ -2984,6 +2984,9 @@ export interface PrDetail {
   changedFiles?: number;
   mergeable?: "MERGEABLE" | "CONFLICTING" | "UNKNOWN";
   updatedAt?: string;
+  reviewDecision?: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED";
+  /** CI bucket counts, for the PR hover card (#1771). Absent when gh has none to report. */
+  checks?: { passing: number; failing: number; pending: number };
   comments: PrComment[];
 }
 

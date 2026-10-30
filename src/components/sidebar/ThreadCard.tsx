@@ -26,6 +26,7 @@ import { loadHosts } from "../../remoteHosts";
 import { isPinned, resolveSnoozePresets } from "../../threadSnooze";
 import { isUnread } from "../../threadUnread";
 import { ProjectIcon } from "../ProjectIcon";
+import { PrHoverTarget, repoFromGithubUrl } from "../PrHoverCard";
 import {
   subagentNames,
   waitLabel,
@@ -127,6 +128,7 @@ export const ThreadCard = memo(function ThreadCard({
   active,
   now,
   onSelect,
+  projectPath = null,
   contentMatch,
   isSettled = false,
   multiSelected = false,
@@ -156,6 +158,8 @@ export const ThreadCard = memo(function ThreadCard({
 }: {
   thread: ThreadInfo;
   slug: string;
+  /** The thread's project checkout path, for the PR hover card's gh call (#1771). */
+  projectPath?: string | null;
   iconUrl?: string | null;
   providers: ProviderInfo[];
   active: boolean;
@@ -738,44 +742,50 @@ export const ThreadCard = memo(function ThreadCard({
               <span className={styles.cardBranchSpacer} />
             )}
             {thread.prNumber != null && thread.prUrl && (
-              <a
-                className={styles.prLink}
-                data-pr-badge=""
-                data-pr-state={thread.prState?.toLowerCase()}
-                title={
-                  thread.prState
-                    ? `PR #${thread.prNumber} ${thread.prState.toLowerCase()}`
-                    : undefined
-                }
-                href={thread.prUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                onPointerDown={(e) => e.stopPropagation()}
-                onClick={(e) => e.stopPropagation()}
+              <PrHoverTarget
+                projectPath={projectPath}
+                repo={repoFromGithubUrl(thread.prUrl)}
+                number={thread.prNumber}
               >
-                <svg
-                  width="10"
-                  height="10"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.6"
-                  strokeLinecap="round"
-                  aria-hidden="true"
+                <a
+                  className={styles.prLink}
+                  data-pr-badge=""
+                  data-pr-state={thread.prState?.toLowerCase()}
+                  title={
+                    thread.prState
+                      ? `PR #${thread.prNumber} ${thread.prState.toLowerCase()}`
+                      : undefined
+                  }
+                  href={thread.prUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={(e) => e.stopPropagation()}
                 >
-                  <circle cx="4" cy="3.5" r="1.5" />
-                  <circle cx="4" cy="12.5" r="1.5" />
-                  <circle cx="12" cy="12.5" r="1.5" />
-                  <path
-                    d={
-                      thread.prState === "MERGED"
-                        ? "M4 5v6M4 5c0 4 8 3 8 6"
-                        : "M4 5v6M12 11V6a2 2 0 0 0-2-2H8"
-                    }
-                  />
-                </svg>
-                #{thread.prNumber}
-              </a>
+                  <svg
+                    width="10"
+                    height="10"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.6"
+                    strokeLinecap="round"
+                    aria-hidden="true"
+                  >
+                    <circle cx="4" cy="3.5" r="1.5" />
+                    <circle cx="4" cy="12.5" r="1.5" />
+                    <circle cx="12" cy="12.5" r="1.5" />
+                    <path
+                      d={
+                        thread.prState === "MERGED"
+                          ? "M4 5v6M4 5c0 4 8 3 8 6"
+                          : "M4 5v6M12 11V6a2 2 0 0 0-2-2H8"
+                      }
+                    />
+                  </svg>
+                  #{thread.prNumber}
+                </a>
+              </PrHoverTarget>
             )}
             <ConflictForecastBadge
               threadId={thread.id}
