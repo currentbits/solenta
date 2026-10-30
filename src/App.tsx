@@ -243,6 +243,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     stopRun,
     setPermissionMode,
     respondPermission,
+    redirectPermission,
+    restartAgentSession,
     clearQuestion,
     answerSecret,
     setProvider,
@@ -436,6 +438,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     listCliSessions,
     importCliSession,
     searchThreads,
+    searchMessages,
     peekThread,
     automations,
     addAutomation,
@@ -653,6 +656,28 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     },
     [selectThread, detachedId],
   );
+
+  /**
+   * Palette message hit (#1761): open the thread, then reveal the exact
+   * message the same way a pinned-message jump does (ThreadView's
+   * revealMessageId prop). Cleared after the flash so it does not pin the
+   * view there on a later, unrelated thread switch.
+   */
+  const [revealMessageId, setRevealMessageId] = useState<string | null>(null);
+  const revealMessageTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  useEffect(() => () => clearTimeout(revealMessageTimerRef.current), []);
+  const handleSelectMessage = useCallback(
+    (threadId: string, messageId: string) => {
+      handleSelectThread(threadId);
+      setRevealMessageId(messageId);
+      clearTimeout(revealMessageTimerRef.current);
+      revealMessageTimerRef.current = setTimeout(
+        () => setRevealMessageId(null),
+        1600,
+      );
+    },
+    [handleSelectThread],
+  );
   const liveThreadIds = useMemo(
     () => (loading ? undefined : threads.map((t) => t.id)),
     [loading, threads],
@@ -794,11 +819,29 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       setDrawer(null);
       setScopeRequest(id);
     });
+    // solenta://new?prompt=...&project=... (#1766): a fresh draft thread
+    // with the prompt pre-filled in the composer, never sent — a link must
+    // not be able to start a run by itself. Reuses the same restoreDraft
+    // path as a discarded queued follow-up (#364/#1212).
+    const offNewDraft = api.on("thread:newDraft", (payload) => {
+      const prompt = payload?.prompt;
+      if (typeof prompt !== "string" || !prompt) return;
+      setView("thread");
+      setDrawer(null);
+      void createThread("New Thread", payload.projectId ?? undefined).then(
+        (t) => {
+          if (!t) return;
+          setRevealThreadId(t.id);
+          setQueuedDraftRestore({ threadId: t.id, text: prompt });
+        },
+      );
+    });
     return () => {
       offThread();
       offProject();
+      offNewDraft();
     };
-  }, [api, handleSelectThread]);
+  }, [api, handleSelectThread, createThread]);
 
   // Detached window (#519): the title carries the attention dot (Window menu,
   // Mission Control, taskbar), and the window closes once its thread is gone.
@@ -1598,6 +1641,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       else if (id === "toggle-agents") toggleAgents();
       else if (id === "reopen-pane") {
         window.dispatchEvent(new Event(REOPEN_PANE_EVENT));
+      } else if (id === "restart-agent-session") {
+        void restartAgentSession().catch(() => {});
       }
     },
     [
@@ -1614,6 +1659,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       openApprovals,
       handleAddProject,
       toggleAgents,
+      restartAgentSession,
     ],
   );
 
@@ -2093,6 +2139,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
               }
               quotaDemo={quotaDemo}
               providers={providers}
+              modelPrices={settings?.modelPrices}
               onSelectThread={handleSelectThread}
               existingThreadIds={
                 loading ? undefined : threads.map((t) => t.id)
@@ -2218,6 +2265,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         detail={visibleDetail}
         detailError={selectedThreadId ? detailError : null}
         onRetryDetail={retryDetail}
+        revealMessageId={revealMessageId}
         project={project}
         providers={providers}
         agentProfiles={settings?.agentProfiles ?? EMPTY_AGENT_PROFILES}
@@ -2293,6 +2341,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onRestoreDraftConsumed={clearQueuedDraftRestore}
         onSetPermissionMode={setPermissionMode}
         onRespondPermission={respondPermission}
+        onRedirectPermission={redirectPermission}
         onClearQuestion={clearQuestion}
         onAnswerSecret={answerSecret}
         onSetProvider={setProvider}
@@ -2554,10 +2603,12 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
           threads={threads}
           projects={projects}
           searchThreads={searchThreads}
+          searchMessages={searchMessages}
           listFiles={listFiles}
           searchFileContents={searchFileContents}
           canSearchWorkspace={Boolean(selectedThreadId)}
           onSelectThread={handleSelectThread}
+          onSelectMessage={handleSelectMessage}
           onSelectProject={handlePaletteProject}
           onRunAction={runPaletteAction}
           onOpenFile={handlePaletteFile}

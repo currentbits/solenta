@@ -14,6 +14,7 @@ const {
   isUnknownJsonField,
   listPrs,
   listPrsRaw,
+  viewerLoginFor,
   setGithubApi,
 } = require("../worktrees.js");
 const { fakeGithubApi } = require("./support/fakeGithubApi.js");
@@ -242,6 +243,155 @@ process.exit(2);
     git(repo, ["remote", "set-url", "origin", "https://bitbucket.org/acme/demo.git"]);
     const result = await listPrs(repo);
     assert.deepEqual(result, { ok: false, reason: "not a GitHub repo" });
+  });
+});
+
+describe("reviewRequestedFromMe (#1763)", () => {
+  let tmp;
+  let repo;
+  let prevGh;
+
+  // listPrs takes viewerLogin as an explicit opt rather than resolving it
+  // itself (ipc-git.js's git:listPrs handler does that via viewerLoginFor):
+  // these fixtures only need to exercise the --json reviewRequests parse
+  // and the match, not gh auth probing.
+  function fakeGhWithPrs(prsJson) {
+    return writeFakeBin(
+      path.join(tmp, "fake-gh-reviewreq"),
+      `#!/usr/bin/env node
+"use strict";
+const args = process.argv.slice(2);
+if (args[0] === "pr" && args[1] === "list") {
+  process.stdout.write(${JSON.stringify(prsJson)} + "\\n");
+  process.exit(0);
+}
+process.stderr.write("unhandled " + JSON.stringify(args) + "\\n");
+process.exit(2);
+`,
+    );
+  }
+
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), "coder-listprs-viewer-"));
+    repo = path.join(tmp, "repo");
+    fs.mkdirSync(repo);
+    git(repo, ["init", "-q", "-b", "main"]);
+    git(repo, ["config", "user.email", "t@example.com"]);
+    git(repo, ["config", "user.name", "t"]);
+    fs.writeFileSync(path.join(repo, "a.txt"), "1");
+    git(repo, ["add", "."]);
+    git(repo, ["commit", "-qm", "init"]);
+    git(repo, ["remote", "add", "origin", "https://github.com/acme/demo.git"]);
+    prevGh = process.env.CODER_GH_BIN;
+    process.env.CODER_GH_BIN = fakeGhWithPrs(
+      JSON.stringify([
+        {
+          number: 1,
+          title: "Needs eyes",
+          url: "https://github.com/acme/demo/pull/1",
+          state: "OPEN",
+          headRefName: "feat",
+          reviewRequests: [{ login: "someone-else" }, { name: "core", slug: "core" }],
+        },
+      ]),
+    );
+  });
+
+  afterEach(async () => {
+    setGithubApi(null);
+    if (prevGh == null) delete process.env.CODER_GH_BIN;
+    else process.env.CODER_GH_BIN = prevGh;
+    await rmTree(tmp);
+  });
+
+  it("flags a PR where reviewRequests names the caller-supplied viewer login", async () => {
+    const withLogin = (login) =>
+      listPrs(repo, { viewerLogin: login }).then((r) => r.prs[0].reviewRequestedFromMe);
+    assert.equal(await withLogin("someone-else"), true);
+  });
+
+  it("does not flag someone else's review request, a team-only one, or a missing login", async () => {
+    const withLogin = (login) =>
+      listPrs(repo, { viewerLogin: login }).then((r) => r.prs[0].reviewRequestedFromMe);
+    assert.equal(await withLogin("octocat"), undefined);
+    assert.equal(await withLogin("core"), undefined, "a team slug is not a user login match");
+    assert.equal(await withLogin(null), undefined);
+  });
+});
+
+describe("viewerLoginFor (#1763)", () => {
+  let tmp;
+  let repo;
+  let prevGh;
+  const sourceControl = require("../sourceControl.js");
+
+  function fakeGhAuth({ hostsJson }) {
+    return writeFakeBin(
+      path.join(tmp, "fake-gh-auth"),
+      `#!/usr/bin/env node
+"use strict";
+const args = process.argv.slice(2);
+if (args[0] === "--version") {
+  process.stdout.write("gh version 2.81.0 (2026-01-01)\\n");
+  process.exit(0);
+}
+if (args[0] === "auth" && args[1] === "status") {
+  ${
+    hostsJson
+      ? `process.stdout.write(${JSON.stringify(JSON.stringify({ hosts: hostsJson }))} + "\\n");
+  process.exit(0);`
+      : `process.stderr.write("not logged into any GitHub hosts\\n");
+  process.exit(1);`
+  }
+}
+process.stderr.write("unhandled " + JSON.stringify(args) + "\\n");
+process.exit(2);
+`,
+    );
+  }
+
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), "coder-viewerlogin-"));
+    repo = path.join(tmp, "repo");
+    fs.mkdirSync(repo);
+    git(repo, ["init", "-q", "-b", "main"]);
+    git(repo, ["config", "user.email", "t@example.com"]);
+    git(repo, ["config", "user.name", "t"]);
+    fs.writeFileSync(path.join(repo, "a.txt"), "1");
+    git(repo, ["add", "."]);
+    git(repo, ["commit", "-qm", "init"]);
+    prevGh = process.env.CODER_GH_BIN;
+    // A fresh probe per test: discoverSourceControl caches by default.
+    sourceControl.invalidateDiscoveryCache();
+  });
+
+  afterEach(async () => {
+    sourceControl.invalidateDiscoveryCache();
+    if (prevGh == null) delete process.env.CODER_GH_BIN;
+    else process.env.CODER_GH_BIN = prevGh;
+    await rmTree(tmp);
+  });
+
+  it("resolves the active gh login for the project's GitHub host", async () => {
+    git(repo, ["remote", "add", "origin", "https://github.com/acme/demo.git"]);
+    process.env.CODER_GH_BIN = fakeGhAuth({
+      hostsJson: { "github.com": [{ login: "octocat", active: true, state: "success" }] },
+    });
+    assert.equal(await viewerLoginFor(repo), "octocat");
+  });
+
+  it("returns null when gh cannot report who is signed in", async () => {
+    git(repo, ["remote", "add", "origin", "https://github.com/acme/demo.git"]);
+    process.env.CODER_GH_BIN = fakeGhAuth({ hostsJson: null });
+    assert.equal(await viewerLoginFor(repo), null);
+  });
+
+  it("never probes gh for a non-GitHub origin", async () => {
+    git(repo, ["remote", "add", "origin", "https://gitlab.com/acme/demo.git"]);
+    // A gh binary that fails any call it receives: probing it must not
+    // happen at all for a GitLab origin.
+    process.env.CODER_GH_BIN = fakeGhAuth({ hostsJson: null });
+    assert.equal(await viewerLoginFor(repo), null);
   });
 });
 

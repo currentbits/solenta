@@ -1497,7 +1497,9 @@ function createToolHandlers(deps) {
           "again; a new push or another method needs a new sign-off.",
       };
     }
-    return prTools.mergePr(client, number, method, pr.headRefOid);
+    const merged = await prTools.mergePr(client, number, method, pr.headRefOid);
+    await prTools.maybeDeleteHeadBranch(client, pr, { store, threadId: self.id });
+    return merged;
   }
 
   async function ci_logs(args) {

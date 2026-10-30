@@ -211,6 +211,9 @@ function matchingProfileId(raw, profiles) {
 const SNIPPET_NAME_RE = /^[\w.-]{1,40}$/;
 const SNIPPET_TEXT_MAX = 8000;
 
+/** Thread-title prompt instructions cap (issue #1765). */
+const TITLE_INSTRUCTIONS_MAX = 500;
+
 /**
  * Prompt snippets (issue #189): named text the composer inserts via `@name`.
  * strict (settings:set) throws on the first problem; lenient (disk read)
@@ -425,6 +428,9 @@ function validateQuotaFailover(raw) {
  * autoSettleOnMerge: only an explicit false turns merge-settle off, so
  * absent/junk keeps the previous "MERGED = settled" behaviour.
  *
+ * deleteBranchOnMergeOrClose: default on; only an explicit false opts out
+ * of deleting the GitHub head branch after the app merges or closes a PR.
+ *
  * worktreeRoot: where new thread worktrees go (#1531). Absent/junk/relative
  * → null, the default userData/worktrees. Existence is checked on save.
  *
@@ -444,6 +450,7 @@ function normalizeSettings(raw) {
     autoSettleOnMerge: true,
     stripAgentCoauthors: false,
     prCrossReview: false,
+    deleteBranchOnMergeOrClose: true,
     mcpServers: [],
     defaultWorktree: false,
     defaultOrchestrate: false,
@@ -468,6 +475,8 @@ function normalizeSettings(raw) {
     combineQueuedFollowUps: true,
     agentBugReports: true,
     guardrailsEnabled: true,
+    idleCompactClaudeThreads: false,
+    titleInstructions: "",
     prDiffCapLines: DEFAULT_PR_DIFF_CAP_LINES,
     maxConcurrentRuns: DEFAULT_MAX_CONCURRENT_RUNS,
     agentProfiles: [],
@@ -651,6 +660,15 @@ function normalizeSettings(raw) {
     /** @type {{ agentBugReports?: unknown }} */ (obj).agentBugReports !== false;
   settings.guardrailsEnabled =
     /** @type {{ guardrailsEnabled?: unknown }} */ (obj).guardrailsEnabled !== false;
+  settings.idleCompactClaudeThreads =
+    /** @type {{ idleCompactClaudeThreads?: unknown }} */ (obj)
+      .idleCompactClaudeThreads === true;
+  const titleInstructions =
+    /** @type {{ titleInstructions?: unknown }} */ (obj).titleInstructions;
+  settings.titleInstructions =
+    typeof titleInstructions === "string"
+      ? titleInstructions.trim().slice(0, TITLE_INSTRUCTIONS_MAX)
+      : "";
   settings.autoSettleOnMerge =
     /** @type {{ autoSettleOnMerge?: unknown }} */ (obj).autoSettleOnMerge !==
     false;
@@ -659,6 +677,9 @@ function normalizeSettings(raw) {
     true;
   settings.prCrossReview =
     /** @type {{ prCrossReview?: unknown }} */ (obj).prCrossReview === true;
+  settings.deleteBranchOnMergeOrClose =
+    /** @type {{ deleteBranchOnMergeOrClose?: unknown }} */ (obj)
+      .deleteBranchOnMergeOrClose !== false;
   settings.otel = normalizeOtel(/** @type {{ otel?: unknown }} */ (obj).otel);
   const linearKey = /** @type {{ linearApiKey?: unknown }} */ (obj).linearApiKey;
   if (typeof linearKey === "string" && linearKey.trim()) {
@@ -926,4 +947,5 @@ module.exports = {
   normalizeGithubHosts,
   normalizeChannel,
   CHANNEL_KINDS,
+  TITLE_INSTRUCTIONS_MAX,
 };

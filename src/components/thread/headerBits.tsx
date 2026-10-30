@@ -25,6 +25,7 @@ import {
 } from "../../format";
 import {
   displayWindowLabel,
+  evenPacePercent,
   formatResetAt,
   usagePercentLeft,
   usageSeverity,
@@ -318,7 +319,12 @@ export function UsageLimitsStrip({
 
   const activeRow = rows?.find((r) => r.provider === activeProvider) ?? null;
   let unavailableMessage: string | null = null;
-  const windowRows: Array<{ label: string; left: number; title: string }> = [];
+  const windowRows: Array<{
+    label: string;
+    left: number;
+    title: string;
+    pace: number | null;
+  }> = [];
   if (rows != null) {
     // A window without a reading would draw as a red "0% left"; drop it.
     const readable =
@@ -333,10 +339,14 @@ export function UsageLimitsStrip({
         "No usage data from this provider.";
     } else {
       for (const win of readable) {
+        // Issue #1764: the strip reads percent LEFT, so the marker mirrors
+        // the dialog's percent-used pace onto the same left-to-right axis.
+        const paceUsed = evenPacePercent(win, now);
         windowRows.push({
           label: displayWindowLabel(win),
           left: usagePercentLeft(win.usedPercent),
           title: formatResetAt(win.resetsAt, now) ?? "",
+          pace: paceUsed == null ? null : 100 - paceUsed,
         });
       }
     }
@@ -364,11 +374,22 @@ export function UsageLimitsStrip({
         </div>
       ) : (
         windowRows.map((w) => (
-          <UsageLimitRow key={w.label} label={w.label} left={w.left} title={w.title} />
+          <UsageLimitRow
+            key={w.label}
+            label={w.label}
+            left={w.left}
+            title={w.title}
+            pace={w.pace}
+          />
         ))
       )}
       {contextRow && (
-        <UsageLimitRow label="Context" left={contextRow.left} title={contextRow.title} />
+        <UsageLimitRow
+          label="Context"
+          left={contextRow.left}
+          title={contextRow.title}
+          pace={null}
+        />
       )}
     </div>
   );
@@ -378,10 +399,12 @@ function UsageLimitRow({
   label,
   left,
   title,
+  pace,
 }: {
   label: string;
   left: number;
   title: string;
+  pace: number | null;
 }) {
   const severity = usageSeverity(left);
   return (
@@ -394,6 +417,14 @@ function UsageLimitRow({
       <span className={styles.usageLabel}>{label}</span>
       <div className={styles.usageTrack} aria-hidden>
         <div className={styles.usageFill} style={{ width: `${left}%` }} />
+        {pace != null ? (
+          <div
+            className={styles.usagePace}
+            data-usage-pace=""
+            style={{ left: `${pace}%` }}
+            title={`Even pace: ${Math.round(pace)}% left by now`}
+          />
+        ) : null}
       </div>
       <span className={styles.usagePct}>{left}% left</span>
     </div>

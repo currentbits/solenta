@@ -2,6 +2,7 @@
  * Pure usage rollup for the analytics view. Days are local calendar keys.
  */
 import type {
+  ModelPrice,
   UsageByDay,
   UsageEntry,
   UsageReport,
@@ -423,4 +424,96 @@ export function summarizeUsage(
     .sort((a, b) => compareTotals(a, b) || a.label.localeCompare(b.label));
 
   return { days, totals, providers, models, byDay, projects, threads };
+}
+
+export interface UsageCostByType {
+  /** Uncached input $, matching UsageTotals.inputTokens. */
+  inputUsd: number | null;
+  cachedInputUsd: number | null;
+  cacheWriteUsd: number | null;
+  outputUsd: number | null;
+}
+
+/**
+ * One cell's dollar amount per token type, at `price`. Mirrors the per-cell
+ * formula electron/modelPrices.js:priceCell applies server side (cache
+ * reads/writes fall back to the input rate when left blank) so the four
+ * parts of a priced model's cell always add up to `priceCell`'s total.
+ */
+function priceCellByType(
+  cell: Pick<
+    UsageEntry,
+    "inputTokens" | "cachedInputTokens" | "cacheWriteTokens" | "outputTokens"
+  >,
+  price: ModelPrice,
+): { inputUsd: number; cachedInputUsd: number; cacheWriteUsd: number; outputUsd: number } {
+  return {
+    inputUsd: (cell.inputTokens * price.input) / 1e6,
+    cachedInputUsd:
+      (cell.cachedInputTokens * (price.cacheRead ?? price.input)) / 1e6,
+    cacheWriteUsd:
+      (cell.cacheWriteTokens * (price.cacheWrite ?? price.input)) / 1e6,
+    outputUsd: (cell.outputTokens * price.output) / 1e6,
+  };
+}
+
+/**
+ * Issue #1764: split the range's cost by token type using the model price
+ * table, the same mapping (exact model id) and formula `usage:byDay`
+ * already used to fill summary.totals.costUsd for unmetered cells. A cell
+ * whose model has no price never contributes a number here -- we never
+ * invent a split for a provider-reported cost -- so every field stays
+ * `null` until at least one priced cell is found.
+ *
+ * By the time a report reaches the renderer, a priced cell's costUsd is
+ * already the server's priceCell total (electron/modelPrices.js); there is
+ * no separate "was this unmetered" flag left to read. A cell is only
+ * included in the split when our recomputed parts reproduce that same
+ * total, so a model that both has a user price AND a provider-reported
+ * cost (the two disagree) is left out rather than mislabeled.
+ */
+export function usageCostByType(
+  report: UsageReport | UsageByDay | null | undefined,
+  range: UsageRange,
+  today: Date,
+  prices: Record<string, ModelPrice> | null | undefined,
+): UsageCostByType {
+  const { byDay: source } = unwrapReport(report);
+  const days = new Set<string>();
+  for (let i = range - 1; i >= 0; i--) {
+    days.add(localDayKey(addLocalDays(today, -i)));
+  }
+  let inputUsd = 0;
+  let cachedInputUsd = 0;
+  let cacheWriteUsd = 0;
+  let outputUsd = 0;
+  let priced = false;
+  for (const [day, providers] of Object.entries(source)) {
+    if (!days.has(day)) continue;
+    const providerRec = asRecord(providers);
+    if (!providerRec) continue;
+    for (const models of Object.values(providerRec)) {
+      const modelRec = asRecord(models);
+      if (!modelRec) continue;
+      for (const [model, raw] of Object.entries(modelRec)) {
+        const price = prices?.[model];
+        if (!price) continue;
+        const entry = readEntry(raw);
+        if (!entry) continue;
+        const parts = priceCellByType(entry, price);
+        const total = parts.inputUsd + parts.cachedInputUsd + parts.cacheWriteUsd + parts.outputUsd;
+        const tolerance = Math.max(1e-6, Math.abs(total) * 1e-6);
+        if (Math.abs(total - entry.costUsd) > tolerance) continue;
+        inputUsd += parts.inputUsd;
+        cachedInputUsd += parts.cachedInputUsd;
+        cacheWriteUsd += parts.cacheWriteUsd;
+        outputUsd += parts.outputUsd;
+        priced = true;
+      }
+    }
+  }
+  if (!priced) {
+    return { inputUsd: null, cachedInputUsd: null, cacheWriteUsd: null, outputUsd: null };
+  }
+  return { inputUsd, cachedInputUsd, cacheWriteUsd, outputUsd };
 }

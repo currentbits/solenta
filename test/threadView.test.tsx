@@ -47,7 +47,7 @@ import type {
   WorkSuggestion,
   WorkflowTemplateInfo,
 } from "../src/shared/ipc";
-import { setUsageLimitsStripEnabled } from "../src/uiPrefs";
+import { setChatWidth, setUsageLimitsStripEnabled } from "../src/uiPrefs";
 
 const project: ProjectInfo = {
   id: "p1",
@@ -206,6 +206,11 @@ function view(props: {
     restoreFiles?: boolean,
     attachments?: AttachmentInfo[],
   ) => void | Promise<void>;
+  onRedirectPermission?: (
+    requestId: string,
+    prompt: string,
+    attachments?: AttachmentInfo[],
+  ) => void | Promise<void>;
   onPickDirectory?: () => Promise<string | null>;
   onListSnapWindows?: () => Promise<Array<{ id: string; name: string }>>;
   onCaptureSnapWindow?: (
@@ -241,6 +246,7 @@ function view(props: {
       onRetryQueued={props.onRetryQueued}
       onSetPermissionMode={() => {}}
       onRespondPermission={() => {}}
+      onRedirectPermission={props.onRedirectPermission}
       onSetProvider={() => {}}
       onSetReasoningEffort={() => {}}
       onSetArchived={() => {}}
@@ -322,6 +328,7 @@ afterEach(() => {
   setTranscriptViewMode("normal");
   resetComposerSession();
   setUsageLimitsStripEnabled(false);
+  setChatWidth("default");
 });
 
 describe("ThreadView empty states", () => {
@@ -2484,6 +2491,39 @@ describe("ThreadView file drop (issue #469)", () => {
     m.unmount();
   });
 
+  it("applies the chat-width pref as a data attribute on the thread pane (#1767)", async () => {
+    setChatWidth("wide");
+    const m = await mount(
+      view({
+        detail: detail({
+          messages: [
+            msg({ id: "u1", role: "user", text: "hi", createdAt: 10 }),
+          ],
+        }),
+      }),
+    );
+    const host = m.query("[data-thread-drop]");
+    assert.ok(host, "thread pane must render");
+    assert.equal(host!.getAttribute("data-chat-width"), "wide");
+    m.unmount();
+  });
+
+  it("defaults the chat-width attribute to default", async () => {
+    setChatWidth("default");
+    const m = await mount(
+      view({
+        detail: detail({
+          messages: [
+            msg({ id: "u1", role: "user", text: "hi", createdAt: 10 }),
+          ],
+        }),
+      }),
+    );
+    const host = m.query("[data-thread-drop]");
+    assert.equal(host!.getAttribute("data-chat-width"), "default");
+    m.unmount();
+  });
+
   it("shows a drop overlay while a file drag hovers the thread", async () => {
     const m = await mount(
       view({
@@ -2880,6 +2920,94 @@ describe("ThreadView stick-to-bottom on content resize (issue #408)", () => {
     assert.ok(m.text().includes("THREAD_B"));
     assert.equal(m.query(".body"), body, "a direct switch keeps the scroll body");
     assert.equal(layout.scrollTop, 3500, "a thread switch pins before paint");
+    m.unmount();
+  });
+});
+
+describe("ThreadView permission redirect (#1762)", () => {
+  const pending: PendingPermissionInfo = {
+    requestId: "req-1762",
+    toolName: "Bash",
+    summary: "Bash: npm test",
+    input: '{"command":"npm test"}',
+    command: "npm test",
+  };
+
+  // The permission card's own command editor is a textarea too, and (#509)
+  // it sits above the composer in the DOM — a bare querySelector("textarea")
+  // grabs that one instead.
+  const composerTextarea = (m: { container: HTMLElement }) =>
+    Array.from(m.container.querySelectorAll("textarea")).find(
+      (t) => !t.hasAttribute("data-permission-command"),
+    ) as HTMLTextAreaElement;
+
+  it("hints that sending declines the card and redirects the agent", async () => {
+    const m = await mount(
+      view({
+        detail: detail({
+          thread: thread({ status: "working" }),
+          pendingPermission: pending,
+        }),
+      }),
+    );
+    const hint = m.query("[data-permission-redirect-hint]");
+    assert.ok(hint, "permission card must show the redirect hint");
+    assert.match(
+      hint.textContent ?? "",
+      /sending a message declines this and redirects the agent/i,
+    );
+    m.unmount();
+  });
+
+  it("sending a normal message redirects instead of starting or queueing a run", async () => {
+    const started: string[] = [];
+    const redirected: Array<{ requestId: string; prompt: string }> = [];
+    const m = await mount(
+      view({
+        onStartRun: (prompt) => {
+          started.push(prompt);
+        },
+        onRedirectPermission: (requestId, prompt) => {
+          redirected.push({ requestId, prompt });
+        },
+        detail: detail({
+          thread: thread({ status: "working" }),
+          pendingPermission: pending,
+        }),
+      }),
+    );
+    const ta = composerTextarea(m);
+    await m.type(ta, "do the other thing instead");
+    await m.click(m.query('button[aria-label="Send"]'));
+    assert.deepEqual(redirected, [
+      { requestId: "req-1762", prompt: "do the other thing instead" },
+    ]);
+    assert.equal(started.length, 0, "a plain send must not start/queue a run");
+    m.unmount();
+  });
+
+  it("a /btw side question still goes through onStartRun, not the redirect", async () => {
+    const started: string[] = [];
+    const redirected: string[] = [];
+    const m = await mount(
+      view({
+        onStartRun: (prompt) => {
+          started.push(prompt);
+        },
+        onRedirectPermission: (_requestId, prompt) => {
+          redirected.push(prompt);
+        },
+        detail: detail({
+          thread: thread({ status: "working" }),
+          pendingPermission: pending,
+        }),
+      }),
+    );
+    const ta = composerTextarea(m);
+    await m.type(ta, "/btw is this safe?");
+    await m.click(m.query('button[aria-label="Send"]'));
+    assert.equal(redirected.length, 0, "/btw must not decline the permission card");
+    assert.deepEqual(started, ["/btw is this safe?"]);
     m.unmount();
   });
 });
@@ -4634,6 +4762,33 @@ describe("ThreadView Focus / Summary mode (issue #461)", () => {
     m.unmount();
   });
 
+  it("gives a tool row a hover tooltip with its local time (#1767)", async () => {
+    setTranscriptViewMode("summary");
+    const m = await mount(view({ detail: settledTools() }));
+    await m.click(m.query("[data-focus-turn='u1']"));
+    const toggle = m.query("button.toolToggle");
+    assert.ok(toggle, "tool card is open");
+    const header = toggle!.closest(".toolHeader");
+    assert.ok(header, "tool row has a header to hover");
+    assert.match(
+      header!.getAttribute("title") || "",
+      /\d{1,2}:\d{2}:\d{2}/,
+      "title carries a local clock time",
+    );
+    m.unmount();
+  });
+
+  it("gives the settled-turn fold a hover tooltip with its time span (#1767)", async () => {
+    setTranscriptViewMode("summary");
+    const m = await mount(view({ detail: settledTools() }));
+    const row = m.query("[data-focus-turn='u1']");
+    assert.ok(row, "one focus row for the turn");
+    const title = row!.getAttribute("title") || "";
+    assert.match(title, /^Show tool activity · /);
+    assert.match(title, /\d{1,2}:\d{2}:\d{2}/);
+    m.unmount();
+  });
+
   it("leaves the live turn's tool cards open", async () => {
     setTranscriptViewMode("summary");
     const m = await mount(
@@ -5654,6 +5809,42 @@ describe("ThreadView usage limits strip (#1755)", () => {
     assert.match(context.textContent ?? "", /20% left/);
     assert.equal(context.getAttribute("data-usage-severity"), "warn", "20% left is at or under 20%");
     assert.match(context.getAttribute("title") ?? "", /80,000 \/ 100k tokens/);
+    m.unmount();
+  });
+
+  it("draws a mirrored even-pace tick (#1764), and omits it when unknown", async () => {
+    setUsageLimitsStripEnabled(true);
+    const FIVE_HOURS = 5 * 60 * 60;
+    // 1h into a 5h window (4h left to reset) -> pace is 20% used, 80% left.
+    const resetsAt = Date.now() + 4 * 60 * 60 * 1000;
+    const m = await mount(
+      view({
+        loadProviderLimits: async () => [
+          quota({
+            windows: [
+              { label: "5 hours", usedPercent: 50, resetsAt, windowSeconds: FIVE_HOURS },
+              { label: "Weekly", usedPercent: 50, resetsAt: null, windowSeconds: null },
+            ],
+          }),
+        ],
+      }),
+    );
+    await m.flush();
+    const dated = m.query('[data-usage-row="5 hours"]');
+    assert.ok(dated);
+    const tick = dated.querySelector("[data-usage-pace]") as HTMLElement | null;
+    assert.ok(tick, "pace tick renders when resetsAt/windowSeconds are known");
+    const leftMatch = /left:\s*([\d.]+)%/.exec(tick.getAttribute("style") || "");
+    assert.ok(leftMatch, "tick has a left offset");
+    assert.ok(
+      Math.abs(Number(leftMatch![1]) - 80) < 0.1,
+      `expected ~80% left, got ${leftMatch![1]}%`,
+    );
+    assert.match(tick.getAttribute("title") || "", /Even pace: 80% left by now/);
+
+    const undated = m.query('[data-usage-row="Weekly"]');
+    assert.ok(undated);
+    assert.equal(undated.querySelector("[data-usage-pace]"), null);
     m.unmount();
   });
 

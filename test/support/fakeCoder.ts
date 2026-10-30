@@ -90,6 +90,7 @@ import type {
   ThreadInfo,
   ThreadListPush,
   ThreadMessagePin,
+  ThreadSearchMessagesHit,
   TrashedThreadInfo,
   ThreadSummariesInput,
   ThreadSummaryInfo,
@@ -151,6 +152,8 @@ export interface FakeCoder {
   emitThreads(push: ThreadListPush): void;
   /** Main-process select push (notification click or solenta:// link). */
   emitSelect(channel: "thread:select" | "project:select", id: string): void;
+  /** solenta://new?prompt=...&project=... deep link push (#1766). */
+  emitNewDraft(payload: { prompt: string; projectId: string | null }): void;
   /** Push a thread:updated event (a full detail is a valid ThreadPatch). */
   emitThread(detail: ThreadPatch): void;
   /** Push boot:ready so useCoder refetches lists (#618). */
@@ -394,6 +397,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
     autoSettleOnMerge: true,
     stripAgentCoauthors: false,
     prCrossReview: false,
+    deleteBranchOnMergeOrClose: true,
     mcpServers: [],
     defaultWorktree: false,
     updateChannel: null,
@@ -640,6 +644,9 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
 
   const threadSubs: Array<(t: ThreadListPush) => void> = [];
   const selectSubs: Array<{ channel: string; cb: (id: string) => void }> = [];
+  const newDraftSubs: Array<
+    (payload: { prompt: string; projectId: string | null }) => void
+  > = [];
   const detailSubs: Array<(d: ThreadPatch) => void> = [];
   const bootReadySubs: Array<() => void> = [];
   const stayAwakeSubs: Array<(s: StayAwakeStatus) => void> = [];
@@ -2065,6 +2072,11 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           } as CrewIntegration,
         ),
       search: (input: unknown) => rec("threads.search", [input], { threads: [] as ThreadInfo[], truncated: false }),
+      searchMessages: (input: unknown) =>
+        rec("threads.searchMessages", [input], {
+          hits: [] as ThreadSearchMessagesHit[],
+          truncated: false,
+        }),
       create: (input: unknown) => {
         const createdAt = Date.now();
         const wantWorktree =
@@ -2200,6 +2212,8 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         rec("threads.setPermissionMode", [input], thread()),
       applyAgentProfile: (input: unknown) =>
         rec("threads.applyAgentProfile", [input], thread()),
+      restartAgentSession: (input: unknown) =>
+        rec("threads.restartAgentSession", [input], undefined),
       setArchived: (input: unknown) => {
         const i = input as { threadId: string; archived: boolean };
         return rec(
@@ -4377,6 +4391,17 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           if (i >= 0) bootReadySubs.splice(i, 1);
         };
       }
+      if (channel === "thread:newDraft") {
+        const fn = cb as (payload: {
+          prompt: string;
+          projectId: string | null;
+        }) => void;
+        newDraftSubs.push(fn);
+        return () => {
+          const i = newDraftSubs.indexOf(fn);
+          if (i >= 0) newDraftSubs.splice(i, 1);
+        };
+      }
       if (channel === "stayAwake:changed") {
         stayAwakeSubs.push(cb as (s: StayAwakeStatus) => void);
         return () => {
@@ -4431,6 +4456,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
     emitThreads: (next) => threadSubs.forEach((cb) => cb(next)),
     emitSelect: (channel, id) =>
       selectSubs.filter((s) => s.channel === channel).forEach((s) => s.cb(id)),
+    emitNewDraft: (payload) => newDraftSubs.forEach((cb) => cb(payload)),
     emitThread: (d) => detailSubs.forEach((cb) => cb(d)),
     emitBootReady: () => bootReadySubs.forEach((cb) => cb()),
     emitStayAwake: (s) => stayAwakeSubs.forEach((cb) => cb(s)),
@@ -4442,7 +4468,8 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       stayAwakeSubs.length +
       simulatorSubs.length +
       speechSubs.length +
-      selectSubs.length,
+      selectSubs.length +
+      newDraftSubs.length,
   };
 }
 

@@ -42,7 +42,12 @@ const {
 } = require("./notify.js");
 const { recordSecretUse } = require("./secrets.js");
 const { windowOpenAction, navigateAction } = require("./links.js");
-const { DEEP_LINK_SCHEME, parseDeepLink, deepLinkFromArgv } = require("./deepLinks.js");
+const {
+  DEEP_LINK_SCHEME,
+  parseDeepLink,
+  deepLinkFromArgv,
+  resolveProjectRef,
+} = require("./deepLinks.js");
 const { guestWebviewPolicy, attachGuestPolicy } = require("./preview.js");
 const {
   createMemorySupervisor,
@@ -51,6 +56,7 @@ const {
 } = require("./memory-sup.js");
 const { createOrchServer } = require("./orchServer.js");
 const { createPrStateRefresher, createRetentionSweeper } = require("./worktrees.js");
+const { createIdleCompactScheduler } = require("./idleCompact.js");
 const { createWedgedLaneWatchdog } = require("./mergeQueue.js");
 const {
   killAll: killAllDevServers,
@@ -149,7 +155,13 @@ const isDev = !app.isPackaged && !process.env.CODER_PROD;
 // solenta:// deep links (#186). macOS delivers them as open-url to the
 // running app; Windows/Linux launch a second process with the URL in argv,
 // so packaged builds there hold the single-instance lock and forward it.
-/** @type {{ kind: "thread" | "project", id: string } | null} */
+/**
+ * @typedef {
+ *   | { kind: "thread" | "project", id: string }
+ *   | { kind: "new", prompt: string, project: string | null }
+ * } DeepLink
+ */
+/** @type {DeepLink | null} */
 let pendingDeepLink = deepLinkFromArgv(process.argv);
 if (app.isPackaged) {
   app.setAsDefaultProtocolClient(DEEP_LINK_SCHEME);
@@ -228,6 +240,9 @@ let prStateRefresher = null;
 
 /** @type {ReturnType<typeof createRetentionSweeper> | null} */
 let retentionSweeper = null;
+
+/** @type {ReturnType<typeof createIdleCompactScheduler> | null} */
+let idleCompactScheduler = null;
 
 /** @type {ReturnType<typeof createWedgedLaneWatchdog> | null} */
 let wedgedLaneWatchdog = null;
@@ -541,15 +556,24 @@ function focusMainWindow() {
 }
 
 /**
- * Focus the window and select the linked thread or project scope. Links that
+ * Focus the window and select the linked thread or project scope, or (kind
+ * "new") hand the renderer a prompt to open as a fresh draft thread — never
+ * a run: a link must not be able to start an agent by itself. Links that
  * arrive before the store and window are up wait for boot:ready; the preload
  * holds the push until the renderer subscribes.
- * @param {{ kind: "thread" | "project", id: string } | null} link
+ * @param {DeepLink | null} link
  */
 function openDeepLink(link) {
   if (!link) return;
   if (!store) {
     pendingDeepLink = link;
+    return;
+  }
+  if (link.kind === "new") {
+    sendWhenLoaded(focusMainWindow(), "thread:newDraft", {
+      prompt: link.prompt,
+      projectId: resolveProjectRef(link.project, store.getProjects()),
+    });
     return;
   }
   const known =
@@ -1146,6 +1170,15 @@ app.whenReady().then(async () => {
   });
   prStateRefresher.start();
 
+  // Opt-in idle-thread compaction (#1765): off unless the user turns it on
+  // in Settings. Same unref'd-interval shape as the PR refresher above.
+  idleCompactScheduler = createIdleCompactScheduler({
+    store,
+    runner,
+    broadcast,
+  });
+  idleCompactScheduler.start();
+
   // Anonymous daily usage ping (installs, OS, agents) for the team's stats.
   if (app.isPackaged) {
     require("./telemetry.js").startTelemetry({
@@ -1367,6 +1400,14 @@ function teardownServices() {
       // ignore
     }
     retentionSweeper = null;
+  }
+  if (idleCompactScheduler) {
+    try {
+      idleCompactScheduler.stop();
+    } catch {
+      // ignore
+    }
+    idleCompactScheduler = null;
   }
   if (wedgedLaneWatchdog) {
     try {

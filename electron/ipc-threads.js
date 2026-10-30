@@ -66,6 +66,9 @@ module.exports = {
   "threads:search": async (ctx, input) => {
     return services.searchThreads(ctx.store, input || { query: "" });
   },
+  "threads:searchMessages": async (ctx, input) => {
+    return services.searchMessages(ctx.store, input || { query: "" });
+  },
   "threads:listCliSessions": async (_ctx, input) => {
     if (input && input.provider === "claude") {
       return cliSessions.listClaudeSessions();
@@ -324,6 +327,11 @@ module.exports = {
     // Value goes to threadSecrets only (issue #1531). Pushes its own detail.
     ctx.runner.answerSecret(input);
   },
+  // ⌘K "Restart agent session" (#1762): kill the warm/idle provider process
+  // so the next turn spawns fresh and reloads skills/plugins/MCP servers.
+  // Pushes its own detail.
+  "threads:restartAgentSession": async (ctx, input) =>
+    ctx.runner.restartAgentSession(input),
   "threads:setPermissionMode": async (ctx, input) => {
     const updated = leaveProfile(
       ctx,

@@ -195,10 +195,20 @@
 
 .track {
   grid-area: bar;
+  position: relative;
   height: 6px;
   border-radius: var(--radius-pill);
   background: var(--border-soft);
   overflow: hidden;
+}
+
+/* Even-pace marker (#1764): where usage would sit at a constant rate. */
+.pace {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--text-muted);
 }
 
 .fill {

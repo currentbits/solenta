@@ -1171,6 +1171,26 @@ export interface ThreadSearchResult {
   truncated: boolean;
 }
 
+/** threads.searchMessages input (#1761): words ANDed, case-insensitive. */
+export interface ThreadSearchMessagesInput {
+  query: string;
+  threadIds?: string[];
+}
+
+/** One message-search hit: snippet is ~120 chars around the first match. */
+export interface ThreadSearchMessagesHit {
+  threadId: string;
+  messageId: string;
+  snippet: string;
+  createdAt: number;
+}
+
+/** threads.searchMessages reply: up to 30 hits, newest first, max 3/thread. */
+export interface ThreadSearchMessagesResult {
+  hits: ThreadSearchMessagesHit[];
+  truncated: boolean;
+}
+
 /** One `/btw` side-question card (issue #471). */
 export type BtwStatus = "running" | "done" | "error";
 export type BtwSource = "fm" | "print" | "retrieval";
@@ -2878,6 +2898,14 @@ export interface PrListItem {
   reviewDecision?: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED";
   /** One verdict over all checks; cancelled counts as "fail". */
   checks?: "pass" | "fail" | "pending";
+  /**
+   * True when the signed-in GitHub user is directly named in this PR's
+   * review requests (issue #1763). A team-only request never sets this:
+   * the app caches no team-membership data to expand it. Absent when the
+   * signed-in login could not be resolved (gh missing/signed out, or a
+   * REST-token-only setup with no gh CLI at all).
+   */
+  reviewRequestedFromMe?: boolean;
 }
 
 /** Optional page for `git.listPrs`. Absent limit keeps the historic 50-row page. */
@@ -3666,6 +3694,14 @@ export interface AppSettings {
    */
   prCrossReview: boolean;
   /**
+   * When true (the default), the app deletes the GitHub head branch after
+   * it merges or closes a PR (merge/close from a thread, the PR workspace
+   * panel, the fleet/PR list, or the agent pr_merge tool). Never deletes
+   * the default branch, a branch with other open PRs, or a fork PR's
+   * branch. A deletion failure is logged and never fails the merge/close.
+   */
+  deleteBranchOnMergeOrClose: boolean;
+  /**
    * User-registered MCP servers (Skills tab). Built-ins coder-memory and
    * coder-threads are app-owned and never appear here. Enabled entries are
    * folded into every provider's MCP injection on the next turn.
@@ -3802,6 +3838,21 @@ export interface AppSettings {
   agentBugReports: boolean;
   /** Solenta tool, injection, and secret checks. Default on; false opts out. */
   guardrailsEnabled: boolean;
+  /**
+   * Opt-in (issue #1765, default false): a main-process scheduler compacts
+   * an idle Claude thread (not working, 50-58 minutes since its last turn,
+   * context at/above COLD_COMPACT_MIN_TOKENS) before the hour prompt-cache
+   * TTL lapses, reusing the "Compact first" chip's own mechanism (a bare
+   * `/compact` turn). Each compaction spends one turn.
+   */
+  idleCompactClaudeThreads: boolean;
+  /**
+   * Extra instructions appended to the auto-generated thread title prompt
+   * (issue #1765, electron/fm-title.js buildTitlePrompt). Trimmed, capped
+   * at TITLE_INSTRUCTIONS_MAX (~500) chars. Default "" = the plain "6
+   * words" prompt.
+   */
+  titleInstructions: string;
   /**
    * PR size cap in changed lines (additions + deletions vs the base branch),
    * enforced when a PR is created from the app (issue #402, DORA small
@@ -5580,6 +5631,16 @@ export interface CoderApi {
      */
     search(input: ThreadSearchInput): Promise<ThreadSearchResult>;
     /**
+     * Message-level search for the command palette (#1761): user +
+     * assistant text only (tool/event skipped), words ANDed,
+     * case-insensitive. Up to 30 hits newest first, max 3 per thread.
+     * Same shard/worker scan as search() so a 190MB+ store never blocks
+     * the main process. Queries under 3 chars match nothing.
+     */
+    searchMessages(
+      input: ThreadSearchMessagesInput,
+    ): Promise<ThreadSearchMessagesResult>;
+    /**
      * Create a thread. With `worktree: true` the thread immediately gets its
      * own git worktree + `coder/<slug>-<id>` branch (local projects only);
      * creation fails atomically when the worktree cannot be created.
@@ -5710,7 +5771,26 @@ export interface CoderApi {
        * as the next planning turn.
        */
       feedback?: string;
+      /**
+       * Composer redirect (#1762): sending a normal message while a plain
+       * permission card is open. Deny on a plain tool card only — Claude
+       * reads this as the tool-denial reason and keeps going in the same
+       * turn; providers whose deny can't carry text queue it as the next
+       * prompt instead.
+       */
+      redirect?: string;
+      /** Attachments that rode along with `redirect`. */
+      attachments?: AttachmentInfo[];
     }): Promise<void>;
+    /**
+     * ⌘K "Restart agent session" (#1762): kill this thread's warm/idle
+     * provider process so the next turn spawns fresh and reloads newly
+     * installed skills, plugins and MCP servers. The thread's sessionId is
+     * untouched — the conversation resumes, it does not start over. Rejects
+     * while a run is active. The updated detail (with the confirmation
+     * event message) arrives via thread:updated.
+     */
+    restartAgentSession(input: { threadId: string }): Promise<void>;
     /**
      * "Save plan to file" (#1501): write plan markdown to
      * docs/plans/<date>-<slug>.md in the thread's checkout. Never
@@ -7268,6 +7348,16 @@ export interface CoderApi {
   on(channel: "thread:select", cb: (threadId: string) => void): () => void;
   /** solenta://project/<id> deep link: scope the sidebar to it (#186). */
   on(channel: "project:select", cb: (projectId: string) => void): () => void;
+  /**
+   * solenta://new?prompt=...&project=... deep link (#1766): open a fresh
+   * draft thread with `prompt` pre-filled in the composer, focused, never
+   * sent. `projectId` is null when the link named no project or an unknown
+   * one; the renderer falls back to the currently selected project.
+   */
+  on(
+    channel: "thread:newDraft",
+    cb: (payload: { prompt: string; projectId: string | null }) => void,
+  ): () => void;
   /** Main-process store + IPC handlers are up; refetch boot lists (#618). */
   on(channel: "boot:ready", cb: () => void): () => void;
   /** Stay-awake derived state flipped (mode, blocking, battery) (#364). */

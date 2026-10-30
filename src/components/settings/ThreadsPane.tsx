@@ -410,6 +410,64 @@ export function ThreadsPane({
             the Solenta team, at most 3 per thread a day. Secrets and file
             paths are removed first. Each report shows in the thread.
           </p>
+          <label className={styles.fieldRow}>
+            <input
+              type="checkbox"
+              data-idle-compact-claude-threads=""
+              checked={settings?.idleCompactClaudeThreads === true}
+              disabled={saving || settings == null}
+              onChange={(e) => {
+                setError(null);
+                void onSaveSettings({
+                  idleCompactClaudeThreads: e.target.checked,
+                }).catch((err) => {
+                  setError(
+                    err instanceof Error && err.message
+                      ? err.message
+                      : "Failed to save settings",
+                  );
+                });
+              }}
+            />
+            <span>Compact idle Claude threads before the prompt cache expires</span>
+          </label>
+          <p className={styles.note}>
+            When a Claude thread sits idle for about 55 minutes with a large
+            context, compact it automatically before the hour-long prompt
+            cache expires. Each compaction spends one turn.
+          </p>
+          <label className={styles.fieldLabel} htmlFor="title-instructions">
+            Thread title instructions
+          </label>
+          <textarea
+            id="title-instructions"
+            key={settings?.titleInstructions ?? ""}
+            className={styles.textarea}
+            rows={2}
+            maxLength={500}
+            placeholder="e.g. Start with the issue number. Lowercase."
+            defaultValue={settings?.titleInstructions ?? ""}
+            disabled={saving || settings == null}
+            data-title-instructions=""
+            onBlur={(e) => {
+              const next = e.target.value.trim();
+              if (next === (settings?.titleInstructions ?? "")) return;
+              setError(null);
+              void onSaveSettings({ titleInstructions: next }).catch(
+                (err) => {
+                  setError(
+                    err instanceof Error && err.message
+                      ? err.message
+                      : "Failed to save settings",
+                  );
+                },
+              );
+            }}
+          />
+          <p className={styles.note}>
+            Extra instructions appended to the auto-generated title prompt
+            (6 words max). Empty uses the default prompt.
+          </p>
         </div>
         {providers.length > 0 && (
           <div className={styles.field} data-quota-failover="">

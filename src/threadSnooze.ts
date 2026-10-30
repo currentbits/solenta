@@ -290,3 +290,42 @@ export function snoozePresetUntil(id: SnoozePresetId, now: number): number {
   const daysUntilMonday = (1 - d.getDay() + 7) % 7 || 7;
   return atHour(addSnoozeDays(d, daysUntilMonday), MORNING_HOUR).getTime();
 }
+
+/** How far in the future a custom snooze must land, minimum (#1766). */
+export const CUSTOM_SNOOZE_MIN_LEAD_MS = 5 * 60 * 1000;
+
+/** Local "YYYY-MM-DDTHH:mm", the value shape <input type="datetime-local"> wants and returns. */
+function toDatetimeLocalValue(ms: number): string {
+  const d = new Date(ms);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/** Custom snooze dialog default: tomorrow 9am local, same anchor as the "Tomorrow" preset. */
+export function defaultCustomSnoozeValue(now: number): string {
+  return toDatetimeLocalValue(
+    atHour(addSnoozeDays(new Date(now), 1), MORNING_HOUR).getTime(),
+  );
+}
+
+/** Custom snooze dialog `min` attribute: now + CUSTOM_SNOOZE_MIN_LEAD_MS. */
+export function minCustomSnoozeValue(now: number): string {
+  return toDatetimeLocalValue(now + CUSTOM_SNOOZE_MIN_LEAD_MS);
+}
+
+/**
+ * Parse a datetime-local input value into an epoch-ms snooze target.
+ * Null when malformed, or short of CUSTOM_SNOOZE_MIN_LEAD_MS in the future
+ * — the floor the `min` attribute hints at is re-checked here, since a
+ * typed value can bypass a native picker's min.
+ */
+export function parseCustomSnoozeValue(
+  value: string,
+  now: number,
+): number | null {
+  if (!value) return null;
+  const ms = new Date(value).getTime();
+  if (!Number.isFinite(ms)) return null;
+  if (ms < now + CUSTOM_SNOOZE_MIN_LEAD_MS) return null;
+  return ms;
+}

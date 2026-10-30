@@ -173,6 +173,32 @@ export function GitPane({
           reviews the diff with no context and reports only real bugs. The
           findings go back to the author thread, which decides what to fix.
         </p>
+        <label className={styles.fieldRow}>
+          <input
+            type="checkbox"
+            data-delete-branch-on-merge-or-close=""
+            checked={settings?.deleteBranchOnMergeOrClose !== false}
+            disabled={saving || settings == null}
+            onChange={(e) => {
+              setError(null);
+              void onSaveSettings({
+                deleteBranchOnMergeOrClose: e.target.checked,
+              }).catch((err) => {
+                setError(
+                  err instanceof Error && err.message
+                    ? err.message
+                    : "Failed to save settings",
+                );
+              });
+            }}
+          />
+          <span>Delete the branch on GitHub after merging or closing a PR</span>
+        </label>
+        <p className={styles.note}>
+          Never deletes the default branch, a branch with other open PRs, or
+          a fork PR&apos;s branch. A deletion failure is logged and never
+          fails the merge or close.
+        </p>
       </section>
 
       <section className={styles.section}>

@@ -27,6 +27,7 @@ const {
   normalizeChannel,
   CHANNEL_KINDS,
   normalizeGithubHosts,
+  TITLE_INSTRUCTIONS_MAX,
 } = require("./store-normalize.js");
 
 /**
@@ -78,6 +79,7 @@ class StoreSettingsMethods {
       autoSettleOnMerge: n.autoSettleOnMerge,
       stripAgentCoauthors: n.stripAgentCoauthors,
       prCrossReview: n.prCrossReview,
+      deleteBranchOnMergeOrClose: n.deleteBranchOnMergeOrClose,
       mcpServers: n.mcpServers,
       defaultWorktree: n.defaultWorktree,
       defaultOrchestrate: n.defaultOrchestrate,
@@ -102,6 +104,8 @@ class StoreSettingsMethods {
       combineQueuedFollowUps: n.combineQueuedFollowUps,
       agentBugReports: n.agentBugReports,
       guardrailsEnabled: n.guardrailsEnabled,
+      idleCompactClaudeThreads: n.idleCompactClaudeThreads,
+      titleInstructions: n.titleInstructions,
       prDiffCapLines: n.prDiffCapLines,
       maxConcurrentRuns: n.maxConcurrentRuns,
       agentProfiles: n.agentProfiles,
@@ -234,6 +238,15 @@ class StoreSettingsMethods {
         throw new Error("prCrossReview must be a boolean");
       }
       this.data.settings.prCrossReview = v;
+    }
+    if (
+      Object.prototype.hasOwnProperty.call(patch, "deleteBranchOnMergeOrClose")
+    ) {
+      const v = patch.deleteBranchOnMergeOrClose;
+      if (typeof v !== "boolean") {
+        throw new Error("deleteBranchOnMergeOrClose must be a boolean");
+      }
+      this.data.settings.deleteBranchOnMergeOrClose = v;
     }
     if (Object.prototype.hasOwnProperty.call(patch, "mcpServers")) {
       this.data.settings.mcpServers = validateMcpServers(
@@ -455,6 +468,20 @@ class StoreSettingsMethods {
         throw new Error("guardrailsEnabled must be a boolean");
       }
       this.data.settings.guardrailsEnabled = v;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "idleCompactClaudeThreads")) {
+      const v = patch.idleCompactClaudeThreads;
+      if (typeof v !== "boolean") {
+        throw new Error("idleCompactClaudeThreads must be a boolean");
+      }
+      this.data.settings.idleCompactClaudeThreads = v;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "titleInstructions")) {
+      const v = patch.titleInstructions;
+      if (typeof v !== "string") {
+        throw new Error("titleInstructions must be a string");
+      }
+      this.data.settings.titleInstructions = v.trim().slice(0, TITLE_INSTRUCTIONS_MAX);
     }
     if (Object.prototype.hasOwnProperty.call(patch, "linearApiKey")) {
       const v = patch.linearApiKey;

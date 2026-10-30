@@ -11,11 +11,13 @@ import { useEscapeClose } from "../useEscapeClose";
 import { useModalFocus } from "../useModalFocus";
 import {
   groupPaletteItems,
+  KIND_ORDER,
   paletteActionShortcut,
   paletteModeLabel,
   palettePlaceholder,
   rankPaletteItems,
   scoreMatch,
+  splitSnippetMatch,
   type FileContentHit,
   type PaletteAction,
   type PaletteItem,
@@ -26,12 +28,16 @@ import type {
   ThreadInfo,
   ThreadSearchInput,
   ThreadSearchResult,
+  ThreadSearchMessagesInput,
+  ThreadSearchMessagesResult,
 } from "../shared/ipc";
 import styles from "./CommandPalette.module.css";
 
 const DEBOUNCE_MS = 150;
 const RESULT_CAP = 40;
 const RECENT_THREAD_CAP = 8;
+const MESSAGE_RESULT_CAP = 8;
+const MESSAGE_QUERY_MIN = 3;
 
 export interface CommandPaletteProps {
   open: boolean;
@@ -41,10 +47,14 @@ export interface CommandPaletteProps {
   threads: ThreadInfo[];
   projects: ProjectInfo[];
   searchThreads: (input: ThreadSearchInput) => Promise<ThreadSearchResult>;
+  searchMessages: (
+    input: ThreadSearchMessagesInput,
+  ) => Promise<ThreadSearchMessagesResult>;
   listFiles?: (query: string, opts?: { limit?: number }) => Promise<string[]>;
   searchFileContents?: (query: string) => Promise<FileContentHit[]>;
   canSearchWorkspace: boolean;
   onSelectThread: (id: string) => void;
+  onSelectMessage: (threadId: string, messageId: string) => void;
   onSelectProject: (projectId: string) => void;
   onRunAction: (id: string) => void;
   onOpenFile: (relPath: string, opts?: { reveal?: boolean }) => void;
@@ -79,10 +89,12 @@ export function CommandPalette({
   threads,
   projects,
   searchThreads,
+  searchMessages,
   listFiles,
   searchFileContents,
   canSearchWorkspace,
   onSelectThread,
+  onSelectMessage,
   onSelectProject,
   onRunAction,
   onOpenFile,
@@ -94,6 +106,9 @@ export function CommandPalette({
   const [query, setQuery] = useState("");
   const [index, setIndex] = useState(0);
   const [contentHits, setContentHits] = useState<ThreadInfo[] | null>(null);
+  const [messageHits, setMessageHits] = useState<
+    ThreadSearchMessagesResult["hits"]
+  >([]);
   const [files, setFiles] = useState<string[]>([]);
   const [grepHits, setGrepHits] = useState<FileContentHit[]>([]);
   const [remoteLoading, setRemoteLoading] = useState(false);
@@ -109,6 +124,7 @@ export function CommandPalette({
     setQuery("");
     setIndex(0);
     setContentHits(null);
+    setMessageHits([]);
     setFiles([]);
     setGrepHits([]);
     setRemoteLoading(false);
@@ -146,6 +162,35 @@ export function CommandPalette({
       window.clearTimeout(handle);
     };
   }, [open, mode, actionsOnly, trimmed, searchThreads]);
+
+  // Separate debounce from the thread content-hits search above: both run
+  // off the same query in "command" mode, and the backend already gives
+  // them independent worker slots so one does not cancel the other (#1761).
+  useEffect(() => {
+    if (
+      !open ||
+      mode !== "command" ||
+      actionsOnly ||
+      trimmed.length < MESSAGE_QUERY_MIN
+    ) {
+      setMessageHits([]);
+      return;
+    }
+    const gen = { current: true };
+    const handle = window.setTimeout(() => {
+      void searchMessages({ query: trimmed })
+        .then((res) => {
+          if (gen.current) setMessageHits(res.hits);
+        })
+        .catch(() => {
+          if (gen.current) setMessageHits([]);
+        });
+    }, DEBOUNCE_MS);
+    return () => {
+      gen.current = false;
+      window.clearTimeout(handle);
+    };
+  }, [open, mode, actionsOnly, trimmed, searchMessages]);
 
   useEffect(() => {
     if (!open || mode !== "files" || !canSearchWorkspace || !listFiles) {
@@ -290,7 +335,26 @@ export function CommandPalette({
         addThread(byId.get(thread.id) ?? thread, true);
       }
     }
-    return rankPaletteItems(seeds, trimmed, RESULT_CAP);
+    const ranked = rankPaletteItems(seeds, trimmed, RESULT_CAP);
+    if (!messageHits.length) return ranked;
+    // Message hits are already relevance-ranked (newest first) by the
+    // backend; the query rarely matches their thread title, so they skip
+    // rankPaletteItems' scoreMatch (it would just drop them) and are
+    // merged in after, sorted into KIND_ORDER's "message" slot.
+    const messageItems: PaletteItem[] = messageHits
+      .slice(0, MESSAGE_RESULT_CAP)
+      .map((hit) => ({
+        id: `message:${hit.threadId}:${hit.messageId}`,
+        kind: "message" as const,
+        title: byId.get(hit.threadId)?.title || "Untitled",
+        subtitle: hit.snippet,
+        score: 0,
+      }));
+    const combined = [...ranked, ...messageItems];
+    combined.sort(
+      (a, b) => KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind),
+    );
+    return combined;
   }, [
     mode,
     files,
@@ -299,6 +363,7 @@ export function CommandPalette({
     projects,
     threads,
     contentHits,
+    messageHits,
     actionsOnly,
     trimmed,
   ]);
@@ -340,6 +405,13 @@ export function CommandPalette({
         onSelectThread(item.id.slice("thread:".length));
         return;
       }
+      if (item.kind === "message") {
+        const rest = item.id.slice("message:".length);
+        const sep = rest.indexOf(":");
+        onClose();
+        onSelectMessage(rest.slice(0, sep), rest.slice(sep + 1));
+        return;
+      }
       if (item.kind === "project") {
         onClose();
         onSelectProject(item.id.slice("project:".length));
@@ -357,7 +429,15 @@ export function CommandPalette({
         if (path) onOpenFile(path);
       }
     },
-    [onClose, onModeChange, onOpenFile, onRunAction, onSelectProject, onSelectThread],
+    [
+      onClose,
+      onModeChange,
+      onOpenFile,
+      onRunAction,
+      onSelectMessage,
+      onSelectProject,
+      onSelectThread,
+    ],
   );
 
   const onInputKeyDown = (e: ReactKeyboardEvent<HTMLInputElement>) => {
@@ -462,6 +542,10 @@ export function CommandPalette({
                 {group.items.map((item) => {
                   const i = items.indexOf(item);
                   const highlighted = i === clampedIndex;
+                  const snippetMatch =
+                    item.kind === "message" && item.subtitle
+                      ? splitSnippetMatch(item.subtitle, trimmed)
+                      : null;
                   return (
                     <button
                       key={item.id}
@@ -479,7 +563,19 @@ export function CommandPalette({
                       <span className={styles.rowBody}>
                         <span className={styles.title}>{item.title}</span>
                         {item.subtitle ? (
-                          <span className={styles.subtitle}>{item.subtitle}</span>
+                          <span className={styles.subtitle}>
+                            {snippetMatch ? (
+                              <>
+                                {snippetMatch.pre}
+                                <mark className={styles.match}>
+                                  {snippetMatch.match}
+                                </mark>
+                                {snippetMatch.post}
+                              </>
+                            ) : (
+                              item.subtitle
+                            )}
+                          </span>
                         ) : null}
                       </span>
                       {item.shortcut ? (

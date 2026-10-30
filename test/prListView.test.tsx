@@ -98,6 +98,31 @@ describe("PrListView", () => {
     m.unmount();
   });
 
+  it("shows a Review requested badge only on rows naming the viewer (#1763)", async () => {
+    const listPrs = async (): Promise<ListPrsResult> => ({
+      ok: true,
+      prs: [
+        pr({ number: 11, title: "Needs eyes", reviewRequestedFromMe: true }),
+        pr({ number: 12, title: "Not mine" }),
+      ],
+    });
+    const m = await mount(
+      <PrListView
+        projects={[p1]}
+        threads={[]}
+        listPrs={listPrs}
+        onSelectThread={() => {}}
+      />,
+    );
+    await m.flush();
+    const requested = m.query('[data-pr-row="11"]');
+    const other = m.query('[data-pr-row="12"]');
+    assert.ok(requested?.querySelector("[data-pr-review-requested]"));
+    assert.ok(requested?.textContent?.includes("Review requested"));
+    assert.equal(other?.querySelector("[data-pr-review-requested]"), null);
+    m.unmount();
+  });
+
   it("Needs me ranks agent PRs across projects by attention (#260)", async () => {
     const recent = new Date(Date.now() - 60_000).toISOString();
     const m = await mount(

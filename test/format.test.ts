@@ -9,6 +9,9 @@ import {
   formatWorktreeUsage,
   formatRelativeAge,
   formatWorkingLabel,
+  formatClockTime,
+  formatTimeTooltip,
+  middleTruncate,
   shortModelName,
   providerDisplayName,
   PERMISSION_MODES,
@@ -180,5 +183,75 @@ describe("providerPermissionModes", () => {
       snapToHonouredPermissionMode(["default", "bypassPermissions"], "auto"),
       "default",
     );
+  });
+});
+
+describe("formatClockTime / formatTimeTooltip", () => {
+  it("formats a plain local time with no date for today", () => {
+    const now = new Date(2026, 9, 24, 9, 0, 0).getTime();
+    const t = new Date(2026, 9, 24, 14, 32, 5).getTime();
+    assert.equal(formatClockTime(t, now), "14:32:05");
+  });
+
+  it("prefixes a short date when the timestamp is not today", () => {
+    const now = new Date(2026, 9, 24, 9, 0, 0).getTime();
+    const t = new Date(2026, 9, 20, 14, 32, 5).getTime();
+    assert.equal(formatClockTime(t, now), "Oct 20 14:32:05");
+  });
+
+  it("appends a duration when an end time is known", () => {
+    const start = new Date(2026, 9, 24, 14, 32, 5).getTime();
+    const end = start + 64_000;
+    assert.equal(formatTimeTooltip(start, end, start), "14:32:05 · 1m");
+  });
+
+  it("omits the duration with no end time, or an end at/before start", () => {
+    const start = new Date(2026, 9, 24, 14, 32, 5).getTime();
+    assert.equal(formatTimeTooltip(start, null, start), "14:32:05");
+    assert.equal(formatTimeTooltip(start, start, start), "14:32:05");
+  });
+});
+
+describe("middleTruncate", () => {
+  it("leaves short strings untouched", () => {
+    assert.equal(middleTruncate("abc", 10), "abc");
+    assert.equal(middleTruncate("", 10), "");
+  });
+
+  it("leaves a string exactly at max untouched", () => {
+    assert.equal(middleTruncate("0123456789", 10), "0123456789");
+  });
+
+  it("keeps the start and end with one ellipsis in the middle", () => {
+    const out = middleTruncate("0123456789abcdefghij", 11);
+    assert.equal(out.length, 11);
+    assert.ok(out.includes("…"));
+    assert.ok(out.startsWith("0"));
+    assert.ok(out.endsWith("j"));
+  });
+
+  it("favours the tail when endBias leans toward the end", () => {
+    // 30 chars down to 12: a branch-style bias keeps more of the suffix.
+    const out = middleTruncate("feat/add-the-thing-35693f-xyz", 12, 0.65);
+    assert.equal(out.length, 12);
+    assert.ok(out.endsWith("3f-xyz"));
+  });
+
+  it("is unicode-safe: never splits a surrogate pair", () => {
+    const emoji = "😀".repeat(10); // 10 code points, 20 UTF-16 code units
+    const out = middleTruncate(emoji, 5);
+    assert.equal(Array.from(out).length, 5);
+    assert.ok(!out.includes("�"));
+    // Every remaining char (besides the ellipsis) is a full emoji, not a
+    // lone surrogate half.
+    for (const ch of out) {
+      assert.ok(ch === "…" || ch === "😀");
+    }
+  });
+
+  it("handles a tiny max", () => {
+    assert.equal(middleTruncate("abcdef", 1), "…");
+    assert.equal(middleTruncate("abcdef", 0), "");
+    assert.equal(middleTruncate("abcdef", 2).length, 2);
   });
 });

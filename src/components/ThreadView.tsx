@@ -123,6 +123,7 @@ import { mapReviewBars, type ReviewBar } from "../reviewBar";
 import { isRunCollapsed, toggleRunCollapsed } from "../runHeader";
 import type { SlashAction } from "../slashCommands";
 import { NATIVE_COMPACT_PROVIDERS } from "../slashCommands";
+import { parseBtwCommand } from "../btw";
 import { ProviderQuotaDialog } from "./ProviderQuota";
 import type { ProviderLimitsLoader } from "../providerUsage";
 import { buildBestOfNEntries, providerCanPlan } from "../bestOfN";
@@ -139,6 +140,7 @@ import {
 import {
   setDiffSplit,
   setTranscriptViewMode,
+  useChatWidth,
   useDiffSplit,
   useTranscriptViewMode,
   useUsageLimitsStripEnabled,
@@ -379,6 +381,18 @@ interface ThreadViewProps {
     inputValues?: InputValues,
     feedback?: string,
     alwaysRule?: string,
+  ) => void | Promise<void>;
+  /**
+   * Sending a normal message while a plain permission card is open (#1762):
+   * decline it and hand the typed text to the agent as the new direction.
+   * handleComposerSend calls this instead of onStartRun for that one case.
+   * Optional so existing fixtures that never open a permission card need
+   * not pass it; without it, that send just falls back to onStartRun.
+   */
+  onRedirectPermission?: (
+    requestId: string,
+    prompt: string,
+    attachments?: AttachmentInfo[],
   ) => void | Promise<void>;
   /** "Implement in a new thread" from the plan prompt (#1501). */
   onImplementPlan?: (plan: string, provider?: string) => void | Promise<void>;
@@ -822,6 +836,7 @@ export const ThreadView = memo(function ThreadView({
   onRestoreDraftConsumed,
   onSetPermissionMode,
   onRespondPermission,
+  onRedirectPermission,
   onImplementPlan,
   onSavePlan,
   onClearQuestion,
@@ -1010,6 +1025,14 @@ export const ThreadView = memo(function ThreadView({
   });
   // Reorder/remove write index orders so files move with their item (#1512).
   const queuedOrder = queuedItems.map((_, j) => j);
+  // Alt+↑ from the composer (#1762): same editor the queued strip's own
+  // Edit button opens, on the LAST item.
+  const handleEditLastQueued = useCallback(() => {
+    if (!onEditQueued || queuedItems.length === 0) return;
+    const i = queuedItems.length - 1;
+    setQueuedEditDraft(queuedItems[i]!);
+    setEditingQueued(i);
+  }, [onEditQueued, queuedItems, setQueuedEditDraft, setEditingQueued]);
   const [notesOpen, setNotesOpen] = useState(false);
   const [notesDraft, setNotesDraft] = useState("");
   const [notesError, setNotesError] = useState<string | null>(null);
@@ -1372,6 +1395,7 @@ export const ThreadView = memo(function ThreadView({
   const hiddenCount = start;
   const transcriptView = useTranscriptViewMode();
   const verboseTools = transcriptView === "verbose";
+  const chatWidth = useChatWidth();
   const summaryMode = transcriptView === "summary";
   const isWorking = detail?.thread.status === "working";
   /** Queued items can be steered into the live turn only where the CLI takes stdin. */
@@ -1825,13 +1849,38 @@ export const ThreadView = memo(function ThreadView({
     ],
   );
 
+  // A plain tool-permission card (not a question, not a plan approval) open
+  // while the composer is used to type a normal message (#1762): sending
+  // redirects the agent instead of queuing behind, or steering past, the
+  // card it is blocked on.
+  const pendingPlainPermission =
+    detail?.pendingPermission &&
+    !detail.pendingPermission.inputRequest &&
+    !detail.pendingPermission.questions?.length &&
+    !detail.pendingPermission.plan
+      ? detail.pendingPermission
+      : null;
+
   const handleComposerSend = useCallback(
     (
       prompt: string,
       messageAttachments?: AttachmentInfo[],
       opts?: { steer?: boolean },
-    ) => onStartRun(prompt, undefined, messageAttachments, opts),
-    [onStartRun],
+    ) => {
+      if (
+        pendingPlainPermission &&
+        onRedirectPermission &&
+        !parseBtwCommand(prompt)
+      ) {
+        return onRedirectPermission(
+          pendingPlainPermission.requestId,
+          prompt,
+          messageAttachments,
+        );
+      }
+      return onStartRun(prompt, undefined, messageAttachments, opts);
+    },
+    [onStartRun, onRedirectPermission, pendingPlainPermission],
   );
 
   const storeReply = useCallback((target: ReplyTarget) => {
@@ -3024,6 +3073,7 @@ export const ThreadView = memo(function ThreadView({
       className={styles.main}
       ref={dropHostRef}
       data-thread-drop=""
+      data-chat-width={chatWidth}
     >
       {fileDrag && onDropAttachmentFiles ? (
         <div className={styles.dropOverlay} data-drop-overlay="" aria-hidden>
@@ -5236,6 +5286,7 @@ export const ThreadView = memo(function ThreadView({
         }
         restoreDraft={restoreDraft}
         onRestoreDraftConsumed={onRestoreDraftConsumed}
+        onEditLastQueued={onEditQueued ? handleEditLastQueued : undefined}
         onBuild={onStartWorkflow}
         onBestOfN={onFork && !thread.ask ? runBestOfN : undefined}
         onDelegate={onFork && !thread.ask ? runDelegate : undefined}

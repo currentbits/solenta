@@ -8,6 +8,20 @@
   background: var(--bg);
 }
 
+/*
+ * Chat width setting (issue #1767, Settings → General → Display). Widens
+ * the shared --thread-column variable that .body > * and .composerColumn
+ * both read, so the transcript and composer stay aligned without a second
+ * knob. "full" is a large-but-finite cap rather than max-width: none, since
+ * the composer column's calc() needs a length to add 40px to.
+ */
+.main[data-chat-width="wide"] {
+  --thread-column: 980px;
+}
+.main[data-chat-width="full"] {
+  --thread-column: 10000px;
+}
+
 .chatSlot {
   flex: 1;
   min-width: 0;
@@ -3209,6 +3223,13 @@ button.diffLineGutter:focus-visible {
   font-weight: 500;
 }
 
+/* Hint (#1762): the composer stays usable while this card is open, and
+   sending through it declines the card instead of queuing behind it. */
+.permissionRedirectHint {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
 /* Guardrail warning on an ask-tier prompt (#409): louder than the card it
    sits in, because the card is already amber. */
 .permissionGuardrail {
@@ -4630,6 +4651,7 @@ a.menuItem {
 
 .usageTrack {
   flex: 1;
+  position: relative;
   height: 3px;
   border-radius: var(--radius-pill);
   background: var(--border-soft);
@@ -4640,6 +4662,15 @@ a.menuItem {
   height: 100%;
   border-radius: inherit;
   background: var(--text-dim);
+}
+
+/* Even-pace marker (#1764), mirrored onto the strip's percent-left axis. */
+.usagePace {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--text-muted);
 }
 
 .usageRow[data-usage-severity="warn"] .usageFill {

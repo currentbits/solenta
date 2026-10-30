@@ -110,6 +110,8 @@ import type {
   ModelRoute,
   ThreadSearchInput,
   ThreadSearchResult,
+  ThreadSearchMessagesInput,
+  ThreadSearchMessagesResult,
 } from "./shared/ipc";
 import { resolveCoderApi } from "./coderApi";
 import {
@@ -347,6 +349,21 @@ export interface UseCoderResult {
     feedback?: string,
     alwaysRule?: string,
   ) => Promise<void>;
+  /**
+   * Decline the selected thread's pending plain permission card and hand
+   * the typed text to the agent as the new direction (#1762).
+   */
+  redirectPermission: (
+    requestId: string,
+    prompt: string,
+    attachments?: AttachmentInfo[],
+  ) => Promise<void>;
+  /**
+   * ⌘K "Restart agent session" (#1762): kill the selected thread's
+   * warm/idle provider process. Rejects (surfacing the run-error banner)
+   * while a run is active.
+   */
+  restartAgentSession: () => Promise<void>;
   /** Write plan markdown into the thread's checkout; resolves the path (#1501). */
   savePlan: (plan: string, threadId?: string) => Promise<string>;
   /** Dismiss the selected thread's persisted question card (issue #647). */
@@ -945,6 +962,10 @@ export interface UseCoderResult {
   }) => Promise<ThreadInfo>;
   /** Full-content thread search (titles + message text); Sidebar owns debounce/state. */
   searchThreads: (input: ThreadSearchInput) => Promise<ThreadSearchResult>;
+  /** Message-level search for the command palette (#1761); it owns debounce/state. */
+  searchMessages: (
+    input: ThreadSearchMessagesInput,
+  ) => Promise<ThreadSearchMessagesResult>;
   /** Load another thread's transcript without marking it visited (#393). */
   peekThread: (id: string) => Promise<ThreadDetail>;
 }
@@ -1617,6 +1638,8 @@ export function useCoder(): UseCoderResult {
     stopRun,
     setPermissionMode,
     respondPermission,
+    redirectPermission,
+    restartAgentSession,
     clearQuestion,
     answerSecret,
     setProvider,
@@ -2123,6 +2146,13 @@ export function useCoder(): UseCoderResult {
     [api],
   );
 
+  const searchMessages = useCallback(
+    async (input: ThreadSearchMessagesInput) => {
+      return api.threads.searchMessages(input);
+    },
+    [api],
+  );
+
   /** Load another thread's transcript without marking it visited (#393). */
   const peekThread = useCallback(
     (id: string) => api.threads.peek(id),
@@ -2178,6 +2208,8 @@ export function useCoder(): UseCoderResult {
     stopRun,
     setPermissionMode,
     respondPermission,
+    redirectPermission,
+    restartAgentSession,
     clearQuestion,
     answerSecret,
     setProvider,
@@ -2373,6 +2405,7 @@ export function useCoder(): UseCoderResult {
     listCliSessions,
     importCliSession,
     searchThreads,
+    searchMessages,
     peekThread,
   };
 }

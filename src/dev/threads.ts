@@ -11,6 +11,9 @@ import type {
   ThreadInfo,
   ThreadSearchInput,
   ThreadSearchResult,
+  ThreadSearchMessagesInput,
+  ThreadSearchMessagesHit,
+  ThreadSearchMessagesResult,
   ThreadMessagePin,
   ThreadSummariesInput,
   TrashedThreadInfo,
@@ -25,6 +28,22 @@ import { mockData } from "../mockData.ts";
 import type { DevCtx } from "./context.ts";
 import { DEV_SPEC_ARTIFACTS, SEED_CREW_TASKS } from "./seed.ts";
 import { TITLE_MAX, now, id, cloneDetail } from "./util.ts";
+
+/** ~120 chars of context around the earliest matching word (#1761). */
+function snippetAround(text: string, lower: string, words: string[]): string {
+  let at = -1;
+  for (const w of words) {
+    const i = lower.indexOf(w);
+    if (i >= 0 && (at < 0 || i < at)) at = i;
+  }
+  if (at < 0) at = 0;
+  const start = Math.max(0, at - 60);
+  const end = Math.min(text.length, at + 60);
+  let snippet = text.slice(start, end).replace(/\s+/g, " ").trim();
+  if (start > 0) snippet = "…" + snippet;
+  if (end < text.length) snippet = snippet + "…";
+  return snippet;
+}
 
 export function createThreads(ctx: DevCtx): Pick<CoderApi, "threads"> {
   const { details, rewindRestore, runTimers, runStates, clearedDiff, emitThreads, emitDetail, syncThreadRow, patchThread, newThread, registerThread, clearRunTimer } = ctx;
@@ -159,6 +178,42 @@ export function createThreads(ctx: DevCtx): Pick<CoderApi, "threads"> {
 
         hits.sort((a, b) => b.updatedAt - a.updatedAt);
         return { threads: hits.slice(0, 50), truncated: hits.length > 50 };
+      },
+      /**
+       * Message-level search (#1761): user + assistant text only, words
+       * ANDed, case-insensitive. Up to 30 hits newest first, max 3/thread.
+       */
+      async searchMessages(
+        input: ThreadSearchMessagesInput,
+      ): Promise<ThreadSearchMessagesResult> {
+        if (input.query.trim().length < 3) return { hits: [], truncated: false };
+        const words = input.query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+        if (!words.length) return { hits: [], truncated: false };
+        const scope = input.threadIds ? new Set(input.threadIds) : null;
+        const hits: ThreadSearchMessagesHit[] = [];
+
+        for (const t of ctx.threads) {
+          if (scope && !scope.has(t.id)) continue;
+          const detail = details.get(t.id);
+          if (!detail) continue;
+          let perThread = 0;
+          for (let i = detail.messages.length - 1; i >= 0 && perThread < 3; i--) {
+            const m = detail.messages[i];
+            if (m.role === "tool" || m.role === "event") continue;
+            const lower = m.text.toLowerCase();
+            if (!words.every((w) => lower.includes(w))) continue;
+            perThread++;
+            hits.push({
+              threadId: t.id,
+              messageId: m.id,
+              snippet: snippetAround(m.text, lower, words),
+              createdAt: m.createdAt,
+            });
+          }
+        }
+
+        hits.sort((a, b) => b.createdAt - a.createdAt);
+        return { hits: hits.slice(0, 30), truncated: hits.length > 30 };
       },
       async create(input) {
         const source = input.taskGroupFrom
@@ -394,6 +449,23 @@ export function createThreads(ctx: DevCtx): Pick<CoderApi, "threads"> {
       async answerSecret(input) {
         // Dev threads never spawn, so the value is simply dropped.
         patchThread(input.threadId, { pendingSecret: null });
+      },
+      async restartAgentSession(input) {
+        const detail = details.get(input.threadId);
+        if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
+        if (detail.thread.status === "working") {
+          throw new Error("Cannot restart the agent session while a run is active");
+        }
+        // Dev threads never keep a warm process between turns (electron does
+        // via runner-claude-sessions.js), so there is nothing to kill — just
+        // mirror the confirmation event so the demo UI matches.
+        detail.messages.push({
+          id: id("evt"),
+          role: "event",
+          text: "Agent session restarted; skills and MCP servers reload on the next message",
+          createdAt: now(),
+        });
+        emitDetail(detail);
       },
       // Bookkeeping setters below leave updatedAt alone: visiting, pinning and
       // settling are not activity. The rules they used to mirror (invalid

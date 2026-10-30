@@ -107,12 +107,20 @@ export function buildThreadActionMenuItems(input: {
         id: "snooze",
         label: "Snooze",
         attrs: { "data-snooze-item": "" },
-        children: input.snoozePresets.map((p) => ({
-          id: `snooze:${p.id}`,
-          label: p.label,
-          whenLabel: p.whenLabel,
-          attrs: { "data-snooze-preset": p.id },
-        })),
+        children: [
+          ...input.snoozePresets.map((p) => ({
+            id: `snooze:${p.id}`,
+            label: p.label,
+            whenLabel: p.whenLabel,
+            attrs: { "data-snooze-preset": p.id },
+          })),
+          {
+            id: "snooze:custom",
+            label: "Custom…",
+            separatorBefore: true,
+            attrs: { "data-snooze-custom": "" },
+          },
+        ],
       });
     }
   }

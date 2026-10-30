@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { formatCostUsd, formatTokenCount, providerDisplayName } from "../format";
-import type { ProviderInfo, UsageReport } from "../shared/ipc";
+import type { ModelPrice, ProviderInfo, UsageReport } from "../shared/ipc";
 import {
   USAGE_RANGES,
   filterUsageReport,
   processedTokens,
   summarizeUsage,
+  usageCostByType,
   type UsageBreakdownKind,
   type UsageBreakdownRow,
   type UsageProviderTotal,
@@ -32,6 +33,8 @@ export interface UsageViewProps {
   quotaDemo?: boolean;
   /** Registry rows for display names ("Claude Code"); ids show without it. */
   providers?: readonly ProviderInfo[];
+  /** User model rates (#1531), used to split the cost total by token type. */
+  modelPrices?: Record<string, ModelPrice>;
   onSelectThread?: (id: string) => void;
   existingThreadIds?: Iterable<string>;
   reportControls?: UsageReportControls;
@@ -116,6 +119,7 @@ export function UsageView({
   loadProviderLimits,
   quotaDemo = false,
   providers = [],
+  modelPrices,
   onSelectThread,
   existingThreadIds,
   reportControls,
@@ -219,6 +223,16 @@ export function UsageView({
         ? summarizeUsage(filterUsageReport(report, providerFilter), range, new Date(now))
         : fullSummary,
     [fullSummary, report, providerFilter, range, now],
+  );
+  const costByType = useMemo(
+    () =>
+      usageCostByType(
+        providerFilter ? filterUsageReport(report, providerFilter) : report,
+        range,
+        new Date(now),
+        modelPrices,
+      ),
+    [report, providerFilter, range, now, modelPrices],
   );
   const providerOptions = useMemo(() => {
     const ids = fullSummary.providers.map((p) => p.provider);
@@ -581,16 +595,25 @@ export function UsageView({
                 label="Cached input"
                 value={formatTokenCount(summary.totals.cachedInputTokens)}
                 kind="cached"
+                costUsd={costByType.cachedInputUsd}
               />
               <Stat
                 label="Uncached input"
                 value={formatTokenCount(summary.totals.inputTokens)}
                 kind="uncached"
+                costUsd={costByType.inputUsd}
+              />
+              <Stat
+                label="Cache write"
+                value={formatTokenCount(summary.totals.cacheWriteTokens)}
+                kind="cacheWrite"
+                costUsd={costByType.cacheWriteUsd}
               />
               <Stat
                 label="Output"
                 value={formatTokenCount(summary.totals.outputTokens)}
                 kind="output"
+                costUsd={costByType.outputUsd}
               />
               <Stat
                 label="Wasted"
@@ -751,11 +774,14 @@ function Stat({
   value,
   kind,
   title,
+  costUsd,
 }: {
   label: string;
   value: string;
   kind: string;
   title?: string;
+  /** #1764: per-type dollar split. Omitted entirely for non-token stats. */
+  costUsd?: number | null;
 }) {
   return (
     <div className={styles.stat} data-usage-stat={kind} title={title}>
@@ -766,6 +792,11 @@ function Stat({
       >
         {value}
       </span>
+      {costUsd === undefined ? null : (
+        <span className={styles.statCost} data-usage-stat-cost={kind}>
+          {costUsd == null ? "n/a" : formatCostUsd(costUsd)}
+        </span>
+      )}
     </div>
   );
 }

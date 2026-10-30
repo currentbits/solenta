@@ -1992,6 +1992,24 @@ async function searchThreads(store, input) {
 }
 
 /**
+ * Message-level search for the command palette (#1761): same scope rule
+ * as searchThreads (hidden rows and out-of-scope ids dropped before the
+ * cap), but returns individual message hits instead of thread rows.
+ * @param {import('./store').Store} store
+ * @param {{ query?: string, threadIds?: string[] }} [input]
+ */
+async function searchMessages(store, input) {
+  const query =
+    input && input.query != null ? String(input.query) : "";
+  const ids =
+    input && Array.isArray(input.threadIds) ? new Set(input.threadIds) : null;
+  return store.searchMessages(query, {
+    include: (t) =>
+      t.memoryConsolidate !== true && !isTrashed(t) && (!ids || ids.has(t.id)),
+  });
+}
+
+/**
  * Full thread detail for the renderer.
  *
  * Selecting a thread is visiting it: when markVisited is true (default), stamp
@@ -2077,5 +2095,6 @@ module.exports = {
   listThreads,
   threadSummaries,
   searchThreads,
+  searchMessages,
   getThreadDetail,
 };

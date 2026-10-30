@@ -96,6 +96,7 @@ const {
   listThreads,
   threadSummaries,
   searchThreads,
+  searchMessages,
   getThreadDetail,
 } = require("./services-threads.js");
 const {
@@ -356,6 +357,7 @@ module.exports = {
   listThreads,
   threadSummaries,
   searchThreads,
+  searchMessages,
   getThreadDetail,
   gitStatus,
   parseRevListCount,

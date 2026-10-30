@@ -637,3 +637,56 @@ describe("UsageView", () => {
     m.unmount();
   });
 });
+
+describe("UsageView token-type cost split (#1764)", () => {
+  function pricedReport(): UsageReport {
+    const today = daysAgo(0);
+    return {
+      byDay: {
+        [today]: {
+          claude: {
+            opus: entry({
+              inputTokens: 100_000,
+              cachedInputTokens: 50_000,
+              cacheWriteTokens: 20_000,
+              outputTokens: 30_000,
+              turns: 2,
+              costUsd: (100_000 * 2 + 50_000 * 1 + 20_000 * 3 + 30_000 * 10) / 1e6,
+            }),
+          },
+        },
+      },
+      threadsByDay: {},
+    };
+  }
+
+  it("shows a dollar amount next to each token-type row for a priced model", async () => {
+    const m = await mount(
+      <UsageView
+        loadUsage={async () => pricedReport()}
+        modelPrices={{ opus: { input: 2, output: 10, cacheRead: 1, cacheWrite: 3 } }}
+      />,
+    );
+    await m.flush();
+    const cached = m.query('[data-usage-stat-cost="cached"]');
+    const uncached = m.query('[data-usage-stat-cost="uncached"]');
+    const cacheWrite = m.query('[data-usage-stat-cost="cacheWrite"]');
+    const output = m.query('[data-usage-stat-cost="output"]');
+    assert.ok(cached && uncached && cacheWrite && output, "all four cost cells render");
+    assert.equal(cached!.textContent, "$0.05");
+    assert.equal(uncached!.textContent, "$0.20");
+    assert.equal(cacheWrite!.textContent, "$0.06");
+    assert.equal(output!.textContent, "$0.30");
+    m.unmount();
+  });
+
+  it("shows n/a for the cost split when there is no price table", async () => {
+    const m = await mount(<UsageView loadUsage={async () => pricedReport()} />);
+    await m.flush();
+    assert.equal(m.query('[data-usage-stat-cost="cached"]')?.textContent, "n/a");
+    assert.equal(m.query('[data-usage-stat-cost="uncached"]')?.textContent, "n/a");
+    assert.equal(m.query('[data-usage-stat-cost="cacheWrite"]')?.textContent, "n/a");
+    assert.equal(m.query('[data-usage-stat-cost="output"]')?.textContent, "n/a");
+    m.unmount();
+  });
+});

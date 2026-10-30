@@ -45,7 +45,9 @@ function PalletteHost({
   listFiles,
   searchFileContents,
   searchThreads,
+  searchMessages,
   onSelectThread,
+  onSelectMessage,
   onSelectProject,
   onRunAction,
   onOpenFile,
@@ -58,7 +60,9 @@ function PalletteHost({
     query: string,
   ) => Promise<Array<{ path: string; line: number; text: string }>>;
   searchThreads?: CommandPaletteProps["searchThreads"];
+  searchMessages?: CommandPaletteProps["searchMessages"];
   onSelectThread?: (id: string) => void;
+  onSelectMessage?: (threadId: string, messageId: string) => void;
   onSelectProject?: (id: string) => void;
   onRunAction?: (id: string) => void;
   onOpenFile?: (path: string) => void;
@@ -80,10 +84,14 @@ function PalletteHost({
         searchThreads={
           searchThreads ?? (async () => ({ threads: [], truncated: false }))
         }
+        searchMessages={
+          searchMessages ?? (async () => ({ hits: [], truncated: false }))
+        }
         listFiles={listFiles}
         searchFileContents={searchFileContents}
         canSearchWorkspace={canSearchWorkspace}
         onSelectThread={onSelectThread ?? (() => {})}
+        onSelectMessage={onSelectMessage ?? (() => {})}
         onSelectProject={onSelectProject ?? (() => {})}
         onRunAction={onRunAction ?? (() => {})}
         onOpenFile={onOpenFile ?? (() => {})}
@@ -163,6 +171,46 @@ describe("command palette ui", () => {
     await m.press(input, "Enter");
     await m.flush();
     assert.deepEqual(selected, ["t-fix"]);
+    m.unmount();
+  });
+
+  it("shows message hits with the snippet highlighted; selecting one calls onSelectMessage (#1761)", async () => {
+    const selectedMessages: Array<[string, string]> = [];
+    const m = await mount(
+      <PalletteHost
+        searchMessages={async ({ query }) =>
+          query === "parser bug"
+            ? {
+                hits: [
+                  {
+                    threadId: "t-old",
+                    messageId: "m1",
+                    snippet: "the parser bug is in the lexer",
+                    createdAt: 5,
+                  },
+                ],
+                truncated: false,
+              }
+            : { hits: [], truncated: false }
+        }
+        onSelectMessage={(threadId, messageId) =>
+          selectedMessages.push([threadId, messageId])
+        }
+      />,
+    );
+    const input = m.query("[data-command-palette-input]") as HTMLInputElement;
+    await m.type(input, "parser bug");
+    await inAct(() => new Promise((r) => setTimeout(r, 200)));
+    await m.flush();
+    const messageRow = m.query('[data-palette-kind="message"]') as HTMLElement;
+    assert.ok(messageRow, "a message result row renders");
+    assert.match(messageRow.textContent || "", /parser bug is in the lexer/);
+    const mark = messageRow.querySelector("mark");
+    assert.ok(mark, "the matched word is wrapped for highlighting");
+    assert.equal(mark?.textContent, "parser");
+    await m.click(messageRow);
+    await m.flush();
+    assert.deepEqual(selectedMessages, [["t-old", "m1"]]);
     m.unmount();
   });
 

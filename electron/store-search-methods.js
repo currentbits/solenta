@@ -5,6 +5,9 @@ const {
   collectMessageTexts,
   threadMatches,
   rankSearchHits,
+  matchThreadMessages,
+  messagesForRow,
+  MESSAGE_SEARCH_LIMIT,
 } = require("./threadSearch.js");
 const { isSafeThreadId } = require("./store-util.js");
 
@@ -160,6 +163,147 @@ class StoreSearchMethods {
       if (thread) hits.push(thread);
     }
     return { threads: hits, truncated };
+  }
+
+  /**
+   * Snapshot for the message-search scan: same three message sources as
+   * _buildSearchSnapshot (live/raw/shard), but no title/notes — message
+   * search only looks at message text (#1761).
+   * @param {((thread: object) => boolean) | null} [include]
+   */
+  _buildMessageSearchSnapshot(needle, include) {
+    /** @type {object[]} */
+    const threads = [];
+    for (const thread of this.data.threads) {
+      if (!thread || typeof thread !== "object" || thread.id == null) continue;
+      if (include && !include(thread)) continue;
+      const id = thread.id;
+      const row = { id, liveMessages: null, rawJson: null, shardPath: null };
+      if (Object.prototype.hasOwnProperty.call(this._messagesHydrated, id)) {
+        row.liveMessages = this._messagesHydrated[id] || [];
+      } else if (this._messagesRaw.has(id)) {
+        row.rawJson = this._messagesRaw.get(id);
+      } else {
+        const r = this._threadRange(id);
+        if (r && this._messagesLazy) {
+          row.rawJson = this._messagesLazy.raw.slice(r.start, r.end);
+        } else if (this._messageShards.has(id) && isSafeThreadId(id)) {
+          try {
+            row.shardPath = this._messagePath(id);
+          } catch {
+            // unencodable id: this thread just contributes no hits
+          }
+        }
+      }
+      threads.push(row);
+    }
+    return { mode: "messages", needle, threads };
+  }
+
+  _cancelMessageSearchWorker() {
+    const worker = this._messageSearchWorker;
+    this._messageSearchWorker = null;
+    if (worker) {
+      Promise.resolve(worker.terminate()).catch(() => {});
+    }
+  }
+
+  /**
+   * Own worker/generation slot, separate from _runSearchScan: the palette
+   * fires searchThreads (thread-kind hits) and searchMessages (message-kind
+   * hits) within the same debounce window, and a single shared slot would
+   * have the second call cancel the first's in-flight scan (#1761).
+   * @param {{ needle: string, threads: object[] }} snapshot
+   * @param {number} gen
+   * @returns {Promise<{ hits: object[], truncated: boolean }>}
+   */
+  _runMessageSearchScan(snapshot, gen) {
+    const none = { hits: [], truncated: false };
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (result) => {
+        if (settled) return;
+        settled = true;
+        resolve(gen !== this._messageSearchGen ? none : result);
+      };
+      const SEARCH_INLINE_BATCH = 8;
+      const runInline = () => {
+        const words = snapshot.needle.split(/\s+/).filter(Boolean);
+        /** @type {object[]} */
+        const hits = [];
+        let i = 0;
+        const step = () => {
+          if (gen !== this._messageSearchGen) {
+            finish(none);
+            return;
+          }
+          const end = Math.min(i + SEARCH_INLINE_BATCH, snapshot.threads.length);
+          for (; i < end; i++) {
+            const row = snapshot.threads[i];
+            const messages = messagesForRow(row);
+            for (const hit of matchThreadMessages(row.id, messages, words)) {
+              hits.push(hit);
+            }
+          }
+          if (i < snapshot.threads.length) {
+            setImmediate(step);
+            return;
+          }
+          hits.sort((a, b) => b.createdAt - a.createdAt);
+          finish({
+            hits: hits.slice(0, MESSAGE_SEARCH_LIMIT),
+            truncated: hits.length > MESSAGE_SEARCH_LIMIT,
+          });
+        };
+        setImmediate(step);
+      };
+      try {
+        const { Worker } = require("node:worker_threads");
+        const worker = new Worker(path.join(__dirname, "threadSearch.js"));
+        this._messageSearchWorker = worker;
+        let usedInline = false;
+        worker.once("message", (result) => {
+          if (this._messageSearchWorker === worker) this._messageSearchWorker = null;
+          Promise.resolve(worker.terminate()).catch(() => {});
+          finish(result && Array.isArray(result.hits) ? result : none);
+        });
+        worker.once("error", () => {
+          if (this._messageSearchWorker === worker) this._messageSearchWorker = null;
+          usedInline = true;
+          runInline();
+        });
+        worker.once("exit", () => {
+          if (this._messageSearchWorker === worker) this._messageSearchWorker = null;
+          if (!usedInline) finish(none);
+        });
+        worker.postMessage(snapshot);
+      } catch {
+        runInline();
+      }
+    });
+  }
+
+  /**
+   * Message-level full-text search (#1761): user + assistant text only
+   * (tool/event skipped), case-insensitive, words ANDed. Up to 30 hits
+   * newest first, max 3 per thread. `include` scopes the scan BEFORE the
+   * cap, same contract as searchThreads. Queries under 3 chars match
+   * nothing (the renderer only calls with 3+ chars). Scans shards off the
+   * main thread and does not hydrate transcripts into _messagesHydrated.
+   * @param {unknown} query
+   * @param {{ include?: (thread: object) => boolean }} [opts]
+   * @returns {Promise<{ hits: object[], truncated: boolean }>}
+   */
+  async searchMessages(query, opts) {
+    const raw = query == null ? "" : String(query).trim();
+    if (raw.length < 3) return { hits: [], truncated: false };
+    const needle = raw.toLowerCase();
+    const gen = ++this._messageSearchGen;
+    this._cancelMessageSearchWorker();
+    const snapshot = this._buildMessageSearchSnapshot(needle, opts && opts.include);
+    const result = await this._runMessageSearchScan(snapshot, gen);
+    if (gen !== this._messageSearchGen) return { hits: [], truncated: false };
+    return result;
   }
 }
 
