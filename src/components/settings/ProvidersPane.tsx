@@ -543,7 +543,7 @@ function withEnv(
   const current = findInstanceFor(p, instances);
   if (current) {
     const env = patchEnv(current.env, patch);
-    if (!p.instanceId && Object.keys(env).length === 0) {
+    if (!p.instanceId && Object.keys(env).length === 0 && !(current.extraArgs ?? []).length) {
       return instances.filter((i) => i !== current);
     }
     return instances.map((i) => (i === current ? { ...i, env } : i));
@@ -551,6 +551,30 @@ function withEnv(
   const env = patchEnv({}, patch);
   if (Object.keys(env).length === 0) return [...instances];
   return [...instances, { id: p.id, name: p.name.slice(0, 40), provider: p.id, configDir: null, env }];
+}
+
+/**
+ * Extra launch arguments (#1780) with a base provider's overlay instance
+ * patched. Same overlay lifecycle as withEnv: created on first non-empty
+ * value, dropped when both env and extraArgs are empty.
+ */
+function withExtraArgs(
+  instances: readonly ProviderInstance[],
+  p: ProviderInfo,
+  extraArgs: string[],
+): ProviderInstance[] {
+  const current = findInstanceFor(p, instances);
+  if (current) {
+    if (!p.instanceId && extraArgs.length === 0 && Object.keys(current.env).length === 0) {
+      return instances.filter((i) => i !== current);
+    }
+    return instances.map((i) => (i === current ? { ...i, extraArgs } : i));
+  }
+  if (extraArgs.length === 0) return [...instances];
+  return [
+    ...instances,
+    { id: p.id, name: p.name.slice(0, 40), provider: p.id, configDir: null, env: {}, extraArgs },
+  ];
 }
 
 function SecretField({
@@ -850,6 +874,15 @@ function ProviderDetail({
         />
       ) : null}
 
+      {!custom && BASE_ENV.has(p.id) && (
+        <ExtraArgsSection
+          extraArgs={inst?.extraArgs ?? []}
+          saving={saving}
+          setError={setError}
+          onSave={(extraArgs) => persistInstances(withExtraArgs(instances, p, extraArgs))}
+        />
+      )}
+
       {!p.bestEffort && (
         <ModelsPanel
           provider={p}
@@ -969,6 +1002,75 @@ function EnvSection({
           <p className={base.note}>
             Extra variables for this CLI&apos;s local runs. Values are stored like other provider
             keys and never logged.
+          </p>
+        </>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Extra launch arguments (#1780) for a base provider with no named
+ * instance picked: a single argv-text field, saved through the same
+ * overlay instance (id === provider) as EnvSection's env.
+ */
+function ExtraArgsSection({
+  extraArgs,
+  saving,
+  setError,
+  onSave,
+}: {
+  extraArgs: readonly string[];
+  saving: boolean;
+  setError: (error: string | null) => void;
+  onSave: (extraArgs: string[]) => Promise<boolean>;
+}) {
+  const [open, setOpen] = useState(extraArgs.length > 0);
+  const [draft, setDraft] = useState(() => argvText(extraArgs));
+  return (
+    <div className={styles.keys} data-provider-extra-args="">
+      <button
+        type="button"
+        className={styles.disclosure}
+        aria-expanded={open}
+        onClick={() => {
+          setDraft(argvText(extraArgs));
+          setOpen((o) => !o);
+        }}
+      >
+        <Chevron open={open} />
+        Extra launch arguments{extraArgs.length > 0 ? ` (${extraArgs.length})` : ""}
+      </button>
+      {open && (
+        <>
+          <input
+            className={`${base.input} ${base.monoInput}`}
+            aria-label="Extra launch arguments"
+            value={draft}
+            disabled={saving}
+            autoComplete="off"
+            spellCheck={false}
+            placeholder="--add-dir ../shared"
+            onChange={(e) => setDraft(e.target.value)}
+          />
+          <div className={base.fieldRow}>
+            <button
+              type="button"
+              className={`${base.btn} ${base.btnPrimary}`}
+              data-provider-extra-args-save=""
+              disabled={saving}
+              onClick={() => {
+                const parsed = parseMcpArgv(draft);
+                if (!parsed.ok) return setError(parsed.error);
+                void onSave(parsed.args);
+              }}
+            >
+              Save
+            </button>
+          </div>
+          <p className={base.note}>
+            Appended to every launch, e.g. --add-dir ../shared. Flags the app
+            controls itself (output format, resume, session id) are rejected.
           </p>
         </>
       )}
@@ -1251,6 +1353,8 @@ interface InstanceDraft {
   fullAccess: string;
   cwd: string;
   transcript: NonNullable<ProviderInstance["transcript"]>;
+  /** Extra launch arguments (#1780): argv text, parsed by parseMcpArgv on submit. */
+  extraArgs: string;
 }
 
 function emptyInstanceDraft(providers: readonly ProviderInfo[], provider?: string): InstanceDraft {
@@ -1267,6 +1371,7 @@ function emptyInstanceDraft(providers: readonly ProviderInfo[], provider?: strin
     fullAccess: "",
     cwd: "",
     transcript: "stdout",
+    extraArgs: "",
   };
 }
 
@@ -1287,6 +1392,7 @@ function draftFromInstance(inst: ProviderInstance): InstanceDraft {
     fullAccess: argvText(inst.fullAccessArgs),
     cwd: inst.cwd ?? "",
     transcript: inst.transcript ?? "stdout",
+    extraArgs: argvText(inst.extraArgs),
   };
 }
 
@@ -1301,6 +1407,8 @@ function instanceFromDraft(draft: InstanceDraft, prev?: ProviderInstance): Provi
     if (!ENV_KEY_RE.test(key)) return `"${key}" is not a valid variable name`;
     env[key] = row.value;
   }
+  const extraArgs = parseMcpArgv(draft.extraArgs);
+  if (!extraArgs.ok) return extraArgs.error;
   const next: ProviderInstance = {
     ...(prev?.openaiCompatible ? { openaiCompatible: prev.openaiCompatible } : {}),
     id: draft.id ?? crypto.randomUUID().slice(0, 8),
@@ -1308,6 +1416,7 @@ function instanceFromDraft(draft: InstanceDraft, prev?: ProviderInstance): Provi
     provider: draft.provider,
     configDir: draft.configDir.trim() || null,
     env,
+    extraArgs: extraArgs.args,
   };
   if (draft.provider === "generic") {
     const command = parseMcpArgv(draft.command);
@@ -1584,6 +1693,27 @@ function InstanceForm({
           </p>
         </div>
       ) : null}
+      {!generic && (
+        <div className={base.field}>
+          <label className={base.fieldLabel} htmlFor="instance-extra-args">
+            Extra launch arguments
+          </label>
+          <input
+            id="instance-extra-args"
+            className={base.input}
+            value={draft.extraArgs}
+            disabled={saving}
+            autoComplete="off"
+            spellCheck={false}
+            placeholder="--add-dir ../shared"
+            onChange={(e) => onChange({ ...draft, extraArgs: e.target.value })}
+          />
+          <p className={base.note}>
+            Appended to every launch, e.g. --add-dir ../shared. Flags the app
+            controls itself (output format, resume, session id) are rejected.
+          </p>
+        </div>
+      )}
       <div className={base.field}>
         <span className={base.fieldLabel}>Environment</span>
         {draft.env.map((row, i) => (

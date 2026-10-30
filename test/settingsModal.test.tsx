@@ -3623,6 +3623,7 @@ describe("SettingsModal Providers › add and custom providers (#453, #458, #171
     provider: "claude",
     configDir: "~/.claude-work",
     env: { ANTHROPIC_BASE_URL: "https://router.example" },
+    extraArgs: [],
   };
   function recorder() {
     const saved: Array<Partial<AppSettings>> = [];
@@ -3689,6 +3690,40 @@ describe("SettingsModal Providers › add and custom providers (#453, #458, #171
     assert.deepEqual({ ...list![0], id: "x" }, { ...INSTANCE, id: "x" });
   });
 
+  it("extra launch arguments (#1780): quoted argv parses, denylisted flags show a validation message", async () => {
+    const r = recorder();
+    const m = await mount(modal({ initialPane: "providers", providers: [CLAUDE], settings: { providerInstances: [] } as Partial<AppSettings> as AppSettings, onSaveSettings: r.onSaveSettings }));
+    await m.click(m.query("[data-add-provider]"));
+    await m.click(m.query('[data-add-kind="instance"]'));
+    await m.type(m.query("#instance-name"), "work");
+    await m.type(m.query("#instance-extra-args"), `--add-dir "../shared dir"`);
+    await m.click(m.queryAll("[data-instance-form] button").find((b) => b.textContent === "Add"));
+    const list = r.saved.at(-1)?.providerInstances;
+    assert.deepEqual(list?.[0]?.extraArgs, ["--add-dir", "../shared dir"]);
+
+    // The denylist itself is enforced server-side (electron/providerInstances.js);
+    // the renderer surfaces whatever message the save round-trip returns.
+    const denied = modal({
+      initialPane: "providers",
+      providers: [CLAUDE],
+      settings: { providerInstances: [] } as Partial<AppSettings> as AppSettings,
+      onSaveSettings: async () => {
+        throw new Error('"--resume" is controlled by Solenta and cannot be set as an extra launch argument');
+      },
+    });
+    const m2 = await mount(denied);
+    await m2.click(m2.query("[data-add-provider]"));
+    await m2.click(m2.query('[data-add-kind="instance"]'));
+    await m2.type(m2.query("#instance-name"), "work");
+    await m2.type(m2.query("#instance-extra-args"), "--resume s1");
+    await m2.click(m2.queryAll("[data-instance-form] button").find((b) => b.textContent === "Add"));
+    assert.match(
+      m2.query("[role=\"alert\"]")?.textContent ?? "",
+      /controlled by Solenta/,
+    );
+    m2.unmount();
+  });
+
   it("an instance row signs in under its ref, and edits or deletes", async () => {
     const r = recorder();
     const signIns: string[] = [];
@@ -3729,6 +3764,7 @@ describe("SettingsModal Providers › add and custom providers (#453, #458, #171
       provider: "generic",
       configDir: null,
       env: {},
+      extraArgs: [],
       command: ["/opt/my tools/goose", "run", "-t"],
       fullAccessArgs: ["--yolo"],
       cwd: "packages/app",

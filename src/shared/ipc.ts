@@ -3425,6 +3425,14 @@ export interface ProviderInstance {
   configDir: string | null;
   /** Extra env for this instance's spawns only. Stored like MCP secrets. */
   env: Record<string, string>;
+  /**
+   * Extra CLI flags appended to a normal run's argv (#1780), after the
+   * app's own flags and before the trailing prompt where one exists.
+   * Denylisted flags (claude: -p/--print/--output-format/--input-format/
+   * --resume/--session-id; codex: the app-server subcommand itself) are
+   * rejected on save.
+   */
+  extraArgs?: string[];
   /** generic only: argv, binary first. The prompt is appended last. */
   command?: string[];
   /** generic only: appended in Full access. Empty = the CLI decides. */
