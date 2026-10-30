@@ -64,6 +64,22 @@ function canHostWorktree(project) {
 }
 
 /**
+ * Per-project default-worktree override (#1775): a project's own
+ * `defaultWorktree` wins over settings.defaultWorktree when it is set;
+ * null/absent falls through to the global setting. This only resolves the
+ * stored preference — callers still apply their own can-host-a-worktree
+ * guard (canHostWorktree, scratch, remoteHost) at the call site.
+ * @param {{ defaultWorktree?: boolean | null } | null | undefined} project
+ * @param {{ defaultWorktree?: boolean } | null | undefined} settings
+ * @returns {boolean}
+ */
+function resolveDefaultWorktree(project, settings) {
+  const override = project && project.defaultWorktree;
+  if (override === true || override === false) return override;
+  return Boolean(settings && settings.defaultWorktree === true);
+}
+
+/**
  * Worktree (or project checkout) the spec artifacts live in — same folder
  * readSpecArtifact / the CLI use.
  * @param {import('./store').Store} store
@@ -99,6 +115,7 @@ module.exports = {
   scheduleArtifactCleanup,
   scheduleSimulatorRelease,
   canHostWorktree,
+  resolveDefaultWorktree,
   specCwd,
   purgeThread,
 };

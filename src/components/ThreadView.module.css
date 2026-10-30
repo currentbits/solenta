@@ -3871,6 +3871,62 @@ button.diffLineGutter:focus-visible {
   }
 }
 
+/* Background jobs (#1775): a collapsed one-liner under the working strip,
+   expanding into a named list of shells / subagents / workflow agents. */
+.bgJobs {
+  margin-top: 2px;
+}
+
+.bgJobsToggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.bgJobsToggle:hover {
+  color: var(--text);
+}
+
+.bgJobsChevron {
+  display: inline-flex;
+  transition: transform 0.12s ease;
+}
+
+.bgJobsChevron[data-open="true"] {
+  transform: rotate(90deg);
+}
+
+.bgJobsList {
+  margin: 4px 0 0;
+  padding-left: 16px;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.bgJobsItem {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.bgJobsLabel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono);
+}
+
 /* Queued follow-up: the status strip, muted — it is waiting, not running. */
 .queuedStrip {
   display: flex;

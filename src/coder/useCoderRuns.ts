@@ -13,6 +13,7 @@ import { errorMessage } from "./errorMessage";
 import { parseBtwCommand } from "../btw";
 import { parseFeedbackCommand } from "../feedback";
 import { parseGoalCommand } from "../slashCommands";
+import { resolveDefaultWorktree } from "../projectDefaults";
 
 /** Thread create/fork and run start/rewind for the selected thread. */
 export function useCoderRuns({
@@ -72,7 +73,9 @@ export function useCoderRuns({
       const worktree =
         !ask &&
         !orchestrate &&
-        (opts?.worktree ?? (settings?.defaultWorktree === true && local));
+        (opts?.worktree ??
+          (resolveDefaultWorktree(project, settings?.defaultWorktree === true) &&
+            local));
       // Inherit provider+model from the currently selected thread when present.
       const inheritFrom = selectedRef.current
         ? threadsRef.current.find((x) => x.id === selectedRef.current)
