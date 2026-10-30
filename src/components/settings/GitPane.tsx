@@ -1,5 +1,5 @@
 import { useState, type RefObject } from "react";
-import type { AppSettings, MergeSpotlight, ProjectInfo } from "../../shared/ipc";
+import type { AppSettings, MergeSpotlight, ProjectInfo, ProviderInfo } from "../../shared/ipc";
 import styles from "../SettingsModal.module.css";
 import type { SettingsDraftKey, SettingsModalProps } from "../SettingsModal";
 import { SourceControlSection } from "../SourceControlSection";
@@ -8,6 +8,7 @@ import { ProjectPicker } from "./shared";
 
 export function GitPane({
   settings,
+  providers,
   saving,
   error,
   setError,
@@ -31,6 +32,7 @@ export function GitPane({
   setToolsProjectId,
 }: {
   settings: AppSettings | null;
+  providers: ProviderInfo[];
   saving: boolean;
   error: string | null;
   setError: (error: string | null) => void;
@@ -262,6 +264,82 @@ export function GitPane({
           Appended to the generated PR title/body prompt and takes
           precedence over the default style; the repo&apos;s PR template
           still applies. Empty uses the default prompt.
+        </p>
+        <label className={styles.fieldLabel} htmlFor="git-text-provider">
+          Model for commit messages and PR text
+        </label>
+        <div className={styles.fieldRow}>
+          <select
+            id="git-text-provider"
+            className={styles.input}
+            data-git-text-provider=""
+            value={settings?.gitTextModel?.provider ?? ""}
+            disabled={saving || settings == null}
+            onChange={(e) => {
+              const provider = e.target.value || null;
+              setError(null);
+              void onSaveSettings({
+                gitTextModel: provider ? { provider, model: null } : null,
+              }).catch((err) => {
+                setError(
+                  err instanceof Error && err.message
+                    ? err.message
+                    : "Failed to save settings",
+                );
+              });
+            }}
+          >
+            <option value="">Same as the thread</option>
+            {providers.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+                {!p.available ? " (not installed)" : ""}
+              </option>
+            ))}
+          </select>
+          {(() => {
+            const providerId = settings?.gitTextModel?.provider || "";
+            const selected = providers.find((p) => p.id === providerId);
+            const modelInfo = selected?.modelInfo ?? [];
+            if (!providerId) return null;
+            const current = settings?.gitTextModel?.model ?? "";
+            const known = modelInfo.some((m) => m.id === current);
+            return (
+              <select
+                id="git-text-model"
+                className={styles.input}
+                data-git-text-model=""
+                value={current}
+                disabled={saving || settings == null}
+                onChange={(e) => {
+                  const model = e.target.value || null;
+                  setError(null);
+                  void onSaveSettings({
+                    gitTextModel: { provider: providerId, model },
+                  }).catch((err) => {
+                    setError(
+                      err instanceof Error && err.message
+                        ? err.message
+                        : "Failed to save settings",
+                    );
+                  });
+                }}
+              >
+                <option value="">Provider default</option>
+                {modelInfo.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.label}
+                  </option>
+                ))}
+                {current && !known && <option value={current}>{current}</option>}
+              </select>
+            );
+          })()}
+        </div>
+        <p className={styles.note}>
+          When set, commit messages and PR text are generated with this
+          provider and model instead of the thread&apos;s own, falling back
+          to the thread&apos;s if the provider is not installed.
         </p>
       </section>
 

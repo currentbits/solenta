@@ -18,7 +18,7 @@ const {
   OUTPUT_TRUNCATE,
   runClaude,
 } = require("./claude.js");
-const { threadInstanceEnv, threadProviderRef } = require("./providerInstances.js");
+const { threadInstanceEnv, threadProviderRef, threadExtraArgv } = require("./providerInstances.js");
 const { randomUUID, createHash } = require("node:crypto");
 const { grokGuardrailNotice } = require("./grok-guardrail-hook.js");
 const {
@@ -498,6 +498,10 @@ function createClaudeRun(ctx) {
         // A failed copy must not block the turn; PostToolUse/Stop still run.
       }
     }
+    // Extra launch arguments (#1780): named instance's, or the base
+    // provider's overlay row. Joins the reuse key below too: changing it
+    // mid-thread must respawn a warm interactive process.
+    const extraArgv = threadExtraArgv(store.getSettings(), thread);
     const args = entryDef.buildArgs({
       prompt,
       sessionId: thread.sessionId || null,
@@ -512,6 +516,7 @@ function createClaudeRun(ctx) {
       askWriteDirs,
       askReads,
       userHooks: userHookSettings,
+      extraArgs: extraArgv,
     });
     // Claude runs interactively: prompt over stdin, permission prompts via
     // the control protocol. Other claude-stream providers (e.g. grok) keep
@@ -1498,6 +1503,8 @@ function createClaudeRun(ctx) {
       fast: thread.fast === true,
       // --add-dir / ask rules are argv: a folder change or grant respawns.
       dirs: [extraDirs, askWriteDirs, askReads],
+      // Extra launch arguments (#1780) are argv: an edit must respawn.
+      extraArgv,
       mcp: interactive ? mcpArgs : [],
       // The config path is stable; a warm process has already read its contents.
       mcpHash: interactive

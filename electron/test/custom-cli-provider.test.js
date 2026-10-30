@@ -45,6 +45,7 @@ describe("custom CLI rows parse", () => {
       provider: "generic",
       configDir: null,
       env: {},
+      extraArgs: [],
       command: ["goose", "run", "-t"],
       fullAccessArgs: [],
       cwd: null,

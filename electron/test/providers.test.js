@@ -582,6 +582,42 @@ describe("providers registry", () => {
     assert.ok(!plan.includes("--effort"));
   });
 
+  it("buildArgs: extraArgs (#1780) join before the trailing prompt, or at the end with no prompt", () => {
+    const claudeArgs = getProvider("claude").buildArgs({
+      prompt: "hi",
+      permissionMode: "default",
+      extraArgs: ["--add-dir", "../shared"],
+    });
+    // No trailing prompt in claude's interactive argv: extraArgs is last.
+    assert.deepEqual(claudeArgs.slice(-2), ["--add-dir", "../shared"]);
+
+    const grokArgs = getProvider("grok").buildArgs({
+      prompt: "hello",
+      permissionMode: "default",
+      extraArgs: ["--rules", "extra"],
+    });
+    assert.deepEqual(grokArgs.slice(-4), ["--rules", "extra", "-p", "hello"]);
+
+    const cursorArgs = getProvider("cursor").buildArgs({
+      prompt: "hi cursor",
+      permissionMode: "default",
+      extraArgs: ["--foo"],
+    });
+    assert.deepEqual(cursorArgs.slice(-2), ["--foo", "hi cursor"]);
+
+    const opencodeArgs = getProvider("opencode").buildArgs({
+      prompt: "hello",
+      extraArgs: ["--bar"],
+    });
+    assert.deepEqual(opencodeArgs.slice(-2), ["--bar", "hello"]);
+
+    // Absent/empty extraArgs changes nothing (default run shape).
+    assert.deepEqual(
+      getProvider("claude").buildArgs({ prompt: "hi", permissionMode: "default" }),
+      getProvider("claude").buildArgs({ prompt: "hi", permissionMode: "default", extraArgs: [] }),
+    );
+  });
+
   it("resolveBin uses env overrides", () => {
     const claude = getProvider("claude");
     assert.equal(resolveBin(claude, {}), "claude");

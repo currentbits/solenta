@@ -305,6 +305,42 @@ function normalizeDefaultModel(raw) {
 }
 
 /**
+ * Settings.gitTextModel (#1780): provider/model for commit message and PR
+ * text generation (electron/commitmsg.js). Absent/junk/empty provider →
+ * null, the thread's own provider/model (today's behaviour).
+ * @param {unknown} raw
+ * @returns {{ provider: string, model: string | null } | null}
+ */
+function normalizeGitTextModel(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const rec = /** @type {{ provider?: unknown, model?: unknown }} */ (raw);
+  const provider = typeof rec.provider === "string" ? rec.provider.trim() : "";
+  if (!provider) return null;
+  const model = typeof rec.model === "string" && rec.model.trim() ? rec.model.trim().slice(0, 100) : null;
+  return { provider, model };
+}
+
+/**
+ * Strict validation for settings:set. Throws on the first problem.
+ * @param {unknown} raw
+ * @returns {{ provider: string, model: string | null } | null}
+ */
+function validateGitTextModel(raw) {
+  if (raw == null) return null;
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error("gitTextModel must be an object with provider and model, or null");
+  }
+  const rec = /** @type {{ provider?: unknown, model?: unknown }} */ (raw);
+  if (typeof rec.provider !== "string" || !rec.provider.trim()) {
+    throw new Error("gitTextModel.provider must be a non-empty string");
+  }
+  if (rec.model != null && typeof rec.model !== "string") {
+    throw new Error("gitTextModel.model must be a string or null");
+  }
+  return normalizeGitTextModel(rec);
+}
+
+/**
  * Settings.quotaFailover (issue #711). Ordered provider ids to try after a
  * quota-exhausted turn. Absent/junk → [] (no failover; park or fail as today).
  * Duplicates and empty strings dropped. Unknown ids are skipped at use time.
@@ -483,6 +519,7 @@ function normalizeSettings(raw) {
     titleInstructions: "",
     commitMessageInstructions: "",
     prInstructions: "",
+    gitTextModel: null,
     prDiffCapLines: DEFAULT_PR_DIFF_CAP_LINES,
     maxConcurrentRuns: DEFAULT_MAX_CONCURRENT_RUNS,
     agentProfiles: [],
@@ -688,6 +725,9 @@ function normalizeSettings(raw) {
     typeof prInstructions === "string"
       ? prInstructions.trim().slice(0, PR_INSTRUCTIONS_MAX)
       : "";
+  settings.gitTextModel = normalizeGitTextModel(
+    /** @type {{ gitTextModel?: unknown }} */ (obj).gitTextModel,
+  );
   settings.autoSettleOnMerge =
     /** @type {{ autoSettleOnMerge?: unknown }} */ (obj).autoSettleOnMerge !==
     false;
@@ -955,6 +995,8 @@ module.exports = {
   DEFAULT_AUTO_SETTLE_AFTER_DAYS,
   normalizeDefaultProvider,
   normalizeDefaultModel,
+  normalizeGitTextModel,
+  validateGitTextModel,
   validateQuotaFailover,
   normalizeQuotaFailover,
   normalizeSettings,

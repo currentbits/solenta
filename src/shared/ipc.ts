@@ -3425,6 +3425,14 @@ export interface ProviderInstance {
   configDir: string | null;
   /** Extra env for this instance's spawns only. Stored like MCP secrets. */
   env: Record<string, string>;
+  /**
+   * Extra CLI flags appended to a normal run's argv (#1780), after the
+   * app's own flags and before the trailing prompt where one exists.
+   * Denylisted flags (claude: -p/--print/--output-format/--input-format/
+   * --resume/--session-id; codex: the app-server subcommand itself) are
+   * rejected on save.
+   */
+  extraArgs?: string[];
   /** generic only: argv, binary first. The prompt is appended last. */
   command?: string[];
   /** generic only: appended in Full access. Empty = the CLI decides. */
@@ -3913,6 +3921,13 @@ export interface AppSettings {
    * Trimmed, capped at PR_INSTRUCTIONS_MAX (~1000) chars. Default "".
    */
   prInstructions: string;
+  /**
+   * Provider/model used to generate commit messages and PR title/body
+   * (#1780, electron/commitmsg.js). null (the default) means the thread's
+   * own provider/model, as before. When set, that provider's CLI must be
+   * installed or the thread's is used instead (console warning).
+   */
+  gitTextModel: { provider: string; model: string | null } | null;
   /**
    * PR size cap in changed lines (additions + deletions vs the base branch),
    * enforced when a PR is created from the app (issue #402, DORA small

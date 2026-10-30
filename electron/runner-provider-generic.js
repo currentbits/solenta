@@ -232,6 +232,8 @@ function createGenericRun(ctx) {
     if (thread.permissionMode === "bypassPermissions") {
       args.push(...(inst.fullAccessArgs || []));
     }
+    // Extra launch arguments (#1780), always on, before the trailing prompt.
+    args.push(...(inst.extraArgs || []));
     const cwd = !inst.cwd
       ? worktree
       : inst.cwd.startsWith("~/")

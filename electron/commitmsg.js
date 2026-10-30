@@ -249,9 +249,12 @@ async function suggestCommitMessage(opts) {
     }
   }
 
-  const message = cleanSubject(await providerText(thread, prompt, env));
+  const target = gitTextTarget(store, thread, env);
+  const message = cleanSubject(
+    await providerText({ ...thread, ...target }, prompt, env),
+  );
   if (!message) {
-    throw new Error(`${providerLabel(thread)} returned an empty message`);
+    throw new Error(`${providerLabel(target)} returned an empty message`);
   }
   assertNoOutboundSecrets(message, "commit message");
   return { message };
@@ -261,6 +264,33 @@ async function suggestCommitMessage(opts) {
 function providerLabel(thread) {
   const entry = getProvider(thread.provider);
   return entry ? entry.name : String(thread.provider);
+}
+
+/**
+ * Provider/model to use for commit message and PR text generation (#1780).
+ * The `gitTextModel` setting overrides the thread's own provider/model when
+ * set AND that provider's CLI is installed; otherwise falls back to the
+ * thread's, with a console warning so a stale pick is visible in the logs.
+ *
+ * @param {import('./store').Store} store
+ * @param {{ provider?: string, model?: string | null }} thread
+ * @param {NodeJS.ProcessEnv} env
+ * @returns {{ provider?: string, model?: string | null }}
+ */
+function gitTextTarget(store, thread, env) {
+  const configured = store.getSettings ? store.getSettings().gitTextModel : null;
+  if (!configured || !configured.provider) {
+    return { provider: thread.provider, model: thread.model };
+  }
+  const entry = getProvider(configured.provider);
+  const bin = entry ? resolveBin(entry, env) : null;
+  if (!entry || !bin || !isBinAvailable(bin, undefined, env)) {
+    console.warn(
+      `gitTextModel provider "${configured.provider}" is not installed; using the thread's ${thread.provider}`,
+    );
+    return { provider: thread.provider, model: thread.model };
+  }
+  return { provider: configured.provider, model: configured.model || null };
 }
 
 /**
@@ -391,9 +421,10 @@ async function suggestPrText(opts) {
     baseBranch,
     instructions: store.getSettings ? store.getSettings().prInstructions : "",
   });
-  const out = parsePrText(await providerText(thread, prompt, env));
+  const target = gitTextTarget(store, thread, env);
+  const out = parsePrText(await providerText({ ...thread, ...target }, prompt, env));
   if (!out.title) {
-    throw new Error(`${providerLabel(thread)} returned an empty title`);
+    throw new Error(`${providerLabel(target)} returned an empty title`);
   }
   assertNoOutboundSecrets(`${out.title}\n${out.body}`, "PR");
   return out;
@@ -462,6 +493,7 @@ module.exports = {
   extractSubject,
   cleanSubject,
   extractCodexMessage,
+  gitTextTarget,
   TIMEOUT_MS,
   PROMPT_PATCH_LIMIT,
 };

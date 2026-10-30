@@ -16,6 +16,7 @@ const {
   DEFAULT_AUTO_SETTLE_AFTER_DAYS,
   normalizeDefaultProvider,
   normalizeDefaultModel,
+  validateGitTextModel,
   validateQuotaFailover,
   normalizeQuotaFailover,
   normalizeSettings,
@@ -110,6 +111,7 @@ class StoreSettingsMethods {
       titleInstructions: n.titleInstructions,
       commitMessageInstructions: n.commitMessageInstructions,
       prInstructions: n.prInstructions,
+      gitTextModel: n.gitTextModel,
       prDiffCapLines: n.prDiffCapLines,
       maxConcurrentRuns: n.maxConcurrentRuns,
       agentProfiles: n.agentProfiles,
@@ -502,6 +504,9 @@ class StoreSettingsMethods {
         throw new Error("prInstructions must be a string");
       }
       this.data.settings.prInstructions = v.trim().slice(0, PR_INSTRUCTIONS_MAX);
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "gitTextModel")) {
+      this.data.settings.gitTextModel = validateGitTextModel(patch.gitTextModel);
     }
     if (Object.prototype.hasOwnProperty.call(patch, "linearApiKey")) {
       const v = patch.linearApiKey;
