@@ -61,10 +61,35 @@ import { isPdfAttachment, PdfTextNote } from "../composer/AttachmentChip";
 const RESTORE_ACTIVE_TITLE =
   "Cannot restore a checkpoint while a run is active";
 
+const LIGHTBOX_MIN_SCALE = 1;
+const LIGHTBOX_MAX_SCALE = 8;
+/** A pointer move past this many px is a drag, not a click (issue #1782). */
+const LIGHTBOX_DRAG_THRESHOLD = 4;
+const LIGHTBOX_KEY_STEP = 1.4;
+
+function clampScale(scale: number): number {
+  return Math.min(LIGHTBOX_MAX_SCALE, Math.max(LIGHTBOX_MIN_SCALE, scale));
+}
+
 /**
- * Full-size viewer for an image clicked anywhere in the thread body. Clicking
- * the image toggles fit-to-window / native resolution (the overlay scrolls);
- * backdrop, close button and Escape all dismiss.
+ * Native pixel size as a multiple of the current "fit" size. The img's CSS
+ * box (max-width/max-height: 100%, object-fit: contain) is never scaled up
+ * past its natural size, so getBoundingClientRect divided by the current
+ * transform scale always recovers the fit size, and naturalWidth / that is
+ * >= 1.
+ */
+function nativeScaleFor(img: HTMLImageElement, currentScale: number): number {
+  const fitWidth = img.getBoundingClientRect().width / currentScale;
+  if (!img.naturalWidth || !fitWidth) return 2;
+  return clampScale(img.naturalWidth / fitWidth);
+}
+
+/**
+ * Full-size viewer for an image clicked anywhere in the thread body. Click
+ * (without dragging) toggles fit / native size; wheel or trackpad pinch
+ * zooms centered on the pointer; a pointer drag pans once zoomed in;
+ * double-click toggles fit / 2x; +/-/0 zoom and reset from the keyboard.
+ * Backdrop, close button and Escape are unchanged (#1782).
  */
 export function ImageLightbox({
   src,
@@ -76,9 +101,138 @@ export function ImageLightbox({
   onClose: () => void;
 }) {
   const dialogRef = useRef<HTMLDivElement>(null);
-  const [zoomed, setZoomed] = useState(false);
+  const imgRef = useRef<HTMLImageElement>(null);
+  const [scale, setScale] = useState(1);
+  const [tx, setTx] = useState(0);
+  const [ty, setTy] = useState(0);
+  // scale/tx/ty read inside the pointer handlers via refs: PointerEvent
+  // handlers are React props here (not imperative listeners), so each
+  // render closes over fresh state already, but the drag record below
+  // needs the values from pointerdown time, not the latest render.
+  const drag = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    startTx: number;
+    startTy: number;
+    moved: boolean;
+  } | null>(null);
   useEscapeClose(true, onClose);
   useModalFocus(true, dialogRef);
+
+  /** Zoom to `next`, keeping the point under (clientX, clientY) fixed. */
+  const zoomTo = (next: number, clientX: number, clientY: number) => {
+    const clamped = clampScale(next);
+    if (clamped === scale) return;
+    if (clamped === LIGHTBOX_MIN_SCALE) {
+      setScale(LIGHTBOX_MIN_SCALE);
+      setTx(0);
+      setTy(0);
+      return;
+    }
+    const img = imgRef.current;
+    if (!img) {
+      setScale(clamped);
+      return;
+    }
+    const rect = img.getBoundingClientRect();
+    const factor = 1 - clamped / scale;
+    setTx((v) => v + (clientX - rect.left) * factor);
+    setTy((v) => v + (clientY - rect.top) * factor);
+    setScale(clamped);
+  };
+
+  /** Click toggles fit/native; a drag past the threshold is not a click. */
+  const toggleFitNative = (clientX: number, clientY: number) => {
+    const img = imgRef.current;
+    if (scale > LIGHTBOX_MIN_SCALE) {
+      zoomTo(LIGHTBOX_MIN_SCALE, clientX, clientY);
+    } else {
+      zoomTo(img ? nativeScaleFor(img, scale) : 2, clientX, clientY);
+    }
+  };
+
+  const onWheel = (e: React.WheelEvent<HTMLImageElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const factor = Math.exp(-e.deltaY * 0.0015);
+    zoomTo(scale * factor, e.clientX, e.clientY);
+  };
+
+  const onDoubleClick = (e: React.MouseEvent<HTMLImageElement>) => {
+    e.stopPropagation();
+    zoomTo(scale > LIGHTBOX_MIN_SCALE ? LIGHTBOX_MIN_SCALE : 2, e.clientX, e.clientY);
+  };
+
+  const onPointerDown = (e: React.PointerEvent<HTMLImageElement>) => {
+    e.stopPropagation();
+    drag.current = {
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+      startTx: tx,
+      startTy: ty,
+      moved: false,
+    };
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+  };
+
+  const onPointerMove = (e: React.PointerEvent<HTMLImageElement>) => {
+    const d = drag.current;
+    if (!d || d.pointerId !== e.pointerId) return;
+    const dx = e.clientX - d.startX;
+    const dy = e.clientY - d.startY;
+    if (!d.moved && Math.hypot(dx, dy) > LIGHTBOX_DRAG_THRESHOLD) {
+      d.moved = true;
+    }
+    if (d.moved && scale > LIGHTBOX_MIN_SCALE) {
+      setTx(d.startTx + dx);
+      setTy(d.startTy + dy);
+    }
+  };
+
+  const onPointerUp = (e: React.PointerEvent<HTMLImageElement>) => {
+    e.stopPropagation();
+    const d = drag.current;
+    drag.current = null;
+    if (!d || d.pointerId !== e.pointerId) return;
+    e.currentTarget.releasePointerCapture?.(e.pointerId);
+    if (d.moved) return;
+    toggleFitNative(e.clientX, e.clientY);
+  };
+
+  /** The browser cancelled the gesture (e.g. a touch scroll takeover): drop
+   * the drag record without treating it as a click. */
+  const onPointerCancel = (e: React.PointerEvent<HTMLImageElement>) => {
+    const d = drag.current;
+    if (d && d.pointerId === e.pointerId) drag.current = null;
+  };
+
+  const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === "+" || e.key === "=") {
+      e.preventDefault();
+      const rect = imgRef.current?.getBoundingClientRect();
+      zoomTo(
+        scale * LIGHTBOX_KEY_STEP,
+        rect ? rect.left + rect.width / 2 : 0,
+        rect ? rect.top + rect.height / 2 : 0,
+      );
+    } else if (e.key === "-" || e.key === "_") {
+      e.preventDefault();
+      const rect = imgRef.current?.getBoundingClientRect();
+      zoomTo(
+        scale / LIGHTBOX_KEY_STEP,
+        rect ? rect.left + rect.width / 2 : 0,
+        rect ? rect.top + rect.height / 2 : 0,
+      );
+    } else if (e.key === "0") {
+      e.preventDefault();
+      setScale(1);
+      setTx(0);
+      setTy(0);
+    }
+  };
+
   return (
     <div
       ref={dialogRef}
@@ -89,17 +243,30 @@ export function ImageLightbox({
       tabIndex={-1}
       data-image-lightbox=""
       onClick={onClose}
+      onKeyDown={onKeyDown}
     >
       <img
+        ref={imgRef}
         className={styles.lightboxImg}
-        data-zoom={zoomed ? "1" : undefined}
+        data-zoom={scale > LIGHTBOX_MIN_SCALE ? "1" : undefined}
         src={src}
         alt={alt}
-        title={zoomed ? "Fit to window" : "View at full size"}
-        onClick={(e) => {
-          e.stopPropagation();
-          setZoomed((v) => !v);
+        title={scale > LIGHTBOX_MIN_SCALE ? "Fit to window" : "View at full size"}
+        style={{
+          transform: `translate(${tx}px, ${ty}px) scale(${scale})`,
+          transformOrigin: "0 0",
         }}
+        // The real click-vs-drag toggle runs in onPointerUp; this only stops
+        // the browser's own trailing click event (pointerup always fires
+        // one) from bubbling into the backdrop's onClick and closing the
+        // lightbox right after a plain click opened/toggled it.
+        onClick={(e) => e.stopPropagation()}
+        onWheel={onWheel}
+        onDoubleClick={onDoubleClick}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerCancel}
       />
       <button
         type="button"
@@ -112,6 +279,28 @@ export function ImageLightbox({
       </button>
     </div>
   );
+}
+
+/**
+ * Claude's `Skill` tool_use input is `{skill: "name", ...}` in the public
+ * API shape; toolSummary's (electron/claude.js) generic "first string
+ * value" fallback means a differently-shaped input still carries a name
+ * somewhere, so this reads loosely rather than requiring one exact key.
+ */
+function skillNameFromInput(input: string): string {
+  try {
+    const obj = JSON.parse(input);
+    if (obj && typeof obj === "object" && !Array.isArray(obj)) {
+      const preferred = obj.skill ?? obj.name;
+      if (typeof preferred === "string" && preferred) return preferred;
+      for (const v of Object.values(obj)) {
+        if (typeof v === "string" && v) return v;
+      }
+    }
+  } catch {
+    // Streaming partial JSON, or not JSON at all: no name yet.
+  }
+  return "";
 }
 
 function ToolCallCard({
@@ -173,52 +362,70 @@ function ToolCallCard({
       ? "error"
       : "done";
   const page = tool.html || htmlFromToolOutput(tool.output);
+  const isSkill = tool.name === "Skill";
+
+  const header = isSkill ? (
+    <button
+      type="button"
+      className={styles.skillChip}
+      data-skill-chip=""
+      title={formatTimeTooltip(message.createdAt)}
+      aria-expanded={open}
+      onClick={() => setManual(!open)}
+    >
+      <span className={styles.toolDot} data-status={status} aria-label={status} />
+      Skill: {skillNameFromInput(tool.input) || "skill"}
+    </button>
+  ) : (
+    <div
+      className={styles.toolHeader}
+      title={formatTimeTooltip(message.createdAt)}
+      onClick={() => setManual(!open)}
+    >
+      <button
+        type="button"
+        className={styles.toolToggle}
+        onClick={(e) => {
+          e.stopPropagation();
+          setManual(!open);
+        }}
+        aria-expanded={open}
+      >
+        <span
+          className={styles.toolDot}
+          data-status={status}
+          aria-label={status}
+        />
+        <span className={styles.toolName}>{tool.name}</span>
+      </button>
+      <span className={styles.toolSummary}>
+        <PathText text={redactDisplay(message.text)} />
+      </span>
+      <span className={styles.chevron} data-open={open} aria-hidden="true">
+        <svg
+          width="9"
+          height="9"
+          viewBox="0 0 10 10"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <path d="M3.5 2 6.5 5 3.5 8" />
+        </svg>
+      </span>
+    </div>
+  );
 
   return (
     <section
       className={`${bare ? styles.toolBare : `${styles.card} ${styles.toolCard}`}${entered ? ` ${styles.streamIn}` : ""}`}
       data-message-id={message.id}
       data-stream-in={entered ? "" : undefined}
+      data-skill-call={isSkill ? "" : undefined}
     >
-      <div
-        className={styles.toolHeader}
-        title={formatTimeTooltip(message.createdAt)}
-        onClick={() => setManual(!open)}
-      >
-        <button
-          type="button"
-          className={styles.toolToggle}
-          onClick={(e) => {
-            e.stopPropagation();
-            setManual(!open);
-          }}
-          aria-expanded={open}
-        >
-          <span
-            className={styles.toolDot}
-            data-status={status}
-            aria-label={status}
-          />
-          <span className={styles.toolName}>{tool.name}</span>
-        </button>
-        <span className={styles.toolSummary}>
-          <PathText text={redactDisplay(message.text)} />
-        </span>
-        <span className={styles.chevron} data-open={open} aria-hidden="true">
-          <svg
-            width="9"
-            height="9"
-            viewBox="0 0 10 10"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.6"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <path d="M3.5 2 6.5 5 3.5 8" />
-          </svg>
-        </span>
-      </div>
+      {header}
       {open && (
         <div className={styles.toolBody}>
           <pre className={styles.toolPre}>

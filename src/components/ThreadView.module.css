@@ -1067,6 +1067,32 @@ a.btn {
   max-width: 100%;
 }
 
+/*
+ * Skill tool_use calls render as a compact chip instead of the full
+ * .toolHeader bar (#1782): clicking it still toggles the same .toolBody
+ * disclosure below, so expanding shows the original tool card details.
+ */
+.skillChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 0;
+  padding: 3px 10px 3px 8px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.skillChip:hover {
+  color: var(--text);
+  background: var(--card-hover);
+  border-color: var(--blue-border);
+}
+
 .toolGroup {
   display: flex;
   flex-direction: column;
@@ -2089,6 +2115,10 @@ button.diffLineGutter:focus-visible {
 }
 
 .body {
+  /* Anchor for the "Jump to latest" pill (#1782): an absolutely positioned
+     direct child of a scrolling element is laid out against its padding
+     box, not its scrolled content, so the pill stays put under scroll. */
+  position: relative;
   flex: 1;
   min-height: 0;
   overflow-y: auto;
@@ -2102,6 +2132,37 @@ button.diffLineGutter:focus-visible {
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+/*
+ * Jump to latest (#1782). A direct child of .body, so the `.body > *` rule
+ * below (same specificity, same cascade) would otherwise stretch it to the
+ * thread column width; the compound selector outranks it. bottom:16px
+ * keeps clear of the composer, which is a sibling of .body, not inside it.
+ */
+.body > .jumpToLatest {
+  position: absolute;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 7px 14px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: var(--shadow-pop);
+}
+
+.body > .jumpToLatest:hover {
+  background: var(--card-hover);
+  border-color: var(--blue-border);
 }
 
 /* Comfortable reading column: every timeline block shares one centered measure. */
@@ -2562,8 +2623,14 @@ button.diffLineGutter:focus-visible {
   background: var(--scrim-heavy);
 }
 
-/* margin auto, not justify/align: centring a zoomed image with those clips
-   the overflowing edges out of reach of the scrollbars. */
+/*
+ * margin auto, not justify/align: centring a zoomed image with those clips
+ * the overflowing edges out of reach of the scrollbars. The CSS box always
+ * stays at "fit" size (never upscaled past the natural image size); click,
+ * wheel/pinch, double-click and +/-/0 all zoom via the transform instead
+ * (#1782), so native/100% is just a particular scale rather than a second
+ * sizing system layered on top of this one.
+ */
 .lightboxImg {
   margin: auto;
   max-width: 100%;
@@ -2571,11 +2638,10 @@ button.diffLineGutter:focus-visible {
   object-fit: contain;
   border-radius: 6px;
   cursor: zoom-in;
+  touch-action: none;
 }
 
 .lightboxImg[data-zoom="1"] {
-  max-width: none;
-  max-height: none;
   cursor: zoom-out;
 }
 

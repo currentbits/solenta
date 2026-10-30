@@ -21,6 +21,7 @@ import {
   getDivergenceCardEnabled,
   getPasteCardsEnabled,
   getUsageLimitsStripEnabled,
+  getWrapCodeBlocksEnabled,
   setChatWidth,
   setComposerVimEnabled,
   setEnterSendsEnabled,
@@ -28,6 +29,7 @@ import {
   setPasteCardsEnabled,
   setRunDurationEnabled,
   setUsageLimitsStripEnabled,
+  setWrapCodeBlocksEnabled,
 } from "../src/uiPrefs";
 import type {
   AgentConfigDoctorReport,
@@ -142,7 +144,10 @@ function modal(stubs: Stubs = {}) {
   );
 }
 
-afterEach(unmountAll);
+afterEach(() => {
+  unmountAll();
+  setWrapCodeBlocksEnabled(false);
+});
 
 describe("SettingsModal memory section", () => {
   it("shows the entry and vector counts it was given", async () => {
@@ -3134,6 +3139,24 @@ describe("SettingsModal Display group (moved from Environment)", () => {
     assert.equal(box.checked, true);
     assert.equal(getUsageLimitsStripEnabled(), true);
     assert.equal(window.localStorage.getItem("coder.usageLimitsStrip"), "on");
+    m.unmount();
+  });
+
+  it("offers wrap long lines in code blocks off by default (#1782)", async () => {
+    setWrapCodeBlocksEnabled(false);
+    const m = await mount(modal());
+    const card = m.query("[data-display-prefs]");
+    assert.ok(card, "Display group on General");
+    const box = card.querySelector(
+      "[data-wrap-code-pref]",
+    ) as HTMLInputElement | null;
+    assert.ok(box, "wrap code blocks checkbox");
+    assert.equal(box.checked, false);
+    assert.match(card.textContent || "", /Wrap long lines in code blocks/);
+    await m.click(box);
+    assert.equal(box.checked, true);
+    assert.equal(getWrapCodeBlocksEnabled(), true);
+    assert.equal(window.localStorage.getItem("coder.wrapCodeBlocks"), "on");
     m.unmount();
   });
 
