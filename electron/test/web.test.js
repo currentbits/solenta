@@ -501,12 +501,17 @@ describe("one map, two transports + packaging", () => {
     });
   });
 
-  it("package-app.sh copies electron/*.js and node_modules/ws", () => {
+  it("package-app.sh copies every electron/ .js (subdirectories too) and node_modules/ws", () => {
     const sh = fs.readFileSync(
       path.join(__dirname, "../../scripts/package-app.sh"),
       "utf8",
     );
-    assert.match(sh, /electron\/\*\.js/);
+    // Recursive: a top-level-only copy dropped electron/channels/ and every
+    // packaged build hung at boot. Tests stay out of the bundle.
+    for (const script of [sh, fs.readFileSync(path.join(__dirname, "../../scripts/package-cross.sh"), "utf8")]) {
+      assert.match(script, /rsync [^\n]*--exclude='\/test\/' --include='\*\/' --include='\*\.js' --exclude='\*'/);
+      assert.match(script, /^\s+electron\/ "\$(APP_DIR|PAYLOAD)\/electron\/"$/m);
+    }
     // ws ships via ROOT_NM_PKGS + `cp node_modules/$pkg`, not a hardcoded
     // `node_modules/ws` path (that string lives in verify-package.sh).
     assert.match(sh, /ROOT_NM_PKGS=\(ws /);
