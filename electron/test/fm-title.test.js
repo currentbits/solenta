@@ -6,7 +6,7 @@ const path = require("node:path");
 const { execFileSync } = require("node:child_process");
 const { Store } = require("../store.js");
 const services = require("../services.js");
-const { maybeApplyFmTitle } = require("../fm-title.js");
+const { maybeApplyFmTitle, buildTitlePrompt } = require("../fm-title.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
 const { rmTree } = require("./support/rmTree.js");
 
@@ -37,6 +37,30 @@ function seedFirstTurn(store, threadId, userText, assistantText) {
     createdAt: Date.now() + 1,
   });
 }
+
+describe("buildTitlePrompt (custom title instructions, #1765)", () => {
+  it("is unchanged when instructions are empty", () => {
+    const withEmpty = buildTitlePrompt("Do a thing", "Done.", "");
+    const withNone = buildTitlePrompt("Do a thing", "Done.");
+    assert.equal(withEmpty, withNone);
+    assert.doesNotMatch(withEmpty, /Extra instructions/);
+  });
+
+  it("appends the instructions when set", () => {
+    const prompt = buildTitlePrompt(
+      "Do a thing",
+      "Done.",
+      "Start with the issue number. Lowercase.",
+    );
+    assert.match(
+      prompt,
+      /Extra instructions:\nStart with the issue number\. Lowercase\./,
+    );
+    // Still has the base rules and the user/assistant text.
+    assert.match(prompt, /Write a title of at most 6 words/);
+    assert.match(prompt, /User:\nDo a thing/);
+  });
+});
 
 describe("maybeApplyFmTitle", () => {
   let tmpDir;
@@ -139,5 +163,25 @@ describe("maybeApplyFmTitle", () => {
     });
     assert.equal(saved, null);
     assert.equal(store.getThread(thread.id).title, "Ship checklist");
+  });
+
+  it("passes the titleInstructions setting through to the fm prompt (#1765)", async () => {
+    services.setSettings(store, {
+      titleInstructions: "Start with the issue number.",
+    });
+    seedFirstTurn(store, thread.id, "Fix the flaky test", "Looking now.");
+
+    const captured = path.join(tmpDir, "captured-prompt.txt");
+    const bin = writeFakeFm(
+      tmpDir,
+      `const fs = require("fs");
+fs.writeFileSync(${JSON.stringify(captured)}, process.argv[process.argv.length - 1]);
+console.log("Captured title");`,
+    );
+    await maybeApplyFmTitle(store, thread.id, {
+      env: { ...process.env, CODER_FM_BIN: bin },
+    });
+    const prompt = fs.readFileSync(captured, "utf8");
+    assert.match(prompt, /Extra instructions:\nStart with the issue number\./);
   });
 });
