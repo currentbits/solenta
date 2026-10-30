@@ -3922,6 +3922,13 @@ export interface AppSettings {
    */
   prInstructions: string;
   /**
+   * Provider/model used to generate commit messages and PR title/body
+   * (#1780, electron/commitmsg.js). null (the default) means the thread's
+   * own provider/model, as before. When set, that provider's CLI must be
+   * installed or the thread's is used instead (console warning).
+   */
+  gitTextModel: { provider: string; model: string | null } | null;
+  /**
    * PR size cap in changed lines (additions + deletions vs the base branch),
    * enforced when a PR is created from the app (issue #402, DORA small
    * batches as a product default). Default 400; null disables the cap.

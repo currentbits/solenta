@@ -729,6 +729,7 @@ export function SettingsModal({
           {pane === "git" && (
           <GitPane
             settings={settings}
+            providers={providers}
             saving={saving}
             error={error}
             setError={setError}

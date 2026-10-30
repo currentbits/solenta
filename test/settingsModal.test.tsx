@@ -2122,6 +2122,65 @@ describe("SettingsModal commit message and PR instructions (#1774)", () => {
   });
 });
 
+describe("SettingsModal git text model (#1780)", () => {
+  const CLAUDE: ProviderInfo = { ...KIMI, id: "claude", name: "Claude Code" };
+  const CODEX: ProviderInfo = {
+    ...KIMI,
+    id: "codex",
+    name: "Codex",
+    models: ["gpt-6.1-sol"],
+    modelInfo: [{ id: "gpt-6.1-sol", label: "GPT-6.1-Sol", description: "", vendor: "OpenAI" }],
+  };
+
+  it('defaults to "Same as the thread" and saves a provider then a model', async () => {
+    const patches: Partial<AppSettings>[] = [];
+    const m = await mount(
+      modal({
+        initialPane: "git",
+        providers: [CLAUDE, CODEX],
+        settings: { dailyBudgetUsd: null, autoSettleAfterDays: 3, gitTextModel: null } as AppSettings,
+        onSaveSettings: async (patch) => {
+          patches.push(patch);
+          return { dailyBudgetUsd: null, autoSettleAfterDays: 3 } as AppSettings;
+        },
+      }),
+    );
+    const providerSelect = m.query("[data-git-text-provider]") as HTMLSelectElement;
+    assert.equal(providerSelect.value, "");
+    assert.equal(m.query("[data-git-text-model]"), null, "no model picker until a provider is chosen");
+
+    await m.change(providerSelect, "codex");
+    assert.deepEqual(patches.at(-1), { gitTextModel: { provider: "codex", model: null } });
+
+    await m.rerender(
+      modal({
+        initialPane: "git",
+        providers: [CLAUDE, CODEX],
+        settings: {
+          dailyBudgetUsd: null,
+          autoSettleAfterDays: 3,
+          gitTextModel: { provider: "codex", model: null },
+        } as AppSettings,
+        onSaveSettings: async (patch) => {
+          patches.push(patch);
+          return { dailyBudgetUsd: null, autoSettleAfterDays: 3 } as AppSettings;
+        },
+      }),
+    );
+    const modelSelect = m.query("[data-git-text-model]") as HTMLSelectElement;
+    assert.ok(modelSelect, "model picker appears once a provider is chosen");
+    await m.change(modelSelect, "gpt-6.1-sol");
+    assert.deepEqual(patches.at(-1), {
+      gitTextModel: { provider: "codex", model: "gpt-6.1-sol" },
+    });
+
+    // Back to "Same as the thread" clears the whole setting, not just the model.
+    await m.change(providerSelect, "");
+    assert.deepEqual(patches.at(-1), { gitTextModel: null });
+    m.unmount();
+  });
+});
+
 describe("SettingsModal worker model pool (issue #467)", () => {
   const namedPool: SubagentPool = {
     defaultAlias: "fast",

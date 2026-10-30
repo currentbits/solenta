@@ -417,6 +417,70 @@ console.log("feat: cursor print subject");
     assert.match(prompt, /\?\? a\.txt/);
   });
 
+  it("gitTextModel (#1780): uses the configured provider/model instead of the thread's", async () => {
+    fs.writeFileSync(path.join(repo, "a.txt"), "one\n");
+    services.setSettings(store, {
+      gitTextModel: { provider: "cursor", model: "composer-2.5" },
+    });
+    const cursorLog = path.join(tmpDir, "fake-cursor-log.json");
+    const cursorBin = writeFakeBin(
+      path.join(tmpDir, "fake-cursor"),
+      `#!/usr/bin/env node
+const fs = require("fs");
+fs.writeFileSync(process.env.FAKE_CURSOR_LOG, JSON.stringify(process.argv.slice(2)));
+console.log("feat: from the configured provider");
+`,
+    );
+
+    const result = await suggestCommitMessage({
+      store,
+      threadId: thread.id,
+      env: {
+        ...process.env,
+        // Thread is "claude" (default); its bin is deliberately unset
+        // (and the fake-claude log untouched) to prove it is never run.
+        CODER_CURSOR_BIN: cursorBin,
+        FAKE_CURSOR_LOG: cursorLog,
+        CODER_FM_DISABLE: "1",
+      },
+    });
+    assert.equal(result.message, "feat: from the configured provider");
+    assert.equal(fs.existsSync(logPath), false, "the thread's own provider never ran");
+    const argv = JSON.parse(fs.readFileSync(cursorLog, "utf8"));
+    assert.equal(argv[argv.indexOf("--model") + 1], "composer-2.5");
+  });
+
+  it("gitTextModel (#1780): falls back to the thread's provider when the configured one is not installed", async () => {
+    fs.writeFileSync(path.join(repo, "a.txt"), "one\n");
+    services.setSettings(store, {
+      gitTextModel: { provider: "cursor", model: null },
+    });
+    const warnings = [];
+    const origWarn = console.warn;
+    console.warn = (...args) => warnings.push(args.join(" "));
+    try {
+      const result = await suggestCommitMessage({
+        store,
+        threadId: thread.id,
+        env: {
+          ...process.env,
+          CODER_CLAUDE_BIN: fakeBin,
+          FAKE_CLAUDE_LOG: logPath,
+          CODER_CURSOR_BIN: path.join(tmpDir, "missing-cursor"),
+          CODER_FM_DISABLE: "1",
+        },
+      });
+      assert.equal(result.message, "feat: generated subject", "falls back to the thread's claude");
+      assert.ok(fs.existsSync(logPath), "the thread's own provider ran");
+      assert.ok(
+        warnings.some((w) => /cursor.*not installed|not installed.*cursor/i.test(w)),
+        `expected an install warning, got: ${JSON.stringify(warnings)}`,
+      );
+    } finally {
+      console.warn = origWarn;
+    }
+  });
+
   it("falls back to the provider when fm exits non-zero", async () => {
     fs.writeFileSync(path.join(repo, "a.txt"), "one\n");
     const fmBin = writeFakeBin(
