@@ -18,6 +18,7 @@ import { isTestFile } from "../shared/testFiles";
 import {
   setDiffHideTests,
   setDiffTreeView,
+  useDiffFilesCollapsed,
   useDiffHideTests,
   useDiffTreeView,
 } from "../uiPrefs";
@@ -107,6 +108,54 @@ export function TreeListToggle() {
         Tree
       </button>
     </div>
+  );
+}
+
+/**
+ * Per-file collapse (issue #1787): "Start diff files collapsed" starts every
+ * file's diff body hidden behind a header until it is expanded, either by
+ * clicking the header or by selecting that file from the list/tree. Shared
+ * by the Git pane, the PR Code tab and turn diffs: `startCollapsed` is the
+ * pref, `expanded` is each view's own "has been opened" set, so the pref
+ * stays a pure default and never fights a click.
+ */
+export function fileCollapsed(
+  startCollapsed: boolean,
+  expanded: Set<string>,
+  path: string,
+): boolean {
+  return startCollapsed && !expanded.has(path);
+}
+
+/** Header row above a file's diff body: chevron, path, click/Enter toggles (#1787). */
+export function FileCollapseHeader({
+  path,
+  collapsed,
+  onToggle,
+}: {
+  path: string;
+  collapsed: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={styles.dirRow}
+      data-diff-file-header={path}
+      aria-expanded={!collapsed}
+      onClick={onToggle}
+    >
+      <span
+        className={styles.dirTwisty}
+        data-open={collapsed ? undefined : ""}
+        aria-hidden
+      >
+        ›
+      </span>
+      <span className={styles.dirName} title={path}>
+        {path}
+      </span>
+    </button>
   );
 }
 
@@ -279,8 +328,27 @@ export const TurnDiffPanel = memo(function TurnDiffPanel({
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const cacheRef = useRef(new Map<string, DiffResult>());
   const requestRef = useRef(0);
+  /** Files explicitly opened (click or select) while this sha is mounted (#1787). */
+  const [expandedFiles, setExpandedFiles] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const startCollapsed = useDiffFilesCollapsed();
+  const expandFile = (path: string) =>
+    setExpandedFiles((prev) => (prev.has(path) ? prev : new Set(prev).add(path)));
+  const toggleFile = (path: string) =>
+    setExpandedFiles((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  const selectFile = (path: string) => {
+    setSelectedPath(path);
+    expandFile(path);
+  };
 
   useEffect(() => {
+    setExpandedFiles(new Set());
     const cached = cacheRef.current.get(sha);
     if (cached) {
       setDiff(cached);
@@ -394,7 +462,7 @@ export const TurnDiffPanel = memo(function TurnDiffPanel({
                   key={f.path}
                   file={f}
                   selected={selectedPath === f.path}
-                  onSelect={setSelectedPath}
+                  onSelect={selectFile}
                 />
               ))}
             </div>
@@ -403,17 +471,27 @@ export const TurnDiffPanel = memo(function TurnDiffPanel({
             <p className={styles.empty}>No textual diff for this file</p>
           ) : (
             <div className={styles.patch}>
-              {visible.map((p) => (
-                <Fragment key={p.path}>
-                  {p.hunks.length === 0 ? (
-                    p.text.split("\n").map((line, i) => (
-                      <PatchLine key={`${p.path}:${i}`} line={line} />
-                    ))
-                  ) : (
-                    <FileHunks patch={p} mode={mode} />
-                  )}
-                </Fragment>
-              ))}
+              {visible.map((p) => {
+                const collapsed = fileCollapsed(startCollapsed, expandedFiles, p.path);
+                return (
+                  <Fragment key={p.path}>
+                    {startCollapsed ? (
+                      <FileCollapseHeader
+                        path={p.path}
+                        collapsed={collapsed}
+                        onToggle={() => toggleFile(p.path)}
+                      />
+                    ) : null}
+                    {collapsed ? null : p.hunks.length === 0 ? (
+                      p.text.split("\n").map((line, i) => (
+                        <PatchLine key={`${p.path}:${i}`} line={line} />
+                      ))
+                    ) : (
+                      <FileHunks patch={p} mode={mode} />
+                    )}
+                  </Fragment>
+                );
+              })}
             </div>
           )}
           {diff.truncated ? (

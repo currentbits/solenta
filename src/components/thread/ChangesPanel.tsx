@@ -44,13 +44,20 @@ import {
   setDiffScope,
   setDiffSplit,
   setDiffWrap,
+  useDiffFilesCollapsed,
   useDiffHideTests,
   useDiffIgnoreWhitespace,
   useDiffSplit,
   useDiffTreeView,
   useDiffWrap,
 } from "../../uiPrefs";
-import { TestFilesBar, TreeListToggle, filterTestFiles } from "../TurnDiffPanel";
+import {
+  FileCollapseHeader,
+  TestFilesBar,
+  TreeListToggle,
+  filterTestFiles,
+  fileCollapsed,
+} from "../TurnDiffPanel";
 import { buildFileTree, type FileTreeDir, type FileTreeNode } from "../../fileTree";
 import { blastRadiusTitle, isCiWorkflowPath } from "../../blastRadius";
 import { middleTruncate } from "../../format";
@@ -809,6 +816,24 @@ export const ChangesPanel = memo(function ChangesPanel({
   const [collapsedDirs, setCollapsedDirs] = useState<Set<string>>(
     () => new Set(),
   );
+  /** Files explicitly opened (click header or select) this thread (#1787). */
+  const [expandedFiles, setExpandedFiles] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const startFilesCollapsed = useDiffFilesCollapsed();
+  const expandFile = (path: string) =>
+    setExpandedFiles((prev) => (prev.has(path) ? prev : new Set(prev).add(path)));
+  const toggleFileCollapse = (path: string) =>
+    setExpandedFiles((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  const selectFile = (path: string) => {
+    setSelectedPath(path);
+    expandFile(path);
+  };
   /** Copy-path feedback (#1772): which path was just copied, if any. */
   const [copiedPath, setCopiedPath] = useState<string | null>(null);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -969,6 +994,7 @@ export const ChangesPanel = memo(function ChangesPanel({
     setUnstagedHunks(new Set());
     setFilePatches({});
     setCollapsedDirs(new Set(saved?.collapsedDirs ?? []));
+    setExpandedFiles(new Set());
     setCopiedPath(null);
     knownFilesRef.current = new Set();
     onStagedPathsChange?.(null);
@@ -1231,7 +1257,7 @@ export const ChangesPanel = memo(function ChangesPanel({
             reverting={reverting}
             depth={depth}
             copied={copiedPath === f.path}
-            onSelect={setSelectedPath}
+            onSelect={selectFile}
             onToggleStage={toggleStage}
             onRevert={(file) => void revert(file)}
             onCopyPath={copyPath}
@@ -1615,7 +1641,7 @@ export const ChangesPanel = memo(function ChangesPanel({
                           confirmRevert={confirmRevert}
                           reverting={reverting}
                           copied={copiedPath === f.path}
-                          onSelect={setSelectedPath}
+                          onSelect={selectFile}
                           onToggleStage={toggleStage}
                           onRevert={(file) => void revert(file)}
                           onCopyPath={copyPath}
@@ -1680,9 +1706,22 @@ export const ChangesPanel = memo(function ChangesPanel({
                   data-wrap={wrap ? "" : undefined}
                   data-split={split ? "" : undefined}
                 >
-                  {visiblePatches.map((p) => (
+                  {visiblePatches.map((p) => {
+                    const collapsed = fileCollapsed(
+                      startFilesCollapsed,
+                      expandedFiles,
+                      p.path,
+                    );
+                    return (
                     <Fragment key={p.path}>
-                      {p.hunks.length === 0 &&
+                      {startFilesCollapsed ? (
+                        <FileCollapseHeader
+                          path={p.path}
+                          collapsed={collapsed}
+                          onToggle={() => toggleFileCollapse(p.path)}
+                        />
+                      ) : null}
+                      {!collapsed && p.hunks.length === 0 &&
                         (() => {
                           const rows = p.text.split("\n").map((line) => ({
                             path: p.path,
@@ -1716,6 +1755,7 @@ export const ChangesPanel = memo(function ChangesPanel({
                             );
                           });
                         })()}
+                      {collapsed ? null : (
                       <FilePatch
                         patch={p}
                         split={split}
@@ -1734,8 +1774,10 @@ export const ChangesPanel = memo(function ChangesPanel({
                             : null
                         }
                       />
+                      )}
                     </Fragment>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
               {selectedFile && filePatches[selectedFile.path]?.truncated ? (

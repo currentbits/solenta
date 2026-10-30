@@ -316,6 +316,16 @@ export const useDiffHideTests = diffHideTests.use;
 const diffTreeView = makeFlagPref("coder.diffTreeView", false);
 export const setDiffTreeView = diffTreeView.set;
 export const useDiffTreeView = diffTreeView.use;
+/**
+ * Each file's diff body starts collapsed (issue #1787), one setting shared
+ * by the Git pane, the PR Code tab and turn diffs. Off by default: today's
+ * always-expanded body is unchanged until the user opts in. Selecting a
+ * file from the list/tree always expands it regardless of this setting.
+ */
+const diffFilesCollapsed = makeFlagPref("coder.diffFilesCollapsed", false);
+export const getDiffFilesCollapsed = diffFilesCollapsed.get;
+export const setDiffFilesCollapsed = diffFilesCollapsed.set;
+export const useDiffFilesCollapsed = diffFilesCollapsed.use;
 
 /**
  * User keybinding overrides (#1506): binding id → chord, e.g.

@@ -16,6 +16,7 @@ import {
   CHAT_WIDTH_LABELS,
   setChatWidth,
   setComposerVimEnabled,
+  setDiffFilesCollapsed,
   setEnterSendsEnabled,
   setDivergenceCardEnabled,
   setPasteCardsEnabled,
@@ -24,6 +25,7 @@ import {
   setWrapCodeBlocksEnabled,
   useChatWidth,
   useComposerVimEnabled,
+  useDiffFilesCollapsed,
   useEnterSendsEnabled,
   useDivergenceCardEnabled,
   usePasteCardsEnabled,
@@ -924,6 +926,7 @@ function DisplayPrefsSection() {
   const enterSends = useEnterSendsEnabled();
   const usageLimits = useUsageLimitsStripEnabled();
   const wrapCode = useWrapCodeBlocksEnabled();
+  const diffFilesCollapsed = useDiffFilesCollapsed();
   const chatWidth = useChatWidth();
   return (
     <section className={styles.section} data-display-prefs="">
@@ -1008,6 +1011,15 @@ function DisplayPrefsSection() {
           onChange={(e) => setWrapCodeBlocksEnabled(e.target.checked)}
         />
         <span>Wrap long lines in code blocks</span>
+      </label>
+      <label className={styles.fieldRow}>
+        <input
+          type="checkbox"
+          data-diff-files-collapsed-pref=""
+          checked={diffFilesCollapsed}
+          onChange={(e) => setDiffFilesCollapsed(e.target.checked)}
+        />
+        <span>Start diff files collapsed</span>
       </label>
       <p className={styles.note}>
         A quiet strip above the composer with the 5-hour, weekly and

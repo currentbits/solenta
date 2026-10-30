@@ -9,13 +9,20 @@ import { mount } from "./support/dom.ts";
 import { PrWorkspacePanel } from "../src/components/PrWorkspacePanel";
 import { PrCodeTab } from "../src/components/PrCodeTab";
 import { ChangesPanel } from "../src/components/thread/ChangesPanel";
-import { setDiffHideTests, setDiffTreeView } from "../src/uiPrefs";
+import {
+  setDiffFilesCollapsed,
+  setDiffHideTests,
+  setDiffTreeView,
+} from "../src/uiPrefs";
 import type { DiffResult, FileChange, PrDetail, PrDetailResult } from "../src/shared/ipc";
 
 // Top-level, like changesPanel.test.tsx's reset: registered before any
 // describe()'s own hooks, so dom.ts's unmountAll (registered when it was
 // imported, above) runs first and this fires on an already-unmounted tree.
-afterEach(() => setDiffTreeView(false));
+afterEach(() => {
+  setDiffTreeView(false);
+  setDiffFilesCollapsed(false);
+});
 
 const pr = {
   number: 11,
@@ -257,6 +264,103 @@ describe("PR Code tab copy path (#1772)", () => {
       await m.click(btn);
       assert.deepEqual(copied, ["src/app.ts"]);
       assert.equal(btn!.textContent, "✓");
+      m.unmount();
+    });
+  });
+});
+
+describe("PR Code tab per-file collapse (#1787)", () => {
+  const files: FileChange[] = [
+    { path: "src/a.ts", status: "M", additions: 1, deletions: 1 },
+    { path: "notes.txt", status: "A", additions: 1, deletions: 0 },
+  ];
+  const patch = [
+    "diff --git a/src/a.ts b/src/a.ts",
+    "--- a/src/a.ts",
+    "+++ b/src/a.ts",
+    "@@ -1,3 +1,3 @@",
+    " keep",
+    "-old",
+    "+new",
+    " keep",
+    "diff --git a/notes.txt b/notes.txt",
+    "--- /dev/null",
+    "+++ b/notes.txt",
+    "@@ -0,0 +1 @@",
+    "+hello",
+  ].join("\n");
+
+  async function withPatch<T>(run: () => Promise<T>): Promise<T> {
+    const shell = await mount(<div />);
+    const w = window as unknown as { coder?: unknown };
+    const prev = w.coder;
+    w.coder = {
+      git: {
+        prDiff: async () => ({
+          ok: true,
+          headSha: "abc1234",
+          commits: [],
+          files,
+          patch,
+          truncated: false,
+        }),
+      },
+    };
+    shell.unmount();
+    try {
+      return await run();
+    } finally {
+      w.coder = prev;
+    }
+  }
+
+  it("renders no collapse header and a fully expanded body with the pref off", async () => {
+    await withPatch(async () => {
+      const m = await mount(<PrCodeTab projectPath="/tmp/ledger" prNumber={11} />);
+      await m.flush();
+      assert.equal(m.query("[data-diff-file-header]"), null);
+      assert.ok((m.query("[data-pr-code-patch]")?.textContent || "").includes("-old"));
+      m.unmount();
+    });
+  });
+
+  it("starts collapsed with the pref on; the header click expands it", async () => {
+    setDiffFilesCollapsed(true);
+    await withPatch(async () => {
+      const m = await mount(<PrCodeTab projectPath="/tmp/ledger" prNumber={11} />);
+      await m.flush();
+      const header = m.query("[data-diff-file-header='src/a.ts']");
+      assert.ok(header, "collapse header renders for the auto-selected file");
+      assert.equal(header!.getAttribute("aria-expanded"), "false");
+      assert.ok(
+        !(m.query("[data-pr-code-patch]")?.textContent || "").includes("-old"),
+        "body starts hidden",
+      );
+
+      await m.click(header as HTMLElement);
+      await m.flush();
+      assert.equal(
+        m.query("[data-diff-file-header='src/a.ts']")?.getAttribute("aria-expanded"),
+        "true",
+      );
+      assert.ok((m.query("[data-pr-code-patch]")?.textContent || "").includes("-old"));
+      m.unmount();
+    });
+  });
+
+  it("selecting a file from the chip list expands it", async () => {
+    setDiffFilesCollapsed(true);
+    await withPatch(async () => {
+      const m = await mount(<PrCodeTab projectPath="/tmp/ledger" prNumber={11} />);
+      await m.flush();
+      await m.click(m.query("[data-pr-code-file='notes.txt']") as HTMLElement);
+      await m.flush();
+      assert.equal(
+        m.query("[data-diff-file-header='notes.txt']")?.getAttribute("aria-expanded"),
+        "true",
+        "selecting a file from the list expands it",
+      );
+      assert.ok((m.query("[data-pr-code-patch]")?.textContent || "").includes("+hello"));
       m.unmount();
     });
   });
