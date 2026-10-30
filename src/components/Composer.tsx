@@ -260,6 +260,17 @@ export interface ComposerProps {
     opts?: { steer?: boolean },
   ) => void | Promise<void>;
   /**
+   * "Send in background" (mod+alt+enter, issue #1778): starts a brand NEW
+   * thread with the typed prompt instead of sending into this one, and
+   * leaves this draft untouched apart from clearing it on success. Absent
+   * hides the chord entirely — the caller only passes this on a fresh,
+   * never-run draft (ThreadView.isDraftThread).
+   */
+  onSendInBackground?: (
+    prompt: string,
+    attachments?: AttachmentInfo[],
+  ) => void | Promise<void>;
+  /**
    * Text and files pushed back toward the draft from outside (a cancelled
    * queued follow-up, issue #364 / #1212). Applied once, on its own thread
    * only; an in-progress draft is kept and the text appended after it.
@@ -471,6 +482,7 @@ export const Composer = memo(function Composer({
   disabled = false,
   busy = false,
   onSend,
+  onSendInBackground,
   restoreDraft = null,
   onRestoreDraftConsumed,
   onEditLastQueued,
@@ -1327,6 +1339,16 @@ export const Composer = memo(function Composer({
     }, "Failed to steer");
   };
 
+  const submitBackground = () => {
+    if (!canSend || !onSendInBackground) return;
+    void runAction(async (prompt) => {
+      await onSendInBackground(
+        prompt,
+        attachments.length ? attachments : undefined,
+      );
+    }, "Failed to start in background");
+  };
+
   const submitBtw = () => {
     if (!canSend) return;
     void runAction(async (prompt) => {
@@ -1565,6 +1587,11 @@ export const Composer = memo(function Composer({
     if (matchesBinding(e, "composer.btw")) {
       e.preventDefault();
       submitBtw();
+      return;
+    }
+    if (matchesBinding(e, "composer.sendBackground") && onSendInBackground) {
+      e.preventDefault();
+      submitBackground();
       return;
     }
     if (matchesBinding(e, "composer.steer")) {
@@ -3364,7 +3391,9 @@ export const Composer = memo(function Composer({
                   ? canSteer
                     ? "Queue for when this run lands (⌘Enter). ⌘⇧Enter steers. Esc stops the run."
                     : "Queue for when this run lands (⌘Enter). ⌥Enter asks a side question. Esc stops the run."
-                  : "Send (⌘Enter). ⌥Enter asks a side question. ⌘S stashes the draft."
+                  : onSendInBackground
+                    ? "Send (⌘Enter). ⌥Enter asks a side question. ⌘⌥Enter starts this in the background. ⌘S stashes the draft."
+                    : "Send (⌘Enter). ⌥Enter asks a side question. ⌘S stashes the draft."
             }
             onClick={() => submitSend()}
           >

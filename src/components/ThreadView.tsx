@@ -306,6 +306,17 @@ interface ThreadViewProps {
     opts?: { fromNotice?: boolean; steer?: boolean; fromQueue?: boolean },
   ) => void | Promise<void>;
   /**
+   * "Send in background" (issue #1778, mod+alt+enter): creates a NEW thread
+   * with the typed prompt, starts it, and leaves this draft's composer and
+   * selection untouched. Only wired up while this thread is itself a fresh,
+   * never-run draft (see isDraftThread below) — an existing conversation
+   * sends into itself, not into a side thread.
+   */
+  onSendInBackground?: (
+    prompt: string,
+    attachments?: AttachmentInfo[],
+  ) => void | Promise<void>;
+  /**
    * Edit-and-resubmit (#254): rewind to just before messageId, then start
    * a run with the edited prompt. Same start-run path as Composer.
    */
@@ -819,6 +830,7 @@ export const ThreadView = memo(function ThreadView({
   hasProjects,
   onAddProject,
   onStartRun,
+  onSendInBackground,
   onRewindAndResubmit,
   onStartWorkflow,
   onRetryWorkflowAgent,
@@ -1910,6 +1922,11 @@ export const ThreadView = memo(function ThreadView({
     },
     [onStartRun, onRedirectPermission, pendingPlainPermission],
   );
+
+  // "Send in background" (#1778) only makes sense before this thread has
+  // ever run: once there is a conversation (or a live run), the composer
+  // belongs to THIS thread, not to spinning up a new one beside it.
+  const isDraftThread = emptyMessages && detail?.thread.status !== "working";
 
   const storeReply = useCallback((target: ReplyTarget) => {
     const tid = target.threadId;
@@ -5358,6 +5375,9 @@ export const ThreadView = memo(function ThreadView({
                 : undefined
         }
         onSend={handleComposerSend}
+        onSendInBackground={
+          isDraftThread && onSendInBackground ? onSendInBackground : undefined
+        }
         onShell={
           onRunShell && !thread.ask
             ? (command) => onRunShell(thread.id, command)

@@ -145,6 +145,15 @@ export const KEYBINDINGS: readonly KeybindingDef[] = [
     chord: "mod+shift+enter",
   },
   {
+    id: "composer.sendBackground",
+    label: "Start a new thread in the background with this draft",
+    scope: "composer",
+    // mod+shift+enter is composer.steer and alt+enter is composer.btw;
+    // this is the next free enter chord. Only wired up on a fresh,
+    // never-run draft (ThreadView.isDraftThread) — see Composer.tsx.
+    chord: "mod+alt+enter",
+  },
+  {
     id: "composer.editLastQueued",
     label: "Edit the last queued follow-up (empty draft)",
     scope: "composer",

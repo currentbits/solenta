@@ -2407,3 +2407,62 @@ describe("start without a project (#1411)", () => {
     }
   });
 });
+
+describe("Send in background (mod+alt+enter, issue #1778)", () => {
+  it("creates and starts a separate thread, keeps the draft selected, and clears it", async () => {
+    const draft = thread({ id: "t-draft", title: "New Thread" });
+    const fake = createFakeCoder({
+      threads: [draft],
+      details: { "t-draft": detail({ thread: draft, messages: [] }) },
+    });
+    const m = await boot(fake);
+    try {
+      await m.flush();
+      const ta = m.query("textarea") as HTMLTextAreaElement;
+      assert.ok(ta, "composer textarea");
+      await m.type(ta, "write release notes");
+      await inAct(async () => {
+        ta.dispatchEvent(
+          new KeyboardEvent("keydown", {
+            key: "Enter",
+            metaKey: true,
+            altKey: true,
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+      });
+      await m.flush();
+
+      assert.equal(fake.of("threads.create").length, 1, "a new thread is created");
+      const starts = fake.of("runs.start");
+      assert.equal(starts.length, 1, "the new thread's run is started");
+      const startInput = starts[0]!.args[0] as { threadId: string; prompt: string };
+      assert.notEqual(
+        startInput.threadId,
+        "t-draft",
+        "the run starts on the NEW thread, not the draft being viewed",
+      );
+      assert.equal(startInput.prompt, "write release notes");
+
+      // Selection never moved: the draft card stays active.
+      assert.equal(
+        m.query('[data-thread-card="t-draft"]')?.getAttribute("data-active"),
+        "true",
+      );
+      const newCard = m.query(`[data-thread-card="${startInput.threadId}"]`);
+      assert.ok(newCard, "the background thread shows up in the sidebar");
+      assert.equal(newCard?.getAttribute("data-active"), "false");
+
+      // The draft composer is cleared for the next task.
+      assert.equal((m.query("textarea") as HTMLTextAreaElement).value, "");
+
+      // Toast with an Open action lands.
+      assert.match(m.text(), /Started in background/);
+      const open = m.query('[data-toast="action"] button') as HTMLElement;
+      assert.ok(open, "toast Open action renders");
+    } finally {
+      m.unmount();
+    }
+  });
+});

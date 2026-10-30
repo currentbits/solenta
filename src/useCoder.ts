@@ -231,6 +231,8 @@ export interface UseCoderResult {
       baseBranch?: string | null;
       inheritProvider?: boolean;
       taskGroupFrom?: string;
+      /** False keeps the current selection (issue #1778 background send). */
+      select?: boolean;
     },
   ) => Promise<ThreadInfo | null>;
   /**

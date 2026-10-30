@@ -147,6 +147,7 @@ const WORKFLOWS: WorkflowTemplateInfo[] = [
 
 interface Harness {
   sends: string[];
+  backgroundSends: string[];
   steers: boolean[];
   builds: { prompt: string; templateId: string }[];
   modes: PermissionMode[];
@@ -175,6 +176,7 @@ interface Harness {
 function makeHarness(provider = "claude"): Harness {
   return {
     sends: [],
+    backgroundSends: [],
     steers: [],
     builds: [],
     modes: [],
@@ -214,6 +216,7 @@ function composer(
     onProviderSignIn?: (providerId: string) => Promise<void>;
     onShell?: (command: string) => Promise<unknown>;
     onEditLastQueued?: () => void;
+    onSendInBackground?: boolean;
   } = {},
 ) {
   // Seed the emulation from the thread this element renders with, so the
@@ -285,6 +288,13 @@ function composer(
         harness.sends.push(prompt);
         harness.steers.push(opts?.steer === true);
       }}
+      onSendInBackground={
+        over.onSendInBackground
+          ? (prompt) => {
+              harness.backgroundSends.push(prompt);
+            }
+          : undefined
+      }
       onEditLastQueued={over.onEditLastQueued}
       onBuild={(prompt, templateId) => {
         harness.builds.push({ prompt, templateId });
@@ -2484,6 +2494,40 @@ describe("Composer keyboard send", () => {
     await m.type(m.query("textarea"), "/btw which file owns parseBtw");
     await m.press(m.query("textarea"), "Enter", { altKey: true });
     assert.deepEqual(h.sends, ["/btw which file owns parseBtw"]);
+    m.unmount();
+  });
+});
+
+describe("Composer send in background (mod+alt+enter, issue #1778)", () => {
+  it("starts in the background and clears the draft, leaving onSend untouched", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h, { onSendInBackground: true }));
+    const ta = m.query<HTMLTextAreaElement>("textarea");
+    await m.type(ta, "write release notes");
+    await m.press(ta, "Enter", { metaKey: true, altKey: true });
+    assert.deepEqual(h.backgroundSends, ["write release notes"]);
+    assert.deepEqual(h.sends, [], "the normal send path must not also fire");
+    assert.equal(ta.value, "", "the draft clears for the next task");
+    m.unmount();
+  });
+
+  it("does nothing on an empty draft", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h, { onSendInBackground: true }));
+    const ta = m.query<HTMLTextAreaElement>("textarea");
+    await m.press(ta, "Enter", { metaKey: true, altKey: true });
+    assert.deepEqual(h.backgroundSends, []);
+    m.unmount();
+  });
+
+  it("without the callback (not a draft), the chord falls back to a normal send", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h));
+    const ta = m.query<HTMLTextAreaElement>("textarea");
+    await m.type(ta, "mid-conversation follow-up");
+    await m.press(ta, "Enter", { metaKey: true, altKey: true });
+    assert.deepEqual(h.backgroundSends, []);
+    assert.deepEqual(h.sends, ["mid-conversation follow-up"]);
     m.unmount();
   });
 });

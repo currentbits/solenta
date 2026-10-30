@@ -54,6 +54,8 @@ export function useCoderRuns({
         baseBranch?: string | null;
         inheritProvider?: boolean;
         taskGroupFrom?: string;
+        /** False keeps the current selection (issue #1778 background send). */
+        select?: boolean;
       },
     ) => {
       const pid = projectId ?? selectedProjectId;
@@ -120,8 +122,10 @@ export function useCoderRuns({
         ? threadsRef.current.map((x) => (x.id === t.id ? t : x))
         : [t, ...threadsRef.current];
       applyThreads(next);
-      selectedRef.current = t.id;
-      setSelectedThreadId(t.id);
+      if (opts?.select !== false) {
+        selectedRef.current = t.id;
+        setSelectedThreadId(t.id);
+      }
       return t;
     },
     [api, selectedProjectId, applyThreads, projects, settings],

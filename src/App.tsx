@@ -484,6 +484,11 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   const [archiveToastIds, setArchiveToastIds] = useState<string[] | null>(null);
   /** Undo toast after moving a thread to Recently deleted (#940). */
   const [deleteToastId, setDeleteToastId] = useState<string | null>(null);
+  /** "Started in background: <title>" toast (#1778), with an Open action. */
+  const [backgroundToast, setBackgroundToast] = useState<{
+    id: string;
+    title: string;
+  } | null>(null);
   /**
    * Error toast after projects.remove rejects. Title reads:
    * Failed to remove "slug", plus the reason — swallowing it left the user
@@ -908,6 +913,56 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     },
     [createThread, selectedThreadId],
   );
+  /**
+   * "Send in background" (⌘⌥Enter on a fresh draft, issue #1778). Creates a
+   * SEPARATE thread for the typed prompt instead of running it on the draft
+   * being viewed, so the current view and selection never move. Provider +
+   * model are inherited for free by createThread (it reads the still-selected
+   * draft); permission mode is not, so it is copied explicitly.
+   */
+  const handleSendInBackground = useCallback(
+    async (prompt: string, attachments?: AttachmentInfo[]) => {
+      const draft = threadsRef.current.find((t) => t.id === selectedThreadId);
+      if (!draft) return;
+      const t = await createThread("New Thread", draft.projectId, {
+        select: false,
+      });
+      if (!t) return;
+      if (draft.permissionMode !== t.permissionMode) {
+        void setPermissionMode(
+          draft.permissionMode,
+          t.id,
+          draft.autoApprove ?? null,
+        ).catch(() => {});
+      }
+      try {
+        await startRun(prompt, t.id, attachments);
+      } catch {
+        // startRun already recorded the run-scope error; the thread still
+        // exists, so the toast (with Open) is still useful.
+      }
+      let title = t.title;
+      try {
+        title = (await api.threads.get(t.id)).thread.title;
+      } catch {
+        // Fall back to the pre-rename title.
+      }
+      setBackgroundToast({ id: t.id, title });
+    },
+    [createThread, startRun, setPermissionMode, selectedThreadId, api],
+  );
+
+  const dismissBackgroundToast = useCallback(() => {
+    setBackgroundToast(null);
+  }, []);
+
+  const openBackgroundThread = useCallback(() => {
+    if (!backgroundToast) return;
+    handleSelectThread(backgroundToast.id);
+    setRevealThreadId(backgroundToast.id);
+    setBackgroundToast(null);
+  }, [backgroundToast, handleSelectThread]);
+
   const { undoKey, undoMessage, offerUndo, dismissUndo, runUndo } =
     useUndoLast();
   const offerUndoOnly = useCallback(
@@ -1873,7 +1928,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       !deleteToastId &&
       !removeFailMessage &&
       !distillError &&
-      !chipError
+      !chipError &&
+      !backgroundToast
     ) {
       return null;
     }
@@ -1939,6 +1995,17 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
             onDismiss={dismissChipError}
           />
         )}
+        {backgroundToast && (
+          <ArchiveToast
+            docked
+            key={`background-${backgroundToast.id}`}
+            variant="action"
+            message={`Started in background: ${backgroundToast.title}`}
+            actionLabel="Open"
+            onAction={openBackgroundThread}
+            onDismiss={dismissBackgroundToast}
+          />
+        )}
       </>
     );
   }, [
@@ -1957,6 +2024,9 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     distillError,
     dismissDistillError,
     chipError,
+    backgroundToast,
+    openBackgroundThread,
+    dismissBackgroundToast,
     dismissChipError,
   ]);
   // Only one of these is ever non-null at a time: the toast moves between
@@ -2349,6 +2419,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onAddProject={handleAddProject}
         onCreateThread={handleCreateThread}
         onStartRun={startRun}
+        onSendInBackground={handleSendInBackground}
         onSetupWorktree={setupWorktree}
         onMergeWorktree={mergeWorktree}
         onOpenCrewLead={handleSelectThread}
