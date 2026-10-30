@@ -6,6 +6,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { PATCH_TRUNCATE, invalidateGitReads, tailErr, gitTryAsync } = require("./worktrees-git.js");
 const { diff, commit } = require("./worktrees-changes.js");
+const { siblingRunningSameCheckout } = require("./services-shared.js");
 
 // ---------------------------------------------------------------------------
 // Round 50: worktree turn checkpoints (async git only — never execFileSync)
@@ -496,7 +497,8 @@ async function checkpointForkPoint(opts) {
  * Hard-reset the thread WORKTREE to a prior checkpoint sha and rewind the
  * transcript to that turn (issue #149). CLI sessions cannot be rewound, so
  * sessionId is cleared and replayContext is set — same as threads.rewind.
- * Guards (in order): unknown thread → run active → no worktree → sha not ours.
+ * Guards (in order): unknown thread → run active → no worktree → sibling
+ * running in the same checkout (#1788) → sha not ours.
  * A dirty worktree is checkpointed first so the reset never eats uncommitted work.
  *
  * @param {object} opts
@@ -504,6 +506,8 @@ async function checkpointForkPoint(opts) {
  * @param {string} opts.threadId
  * @param {string} opts.sha
  * @param {(threadId: string) => boolean} [opts.isRunning]
+ * @param {() => string[]} [opts.listActiveThreadIds] every thread id with a
+ *   live run, so a sibling sharing this thread's checkout can be detected.
  * @param {boolean} [opts.rewindConversation] default true; false when
  *   threads.rewind already truncated (restoreFiles).
  * @param {() => unknown} [opts.cleanupRunArtifacts]
@@ -521,6 +525,14 @@ async function restoreCheckpoint(opts) {
   if (!thread.worktreePath) {
     throw new Error(
       `Thread ${threadId} has no worktree; call setupWorktree first`,
+    );
+  }
+  // #1788: crew/orchestrator workers can share a worktree, and two
+  // non-worktree threads share the project checkout. A hard reset here
+  // while that sibling's run is writing files would race it.
+  if (siblingRunningSameCheckout(store, threadId, opts)) {
+    throw new Error(
+      "Another thread is working in this checkout. Stop it before restoring files.",
     );
   }
 

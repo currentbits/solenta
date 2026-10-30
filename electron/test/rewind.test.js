@@ -18,8 +18,10 @@ const {
   setupWorktree,
   maybeCreateCheckpoint,
   listCheckpoints,
+  restoreCheckpoint,
   CHECKPOINT_SUBJECT_PREFIX,
 } = require("../worktrees.js");
+const { siblingRunningSameCheckout } = require("../services-shared.js");
 const { createRunner } = require("../runner.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
 const { rmTree } = require("./support/rmTree.js");
@@ -453,6 +455,67 @@ describe("rewindThread (services)", () => {
   });
 });
 
+describe("siblingRunningSameCheckout (#1788)", () => {
+  let tmpDir;
+  let store;
+  let project;
+
+  beforeEach(async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-sibling-"));
+    const repo = path.join(tmpDir, "app");
+    fs.mkdirSync(repo);
+    git(repo, ["init"]);
+    store = new Store(path.join(tmpDir, "store.json"));
+    project = await services.addProject(store, repo);
+  });
+
+  afterEach(async () => {
+    await rmTree(tmpDir);
+  });
+
+  it("true for two non-worktree threads sharing the project checkout when the other is active", () => {
+    const a = services.createThread(store, { projectId: project.id, title: "a" });
+    const b = services.createThread(store, { projectId: project.id, title: "b" });
+    // Neither has a worktree, so both run directly in the project checkout.
+    assert.equal(a.worktreePath, null);
+    assert.equal(b.worktreePath, null);
+    assert.equal(
+      siblingRunningSameCheckout(store, a.id, { listActiveThreadIds: () => [b.id] }),
+      true,
+    );
+  });
+
+  it("false when the other thread is not in the active list (idle)", () => {
+    const a = services.createThread(store, { projectId: project.id, title: "a" });
+    const b = services.createThread(store, { projectId: project.id, title: "b" });
+    assert.equal(
+      siblingRunningSameCheckout(store, a.id, { listActiveThreadIds: () => [] }),
+      false,
+    );
+    void b;
+  });
+
+  it("false when the active sibling is in a different project (different checkout)", async () => {
+    const otherRepo = path.join(tmpDir, "other");
+    fs.mkdirSync(otherRepo);
+    git(otherRepo, ["init"]);
+    const otherProject = await services.addProject(store, otherRepo);
+
+    const a = services.createThread(store, { projectId: project.id, title: "a" });
+    const b = services.createThread(store, { projectId: otherProject.id, title: "b" });
+    assert.equal(
+      siblingRunningSameCheckout(store, a.id, { listActiveThreadIds: () => [b.id] }),
+      false,
+    );
+  });
+
+  it("false without a listActiveThreadIds opt (callers that never pass it are unaffected)", () => {
+    const a = services.createThread(store, { projectId: project.id, title: "a" });
+    assert.equal(siblingRunningSameCheckout(store, a.id, {}), false);
+    assert.equal(siblingRunningSameCheckout(store, a.id, null), false);
+  });
+});
+
 describe("buildHandoffPrefix replayContext", () => {
   it("digests this thread's own tail when replayContext is set", () => {
     const prefix = services.buildHandoffPrefix(
@@ -784,6 +847,143 @@ describe("restoreFiles resets to the last retained turn", () => {
       "merged worker file must survive; reset landed on this thread, not the fork",
     );
     assert.notEqual(fs.readFileSync(ownFile, "utf8"), "FORK-OVERWRITE\n");
+  });
+
+  it("refuses restoreFiles when a sibling thread sharing this worktree is running (#1788)", async () => {
+    fx = await makeRewindWorktree();
+    const { store, thread, file } = fx;
+    appendTurn(store, thread.id, 1, Date.now());
+    fs.writeFileSync(file, "v1\n");
+    await maybeCreateCheckpoint(store, thread.id);
+    store.saveNow();
+
+    const sibling = services.createThread(store, {
+      projectId: thread.projectId,
+      title: "crew worker sharing the worktree",
+    });
+    // Simulate an orchestrator worker forked with worktree:false that shares
+    // this thread's own worktree directory (orchServer.js ~489).
+    store.updateThread(sibling.id, { worktreePath: fx.worktreePath });
+
+    await assert.rejects(
+      () =>
+        services.rewindThread(
+          store,
+          { threadId: thread.id, messageId: "u1", prompt: "edited", restoreFiles: true },
+          { listActiveThreadIds: () => [sibling.id] },
+        ),
+      /Another thread is working in this checkout\. Stop it before restoring files\./,
+    );
+    // Refused before any mutation: nothing dropped, file untouched.
+    assert.equal(fs.readFileSync(file, "utf8"), "v1\n");
+    assert.equal(store.getMessages(thread.id).length, 2);
+  });
+
+  it("allows restoreFiles when the worktree-sharing sibling is idle", async () => {
+    fx = await makeRewindWorktree();
+    const { store, thread, file } = fx;
+    appendTurn(store, thread.id, 1, Date.now());
+    fs.writeFileSync(file, "v1\n");
+    await maybeCreateCheckpoint(store, thread.id);
+    await sleep(1100);
+    appendTurn(store, thread.id, 2, Date.now());
+    await sleep(1100);
+    fs.writeFileSync(file, "v2\n");
+    await maybeCreateCheckpoint(store, thread.id);
+    store.saveNow();
+
+    const sibling = services.createThread(store, {
+      projectId: thread.projectId,
+      title: "idle crew worker",
+    });
+    store.updateThread(sibling.id, { worktreePath: fx.worktreePath });
+
+    const result = await services.rewindThread(
+      store,
+      { threadId: thread.id, messageId: "u2", prompt: "edited", restoreFiles: true },
+      { listActiveThreadIds: () => [] },
+    );
+    assert.equal(fs.readFileSync(file, "utf8"), "v1\n");
+    assert.ok(result.restoredSha);
+  });
+
+  it("allows restoreFiles when the running sibling uses a different worktree", async () => {
+    fx = await makeRewindWorktree();
+    const { store, thread, file } = fx;
+    appendTurn(store, thread.id, 1, Date.now());
+    fs.writeFileSync(file, "v1\n");
+    await maybeCreateCheckpoint(store, thread.id);
+    await sleep(1100);
+    appendTurn(store, thread.id, 2, Date.now());
+    await sleep(1100);
+    fs.writeFileSync(file, "v2\n");
+    await maybeCreateCheckpoint(store, thread.id);
+    store.saveNow();
+
+    const sibling = services.createThread(store, {
+      projectId: thread.projectId,
+      title: "unrelated worker",
+    });
+    store.updateThread(sibling.id, { worktreePath: "/tmp/some-other-worktree" });
+
+    const result = await services.rewindThread(
+      store,
+      { threadId: thread.id, messageId: "u2", prompt: "edited", restoreFiles: true },
+      { listActiveThreadIds: () => [sibling.id] },
+    );
+    assert.equal(fs.readFileSync(file, "utf8"), "v1\n");
+    assert.ok(result.restoredSha);
+  });
+
+  it("conversation-only rewind (no restoreFiles) is unaffected by a running sibling", async () => {
+    fx = await makeRewindWorktree();
+    const { store, thread, file } = fx;
+    appendTurn(store, thread.id, 1, Date.now());
+    fs.writeFileSync(file, "v1\n");
+    await maybeCreateCheckpoint(store, thread.id);
+    store.saveNow();
+
+    const sibling = services.createThread(store, {
+      projectId: thread.projectId,
+      title: "crew worker sharing the worktree",
+    });
+    store.updateThread(sibling.id, { worktreePath: fx.worktreePath });
+
+    const result = await services.rewindThread(
+      store,
+      { threadId: thread.id, messageId: "u1", prompt: "edited" },
+      { listActiveThreadIds: () => [sibling.id] },
+    );
+    // No restoreFiles requested: the sibling guard never engages.
+    assert.equal(result.restoredSha, null);
+    assert.equal(fs.readFileSync(file, "utf8"), "v1\n");
+  });
+
+  it("restoreCheckpoint itself refuses a sibling sharing the worktree (git:restoreCheckpoint, thrash rollback)", async () => {
+    fx = await makeRewindWorktree();
+    const { store, thread, file } = fx;
+    appendTurn(store, thread.id, 1, Date.now());
+    fs.writeFileSync(file, "v1\n");
+    const c1 = await maybeCreateCheckpoint(store, thread.id);
+    assert.ok(c1);
+    store.saveNow();
+
+    const sibling = services.createThread(store, {
+      projectId: thread.projectId,
+      title: "crew worker sharing the worktree",
+    });
+    store.updateThread(sibling.id, { worktreePath: fx.worktreePath });
+
+    await assert.rejects(
+      () =>
+        restoreCheckpoint({
+          store,
+          threadId: thread.id,
+          sha: c1.sha,
+          listActiveThreadIds: () => [sibling.id],
+        }),
+      /Another thread is working in this checkout\. Stop it before restoring files\./,
+    );
   });
 });
 

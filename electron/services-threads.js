@@ -41,6 +41,7 @@ const {
   scheduleArtifactCleanup,
   scheduleSimulatorRelease,
   canHostWorktree,
+  siblingRunningSameCheckout,
   purgeThread,
 } = require("./services-shared.js");
 const terminal = require("./terminal.js");
@@ -1510,6 +1511,15 @@ async function undoRewindThread(store, threadId, opts) {
   if (!snap) {
     return { thread: { ...thread }, droppedMessages: 0, restoredSha: null };
   }
+  if (
+    snap.headSha &&
+    thread.worktreePath &&
+    siblingRunningSameCheckout(store, threadId, opts)
+  ) {
+    throw new Error(
+      "Another thread is working in this checkout. Stop it before restoring files.",
+    );
+  }
   store.applyRewindRestore(threadId, snap);
   store.clearRewindRestore(threadId);
 
@@ -1551,6 +1561,19 @@ async function rewindThread(store, input, opts) {
   }
   if (!String((input && input.prompt) ?? "").trim()) {
     throw new Error("Prompt cannot be empty");
+  }
+  // #1788: a hard reset onto a shared checkout (crew/orchestrator workers
+  // sharing a worktree, or two non-worktree threads sharing the project
+  // path) would race that other thread's own writes. Conversation-only
+  // rewind (no restoreFiles) never touches disk, so it stays allowed.
+  if (
+    input.restoreFiles &&
+    thread.worktreePath &&
+    siblingRunningSameCheckout(store, threadId, opts)
+  ) {
+    throw new Error(
+      "Another thread is working in this checkout. Stop it before restoring files.",
+    );
   }
 
   const msgs = store.getMessages(threadId);
@@ -1618,6 +1641,7 @@ async function rewindThread(store, input, opts) {
         threadId,
         sha: match.sha,
         isRunning: opts && opts.isRunning,
+        listActiveThreadIds: opts && opts.listActiveThreadIds,
         rewindConversation: false,
       });
       restoredSha = match.sha;

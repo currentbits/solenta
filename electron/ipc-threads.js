@@ -302,6 +302,7 @@ module.exports = {
   "threads:rewind": async (ctx, input) => {
     const result = await services.rewindThread(ctx.store, input, {
       isRunning: (id) => ctx.runner.isRunning(id),
+      listActiveThreadIds: () => ctx.runner.listActiveThreadIds(),
       cleanupRunArtifacts: ctx.cleanupRunArtifacts,
       log: ctx.log,
     });

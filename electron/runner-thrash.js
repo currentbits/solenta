@@ -187,6 +187,7 @@ function createThrash(ctx) {
             threadId,
             sha: target.sha,
             isRunning: (id) => active.has(id),
+            listActiveThreadIds: () => [...active.keys()],
             // Keep the transcript: the user needs to see what happened.
             rewindConversation: false,
           });
