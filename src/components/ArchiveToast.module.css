@@ -1,9 +1,9 @@
+/*
+ * Positioning lives on the dock (anchored to the sidebar footer, or the
+ * thread-pane fallback) in App.module.css / Sidebar.module.css. This is
+ * just the pill itself, centered by the dock's flex row.
+ */
 .toast {
-  position: fixed;
-  bottom: 24px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 1000;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -14,6 +14,7 @@
   box-shadow: 0 8px 24px var(--shadow-color);
   color: var(--text);
   font-size: 13px;
+  pointer-events: auto;
 }
 
 .toastError {

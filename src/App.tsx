@@ -1744,6 +1744,103 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   const settingsLoaded = useOpenedOnce(settingsOpen);
   const onboardingLoaded = useOpenedOnce(onboardingOpen);
 
+  // #1758: the archive/settle/snooze undo (or error) toast used to float
+  // fixed over the window center, on top of the composer. It now docks
+  // above the sidebar footer, with a thread-pane fallback when the sidebar
+  // itself is not visible (narrow drawer closed, or collapsed to a rail).
+  const sidebarVisible = narrow ? drawer === "sidebar" : !sidebarHidden;
+  const archiveToastNode = useMemo(() => {
+    if (
+      !archiveToastIds &&
+      !undoMessage &&
+      !deleteToastId &&
+      !removeFailMessage &&
+      !distillError &&
+      !chipError
+    ) {
+      return null;
+    }
+    return (
+      <>
+        {archiveToastIds && (
+          <ArchiveToast
+            key={`archive-${archiveToastIds.join(",")}`}
+            message={
+              archiveToastIds.length > 1
+                ? `${archiveToastIds.length} archived`
+                : undefined
+            }
+            onUndo={() => void undoArchive()}
+            onDismiss={dismissArchiveToast}
+            durationMs={UNDO_WINDOW_MS}
+          />
+        )}
+        {undoMessage && (
+          <ArchiveToast
+            key={`undo-${undoKey}`}
+            message={undoMessage}
+            onUndo={() => void runUndo()}
+            onDismiss={dismissUndo}
+            durationMs={UNDO_WINDOW_MS}
+          />
+        )}
+        {deleteToastId && (
+          <ArchiveToast
+            key={`delete-${deleteToastId}`}
+            message="Deleted"
+            onUndo={() => void undoDelete()}
+            onDismiss={dismissDeleteToast}
+          />
+        )}
+        {removeFailMessage && (
+          <ArchiveToast
+            key={`remove-fail-${removeFailMessage}`}
+            variant="error"
+            title={removeFailMessage}
+            onDismiss={dismissRemoveFail}
+          />
+        )}
+        {distillError && (
+          <ArchiveToast
+            key={`distill-fail-${distillError}`}
+            variant="error"
+            title={distillError}
+            onDismiss={dismissDistillError}
+          />
+        )}
+        {chipError && (
+          <ArchiveToast
+            key={`chip-fail-${chipError}`}
+            variant="error"
+            title={chipError}
+            onDismiss={dismissChipError}
+          />
+        )}
+      </>
+    );
+  }, [
+    archiveToastIds,
+    undoArchive,
+    dismissArchiveToast,
+    undoMessage,
+    undoKey,
+    runUndo,
+    dismissUndo,
+    deleteToastId,
+    undoDelete,
+    dismissDeleteToast,
+    removeFailMessage,
+    dismissRemoveFail,
+    distillError,
+    dismissDistillError,
+    chipError,
+    dismissChipError,
+  ]);
+  // Only one of these is ever non-null at a time: the toast moves between
+  // docks, it never renders twice.
+  const sidebarToast = sidebarVisible ? archiveToastNode : null;
+  const fallbackToast = sidebarVisible ? null : archiveToastNode;
+
   if (buildMismatch) {
     return (
       <BuildMismatchScreen onRestart={() => void applyUpdate()} />
@@ -1929,6 +2026,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onPurgeThread={(id) => void purgeThread(id)}
         onFork={handleRowFork}
         conflictForecast={forecast}
+        toast={sidebarToast}
             />
           </ErrorBoundary>
           </div>
@@ -1959,6 +2057,9 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
           inert={narrow && drawer !== null}
           onWheel={handleThreadPaneWheel}
         >
+          {fallbackToast && (
+            <div className={styles.threadToastDock}>{fallbackToast}</div>
+          )}
           <ErrorBoundary pane="Thread view">
           <Suspense fallback={null}>
           {view === "activity" ? (
@@ -2551,60 +2652,6 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
             }
           }}
         />
-        {archiveToastIds && (
-          <ArchiveToast
-            key={`archive-${archiveToastIds.join(",")}`}
-            message={
-              archiveToastIds.length > 1
-                ? `${archiveToastIds.length} archived`
-                : undefined
-            }
-            onUndo={() => void undoArchive()}
-            onDismiss={dismissArchiveToast}
-            durationMs={UNDO_WINDOW_MS}
-          />
-        )}
-        {undoMessage && (
-          <ArchiveToast
-            key={`undo-${undoKey}`}
-            message={undoMessage}
-            onUndo={() => void runUndo()}
-            onDismiss={dismissUndo}
-            durationMs={UNDO_WINDOW_MS}
-          />
-        )}
-        {deleteToastId && (
-          <ArchiveToast
-            key={`delete-${deleteToastId}`}
-            message="Deleted"
-            onUndo={() => void undoDelete()}
-            onDismiss={dismissDeleteToast}
-          />
-        )}
-        {removeFailMessage && (
-          <ArchiveToast
-            key={`remove-fail-${removeFailMessage}`}
-            variant="error"
-            title={removeFailMessage}
-            onDismiss={dismissRemoveFail}
-          />
-        )}
-        {distillError && (
-          <ArchiveToast
-            key={`distill-fail-${distillError}`}
-            variant="error"
-            title={distillError}
-            onDismiss={dismissDistillError}
-          />
-        )}
-        {chipError && (
-          <ArchiveToast
-            key={`chip-fail-${chipError}`}
-            variant="error"
-            title={chipError}
-            onDismiss={dismissChipError}
-          />
-        )}
         <Suspense fallback={null}>
         {addPathOpen && (
           <AddProjectPathModal

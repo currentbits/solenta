@@ -1616,12 +1616,28 @@
 }
 
 .footer {
+  position: relative;
   flex-shrink: 0;
   border-top: 1px solid var(--border-soft);
   padding: 8px;
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+
+/* Undo/error toast, docked just above the footer row (#1758) so it never
+   covers the Settings / nav / update buttons below it. bottom: 100% of the
+   footer's own box keeps it flush above regardless of footer height
+   (error banner, update button, etc. all change that height). */
+.toastDock {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: calc(100% + 8px);
+  z-index: 5;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
 }
 
 .errorBanner {
