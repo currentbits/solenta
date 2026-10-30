@@ -5657,6 +5657,42 @@ describe("ThreadView usage limits strip (#1755)", () => {
     m.unmount();
   });
 
+  it("draws a mirrored even-pace tick (#1764), and omits it when unknown", async () => {
+    setUsageLimitsStripEnabled(true);
+    const FIVE_HOURS = 5 * 60 * 60;
+    // 1h into a 5h window (4h left to reset) -> pace is 20% used, 80% left.
+    const resetsAt = Date.now() + 4 * 60 * 60 * 1000;
+    const m = await mount(
+      view({
+        loadProviderLimits: async () => [
+          quota({
+            windows: [
+              { label: "5 hours", usedPercent: 50, resetsAt, windowSeconds: FIVE_HOURS },
+              { label: "Weekly", usedPercent: 50, resetsAt: null, windowSeconds: null },
+            ],
+          }),
+        ],
+      }),
+    );
+    await m.flush();
+    const dated = m.query('[data-usage-row="5 hours"]');
+    assert.ok(dated);
+    const tick = dated.querySelector("[data-usage-pace]") as HTMLElement | null;
+    assert.ok(tick, "pace tick renders when resetsAt/windowSeconds are known");
+    const leftMatch = /left:\s*([\d.]+)%/.exec(tick.getAttribute("style") || "");
+    assert.ok(leftMatch, "tick has a left offset");
+    assert.ok(
+      Math.abs(Number(leftMatch![1]) - 80) < 0.1,
+      `expected ~80% left, got ${leftMatch![1]}%`,
+    );
+    assert.match(tick.getAttribute("title") || "", /Even pace: 80% left by now/);
+
+    const undated = m.query('[data-usage-row="Weekly"]');
+    assert.ok(undated);
+    assert.equal(undated.querySelector("[data-usage-pace]"), null);
+    m.unmount();
+  });
+
   it("turns amber at exactly 20% left and red at exactly 10% left", async () => {
     setUsageLimitsStripEnabled(true);
     const m = await mount(

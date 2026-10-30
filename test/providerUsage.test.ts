@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   displayWindowLabel,
+  evenPacePercent,
   formatResetAt,
   formatUsedPercent,
   usedBarWidth,
@@ -111,6 +112,39 @@ describe("formatResetAt", () => {
     assert.match(formatResetAt(now - 1, now) ?? "", /last reported|refresh|passed/i);
     assert.equal(/reset due|renewed|fresh/i.test(formatResetAt(now - 1, now) ?? ""), false);
     assert.equal(formatResetAt(null, now), null);
+  });
+});
+
+describe("evenPacePercent", () => {
+  it("is 0 right at window start", () => {
+    const now = 1_000_000;
+    const windowSeconds = FIVE_HOURS;
+    const resetsAt = now + windowSeconds * 1000;
+    assert.equal(evenPacePercent({ resetsAt, windowSeconds }, now), 0);
+  });
+
+  it("is 50 at the midpoint of the window", () => {
+    const now = 1_000_000;
+    const windowSeconds = FIVE_HOURS;
+    const resetsAt = now + (windowSeconds / 2) * 1000;
+    assert.equal(evenPacePercent({ resetsAt, windowSeconds }, now), 50);
+  });
+
+  it("clamps to 100 right at (or past) the reset", () => {
+    const now = 1_000_000;
+    const windowSeconds = FIVE_HOURS;
+    assert.equal(evenPacePercent({ resetsAt: now, windowSeconds }, now), 100);
+    assert.equal(
+      evenPacePercent({ resetsAt: now - 60_000, windowSeconds }, now),
+      100,
+    );
+  });
+
+  it("is null when the reset time or duration is unknown", () => {
+    const now = 1_000_000;
+    assert.equal(evenPacePercent({ resetsAt: null, windowSeconds: FIVE_HOURS }, now), null);
+    assert.equal(evenPacePercent({ resetsAt: now + 1000, windowSeconds: null }, now), null);
+    assert.equal(evenPacePercent({ resetsAt: now + 1000, windowSeconds: 0 }, now), null);
   });
 });
 

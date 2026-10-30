@@ -64,6 +64,32 @@ export function usageSeverity(percentLeft: number): UsageSeverity {
   return "";
 }
 
+/**
+ * Issue #1764: where in the window a user who spent at a constant rate
+ * would be right now, as a percent USED (same framing as the quota
+ * dialog's bar). Null when the window never reported a reset time or
+ * duration, same honesty rule as the rest of this file: never invent a
+ * position from data the provider did not give us.
+ */
+export function evenPacePercent(
+  win: Pick<ProviderUsageWindow, "resetsAt" | "windowSeconds">,
+  now = Date.now(),
+): number | null {
+  const { resetsAt, windowSeconds } = win;
+  if (
+    resetsAt == null ||
+    !Number.isFinite(resetsAt) ||
+    windowSeconds == null ||
+    !Number.isFinite(windowSeconds) ||
+    windowSeconds <= 0
+  ) {
+    return null;
+  }
+  const elapsedSeconds = windowSeconds - (resetsAt - now) / 1000;
+  const clamped = Math.max(0, Math.min(windowSeconds, elapsedSeconds));
+  return (clamped / windowSeconds) * 100;
+}
+
 export function isResetExpired(
   resetsAt: number | null,
   now = Date.now(),

@@ -4630,6 +4630,7 @@ a.menuItem {
 
 .usageTrack {
   flex: 1;
+  position: relative;
   height: 3px;
   border-radius: var(--radius-pill);
   background: var(--border-soft);
@@ -4640,6 +4641,15 @@ a.menuItem {
   height: 100%;
   border-radius: inherit;
   background: var(--text-dim);
+}
+
+/* Even-pace marker (#1764), mirrored onto the strip's percent-left axis. */
+.usagePace {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--text-muted);
 }
 
 .usageRow[data-usage-severity="warn"] .usageFill {
