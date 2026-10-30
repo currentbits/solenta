@@ -1,5 +1,7 @@
 "use strict";
 
+const zlib = require("node:zlib");
+
 /**
  * Whether a thread state change is a "come back to me" moment (issue #31).
  * States are thread.status plus the synthetic "waiting" (working, but blocked
@@ -94,14 +96,128 @@ function needsUser(thread, now) {
   );
 }
 
+const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+const CRC_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    table[n] = c;
+  }
+  return table;
+})();
+
+/** @param {Buffer} buf */
+function crc32(buf) {
+  let c = 0xffffffff;
+  for (let i = 0; i < buf.length; i++) c = CRC_TABLE[(c ^ buf[i]) & 0xff] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+}
+
+/**
+ * @param {string} type Four-letter PNG chunk type, e.g. "IHDR".
+ * @param {Buffer} data
+ */
+function pngChunk(type, data) {
+  const typeBuf = Buffer.from(type, "ascii");
+  const len = Buffer.alloc(4);
+  len.writeUInt32BE(data.length, 0);
+  const crc = Buffer.alloc(4);
+  crc.writeUInt32BE(crc32(Buffer.concat([typeBuf, data])), 0);
+  return Buffer.concat([len, typeBuf, data, crc]);
+}
+
+/**
+ * A filled-circle PNG in one flat color, hand-built with zlib (no image
+ * dependency) for the small per-status notification icon (#1790). Good
+ * enough at notification-icon size (Windows/Linux only; macOS ignores the
+ * `icon` field and gets a title glyph instead, see notificationOptions).
+ * @param {number} size
+ * @param {[number, number, number]} rgb
+ * @returns {Buffer}
+ */
+function circlePng(size, [r, g, b]) {
+  const stride = 1 + size * 4; // filter byte + RGBA row
+  const raw = Buffer.alloc(size * stride);
+  const center = (size - 1) / 2;
+  const radiusSq = (size / 2 - 1) * (size / 2 - 1);
+  for (let y = 0; y < size; y++) {
+    const rowStart = y * stride;
+    for (let x = 0; x < size; x++) {
+      const dx = x - center;
+      const dy = y - center;
+      const inside = dx * dx + dy * dy <= radiusSq;
+      const o = rowStart + 1 + x * 4;
+      raw[o] = inside ? r : 0;
+      raw[o + 1] = inside ? g : 0;
+      raw[o + 2] = inside ? b : 0;
+      raw[o + 3] = inside ? 255 : 0;
+    }
+  }
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(size, 0);
+  ihdr.writeUInt32BE(size, 4);
+  ihdr[8] = 8; // bit depth
+  ihdr[9] = 6; // color type: RGBA
+  return Buffer.concat([
+    PNG_SIGNATURE,
+    pngChunk("IHDR", ihdr),
+    pngChunk("IDAT", zlib.deflateSync(raw)),
+    pngChunk("IEND", Buffer.alloc(0)),
+  ]);
+}
+
+/** Status dot colors, RGB. */
+const STATUS_COLOR = {
+  done: [0x2e, 0xa0, 0x43],
+  failed: [0xd1, 0x3a, 0x2e],
+  waiting: [0xd9, 0xa2, 0x1f],
+};
+
+/** Status title glyphs — macOS fallback where the `icon` field is ignored. */
+const STATUS_GLYPH = { done: "✓", failed: "✕", waiting: "●" };
+
+/** @type {Record<string, Buffer> | null} */
+let statusIconCache = null;
+
+/** @param {"done" | "failed" | "waiting"} event */
+function statusIconPng(event) {
+  if (!statusIconCache) {
+    statusIconCache = {
+      done: circlePng(48, STATUS_COLOR.done),
+      failed: circlePng(48, STATUS_COLOR.failed),
+      waiting: circlePng(48, STATUS_COLOR.waiting),
+    };
+  }
+  return statusIconCache[event];
+}
+
 /**
  * Desktop notification options. No `silent`: the OS plays its default
  * sound, as it always has. The attention-sound setting never changes that.
+ *
+ * Outcome icon (#1790): pass `event` for a done/failed/waiting transition
+ * ("waiting" covers both an approval prompt and a question card, same as
+ * threadNotifyState). macOS ignores the Notification `icon` field for its
+ * own app icon, so there the title gets a status glyph prefix instead;
+ * Windows/Linux get a generated status-color PNG via `iconBuffer` — the
+ * caller (main.js, which has `electron`) turns that into a NativeImage,
+ * since this module stays requirable under plain Node for its tests.
+ *
  * @param {string | undefined} title
  * @param {string} body
+ * @param {{ event?: "done" | "failed" | "waiting", platform?: string }} [opts]
  */
-function notificationOptions(title, body) {
-  return { title: title || "Thread", body };
+function notificationOptions(title, body, opts = {}) {
+  const base = { title: title || "Thread", body };
+  const event = opts.event;
+  if (!event) return base;
+  const platform = opts.platform || process.platform;
+  if (platform === "darwin") {
+    return { ...base, title: `${STATUS_GLYPH[event]} ${base.title}` };
+  }
+  return { ...base, iconBuffer: statusIconPng(event) };
 }
 
 /**

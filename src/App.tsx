@@ -38,7 +38,8 @@ import {
   detachedThreadId,
   detachedWindowTitle,
 } from "./detachedWindow";
-import { isShortcutBlocked } from "./sidebarSelection";
+import { isShortcutBlocked, nextThreadAfterSettle } from "./sidebarSelection";
+import { buildFlatSidebar } from "./sidebarGroups";
 import {
   canStep,
   EMPTY_HISTORY,
@@ -980,21 +981,53 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     if (archiveToastIds) dismissUndo();
   }, [archiveToastIds, dismissUndo]);
 
+  // Settling (not un-settling) the OPEN thread moves selection to the next
+  // visible thread; settling a different thread from the sidebar leaves
+  // selection alone (#1790). One shared function so the ⌘⇧A shortcut, the
+  // sidebar card's settle button, and ThreadView's settle button all agree.
   const handleSetSettled = useCallback(
     (threadId: string, override: "settled" | "active" | null) => {
       const prev =
         threadsRef.current.find((t) => t.id === threadId)?.settledOverride ?? null;
+      const settlingOpenThread =
+        override === "settled" && prev !== "settled" && threadId === selectedThreadId;
+      let nextId: string | null = null;
+      if (settlingOpenThread) {
+        const afterDaysProp =
+          settings == null ? undefined : settings.autoSettleAfterDays;
+        const flat = buildFlatSidebar(
+          threadsRef.current,
+          {
+            now: Date.now(),
+            autoSettleAfterDays:
+              afterDaysProp === undefined ? AUTO_SETTLE_AFTER_DAYS : afterDaysProp,
+            autoSettleOnMerge:
+              (settings == null ? undefined : settings.autoSettleOnMerge) !== false,
+          },
+          null,
+        );
+        const order = [
+          ...flat.pinned,
+          ...flat.active,
+          ...flat.working,
+          ...flat.snoozed,
+        ].map((t) => t.id);
+        nextId = nextThreadAfterSettle(order, threadId);
+      }
       if (prev === override) {
         void setSettled(threadId, override);
+        if (nextId) handleSelectThread(nextId);
         return;
       }
       void setSettled(threadId, override).then(() =>
-        offerUndoOnly(override === "settled" ? "Settled" : "Unsettled", () =>
-          setSettled(threadId, prev),
-        ),
+        offerUndoOnly(override === "settled" ? "Settled" : "Unsettled", () => {
+          void setSettled(threadId, prev);
+          if (settlingOpenThread) handleSelectThread(threadId);
+        }),
       );
+      if (nextId) handleSelectThread(nextId);
     },
-    [setSettled, offerUndoOnly],
+    [setSettled, offerUndoOnly, selectedThreadId, settings, handleSelectThread],
   );
 
   const handleSetPinned = useCallback(

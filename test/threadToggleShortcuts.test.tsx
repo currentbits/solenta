@@ -37,6 +37,34 @@ async function boot(target = thread({ id: "t1", title: "target" })) {
   return { m, fake, target };
 }
 
+// Three idle threads, newest first (buildFlatSidebar's default active
+// order) so the eligible settle order is deterministic: t1, t2, t3.
+async function bootThree(openId: string) {
+  const now = Date.now();
+  const threads = [
+    // buildFlatSidebar's active order is newest-createdAt-first.
+    thread({ id: "t1", title: "first", createdAt: now - 1_000, updatedAt: now - 1_000 }),
+    thread({ id: "t2", title: "second", createdAt: now - 2_000, updatedAt: now - 2_000 }),
+    thread({ id: "t3", title: "third", createdAt: now - 3_000, updatedAt: now - 3_000 }),
+  ];
+  const fake = createFakeCoder({
+    projects: [project({ id: "p1" })],
+    threads,
+    details: Object.fromEntries(
+      threads.map((t) => [t.id, detail({ thread: t })]),
+    ),
+  });
+  const shell = await mount(<div />);
+  installFakeCoder(fake);
+  shell.unmount();
+  const m = await mount(<App />);
+  await m.flush();
+  const title = threads.find((t) => t.id === openId)!.title;
+  await m.click(m.query(`button[aria-label="Select thread: ${title}"]`));
+  await m.flush();
+  return { m, fake };
+}
+
 async function settle(m: Mounted) {
   await m.flush();
   await inAct(async () => {
@@ -136,6 +164,102 @@ describe("thread.togglePin / thread.toggleSettle shortcuts", () => {
       await inAct(() => press(document.body, "p"));
       await settle(m);
       assert.equal(fake.of("threads.setPinned").length, 0);
+    } finally {
+      m.unmount();
+    }
+  });
+});
+
+describe("settling the open thread advances selection (#1790)", () => {
+  it("⌘⇧A settling the open thread selects the next thread below", async () => {
+    const { m, fake } = await bootThree("t1");
+    try {
+      await inAct(() => press(document.body, "a"));
+      await settle(m);
+      assert.deepEqual(fake.of("threads.setSettled").at(-1)?.args[0], {
+        threadId: "t1",
+        override: "settled",
+      });
+      assert.ok(
+        m.query('[data-thread-card="t2"][data-active="true"]'),
+        "t2 (next below t1) becomes the open thread",
+      );
+    } finally {
+      m.unmount();
+    }
+  });
+
+  it("the settle button on the open thread's card selects the next thread below", async () => {
+    const { m, fake } = await bootThree("t1");
+    try {
+      await m.click(m.query('[data-settle-btn="t1"]'));
+      await settle(m);
+      assert.deepEqual(fake.of("threads.setSettled").at(-1)?.args[0], {
+        threadId: "t1",
+        override: "settled",
+      });
+      assert.ok(
+        m.query('[data-thread-card="t2"][data-active="true"]'),
+        "t2 (next below t1) becomes the open thread",
+      );
+    } finally {
+      m.unmount();
+    }
+  });
+
+  it("settling the last (oldest) item falls back to the previous one", async () => {
+    const { m, fake } = await bootThree("t3");
+    try {
+      await inAct(() => press(document.body, "a"));
+      await settle(m);
+      assert.deepEqual(fake.of("threads.setSettled").at(-1)?.args[0], {
+        threadId: "t3",
+        override: "settled",
+      });
+      assert.ok(
+        m.query('[data-thread-card="t2"][data-active="true"]'),
+        "t2 (above t3, the last item) becomes the open thread",
+      );
+    } finally {
+      m.unmount();
+    }
+  });
+
+  it("settling a different (non-open) thread from the sidebar keeps selection", async () => {
+    const { m, fake } = await bootThree("t1");
+    try {
+      await m.click(m.query('[data-settle-btn="t2"]'));
+      await settle(m);
+      assert.deepEqual(fake.of("threads.setSettled").at(-1)?.args[0], {
+        threadId: "t2",
+        override: "settled",
+      });
+      assert.ok(
+        m.query('[data-thread-card="t1"][data-active="true"]'),
+        "t1 (originally open) stays selected",
+      );
+    } finally {
+      m.unmount();
+    }
+  });
+
+  it("undo restores the settled thread as the open selection", async () => {
+    const { m, fake } = await bootThree("t1");
+    try {
+      await inAct(() => press(document.body, "a"));
+      await settle(m);
+      assert.ok(m.query('[data-thread-card="t2"][data-active="true"]'));
+      await m.click(m.byText("Undo"));
+      await settle(m);
+      const calls = fake.of("threads.setSettled");
+      assert.deepEqual(calls.at(-1)?.args[0], {
+        threadId: "t1",
+        override: null,
+      });
+      assert.ok(
+        m.query('[data-thread-card="t1"][data-active="true"]'),
+        "undo re-selects the settled thread",
+      );
     } finally {
       m.unmount();
     }
