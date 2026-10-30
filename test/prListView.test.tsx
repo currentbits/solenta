@@ -118,7 +118,7 @@ describe("PrListView", () => {
     await m.hover(number);
     await inAct(() => new Promise((r) => setTimeout(r, 500)));
     await m.flush();
-    assert.ok(m.query("[data-pr-hover-card]"), "hover card shown");
+    assert.ok(document.querySelector("[data-pr-hover-card]"), "hover card shown");
     assert.deepEqual(calledWith, {
       projectPath: p1.path,
       prNumber: 11,

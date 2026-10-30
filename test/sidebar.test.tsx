@@ -1838,8 +1838,9 @@ describe("Sidebar card anatomy + hover actions", () => {
     await m.hover(target);
     await inAct(() => new Promise((r) => setTimeout(r, 500)));
     await m.flush();
-    assert.ok(m.query("[data-pr-hover-card]"), "hover card shown");
-    assert.match(m.text(), /Ship it/);
+    const card = document.querySelector("[data-pr-hover-card]");
+    assert.ok(card, "hover card shown");
+    assert.match(card!.textContent || "", /Ship it/);
     assert.deepEqual(calledWith, {
       projectPath: "/tmp/ledger",
       prNumber: 12,
