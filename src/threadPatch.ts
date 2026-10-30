@@ -180,6 +180,15 @@ export function mergeThreadPatch(
   )
     ? prev.pendingPermission
     : rest.pendingPermission;
+  // Pagination bookkeeping (#1786) is NOT carried by streamed patches: the
+  // runner pushes pushDetail with limit: Infinity (the firstChanged diff
+  // needs the true full array), so every patch reports hasOlderMessages
+  // false / totalMessageCount = current length regardless of how much of
+  // the transcript the renderer actually has loaded. Only an explicit
+  // threads.get / threads:getOlderMessages result (applied outside this
+  // merge, as a plain assignment) may move these fields.
+  const hasOlderMessages = prev.hasOlderMessages;
+  const totalMessageCount = prev.totalMessageCount;
   const artifacts = sameJson(prev.artifacts, rest.artifacts)
     ? prev.artifacts
     : rest.artifacts;
@@ -213,5 +222,7 @@ export function mergeThreadPatch(
     artifacts,
     messages,
     workLog,
+    hasOlderMessages,
+    totalMessageCount,
   };
 }

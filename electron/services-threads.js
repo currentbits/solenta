@@ -2026,10 +2026,17 @@ async function searchMessages(store, input) {
  *   { markVisited: false } so a non-selected thread is never marked read
  * - electron tests — default or explicit depending on the case under test
  *
+ * Messages are paged (#1786): by default only the newest page (see
+ * store.getMessagesPage) ships over IPC, with `hasOlderMessages` /
+ * `totalMessageCount` telling the renderer there is more to fetch via
+ * threads:getOlderMessages. Pass `opts.limit: Infinity` for the full
+ * transcript (export/report; internal callers that read the store directly
+ * never go through this windowing at all).
+ *
  * @param {import('./store').Store} store
  * @param {string} threadId
  * @param {object | null} [workflow]
- * @param {{ markVisited?: boolean }} [opts]
+ * @param {{ markVisited?: boolean, limit?: number, before?: string | null }} [opts]
  */
 function getThreadDetail(store, threadId, workflow = null, opts) {
   const markVisited = !opts || opts.markVisited !== false;
@@ -2045,9 +2052,15 @@ function getThreadDetail(store, threadId, workflow = null, opts) {
     store.markDirty();
   }
   const current = store.getThread(threadId) || thread;
+  const page = store.getMessagesPage(threadId, {
+    limit: opts && opts.limit,
+    before: opts && opts.before,
+  });
   return {
     thread: decorateThread(store, current),
-    messages: store.getMessages(threadId).slice(),
+    messages: page.messages,
+    hasOlderMessages: page.hasOlder,
+    totalMessageCount: page.totalCount,
     workLog: store.getWorkLog(threadId).slice(),
     workflow: workflow ?? null,
     usage: store.getUsage(threadId) ?? null,
@@ -2056,6 +2069,30 @@ function getThreadDetail(store, threadId, workflow = null, opts) {
     pendingPermission: (opts && opts.pendingPermission) || null,
     // Only on a user visit that should show it; background pushes omit it.
     ...(recap ? { recap } : {}),
+  };
+}
+
+/**
+ * Previous page of a thread's messages (#1786), for the renderer's
+ * "load older" trigger. Same cursor rule as getThreadDetail's windowing:
+ * the page ends just before `before` and holds at most `limit` messages.
+ * @param {import('./store').Store} store
+ * @param {string} threadId
+ * @param {{ before: string, limit?: number }} input
+ */
+function getOlderMessages(store, threadId, input) {
+  const thread = store.getThread(threadId);
+  if (!thread || isTrashed(thread)) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  const page = store.getMessagesPage(threadId, {
+    limit: input && input.limit,
+    before: input && input.before,
+  });
+  return {
+    messages: page.messages,
+    hasOlderMessages: page.hasOlder,
+    totalMessageCount: page.totalCount,
   };
 }
 
@@ -2098,4 +2135,5 @@ module.exports = {
   searchThreads,
   searchMessages,
   getThreadDetail,
+  getOlderMessages,
 };

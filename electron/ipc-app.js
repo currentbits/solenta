@@ -79,8 +79,13 @@ module.exports = {
       try {
         ctx.broadcast(
           "thread:updated",
+          // Direct broadcast, not runner.pushDetail, so there is no prior
+          // push to diff against (#1786): request the full transcript so
+          // this rare event never truncates a renderer that has paged back
+          // further than the default window.
           services.getThreadDetail(ctx.store, threadId, null, {
             markVisited: false,
+            limit: Infinity,
           }),
         );
         ctx.broadcast("threads:changed", services.listThreads(ctx.store));

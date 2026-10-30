@@ -211,6 +211,7 @@ const IPC_CHANNELS = Object.freeze([
   { ns: "threads", method: "create" },
   { ns: "threads", method: "get" },
   { ns: "threads", method: "peek" },
+  { ns: "threads", method: "getOlderMessages" },
   { ns: "threads", method: "setPermissionMode" },
   { ns: "threads", method: "applyAgentProfile" },
   { ns: "threads", method: "pendingApprovals" },

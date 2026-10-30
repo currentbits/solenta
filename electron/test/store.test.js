@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { Store, MAX_MESSAGES_PER_THREAD, MESSAGE_OVERFLOW_SLACK, MAX_WORKLOG_ITEMS_PER_THREAD, WORKLOG_OVERFLOW_SLACK, SAVE_DEBOUNCE_MS, SAVE_DEBOUNCE_MAX_MS, ENVELOPE_THROTTLE_MS } = require("../store.js");
+const { Store, MAX_MESSAGES_PER_THREAD, MESSAGE_OVERFLOW_SLACK, DEFAULT_MESSAGE_PAGE_SIZE, MAX_WORKLOG_ITEMS_PER_THREAD, WORKLOG_OVERFLOW_SLACK, SAVE_DEBOUNCE_MS, SAVE_DEBOUNCE_MAX_MS, ENVELOPE_THROTTLE_MS } = require("../store.js");
 const services = require("../services.js");
 
 describe("Store", () => {
@@ -1247,6 +1247,72 @@ describe("Store", () => {
     assert.equal(kept.length, MAX_MESSAGES_PER_THREAD);
     assert.equal(kept.filter((m) => m.role === "event").length, 1);
     assert.equal(kept[kept.length - 1].text, "newest");
+  });
+
+  describe("getMessagesPage (#1786)", () => {
+    function seedMessages(store, threadId, count) {
+      const msgs = [];
+      for (let i = 0; i < count; i += 1) {
+        msgs.push({ id: `m${i}`, role: "assistant", text: `msg ${i}`, createdAt: i });
+      }
+      store.setMessages(threadId, msgs);
+      return msgs;
+    }
+
+    it("returns the newest default page with hasOlder when the thread is bigger", () => {
+      const store = new Store(filePath);
+      const msgs = seedMessages(store, "t1", 500);
+      const page = store.getMessagesPage("t1");
+      assert.equal(page.messages.length, DEFAULT_MESSAGE_PAGE_SIZE);
+      assert.equal(page.hasOlder, true);
+      assert.equal(page.totalCount, 500);
+      assert.deepEqual(page.messages, msgs.slice(500 - DEFAULT_MESSAGE_PAGE_SIZE));
+    });
+
+    it("returns everything with hasOlder false when the thread fits in one page", () => {
+      const store = new Store(filePath);
+      const msgs = seedMessages(store, "t1", 10);
+      const page = store.getMessagesPage("t1");
+      assert.deepEqual(page.messages, msgs);
+      assert.equal(page.hasOlder, false);
+      assert.equal(page.totalCount, 10);
+    });
+
+    it("pages backward from a before cursor, excluding that message", () => {
+      const store = new Store(filePath);
+      const msgs = seedMessages(store, "t1", 500);
+      const page = store.getMessagesPage("t1", { before: "m300", limit: 50 });
+      assert.deepEqual(page.messages, msgs.slice(250, 300));
+      assert.equal(page.hasOlder, true);
+      assert.equal(page.totalCount, 500);
+      // Then page past the start: hasOlder flips false and the page is short.
+      const first = store.getMessagesPage("t1", { before: "m20", limit: 50 });
+      assert.deepEqual(first.messages, msgs.slice(0, 20));
+      assert.equal(first.hasOlder, false);
+    });
+
+    it("limit: Infinity returns the whole transcript", () => {
+      const store = new Store(filePath);
+      const msgs = seedMessages(store, "t1", 500);
+      const page = store.getMessagesPage("t1", { limit: Infinity });
+      assert.deepEqual(page.messages, msgs);
+      assert.equal(page.hasOlder, false);
+    });
+
+    it("an unknown before id falls back to the newest page", () => {
+      const store = new Store(filePath);
+      const msgs = seedMessages(store, "t1", 500);
+      const page = store.getMessagesPage("t1", { before: "does-not-exist" });
+      assert.deepEqual(page.messages, msgs.slice(500 - DEFAULT_MESSAGE_PAGE_SIZE));
+    });
+
+    it("an empty/unknown thread returns an empty page, not an error", () => {
+      const store = new Store(filePath);
+      const page = store.getMessagesPage("nope");
+      assert.deepEqual(page.messages, []);
+      assert.equal(page.hasOlder, false);
+      assert.equal(page.totalCount, 0);
+    });
   });
 
   it("caps work-log growth without a marker", () => {

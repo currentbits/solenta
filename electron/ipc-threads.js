@@ -9,8 +9,11 @@ const { retireAgent, runRetention } = require("./ipc-shared.js");
 /**
  * Shared get/peek payload. Selecting a thread (get) stamps lastVisitedAt;
  * peeking a sibling for the divergence compare must not (issue #393).
+ * `opts` (issue #1786) pages the transcript: { limit?, before? }, same
+ * cursor rule as threads:getOlderMessages. Omitted entirely, this returns
+ * the newest default-sized page, not the whole history.
  */
-function threadDetailFor(ctx, id, markVisited) {
+function threadDetailFor(ctx, id, markVisited, opts) {
   const workflow =
     typeof ctx.runner.getActiveWorkflow === "function"
       ? ctx.runner.getActiveWorkflow(id)
@@ -27,6 +30,8 @@ function threadDetailFor(ctx, id, markVisited) {
   }
   return services.getThreadDetail(ctx.store, id, view, {
     markVisited,
+    limit: opts && opts.limit,
+    before: opts && opts.before,
     pendingPermission: ctx.runner.getPendingPermission
       ? ctx.runner.getPendingPermission(id)
       : null,
@@ -308,9 +313,15 @@ module.exports = {
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
     return result;
   },
-  "threads:get": async (ctx, id) => threadDetailFor(ctx, id, true),
+  "threads:get": async (ctx, id, opts) => threadDetailFor(ctx, id, true, opts),
   // Compare/sibling load (issue #393). Same payload as get, no visit stamp.
-  "threads:peek": async (ctx, id) => threadDetailFor(ctx, id, false),
+  "threads:peek": async (ctx, id, opts) => threadDetailFor(ctx, id, false, opts),
+  // Previous page of the transcript (#1786): {threadId, before, limit?}.
+  "threads:getOlderMessages": async (ctx, input) =>
+    services.getOlderMessages(ctx.store, input && input.threadId, {
+      before: input && input.before,
+      limit: input && input.limit,
+    }),
   // Approval inbox (#291): every pending prompt across threads.
   "threads:pendingApprovals": async (ctx) =>
     ctx.runner.listPendingApprovals ? ctx.runner.listPendingApprovals() : [],

@@ -12,6 +12,8 @@ import type { DisplayEntry } from "../../toolGroups";
 export function useTranscriptFind(
   detail: ThreadDetail | null,
   threadId: string | null,
+  /** A miss can mean the hit is in unloaded history, not that it doesn't exist (#1786). */
+  onEnsureFullHistory?: (threadId: string) => void,
 ) {
   const session = useFindSession();
   useFindShortcut("transcript", session.openFind);
@@ -35,6 +37,17 @@ export function useTranscriptFind(
         : [],
     [session.open, session.query, detail],
   );
+
+  // A query with zero hits in the loaded page might still match further
+  // back: fetch the rest of the transcript once and let the next render's
+  // hits recompute over it (#1786).
+  useEffect(() => {
+    if (!session.open || !session.query.trim() || hits.length > 0) return;
+    if (!detail || detail.thread.id !== threadId || !detail.hasOlderMessages) {
+      return;
+    }
+    onEnsureFullHistory?.(threadId);
+  }, [session.open, session.query, hits.length, detail, threadId, onEnsureFullHistory]);
   const current = hits[session.index] ?? null;
 
   const step = (dir: 1 | -1) => {
