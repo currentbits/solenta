@@ -252,3 +252,22 @@ export function stepVisibleId(
   const next = (i + delta + orderedIds.length) % orderedIds.length;
   return orderedIds[next]!;
 }
+
+/**
+ * Thread to select after settling the open thread (#1790). `orderedIds` is
+ * the eligible order from BEFORE the settle (buildFlatSidebar's
+ * pinned+active+working+snoozed, in render order) — settled/archived are
+ * excluded since settling is what moves `settledId` into one of them. No
+ * wrap, unlike stepVisibleId: next below; the last item falls back to the
+ * one above; alone in the list, leaves the selection unchanged (null).
+ */
+export function nextThreadAfterSettle(
+  orderedIds: readonly string[],
+  settledId: string,
+): string | null {
+  const i = orderedIds.indexOf(settledId);
+  if (i < 0) return null;
+  if (i < orderedIds.length - 1) return orderedIds[i + 1]!;
+  if (i > 0) return orderedIds[i - 1]!;
+  return null;
+}

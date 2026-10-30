@@ -20,6 +20,7 @@ import { inAct, mount, unmountAll } from "./support/dom.ts";
 import { setTranscriptViewMode } from "../src/uiPrefs";
 import { resetComposerSession } from "../src/composerSession";
 import { ThreadView } from "../src/components/ThreadView";
+import { ChangesPanel } from "../src/components/thread/ChangesPanel";
 // Warm the lazy chunk: a cold import() can outlast flush() on a loaded CI
 // runner, then resolves outside act() and fails the next test's console check.
 import "../src/components/HtmlPage";
@@ -138,6 +139,8 @@ function detail(over: Partial<ThreadDetail> = {}): ThreadDetail {
     usage: over.usage ?? null,
     pendingPermission: over.pendingPermission,
     artifacts: over.artifacts,
+    hasOlderMessages: over.hasOlderMessages,
+    totalMessageCount: over.totalMessageCount,
   };
 }
 
@@ -155,11 +158,19 @@ function suggestion(
 const noopAsync = async () => {};
 const noopSave = async () =>
   ({ id: "wf", name: "standard", phases: [] }) as WorkflowTemplateInfo;
+// Hoisted (not inline in view()) so repeated view() calls in a rerender loop
+// hand ChangesPanel the SAME onCommit/onRevert/onSuggest reference every
+// time, the way a real caller's useCallback'd props would (#1787 render test).
+const defaultOnCommitChanges = async () => ({ subject: "x" });
+const defaultOnRevertFile = async (path: string) => ({ path });
+const defaultOnSuggestCommitMessage = async () => ({ message: "feat: x" });
 
 function view(props: {
   detail?: ThreadDetail | null;
   detailError?: string | null;
   onRetryDetail?: () => void;
+  onLoadOlderMessages?: (threadId: string) => void;
+  onEnsureFullHistory?: (threadId: string) => void;
   hasProjects?: boolean;
   project?: ProjectInfo | null;
   changesOpen?: boolean;
@@ -231,6 +242,8 @@ function view(props: {
       detail={props.detail === undefined ? detail() : props.detail}
       detailError={props.detailError}
       onRetryDetail={props.onRetryDetail}
+      onLoadOlderMessages={props.onLoadOlderMessages}
+      onEnsureFullHistory={props.onEnsureFullHistory}
       project={props.project === undefined ? project : props.project}
       providers={providers}
       workflows={workflows}
@@ -266,9 +279,9 @@ function view(props: {
         (async () => ({ files: [], patch: "", truncated: false }))
       }
       onFetchReviewContext={props.onFetchReviewContext}
-      onCommitChanges={async () => ({ subject: "x" })}
-      onRevertFile={async (path) => ({ path })}
-      onSuggestCommitMessage={async () => ({ message: "feat: x" })}
+      onCommitChanges={defaultOnCommitChanges}
+      onRevertFile={defaultOnRevertFile}
+      onSuggestCommitMessage={defaultOnSuggestCommitMessage}
       onPush={async () => ({ remote: "origin", branch: "main" })}
       onLoadImage={props.onLoadImage}
       onLoadAttachmentImage={props.onLoadAttachmentImage}
@@ -3684,6 +3697,333 @@ describe("ThreadView permission redirect (#1762)", () => {
   });
 });
 
+describe("ThreadView deferred question/approval cards (#1789)", () => {
+  const pending: PendingPermissionInfo = {
+    requestId: "req-1789",
+    toolName: "Bash",
+    summary: "Bash: npm test",
+    input: '{"command":"npm test"}',
+    command: "npm test",
+  };
+
+  // Same caveat as the #1762 redirect tests: the permission card's own
+  // command editor is a textarea too.
+  const composerTextarea = (m: { container: HTMLElement }) =>
+    Array.from(m.container.querySelectorAll("textarea")).find(
+      (t) => !t.hasAttribute("data-permission-command"),
+    ) as HTMLTextAreaElement;
+
+  it("holds the card back while the composer is mid-type, with a notice in its place", async () => {
+    const m = await mount(
+      view({ detail: detail({ thread: thread({ status: "working" }) }) }),
+    );
+    const ta = composerTextarea(m);
+    await inAct(() => ta.focus());
+    await m.type(ta, "still writing this");
+
+    await m.rerender(
+      view({
+        detail: detail({
+          thread: thread({ status: "working" }),
+          pendingPermission: pending,
+        }),
+      }),
+    );
+
+    assert.equal(
+      m.query("[data-permission-redirect-hint]"),
+      null,
+      "the real card must not mount while the user is typing",
+    );
+    const notice = m.query("[data-deferred-card-notice]");
+    assert.ok(notice, "a compact notice must show in its place");
+    assert.match(notice!.textContent ?? "", /approval needed/i);
+    assert.match(
+      notice!.textContent ?? "",
+      /sending will decline and redirect/i,
+      "the notice must carry the #1762 redirect warning too",
+    );
+    m.unmount();
+  });
+
+  it("reveals the card once 1.5s pass with no further typing", async () => {
+    const m = await mount(
+      view({ detail: detail({ thread: thread({ status: "working" }) }) }),
+    );
+    const ta = composerTextarea(m);
+    await inAct(() => ta.focus());
+    await m.type(ta, "still writing this");
+
+    await m.rerender(
+      view({
+        detail: detail({
+          thread: thread({ status: "working" }),
+          pendingPermission: pending,
+        }),
+      }),
+    );
+    assert.ok(m.query("[data-deferred-card-notice]"), "deferred first");
+
+    // Real timer, not a fixed-offset fake: the component arms a real
+    // setTimeout off the last keystroke, same as the #607 idle-chain test
+    // above. 1.6s comfortably clears the 1.5s idle window.
+    await inAct(() => new Promise((r) => setTimeout(r, 1600)));
+
+    assert.ok(
+      m.query("[data-permission-redirect-hint]"),
+      "the idle timeout must reveal the real card",
+    );
+    assert.equal(m.query("[data-deferred-card-notice]"), null);
+    m.unmount();
+  });
+
+  it("shows the card immediately when the composer was not being typed into", async () => {
+    const m = await mount(
+      view({
+        detail: detail({
+          thread: thread({ status: "working" }),
+          pendingPermission: pending,
+        }),
+      }),
+    );
+    assert.ok(
+      m.query("[data-permission-redirect-hint]"),
+      "no typing happened, so the card must not be held back",
+    );
+    assert.equal(m.query("[data-deferred-card-notice]"), null);
+    m.unmount();
+  });
+
+  it("never holds back a card once the composer is cleared, even mid-typing-window", async () => {
+    const m = await mount(
+      view({ detail: detail({ thread: thread({ status: "working" }) }) }),
+    );
+    const ta = composerTextarea(m);
+    await inAct(() => ta.focus());
+    await m.type(ta, "still writing this");
+    await m.type(ta, "");
+
+    await m.rerender(
+      view({
+        detail: detail({
+          thread: thread({ status: "working" }),
+          pendingPermission: pending,
+        }),
+      }),
+    );
+
+    assert.ok(
+      m.query("[data-permission-redirect-hint]"),
+      "an empty composer must never defer the card",
+    );
+    assert.equal(m.query("[data-deferred-card-notice]"), null);
+    m.unmount();
+  });
+
+  it("clicking the notice opens the card right away", async () => {
+    const m = await mount(
+      view({ detail: detail({ thread: thread({ status: "working" }) }) }),
+    );
+    const ta = composerTextarea(m);
+    await inAct(() => ta.focus());
+    await m.type(ta, "still writing this");
+
+    await m.rerender(
+      view({
+        detail: detail({
+          thread: thread({ status: "working" }),
+          pendingPermission: pending,
+        }),
+      }),
+    );
+    assert.ok(m.query("[data-deferred-card-notice]"));
+
+    await m.click(m.query("[data-deferred-card-open]"));
+
+    assert.ok(
+      m.query("[data-permission-redirect-hint]"),
+      "clicking the notice must open the real card immediately",
+    );
+    assert.equal(m.query("[data-deferred-card-notice]"), null);
+    m.unmount();
+  });
+
+  it("still redirects a send while the card is deferred (#1762 semantics unchanged)", async () => {
+    const redirected: Array<{ requestId: string; prompt: string }> = [];
+    const started: string[] = [];
+    const m = await mount(
+      view({
+        onStartRun: (prompt) => {
+          started.push(prompt);
+        },
+        onRedirectPermission: (requestId, prompt) => {
+          redirected.push({ requestId, prompt });
+        },
+        detail: detail({ thread: thread({ status: "working" }) }),
+      }),
+    );
+    const ta = composerTextarea(m);
+    await inAct(() => ta.focus());
+    await m.type(ta, "do the other thing instead");
+
+    await m.rerender(
+      view({
+        onStartRun: (prompt) => {
+          started.push(prompt);
+        },
+        onRedirectPermission: (requestId, prompt) => {
+          redirected.push({ requestId, prompt });
+        },
+        detail: detail({
+          thread: thread({ status: "working" }),
+          pendingPermission: pending,
+        }),
+      }),
+    );
+    assert.ok(
+      m.query("[data-deferred-card-notice]"),
+      "sanity: the card is deferred for this send",
+    );
+
+    await m.click(m.query('button[aria-label="Send"]'));
+    assert.deepEqual(redirected, [
+      { requestId: "req-1789", prompt: "do the other thing instead" },
+    ]);
+    assert.equal(started.length, 0, "a deferred card still counts as open");
+    m.unmount();
+  });
+
+  it("labels a deferred persisted question without the redirect warning", async () => {
+    const m = await mount(
+      view({ detail: detail({ thread: thread({ status: "working" }) }) }),
+    );
+    const ta = composerTextarea(m);
+    await inAct(() => ta.focus());
+    await m.type(ta, "still writing this");
+
+    await m.rerender(
+      view({
+        detail: detail({
+          thread: thread({
+            status: "working",
+            pendingQuestion: {
+              id: "q-1",
+              askedAt: Date.now(),
+              questions: [
+                {
+                  question: "Which auth method?",
+                  header: "Auth method",
+                  multiSelect: false,
+                  options: [{ label: "OAuth", description: "" }],
+                },
+              ],
+            },
+          }),
+        }),
+      }),
+    );
+
+    const notice = m.query("[data-deferred-card-notice]");
+    assert.ok(notice);
+    assert.match(notice!.textContent ?? "", /agent is asking a question/i);
+    assert.equal(
+      m.query("[data-deferred-card-redirect-hint]"),
+      null,
+      "a question card never carries the #1762 redirect warning",
+    );
+    m.unmount();
+  });
+});
+
+describe("ThreadView back-to-back user message bursts (#1789)", () => {
+  it("tags a lone user message as a single burst", () => {
+    const html = render({
+      detail: detail({
+        messages: [msg({ id: "u1", role: "user", text: "one off", createdAt: 10 })],
+      }),
+    });
+    assert.ok(html.includes('data-burst="single"'));
+  });
+
+  it("tags consecutive user messages first/middle/last, and resets after agent output", () => {
+    const html = render({
+      detail: detail({
+        messages: [
+          msg({ id: "u1", role: "user", text: "QUEUED_ONE", createdAt: 10 }),
+          msg({ id: "u2", role: "user", text: "QUEUED_TWO", createdAt: 11 }),
+          msg({ id: "u3", role: "user", text: "QUEUED_THREE", createdAt: 12 }),
+          msg({
+            id: "a1",
+            role: "assistant",
+            text: "ASSISTANT_REPLY",
+            createdAt: 20,
+          }),
+          msg({ id: "u4", role: "user", text: "AFTER_REPLY", createdAt: 30 }),
+        ],
+      }),
+    });
+    // The burst members carry first/middle/last; the lone trailing message
+    // (an agent turn came between it and the burst) is single again.
+    const u1Idx = html.indexOf("QUEUED_ONE");
+    const u2Idx = html.indexOf("QUEUED_TWO");
+    const u3Idx = html.indexOf("QUEUED_THREE");
+    const u4Idx = html.indexOf("AFTER_REPLY");
+    const burstAttrNear = (idx: number) => {
+      const before = html.lastIndexOf("data-burst=", idx);
+      return html.slice(before, before + 20);
+    };
+    assert.match(burstAttrNear(u1Idx), /data-burst="first"/);
+    assert.match(burstAttrNear(u2Idx), /data-burst="middle"/);
+    assert.match(burstAttrNear(u3Idx), /data-burst="last"/);
+    assert.match(burstAttrNear(u4Idx), /data-burst="single"/);
+  });
+
+  it("shows the shared time only on the last message of a burst", () => {
+    const html = render({
+      detail: detail({
+        messages: [
+          msg({ id: "u1", role: "user", text: "QUEUED_ONE", createdAt: 10 }),
+          msg({ id: "u2", role: "user", text: "QUEUED_TWO", createdAt: 11 }),
+        ],
+      }),
+    });
+    const firstSlice = html.slice(
+      html.lastIndexOf("<article", html.indexOf("QUEUED_ONE")),
+      html.indexOf("QUEUED_ONE"),
+    );
+    assert.ok(
+      !firstSlice.includes("data-burst-time"),
+      "the first bubble of a burst must not carry its own time",
+    );
+    assert.ok(
+      html.includes("data-burst-time"),
+      "the group's shared time must render once, on the last bubble",
+    );
+  });
+
+  it("keeps steer badges per message inside a burst", () => {
+    const html = render({
+      detail: detail({
+        messages: [
+          msg({ id: "u1", role: "user", text: "QUEUED_ONE", createdAt: 10 }),
+          msg({
+            id: "u2",
+            role: "user",
+            text: "QUEUED_TWO",
+            createdAt: 11,
+            steer: true,
+          }),
+        ],
+      }),
+    });
+    assert.equal(
+      [...html.matchAll(/data-steer-label=""/g)].length,
+      1,
+      "only the steered message shows the badge, burst or not",
+    );
+  });
+});
+
 /**
  * Issue #555: a tall review itinerary used to consume the whole 520px
  * Changes panel, clip the commit box, and leave no scrollbar to reach it.
@@ -4044,6 +4384,99 @@ describe("ThreadView Changes panel commit box (issue #555)", () => {
   });
 });
 
+/**
+ * React.memo(ChangesPanel) stores the inner function on `.type`, the same
+ * probe sidebar.test.tsx uses for ThreadCard (#617).
+ */
+function countChangesPanelRenders(): {
+  count: () => number;
+  restore: () => void;
+} {
+  const memoized = ChangesPanel as unknown as {
+    type: (props: unknown) => unknown;
+  };
+  const inner = memoized.type;
+  let n = 0;
+  memoized.type = ((props: unknown) => {
+    n += 1;
+    return inner(props);
+  }) as typeof inner;
+  return {
+    count: () => n,
+    restore: () => {
+      memoized.type = inner;
+    },
+  };
+}
+
+describe("ChangesPanel does not re-render on every streamed token (#1787)", () => {
+  it("stays memoized across detail updates that leave git state untouched", async () => {
+    const probe = countChangesPanelRenders();
+    try {
+      const files = [
+        { path: "src/App.tsx", status: "M", additions: 3, deletions: 1 },
+      ];
+      const patch = [
+        "diff --git a/src/App.tsx b/src/App.tsx",
+        "--- a/src/App.tsx",
+        "+++ b/src/App.tsx",
+        "@@ -1,1 +1,2 @@",
+        " const x = 1",
+        "+const y = 2",
+      ].join("\n");
+      // Hoisted once: a real caller's git callbacks are stable (useCallback),
+      // and that stability is exactly what the memo depends on.
+      const onFetchDiff = async () => ({ files, patch, truncated: false });
+      const onFetchReviewContext = async () => ({
+        annotation: null,
+        symbols: [],
+        acceptedHunks: [],
+      });
+      const buildDetail = (text: string) =>
+        detail({
+          thread: thread({ id: "t1", status: "working" }),
+          messages: [msg({ id: "a1", role: "assistant", text, createdAt: 1 })],
+        });
+
+      const m = await mount(
+        view({
+          changesOpen: true,
+          detail: buildDetail("Hello"),
+          onFetchDiff,
+          onFetchReviewContext,
+        }),
+      );
+      await m.flush();
+      assert.ok(m.query("[aria-label='Git']"), "Git pane must be open");
+      const before = probe.count();
+      assert.ok(before > 0, "panel must have rendered once opened");
+
+      // Simulate several streamed tokens: only the assistant message text
+      // grows, same thread id/branch/worktree, same diff.
+      for (let i = 0; i < 5; i++) {
+        await m.rerender(
+          view({
+            changesOpen: true,
+            detail: buildDetail(`Hello${"!".repeat(i + 1)}`),
+            onFetchDiff,
+            onFetchReviewContext,
+          }),
+        );
+      }
+      await m.flush();
+
+      assert.equal(
+        probe.count(),
+        before,
+        "a streamed token that leaves git state untouched must not re-render ChangesPanel",
+      );
+      m.unmount();
+    } finally {
+      probe.restore();
+    }
+  });
+});
+
 const twoOpenOneDismissed: WorkSuggestion[] = [
   suggestion({ id: "s-open-1", title: "Fix flaky reconnect test" }),
   suggestion({ id: "s-open-2", title: "Tighten cookie flags" }),
@@ -4249,6 +4682,17 @@ function bulkMessages(n: number): ChatMessage[] {
         text: `#${i}#`,
         createdAt: i + 1,
       }),
+    );
+  }
+  return rows;
+}
+
+/** Messages with a stable id (`m${i}`) over [start, end), for paging tests. */
+function rangeMessages(start: number, end: number): ChatMessage[] {
+  const rows: ChatMessage[] = [];
+  for (let i = start; i < end; i++) {
+    rows.push(
+      msg({ id: `m${i}`, role: "user", text: `#${i}#`, createdAt: i + 1 }),
     );
   }
   return rows;
@@ -4676,6 +5120,227 @@ describe("ThreadView transcript windowing (issue #564)", () => {
   });
 });
 
+describe("ThreadView settled rows get content-visibility (issue #1785)", () => {
+  it("marks every mounted message row settled when the thread is idle", () => {
+    const html = render({
+      detail: detail({ messages: bulkMessages(5) }),
+    });
+    const count = (html.match(new RegExp(styles.settledRow, "g")) ?? []).length;
+    assert.equal(count, 5, "an idle thread has no live row to exclude");
+  });
+
+  it("excludes the live streaming message from settled, keeps earlier ones settled", () => {
+    const messages = [
+      ...bulkMessages(5),
+      msg({ id: "live", role: "assistant", text: "writing now", createdAt: 100 }),
+    ];
+    const html = render({
+      detail: detail({
+        thread: thread({ status: "working" }),
+        messages,
+      }),
+    });
+    const liveRow = html.slice(
+      html.indexOf('data-message-id="live"'),
+      html.indexOf('data-message-id="live"') + 400,
+    );
+    assert.ok(
+      !liveRow.includes(styles.settledRow),
+      "the message the live turn is currently writing stays un-contained",
+    );
+    const earlierRow = html.slice(
+      html.indexOf('data-message-id="bulk-0"'),
+      html.indexOf('data-message-id="bulk-0"') + 400,
+    );
+    assert.ok(
+      earlierRow.includes(styles.settledRow),
+      "earlier, finished rows get content-visibility",
+    );
+  });
+
+  it("excludes the running tool's group from settled, settles finished groups", () => {
+    const messages = [
+      msg({
+        id: "done-1",
+        role: "tool",
+        text: "Read: a.ts",
+        createdAt: 1,
+        runId: "run-old",
+        tool: { id: "tc1", name: "Read", input: "a.ts", output: "ok", done: true, isError: false },
+      }),
+      msg({
+        id: "done-2",
+        role: "tool",
+        text: "Read: b.ts",
+        createdAt: 2,
+        runId: "run-old",
+        tool: { id: "tc2", name: "Read", input: "b.ts", output: "ok", done: true, isError: false },
+      }),
+      msg({
+        id: "running-1",
+        role: "tool",
+        text: "Read: c.ts",
+        createdAt: 3,
+        runId: "run-live",
+        tool: { id: "tc3", name: "Read", input: "c.ts", output: "", done: false, isError: false },
+      }),
+    ];
+    const html = render({
+      detail: detail({
+        thread: thread({ status: "working" }),
+        messages,
+        workLog: [
+          { id: "wl-old", runId: "run-old", label: "Read 2 files", done: true, timestamp: 2 },
+          { id: "wl-live", runId: "run-live", label: "Read c.ts", done: false, timestamp: 3 },
+        ],
+      }),
+    });
+    const groups = [
+      ...html.matchAll(/<section class="([^"]*)" data-tool-group="([^"]*)"/g),
+    ];
+    assert.equal(groups.length, 2, "two separate run groups");
+    assert.ok(
+      groups[0]![1]!.split(" ").includes(styles.settledRow),
+      "the finished run's group is settled",
+    );
+    assert.ok(
+      !groups[1]![1]!.split(" ").includes(styles.settledRow),
+      "the run still being worked stays un-contained",
+    );
+  });
+
+  it("marks far-above rows settled once Show earlier mounts them", async () => {
+    const n = 500;
+    const m = await mount(
+      view({ detail: detail({ messages: bulkMessages(n) }) }),
+    );
+    await m.click(m.query("[data-show-earlier]"));
+    const settledRows = m.queryAll(`.${styles.settledRow}`);
+    assert.ok(
+      settledRows.length >= TRANSCRIPT_WINDOW * 2,
+      "every row paged in by Show earlier is far from the viewport and settled",
+    );
+    m.unmount();
+  });
+});
+
+describe("ThreadView server-paged messages (issue #1786)", () => {
+  it("renders no load-older control when hasOlderMessages is unset or false", () => {
+    const html = render({ detail: detail({ messages: bulkMessages(40) }) });
+    assert.ok(!html.includes("data-load-older"));
+  });
+
+  it("offers Load older messages once the local tail window is exhausted", () => {
+    const n = 40; // under TRANSCRIPT_WINDOW, so hiddenCount stays 0
+    const html = render({
+      detail: detail({
+        messages: bulkMessages(n),
+        hasOlderMessages: true,
+        totalMessageCount: 500,
+      }),
+    });
+    assert.ok(
+      !html.includes("data-show-earlier"),
+      "local window already shows everything loaded",
+    );
+    assert.ok(
+      html.includes("data-load-older"),
+      "server says there is more, so the fetch-more control must render",
+    );
+    assert.ok(html.includes("Load older messages"));
+  });
+
+  it("does not show Load older messages while Show earlier still has local entries to reveal", () => {
+    const html = render({
+      detail: detail({
+        messages: bulkMessages(500),
+        hasOlderMessages: true,
+        totalMessageCount: 5000,
+      }),
+    });
+    assert.ok(html.includes("data-show-earlier"));
+    assert.ok(
+      !html.includes("data-load-older"),
+      "the local window still has hidden entries; fetch-more is not needed yet",
+    );
+  });
+
+  it("clicking Load older messages calls onLoadOlderMessages with the thread id and prepends the result", async () => {
+    const calls: string[] = [];
+    const older = rangeMessages(0, 10); // the page "before" what's loaded
+    const loaded = rangeMessages(10, 50);
+    function Harness() {
+      const [d, setD] = useState(
+        detail({ messages: loaded, hasOlderMessages: true, totalMessageCount: 50 }),
+      );
+      return view({
+        detail: d,
+        onLoadOlderMessages: (threadId: string) => {
+          calls.push(threadId);
+          setD((prev) => ({
+            ...prev,
+            messages: [...older, ...prev.messages],
+            hasOlderMessages: false,
+            totalMessageCount: 50,
+          }));
+        },
+      });
+    }
+    const m = await mount(<Harness />);
+    const btn = m.query("[data-load-older]");
+    assert.ok(btn, "Load older messages button");
+    await m.click(btn);
+    assert.deepEqual(calls, ["t1"]);
+    assert.ok(m.html().includes("#0#"), "the fetched older page is now mounted");
+    assert.equal(
+      m.query("[data-load-older]"),
+      null,
+      "hasOlderMessages is now false, so the control is gone",
+    );
+    m.unmount();
+  });
+
+  it("fetches the whole transcript when a reveal target is not in the loaded page", async () => {
+    const calls: string[] = [];
+    const loaded = rangeMessages(100, 140);
+    const m = await mount(
+      view({
+        detail: detail({
+          thread: thread({ id: "t-reveal" }),
+          messages: loaded,
+          hasOlderMessages: true,
+          totalMessageCount: 140,
+        }),
+        revealMessageId: "m5",
+        onEnsureFullHistory: (threadId: string) => {
+          calls.push(threadId);
+        },
+      }),
+    );
+    assert.deepEqual(calls, ["t-reveal"]);
+    m.unmount();
+  });
+
+  it("does not call onEnsureFullHistory when the reveal target is already loaded", async () => {
+    const calls: string[] = [];
+    const loaded = rangeMessages(100, 140);
+    const m = await mount(
+      view({
+        detail: detail({
+          messages: loaded,
+          hasOlderMessages: true,
+          totalMessageCount: 140,
+        }),
+        revealMessageId: loaded[5]!.id,
+        onEnsureFullHistory: (threadId: string) => {
+          calls.push(threadId);
+        },
+      }),
+    );
+    assert.deepEqual(calls, []);
+    m.unmount();
+  });
+});
 
 describe("ThreadView stream-in animation", () => {
   it("marks nothing for stream-in on the initial render", () => {

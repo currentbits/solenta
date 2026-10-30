@@ -116,6 +116,7 @@ import type {
   SlackSettings,
 } from "../../src/shared/ipc";
 import { normalizeMessagePins } from "../../src/messagePins";
+import { pageMessages } from "../../src/shared/messagePaging";
 import { queuedItemFiles, queuedRow } from "../../src/queuedFiles";
 import { buildActivity } from "../../src/activity";
 import {
@@ -239,6 +240,24 @@ export function detail(over: Partial<ThreadDetail> = {}): ThreadDetail {
     workflow: null,
     ...over,
   } as ThreadDetail;
+}
+
+/**
+ * threads.get/peek page the transcript (#1786): slice `d.messages` for the
+ * response, leaving the full-history object held in `details` untouched so
+ * a later getOlderMessages call still sees everything.
+ */
+function pagedDetail(
+  d: ThreadDetail,
+  opts?: { limit?: number; before?: string },
+): ThreadDetail {
+  const page = pageMessages(d.messages, opts);
+  return {
+    ...d,
+    messages: page.messages,
+    hasOlderMessages: page.hasOlderMessages,
+    totalMessageCount: page.totalMessageCount,
+  };
 }
 
 export interface FakeOptions {
@@ -417,7 +436,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
     stayAwake: "agent",
     quotaWaitAutoResume: true,
     confirmQuitWithActiveWork: true,
-    resumeInterruptedRuns: false,
+    resumeInterruptedRuns: true,
     combineQueuedFollowUps: true,
     agentBugReports: true,
     prDiffCapLines: 400,
@@ -2177,7 +2196,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
        * that select-and-clear-unread do not pass against a silent no-op.
        * Round-37 lesson: a fake that drifts from reality ships green and broken.
        */
-      get: (id: string) => {
+      get: (id: string, opts?: { limit?: number; before?: string }) => {
         const stamp = Date.now();
         const existing = threads.find((t) => t.id === id);
         if (existing) {
@@ -2193,20 +2212,20 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
             thread: { ...base.thread, ...stampedRow, lastVisitedAt: stamp },
           };
           details[id] = stampedDetail;
-          return rec("threads.get", [id], stampedDetail);
+          return rec("threads.get", [id, opts], pagedDetail(stampedDetail, opts));
         }
         const fallback = details[id] ?? detail({ thread: thread({ id, lastVisitedAt: stamp }) });
         const stampedFallback: ThreadDetail = {
           ...fallback,
           thread: { ...fallback.thread, lastVisitedAt: stamp },
         };
-        return rec("threads.get", [id], stampedFallback);
+        return rec("threads.get", [id, opts], pagedDetail(stampedFallback, opts));
       },
       /**
        * Sibling load for the divergence compare (issue #393). Same payload
        * as get, but visiting is not implied — lastVisitedAt stays put.
        */
-      peek: (id: string) => {
+      peek: (id: string, opts?: { limit?: number; before?: string }) => {
         const existing = threads.find((t) => t.id === id);
         const base =
           details[id] ??
@@ -2216,7 +2235,24 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           : { ...base.thread };
         const peeked: ThreadDetail = { ...base, thread: row };
         details[id] = peeked;
-        return rec("threads.peek", [id], peeked);
+        return rec("threads.peek", [id, opts], pagedDetail(peeked, opts));
+      },
+      /** "Load older" page (#1786): slices the canonical full history held in `details`. */
+      getOlderMessages: (input: {
+        threadId: string;
+        before: string;
+        limit?: number;
+      }) => {
+        const base = details[input.threadId] ?? detail();
+        const page = pageMessages(base.messages, {
+          limit: input.limit,
+          before: input.before,
+        });
+        return rec("threads.getOlderMessages", [input], {
+          messages: page.messages,
+          hasOlderMessages: page.hasOlderMessages,
+          totalMessageCount: page.totalMessageCount,
+        });
       },
       setPermissionMode: (input: unknown) =>
         rec("threads.setPermissionMode", [input], thread()),

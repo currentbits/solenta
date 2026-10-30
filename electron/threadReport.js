@@ -234,7 +234,12 @@ async function exportThreadReport(ctx, threadId) {
   const services = require("./services.js");
   const { diff } = require("./worktrees.js");
   const providers = require("./providers.js");
-  const detail = services.getThreadDetail(ctx.store, threadId, null, { markVisited: false });
+  // Export needs the whole transcript, not the renderer's windowed page
+  // (#1786): Infinity as the limit turns getMessagesPage into "everything".
+  const detail = services.getThreadDetail(ctx.store, threadId, null, {
+    markVisited: false,
+    limit: Infinity,
+  });
   if (!ctx.dialog || typeof ctx.dialog.showSaveDialog !== "function") {
     throw new Error("Save dialog is not available in this mode");
   }
@@ -292,7 +297,12 @@ async function exportThreadReport(ctx, threadId) {
  */
 async function exportThreadReportMarkdown(ctx, threadId) {
   const services = require("./services.js");
-  const detail = services.getThreadDetail(ctx.store, threadId, null, { markVisited: false });
+  // Export needs the whole transcript, not the renderer's windowed page
+  // (#1786): Infinity as the limit turns getMessagesPage into "everything".
+  const detail = services.getThreadDetail(ctx.store, threadId, null, {
+    markVisited: false,
+    limit: Infinity,
+  });
   if (!ctx.dialog || typeof ctx.dialog.showSaveDialog !== "function") {
     throw new Error("Save dialog is not available in this mode");
   }

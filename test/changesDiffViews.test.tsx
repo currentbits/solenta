@@ -22,6 +22,7 @@ import {
 import { diffHighlightGroups } from "../src/diffView";
 import {
   getDiffScope,
+  setDiffFilesCollapsed,
   setDiffHideTests,
   setDiffIgnoreWhitespace,
   setDiffScope,
@@ -99,6 +100,7 @@ afterEach(() => {
   setDiffIgnoreWhitespace(false);
   setDiffHideTests(false);
   setDiffTreeView(false);
+  setDiffFilesCollapsed(false);
   resetChangesPanelSnaps();
 });
 
@@ -509,5 +511,66 @@ describe("Changes panel per-thread memory cap (#1779)", () => {
     assert.equal(getChangesPanelSnap("cap-0"), null, "oldest thread evicted once the 51st arrives");
     assert.equal(getChangesPanelSnap("cap-1")?.selectedPath, "file1.ts", "next-oldest survives");
     assert.equal(getChangesPanelSnap("cap-50")?.selectedPath, "file50.ts", "newest survives");
+  });
+});
+
+describe("Git pane per-file collapse (#1787)", () => {
+  const COLLAPSE_DIFF: DiffResult = {
+    files: [
+      { path: "src/a.ts", status: "M", additions: 1, deletions: 1 },
+      { path: "notes.txt", status: "A", additions: 1, deletions: 0 },
+    ],
+    patch: [
+      patchFor("src/a.ts", "const fresh = 3;"),
+      patchFor("notes.txt", "hello"),
+    ].join("\n"),
+    truncated: false,
+  };
+
+  it("renders no collapse header and a fully expanded body with the pref off", async () => {
+    const { m } = mountPanel(() => COLLAPSE_DIFF);
+    const view = await m;
+    await view.flush();
+    assert.equal(view.query("[data-diff-file-header]"), null);
+    assert.match(view.query("[data-review-hunk]")?.textContent || "", /const fresh = 3;/);
+  });
+
+  it("starts collapsed with the pref on; the header click expands it", async () => {
+    setDiffFilesCollapsed(true);
+    const { m } = mountPanel(() => COLLAPSE_DIFF);
+    const view = await m;
+    await view.flush();
+    const header = view.query("[data-diff-file-header='src/a.ts']");
+    assert.ok(header, "collapse header renders for the default-selected file");
+    assert.equal(header!.getAttribute("aria-expanded"), "false");
+    assert.equal(view.query("[data-review-hunk]"), null, "body starts hidden");
+
+    await view.click(header as HTMLElement);
+    await view.flush();
+    assert.equal(
+      view.query("[data-diff-file-header='src/a.ts']")?.getAttribute("aria-expanded"),
+      "true",
+    );
+    assert.match(view.query("[data-review-hunk]")?.textContent || "", /const fresh = 3;/);
+  });
+
+  it("selecting a file from the list expands it", async () => {
+    setDiffFilesCollapsed(true);
+    const { m } = mountPanel(() => COLLAPSE_DIFF);
+    const view = await m;
+    await view.flush();
+    assert.equal(
+      view.query("[data-diff-file-header='src/a.ts']")?.getAttribute("aria-expanded"),
+      "false",
+    );
+
+    await view.click(view.query("[data-file-path='notes.txt']"));
+    await view.flush();
+    assert.equal(
+      view.query("[data-diff-file-header='notes.txt']")?.getAttribute("aria-expanded"),
+      "true",
+      "selecting a file from the list expands it",
+    );
+    assert.match(view.query("[data-review-hunk]")?.textContent || "", /hello/);
   });
 });

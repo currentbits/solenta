@@ -69,6 +69,57 @@ describe("notification sound (#1506)", () => {
   });
 });
 
+describe("notificationOptions status icon (#1790)", () => {
+  it("no event: unchanged shape, no icon/prefix (other callers, e.g. ciFailedNotification)", () => {
+    const opts = notificationOptions("Fix tests", "PR #1 checks failed");
+    assert.deepEqual(opts, { title: "Fix tests", body: "PR #1 checks failed" });
+  });
+
+  it("macOS: ignores the icon field, prefixes the title with a status glyph instead", () => {
+    for (const [event, glyph] of [
+      ["done", "✓"],
+      ["failed", "✕"],
+      ["waiting", "●"],
+    ]) {
+      const opts = notificationOptions("Fix tests", "body", {
+        event,
+        platform: "darwin",
+      });
+      assert.equal(opts.title, `${glyph} Fix tests`, event);
+      assert.equal(opts.body, "body");
+      assert.equal("iconBuffer" in opts, false, `${event}: no icon buffer on darwin`);
+    }
+  });
+
+  it("Windows/Linux: unprefixed title, a distinct PNG icon buffer per status", () => {
+    for (const platform of ["win32", "linux"]) {
+      const seen = new Set();
+      for (const event of ["done", "failed", "waiting"]) {
+        const opts = notificationOptions("Fix tests", "body", { event, platform });
+        assert.equal(opts.title, "Fix tests", `${platform}/${event}: title unprefixed`);
+        assert.ok(Buffer.isBuffer(opts.iconBuffer), `${platform}/${event}: PNG buffer`);
+        // PNG signature.
+        assert.deepEqual(
+          [...opts.iconBuffer.subarray(0, 8)],
+          [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a],
+        );
+        const key = opts.iconBuffer.toString("base64");
+        assert.equal(seen.has(key), false, `${platform}/${event}: icon distinct per status`);
+        seen.add(key);
+      }
+    }
+  });
+
+  it("falls back to the real process.platform when none is injected", () => {
+    const opts = notificationOptions("Fix tests", "body", { event: "done" });
+    if (process.platform === "darwin") {
+      assert.equal(opts.title, "✓ Fix tests");
+    } else {
+      assert.ok(Buffer.isBuffer(opts.iconBuffer));
+    }
+  });
+});
+
 describe("shouldNotify", () => {
   it("notifies working -> done when the window is not focused", () => {
     assert.equal(shouldNotify("working", "done", false), true);

@@ -188,6 +188,7 @@ import {
   SuggestedWorkStrip,
   FocusTurnRow,
   RunHeaderRow,
+  userMessageBursts,
 } from "./thread/messages";
 import { NextGitActionButton, coderGit } from "./thread/NextGitActionButton";
 import {
@@ -204,6 +205,7 @@ import {
   DivergenceCard,
 } from "./thread/cards";
 import { setContextChips, setReviewComments } from "../composerSession";
+import type { ReviewComment } from "../diffView";
 import { useRetryAnchors } from "./thread/useRetryAnchors";
 import { useTranscriptAnnotations } from "./thread/useTranscriptAnnotations";
 import { useCliCommands } from "./thread/useCliCommands";
@@ -268,6 +270,12 @@ const EMPTY_TASK_TARGETS: { id: string; name: string }[] = [];
 
 const COPY_FLASH_MS = 1500;
 
+/**
+ * Question/approval cards grabbing the composer mid-type (#1789): a new
+ * card held back no longer than this after the last keystroke.
+ */
+const COMPOSER_TYPING_IDLE_MS = 1500;
+
 function shortSha(sha: string): string {
   return sha.length > 7 ? sha.slice(0, 7) : sha;
 }
@@ -292,6 +300,19 @@ interface ThreadViewProps {
   detailError?: string | null;
   /** Re-fetch the selected thread's detail after a load failure. */
   onRetryDetail?: () => void;
+  /**
+   * "Load older messages" (#1786): detail.messages is a page, not the whole
+   * transcript. Fetches and prepends the page before what's loaded; the
+   * button only renders when detail.hasOlderMessages and the local tail
+   * window (TRANSCRIPT_WINDOW) is already fully shown.
+   */
+  onLoadOlderMessages?: (threadId: string) => void;
+  /**
+   * Fetch the whole transcript once (#1786), for a feature that needs a
+   * message outside the loaded page: a reveal target (⌘K hit) not found in
+   * the current timeline.
+   */
+  onEnsureFullHistory?: (threadId: string) => void;
   project: ProjectInfo | null;
   providers: ProviderInfo[];
   /** Saved agent profiles from settings; passed through to Composer. */
@@ -832,6 +853,8 @@ export const ThreadView = memo(function ThreadView({
   revealMessageId = null,
   detailError = null,
   onRetryDetail,
+  onLoadOlderMessages,
+  onEnsureFullHistory,
   project,
   providers,
   agentProfiles = [],
@@ -1112,6 +1135,12 @@ export const ThreadView = memo(function ThreadView({
   const [openTurnSha, setOpenTurnSha] = useState<string | null>(null);
   // One split/unified choice for the turn panel and the Git pane (#1493).
   const turnDiffMode: DiffViewMode = useDiffSplit() ? "split" : "unified";
+  // Stable prop for TurnDiffPanel (memoized, #1787): setDiffSplit is already
+  // a module-level function, so this closure never needs to change.
+  const handleTurnDiffModeChange = useCallback(
+    (m: DiffViewMode) => setDiffSplit(m === "split"),
+    [],
+  );
   const openThreadId = detail?.thread.id ?? null;
   useEffect(() => {
     setOpenTurnSha(null);
@@ -1161,7 +1190,7 @@ export const ThreadView = memo(function ThreadView({
   const [cliAgents, setCliAgents] = useState<CliAgentInfo[]>([]);
   const copyFlashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const threadId = detail?.thread.id ?? null;
-  const find = useTranscriptFind(detail, threadId);
+  const find = useTranscriptFind(detail, threadId, onEnsureFullHistory);
   const [revealPlan, setRevealPlan] = useState(false);
   if (threadId !== focusThreadId) {
     setFocusThreadId(threadId);
@@ -1334,6 +1363,19 @@ export const ThreadView = memo(function ThreadView({
     );
   }, [timeline, revealTargetId]);
 
+  /**
+   * A reveal target (⌘K hit, pinned jump) can name a message older than the
+   * loaded page (#1786): fetch the whole transcript once rather than
+   * silently failing to scroll there.
+   */
+  useEffect(() => {
+    if (!revealTargetId || revealIndex >= 0) return;
+    if (!detail || detail.thread.id !== threadId || !detail.hasOlderMessages) {
+      return;
+    }
+    onEnsureFullHistory?.(threadId);
+  }, [revealTargetId, revealIndex, detail, threadId, onEnsureFullHistory]);
+
   const windowAt = clampWindowStart(
     ensureVisibleStart(
       threadId !== windowThreadId
@@ -1434,6 +1476,11 @@ export const ThreadView = memo(function ThreadView({
 
   const visibleTimeline = start === 0 ? timeline : timeline.slice(start);
   const hiddenCount = start;
+  /** "Load older messages" button in flight (#1786); resets on thread switch. */
+  const [loadingOlderMessages, setLoadingOlderMessages] = useState(false);
+  useEffect(() => {
+    setLoadingOlderMessages(false);
+  }, [threadId]);
   const transcriptView = useTranscriptViewMode();
   const verboseTools = transcriptView === "verbose";
   const chatWidth = useChatWidth();
@@ -1484,6 +1531,13 @@ export const ThreadView = memo(function ThreadView({
       working: detail?.thread.status === "working",
     });
   }, [visibleTimeline, detail?.thread.status, summaryMode]);
+
+  // Back-to-back user messages (#1789): burst position per message id, over
+  // the same row list just built above.
+  const userBursts = useMemo(
+    () => userMessageBursts(displayTimeline),
+    [displayTimeline],
+  );
 
   /**
    * Stream-in gating: an entry plays its entrance animation only when it is
@@ -1600,6 +1654,33 @@ export const ThreadView = memo(function ThreadView({
 
   const isArchived = Boolean(detail?.thread.archived);
   const emptyMessages = detail != null && detail.messages.length === 0;
+
+  // Stable references for ChangesPanel (memoized, #1787): these used to be
+  // recreated as inline closures on every ThreadView render, which defeated
+  // the memo on every streamed token even though neither actually depends
+  // on anything that changes mid-stream.
+  const canCommitAndPr =
+    Boolean(onCreatePr) &&
+    Boolean(detail?.thread.worktreePath) &&
+    !project?.remoteHost &&
+    !isArchived;
+  const handleCommitAndPr = useCallback(async () => {
+    if (!detail || !onCreatePr) return;
+    const text = await coderGit()
+      ?.suggestPrText({ threadId: detail.thread.id })
+      .catch(() => null);
+    return onCreatePr({
+      title: text?.title || detail.thread.title,
+      body: text?.body,
+    });
+  }, [onCreatePr, detail?.thread.id, detail?.thread.title]);
+  const handleDiffComment = useCallback(
+    (comment: ReviewComment) => {
+      if (!detail) return;
+      setReviewComments(detail.thread.id, (prev) => [...prev, comment]);
+    },
+    [detail?.thread.id],
+  );
 
   /** Header context ring; null hides it (unknown window or no measured turn). */
   const ring = useMemo(() => {
@@ -1935,6 +2016,119 @@ export const ThreadView = memo(function ThreadView({
     },
     [onStartRun, onRedirectPermission, pendingPlainPermission],
   );
+
+  // Question/approval cards grabbing the view mid-type (#1789): whichever
+  // card the render below would show right now (same precedence: a live
+  // permission prompt wins over a persisted question). `pendingPlainPermission`
+  // above is untouched by this — it reads the raw data, so a card held back
+  // here still counts as "open" for the #1762 redirect.
+  const activeCard = detail?.pendingPermission
+    ? {
+        key: detail.pendingPermission.requestId,
+        kind: detail.pendingPermission.plan
+          ? ("plan" as const)
+          : detail.pendingPermission.inputRequest ||
+              detail.pendingPermission.questions?.length
+            ? ("question" as const)
+            : ("permission" as const),
+      }
+    : detail?.thread.pendingQuestion
+      ? { key: detail.thread.pendingQuestion.id, kind: "question" as const }
+      : null;
+
+  /** Last keystroke / focus / emptiness, kept fresh by Composer (issue #1789). */
+  const composerActivityRef = useRef({ focused: false, empty: true, typedAt: 0 });
+  const lastCardKeyRef = useRef<string | null>(null);
+  const deferTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Mirrors deferredCardKey so handleComposerActivity (a native focus/blur
+  // listener, outside React's event system) can check "is anything even
+  // deferred right now" WITHOUT calling setState — a no-op setState still
+  // trips the act() warning. Every write below updates both together.
+  const deferredKeyRef = useRef<string | null>(null);
+  const [deferredCardKey, setDeferredCardKeyState] = useState<string | null>(
+    null,
+  );
+  const setDeferredCardKey = useCallback((key: string | null) => {
+    if (deferredKeyRef.current === key) return;
+    deferredKeyRef.current = key;
+    setDeferredCardKeyState(key);
+  }, []);
+
+  const armDeferTimer = useCallback(() => {
+    if (deferTimerRef.current) clearTimeout(deferTimerRef.current);
+    const elapsed = Date.now() - composerActivityRef.current.typedAt;
+    const wait = Math.max(0, COMPOSER_TYPING_IDLE_MS - elapsed);
+    deferTimerRef.current = setTimeout(() => {
+      deferTimerRef.current = null;
+      setDeferredCardKey(null);
+    }, wait);
+  }, [setDeferredCardKey]);
+
+  /** Click on the compact notice (or losing the conditions that earned the
+   * deferral): show the real card right away. */
+  const revealDeferredCard = useCallback(() => {
+    if (deferTimerRef.current) {
+      clearTimeout(deferTimerRef.current);
+      deferTimerRef.current = null;
+    }
+    setDeferredCardKey(null);
+  }, [setDeferredCardKey]);
+
+  const handleComposerActivity = useCallback(
+    (info: { typed: boolean; focused: boolean; empty: boolean }) => {
+      composerActivityRef.current.focused = info.focused;
+      composerActivityRef.current.empty = info.empty;
+      if (info.typed) composerActivityRef.current.typedAt = Date.now();
+      // Nothing is deferred: every keystroke/focus/blur in the whole app
+      // would otherwise reach here for nothing.
+      if (!deferredKeyRef.current) return;
+      // Blurred or cleared mid-defer: never hold back an unfocused or empty
+      // composer's card.
+      if (!info.focused || info.empty) {
+        if (deferTimerRef.current) {
+          clearTimeout(deferTimerRef.current);
+          deferTimerRef.current = null;
+        }
+        setDeferredCardKey(null);
+      } else if (info.typed) {
+        armDeferTimer();
+      }
+    },
+    [armDeferTimer, setDeferredCardKey],
+  );
+
+  // A genuinely NEW card (different id) decides whether to defer, once, at
+  // the moment it arrives; it does not re-arm on every render.
+  useEffect(() => {
+    const key = activeCard?.key ?? null;
+    if (key === lastCardKeyRef.current) return;
+    lastCardKeyRef.current = key;
+    if (deferTimerRef.current) {
+      clearTimeout(deferTimerRef.current);
+      deferTimerRef.current = null;
+    }
+    if (key == null) {
+      setDeferredCardKey(null);
+      return;
+    }
+    const { focused, empty, typedAt } = composerActivityRef.current;
+    if (focused && !empty && Date.now() - typedAt < COMPOSER_TYPING_IDLE_MS) {
+      setDeferredCardKey(key);
+      armDeferTimer();
+    } else {
+      setDeferredCardKey(null);
+    }
+  }, [activeCard?.key, armDeferTimer, setDeferredCardKey]);
+
+  useEffect(
+    () => () => {
+      if (deferTimerRef.current) clearTimeout(deferTimerRef.current);
+    },
+    [],
+  );
+
+  const cardDeferred =
+    deferredCardKey != null && deferredCardKey === activeCard?.key;
 
   // "Send in background" (#1778) only makes sense before this thread has
   // ever run: once there is a conversation (or a live run), the composer
@@ -3021,7 +3215,41 @@ export const ThreadView = memo(function ThreadView({
   });
   // Run status rides on the composer's top edge (#1429), not the transcript.
   const composerStatus =
-    copied === "reply" ? (
+    cardDeferred && activeCard ? (
+      // Question/approval card held back while the user is mid-type (#1789):
+      // compact notice here instead of the card itself, which otherwise
+      // mounts straight into the scrolled transcript the instant it arrives.
+      <div
+        className={styles.statusStrip}
+        data-deferred-card-notice=""
+        role="status"
+      >
+        <span className={styles.statusDiamond} aria-hidden />
+        <span className={styles.statusText}>
+          {activeCard.kind === "plan"
+            ? "Plan ready for review"
+            : activeCard.kind === "question"
+              ? "Agent is asking a question"
+              : "Approval needed"}
+        </span>
+        {activeCard.kind === "permission" ? (
+          <span
+            className={styles.permissionGuardrail}
+            data-deferred-card-redirect-hint=""
+          >
+            Sending will decline and redirect.
+          </span>
+        ) : null}
+        <button
+          type="button"
+          className={styles.statusAction}
+          onClick={revealDeferredCard}
+          data-deferred-card-open=""
+        >
+          Open now
+        </button>
+      </div>
+    ) : copied === "reply" ? (
       <div className={styles.statusStrip} data-copied-reply="" role="status">
         <span className={styles.statusText}>Copied last reply</span>
       </div>
@@ -4251,31 +4479,9 @@ export const ThreadView = memo(function ThreadView({
                 onRevert={onRevertFile}
                 onRevertHunk={onRevertHunk}
                 onSuggest={onSuggestCommitMessage}
-                onCommitAndPr={
-                  onCreatePr &&
-                  detail?.thread.worktreePath &&
-                  !project?.remoteHost &&
-                  !isArchived
-                    ? async () => {
-                        // Same title fallback as autoPr when drafting fails.
-                        const text = await coderGit()
-                          ?.suggestPrText({ threadId: detail.thread.id })
-                          .catch(() => null);
-                        return onCreatePr({
-                          title: text?.title || detail.thread.title,
-                          body: text?.body,
-                        });
-                      }
-                    : undefined
-                }
+                onCommitAndPr={canCommitAndPr ? handleCommitAndPr : undefined}
                 onComment={
-                  isArchived || !detail
-                    ? undefined
-                    : (comment) =>
-                        setReviewComments(detail.thread.id, (prev) => [
-                          ...prev,
-                          comment,
-                        ])
+                  isArchived || !detail ? undefined : handleDiffComment
                 }
               />
             );
@@ -4556,7 +4762,34 @@ export const ThreadView = memo(function ThreadView({
           </div>
         )}
 
-        {hiddenCount === 0 && worktreeLine}
+        {/*
+         * The local tail window (hiddenCount) is exhausted, but the server
+         * holds more (#1786): offer to fetch the previous page over IPC
+         * instead of silently having nothing further to show.
+         */}
+        {hiddenCount === 0 && detail?.hasOlderMessages && (
+          <div className={styles.showEarlier}>
+            <button
+              type="button"
+              className={styles.showEarlierBtn}
+              data-load-older=""
+              disabled={loadingOlderMessages}
+              onClick={() => {
+                if (!threadId || !onLoadOlderMessages || loadingOlderMessages) {
+                  return;
+                }
+                setLoadingOlderMessages(true);
+                Promise.resolve(onLoadOlderMessages(threadId)).finally(() =>
+                  setLoadingOlderMessages(false),
+                );
+              }}
+            >
+              {loadingOlderMessages ? "Loading…" : "Load older messages"}
+            </button>
+          </div>
+        )}
+
+        {hiddenCount === 0 && !detail?.hasOlderMessages && worktreeLine}
 
         {displayTimeline.map((entry) => {
           if (entry.kind === "group") {
@@ -4668,9 +4901,17 @@ export const ThreadView = memo(function ThreadView({
                       data-revealed-message={
                         revealTargetId === entry.message.id ? "" : undefined
                       }
+                      className={
+                        entry.message.id !== streamingMessageId &&
+                        entry.message.id !== latestRunningToolId &&
+                        entry.message.id !== latestThinkingId
+                          ? styles.settledRow
+                          : undefined
+                      }
                     >
                     <MessageBlock
                       message={entry.message}
+                      burstPosition={userBursts.get(entry.message.id)}
                       autoExpandTool={
                         verboseTools ||
                         entry.message.id === latestRunningToolId ||
@@ -4805,7 +5046,7 @@ export const ThreadView = memo(function ThreadView({
                               sha={bar.sha}
                               turn={bar.turn}
                               mode={turnDiffMode}
-                              onModeChange={(m) => setDiffSplit(m === "split")}
+                              onModeChange={handleTurnDiffModeChange}
                               onFetch={onFetchTurnDiff}
                             />
                           </Suspense>
@@ -4914,7 +5155,7 @@ export const ThreadView = memo(function ThreadView({
           asking, so answering is the next message — not a permission answer.
           A live permission prompt wins: that one is blocking a running CLI.
         */}
-        {!detail.pendingPermission && thread.pendingQuestion ? (
+        {!detail.pendingPermission && thread.pendingQuestion && !cardDeferred ? (
           <QuestionPrompt
             key={`${thread.id}:${thread.pendingQuestion.id}`}
             requestId={thread.pendingQuestion.id}
@@ -4940,7 +5181,7 @@ export const ThreadView = memo(function ThreadView({
           />
         ) : null}
 
-        {detail.pendingPermission?.inputRequest ? (
+        {cardDeferred ? null : detail.pendingPermission?.inputRequest ? (
           <InputPrompt
             key={`${thread.id}:${detail.pendingPermission.requestId}`}
             pending={detail.pendingPermission}
@@ -5512,6 +5753,7 @@ export const ThreadView = memo(function ThreadView({
         onStopRun={onStopRun}
         dropHostRef={dropHostRef}
         onFileDragChange={setFileDrag}
+        onComposerActivity={handleComposerActivity}
       />
       </div>
             </div>

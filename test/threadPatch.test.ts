@@ -110,6 +110,42 @@ describe("mergeThreadPatch", () => {
     });
     assert.equal(next?.artifacts, artifacts);
   });
+
+  // #1786: runner.pushDetail always requests the full array (limit:
+  // Infinity, so firstChanged's tail diff stays correct), which means every
+  // streamed patch reports hasOlderMessages false / totalMessageCount =
+  // current length regardless of how much of the transcript the renderer
+  // actually has loaded. A merge must not let that overwrite a true
+  // "there is more to load" established by threads.get.
+  it("keeps the open detail's hasOlderMessages/totalMessageCount through a streamed tail", () => {
+    const prev: ThreadDetail = {
+      ...detail([msg("a"), msg("b")]),
+      hasOlderMessages: true,
+      totalMessageCount: 500,
+    };
+    const tail: ThreadPatch = {
+      ...patch([msg("c")], 2),
+      hasOlderMessages: false,
+      totalMessageCount: 3,
+    };
+    const next = mergeThreadPatch(prev, tail);
+    assert.equal(next?.hasOlderMessages, true);
+    assert.equal(next?.totalMessageCount, 500);
+  });
+
+  it("carries pagination fields forward even on a no-op tick (identity reuse)", () => {
+    const prev: ThreadDetail = {
+      ...detail([msg("a")]),
+      hasOlderMessages: true,
+      totalMessageCount: 10,
+    };
+    const same: ThreadPatch = {
+      ...patch([msg("a")], 0),
+      hasOlderMessages: false,
+      totalMessageCount: 1,
+    };
+    assert.equal(mergeThreadPatch(prev, same), prev);
+  });
 });
 
 describe("patchThreadList", () => {

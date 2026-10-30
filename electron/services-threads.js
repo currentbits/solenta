@@ -41,6 +41,7 @@ const {
   scheduleArtifactCleanup,
   scheduleSimulatorRelease,
   canHostWorktree,
+  siblingRunningSameCheckout,
   purgeThread,
 } = require("./services-shared.js");
 const terminal = require("./terminal.js");
@@ -1510,26 +1511,40 @@ async function undoRewindThread(store, threadId, opts) {
   if (!snap) {
     return { thread: { ...thread }, droppedMessages: 0, restoredSha: null };
   }
-  store.applyRewindRestore(threadId, snap);
-  store.clearRewindRestore(threadId);
-
-  let restoredSha = null;
-  const live = store.getThread(threadId) || thread;
-  if (snap.headSha && live.worktreePath) {
-    // Original HEAD is no longer first-parent reachable after restoreFiles
-    // reset, so listCheckpoints / restoreCheckpoint would reject it.
-    const { gitTryAsync } = require("./worktrees.js");
-    const reset = await gitTryAsync(live.worktreePath, [
-      "reset",
-      "--hard",
-      snap.headSha,
-    ]);
-    if (reset && reset.ok) restoredSha = snap.headSha;
+  if (
+    snap.headSha &&
+    thread.worktreePath &&
+    siblingRunningSameCheckout(store, threadId, opts)
+  ) {
+    throw new Error(
+      "Another thread is working in this checkout. Stop it before restoring files.",
+    );
   }
+  // #1788: same hold restoreCheckpoint takes — a message sent mid-undo must
+  // not spawn into this worktree while it is being hard-reset back.
+  const hold = (opts && opts.withRestoreHold) || ((_id, fn) => fn());
+  let restoredSha = null;
+  const next = await hold(threadId, async () => {
+    store.applyRewindRestore(threadId, snap);
+    store.clearRewindRestore(threadId);
 
-  store.saveNow();
+    const live = store.getThread(threadId) || thread;
+    if (snap.headSha && live.worktreePath) {
+      // Original HEAD is no longer first-parent reachable after restoreFiles
+      // reset, so listCheckpoints / restoreCheckpoint would reject it.
+      const { gitTryAsync } = require("./worktrees.js");
+      const reset = await gitTryAsync(live.worktreePath, [
+        "reset",
+        "--hard",
+        snap.headSha,
+      ]);
+      if (reset && reset.ok) restoredSha = snap.headSha;
+    }
+
+    store.saveNow();
+    return store.getThread(threadId) || live;
+  });
   scheduleArtifactCleanup(opts);
-  const next = store.getThread(threadId) || live;
   return { thread: { ...next }, droppedMessages: 0, restoredSha };
 }
 
@@ -1551,6 +1566,19 @@ async function rewindThread(store, input, opts) {
   }
   if (!String((input && input.prompt) ?? "").trim()) {
     throw new Error("Prompt cannot be empty");
+  }
+  // #1788: a hard reset onto a shared checkout (crew/orchestrator workers
+  // sharing a worktree, or two non-worktree threads sharing the project
+  // path) would race that other thread's own writes. Conversation-only
+  // rewind (no restoreFiles) never touches disk, so it stays allowed.
+  if (
+    input.restoreFiles &&
+    thread.worktreePath &&
+    siblingRunningSameCheckout(store, threadId, opts)
+  ) {
+    throw new Error(
+      "Another thread is working in this checkout. Stop it before restoring files.",
+    );
   }
 
   const msgs = store.getMessages(threadId);
@@ -1618,6 +1646,8 @@ async function rewindThread(store, input, opts) {
         threadId,
         sha: match.sha,
         isRunning: opts && opts.isRunning,
+        listActiveThreadIds: opts && opts.listActiveThreadIds,
+        withRestoreHold: opts && opts.withRestoreHold,
         rewindConversation: false,
       });
       restoredSha = match.sha;
@@ -2026,10 +2056,17 @@ async function searchMessages(store, input) {
  *   { markVisited: false } so a non-selected thread is never marked read
  * - electron tests — default or explicit depending on the case under test
  *
+ * Messages are paged (#1786): by default only the newest page (see
+ * store.getMessagesPage) ships over IPC, with `hasOlderMessages` /
+ * `totalMessageCount` telling the renderer there is more to fetch via
+ * threads:getOlderMessages. Pass `opts.limit: Infinity` for the full
+ * transcript (export/report; internal callers that read the store directly
+ * never go through this windowing at all).
+ *
  * @param {import('./store').Store} store
  * @param {string} threadId
  * @param {object | null} [workflow]
- * @param {{ markVisited?: boolean }} [opts]
+ * @param {{ markVisited?: boolean, limit?: number, before?: string | null }} [opts]
  */
 function getThreadDetail(store, threadId, workflow = null, opts) {
   const markVisited = !opts || opts.markVisited !== false;
@@ -2045,9 +2082,15 @@ function getThreadDetail(store, threadId, workflow = null, opts) {
     store.markDirty();
   }
   const current = store.getThread(threadId) || thread;
+  const page = store.getMessagesPage(threadId, {
+    limit: opts && opts.limit,
+    before: opts && opts.before,
+  });
   return {
     thread: decorateThread(store, current),
-    messages: store.getMessages(threadId).slice(),
+    messages: page.messages,
+    hasOlderMessages: page.hasOlder,
+    totalMessageCount: page.totalCount,
     workLog: store.getWorkLog(threadId).slice(),
     workflow: workflow ?? null,
     usage: store.getUsage(threadId) ?? null,
@@ -2056,6 +2099,30 @@ function getThreadDetail(store, threadId, workflow = null, opts) {
     pendingPermission: (opts && opts.pendingPermission) || null,
     // Only on a user visit that should show it; background pushes omit it.
     ...(recap ? { recap } : {}),
+  };
+}
+
+/**
+ * Previous page of a thread's messages (#1786), for the renderer's
+ * "load older" trigger. Same cursor rule as getThreadDetail's windowing:
+ * the page ends just before `before` and holds at most `limit` messages.
+ * @param {import('./store').Store} store
+ * @param {string} threadId
+ * @param {{ before: string, limit?: number }} input
+ */
+function getOlderMessages(store, threadId, input) {
+  const thread = store.getThread(threadId);
+  if (!thread || isTrashed(thread)) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  const page = store.getMessagesPage(threadId, {
+    limit: input && input.limit,
+    before: input && input.before,
+  });
+  return {
+    messages: page.messages,
+    hasOlderMessages: page.hasOlder,
+    totalMessageCount: page.totalCount,
   };
 }
 
@@ -2098,4 +2165,5 @@ module.exports = {
   searchThreads,
   searchMessages,
   getThreadDetail,
+  getOlderMessages,
 };

@@ -8,6 +8,7 @@ import {
   flatVisibleThreadIds,
   formatBatchSettleFeedback,
   isShortcutBlocked,
+  nextThreadAfterSettle,
   planBatchSettle,
   rangeSelectIds,
   stepVisibleId,
@@ -251,6 +252,24 @@ describe("stepVisibleId wrap", () => {
     const ids = ["a", "b", "c"];
     assert.equal(stepVisibleId(ids, "c", 1), "a");
     assert.equal(stepVisibleId(ids, "a", -1), "c");
+  });
+});
+
+describe("nextThreadAfterSettle (#1790)", () => {
+  it("picks the thread below", () => {
+    assert.equal(nextThreadAfterSettle(["a", "b", "c"], "a"), "b");
+  });
+
+  it("falls back to the one above when settling the last item", () => {
+    assert.equal(nextThreadAfterSettle(["a", "b", "c"], "c"), "b");
+  });
+
+  it("leaves selection unchanged when it's the only thread", () => {
+    assert.equal(nextThreadAfterSettle(["a"], "a"), null);
+  });
+
+  it("returns null when the id isn't in the order", () => {
+    assert.equal(nextThreadAfterSettle(["a", "b"], "z"), null);
   });
 });
 

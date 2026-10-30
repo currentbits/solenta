@@ -607,9 +607,17 @@ function threadNotifyState(thread) {
 function notifyThreadComplete(thread) {
   if (typeof Notification !== "function") return;
   if (Notification.isSupported && !Notification.isSupported()) return;
-  const n = new Notification(
-    notificationOptions(thread.title, notifyBody(notifyEvent(threadNotifyState(thread)))),
+  const event = notifyEvent(threadNotifyState(thread));
+  const { title, body, iconBuffer } = notificationOptions(
+    thread.title,
+    notifyBody(event),
+    { event },
   );
+  const n = new Notification({
+    title,
+    body,
+    ...(iconBuffer ? { icon: nativeImage.createFromBuffer(iconBuffer) } : {}),
+  });
   n.on("click", () => focusThread(thread.id));
   n.show();
 }

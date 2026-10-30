@@ -18,12 +18,14 @@ import type { MemoryProjectToolsApi } from "../src/components/MemoryTab";
 import type { SkillsManagerProps } from "../src/components/SkillsTab";
 import {
   getChatWidth,
+  getDiffFilesCollapsed,
   getDivergenceCardEnabled,
   getPasteCardsEnabled,
   getUsageLimitsStripEnabled,
   getWrapCodeBlocksEnabled,
   setChatWidth,
   setComposerVimEnabled,
+  setDiffFilesCollapsed,
   setEnterSendsEnabled,
   setDivergenceCardEnabled,
   setPasteCardsEnabled,
@@ -147,6 +149,7 @@ function modal(stubs: Stubs = {}) {
 afterEach(() => {
   unmountAll();
   setWrapCodeBlocksEnabled(false);
+  setDiffFilesCollapsed(false);
 });
 
 describe("SettingsModal memory section", () => {
@@ -1935,8 +1938,8 @@ describe("SettingsModal quota-wait auto-resume (#462)", () => {
   });
 });
 
-describe("SettingsModal resume interrupted runs (#1512 I3)", () => {
-  it("is off by default and saves the toggle", async () => {
+describe("SettingsModal resume interrupted runs (#1788)", () => {
+  it("is on by default for anyone who never chose, and saves an explicit off", async () => {
     const patches: Partial<AppSettings>[] = [];
     const m = await mount(
       modal({
@@ -1944,6 +1947,9 @@ describe("SettingsModal resume interrupted runs (#1512 I3)", () => {
         settings: {
           dailyBudgetUsd: null,
           autoSettleAfterDays: 3,
+          // The store now normalizes an untouched setting to true (#1788);
+          // the modal only ever reflects what it is handed.
+          resumeInterruptedRuns: true,
         } as AppSettings,
         onSaveSettings: async (patch) => {
           patches.push(patch);
@@ -1957,11 +1963,11 @@ describe("SettingsModal resume interrupted runs (#1512 I3)", () => {
     );
     const box = m.query("[data-resume-interrupted-runs]") as HTMLInputElement;
     assert.ok(box, "resume checkbox");
-    assert.equal(box.checked, false);
+    assert.equal(box.checked, true);
     assert.ok(m.text().includes("Resume interrupted runs after restart"));
     await m.click(box);
     assert.equal(patches.length, 1);
-    assert.equal(patches[0].resumeInterruptedRuns, true);
+    assert.equal(patches[0].resumeInterruptedRuns, false);
     m.unmount();
   });
 });
@@ -3157,6 +3163,24 @@ describe("SettingsModal Display group (moved from Environment)", () => {
     assert.equal(box.checked, true);
     assert.equal(getWrapCodeBlocksEnabled(), true);
     assert.equal(window.localStorage.getItem("coder.wrapCodeBlocks"), "on");
+    m.unmount();
+  });
+
+  it("offers start diff files collapsed off by default (#1787)", async () => {
+    setDiffFilesCollapsed(false);
+    const m = await mount(modal());
+    const card = m.query("[data-display-prefs]");
+    assert.ok(card, "Display group on General");
+    const box = card.querySelector(
+      "[data-diff-files-collapsed-pref]",
+    ) as HTMLInputElement | null;
+    assert.ok(box, "diff files collapsed checkbox");
+    assert.equal(box.checked, false);
+    assert.match(card.textContent || "", /Start diff files collapsed/);
+    await m.click(box);
+    assert.equal(box.checked, true);
+    assert.equal(getDiffFilesCollapsed(), true);
+    assert.equal(window.localStorage.getItem("coder.diffFilesCollapsed"), "on");
     m.unmount();
   });
 

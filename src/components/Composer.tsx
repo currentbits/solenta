@@ -410,6 +410,17 @@ export interface ComposerProps {
   dropHostRef?: RefObject<HTMLElement | null>;
   /** Host overlay: true while a file drag is hovering the drop target. */
   onFileDragChange?: (dragging: boolean) => void;
+  /**
+   * Last-keystroke / focus / emptiness snapshot, on every change to the
+   * draft text or textarea focus (issue #1789). ThreadView uses this to hold
+   * back a newly-arrived question/approval card while the user is actively
+   * typing, instead of letting it grab the view mid-sentence.
+   */
+  onComposerActivity?: (info: {
+    typed: boolean;
+    focused: boolean;
+    empty: boolean;
+  }) => void;
 }
 
 const STATIC = {
@@ -539,6 +550,7 @@ export const Composer = memo(function Composer({
   onStopRun,
   dropHostRef,
   onFileDragChange,
+  onComposerActivity,
 }: ComposerProps) {
   const currentProviderInfo = providers.find((p) => p.id === provider);
   const canAttachImages = supportsImagesForModel(currentProviderInfo, model);
@@ -585,8 +597,13 @@ export const Composer = memo(function Composer({
       setDraftText(threadId, text);
       syncHasPrompt(text);
       syncOverflow(text);
+      onComposerActivity?.({
+        typed: true,
+        focused: true,
+        empty: text.trim().length === 0,
+      });
     },
-    [threadId, syncHasPrompt, syncOverflow],
+    [threadId, syncHasPrompt, syncOverflow, onComposerActivity],
   );
   const writeDraft = useCallback(
     (text: string, caret?: number) => {
@@ -2279,6 +2296,12 @@ export const Composer = memo(function Composer({
             refreshMention();
             refreshCommand();
           }}
+          onFocus={() =>
+            onComposerActivity?.({ typed: false, focused: true, empty: !hasPrompt })
+          }
+          onBlur={() =>
+            onComposerActivity?.({ typed: false, focused: false, empty: !hasPrompt })
+          }
           onKeyDown={onKeyDown}
           onPaste={onPaste}
           disabled={disabled || sending}

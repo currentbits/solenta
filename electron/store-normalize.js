@@ -450,9 +450,17 @@ function validateQuotaFailover(raw) {
  * confirmQuitWithActiveWork: only an explicit false opts out of the
  * accidental-quit dialog (issue #1195). Absent/junk keeps the confirm.
  *
- * resumeInterruptedRuns: opt-in (issue #1512 I3); only an explicit true
- * resumes interrupted runs after a restart.
+ * resumeInterruptedRuns: shipped opt-in (#1512 I3), then defaulted on
+ * (#1788) for anyone who never chose. normalizeSettings cannot tell an
+ * unset value from an explicit `false` once a store round-trips through
+ * save (every save backfills every default, this one included), so the
+ * on/off switch here is `resumeInterruptedRunsSet`, a marker setSettings
+ * stamps the moment the user ever patches this key (either direction).
+ * No marker on disk -> the user never touched it -> true, regardless of
+ * what a pre-#1788 save happened to backfill. Marker present -> honour
+ * whatever the user last chose, true or false.
  *
+
  * agentBugReports: default on (#1703); only an explicit false hides the
  * solenta_bug_report tool and its prompt hint.
  *
@@ -516,7 +524,8 @@ function normalizeSettings(raw) {
     stayAwake: "agent",
     quotaWaitAutoResume: true,
     confirmQuitWithActiveWork: true,
-    resumeInterruptedRuns: false,
+    resumeInterruptedRuns: true,
+    resumeInterruptedRunsSet: false,
     combineQueuedFollowUps: true,
     agentBugReports: true,
     guardrailsEnabled: true,
@@ -698,9 +707,18 @@ function normalizeSettings(raw) {
   settings.confirmQuitWithActiveWork =
     /** @type {{ confirmQuitWithActiveWork?: unknown }} */ (obj)
       .confirmQuitWithActiveWork !== false;
-  settings.resumeInterruptedRuns =
-    /** @type {{ resumeInterruptedRuns?: unknown }} */ (obj)
-      .resumeInterruptedRuns === true;
+  // #1788: `resumeInterruptedRunsSet` only ever becomes true via setSettings
+  // (store-settings-methods.js), the moment a human actually patches this
+  // key. Absent -> never touched -> default true, whatever a prior save
+  // backfilled. Present -> the stored boolean is a real choice, keep it.
+  const resumeTouched =
+    /** @type {{ resumeInterruptedRunsSet?: unknown }} */ (obj)
+      .resumeInterruptedRunsSet === true;
+  settings.resumeInterruptedRunsSet = resumeTouched;
+  settings.resumeInterruptedRuns = resumeTouched
+    ? /** @type {{ resumeInterruptedRuns?: unknown }} */ (obj)
+        .resumeInterruptedRuns === true
+    : true;
   settings.combineQueuedFollowUps =
     /** @type {{ combineQueuedFollowUps?: unknown }} */ (obj)
       .combineQueuedFollowUps !== false;

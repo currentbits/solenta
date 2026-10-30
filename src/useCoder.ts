@@ -200,6 +200,10 @@ export interface UseCoderResult {
   detailError: string | null;
   /** Re-fetch the selected thread's detail after a load failure. */
   retryDetail: () => void;
+  /** "Load older" (#1786): fetch and prepend the page before what's loaded. */
+  loadOlderMessages: (threadId: string) => Promise<void>;
+  /** Fetch the whole transcript once, for a feature that needs it (#1786). */
+  ensureFullHistory: (threadId: string) => Promise<void>;
   loading: boolean;
   /** Project of the selected thread, or first project if none selected. */
   selectedProjectId: string | null;
@@ -1121,6 +1125,81 @@ export function useCoder(): UseCoderResult {
         })
         .finally(() => {
           refetchRef.current.delete(threadId);
+        });
+    },
+    [api],
+  );
+
+  /** Thread ids with a getOlderMessages/full-history fetch in flight (#1786). */
+  const olderMessagesRef = useRef<Set<string>>(new Set());
+
+  /**
+   * "Load older" (#1786): fetch the page just before what's loaded and
+   * prepend it. No-op when nothing is open, there is nothing older, or a
+   * fetch for this thread is already in flight. Guards against a stale
+   * response landing after the user has since scrolled further (or the
+   * thread changed) by re-checking the oldest loaded id before applying.
+   */
+  const loadOlderMessages = useCallback(
+    (threadId: string) => {
+      const open = detailRef.current;
+      if (!open || open.thread.id !== threadId || !open.hasOlderMessages) {
+        return Promise.resolve();
+      }
+      const oldest = open.messages[0];
+      if (!oldest || olderMessagesRef.current.has(threadId)) {
+        return Promise.resolve();
+      }
+      olderMessagesRef.current.add(threadId);
+      return api.threads
+        .getOlderMessages({ threadId, before: oldest.id })
+        .then((page) => {
+          setDetail((prev) => {
+            if (!prev || prev.thread.id !== threadId) return prev;
+            if (prev.messages[0]?.id !== oldest.id) return prev;
+            return {
+              ...prev,
+              messages: [...page.messages, ...prev.messages],
+              hasOlderMessages: page.hasOlderMessages,
+              totalMessageCount: page.totalMessageCount,
+            };
+          });
+        })
+        .catch(() => {
+          // Best effort; the control stays put and the user can retry.
+        })
+        .finally(() => {
+          olderMessagesRef.current.delete(threadId);
+        });
+    },
+    [api],
+  );
+
+  /**
+   * Fallback for features that need the whole transcript client-side
+   * (⌘F / ⌘K reveal / turn rail hitting the loaded boundary, #1786): fetch
+   * everything once and replace the loaded page. peek (not get) so this
+   * never re-stamps lastVisitedAt.
+   */
+  const ensureFullHistory = useCallback(
+    (threadId: string) => {
+      const open = detailRef.current;
+      if (!open || open.thread.id !== threadId || !open.hasOlderMessages) {
+        return Promise.resolve();
+      }
+      if (olderMessagesRef.current.has(threadId)) return Promise.resolve();
+      olderMessagesRef.current.add(threadId);
+      return api.threads
+        .peek(threadId, { limit: Infinity })
+        .then((d) => {
+          if (selectedRef.current !== threadId) return;
+          setDetail((prev) => (prev && prev.thread.id === threadId ? d : prev));
+        })
+        .catch(() => {
+          // Best effort; the feature just stays scoped to the loaded window.
+        })
+        .finally(() => {
+          olderMessagesRef.current.delete(threadId);
         });
     },
     [api],
@@ -2202,6 +2281,8 @@ export function useCoder(): UseCoderResult {
     detail,
     detailError,
     retryDetail,
+    loadOlderMessages,
+    ensureFullHistory,
     loading,
     selectedProjectId,
     error,

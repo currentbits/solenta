@@ -15,12 +15,14 @@ import type {
 import { isEmptyDiff } from "../diffView";
 import { parsePatch } from "../reviewItinerary";
 import {
+  FileCollapseHeader,
   FileHunks,
   TestFilesBar,
   TreeListToggle,
+  fileCollapsed,
   filterTestFiles,
 } from "./TurnDiffPanel";
-import { useDiffHideTests, useDiffTreeView } from "../uiPrefs";
+import { useDiffFilesCollapsed, useDiffHideTests, useDiffTreeView } from "../uiPrefs";
 import {
   buildFileTree,
   type FileTreeDir,
@@ -193,6 +195,24 @@ export function PrCodeTab({
   const [collapsedDirs, setCollapsedDirs] = useState<Set<string>>(
     () => new Set(),
   );
+  /** Files explicitly opened (click header or select) in this tab (#1787). */
+  const [expandedFiles, setExpandedFiles] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const startFilesCollapsed = useDiffFilesCollapsed();
+  const expandFile = (path: string) =>
+    setExpandedFiles((prev) => (prev.has(path) ? prev : new Set(prev).add(path)));
+  const toggleFileCollapse = (path: string) =>
+    setExpandedFiles((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  const selectFile = (path: string) => {
+    setSelectedPath(path);
+    expandFile(path);
+  };
   /** Copy-path feedback: which path was just copied, if any. */
   const [copiedPath, setCopiedPath] = useState<string | null>(null);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -236,6 +256,7 @@ export function PrCodeTab({
   useEffect(() => {
     setCommit("");
     setCollapsedDirs(new Set());
+    setExpandedFiles(new Set());
     setCopiedPath(null);
     void load("");
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -289,7 +310,7 @@ export function PrCodeTab({
             tree
             depth={depth}
             copied={copiedPath === node.path}
-            onSelect={setSelectedPath}
+            onSelect={selectFile}
             onCopy={copyPath}
           />,
         );
@@ -462,7 +483,7 @@ export function PrCodeTab({
                 file={file}
                 selected={selectedPath === file.path}
                 copied={copiedPath === file.path}
-                onSelect={setSelectedPath}
+                onSelect={selectFile}
                 onCopy={copyPath}
               />
             ))}
@@ -507,11 +528,21 @@ export function PrCodeTab({
 
       {visible.length > 0 ? (
         <div className={diffStyles.patch} data-pr-code-patch="">
-          {visible.map((p) => (
-            <Fragment key={p.path}>
-              <FileHunks patch={p} mode={mode} />
-            </Fragment>
-          ))}
+          {visible.map((p) => {
+            const collapsed = fileCollapsed(startFilesCollapsed, expandedFiles, p.path);
+            return (
+              <Fragment key={p.path}>
+                {startFilesCollapsed ? (
+                  <FileCollapseHeader
+                    path={p.path}
+                    collapsed={collapsed}
+                    onToggle={() => toggleFileCollapse(p.path)}
+                  />
+                ) : null}
+                {collapsed ? null : <FileHunks patch={p} mode={mode} />}
+              </Fragment>
+            );
+          })}
         </div>
       ) : null}
     </div>

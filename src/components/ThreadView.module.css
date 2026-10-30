@@ -2183,6 +2183,25 @@ button.diffLineGutter:focus-visible {
   margin-top: 2px;
 }
 
+/*
+ * Issue #1785: a long transcript's tail window (#564) still mounts up to
+ * TRANSCRIPT_WINDOW rows (more once Show earlier is clicked repeatedly), and
+ * every one of those used to cost full layout/paint even while scrolled far
+ * out of view. content-visibility skips layout, paint and hit-testing for
+ * rows the browser determines are not near the viewport, without unmounting
+ * them: find, selection and scrollIntoView-based jumps still see real DOM.
+ * `auto` in contain-intrinsic-size remembers each row's real size once it
+ * has been rendered once, so only the very first (never-shown) estimate uses
+ * the fallback. Only "settled" rows (not the live turn's streaming message,
+ * running tool, or thinking card) get this: those change every push while
+ * working, and re-measuring containment on every one of those updates is
+ * the opposite of the point.
+ */
+.settledRow {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 220px;
+}
+
 .card {
   background: transparent;
   border: none;
@@ -2968,6 +2987,36 @@ button.diffLineGutter:focus-visible {
   font-size: 13.5px;
   white-space: pre-wrap;
   user-select: text;
+}
+
+/*
+ * Back-to-back user messages (#1789): no agent output between them reads as
+ * one bubble group — tighter stacking, corners that flatten on the shared
+ * edge like a chat app. `single` (the default) is untouched.
+ */
+.messageUser[data-burst="first"] {
+  padding-bottom: 0;
+}
+
+.messageUser[data-burst="middle"] {
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.messageUser[data-burst="last"] {
+  padding-top: 0;
+}
+
+.messageUser[data-burst="first"] .userBubble {
+  border-radius: 14px 14px 4px 4px;
+}
+
+.messageUser[data-burst="middle"] .userBubble {
+  border-radius: 4px;
+}
+
+.messageUser[data-burst="last"] .userBubble {
+  border-radius: 4px 4px 4px 14px;
 }
 
 .steerLabel {
