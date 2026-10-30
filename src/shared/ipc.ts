@@ -3863,6 +3863,21 @@ export interface AppSettings {
    */
   titleInstructions: string;
   /**
+   * Extra instructions appended to the generated commit message prompt
+   * (issue #1774, electron/commitmsg.js buildPrompt), as a "Follow these
+   * instructions from the user:" block that takes precedence over the
+   * default conventional-commits style. Trimmed, capped at
+   * COMMIT_MESSAGE_INSTRUCTIONS_MAX (~1000) chars. Default "".
+   */
+  commitMessageInstructions: string;
+  /**
+   * Extra instructions appended to the generated PR title/body prompt
+   * (issue #1774, electron/commitmsg.js buildPrPrompt), same shape as
+   * commitMessageInstructions. The repo's PR template still applies.
+   * Trimmed, capped at PR_INSTRUCTIONS_MAX (~1000) chars. Default "".
+   */
+  prInstructions: string;
+  /**
    * PR size cap in changed lines (additions + deletions vs the base branch),
    * enforced when a PR is created from the app (issue #402, DORA small
    * batches as a product default). Default 400; null disables the cap.

@@ -14,7 +14,12 @@ const {
   extractSubject,
   PROMPT_PATCH_LIMIT,
 } = require("../commitmsg.js");
-const { buildPrompt, suggestPrText, parsePrText } = require("../commitmsg.js");
+const {
+  buildPrompt,
+  buildPrPrompt,
+  suggestPrText,
+  parsePrText,
+} = require("../commitmsg.js");
 const { kimiNoToolsAgentFile } = require("../ask.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
 const { rmTree } = require("./support/rmTree.js");
@@ -202,6 +207,27 @@ describe("buildPrompt", () => {
     assert.match(prompt, /diff truncated/);
     assert.ok(prompt.length < PROMPT_PATCH_LIMIT + 2000);
   });
+
+  it("is unchanged when commitMessageInstructions is empty (#1774)", () => {
+    const d = { files: [], patch: "x" };
+    assert.equal(buildPrompt(d, ""), buildPrompt(d));
+    assert.doesNotMatch(buildPrompt(d), /Follow these instructions/);
+  });
+
+  it("appends the user's instructions, taking precedence over the default style (#1774)", () => {
+    const prompt = buildPrompt(
+      { files: [], patch: "x" },
+      "Imperative mood, no prefix, under 60 chars.",
+    );
+    assert.match(
+      prompt,
+      /Follow these instructions from the user:\nImperative mood, no prefix, under 60 chars\./,
+    );
+    assert.match(prompt, /take precedence over the default style/);
+    // Still has the base rule and the data sections.
+    assert.match(prompt, /conventional commits style/);
+    assert.match(prompt, /Files changed:/);
+  });
 });
 
 describe("suggestCommitMessage", () => {
@@ -270,6 +296,20 @@ console.log("feat: generated subject");
     const prompt = argv[argv.length - 1];
     assert.match(prompt, /commit message/);
     assert.match(prompt, /\?\? a\.txt/);
+  });
+
+  it("passes the commitMessageInstructions setting through to the prompt (#1774)", async () => {
+    fs.writeFileSync(path.join(repo, "a.txt"), "one\n");
+    services.setSettings(store, {
+      commitMessageInstructions: "Imperative mood, under 60 chars.",
+    });
+    await suggestCommitMessage({ store, threadId: thread.id, env: fakeEnv() });
+    const argv = JSON.parse(fs.readFileSync(logPath, "utf8"));
+    const prompt = argv[argv.length - 1];
+    assert.match(
+      prompt,
+      /Follow these instructions from the user:\nImperative mood, under 60 chars\./,
+    );
   });
 
   it("rejects when there are no changes", async () => {
@@ -413,6 +453,36 @@ describe("parsePrText", () => {
   });
 });
 
+describe("buildPrPrompt", () => {
+  const base = {
+    commits: "- feat: x",
+    stat: "a.txt | 1 +",
+    template: "## Why\n\n## Testing\n",
+    baseBranch: "main",
+  };
+
+  it("is unchanged when prInstructions is empty (#1774)", () => {
+    assert.equal(buildPrPrompt(base), buildPrPrompt({ ...base, instructions: "" }));
+    assert.doesNotMatch(buildPrPrompt(base), /Follow these instructions/);
+  });
+
+  it("appends the user's instructions; the repo template still applies (#1774)", () => {
+    const prompt = buildPrPrompt({
+      ...base,
+      instructions: "Start with the user-facing outcome; include a Testing section.",
+    });
+    assert.match(
+      prompt,
+      /Follow these instructions from the user:\nStart with the user-facing outcome; include a Testing section\./,
+    );
+    assert.match(prompt, /take precedence over the default style/);
+    assert.match(prompt, /pull request template below still applies/);
+    assert.match(prompt, /Fill in this pull request template/);
+    assert.match(prompt, /## Why/);
+    assert.match(prompt, /Commits:\n- feat: x/);
+  });
+});
+
 describe("suggestPrText", () => {
   let tmpDir;
   let store;
@@ -478,6 +548,24 @@ process.stdout.write(process.env.FAKE_REPLY);
     assert.match(prompt, /- feat: add a\.txt/);
     assert.match(prompt, /a\.txt \| 1 \+/);
     assert.match(prompt, /## Testing/);
+  });
+
+  it("passes the prInstructions setting through to the prompt (#1774)", async () => {
+    services.setSettings(store, {
+      prInstructions: "Start with the user-facing outcome.",
+    });
+    await suggestPrText({
+      store,
+      threadId: thread.id,
+      env: env("feat: add a.txt\n\nDone."),
+    });
+    const argv = JSON.parse(fs.readFileSync(logPath, "utf8"));
+    const prompt = argv[argv.length - 1];
+    assert.match(
+      prompt,
+      /Follow these instructions from the user:\nStart with the user-facing outcome\./,
+    );
+    assert.match(prompt, /pull request template below still applies/);
   });
 
   it("refuses generated text that carries a secret", async () => {
