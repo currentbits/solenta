@@ -19,6 +19,35 @@ export function turnLabel(text: string): string {
 }
 
 /**
+ * The last prompt above the top third of the pane (or the pane bottom once
+ * scrolled to the end) is the "current" turn. Shared by the rail's own
+ * scrollspy highlight and the turn.prev/turn.next shortcuts (#1770), so a
+ * keyboard jump starts from the same turn the rail already highlights.
+ */
+export function currentRailTurn(
+  turns: RailTurn[],
+  body: HTMLElement,
+  start: number,
+): string | null {
+  const ids = new Set(turns.map((t) => t.id));
+  const rect = body.getBoundingClientRect();
+  const atEnd = body.scrollTop + body.clientHeight >= body.scrollHeight - 2;
+  const line = atEnd ? rect.bottom : rect.top + rect.height / 3;
+  const tops = new Map<string, number>();
+  for (const el of body.querySelectorAll<HTMLElement>("[data-message-id]")) {
+    const id = el.dataset.messageId;
+    if (id && ids.has(id)) tops.set(id, el.getBoundingClientRect().top);
+  }
+  let id = turns[0]?.id ?? null;
+  for (const t of turns) {
+    const top = tops.get(t.id);
+    if (t.index < start || (top !== undefined && top <= line)) id = t.id;
+    else if (top !== undefined) break;
+  }
+  return id;
+}
+
+/**
  * Jump-to-turn rail: one tick per user prompt, expanding into labels on
  * hover/focus. `query` non-null is `/jump` mode: an open, filtered list.
  */
@@ -47,26 +76,10 @@ export function TurnRail({
   useEffect(() => {
     const body = bodyRef.current;
     if (!body || !visible) return;
-    const ids = new Set(turns.map((t) => t.id));
     let frame = 0;
     const update = () => {
       frame = 0;
-      const rect = body.getBoundingClientRect();
-      const atEnd =
-        body.scrollTop + body.clientHeight >= body.scrollHeight - 2;
-      const line = atEnd ? rect.bottom : rect.top + rect.height / 3;
-      const tops = new Map<string, number>();
-      for (const el of body.querySelectorAll<HTMLElement>("[data-message-id]")) {
-        const id = el.dataset.messageId;
-        if (id && ids.has(id)) tops.set(id, el.getBoundingClientRect().top);
-      }
-      let id = turns[0]?.id ?? null;
-      for (const t of turns) {
-        const top = tops.get(t.id);
-        if (t.index < start || (top !== undefined && top <= line)) id = t.id;
-        else if (top !== undefined) break;
-      }
-      setCurrent(id);
+      setCurrent(currentRailTurn(turns, body, start));
     };
     const onScroll = () => {
       if (!frame) frame = requestAnimationFrame(update);

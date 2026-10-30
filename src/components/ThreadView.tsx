@@ -212,6 +212,7 @@ import { usePaneLayoutActions } from "./thread/usePaneLayoutActions";
 import { useAppSnap } from "./thread/useAppSnap";
 import { useStickToBottom } from "./thread/useStickToBottom";
 import { TurnRail, turnLabel, type RailTurn } from "./thread/TurnRail";
+import { useTurnNavigation } from "./thread/useTurnNavigation";
 import { offsetTopWithin } from "../scrollNearest";
 import { bindingLabel } from "../keybindings";
 import styles from "./ThreadView.module.css";
@@ -2513,6 +2514,7 @@ export const ThreadView = memo(function ThreadView({
       1600,
     );
   }, []);
+  useTurnNavigation({ turns: railTurns, bodyRef, start, onJump: handleTurnJump });
   // Declared after useStickToBottom so its nearest-reveal cannot pull a tall
   // prompt back down to its bottom edge.
   useLayoutEffect(() => {

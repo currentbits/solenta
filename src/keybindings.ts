@@ -234,6 +234,33 @@ export const KEYBINDINGS: readonly KeybindingDef[] = [
     scope: "window",
     chord: "mod+.",
   },
+  {
+    id: "thread.togglePin",
+    label: "Pin / unpin the open thread",
+    scope: "window",
+    chord: "mod+shift+p",
+  },
+  {
+    id: "thread.toggleSettle",
+    label: "Settle / restore the open thread",
+    scope: "window",
+    // mod+shift+s is composer.unstash; this is the next free slot.
+    chord: "mod+shift+a",
+  },
+  {
+    id: "turn.prev",
+    label: "Previous prompt",
+    scope: "window",
+    // Same chord as composer.editLastQueued on purpose: the composer owns
+    // it while focused, the rail owns it everywhere else.
+    chord: "alt+arrowup",
+  },
+  {
+    id: "turn.next",
+    label: "Next prompt",
+    scope: "window",
+    chord: "alt+arrowdown",
+  },
 ];
 
 const BY_ID = new Map(KEYBINDINGS.map((def) => [def.id, def]));

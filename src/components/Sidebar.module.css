@@ -1946,6 +1946,13 @@
   opacity: 0.8;
 }
 
+.cardDraft {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--text-dim);
+  opacity: 0.8;
+}
+
 .headerNav {
   display: flex;
   align-items: center;
