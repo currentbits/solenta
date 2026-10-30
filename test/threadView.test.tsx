@@ -1209,6 +1209,83 @@ describe("ThreadView mounted interactions", () => {
     m.unmount();
   });
 
+  it("renders a Skill tool_use as a compact chip instead of a full tool card (#1782)", async () => {
+    const m = await mount(
+      view({
+        detail: detail({
+          messages: [
+            msg({
+              id: "t1",
+              role: "tool",
+              text: "Skill: dataviz",
+              createdAt: 1,
+              runId: "run-1",
+              tool: {
+                id: "tc1",
+                name: "Skill",
+                input: JSON.stringify({ skill: "dataviz", input: "chart it" }),
+                output: "done",
+                done: true,
+                isError: false,
+              },
+            }),
+          ],
+          workLog: [],
+        }),
+      }),
+    );
+    const group = toolGroupToggle(m);
+    assert.ok(group, "collapsed tool is a group line");
+    await m.click(group);
+
+    assert.equal(m.query("button.toolToggle"), null, "no full tool header");
+    assert.equal(m.query(".toolSummary"), null, "no toolSummary either");
+    const chip = m.query("[data-skill-chip]") as HTMLButtonElement | null;
+    assert.ok(chip, "skill call renders as a chip");
+    assert.match(chip.textContent || "", /Skill: dataviz/);
+
+    // Expanding the chip shows the original tool card details.
+    await m.click(chip);
+    assert.ok(
+      m.text().includes("chart it") && m.text().includes("done"),
+      `expanding the chip must show the tool input/output, got: ${m.text().slice(0, 200)}`,
+    );
+    m.unmount();
+  });
+
+  it("a non-Skill tool call keeps the normal full tool header", async () => {
+    const m = await mount(
+      view({
+        detail: detail({
+          messages: [
+            msg({
+              id: "t1",
+              role: "tool",
+              text: "Bash: echo hi",
+              createdAt: 1,
+              runId: "run-1",
+              tool: {
+                id: "tc1",
+                name: "Bash",
+                input: "echo hi",
+                output: null,
+                done: false,
+                isError: false,
+              },
+            }),
+          ],
+          workLog: [],
+        }),
+      }),
+    );
+    const group = toolGroupToggle(m);
+    await m.click(group);
+    assert.equal(m.query("[data-skill-chip]"), null, "not a skill call");
+    const header = m.query("button.toolToggle") ?? m.byText("Bash");
+    assert.ok(header, "ordinary tool keeps its full header");
+    m.unmount();
+  });
+
   it("shows a collapsed Background jobs row while working, expanding to name each job (#1775)", async () => {
     const m = await mount(
       view({

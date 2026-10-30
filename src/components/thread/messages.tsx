@@ -281,6 +281,28 @@ export function ImageLightbox({
   );
 }
 
+/**
+ * Claude's `Skill` tool_use input is `{skill: "name", ...}` in the public
+ * API shape; toolSummary's (electron/claude.js) generic "first string
+ * value" fallback means a differently-shaped input still carries a name
+ * somewhere, so this reads loosely rather than requiring one exact key.
+ */
+function skillNameFromInput(input: string): string {
+  try {
+    const obj = JSON.parse(input);
+    if (obj && typeof obj === "object" && !Array.isArray(obj)) {
+      const preferred = obj.skill ?? obj.name;
+      if (typeof preferred === "string" && preferred) return preferred;
+      for (const v of Object.values(obj)) {
+        if (typeof v === "string" && v) return v;
+      }
+    }
+  } catch {
+    // Streaming partial JSON, or not JSON at all: no name yet.
+  }
+  return "";
+}
+
 function ToolCallCard({
   message,
   autoExpand,
@@ -340,52 +362,70 @@ function ToolCallCard({
       ? "error"
       : "done";
   const page = tool.html || htmlFromToolOutput(tool.output);
+  const isSkill = tool.name === "Skill";
+
+  const header = isSkill ? (
+    <button
+      type="button"
+      className={styles.skillChip}
+      data-skill-chip=""
+      title={formatTimeTooltip(message.createdAt)}
+      aria-expanded={open}
+      onClick={() => setManual(!open)}
+    >
+      <span className={styles.toolDot} data-status={status} aria-label={status} />
+      Skill: {skillNameFromInput(tool.input) || "skill"}
+    </button>
+  ) : (
+    <div
+      className={styles.toolHeader}
+      title={formatTimeTooltip(message.createdAt)}
+      onClick={() => setManual(!open)}
+    >
+      <button
+        type="button"
+        className={styles.toolToggle}
+        onClick={(e) => {
+          e.stopPropagation();
+          setManual(!open);
+        }}
+        aria-expanded={open}
+      >
+        <span
+          className={styles.toolDot}
+          data-status={status}
+          aria-label={status}
+        />
+        <span className={styles.toolName}>{tool.name}</span>
+      </button>
+      <span className={styles.toolSummary}>
+        <PathText text={redactDisplay(message.text)} />
+      </span>
+      <span className={styles.chevron} data-open={open} aria-hidden="true">
+        <svg
+          width="9"
+          height="9"
+          viewBox="0 0 10 10"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <path d="M3.5 2 6.5 5 3.5 8" />
+        </svg>
+      </span>
+    </div>
+  );
 
   return (
     <section
       className={`${bare ? styles.toolBare : `${styles.card} ${styles.toolCard}`}${entered ? ` ${styles.streamIn}` : ""}`}
       data-message-id={message.id}
       data-stream-in={entered ? "" : undefined}
+      data-skill-call={isSkill ? "" : undefined}
     >
-      <div
-        className={styles.toolHeader}
-        title={formatTimeTooltip(message.createdAt)}
-        onClick={() => setManual(!open)}
-      >
-        <button
-          type="button"
-          className={styles.toolToggle}
-          onClick={(e) => {
-            e.stopPropagation();
-            setManual(!open);
-          }}
-          aria-expanded={open}
-        >
-          <span
-            className={styles.toolDot}
-            data-status={status}
-            aria-label={status}
-          />
-          <span className={styles.toolName}>{tool.name}</span>
-        </button>
-        <span className={styles.toolSummary}>
-          <PathText text={redactDisplay(message.text)} />
-        </span>
-        <span className={styles.chevron} data-open={open} aria-hidden="true">
-          <svg
-            width="9"
-            height="9"
-            viewBox="0 0 10 10"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.6"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <path d="M3.5 2 6.5 5 3.5 8" />
-          </svg>
-        </span>
-      </div>
+      {header}
       {open && (
         <div className={styles.toolBody}>
           <pre className={styles.toolPre}>

@@ -1067,6 +1067,32 @@ a.btn {
   max-width: 100%;
 }
 
+/*
+ * Skill tool_use calls render as a compact chip instead of the full
+ * .toolHeader bar (#1782): clicking it still toggles the same .toolBody
+ * disclosure below, so expanding shows the original tool card details.
+ */
+.skillChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 0;
+  padding: 3px 10px 3px 8px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.skillChip:hover {
+  color: var(--text);
+  background: var(--card-hover);
+  border-color: var(--blue-border);
+}
+
 .toolGroup {
   display: flex;
   flex-direction: column;
