@@ -20,6 +20,7 @@ import { inAct, mount, unmountAll } from "./support/dom.ts";
 import { setTranscriptViewMode } from "../src/uiPrefs";
 import { resetComposerSession } from "../src/composerSession";
 import { ThreadView } from "../src/components/ThreadView";
+import { ChangesPanel } from "../src/components/thread/ChangesPanel";
 // Warm the lazy chunk: a cold import() can outlast flush() on a loaded CI
 // runner, then resolves outside act() and fails the next test's console check.
 import "../src/components/HtmlPage";
@@ -157,6 +158,12 @@ function suggestion(
 const noopAsync = async () => {};
 const noopSave = async () =>
   ({ id: "wf", name: "standard", phases: [] }) as WorkflowTemplateInfo;
+// Hoisted (not inline in view()) so repeated view() calls in a rerender loop
+// hand ChangesPanel the SAME onCommit/onRevert/onSuggest reference every
+// time, the way a real caller's useCallback'd props would (#1787 render test).
+const defaultOnCommitChanges = async () => ({ subject: "x" });
+const defaultOnRevertFile = async (path: string) => ({ path });
+const defaultOnSuggestCommitMessage = async () => ({ message: "feat: x" });
 
 function view(props: {
   detail?: ThreadDetail | null;
@@ -272,9 +279,9 @@ function view(props: {
         (async () => ({ files: [], patch: "", truncated: false }))
       }
       onFetchReviewContext={props.onFetchReviewContext}
-      onCommitChanges={async () => ({ subject: "x" })}
-      onRevertFile={async (path) => ({ path })}
-      onSuggestCommitMessage={async () => ({ message: "feat: x" })}
+      onCommitChanges={defaultOnCommitChanges}
+      onRevertFile={defaultOnRevertFile}
+      onSuggestCommitMessage={defaultOnSuggestCommitMessage}
       onPush={async () => ({ remote: "origin", branch: "main" })}
       onLoadImage={props.onLoadImage}
       onLoadAttachmentImage={props.onLoadAttachmentImage}
@@ -4047,6 +4054,99 @@ describe("ThreadView Changes panel commit box (issue #555)", () => {
       /commitBox/,
       "narrow path must not restyle .commitBox into the scrolling split",
     );
+  });
+});
+
+/**
+ * React.memo(ChangesPanel) stores the inner function on `.type`, the same
+ * probe sidebar.test.tsx uses for ThreadCard (#617).
+ */
+function countChangesPanelRenders(): {
+  count: () => number;
+  restore: () => void;
+} {
+  const memoized = ChangesPanel as unknown as {
+    type: (props: unknown) => unknown;
+  };
+  const inner = memoized.type;
+  let n = 0;
+  memoized.type = ((props: unknown) => {
+    n += 1;
+    return inner(props);
+  }) as typeof inner;
+  return {
+    count: () => n,
+    restore: () => {
+      memoized.type = inner;
+    },
+  };
+}
+
+describe("ChangesPanel does not re-render on every streamed token (#1787)", () => {
+  it("stays memoized across detail updates that leave git state untouched", async () => {
+    const probe = countChangesPanelRenders();
+    try {
+      const files = [
+        { path: "src/App.tsx", status: "M", additions: 3, deletions: 1 },
+      ];
+      const patch = [
+        "diff --git a/src/App.tsx b/src/App.tsx",
+        "--- a/src/App.tsx",
+        "+++ b/src/App.tsx",
+        "@@ -1,1 +1,2 @@",
+        " const x = 1",
+        "+const y = 2",
+      ].join("\n");
+      // Hoisted once: a real caller's git callbacks are stable (useCallback),
+      // and that stability is exactly what the memo depends on.
+      const onFetchDiff = async () => ({ files, patch, truncated: false });
+      const onFetchReviewContext = async () => ({
+        annotation: null,
+        symbols: [],
+        acceptedHunks: [],
+      });
+      const buildDetail = (text: string) =>
+        detail({
+          thread: thread({ id: "t1", status: "working" }),
+          messages: [msg({ id: "a1", role: "assistant", text, createdAt: 1 })],
+        });
+
+      const m = await mount(
+        view({
+          changesOpen: true,
+          detail: buildDetail("Hello"),
+          onFetchDiff,
+          onFetchReviewContext,
+        }),
+      );
+      await m.flush();
+      assert.ok(m.query("[aria-label='Git']"), "Git pane must be open");
+      const before = probe.count();
+      assert.ok(before > 0, "panel must have rendered once opened");
+
+      // Simulate several streamed tokens: only the assistant message text
+      // grows, same thread id/branch/worktree, same diff.
+      for (let i = 0; i < 5; i++) {
+        await m.rerender(
+          view({
+            changesOpen: true,
+            detail: buildDetail(`Hello${"!".repeat(i + 1)}`),
+            onFetchDiff,
+            onFetchReviewContext,
+          }),
+        );
+      }
+      await m.flush();
+
+      assert.equal(
+        probe.count(),
+        before,
+        "a streamed token that leaves git state untouched must not re-render ChangesPanel",
+      );
+      m.unmount();
+    } finally {
+      probe.restore();
+    }
   });
 });
 

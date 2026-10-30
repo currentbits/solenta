@@ -18,12 +18,14 @@ import type { MemoryProjectToolsApi } from "../src/components/MemoryTab";
 import type { SkillsManagerProps } from "../src/components/SkillsTab";
 import {
   getChatWidth,
+  getDiffFilesCollapsed,
   getDivergenceCardEnabled,
   getPasteCardsEnabled,
   getUsageLimitsStripEnabled,
   getWrapCodeBlocksEnabled,
   setChatWidth,
   setComposerVimEnabled,
+  setDiffFilesCollapsed,
   setEnterSendsEnabled,
   setDivergenceCardEnabled,
   setPasteCardsEnabled,
@@ -147,6 +149,7 @@ function modal(stubs: Stubs = {}) {
 afterEach(() => {
   unmountAll();
   setWrapCodeBlocksEnabled(false);
+  setDiffFilesCollapsed(false);
 });
 
 describe("SettingsModal memory section", () => {
@@ -3157,6 +3160,24 @@ describe("SettingsModal Display group (moved from Environment)", () => {
     assert.equal(box.checked, true);
     assert.equal(getWrapCodeBlocksEnabled(), true);
     assert.equal(window.localStorage.getItem("coder.wrapCodeBlocks"), "on");
+    m.unmount();
+  });
+
+  it("offers start diff files collapsed off by default (#1787)", async () => {
+    setDiffFilesCollapsed(false);
+    const m = await mount(modal());
+    const card = m.query("[data-display-prefs]");
+    assert.ok(card, "Display group on General");
+    const box = card.querySelector(
+      "[data-diff-files-collapsed-pref]",
+    ) as HTMLInputElement | null;
+    assert.ok(box, "diff files collapsed checkbox");
+    assert.equal(box.checked, false);
+    assert.match(card.textContent || "", /Start diff files collapsed/);
+    await m.click(box);
+    assert.equal(box.checked, true);
+    assert.equal(getDiffFilesCollapsed(), true);
+    assert.equal(window.localStorage.getItem("coder.diffFilesCollapsed"), "on");
     m.unmount();
   });
 

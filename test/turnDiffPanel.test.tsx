@@ -4,11 +4,16 @@
  * Run: node --import=./test/support/render.mjs --test test/turnDiffPanel.test.tsx
  */
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { afterEach, describe, it } from "node:test";
 import { useState } from "react";
 import { mount } from "./support/dom.ts";
 import { TurnDiffPanel, type DiffViewMode } from "../src/components/TurnDiffPanel";
+import { setDiffFilesCollapsed } from "../src/uiPrefs";
 import type { DiffResult } from "../src/shared/ipc";
+
+afterEach(() => {
+  setDiffFilesCollapsed(false);
+});
 
 const DIFF: DiffResult = {
   files: [
@@ -98,6 +103,63 @@ describe("TurnDiffPanel", () => {
         "No textual diff for this turn",
       ),
     );
+    m.unmount();
+  });
+});
+
+describe("TurnDiffPanel per-file collapse (#1787)", () => {
+  it("renders no collapse header and a fully expanded body with the pref off", async () => {
+    const m = await mount(<Harness />);
+    await m.flush();
+    assert.equal(
+      m.query("[data-diff-file-header]"),
+      null,
+      "no collapse header when the pref is off",
+    );
+    assert.ok((m.query("[data-turn-diff]")?.textContent || "").includes("-old"));
+    m.unmount();
+  });
+
+  it("starts collapsed with the pref on; the header click expands it", async () => {
+    setDiffFilesCollapsed(true);
+    const m = await mount(<Harness />);
+    await m.flush();
+    const header = m.query("[data-diff-file-header='src/a.ts']");
+    assert.ok(header, "collapse header renders for the auto-selected file");
+    assert.equal(header!.getAttribute("aria-expanded"), "false");
+    assert.ok(
+      !(m.query("[data-turn-diff]")?.textContent || "").includes("-old"),
+      "body starts hidden",
+    );
+
+    await m.click(header as HTMLElement);
+    await m.flush();
+    assert.equal(
+      m.query("[data-diff-file-header='src/a.ts']")?.getAttribute("aria-expanded"),
+      "true",
+      "a header click expands",
+    );
+    assert.ok((m.query("[data-turn-diff]")?.textContent || "").includes("-old"));
+    m.unmount();
+  });
+
+  it("selecting a file from the chip list expands it", async () => {
+    setDiffFilesCollapsed(true);
+    const m = await mount(<Harness />);
+    await m.flush();
+    assert.equal(
+      m.query("[data-diff-file-header='src/a.ts']")?.getAttribute("aria-expanded"),
+      "false",
+    );
+
+    await m.click(m.query("[data-turn-diff-file='notes.txt']") as HTMLElement);
+    await m.flush();
+    assert.equal(
+      m.query("[data-diff-file-header='notes.txt']")?.getAttribute("aria-expanded"),
+      "true",
+      "selecting a file from the list expands it",
+    );
+    assert.ok((m.query("[data-turn-diff]")?.textContent || "").includes("+hello"));
     m.unmount();
   });
 });

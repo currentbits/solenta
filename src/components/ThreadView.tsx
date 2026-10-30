@@ -204,6 +204,7 @@ import {
   DivergenceCard,
 } from "./thread/cards";
 import { setContextChips, setReviewComments } from "../composerSession";
+import type { ReviewComment } from "../diffView";
 import { useRetryAnchors } from "./thread/useRetryAnchors";
 import { useTranscriptAnnotations } from "./thread/useTranscriptAnnotations";
 import { useCliCommands } from "./thread/useCliCommands";
@@ -1127,6 +1128,12 @@ export const ThreadView = memo(function ThreadView({
   const [openTurnSha, setOpenTurnSha] = useState<string | null>(null);
   // One split/unified choice for the turn panel and the Git pane (#1493).
   const turnDiffMode: DiffViewMode = useDiffSplit() ? "split" : "unified";
+  // Stable prop for TurnDiffPanel (memoized, #1787): setDiffSplit is already
+  // a module-level function, so this closure never needs to change.
+  const handleTurnDiffModeChange = useCallback(
+    (m: DiffViewMode) => setDiffSplit(m === "split"),
+    [],
+  );
   const openThreadId = detail?.thread.id ?? null;
   useEffect(() => {
     setOpenTurnSha(null);
@@ -1633,6 +1640,33 @@ export const ThreadView = memo(function ThreadView({
 
   const isArchived = Boolean(detail?.thread.archived);
   const emptyMessages = detail != null && detail.messages.length === 0;
+
+  // Stable references for ChangesPanel (memoized, #1787): these used to be
+  // recreated as inline closures on every ThreadView render, which defeated
+  // the memo on every streamed token even though neither actually depends
+  // on anything that changes mid-stream.
+  const canCommitAndPr =
+    Boolean(onCreatePr) &&
+    Boolean(detail?.thread.worktreePath) &&
+    !project?.remoteHost &&
+    !isArchived;
+  const handleCommitAndPr = useCallback(async () => {
+    if (!detail || !onCreatePr) return;
+    const text = await coderGit()
+      ?.suggestPrText({ threadId: detail.thread.id })
+      .catch(() => null);
+    return onCreatePr({
+      title: text?.title || detail.thread.title,
+      body: text?.body,
+    });
+  }, [onCreatePr, detail?.thread.id, detail?.thread.title]);
+  const handleDiffComment = useCallback(
+    (comment: ReviewComment) => {
+      if (!detail) return;
+      setReviewComments(detail.thread.id, (prev) => [...prev, comment]);
+    },
+    [detail?.thread.id],
+  );
 
   /** Header context ring; null hides it (unknown window or no measured turn). */
   const ring = useMemo(() => {
@@ -4284,31 +4318,9 @@ export const ThreadView = memo(function ThreadView({
                 onRevert={onRevertFile}
                 onRevertHunk={onRevertHunk}
                 onSuggest={onSuggestCommitMessage}
-                onCommitAndPr={
-                  onCreatePr &&
-                  detail?.thread.worktreePath &&
-                  !project?.remoteHost &&
-                  !isArchived
-                    ? async () => {
-                        // Same title fallback as autoPr when drafting fails.
-                        const text = await coderGit()
-                          ?.suggestPrText({ threadId: detail.thread.id })
-                          .catch(() => null);
-                        return onCreatePr({
-                          title: text?.title || detail.thread.title,
-                          body: text?.body,
-                        });
-                      }
-                    : undefined
-                }
+                onCommitAndPr={canCommitAndPr ? handleCommitAndPr : undefined}
                 onComment={
-                  isArchived || !detail
-                    ? undefined
-                    : (comment) =>
-                        setReviewComments(detail.thread.id, (prev) => [
-                          ...prev,
-                          comment,
-                        ])
+                  isArchived || !detail ? undefined : handleDiffComment
                 }
               />
             );
@@ -4872,7 +4884,7 @@ export const ThreadView = memo(function ThreadView({
                               sha={bar.sha}
                               turn={bar.turn}
                               mode={turnDiffMode}
-                              onModeChange={(m) => setDiffSplit(m === "split")}
+                              onModeChange={handleTurnDiffModeChange}
                               onFetch={onFetchTurnDiff}
                             />
                           </Suspense>
