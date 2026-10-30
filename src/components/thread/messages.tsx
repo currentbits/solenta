@@ -1053,6 +1053,7 @@ const UserMessageBlock = memo(function UserMessageBlock({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(message.text);
   const [activityOpened, setActivityOpened] = useState(false);
+  const [copied, setCopied] = useState(false);
   const taRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -1327,20 +1328,42 @@ const UserMessageBlock = memo(function UserMessageBlock({
           )}
         </div>
       </div>
-      {onTogglePin && (
+      {(onTogglePin || message.text.trim()) && (
         <footer className={styles.msgMeta}>
           <span className={styles.msgActions}>
-            <button
-              type="button"
-              className={styles.msgAction}
-              data-msg-pin=""
-              aria-pressed={pinned}
-              aria-label={pinned ? "Unpin message" : "Pin message"}
-              title={pinned ? "Unpin this message" : "Pin this message"}
-              onClick={onTogglePin}
-            >
-              <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M8 11v3.5M4.5 11h7l-1.25-3.5V3h-4.5v4.5Z" /></svg>
-            </button>
+            {message.text.trim() && (
+              <button
+                type="button"
+                className={styles.msgAction}
+                data-msg-copy=""
+                aria-label={copied ? "Copied" : "Copy message"}
+                title={copied ? "Copied" : "Copy message"}
+                onClick={() => {
+                  void navigator.clipboard?.writeText(message.text).then(
+                    () => {
+                      setCopied(true);
+                      window.setTimeout(() => setCopied(false), 1200);
+                    },
+                    () => {},
+                  );
+                }}
+              >
+                {copied ? <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m3.5 8.5 3 3 6-7" /></svg> : <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5" /><path d="M10.5 5.5V4a1.5 1.5 0 0 0-1.5-1.5H4A1.5 1.5 0 0 0 2.5 4v5A1.5 1.5 0 0 0 4 10.5h1.5" /></svg>}
+              </button>
+            )}
+            {onTogglePin && (
+              <button
+                type="button"
+                className={styles.msgAction}
+                data-msg-pin=""
+                aria-pressed={pinned}
+                aria-label={pinned ? "Unpin message" : "Pin message"}
+                title={pinned ? "Unpin this message" : "Pin this message"}
+                onClick={onTogglePin}
+              >
+                <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M8 11v3.5M4.5 11h7l-1.25-3.5V3h-4.5v4.5Z" /></svg>
+              </button>
+            )}
           </span>
         </footer>
       )}

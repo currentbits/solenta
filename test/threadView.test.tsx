@@ -1157,6 +1157,34 @@ describe("ThreadView mounted interactions", () => {
     m.unmount();
   });
 
+  it("copies a user message's text via the same copy button as assistant replies (#1783)", async () => {
+    const copied: string[] = [];
+    Object.defineProperty(navigator, "clipboard", {
+      value: {
+        writeText: async (text: string) => {
+          copied.push(text);
+        },
+      },
+      configurable: true,
+    });
+    const m = await mount(
+      view({
+        detail: detail({
+          messages: [
+            msg({ id: "u1", role: "user", text: "USER_PROMPT_TEXT", createdAt: 1 }),
+          ],
+        }),
+      }),
+    );
+    const copyBtns = m.queryAll("[data-msg-copy]");
+    assert.equal(copyBtns.length, 1, "exactly one message, one copy button");
+    const btn = copyBtns[0];
+    await m.click(btn as HTMLElement);
+    await m.flush();
+    assert.deepEqual(copied, ["USER_PROMPT_TEXT"]);
+    m.unmount();
+  });
+
   it("expands a tool card on click to show tool input", async () => {
     const m = await mount(
       view({
