@@ -69,6 +69,10 @@ import {
   ReviewItineraryView,
 } from "../ReviewItinerary";
 import { useDiffFind } from "./useDiffFind";
+import {
+  getChangesPanelSnap,
+  setChangesPanelSnap,
+} from "./changesPanelMemory";
 import { ImageDiff, isImagePath } from "./ImageDiff";
 import { showContextMenu, type ContextMenuItem } from "../../contextMenu";
 import { isMacPlatform } from "../../keybindings";
@@ -816,6 +820,36 @@ export function ChangesPanel({
   const knownFilesRef = useRef<Set<string>>(new Set());
   const threadIdRef = useRef(threadId);
   threadIdRef.current = threadId;
+  /**
+   * Per-thread "where was I" (#1779): file-list and diff-body scroll
+   * containers, and render-fresh mirrors of the state the switch effect's
+   * cleanup needs. Mirrors (not the state itself) because that cleanup is
+   * closed over the OUTGOING thread's render and must read the LATEST
+   * selection/collapse, not whatever they were when this effect last fired.
+   */
+  const fileListRef = useRef<HTMLDivElement | null>(null);
+  const diffBodyRef = useRef<HTMLDivElement | null>(null);
+  const liveSelectedPathRef = useRef(selectedPath);
+  liveSelectedPathRef.current = selectedPath;
+  const liveCollapsedDirsRef = useRef(collapsedDirs);
+  liveCollapsedDirsRef.current = collapsedDirs;
+  /** Saved selection waiting for the new thread's diff to confirm it (one-shot). */
+  const restoreWantRef = useRef<string | null>(null);
+  /** Saved scroll waiting for the new thread's content to render (one-shot). */
+  const pendingScrollRef = useRef<{
+    fileListScrollTop: number;
+    diffScrollTop: number;
+  } | null>(null);
+  /** Snapshot `forThreadId`'s current spot (#1779). Scroll reads the DOM
+   * directly, so this is accurate at any instant, no separate scroll state. */
+  const persistSnap = (forThreadId: string) => {
+    setChangesPanelSnap(forThreadId, {
+      selectedPath: liveSelectedPathRef.current,
+      collapsedDirs: [...liveCollapsedDirsRef.current],
+      fileListScrollTop: fileListRef.current?.scrollTop ?? 0,
+      diffScrollTop: diffBodyRef.current?.scrollTop ?? 0,
+    });
+  };
   // Scope lives in uiPrefs per thread; the reducer re-reads it after a pick.
   const [, bumpScope] = useReducer((n: number) => n + 1, 0);
   const scope = getDiffScope(threadId);
@@ -912,8 +946,15 @@ export function ChangesPanel({
     bumpScope();
   };
 
-  // Never show one thread's diff under another thread.
+  // Never show one thread's diff under another thread. Clear first, then
+  // queue the new thread's remembered spot (#1779): restoreWantRef and
+  // pendingScrollRef are consumed once that thread's diff and content
+  // actually render, below. The cleanup fires on the OUTGOING thread first
+  // (React runs all effect cleanups before any new effect body in the same
+  // commit), using the live-ref mirrors so it saves the latest selection and
+  // collapse even though this effect itself only reruns on a thread change.
   useEffect(() => {
+    const saved = threadId ? getChangesPanelSnap(threadId) : null;
     setDiff(null);
     setError(null);
     setMessage("");
@@ -927,10 +968,20 @@ export function ChangesPanel({
     setStagedPaths(new Set());
     setUnstagedHunks(new Set());
     setFilePatches({});
-    setCollapsedDirs(new Set());
+    setCollapsedDirs(new Set(saved?.collapsedDirs ?? []));
     setCopiedPath(null);
     knownFilesRef.current = new Set();
     onStagedPathsChange?.(null);
+    restoreWantRef.current = saved?.selectedPath ?? null;
+    pendingScrollRef.current = saved
+      ? {
+          fileListScrollTop: saved.fileListScrollTop,
+          diffScrollTop: saved.diffScrollTop,
+        }
+      : null;
+    return () => {
+      if (threadId) persistSnap(threadId);
+    };
     // onStagedPathsChange is a stable setter from useCoder; threadId is the trigger.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [threadId]);
@@ -998,9 +1049,32 @@ export function ChangesPanel({
       setSelectedPath(want);
       return;
     }
+    // Remembered selection (#1779) beats the default, but only once: decide
+    // now, on the first diff that actually has files, and fall back to the
+    // default below if the saved path is stale (file renamed/reverted/gone).
+    const restore = restoreWantRef.current;
+    restoreWantRef.current = null;
+    if (restore && diff.files.some((f) => f.path === restore)) {
+      setSelectedPath(restore);
+      return;
+    }
     if (selectedPath && shownPaths.has(selectedPath)) return;
     setSelectedPath(testFilter.shown[0]?.path ?? null);
   }, [diff, selectedPath, testFilter, shownPaths]);
+
+  // Restore (#1779) the remembered scroll once this thread's content has
+  // actually rendered: after the diff lands, a frame later so the file
+  // list / diff body have painted at full height.
+  useEffect(() => {
+    const pending = pendingScrollRef.current;
+    if (!pending || !diff) return;
+    pendingScrollRef.current = null;
+    const raf = requestAnimationFrame(() => {
+      if (fileListRef.current) fileListRef.current.scrollTop = pending.fileListScrollTop;
+      if (diffBodyRef.current) diffBodyRef.current.scrollTop = pending.diffScrollTop;
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [diff]);
 
   useEffect(() => {
     if (open) void load();
@@ -1473,7 +1547,7 @@ export function ChangesPanel({
       {diff && !empty && itinerary && (
         <>
           <div className={styles.changesSplit}>
-            <div className={styles.changesFiles}>
+            <div className={styles.changesFiles} ref={fileListRef}>
               {editable ? (
               <div className={styles.stageBar}>
                 <button
@@ -1553,7 +1627,7 @@ export function ChangesPanel({
                 )
               )}
             </div>
-            <div className={styles.changesDiff}>
+            <div className={styles.changesDiff} ref={diffBodyRef}>
               {imageFile ? null : (
               <div className={styles.diffToolbar} role="group" aria-label="Diff view">
                 <button

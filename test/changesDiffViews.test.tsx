@@ -9,6 +9,11 @@ import { afterEach, describe, it } from "node:test";
 import { mount, type Mounted } from "./support/dom.ts";
 import { ChangesPanel } from "../src/components/thread/ChangesPanel";
 import {
+  getChangesPanelSnap,
+  resetChangesPanelSnaps,
+  setChangesPanelSnap,
+} from "../src/components/thread/changesPanelMemory";
+import {
   languageForFence,
   languageForPath,
   splitHighlightedLines,
@@ -21,6 +26,7 @@ import {
   setDiffIgnoreWhitespace,
   setDiffScope,
   setDiffSplit,
+  setDiffTreeView,
   setDiffWrap,
 } from "../src/uiPrefs";
 import type { DiffOptions, DiffResult } from "../src/shared/ipc";
@@ -92,6 +98,8 @@ afterEach(() => {
   setDiffWrap(false);
   setDiffIgnoreWhitespace(false);
   setDiffHideTests(false);
+  setDiffTreeView(false);
+  resetChangesPanelSnaps();
 });
 
 describe("Git pane scope (#1493)", () => {
@@ -358,5 +366,148 @@ describe("Git pane Hide tests (#1745)", () => {
     const view = await mountPanel().m;
     await view.flush();
     assert.equal(view.query("[data-hide-tests]"), null);
+  });
+});
+
+describe("Git pane remembers its spot per thread (#1779)", () => {
+  function panel(opts: {
+    threadId: string;
+    diff: DiffResult;
+    focus?: { path: string } | null;
+  }) {
+    return (
+      <ChangesPanel
+        open
+        threadId={opts.threadId}
+        threadTitle="diffs"
+        threadBranch="coder/diffs"
+        planText=""
+        openNonce={1}
+        focus={opts.focus ?? null}
+        onFetchDiff={async () => opts.diff}
+        onCommit={async (message) => ({ subject: message })}
+        onStagedPathsChange={() => {}}
+        onRevert={async (path) => ({ path })}
+        onSuggest={async () => ({ message: "x" })}
+        onComment={() => {}}
+      />
+    );
+  }
+
+  const DIFF_A: DiffResult = {
+    files: [
+      { path: "dirA/one.ts", status: "M", additions: 1, deletions: 1 },
+      { path: "dirB/two.ts", status: "M", additions: 1, deletions: 1 },
+    ],
+    patch: [patchFor("dirA/one.ts", "aa"), patchFor("dirB/two.ts", "bb")].join("\n"),
+    truncated: false,
+  };
+  const DIFF_B: DiffResult = {
+    files: [{ path: "dirC/three.ts", status: "M", additions: 1, deletions: 1 }],
+    patch: patchFor("dirC/three.ts", "cc"),
+    truncated: false,
+  };
+
+  async function selectFile(view: Mounted, path: string) {
+    const row = view
+      .queryAll("[data-file-row]")
+      .find((r) => r.getAttribute("data-file-path") === path);
+    assert.ok(row, `file row for ${path}`);
+    await view.click(row!);
+  }
+
+  const selectedFile = (view: Mounted) =>
+    view.query("[data-file-row][data-selected]")?.getAttribute("data-file-path") ?? null;
+
+  it("restores the selected file, scroll position and collapsed folders after a visit to another thread", async () => {
+    setDiffTreeView(true);
+    const view = await mount(panel({ threadId: "tA", diff: DIFF_A }));
+    await view.flush();
+    assert.equal(selectedFile(view), "dirA/one.ts", "defaults to the first file");
+
+    await selectFile(view, "dirB/two.ts");
+    assert.equal(selectedFile(view), "dirB/two.ts");
+
+    await view.click(view.query('[data-dir-row="dirA"]'));
+    assert.equal(
+      view.query('[data-dir-row="dirA"]')?.getAttribute("aria-expanded"),
+      "false",
+      "dirA collapsed",
+    );
+
+    const fileList = view.query(".changesFiles") as HTMLElement;
+    const diffBody = view.query(".changesDiff") as HTMLElement;
+    assert.ok(fileList && diffBody, "scroll containers render");
+    fileList.scrollTop = 40;
+    diffBody.scrollTop = 80;
+
+    // Switch away: B must show none of A's selection, collapse or scroll.
+    await view.rerender(panel({ threadId: "tB", diff: DIFF_B }));
+    await view.flush();
+    assert.equal(selectedFile(view), "dirC/three.ts", "B never shows A's selection");
+    assert.equal(
+      view.query('[data-dir-row="dirA"]'),
+      null,
+      "B has no dirA to begin with, let alone collapsed",
+    );
+    assert.equal((view.query(".changesFiles") as HTMLElement).scrollTop, 0);
+    assert.equal((view.query(".changesDiff") as HTMLElement).scrollTop, 0);
+
+    // Back to A: selection, collapse and scroll all come back.
+    await view.rerender(panel({ threadId: "tA", diff: DIFF_A }));
+    await view.flush();
+    assert.equal(selectedFile(view), "dirB/two.ts", "A's selected file is restored");
+    assert.equal(
+      view.query('[data-dir-row="dirA"]')?.getAttribute("aria-expanded"),
+      "false",
+      "A's collapsed folder is restored",
+    );
+    await until(
+      view,
+      () => (view.query(".changesFiles") as HTMLElement)?.scrollTop === 40,
+      "file-list scroll restored",
+    );
+    await until(
+      view,
+      () => (view.query(".changesDiff") as HTMLElement)?.scrollTop === 80,
+      "diff-body scroll restored",
+    );
+  });
+
+  it("falls back to the default selection when the saved path no longer exists", async () => {
+    const view = await mount(panel({ threadId: "tA", diff: DIFF_A }));
+    await view.flush();
+    await selectFile(view, "dirB/two.ts");
+    assert.equal(selectedFile(view), "dirB/two.ts");
+
+    await view.rerender(panel({ threadId: "tB", diff: DIFF_B }));
+    await view.flush();
+
+    // dirB/two.ts is gone by the time thread A comes back into view.
+    const diffA2: DiffResult = {
+      files: [{ path: "dirA/one.ts", status: "M", additions: 1, deletions: 1 }],
+      patch: patchFor("dirA/one.ts", "aa2"),
+      truncated: false,
+    };
+    await view.rerender(panel({ threadId: "tA", diff: diffA2 }));
+    await view.flush();
+    assert.equal(selectedFile(view), "dirA/one.ts", "stale path falls back to the default");
+  });
+});
+
+describe("Changes panel per-thread memory cap (#1779)", () => {
+  it("evicts the oldest thread once the cap is reached", () => {
+    const snap = (n: number) => ({
+      selectedPath: `file${n}.ts`,
+      fileListScrollTop: n,
+      diffScrollTop: n,
+      collapsedDirs: [],
+    });
+    for (let i = 0; i < 51; i++) {
+      setChangesPanelSnap(`cap-${i}`, snap(i));
+    }
+    assert.equal(getChangesPanelSnap("cap-0"), null, "oldest thread evicted once the 51st arrives");
+    assert.equal(getChangesPanelSnap("cap-1")?.selectedPath, "file1.ts", "next-oldest survives");
+    assert.equal(getChangesPanelSnap("cap-50")?.selectedPath, "file50.ts", "newest survives");
   });
 });
