@@ -173,6 +173,7 @@ const BY_SCOPE = {
     "threads:dismissBtw",
     "threads:promoteBtw",
     "threads:rename",
+    "threads:regenerateTitle",
     "threads:setGoal",
     "threads:setProvider",
     "threads:setReasoningEffort",

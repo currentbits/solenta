@@ -254,6 +254,7 @@ const IPC_CHANNELS = Object.freeze([
   { ns: "threads", method: "dismissBtw" },
   { ns: "threads", method: "promoteBtw" },
   { ns: "threads", method: "rename" },
+  { ns: "threads", method: "regenerateTitle" },
   { ns: "threads", method: "fork" },
   { ns: "threads", method: "savePlan" },
   { ns: "threads", method: "resolveSuggestion" },

@@ -2440,6 +2440,15 @@ export interface VerifyResult {
   artifactIds?: string[];
 }
 
+/** One thread's outcome from threads.regenerateTitle (issue #1774). */
+export interface RegenerateTitleResult {
+  threadId: string;
+  /** New title, present on success. */
+  title?: string;
+  /** Failure reason; present on failure, with the old title left in place. */
+  error?: string;
+}
+
 /**
  * Result of a per-project setup or named quick action (issue #153).
  * Failure is a result, not a throw, matching runVerify.
@@ -6097,6 +6106,19 @@ export interface CoderApi {
      * empty title. Never bumps updatedAt.
      */
     rename(input: { threadId: string; title: string }): Promise<ThreadInfo>;
+    /**
+     * Regenerate one or more thread titles from each thread's first user
+     * message plus a digest of its latest messages (issue #1774), so a
+     * thread that drifted gets retitled for what it is about now. Always
+     * an explicit user action (menu item, bulk action): unlike the
+     * automatic one-shot title, it overwrites any existing title,
+     * including one the user set by hand. Runs at most 2 threads
+     * concurrently; trashed threads are skipped. One thread's failure
+     * leaves its old title and does not stop the others.
+     */
+    regenerateTitle(input: {
+      threadIds: string[];
+    }): Promise<RegenerateTitleResult[]>;
     /**
      * Fork / hand off a thread: creates a NEW thread in the same project,
      * copying provider/model/permissionMode unless overridden (a provider

@@ -621,6 +621,15 @@ module.exports = {
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
     return updated;
   },
+  "threads:regenerateTitle": async (ctx, input) => {
+    const { regenerateTitles } = require("./fm-title.js");
+    const results = await regenerateTitles(
+      ctx.store,
+      (input && input.threadIds) || [],
+    );
+    ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+    return results;
+  },
   "threads:setProvider": async (ctx, input) => {
     // A manual pick beats a pending Auto route (#246).
     services.setRoute(ctx.store, { threadId: input.threadId, route: null });
