@@ -382,6 +382,11 @@ module.exports = {
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
     return updated;
   },
+  "threads:setSortKey": async (ctx, input) => {
+    const updated = services.setSortKey(ctx.store, input);
+    ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+    return updated;
+  },
   "threads:setQueued": async (ctx, input) => {
     const updated = services.setQueued(ctx.store, input);
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
@@ -620,6 +625,15 @@ module.exports = {
     const updated = services.renameThread(ctx.store, input);
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
     return updated;
+  },
+  "threads:regenerateTitle": async (ctx, input) => {
+    const { regenerateTitles } = require("./fm-title.js");
+    const results = await regenerateTitles(
+      ctx.store,
+      (input && input.threadIds) || [],
+    );
+    ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+    return results;
   },
   "threads:setProvider": async (ctx, input) => {
     // A manual pick beats a pending Auto route (#246).

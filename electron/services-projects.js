@@ -377,7 +377,7 @@ async function createProject(store, input) {
  * project local again. The local checkout path is never edited here.
  * @param {import('./store').Store} store
  * @param {string} projectId
- * @param {{ name?: string, remoteHost?: string, remotePath?: string, spaceId?: string, autoDispatch?: boolean, autoPr?: boolean, worktreeRetention?: number, iconPath?: string | null, setupCommand?: string | null, quickActions?: Array<{ id?: string, name?: string, command?: string }>, env?: Record<string, string> | null }} patch
+ * @param {{ name?: string, remoteHost?: string, remotePath?: string, spaceId?: string, autoDispatch?: boolean, autoPr?: boolean, defaultWorktree?: boolean | null, worktreeRetention?: number, iconPath?: string | null, setupCommand?: string | null, quickActions?: Array<{ id?: string, name?: string, command?: string }>, env?: Record<string, string> | null }} patch
  */
 function updateProject(store, projectId, patch) {
   const projects = store.getProjects().slice();
@@ -433,6 +433,14 @@ function updateProject(store, projectId, patch) {
   }
   if (input.autoPr === true) next.autoPr = true;
   else if (input.autoPr === false) delete next.autoPr;
+
+  // #1775: tri-state override of settings.defaultWorktree. true/false pin
+  // it; null (or any other value) restores "use the global setting".
+  if (input.defaultWorktree === true || input.defaultWorktree === false) {
+    next.defaultWorktree = input.defaultWorktree;
+  } else if (Object.prototype.hasOwnProperty.call(input, "defaultWorktree")) {
+    delete next.defaultWorktree;
+  }
 
   if (Object.prototype.hasOwnProperty.call(input, "worktreeRetention")) {
     const v = input.worktreeRetention;

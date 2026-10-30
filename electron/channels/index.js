@@ -182,8 +182,13 @@ function createChannels(deps) {
         log(`${kind}: agent profile not applied: ${errText(err)}`);
       }
     }
-    // Same lazy worktree intent as a New Thread with the default on.
-    if (store.getSettings().defaultWorktree && !project.scratch && !project.remoteHost) {
+    // Same lazy worktree intent as a New Thread with the default on; the
+    // project's own defaultWorktree override (#1775) wins over the global.
+    if (
+      !project.scratch &&
+      !project.remoteHost &&
+      services.resolveDefaultWorktree(project, store.getSettings())
+    ) {
       store.updateThread(thread.id, { pendingWorktree: true });
     }
     chats(kind)[chatId] = thread.id;

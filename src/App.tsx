@@ -29,6 +29,8 @@ import { ArchiveToast } from "./components/ArchiveToast";
 import { ResumeNotice } from "./components/ResumeNotice";
 import { UNDO_WINDOW_MS, useUndoLast } from "./app/useUndoLast";
 import { bindingLabel, matchesBinding } from "./keybindings";
+import { isPinned } from "./threadSnooze";
+import { AUTO_SETTLE_AFTER_DAYS, effectiveSettled } from "./threadSettle";
 import {
   canDetachThread,
   detachThread,
@@ -55,6 +57,7 @@ import {
 } from "./commandPalette";
 import { ConnectionBanner } from "./components/ConnectionBanner";
 import { OauthConsentDialog } from "./components/OauthConsentDialog";
+import { PrHoverFetchContext } from "./components/PrHoverCard";
 import { isWebMode } from "./shared/wire";
 import { isBuildMismatch } from "./buildMismatch";
 import { BuildMismatchScreen } from "./components/BuildMismatchScreen";
@@ -97,7 +100,7 @@ import { useThreadRoster } from "./app/useThreadRoster";
 import { useCrewHandlers } from "./app/useCrewHandlers";
 import { useOnboarding } from "./app/useOnboarding";
 import { useIssueStarters } from "./app/useIssueStarters";
-import { useAppShortcuts } from "./app/useAppShortcuts";
+import { dialogOpen, useAppShortcuts } from "./app/useAppShortcuts";
 import { useSidebarResize } from "./app/useSidebarResize";
 import { lazyNamed } from "./lazyNamed";
 
@@ -259,6 +262,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     setArchived,
     setSettled,
     setPinned,
+    setSortKey,
     setSnoozed,
     setTags,
     setThreadProject,
@@ -270,6 +274,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     resumeQuotaWait,
     resumeCrew,
     renameThread,
+    regenerateTitle,
     setNotes,
     setMessagePins,
     setBaseBranch,
@@ -936,6 +941,13 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     [setPinned],
   );
 
+  const handleSetSortKey = useCallback(
+    (threadId: string, sortKey: number | null) => {
+      void setSortKey(threadId, sortKey);
+    },
+    [setSortKey],
+  );
+
   const handleSetSnoozed = useCallback(
     (threadId: string, until: number | null) => {
       const was = threadsRef.current.find((t) => t.id === threadId)?.snoozedUntil;
@@ -999,6 +1011,11 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     },
     [renameThread, selectedThreadId],
   );
+
+  const handleRegenerateOpenThread = useCallback(() => {
+    if (!selectedThreadId) return;
+    void regenerateTitle([selectedThreadId]);
+  }, [regenerateTitle, selectedThreadId]);
 
   // An inline arrow here would bust ThreadView's memo on every 700ms stream
   // tick (issue #91); keep it identity-stable per selected thread.
@@ -1331,6 +1348,39 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+
+  // ⌘⇧P / ⌘⇧A toggle pin and settle for the open thread (#1770). Both
+  // bindings use mod, so unlike plain-letter shortcuts they still fire while
+  // a text field is focused; only an open dialog blocks them.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || dialogOpen()) return;
+      const pin = matchesBinding(e, "thread.togglePin");
+      const settle = !pin && matchesBinding(e, "thread.toggleSettle");
+      if (!pin && !settle) return;
+      const threadId = selectedThreadId;
+      const active = threadId
+        ? threadsRef.current.find((t) => t.id === threadId)
+        : undefined;
+      if (!active) return;
+      e.preventDefault();
+      if (pin) {
+        handleSetPinned(active.id, !isPinned(active));
+        return;
+      }
+      const afterDaysProp = settings == null ? undefined : settings.autoSettleAfterDays;
+      const settled = effectiveSettled(active, {
+        now: Date.now(),
+        autoSettleAfterDays:
+          afterDaysProp === undefined ? AUTO_SETTLE_AFTER_DAYS : afterDaysProp,
+        autoSettleOnMerge:
+          (settings == null ? undefined : settings.autoSettleOnMerge) !== false,
+      });
+      handleSetSettled(active.id, settled ? "active" : "settled");
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selectedThreadId, handleSetPinned, handleSetSettled, settings]);
 
   // Close the center Changes panel when switching threads (old behavior).
   useEffect(() => {
@@ -1900,6 +1950,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   }
 
   return (
+    <PrHoverFetchContext.Provider value={prDetail}>
     <div className={styles.shell}>
       <ConnectionBanner />
       <div
@@ -2068,6 +2119,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         searchThreads={searchThreads}
         onSetSettled={handleSetSettled}
         onSetPinned={handleSetPinned}
+        onSetSortKey={handleSetSortKey}
         onSetSnoozed={handleSetSnoozed}
         onSetTags={handleSetTags}
         onSetThreadProject={handleSetThreadProject}
@@ -2075,6 +2127,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onSetEjected={handleSetEjected}
         onTeleport={teleport}
         onRenameThread={handleRenameThread}
+        onRegenerateTitle={regenerateTitle}
         onSetArchived={handleRowArchived}
         onClearSettled={handleClearSettled}
         trashedThreads={trashedThreads}
@@ -2360,6 +2413,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
             : undefined
         }
         onRenameThread={handleRenameOpenThread}
+        onRegenerateTitle={handleRegenerateOpenThread}
         onExportReport={exportReport}
         onRepeatSchedule={handleRepeatSchedule}
         onDistillWorkflow={handleDistillWorkflow}
@@ -2740,6 +2794,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
             onSubmit={submitEditProject}
             providers={providers}
             globalProvider={settings?.defaultProvider ?? null}
+            globalDefaultWorktree={settings?.defaultWorktree ?? false}
             agentProfiles={settings?.agentProfiles ?? EMPTY_AGENT_PROFILES}
             onMoveConfigToRepo={() =>
               api.projects.moveConfigToRepo({ projectId: editProject.id })
@@ -2761,5 +2816,6 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         </Suspense>
       </div>
     </div>
+    </PrHoverFetchContext.Provider>
   );
 }

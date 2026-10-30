@@ -21,7 +21,8 @@ const URL_RE = /https?:\/\/\S+|file:\/\/\S+|mailto:\S+/gi;
 /** Token body: path characters, plus `:` so `C:\` and `:12` stay attached. */
 const PATH_CHAR = /[A-Za-z0-9_./\\@+~:-]/;
 
-function urlRanges(text: string): Array<{ start: number; end: number }> {
+/** Ranges covered by a URL; shared with githubRefs.ts so a ref inside a link is never double-matched. */
+export function urlRanges(text: string): Array<{ start: number; end: number }> {
   const ranges: Array<{ start: number; end: number }> = [];
   URL_RE.lastIndex = 0;
   let m: RegExpExecArray | null;
@@ -31,7 +32,7 @@ function urlRanges(text: string): Array<{ start: number; end: number }> {
   return ranges;
 }
 
-function inRange(
+export function inRange(
   ranges: Array<{ start: number; end: number }>,
   i: number,
 ): boolean {

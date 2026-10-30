@@ -55,6 +55,8 @@ interface EditProjectModalProps {
   providers?: ProviderInfo[];
   /** settings.defaultProvider; null = the built-in Claude Code default. */
   globalProvider?: string | null;
+  /** settings.defaultWorktree (#1775), named in the inherit option's label. */
+  globalDefaultWorktree?: boolean;
   /** Profiles the model routing tiers map to (#246). */
   agentProfiles?: AgentProfile[];
   /** #438: PR the stored setup + quick actions into solenta.json. */
@@ -81,6 +83,7 @@ export function EditProjectModal({
   onPreviewIcon,
   providers = [],
   globalProvider = null,
+  globalDefaultWorktree = false,
   agentProfiles = [],
   onMoveConfigToRepo,
 }: EditProjectModalProps) {
@@ -91,6 +94,11 @@ export function EditProjectModal({
     project.autoDispatch ?? false,
   );
   const [autoPr, setAutoPr] = useState(project.autoPr === true);
+  const [defaultWorktree, setDefaultWorktree] = useState<boolean | null>(
+    project.defaultWorktree === true || project.defaultWorktree === false
+      ? project.defaultWorktree
+      : null,
+  );
   const [retentionText, setRetentionText] = useState(
     String(
       typeof project.worktreeRetention === "number"
@@ -215,6 +223,7 @@ export function EditProjectModal({
         worktreeRetention,
         autoDispatch,
         autoPr,
+        defaultWorktree,
         setupCommand: setupCommand.trim() || null,
         waitForSetup,
         setupCacheOff: !setupCache,
@@ -648,6 +657,36 @@ export function EditProjectModal({
               </p>
             </div>
           ) : null}
+          <div className={styles.field}>
+            <label
+              className={styles.fieldLabel}
+              htmlFor="edit-project-default-worktree"
+            >
+              New thread worktree
+            </label>
+            <select
+              id="edit-project-default-worktree"
+              className={styles.input}
+              data-edit-project-default-worktree=""
+              value={defaultWorktree === null ? "" : String(defaultWorktree)}
+              disabled={pending}
+              onChange={(e) => {
+                const v = e.target.value;
+                setDefaultWorktree(v === "" ? null : v === "true");
+              }}
+            >
+              <option value="">
+                Use global setting (currently:{" "}
+                {globalDefaultWorktree ? "Worktree" : "Current checkout"})
+              </option>
+              <option value="true">Worktree</option>
+              <option value="false">Current checkout</option>
+            </select>
+            <p className={styles.note}>
+              Overrides Settings → New thread worktree default for new
+              threads in this project.
+            </p>
+          </div>
           <div className={styles.field}>
             <label
               className={styles.fieldLabel}

@@ -1,4 +1,4 @@
-import { memo, useRef, useState } from "react";
+import { memo, useRef, useState, useSyncExternalStore } from "react";
 import type {
   ConflictForecast,
   ProjectInfo,
@@ -13,6 +13,7 @@ import {
 } from "../../conflictForecast";
 import { formatRelativeAge, middleTruncate } from "../../format";
 import { isCrewWorker } from "../../sidebarGroups";
+import { hasNonEmptyDraft, subscribeDrafts } from "../../composerSession";
 import { ProviderMark } from "../ProviderMark";
 import { showContextMenu } from "../../contextMenu";
 import {
@@ -26,6 +27,7 @@ import { loadHosts } from "../../remoteHosts";
 import { isPinned, resolveSnoozePresets } from "../../threadSnooze";
 import { isUnread } from "../../threadUnread";
 import { ProjectIcon } from "../ProjectIcon";
+import { PrHoverTarget, repoFromGithubUrl } from "../PrHoverCard";
 import {
   subagentNames,
   waitLabel,
@@ -127,6 +129,7 @@ export const ThreadCard = memo(function ThreadCard({
   active,
   now,
   onSelect,
+  projectPath = null,
   contentMatch,
   isSettled = false,
   multiSelected = false,
@@ -140,6 +143,8 @@ export const ThreadCard = memo(function ThreadCard({
   onSetEjected,
   onTeleport,
   onRenameThread,
+  onRegenerateTitle,
+  regeneratingTitle = false,
   onFork,
   onToggleSnoozeMenu,
   nested = false,
@@ -153,9 +158,17 @@ export const ThreadCard = memo(function ThreadCard({
   conflictForecast = null,
   threadTitles,
   listMoveProjects,
+  onDragStartRow,
+  onDragOverRow,
+  onDropRow,
+  onDragEndRow,
+  dropIndicator = null,
+  dragging = false,
 }: {
   thread: ThreadInfo;
   slug: string;
+  /** The thread's project checkout path, for the PR hover card's gh call (#1771). */
+  projectPath?: string | null;
   iconUrl?: string | null;
   providers: ProviderInfo[];
   active: boolean;
@@ -184,6 +197,10 @@ export const ThreadCard = memo(function ThreadCard({
   /** Teleport to a saved host, or back with null (#1702). */
   onTeleport?: (threadId: string, target: TeleportTarget | null) => void | Promise<void>;
   onRenameThread?: (threadId: string, title: string) => void | Promise<void>;
+  /** Regenerate the title from current activity (issue #1774). */
+  onRegenerateTitle?: (threadId: string) => void | Promise<void>;
+  /** This row's title is being regenerated (#1774); cheap inline state. */
+  regeneratingTitle?: boolean;
   onFork?: (
     threadId: string,
     opts?: { provider?: string },
@@ -200,6 +217,22 @@ export const ThreadCard = memo(function ThreadCard({
   showSlug?: boolean;
   conflictForecast?: ConflictForecast | null;
   threadTitles?: ReadonlyMap<string, string>;
+  /**
+   * Manual drag reorder (#1769). The card only reports the native drag
+   * events on its outer row, passing its own id — same shape as
+   * onSetPinned etc. — so Sidebar can pass one stable function to every
+   * card without defeating this component's memo (#617). Sidebar owns the
+   * section order, the pure midpoint math (src/threadOrder.ts) and the
+   * persisted patch.
+   */
+  onDragStartRow?: (threadId: string) => void;
+  onDragOverRow?: (threadId: string, e: React.DragEvent<HTMLDivElement>) => void;
+  onDropRow?: (threadId: string, e: React.DragEvent<HTMLDivElement>) => void;
+  onDragEndRow?: (threadId: string) => void;
+  /** Drop indicator line rendered above/below this row while dragging. */
+  dropIndicator?: "before" | "after" | null;
+  /** This row is the one currently being dragged (reorder, not detach). */
+  dragging?: boolean;
 }) {
   const working = thread.status === "working";
   const settleOverride = isSettled ? ("active" as const) : ("settled" as const);
@@ -238,11 +271,20 @@ export const ThreadCard = memo(function ThreadCard({
   const [customSnoozeOpen, setCustomSnoozeOpen] = useState(false);
   const forecastPairs = pairsForThread(conflictForecast, thread.id);
   const providerId = thread.provider || "";
+  // Reactive (#1770): subscribes to composer writes rather than reading
+  // localStorage/keptDrafts on every row's render.
+  // Server snapshot: renderToString (prRender tests) has no drafts.
+  const hasDraft = useSyncExternalStore(
+    subscribeDrafts,
+    () => hasNonEmptyDraft(thread.id),
+    () => false,
+  );
   const hasLine3 =
     Boolean(thread.branch) ||
     (thread.prNumber != null && Boolean(thread.prUrl)) ||
     forecastPairs.length > 0 ||
-    Boolean(providerId);
+    Boolean(providerId) ||
+    hasDraft;
 
   const startRename = () => {
     setRenameDraft(thread.title);
@@ -304,6 +346,7 @@ export const ThreadCard = memo(function ThreadCard({
     else if (id.startsWith("handoff:")) {
       void onFork?.(thread.id, { provider: id.slice("handoff:".length) });
     } else if (id === "rename") startRename();
+    else if (id === "regenerateTitle") void onRegenerateTitle?.(thread.id);
     else if (id === "tags") startTagEdit();
     else if (id === "copyLink") {
       void navigator.clipboard?.writeText(`solenta://thread/${thread.id}`).catch(() => {});
@@ -338,6 +381,7 @@ export const ThreadCard = memo(function ThreadCard({
       showPin: Boolean(onSetPinned),
       showFork: Boolean(onFork),
       showRename: Boolean(onRenameThread),
+      showRegenerateTitle: Boolean(onRegenerateTitle),
       showTags: Boolean(onSetTags),
       showCopyLink: true,
       showMove: Boolean(onSetThreadProject),
@@ -363,7 +407,7 @@ export const ThreadCard = memo(function ThreadCard({
   };
 
   const hasActions = Boolean(
-    onSetSettled || onSetPinned || onSetSnoozed || onSetTags || onSetThreadProject || onFork || onRenameThread || onSetMuted || onSetEjected || onTeleport,
+    onSetSettled || onSetPinned || onSetSnoozed || onSetTags || onSetThreadProject || onFork || onRenameThread || onRegenerateTitle || onSetMuted || onSetEjected || onTeleport,
   );
 
   // Card is a non-interactive shell. Stretch select + hover actions are
@@ -383,6 +427,8 @@ export const ThreadCard = memo(function ThreadCard({
       data-nested={nested ? "true" : undefined}
       data-compact={compact ? "true" : undefined}
       data-actions-open={actionsOpen ? "true" : undefined}
+      data-dragging={dragging ? "true" : undefined}
+      data-drop-indicator={dropIndicator ?? undefined}
       onContextMenu={(e) => {
         if (renaming || editingTags) return;
         if ((e.target as HTMLElement).closest("input, a, textarea")) return;
@@ -390,6 +436,8 @@ export const ThreadCard = memo(function ThreadCard({
         e.stopPropagation();
         void openThreadMenu({ x: e.clientX, y: e.clientY });
       }}
+      onDragOver={onDragOverRow && ((e) => onDragOverRow(thread.id, e))}
+      onDrop={onDropRow && ((e) => onDropRow(thread.id, e))}
     >
       {indexHint != null && (
         <span className={styles.indexHint} data-index-hint={indexHint} aria-hidden>
@@ -411,14 +459,20 @@ export const ThreadCard = memo(function ThreadCard({
           e.preventDefault();
           startRename();
         }}
-        // Drag a card out of the window to detach it (#519).
-        draggable={canDetachThread() && !renaming}
+        // Drag a card out of the window to detach it (#519), or drop it
+        // elsewhere in the pinned/active section to reorder it (#1769).
+        // canDetachThread() used to gate this attribute, so reordering
+        // never worked in web mode; dragging now always starts, and
+        // detach stays desktop-only at the onDragEnd check below.
+        draggable={!renaming}
         onDragStart={(e) => {
           e.dataTransfer.setData("application/x-solenta-thread", thread.id);
           e.dataTransfer.effectAllowed = "move";
+          onDragStartRow?.(thread.id);
         }}
         onDragEnd={(e) => {
-          if (droppedOutsideWindow(e)) detachThread(thread.id);
+          onDragEndRow?.(thread.id);
+          if (canDetachThread() && droppedOutsideWindow(e)) detachThread(thread.id);
         }}
         aria-label={selectLabel}
       />
@@ -607,8 +661,12 @@ export const ThreadCard = memo(function ThreadCard({
               }}
             />
           ) : (
-            <div className={styles.cardTitle} title={thread.title}>
-              {shownTitle}
+            <div
+              className={styles.cardTitle}
+              title={thread.title}
+              data-regenerating-title={regeneratingTitle ? "" : undefined}
+            >
+              {regeneratingTitle ? "Regenerating…" : shownTitle}
             </div>
           )}
           {contentMatch && (
@@ -738,44 +796,50 @@ export const ThreadCard = memo(function ThreadCard({
               <span className={styles.cardBranchSpacer} />
             )}
             {thread.prNumber != null && thread.prUrl && (
-              <a
-                className={styles.prLink}
-                data-pr-badge=""
-                data-pr-state={thread.prState?.toLowerCase()}
-                title={
-                  thread.prState
-                    ? `PR #${thread.prNumber} ${thread.prState.toLowerCase()}`
-                    : undefined
-                }
-                href={thread.prUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                onPointerDown={(e) => e.stopPropagation()}
-                onClick={(e) => e.stopPropagation()}
+              <PrHoverTarget
+                projectPath={projectPath}
+                repo={repoFromGithubUrl(thread.prUrl)}
+                number={thread.prNumber}
               >
-                <svg
-                  width="10"
-                  height="10"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.6"
-                  strokeLinecap="round"
-                  aria-hidden="true"
+                <a
+                  className={styles.prLink}
+                  data-pr-badge=""
+                  data-pr-state={thread.prState?.toLowerCase()}
+                  title={
+                    thread.prState
+                      ? `PR #${thread.prNumber} ${thread.prState.toLowerCase()}`
+                      : undefined
+                  }
+                  href={thread.prUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={(e) => e.stopPropagation()}
                 >
-                  <circle cx="4" cy="3.5" r="1.5" />
-                  <circle cx="4" cy="12.5" r="1.5" />
-                  <circle cx="12" cy="12.5" r="1.5" />
-                  <path
-                    d={
-                      thread.prState === "MERGED"
-                        ? "M4 5v6M4 5c0 4 8 3 8 6"
-                        : "M4 5v6M12 11V6a2 2 0 0 0-2-2H8"
-                    }
-                  />
-                </svg>
-                #{thread.prNumber}
-              </a>
+                  <svg
+                    width="10"
+                    height="10"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.6"
+                    strokeLinecap="round"
+                    aria-hidden="true"
+                  >
+                    <circle cx="4" cy="3.5" r="1.5" />
+                    <circle cx="4" cy="12.5" r="1.5" />
+                    <circle cx="12" cy="12.5" r="1.5" />
+                    <path
+                      d={
+                        thread.prState === "MERGED"
+                          ? "M4 5v6M4 5c0 4 8 3 8 6"
+                          : "M4 5v6M12 11V6a2 2 0 0 0-2-2H8"
+                      }
+                    />
+                  </svg>
+                  #{thread.prNumber}
+                </a>
+              </PrHoverTarget>
             )}
             <ConflictForecastBadge
               threadId={thread.id}
@@ -788,6 +852,29 @@ export const ThreadCard = memo(function ThreadCard({
                 providers={providers}
                 className={styles.cardProvider}
               />
+            ) : null}
+            {hasDraft ? (
+              <span
+                className={styles.cardDraft}
+                data-card-draft=""
+                role="img"
+                aria-label="Unsent draft"
+                title="Unsent draft"
+              >
+                <svg
+                  width="11"
+                  height="11"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M11.4 2.4a1.4 1.4 0 0 1 2 2L5 12.8l-3 .8.8-3Z" />
+                </svg>
+              </span>
             ) : null}
           </div>
         )}

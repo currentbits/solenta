@@ -491,6 +491,9 @@ export function createThreads(ctx: DevCtx): Pick<CoderApi, "threads"> {
           pinnedAt: input.pinned ? now() : null,
         });
       },
+      async setSortKey(input: { threadId: string; sortKey: number | null }) {
+        return patchThread(input.threadId, { sortKey: input.sortKey });
+      },
       async setQueued(input: {
         threadId: string;
         prompt: string | null;
@@ -905,6 +908,22 @@ export function createThreads(ctx: DevCtx): Pick<CoderApi, "threads"> {
           throw new Error(`Unknown thread: ${input.threadId}`);
         }
         return patchThread(input.threadId, { title });
+      },
+      // ponytail: fixture stub, no real fm call. Just makes the title
+      // visibly different so the UI flow (menu item, bulk action) has
+      // something to show.
+      async regenerateTitle(input: { threadIds: string[] }) {
+        const ids = Array.isArray(input.threadIds) ? input.threadIds : [];
+        return ids.map((threadId) => {
+          const existing = details.get(threadId);
+          if (!existing) {
+            return { threadId, error: `Unknown thread: ${threadId}` };
+          }
+          const updated = patchThread(threadId, {
+            title: `${existing.thread.title} (regenerated)`.slice(0, TITLE_MAX),
+          });
+          return { threadId, title: updated.title };
+        });
       },
       async setReasoningEffort(input: {
         threadId: string;

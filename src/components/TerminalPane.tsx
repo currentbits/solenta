@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { CoderApi, TerminalDataPush, TerminalState } from "../shared/ipc";
 import { detectFailure, failureKey, plainText, type Failure, type FixHandler } from "../fixSuggest";
 import { FixSuggestion } from "./FixSuggestion";
+import { useModalFocus } from "../useModalFocus";
 import styles from "./TerminalPane.module.css";
 
 /** Terminals side by side in one pane. More than this is unreadable. */
@@ -325,6 +326,26 @@ function TerminalView({
     void api.close({ threadId, termId, keep: true }).catch(() => {});
   }, [api, threadId, termId]);
 
+  // Close tab (#1773): a shell idle at its prompt closes right away; one
+  // still running a command confirms first so a build or test run is not
+  // silently killed. isBusy is checked fresh on every click, not cached.
+  const [closeConfirm, setCloseConfirm] = useState<{ command: string | null } | null>(null);
+  const closeDialogRef = useRef<HTMLDivElement>(null);
+  useModalFocus(Boolean(closeConfirm), closeDialogRef);
+
+  const requestClose = useCallback(() => {
+    if (!onClose) return;
+    void api
+      .isBusy({ threadId, termId })
+      .then((r) => (r.busy ? setCloseConfirm({ command: r.command }) : onClose()))
+      .catch(() => onClose());
+  }, [api, threadId, termId, onClose]);
+
+  const confirmClose = useCallback(() => {
+    setCloseConfirm(null);
+    onClose?.();
+  }, [onClose]);
+
   // Move to worktree (#1512): main restarts the shell in the thread's
   // current root with the old scrollback above a separator; remount re-attaches.
   const move = useCallback(() => {
@@ -465,7 +486,7 @@ function TerminalView({
             data-terminal-close=""
             aria-label="Close terminal"
             title="Close terminal"
-            onClick={onClose}
+            onClick={requestClose}
           >
             ×
           </button>
@@ -571,6 +592,54 @@ function TerminalView({
         aria-label={`Terminal ${termId}`}
         data-terminal-output=""
       />
+      {closeConfirm && (
+        <div
+          className={styles.confirmOverlay}
+          role="presentation"
+          onClick={() => setCloseConfirm(null)}
+        >
+          <div
+            ref={closeDialogRef}
+            className={styles.confirmDialog}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby={`terminal-close-title-${threadId}-${termId}`}
+            tabIndex={-1}
+            data-terminal-close-confirm=""
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2
+              id={`terminal-close-title-${threadId}-${termId}`}
+              className={styles.confirmTitle}
+            >
+              Close terminal?
+            </h2>
+            <p className={styles.confirmBody}>
+              {closeConfirm.command
+                ? `${closeConfirm.command} is still running.`
+                : "Something is still running."}
+            </p>
+            <div className={styles.confirmActions}>
+              <button
+                type="button"
+                className={styles.confirmDanger}
+                data-terminal-close-confirm-submit=""
+                onClick={confirmClose}
+              >
+                Close
+              </button>
+              <button
+                type="button"
+                className={styles.confirmCancel}
+                data-terminal-close-confirm-cancel=""
+                onClick={() => setCloseConfirm(null)}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

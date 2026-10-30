@@ -73,6 +73,7 @@ import type {
   ProjectUpdateInput,
   ProviderInfo,
   ReasoningEffort,
+  RegenerateTitleResult,
   CliSessionCandidate,
   CliSlashCommand,
   SkillCatalogEntry,
@@ -427,6 +428,12 @@ export interface UseCoderResult {
   /** Pin or unpin a thread (sidebar hover). Does not require selection. */
   setPinned: (threadId: string, pinned: boolean) => Promise<void>;
   /**
+   * Persist a manual drag/keyboard reorder position within the pinned or
+   * active sidebar section (#1769), or clear it with null. Does not
+   * require selection.
+   */
+  setSortKey: (threadId: string, sortKey: number | null) => Promise<void>;
+  /**
    * Snooze until an epoch ms, or clear with null. Does not require selection.
    */
   setSnoozed: (threadId: string, until: number | null) => Promise<void>;
@@ -451,6 +458,11 @@ export interface UseCoderResult {
   resumeCrew: (threadId: string) => Promise<void>;
   /** Rename a thread. Does not require selection. */
   renameThread: (threadId: string, title: string) => Promise<void>;
+  /**
+   * Regenerate one or more thread titles from current activity (issue
+   * #1774). Always explicit, so it overwrites a user-set title too.
+   */
+  regenerateTitle: (threadIds: string[]) => Promise<RegenerateTitleResult[]>;
   /** Save scratch notes on a thread (header editor, issue #194). */
   setNotes: (threadId: string, notes: string) => Promise<void>;
   /** Replace the per-thread transcript bookmark list (issue #1217). */
@@ -1654,6 +1666,7 @@ export function useCoder(): UseCoderResult {
     setArchived,
     setSettled,
     setPinned,
+    setSortKey,
     setSnoozed,
     setTags,
     setThreadProject,
@@ -1665,6 +1678,7 @@ export function useCoder(): UseCoderResult {
     resumeQuotaWait,
     resumeCrew,
     renameThread,
+    regenerateTitle,
     setNotes,
     setMessagePins,
     setBaseBranch,
@@ -2224,6 +2238,7 @@ export function useCoder(): UseCoderResult {
     setArchived,
     setSettled,
     setPinned,
+    setSortKey,
     setSnoozed,
     setTags,
     setThreadProject,
@@ -2235,6 +2250,7 @@ export function useCoder(): UseCoderResult {
     resumeQuotaWait,
     resumeCrew,
     renameThread,
+    regenerateTitle,
     setNotes,
     setMessagePins,
     setBaseBranch,

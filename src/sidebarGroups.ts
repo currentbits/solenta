@@ -11,6 +11,7 @@ import {
   effectiveSnoozed,
   isPinned,
 } from "./threadSnooze";
+import { applyManualOrder } from "./threadOrder";
 
 export interface SidebarGroup {
   project: ProjectInfo | null;
@@ -280,8 +281,8 @@ export function buildFlatSidebar(
   opts: SettleOpts,
   scopeProjectId: string | null = null,
 ): FlatSidebar {
-  const pinned: ThreadInfo[] = [];
-  const active: ThreadInfo[] = [];
+  let pinned: ThreadInfo[] = [];
+  let active: ThreadInfo[] = [];
   const snoozed: ThreadInfo[] = [];
   const settled: ThreadInfo[] = [];
   const archived: ThreadInfo[] = [];
@@ -299,6 +300,12 @@ export function buildFlatSidebar(
   active.sort(
     (a, b) => createdKey(b) - createdKey(a) || a.id.localeCompare(b.id),
   );
+  // Manual drag order (#1769) layers on top of each section's normal order:
+  // keyed threads first (ascending), unkeyed ones keep the order above.
+  // Settled/snoozed/archived never reorder by drag, so this stays scoped to
+  // pinned + active.
+  pinned = applyManualOrder(pinned);
+  active = applyManualOrder(active);
   snoozed.sort(compareSnoozedWakeSoonest);
   settled.sort(compareSettledNewestFirst);
   archived.sort(

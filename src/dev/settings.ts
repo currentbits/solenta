@@ -94,6 +94,8 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
   let guardrailsEnabled = true;
   let idleCompactClaudeThreads = false;
   let titleInstructions = "";
+  let commitMessageInstructions = "";
+  let prInstructions = "";
   let otel: OtelSettings = { endpoint: null, headers: {}, claudeMetrics: false };
   let modelPrices: Record<string, ModelPrice> = {};
   let privacyGateway: PrivacyGatewaySettings = { default: "off", providers: {}, patterns: [] };
@@ -216,6 +218,8 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           guardrailsEnabled,
           idleCompactClaudeThreads,
           titleInstructions,
+          commitMessageInstructions,
+          prInstructions,
           agentProfiles: agentProfiles.map((p) => ({ ...p })),
           providerInstances: providerInstances.map((p) => ({ ...p, env: { ...p.env } })),
           providerModels: structuredClone(providerModels),
@@ -477,6 +481,24 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           // Keep in sync with TITLE_INSTRUCTIONS_MAX in electron/store-normalize.js.
           titleInstructions = patch.titleInstructions.trim().slice(0, 500);
         }
+        if (
+          Object.prototype.hasOwnProperty.call(patch, "commitMessageInstructions")
+        ) {
+          if (typeof patch.commitMessageInstructions !== "string") {
+            throw new Error("commitMessageInstructions must be a string");
+          }
+          // Keep in sync with COMMIT_MESSAGE_INSTRUCTIONS_MAX in electron/store-normalize.js.
+          commitMessageInstructions = patch.commitMessageInstructions
+            .trim()
+            .slice(0, 1000);
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, "prInstructions")) {
+          if (typeof patch.prInstructions !== "string") {
+            throw new Error("prInstructions must be a string");
+          }
+          // Keep in sync with PR_INSTRUCTIONS_MAX in electron/store-normalize.js.
+          prInstructions = patch.prInstructions.trim().slice(0, 1000);
+        }
         if (Object.prototype.hasOwnProperty.call(patch, "agentProfiles")) {
           if (!Array.isArray(patch.agentProfiles)) {
             throw new Error("agentProfiles must be an array");
@@ -636,6 +658,8 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           guardrailsEnabled,
           idleCompactClaudeThreads,
           titleInstructions,
+          commitMessageInstructions,
+          prInstructions,
           agentProfiles: agentProfiles.map((p) => ({ ...p })),
           providerInstances: providerInstances.map((p) => ({ ...p, env: { ...p.env } })),
           providerModels: structuredClone(providerModels),

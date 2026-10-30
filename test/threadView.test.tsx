@@ -222,6 +222,8 @@ function view(props: {
   onCancelQueued?: () => void;
   onRetryQueued?: () => void;
   loadProviderLimits?: () => Promise<ProviderUsage[]>;
+  onRenameThread?: (title: string) => void | Promise<void>;
+  onRegenerateTitle?: () => void | Promise<void>;
 }) {
   return (
     <ThreadView
@@ -285,6 +287,8 @@ function view(props: {
       onListSnapWindows={props.onListSnapWindows}
       onCaptureSnapWindow={props.onCaptureSnapWindow}
       loadProviderLimits={props.loadProviderLimits}
+      onRenameThread={props.onRenameThread}
+      onRegenerateTitle={props.onRegenerateTitle}
     />
   );
 }
@@ -1116,6 +1120,43 @@ describe("ThreadView mounted interactions", () => {
     m.unmount();
   });
 
+  it("Regenerate title sits in the header menu next to Rename, and closes the menu (#1774)", async () => {
+    let regenerated = 0;
+    let renamed = 0;
+    const m = await mount(
+      view({
+        onRenameThread: () => {
+          renamed += 1;
+        },
+        onRegenerateTitle: () => {
+          regenerated += 1;
+        },
+      }),
+    );
+    await m.click(m.query("[data-thread-title-menu]"));
+    assert.ok(m.query("[data-rename-thread]"), "Rename thread item");
+    const regen = m.query("[data-regenerate-title]");
+    assert.ok(regen, "Regenerate title item");
+    assert.equal(regen?.textContent, "Regenerate title");
+    await m.click(regen);
+    assert.equal(regenerated, 1);
+    assert.equal(renamed, 0);
+    assert.equal(
+      m.query("[data-regenerate-title]"),
+      null,
+      "menu closes after the click",
+    );
+    m.unmount();
+  });
+
+  it("hides Regenerate title when onRegenerateTitle is not wired", async () => {
+    const m = await mount(view({ onRenameThread: () => {} }));
+    await m.click(m.query("[data-thread-title-menu]"));
+    assert.ok(m.query("[data-rename-thread]"));
+    assert.equal(m.query("[data-regenerate-title]"), null);
+    m.unmount();
+  });
+
   it("expands a tool card on click to show tool input", async () => {
     const m = await mount(
       view({
@@ -1164,6 +1205,82 @@ describe("ThreadView mounted interactions", () => {
     assert.ok(
       m.text().includes("TOOL_INPUT_SECRET_PAYLOAD"),
       `expanded tool body must show input, got: ${m.text().slice(0, 200)}`,
+    );
+    m.unmount();
+  });
+
+  it("shows a collapsed Background jobs row while working, expanding to name each job (#1775)", async () => {
+    const m = await mount(
+      view({
+        detail: detail({
+          thread: thread({
+            status: "working",
+            runStartedAt: 1,
+            subagents: [
+              { id: "a1", description: "Explore the repo", agentType: "Explore", status: "running", startedAt: 1 },
+            ],
+          }),
+          messages: [
+            msg({ id: "u1", role: "user", text: "work", createdAt: 1 }),
+            msg({
+              id: "t1",
+              role: "tool",
+              text: "Bash: npm run watch",
+              createdAt: 2,
+              tool: {
+                id: "tc1",
+                name: "Bash",
+                input: JSON.stringify({ command: "npm run watch", run_in_background: true }),
+                output: "Running in the background with ID: bash_1",
+                done: true,
+                isError: false,
+              },
+            }),
+          ],
+        }),
+      }),
+    );
+    const toggle = m.query("[data-bg-jobs-toggle]") as HTMLButtonElement | null;
+    assert.ok(toggle, "a collapsed Background row shows while jobs are running");
+    assert.match(toggle!.textContent ?? "", /Background: 2 running/);
+    assert.equal(m.query("[data-bg-jobs-list]"), null, "starts collapsed");
+
+    await m.click(toggle!);
+    const list = m.query("[data-bg-jobs-list]");
+    assert.ok(list, "expands on click");
+    assert.match(list!.textContent ?? "", /npm run watch/);
+    assert.match(list!.textContent ?? "", /Explore the repo/);
+    m.unmount();
+  });
+
+  it("the Background row disappears once the run ends", async () => {
+    const m = await mount(
+      view({
+        detail: detail({
+          thread: thread({ status: "done" }),
+          messages: [
+            msg({
+              id: "t1",
+              role: "tool",
+              text: "Bash: npm run watch",
+              createdAt: 2,
+              tool: {
+                id: "tc1",
+                name: "Bash",
+                input: JSON.stringify({ command: "npm run watch", run_in_background: true }),
+                output: "Running in the background with ID: bash_1",
+                done: true,
+                isError: false,
+              },
+            }),
+          ],
+        }),
+      }),
+    );
+    assert.equal(
+      m.query("[data-bg-jobs-toggle]"),
+      null,
+      "no Background row once the thread is not working",
     );
     m.unmount();
   });

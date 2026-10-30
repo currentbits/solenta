@@ -67,6 +67,18 @@ export const KEYBINDINGS: readonly KeybindingDef[] = [
     chord: "mod+shift+j",
   },
   {
+    id: "thread.moveUp",
+    label: "Move thread up (pinned/active only)",
+    scope: "list",
+    chord: "alt+shift+arrowup",
+  },
+  {
+    id: "thread.moveDown",
+    label: "Move thread down (pinned/active only)",
+    scope: "list",
+    chord: "alt+shift+arrowdown",
+  },
+  {
     id: "history.back",
     label: "Back to the previous thread",
     scope: "window",
@@ -221,6 +233,33 @@ export const KEYBINDINGS: readonly KeybindingDef[] = [
     label: "Toggle agents panel",
     scope: "window",
     chord: "mod+.",
+  },
+  {
+    id: "thread.togglePin",
+    label: "Pin / unpin the open thread",
+    scope: "window",
+    chord: "mod+shift+p",
+  },
+  {
+    id: "thread.toggleSettle",
+    label: "Settle / restore the open thread",
+    scope: "window",
+    // mod+shift+s is composer.unstash; this is the next free slot.
+    chord: "mod+shift+a",
+  },
+  {
+    id: "turn.prev",
+    label: "Previous prompt",
+    scope: "window",
+    // Same chord as composer.editLastQueued on purpose: the composer owns
+    // it while focused, the rail owns it everywhere else.
+    chord: "alt+arrowup",
+  },
+  {
+    id: "turn.next",
+    label: "Next prompt",
+    scope: "window",
+    chord: "alt+arrowdown",
   },
 ];
 

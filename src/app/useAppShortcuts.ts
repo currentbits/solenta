@@ -2,7 +2,7 @@ import { useEffect, type Dispatch, type RefObject, type SetStateAction } from "r
 import { matchPaletteShortcut, type PaletteMode } from "../commandPalette";
 import { matchesBinding } from "../keybindings";
 
-function dialogOpen(): boolean {
+export function dialogOpen(): boolean {
   return (
     typeof document !== "undefined" &&
     document.querySelector('[role="dialog"]') != null

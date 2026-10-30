@@ -19,6 +19,8 @@ import type { TerminalApi } from "./TerminalPane";
 import type { FixHandler } from "../fixSuggest";
 import type { FilesPaneApi } from "./FilesPane";
 import { useWorktreeChrome } from "./WorktreeControl";
+import { resolveDefaultWorktree } from "../projectDefaults";
+import { deriveBackgroundJobs } from "../backgroundJobs";
 import { WorkspaceStrip } from "./WorkspaceStrip";
 import { ProjectIcon } from "./ProjectIcon";
 import {
@@ -212,6 +214,7 @@ import { usePaneLayoutActions } from "./thread/usePaneLayoutActions";
 import { useAppSnap } from "./thread/useAppSnap";
 import { useStickToBottom } from "./thread/useStickToBottom";
 import { TurnRail, turnLabel, type RailTurn } from "./thread/TurnRail";
+import { useTurnNavigation } from "./thread/useTurnNavigation";
 import { offsetTopWithin } from "../scrollNearest";
 import { bindingLabel } from "../keybindings";
 import styles from "./ThreadView.module.css";
@@ -433,6 +436,8 @@ interface ThreadViewProps {
   ) => void | Promise<void>;
   /** Rename the open thread (header overflow). */
   onRenameThread?: (title: string) => void | Promise<void>;
+  /** Regenerate the open thread's title from current activity (#1774). */
+  onRegenerateTitle?: () => void | Promise<void>;
   /** Save a redacted HTML bug report (#394); null = dialog cancelled. */
   onExportReport?: (input: { threadId: string }) => Promise<string | null>;
   /**
@@ -502,7 +507,10 @@ interface ThreadViewProps {
   ) => void | Promise<void>;
   /** Set or clear (null) the thread's hard budget cap (#286). Throws on rejection. */
   onSetBudget?: (threadId: string, budget: ThreadBudget | null) => Promise<void>;
-  /** Settings.defaultWorktree — Start work arms a pending worktree when set. */
+  /**
+   * Settings.defaultWorktree — Start work arms a pending worktree when set.
+   * The open thread's project.defaultWorktree (#1775) wins over this.
+   */
   defaultWorktree?: boolean;
   /** Permanently delete the open thread (caller already confirmed in UI). */
   onDeleteThread: () => void | Promise<void>;
@@ -853,6 +861,7 @@ export const ThreadView = memo(function ThreadView({
   onSetArchived,
   onSetCrossThreadInbound,
   onRenameThread,
+  onRegenerateTitle,
   onExportReport,
   onCreateThread,
   onRepeatSchedule,
@@ -1240,13 +1249,20 @@ export const ThreadView = memo(function ThreadView({
     [onResolvePaths, sessionImages],
   );
 
-  const threadLinks = useMemo(
-    () =>
-      threadTitles && onSelectThread
-        ? { titles: threadTitles, open: onSelectThread }
-        : null,
-    [threadTitles, onSelectThread],
-  );
+  const threadLinks = useMemo(() => {
+    // project.slug is "owner/repo" when derived from a git remote, a plain
+    // folder name otherwise (#1771) — the "/" is how a GitHub ref knows it
+    // has a real repo to resolve bare `#123` against.
+    const repoSlug = project?.slug && project.slug.includes("/") ? project.slug : null;
+    const projectPath = project?.path ?? null;
+    if (!threadTitles && !onSelectThread && !repoSlug && !projectPath) return null;
+    return {
+      titles: threadTitles ?? {},
+      open: onSelectThread ?? (() => {}),
+      repoSlug,
+      projectPath,
+    };
+  }, [threadTitles, onSelectThread, project]);
 
   const handleOpenWorkspacePath = useCallback(
     (abs: string, opts?: { reveal?: boolean; line?: number; col?: number }) => {
@@ -1398,6 +1414,18 @@ export const ThreadView = memo(function ThreadView({
   const chatWidth = useChatWidth();
   const summaryMode = transcriptView === "summary";
   const isWorking = detail?.thread.status === "working";
+  // Named background jobs (#1775): only while the turn is live, so a run
+  // that ends never leaves a stale "still running" row behind.
+  const backgroundJobs = useMemo(() => {
+    if (!isWorking || !detail) return [];
+    return deriveBackgroundJobs(
+      detail.messages,
+      detail.thread.subagents,
+      detail.workflow,
+      detail.thread.runStartedAt,
+    );
+  }, [isWorking, detail]);
+  const [bgJobsExpanded, setBgJobsExpanded] = useState(false);
   /** Queued items can be steered into the live turn only where the CLI takes stdin. */
   const canSteerQueued = Boolean(
     onSteerQueued &&
@@ -2513,6 +2541,7 @@ export const ThreadView = memo(function ThreadView({
       1600,
     );
   }, []);
+  useTurnNavigation({ turns: railTurns, bodyRef, start, onJump: handleTurnJump });
   // Declared after useStickToBottom so its nearest-reveal cannot pull a tall
   // prompt back down to its bottom edge.
   useLayoutEffect(() => {
@@ -3011,25 +3040,59 @@ export const ThreadView = memo(function ThreadView({
         ) : null}
       </div>
     ) : isWorking ? (
-      <div
-        className={`${styles.statusStrip}${stalledAt != null ? ` ${styles.statusStripStalled}` : ""}`}
-        data-stalled={stalledAt != null ? "" : undefined}
-      >
-        <span className={styles.statusDiamond} aria-hidden />
-        <span className={styles.statusText}>{workingLabel}</span>
-        {detail.thread.runStartedAt != null ? (
-          <ElapsedClock since={detail.thread.runStartedAt} />
-        ) : null}
-        <button
-          type="button"
-          className={styles.stopBtn}
-          title="Stop (Esc · Ctrl+C)"
-          aria-keyshortcuts="Escape Control+C"
-          onClick={() => void onStopRun()}
+      <>
+        <div
+          className={`${styles.statusStrip}${stalledAt != null ? ` ${styles.statusStripStalled}` : ""}`}
+          data-stalled={stalledAt != null ? "" : undefined}
         >
-          Stop
-        </button>
-      </div>
+          <span className={styles.statusDiamond} aria-hidden />
+          <span className={styles.statusText}>{workingLabel}</span>
+          {detail.thread.runStartedAt != null ? (
+            <ElapsedClock since={detail.thread.runStartedAt} />
+          ) : null}
+          <button
+            type="button"
+            className={styles.stopBtn}
+            title="Stop (Esc · Ctrl+C)"
+            aria-keyshortcuts="Escape Control+C"
+            onClick={() => void onStopRun()}
+          >
+            Stop
+          </button>
+        </div>
+        {backgroundJobs.length > 0 ? (
+          <div className={styles.bgJobs} data-bg-jobs="">
+            <button
+              type="button"
+              className={styles.bgJobsToggle}
+              data-bg-jobs-toggle=""
+              aria-expanded={bgJobsExpanded}
+              onClick={() => setBgJobsExpanded((v) => !v)}
+            >
+              <span
+                className={styles.bgJobsChevron}
+                data-open={bgJobsExpanded ? "true" : undefined}
+                aria-hidden
+              >
+                ▸
+              </span>
+              Background: {backgroundJobs.length} running
+            </button>
+            {bgJobsExpanded ? (
+              <ul className={styles.bgJobsList} data-bg-jobs-list="">
+                {backgroundJobs.map((job) => (
+                  <li key={job.id} className={styles.bgJobsItem} data-bg-job={job.kind}>
+                    <span className={styles.bgJobsLabel}>{job.label}</span>
+                    {job.startedAt != null ? (
+                      <ElapsedClock since={job.startedAt} />
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
+        ) : null}
+      </>
     ) : detail.thread.heldNotices && onResumeCrew ? (
       <div className={styles.statusStrip} data-held-notices="">
         <span className={styles.statusText}>
@@ -3293,6 +3356,20 @@ export const ThreadView = memo(function ThreadView({
                           onClick={startRename}
                         >
                           Rename thread
+                        </button>
+                      )}
+                      {onRegenerateTitle && !isWorking && (
+                        <button
+                          type="button"
+                          className={styles.menuItem}
+                          role="menuitem"
+                          data-regenerate-title=""
+                          onClick={() => {
+                            setMenuOpen(false);
+                            void onRegenerateTitle();
+                          }}
+                        >
+                          Regenerate title
                         </button>
                       )}
                     <div className={styles.menuInbound} data-transcript-view-menu="">
@@ -4082,6 +4159,7 @@ export const ThreadView = memo(function ThreadView({
                 threadTitle={detail?.thread.title ?? ""}
                 threadBranch={detail?.thread.branch ?? null}
                 threadBaseBranch={detail?.thread.baseBranch ?? null}
+                threadWorktreePath={detail?.thread.worktreePath ?? null}
                 planText={planTextOf(detail)}
                 openNonce={changesNonce}
                 focus={diffFocus}
@@ -4702,7 +4780,8 @@ export const ThreadView = memo(function ThreadView({
             thread={thread}
             onStopAsk={onStopAsk}
             promoteWorktree={
-              defaultWorktree === true && !project?.remoteHost
+              resolveDefaultWorktree(project, defaultWorktree === true) &&
+              !project?.remoteHost
             }
           />
         ) : null}

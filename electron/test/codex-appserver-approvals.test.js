@@ -224,9 +224,27 @@ require(${JSON.stringify(helper)}).main();
       .find((m) => m.role === "user" && m.text === "do the other thing instead");
     assert.ok(redirectMsg, "expected the redirect text as a user message");
     assert.equal(redirectMsg.steer, undefined);
+    // Fast runners drain the queue into the next turn before we look, so
+    // accept either state: still queued, or already sent as a turn/start.
     const queued = store.getThread(thread.id).queued;
-    assert.equal(queued?.prompt, "do the other thing instead");
-    assert.equal(queued?.posted, true);
+    if (queued) {
+      assert.equal(queued.prompt, "do the other thing instead");
+      assert.equal(queued.posted, true);
+    } else {
+      await waitFor(() =>
+        readRpc(rpcFile).some(
+          (m) =>
+            m.method === "turn/start" &&
+            JSON.stringify(m.params).includes("do the other thing instead"),
+        ),
+      );
+    }
+    // posted: true means the drain must not append the text a second time.
+    await waitFor(() => store.getThread(thread.id).queued == null);
+    const copies = store
+      .getMessages(thread.id)
+      .filter((m) => m.role === "user" && m.text === "do the other thing instead");
+    assert.equal(copies.length, 1);
   });
 
   it("stop cancels an outstanding command ask then kills", async () => {

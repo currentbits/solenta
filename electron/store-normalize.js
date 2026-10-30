@@ -214,6 +214,10 @@ const SNIPPET_TEXT_MAX = 8000;
 /** Thread-title prompt instructions cap (issue #1765). */
 const TITLE_INSTRUCTIONS_MAX = 500;
 
+/** Commit message / PR prompt instructions caps (issue #1774). */
+const COMMIT_MESSAGE_INSTRUCTIONS_MAX = 1000;
+const PR_INSTRUCTIONS_MAX = 1000;
+
 /**
  * Prompt snippets (issue #189): named text the composer inserts via `@name`.
  * strict (settings:set) throws on the first problem; lenient (disk read)
@@ -477,6 +481,8 @@ function normalizeSettings(raw) {
     guardrailsEnabled: true,
     idleCompactClaudeThreads: false,
     titleInstructions: "",
+    commitMessageInstructions: "",
+    prInstructions: "",
     prDiffCapLines: DEFAULT_PR_DIFF_CAP_LINES,
     maxConcurrentRuns: DEFAULT_MAX_CONCURRENT_RUNS,
     agentProfiles: [],
@@ -668,6 +674,19 @@ function normalizeSettings(raw) {
   settings.titleInstructions =
     typeof titleInstructions === "string"
       ? titleInstructions.trim().slice(0, TITLE_INSTRUCTIONS_MAX)
+      : "";
+  const commitMessageInstructions =
+    /** @type {{ commitMessageInstructions?: unknown }} */ (obj)
+      .commitMessageInstructions;
+  settings.commitMessageInstructions =
+    typeof commitMessageInstructions === "string"
+      ? commitMessageInstructions.trim().slice(0, COMMIT_MESSAGE_INSTRUCTIONS_MAX)
+      : "";
+  const prInstructions =
+    /** @type {{ prInstructions?: unknown }} */ (obj).prInstructions;
+  settings.prInstructions =
+    typeof prInstructions === "string"
+      ? prInstructions.trim().slice(0, PR_INSTRUCTIONS_MAX)
       : "";
   settings.autoSettleOnMerge =
     /** @type {{ autoSettleOnMerge?: unknown }} */ (obj).autoSettleOnMerge !==
@@ -948,4 +967,6 @@ module.exports = {
   normalizeChannel,
   CHANNEL_KINDS,
   TITLE_INSTRUCTIONS_MAX,
+  COMMIT_MESSAGE_INSTRUCTIONS_MAX,
+  PR_INSTRUCTIONS_MAX,
 };

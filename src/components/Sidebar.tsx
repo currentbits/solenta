@@ -14,6 +14,7 @@ import type {
   ConflictForecast,
   ProjectInfo,
   ProviderInfo,
+  RegenerateTitleResult,
   StayAwakeMode,
   StayAwakeStatus,
   TeleportTarget,
@@ -109,6 +110,7 @@ import { useStableThreadTitles } from "./sidebar/useStableThreadTitles";
 import { useProviderOptions } from "./sidebar/useProviderOptions";
 import { useListAnimation } from "./sidebar/useListAnimation";
 import { useSidebarRows } from "./sidebar/useSidebarRows";
+import { useThreadReorder } from "./sidebar/useThreadReorder";
 import { useMoreMenuFocus } from "./sidebar/useMoreMenuFocus";
 import { useThreadSearch } from "./sidebar/useThreadSearch";
 import { useSidebarShortcuts } from "./sidebar/useSidebarShortcuts";
@@ -241,6 +243,12 @@ export interface SidebarProps {
     override: "settled" | "active",
   ) => void | Promise<void>;
   onSetPinned?: (threadId: string, pinned: boolean) => void | Promise<void>;
+  /**
+   * Persist a manual drag/keyboard reorder position within the pinned or
+   * active section (#1769). Drag-and-drop and Alt+Shift+ArrowUp/Down both
+   * go through this.
+   */
+  onSetSortKey?: (threadId: string, sortKey: number | null) => void | Promise<void>;
   onSetSnoozed?: (threadId: string, until: number | null) => void | Promise<void>;
   /** Replace a thread's user-defined tags (chip editor on the card). */
   onSetTags?: (threadId: string, tags: string[]) => void | Promise<void>;
@@ -257,6 +265,13 @@ export interface SidebarProps {
   onTeleport?: (threadId: string, target: TeleportTarget | null) => void | Promise<void>;
   /** Rename a thread from the row menu. */
   onRenameThread?: (threadId: string, title: string) => void | Promise<void>;
+  /**
+   * Regenerate one or more thread titles from current activity (#1774).
+   * Row menu (one id) and the multi-select bulk action (many).
+   */
+  onRegenerateTitle?: (
+    threadIds: string[],
+  ) => Promise<RegenerateTitleResult[]>;
   /** Archive a thread (batch toolbar). */
   onSetArchived?: (threadId: string, archived: boolean) => void | Promise<void>;
   /** Clear the settled tail: archive all settled threads (Synara-style, undo via toast). */
@@ -381,6 +396,7 @@ export const Sidebar = memo(function Sidebar({
   searchThreads,
   onSetSettled,
   onSetPinned,
+  onSetSortKey,
   onSetSnoozed,
   onSetTags,
   onSetThreadProject,
@@ -388,6 +404,7 @@ export const Sidebar = memo(function Sidebar({
   onSetEjected,
   onTeleport,
   onRenameThread,
+  onRegenerateTitle,
   onSetArchived,
   onClearSettled,
   trashedThreads = [],
@@ -528,6 +545,10 @@ export const Sidebar = memo(function Sidebar({
   );
   const [selectAnchor, setSelectAnchor] = useState<string | null>(null);
   const [batchFeedback, setBatchFeedback] = useState<string | null>(null);
+  /** Rows with a title regeneration in flight (#1774); cheap inline state. */
+  const [regeneratingTitles, setRegeneratingTitles] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [cmdHeld, setCmdHeld] = useState(false);
   const [keyboardSheetOpen, setKeyboardSheetOpen] = useState(false);
   const settleOpts = useMemo(
@@ -685,6 +706,22 @@ export const Sidebar = memo(function Sidebar({
     keepThreadIds,
     searching,
     searchResults,
+  });
+
+  const {
+    dragThreadId,
+    dropTarget,
+    onDragStartRow,
+    onDragOverRow,
+    onDropRow,
+    onDragEndRow,
+    moveThread,
+  } = useThreadReorder({
+    pinned: flat.pinned,
+    active: flat.active,
+    pinnedFamilies,
+    activeFamilies,
+    onSetSortKey,
   });
 
   const toggleFamily = useCallback(
@@ -964,6 +1001,46 @@ export const Sidebar = memo(function Sidebar({
     setMultiSelected(new Set());
   }, [multiSelected, onSetSettled, threads]);
 
+  const regenerateTitles = useCallback(
+    async (ids: string[]) => {
+      if (!onRegenerateTitle || ids.length === 0) return;
+      setRegeneratingTitles((prev) => new Set([...prev, ...ids]));
+      try {
+        const results = await onRegenerateTitle(ids);
+        const failed = results.filter((r) => r.error).length;
+        const ok = results.length - failed;
+        setBatchFeedback(
+          failed === 0
+            ? ok === 1
+              ? "1 title regenerated"
+              : `${ok} titles regenerated`
+            : `${ok} titles regenerated, ${failed} failed`,
+        );
+      } finally {
+        setRegeneratingTitles((prev) => {
+          const next = new Set(prev);
+          for (const id of ids) next.delete(id);
+          return next;
+        });
+      }
+    },
+    [onRegenerateTitle],
+  );
+
+  const runBatchRegenerateTitle = useCallback(async () => {
+    if (multiSelected.size === 0) return;
+    const ids = [...multiSelected];
+    await regenerateTitles(ids);
+    setMultiSelected(new Set());
+  }, [multiSelected, regenerateTitles]);
+
+  // Stable identity (issue #617): an inline arrow in renderCard would bust
+  // ThreadCard's memo on every render.
+  const regenerateTitleRow = useCallback(
+    (threadId: string) => regenerateTitles([threadId]),
+    [regenerateTitles],
+  );
+
   const createInTargetProject = useCallback(() => {
     if (!createTargetProject) return;
     onCreateThread(createTargetProject.id);
@@ -984,6 +1061,7 @@ export const Sidebar = memo(function Sidebar({
     setSelectAnchor,
     createInTargetProject,
     handleBrandCreate,
+    onMoveThread: moveThread,
   });
 
   const indexHintFor = (id: string): number | null => {
@@ -1247,6 +1325,7 @@ export const Sidebar = memo(function Sidebar({
   const renderCard = (
     thread: ThreadInfo,
     families: ReadonlyMap<string, string[]>,
+    reorderable = false,
   ) => {
     let compact = false;
     for (const kids of families.values()) {
@@ -1269,6 +1348,7 @@ export const Sidebar = memo(function Sidebar({
       <ThreadCard
         thread={thread}
         slug={slugFor(thread)}
+        projectPath={projectById.get(thread.projectId)?.path ?? null}
         iconUrl={iconUrlFor(thread)}
         providers={providers}
         active={thread.id === activeThreadId}
@@ -1286,6 +1366,8 @@ export const Sidebar = memo(function Sidebar({
         onSetEjected={onSetEjected}
         onTeleport={onTeleport}
         onRenameThread={onRenameThread}
+        onRegenerateTitle={onRegenerateTitle ? regenerateTitleRow : undefined}
+        regeneratingTitle={regeneratingTitles.has(thread.id)}
         onFork={onFork}
         listMoveProjects={listMoveProjects}
         nested={compact}
@@ -1300,6 +1382,14 @@ export const Sidebar = memo(function Sidebar({
         }
         conflictForecast={conflictForecast}
         threadTitles={threadTitles}
+        dragging={reorderable && dragThreadId === thread.id}
+        dropIndicator={
+          reorderable && dropTarget?.id === thread.id ? dropTarget.edge : null
+        }
+        onDragStartRow={reorderable ? onDragStartRow : undefined}
+        onDragOverRow={reorderable ? onDragOverRow : undefined}
+        onDropRow={reorderable ? onDropRow : undefined}
+        onDragEndRow={reorderable ? onDragEndRow : undefined}
       />
     </Fragment>
     );
@@ -1950,7 +2040,7 @@ export const Sidebar = memo(function Sidebar({
                     : (
                     <>
                       {visiblePinned.map((thread) =>
-                        renderCard(thread, pinnedFamilies),
+                        renderCard(thread, pinnedFamilies, true),
                       )}
                       {visiblePinned.length > 0 && (
                         <div
@@ -1960,7 +2050,7 @@ export const Sidebar = memo(function Sidebar({
                         />
                       )}
                       {visibleActive.map((thread) =>
-                        renderCard(thread, activeFamilies),
+                        renderCard(thread, activeFamilies, true),
                       )}
                     </>
                   )}
@@ -2129,6 +2219,9 @@ export const Sidebar = memo(function Sidebar({
         batchFeedback={batchFeedback}
         runBatchArchive={runBatchArchive}
         runBatchSettle={runBatchSettle}
+        runBatchRegenerateTitle={
+          onRegenerateTitle ? runBatchRegenerateTitle : undefined
+        }
         clearMulti={clearMulti}
         setBatchFeedback={setBatchFeedback}
       />

@@ -1858,6 +1858,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         setupCommand?: string | null;
         quickActions?: ProjectInfo["quickActions"];
         threadDefaults?: ProjectInfo["threadDefaults"] | null;
+        defaultWorktree?: boolean | null;
       }) => {
         const found = projects.find((p) => p.id === input.projectId);
         const updated = found ? { ...found } : project();
@@ -1903,6 +1904,13 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         if (Object.prototype.hasOwnProperty.call(input, "threadDefaults")) {
           if (input.threadDefaults) updated.threadDefaults = input.threadDefaults;
           else delete updated.threadDefaults;
+        }
+        if (input.defaultWorktree === true || input.defaultWorktree === false) {
+          updated.defaultWorktree = input.defaultWorktree;
+        } else if (
+          Object.prototype.hasOwnProperty.call(input, "defaultWorktree")
+        ) {
+          delete updated.defaultWorktree;
         }
         return rec("projects.update", [input], updated).then((v) => {
           if (found) {
@@ -2280,6 +2288,24 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         };
         threads = threads.map((t) => (t.id === i.threadId ? next : t));
         return rec("threads.setPinned", [input], next);
+      },
+      /**
+       * Honest manual reorder (#1769). Plain field write, same shape as
+       * setPinned; the ordering math lives in src/threadOrder.ts.
+       */
+      setSortKey: (input: unknown) => {
+        const i = input as { threadId: string; sortKey: number | null };
+        const existing = threads.find((t) => t.id === i.threadId);
+        if (!existing) {
+          return rec(
+            "threads.setSortKey",
+            [input],
+            thread({ id: i.threadId, sortKey: i.sortKey }),
+          );
+        }
+        const next: ThreadInfo = { ...existing, sortKey: i.sortKey };
+        threads = threads.map((t) => (t.id === i.threadId ? next : t));
+        return rec("threads.setSortKey", [input], next);
       },
       /**
        * Honest type-ahead queue (issue #137). prompt === null clears; a
@@ -4060,6 +4086,8 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       read: (input: unknown) => rec("terminal.read", [input], fakeTerminal()),
       list: (input: unknown) => rec("terminal.list", [input], [] as string[]),
       close: (input: unknown) => rec("terminal.close", [input], fakeTerminal()),
+      isBusy: (input: unknown) =>
+        rec("terminal.isBusy", [input], { running: true, busy: false, command: null }),
       signIn: (input: { provider: string; threadId?: string | null }) =>
         rec("terminal.signIn", [input], {
           threadId: input.threadId || "__signin__",

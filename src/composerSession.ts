@@ -226,6 +226,35 @@ export function setContextChips(
   notifyContextChips();
 }
 
+const draftListeners = new Set<() => void>();
+
+function notifyDrafts(): void {
+  for (const l of draftListeners) l();
+}
+
+/** Sidebar draft marker (#1770): subscribe instead of polling keptDrafts. */
+export function subscribeDrafts(listener: () => void): () => void {
+  draftListeners.add(listener);
+  return () => draftListeners.delete(listener);
+}
+
+/** Whitespace-only drafts don't count as "unsent". */
+export function hasNonEmptyDraft(threadId: string): boolean {
+  return Boolean(keptDrafts[threadId]?.trim());
+}
+
+/**
+ * Composer's single write path for draft text (draftsRef aliases keptDrafts,
+ * so this is the only place the module map changes). Only notifies sidebar
+ * listeners when the non-empty state actually flips, not on every keystroke.
+ */
+export function setDraftText(threadId: string, text: string): void {
+  const had = hasNonEmptyDraft(threadId);
+  keptDrafts[threadId] = text;
+  scheduleDraftSave();
+  if (had !== hasNonEmptyDraft(threadId)) notifyDrafts();
+}
+
 /** Drop drafts of threads that no longer exist (deleted, not archived). */
 export function pruneComposerDrafts(threadIds: Iterable<string>): number {
   const known = new Set(threadIds);
@@ -244,7 +273,10 @@ export function pruneComposerDrafts(threadIds: Iterable<string>): number {
       gone.add(id);
     }
   }
-  if (gone.size) flushDraftSave();
+  if (gone.size) {
+    flushDraftSave();
+    notifyDrafts();
+  }
   return gone.size;
 }
 
@@ -259,6 +291,7 @@ export function resetComposerSession(): void {
   clearRecord(keptContextChips);
   notifyReviewComments();
   notifyContextChips();
+  notifyDrafts();
   try {
     storage()?.removeItem(DRAFTS_STORAGE_KEY);
   } catch {

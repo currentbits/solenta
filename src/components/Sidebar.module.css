@@ -536,6 +536,36 @@
   pointer-events: none;
 }
 
+/* Manual drag reorder (#1769): a line between rows, not on them — the row
+   under the cursor is not where the thread lands, the gap next to it is. */
+.card[data-drop-indicator]::before {
+  content: "";
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  height: 2px;
+  background: var(--accent);
+  pointer-events: none;
+}
+
+.card[data-drop-indicator="before"]::before {
+  top: -1px;
+}
+
+.card[data-drop-indicator="after"]::before {
+  bottom: -1px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .card[data-dragging="true"] {
+    transition: opacity 0.12s ease;
+  }
+}
+
+.card[data-dragging="true"] {
+  opacity: 0.5;
+}
+
 .card[data-multi="true"],
 .slimRow[data-multi="true"] {
   background: var(--blue-soft);
@@ -1910,6 +1940,13 @@
 }
 
 .cardWorktree {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--text-dim);
+  opacity: 0.8;
+}
+
+.cardDraft {
   display: inline-flex;
   flex-shrink: 0;
   color: var(--text-dim);

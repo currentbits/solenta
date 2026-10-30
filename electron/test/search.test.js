@@ -81,6 +81,32 @@ describe("threads search", () => {
     assert.equal(hits[0].id, "a");
   });
 
+  it("finds a thread by its linked PR number or title (#1771)", async () => {
+    store.setThreads([
+      makeThread({
+        id: "a",
+        title: "Ship the thing",
+        prNumber: 482,
+        prUrl: "https://github.com/acme/demo/pull/482",
+        prLinks: [
+          {
+            number: 482,
+            url: "https://github.com/acme/demo/pull/482",
+            title: "Add the frobnicator",
+          },
+        ],
+        updatedAt: 10,
+      }),
+      makeThread({ id: "b", title: "Unrelated", updatedAt: 20 }),
+    ]);
+    const byHash = await store.searchThreads("#482");
+    assert.deepEqual(byHash.threads.map((h) => h.id), ["a"]);
+    const byBareNumber = await store.searchThreads("482");
+    assert.deepEqual(byBareNumber.threads.map((h) => h.id), ["a"]);
+    const byTitle = await store.searchThreads("frobnicator");
+    assert.deepEqual(byTitle.threads.map((h) => h.id), ["a"]);
+  });
+
   it("matches message content (case-insensitive substring)", async () => {
     store.setThreads([
       makeThread({ id: "a", title: "Thread A", updatedAt: 10 }),

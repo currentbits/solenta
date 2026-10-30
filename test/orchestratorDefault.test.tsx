@@ -168,3 +168,55 @@ describe("plain New thread mode resolution", () => {
     m.unmount();
   });
 });
+
+describe("project default-worktree override (#1775)", () => {
+  it("a project override wins over a global default that disagrees", async () => {
+    const fake = createFakeCoder({
+      projects: [project({ id: "p1", defaultWorktree: true })],
+      settings: {
+        dailyBudgetUsd: null,
+        orchestrationBudgetUsd: null,
+        autoSettleAfterDays: 3,
+        mcpServers: [],
+        defaultWorktree: false,
+        defaultOrchestrate: false,
+        updateChannel: null,
+      },
+    });
+    const m = await boot(fake);
+    await clickNewThread(m);
+    const input = fake.of("threads.create")[0].args[0] as Record<
+      string,
+      unknown
+    >;
+    assert.equal(input.worktree, true, "project override beats the global off");
+    m.unmount();
+  });
+
+  it("a project override of false beats a global default on", async () => {
+    const fake = createFakeCoder({
+      projects: [project({ id: "p1", defaultWorktree: false })],
+      settings: {
+        dailyBudgetUsd: null,
+        orchestrationBudgetUsd: null,
+        autoSettleAfterDays: 3,
+        mcpServers: [],
+        defaultWorktree: true,
+        defaultOrchestrate: false,
+        updateChannel: null,
+      },
+    });
+    const m = await boot(fake);
+    await clickNewThread(m);
+    const input = fake.of("threads.create")[0].args[0] as Record<
+      string,
+      unknown
+    >;
+    assert.equal(
+      input.worktree,
+      undefined,
+      "project override beats the global on",
+    );
+    m.unmount();
+  });
+});

@@ -22,7 +22,15 @@ import { lazyNamed } from "../lazyNamed";
 import { isAbsolutePath } from "../pathLinks";
 import { languageForFence, useHighlightedBlock } from "../syntaxHighlight";
 import { markdownChunks } from "./markdownChunks";
-import { linkifyNode, PathLinkContext, useResolvedMap } from "./PathLinks";
+import {
+  GithubMark,
+  isGithubUrl,
+  linkifyNode,
+  PathLinkContext,
+  ThreadLinkContext,
+  useResolvedMap,
+} from "./PathLinks";
+import { prRefFromGithubUrl, PrHoverTarget } from "./PrHoverCard";
 import styles from "./Markdown.module.css";
 
 const COPIED_MS = 1500;
@@ -237,7 +245,7 @@ const COMPONENTS: Components = {
         window.getSelection()?.selectAllChildren(e.currentTarget)
       }
     >
-      {linkifyNode(props.children)}
+      {linkifyNode(props.children, { githubRefs: false })}
     </code>
   ),
   p: (props) => <p>{linkifyNode(props.children)}</p>,
@@ -249,11 +257,23 @@ const COMPONENTS: Components = {
   h3: (props) => <h3>{linkifyNode(props.children)}</h3>,
   h4: (props) => <h4>{linkifyNode(props.children)}</h4>,
   blockquote: (props) => <blockquote>{linkifyNode(props.children)}</blockquote>,
-  a: (props) => (
-    <a href={props.href} target="_blank" rel="noreferrer">
-      {props.children}
-    </a>
-  ),
+  a: (props) => {
+    const links = useContext(ThreadLinkContext);
+    const github = isGithubUrl(props.href);
+    const anchor = (
+      <a href={props.href} target="_blank" rel="noreferrer">
+        {github ? <GithubMark className={styles.githubMark} /> : null}
+        {props.children}
+      </a>
+    );
+    const ref = github ? prRefFromGithubUrl(props.href) : null;
+    if (!ref) return anchor;
+    return (
+      <PrHoverTarget projectPath={links?.projectPath} repo={ref.repo} number={ref.number}>
+        {anchor}
+      </PrHoverTarget>
+    );
+  },
   img: (props) => <MarkdownImage src={props.src} alt={props.alt} />,
 };
 

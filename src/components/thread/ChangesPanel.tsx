@@ -47,9 +47,11 @@ import {
   useDiffHideTests,
   useDiffIgnoreWhitespace,
   useDiffSplit,
+  useDiffTreeView,
   useDiffWrap,
 } from "../../uiPrefs";
-import { TestFilesBar, filterTestFiles } from "../TurnDiffPanel";
+import { TestFilesBar, TreeListToggle, filterTestFiles } from "../TurnDiffPanel";
+import { buildFileTree, type FileTreeDir, type FileTreeNode } from "../../fileTree";
 import { blastRadiusTitle, isCiWorkflowPath } from "../../blastRadius";
 import { middleTruncate } from "../../format";
 import {
@@ -124,10 +126,20 @@ function openFileContextMenu(
       label: revealFileLabel(),
       attrs: { "data-file-reveal": "" },
     },
+    {
+      id: "copy-path",
+      label: "Copy path",
+      attrs: { "data-file-copy-path-menu": "" },
+    },
   ];
   void showContextMenu(items, { x: e.clientX, y: e.clientY }).then((id) => {
+    if (!id) return;
+    if (id === "copy-path") {
+      void navigator.clipboard?.writeText(file.path).catch(() => {});
+      return;
+    }
     const shell = coderShell();
-    if (!shell || !id) return;
+    if (!shell) return;
     if (id === "open" && !deleted) {
       void shell.openPath({ threadId, path: file.path });
     } else if (id === "reveal") {
@@ -273,6 +285,26 @@ function DiffCommentBox({
   );
 }
 
+/** Same glyph as WorktreeControl's copy-path button (#1772). */
+function CopyGlyph() {
+  return (
+    <svg
+      width="12"
+      height="12"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <rect x="5.5" y="5.5" width="8" height="8" rx="1.5" />
+      <path d="M10.5 5.5V4a1.5 1.5 0 0 0-1.5-1.5H4A1.5 1.5 0 0 0 2.5 4v5A1.5 1.5 0 0 0 4 10.5h1.5" />
+    </svg>
+  );
+}
+
 function FileRow({
   file,
   threadId,
@@ -281,9 +313,12 @@ function FileRow({
   staged,
   confirmRevert,
   reverting,
+  depth = 0,
+  copied = false,
   onSelect,
   onToggleStage,
   onRevert,
+  onCopyPath,
 }: {
   file: FileChange;
   /** For the row's "Open in editor" / reveal context menu (#1766). */
@@ -295,12 +330,18 @@ function FileRow({
   staged: boolean | "mixed";
   confirmRevert: string | null;
   reverting: string | null;
+  /** Tree view indent (#1772); 0 in the flat List view. */
+  depth?: number;
+  /** This row's path was just copied: flip the button to a checkmark. */
+  copied?: boolean;
   onSelect: (path: string) => void;
   onToggleStage: (path: string, next: boolean) => void;
   onRevert: (f: FileChange) => void;
+  /** Copy path (#1772); `absolute` is Alt-click, repo path otherwise. */
+  onCopyPath?: (file: FileChange, absolute: boolean) => void;
 }) {
   return (
-    <li>
+    <li style={depth ? { paddingLeft: depth * 14 } : undefined}>
       {editable ? (
       <button
         type="button"
@@ -343,6 +384,21 @@ function FileRow({
           <span className={styles.dels}>−{file.deletions}</span>
         </span>
       </button>
+      {onCopyPath ? (
+      <button
+        type="button"
+        className={styles.fileCopy}
+        data-file-copy-path={file.path}
+        aria-label={`Copy path ${file.path}`}
+        title="Copy path"
+        onClick={(e) => {
+          e.stopPropagation();
+          onCopyPath(file, e.altKey);
+        }}
+      >
+        {copied ? "✓" : <CopyGlyph />}
+      </button>
+      ) : null}
       {editable ? (
       <button
         type="button"
@@ -365,6 +421,47 @@ function FileRow({
             : "↩"}
       </button>
       ) : null}
+    </li>
+  );
+}
+
+/** Tree view (#1772) directory row: file count, summed +/-, collapsible. */
+function DirRow({
+  node,
+  depth,
+  collapsed,
+  onToggle,
+}: {
+  node: FileTreeDir<FileChange>;
+  depth: number;
+  collapsed: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <li style={depth ? { paddingLeft: depth * 14 } : undefined}>
+      <button
+        type="button"
+        className={styles.dirRow}
+        data-dir-row={node.path}
+        aria-expanded={!collapsed}
+        onClick={onToggle}
+      >
+        <span
+          className={styles.dirTwisty}
+          data-open={collapsed ? undefined : ""}
+          aria-hidden
+        >
+          ›
+        </span>
+        <span className={styles.dirName} title={node.path}>
+          {node.name}
+        </span>
+        <span className={styles.fileStats}>
+          <span className={styles.dirCount}>{node.fileCount}</span>
+          <span className={styles.adds}>+{node.additions}</span>
+          <span className={styles.dels}>−{node.deletions}</span>
+        </span>
+      </button>
     </li>
   );
 }
@@ -610,6 +707,7 @@ export function ChangesPanel({
   threadTitle,
   threadBranch,
   threadBaseBranch,
+  threadWorktreePath = null,
   planText,
   openNonce,
   focus = null,
@@ -633,6 +731,8 @@ export function ChangesPanel({
   threadBranch: string | null;
   /** Recorded merge/PR base (#187). Null/absent = repo default. */
   threadBaseBranch?: string | null;
+  /** Absolute checkout path, for the copy-path button's Alt-click (#1772). */
+  threadWorktreePath?: string | null;
   planText: string;
   openNonce: number;
   /** File an agent pointed at (show_user, #293); a new object re-selects. */
@@ -701,6 +801,18 @@ export function ChangesPanel({
   const [unstagedHunks, setUnstagedHunks] = useState<Set<string>>(
     () => new Set(),
   );
+  /** Tree view (#1772) collapse state; kept while the panel stays mounted. */
+  const [collapsedDirs, setCollapsedDirs] = useState<Set<string>>(
+    () => new Set(),
+  );
+  /** Copy-path feedback (#1772): which path was just copied, if any. */
+  const [copiedPath, setCopiedPath] = useState<string | null>(null);
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    return () => {
+      if (copyTimerRef.current != null) clearTimeout(copyTimerRef.current);
+    };
+  }, []);
   const knownFilesRef = useRef<Set<string>>(new Set());
   const threadIdRef = useRef(threadId);
   threadIdRef.current = threadId;
@@ -711,6 +823,7 @@ export function ChangesPanel({
   const split = useDiffSplit();
   const wrap = useDiffWrap();
   const ignoreWhitespace = useDiffIgnoreWhitespace();
+  const treeView = useDiffTreeView();
   /** Patches fetched one file at a time: lazy or "Show anyway" (#1493). */
   const [filePatches, setFilePatches] = useState<Record<string, FilePatchState>>({});
   /** Bumped per load so a slow fetch from an old scope cannot land. */
@@ -814,6 +927,8 @@ export function ChangesPanel({
     setStagedPaths(new Set());
     setUnstagedHunks(new Set());
     setFilePatches({});
+    setCollapsedDirs(new Set());
+    setCopiedPath(null);
     knownFilesRef.current = new Set();
     onStagedPathsChange?.(null);
     // onStagedPathsChange is a stable setter from useCoder; threadId is the trigger.
@@ -859,6 +974,18 @@ export function ChangesPanel({
     () => new Set(testFilter.shown.map((f) => f.path)),
     [testFilter],
   );
+  /** Summed +/- across the visible files (#1772), same cut as the list below. */
+  const totals = useMemo(() => {
+    let additions = 0;
+    let deletions = 0;
+    for (const f of testFilter.shown) {
+      additions += f.additions;
+      deletions += f.deletions;
+    }
+    return { count: testFilter.shown.length, additions, deletions };
+  }, [testFilter]);
+  /** Tree view (#1772): built from the same visible files as the flat list. */
+  const tree = useMemo(() => buildFileTree(testFilter.shown), [testFilter]);
 
   useEffect(() => {
     if (!diff || diff.files.length === 0) {
@@ -948,6 +1075,10 @@ export function ChangesPanel({
     onStagedPathsChange?.([...stagedPaths].filter((p) => !partial.has(p)));
   }, [diff, stagedPaths, partialKey, onStagedPathsChange, editable]);
 
+  /** File row staging state, same cut used by both the flat list and the tree. */
+  const fileStaged = (path: string): boolean | "mixed" =>
+    partialPatches.some((p) => p.path === path) ? "mixed" : stagedPaths.has(path);
+
   if (!open) return null;
 
   const empty = !loading && !error && diff != null && isEmptyDiff(diff);
@@ -975,6 +1106,78 @@ export function ChangesPanel({
     } finally {
       setReverting(null);
     }
+  };
+
+  /** Copy path (#1772): repo-relative, or absolute in the worktree on Alt-click. */
+  const copyPath = (file: FileChange, absolute: boolean) => {
+    const text =
+      absolute && threadWorktreePath
+        ? `${threadWorktreePath}/${file.path}`
+        : file.path;
+    navigator.clipboard?.writeText(text).then(
+      () => {
+        setCopiedPath(file.path);
+        if (copyTimerRef.current != null) clearTimeout(copyTimerRef.current);
+        copyTimerRef.current = setTimeout(() => {
+          setCopiedPath(null);
+          copyTimerRef.current = null;
+        }, 1400);
+      },
+      () => {},
+    );
+  };
+
+  const toggleDir = (path: string) => {
+    setCollapsedDirs((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  };
+
+  /** Tree view (#1772) rows: same FileRow as the flat list, nested under DirRow. */
+  const renderTree = (
+    nodes: FileTreeNode<FileChange>[],
+    depth: number,
+  ): ReactNode[] => {
+    const rows: ReactNode[] = [];
+    for (const node of nodes) {
+      if (node.kind === "file") {
+        const f = node.file;
+        rows.push(
+          <FileRow
+            key={node.path}
+            file={f}
+            threadId={threadId}
+            editable={editable}
+            selected={selectedPath === f.path}
+            staged={fileStaged(f.path)}
+            confirmRevert={confirmRevert}
+            reverting={reverting}
+            depth={depth}
+            copied={copiedPath === f.path}
+            onSelect={setSelectedPath}
+            onToggleStage={toggleStage}
+            onRevert={(file) => void revert(file)}
+            onCopyPath={copyPath}
+          />,
+        );
+        continue;
+      }
+      const collapsed = collapsedDirs.has(node.path);
+      rows.push(
+        <DirRow
+          key={node.path}
+          node={node}
+          depth={depth}
+          collapsed={collapsed}
+          onToggle={() => toggleDir(node.path)}
+        />,
+      );
+      if (!collapsed) rows.push(...renderTree(node.children, depth + 1));
+    }
+    return rows;
   };
 
   const toggleHunk = (id: string, next: boolean) => {
@@ -1301,39 +1504,53 @@ export function ChangesPanel({
                 {stagedPaths.size}/{diff.files.length} staged
               </div>
               ) : null}
+              <div className={styles.changesSummary} data-changes-summary="">
+                <span className={styles.changesSummaryCount}>
+                  {totals.count} file{totals.count === 1 ? "" : "s"}
+                </span>
+                <span className={styles.fileStats}>
+                  <span className={styles.adds}>+{totals.additions}</span>
+                  <span className={styles.dels}>−{totals.deletions}</span>
+                </span>
+                <TreeListToggle />
+              </div>
               <TestFilesBar {...testFilter} />
               <ReviewItineraryView
                 itinerary={itinerary}
                 testsFirst={testsFirst}
                 onToggleTestsFirst={() => setTestsFirst((v) => !v)}
               />
-              {itinerary.chunks.map((chunk) =>
-                chunk.files.some((f) => shownPaths.has(f.path)) ? (
-                <div key={chunk.area}>
-                  <ChunkRationale itinerary={itinerary} area={chunk.area} />
-                  <ul className={styles.fileList}>
-                    {chunk.files.filter((f) => shownPaths.has(f.path)).map((f) => (
-                      <FileRow
-                        key={f.path}
-                        file={f}
-                        threadId={threadId}
-                        editable={editable}
-                        selected={selectedPath === f.path}
-                        staged={
-                          partialPatches.some((p) => p.path === f.path)
-                            ? "mixed"
-                            : stagedPaths.has(f.path)
-                        }
-                        confirmRevert={confirmRevert}
-                        reverting={reverting}
-                        onSelect={setSelectedPath}
-                        onToggleStage={toggleStage}
-                        onRevert={(file) => void revert(file)}
-                      />
-                    ))}
-                  </ul>
-                </div>
-                ) : null,
+              {treeView ? (
+                <ul className={styles.fileList} data-file-tree="">
+                  {renderTree(tree, 0)}
+                </ul>
+              ) : (
+                itinerary.chunks.map((chunk) =>
+                  chunk.files.some((f) => shownPaths.has(f.path)) ? (
+                  <div key={chunk.area}>
+                    <ChunkRationale itinerary={itinerary} area={chunk.area} />
+                    <ul className={styles.fileList}>
+                      {chunk.files.filter((f) => shownPaths.has(f.path)).map((f) => (
+                        <FileRow
+                          key={f.path}
+                          file={f}
+                          threadId={threadId}
+                          editable={editable}
+                          selected={selectedPath === f.path}
+                          staged={fileStaged(f.path)}
+                          confirmRevert={confirmRevert}
+                          reverting={reverting}
+                          copied={copiedPath === f.path}
+                          onSelect={setSelectedPath}
+                          onToggleStage={toggleStage}
+                          onRevert={(file) => void revert(file)}
+                          onCopyPath={copyPath}
+                        />
+                      ))}
+                    </ul>
+                  </div>
+                  ) : null,
+                )
               )}
             </div>
             <div className={styles.changesDiff}>

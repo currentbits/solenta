@@ -8,6 +8,7 @@ const {
   PERMISSION_MODES,
   scheduleSimulatorRelease,
   canHostWorktree,
+  resolveDefaultWorktree,
   purgeThread,
 } = require("./services-shared.js");
 const {
@@ -104,6 +105,7 @@ const {
   clearSettledOnActivity,
   setSettled,
   setPinned,
+  setSortKey,
   setQueued,
   takeQueued,
   takeQueuedHead,
@@ -221,6 +223,7 @@ module.exports = {
   forkFromCheckpoint,
   savePlanFile,
   canHostWorktree,
+  resolveDefaultWorktree,
   forkWorkerThread,
   dirtySnapshotWarning,
   setPermissionMode,
@@ -313,6 +316,7 @@ module.exports = {
   setArchived,
   setSettled,
   setPinned,
+  setSortKey,
   setTags,
   setThreadProject,
   setQueued,

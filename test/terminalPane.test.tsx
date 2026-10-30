@@ -112,6 +112,10 @@ function harness(over: Partial<TerminalApi> = {}) {
     read: (input) => (over.read ? (calls.push({ call: "read", input }), over.read(input)) : rec("read", input, state())),
     list: (input) => (over.list ? over.list(input) : rec("list", input, [] as string[])),
     close: (input) => rec("close", input, state({ running: false })),
+    isBusy: (input) =>
+      over.isBusy
+        ? (calls.push({ call: "isBusy", input }), over.isBusy(input))
+        : rec("isBusy", input, { running: true, busy: false, command: null }),
     onData: (cb) => {
       listeners.add(cb);
       return () => listeners.delete(cb);
@@ -201,6 +205,54 @@ describe("TerminalPane", () => {
     assert.equal(m.queryAll("[data-terminal-view]").length, 1);
     assert.deepEqual(h.calls.find((c) => c.call === "close")?.input, { threadId: "t1", termId: "2" });
     assert.equal(h.terms[1].disposed, true);
+  });
+
+  it("closes an idle terminal right away, no confirm (#1773)", async () => {
+    const h = harness({ isBusy: async () => ({ running: true, busy: false, command: null }) });
+    const m = await mount(<TerminalPane threadId="t1" api={h.api} load={h.load} />);
+    await settle();
+    await m.click(m.query("[data-terminal-split]"));
+    await settle();
+    await m.click(m.queryAll("[data-terminal-close]")[1]);
+    await settle();
+    assert.equal(m.query("[data-terminal-close-confirm]"), null, "idle shells skip the confirm");
+    assert.deepEqual(h.calls.find((c) => c.call === "isBusy")?.input, { threadId: "t1", termId: "2" });
+    assert.deepEqual(h.calls.find((c) => c.call === "close")?.input, { threadId: "t1", termId: "2" });
+    assert.equal(m.queryAll("[data-terminal-view]").length, 1);
+  });
+
+  it("confirms before closing a terminal with a command still running (#1773)", async () => {
+    const h = harness({
+      isBusy: async () => ({ running: true, busy: true, command: "npm" }),
+    });
+    const m = await mount(<TerminalPane threadId="t1" api={h.api} load={h.load} />);
+    await settle();
+    await m.click(m.query("[data-terminal-split]"));
+    await settle();
+    await m.click(m.queryAll("[data-terminal-close]")[1]);
+    await settle();
+    assert.ok(m.query("[data-terminal-close-confirm]"), "a busy terminal must confirm first");
+    assert.ok(m.text().includes("npm is still running."));
+    assert.equal(
+      h.calls.find((c) => c.call === "close"),
+      undefined,
+      "must not close until confirmed",
+    );
+
+    // Cancel: the terminal stays open, nothing closed.
+    await m.click(m.query("[data-terminal-close-confirm-cancel]"));
+    await settle();
+    assert.equal(m.query("[data-terminal-close-confirm]"), null);
+    assert.equal(m.queryAll("[data-terminal-view]").length, 2);
+    assert.equal(h.calls.find((c) => c.call === "close"), undefined);
+
+    // Close again and confirm this time: the terminal actually closes.
+    await m.click(m.queryAll("[data-terminal-close]")[1]);
+    await settle();
+    await m.click(m.query("[data-terminal-close-confirm-submit]"));
+    await settle();
+    assert.equal(m.queryAll("[data-terminal-view]").length, 1);
+    assert.deepEqual(h.calls.find((c) => c.call === "close")?.input, { threadId: "t1", termId: "2" });
   });
 
   it("caps splits at four", async () => {

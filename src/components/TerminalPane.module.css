@@ -145,3 +145,79 @@
   color: var(--text-dim);
   font-size: 11px;
 }
+
+/* Close confirm (#1773): same shape as the other destructive confirms. */
+.confirmOverlay {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: var(--scrim);
+}
+
+.confirmDialog {
+  width: 100%;
+  max-width: 300px;
+  padding: 14px 14px 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-pop);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.confirmTitle {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--text);
+  line-height: 1.35;
+}
+
+.confirmBody {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+.confirmActions {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.confirmDanger,
+.confirmCancel {
+  flex: 1;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 550;
+  cursor: pointer;
+}
+
+.confirmDanger {
+  border: 1px solid var(--danger-border);
+  background: var(--danger-soft);
+  color: var(--danger-fg);
+}
+
+.confirmDanger:hover {
+  background: var(--danger-soft);
+}
+
+.confirmCancel {
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--text-muted);
+}
+
+.confirmCancel:hover {
+  color: var(--text);
+}

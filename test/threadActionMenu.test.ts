@@ -88,6 +88,45 @@ describe("buildThreadActionMenuItems (contract)", () => {
     assert.equal(eject?.label, "Eject to terminal");
   });
 
+  it("offers Regenerate title right after Rename, with no extra separator (#1774)", () => {
+    const items = buildThreadActionMenuItems({
+      thread,
+      providers,
+      snoozePresets: presets,
+      isSettled: false,
+      canSettle: true,
+      showSnooze: false,
+      showFork: false,
+      showRename: true,
+      showRegenerateTitle: true,
+      showMute: false,
+      showSettle: false,
+    });
+    const rename = items.find((i) => i.id === "rename");
+    const regen = items.find((i) => i.id === "regenerateTitle");
+    assert.ok(rename, "Rename");
+    assert.ok(regen, "Regenerate title");
+    assert.equal(regen?.label, "Regenerate title");
+    assert.equal(regen?.separatorBefore, undefined);
+    assert.deepEqual(items.map((i) => i.id), ["rename", "regenerateTitle"]);
+  });
+
+  it("hides Regenerate title when showRegenerateTitle is off", () => {
+    const items = buildThreadActionMenuItems({
+      thread,
+      providers,
+      snoozePresets: presets,
+      isSettled: false,
+      canSettle: true,
+      showSnooze: false,
+      showFork: false,
+      showRename: true,
+      showMute: false,
+      showSettle: false,
+    });
+    assert.equal(items.some((i) => i.id === "regenerateTitle"), false);
+  });
+
   it("already-ejected threads show Reclaim, not Eject", () => {
     const items = buildThreadActionMenuItems({
       thread: { ...thread, ejected: true } as ThreadInfo,

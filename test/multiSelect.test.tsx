@@ -448,6 +448,96 @@ describe("Sidebar multi-select (round 46)", () => {
     );
     m.unmount();
   });
+
+  it("batch regenerate title calls onRegenerateTitle once with every selected id (#1774)", async () => {
+    const calls: string[][] = [];
+
+    function HostRegen() {
+      const [threads, setThreads] = useState(fullFixture());
+      return (
+        <Sidebar
+          appName="Solenta"
+          searchPlaceholder="S"
+          projectsHeader="All"
+          projects={[p1, p2]}
+          threads={threads}
+          providers={providers}
+          activeThreadId="noise"
+          onSelectThread={() => {}}
+          onCreateThread={() => {}}
+          onAddProject={() => {}}
+          onSetArchived={() => {}}
+          onSetSettled={() => {}}
+          onRegenerateTitle={async (ids) => {
+            calls.push(ids);
+            setThreads((prev) =>
+              prev.map((t) =>
+                ids.includes(t.id) ? { ...t, title: `${t.title} v2` } : t,
+              ),
+            );
+            return ids.map((threadId) => ({ threadId, title: `${threadId} v2` }));
+          }}
+          searchThreads={async () => ({ threads, truncated: false })}
+        />
+      );
+    }
+
+    const m = await mount(<HostRegen />);
+    await openShelves(m);
+
+    for (const id of ["p1-mid", "p2-mid"]) {
+      const btn = m.query(`[data-thread-card="${id}"]`)!.querySelector("button")!;
+      await inAct(async () => {
+        btn.dispatchEvent(
+          new MouseEvent("click", {
+            bubbles: true,
+            metaKey: true,
+            cancelable: true,
+          }),
+        );
+      });
+      await m.flush();
+    }
+
+    const regenBtn = m.query("[data-batch-regenerate-title]");
+    assert.ok(regenBtn, "toolbar Regenerate titles must render at 2+ selected");
+    await m.click(regenBtn!);
+    await m.flush();
+
+    assert.equal(calls.length, 1, "one batch call, not one per thread");
+    assert.deepEqual(calls[0].sort(), ["p1-mid", "p2-mid"].sort());
+    assert.equal(
+      m.query("[data-batch-feedback]")?.textContent,
+      "2 titles regenerated",
+    );
+    assert.equal(
+      m.query("[data-batch-count]") != null,
+      false,
+      "selection cleared after batch regenerate",
+    );
+    m.unmount();
+  });
+
+  it("hides Regenerate titles from the toolbar when onRegenerateTitle is not wired", async () => {
+    const m = await mount(<Host />);
+    await openShelves(m);
+    for (const id of ["p1-mid", "p2-mid"]) {
+      const btn = m.query(`[data-thread-card="${id}"]`)!.querySelector("button")!;
+      await inAct(async () => {
+        btn.dispatchEvent(
+          new MouseEvent("click", {
+            bubbles: true,
+            metaKey: true,
+            cancelable: true,
+          }),
+        );
+      });
+      await m.flush();
+    }
+    assert.ok(m.query("[data-batch-bar]"));
+    assert.equal(m.query("[data-batch-regenerate-title]"), null);
+    m.unmount();
+  });
 });
 
 describe("Sidebar jump shortcuts (round 46)", () => {

@@ -13,3 +13,8 @@
   text-decoration: underline;
   text-underline-offset: 2px;
 }
+
+.pathLink svg {
+  margin-right: 3px;
+  vertical-align: -1px;
+}

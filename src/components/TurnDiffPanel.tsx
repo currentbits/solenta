@@ -15,7 +15,12 @@ import {
   type DiffViewMode,
 } from "../turnDiff";
 import { isTestFile } from "../shared/testFiles";
-import { setDiffHideTests, useDiffHideTests } from "../uiPrefs";
+import {
+  setDiffHideTests,
+  setDiffTreeView,
+  useDiffHideTests,
+  useDiffTreeView,
+} from "../uiPrefs";
 import { useDiffFind } from "./thread/useDiffFind";
 import styles from "./TurnDiffPanel.module.css";
 
@@ -70,6 +75,36 @@ export function TestFilesBar({
         onClick={() => setDiffHideTests(!hide)}
       >
         Hide tests
+      </button>
+    </div>
+  );
+}
+
+/**
+ * Flat List vs collapsible folder Tree (#1772), shared setting between the
+ * Git pane and the PR Code tab, same pattern as the Hide tests toggle above.
+ */
+export function TreeListToggle() {
+  const tree = useDiffTreeView();
+  return (
+    <div className={styles.modes} role="group" aria-label="File list layout">
+      <button
+        type="button"
+        className={styles.modeBtn}
+        data-tree-toggle="list"
+        aria-pressed={!tree}
+        onClick={() => setDiffTreeView(false)}
+      >
+        List
+      </button>
+      <button
+        type="button"
+        className={styles.modeBtn}
+        data-tree-toggle="tree"
+        aria-pressed={tree}
+        onClick={() => setDiffTreeView(true)}
+      >
+        Tree
       </button>
     </div>
   );

@@ -56,6 +56,20 @@ const MAX_FOLDER_FILES = 1000;
 const THREAD_ID_RE = /^[A-Za-z0-9_-]+$/;
 
 /**
+ * Downscale target for an oversize image (issue #1773): longest side and
+ * byte budget safe for every provider Solenta supports. Claude's API is the
+ * tightest (~5MB, ~8000px/side); 4096px and 4MB leave headroom under that
+ * without visibly degrading a screenshot or photo. Extensions that can carry
+ * transparency keep PNG; everything else re-encodes as JPEG, which shrinks
+ * far more per step.
+ */
+const DOWNSCALE_MAX_DIMENSION = 4096;
+const DOWNSCALE_TARGET_BYTES = 4 * 1024 * 1024;
+const JPEG_QUALITY_STEPS = [85, 75, 65, 55, 45, 35];
+const DIMENSION_STEP_FACTORS = [1, 0.75, 0.5, 0.35];
+const ALPHA_EXT_SET = new Set(["png", "gif", "webp"]);
+
+/**
  * Classify absolute paths as image, file, or folder. Images keep their
  * kind so the composer can thumbnail them; every other regular file is
  * `kind: "file"` (issue #653). Missing / relative / non-file paths skip.
@@ -116,10 +130,151 @@ async function pickAttachments(dialog, opts = {}) {
 }
 
 /**
+ * Pure step-down plan for shrinking an oversize image: shrink the longest
+ * side to maxDimension (a no-op if it already fits), then try progressively
+ * lower JPEG quality at that size, then shrink further and repeat. PNG only
+ * gets a dimension step (no quality knob) and is tried first when the
+ * source might carry transparency; the JPEG steps that follow are the real
+ * fallback, since they shrink far more per step and have no alpha to lose.
+ * No image codec here (nativeImage may not exist under plain node tests) -
+ * downscaleImage is the impure driver that actually encodes each step.
+ * @param {number} width
+ * @param {number} height
+ * @param {{ hasAlpha?: boolean, maxDimension?: number }} [opts]
+ * @returns {{ width: number, height: number, format: "png" | "jpeg", quality?: number }[]}
+ */
+function planDownscaleSteps(width, height, opts = {}) {
+  const maxDimension = opts.maxDimension || DOWNSCALE_MAX_DIMENSION;
+  const longest = Math.max(width, height) || 1;
+  const baseScale = Math.min(1, maxDimension / longest);
+  const steps = [];
+  for (const factor of DIMENSION_STEP_FACTORS) {
+    const scale = baseScale * factor;
+    const w = Math.max(1, Math.round(width * scale));
+    const h = Math.max(1, Math.round(height * scale));
+    if (opts.hasAlpha) steps.push({ width: w, height: h, format: "png" });
+    for (const quality of JPEG_QUALITY_STEPS) {
+      steps.push({ width: w, height: h, format: "jpeg", quality });
+    }
+  }
+  return steps;
+}
+
+/**
+ * Whether an image is worth running through downscaleImage at all: over the
+ * reject cap or over the per-side dimension limit. Pure (no decode) so the
+ * save* functions can gate the nativeImage call.
+ * @param {number} width
+ * @param {number} height
+ * @param {number} byteLength
+ * @param {{ rejectBytes?: number, maxDimension?: number }} [opts]
+ */
+function imageNeedsDownscale(width, height, byteLength, opts = {}) {
+  const rejectBytes = opts.rejectBytes || MAX_IMAGE_BYTES;
+  const maxDimension = opts.maxDimension || DOWNSCALE_MAX_DIMENSION;
+  return byteLength > rejectBytes || Math.max(width, height) > maxDimension;
+}
+
+/** Test hook: a fake `{ createFromBuffer }`. Pass null to restore electron's. */
+let nativeImageImpl = null;
+function setNativeImage(impl) {
+  nativeImageImpl = impl;
+}
+
+function getNativeImage() {
+  try {
+    const mod = require("electron");
+    return mod && typeof mod === "object" ? mod.nativeImage || null : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Resize + re-encode an oversize image buffer until it fits maxBytes.
+ * `ok: false` means give up (today's rejection applies); `ok: true,
+ * changed: false` means it was already within limits and the caller should
+ * keep the original bytes.
+ * @param {Buffer} buf
+ * @param {{ hasAlpha?: boolean, maxBytes?: number, maxDimension?: number, rejectBytes?: number }} [opts]
+ * @returns {{ ok: boolean, changed?: boolean, buffer?: Buffer, format?: "png"|"jpeg",
+ *   width?: number, height?: number, originalWidth?: number, originalHeight?: number }}
+ */
+function downscaleImage(buf, opts = {}) {
+  if (!Buffer.isBuffer(buf) || !buf.length) return { ok: false };
+  const nativeImage = nativeImageImpl || getNativeImage();
+  if (!nativeImage || typeof nativeImage.createFromBuffer !== "function") {
+    return { ok: false };
+  }
+  const maxDimension = opts.maxDimension || DOWNSCALE_MAX_DIMENSION;
+  const maxBytes = opts.maxBytes || DOWNSCALE_TARGET_BYTES;
+  let image;
+  try {
+    image = nativeImage.createFromBuffer(buf);
+  } catch {
+    return { ok: false };
+  }
+  const size = image && typeof image.getSize === "function" ? image.getSize() : null;
+  if (!size || !size.width || !size.height) return { ok: false };
+  if (!imageNeedsDownscale(size.width, size.height, buf.length, { ...opts, maxDimension })) {
+    return { ok: true, changed: false };
+  }
+  for (const step of planDownscaleSteps(size.width, size.height, {
+    maxDimension,
+    hasAlpha: opts.hasAlpha,
+  })) {
+    try {
+      const resized =
+        step.width === size.width && step.height === size.height
+          ? image
+          : image.resize({ width: step.width, height: step.height });
+      const out = step.format === "png" ? resized.toPNG() : resized.toJPEG(step.quality);
+      if (out && out.length && out.length <= maxBytes) {
+        return {
+          ok: true,
+          changed: true,
+          buffer: out,
+          format: step.format,
+          width: step.width,
+          height: step.height,
+          originalWidth: size.width,
+          originalHeight: size.height,
+        };
+      }
+    } catch {
+      // this step's resize/encode failed; try the next one
+    }
+  }
+  return { ok: false };
+}
+
+/**
+ * saveImage/savePng/transcodeHeic share this: downscale when worth it, else
+ * hand back the original buffer untouched. `ext` is the extension to use
+ * going forward (unchanged unless the format actually changed).
+ * @param {Buffer} buf
+ * @param {string} ext
+ * @returns {{ buffer: Buffer, ext: string, resizedFrom: { width: number, height: number } | null }}
+ */
+function maybeDownscaleBuffer(buf, ext) {
+  const result = downscaleImage(buf, { hasAlpha: ALPHA_EXT_SET.has(ext) });
+  if (result.ok && result.changed && result.buffer) {
+    return {
+      buffer: result.buffer,
+      ext: result.format === "png" ? "png" : "jpg",
+      resizedFrom: { width: result.originalWidth, height: result.originalHeight },
+    };
+  }
+  return { buffer: buf, ext, resizedFrom: null };
+}
+
+/**
  * Persist a pasted image beside the store (same reasoning as tool-images:
  * the store is one JSON file rewritten in full on every event). Filenames
  * are timestamped + random. image-store.js prunes archived/deleted thread
- * dirs and enforces a global size cap (issue #145).
+ * dirs and enforces a global size cap (issue #145). Oversize captures are
+ * downscaled (#1773) rather than refused outright; MAX_IMAGE_BYTES is the
+ * last-resort reject if even the smallest step doesn't fit.
  * @param {string} userDataPath
  * @param {unknown} threadId
  * @param {unknown} dataUrl
@@ -128,16 +283,21 @@ async function pickAttachments(dialog, opts = {}) {
 function savePng(userDataPath, threadId, buf) {
   const tid = String(threadId || "");
   if (!userDataPath || !/^[A-Za-z0-9_-]+$/.test(tid)) return null;
-  if (!Buffer.isBuffer(buf) || !buf.length || buf.length > MAX_IMAGE_BYTES) {
-    return null;
-  }
+  if (!Buffer.isBuffer(buf) || !buf.length) return null;
+  const shrunk = maybeDownscaleBuffer(buf, "png");
+  if (shrunk.buffer.length > MAX_IMAGE_BYTES) return null;
   const dir = path.join(userDataPath, DIR_NAME, tid);
   try {
     fs.mkdirSync(dir, { recursive: true });
-    const name = `${Date.now()}-${randomUUID().slice(0, 8)}.png`;
+    const name = `${Date.now()}-${randomUUID().slice(0, 8)}.${shrunk.ext}`;
     const full = path.join(dir, name);
-    fs.writeFileSync(full, buf);
-    return { kind: "image", path: full, name };
+    fs.writeFileSync(full, shrunk.buffer);
+    return {
+      kind: "image",
+      path: full,
+      name,
+      ...(shrunk.resizedFrom ? { resizedFrom: shrunk.resizedFrom } : {}),
+    };
   } catch {
     return null;
   }
@@ -192,6 +352,11 @@ function isInside(root, candidate) {
   return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
 }
 
+/**
+ * Oversize pastes/drops are downscaled (#1773) rather than refused outright;
+ * MAX_IMAGE_BYTES is still the last-resort reject when even the smallest
+ * step doesn't fit.
+ */
 function saveImage(userDataPath, threadId, dataUrl) {
   const tid = validThreadId(threadId);
   if (!userDataPath || !tid) return null;
@@ -202,14 +367,21 @@ function saveImage(userDataPath, threadId, dataUrl) {
   const ext = EXT_BY_MEDIA[m[1].toLowerCase()];
   if (!ext) return null;
   const buf = Buffer.from(m[2], "base64");
-  if (!buf.length || buf.length > MAX_IMAGE_BYTES) return null;
+  if (!buf.length) return null;
+  const shrunk = maybeDownscaleBuffer(buf, ext);
+  if (shrunk.buffer.length > MAX_IMAGE_BYTES) return null;
   const dir = threadDir(userDataPath, tid);
   try {
     fs.mkdirSync(dir, { recursive: true });
-    const name = `${Date.now()}-${randomUUID().slice(0, 8)}.${ext}`;
+    const name = `${Date.now()}-${randomUUID().slice(0, 8)}.${shrunk.ext}`;
     const full = path.join(dir, name);
-    fs.writeFileSync(full, buf);
-    return { kind: "image", path: full, name };
+    fs.writeFileSync(full, shrunk.buffer);
+    return {
+      kind: "image",
+      path: full,
+      name,
+      ...(shrunk.resizedFrom ? { resizedFrom: shrunk.resizedFrom } : {}),
+    };
   } catch {
     return null;
   }
@@ -361,11 +533,32 @@ async function transcodeHeic(list, userDataPath, threadId) {
         userDataPath && tid
           ? await heicToJpeg(a.path, threadDir(userDataPath, tid))
           : null;
-      return out
-        ? { kind: "image", path: out, name: a.name, convertedFrom: ext.toUpperCase() }
-        : { ...a, kind: "file" };
+      if (!out) return { ...a, kind: "file" };
+      // Phone cameras HEIC-encode at resolutions well past every provider's
+      // image cap; downscale the JPEG we just wrote (#1773), best-effort.
+      const resizedFrom = shrinkFileInPlace(out);
+      return {
+        kind: "image",
+        path: out,
+        name: a.name,
+        convertedFrom: ext.toUpperCase(),
+        ...(resizedFrom ? { resizedFrom } : {}),
+      };
     }),
   );
+}
+
+/** Downscale a JPEG already on disk in place; returns resizedFrom or null. */
+function shrinkFileInPlace(jpegPath) {
+  try {
+    const bytes = fs.readFileSync(jpegPath);
+    const shrunk = maybeDownscaleBuffer(bytes, "jpg");
+    if (!shrunk.resizedFrom) return null;
+    fs.writeFileSync(jpegPath, shrunk.buffer);
+    return shrunk.resizedFrom;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -549,4 +742,10 @@ module.exports = {
   IMAGE_EXTS,
   MAX_IMAGE_BYTES,
   DIR_NAME,
+  planDownscaleSteps,
+  imageNeedsDownscale,
+  downscaleImage,
+  setNativeImage,
+  DOWNSCALE_MAX_DIMENSION,
+  DOWNSCALE_TARGET_BYTES,
 };

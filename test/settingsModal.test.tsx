@@ -2030,6 +2030,98 @@ describe("SettingsModal thread title instructions (#1765)", () => {
   });
 });
 
+describe("SettingsModal commit message and PR instructions (#1774)", () => {
+  it("saves a trimmed commit message instructions value on blur and clears to empty", async () => {
+    const patches: Partial<AppSettings>[] = [];
+    const m = await mount(
+      modal({
+        initialPane: "git",
+        settings: {
+          dailyBudgetUsd: null,
+          autoSettleAfterDays: 3,
+          commitMessageInstructions: "",
+        } as AppSettings,
+        onSaveSettings: async (patch) => {
+          patches.push(patch);
+          return {
+            dailyBudgetUsd: null,
+            autoSettleAfterDays: 3,
+          } as AppSettings;
+        },
+      }),
+    );
+    const area = m.query(
+      "[data-commit-message-instructions]",
+    ) as HTMLTextAreaElement;
+    assert.ok(area, "commit message instructions textarea");
+    assert.equal(area.value, "");
+    assert.equal(
+      area.getAttribute("placeholder"),
+      "e.g. Imperative mood, no prefix, under 60 chars",
+    );
+    const blur = () =>
+      act(async () => {
+        area.dispatchEvent(
+          new area.ownerDocument.defaultView!.FocusEvent("focusout", {
+            bubbles: true,
+          }),
+        );
+      });
+    await blur();
+    assert.equal(patches.length, 0, "unchanged empty does not save");
+    await m.type(area, "  Imperative mood, under 60 chars.  ");
+    await blur();
+    assert.deepEqual(patches, [
+      { commitMessageInstructions: "Imperative mood, under 60 chars." },
+    ]);
+    m.unmount();
+  });
+
+  it("saves a trimmed PR instructions value on blur and clears to empty", async () => {
+    const patches: Partial<AppSettings>[] = [];
+    const m = await mount(
+      modal({
+        initialPane: "git",
+        settings: {
+          dailyBudgetUsd: null,
+          autoSettleAfterDays: 3,
+          prInstructions: "",
+        } as AppSettings,
+        onSaveSettings: async (patch) => {
+          patches.push(patch);
+          return {
+            dailyBudgetUsd: null,
+            autoSettleAfterDays: 3,
+          } as AppSettings;
+        },
+      }),
+    );
+    const area = m.query("[data-pr-instructions]") as HTMLTextAreaElement;
+    assert.ok(area, "PR instructions textarea");
+    assert.equal(area.value, "");
+    assert.equal(
+      area.getAttribute("placeholder"),
+      "e.g. Start with the user-facing outcome; include a Testing section",
+    );
+    const blur = () =>
+      act(async () => {
+        area.dispatchEvent(
+          new area.ownerDocument.defaultView!.FocusEvent("focusout", {
+            bubbles: true,
+          }),
+        );
+      });
+    await blur();
+    assert.equal(patches.length, 0, "unchanged empty does not save");
+    await m.type(area, "  Start with the user-facing outcome.  ");
+    await blur();
+    assert.deepEqual(patches, [
+      { prInstructions: "Start with the user-facing outcome." },
+    ]);
+    m.unmount();
+  });
+});
+
 describe("SettingsModal worker model pool (issue #467)", () => {
   const namedPool: SubagentPool = {
     defaultAlias: "fast",

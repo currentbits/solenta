@@ -95,6 +95,12 @@ export interface ProjectInfo {
    */
   worktreeRetention?: number;
   /**
+   * Per-project override of settings.defaultWorktree (#1775): true/false
+   * pins this project's new threads into/out of a worktree regardless of
+   * the global default; null/absent follows the global setting.
+   */
+  defaultWorktree?: boolean | null;
+  /**
    * User override (#610): a path relative to the project checkout. Absent
    * means Automatic (detect from favicon / t3.json / HTML). Never an
    * absolute path.
@@ -409,6 +415,8 @@ export interface ProjectUpdateInput {
   autoPr?: boolean;
   /** Worktree retention (#316 / #559): 0 keeps everything, N > 0 sets the keep count. Default 10. */
   worktreeRetention?: number;
+  /** Per-project default-worktree override (#1775); null restores "use the global setting". */
+  defaultWorktree?: boolean | null;
   /** Secondary folders (#514), absolute paths. Empty / null clears them. */
   folders?: string[] | null;
   /**
@@ -813,6 +821,16 @@ export interface ThreadInfo {
    * can then only arise from raced writes, not normal use.
    */
   pinnedAt: number | null;
+  /**
+   * Manual drag order within its section (#1769). Null/absent = unordered:
+   * the thread sorts after every keyed thread in that section, in today's
+   * order. Only read inside the pinned and active sections of the flat
+   * sidebar (buildFlatSidebar) — settled/snoozed/archived ignore it.
+   * Dragging (or Alt+Shift+ArrowUp/Down) assigns a fresh midpoint between
+   * its new neighbors; the section renumbers itself when keys collapse too
+   * close to divide further. See src/threadOrder.ts.
+   */
+  sortKey?: number | null;
   /**
    * Snooze: hidden from the attention list until this epoch ms passes.
    * Snooze is VISIBILITY ONLY — it never touches the agent, suspends a pin
@@ -1462,6 +1480,8 @@ export interface SubagentInfo {
   status: "running" | "done" | "failed";
   /** Latest progress the CLI reported for a running agent (#1522). */
   activity?: { text: string; at: number };
+  /** Row-creation timestamp (#1775), for the Background jobs list. Absent on rows written before this field existed. */
+  startedAt?: number;
 }
 
 /** Scope for threads:summaries (#1398). Omitted = every thread. */
@@ -1556,6 +1576,8 @@ export interface AttachmentInfo {
   name: string;
   /** Source format when the host transcoded it, e.g. "HEIC" -> JPEG (#463). */
   convertedFrom?: string;
+  /** Original pixel size when the host downscaled an oversize image (#1773). */
+  resizedFrom?: { width: number; height: number };
 }
 
 /** Per-thread inbound policy for cross-thread messages (issue #551). */
@@ -2440,6 +2462,15 @@ export interface VerifyResult {
   artifactIds?: string[];
 }
 
+/** One thread's outcome from threads.regenerateTitle (issue #1774). */
+export interface RegenerateTitleResult {
+  threadId: string;
+  /** New title, present on success. */
+  title?: string;
+  /** Failure reason; present on failure, with the old title left in place. */
+  error?: string;
+}
+
 /**
  * Result of a per-project setup or named quick action (issue #153).
  * Failure is a result, not a throw, matching runVerify.
@@ -2657,6 +2688,17 @@ export interface TerminalState {
   startedAt: number;
   /** The shell is still running in a checkout the thread has since left. */
   staleRoot: boolean;
+}
+
+/**
+ * Result of `terminal.isBusy`: whether anything other than the login shell
+ * is running right now (#1773), checked on demand before Close confirms.
+ */
+export interface TerminalBusyState {
+  running: boolean;
+  busy: boolean;
+  /** Foreground process name, e.g. "npm", when busy is true. */
+  command: string | null;
 }
 
 /** Batched live output for one terminal, pushed on "terminal:data". */
@@ -2984,6 +3026,9 @@ export interface PrDetail {
   changedFiles?: number;
   mergeable?: "MERGEABLE" | "CONFLICTING" | "UNKNOWN";
   updatedAt?: string;
+  reviewDecision?: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED";
+  /** CI bucket counts, for the PR hover card (#1771). Absent when gh has none to report. */
+  checks?: { passing: number; failing: number; pending: number };
   comments: PrComment[];
 }
 
@@ -3853,6 +3898,21 @@ export interface AppSettings {
    * words" prompt.
    */
   titleInstructions: string;
+  /**
+   * Extra instructions appended to the generated commit message prompt
+   * (issue #1774, electron/commitmsg.js buildPrompt), as a "Follow these
+   * instructions from the user:" block that takes precedence over the
+   * default conventional-commits style. Trimmed, capped at
+   * COMMIT_MESSAGE_INSTRUCTIONS_MAX (~1000) chars. Default "".
+   */
+  commitMessageInstructions: string;
+  /**
+   * Extra instructions appended to the generated PR title/body prompt
+   * (issue #1774, electron/commitmsg.js buildPrPrompt), same shape as
+   * commitMessageInstructions. The repo's PR template still applies.
+   * Trimmed, capped at PR_INSTRUCTIONS_MAX (~1000) chars. Default "".
+   */
+  prInstructions: string;
   /**
    * PR size cap in changed lines (additions + deletions vs the base branch),
    * enforced when a PR is created from the app (issue #402, DORA small
@@ -5835,6 +5895,16 @@ export interface CoderApi {
      */
     setPinned(input: { threadId: string; pinned: boolean }): Promise<ThreadInfo>;
     /**
+     * Persist a manual drag/keyboard reorder position within the pinned or
+     * active section (#1769), or clear it with null. The caller computes the
+     * new key (src/threadOrder.ts); this is a plain field write, same as
+     * setPinned. Never bumps updatedAt.
+     */
+    setSortKey(input: {
+      threadId: string;
+      sortKey: number | null;
+    }): Promise<ThreadInfo>;
+    /**
      * Persist or clear the type-ahead queue (issue #137). prompt === null
      * clears; a non-null prompt APPENDS to any existing queue so two mid-run
      * sends cannot race-replace each other across the async hop — unless
@@ -6097,6 +6167,19 @@ export interface CoderApi {
      * empty title. Never bumps updatedAt.
      */
     rename(input: { threadId: string; title: string }): Promise<ThreadInfo>;
+    /**
+     * Regenerate one or more thread titles from each thread's first user
+     * message plus a digest of its latest messages (issue #1774), so a
+     * thread that drifted gets retitled for what it is about now. Always
+     * an explicit user action (menu item, bulk action): unlike the
+     * automatic one-shot title, it overwrites any existing title,
+     * including one the user set by hand. Runs at most 2 threads
+     * concurrently; trashed threads are skipped. One thread's failure
+     * leaves its old title and does not stop the others.
+     */
+    regenerateTitle(input: {
+      threadIds: string[];
+    }): Promise<RegenerateTitleResult[]>;
     /**
      * Fork / hand off a thread: creates a NEW thread in the same project,
      * copying provider/model/permissionMode unless overridden (a provider
@@ -7122,6 +7205,8 @@ export interface CoderApi {
     list(input: { threadId: string }): Promise<string[]>;
     /** Kill the shell and drop its scrollback; `keep` ends it but keeps the scrollback. */
     close(input: { threadId: string; termId?: string; keep?: boolean }): Promise<TerminalState>;
+    /** Whether a foreground command (not just the login shell) is running, so Close can confirm (#1773). */
+    isBusy(input: { threadId: string; termId?: string }): Promise<TerminalBusyState>;
     /**
      * Type a provider's login command into a fresh "signin" shell (#1501):
      * the thread's when one is given, else a dedicated one in the home
