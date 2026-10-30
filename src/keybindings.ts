@@ -222,6 +222,19 @@ export const KEYBINDINGS: readonly KeybindingDef[] = [
     scope: "window",
     chord: "mod+.",
   },
+  {
+    id: "thread.togglePin",
+    label: "Pin / unpin the open thread",
+    scope: "window",
+    chord: "mod+shift+p",
+  },
+  {
+    id: "thread.toggleSettle",
+    label: "Settle / restore the open thread",
+    scope: "window",
+    // mod+shift+s is composer.unstash; this is the next free slot.
+    chord: "mod+shift+a",
+  },
 ];
 
 const BY_ID = new Map(KEYBINDINGS.map((def) => [def.id, def]));

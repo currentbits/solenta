@@ -29,6 +29,8 @@ import { ArchiveToast } from "./components/ArchiveToast";
 import { ResumeNotice } from "./components/ResumeNotice";
 import { UNDO_WINDOW_MS, useUndoLast } from "./app/useUndoLast";
 import { bindingLabel, matchesBinding } from "./keybindings";
+import { isPinned } from "./threadSnooze";
+import { AUTO_SETTLE_AFTER_DAYS, effectiveSettled } from "./threadSettle";
 import {
   canDetachThread,
   detachThread,
@@ -97,7 +99,7 @@ import { useThreadRoster } from "./app/useThreadRoster";
 import { useCrewHandlers } from "./app/useCrewHandlers";
 import { useOnboarding } from "./app/useOnboarding";
 import { useIssueStarters } from "./app/useIssueStarters";
-import { useAppShortcuts } from "./app/useAppShortcuts";
+import { dialogOpen, useAppShortcuts } from "./app/useAppShortcuts";
 import { useSidebarResize } from "./app/useSidebarResize";
 import { lazyNamed } from "./lazyNamed";
 
@@ -1331,6 +1333,39 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+
+  // ⌘⇧P / ⌘⇧A toggle pin and settle for the open thread (#1770). Both
+  // bindings use mod, so unlike plain-letter shortcuts they still fire while
+  // a text field is focused; only an open dialog blocks them.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || dialogOpen()) return;
+      const pin = matchesBinding(e, "thread.togglePin");
+      const settle = !pin && matchesBinding(e, "thread.toggleSettle");
+      if (!pin && !settle) return;
+      const threadId = selectedThreadId;
+      const active = threadId
+        ? threadsRef.current.find((t) => t.id === threadId)
+        : undefined;
+      if (!active) return;
+      e.preventDefault();
+      if (pin) {
+        handleSetPinned(active.id, !isPinned(active));
+        return;
+      }
+      const afterDaysProp = settings == null ? undefined : settings.autoSettleAfterDays;
+      const settled = effectiveSettled(active, {
+        now: Date.now(),
+        autoSettleAfterDays:
+          afterDaysProp === undefined ? AUTO_SETTLE_AFTER_DAYS : afterDaysProp,
+        autoSettleOnMerge:
+          (settings == null ? undefined : settings.autoSettleOnMerge) !== false,
+      });
+      handleSetSettled(active.id, settled ? "active" : "settled");
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selectedThreadId, handleSetPinned, handleSetSettled, settings]);
 
   // Close the center Changes panel when switching threads (old behavior).
   useEffect(() => {
