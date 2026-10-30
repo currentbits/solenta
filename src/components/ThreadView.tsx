@@ -3222,6 +3222,15 @@ export const ThreadView = memo(function ThreadView({
                   setMenuOpen((v) => !v);
                   setDeleteConfirm(false);
                 }}
+                onDoubleClick={(e) => {
+                  if (!onRenameThread) return;
+                  // A real dblclick fires two clicks first (toggle cancels
+                  // itself out), then this handler: force-close the menu the
+                  // clicks may have left open and start the rename instead
+                  // of leaving the menu toggled (#1783, mirrors ThreadCard).
+                  e.preventDefault();
+                  startRename();
+                }}
               >
                 <span className={styles.threadTitle}>{thread.title}</span>
                 <svg

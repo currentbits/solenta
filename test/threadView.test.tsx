@@ -1157,6 +1157,43 @@ describe("ThreadView mounted interactions", () => {
     m.unmount();
   });
 
+  it("double-clicking the title starts an inline rename and Enter saves it (#1783)", async () => {
+    const renamed: string[] = [];
+    const m = await mount(
+      view({
+        onRenameThread: (title) => {
+          renamed.push(title);
+        },
+      }),
+    );
+    const titleBtn = m.query("[data-thread-title-menu]") as HTMLElement | null;
+    assert.ok(titleBtn, "title button");
+    await inAct(() => {
+      titleBtn!.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    });
+    await m.flush();
+    assert.equal(
+      m.query("[data-thread-title-menu]"),
+      null,
+      "dblclick enters rename, not the menu",
+    );
+    const input = m.query("[data-thread-title-input]") as HTMLInputElement | null;
+    assert.ok(input, "inline rename input shows");
+    await m.type(input, "renamed thread");
+    await m.press(input, "Enter");
+    await m.flush();
+    assert.deepEqual(renamed, ["renamed thread"]);
+    m.unmount();
+  });
+
+  it("a single click still opens the title menu (no rename without a dblclick)", async () => {
+    const m = await mount(view({ onRenameThread: () => {} }));
+    await m.click(m.query("[data-thread-title-menu]"));
+    assert.ok(m.query("[data-rename-thread]"), "menu opened on a single click");
+    assert.equal(m.query("[data-thread-title-input]"), null, "no rename started");
+    m.unmount();
+  });
+
   it("copies a user message's text via the same copy button as assistant replies (#1783)", async () => {
     const copied: string[] = [];
     Object.defineProperty(navigator, "clipboard", {
