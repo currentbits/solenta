@@ -175,6 +175,7 @@ function view(props: {
   ) => void;
   onRenameThread?: (title: string) => void | Promise<void>;
   onExportReport?: (input: { threadId: string }) => Promise<string | null>;
+  onExportReportMarkdown?: (input: { threadId: string }) => Promise<string | null>;
   onSetCrossThreadInbound?: (
     policy: "accept" | "queue-only" | "refuse",
   ) => void | Promise<void>;
@@ -227,6 +228,7 @@ function view(props: {
       onCreateThread={props.onCreateThread}
       onRenameThread={props.onRenameThread}
       onExportReport={props.onExportReport}
+      onExportReportMarkdown={props.onExportReportMarkdown}
       onStartRun={props.onStartRun ?? (() => {})}
       onStartWorkflow={() => {}}
       onSaveWorkflow={noopSave}
@@ -1693,6 +1695,48 @@ describe("export bug report (#394)", () => {
     await m.flush();
     assert.deepEqual(asked, ["t1", "t1"]);
     assert.equal(label(), "Saved");
+    m.unmount();
+  });
+});
+
+describe("export as Markdown (#1783)", () => {
+  it("calls the Markdown export IPC and flashes Saved; a cancel stays quiet", async () => {
+    const asked: string[] = [];
+    let result: string | null = null;
+    const m = await mount(
+      view({
+        onExportReportMarkdown: async ({ threadId }) => {
+          asked.push(threadId);
+          return result;
+        },
+      }),
+    );
+    await m.flush();
+    await m.click(m.query("[aria-label='Thread actions']"));
+    const label = () =>
+      (m.query("[data-export-report-markdown]")?.textContent || "").trim();
+    assert.equal(label(), "Export as Markdown…");
+    await m.click(m.query("[data-export-report-markdown]"));
+    await m.flush();
+    assert.equal(label(), "Export as Markdown…", "cancelled dialog: no flash");
+    result = "/tmp/t1-report.md";
+    await m.click(m.query("[data-export-report-markdown]"));
+    await m.flush();
+    assert.deepEqual(asked, ["t1", "t1"]);
+    assert.equal(label(), "Saved");
+    m.unmount();
+  });
+
+  it("sits next to the HTML export item and is absent when not wired", async () => {
+    const m = await mount(view({ onExportReport: async () => null }));
+    await m.flush();
+    await m.click(m.query("[aria-label='Thread actions']"));
+    assert.ok(m.query("[data-export-report]"), "HTML export present");
+    assert.equal(
+      m.query("[data-export-report-markdown]"),
+      null,
+      "Markdown export hidden without the handler",
+    );
     m.unmount();
   });
 });

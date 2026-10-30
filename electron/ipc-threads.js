@@ -709,6 +709,10 @@ module.exports = {
     const { exportThreadReport } = require("./threadReport.js");
     return exportThreadReport(ctx, input && input.threadId);
   },
+  "threads:exportReportMarkdown": async (ctx, input) => {
+    const { exportThreadReportMarkdown } = require("./threadReport.js");
+    return exportThreadReportMarkdown(ctx, input && input.threadId);
+  },
   "threads:runCommand": async (ctx, input) => {
     return services.runCommand(ctx.store, input, {
       runner: ctx.runner,

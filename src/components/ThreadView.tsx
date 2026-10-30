@@ -440,6 +440,8 @@ interface ThreadViewProps {
   onRegenerateTitle?: () => void | Promise<void>;
   /** Save a redacted HTML bug report (#394); null = dialog cancelled. */
   onExportReport?: (input: { threadId: string }) => Promise<string | null>;
+  /** Save a redacted Markdown transcript (#1783); null = dialog cancelled. */
+  onExportReportMarkdown?: (input: { threadId: string }) => Promise<string | null>;
   /**
    * New thread in this project, same default as the sidebar "New thread"
    * button (Settings defaultWorktree / orchestrator; remotes stay plain).
@@ -863,6 +865,7 @@ export const ThreadView = memo(function ThreadView({
   onRenameThread,
   onRegenerateTitle,
   onExportReport,
+  onExportReportMarkdown,
   onCreateThread,
   onRepeatSchedule,
   onDistillWorkflow,
@@ -1123,7 +1126,9 @@ export const ThreadView = memo(function ThreadView({
   /** Bumps after a successful push so the sync pill refetches. */
   const [syncRefreshNonce, setSyncRefreshNonce] = useState(0);
   /** Brief inline confirmation after copying the thread id, `/copy`, or exporting a report. */
-  const [copied, setCopied] = useState<"id" | "link" | "reply" | "report" | "report-failed" | null>(null);
+  const [copied, setCopied] = useState<
+    "id" | "link" | "reply" | "report" | "report-failed" | "report-md" | "report-md-failed" | null
+  >(null);
   /** Header quick action currently in flight (issue #153). */
   const [commandRunningId, setCommandRunningId] = useState<string | null>(null);
   const [commandError, setCommandError] = useState<string | null>(null);
@@ -2899,6 +2904,15 @@ export const ThreadView = memo(function ThreadView({
     }
   };
 
+  const handleExportReportMarkdown = async () => {
+    if (!onExportReportMarkdown) return;
+    try {
+      if (await onExportReportMarkdown({ threadId: thread.id })) flashCopied("report-md");
+    } catch {
+      flashCopied("report-md-failed");
+    }
+  };
+
   const hasVersionControl =
     Boolean(gitSyncInfo && gitFetch) || headerCommands.length > 0;
   // A brand-new draft's header is just terminal + right panel (#1411): no
@@ -3354,6 +3368,22 @@ export const ThreadView = memo(function ThreadView({
                             : copied === "report-failed"
                               ? "Export failed"
                               : "Export bug report…"}
+                        </button>
+                      )}
+                      {onExportReportMarkdown && (
+                        <button
+                          type="button"
+                          className={styles.menuItem}
+                          role="menuitem"
+                          data-export-report-markdown=""
+                          title="Transcript as plain Markdown, with secrets redacted"
+                          onClick={() => void handleExportReportMarkdown()}
+                        >
+                          {copied === "report-md"
+                            ? "Saved"
+                            : copied === "report-md-failed"
+                              ? "Export failed"
+                              : "Export as Markdown…"}
                         </button>
                       )}
                       {onRenameThread && !isWorking && (
