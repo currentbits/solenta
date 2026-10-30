@@ -1919,6 +1919,85 @@ describe("SettingsModal combine queued follow-ups (#468)", () => {
   });
 });
 
+describe("SettingsModal idle Claude compaction (#1765)", () => {
+  it("is off by default and saves the toggle", async () => {
+    const patches: Partial<AppSettings>[] = [];
+    const m = await mount(
+      modal({
+        initialPane: "threads",
+        settings: {
+          dailyBudgetUsd: null,
+          autoSettleAfterDays: 3,
+        } as AppSettings,
+        onSaveSettings: async (patch) => {
+          patches.push(patch);
+          return {
+            dailyBudgetUsd: null,
+            autoSettleAfterDays: 3,
+            idleCompactClaudeThreads: patch.idleCompactClaudeThreads === true,
+          } as AppSettings;
+        },
+      }),
+    );
+    const box = m.query(
+      "[data-idle-compact-claude-threads]",
+    ) as HTMLInputElement;
+    assert.ok(box, "idle compact checkbox");
+    assert.equal(box.checked, false);
+    assert.match(m.text(), /spends one turn/);
+    await m.click(box);
+    assert.equal(patches.length, 1);
+    assert.equal(patches[0].idleCompactClaudeThreads, true);
+    m.unmount();
+  });
+});
+
+describe("SettingsModal thread title instructions (#1765)", () => {
+  it("saves a trimmed value on blur and clears to empty", async () => {
+    const patches: Partial<AppSettings>[] = [];
+    const m = await mount(
+      modal({
+        initialPane: "threads",
+        settings: {
+          dailyBudgetUsd: null,
+          autoSettleAfterDays: 3,
+          titleInstructions: "",
+        } as AppSettings,
+        onSaveSettings: async (patch) => {
+          patches.push(patch);
+          return {
+            dailyBudgetUsd: null,
+            autoSettleAfterDays: 3,
+          } as AppSettings;
+        },
+      }),
+    );
+    const area = m.query("[data-title-instructions]") as HTMLTextAreaElement;
+    assert.ok(area, "title instructions textarea");
+    assert.equal(area.value, "");
+    assert.equal(
+      area.getAttribute("placeholder"),
+      "e.g. Start with the issue number. Lowercase.",
+    );
+    const blur = () =>
+      act(async () => {
+        area.dispatchEvent(
+          new area.ownerDocument.defaultView!.FocusEvent("focusout", {
+            bubbles: true,
+          }),
+        );
+      });
+    await blur();
+    assert.equal(patches.length, 0, "unchanged empty does not save");
+    await m.type(area, "  Start with the issue number.  ");
+    await blur();
+    assert.deepEqual(patches, [
+      { titleInstructions: "Start with the issue number." },
+    ]);
+    m.unmount();
+  });
+});
+
 describe("SettingsModal worker model pool (issue #467)", () => {
   const namedPool: SubagentPool = {
     defaultAlias: "fast",
