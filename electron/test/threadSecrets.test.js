@@ -66,12 +66,12 @@ describe("threadSecrets persistence (#1744)", () => {
 
   it("retireAgent (archive / settle / delete) clears it from memory and disk", () => {
     threadSecrets.set("t1", "API_KEY", VALUE);
-    threadSecrets.set("t2", "API_KEY", "other-thread-val");
+    threadSecrets.set("t2", "API_KEY", "dummy-other-thread");
     retireAgent({ runner: {} }, "t1");
     assert.equal(threadSecrets.withEnv("t1", undefined), undefined);
     relaunch();
     assert.equal(threadSecrets.withEnv("t1", undefined), undefined);
-    assert.deepEqual(threadSecrets.withEnv("t2", undefined), { API_KEY: "other-thread-val" });
+    assert.deepEqual(threadSecrets.withEnv("t2", undefined), { API_KEY: "dummy-other-thread" });
   });
 
   it("seals values on disk when encryption is on, and drops what it cannot open", () => {
