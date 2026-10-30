@@ -10,6 +10,7 @@ export function BatchBar({
   batchFeedback,
   runBatchArchive,
   runBatchSettle,
+  runBatchRegenerateTitle,
   clearMulti,
   setBatchFeedback,
 }: {
@@ -17,6 +18,8 @@ export function BatchBar({
   batchFeedback: string | null;
   runBatchArchive: () => Promise<void>;
   runBatchSettle: () => Promise<void>;
+  /** Regenerate titles for every selected thread (issue #1774). */
+  runBatchRegenerateTitle?: () => Promise<void>;
   clearMulti: () => void;
   setBatchFeedback: Dispatch<SetStateAction<string | null>>;
 }) {
@@ -48,6 +51,16 @@ export function BatchBar({
           >
             Settle
           </button>
+          {runBatchRegenerateTitle && (
+            <button
+              type="button"
+              className={styles.batchBtn}
+              data-batch-regenerate-title=""
+              onClick={() => void runBatchRegenerateTitle()}
+            >
+              Regenerate titles
+            </button>
+          )}
           <button
             type="button"
             className={styles.batchBtn}

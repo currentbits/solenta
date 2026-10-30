@@ -14,6 +14,7 @@ import type {
   ConflictForecast,
   ProjectInfo,
   ProviderInfo,
+  RegenerateTitleResult,
   StayAwakeMode,
   StayAwakeStatus,
   TeleportTarget,
@@ -257,6 +258,13 @@ export interface SidebarProps {
   onTeleport?: (threadId: string, target: TeleportTarget | null) => void | Promise<void>;
   /** Rename a thread from the row menu. */
   onRenameThread?: (threadId: string, title: string) => void | Promise<void>;
+  /**
+   * Regenerate one or more thread titles from current activity (#1774).
+   * Row menu (one id) and the multi-select bulk action (many).
+   */
+  onRegenerateTitle?: (
+    threadIds: string[],
+  ) => Promise<RegenerateTitleResult[]>;
   /** Archive a thread (batch toolbar). */
   onSetArchived?: (threadId: string, archived: boolean) => void | Promise<void>;
   /** Clear the settled tail: archive all settled threads (Synara-style, undo via toast). */
@@ -388,6 +396,7 @@ export const Sidebar = memo(function Sidebar({
   onSetEjected,
   onTeleport,
   onRenameThread,
+  onRegenerateTitle,
   onSetArchived,
   onClearSettled,
   trashedThreads = [],
@@ -528,6 +537,10 @@ export const Sidebar = memo(function Sidebar({
   );
   const [selectAnchor, setSelectAnchor] = useState<string | null>(null);
   const [batchFeedback, setBatchFeedback] = useState<string | null>(null);
+  /** Rows with a title regeneration in flight (#1774); cheap inline state. */
+  const [regeneratingTitles, setRegeneratingTitles] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [cmdHeld, setCmdHeld] = useState(false);
   const [keyboardSheetOpen, setKeyboardSheetOpen] = useState(false);
   const settleOpts = useMemo(
@@ -964,6 +977,46 @@ export const Sidebar = memo(function Sidebar({
     setMultiSelected(new Set());
   }, [multiSelected, onSetSettled, threads]);
 
+  const regenerateTitles = useCallback(
+    async (ids: string[]) => {
+      if (!onRegenerateTitle || ids.length === 0) return;
+      setRegeneratingTitles((prev) => new Set([...prev, ...ids]));
+      try {
+        const results = await onRegenerateTitle(ids);
+        const failed = results.filter((r) => r.error).length;
+        const ok = results.length - failed;
+        setBatchFeedback(
+          failed === 0
+            ? ok === 1
+              ? "1 title regenerated"
+              : `${ok} titles regenerated`
+            : `${ok} titles regenerated, ${failed} failed`,
+        );
+      } finally {
+        setRegeneratingTitles((prev) => {
+          const next = new Set(prev);
+          for (const id of ids) next.delete(id);
+          return next;
+        });
+      }
+    },
+    [onRegenerateTitle],
+  );
+
+  const runBatchRegenerateTitle = useCallback(async () => {
+    if (multiSelected.size === 0) return;
+    const ids = [...multiSelected];
+    await regenerateTitles(ids);
+    setMultiSelected(new Set());
+  }, [multiSelected, regenerateTitles]);
+
+  // Stable identity (issue #617): an inline arrow in renderCard would bust
+  // ThreadCard's memo on every render.
+  const regenerateTitleRow = useCallback(
+    (threadId: string) => regenerateTitles([threadId]),
+    [regenerateTitles],
+  );
+
   const createInTargetProject = useCallback(() => {
     if (!createTargetProject) return;
     onCreateThread(createTargetProject.id);
@@ -1286,6 +1339,8 @@ export const Sidebar = memo(function Sidebar({
         onSetEjected={onSetEjected}
         onTeleport={onTeleport}
         onRenameThread={onRenameThread}
+        onRegenerateTitle={onRegenerateTitle ? regenerateTitleRow : undefined}
+        regeneratingTitle={regeneratingTitles.has(thread.id)}
         onFork={onFork}
         listMoveProjects={listMoveProjects}
         nested={compact}
@@ -2129,6 +2184,9 @@ export const Sidebar = memo(function Sidebar({
         batchFeedback={batchFeedback}
         runBatchArchive={runBatchArchive}
         runBatchSettle={runBatchSettle}
+        runBatchRegenerateTitle={
+          onRegenerateTitle ? runBatchRegenerateTitle : undefined
+        }
         clearMulti={clearMulti}
         setBatchFeedback={setBatchFeedback}
       />

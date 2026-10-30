@@ -433,6 +433,8 @@ interface ThreadViewProps {
   ) => void | Promise<void>;
   /** Rename the open thread (header overflow). */
   onRenameThread?: (title: string) => void | Promise<void>;
+  /** Regenerate the open thread's title from current activity (#1774). */
+  onRegenerateTitle?: () => void | Promise<void>;
   /** Save a redacted HTML bug report (#394); null = dialog cancelled. */
   onExportReport?: (input: { threadId: string }) => Promise<string | null>;
   /**
@@ -853,6 +855,7 @@ export const ThreadView = memo(function ThreadView({
   onSetArchived,
   onSetCrossThreadInbound,
   onRenameThread,
+  onRegenerateTitle,
   onExportReport,
   onCreateThread,
   onRepeatSchedule,
@@ -3293,6 +3296,20 @@ export const ThreadView = memo(function ThreadView({
                           onClick={startRename}
                         >
                           Rename thread
+                        </button>
+                      )}
+                      {onRegenerateTitle && !isWorking && (
+                        <button
+                          type="button"
+                          className={styles.menuItem}
+                          role="menuitem"
+                          data-regenerate-title=""
+                          onClick={() => {
+                            setMenuOpen(false);
+                            void onRegenerateTitle();
+                          }}
+                        >
+                          Regenerate title
                         </button>
                       )}
                     <div className={styles.menuInbound} data-transcript-view-menu="">
