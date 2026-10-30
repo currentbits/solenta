@@ -273,8 +273,11 @@ export const ThreadCard = memo(function ThreadCard({
   const providerId = thread.provider || "";
   // Reactive (#1770): subscribes to composer writes rather than reading
   // localStorage/keptDrafts on every row's render.
-  const hasDraft = useSyncExternalStore(subscribeDrafts, () =>
-    hasNonEmptyDraft(thread.id),
+  // Server snapshot: renderToString (prRender tests) has no drafts.
+  const hasDraft = useSyncExternalStore(
+    subscribeDrafts,
+    () => hasNonEmptyDraft(thread.id),
+    () => false,
   );
   const hasLine3 =
     Boolean(thread.branch) ||
