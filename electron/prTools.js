@@ -1,7 +1,7 @@
 "use strict";
 
 /**
- * PR + CI tools for agents (issue #1749, after T3 Code #26751 / #26752).
+ * PR + CI tools for agents (issue #1749).
  * The coder-threads handlers own scoping and the merge gate; this module is
  * the GitHub side, written against a small client ({ remote, gql, rest, text })
  * so tests stub it. The real client rides github.js: one token per host, no
