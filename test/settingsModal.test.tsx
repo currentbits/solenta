@@ -19,11 +19,13 @@ import type { SkillsManagerProps } from "../src/components/SkillsTab";
 import {
   getDivergenceCardEnabled,
   getPasteCardsEnabled,
+  getUsageLimitsStripEnabled,
   setComposerVimEnabled,
   setEnterSendsEnabled,
   setDivergenceCardEnabled,
   setPasteCardsEnabled,
   setRunDurationEnabled,
+  setUsageLimitsStripEnabled,
 } from "../src/uiPrefs";
 import type {
   AgentConfigDoctorReport,
@@ -2760,6 +2762,7 @@ describe("SettingsModal Display group (moved from Environment)", () => {
     setRunDurationEnabled(false);
     setPasteCardsEnabled(true);
     setComposerVimEnabled(false);
+    setUsageLimitsStripEnabled(false);
   });
 
   it("offers vim motions off by default", async () => {
@@ -2810,6 +2813,24 @@ describe("SettingsModal Display group (moved from Environment)", () => {
     assert.equal(window.localStorage.getItem("coder.divergenceCard"), "on");
     assert.equal(window.localStorage.getItem("coder.runDuration"), "on");
     assert.equal(window.localStorage.getItem("coder.pasteCards"), "off");
+    m.unmount();
+  });
+
+  it("offers the usage limits strip off by default (#1755)", async () => {
+    setUsageLimitsStripEnabled(false);
+    const m = await mount(modal());
+    const card = m.query("[data-display-prefs]");
+    assert.ok(card, "Display group on General");
+    const box = card.querySelector(
+      "[data-usage-limits-strip-pref]",
+    ) as HTMLInputElement | null;
+    assert.ok(box, "usage limits strip checkbox");
+    assert.equal(box.checked, false);
+    assert.match(card.textContent || "", /Show usage limits in thread/);
+    await m.click(box);
+    assert.equal(box.checked, true);
+    assert.equal(getUsageLimitsStripEnabled(), true);
+    assert.equal(window.localStorage.getItem("coder.usageLimitsStrip"), "on");
     m.unmount();
   });
 });

@@ -6,6 +6,7 @@ import {
   useState,
   Suspense,
   type CSSProperties,
+  type WheelEvent as ReactWheelEvent,
 } from "react";
 import { useCoder } from "./useCoder";
 import { isDevBuild } from "./coderApi";
@@ -36,11 +37,17 @@ import {
 } from "./detachedWindow";
 import { isShortcutBlocked } from "./sidebarSelection";
 import {
+  canStep,
   EMPTY_HISTORY,
   stepThread,
   visitThread,
   type ThreadHistory,
 } from "./threadHistory";
+import {
+  accumulateSwipe,
+  hasHorizontalScrollAncestor,
+  type SwipeState,
+} from "./swipeNav";
 import { WorkflowsModal } from "./components/WorkflowsModal";
 import {
   PALETTE_ACTIONS,
@@ -1323,21 +1330,57 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   // Back/forward over opened threads (#1506): every selection lands here,
   // whatever opened it; stepping moves the index first so it is not re-pushed.
   const historyRef = useRef<ThreadHistory>(EMPTY_HISTORY);
+  // Bumped whenever historyRef moves, so the sidebar's Back/Forward buttons
+  // (#1752) can recompute without the stack itself living in React state.
+  const [historyTick, setHistoryTick] = useState(0);
+  const historyExists = useCallback(
+    (id: string) => threadsRef.current.some((t) => t.id === id),
+    [],
+  );
   useEffect(() => {
     if (selectedThreadId) {
       historyRef.current = visitThread(historyRef.current, selectedThreadId);
+      setHistoryTick((n) => n + 1);
     }
   }, [selectedThreadId]);
   const goHistory = useCallback(
     (delta: 1 | -1) => {
-      const step = stepThread(historyRef.current, delta, (id) =>
-        threadsRef.current.some((t) => t.id === id),
-      );
+      const step = stepThread(historyRef.current, delta, historyExists);
       if (!step) return;
       historyRef.current = step.history;
+      setHistoryTick((n) => n + 1);
       handleSelectThread(step.id);
     },
-    [handleSelectThread],
+    [handleSelectThread, historyExists],
+  );
+  const goBack = useCallback(() => goHistory(-1), [goHistory]);
+  const goForward = useCallback(() => goHistory(1), [goHistory]);
+  // `threads` isn't read directly here, but it's what historyExists actually
+  // reads (via threadsRef), so it has to be a dep or a delete/archive would
+  // leave a stale button enabled until the next selection change.
+  const canGoBack = useMemo(
+    () => canStep(historyRef.current, -1, historyExists),
+    [historyTick, threads, historyExists],
+  );
+  const canGoForward = useMemo(
+    () => canStep(historyRef.current, 1, historyExists),
+    [historyTick, threads, historyExists],
+  );
+
+  // Trackpad swipe over the thread pane (#1752): a horizontal wheel run past
+  // the threshold commits one step, same as the keyboard/button paths.
+  const swipeStateRef = useRef<SwipeState | null>(null);
+  const handleThreadPaneWheel = useCallback(
+    (e: ReactWheelEvent<HTMLDivElement>) => {
+      // Vertical scroll is most wheel traffic; skip the layout-reading
+      // ancestor walk for it.
+      if (Math.abs(e.deltaX) <= Math.abs(e.deltaY)) return;
+      if (hasHorizontalScrollAncestor(e.target as Element)) return;
+      const { state, commit } = accumulateSwipe(swipeStateRef.current, e, Date.now());
+      swipeStateRef.current = state;
+      if (commit) goHistory(commit);
+    },
+    [goHistory],
   );
 
   useAppShortcuts({
@@ -1826,6 +1869,10 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         providers={providers}
         activeThreadId={selectedThreadId}
         onSelectThread={handleSelectThread}
+        onGoBack={goBack}
+        onGoForward={goForward}
+        canGoBack={canGoBack}
+        canGoForward={canGoForward}
         activeView={view}
         onOpenThreads={openThreads}
         onOpenKanban={openKanban}
@@ -1910,6 +1957,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
           className={styles.threadSlot}
           data-pane="thread"
           inert={narrow && drawer !== null}
+          onWheel={handleThreadPaneWheel}
         >
           <ErrorBoundary pane="Thread view">
           <Suspense fallback={null}>

@@ -160,6 +160,11 @@ export interface SidebarProps {
   providers: ProviderInfo[];
   activeThreadId: string | null;
   onSelectThread: (id: string) => void;
+  /** Back/forward over opened threads (#1752); each disabled with nowhere to go. */
+  onGoBack?: () => void;
+  onGoForward?: () => void;
+  canGoBack?: boolean;
+  canGoForward?: boolean;
   /** Global + uses selected project; per-group New thread passes that projectId. */
   onCreateThread: (
     projectId?: string,
@@ -334,6 +339,10 @@ export const Sidebar = memo(function Sidebar({
   providers,
   activeThreadId,
   onSelectThread,
+  onGoBack,
+  onGoForward,
+  canGoBack = false,
+  canGoForward = false,
   onCreateThread,
   listBaseBranches,
   onAddProject,
@@ -1429,21 +1438,51 @@ export const Sidebar = memo(function Sidebar({
             <span className={styles.brandChannel}>nightly</span>
           )}
         </div>
-        {onCollapseSidebar ? (
+        <div className={styles.headerNav}>
           <button
             type="button"
             className={styles.iconBtn}
-            data-sidebar-collapse=""
-            aria-label="Hide sidebar"
-            title={`Hide sidebar (${bindingLabel("sidebar.toggle", true)})`}
-            onClick={onCollapseSidebar}
+            data-history-back=""
+            aria-label="Back"
+            title={`Back (${bindingLabel("history.back", true)})`}
+            disabled={!canGoBack}
+            onClick={onGoBack}
           >
             <Icon size={15}>
-              <rect x="3" y="3" width="18" height="18" rx="2" />
-              <path d="M9 3v18" />
+              <path d="M19 12H5" />
+              <path d="M12 19l-7-7 7-7" />
             </Icon>
           </button>
-        ) : null}
+          <button
+            type="button"
+            className={styles.iconBtn}
+            data-history-forward=""
+            aria-label="Forward"
+            title={`Forward (${bindingLabel("history.forward", true)})`}
+            disabled={!canGoForward}
+            onClick={onGoForward}
+          >
+            <Icon size={15}>
+              <path d="M5 12h14" />
+              <path d="M12 5l7 7-7 7" />
+            </Icon>
+          </button>
+          {onCollapseSidebar ? (
+            <button
+              type="button"
+              className={styles.iconBtn}
+              data-sidebar-collapse=""
+              aria-label="Hide sidebar"
+              title={`Hide sidebar (${bindingLabel("sidebar.toggle", true)})`}
+              onClick={onCollapseSidebar}
+            >
+              <Icon size={15}>
+                <rect x="3" y="3" width="18" height="18" rx="2" />
+                <path d="M9 3v18" />
+              </Icon>
+            </button>
+          ) : null}
+        </div>
       </header>
 
       <div className={styles.searchRow}>

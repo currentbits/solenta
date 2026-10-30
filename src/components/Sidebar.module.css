@@ -1840,8 +1840,14 @@
   opacity: 0.8;
 }
 
-.header > [data-sidebar-collapse] {
+.headerNav {
+  display: flex;
+  align-items: center;
+  gap: 2px;
   margin-left: auto;
+}
+
+.headerNav [data-sidebar-collapse] {
   width: 26px;
   height: 26px;
 }

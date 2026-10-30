@@ -17,11 +17,13 @@ import {
   setDivergenceCardEnabled,
   setPasteCardsEnabled,
   setRunDurationEnabled,
+  setUsageLimitsStripEnabled,
   useComposerVimEnabled,
   useEnterSendsEnabled,
   useDivergenceCardEnabled,
   usePasteCardsEnabled,
   useRunDurationEnabled,
+  useUsageLimitsStripEnabled,
 } from "../../uiPrefs";
 import styles from "../SettingsModal.module.css";
 import type { SettingsDraftKey, SettingsModalProps } from "../SettingsModal";
@@ -913,6 +915,7 @@ function DisplayPrefsSection() {
   const pasteCards = usePasteCardsEnabled();
   const composerVim = useComposerVimEnabled();
   const enterSends = useEnterSendsEnabled();
+  const usageLimits = useUsageLimitsStripEnabled();
   return (
     <section className={styles.section} data-display-prefs="">
       <h3 className={styles.sectionLabel}>Display</h3>
@@ -961,6 +964,19 @@ function DisplayPrefsSection() {
         />
         <span>Send with Enter (⇧ Enter for a new line)</span>
       </label>
+      <label className={styles.fieldRow}>
+        <input
+          type="checkbox"
+          data-usage-limits-strip-pref=""
+          checked={usageLimits}
+          onChange={(e) => setUsageLimitsStripEnabled(e.target.checked)}
+        />
+        <span>Show usage limits in thread</span>
+      </label>
+      <p className={styles.note}>
+        A quiet strip above the composer with the 5-hour, weekly and
+        context limits as percent left. Off by default.
+      </p>
     </section>
   );
 }
