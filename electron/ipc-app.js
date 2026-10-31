@@ -263,7 +263,7 @@ module.exports = {
     // later list (picker or Agents pane opening) waits for a rate-limited one.
     const first = !providerAuth.started();
     const probing = providerAuth.refresh({
-      instances: services.instanceAuthProbes(ctx.store),
+      instances: services.instanceAuthProbes(ctx.store, ctx.userDataPath),
     });
     if (!first) await probing;
     return services.listProvidersForApi(ctx.store);

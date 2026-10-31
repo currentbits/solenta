@@ -3518,6 +3518,13 @@ export interface ProviderInstance {
   provider: string;
   /** CLAUDE_CONFIG_DIR / CODEX_HOME. null = the CLI's default folder. */
   configDir: string | null;
+  /**
+   * Separate CLI home (#1808), claude/codex only: an exclusive home under
+   * Solenta's userData instead of configDir, with no sharing back to the
+   * CLI's real home. Turning it off reverts to the shared/default home;
+   * the isolated folder is kept on disk, not deleted.
+   */
+  isolatedHome?: boolean;
   /** Extra env for this instance's spawns only. Stored like MCP secrets. */
   env: Record<string, string>;
   /**

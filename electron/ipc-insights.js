@@ -28,7 +28,7 @@ module.exports = {
   "usage:providerLimits": async (ctx) => {
     const { fetchProviderLimits } = require("./providerUsage.js");
     return fetchProviderLimits({
-      instances: require("./services.js").instanceAuthProbes(ctx.store),
+      instances: require("./services.js").instanceAuthProbes(ctx.store, ctx.userDataPath),
     });
   },
   "insights:failureModes": async (ctx) => {

@@ -1470,6 +1470,7 @@ function createClaudeRun(ctx) {
       // A base-provider key (#1714) rides local runs only.
       ...(threadInstanceEnv(store.getSettings(), thread, {
         local: !crossesBoundary(project),
+        userDataPath,
       }) || {}),
       ...otel.claudeEnv(),
       ...(userHookEnv || {}),

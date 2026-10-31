@@ -84,6 +84,9 @@ function isHttpUrl(v) {
  * @property {string} name
  * @property {string} provider
  * @property {string | null} configDir
+ * @property {boolean} [isolatedHome] - claude/codex only (#1808): an
+ *   exclusive home under Solenta's userData instead of configDir, with no
+ *   sharing back to the real CLI home
  * @property {Record<string, string>} env
  * @property {string[]} [extraArgs] - appended to a normal run's argv
  *   (#1780), filtered against EXTRA_ARGS_DENYLIST at parse time
@@ -242,18 +245,21 @@ function parseInstance(item, strict) {
     return fail(`"${name}" is reserved for a built-in provider`);
   }
   let configDir = null;
-  if (
-    !overlay &&
-    CONFIG_DIR_ENV[/** @type {"claude"} */ (provider)] &&
-    rec.configDir != null &&
-    rec.configDir !== ""
-  ) {
-    if (typeof rec.configDir !== "string") return fail("Config folder must be a path");
-    const dir = rec.configDir.trim();
-    if (dir && !path.isAbsolute(dir) && !dir.startsWith("~/")) {
-      return fail("Config folder must be an absolute path");
+  // Separate CLI home (#1808): a computed, exclusive home under Solenta's
+  // userData. Mutually exclusive with a user-typed configDir - isolatedHome
+  // wins, and configDir is dropped on save so toggling it off reverts to
+  // the shared/default home rather than a stale folder.
+  let isolatedHome = false;
+  if (!overlay && CONFIG_DIR_ENV[/** @type {"claude"} */ (provider)]) {
+    isolatedHome = rec.isolatedHome === true;
+    if (!isolatedHome && rec.configDir != null && rec.configDir !== "") {
+      if (typeof rec.configDir !== "string") return fail("Config folder must be a path");
+      const dir = rec.configDir.trim();
+      if (dir && !path.isAbsolute(dir) && !dir.startsWith("~/")) {
+        return fail("Config folder must be an absolute path");
+      }
+      configDir = dir || null;
     }
-    configDir = dir || null;
   }
   /** @type {Record<string, string>} */
   const env = {};
@@ -302,7 +308,17 @@ function parseInstance(item, strict) {
     if (!openaiCompatible) return null;
     return { id, name, provider, configDir: null, env, extraArgs, openaiCompatible };
   }
-  if (provider !== "generic") return { id, name, provider, configDir, env, extraArgs };
+  if (provider !== "generic") {
+    return {
+      id,
+      name,
+      provider,
+      configDir,
+      env,
+      extraArgs,
+      ...(isolatedHome ? { isolatedHome: true } : {}),
+    };
+  }
   const command = argvList(rec.command);
   if (!command || command.length === 0 || !command[0].trim()) {
     return fail("Custom CLI command cannot be empty");
@@ -384,14 +400,41 @@ function findInstance(settings, provider, id) {
 }
 
 /**
+ * Computed home for an isolated-home instance (#1808): exclusive, under
+ * Solenta's own userData, never shared with the real CLI home.
+ * @param {string} userDataPath
+ * @param {ProviderInstance} inst
+ * @returns {string}
+ */
+function isolatedHomeDir(userDataPath, inst) {
+  return path.join(String(userDataPath || ""), "provider-homes", inst.id, inst.provider);
+}
+
+/**
  * Env overlay for one spawn of this instance. `~/` expands against `home`.
+ * An isolatedHome instance (#1808) ignores configDir and computes its own
+ * exclusive folder under `userDataPath` instead; without a userDataPath
+ * (callers that have none to give) it falls through with no dir var set,
+ * same as a fresh instance with no folder.
  * @param {ProviderInstance} inst
  * @param {string} [home]
+ * @param {string} [userDataPath]
  * @returns {Record<string, string>}
  */
-function instanceEnv(inst, home = require("node:os").homedir()) {
+function instanceEnv(inst, home = require("node:os").homedir(), userDataPath) {
   /** @type {Record<string, string>} */
   const out = { ...inst.env };
+  const dirVar = CONFIG_DIR_ENV[inst.provider];
+  if (dirVar && inst.isolatedHome && userDataPath) {
+    const dir = isolatedHomeDir(userDataPath, inst);
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+    } catch {
+      // The CLI reports the bad path itself.
+    }
+    out[dirVar] = dir;
+    return out;
+  }
   if (inst.configDir) {
     const dir = inst.configDir.startsWith("~/")
       ? path.join(home, inst.configDir.slice(2))
@@ -419,7 +462,7 @@ function instanceEnv(inst, home = require("node:os").homedir()) {
  *
  * @param {{ providerInstances?: unknown } | null | undefined} settings
  * @param {{ provider?: string, providerInstance?: string | null }} thread
- * @param {{ local?: boolean }} [opts]
+ * @param {{ local?: boolean, userDataPath?: string }} [opts]
  * @returns {Record<string, string> | undefined}
  */
 function threadInstanceEnv(settings, thread, opts = {}) {
@@ -435,7 +478,7 @@ function threadInstanceEnv(settings, thread, opts = {}) {
       `This thread's provider instance was removed. Pick a provider in the model picker to continue.`,
     );
   }
-  return instanceEnv(inst);
+  return instanceEnv(inst, undefined, opts.userDataPath);
 }
 
 /**
@@ -549,6 +592,7 @@ module.exports = {
   validateProviderInstances,
   findInstance,
   instanceEnv,
+  isolatedHomeDir,
   threadInstanceEnv,
   threadExtraArgv,
   instanceDisplayName,
