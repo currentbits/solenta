@@ -235,6 +235,14 @@ export const setUsageLimitsStripEnabled = usageLimitsStrip.set;
 export const useUsageLimitsStripEnabled = usageLimitsStrip.use;
 
 /**
+ * Spellcheck underlines in the composer textarea (issue #1801). On by
+ * default; vim mode always forces it off regardless of this setting.
+ */
+const composerSpellcheck = makeFlagPref("coder.composerSpellcheck", true);
+export const setComposerSpellcheckEnabled = composerSpellcheck.set;
+export const useComposerSpellcheckEnabled = composerSpellcheck.use;
+
+/**
  * Wrap long lines in chat code blocks and tables (issue #1782) instead of
  * scrolling them horizontally. Off by default, same as diffWrap.
  */

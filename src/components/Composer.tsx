@@ -148,6 +148,7 @@ import {
   getPasteCardsEnabled,
   setComposerBusyAction,
   setLastReasoningEffort,
+  useComposerSpellcheckEnabled,
   useEnterSendsEnabled,
   useTranscriptViewMode,
   type ComposerBusyAction,
@@ -588,6 +589,7 @@ export const Composer = memo(function Composer({
   const canAttachImages = supportsImagesForModel(currentProviderInfo, model);
   const transcriptView = useTranscriptViewMode();
   const enterSends = useEnterSendsEnabled();
+  const spellcheckEnabled = useComposerSpellcheckEnabled();
   const { vimEnabled, vimMode, setVimMode, vimStateRef } =
     useComposerVim(threadId);
   const [viewOpen, setViewOpen] = useState(false);
@@ -2425,7 +2427,7 @@ export const Composer = memo(function Composer({
           placeholder={placeholder}
           rows={3}
           defaultValue={draftsRef.current[threadId] ?? ""}
-          spellCheck={false}
+          spellCheck={spellcheckEnabled && !vimEnabled}
           autoComplete="off"
           autoCorrect="off"
           autoCapitalize="off"
