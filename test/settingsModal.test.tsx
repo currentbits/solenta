@@ -3968,6 +3968,41 @@ describe("SettingsModal Providers › add and custom providers (#453, #458, #171
     assert.deepEqual({ ...list![0], id: "x" }, { ...INSTANCE, id: "x" });
   });
 
+  it("isolated CLI home (#1808): checking it disables and drops the config folder", async () => {
+    const r = recorder();
+    const m = await mount(modal({ initialPane: "providers", providers: [CLAUDE], settings: { providerInstances: [] } as Partial<AppSettings> as AppSettings, onSaveSettings: r.onSaveSettings }));
+    await m.click(m.query("[data-add-provider]"));
+    await m.click(m.query('[data-add-kind="instance"]'));
+    await m.type(m.query("#instance-name"), "work");
+    await m.type(m.query("#instance-dir"), "~/.claude-work");
+    const toggle = m.query("[data-instance-isolated-home]") as HTMLInputElement;
+    assert.ok(toggle, "separate CLI home checkbox");
+    await m.click(toggle);
+    assert.equal((m.query("#instance-dir") as HTMLInputElement).disabled, true);
+    assert.ok(m.text().includes("You sign in again for this instance"));
+    await m.click(m.queryAll("[data-instance-form] button").find((b) => b.textContent === "Add"));
+    const saved = r.saved.at(-1)?.providerInstances?.[0];
+    assert.equal(saved?.isolatedHome, true);
+    assert.equal(saved?.configDir, null, "the typed folder is dropped in favour of the computed home");
+  });
+
+  it("isolated CLI home (#1808): the instance row shows it instead of a folder path", async () => {
+    const ISO_INSTANCE = { ...INSTANCE, id: "w2", configDir: null, isolatedHome: true };
+    const WORK_ISO: ProviderInfo = { ...WORK, id: "claude:w2", instanceId: "w2" };
+    const m = await mount(
+      modal({
+        initialPane: "providers",
+        providers: [CLAUDE, WORK_ISO],
+        settings: { providerInstances: [ISO_INSTANCE] } as Partial<AppSettings> as AppSettings,
+      }),
+    );
+    await m.click(m.query('[data-provider-row="claude:w2"]'));
+    assert.match(m.text(), /Separate CLI home/);
+    await m.click(m.query('[data-instance-edit="w2"]'));
+    assert.equal((m.query("[data-instance-isolated-home]") as HTMLInputElement).checked, true);
+    assert.equal((m.query("#instance-dir") as HTMLInputElement).disabled, true);
+  });
+
   it("extra launch arguments (#1780): quoted argv parses, denylisted flags show a validation message", async () => {
     const r = recorder();
     const m = await mount(modal({ initialPane: "providers", providers: [CLAUDE], settings: { providerInstances: [] } as Partial<AppSettings> as AppSettings, onSaveSettings: r.onSaveSettings }));
