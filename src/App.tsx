@@ -401,6 +401,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     mentions,
     simulator,
     simulatorStatus,
+    audioByThread,
+    setThreadAudioMuted,
     setVerifyCommand,
     runVerify,
     exportReport,
@@ -2297,6 +2299,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onSetTags={handleSetTags}
         onSetThreadProject={handleSetThreadProject}
         onSetMuted={handleSetMuted}
+        audioByThread={audioByThread}
+        onSetAudioMuted={setThreadAudioMuted}
         onSetEjected={handleSetEjected}
         onTeleport={teleport}
         onRenameThread={handleRenameThread}

@@ -4330,6 +4330,11 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           canGoBack: false,
           canGoForward: false,
         } as PreviewSnapshot),
+      setAudioMuted: (input: unknown) =>
+        rec("preview.setAudioMuted", [input], {
+          ok: true,
+          muted: Boolean((input as { muted?: boolean }).muted),
+        }),
     },
     files: {
       list: (input: unknown) => {

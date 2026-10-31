@@ -141,6 +141,8 @@ export const ThreadCard = memo(function ThreadCard({
   onSetTags,
   onSetThreadProject,
   onSetMuted,
+  audio = null,
+  onSetAudioMuted,
   onSetEjected,
   onTeleport,
   onRenameThread,
@@ -193,6 +195,14 @@ export const ThreadCard = memo(function ThreadCard({
     projectId: string,
   ) => void | Promise<void>;
   onSetMuted?: (threadId: string, muted: boolean) => void | Promise<void>;
+  /**
+   * Browser pane audio indicator (#1807): whether the thread's bound guest
+   * webContents is currently playing audio, and whether it is muted. Null
+   * when the pane has never bound (nothing to show).
+   */
+  audio?: { audible: boolean; muted: boolean } | null;
+  /** Toggle the Browser pane's audio mute from the sidebar indicator (#1807). */
+  onSetAudioMuted?: (threadId: string, muted: boolean) => void | Promise<void>;
   /** Live project list at menu-open time. Stable identity (ref getter). */
   listMoveProjects?: () => readonly ProjectInfo[];
   onSetEjected?: (threadId: string, ejected: boolean) => void | Promise<void>;
@@ -504,6 +514,36 @@ export const ThreadCard = memo(function ThreadCard({
                 <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1" />
               </Icon>
             </span>
+          )}
+          {audio?.audible && (
+            <button
+              type="button"
+              className={styles.iconBtn}
+              aria-label={audio.muted ? "Unmute thread audio" : "Mute thread audio"}
+              title={
+                audio.muted
+                  ? "Audio muted (click to unmute)"
+                  : "Playing audio (click to mute)"
+              }
+              data-audio-indicator={thread.id}
+              data-audio-muted={audio.muted ? "true" : undefined}
+              onClick={(e) => {
+                e.stopPropagation();
+                void onSetAudioMuted?.(thread.id, !audio.muted);
+              }}
+            >
+              <Icon size={12}>
+                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                {audio.muted ? (
+                  <>
+                    <line x1="23" y1="9" x2="17" y2="15" />
+                    <line x1="17" y1="9" x2="23" y2="15" />
+                  </>
+                ) : (
+                  <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+                )}
+              </Icon>
+            </button>
           )}
           <span className={styles.cardSlot}>
             <span className={styles.cardStatus}>

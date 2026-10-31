@@ -259,6 +259,10 @@ export interface SidebarProps {
   ) => void | Promise<void>;
   /** Mute/unmute desktop notifications for one thread. */
   onSetMuted?: (threadId: string, muted: boolean) => void | Promise<void>;
+  /** Browser pane audio indicator (#1807): live audible/muted per thread. */
+  audioByThread?: ReadonlyMap<string, { audible: boolean; muted: boolean }>;
+  /** Toggle the Browser pane's audio mute from the sidebar indicator (#1807). */
+  onSetAudioMuted?: (threadId: string, muted: boolean) => void | Promise<void>;
   /** Eject/reclaim the provider session so the raw CLI can own it (#554). */
   onSetEjected?: (threadId: string, ejected: boolean) => void | Promise<void>;
   /** Teleport to a saved host, or back with null (#1702). */
@@ -409,6 +413,8 @@ export const Sidebar = memo(function Sidebar({
   onSetTags,
   onSetThreadProject,
   onSetMuted,
+  audioByThread,
+  onSetAudioMuted,
   onSetEjected,
   onTeleport,
   onRenameThread,
@@ -1378,6 +1384,8 @@ export const Sidebar = memo(function Sidebar({
         onSetTags={onSetTags}
         onSetThreadProject={onSetThreadProject}
         onSetMuted={onSetMuted}
+        audio={audioByThread?.get(thread.id) ?? null}
+        onSetAudioMuted={onSetAudioMuted}
         onSetEjected={onSetEjected}
         onTeleport={onTeleport}
         onRenameThread={onRenameThread}

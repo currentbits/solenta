@@ -9,6 +9,11 @@ const UI_SCALE_MAX = 1.6;
 const UI_SCALE_STEP = 0.1;
 const UI_SCALE_DEFAULT = 1;
 
+// Trackpad pinch (issue #1807): the visual zoom level cap, like a browser.
+// This is Chromium's compositor-level pinch zoom, separate from
+// webContents.setZoomFactor (uiScale/Cmd+±) which scales CSS px instead.
+const PINCH_ZOOM_MAX = 3;
+
 /**
  * Snap to 0.1 between 0.8 and 1.6. Junk (non-finite) → 1.
  * @param {unknown} raw
@@ -88,12 +93,36 @@ function applyZoom(win, factor, store, getAllWindows) {
   return next;
 }
 
+/**
+ * Enable/disable trackpad pinch-to-magnify on one window (issue #1807).
+ * Disabled is modeled as a locked range (1, 1): Electron has no on/off
+ * switch for setVisualZoomLevelLimits, only a range. A pinch inside the
+ * image lightbox still zooms the image instead of the window: Chromium
+ * delivers the gesture as a ctrl+wheel event to the page first, and the
+ * lightbox's onWheel already calls preventDefault (#1782) before this
+ * visual-zoom path ever sees it.
+ *
+ * @param {import("electron").BrowserWindow | null | undefined} win
+ * @param {unknown} enabled
+ */
+function applyPinchZoom(win, enabled) {
+  const wc = win && !win.isDestroyed?.() ? win.webContents : null;
+  if (!wc || typeof wc.setVisualZoomLevelLimits !== "function") return;
+  try {
+    wc.setVisualZoomLevelLimits(1, enabled ? PINCH_ZOOM_MAX : 1);
+  } catch {
+    // contents destroyed mid-call
+  }
+}
+
 module.exports = {
   UI_SCALE_MIN,
   UI_SCALE_MAX,
   UI_SCALE_STEP,
   UI_SCALE_DEFAULT,
+  PINCH_ZOOM_MAX,
   clampUiScale,
   nudgeUiScale,
   applyZoom,
+  applyPinchZoom,
 };
