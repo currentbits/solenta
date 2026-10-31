@@ -1121,7 +1121,7 @@ function coderShell(): CoderApi["shell"] | undefined {
  * Changes panel uses (#1794). shell:reveal / shell:openPath already accept
  * an attachment's absolute path (electron/ipc-files.js
  * resolveAllowedShellPath allows `<userDataPath>/attachments` alongside the
- * thread worktree) — no new IPC needed.
+ * thread worktree), so no new IPC is needed.
  */
 function attachmentContextMenu(
   e: { preventDefault(): void; clientX: number; clientY: number },
