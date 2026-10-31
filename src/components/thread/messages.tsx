@@ -9,6 +9,7 @@ import {
 import type {
   AttachmentInfo,
   ChatMessage,
+  CoderApi,
   CommandRunResult,
   WorkSuggestion,
 } from "../../shared/ipc";
@@ -40,6 +41,8 @@ import { htmlFromToolOutput } from "../../htmlPage";
 import { Markdown } from "../Markdown";
 import { redactDisplay } from "../../redactDisplay";
 import { lazyNamed } from "../../lazyNamed";
+import { showContextMenu, type ContextMenuItem } from "../../contextMenu";
+import { revealFileLabel } from "./ChangesPanel";
 
 // lazyNamed, not lazy: mount() preloads it, so tests never suspend on it.
 const HtmlPage = lazyNamed(() => import("../HtmlPage").then((m) => m.default));
@@ -1006,11 +1009,14 @@ function TranscriptAttachments({
   onLoadImage,
   pdfText,
   variant = "chips",
+  threadId = null,
 }: {
   attachments: AttachmentInfo[];
   onLoadImage?: (path: string) => Promise<string | null>;
   pdfText?: boolean;
   variant?: "chips" | "images";
+  /** Reveal/Open context menu (#1794) needs the owning thread. */
+  threadId?: string | null;
 }) {
   if (variant === "images") {
     return <ImageOnlyAttachments attachments={attachments} onLoadImage={onLoadImage} />;
@@ -1023,6 +1029,7 @@ function TranscriptAttachments({
           attachment={a}
           onLoadImage={onLoadImage}
           textOnly={Boolean(pdfText) && isPdfAttachment(a)}
+          threadId={threadId}
         />
       ))}
     </div>
@@ -1103,14 +1110,56 @@ function AttachmentImageEl({
   );
 }
 
+/** Desktop-only shell.reveal/openPath, same seam as ChangesPanel's coderShell (#1794). */
+function coderShell(): CoderApi["shell"] | undefined {
+  if (typeof window === "undefined") return undefined;
+  return (window as unknown as { coder?: CoderApi }).coder?.shell;
+}
+
+/**
+ * Right-click an attachment chip: "Open" / reveal-on-disk, same IPCs the
+ * Changes panel uses (#1794). shell:reveal / shell:openPath already accept
+ * an attachment's absolute path (electron/ipc-files.js
+ * resolveAllowedShellPath allows `<userDataPath>/attachments` alongside the
+ * thread worktree) — no new IPC needed.
+ */
+function attachmentContextMenu(
+  e: { preventDefault(): void; clientX: number; clientY: number },
+  attachment: AttachmentInfo,
+  threadId: string | null,
+): void {
+  e.preventDefault();
+  if (!threadId) return;
+  const items: ContextMenuItem[] = [
+    { id: "open", label: "Open", attrs: { "data-attachment-open": "" } },
+    {
+      id: "reveal",
+      label: revealFileLabel(),
+      attrs: { "data-attachment-reveal": "" },
+    },
+  ];
+  void showContextMenu(items, { x: e.clientX, y: e.clientY }).then((id) => {
+    if (!id) return;
+    const shell = coderShell();
+    if (!shell) return;
+    if (id === "open") {
+      void shell.openPath({ threadId, path: attachment.path });
+    } else if (id === "reveal") {
+      void shell.reveal({ threadId, path: attachment.path });
+    }
+  });
+}
+
 function TranscriptAttachmentChip({
   attachment,
   onLoadImage,
   textOnly,
+  threadId = null,
 }: {
   attachment: AttachmentInfo;
   onLoadImage?: (path: string) => Promise<string | null>;
   textOnly?: boolean;
+  threadId?: string | null;
 }) {
   const thumb = useAttachmentThumb(attachment, onLoadImage);
   return (
@@ -1118,6 +1167,7 @@ function TranscriptAttachmentChip({
       className={styles.attachmentChip}
       data-attachment-kind={attachment.kind}
       title={attachment.path}
+      onContextMenu={(e) => attachmentContextMenu(e, attachment, threadId)}
     >
       {attachment.kind === "image" && thumb ? (
         <img
@@ -1288,6 +1338,7 @@ const UserMessageBlock = memo(function UserMessageBlock({
   pinned = false,
   onTogglePin,
   burstPosition = "single",
+  threadId = null,
 }: {
   message: ChatMessage;
   canEdit: boolean;
@@ -1305,6 +1356,8 @@ const UserMessageBlock = memo(function UserMessageBlock({
   onTogglePin?: () => void;
   /** Back-to-back user messages (#1789): position within the bubble group. */
   burstPosition?: BurstPosition;
+  /** Attachment chip context menu (#1794): Reveal/Open need the thread. */
+  threadId?: string | null;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(message.text);
@@ -1579,6 +1632,7 @@ const UserMessageBlock = memo(function UserMessageBlock({
                   attachments={attachments}
                   onLoadImage={onLoadAttachmentImage}
                   pdfText={message.pdfText}
+                  threadId={threadId}
                 />
               )}
             </div>
@@ -1837,6 +1891,7 @@ export const MessageBlock = memo(function MessageBlock({
         pinned={pinned}
         onTogglePin={onTogglePin}
         burstPosition={burstPosition}
+        threadId={threadId}
       />
     );
   }

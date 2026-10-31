@@ -28,18 +28,32 @@ function stripLineSuffix(raw) {
 }
 
 /**
- * Validate a path exists and is the thread root or inside it.
+ * Validate a path exists and is the thread root or inside it, OR is an
+ * absolute path under this install's attachments dir (#1794): chat
+ * attachment chips (pasted images, dropped files) live under
+ * `<userDataPath>/attachments`, outside every thread's worktree, so they
+ * need their own allowed root for "Reveal in Finder" / "Open" to work.
  * Relative paths join against the thread worktree (or project checkout).
  * @param {import('./store').Store} store
+ * @param {string} userDataPath
  * @param {{ threadId?: string, path?: string }} input
  * @returns {string}
  */
-function resolveAllowedShellPath(store, input) {
+function resolveAllowedShellPath(store, userDataPath, input) {
   if (!input || typeof input !== "object") {
     throw new Error("threadId is required");
   }
+  const raw = input.path != null ? String(input.path) : null;
+  if (raw && userDataPath && path.isAbsolute(raw)) {
+    try {
+      return resolveUnderRoot(path.join(userDataPath, "attachments"), raw);
+    } catch {
+      // Not under the attachments dir: fall through to the thread-worktree
+      // check below, whose errors are the ones callers already assert on.
+    }
+  }
   const { root } = resolveThreadRoot(store, input.threadId);
-  return resolveUnderRoot(root, input.path != null ? String(input.path) : root);
+  return resolveUnderRoot(root, raw != null ? raw : root);
 }
 
 /**
@@ -476,11 +490,11 @@ module.exports = {
     };
   },
   "shell:reveal": async (ctx, input) => {
-    const target = resolveAllowedShellPath(ctx.store, input);
+    const target = resolveAllowedShellPath(ctx.store, ctx.userDataPath, input);
     shell.showItemInFolder(target);
   },
   "shell:openPath": async (ctx, input) => {
-    const target = resolveAllowedShellPath(ctx.store, input);
+    const target = resolveAllowedShellPath(ctx.store, ctx.userDataPath, input);
     const err = await shell.openPath(target);
     if (err) throw new Error(err);
   },
@@ -488,7 +502,7 @@ module.exports = {
     return require("./openIn.js").listEditors();
   },
   "shell:openIn": async (ctx, input) => {
-    const target = resolveAllowedShellPath(ctx.store, input);
+    const target = resolveAllowedShellPath(ctx.store, ctx.userDataPath, input);
     await require("./openIn.js").openIn(target, input && input.editor, {
       line: input && input.line,
       col: input && input.column,
