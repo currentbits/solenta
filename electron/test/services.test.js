@@ -2142,14 +2142,17 @@ describe("listThreads rows omit detail-only fields (#1385)", () => {
       store.updateThread(t.id, {
         hypotheses: [{ id: "h1", claim: "c", status: "invalidated" }],
         suggestions: [{ id: "s1", title: "s", prompt: "p", status: "open" }],
+        nextPromptSuggestion: "Run the tests",
       });
       const row = services.listThreads(store).find((r) => r.id === t.id);
       assert.equal("hypotheses" in row, false);
       assert.equal("suggestions" in row, false);
+      assert.equal("nextPromptSuggestion" in row, false);
       assert.equal(row.title, "t");
       const detail = services.getThreadDetail(store, t.id);
       assert.equal(detail.thread.hypotheses.length, 1);
       assert.equal(detail.thread.suggestions.length, 1);
+      assert.equal(detail.thread.nextPromptSuggestion, "Run the tests");
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

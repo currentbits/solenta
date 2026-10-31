@@ -97,6 +97,7 @@ class StoreSettingsMethods {
       notifyEvents: n.notifyEvents,
       notificationProjects: n.notificationProjects,
       feltEstimatePrompt: n.feltEstimatePrompt,
+      suggestNextPrompt: n.suggestNextPrompt,
       uiScale: n.uiScale,
       theme: n.theme,
       agentsPanelDefault: n.agentsPanelDefault,
@@ -402,6 +403,13 @@ class StoreSettingsMethods {
         throw new Error("feltEstimatePrompt must be a boolean");
       }
       this.data.settings.feltEstimatePrompt = v;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "suggestNextPrompt")) {
+      const v = patch.suggestNextPrompt;
+      if (typeof v !== "boolean") {
+        throw new Error("suggestNextPrompt must be a boolean");
+      }
+      this.data.settings.suggestNextPrompt = v;
     }
     if (Object.prototype.hasOwnProperty.call(patch, "uiScale")) {
       const v = patch.uiScale;

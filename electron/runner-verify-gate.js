@@ -15,6 +15,7 @@ const {
 } = require("./verify.js");
 const { prepareVerifyRun } = require("./verifyEfficiency.js");
 const { maybeApplyFmTitle } = require("./fm-title.js");
+const { maybeSuggestNextPrompt } = require("./fm-suggest.js");
 const { refreshRecap } = require("./recap.js");
 const { maybeAutoPr } = require("./autoPr.js");
 
@@ -73,6 +74,22 @@ function createVerifyGate(ctx) {
     void maybeApplyFmTitle(store, threadId)
       .then((title) => {
         if (!title) return;
+        try {
+          pushDetail(threadId);
+          pushThreadsChanged();
+        } catch {
+          // silent
+        }
+      })
+      .catch(() => {});
+    // Labs opt-in (#1806): ghost next-prompt suggestion. maybeSuggestNextPrompt
+    // gates on the setting, automation threads and isAutoTurn itself; push
+    // only when a value actually landed.
+    void maybeSuggestNextPrompt(store, threadId, {
+      isAutoTurn: ctx.isAutoTurn,
+    })
+      .then((suggestion) => {
+        if (suggestion == null) return;
         try {
           pushDetail(threadId);
           pushThreadsChanged();

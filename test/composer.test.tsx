@@ -225,6 +225,7 @@ function composer(
     contextWindow?: number | null;
     contextUsed?: number | null;
     onCompactFirst?: () => void;
+    nextPromptSuggestion?: string | null;
   } = {},
 ) {
   // Seed the emulation from the thread this element renders with, so the
@@ -295,6 +296,9 @@ function composer(
       contextWindow={over.contextWindow}
       contextUsed={over.contextUsed}
       onCompactFirst={over.onCompactFirst}
+      nextPromptSuggestion={
+        over.nextPromptSuggestion === undefined ? null : over.nextPromptSuggestion
+      }
       workspaceStrip={over.workspaceStrip}
       disabled={over.disabled ?? false}
       busy={over.busy ?? false}
@@ -3322,6 +3326,114 @@ describe("Composer effort/fast keyboard shortcuts (#1806)", () => {
     await inAct(() => pressChord("g"));
     await m.flush();
     assert.deepEqual(h.fasts, [], "claude-sonnet-4 has no fast tier");
+    m.unmount();
+  });
+});
+
+describe("Composer next-prompt ghost suggestion (Labs, #1806)", () => {
+  it("is off by default: no ghost without a suggestion", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h));
+    assert.equal(m.query("[data-next-prompt-ghost]"), null);
+    const textarea = m.query("textarea") as HTMLTextAreaElement;
+    assert.doesNotMatch(textarea.placeholder, /Run the tests/);
+    m.unmount();
+  });
+
+  it("shows the suggestion as the empty composer's placeholder", async () => {
+    const h = makeHarness();
+    const m = await mount(
+      composer(h, { nextPromptSuggestion: "Run the tests" }),
+    );
+    const textarea = m.query("textarea") as HTMLTextAreaElement;
+    assert.ok(m.query("[data-next-prompt-ghost]"), "ghost marker renders");
+    assert.equal(textarea.placeholder, "Run the tests");
+    m.unmount();
+  });
+
+  it("hides the ghost while the thread is busy or disabled", async () => {
+    const h = makeHarness();
+    const busy = await mount(
+      composer(h, { nextPromptSuggestion: "Run the tests", busy: true }),
+    );
+    assert.equal(busy.query("[data-next-prompt-ghost]"), null);
+    busy.unmount();
+
+    const disabled = await mount(
+      composer(h, { nextPromptSuggestion: "Run the tests", disabled: true }),
+    );
+    assert.equal(disabled.query("[data-next-prompt-ghost]"), null);
+    disabled.unmount();
+  });
+
+  it("Tab pulls the suggestion into the draft without sending it", async () => {
+    const h = makeHarness();
+    const m = await mount(
+      composer(h, { nextPromptSuggestion: "Run the tests" }),
+    );
+    const textarea = m.query("textarea") as HTMLTextAreaElement;
+    await inAct(() => {
+      textarea.focus();
+      textarea.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Tab",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    });
+    await m.flush();
+    assert.equal(textarea.value, "Run the tests");
+    assert.deepEqual(h.sends, [], "Tab must only fill the draft, never send");
+    m.unmount();
+  });
+
+  it("ArrowRight also accepts the suggestion", async () => {
+    const h = makeHarness();
+    const m = await mount(
+      composer(h, { nextPromptSuggestion: "Run the tests" }),
+    );
+    const textarea = m.query("textarea") as HTMLTextAreaElement;
+    await inAct(() => {
+      textarea.focus();
+      textarea.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "ArrowRight",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    });
+    await m.flush();
+    assert.equal(textarea.value, "Run the tests");
+    m.unmount();
+  });
+
+  it("typing dismisses the ghost and Enter on an empty draft never sends it implicitly", async () => {
+    const h = makeHarness();
+    const m = await mount(
+      composer(h, { nextPromptSuggestion: "Run the tests" }),
+    );
+    const textarea = m.query("textarea") as HTMLTextAreaElement;
+    assert.ok(m.query("[data-next-prompt-ghost]"), "ghost starts visible");
+    // Enter on the still-empty composer (before any typing) must not send
+    // the ghost text: it never reached the actual draft value.
+    await inAct(() => {
+      textarea.focus();
+      textarea.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Enter",
+          metaKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    });
+    await m.flush();
+    assert.deepEqual(h.sends, [], "an empty draft has nothing to send");
+
+    await m.type(textarea, "s");
+    assert.equal(m.query("[data-next-prompt-ghost]"), null, "typing dismisses it");
     m.unmount();
   });
 });

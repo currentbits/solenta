@@ -5761,6 +5761,7 @@ export const ThreadView = memo(function ThreadView({
         workflowListError={workflowListError}
         onRetryWorkflows={onRetryWorkflows}
         sessionId={thread.sessionId}
+        nextPromptSuggestion={thread.nextPromptSuggestion ?? null}
         contextWindow={composerContextWindow}
         contextUsed={detail.usage?.contextTokens ?? null}
         onCompactFirst={nativeCompact ? handleCompact : undefined}
