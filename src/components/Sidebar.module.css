@@ -798,6 +798,10 @@
   color: var(--text-dim);
 }
 
+.statusLabel[data-tone="watching"] {
+  color: var(--text-dim);
+}
+
 .statusLabel[data-dim="true"] {
   opacity: 0.75;
 }

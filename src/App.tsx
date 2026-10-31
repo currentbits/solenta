@@ -1021,6 +1021,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
           ...flat.pinned,
           ...flat.active,
           ...flat.working,
+          ...flat.watching,
           ...flat.snoozed,
         ].map((t) => t.id);
         nextId = nextThreadAfterSettle(order, threadId);

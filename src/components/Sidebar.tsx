@@ -138,6 +138,7 @@ const SCOPE_KEY = "sidebar:projectScope";
 const WORKING_OPEN_KEY = "sidebar:workingOpen";
 const FILTERS_OPEN_KEY = "sidebar:filtersOpen";
 const SNOOZED_OPEN_KEY = "sidebar:snoozedOpen";
+const WATCHING_OPEN_KEY = "sidebar:watchingOpen";
 const SETTLED_OPEN_KEY = "sidebar:settledOpen";
 const WORKER_OPEN_KEY = "sidebar:workerOpen";
 const BULK_ROW_DELTA = 40;
@@ -543,6 +544,9 @@ export const Sidebar = memo(function Sidebar({
   const [snoozedOpen, setSnoozedOpen] = useState(() =>
     loadFlag(SNOOZED_OPEN_KEY, false),
   );
+  const [watchingOpen, setWatchingOpen] = useState(() =>
+    loadFlag(WATCHING_OPEN_KEY, false),
+  );
   const [settledOpen, setSettledOpen] = useState(() =>
     loadFlag(SETTLED_OPEN_KEY, false),
   );
@@ -715,6 +719,8 @@ export const Sidebar = memo(function Sidebar({
     activeFamilies,
     visibleWorking,
     workingFamilies,
+    visibleWatching,
+    watchingFamilies,
     searchFamilies,
   } = useSidebarRows({
     displayThreads,
@@ -841,6 +847,7 @@ export const Sidebar = memo(function Sidebar({
     });
   };
   const workingExpanded = workingOpen || filtersOn;
+  const watchingExpanded = watchingOpen || filtersOn;
   const snoozedExpanded = snoozedOpen || filtersOn;
   const settledExpanded = settledOpen || filtersOn;
 
@@ -894,16 +901,18 @@ export const Sidebar = memo(function Sidebar({
             : null;
     const navFlat =
       groupedRows != null
-        ? { ...flat, pinned: [], active: groupedRows, working: [] }
+        ? { ...flat, pinned: [], active: groupedRows, working: [], watching: [] }
         : {
             ...flat,
             pinned: visiblePinned,
             active: visibleActive,
             working: visibleWorking,
+            watching: visibleWatching,
           };
     return flatVisibleThreadIds({
       flat: navFlat,
       workingOpen: workingExpanded,
+      watchingOpen: watchingExpanded,
       snoozedOpen: snoozedExpanded,
       settledOpen: settledExpanded,
       settledVisibleCount,
@@ -922,7 +931,9 @@ export const Sidebar = memo(function Sidebar({
     visiblePinned,
     visibleActive,
     visibleWorking,
+    visibleWatching,
     workingExpanded,
+    watchingExpanded,
     snoozedExpanded,
     settledExpanded,
     settledVisibleCount,
@@ -1323,6 +1334,13 @@ export const Sidebar = memo(function Sidebar({
     });
   };
 
+  const toggleWatching = () => {
+    setWatchingOpen((open) => {
+      saveFlag(WATCHING_OPEN_KEY, !open);
+      return !open;
+    });
+  };
+
   const toggleSnoozed = () => {
     setSnoozedOpen((open) => {
       saveFlag(SNOOZED_OPEN_KEY, !open);
@@ -1425,6 +1443,9 @@ export const Sidebar = memo(function Sidebar({
   const workingCarve = workingExpanded
     ? null
     : flat.working.find((t) => keepIds.includes(t.id)) ?? null;
+  const watchingCarve = watchingExpanded
+    ? null
+    : flat.watching.find((t) => keepIds.includes(t.id)) ?? null;
   const visibleSnoozed = snoozedExpanded ? flat.snoozed : [];
   const snoozedCarve = snoozedExpanded
     ? null
@@ -1489,6 +1510,7 @@ export const Sidebar = memo(function Sidebar({
     flat.pinned.length +
       flat.active.length +
       flat.working.length +
+      flat.watching.length +
       flat.snoozed.length +
       settledTail.length ===
       0;
@@ -2118,6 +2140,37 @@ export const Sidebar = memo(function Sidebar({
                   {workingExpanded &&
                     visibleWorking.map((thread) =>
                       renderCard(thread, workingFamilies),
+                    )}
+                </div>
+              )}
+
+              {groupBy === "none" && flat.watching.length > 0 && (
+                <div className={styles.shelf} ref={bindListAnimation}>
+                  <button
+                    type="button"
+                    className={styles.shelfToggle}
+                    data-watching-shelf-toggle=""
+                    aria-expanded={watchingExpanded}
+                    onClick={toggleWatching}
+                  >
+                    <span className={styles.shelfLabelSettled}>
+                      {`Watching · ${flat.watching.length}`}
+                    </span>
+                    <span className={styles.shelfRuleSettled} />
+                    <span
+                      className={styles.shelfChevron}
+                      data-open={watchingExpanded}
+                      aria-hidden
+                    >
+                      <Icon size={12}>
+                        <path d="m6 9 6 6 6-6" />
+                      </Icon>
+                    </span>
+                  </button>
+                  {watchingCarve && renderCard(watchingCarve, watchingFamilies)}
+                  {watchingExpanded &&
+                    visibleWatching.map((thread) =>
+                      renderCard(thread, watchingFamilies),
                     )}
                 </div>
               )}

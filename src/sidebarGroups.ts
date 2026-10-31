@@ -263,6 +263,8 @@ export interface FlatSidebar {
   active: ThreadInfo[];
   /** Mid-turn rows nobody needs to look at yet; same order as active. */
   working: ThreadInfo[];
+  /** Idle rows with an active PR watch (#1811); same order as active. */
+  watching: ThreadInfo[];
   /** Wake-soonest first. */
   snoozed: ThreadInfo[];
   /** Wrap-up newest first. */
@@ -272,8 +274,25 @@ export interface FlatSidebar {
 }
 
 /**
+ * PR watch-and-wake (electron/prWatch.js) is active for this thread: there is
+ * an open PR and the user has not turned the watch off. Does not look at the
+ * wake count — a watch past WAKE_CAP has gone quiet but the user turns it
+ * back on by re-arming it, not by it silently leaving the Watching section.
+ * ponytail: the "paused" nuance (prUi.ts prWatchSummary) is skipped here.
+ */
+export function isWatchingPr(t: {
+  prNumber: number | null;
+  prState: "OPEN" | "CLOSED" | "MERGED" | null;
+  prWatch?: boolean | null;
+}): boolean {
+  return t.prNumber != null && t.prState === "OPEN" && t.prWatch !== false;
+}
+
+/**
  * Partition for the flat sidebar. Precedence (first match wins):
- *   archived > snoozed > pinned > settled > working > active
+ *   archived > snoozed > pinned > settled > working > watching > active
+ * watching (#1811) is a further split of the inbox: idle, not needing the
+ * user, with an active PR watch.
  * scopeProjectId filters every section ("All projects" = null).
  */
 export function buildFlatSidebar(
@@ -375,15 +394,26 @@ export function buildFlatSidebar(
   }
   const attention: ThreadInfo[] = [];
   const working: ThreadInfo[] = [];
+  const watching: ThreadInfo[] = [];
   for (const t of inbox) {
     const lead = leadOf(t);
-    (busy.has(lead) && !needsUser.has(lead) ? working : attention).push(t);
+    if (busy.has(lead) && !needsUser.has(lead)) {
+      working.push(t);
+    } else if (!needsUser.has(lead) && isWatchingPr(t)) {
+      // #1811: idle + watched PR carves out of the inbox into its own
+      // section. A wake turns the thread working, which routes it above
+      // via the busy branch, so it leaves Watching on its own.
+      watching.push(t);
+    } else {
+      attention.push(t);
+    }
   }
 
   return {
     pinned: nestWorkerFamilies([...pinned, ...nestPinned], byId),
     active: attention,
     working,
+    watching,
     snoozed,
     settled: settledRest,
     archived,

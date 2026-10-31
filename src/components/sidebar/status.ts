@@ -4,6 +4,7 @@ import {
   formatWorkingLabel,
 } from "../../format";
 import { formatQuotaWaitLabel } from "../../quotaWait";
+import { isWatchingPr } from "../../sidebarGroups";
 import { showWokePill } from "../../threadSnooze";
 import { isUnread } from "../../threadUnread";
 import {
@@ -35,7 +36,8 @@ export type StatusLabelInfo = {
     | "stalled"
     | "failed"
     | "done"
-    | "queued";
+    | "queued"
+    | "watching";
   title: string;
   spoken: string;
   flags: Record<string, string>;
@@ -252,6 +254,17 @@ export function statusLabelFor(
       title: dot?.label ?? `Queued: ${thread.queued.prompt}`,
       spoken: "queued follow-up",
       flags: dot?.flags ?? { "data-queued-dot": thread.id },
+    };
+  }
+  // Watching (#1811): idle threads with an active PR watch always say so,
+  // even when read, so the section's rows are self-explanatory.
+  if (!active && isWatchingPr(thread)) {
+    return {
+      text: `Watching #${thread.prNumber}`,
+      tone: "watching",
+      title: dot?.label ?? `Watching PR #${thread.prNumber} for failed checks, reviews and conflicts`,
+      spoken: "watching",
+      flags: dot?.flags ?? { "data-watching": thread.id },
     };
   }
   if (
