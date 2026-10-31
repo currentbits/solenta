@@ -1324,6 +1324,22 @@ export function userMessageBursts(
   return positions;
 }
 
+/** Fold a long user message (issue #1801): clamp past either threshold. */
+export const FOLD_USER_TEXT_LINES = 12;
+export const FOLD_USER_TEXT_CHARS = 1200;
+
+export function shouldFoldUserText(text: string): boolean {
+  if (text.length > FOLD_USER_TEXT_CHARS) return true;
+  let lines = 1;
+  for (let i = 0; i < text.length; i++) {
+    if (text.charCodeAt(i) === 10) {
+      lines++;
+      if (lines > FOLD_USER_TEXT_LINES) return true;
+    }
+  }
+  return false;
+}
+
 const UserMessageBlock = memo(function UserMessageBlock({
   message,
   canEdit,
@@ -1363,6 +1379,7 @@ const UserMessageBlock = memo(function UserMessageBlock({
   const [draft, setDraft] = useState(message.text);
   const [activityOpened, setActivityOpened] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const taRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -1583,6 +1600,12 @@ const UserMessageBlock = memo(function UserMessageBlock({
     attachments.length > 0 &&
     attachments.every((a) => a.kind === "image");
 
+  // Fold a long plain-text user message (issue #1801): clamped by default,
+  // "Show more"/"Show less" toggles. Pasted-context blocks (#381) already
+  // land in message.text as plain markup -- there is no separate "paste
+  // card" at render time -- so folding the whole text covers them too.
+  const folded = !imagesOnly && shouldFoldUserText(message.text);
+
   return (
     <article
       className={`${styles.message} ${styles.messageUser}${streamCls}`}
@@ -1626,7 +1649,26 @@ const UserMessageBlock = memo(function UserMessageBlock({
                   Steered
                 </div>
               )}
-              {redactDisplay(message.text)}
+              <div
+                className={
+                  folded && !expanded
+                    ? `${styles.userText} ${styles.userTextFolded}`
+                    : styles.userText
+                }
+                data-user-text-folded={folded && !expanded ? "" : undefined}
+              >
+                {redactDisplay(message.text)}
+              </div>
+              {folded && (
+                <button
+                  type="button"
+                  className={styles.userTextFoldToggle}
+                  data-user-text-fold-toggle=""
+                  onClick={() => setExpanded((v) => !v)}
+                >
+                  {expanded ? "Show less" : "Show more"}
+                </button>
+              )}
               {attachments.length > 0 && (
                 <TranscriptAttachments
                   attachments={attachments}

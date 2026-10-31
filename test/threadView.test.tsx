@@ -4024,6 +4024,105 @@ describe("ThreadView back-to-back user message bursts (#1789)", () => {
   });
 });
 
+describe("ThreadView long user message fold (issue #1801)", () => {
+  const LONG_TEXT = Array.from({ length: 20 }, (_, i) => `line ${i}`).join("\n");
+
+  it("a short message is never clamped and shows no toggle", () => {
+    const html = render({
+      detail: detail({
+        messages: [msg({ id: "u1", role: "user", text: "a short prompt", createdAt: 10 })],
+      }),
+    });
+    assert.ok(!html.includes("data-user-text-folded"), "no clamp class");
+    assert.ok(!html.includes("data-user-text-fold-toggle"), "no toggle button");
+  });
+
+  it("a message over the line threshold is clamped with a Show more toggle", () => {
+    const html = render({
+      detail: detail({
+        messages: [msg({ id: "u1", role: "user", text: LONG_TEXT, createdAt: 10 })],
+      }),
+    });
+    assert.ok(html.includes("data-user-text-folded"));
+    assert.ok(html.includes("data-user-text-fold-toggle"));
+    assert.match(html, /Show more/);
+  });
+
+  it("a message over the char threshold (few lines, very long) is also clamped", () => {
+    const html = render({
+      detail: detail({
+        messages: [
+          msg({ id: "u1", role: "user", text: "x".repeat(1300), createdAt: 10 }),
+        ],
+      }),
+    });
+    assert.ok(html.includes("data-user-text-folded"));
+  });
+
+  it("Show more expands the message, keeping it expanded on its own re-renders; Show less re-clamps", async () => {
+    const m = await mount(
+      view({
+        detail: detail({
+          messages: [msg({ id: "u1", role: "user", text: LONG_TEXT, createdAt: 10 })],
+        }),
+      }),
+    );
+    assert.ok(m.query("[data-user-text-folded]"), "starts clamped");
+    const toggle = m.query("[data-user-text-fold-toggle]") as HTMLElement;
+    assert.ok(toggle);
+    assert.equal(toggle.textContent, "Show more");
+    await m.click(toggle);
+    assert.equal(m.query("[data-user-text-folded]"), null, "expanded: no clamp class");
+    assert.equal(toggle.textContent, "Show less");
+    await m.click(toggle);
+    assert.ok(m.query("[data-user-text-folded]"), "re-clamped");
+    assert.equal(toggle.textContent, "Show more");
+    m.unmount();
+  });
+
+  it("folding does not disturb copy, edit, pin or burst grouping", async () => {
+    const m = await mount(
+      view({
+        onRewindAndResubmit: async () => {},
+        detail: detail({
+          messages: [
+            msg({ id: "u1", role: "user", text: LONG_TEXT, createdAt: 10 }),
+            msg({ id: "u2", role: "user", text: "short follow-up", createdAt: 11 }),
+          ],
+        }),
+      }),
+    );
+    // Burst grouping (#1789) still applies across a folded + short pair.
+    const html = m.html();
+    assert.match(html, /data-burst="first"/);
+    assert.match(html, /data-burst="last"/);
+    assert.ok(m.query("[data-edit-message]"), "edit affordance still present");
+    assert.ok(m.query("[data-msg-copy]"), "copy button still present");
+    m.unmount();
+  });
+
+  it("never folds while the message is being edited", async () => {
+    const m = await mount(
+      view({
+        onRewindAndResubmit: async () => {},
+        detail: detail({
+          messages: [msg({ id: "u1", role: "user", text: LONG_TEXT, createdAt: 10 })],
+        }),
+      }),
+    );
+    await m.click(m.query('[data-edit-message="u1"]'));
+    assert.equal(
+      m.query("[data-user-text-folded]"),
+      null,
+      "no clamp while editing",
+    );
+    const ta = m.query('[data-edit-textarea="u1"]') as HTMLTextAreaElement | null;
+    assert.ok(ta, "edit textarea shows full text, unclamped");
+    assert.equal(ta!.value, LONG_TEXT);
+    m.unmount();
+  });
+});
+
 /**
  * Issue #555: a tall review itinerary used to consume the whole 520px
  * Changes panel, clip the commit box, and leave no scrollbar to reach it.
