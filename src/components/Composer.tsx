@@ -89,6 +89,12 @@ import {
   undoStash,
   type StashEntry,
 } from "../promptStash";
+import {
+  estimateTokens,
+  formatWindowSize,
+  oversizedPromptWarning,
+  type OversizedPromptWarning,
+} from "../contextRing";
 import { parseDelegate } from "../delegate";
 import { asBtwPrompt } from "../btw";
 import {
@@ -134,6 +140,7 @@ import { scrollChildIntoNearestView } from "../scrollNearest";
 import { teachPermissionAllowed } from "../teach";
 import type { ThreadTeach, PromptSnippet } from "../shared/ipc";
 import { useFileDrop } from "../useFileDrop";
+import { applyMention } from "../mention";
 import { isWebMode } from "../shared/wire";
 import {
   getComposerBusyAction,
@@ -234,6 +241,15 @@ export interface ComposerProps {
   onRetryWorkflows?: () => void | Promise<void>;
   /** Provider session id; a live session locks the provider picker. */
   sessionId: string | null;
+  /**
+   * Context window for the thread's model, and tokens already used
+   * (issue #1797). Null/absent window never warns — an unknown denominator
+   * is not a limit.
+   */
+  contextWindow?: number | null;
+  contextUsed?: number | null;
+  /** "Compact first" escape hatch on the oversized-send warning, when native compaction is available. */
+  onCompactFirst?: () => void | Promise<void>;
   /**
    * Tab under the card: editable workspace + base branch on a draft, a
    * read-only "where this runs" label once the thread has started.
@@ -465,6 +481,19 @@ function pasteRejectReason(blob: Blob): string {
   return "Couldn't save the pasted image. Try pasting again, or attach it from a file.";
 }
 
+/**
+ * Chars the attachment list actually adds to the prompt (issue #1797).
+ * Mirrors attachmentPromptSection (electron/runnerHelpers.js): only a
+ * "- Kind: path" line per attachment reaches the model, never file
+ * content, so that line's length is all the size estimate owes them.
+ */
+function attachmentPromptChars(attachments: AttachmentInfo[]): number {
+  return attachments.reduce(
+    (sum, a) => sum + a.kind.length + a.path.length + (a.name?.length ?? 0) + 16,
+    0,
+  );
+}
+
 /** Capped cascade index: row 30 shouldn't wait half a second to appear. */
 const rowEnterStyle = (index: number): CSSProperties =>
   ({ "--i": String(Math.min(index, 10)) }) as CSSProperties;
@@ -503,6 +532,9 @@ export const Composer = memo(function Composer({
   workflowListError = null,
   onRetryWorkflows,
   sessionId,
+  contextWindow = null,
+  contextUsed = null,
+  onCompactFirst,
   workspaceStrip,
   statusTab,
   disabled = false,
@@ -632,6 +664,18 @@ export const Composer = memo(function Composer({
     getComposerBusyAction,
   );
   const [localError, setLocalError] = useState<string | null>(null);
+  /** Oversized-send inline confirm (#1797); null hides the banner. */
+  const [sizeWarning, setSizeWarning] = useState<OversizedPromptWarning | null>(
+    null,
+  );
+  // ponytail: a ref pair, not state, because "Send anyway" needs to resume
+  // the exact same action/failLabel the first call bailed with — no reason
+  // to re-render for data nothing visible reads.
+  const sizeConfirmedRef = useRef(false);
+  const pendingSendRef = useRef<{
+    action: (prompt: string) => void | Promise<void>;
+    failLabel: string;
+  } | null>(null);
   const {
     hasSpeech,
     speech,
@@ -895,6 +939,9 @@ export const Composer = memo(function Composer({
     lastEscAt.current = 0;
     recallIndexRef.current = null;
     syncHasPrompt(draftsRef.current[threadId] ?? "");
+    pendingSendRef.current = null;
+    sizeConfirmedRef.current = false;
+    setSizeWarning(null);
     return () => {
       void cancelDictationRef.current();
     };
@@ -1287,8 +1334,25 @@ export const Composer = memo(function Composer({
     // a stand-in prompt and the transcript shows just the images.
     if ((!prompt.trim() && attachments.length === 0) || disabled || sending)
       return;
+    if (!sizeConfirmedRef.current) {
+      const estTokens = estimateTokens(
+        prompt.length + attachmentPromptChars(attachments),
+      );
+      const warning = oversizedPromptWarning({
+        estTokens,
+        window: contextWindow,
+        used: contextUsed,
+      });
+      if (warning) {
+        pendingSendRef.current = { action, failLabel };
+        setSizeWarning(warning);
+        return;
+      }
+    }
+    sizeConfirmedRef.current = false;
     setSending(true);
     setLocalError(null);
+    setSizeWarning(null);
     try {
       await action(prompt);
       recordSent(threadId, typed);
@@ -1308,6 +1372,24 @@ export const Composer = memo(function Composer({
     } finally {
       setSending(false);
     }
+  };
+
+  const confirmOversizedSend = () => {
+    const pending = pendingSendRef.current;
+    pendingSendRef.current = null;
+    setSizeWarning(null);
+    if (!pending) return;
+    sizeConfirmedRef.current = true;
+    void runAction(pending.action, pending.failLabel);
+  };
+  const cancelOversizedSend = () => {
+    pendingSendRef.current = null;
+    setSizeWarning(null);
+  };
+  const compactFirstForOversizedSend = () => {
+    pendingSendRef.current = null;
+    setSizeWarning(null);
+    void onCompactFirst?.();
   };
 
   const submitSend = () => {
@@ -1881,12 +1963,32 @@ export const Composer = memo(function Composer({
     [onDropAttachmentFiles, disabled, sending, addAttachments, canAttachImages],
   );
 
+  /**
+   * Files-pane row dropped on the composer (#1794): insert the same `@path `
+   * text acceptMention would, at the drop caret, instead of attaching it.
+   */
+  const insertMentionPath = useCallback(
+    (path: string) => {
+      const el = textareaRef.current;
+      if (!el) return;
+      const caret = el.selectionStart ?? el.value.length;
+      const next = applyMention(el.value, caret, caret, path);
+      writeDraft(next.text, next.caret);
+      closeMention();
+    },
+    [writeDraft, closeMention],
+  );
+
   const composerRef = useRef<HTMLDivElement>(null);
   const dropTargetRef = dropHostRef ?? composerRef;
   const fileDrag = useFileDrop(dropTargetRef, {
-    enabled: Boolean(onDropAttachmentFiles) && !disabled && !sending,
+    enabled:
+      (Boolean(onDropAttachmentFiles) || Boolean(onListFiles)) &&
+      !disabled &&
+      !sending,
     onFiles: acceptDroppedFiles,
     onDraggingChange: onFileDragChange,
+    onMentionPath: insertMentionPath,
   });
 
   const pickMode = async (mode: PermissionMode) => {
@@ -2147,6 +2249,47 @@ export const Composer = memo(function Composer({
           >
             ×
           </button>
+        </div>
+      )}
+      {sizeWarning && (
+        <div
+          className={styles.sizeWarning}
+          role="alert"
+          data-oversized-prompt-warning=""
+        >
+          <span className={styles.errorText}>
+            This message is about {sizeWarning.estTokens.toLocaleString("en-US")}{" "}
+            tokens, more than the ~{formatWindowSize(sizeWarning.remaining)} left
+            in context.
+          </span>
+          <div className={styles.sizeWarningActions}>
+            {onCompactFirst && (
+              <button
+                type="button"
+                className={styles.sizeWarningBtn}
+                data-oversized-compact-first=""
+                onClick={compactFirstForOversizedSend}
+              >
+                Compact first
+              </button>
+            )}
+            <button
+              type="button"
+              className={styles.sizeWarningBtn}
+              data-oversized-send-anyway=""
+              onClick={confirmOversizedSend}
+            >
+              Send anyway
+            </button>
+            <button
+              type="button"
+              className={styles.sizeWarningBtn}
+              data-oversized-cancel=""
+              onClick={cancelOversizedSend}
+            >
+              Cancel
+            </button>
+          </div>
         </div>
       )}
       {statusTab ? (

@@ -66,6 +66,7 @@ import type {
   PrChecksResult,
   PrCommentResult,
   PrDetailResult,
+  PrReactionResult,
   MergeMethod,
   PrInfo,
   PrTemplateResult,
@@ -465,6 +466,8 @@ export interface UseCoderResult {
     threadId: string,
     policy: "accept" | "queue-only" | "refuse",
   ) => Promise<void>;
+  /** Agent-facing browser access (#1797); default true. */
+  setBrowserAccess: (threadId: string, enabled: boolean) => Promise<void>;
   setQuotaWaitAutoResume: (
     threadId: string,
     enabled: boolean | null,
@@ -727,6 +730,28 @@ export interface UseCoderResult {
     repo?: string;
     method?: MergeMethod;
   }) => Promise<PrDetailResult>;
+  prUpdateBranch: (input: {
+    projectPath: string;
+    prNumber: number;
+    repo?: string;
+  }) => Promise<PrDetailResult>;
+  prCommentEdit: (input: {
+    projectPath: string;
+    prNumber: number;
+    repo?: string;
+    commentId: number;
+    type?: "issue" | "review";
+    body: string;
+  }) => Promise<PrDetailResult>;
+  prReaction: (input: {
+    projectPath: string;
+    prNumber: number;
+    repo?: string;
+    commentId: number;
+    content: string;
+    remove?: boolean;
+    reactionId?: number;
+  }) => Promise<PrReactionResult>;
   /** Issues for a project checkout (`gh issue list`). Failures are in-band. */
   listIssues: (projectPath: string) => Promise<ListIssuesResult>;
   /** Move an issue's plan:* label (Planboard). Failures are in-band. */
@@ -1769,6 +1794,7 @@ export function useCoder(): UseCoderResult {
     setEjected,
     teleport,
     setCrossThreadInbound,
+    setBrowserAccess,
     setQuotaWaitAutoResume,
     resumeQuotaWait,
     resumeCrew,
@@ -1890,6 +1916,9 @@ export function useCoder(): UseCoderResult {
     prClose,
     prReady,
     prMergeAt,
+    prUpdateBranch,
+    prCommentEdit,
+    prReaction,
     checkoutPr,
     listIssues,
     setIssuePlanStatus,
@@ -2345,6 +2374,7 @@ export function useCoder(): UseCoderResult {
     setEjected,
     teleport,
     setCrossThreadInbound,
+    setBrowserAccess,
     setQuotaWaitAutoResume,
     resumeQuotaWait,
     resumeCrew,
@@ -2417,6 +2447,9 @@ export function useCoder(): UseCoderResult {
     prClose,
     prReady,
     prMergeAt,
+    prUpdateBranch,
+    prCommentEdit,
+    prReaction,
     listIssues,
     setIssuePlanStatus,
     createIssue,

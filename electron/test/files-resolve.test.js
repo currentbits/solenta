@@ -180,3 +180,110 @@ describe("files:resolve", () => {
     ]);
   });
 });
+
+/**
+ * Bare filename fallback (#1794): a token with an extension and no slash
+ * that does not exist at the root resolves by basename against git's
+ * tracked/untracked-not-ignored file list, only when exactly one matches.
+ */
+describe("files:resolve basename fallback (#1794)", () => {
+  let tmp2;
+
+  beforeEach(() => {
+    tmp2 = fs.mkdtempSync(path.join(os.tmpdir(), "coder-files-resolve-basename-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmp2, { recursive: true, force: true });
+  });
+
+  async function setupBasename() {
+    return withHandlers(async ({ createHandlers, Store, services, worktrees }) => {
+      const repo = path.join(tmp2, "repo");
+      fs.mkdirSync(repo);
+      git(repo, ["init", "-q", "-b", "main"]);
+      git(repo, ["config", "user.email", "t@example.com"]);
+      git(repo, ["config", "user.name", "t"]);
+      fs.mkdirSync(path.join(repo, "src"), { recursive: true });
+      fs.mkdirSync(path.join(repo, "lib"), { recursive: true });
+      fs.writeFileSync(path.join(repo, "src", "runner.js"), "a\n");
+      fs.writeFileSync(path.join(repo, "src", "dup.ts"), "b\n");
+      fs.writeFileSync(path.join(repo, "lib", "dup.ts"), "c\n");
+      fs.writeFileSync(path.join(repo, ".gitignore"), "*.log\n");
+      git(repo, ["add", "."]);
+      git(repo, ["commit", "-qm", "init"]);
+
+      const store = new Store(path.join(tmp2, "store.json"));
+      const project = await services.addProject(store, repo);
+      const thread = services.createThread(store, {
+        projectId: project.id,
+        title: "resolve",
+      });
+      worktrees.setupWorktree({
+        store,
+        threadId: thread.id,
+        worktreeBase: path.join(tmp2, "wt"),
+      });
+      const wt = store.getThread(thread.id).worktreePath;
+      assert.ok(wt);
+      fs.mkdirSync(path.join(wt, "ignored"), { recursive: true });
+      fs.writeFileSync(path.join(wt, "ignored", "debug.log"), "noisy\n");
+
+      const handlers = createHandlers({
+        store,
+        runner: { start() {}, stop() {}, stopAll() {} },
+        broadcast() {},
+        worktreeBase: path.join(tmp2, "wt"),
+        userDataPath: tmp2,
+      });
+      return { handlers, thread, wt };
+    });
+  }
+
+  it("resolves a bare filename by basename when exactly one tracked file matches", async () => {
+    const { handlers, thread, wt } = await setupBasename();
+    const out = await handlers["files:resolve"]({
+      threadId: thread.id,
+      paths: ["runner.js"],
+    });
+    assert.deepEqual(out.resolved, [
+      { path: "runner.js", abs: path.join(wt, "src", "runner.js") },
+    ]);
+  });
+
+  it("does not link an ambiguous basename (ponytail: never guess)", async () => {
+    const { handlers, thread } = await setupBasename();
+    const out = await handlers["files:resolve"]({
+      threadId: thread.id,
+      paths: ["dup.ts"],
+    });
+    assert.deepEqual(out.resolved, [{ path: "dup.ts", abs: null }]);
+  });
+
+  it("does not match a gitignored file by basename", async () => {
+    const { handlers, thread } = await setupBasename();
+    const out = await handlers["files:resolve"]({
+      threadId: thread.id,
+      paths: ["debug.log"],
+    });
+    assert.deepEqual(out.resolved, [{ path: "debug.log", abs: null }]);
+  });
+
+  it("returns null for a basename with no match at all", async () => {
+    const { handlers, thread } = await setupBasename();
+    const out = await handlers["files:resolve"]({
+      threadId: thread.id,
+      paths: ["nope.xyz"],
+    });
+    assert.deepEqual(out.resolved, [{ path: "nope.xyz", abs: null }]);
+  });
+
+  it("does not fall back for a path that has a separator", async () => {
+    const { handlers, thread } = await setupBasename();
+    const out = await handlers["files:resolve"]({
+      threadId: thread.id,
+      paths: ["other/runner.js"],
+    });
+    assert.deepEqual(out.resolved, [{ path: "other/runner.js", abs: null }]);
+  });
+});

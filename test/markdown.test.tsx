@@ -216,6 +216,31 @@ describe("Markdown path links", () => {
     assert.ok(a);
     assert.equal(a.getAttribute("href"), "https://example.com/src/foo.ts");
   });
+
+  it("links a bare filename once the resolver finds it by basename (#1794)", async () => {
+    // The basename lookup itself is electron-side (electron/ipc-files.js);
+    // this only checks the renderer still links whatever resolvePaths hands
+    // back for a bare, slash-free token.
+    const opened: string[] = [];
+    const m = await mount(
+      <PathLinkProvider
+        resolvePaths={(paths) =>
+          Object.fromEntries(
+            paths.map((p) => [p, p === "runner.js" ? "/wt/electron/runner.js" : null]),
+          )
+        }
+        openPath={(abs) => opened.push(abs)}
+      >
+        <Markdown text={"see `runner.js` for the entry point"} />
+      </PathLinkProvider>,
+    );
+    await m.flush();
+    const link = m.container.querySelector("[data-path-link]");
+    assert.ok(link, "bare filename is a link once resolved");
+    assert.equal(link.getAttribute("data-path-link"), "runner.js");
+    await m.click(link);
+    assert.deepEqual(opened, ["/wt/electron/runner.js"]);
+  });
 });
 
 describe("PathLinkProvider batching (#1475)", () => {

@@ -16,6 +16,19 @@ export const DROP_REJECT_MESSAGE =
 
 export const DROP_OVERLAY_MESSAGE = "Drop files or folders";
 
+/**
+ * Files pane row drag payload (#1794): a repo-relative path, with a
+ * trailing slash for a folder. Lets the composer's drop handler tell a
+ * Files-pane drag apart from an OS file drop and insert an @mention
+ * instead of attaching it.
+ */
+export const MENTION_PATH_MIME = "application/x-solenta-path";
+
+/** True when a drag carries the Files-pane MENTION_PATH_MIME payload. */
+export function isMentionPathDrag(dt: DataTransfer | null | undefined): boolean {
+  return Boolean(dt?.types && Array.from(dt.types).includes(MENTION_PATH_MIME));
+}
+
 export type DroppedFolderFile = { relativePath: string; dataUrl: string };
 export type DroppedFolder = { name: string; files: DroppedFolderFile[] };
 

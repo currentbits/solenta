@@ -15,6 +15,7 @@ import path from "node:path";
 import { describe, it } from "node:test";
 import { inAct, mount } from "./support/dom";
 import type {
+  ProjectInfo,
   ProviderInfo,
   ThreadInfo,
   ThreadSearchInput,
@@ -329,6 +330,112 @@ describe("Sidebar project scope", () => {
         `avatar on row ${card.getAttribute("data-thread-card")}`,
       );
     }
+    m.unmount();
+  });
+
+  it("filter box gets focus when the scope menu opens (#1793)", async () => {
+    await clearSidebarStorage();
+    const m = await mount(sidebar(THREADS, { projects: [p1, p2] }));
+    await openScopeMenu(m);
+    const input = m.query('[data-scope-search]');
+    assert.ok(input, "filter box renders");
+    assert.equal(
+      document.activeElement,
+      input,
+      "filter box is focused as soon as the menu opens",
+    );
+    m.unmount();
+  });
+
+  it("filters scope menu rows by name, slug or path, keeping All projects pinned (#1793)", async () => {
+    await clearSidebarStorage();
+    const p3: ProjectInfo = {
+      id: "p3",
+      slug: "foo/rocket",
+      name: "rocket-ship",
+      path: "/tmp/rocket",
+    };
+    const m = await mount(sidebar(THREADS, { projects: [p1, p2, p3] }));
+    await openScopeMenu(m);
+    assert.ok(m.query('[data-scope-item="p1"]'));
+    assert.ok(m.query('[data-scope-item="p2"]'));
+    assert.ok(m.query('[data-scope-item="p3"]'));
+
+    await m.type(m.query('[data-scope-search]')!, "bill");
+    assert.ok(
+      m.query('[data-scope-item="all"]'),
+      "All projects stays pinned while filtering",
+    );
+    assert.ok(m.query('[data-scope-item="p2"]'), "billing matches by slug");
+    assert.equal(m.query('[data-scope-item="p1"]'), null);
+    assert.equal(m.query('[data-scope-item="p3"]'), null);
+
+    // Case-insensitive match against the bare path, not just name/slug.
+    await m.type(m.query('[data-scope-search]')!, "ROCKET");
+    assert.ok(m.query('[data-scope-item="p3"]'));
+    assert.equal(m.query('[data-scope-item="p1"]'), null);
+    assert.equal(m.query('[data-scope-item="p2"]'), null);
+    m.unmount();
+  });
+
+  it("shows an empty-results message when nothing matches the filter (#1793)", async () => {
+    await clearSidebarStorage();
+    const m = await mount(sidebar(THREADS, { projects: [p1, p2] }));
+    await openScopeMenu(m);
+    await m.type(m.query('[data-scope-search]')!, "nonexistent-zzz");
+    assert.equal(m.query('[data-scope-item="p1"]'), null);
+    assert.equal(m.query('[data-scope-item="p2"]'), null);
+    const empty = m.query("[data-scope-empty]");
+    assert.ok(empty, "empty-results message renders");
+    assert.match(empty!.textContent || "", /no matching projects/i);
+    assert.ok(
+      m.query('[data-scope-item="all"]'),
+      "All projects still shown alongside the empty message",
+    );
+    m.unmount();
+  });
+
+  it("ArrowDown/ArrowUp move through filtered results and Enter selects (#1793)", async () => {
+    await clearSidebarStorage();
+    const m = await mount(sidebar(THREADS, { projects: [p1, p2] }));
+    await openScopeMenu(m);
+    const input = m.query('[data-scope-search]')!;
+
+    // Index 0 is "All projects"; one ArrowDown moves onto the first project.
+    await m.press(input, "ArrowDown");
+    assert.equal(
+      m.query('[data-scope-item="p1"]')?.getAttribute("data-scope-active"),
+      "true",
+    );
+    await m.press(input, "ArrowDown");
+    assert.equal(
+      m.query('[data-scope-item="p2"]')?.getAttribute("data-scope-active"),
+      "true",
+    );
+    await m.press(input, "Enter");
+    assert.match(scopeTrigger(m).textContent || "", /acme\/billing/);
+    assert.equal(m.query("[data-scope-menu]"), null, "Enter closes the menu");
+    m.unmount();
+  });
+
+  it("Escape clears the filter query before closing the menu (#1793)", async () => {
+    await clearSidebarStorage();
+    const m = await mount(sidebar(THREADS, { projects: [p1, p2] }));
+    await openScopeMenu(m);
+    const input = m.query('[data-scope-search]')!;
+    await m.type(input, "bill");
+    assert.equal((input as HTMLInputElement).value, "bill");
+
+    await m.press(input, "Escape");
+    assert.ok(m.query("[data-scope-menu]"), "first Escape only clears, menu stays open");
+    assert.equal((m.query('[data-scope-search]') as HTMLInputElement).value, "");
+
+    await m.press(input, "Escape");
+    assert.equal(
+      m.query("[data-scope-menu]"),
+      null,
+      "second Escape closes the now-empty menu",
+    );
     m.unmount();
   });
 });

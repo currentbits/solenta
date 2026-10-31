@@ -92,6 +92,32 @@
   outline-offset: 1px;
 }
 
+.qualifiers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 24px 8px;
+}
+
+.qualifierChip {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.qualifierChip:hover {
+  color: var(--text);
+  background: var(--card-hover);
+}
+
 .modeToggle {
   composes: reset;
 }

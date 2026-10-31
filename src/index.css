@@ -106,6 +106,17 @@
     monospace;
 }
 
+/* Increase contrast (#1797): stronger muted/dim text, borders and focus
+   ring on top of dark. The yellow accent itself is untouched. */
+:root[data-contrast="high"] {
+  --text-muted: #d4d4cf;
+  --text-dim: #cfcfc9;
+  --border: #55554f;
+  --border-soft: #45453f;
+  --focus-ring-color: rgba(242, 229, 31, 0.9);
+  --focus-ring: 0 0 0 3px var(--focus-ring-color);
+}
+
 /* Same token names. No per-component branching (issue #651). */
 :root[data-theme="light"] {
   color-scheme: light;
@@ -177,6 +188,37 @@
   --shadow-pop:
     0 12px 32px rgba(25, 25, 24, 0.12), 0 2px 8px rgba(25, 25, 24, 0.06);
   --shadow-modal: 0 24px 64px rgba(25, 25, 24, 0.16);
+}
+
+/* Increase contrast (#1797): light's equivalent of the dark block above. */
+:root[data-theme="light"][data-contrast="high"] {
+  --text-muted: #191918;
+  --text-dim: #0e0e0d;
+  --border: #9c9c94;
+  --border-soft: #b4b4ac;
+  --focus-ring-color: rgba(25, 25, 24, 0.9);
+  --focus-ring: 0 0 0 3px var(--focus-ring-color);
+}
+
+/* Honor the OS preference automatically when the in-app toggle is unset
+   (contrast.ts never writes an explicit "off", only "high" or absent). */
+@media (prefers-contrast: more) {
+  :root:not([data-contrast]) {
+    --text-muted: #d4d4cf;
+    --text-dim: #cfcfc9;
+    --border: #55554f;
+    --border-soft: #45453f;
+    --focus-ring-color: rgba(242, 229, 31, 0.9);
+    --focus-ring: 0 0 0 3px var(--focus-ring-color);
+  }
+  :root[data-theme="light"]:not([data-contrast]) {
+    --text-muted: #191918;
+    --text-dim: #0e0e0d;
+    --border: #9c9c94;
+    --border-soft: #b4b4ac;
+    --focus-ring-color: rgba(25, 25, 24, 0.9);
+    --focus-ring: 0 0 0 3px var(--focus-ring-color);
+  }
 }
 
 *,

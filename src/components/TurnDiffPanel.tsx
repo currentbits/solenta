@@ -112,6 +112,35 @@ export function TreeListToggle() {
 }
 
 /**
+ * Expand/collapse every directory in the Tree view in one click (#1796).
+ * Shown only in Tree mode, next to the Tree/List toggle; the caller owns
+ * `collapsedDirs` (and, for the Git pane, its per-thread memory) so this
+ * only needs the current tree's directory paths to decide the label.
+ */
+export function TreeCollapseAllButton({
+  allDirs,
+  collapsedDirs,
+  onSetCollapsed,
+}: {
+  allDirs: string[];
+  collapsedDirs: Set<string>;
+  onSetCollapsed: (next: Set<string>) => void;
+}) {
+  if (allDirs.length === 0) return null;
+  const allCollapsed = allDirs.every((p) => collapsedDirs.has(p));
+  return (
+    <button
+      type="button"
+      className={styles.modeBtn}
+      data-tree-collapse-all=""
+      onClick={() => onSetCollapsed(allCollapsed ? new Set() : new Set(allDirs))}
+    >
+      {allCollapsed ? "Expand all" : "Collapse all"}
+    </button>
+  );
+}
+
+/**
  * Per-file collapse (issue #1787): "Start diff files collapsed" starts every
  * file's diff body hidden behind a header until it is expanded, either by
  * clicking the header or by selecting that file from the list/tree. Shared

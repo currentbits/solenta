@@ -141,7 +141,8 @@
   text-align: left;
 }
 
-.scopeItem:hover {
+.scopeItem:hover,
+.scopeItem[data-scope-active="true"] {
   background: var(--card-hover);
 }
 
@@ -240,6 +241,13 @@
   outline: none;
   border-color: color-mix(in srgb, var(--blue) 45%, transparent);
   box-shadow: var(--focus-ring);
+}
+
+/* #1793: project filter box at the top of the scope menu. */
+.scopeSearchInput {
+  composes: viewNameInput;
+  width: 100%;
+  margin-bottom: 4px;
 }
 
 .viewNameSave {

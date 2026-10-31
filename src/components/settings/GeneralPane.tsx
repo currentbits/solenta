@@ -11,6 +11,7 @@ import type {
   WebhookTestResult,
 } from "../../shared/ipc";
 import { syncTheme, type ThemePreference } from "../../theme";
+import { applyContrast } from "../../contrast";
 import {
   CHAT_WIDTH_MODES,
   CHAT_WIDTH_LABELS,
@@ -19,6 +20,7 @@ import {
   setDiffFilesCollapsed,
   setEnterSendsEnabled,
   setDivergenceCardEnabled,
+  setHighContrastEnabled,
   setPasteCardsEnabled,
   setRunDurationEnabled,
   setUsageLimitsStripEnabled,
@@ -28,6 +30,7 @@ import {
   useDiffFilesCollapsed,
   useEnterSendsEnabled,
   useDivergenceCardEnabled,
+  useHighContrastEnabled,
   usePasteCardsEnabled,
   useRunDurationEnabled,
   useUsageLimitsStripEnabled,
@@ -928,6 +931,7 @@ function DisplayPrefsSection() {
   const wrapCode = useWrapCodeBlocksEnabled();
   const diffFilesCollapsed = useDiffFilesCollapsed();
   const chatWidth = useChatWidth();
+  const highContrast = useHighContrastEnabled();
   return (
     <section className={styles.section} data-display-prefs="">
       <h3 className={styles.sectionLabel}>Display</h3>
@@ -949,6 +953,23 @@ function DisplayPrefsSection() {
           ))}
         </select>
       </div>
+      <label className={styles.fieldRow}>
+        <input
+          type="checkbox"
+          data-high-contrast-pref=""
+          checked={highContrast}
+          onChange={(e) => {
+            setHighContrastEnabled(e.target.checked);
+            applyContrast(e.target.checked);
+          }}
+        />
+        <span>Increase contrast</span>
+      </label>
+      <p className={styles.note}>
+        Stronger borders and muted text in either theme. Off by default, but
+        the OS &quot;increase contrast&quot; setting applies the same look on
+        its own even then.
+      </p>
       <label className={styles.fieldRow}>
         <input
           type="checkbox"

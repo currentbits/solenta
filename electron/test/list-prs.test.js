@@ -211,6 +211,7 @@ process.exit(2);
     assert.deepEqual(result.prs[0], {
       number: 155, title: "PR 155", url: "https://github.com/acme/demo/pull/155", state: "OPEN",
       headRefName: "b155", isDraft: false, additions: 3, deletions: 1, updatedAt: "2026-10-01T00:00:00Z",
+      author: "octocat",
     });
     assert.deepEqual(api.state.calls.map((c) => c.body.variables.first), [100, 50]);
 
@@ -243,6 +244,38 @@ process.exit(2);
     git(repo, ["remote", "set-url", "origin", "https://bitbucket.org/acme/demo.git"]);
     const result = await listPrs(repo);
     assert.deepEqual(result, { ok: false, reason: "not a GitHub repo" });
+  });
+
+  it("parses author and labels for the list-view query qualifiers (#1795 feature 4)", async () => {
+    const api = fakeGithubApi({
+      prs: [
+        {
+          number: 5,
+          url: "https://github.com/acme/demo/pull/5",
+          title: "Add thing",
+          headRefName: "feat/x",
+          author: "alice",
+          labels: ["bug", "urgent"],
+        },
+        {
+          number: 6,
+          url: "https://github.com/acme/demo/pull/6",
+          title: "No labels",
+          headRefName: "feat/y",
+        },
+      ],
+    });
+    setGithubApi(api);
+    const result = await listPrs(repo);
+    assert.equal(result.ok, true);
+    const labeled = result.prs.find((p) => p.number === 5);
+    const unlabeled = result.prs.find((p) => p.number === 6);
+    assert.equal(labeled.author, "alice");
+    assert.deepEqual(labeled.labels, ["bug", "urgent"]);
+    // Unset in the seed: the API always resolves an author (unlike older gh's
+    // short field set), but labels stay omitted when the PR has none.
+    assert.equal(unlabeled.author, "octocat");
+    assert.equal(unlabeled.labels, undefined);
   });
 });
 

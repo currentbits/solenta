@@ -692,6 +692,54 @@
   color: var(--text-dim);
 }
 
+/* #1793: "Find a setting" results, listed above the pane list. */
+.navMatches {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 0 8px 6px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.navMatch {
+  display: flex;
+  align-items: baseline;
+  width: 100%;
+  text-align: left;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: transparent;
+  font-size: 12.5px;
+}
+
+.navMatch:hover {
+  background: var(--overlay-hover);
+}
+
+.navMatchPane {
+  flex-shrink: 0;
+  color: var(--text-dim);
+}
+
+.navMatchLabel {
+  color: var(--text);
+}
+
+/* Briefly highlights the setting a "Find a setting" result jumps to. */
+.settingFlash {
+  animation: settingFlash 1.2s ease-out;
+}
+
+@keyframes settingFlash {
+  from {
+    background: color-mix(in srgb, var(--blue) 18%, transparent);
+  }
+  to {
+    background: transparent;
+  }
+}
+
 .content {
   display: flex;
   flex-direction: column;

@@ -267,6 +267,52 @@ describe("preview MCP tool (issue #155)", () => {
   });
 });
 
+describe("preview MCP tool: per-thread browser access (#1797)", () => {
+  it("refuses every action once the thread's browserAccess is off", async () => {
+    const deps = makeDeps();
+    deps.store.updateThread("t1", { browserAccess: false });
+    deps.preview = Object.fromEntries(
+      ["info", "navigate", "reload", "screenshot", "snapshot", "click"].map(
+        (name) => [name, async () => ({ ok: true })],
+      ),
+    );
+    const h = createToolHandlers(deps);
+    for (const action of ["info", "navigate", "reload", "screenshot", "snapshot", "click"]) {
+      await assert.rejects(
+        h.preview({ threadId: "t1", projectId: "p1", action, url: "http://localhost/" }),
+        /Browser access is turned off for this thread/,
+        `action ${action} must be refused`,
+      );
+    }
+  });
+
+  it("still works once browserAccess is absent (default on) or explicitly true", async () => {
+    const deps = makeDeps();
+    deps.preview = { info: async (input) => ({ url: "http://localhost/5173", input }) };
+    const h = createToolHandlers(deps);
+    const out = await h.preview({ threadId: "t1", projectId: "p1", action: "info" });
+    assert.equal(out.url, "http://localhost/5173");
+
+    deps.store.updateThread("t1", { browserAccess: true });
+    const out2 = await h.preview({ threadId: "t1", projectId: "p1", action: "info" });
+    assert.equal(out2.url, "http://localhost/5173");
+  });
+
+  it("re-enabling the thread's browserAccess lets preview through again", async () => {
+    const deps = makeDeps();
+    deps.store.updateThread("t1", { browserAccess: false });
+    deps.preview = { info: async () => ({ ok: true }) };
+    const h = createToolHandlers(deps);
+    await assert.rejects(
+      h.preview({ threadId: "t1", projectId: "p1", action: "info" }),
+      /turned off/,
+    );
+    deps.store.updateThread("t1", { browserAccess: true });
+    const out = await h.preview({ threadId: "t1", projectId: "p1", action: "info" });
+    assert.deepEqual(out, { ok: true });
+  });
+});
+
 describe("refresh_worker_snapshot MCP tool", () => {
   function orchWorker(overrides = {}) {
     return {

@@ -278,8 +278,11 @@ async function fetchPrStates(remote, numbers, opts = {}) {
 // ponytail: no statusCheckRollup here, so API-fallback PR lists show no CI
 // state in the triage inbox (#260); add a commits(last: 1) rollup if missed.
 const PR_FIELDS =
-  "id number url state title body isDraft headRefName baseRefName additions deletions changedFiles mergeable reviewDecision updatedAt createdAt mergedAt closedAt isCrossRepository author { login }";
-const PR_COMMENTS = "comments(last: 100) { nodes { author { login } body createdAt url } }";
+  "id number url state title body isDraft headRefName baseRefName additions deletions changedFiles mergeable mergeStateStatus reviewDecision updatedAt createdAt mergedAt closedAt isCrossRepository author { login } labels(first: 20) { nodes { name } }";
+// databaseId/url resolve the REST comment id (#1795 feature 2); viewerDidAuthor
+// and reactionGroups drive the Edit affordance and the reaction picker.
+const PR_COMMENTS =
+  "comments(last: 100) { nodes { databaseId author { login } body createdAt url viewerDidAuthor reactionGroups { content viewerHasReacted users { totalCount } } } }";
 const PR_REVIEWS = "reviews(first: 100) { nodes { author { login } state submittedAt } }";
 
 /** Thrown for argv ghPr does not translate; the caller just runs gh. */
@@ -301,6 +304,7 @@ function ghShape(pr) {
   delete out.id;
   if (pr.comments) out.comments = pr.comments.nodes || [];
   if (pr.reviews) out.reviews = pr.reviews.nodes || [];
+  if (pr.labels) out.labels = (pr.labels.nodes || []).map((l) => ({ name: l.name }));
   return out;
 }
 
@@ -429,6 +433,12 @@ async function ghPr(remote, args, opts) {
     return "";
   }
 
+  // #1795 feature 1: update a behind PR's head branch from its base.
+  if (sub === "update-branch" && number != null) {
+    await rest({ ...req, method: "PUT", path: `${repoPath}/pulls/${number}/update-branch` });
+    return "";
+  }
+
   if (sub === "create" && !target) {
     const created = await rest({
       ...req,
@@ -519,6 +529,31 @@ async function ghIssue(remote, args, opts) {
     }
     if (!query) throw new Unsupported("ghIssue: api graphql without a query");
     return JSON.stringify(await graphql({ ...req, query, variables }));
+  }
+
+  // Generic `gh api <path> [-X METHOD] [-f k=v ...]` passthrough (#1795
+  // features 2/3: editing a comment and reactions have no dedicated `gh pr`
+  // subcommand). The REST path already embeds owner/repo, so this covers any
+  // endpoint without a bespoke branch here, same contract `gh api` itself has.
+  if (args[0] === "api" && args[1] != null && !String(args[1]).startsWith("-")) {
+    const restPath = String(args[1]);
+    const method = String(flag("-X") || flag("--method") || "GET").toUpperCase();
+    /** @type {Record<string, string>} */
+    const body = {};
+    for (let i = 2; i < args.length - 1; i++) {
+      if (args[i] !== "-f" && args[i] !== "-F") continue;
+      const raw = args[++i];
+      const eq = raw.indexOf("=");
+      if (eq < 0) continue;
+      body[raw.slice(0, eq)] = raw.slice(eq + 1);
+    }
+    const result = await rest({
+      ...req,
+      method,
+      path: `/${restPath.replace(/^\/+/, "")}`,
+      body: Object.keys(body).length ? body : undefined,
+    });
+    return JSON.stringify(result == null ? {} : result);
   }
 
   const sub = args[1];

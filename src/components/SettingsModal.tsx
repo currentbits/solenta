@@ -41,6 +41,7 @@ import {
 import { GeneralPane } from "./settings/GeneralPane";
 import { ProvidersPane } from "./settings/ProvidersPane";
 import { KeyboardPane } from "./settings/KeyboardPane";
+import { SETTINGS_INDEX } from "../settingsIndex";
 
 export { formatOtelHeaders, parseOtelHeaders } from "./settings/AdvancedPane";
 
@@ -294,6 +295,8 @@ export function SettingsModal({
 }: SettingsModalProps) {
   const [pane, setPane] = useState<SettingsPane>("general");
   const [navQuery, setNavQuery] = useState("");
+  /** Selector of a "Find a setting" pick, scrolled to and flashed once its pane renders. */
+  const [highlightTarget, setHighlightTarget] = useState<string | null>(null);
   const [budgetText, setBudgetText] = useState("");
   const [uiScale, setUiScale] = useState(1);
   const [orchBudgetText, setOrchBudgetText] = useState("");
@@ -332,6 +335,7 @@ export function SettingsModal({
       wasOpen.current = false;
       hydrated.current = false;
       dirtyDrafts.current.clear();
+      setHighlightTarget(null);
       return;
     }
     const justOpened = !wasOpen.current;
@@ -398,9 +402,48 @@ export function SettingsModal({
     setPane(initialPane);
   }, [open, initialPane]);
 
+  // "Find a setting" jump: once the target pane has rendered, scroll to the
+  // setting's own control and flash its row (same device as the sidebar's
+  // #293 thread reveal).
+  useEffect(() => {
+    if (!highlightTarget) return;
+    const selector = highlightTarget;
+    // No cleanup: clearing highlightTarget right below re-runs this effect,
+    // and a cleanup here would cancel the rAF it just scheduled before it
+    // ever fires (same shape as the sidebar's #293 thread reveal effect).
+    window.requestAnimationFrame(() => {
+      const el = dialogRef.current?.querySelector(selector);
+      if (el) {
+        // Prefer the whole .field block (label + control); a standalone
+        // checkbox row has no .field wrapper, so fall back to .fieldRow.
+        const row =
+          el.closest(`.${styles.field}`) ??
+          el.closest(`.${styles.fieldRow}`) ??
+          el;
+        row.scrollIntoView({ block: "center" });
+        row.classList.add(styles.settingFlash);
+      }
+    });
+    setHighlightTarget(null);
+  }, [highlightTarget, pane]);
+
   if (!open) return null;
 
   const navFilter = navQuery.trim().toLowerCase();
+  const settingMatches = navFilter
+    ? SETTINGS_INDEX.filter(
+        (entry) =>
+          entry.label.toLowerCase().includes(navFilter) ||
+          entry.help.toLowerCase().includes(navFilter) ||
+          (entry.keywords ?? "").toLowerCase().includes(navFilter),
+      ).slice(0, 8)
+    : [];
+  const goToSetting = (entry: (typeof SETTINGS_INDEX)[number]) => {
+    setPane(entry.pane);
+    setHighlightTarget(entry.selector);
+    setNavQuery("");
+    setError(null);
+  };
   const visiblePanes = SETTINGS_PANES.filter((id) => {
     if (id === "connections" && isWebMode()) return false;
     if (!navFilter) return true;
@@ -653,15 +696,48 @@ export function SettingsModal({
               value={navQuery}
               onChange={(e) => setNavQuery(e.target.value)}
               onKeyDown={(e) => {
+                if (e.key === "Escape" && navQuery !== "") {
+                  // Clear first; Escape again (bubbling, query now empty)
+                  // falls through to the modal's own close handler.
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setNavQuery("");
+                  return;
+                }
                 if (e.key !== "Enter") return;
+                e.preventDefault();
+                if (settingMatches[0]) {
+                  goToSetting(settingMatches[0]);
+                  return;
+                }
                 const first = visiblePanes[0];
                 if (!first) return;
-                e.preventDefault();
                 setPane(first);
                 setError(null);
               }}
               aria-label="Find a setting"
             />
+            {settingMatches.length > 0 ? (
+              <div className={styles.navMatches} data-settings-search-results="">
+                {settingMatches.map((entry) => (
+                  <button
+                    key={`${entry.pane}:${entry.label}`}
+                    type="button"
+                    className={styles.navMatch}
+                    data-setting-match={`${entry.pane}:${entry.label}`}
+                    onClick={() => goToSetting(entry)}
+                  >
+                    <span className={styles.navMatchPane}>
+                      {PANE_META[entry.pane].label}
+                      {" › "}
+                    </span>
+                    <span className={styles.navMatchLabel}>
+                      {entry.label}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
             <div className={styles.navList}>
               {visiblePanes.map((id) => (
                 <button

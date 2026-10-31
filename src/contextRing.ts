@@ -72,6 +72,38 @@ export function contextWindowFor(
   return byId?.contextTokens ?? fallback?.contextTokens ?? null;
 }
 
+/** Rough chars-per-token for a pre-send estimate (issue #1797): not billing-accurate, good enough for a guard. */
+export const CHARS_PER_TOKEN = 4;
+
+export function estimateTokens(chars: number): number {
+  return Math.ceil(Math.max(0, chars) / CHARS_PER_TOKEN);
+}
+
+export interface OversizedPromptWarning {
+  estTokens: number;
+  /** Tokens left in the window before this send, clamped to >= 0. */
+  remaining: number;
+}
+
+/**
+ * Oversized-send guard (#1797): warn when an outgoing prompt's estimate
+ * would outrun what's left in the context window, or eat more than ~90%
+ * of the window outright even on an otherwise-fresh thread. A null/unknown
+ * window never warns — rule 1 of this file ("never invent a denominator")
+ * applies here too, so a model Solenta can't size never blocks a send.
+ */
+export function oversizedPromptWarning(input: {
+  estTokens: number;
+  window: number | null | undefined;
+  used: number | null | undefined;
+}): OversizedPromptWarning | null {
+  const { estTokens, window: win, used } = input;
+  if (win == null || !(win > 0)) return null;
+  const remaining = Math.max(0, win - Math.max(0, used ?? 0));
+  if (estTokens <= remaining && estTokens <= win * 0.9) return null;
+  return { estTokens, remaining };
+}
+
 /** Anthropic's extended prompt-cache TTL; past it the next send re-reads everything. */
 export const CLAUDE_CACHE_TTL_MS = 60 * 60 * 1000;
 // ponytail: fixed cutoff, make it a setting if 50k nags or misses in practice.

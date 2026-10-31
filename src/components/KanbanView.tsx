@@ -96,6 +96,9 @@ export function KanbanView({
 
   const slugFor = (thread: ThreadInfo): string =>
     projects.find((p) => p.id === thread.projectId)?.slug ?? "unknown";
+  /** The thread's project checkout path, for ThreadCard's PR hover card (#1796). */
+  const pathFor = (thread: ThreadInfo): string | null =>
+    projects.find((p) => p.id === thread.projectId)?.path ?? null;
   const rootRef = useRef<HTMLElement>(null);
   useViewRestore(true, restore, rootRef, onRestoreApplied);
 
@@ -163,6 +166,7 @@ export function KanbanView({
                     <ThreadCard
                       thread={thread}
                       slug={slugFor(thread)}
+                      projectPath={pathFor(thread)}
                       providers={providers}
                       active={false}
                       now={now}

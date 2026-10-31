@@ -133,6 +133,8 @@ export function BrowserPane({
   listLocalServers,
   onAttachScreenshot,
   onAttachElement,
+  browserAccess = true,
+  onSetBrowserAccess,
 }: {
   threadId: string;
   preview?: PreviewApi | null;
@@ -155,6 +157,12 @@ export function BrowserPane({
     comment: string,
     originThreadId: string,
   ) => unknown;
+  /**
+   * Whether the agent's own preview MCP tool may drive this thread's pane
+   * (#1797); default true. Never affects the user's own use of the pane.
+   */
+  browserAccess?: boolean;
+  onSetBrowserAccess?: (enabled: boolean) => void | Promise<void>;
 }) {
   const webviewRef = useRef<HTMLElement | null>(null);
   const [bound, setBound] = useState(false);
@@ -571,6 +579,18 @@ export function BrowserPane({
         >
           ↗
         </button>
+        {onSetBrowserAccess ? (
+          <button
+            type="button"
+            className={styles.go}
+            data-browser-access-toggle=""
+            aria-pressed={browserAccess}
+            title="Let the agent use this browser"
+            onClick={() => void onSetBrowserAccess(!browserAccess)}
+          >
+            Let the agent use this browser
+          </button>
+        ) : null}
       </div>
       {error ? (
         <p className={styles.error} data-browser-error="" role="alert">

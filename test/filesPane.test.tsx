@@ -236,3 +236,45 @@ describe("FilesPane", () => {
     assert.equal(calls.length, 0);
   });
 });
+
+/** Minimal fake DataTransfer: records setData calls, nothing else. */
+function fakeDataTransfer() {
+  const data: Record<string, string> = {};
+  return {
+    data,
+    dt: {
+      setData: (type: string, value: string) => {
+        data[type] = value;
+      },
+      getData: (type: string) => data[type] ?? "",
+      effectAllowed: "",
+    },
+  };
+}
+
+async function dragStart(el: Element | null): Promise<Record<string, string>> {
+  assert.ok(el, "drag source must exist");
+  const { dt, data } = fakeDataTransfer();
+  const ev = new Event("dragstart", { bubbles: true, cancelable: true });
+  Object.defineProperty(ev, "dataTransfer", { value: dt });
+  await inAct(() => {
+    el!.dispatchEvent(ev);
+  });
+  return data;
+}
+
+describe("FilesPane row drag (#1794)", () => {
+  it("a file row's drag data is the repo-relative path on both the mention MIME and text/plain", async () => {
+    const { m } = await setup();
+    const data = await dragStart(m.query("[data-files-row='README.md']"));
+    assert.equal(data["application/x-solenta-path"], "README.md");
+    assert.equal(data["text/plain"], "README.md");
+  });
+
+  it("a folder row's drag data has a trailing slash", async () => {
+    const { m } = await setup();
+    const data = await dragStart(m.query("[data-files-row='src']"));
+    assert.equal(data["application/x-solenta-path"], "src/");
+    assert.equal(data["text/plain"], "src/");
+  });
+});

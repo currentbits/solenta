@@ -476,6 +476,39 @@ describe("Git pane remembers its spot per thread (#1779)", () => {
     );
   });
 
+  it("collapse all / expand all persists through a thread switch (#1796)", async () => {
+    setDiffTreeView(true);
+    const view = await mount(panel({ threadId: "tA", diff: DIFF_A }));
+    await view.flush();
+    await view.click(view.query("[data-tree-collapse-all]")!);
+    await view.flush();
+    assert.equal(
+      view.query('[data-dir-row="dirA"]')?.getAttribute("aria-expanded"),
+      "false",
+    );
+    assert.equal(
+      view.query('[data-dir-row="dirB"]')?.getAttribute("aria-expanded"),
+      "false",
+    );
+
+    await view.rerender(panel({ threadId: "tB", diff: DIFF_B }));
+    await view.flush();
+    assert.equal(
+      view.query("[data-tree-collapse-all]")?.textContent,
+      "Collapse all",
+      "tB starts with nothing collapsed",
+    );
+
+    await view.rerender(panel({ threadId: "tA", diff: DIFF_A }));
+    await view.flush();
+    assert.equal(
+      view.query('[data-dir-row="dirA"]')?.getAttribute("aria-expanded"),
+      "false",
+      "tA's collapse-all is restored",
+    );
+    assert.equal(view.query("[data-tree-collapse-all]")?.textContent, "Expand all");
+  });
+
   it("falls back to the default selection when the saved path no longer exists", async () => {
     const view = await mount(panel({ threadId: "tA", diff: DIFF_A }));
     await view.flush();
