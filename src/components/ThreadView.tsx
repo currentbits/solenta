@@ -445,6 +445,8 @@ interface ThreadViewProps {
     provider?: string;
     model?: string | null;
   }) => void | Promise<void>;
+  /** Composer picker star writes to Settings → Providers favourites (#1802). */
+  onToggleModelFavorite?: (providerId: string, modelId: string) => void | Promise<void>;
   onSetReasoningEffort: (
     effort: ReasoningEffort | null,
     threadId?: string,
@@ -900,6 +902,7 @@ export const ThreadView = memo(function ThreadView({
   onClearQuestion,
   onAnswerSecret,
   onSetProvider,
+  onToggleModelFavorite,
   onSetReasoningEffort,
   onApplyAgentProfile,
   onSetWebSearch,
@@ -5710,6 +5713,7 @@ export const ThreadView = memo(function ThreadView({
         agents={cliAgents}
         onSetAgent={onSetAgent}
         providers={providers}
+        onToggleModelFavorite={onToggleModelFavorite}
         agentProfiles={agentProfiles}
         agentProfileId={thread.agentProfileId ?? null}
         workflows={workflows}

@@ -958,6 +958,22 @@
   flex: 1;
 }
 
+/* Sidebar preview setting (#1802): "1" (default) keeps the rule above
+   unchanged; "2"/"3" wrap the title via line-clamp instead of truncating.
+   "none" never reaches here, ThreadCard skips the element entirely. */
+.cardTitle[data-sidebar-preview="2"],
+.cardTitle[data-sidebar-preview="3"] {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  white-space: normal;
+}
+.cardTitle[data-sidebar-preview="2"] {
+  -webkit-line-clamp: 2;
+}
+.cardTitle[data-sidebar-preview="3"] {
+  -webkit-line-clamp: 3;
+}
+
 .titleInput {
   pointer-events: auto;
   position: relative;

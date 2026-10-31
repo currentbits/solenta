@@ -18,6 +18,7 @@ import {
   ThreadCard,
   displayWorkerTitle,
 } from "../src/components/Sidebar";
+import { getSidebarPreview, setSidebarPreview } from "../src/uiPrefs";
 import {
   createFakeCoder,
   installFakeCoder,
@@ -57,6 +58,8 @@ import {
   clearSidebarStorage,
   portalMenu,
 } from "./support/sidebarFixtures";
+
+afterEach(() => setSidebarPreview("1"));
 
 describe("displayWorkerTitle", () => {
   it("strips repeated Fork: prefixes and leaves a bare title alone", () => {
@@ -2758,6 +2761,66 @@ describe("Sidebar footer Stop all control (#1778)", () => {
     await clearSidebarStorage();
     const m = await mount(sidebar(THREADS));
     assert.equal(m.query("[data-stop-all-button]"), null);
+    m.unmount();
+  });
+});
+
+describe("Sidebar preview setting (#1802)", () => {
+  function titleEl(m: Awaited<ReturnType<typeof mount>>, id: string) {
+    return m
+      .query(`[data-thread-card="${id}"]`)
+      ?.querySelector("[data-sidebar-preview]") as HTMLElement | null;
+  }
+
+  it("defaults to 1 line, matching today's single-line truncated title", async () => {
+    await clearSidebarStorage();
+    assert.equal(getSidebarPreview(), "1");
+    const m = await mount(sidebar(THREADS, { projects: [p1, p2] }));
+    const el = titleEl(m, "busy");
+    assert.ok(el, "the title line renders");
+    assert.equal(el!.getAttribute("data-sidebar-preview"), "1");
+    assert.equal(el!.textContent, "busy work");
+    m.unmount();
+  });
+
+  for (const mode of ["2", "3"] as const) {
+    it(`renders the ${mode}-line clamp attribute when set to ${mode}`, async () => {
+      await clearSidebarStorage();
+      setSidebarPreview(mode);
+      const m = await mount(sidebar(THREADS, { projects: [p1, p2] }));
+      const el = titleEl(m, "busy");
+      assert.equal(el!.getAttribute("data-sidebar-preview"), mode);
+      m.unmount();
+    });
+  }
+
+  it("None hides the title line entirely, tightening the row", async () => {
+    await clearSidebarStorage();
+    setSidebarPreview("none");
+    const m = await mount(sidebar(THREADS, { projects: [p1, p2] }));
+    assert.equal(titleEl(m, "busy"), null, "no title node at all, not just CSS-hidden");
+    // The row itself still renders (status, branch, etc), just without a title line.
+    assert.ok(m.query('[data-thread-card="busy"]'), "card still renders");
+    m.unmount();
+  });
+
+  it("renaming still shows the editable title input even when preview is None", async () => {
+    await clearSidebarStorage();
+    setSidebarPreview("none");
+    const onRenameThread = () => {};
+    const m = await mount(
+      sidebar(THREADS, { projects: [p1, p2], onRenameThread }),
+    );
+    const selectBtn = m.query('[data-thread-card="busy"] button') as HTMLElement;
+    await inAct(() =>
+      selectBtn.dispatchEvent(
+        new window.MouseEvent("dblclick", { bubbles: true, cancelable: true }),
+      ),
+    );
+    assert.ok(
+      m.query('[data-thread-title-input="busy"]'),
+      "rename input renders regardless of the preview setting",
+    );
     m.unmount();
   });
 });

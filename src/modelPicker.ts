@@ -49,6 +49,8 @@ export interface ModelRow {
   setup?: boolean;
   /** "Update Codex to use X" (#1529): the installed CLI is too old. */
   updateHint?: string;
+  /** Starred in Settings → Providers (#1714); pulled into the picker's Favorites group (#1802). */
+  favorite?: boolean;
 }
 
 /** Stable key for React lists and selection compare. */
@@ -240,13 +242,14 @@ export function buildUnifiedModelRows(
 
 function rowFromInfo(info: ModelInfo): Pick<
   ModelRow,
-  "id" | "label" | "vendor" | "description"
+  "id" | "label" | "vendor" | "description" | "favorite"
 > {
   return {
     id: info.id,
     label: info.label,
     vendor: info.vendor,
     description: info.description,
+    favorite: info.favorite === true,
   };
 }
 
@@ -855,11 +858,31 @@ export function buildPickerRows(input: {
     out.push(row);
   }
 
-  let prev: string | null = null;
-  return out.map((row) => {
-    const group = row.providerName;
-    const heading = group !== prev ? group : null;
-    prev = group;
-    return { ...row, groupHeading: heading };
-  });
+  const withProviderHeadings = (rows: ModelRow[]): ModelRow[] => {
+    let prev: string | null = null;
+    return rows.map((row) => {
+      const group = row.providerName;
+      const heading = group !== prev ? group : null;
+      prev = group;
+      return { ...row, groupHeading: heading };
+    });
+  };
+
+  // Settings → Providers favourites (#1802) surface as one cross-provider
+  // group at the very top, pulled out of the normal per-provider sections
+  // below so a starred row is not shown twice. Only in the default view:
+  // the local favouritesOnly toggle (`favs`) already IS an all-favourites
+  // view, so a second Favorites header inside it would be redundant.
+  if (!favs) {
+    const favoriteRows = out.filter((row) => row.favorite === true);
+    if (favoriteRows.length > 0) {
+      const rest = out.filter((row) => row.favorite !== true);
+      return [
+        ...favoriteRows.map((row, i) => ({ ...row, groupHeading: i === 0 ? "Favorites" : null })),
+        ...withProviderHeadings(rest),
+      ];
+    }
+  }
+
+  return withProviderHeadings(out);
 }

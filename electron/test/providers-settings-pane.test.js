@@ -136,6 +136,12 @@ describe("provider list for Settings › Providers (#1714)", () => {
     const claude = list.find((p) => p.id === "claude");
     assert.equal(claude.models[0], "my-custom", "favourite first");
     assert.equal(claude.modelInfo[0].id, "my-custom");
+    assert.equal(claude.modelInfo[0].favorite, true, "marked so the composer picker can group it (#1802)");
+    assert.equal(
+      claude.modelInfo.find((m) => m.id === "claude-opus-5")?.favorite,
+      undefined,
+      "unstarred models stay unmarked",
+    );
     const work = list.find((p) => p.id === "claude:work");
     assert.equal(work.models.includes("my-custom"), false, "prefs do not leak through shared arrays");
     const groq = list.find((p) => p.id === "opencode:groq");
