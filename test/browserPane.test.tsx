@@ -295,3 +295,66 @@ describe("BrowserPane screenshot ownership (issue #1206)", () => {
     m.unmount();
   });
 });
+
+describe("BrowserPane agent browser-access toggle (#1797)", () => {
+  it("hides the toggle when no handler is wired", async () => {
+    const m = await mount(<BrowserPane threadId="t1" preview={fakePreview()} />);
+    assert.equal(m.query("[data-browser-access-toggle]"), null);
+    m.unmount();
+  });
+
+  it("reflects the current state and calls the handler with the flip", async () => {
+    const calls: boolean[] = [];
+    const m = await mount(
+      <BrowserPane
+        threadId="t1"
+        preview={fakePreview()}
+        browserAccess={true}
+        onSetBrowserAccess={(enabled) => {
+          calls.push(enabled);
+        }}
+      />,
+    );
+    const toggle = m.query("[data-browser-access-toggle]") as HTMLButtonElement;
+    assert.ok(toggle, "toggle must render once a handler is given");
+    assert.equal(toggle.getAttribute("aria-pressed"), "true");
+    assert.match(toggle.textContent || "", /Let the agent use this browser/);
+
+    await m.click(toggle);
+    assert.deepEqual(calls, [false], "click must flip the current state");
+    m.unmount();
+  });
+
+  it("defaults to on, and flips on from off", async () => {
+    const calls: boolean[] = [];
+    const m = await mount(
+      <BrowserPane
+        threadId="t1"
+        preview={fakePreview()}
+        browserAccess={false}
+        onSetBrowserAccess={(enabled) => {
+          calls.push(enabled);
+        }}
+      />,
+    );
+    const toggle = m.query("[data-browser-access-toggle]") as HTMLButtonElement;
+    assert.equal(toggle.getAttribute("aria-pressed"), "false");
+    await m.click(toggle);
+    assert.deepEqual(calls, [true]);
+    m.unmount();
+
+    const m2 = await mount(
+      <BrowserPane
+        threadId="t1"
+        preview={fakePreview()}
+        onSetBrowserAccess={() => {}}
+      />,
+    );
+    assert.equal(
+      m2.query("[data-browser-access-toggle]")!.getAttribute("aria-pressed"),
+      "true",
+      "browserAccess defaults to on when omitted",
+    );
+    m2.unmount();
+  });
+});

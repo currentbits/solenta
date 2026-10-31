@@ -2636,6 +2636,20 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         threads = threads.map((t) => (t.id === i.threadId ? next : t));
         return Promise.resolve(next);
       },
+      setBrowserAccess: (input: unknown) => {
+        const i = input as { threadId: string; browserAccess: boolean };
+        calls.push({ channel: "threads.setBrowserAccess", args: [input] });
+        const existing = threads.find((t) => t.id === i.threadId);
+        if (!existing) {
+          return Promise.reject(new Error(`Unknown thread: ${i.threadId}`));
+        }
+        const next: ThreadInfo = {
+          ...existing,
+          browserAccess: i.browserAccess !== false,
+        };
+        threads = threads.map((t) => (t.id === i.threadId ? next : t));
+        return Promise.resolve(next);
+      },
       startTeach: (input: unknown) => {
         const i = input as { threadId: string };
         calls.push({ channel: "threads.startTeach", args: [input] });

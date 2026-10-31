@@ -20,6 +20,7 @@ import {
   getChatWidth,
   getDiffFilesCollapsed,
   getDivergenceCardEnabled,
+  getHighContrastEnabled,
   getPasteCardsEnabled,
   getUsageLimitsStripEnabled,
   getWrapCodeBlocksEnabled,
@@ -28,6 +29,7 @@ import {
   setDiffFilesCollapsed,
   setEnterSendsEnabled,
   setDivergenceCardEnabled,
+  setHighContrastEnabled,
   setPasteCardsEnabled,
   setRunDurationEnabled,
   setUsageLimitsStripEnabled,
@@ -3130,6 +3132,8 @@ describe("SettingsModal Display group (moved from Environment)", () => {
     setComposerVimEnabled(false);
     setUsageLimitsStripEnabled(false);
     setChatWidth("default");
+    setHighContrastEnabled(false);
+    document.documentElement.removeAttribute("data-contrast");
   });
 
   it("offers vim motions off by default", async () => {
@@ -3234,6 +3238,31 @@ describe("SettingsModal Display group (moved from Environment)", () => {
     assert.equal(box.checked, true);
     assert.equal(getDiffFilesCollapsed(), true);
     assert.equal(window.localStorage.getItem("coder.diffFilesCollapsed"), "on");
+    m.unmount();
+  });
+
+  it("offers Increase contrast off by default, sets data-contrast and persists (#1797)", async () => {
+    setHighContrastEnabled(false);
+    document.documentElement.removeAttribute("data-contrast");
+    const m = await mount(modal());
+    const card = m.query("[data-display-prefs]");
+    assert.ok(card, "Display group on General");
+    const box = card.querySelector(
+      "[data-high-contrast-pref]",
+    ) as HTMLInputElement | null;
+    assert.ok(box, "increase contrast checkbox");
+    assert.equal(box.checked, false);
+    assert.equal(document.documentElement.getAttribute("data-contrast"), null);
+    assert.match(card.textContent || "", /Increase contrast/);
+
+    await m.click(box);
+    assert.equal(box.checked, true);
+    assert.equal(getHighContrastEnabled(), true);
+    assert.equal(window.localStorage.getItem("coder.highContrast"), "on");
+    assert.equal(document.documentElement.getAttribute("data-contrast"), "high");
+
+    await m.click(box);
+    assert.equal(document.documentElement.getAttribute("data-contrast"), null);
     m.unmount();
   });
 

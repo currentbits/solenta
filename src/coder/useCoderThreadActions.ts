@@ -689,6 +689,27 @@ export function useCoderThreadActions({
     [api, applyThreads],
   );
 
+  const setBrowserAccess = useCallback(
+    async (threadId: string, enabled: boolean) => {
+      try {
+        const thread = await api.threads.setBrowserAccess({
+          threadId,
+          browserAccess: enabled,
+        });
+        applyThreads(
+          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
+        );
+        setDetail((prev) =>
+          prev && prev.thread.id === thread.id ? { ...prev, thread } : prev,
+        );
+        setError(null);
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+      }
+    },
+    [api, applyThreads],
+  );
+
   const setQuotaWaitAutoResume = useCallback(
     async (threadId: string, enabled: boolean | null) => {
       try {
@@ -1233,6 +1254,7 @@ export function useCoderThreadActions({
     setEjected,
     teleport,
     setCrossThreadInbound,
+    setBrowserAccess,
     setQuotaWaitAutoResume,
     resumeQuotaWait,
     resumeCrew,

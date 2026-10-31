@@ -1548,7 +1548,13 @@ function createToolHandlers(deps) {
   }
 
   async function preview(args) {
-    requireOwnThread(args);
+    const thread = requireOwnThread(args);
+    // #1797: a per-thread kill switch for agent-facing browser access.
+    // Single gate for every action (info/navigate/.../type) since they all
+    // route through here; user interaction with the pane itself is unaffected.
+    if (thread.browserAccess === false) {
+      throw new Error("Browser access is turned off for this thread");
+    }
     const action = String((args && args.action) || "");
     const threadId = args.threadId;
     if (action === "info") return previewApi.info({ threadId });
@@ -1628,9 +1634,12 @@ function createToolHandlers(deps) {
  * Build the MCP server exposing the thread tools.
  * @param {{ McpServer: unknown, z: unknown }} sdk
  * @param {ReturnType<typeof createToolHandlers>} handlers
- * @param {{ planboard?: boolean, github?: boolean, bugReports?: boolean }} [opts] - planboard:
+ * @param {{ planboard?: boolean, github?: boolean, bugReports?: boolean, browser?: boolean }} [opts] - planboard:
  *   GitHub-origin sessions only (#849); github: PR/CI tools on GitHub
- *   origins only (#1749); bugReports: false hides solenta_bug_report (#1703)
+ *   origins only (#1749); bugReports: false hides solenta_bug_report (#1703);
+ *   browser: false hides preview when the bound thread's browserAccess is
+ *   off (#1797) — the handler also gates every action, so this only saves
+ *   an agent from seeing a tool it cannot use.
  */
 function buildMcpServer(sdk, handlers, opts = {}) {
   const { McpServer, z } = sdk;
@@ -2212,6 +2221,7 @@ function buildMcpServer(sdk, handlers, opts = {}) {
     async (args) => json(await handlers.task_release(args)),
   );
 
+  if (opts.browser !== false) {
   server.registerTool(
     "preview",
     {
@@ -2253,6 +2263,7 @@ function buildMcpServer(sdk, handlers, opts = {}) {
     },
     async (args) => previewResult(await handlers.preview(args)),
   );
+  }
 
   server.registerTool(
     "refresh_worker_snapshot",
@@ -2686,12 +2697,14 @@ function createOrchServer(opts) {
             boundProjectId && typeof store.getProject === "function"
               ? store.getProject(boundProjectId)
               : null;
+          const boundThread = boundThreadId ? store.getThread(boundThreadId) : null;
           mcp = buildMcpServer(sdk, handlers, {
             planboard: Boolean(
               boundProject && planboardNoteFor(boundProject),
             ),
             bugReports: bugReportsEnabled(store),
             github: Boolean(boundProject && isGitHubProject(boundProject)),
+            browser: !boundThread || boundThread.browserAccess !== false,
           });
         }
         const transport = new sdk.StreamableHTTPServerTransport({

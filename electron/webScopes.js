@@ -150,6 +150,7 @@ const BY_SCOPE = {
     "threads:setMuted",
     "threads:setEjected",
     "threads:setCrossThreadInbound",
+    "threads:setBrowserAccess",
     "threads:setQuotaWaitAutoResume",
     "threads:setPrWatch",
     "threads:linkPullRequest",

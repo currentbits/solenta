@@ -629,6 +629,14 @@ export function createThreads(ctx: DevCtx): Pick<CoderApi, "threads"> {
               : undefined,
         });
       },
+      async setBrowserAccess(input: {
+        threadId: string;
+        browserAccess: boolean;
+      }) {
+        return patchThread(input.threadId, {
+          browserAccess: input.browserAccess !== false,
+        });
+      },
       async setQuotaWaitAutoResume(input: {
         threadId: string;
         enabled: boolean | null;
