@@ -160,3 +160,92 @@ describe("shell:reveal / shell:openPath on a file inside the worktree", () => {
     );
   });
 });
+
+/**
+ * Chat attachments (pasted images, dropped files) live under
+ * `<userDataPath>/attachments`, outside every thread's worktree
+ * (electron/attachments.js DIR_NAME). "Reveal in Finder" / "Open" on an
+ * attachment chip (#1794) needs resolveAllowedShellPath to accept that
+ * directory too, not just the thread worktree.
+ */
+describe("shell:reveal / shell:openPath on a chat attachment", () => {
+  let tmp;
+
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), "coder-shell-attachment-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  async function setup() {
+    return withHandlers(async ({ createHandlers, Store, services, worktrees, calls }) => {
+      const repo = path.join(tmp, "repo");
+      fs.mkdirSync(repo);
+      git(repo, ["init", "-q", "-b", "main"]);
+      git(repo, ["config", "user.email", "t@example.com"]);
+      git(repo, ["config", "user.name", "t"]);
+      fs.writeFileSync(path.join(repo, "README.md"), "x\n");
+      git(repo, ["add", "."]);
+      git(repo, ["commit", "-qm", "init"]);
+
+      const store = new Store(path.join(tmp, "store.json"));
+      const project = await services.addProject(store, repo);
+      const thread = services.createThread(store, {
+        projectId: project.id,
+        title: "shell-attachment",
+      });
+      worktrees.setupWorktree({
+        store,
+        threadId: thread.id,
+        worktreeBase: path.join(tmp, "wt"),
+      });
+
+      const attachmentDir = path.join(tmp, "attachments", thread.id);
+      fs.mkdirSync(attachmentDir, { recursive: true });
+      const attachment = path.join(attachmentDir, "pasted.png");
+      fs.writeFileSync(attachment, "fake-png\n");
+
+      const handlers = createHandlers({
+        store,
+        runner: { start() {}, stop() {}, stopAll() {} },
+        broadcast() {},
+        worktreeBase: path.join(tmp, "wt"),
+        userDataPath: tmp,
+      });
+      return { handlers, thread, attachment, calls };
+    });
+  }
+
+  it("reveal accepts an attachment path outside the worktree", async () => {
+    const { handlers, thread, attachment, calls } = await setup();
+    await handlers["shell:reveal"]({ threadId: thread.id, path: attachment });
+    assert.deepEqual(calls.showItemInFolder, [attachment]);
+  });
+
+  it("openPath accepts the same attachment path", async () => {
+    const { handlers, thread, attachment, calls } = await setup();
+    await handlers["shell:openPath"]({ threadId: thread.id, path: attachment });
+    assert.deepEqual(calls.openPath, [attachment]);
+  });
+
+  it("still rejects a path that is neither the worktree nor the attachments dir", async () => {
+    const { handlers, thread } = await setup();
+    const escape = path.join(tmp, "outside.txt");
+    fs.writeFileSync(escape, "nope\n");
+    await assert.rejects(
+      handlers["shell:reveal"]({ threadId: thread.id, path: escape }),
+      /outside the thread workspace/,
+    );
+  });
+
+  it("rejects a missing attachment path (does not exist)", async () => {
+    const { handlers, thread } = await setup();
+    const gone = path.join(tmp, "attachments", thread.id, "gone.png");
+    await assert.rejects(
+      handlers["shell:reveal"]({ threadId: thread.id, path: gone }),
+      /does not exist/,
+    );
+  });
+});

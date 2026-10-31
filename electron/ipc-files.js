@@ -28,18 +28,32 @@ function stripLineSuffix(raw) {
 }
 
 /**
- * Validate a path exists and is the thread root or inside it.
+ * Validate a path exists and is the thread root or inside it, OR is an
+ * absolute path under this install's attachments dir (#1794): chat
+ * attachment chips (pasted images, dropped files) live under
+ * `<userDataPath>/attachments`, outside every thread's worktree, so they
+ * need their own allowed root for "Reveal in Finder" / "Open" to work.
  * Relative paths join against the thread worktree (or project checkout).
  * @param {import('./store').Store} store
+ * @param {string} userDataPath
  * @param {{ threadId?: string, path?: string }} input
  * @returns {string}
  */
-function resolveAllowedShellPath(store, input) {
+function resolveAllowedShellPath(store, userDataPath, input) {
   if (!input || typeof input !== "object") {
     throw new Error("threadId is required");
   }
+  const raw = input.path != null ? String(input.path) : null;
+  if (raw && userDataPath && path.isAbsolute(raw)) {
+    try {
+      return resolveUnderRoot(path.join(userDataPath, "attachments"), raw);
+    } catch {
+      // Not under the attachments dir: fall through to the thread-worktree
+      // check below, whose errors are the ones callers already assert on.
+    }
+  }
   const { root } = resolveThreadRoot(store, input.threadId);
-  return resolveUnderRoot(root, input.path != null ? String(input.path) : root);
+  return resolveUnderRoot(root, raw != null ? raw : root);
 }
 
 /**
@@ -66,27 +80,98 @@ function resolveUnderRoot(root, raw) {
 }
 
 /**
+ * Bare filename: an extension, no path separator (`runner.js`, not
+ * `electron/runner.js`). Mirrors the bare-name branch of looksLikePath in
+ * src/pathLinks.ts (#1794).
+ * @param {string} raw
+ */
+function isBareFilename(raw) {
+  if (!raw || raw.includes("/") || raw.includes("\\")) return false;
+  const dot = raw.lastIndexOf(".");
+  return dot > 0 && dot < raw.length - 1;
+}
+
+/**
+ * Basename -> tracked/untracked-not-ignored paths (git ls-files, so
+ * .gitignore is respected for free), cached per root for ~30s (#1794).
+ */
+const BASENAME_INDEX_TTL_MS = 30000;
+let basenameIndexCache = null;
+
+/** @param {string} root */
+async function basenameIndex(root) {
+  const now = Date.now();
+  if (
+    basenameIndexCache &&
+    basenameIndexCache.root === root &&
+    now - basenameIndexCache.at < BASENAME_INDEX_TTL_MS
+  ) {
+    return basenameIndexCache.byBase;
+  }
+  const byBase = new Map();
+  try {
+    for (const f of await lsFiles(root)) {
+      const base = f.slice(f.lastIndexOf("/") + 1);
+      const list = byBase.get(base);
+      if (list) list.push(f);
+      else byBase.set(base, [f]);
+    }
+  } catch {
+    // Not a git repo (or git failed): no basename fallback, same as before.
+  }
+  basenameIndexCache = { root, at: now, byBase };
+  return byBase;
+}
+
+/**
+ * Fallback for a bare filename that doesn't exist at the root: resolve by
+ * basename against the worktree's tracked file list, but only when exactly
+ * one file has that name (#1794).
+ *
+ * ponytail: ambiguous basenames are not linked at all - the simplest rule
+ * that is never wrong. Add a "prefer the file this thread touched" tie-break
+ * only if an actual complaint about a common basename (e.g. `index.ts`)
+ * shows up; it is not free (needs the thread's changed-files list) and the
+ * issue only asks for it when "cheap".
+ * @param {string} root
+ * @param {string} raw
+ * @returns {Promise<string | null>}
+ */
+async function resolveByBasename(root, raw) {
+  if (!isBareFilename(raw)) return null;
+  const matches = (await basenameIndex(root)).get(raw);
+  if (!matches || matches.length !== 1) return null;
+  try {
+    return resolveUnderRoot(root, matches[0]);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Batch form of resolveAllowedShellPath: missing / outside paths are null.
  * The thread root is looked up once per call, not once per path (#1475).
  * @param {import('./store').Store} store
  * @param {string} threadId
  * @param {string[]} rawPaths
- * @returns {Array<string | null>}
+ * @returns {Promise<Array<string | null>>}
  */
-function tryResolveWorkspaceFiles(store, threadId, rawPaths) {
+async function tryResolveWorkspaceFiles(store, threadId, rawPaths) {
   let root;
   try {
     root = resolveThreadRoot(store, threadId).root;
   } catch {
     return rawPaths.map(() => null);
   }
-  return rawPaths.map((raw) => {
-    try {
-      return resolveUnderRoot(root, raw);
-    } catch {
-      return null;
-    }
-  });
+  return Promise.all(
+    rawPaths.map(async (raw) => {
+      try {
+        return resolveUnderRoot(root, raw);
+      } catch {
+        return resolveByBasename(root, raw);
+      }
+    }),
+  );
 }
 
 /** Max paths per files:resolve call; the renderer chunks at the same size. */
@@ -283,7 +368,7 @@ module.exports = {
     const raws = Array.isArray(input.paths)
       ? input.paths.slice(0, RESOLVE_PATHS_MAX).map((raw) => String(raw ?? ""))
       : [];
-    const abs = tryResolveWorkspaceFiles(ctx.store, threadId, raws);
+    const abs = await tryResolveWorkspaceFiles(ctx.store, threadId, raws);
     return { resolved: raws.map((p, i) => ({ path: p, abs: abs[i] })) };
   },
   "files:tree": async (ctx, input) => {
@@ -405,11 +490,11 @@ module.exports = {
     };
   },
   "shell:reveal": async (ctx, input) => {
-    const target = resolveAllowedShellPath(ctx.store, input);
+    const target = resolveAllowedShellPath(ctx.store, ctx.userDataPath, input);
     shell.showItemInFolder(target);
   },
   "shell:openPath": async (ctx, input) => {
-    const target = resolveAllowedShellPath(ctx.store, input);
+    const target = resolveAllowedShellPath(ctx.store, ctx.userDataPath, input);
     const err = await shell.openPath(target);
     if (err) throw new Error(err);
   },
@@ -417,7 +502,7 @@ module.exports = {
     return require("./openIn.js").listEditors();
   },
   "shell:openIn": async (ctx, input) => {
-    const target = resolveAllowedShellPath(ctx.store, input);
+    const target = resolveAllowedShellPath(ctx.store, ctx.userDataPath, input);
     await require("./openIn.js").openIn(target, input && input.editor, {
       line: input && input.line,
       col: input && input.column,

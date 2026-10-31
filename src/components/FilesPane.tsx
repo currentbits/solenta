@@ -17,6 +17,7 @@ import type {
   FileTreeEntry,
 } from "../shared/ipc";
 import type { ReviewComment } from "../diffView";
+import { MENTION_PATH_MIME } from "../dropFiles";
 import { formatBytes } from "../format";
 import { languageForPath, useHighlightedLines } from "../syntaxHighlight";
 import { MarkdownBody } from "./Markdown";
@@ -399,6 +400,18 @@ function FilesBrowser({
                 data-ignored={row.entry.ignored ? "" : undefined}
                 data-files-row={row.entry.path}
                 style={{ paddingLeft: 8 + row.level * 12 }}
+                draggable
+                onDragStart={(e) => {
+                  // Dragged into the composer (#1794): a repo-relative
+                  // path, trailing slash for a folder so the drop handler
+                  // can tell them apart without a second round trip.
+                  const path = row.entry.dir
+                    ? `${row.entry.path}/`
+                    : row.entry.path;
+                  e.dataTransfer.setData(MENTION_PATH_MIME, path);
+                  e.dataTransfer.setData("text/plain", path);
+                  e.dataTransfer.effectAllowed = "copy";
+                }}
                 onMouseDown={(e) => {
                   // Keep focus on the tree so arrows keep working.
                   e.preventDefault();

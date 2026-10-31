@@ -4,6 +4,8 @@ import {
   filesFromDataTransfer,
   foldersFromCapturedItems,
   isFileDrag,
+  isMentionPathDrag,
+  MENTION_PATH_MIME,
   type DroppedFolder,
 } from "./dropFiles";
 
@@ -17,6 +19,13 @@ export function useFileDrop(
     enabled: boolean;
     onFiles: (files: File[], folders?: DroppedFolder[]) => void | Promise<void>;
     onDraggingChange?: (dragging: boolean) => void;
+    /**
+     * Files-pane row drop (#1794): a repo-relative path (trailing slash for
+     * a folder), handled as an @mention insert rather than an attachment.
+     * Checked before the OS-file path, so a Files-pane drag never falls
+     * through to onFiles.
+     */
+    onMentionPath?: (path: string) => void;
   },
 ): boolean {
   const [dragging, setDragging] = useState(false);
@@ -24,6 +33,8 @@ export function useFileDrop(
   onFilesRef.current = opts.onFiles;
   const onDraggingRef = useRef(opts.onDraggingChange);
   onDraggingRef.current = opts.onDraggingChange;
+  const onMentionPathRef = useRef(opts.onMentionPath);
+  onMentionPathRef.current = opts.onMentionPath;
 
   useEffect(() => {
     const el = targetRef.current;
@@ -35,22 +46,39 @@ export function useFileDrop(
     };
 
     const onDragEnter = (e: DragEvent) => {
+      if (isMentionPathDrag(e.dataTransfer)) {
+        e.preventDefault();
+        return;
+      }
       if (!isFileDrag(e.dataTransfer)) return;
       e.preventDefault();
       setHover(true);
     };
     const onDragOver = (e: DragEvent) => {
+      if (isMentionPathDrag(e.dataTransfer)) {
+        e.preventDefault();
+        if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+        return;
+      }
       if (!isFileDrag(e.dataTransfer)) return;
       e.preventDefault();
       if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
     };
     const onDragLeave = (e: DragEvent) => {
+      if (isMentionPathDrag(e.dataTransfer)) return;
       if (!isFileDrag(e.dataTransfer)) return;
       const next = e.relatedTarget;
       if (next instanceof Node && el.contains(next)) return;
       setHover(false);
     };
     const onDrop = (e: DragEvent) => {
+      if (isMentionPathDrag(e.dataTransfer)) {
+        const path = e.dataTransfer?.getData(MENTION_PATH_MIME) ?? "";
+        e.preventDefault();
+        e.stopPropagation();
+        if (path) onMentionPathRef.current?.(path);
+        return;
+      }
       const captured = captureDropItems(e.dataTransfer);
       const files = filesFromDataTransfer(e.dataTransfer);
       const hasDir = captured.some((item) => item.entry?.isDirectory);

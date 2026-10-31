@@ -134,6 +134,7 @@ import { scrollChildIntoNearestView } from "../scrollNearest";
 import { teachPermissionAllowed } from "../teach";
 import type { ThreadTeach, PromptSnippet } from "../shared/ipc";
 import { useFileDrop } from "../useFileDrop";
+import { applyMention } from "../mention";
 import { isWebMode } from "../shared/wire";
 import {
   getComposerBusyAction,
@@ -1881,12 +1882,32 @@ export const Composer = memo(function Composer({
     [onDropAttachmentFiles, disabled, sending, addAttachments, canAttachImages],
   );
 
+  /**
+   * Files-pane row dropped on the composer (#1794): insert the same `@path `
+   * text acceptMention would, at the drop caret, instead of attaching it.
+   */
+  const insertMentionPath = useCallback(
+    (path: string) => {
+      const el = textareaRef.current;
+      if (!el) return;
+      const caret = el.selectionStart ?? el.value.length;
+      const next = applyMention(el.value, caret, caret, path);
+      writeDraft(next.text, next.caret);
+      closeMention();
+    },
+    [writeDraft, closeMention],
+  );
+
   const composerRef = useRef<HTMLDivElement>(null);
   const dropTargetRef = dropHostRef ?? composerRef;
   const fileDrag = useFileDrop(dropTargetRef, {
-    enabled: Boolean(onDropAttachmentFiles) && !disabled && !sending,
+    enabled:
+      (Boolean(onDropAttachmentFiles) || Boolean(onListFiles)) &&
+      !disabled &&
+      !sending,
     onFiles: acceptDroppedFiles,
     onDraggingChange: onFileDragChange,
+    onMentionPath: insertMentionPath,
   });
 
   const pickMode = async (mode: PermissionMode) => {
