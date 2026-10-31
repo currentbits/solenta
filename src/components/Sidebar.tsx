@@ -2281,9 +2281,13 @@ export const Sidebar = memo(function Sidebar({
               className={styles.stopAllButton}
               data-stop-all-button=""
               title={`Stop ${workingCount} running ${workingCount === 1 ? "thread" : "threads"}`}
+              aria-label={`Stop all (${workingCount})`}
               onClick={onStopAllRunning}
             >
-              Stop all ({workingCount})
+              <Icon size={11}>
+                <rect x="5" y="5" width="14" height="14" rx="2" fill="currentColor" />
+              </Icon>
+              {workingCount}
             </button>
           )}
           <nav className={styles.viewNav} aria-label="App">
@@ -2365,9 +2369,7 @@ export const Sidebar = memo(function Sidebar({
               url={updateUrl}
               notesBody={updateNotesBody}
               publishedAt={updatePublishedAt}
-            />
-          )}
-          {(updateState === "available" || updateState === "staged") && (
+            >
             <button
               type="button"
               className={styles.settingsUpdate}
@@ -2399,6 +2401,7 @@ export const Sidebar = memo(function Sidebar({
                   ? "Restart"
                   : "Update"}
             </button>
+            </UpdateNotesPopover>
           )}
         </div>
       </footer>
