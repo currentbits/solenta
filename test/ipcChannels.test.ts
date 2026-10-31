@@ -33,6 +33,7 @@ describe("ipcChannels table", () => {
       "boot:ready",
       "terminal:data",
       "clone:progress",
+      "pr:progress",
     ]);
     for (const ch of WIRE_PUSH_CHANNELS) {
       assert.ok((PUSH_CHANNELS as readonly string[]).includes(ch), `${ch} is a desktop push too`);
