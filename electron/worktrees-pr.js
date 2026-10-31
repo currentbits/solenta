@@ -2288,98 +2288,30 @@ function watchStart(thread, number) {
 }
 
 /**
- * Push the thread branch, open a GitHub PR via gh, persist prNumber/prUrl.
- * Idempotent: an existing PR is returned with created:false.
- *
- * @param {object} opts
- * @param {import('./store').Store} opts.store
- * @param {string} opts.threadId
- * @param {string} opts.title
- * @param {string} [opts.body]
- * @param {boolean} [opts.draft]
- * @param {boolean} [opts.allowOversize] skip the prDiffCapLines guard (#402)
- * @param {(channel: string, payload: unknown) => void} [opts.broadcast]
- * @returns {Promise<{ number: number, url: string, state: "OPEN" | "CLOSED" | "MERGED", branch: string, created: boolean }>}
+ * gh-CLI idempotent create: reuse an OPEN PR on this branch, else open one.
+ * Extracted from createPr so its "create" progress step can wrap one call
+ * regardless of which of these gh round-trips actually ran (issue #1803).
+ * @param {object} args
+ * @param {import('./store').Store} args.store
+ * @param {object} args.thread
+ * @param {string} args.cwd
+ * @param {string} args.branch
+ * @param {string} args.baseBranch
+ * @param {string} args.title
+ * @param {string} [args.body]
+ * @param {boolean} [args.draft]
+ * @returns {Promise<{ info: object, extra: object }>}
  */
-async function createPr(opts) {
-  const { store, threadId, title, body, draft, broadcast } = opts;
-
-  const { thread, project, cwd, branch, originUrl } = await resolveThreadGit(
-    store,
-    threadId,
-  );
-
-  const forge = prForge(originUrl);
-  if (!forge && !(await isGitHubPrRemote(originUrl))) {
-    throw new Error(
-      `Remote origin is not a ${FORGE_NAMES} repository (got: ${originUrl}). PR creation requires one of them.`,
-    );
-  }
-
-  const baseBranch =
-    recordedBaseBranch(thread) || (await repoDefaultBranchAsync(project.path));
-  const ahead = gitTry(cwd, ["log", `${baseBranch}..${branch}`, "--oneline"]);
-  if (!ahead.ok) {
-    throw new Error(
-      `Could not compare branch to ${baseBranch}: ${tailErr(ahead.combined, "git log failed")}`,
-    );
-  }
-  if (!String(ahead.stdout || "").trim()) {
-    throw new Error(
-      `Branch has no commits ahead of ${baseBranch}; nothing to propose in a pull request`,
-    );
-  }
-
-  // Review-bottleneck guardrail (issue #402): refuse oversized PRs before
-  // anything is pushed. DORA small batches as the product default — the cap
-  // comes from settings (default 400 lines); allowOversize is the explicit
-  // human override, and a stat failure never blocks creation.
-  const settings = store.getSettings ? store.getSettings() : {};
-  const cap = settings.prDiffCapLines;
-  if (cap != null && !opts.allowOversize) {
-    const stats = await diffStatVsBase(cwd, baseBranch, branch);
-    if (stats && stats.lines > cap) {
-      throw new Error(
-        `${PR_TOO_LARGE_PREFIX}: ${stats.lines} lines changed vs ${baseBranch} across ${stats.files} file${stats.files === 1 ? "" : "s"} (cap ${cap}). Split the branch into smaller stacked PRs, or create the PR anyway.`,
-      );
-    }
-  }
-
-  // Reuse push for remote/branch/timeout/prompt discipline; no intermediate broadcast.
-  push({ store, threadId });
-
-  if (forge) {
-    // Same idempotency as gh below: only an OPEN PR/MR short-circuits.
-    let info = await forge.api.viewPr(cwd, forge.remote, branch);
-    if (!info || info.state !== "OPEN") {
-      const titleText = String(title ?? "");
-      const bodyText = require("./taskGroups.js").withTaskGroupFooter(
-        store,
-        thread,
-        body,
-      );
-      assertNoOutboundSecrets(`${titleText}\n${bodyText}`, "PR");
-      info = await forge.api.createPr(cwd, forge.remote, {
-        branch,
-        baseBranch,
-        title: titleText,
-        body: bodyText,
-        draft,
-      });
-    }
-    store.updateThread(threadId, {
-      prNumber: info.number,
-      prUrl: info.url,
-      prState: info.state,
-    });
-    store.save();
-    if (typeof broadcast === "function") {
-      const { listThreads } = require("./services.js");
-      broadcast("threads:changed", listThreads(store));
-    }
-    return info;
-  }
-
+async function ghCreateOrReusePr({
+  store,
+  thread,
+  cwd,
+  branch,
+  baseBranch,
+  title,
+  body,
+  draft,
+}) {
   // Idempotency: return the existing PR rather than erroring.
   const existing = await ghApiTryAsync(cwd, [
     "pr",
@@ -2395,18 +2327,7 @@ async function createPr(opts) {
     ? parsePrJson(existing.stdout, branch, false)
     : null;
   if (existingInfo && existingInfo.state === "OPEN") {
-    const info = existingInfo;
-    store.updateThread(threadId, {
-      prNumber: info.number,
-      prUrl: info.url,
-      prState: info.state,
-    });
-    store.save();
-    if (typeof broadcast === "function") {
-      const { listThreads } = require("./services.js");
-      broadcast("threads:changed", listThreads(store));
-    }
-    return info;
+    return { info: existingInfo, extra: {} };
   }
   // A successful view of a CLOSED or MERGED PR is not a failure: it just means
   // there is no CURRENT PR, so fall through and open one. Only classify the
@@ -2461,18 +2382,7 @@ async function createPr(opts) {
         ? parsePrJson(raced.stdout, branch, false)
         : null;
       if (racedInfo && racedInfo.state === "OPEN") {
-        const info = racedInfo;
-        store.updateThread(threadId, {
-          prNumber: info.number,
-          prUrl: info.url,
-          prState: info.state,
-        });
-        store.save();
-        if (typeof broadcast === "function") {
-          const { listThreads } = require("./services.js");
-          broadcast("threads:changed", listThreads(store));
-        }
-        return info;
+        return { info: racedInfo, extra: {} };
       }
     }
     throwGhFailure(created, "gh pr create failed");
@@ -2502,35 +2412,161 @@ async function createPr(opts) {
           branch,
           created: true,
         };
-        store.updateThread(threadId, {
-          prNumber: info.number,
-          prUrl: info.url,
-          prState: info.state,
-          ...watchStart(thread, info.number),
-        });
-        store.save();
-        if (typeof broadcast === "function") {
-          const { listThreads } = require("./services.js");
-          broadcast("threads:changed", listThreads(store));
-        }
-        return info;
+        return { info, extra: watchStart(thread, info.number) };
       }
     }
     throwGhFailure(viewed, "gh pr view failed after create");
   }
 
   const info = parsePrJson(viewed.stdout, branch, true);
-  store.updateThread(threadId, {
-    prNumber: info.number,
-    prUrl: info.url,
-    prState: info.state,
-    ...watchStart(thread, info.number),
-  });
-  store.save();
-  if (typeof broadcast === "function") {
-    const { listThreads } = require("./services.js");
-    broadcast("threads:changed", listThreads(store));
+  return { info, extra: watchStart(thread, info.number) };
+}
+
+/**
+ * Push the thread branch, open a GitHub PR via gh, persist prNumber/prUrl.
+ * Idempotent: an existing PR is returned with created:false.
+ *
+ * Reports progress through `opts.onStep({ step, state, detail? })` (issue
+ * #1803) so the renderer can show Committing / Pushing / Creating PR /
+ * Linking instead of one opaque "Creating...". `step` is one of
+ * "commit" | "push" | "create" | "link"; `state` is one of
+ * "start" | "done" | "error" | "skipped". createPr never commits anything
+ * itself — any commit already happened through the Changes panel's own
+ * separate git.commit call before this runs — so "commit" is always
+ * reported "skipped".
+ *
+ * @param {object} opts
+ * @param {import('./store').Store} opts.store
+ * @param {string} opts.threadId
+ * @param {string} opts.title
+ * @param {string} [opts.body]
+ * @param {boolean} [opts.draft]
+ * @param {boolean} [opts.allowOversize] skip the prDiffCapLines guard (#402)
+ * @param {(channel: string, payload: unknown) => void} [opts.broadcast]
+ * @param {(event: { step: "commit" | "push" | "create" | "link", state: "start" | "done" | "error" | "skipped", detail?: string }) => void} [opts.onStep]
+ * @returns {Promise<{ number: number, url: string, state: "OPEN" | "CLOSED" | "MERGED", branch: string, created: boolean }>}
+ */
+async function createPr(opts) {
+  const { store, threadId, title, body, draft, broadcast } = opts;
+  const onStep = typeof opts.onStep === "function" ? opts.onStep : () => {};
+  const detailOf = (err) => (err instanceof Error ? err.message : String(err));
+
+  onStep({ step: "commit", state: "skipped" });
+
+  const { thread, project, cwd, branch, originUrl } = await resolveThreadGit(
+    store,
+    threadId,
+  );
+
+  const forge = prForge(originUrl);
+  if (!forge && !(await isGitHubPrRemote(originUrl))) {
+    throw new Error(
+      `Remote origin is not a ${FORGE_NAMES} repository (got: ${originUrl}). PR creation requires one of them.`,
+    );
   }
+
+  const baseBranch =
+    recordedBaseBranch(thread) || (await repoDefaultBranchAsync(project.path));
+  const ahead = gitTry(cwd, ["log", `${baseBranch}..${branch}`, "--oneline"]);
+  if (!ahead.ok) {
+    throw new Error(
+      `Could not compare branch to ${baseBranch}: ${tailErr(ahead.combined, "git log failed")}`,
+    );
+  }
+  if (!String(ahead.stdout || "").trim()) {
+    throw new Error(
+      `Branch has no commits ahead of ${baseBranch}; nothing to propose in a pull request`,
+    );
+  }
+
+  // Review-bottleneck guardrail (issue #402): refuse oversized PRs before
+  // anything is pushed. DORA small batches as the product default — the cap
+  // comes from settings (default 400 lines); allowOversize is the explicit
+  // human override, and a stat failure never blocks creation.
+  const settings = store.getSettings ? store.getSettings() : {};
+  const cap = settings.prDiffCapLines;
+  if (cap != null && !opts.allowOversize) {
+    const stats = await diffStatVsBase(cwd, baseBranch, branch);
+    if (stats && stats.lines > cap) {
+      throw new Error(
+        `${PR_TOO_LARGE_PREFIX}: ${stats.lines} lines changed vs ${baseBranch} across ${stats.files} file${stats.files === 1 ? "" : "s"} (cap ${cap}). Split the branch into smaller stacked PRs, or create the PR anyway.`,
+      );
+    }
+  }
+
+  onStep({ step: "push", state: "start" });
+  try {
+    // Reuse push for remote/branch/timeout/prompt discipline; no intermediate broadcast.
+    push({ store, threadId });
+  } catch (err) {
+    onStep({ step: "push", state: "error", detail: detailOf(err) });
+    throw err;
+  }
+  onStep({ step: "push", state: "done" });
+
+  onStep({ step: "create", state: "start" });
+  /** @type {{ number: number, url: string, state: string, branch?: string, created?: boolean }} */
+  let info;
+  let extra = {};
+  try {
+    if (forge) {
+      // Same idempotency as gh below: only an OPEN PR/MR short-circuits.
+      info = await forge.api.viewPr(cwd, forge.remote, branch);
+      if (!info || info.state !== "OPEN") {
+        const titleText = String(title ?? "");
+        const bodyText = require("./taskGroups.js").withTaskGroupFooter(
+          store,
+          thread,
+          body,
+        );
+        assertNoOutboundSecrets(`${titleText}\n${bodyText}`, "PR");
+        info = await forge.api.createPr(cwd, forge.remote, {
+          branch,
+          baseBranch,
+          title: titleText,
+          body: bodyText,
+          draft,
+        });
+      }
+    } else {
+      const result = await ghCreateOrReusePr({
+        store,
+        thread,
+        cwd,
+        branch,
+        baseBranch,
+        title,
+        body,
+        draft,
+      });
+      info = result.info;
+      extra = result.extra;
+    }
+  } catch (err) {
+    onStep({ step: "create", state: "error", detail: detailOf(err) });
+    throw err;
+  }
+  onStep({ step: "create", state: "done" });
+
+  onStep({ step: "link", state: "start" });
+  try {
+    store.updateThread(threadId, {
+      prNumber: info.number,
+      prUrl: info.url,
+      prState: info.state,
+      ...extra,
+    });
+    store.save();
+    if (typeof broadcast === "function") {
+      const { listThreads } = require("./services.js");
+      broadcast("threads:changed", listThreads(store));
+    }
+  } catch (err) {
+    onStep({ step: "link", state: "error", detail: detailOf(err) });
+    throw err;
+  }
+  onStep({ step: "link", state: "done" });
+
   return info;
 }
 

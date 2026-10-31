@@ -1859,6 +1859,73 @@ describe("worktrees", () => {
       );
     });
 
+    it("reports commit/push/create/link steps in order (#1803)", async () => {
+      preparePrFixture({ store, thread, worktreeBase, repo, tmpDir });
+      /** @type {Array<{ step: string, state: string, detail?: string }>} */
+      const steps = [];
+
+      const info = await createPr({
+        store,
+        threadId: thread.id,
+        title: "Ship feature",
+        broadcast: () => {},
+        onStep: (step) => steps.push(step),
+      });
+
+      assert.equal(info.created, true);
+      // createPr never commits itself (any commit already happened through
+      // the Changes panel's own separate git.commit call), so "commit" is
+      // always reported skipped.
+      assert.deepEqual(
+        steps.map((s) => `${s.step}:${s.state}`),
+        [
+          "commit:skipped",
+          "push:start",
+          "push:done",
+          "create:start",
+          "create:done",
+          "link:start",
+          "link:done",
+        ],
+      );
+    });
+
+    it("reports a push failure as a push-step error, before create/link run (#1803)", async () => {
+      preparePrFixture({ store, thread, worktreeBase, repo, tmpDir });
+      // Point the push URL at a path that cannot accept pushes; the fetch
+      // URL stays github.com so the earlier forge/remote checks still pass.
+      git(repo, [
+        "remote",
+        "set-url",
+        "--push",
+        "origin",
+        path.join(tmpDir, "does-not-exist-remote"),
+      ]);
+      /** @type {Array<{ step: string, state: string, detail?: string }>} */
+      const steps = [];
+
+      await assert.rejects(
+        () =>
+          createPr({
+            store,
+            threadId: thread.id,
+            title: "Ship feature",
+            broadcast: () => {},
+            onStep: (step) => steps.push(step),
+          }),
+        /denied|exist|repository|remote|fatal|error|Could not|does not/i,
+      );
+
+      assert.deepEqual(
+        steps.map((s) => `${s.step}:${s.state}`),
+        ["commit:skipped", "push:start", "push:error"],
+        `expected push to fail before create/link ran, got: ${JSON.stringify(steps)}`,
+      );
+      assert.ok(steps[2].detail, "push error step must carry the failure detail");
+      // Nothing was persisted: a failed push must not stamp the thread.
+      assert.equal(store.getThread(thread.id).prNumber, null);
+    });
+
     it("createPr passes --draft when draft is true", async () => {
       const { statePath } = preparePrFixture({
         store,

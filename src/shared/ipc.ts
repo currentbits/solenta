@@ -2901,6 +2901,23 @@ export interface PrInfo {
   baseRefName?: string;
 }
 
+/** createPr's pipeline steps, in order (issue #1803). */
+export type PrStep = "commit" | "push" | "create" | "link";
+
+/**
+ * One progress event for an in-flight createPr, pushed on "pr:progress"
+ * and tagged with the requestId the caller minted for that call.
+ * "skipped" is normal for "commit": createPr never commits anything
+ * itself, so that step reports skipped unless there was nothing to do.
+ */
+export interface PrProgressPush {
+  requestId: string;
+  step: PrStep;
+  state: "start" | "done" | "error" | "skipped";
+  /** Error message when state is "error". */
+  detail?: string;
+}
+
 /** One CI check from `gh pr checks`. */
 export type PrCheckBucket =
   | "pass"
@@ -6819,6 +6836,11 @@ export interface CoderApi {
        * the PR even though the diff exceeds the configured size cap.
        */
       allowOversize?: boolean;
+      /**
+       * Caller-minted id that tags this call's "pr:progress" pushes
+       * (issue #1803). Omit to skip the progress stream.
+       */
+      requestId?: string;
     }): Promise<PrInfo>;
     /**
      * Current PR for the thread's branch, or null when there is none. Reads
@@ -7651,6 +7673,8 @@ export interface CoderApi {
   on(channel: "clone:progress", cb: (push: CloneProgressPush) => void): () => void;
   /** Desktop: a hosted agent is waiting on the in-app OAuth consent screen (#1541). */
   on(channel: "pairing:consent", cb: (pending: OauthConsentInfo) => void): () => void;
+  /** createPr step progress: commit/push/create/link (#1803). */
+  on(channel: "pr:progress", cb: (push: PrProgressPush) => void): () => void;
 }
 
 declare global {
