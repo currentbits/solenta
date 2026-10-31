@@ -6,10 +6,13 @@ import type {
   CoderApi,
   MergeMethod,
   MergeOptionsResult,
+  PrComment,
   PrCommentResult,
   PrDetail,
   PrDetailResult,
+  PrReactionResult,
   PrStackEntry,
+  ReactionContent,
   ThreadInfo,
 } from "../shared/ipc";
 import { Markdown } from "./Markdown";
@@ -21,6 +24,22 @@ const MERGE_LABEL: Record<MergeMethod, string> = {
   merge: "Merge commit",
   rebase: "Rebase merge",
 };
+
+/**
+ * GitHub's 8 comment reactions (#1795 feature 3): the emoji shown in the "+"
+ * picker and under each comment, the REST `content` the IPC call sends, and
+ * the `ReactionContent` enum the fetch reports back in `reactionGroups`.
+ */
+const PR_REACTIONS: ReadonlyArray<{ emoji: string; content: string; enum: ReactionContent }> = [
+  { emoji: "👍", content: "+1", enum: "THUMBS_UP" },
+  { emoji: "👎", content: "-1", enum: "THUMBS_DOWN" },
+  { emoji: "😄", content: "laugh", enum: "LAUGH" },
+  { emoji: "🎉", content: "hooray", enum: "HOORAY" },
+  { emoji: "😕", content: "confused", enum: "CONFUSED" },
+  { emoji: "❤️", content: "heart", enum: "HEART" },
+  { emoji: "🚀", content: "rocket", enum: "ROCKET" },
+  { emoji: "👀", content: "eyes", enum: "EYES" },
+];
 
 function rejectReason(err: unknown, fallback: string): string {
   return err instanceof Error && err.message ? err.message : fallback;
@@ -65,6 +84,31 @@ export interface PrWorkspacePanelProps {
     repo?: string;
     method?: MergeMethod;
   }) => Promise<PrDetailResult>;
+  /** Shown as "Update branch" when the PR is BEHIND (#1795 feature 1). Omit to hide the button. */
+  prUpdateBranch?: (input: {
+    projectPath: string;
+    prNumber: number;
+    repo?: string;
+  }) => Promise<PrDetailResult>;
+  /** Edits a comment in place (#1795 feature 2). Omit to hide the Edit affordance. */
+  prCommentEdit?: (input: {
+    projectPath: string;
+    prNumber: number;
+    repo?: string;
+    commentId: number;
+    type?: "issue" | "review";
+    body: string;
+  }) => Promise<PrDetailResult>;
+  /** Adds/removes the viewer's reaction (#1795 feature 3). Omit to hide the reaction picker. */
+  prReaction?: (input: {
+    projectPath: string;
+    prNumber: number;
+    repo?: string;
+    commentId: number;
+    content: string;
+    remove?: boolean;
+    reactionId?: number;
+  }) => Promise<PrReactionResult>;
   onSelectThread: (id: string) => void;
   onClose: () => void;
 }
@@ -79,6 +123,9 @@ export function PrWorkspacePanel({
   prClose,
   prReady,
   prMergeAt,
+  prUpdateBranch,
+  prCommentEdit,
+  prReaction,
   onSelectThread,
   onClose,
 }: PrWorkspacePanelProps) {
@@ -90,6 +137,12 @@ export function PrWorkspacePanel({
   const [comment, setComment] = useState("");
   const [preview, setPreview] = useState(false);
   const [pending, setPending] = useState<string | null>(null);
+  const [editingComment, setEditingComment] = useState<number | null>(null);
+  const [editCommentBody, setEditCommentBody] = useState("");
+  const [reactionPickerFor, setReactionPickerFor] = useState<number | null>(null);
+  // Reaction id cached per comment+content from a same-session add, so a
+  // same-session remove skips the list-by-login round trip (#1795 feature 3).
+  const [reactionIds, setReactionIds] = useState<Record<string, number>>({});
   const [confirm, setConfirm] = useState<"merge" | "close" | null>(null);
   const [mergeOpts, setMergeOpts] = useState<MergeOptionsResult | null>(null);
   const [method, setMethod] = useState<MergeMethod | null>(null);
@@ -205,6 +258,85 @@ export function PrWorkspacePanel({
   };
 
   const prArgs = { projectPath, prNumber: activePr, ...(activeRepo ? { repo: activeRepo } : {}) };
+
+  const saveCommentEdit = async (row: PrComment) => {
+    if (!prCommentEdit || row.id == null || pending) return;
+    setPending("editComment");
+    try {
+      const result = await prCommentEdit({
+        ...prArgs,
+        commentId: row.id,
+        type: row.type,
+        body: editCommentBody,
+      });
+      if (!result.ok) {
+        setError(result.reason);
+        return;
+      }
+      setError(null);
+      setPr(result.pr);
+      setEditingComment(null);
+    } catch (err) {
+      setError(rejectReason(err, "Edit failed"));
+    } finally {
+      setPending(null);
+    }
+  };
+
+  const toggleReaction = async (
+    row: PrComment,
+    choice: { emoji: string; content: string; enum: ReactionContent },
+  ) => {
+    if (!prReaction || row.id == null || !pr) return;
+    const rowId = row.id;
+    const existing = row.reactions?.find((r) => r.content === choice.enum);
+    const removing = Boolean(existing?.viewerHasReacted);
+    const cacheKey = `${rowId}:${choice.content}`;
+    const prevPr = pr;
+
+    const list = row.reactions ? [...row.reactions] : [];
+    const idx = list.findIndex((r) => r.content === choice.enum);
+    if (removing && idx >= 0) {
+      const count = Math.max(0, list[idx].count - 1);
+      if (count === 0) list.splice(idx, 1);
+      else list[idx] = { ...list[idx], count, viewerHasReacted: false };
+    } else if (!removing) {
+      if (idx >= 0) {
+        list[idx] = { ...list[idx], count: list[idx].count + 1, viewerHasReacted: true };
+      } else {
+        list.push({ content: choice.enum, count: 1, viewerHasReacted: true });
+      }
+    }
+    setPr({
+      ...pr,
+      comments: pr.comments.map((c) => (c.id === rowId ? { ...c, reactions: list } : c)),
+    });
+    setReactionPickerFor(null);
+    try {
+      const result = await prReaction({
+        ...prArgs,
+        commentId: rowId,
+        content: choice.content,
+        remove: removing,
+        ...(removing ? { reactionId: reactionIds[cacheKey] } : {}),
+      });
+      if (!result.ok) {
+        setPr(prevPr);
+        setError(result.reason);
+        return;
+      }
+      setError(null);
+      setReactionIds((prev) => {
+        const next = { ...prev };
+        if (!removing && result.reactionId != null) next[cacheKey] = result.reactionId;
+        else if (removing) delete next[cacheKey];
+        return next;
+      });
+    } catch (err) {
+      setPr(prevPr);
+      setError(rejectReason(err, "Reaction failed"));
+    }
+  };
 
   const runAction = async (
     kind: string,
@@ -396,6 +528,19 @@ export function PrWorkspacePanel({
           ) : null}
 
           <div className={styles.actions}>
+            {open && prUpdateBranch && pr.mergeStateStatus === "BEHIND" ? (
+              <button
+                type="button"
+                className={styles.ghost}
+                data-pr-update-branch=""
+                disabled={pending != null}
+                onClick={() =>
+                  void runAction("updateBranch", () => prUpdateBranch(prArgs))
+                }
+              >
+                {pending === "updateBranch" ? "Updating…" : "Update branch"}
+              </button>
+            ) : null}
             {open && pr.isDraft ? (
               <button
                 type="button"
@@ -556,23 +701,125 @@ export function PrWorkspacePanel({
             {pr.comments.length === 0 ? (
               <p className={styles.hint}>No comments yet</p>
             ) : (
-              pr.comments.map((row, index) => (
-                <article
-                  key={row.url || `${row.author}-${index}`}
-                  className={styles.comment}
-                  data-pr-comment-item=""
-                >
-                  <div className={styles.commentMeta}>
-                    <span className={styles.author}>{row.author}</span>
-                    {row.createdAt ? (
-                      <span className={styles.age}>
-                        {formatRelativeAge(Date.parse(row.createdAt) || 0, now)}
-                      </span>
+              pr.comments.map((row, index) => {
+                const editing = row.id != null && editingComment === row.id;
+                return (
+                  <article
+                    key={row.id ?? row.url ?? `${row.author}-${index}`}
+                    className={styles.comment}
+                    data-pr-comment-item=""
+                  >
+                    <div className={styles.commentMeta}>
+                      <span className={styles.author}>{row.author}</span>
+                      {row.createdAt ? (
+                        <span className={styles.age}>
+                          {formatRelativeAge(Date.parse(row.createdAt) || 0, now)}
+                        </span>
+                      ) : null}
+                      {prCommentEdit && row.mine && row.id != null && !editing ? (
+                        <button
+                          type="button"
+                          className={styles.ghost}
+                          data-pr-comment-edit=""
+                          disabled={pending != null}
+                          onClick={() => {
+                            setEditingComment(row.id!);
+                            setEditCommentBody(row.body);
+                          }}
+                        >
+                          Edit
+                        </button>
+                      ) : null}
+                    </div>
+                    {editing ? (
+                      <div className={styles.commentForm} data-pr-comment-edit-form="">
+                        <textarea
+                          className={styles.textarea}
+                          data-pr-comment-edit-body=""
+                          value={editCommentBody}
+                          rows={4}
+                          disabled={pending != null}
+                          onChange={(event) => setEditCommentBody(event.target.value)}
+                        />
+                        <div className={styles.actions}>
+                          <button
+                            type="button"
+                            className={styles.primary}
+                            data-pr-comment-edit-save=""
+                            disabled={!canSubmitComment(editCommentBody) || pending != null}
+                            onClick={() => void saveCommentEdit(row)}
+                          >
+                            {pending === "editComment" ? "Saving…" : "Save"}
+                          </button>
+                          <button
+                            type="button"
+                            className={styles.ghost}
+                            data-pr-comment-edit-cancel=""
+                            disabled={pending != null}
+                            onClick={() => setEditingComment(null)}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <Markdown text={row.body} />
+                    )}
+                    {prReaction && row.id != null ? (
+                      <div className={styles.reactionsRow} data-pr-reactions="">
+                        {(row.reactions || [])
+                          .filter((r) => r.count > 0)
+                          .map((r) => {
+                            const choice = PR_REACTIONS.find((p) => p.enum === r.content);
+                            if (!choice) return null;
+                            return (
+                              <button
+                                key={r.content}
+                                type="button"
+                                className={styles.reactionChip}
+                                data-pr-reaction={r.content}
+                                aria-pressed={r.viewerHasReacted}
+                                disabled={pending != null}
+                                onClick={() => void toggleReaction(row, choice)}
+                              >
+                                {choice.emoji} {r.count}
+                              </button>
+                            );
+                          })}
+                        <div className={styles.reactionPickerWrap}>
+                          <button
+                            type="button"
+                            className={styles.reactionAdd}
+                            data-pr-reaction-add=""
+                            aria-label="Add reaction"
+                            disabled={pending != null}
+                            onClick={() =>
+                              setReactionPickerFor((cur) => (cur === row.id ? null : row.id!))
+                            }
+                          >
+                            +
+                          </button>
+                          {reactionPickerFor === row.id ? (
+                            <div className={styles.reactionPicker} data-pr-reaction-picker="">
+                              {PR_REACTIONS.map((choice) => (
+                                <button
+                                  key={choice.content}
+                                  type="button"
+                                  className={styles.reactionOption}
+                                  data-pr-reaction-option={choice.content}
+                                  onClick={() => void toggleReaction(row, choice)}
+                                >
+                                  {choice.emoji}
+                                </button>
+                              ))}
+                            </div>
+                          ) : null}
+                        </div>
+                      </div>
                     ) : null}
-                  </div>
-                  <Markdown text={row.body} />
-                </article>
-              ))
+                  </article>
+                );
+              })
             )}
             {open ? (
               <form

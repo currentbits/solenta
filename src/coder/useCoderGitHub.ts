@@ -207,6 +207,42 @@ export function useCoderGitHub({
     [api],
   );
 
+  const prUpdateBranch = useCallback(
+    async (input: { projectPath: string; prNumber: number; repo?: string }) => {
+      return api.git.prUpdateBranch(input);
+    },
+    [api],
+  );
+
+  const prCommentEdit = useCallback(
+    async (input: {
+      projectPath: string;
+      prNumber: number;
+      repo?: string;
+      commentId: number;
+      type?: "issue" | "review";
+      body: string;
+    }) => {
+      return api.git.prCommentEdit(input);
+    },
+    [api],
+  );
+
+  const prReaction = useCallback(
+    async (input: {
+      projectPath: string;
+      prNumber: number;
+      repo?: string;
+      commentId: number;
+      content: string;
+      remove?: boolean;
+      reactionId?: number;
+    }) => {
+      return api.git.prReaction(input);
+    },
+    [api],
+  );
+
   const checkoutPr = useCallback(
     async (input: { projectId: string; prNumber: number }) => {
       const result = await api.git.checkoutPr(input);
@@ -265,6 +301,9 @@ export function useCoderGitHub({
     prClose,
     prReady,
     prMergeAt,
+    prUpdateBranch,
+    prCommentEdit,
+    prReaction,
     checkoutPr,
     listIssues,
     setIssuePlanStatus,

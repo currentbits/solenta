@@ -28,6 +28,7 @@ const {
   parsePrChecksJson,
   parsePrChecksText,
   rollupPrChecks,
+  viewerLoginFor,
 } = require("./worktrees.js");
 const {
   budgetPatch,
@@ -49,9 +50,9 @@ const TEMPLATE_MAX_BYTES = 100 * 1024;
 const GH_USER = { timeout: GH_TIMEOUT_MS };
 
 const DETAIL_FIELDS =
-  "number,title,body,url,state,isDraft,headRefName,baseRefName,author,additions,deletions,changedFiles,mergeable,updatedAt,reviewDecision,comments";
+  "number,title,body,url,state,isDraft,headRefName,baseRefName,author,additions,deletions,changedFiles,mergeable,mergeStateStatus,updatedAt,reviewDecision,comments";
 const DETAIL_FIELDS_NO_COMMENTS =
-  "number,title,body,url,state,isDraft,headRefName,baseRefName,author,additions,deletions,changedFiles,mergeable,updatedAt,reviewDecision";
+  "number,title,body,url,state,isDraft,headRefName,baseRefName,author,additions,deletions,changedFiles,mergeable,mergeStateStatus,updatedAt,reviewDecision";
 const DETAIL_FIELDS_FALLBACK = "number,title,body,url,state,headRefName";
 
 function isTemplateFileName(name) {
@@ -224,6 +225,27 @@ function normalizeMergeable(value) {
   return undefined;
 }
 
+const MERGE_STATE_STATUSES = new Set([
+  "BEHIND",
+  "BLOCKED",
+  "CLEAN",
+  "DIRTY",
+  "DRAFT",
+  "HAS_HOOKS",
+  "UNKNOWN",
+  "UNSTABLE",
+]);
+
+/**
+ * Normalize gh's mergeStateStatus field (#1795 feature 1: BEHIND drives the
+ * "Update branch" button). Unknown / empty -> undefined (omitted).
+ * @param {unknown} value
+ */
+function normalizeMergeStateStatus(value) {
+  const raw = String(value || "").toUpperCase();
+  return MERGE_STATE_STATUSES.has(raw) ? raw : undefined;
+}
+
 function normalizeReviewDecision(value) {
   const raw = String(value || "").toUpperCase();
   if (raw === "APPROVED" || raw === "CHANGES_REQUESTED" || raw === "REVIEW_REQUIRED") {
@@ -246,9 +268,74 @@ function commentAuthor(raw) {
   return "unknown";
 }
 
+/** REST id from a comment's GitHub URL, e.g. "...#issuecomment-123" -> 123. */
+function commentIdFromUrl(url) {
+  const m = String(url || "").match(/#issuecomment-(\d+)$/);
+  return m ? Number(m[1]) : null;
+}
+
+const REACTION_CONTENTS = new Set([
+  "THUMBS_UP",
+  "THUMBS_DOWN",
+  "LAUGH",
+  "HOORAY",
+  "CONFUSED",
+  "HEART",
+  "ROCKET",
+  "EYES",
+]);
+/** gh/REST sometimes report reaction content as the short REST alias. */
+const REACTION_REST_ALIASES = {
+  "+1": "THUMBS_UP",
+  "-1": "THUMBS_DOWN",
+  laugh: "LAUGH",
+  hooray: "HOORAY",
+  confused: "CONFUSED",
+  heart: "HEART",
+  rocket: "ROCKET",
+  eyes: "EYES",
+};
+
+/**
+ * @param {unknown} value
+ * @returns {string | null}
+ */
+function normalizeReactionContent(value) {
+  const raw = String(value || "");
+  const upper = raw.toUpperCase();
+  if (REACTION_CONTENTS.has(upper)) return upper;
+  return REACTION_REST_ALIASES[raw.toLowerCase()] || null;
+}
+
 /**
  * @param {unknown} raw
- * @returns {Array<{ author: string, body: string, createdAt: string, url?: string }>}
+ * @returns {Array<{ content: string, count: number, viewerHasReacted: boolean }>}
+ */
+function parseReactionGroups(raw) {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  for (const row of raw) {
+    if (!row || typeof row !== "object") continue;
+    const content = normalizeReactionContent(row.content);
+    if (!content) continue;
+    const count = optionalCount(row.users && row.users.totalCount) || 0;
+    out.push({ content, count, viewerHasReacted: Boolean(row.viewerHasReacted) });
+  }
+  return out;
+}
+
+/**
+ * @param {unknown} raw
+ * @returns {Array<{
+ *   id?: number,
+ *   type: "issue",
+ *   author: string,
+ *   body: string,
+ *   createdAt: string,
+ *   url?: string,
+ *   mine?: boolean,
+ *   reactions?: Array<{ content: string, count: number, viewerHasReacted: boolean }>,
+ * }>}
  */
 function parsePrComments(raw) {
   if (!Array.isArray(raw)) return [];
@@ -256,11 +343,22 @@ function parsePrComments(raw) {
   for (const row of raw) {
     if (!row || typeof row !== "object") continue;
     const body = row.body != null ? String(row.body) : "";
+    const url = row.url != null ? String(row.url) : "";
+    // ponytail: only top-level PR/issue comments are fetched today, so every
+    // row is "issue". Review (inline diff) comments would be "review"; the
+    // edit/reaction routing already branches on `type`, add the fetch when
+    // the Code tab needs inline comments too.
+    const id = row.databaseId != null ? Number(row.databaseId) : commentIdFromUrl(url);
+    const reactions = parseReactionGroups(row.reactionGroups);
     out.push({
+      ...(Number.isFinite(id) ? { id } : {}),
+      type: "issue",
       author: commentAuthor(row.author),
       body,
       createdAt: row.createdAt != null ? String(row.createdAt) : "",
-      ...(row.url ? { url: String(row.url) } : {}),
+      ...(url ? { url } : {}),
+      ...(typeof row.viewerDidAuthor === "boolean" ? { mine: row.viewerDidAuthor } : {}),
+      ...(reactions.length ? { reactions } : {}),
     });
   }
   return out;
@@ -325,6 +423,8 @@ function parsePrDetailJson(stdout) {
   if (changedFiles !== undefined) info.changedFiles = changedFiles;
   const mergeable = normalizeMergeable(data.mergeable);
   if (mergeable) info.mergeable = mergeable;
+  const mergeStateStatus = normalizeMergeStateStatus(data.mergeStateStatus);
+  if (mergeStateStatus) info.mergeStateStatus = mergeStateStatus;
   if (data.updatedAt != null && String(data.updatedAt).trim()) {
     info.updatedAt = String(data.updatedAt).trim();
   }
@@ -560,6 +660,142 @@ async function commentPr(projectPath, input) {
 }
 
 /**
+ * owner/repo for a comment-scoped REST call: the explicit repo override, or
+ * (lazily) the checkout's origin.
+ * @param {string} cwd
+ * @param {string | null} other
+ */
+async function commentRepoSlug(cwd, other) {
+  return other || (await originSlug(cwd));
+}
+
+/**
+ * Edit an issue comment or PR review comment in place (#1795 feature 2).
+ * Routes to `/issues/comments/{id}` or `/pulls/comments/{id}` by `type`
+ * (default "issue", the only kind the panel fetches today), over `gh api`
+ * (API-first, gh fallback, same as every other prWorkspace write). Same
+ * outbound secret scan as commentPr.
+ *
+ * @param {string} projectPath
+ * @param {{ prNumber: unknown, commentId: unknown, type?: unknown, body: unknown, repo?: unknown }} input
+ */
+async function editPrComment(projectPath, input) {
+  const number = parsePrNumber(input && input.prNumber);
+  if (number == null) return { ok: false, reason: "invalid PR number" };
+  const commentId = parsePrNumber(input && input.commentId);
+  if (commentId == null) return { ok: false, reason: "invalid comment id" };
+  const type = input && input.type === "review" ? "review" : "issue";
+  const text = input && input.body != null ? String(input.body).trim() : "";
+  if (!text) return { ok: false, reason: "empty comment" };
+  const blocked = scanOutbound(text, "PR comment");
+  if (blocked) return { ok: false, reason: blocked };
+
+  const repo = await requireGitHubRepo(projectPath);
+  if (!repo.ok) return repo;
+  const other = parseRepoSlug(input && input.repo);
+  const slug = await commentRepoSlug(repo.cwd, other);
+  if (!slug) return { ok: false, reason: "could not resolve owner/repo" };
+  const kind = type === "review" ? "pulls" : "issues";
+
+  const edited = await ghApiTryAsync(
+    repo.cwd,
+    ["api", `repos/${slug}/${kind}/comments/${commentId}`, "-X", "PATCH", "-f", `body=${text}`],
+    ghOpts(other),
+  );
+  if (!edited.ok) {
+    return { ok: false, reason: ghReason(edited, "edit comment failed") };
+  }
+  return viewPrDetail(projectPath, number, { repo: other });
+}
+
+/** GitHub's REST reaction `content` values (POST .../reactions body). */
+const REACTION_REST_CONTENT = new Set([
+  "+1",
+  "-1",
+  "laugh",
+  "hooray",
+  "confused",
+  "heart",
+  "rocket",
+  "eyes",
+]);
+
+/**
+ * Add or remove the viewer's reaction on an issue comment (#1795 feature 3),
+ * over the REST reactions endpoints. Adding returns the created reaction's
+ * id so the renderer can cache it for an immediate same-session removal.
+ * Removing a reaction from an earlier session (no cached id) instead lists
+ * that content's reactions and picks the one made by the signed-in login
+ * (#1763's viewerLoginFor); nothing to do when none is found (already
+ * removed, or the login could not be resolved).
+ *
+ * @param {string} projectPath
+ * @param {{ prNumber: unknown, commentId: unknown, content: unknown, remove?: unknown, reactionId?: unknown, repo?: unknown }} input
+ */
+async function setCommentReaction(projectPath, input) {
+  const commentId = parsePrNumber(input && input.commentId);
+  if (commentId == null) return { ok: false, reason: "invalid comment id" };
+  const content = String((input && input.content) || "").toLowerCase();
+  if (!REACTION_REST_CONTENT.has(content)) return { ok: false, reason: "invalid reaction" };
+
+  const repo = await requireGitHubRepo(projectPath);
+  if (!repo.ok) return repo;
+  const other = parseRepoSlug(input && input.repo);
+  const slug = await commentRepoSlug(repo.cwd, other);
+  if (!slug) return { ok: false, reason: "could not resolve owner/repo" };
+  const base = `repos/${slug}/issues/comments/${commentId}/reactions`;
+
+  if (input && input.remove) {
+    let reactionId = parsePrNumber(input.reactionId);
+    if (reactionId == null) {
+      const listed = await ghApiTryAsync(
+        repo.cwd,
+        ["api", `${base}?content=${encodeURIComponent(content)}`],
+        ghOpts(other),
+      );
+      if (!listed.ok) return { ok: false, reason: ghReason(listed, "list reactions failed") };
+      let rows;
+      try {
+        rows = JSON.parse(String(listed.stdout || "[]"));
+      } catch {
+        rows = [];
+      }
+      const viewerLogin = await viewerLoginFor(projectPath);
+      const mine =
+        Array.isArray(rows) && viewerLogin
+          ? rows.find(
+              (r) =>
+                r && r.user && String(r.user.login || "").toLowerCase() === viewerLogin.toLowerCase(),
+            )
+          : null;
+      if (!mine) return { ok: true };
+      reactionId = mine.id;
+    }
+    const removed = await ghApiTryAsync(
+      repo.cwd,
+      ["api", `${base}/${reactionId}`, "-X", "DELETE"],
+      ghOpts(other),
+    );
+    if (!removed.ok) return { ok: false, reason: ghReason(removed, "remove reaction failed") };
+    return { ok: true };
+  }
+
+  const added = await ghApiTryAsync(
+    repo.cwd,
+    ["api", base, "-X", "POST", "-f", `content=${content}`],
+    ghOpts(other),
+  );
+  if (!added.ok) return { ok: false, reason: ghReason(added, "add reaction failed") };
+  let reactionId;
+  try {
+    reactionId = JSON.parse(String(added.stdout || "{}")).id;
+  } catch {
+    reactionId = undefined;
+  }
+  return reactionId != null ? { ok: true, reactionId } : { ok: true };
+}
+
+/**
  * @param {string} projectPath
  * @param {{ prNumber: unknown }} input
  * @param {{ store?: object, broadcast?: Function }} [opts]
@@ -631,6 +867,32 @@ async function readyPr(projectPath, input, opts) {
     return { ok: false, reason: ghReason(ready, "gh pr ready failed") };
   }
   return viewPrDetail(projectPath, number, { repo: input && input.repo });
+}
+
+/**
+ * Update a PR's head branch from its base (`gh pr update-branch`), for the
+ * workspace panel's "Update branch" button (#1795 feature 1, shown when
+ * mergeStateStatus is BEHIND).
+ *
+ * @param {string} projectPath
+ * @param {{ prNumber: unknown, repo?: unknown }} input
+ */
+async function updateBranchPr(projectPath, input) {
+  const number = parsePrNumber(input && input.prNumber);
+  if (number == null) return { ok: false, reason: "invalid PR number" };
+  const repo = await requireGitHubRepo(projectPath);
+  if (!repo.ok) return repo;
+  const other = parseRepoSlug(input && input.repo);
+
+  const updated = await ghApiTryAsync(
+    repo.cwd,
+    ["pr", "update-branch", String(number)],
+    ghOpts(other),
+  );
+  if (!updated.ok) {
+    return { ok: false, reason: ghReason(updated, "gh pr update-branch failed") };
+  }
+  return viewPrDetail(projectPath, number, { repo: other });
 }
 
 /**
@@ -1121,6 +1383,9 @@ module.exports = {
   commentPr,
   closePr,
   readyPr,
+  updateBranchPr,
+  editPrComment,
+  setCommentReaction,
   mergePrAt,
   prDiff,
   prViewed,

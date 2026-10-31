@@ -385,3 +385,63 @@
   align-items: flex-start;
   gap: 8px;
 }
+
+.reactionsRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.reactionChip,
+.reactionAdd,
+.reactionOption {
+  height: 22px;
+  padding: 0 6px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--text);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.reactionChip[aria-pressed="true"] {
+  border-color: var(--blue-border);
+  background: var(--blue-soft, var(--card));
+}
+
+.reactionAdd {
+  width: 22px;
+  padding: 0;
+}
+
+.reactionPickerWrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.reactionPicker {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 1;
+  display: flex;
+  gap: 2px;
+  padding: 4px;
+  margin-top: 4px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--card);
+  box-shadow: var(--shadow-popover, 0 4px 12px rgba(0, 0, 0, 0.2));
+}
+
+.reactionOption {
+  border: none;
+  background: transparent;
+  font-size: 14px;
+}
+
+.reactionOption:hover {
+  background: var(--overlay-hover);
+}

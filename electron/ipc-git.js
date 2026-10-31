@@ -52,6 +52,9 @@ const {
   commentPr,
   closePr,
   readyPr,
+  updateBranchPr,
+  editPrComment,
+  setCommentReaction,
   mergePrAt,
 } = require("./prWorkspace.js");
 const { integrateWorker } = require("./crewIntegration.js");
@@ -359,6 +362,31 @@ module.exports = {
       },
       { store: ctx.store, broadcast: ctx.broadcast },
     );
+  },
+  "git:prUpdateBranch": async (_ctx, input) => {
+    return updateBranchPr(input && input.projectPath, {
+      prNumber: input && input.prNumber,
+      repo: input && input.repo,
+    });
+  },
+  "git:prCommentEdit": async (_ctx, input) => {
+    return editPrComment(input && input.projectPath, {
+      prNumber: input && input.prNumber,
+      repo: input && input.repo,
+      commentId: input && input.commentId,
+      type: input && input.type,
+      body: input && input.body,
+    });
+  },
+  "git:prReaction": async (_ctx, input) => {
+    return setCommentReaction(input && input.projectPath, {
+      prNumber: input && input.prNumber,
+      repo: input && input.repo,
+      commentId: input && input.commentId,
+      content: input && input.content,
+      remove: Boolean(input && input.remove),
+      reactionId: input && input.reactionId,
+    });
   },
   "git:prDiff": async (ctx, input) => {
     const { prDiff } = require("./prWorkspace.js");
