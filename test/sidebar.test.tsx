@@ -2162,8 +2162,8 @@ describe("Sidebar update notes popover (issue #1757)", () => {
         updatePublishedAt: PUBLISHED_AT,
       }),
     );
-    const trigger = m.byText("What's new");
-    assert.ok(trigger, "a What's new trigger renders beside the update button");
+    assert.equal(m.byText("What's new"), null, "no separate trigger crowds the footer");
+    const trigger = m.query("[data-settings-update]") as HTMLElement;
     await m.hover(trigger);
     assert.ok(m.text().includes("v0.11.0"), "version is shown");
     assert.ok(m.text().includes("shipped 3h ago"), "relative age is shown");
@@ -2182,11 +2182,8 @@ describe("Sidebar update notes popover (issue #1757)", () => {
     const m = await mount(
       sidebar(THREADS, { updateState: "available", updateTag: "v0.11.0" }),
     );
-    assert.equal(
-      m.byText("What's new"),
-      null,
-      "no popover trigger without a notes body",
-    );
+    await m.hover(m.query("[data-settings-update]") as HTMLElement);
+    assert.equal(m.query("[data-update-notes]"), null, "no popover without a notes body");
     assert.equal(
       m.query("[data-settings-update]")?.textContent,
       "Update",
@@ -2738,7 +2735,8 @@ describe("Sidebar footer Stop all control (#1778)", () => {
     // THREADS has exactly one "working" thread ("busy").
     const btn = m.query("[data-stop-all-button]") as HTMLButtonElement;
     assert.ok(btn, "Stop all control renders while a thread is working");
-    assert.match(btn.textContent ?? "", /Stop all \(1\)/);
+    assert.equal(btn.textContent, "1");
+    assert.equal(btn.title, "Stop 1 running thread");
     await m.click(btn);
     assert.equal(requested, 1);
     m.unmount();

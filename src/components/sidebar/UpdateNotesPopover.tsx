@@ -1,27 +1,29 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { formatRelativeAge } from "../../format";
 import { summarizeReleaseNotes } from "../../releaseNotes";
 import styles from "../Sidebar.module.css";
 
 /**
- * "What's new" popover beside the footer update button (issue #1757). Shows
- * nothing, and renders nothing, when the update check carried no release
- * body: today's Update/Restart button is unaffected either way.
+ * "What's new" popover on the footer update button (issue #1757): hovering or
+ * focusing the Update/Restart button (children) shows the release notes. With
+ * no release body it renders just the button.
  */
 export function UpdateNotesPopover({
   tag,
   url,
   notesBody,
   publishedAt,
+  children,
 }: {
   tag: string | null | undefined;
   url: string | null | undefined;
   notesBody: string | null | undefined;
   publishedAt: string | null | undefined;
+  children: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   const bullets = summarizeReleaseNotes(notesBody);
-  if (!bullets.length) return null;
+  if (!bullets.length) return <>{children}</>;
 
   const publishedMs = publishedAt ? Date.parse(publishedAt) : NaN;
   const age = Number.isFinite(publishedMs) ? formatRelativeAge(publishedMs) : null;
@@ -31,18 +33,10 @@ export function UpdateNotesPopover({
       className={styles.updateNotesHost}
       onMouseEnter={() => setOpen(true)}
       onMouseLeave={() => setOpen(false)}
+      onFocus={() => setOpen(true)}
+      onBlur={() => setOpen(false)}
     >
-      <button
-        type="button"
-        className={styles.updateNotesTrigger}
-        aria-expanded={open}
-        aria-haspopup="true"
-        onFocus={() => setOpen(true)}
-        onBlur={() => setOpen(false)}
-        onClick={() => setOpen((v) => !v)}
-      >
-        What's new
-      </button>
+      {children}
       {open && (
         <div className={styles.updateNotesPopover} role="tooltip" data-update-notes="">
           <div className={styles.updateNotesHead}>

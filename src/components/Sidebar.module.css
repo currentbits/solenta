@@ -1762,20 +1762,21 @@
   cursor: default;
 }
 
+/* Quiet icon + count; turns red only on hover (#1778). */
 .stopAllButton {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--danger-fg, var(--text-muted));
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   flex-shrink: 0;
-  height: 24px;
-  padding: 0 8px;
+  height: 30px;
+  padding: 0 6px;
   border-radius: var(--radius-sm);
-  border: 1px solid var(--danger-border, var(--border));
-  background: var(--danger-soft, transparent);
-  white-space: nowrap;
+  font: 11px var(--mono);
+  color: var(--text-muted);
 }
 
 .stopAllButton:hover {
+  color: var(--danger-fg, var(--danger));
   background: var(--danger-soft, var(--card-hover));
 }
 
@@ -1883,23 +1884,11 @@
   position: relative;
 }
 
-/* "What's new" popover beside the footer Update button (#1757). */
+/* "What's new" popover on the footer Update button (#1757). */
 .updateNotesHost {
   position: relative;
   display: inline-flex;
   flex-shrink: 0;
-}
-
-.updateNotesTrigger {
-  font-size: 11px;
-  color: var(--text-muted);
-  padding: 0 4px;
-  height: 24px;
-}
-
-.updateNotesTrigger:hover,
-.updateNotesTrigger:focus-visible {
-  color: var(--text);
 }
 
 .updateNotesPopover {
