@@ -16,6 +16,7 @@ import {
   CHAT_WIDTH_MODES,
   CHAT_WIDTH_LABELS,
   setChatWidth,
+  setComposerSpellcheckEnabled,
   setComposerVimEnabled,
   setDiffFilesCollapsed,
   setEnterSendsEnabled,
@@ -26,6 +27,7 @@ import {
   setUsageLimitsStripEnabled,
   setWrapCodeBlocksEnabled,
   useChatWidth,
+  useComposerSpellcheckEnabled,
   useComposerVimEnabled,
   useDiffFilesCollapsed,
   useEnterSendsEnabled,
@@ -926,6 +928,7 @@ function DisplayPrefsSection() {
   const runDuration = useRunDurationEnabled();
   const pasteCards = usePasteCardsEnabled();
   const composerVim = useComposerVimEnabled();
+  const composerSpellcheck = useComposerSpellcheckEnabled();
   const enterSends = useEnterSendsEnabled();
   const usageLimits = useUsageLimitsStripEnabled();
   const wrapCode = useWrapCodeBlocksEnabled();
@@ -1005,6 +1008,15 @@ function DisplayPrefsSection() {
           onChange={(e) => setComposerVimEnabled(e.target.checked)}
         />
         <span>Vim motions in the composer</span>
+      </label>
+      <label className={styles.fieldRow}>
+        <input
+          type="checkbox"
+          data-composer-spellcheck-pref=""
+          checked={composerSpellcheck}
+          onChange={(e) => setComposerSpellcheckEnabled(e.target.checked)}
+        />
+        <span>Spellcheck in the composer</span>
       </label>
       <label className={styles.fieldRow}>
         <input

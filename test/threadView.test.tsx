@@ -155,6 +155,66 @@ function suggestion(
   };
 }
 
+/** Right-click: fires the DOM `contextmenu` event the real browser sends. */
+async function rightClickOn(m: { flush(): Promise<void> }, el: Element) {
+  await inAct(() => {
+    el.dispatchEvent(
+      new MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        clientX: 10,
+        clientY: 10,
+      }),
+    );
+  });
+  await m.flush();
+}
+
+/**
+ * Copy Image (issue #1801) reads the image's already-on-screen src back as a
+ * Blob (fetch) and hands it to the Clipboard API -- no IPC. Stub all three
+ * jsdom-missing pieces so the renderer path is exercised end to end.
+ */
+function stubImageClipboard() {
+  const fetched: string[] = [];
+  const copied: unknown[] = [];
+  const prevFetch = globalThis.fetch;
+  const prevClipboardItem = (globalThis as { ClipboardItem?: unknown })
+    .ClipboardItem;
+  const prevClipboard = (navigator as { clipboard?: unknown }).clipboard;
+  (globalThis as { fetch: typeof fetch }).fetch = (async (src: string) => {
+    fetched.push(src);
+    return { ok: true, blob: async () => ({ type: "image/png" }) };
+  }) as typeof fetch;
+  (globalThis as { ClipboardItem?: unknown }).ClipboardItem = class {
+    data: unknown;
+    constructor(data: unknown) {
+      this.data = data;
+    }
+  };
+  Object.defineProperty(navigator, "clipboard", {
+    value: {
+      write: async (items: unknown[]) => {
+        copied.push(...items);
+      },
+    },
+    configurable: true,
+  });
+  return {
+    fetched,
+    copied,
+    restore: () => {
+      globalThis.fetch = prevFetch;
+      (globalThis as { ClipboardItem?: unknown }).ClipboardItem =
+        prevClipboardItem;
+      Object.defineProperty(navigator, "clipboard", {
+        value: prevClipboard,
+        configurable: true,
+      });
+    },
+  };
+}
+
 const noopAsync = async () => {};
 const noopSave = async () =>
   ({ id: "wf", name: "standard", phases: [] }) as WorkflowTemplateInfo;
@@ -3041,6 +3101,34 @@ describe("ThreadView image-only user messages (issue #1759)", () => {
     assert.equal(m.query("img.lightboxImg")?.getAttribute("src"), dataUrl);
     m.unmount();
   });
+
+  it("right-clicking an image-only attachment offers Copy Image and copies it (#1801)", async () => {
+    const dataUrl = "data:image/png;base64,ZZZZ";
+    const clip = stubImageClipboard();
+    try {
+      const m = await mount(
+        view({
+          onLoadAttachmentImage: async () => dataUrl,
+          detail: detail({
+            messages: [
+              msg({ id: "u1", role: "user", text: "", createdAt: 10, attachments: [img(1)] }),
+            ],
+          }),
+        }),
+      );
+      await m.flush();
+      await rightClickOn(m, m.query("img.singleImage") as HTMLElement);
+      const copyItem = document.querySelector("[data-copy-image]");
+      assert.ok(copyItem, "Copy Image offered on a right-clicked image");
+      await m.click(copyItem as HTMLElement);
+      await m.flush();
+      assert.equal(clip.copied.length, 1, "clipboard.write called once");
+      assert.deepEqual(clip.fetched, [dataUrl]);
+      m.unmount();
+    } finally {
+      clip.restore();
+    }
+  });
 });
 
 describe("ThreadView file drop (issue #469)", () => {
@@ -4073,6 +4161,105 @@ describe("ThreadView back-to-back user message bursts (#1789)", () => {
       1,
       "only the steered message shows the badge, burst or not",
     );
+  });
+});
+
+describe("ThreadView long user message fold (issue #1801)", () => {
+  const LONG_TEXT = Array.from({ length: 20 }, (_, i) => `line ${i}`).join("\n");
+
+  it("a short message is never clamped and shows no toggle", () => {
+    const html = render({
+      detail: detail({
+        messages: [msg({ id: "u1", role: "user", text: "a short prompt", createdAt: 10 })],
+      }),
+    });
+    assert.ok(!html.includes("data-user-text-folded"), "no clamp class");
+    assert.ok(!html.includes("data-user-text-fold-toggle"), "no toggle button");
+  });
+
+  it("a message over the line threshold is clamped with a Show more toggle", () => {
+    const html = render({
+      detail: detail({
+        messages: [msg({ id: "u1", role: "user", text: LONG_TEXT, createdAt: 10 })],
+      }),
+    });
+    assert.ok(html.includes("data-user-text-folded"));
+    assert.ok(html.includes("data-user-text-fold-toggle"));
+    assert.match(html, /Show more/);
+  });
+
+  it("a message over the char threshold (few lines, very long) is also clamped", () => {
+    const html = render({
+      detail: detail({
+        messages: [
+          msg({ id: "u1", role: "user", text: "x".repeat(1300), createdAt: 10 }),
+        ],
+      }),
+    });
+    assert.ok(html.includes("data-user-text-folded"));
+  });
+
+  it("Show more expands the message, keeping it expanded on its own re-renders; Show less re-clamps", async () => {
+    const m = await mount(
+      view({
+        detail: detail({
+          messages: [msg({ id: "u1", role: "user", text: LONG_TEXT, createdAt: 10 })],
+        }),
+      }),
+    );
+    assert.ok(m.query("[data-user-text-folded]"), "starts clamped");
+    const toggle = m.query("[data-user-text-fold-toggle]") as HTMLElement;
+    assert.ok(toggle);
+    assert.equal(toggle.textContent, "Show more");
+    await m.click(toggle);
+    assert.equal(m.query("[data-user-text-folded]"), null, "expanded: no clamp class");
+    assert.equal(toggle.textContent, "Show less");
+    await m.click(toggle);
+    assert.ok(m.query("[data-user-text-folded]"), "re-clamped");
+    assert.equal(toggle.textContent, "Show more");
+    m.unmount();
+  });
+
+  it("folding does not disturb copy, edit, pin or burst grouping", async () => {
+    const m = await mount(
+      view({
+        onRewindAndResubmit: async () => {},
+        detail: detail({
+          messages: [
+            msg({ id: "u1", role: "user", text: LONG_TEXT, createdAt: 10 }),
+            msg({ id: "u2", role: "user", text: "short follow-up", createdAt: 11 }),
+          ],
+        }),
+      }),
+    );
+    // Burst grouping (#1789) still applies across a folded + short pair.
+    const html = m.html();
+    assert.match(html, /data-burst="first"/);
+    assert.match(html, /data-burst="last"/);
+    assert.ok(m.query("[data-edit-message]"), "edit affordance still present");
+    assert.ok(m.query("[data-msg-copy]"), "copy button still present");
+    m.unmount();
+  });
+
+  it("never folds while the message is being edited", async () => {
+    const m = await mount(
+      view({
+        onRewindAndResubmit: async () => {},
+        detail: detail({
+          messages: [msg({ id: "u1", role: "user", text: LONG_TEXT, createdAt: 10 })],
+        }),
+      }),
+    );
+    await m.click(m.query('[data-edit-message="u1"]'));
+    assert.equal(
+      m.query("[data-user-text-folded]"),
+      null,
+      "no clamp while editing",
+    );
+    const ta = m.query('[data-edit-textarea="u1"]') as HTMLTextAreaElement | null;
+    assert.ok(ta, "edit textarea shows full text, unclamped");
+    assert.equal(ta!.value, LONG_TEXT);
+    m.unmount();
   });
 });
 

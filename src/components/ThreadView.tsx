@@ -219,6 +219,7 @@ import { TurnRail, turnLabel, type RailTurn } from "./thread/TurnRail";
 import { useTurnNavigation } from "./thread/useTurnNavigation";
 import { offsetTopWithin } from "../scrollNearest";
 import { bindingLabel } from "../keybindings";
+import { imageContextMenu } from "../contextMenu";
 import styles from "./ThreadView.module.css";
 import type { TaskGroupRollup } from "../taskGroup";
 import { lazyNamed } from "../lazyNamed";
@@ -2820,6 +2821,23 @@ export const ThreadView = memo(function ThreadView({
     return true;
   };
 
+  /**
+   * Same delegation as openClickedImage, for right-click (issue #1801): any
+   * image anywhere in the timeline offers Copy Image, with no per-site
+   * wiring. The lightbox's own full-size image is a sibling of this body,
+   * not inside it, so it gets the same handler directly (see ImageLightbox).
+   */
+  const onBodyContextMenu = (e: {
+    target: EventTarget | null;
+    preventDefault(): void;
+    clientX: number;
+    clientY: number;
+  }) => {
+    const img = e.target as HTMLImageElement | null;
+    if (!img || img.tagName !== "IMG") return;
+    imageContextMenu(e, img.src);
+  };
+
   if (!hasProjects) {
     return (
       <main className={styles.main}>
@@ -4763,6 +4781,7 @@ export const ThreadView = memo(function ThreadView({
         ref={bodyRef}
         onScroll={onBodyScroll}
         onClick={(e) => openClickedImage(e.target)}
+        onContextMenu={(e) => onBodyContextMenu(e)}
         onKeyDown={(e) => {
           if (e.key !== "Enter" && e.key !== " ") return;
           if (openClickedImage(e.target)) e.preventDefault();

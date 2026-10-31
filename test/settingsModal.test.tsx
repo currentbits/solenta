@@ -25,6 +25,7 @@ import {
   getUsageLimitsStripEnabled,
   getWrapCodeBlocksEnabled,
   setChatWidth,
+  setComposerSpellcheckEnabled,
   setComposerVimEnabled,
   setDiffFilesCollapsed,
   setEnterSendsEnabled,
@@ -3130,10 +3131,35 @@ describe("SettingsModal Display group (moved from Environment)", () => {
     setRunDurationEnabled(false);
     setPasteCardsEnabled(true);
     setComposerVimEnabled(false);
+    setComposerSpellcheckEnabled(true);
     setUsageLimitsStripEnabled(false);
     setChatWidth("default");
     setHighContrastEnabled(false);
     document.documentElement.removeAttribute("data-contrast");
+  });
+
+  it("offers spellcheck in the composer on by default (#1801)", async () => {
+    setComposerSpellcheckEnabled(true);
+    const m = await mount(modal());
+    const card = m.query("[data-display-prefs]");
+    assert.ok(card, "Display group on General");
+    const box = card.querySelector(
+      "[data-composer-spellcheck-pref]",
+    ) as HTMLInputElement | null;
+    assert.ok(box, "spellcheck checkbox");
+    assert.equal(box.checked, true);
+    assert.match(card.textContent || "", /Spellcheck in the composer/);
+    m.unmount();
+  });
+
+  it("turns spellcheck in the composer off from the Display group", async () => {
+    setComposerSpellcheckEnabled(true);
+    const m = await mount(modal());
+    const box = m.query("[data-composer-spellcheck-pref]") as HTMLInputElement;
+    await m.click(box);
+    assert.equal(box.checked, false);
+    assert.equal(window.localStorage.getItem("coder.composerSpellcheck"), "off");
+    m.unmount();
   });
 
   it("offers vim motions off by default", async () => {

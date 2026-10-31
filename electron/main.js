@@ -704,6 +704,28 @@ app.on("web-contents-created", (_event, contents) => {
   contents.on("did-attach-webview", (_e, guest) => {
     attachGuestPolicy(guest);
   });
+
+  // Cut/Copy/Paste and spellcheck suggestions for text inputs (issue #1801).
+  // Electron has no built-in menu, so without this right-click in the
+  // composer (or any input/textarea) did nothing. Gated on isEditable: every
+  // non-editable right-click in the app (images, attachment chips, thread
+  // cards, ...) already builds its own menu in the renderer via
+  // showContextMenu/contextMenu:show above, and must see nothing from here.
+  contents.on("context-menu", (_e, params) => {
+    const { buildEditableMenuTemplate } = require("./editableContextMenu.js");
+    const template = buildEditableMenuTemplate(params, {
+      onSuggestion: (word) => contents.replaceMisspelling(word),
+      onAddToDictionary: (word) =>
+        contents.session.addWordToSpellCheckerDictionary(word),
+      onCut: () => contents.cut(),
+      onCopy: () => contents.copy(),
+      onPaste: () => contents.paste(),
+      onSelectAll: () => contents.selectAll(),
+    });
+    if (template.length === 0) return;
+    const { Menu } = require("electron");
+    Menu.buildFromTemplate(template).popup();
+  });
 });
 
 app.whenReady().then(async () => {

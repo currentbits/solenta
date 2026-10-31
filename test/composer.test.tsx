@@ -15,6 +15,7 @@ import { mount, unmountAll, inAct } from "./support/dom.ts";
 import { Composer } from "../src/components/Composer";
 import {
   setComposerBusyAction,
+  setComposerSpellcheckEnabled,
   setComposerVimEnabled,
   setLastReasoningEffort,
   setTranscriptViewMode,
@@ -618,8 +619,34 @@ describe("Composer typing lag (#654)", () => {
     assert.equal(lists, 0);
     assert.equal(m.query('[aria-label="Commands"]'), null);
     assert.equal(m.query('[aria-label="Mention a file"]'), null);
-    assert.equal(ta.getAttribute("spellcheck"), "false");
+    assert.equal(ta.getAttribute("spellcheck"), "true", "on by default (#1801)");
     assert.equal(ta.getAttribute("autocomplete"), "off");
+    m.unmount();
+  });
+});
+
+describe("Composer spellcheck (#1801)", () => {
+  afterEach(() => {
+    setComposerSpellcheckEnabled(true);
+    setComposerVimEnabled(false);
+  });
+
+  it("follows the setting off", async () => {
+    setComposerSpellcheckEnabled(false);
+    const h = makeHarness();
+    const m = await mount(composer(h));
+    const ta = m.query("textarea") as HTMLTextAreaElement;
+    assert.equal(ta.getAttribute("spellcheck"), "false");
+    m.unmount();
+  });
+
+  it("is forced off in vim mode even with the setting on", async () => {
+    setComposerSpellcheckEnabled(true);
+    setComposerVimEnabled(true);
+    const h = makeHarness();
+    const m = await mount(composer(h));
+    const ta = m.query("textarea") as HTMLTextAreaElement;
+    assert.equal(ta.getAttribute("spellcheck"), "false");
     m.unmount();
   });
 });
