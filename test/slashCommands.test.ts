@@ -8,6 +8,7 @@ import { describe, it } from "node:test";
 import {
   SLASH_COMMANDS,
   commandQuery,
+  leadingSlashCommand,
   matchSlashCommands,
   parseGoalCommand,
   pickerVerb,
@@ -122,6 +123,37 @@ describe("matchSlashCommands", () => {
       SLASH_COMMANDS.find((c) => c.name === "/usage")?.action,
       "usage",
     );
+  });
+});
+
+describe("leadingSlashCommand (#1805)", () => {
+  it("recognizes a known built-in, with or without a tail", () => {
+    assert.equal(leadingSlashCommand("/compact"), "/compact");
+    assert.equal(leadingSlashCommand("/review the diff"), "/review");
+    assert.equal(leadingSlashCommand("/undo\nplease"), "/undo");
+  });
+
+  it("does not invent a match for an unknown /foo", () => {
+    assert.equal(leadingSlashCommand("/foo"), null);
+    assert.equal(leadingSlashCommand("/foo bar"), null);
+  });
+
+  it("only looks at the leading token, not mid-sentence", () => {
+    assert.equal(leadingSlashCommand("see /compact later"), null);
+    assert.equal(leadingSlashCommand("no slash here"), null);
+  });
+
+  it("a bare / matches nothing", () => {
+    assert.equal(leadingSlashCommand("/"), null);
+    assert.equal(leadingSlashCommand("/ compact"), null);
+  });
+
+  it("recognizes a CLI/skill extra, same as the slash menu", () => {
+    const extras = [
+      { name: "/imagine", hint: "Generate an image", kind: "insert" as const },
+    ];
+    assert.equal(leadingSlashCommand("/imagine a cat", extras), "/imagine");
+    assert.equal(leadingSlashCommand("/imagine a cat"), null);
   });
 });
 

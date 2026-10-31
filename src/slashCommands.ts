@@ -221,6 +221,27 @@ export function shellCommand(text: string): string | null {
 }
 
 /**
+ * The leading `/command` token of a sent message, when it exactly matches a
+ * known command — built-in or CLI/skill (#1805). Highlighted in the
+ * transcript; an unrecognized `/foo` (or a `/` mid-sentence) renders as
+ * plain text. Matches on the whole first word, not a prefix: "/compactor"
+ * is not "/compact".
+ */
+export function leadingSlashCommand(
+  text: string,
+  extras: readonly SlashCommand[] = [],
+): string | null {
+  if (!text.startsWith("/")) return null;
+  const end = text.search(/\s/);
+  const token = end === -1 ? text : text.slice(0, end);
+  if (token === "/") return null;
+  const known =
+    SLASH_COMMANDS.some((c) => c.name === token) ||
+    extras.some((c) => c.name === token);
+  return known ? token : null;
+}
+
+/**
  * Commands whose name starts with the live token. `extras` are CLI skills
  * and custom commands (#606); a name Solenta already owns stays ours.
  */

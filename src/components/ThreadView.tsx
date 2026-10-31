@@ -5107,6 +5107,7 @@ export const ThreadView = memo(function ThreadView({
                     <MessageBlock
                       message={entry.message}
                       burstPosition={userBursts.get(entry.message.id)}
+                      cliCommands={cliCommands}
                       autoExpandTool={
                         verboseTools ||
                         entry.message.id === latestRunningToolId ||
