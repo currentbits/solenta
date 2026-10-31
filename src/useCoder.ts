@@ -465,6 +465,8 @@ export interface UseCoderResult {
     threadId: string,
     policy: "accept" | "queue-only" | "refuse",
   ) => Promise<void>;
+  /** Agent-facing browser access (#1797); default true. */
+  setBrowserAccess: (threadId: string, enabled: boolean) => Promise<void>;
   setQuotaWaitAutoResume: (
     threadId: string,
     enabled: boolean | null,
@@ -1769,6 +1771,7 @@ export function useCoder(): UseCoderResult {
     setEjected,
     teleport,
     setCrossThreadInbound,
+    setBrowserAccess,
     setQuotaWaitAutoResume,
     resumeQuotaWait,
     resumeCrew,
@@ -2345,6 +2348,7 @@ export function useCoder(): UseCoderResult {
     setEjected,
     teleport,
     setCrossThreadInbound,
+    setBrowserAccess,
     setQuotaWaitAutoResume,
     resumeQuotaWait,
     resumeCrew,

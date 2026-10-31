@@ -466,6 +466,11 @@ module.exports = {
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
     return updated;
   },
+  "threads:setBrowserAccess": async (ctx, input) => {
+    const updated = services.setBrowserAccess(ctx.store, input);
+    ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+    return updated;
+  },
   "threads:setQuotaWaitAutoResume": async (ctx, input) => {
     const updated = services.setQuotaWaitAutoResume(ctx.store, input);
     if (ctx.runner && typeof ctx.runner.refreshQuotaWait === "function") {

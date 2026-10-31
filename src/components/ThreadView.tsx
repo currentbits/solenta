@@ -466,6 +466,11 @@ interface ThreadViewProps {
   onSetCrossThreadInbound?: (
     policy: "accept" | "queue-only" | "refuse",
   ) => void | Promise<void>;
+  /**
+   * Agent-facing browser access for the open thread (#1797); default true.
+   * Shown from the Browser pane header and the thread overflow menu.
+   */
+  onSetBrowserAccess?: (enabled: boolean) => void | Promise<void>;
   /** Rename the open thread (header overflow). */
   onRenameThread?: (title: string) => void | Promise<void>;
   /** Regenerate the open thread's title from current activity (#1774). */
@@ -904,6 +909,7 @@ export const ThreadView = memo(function ThreadView({
   onListAgents,
   onSetArchived,
   onSetCrossThreadInbound,
+  onSetBrowserAccess,
   onRenameThread,
   onRegenerateTitle,
   onDuplicateThread,
@@ -3717,6 +3723,25 @@ export const ThreadView = memo(function ThreadView({
                         </button>
                       ))}
                     </div>
+                      {onSetBrowserAccess && !thread.ask && (
+                        <button
+                          type="button"
+                          className={styles.menuItem}
+                          role="menuitemcheckbox"
+                          aria-checked={thread.browserAccess !== false}
+                          data-browser-access-menu=""
+                          title="Let the agent use this browser"
+                          onClick={() => {
+                            setMenuOpen(false);
+                            void onSetBrowserAccess(
+                              !(thread.browserAccess !== false),
+                            );
+                          }}
+                        >
+                          Let the agent use this browser
+                          {thread.browserAccess === false ? "" : " ✓"}
+                        </button>
+                      )}
                       {onSetBudget && !thread.ask && (
                         <button
                           type="button"
@@ -4459,6 +4484,8 @@ export const ThreadView = memo(function ThreadView({
                   onSaveAttachmentImage ? attachBrowserScreenshot : undefined
                 }
                 onAttachElement={attachBrowserElement}
+                browserAccess={thread.browserAccess !== false}
+                onSetBrowserAccess={onSetBrowserAccess}
               />
             );
           }

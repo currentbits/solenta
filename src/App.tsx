@@ -276,6 +276,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     setEjected,
     teleport,
     setCrossThreadInbound,
+    setBrowserAccess,
     setQuotaWaitAutoResume,
     resumeQuotaWait,
     resumeCrew,
@@ -2555,6 +2556,11 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onSetCrossThreadInbound={
           selectedThreadId
             ? (policy) => setCrossThreadInbound(selectedThreadId, policy)
+            : undefined
+        }
+        onSetBrowserAccess={
+          selectedThreadId
+            ? (enabled) => setBrowserAccess(selectedThreadId, enabled)
             : undefined
         }
         onRenameThread={handleRenameOpenThread}

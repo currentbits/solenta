@@ -1064,6 +1064,13 @@ export interface ThreadInfo {
    */
   fast?: boolean;
   /**
+   * Agent-facing browser access (issue #1797). Default true (absent on
+   * older store rows reads as on). `false` turns off the Browser pane's
+   * MCP/preview tool for this thread only — the user can still drive the
+   * pane by hand either way.
+   */
+  browserAccess?: boolean;
+  /**
    * Pending model route (#246), consumed by the first turn: "auto"
    * classifies the prompt, a tier is declared. Absent/null = manual pick.
    */
@@ -6059,6 +6066,15 @@ export interface CoderApi {
     setCrossThreadInbound(input: {
       threadId: string;
       policy: CrossThreadInbound;
+    }): Promise<ThreadInfo>;
+    /**
+     * Turn the agent's browser access on or off for this thread (#1797).
+     * Default true. Off makes the preview MCP tool refuse every action for
+     * this thread; the Browser pane itself still works for the user.
+     */
+    setBrowserAccess(input: {
+      threadId: string;
+      browserAccess: boolean;
     }): Promise<ThreadInfo>;
     /**
      * Per-thread quota-wait auto-resume override (#462). true/false pins

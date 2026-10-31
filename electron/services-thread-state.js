@@ -889,6 +889,27 @@ function setCrossThreadInbound(store, input) {
 }
 
 /**
+ * Per-thread agent browser access (#1797). Default true (stored as absent
+ * on the thread row); `false` makes the preview MCP tool refuse every
+ * action for this thread. The user's own use of the Browser pane is
+ * unaffected either way. Never bumps updatedAt.
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string, browserAccess: boolean }} input
+ */
+function setBrowserAccess(store, input) {
+  const { threadId } = input;
+  const enabled = input.browserAccess !== false;
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  const updated = store.updateThread(threadId, { browserAccess: enabled });
+  store.save();
+  return updated ? { ...updated } : { ...thread, browserAccess: enabled };
+}
+
+/**
  * Hard budget cap (#286). null / {} clears it. Lives on the thread row so
  * compaction can never drop it. Never bumps updatedAt. Answers a budget
  * stop: an idle thread with no open question card stops asking.
@@ -1470,6 +1491,7 @@ module.exports = {
   setMuted,
   setEjected,
   setCrossThreadInbound,
+  setBrowserAccess,
   setQuotaWaitAutoResume,
   setPrWatch,
   setNotes,
