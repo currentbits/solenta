@@ -63,6 +63,51 @@
         Every notable change to Solenta, newest first.
       </p>
 
+      <h2 id="v0-28-0">0.28.0 <small>2026-10-31</small></h2>
+      <h3>Added</h3>
+      <ul>
+        <li><strong>Providers page.</strong> Settings › Providers lists every provider with its sign-in state, API key, base URL and a searchable models panel with favourites. Add OpenAI-compatible endpoints, second Claude or Codex accounts, or custom CLIs, and give any instance its own CLI home and extra launch arguments.</li>
+        <li><strong>Local models.</strong> Ollama and LM Studio are detected and usable in one click.</li>
+        <li><strong>Chat from your phone.</strong> Start and continue threads from Telegram, Slack or Discord direct messages, with approvals and questions as chat buttons.</li>
+        <li><strong>MCP marketplace.</strong> 26 verified servers with search and one-click install, sign-in to remote servers over MCP OAuth, and an allow, ask or deny rule per tool.</li>
+        <li><strong>Granular auto-approve.</strong> Toggle reads, edits, safe commands, web and MCP separately, inside the project or anywhere, per thread or per agent profile. Deny rules and guardrails still win.</li>
+        <li><strong>Plan on one model, build on another.</strong> Plan-mode turns run on a separate model and the same conversation switches back when you approve the plan.</li>
+        <li><strong>Lifecycle hooks.</strong> Your own hooks run for every provider. Repo hooks need your approval, which also pins the scripts they call.</li>
+        <li><strong>Agents handle PRs and CI.</strong> Agents read checks, fetch CI logs, rerun jobs and comment on their PRs through Solenta. Merging still needs your click.</li>
+        <li><strong>Redirect from an approval card.</strong> Typing a message while a permission card is open declines it and gives the agent your new direction.</li>
+        <li><strong>Search everything.</strong> ⌘K searches message text across every thread, shows each thread's status, and finds threads by linked PR. Settings and the project filter are searchable too.</li>
+        <li><strong>Your own sidebar order.</strong> Drag threads to reorder them, drag a thread into the composer as context, and idle threads waiting on a PR collect in a Watching section.</li>
+        <li><strong>Richer PRs.</strong> Hover a PR anywhere for its checks, review state and size. The PR panel updates a behind branch, edits comments in place and adds reactions, the PR list takes <code>author:</code>, <code>label:</code> and <code>is:</code> filters and floats review requests to the top, and PR creation shows each step as it runs.</li>
+        <li><strong>Git defaults.</strong> A default merge method app-wide or per project, branches deleted after merge or close, a model of your choice for commit messages and PR text, and your own instructions for both.</li>
+        <li><strong>More @-mentions.</strong> <code>@url</code>, <code>@terminal</code>, <code>@problems</code>, <code>@git-changes</code>, commits, GitHub issues and discussions. Drag files from the Files pane to mention them.</li>
+        <li><strong>Automations.</strong> Custom cron schedules with the next fire times shown, and one-time runs at a set date.</li>
+        <li><strong>Cost and limits.</strong> The thread header shows its running cost split by model, an opt-in strip shows 5-hour, weekly and context limits with an even-pace marker, and the Usage page splits cost by token type.</li>
+        <li><strong>Diffs.</strong> A folder tree view with per-file copy path, +/- totals, start-collapsed files, and the Changes panel remembers your place per thread.</li>
+        <li><strong>Getting around.</strong> Back and forward buttons with trackpad swipe, next and previous turn shortcuts, a Jump to latest pill, Stop all, Duplicate thread, inline rename, Export as Markdown, and shortcuts for pin, settle, reasoning effort and fast mode.</li>
+        <li><strong>Composer.</strong> Spellcheck with suggestions, surround a selection with brackets or quotes, send images without text, send a draft as a background thread with ⌘⌥↩, a warning before an oversized prompt, and an opt-in suggested next prompt.</li>
+        <li><strong>Reading.</strong> Long user messages fold, back-to-back messages group, code blocks can wrap, images zoom and pan, Copy Image on right-click, chat width and contrast settings, and #123 refs link to GitHub.</li>
+        <li><strong>Notifications.</strong> Switches per event and per project, an opt-in CI failed alert, and icons that show the outcome.</li>
+        <li><strong>Optional cloud voice input.</strong> OpenAI or ElevenLabs speech-to-text, falling back to the local model.</li>
+        <li><strong>Diagnostics bundle.</strong> Help › Export Diagnostics saves a redacted zip for bug reports.</li>
+        <li><strong>Windows and Linux tray.</strong> Close to tray, off by default. Trackpad pinch zooms the window.</li>
+        <li><strong>Deep links.</strong> <code>solenta://new?prompt=…</code> opens a draft thread, never a run.</li>
+        <li><strong>What's new before updating.</strong> Hover the Update button to read the release notes first.</li>
+      </ul>
+      <h3>Changed</h3>
+      <ul>
+        <li><strong>Secrets encrypted by default.</strong> Stored keys and tokens are sealed with the OS keychain. After updating, do not go back to 0.27 or older on the same data folder: older builds cannot read the sealed keys.</li>
+        <li><strong>Long threads load in pages.</strong> Threads open with their newest messages and load older ones on demand, and rows out of view skip layout.</li>
+        <li><strong>Interrupted runs resume by default</strong> unless you turned that off.</li>
+        <li><strong>Oversized images</strong> are downscaled instead of rejected.</li>
+      </ul>
+      <h3>Fixed</h3>
+      <ul>
+        <li><strong>Safer file restores.</strong> A rewind refuses while another thread works in the same checkout, and a message sent mid-restore waits.</li>
+        <li><strong>Smoother streaming.</strong> The Changes and turn diff panels no longer re-render on every token.</li>
+        <li><strong>New models reach installed apps.</strong> The model catalog republishes again.</li>
+        <li><strong>Terminals</strong> ask before closing with a command still running.</li>
+      </ul>
+
       <h2 id="v0-27-0">0.27.0 <small>2026-10-27</small></h2>
       <h3>Added</h3>
       <ul>
