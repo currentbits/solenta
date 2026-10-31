@@ -259,6 +259,33 @@ describe("filterPrGroups", () => {
     assert.equal(filtered[1].ok, true);
     if (filtered[1].ok) assert.equal(filtered[1].prs[0].number, 22);
   });
+
+  it("applies qualifiers on top of the text query (#1795 feature 4)", () => {
+    const labeled = groupPrsByProject(
+      [p1],
+      new Map([
+        [
+          "p1",
+          {
+            ok: true,
+            prs: [
+              pr({ number: 11, title: "Ledger search", headRefName: "feat/ledger", labels: ["bug"] }),
+              pr({ number: 99, title: "Ledger other", headRefName: "feat/old" }),
+            ],
+          },
+        ],
+      ]),
+    );
+    const filtered = filterPrGroups(labeled, {
+      query: "ledger",
+      qualifiers: [{ kind: "label", value: "bug", token: "label:bug" }],
+      viewerLogin: null,
+    });
+    assert.equal(filtered[0].ok, true);
+    if (filtered[0].ok) {
+      assert.deepEqual(filtered[0].prs.map((row) => row.number), [11]);
+    }
+  });
 });
 
 describe("groupPrsByProject completeness", () => {

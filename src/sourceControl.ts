@@ -93,6 +93,27 @@ export function forgeReadiness(
   return { ready: false, hint: providerHint(provider) };
 }
 
+/**
+ * The signed-in GitHub login, for the `author:@me` list query qualifier
+ * (#1795 feature 4). Mirrors electron/worktrees-pr.js's viewerLoginFor
+ * (#1763): the active gh account for the host, else the auth detail when
+ * gh reports no distinct account. Null when GitHub is not discovered /
+ * authenticated at all.
+ */
+export function viewerLoginFromDiscovery(
+  discovery: SourceControlDiscovery | null | undefined,
+): string | null {
+  if (!discovery) return null;
+  const provider = discovery.sourceControlProviders.find((p) => p.kind === "github");
+  if (!provider) return null;
+  const account = (provider.accounts || []).find((a) => a.active);
+  if (account) return account.login;
+  if (provider.auth.status === "authenticated" && provider.auth.detail) {
+    return provider.auth.detail;
+  }
+  return null;
+}
+
 export function buildAddProjectRemoteSourceReadiness(
   discovery: SourceControlDiscovery | null | undefined,
 ): AddProjectRemoteSourceReadiness {

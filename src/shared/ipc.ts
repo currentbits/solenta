@@ -2968,6 +2968,10 @@ export interface PrListItem {
    * REST-token-only setup with no gh CLI at all).
    */
   reviewRequestedFromMe?: boolean;
+  /** PR author login, for the `author:<login|@me>` list query qualifier (#1795). */
+  author?: string;
+  /** Label names, for the repeatable `label:<name>` list query qualifier (#1795). */
+  labels?: string[];
 }
 
 /** Optional page for `git.listPrs`. Absent limit keeps the historic 50-row page. */

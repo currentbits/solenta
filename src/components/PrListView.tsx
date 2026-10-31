@@ -21,7 +21,8 @@ import {
   type TriageDepth,
 } from "../prList";
 import { PrHoverTarget, repoFromGithubUrl } from "./PrHoverCard";
-import { forgeReadiness } from "../sourceControl";
+import { forgeReadiness, viewerLoginFromDiscovery } from "../sourceControl";
+import { parsePrQuery, removePrQualifier } from "../prQualifiers";
 import type {
   MergeMethod,
   CheckoutPrResult,
@@ -31,6 +32,7 @@ import type {
   PrCommentResult,
   PrListItem,
   PrDetailResult,
+  PrReactionResult,
   ProjectInfo,
   SourceControlDiscovery,
   ThreadInfo,
@@ -93,6 +95,28 @@ export interface PrListViewProps {
     prNumber: number;
     method?: MergeMethod;
   }) => Promise<PrDetailResult>;
+  prUpdateBranch?: (input: {
+    projectPath: string;
+    prNumber: number;
+    repo?: string;
+  }) => Promise<PrDetailResult>;
+  prCommentEdit?: (input: {
+    projectPath: string;
+    prNumber: number;
+    repo?: string;
+    commentId: number;
+    type?: "issue" | "review";
+    body: string;
+  }) => Promise<PrDetailResult>;
+  prReaction?: (input: {
+    projectPath: string;
+    prNumber: number;
+    repo?: string;
+    commentId: number;
+    content: string;
+    remove?: boolean;
+    reactionId?: number;
+  }) => Promise<PrReactionResult>;
 }
 
 export function PrListView({
@@ -110,6 +134,9 @@ export function PrListView({
   prClose,
   prReady,
   prMergeAt,
+  prUpdateBranch,
+  prCommentEdit,
+  prReaction,
 }: PrListViewProps) {
   const [results, setResults] = useState<Map<string, ListPrsResult>>(
     () => new Map(),
@@ -120,6 +147,7 @@ export function PrListView({
     ready: boolean;
     hint: string | null;
   } | null>(null);
+  const [discovery, setDiscovery] = useState<SourceControlDiscovery | null>(null);
   const [checkingOut, setCheckingOut] = useState<string | null>(null);
   const [checkoutErrors, setCheckoutErrors] = useState<Map<string, string>>(
     () => new Map(),
@@ -184,7 +212,10 @@ export function PrListView({
     if (typeof discover !== "function") return;
     void discover()
       .then((next: SourceControlDiscovery) => {
-        if (!cancelled) setDiscoveredGithub(forgeReadiness(next, "github"));
+        if (!cancelled) {
+          setDiscoveredGithub(forgeReadiness(next, "github"));
+          setDiscovery(next);
+        }
       })
       .catch(() => {
         /* leave Check out on the click-and-fail path */
@@ -286,9 +317,16 @@ export function PrListView({
     () => filterPrGroups(groups, { projectId: projectFilter || null }),
     [groups, projectFilter],
   );
+  const parsedQuery = useMemo(() => parsePrQuery(query), [query]);
+  const viewerLogin = useMemo(() => viewerLoginFromDiscovery(discovery), [discovery]);
   const filtered = useMemo(
-    () => filterPrGroups(scoped, { query }),
-    [scoped, query],
+    () =>
+      filterPrGroups(scoped, {
+        query: parsedQuery.text,
+        qualifiers: parsedQuery.qualifiers,
+        viewerLogin,
+      }),
+    [scoped, parsedQuery, viewerLogin],
   );
   const inboxRows = useMemo(
     () => (inbox ? triageInbox(filtered, threads, now) : []),
@@ -555,6 +593,24 @@ export function PrListView({
         ) : null}
       </div>
 
+      {parsedQuery.qualifiers.length > 0 ? (
+        <div className={styles.qualifiers} data-pr-qualifiers="">
+          {parsedQuery.qualifiers.map((q, index) => (
+            <button
+              key={`${q.token}-${index}`}
+              type="button"
+              className={styles.qualifierChip}
+              data-pr-qualifier={q.token}
+              title="Remove this filter"
+              onClick={() => setQuery(removePrQualifier(query, q))}
+            >
+              {q.token}
+              <span aria-hidden="true"> ×</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
+
       {query.trim() && incomplete ? (
         <p
           className={styles.partial}
@@ -716,6 +772,9 @@ export function PrListView({
             prClose={prClose}
             prReady={prReady}
             prMergeAt={prMergeAt}
+            prUpdateBranch={prUpdateBranch}
+            prCommentEdit={prCommentEdit}
+            prReaction={prReaction}
             onSelectThread={(id) =>
               onSelectThread(
                 id,
