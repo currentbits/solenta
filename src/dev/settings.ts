@@ -83,6 +83,7 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
   };
   let notificationProjects: string[] = [];
   let feltEstimatePrompt = false;
+  let suggestNextPrompt = false;
   let uiScale = 1;
   let theme: AppSettings["theme"] = "dark";
   let agentsPanelDefault: AppSettings["agentsPanelDefault"] = "closed";
@@ -209,6 +210,7 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           },
           notificationProjects: notificationProjects.slice(),
           feltEstimatePrompt,
+          suggestNextPrompt,
           uiScale,
           theme,
           agentsPanelDefault,
@@ -402,6 +404,14 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
             throw new Error("feltEstimatePrompt must be a boolean");
           }
           feltEstimatePrompt = patch.feltEstimatePrompt;
+        }
+        if (
+          Object.prototype.hasOwnProperty.call(patch, "suggestNextPrompt")
+        ) {
+          if (typeof patch.suggestNextPrompt !== "boolean") {
+            throw new Error("suggestNextPrompt must be a boolean");
+          }
+          suggestNextPrompt = patch.suggestNextPrompt;
         }
         if (Object.prototype.hasOwnProperty.call(patch, "uiScale")) {
           const v = patch.uiScale;
@@ -665,6 +675,7 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           },
           notificationProjects: notificationProjects.slice(),
           feltEstimatePrompt,
+          suggestNextPrompt,
           uiScale,
           theme,
           agentsPanelDefault,

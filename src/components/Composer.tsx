@@ -173,6 +173,7 @@ import { useEscapeInterrupt } from "./composer/useEscapeInterrupt";
 import { useTranscriptViewShortcuts } from "./composer/useTranscriptViewShortcuts";
 import { usePasteCards } from "./composer/usePasteCards";
 import { matchesBinding } from "../keybindings";
+import { dialogOpen } from "../app/useAppShortcuts";
 
 import styles from "./Composer.module.css";
 
@@ -342,6 +343,13 @@ export interface ComposerProps {
   /** Start a signed-out provider's login in a terminal (#1501). */
   onProviderSignIn?: (providerId: string) => Promise<void>;
   placeholder?: string;
+  /**
+   * Labs next-prompt suggestion (#1806): thread.nextPromptSuggestion, a
+   * short instruction fm guessed the user might give next, cached after a
+   * successful turn. Shown as the textarea's placeholder while the draft is
+   * empty and the thread is idle; null/empty shows the ordinary placeholder.
+   */
+  nextPromptSuggestion?: string | null;
   /** Run-scope error from the parent hook (e.g. already active). */
   error?: string | null;
   onDismissError?: () => void;
@@ -567,6 +575,7 @@ export const Composer = memo(function Composer({
   onModelPickerOpen,
   onProviderSignIn,
   placeholder = "Ask anything, @ files, $ skills, / commands",
+  nextPromptSuggestion = null,
   error = null,
   onDismissError,
   onListFiles,
@@ -1012,6 +1021,10 @@ export const Composer = memo(function Composer({
    * waits for the run to land; only the prompt and Send stay live while busy.
    */
   const locked = disabled || busy;
+  // #1806: the ghost only makes sense on an idle, empty draft — typing or a
+  // new turn starting (locked flips true) hides it with no extra state.
+  const suggestion = (nextPromptSuggestion || "").trim();
+  const ghostVisible = suggestion !== "" && !hasPrompt && !locked;
   /** Build is enabled for any provider; backend validates phase providers. */
   const canBuild = !locked && !sending && hasPrompt;
   const workflowRunTitle = hasPrompt
@@ -1632,6 +1645,21 @@ export const Composer = memo(function Composer({
       void stashCurrent();
       return;
     }
+    // #1806: Tab/→ on the empty ghost pulls the suggestion into the draft.
+    // Enter is deliberately NOT one of these keys: an empty composer must
+    // never send the ghost text implicitly.
+    if (
+      ghostVisible &&
+      (e.key === "Tab" || e.key === "ArrowRight") &&
+      !e.metaKey &&
+      !e.ctrlKey &&
+      !e.altKey &&
+      !e.shiftKey
+    ) {
+      e.preventDefault();
+      writeDraft(suggestion, suggestion.length);
+      return;
+    }
     if (mentionOpen) {
       if (e.key === "ArrowDown") {
         e.preventDefault();
@@ -2186,6 +2214,35 @@ export const Composer = memo(function Composer({
     }
   };
 
+  // #1806: ⌘⇧E cycles the current model's reasoning effort, ⌘⇧G toggles fast
+  // mode (when the model supports it). Window-level so they fire whether the
+  // textarea has focus or the user is just looking at this thread, not only
+  // from the Effort/Speed menus. Mod chords still fire over a focused text
+  // field, same as thread.togglePin/toggleSettle in App.tsx. No deps array:
+  // efforts/reasoningEffort/locked change every turn and a stale closure
+  // would cycle the wrong list.
+  useEffect(() => {
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.defaultPrevented || dialogOpen()) return;
+      if (matchesBinding(e, "composer.cycleEffort")) {
+        if (locked || effortUnavailable || !reasoningVisible) return;
+        e.preventDefault();
+        const options = effortOptions(efforts);
+        const at = options.indexOf(reasoningEffort);
+        const next = options[(at + 1) % options.length] ?? null;
+        void pickEffort(next);
+        return;
+      }
+      if (matchesBinding(e, "composer.toggleFast")) {
+        if (!fastAvailable || locked) return;
+        e.preventDefault();
+        void toggleFast();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+
   const onModelListKeyDown = (e: KeyboardEvent<HTMLUListElement>) => {
     if (handleModelNavKey(e, false)) return;
     // A printable key while the list is focused is a search, not a dead key.
@@ -2442,7 +2499,8 @@ export const Composer = memo(function Composer({
           key={threadId}
           ref={textareaRef}
           className={styles.textarea}
-          placeholder={placeholder}
+          placeholder={ghostVisible ? suggestion : placeholder}
+          data-next-prompt-ghost={ghostVisible ? "" : undefined}
           rows={3}
           defaultValue={draftsRef.current[threadId] ?? ""}
           spellCheck={spellcheckEnabled && !vimEnabled}
@@ -2540,9 +2598,12 @@ export const Composer = memo(function Composer({
                     decorative
                   />
                 </span>
-                {/* Keyed so a model swap replays the pop instead of swapping
-                    text mid-frame. */}
-                <span key={triggerLabel} className={styles.pillLabel}>
+                {/* Keyed so a model swap (or a fast-mode flip, #1806) replays
+                    the pop instead of swapping text mid-frame. */}
+                <span
+                  key={`${triggerLabel}|${fastOn ? 1 : 0}`}
+                  className={styles.pillLabel}
+                >
                   {triggerLabel}
                   {fastOn ? " · Fast" : null}
                 </span>

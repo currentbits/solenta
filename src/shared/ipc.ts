@@ -824,6 +824,14 @@ export interface ThreadInfo {
    */
   recap?: ThreadRecap | null;
   /**
+   * Ghost next-prompt suggestion (#1806, Labs opt-in): one short instruction
+   * fm guessed the user might give next, cached after a successful turn on
+   * this thread. Cleared on the next run start (electron/runner.js) so a
+   * stale suggestion never survives into an unrelated turn. Null/absent
+   * shows no ghost.
+   */
+  nextPromptSuggestion?: string | null;
+  /**
    * Epoch ms when the user pinned this thread; null = unpinned. Pinned
    * threads render first and NEVER auto-settle. Pin and an
    * explicit settle are mutually exclusive: setPinned(true) clears a
@@ -3971,6 +3979,14 @@ export interface AppSettings {
    * section of the Fleet view stays empty.
    */
   feltEstimatePrompt: boolean;
+  /**
+   * Labs (issue #1806): after a turn finishes successfully on the open
+   * thread, run one cheap completion over the fm-title path and offer the
+   * result as a ghost suggestion in the empty composer. Opt-in: absent/false
+   * means no extra model call ever runs. Never fires for automation or
+   * notice-delivered turns (electron/fm-suggest.js maybeSuggestNextPrompt).
+   */
+  suggestNextPrompt: boolean;
   /**
    * Electron webContents zoom factor (issue #652). Default 1; clamped to
    * 0.8–1.6 in 0.1 steps. View-menu zoom and the Settings control share this.

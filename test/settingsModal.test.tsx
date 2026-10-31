@@ -1831,6 +1831,29 @@ describe("SettingsModal notification sound (#1506)", () => {
   });
 });
 
+describe("SettingsModal Labs next-prompt suggestion (#1806)", () => {
+  it("is off by default and saves the toggle", async () => {
+    const patches: Partial<AppSettings>[] = [];
+    const m = await mount(
+      modal({
+        initialPane: "general",
+        settings: { dailyBudgetUsd: null, autoSettleAfterDays: 3 } as AppSettings,
+        onSaveSettings: async (patch) => {
+          patches.push(patch);
+          return { dailyBudgetUsd: null, autoSettleAfterDays: 3, ...patch } as AppSettings;
+        },
+      }),
+    );
+    assert.ok(m.query("[data-labs-prefs]"), "Labs section renders");
+    const box = m.query("[data-suggest-next-prompt-pref]") as HTMLInputElement;
+    assert.ok(box, "suggest-next-prompt checkbox");
+    assert.equal(box.checked, false);
+    await m.click(box);
+    assert.deepEqual(patches, [{ suggestNextPrompt: true }]);
+    m.unmount();
+  });
+});
+
 describe("SettingsModal per-event notifications (#1725)", () => {
   it("defaults match today's behaviour and save one switch at a time", async () => {
     const patches: Partial<AppSettings>[] = [];

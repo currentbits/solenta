@@ -225,6 +225,7 @@ function composer(
     contextWindow?: number | null;
     contextUsed?: number | null;
     onCompactFirst?: () => void;
+    nextPromptSuggestion?: string | null;
   } = {},
 ) {
   // Seed the emulation from the thread this element renders with, so the
@@ -295,6 +296,9 @@ function composer(
       contextWindow={over.contextWindow}
       contextUsed={over.contextUsed}
       onCompactFirst={over.onCompactFirst}
+      nextPromptSuggestion={
+        over.nextPromptSuggestion === undefined ? null : over.nextPromptSuggestion
+      }
       workspaceStrip={over.workspaceStrip}
       disabled={over.disabled ?? false}
       busy={over.busy ?? false}
@@ -3208,6 +3212,228 @@ describe("Composer Fast trait (issue #1529)", () => {
       }),
     );
     assert.ok(m.query('button[aria-label$=", fast"]'));
+    m.unmount();
+  });
+});
+
+/** Dispatch the (default, unremapped) chord for a composer.* keybinding id. */
+function pressChord(key: string) {
+  window.dispatchEvent(
+    new KeyboardEvent("keydown", {
+      key,
+      metaKey: true,
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+}
+
+describe("Composer effort/fast keyboard shortcuts (#1806)", () => {
+  const FAST_PROVIDERS = PROVIDERS.map((p) =>
+    p.id === "claude"
+      ? {
+          ...p,
+          modelInfo: p.modelInfo.map((m) =>
+            m.id === "claude-opus-4" ? { ...m, fast: true } : m,
+          ),
+        }
+      : p,
+  );
+
+  it("⌘⇧E steps to the next effort the current model supports", async () => {
+    const h = makeHarness();
+    // CLAUDE_WITH_INFO: ["low", "medium", "high", "xhigh", "max"], so the
+    // full cycle is [Auto, low, medium, high, xhigh, max].
+    const m = await mount(composer(h, { reasoningEffort: "high" }));
+    await inAct(() => pressChord("e"));
+    await m.flush();
+    assert.deepEqual(h.efforts, ["xhigh"], "high steps to the next level up");
+    m.unmount();
+  });
+
+  it("wraps from the last level back to Auto", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h, { reasoningEffort: "max" }));
+    await inAct(() => pressChord("e"));
+    await m.flush();
+    assert.deepEqual(h.efforts, [null], "max wraps around to Auto");
+    m.unmount();
+  });
+
+  it("resets to Auto when the current value is not in the model's list", async () => {
+    const h = makeHarness();
+    // "ultra" is not one of claude's efforts; a stale/model-switched value
+    // must not throw and must land on the first (Auto) row.
+    const m = await mount(
+      composer(h, { reasoningEffort: "ultra" as unknown as ReasoningEffort }),
+    );
+    await inAct(() => pressChord("e"));
+    await m.flush();
+    assert.deepEqual(h.efforts, [null]);
+    m.unmount();
+  });
+
+  it("is a no-op when the model advertises no efforts at all", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h, { provider: "codex", model: null }));
+    await inAct(() => pressChord("e"));
+    await m.flush();
+    assert.deepEqual(h.efforts, [], "codex fixture has no efforts; nothing fires");
+    m.unmount();
+  });
+
+  it("is a no-op while the composer is locked (disabled/busy)", async () => {
+    const h = makeHarness();
+    const m = await mount(
+      composer(h, { reasoningEffort: "high", disabled: true }),
+    );
+    await inAct(() => pressChord("e"));
+    await m.flush();
+    assert.deepEqual(h.efforts, []);
+    m.unmount();
+  });
+
+  it("⌘⇧G toggles fast mode only on a model that supports it", async () => {
+    const h = makeHarness();
+    const m = await mount(
+      composer(h, { model: "claude-opus-4", providers: FAST_PROVIDERS }),
+    );
+    await inAct(() => pressChord("g"));
+    await m.flush();
+    assert.deepEqual(h.fasts, [true]);
+    m.unmount();
+
+    const h2 = makeHarness();
+    const m2 = await mount(
+      composer(h2, {
+        model: "claude-opus-4",
+        fast: true,
+        providers: FAST_PROVIDERS,
+      }),
+    );
+    await inAct(() => pressChord("g"));
+    await m2.flush();
+    assert.deepEqual(h2.fasts, [false], "toggles off from on");
+    m2.unmount();
+  });
+
+  it("is a no-op on a model without a fast tier", async () => {
+    const h = makeHarness();
+    const m = await mount(
+      composer(h, { model: "claude-sonnet-4", providers: FAST_PROVIDERS }),
+    );
+    await inAct(() => pressChord("g"));
+    await m.flush();
+    assert.deepEqual(h.fasts, [], "claude-sonnet-4 has no fast tier");
+    m.unmount();
+  });
+});
+
+describe("Composer next-prompt ghost suggestion (Labs, #1806)", () => {
+  it("is off by default: no ghost without a suggestion", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h));
+    assert.equal(m.query("[data-next-prompt-ghost]"), null);
+    const textarea = m.query("textarea") as HTMLTextAreaElement;
+    assert.doesNotMatch(textarea.placeholder, /Run the tests/);
+    m.unmount();
+  });
+
+  it("shows the suggestion as the empty composer's placeholder", async () => {
+    const h = makeHarness();
+    const m = await mount(
+      composer(h, { nextPromptSuggestion: "Run the tests" }),
+    );
+    const textarea = m.query("textarea") as HTMLTextAreaElement;
+    assert.ok(m.query("[data-next-prompt-ghost]"), "ghost marker renders");
+    assert.equal(textarea.placeholder, "Run the tests");
+    m.unmount();
+  });
+
+  it("hides the ghost while the thread is busy or disabled", async () => {
+    const h = makeHarness();
+    const busy = await mount(
+      composer(h, { nextPromptSuggestion: "Run the tests", busy: true }),
+    );
+    assert.equal(busy.query("[data-next-prompt-ghost]"), null);
+    busy.unmount();
+
+    const disabled = await mount(
+      composer(h, { nextPromptSuggestion: "Run the tests", disabled: true }),
+    );
+    assert.equal(disabled.query("[data-next-prompt-ghost]"), null);
+    disabled.unmount();
+  });
+
+  it("Tab pulls the suggestion into the draft without sending it", async () => {
+    const h = makeHarness();
+    const m = await mount(
+      composer(h, { nextPromptSuggestion: "Run the tests" }),
+    );
+    const textarea = m.query("textarea") as HTMLTextAreaElement;
+    await inAct(() => {
+      textarea.focus();
+      textarea.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Tab",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    });
+    await m.flush();
+    assert.equal(textarea.value, "Run the tests");
+    assert.deepEqual(h.sends, [], "Tab must only fill the draft, never send");
+    m.unmount();
+  });
+
+  it("ArrowRight also accepts the suggestion", async () => {
+    const h = makeHarness();
+    const m = await mount(
+      composer(h, { nextPromptSuggestion: "Run the tests" }),
+    );
+    const textarea = m.query("textarea") as HTMLTextAreaElement;
+    await inAct(() => {
+      textarea.focus();
+      textarea.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "ArrowRight",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    });
+    await m.flush();
+    assert.equal(textarea.value, "Run the tests");
+    m.unmount();
+  });
+
+  it("typing dismisses the ghost and Enter on an empty draft never sends it implicitly", async () => {
+    const h = makeHarness();
+    const m = await mount(
+      composer(h, { nextPromptSuggestion: "Run the tests" }),
+    );
+    const textarea = m.query("textarea") as HTMLTextAreaElement;
+    assert.ok(m.query("[data-next-prompt-ghost]"), "ghost starts visible");
+    // Enter on the still-empty composer (before any typing) must not send
+    // the ghost text: it never reached the actual draft value.
+    await inAct(() => {
+      textarea.focus();
+      textarea.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Enter",
+          metaKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    });
+    await m.flush();
+    assert.deepEqual(h.sends, [], "an empty draft has nothing to send");
+
+    await m.type(textarea, "s");
+    assert.equal(m.query("[data-next-prompt-ghost]"), null, "typing dismisses it");
     m.unmount();
   });
 });

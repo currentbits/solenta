@@ -77,6 +77,15 @@ describe("keybinding table", () => {
     assert.equal(matchesBinding(key("[", { metaKey: true }), "history.back"), false);
   });
 
+  it("ships the effort-cycle and fast-toggle bindings, free of the mod+shift+f/p/a/s/n/enter conflicts (#1806)", () => {
+    assert.equal(matchesBinding(key("e", { metaKey: true, shiftKey: true }), "composer.cycleEffort"), true);
+    assert.equal(matchesBinding(key("g", { metaKey: true, shiftKey: true }), "composer.toggleFast"), true);
+    const chords = effectiveChords({}, true);
+    assert.equal(chords.get("composer.cycleEffort"), "mod+shift+e");
+    assert.equal(chords.get("composer.toggleFast"), "mod+shift+g");
+    assert.deepEqual(findConflicts(chords), []);
+  });
+
   it("formats per platform", () => {
     assert.equal(formatChord("mod+shift+f", true), "⌘ + ⇧ + F");
     assert.equal(formatChord("mod+shift+f", false), "Ctrl + Shift + F");

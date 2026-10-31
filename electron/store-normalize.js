@@ -433,6 +433,10 @@ function validateQuotaFailover(raw) {
  * feltEstimatePrompt: absent/junk → false. The "how much time did this save
  * you?" card is opt-in; only an explicit true asks.
  *
+ * suggestNextPrompt: absent/junk → false (issue #1806, Labs). The next-prompt
+ * ghost suggestion costs one extra fm completion per finished turn; off by
+ * default.
+ *
  * uiScale: Electron webContents zoom factor (issue #652). Absent/junk → 1;
  * otherwise snapped to 0.1 between 0.8 and 1.6.
  * theme: absent/junk → "dark" (the app was dark-only; upgrades must not
@@ -517,6 +521,7 @@ function normalizeSettings(raw) {
     notifyEvents: normalizeNotifyEvents(null),
     notificationProjects: [],
     feltEstimatePrompt: false,
+    suggestNextPrompt: false,
     uiScale: UI_SCALE_DEFAULT,
     theme: "dark",
     agentsPanelDefault: "closed",
@@ -673,6 +678,9 @@ function normalizeSettings(raw) {
   );
   settings.feltEstimatePrompt =
     /** @type {{ feltEstimatePrompt?: unknown }} */ (obj).feltEstimatePrompt ===
+    true;
+  settings.suggestNextPrompt =
+    /** @type {{ suggestNextPrompt?: unknown }} */ (obj).suggestNextPrompt ===
     true;
   settings.uiScale = clampUiScale(
     /** @type {{ uiScale?: unknown }} */ (obj).uiScale,

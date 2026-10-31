@@ -1904,7 +1904,16 @@ const listThreadsCache = new WeakMap();
  */
 function listRow(row) {
   // lastActivity is threads:summaries-only; keep it off the full-list push.
-  const { hypotheses, suggestions, lastActivity, recap, ...rest } = row;
+  // nextPromptSuggestion (#1806) is read by the open thread's Composer from
+  // detail.thread only, same as recap.
+  const {
+    hypotheses,
+    suggestions,
+    lastActivity,
+    recap,
+    nextPromptSuggestion,
+    ...rest
+  } = row;
   return rest;
 }
 

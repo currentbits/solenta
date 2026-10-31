@@ -1900,6 +1900,14 @@ function createRunner(opts) {
       store.updateThread(threadId, { idleCompactedAt: null });
     }
 
+    // Next-prompt ghost suggestion (#1806, Labs): any new turn starting
+    // invalidates a prior one — success or not, the composer's ghost must
+    // not survive into an unrelated turn. The next successful turn writes
+    // a fresh suggestion (or clears it again) via maybeSuggestNextPrompt.
+    if (thread.nextPromptSuggestion != null) {
+      store.updateThread(threadId, { nextPromptSuggestion: null });
+    }
+
     // Ask mode (issue #392): cheap no-tools Q&A. Intercept BEFORE orch
     // commands, budget, and worktree materialization so a `/advisor` on an
     // Ask thread is just a question and a defaultWorktree leftover cannot

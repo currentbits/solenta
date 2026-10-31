@@ -721,6 +721,12 @@ export function GeneralPane({
         setError={setError}
       />
       <DisplayPrefsSection />
+      <LabsSection
+        settings={settings}
+        saving={saving}
+        onSaveSettings={onSaveSettings}
+        setError={setError}
+      />
     </>
   );
 }
@@ -1085,6 +1091,55 @@ function DisplayPrefsSection() {
       <p className={styles.note}>
         A quiet strip above the composer with the 5-hour, weekly and
         context limits as percent left. Off by default.
+      </p>
+    </section>
+  );
+}
+
+/**
+ * Labs / experimental opt-ins (issue #1806): settings worth trying but not
+ * on by default, usually because they cost something (an extra model call,
+ * here) that most people would not expect from a plain toggle elsewhere.
+ */
+function LabsSection({
+  settings,
+  saving,
+  onSaveSettings,
+  setError,
+}: {
+  settings: AppSettings | null;
+  saving: boolean;
+  onSaveSettings: SettingsModalProps["onSaveSettings"];
+  setError: (error: string | null) => void;
+}) {
+  return (
+    <section className={styles.section} data-labs-prefs="">
+      <h3 className={styles.sectionLabel}>Labs</h3>
+      <label className={styles.fieldRow}>
+        <input
+          type="checkbox"
+          data-suggest-next-prompt-pref=""
+          checked={settings?.suggestNextPrompt ?? false}
+          disabled={saving || settings == null}
+          onChange={(e) => {
+            setError(null);
+            void onSaveSettings({
+              suggestNextPrompt: e.target.checked,
+            }).catch((err) => {
+              setError(
+                err instanceof Error && err.message
+                  ? err.message
+                  : "Failed to save settings",
+              );
+            });
+          }}
+        />
+        <span>Suggest a next prompt after each turn</span>
+      </label>
+      <p className={styles.note}>
+        Shows a dim suggestion in the empty composer after a thread finishes;
+        Tab or → accepts it. Uses one small extra model call per turn. Off by
+        default.
       </p>
     </section>
   );
