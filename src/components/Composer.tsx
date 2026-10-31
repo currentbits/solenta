@@ -172,6 +172,7 @@ import { useEscapeInterrupt } from "./composer/useEscapeInterrupt";
 import { useTranscriptViewShortcuts } from "./composer/useTranscriptViewShortcuts";
 import { usePasteCards } from "./composer/usePasteCards";
 import { matchesBinding } from "../keybindings";
+import { dialogOpen } from "../app/useAppShortcuts";
 
 import styles from "./Composer.module.css";
 
@@ -2178,6 +2179,35 @@ export const Composer = memo(function Composer({
     }
   };
 
+  // #1806: ⌘⇧E cycles the current model's reasoning effort, ⌘⇧G toggles fast
+  // mode (when the model supports it). Window-level so they fire whether the
+  // textarea has focus or the user is just looking at this thread, not only
+  // from the Effort/Speed menus. Mod chords still fire over a focused text
+  // field, same as thread.togglePin/toggleSettle in App.tsx. No deps array:
+  // efforts/reasoningEffort/locked change every turn and a stale closure
+  // would cycle the wrong list.
+  useEffect(() => {
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.defaultPrevented || dialogOpen()) return;
+      if (matchesBinding(e, "composer.cycleEffort")) {
+        if (locked || effortUnavailable || !reasoningVisible) return;
+        e.preventDefault();
+        const options = effortOptions(efforts);
+        const at = options.indexOf(reasoningEffort);
+        const next = options[(at + 1) % options.length] ?? null;
+        void pickEffort(next);
+        return;
+      }
+      if (matchesBinding(e, "composer.toggleFast")) {
+        if (!fastAvailable || locked) return;
+        e.preventDefault();
+        void toggleFast();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+
   const onModelListKeyDown = (e: KeyboardEvent<HTMLUListElement>) => {
     if (handleModelNavKey(e, false)) return;
     // A printable key while the list is focused is a search, not a dead key.
@@ -2532,9 +2562,12 @@ export const Composer = memo(function Composer({
                     decorative
                   />
                 </span>
-                {/* Keyed so a model swap replays the pop instead of swapping
-                    text mid-frame. */}
-                <span key={triggerLabel} className={styles.pillLabel}>
+                {/* Keyed so a model swap (or a fast-mode flip, #1806) replays
+                    the pop instead of swapping text mid-frame. */}
+                <span
+                  key={`${triggerLabel}|${fastOn ? 1 : 0}`}
+                  className={styles.pillLabel}
+                >
                   {triggerLabel}
                   {fastOn ? " · Fast" : null}
                 </span>
