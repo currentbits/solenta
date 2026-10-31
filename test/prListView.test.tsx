@@ -796,3 +796,49 @@ describe("PrListView", () => {
     m.unmount();
   });
 });
+
+describe("PrListView query qualifiers (#1795 feature 4)", () => {
+  it("filters rows by qualifier, keeps leftover text search working, and removes a chip on click", async () => {
+    const listPrs = async (): Promise<ListPrsResult> => ({
+      ok: true,
+      prs: [
+        pr({ number: 11, title: "Ledger fix", author: "alice", labels: ["bug"] }),
+        pr({ number: 22, title: "Billing fix", author: "bob", isDraft: true }),
+      ],
+    });
+    const m = await mount(
+      <PrListView
+        projects={[p1]}
+        threads={[]}
+        listPrs={listPrs}
+        onSelectThread={() => {}}
+      />,
+    );
+    await m.flush();
+    assert.ok(m.query('[data-pr-row="11"]'));
+    assert.ok(m.query('[data-pr-row="22"]'));
+
+    const search = m.query("[data-pr-search]") as HTMLInputElement;
+    await m.type(search, "label:bug");
+    await m.flush();
+    assert.ok(m.query('[data-pr-row="11"]'), "label:bug keeps the labeled PR");
+    assert.equal(m.query('[data-pr-row="22"]'), null, "label:bug drops the unlabeled PR");
+    assert.ok(m.query('[data-pr-qualifier="label:bug"]'), "qualifier renders as a chip");
+
+    await m.type(search, "label:bug fix");
+    await m.flush();
+    assert.ok(m.query('[data-pr-row="11"]'), "leftover free text still matches via title");
+
+    await m.click(m.query('[data-pr-qualifier="label:bug"]'));
+    await m.flush();
+    assert.equal(m.query("[data-pr-qualifier]"), null, "clicking the chip removes it");
+    assert.ok(m.query('[data-pr-row="11"]'));
+    assert.ok(m.query('[data-pr-row="22"]'), "removing the qualifier restores the other PR");
+
+    await m.type(search, "author:bob is:draft");
+    await m.flush();
+    assert.equal(m.query('[data-pr-row="11"]'), null);
+    assert.ok(m.query('[data-pr-row="22"]'), "author:bob is:draft matches the draft PR by bob");
+    m.unmount();
+  });
+});

@@ -12,6 +12,7 @@ import type {
   ProjectInfo,
   ThreadInfo,
 } from "./shared/ipc";
+import { prMatchesQualifiers, type PrQualifier } from "./prQualifiers.ts";
 
 export interface PrGroupOk {
   project: ProjectInfo;
@@ -104,20 +105,35 @@ export function prMatchesQuery(
   return false;
 }
 
-/** Narrow groups by project id and/or local query. Failed groups stay visible. */
+/**
+ * Narrow groups by project id, local text query, and/or parsed query
+ * qualifiers (#1795 feature 4: author/label/is/review/head). Failed groups
+ * stay visible.
+ */
 export function filterPrGroups(
   groups: readonly PrGroup[],
-  opts: { query?: string; projectId?: string | null },
+  opts: {
+    query?: string;
+    projectId?: string | null;
+    qualifiers?: readonly PrQualifier[];
+    viewerLogin?: string | null;
+  },
 ): PrGroup[] {
   const projectId = opts.projectId || null;
   const query = opts.query ?? "";
+  const qualifiers = opts.qualifiers ?? [];
+  const viewerLogin = opts.viewerLogin ?? null;
   return groups
     .filter((group) => !projectId || group.project.id === projectId)
     .map((group) => {
       if (!group.ok) return group;
       return {
         ...group,
-        prs: group.prs.filter((row) => prMatchesQuery(row, query)),
+        prs: group.prs.filter(
+          (row) =>
+            prMatchesQuery(row, query) &&
+            (qualifiers.length === 0 || prMatchesQualifiers(row, qualifiers, viewerLogin)),
+        ),
       };
     });
 }

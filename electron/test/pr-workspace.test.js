@@ -21,6 +21,9 @@ const {
   commentPr,
   closePr,
   readyPr,
+  updateBranchPr,
+  editPrComment,
+  setCommentReaction,
   mergePrAt,
   prDiff,
   prStack,
@@ -113,6 +116,7 @@ if (args[0] === "pr" && args[1] === "view") {
   if (pr.additions != null) out.additions = pr.additions;
   if (pr.deletions != null) out.deletions = pr.deletions;
   if (pr.mergeable) out.mergeable = pr.mergeable;
+  if (pr.mergeStateStatus) out.mergeStateStatus = pr.mergeStateStatus;
   if (pr.reviewDecision) out.reviewDecision = pr.reviewDecision;
   out.headRefOid = pr.headRefOid || "aaa1111";
   out.commits = pr.commits || [{ oid: "aaa1111", messageHeadline: "ship" }];
@@ -219,6 +223,18 @@ if (args[0] === "pr" && args[1] === "ready") {
     process.exit(1);
   }
   pr.isDraft = args.includes("--undo");
+  save(state);
+  process.stdout.write(pr.url + "\\n");
+  process.exit(0);
+}
+
+if (args[0] === "pr" && args[1] === "update-branch") {
+  const pr = findPr(args[2]);
+  if (!pr) {
+    process.stderr.write("no pull requests found\\n");
+    process.exit(1);
+  }
+  pr.mergeStateStatus = "CLEAN";
   save(state);
   process.stdout.write(pr.url + "\\n");
   process.exit(0);
@@ -477,6 +493,13 @@ describe("gh PR workspace actions", () => {
     assert.equal(result.pr.isDraft, true);
   });
 
+  it("updateBranchPr runs gh pr update-branch and reports mergeStateStatus (#1795)", async () => {
+    const result = await updateBranchPr(repo, { prNumber: 12 });
+    assert.equal(result.ok, true);
+    assert.equal(result.pr.mergeStateStatus, "CLEAN");
+    assert.ok(calls().some((c) => c[0] === "pr" && c[1] === "update-branch" && c[2] === "12"));
+  });
+
   it("closePr marks the PR CLOSED", async () => {
     const result = await closePr(repo, { prNumber: 12 });
     assert.equal(result.ok, true);
@@ -710,6 +733,122 @@ describe("gh PR workspace actions", () => {
       assert.match(put.url, /\/repos\/acme\/demo\/pulls\/12\/merge$/);
       assert.deepEqual(put.body, { merge_method: "squash" });
       assert.deepEqual(calls(), []);
+    });
+
+    it("updateBranchPr updates the branch over REST (#1795 feature 1)", async () => {
+      const api = fakeGithubApi(seed());
+      setGithubApi(api);
+      const result = await updateBranchPr(repo, { prNumber: 12 });
+      assert.equal(result.ok, true);
+      assert.equal(result.pr.mergeStateStatus, "CLEAN");
+      const put = api.state.calls.find((c) => c.method === "PUT");
+      assert.match(put.url, /\/repos\/acme\/demo\/pulls\/12\/update-branch$/);
+      assert.deepEqual(calls(), []);
+    });
+
+    it("editPrComment routes PATCH by type and refreshes the PR (#1795 feature 2)", async () => {
+      const api = fakeGithubApi(seed());
+      setGithubApi(api);
+      const posted = await commentPr(repo, { prNumber: 12, body: "first" });
+      assert.equal(posted.ok, true);
+      const viewed = await viewPrDetail(repo, 12);
+      const commentId = viewed.pr.comments[0].id;
+      assert.ok(commentId);
+
+      const editedIssue = await editPrComment(repo, {
+        prNumber: 12,
+        commentId,
+        body: "edited issue",
+      });
+      assert.equal(editedIssue.ok, true);
+      assert.equal(editedIssue.pr.comments[0].body, "edited issue");
+      const issuePatch = api.state.calls.find(
+        (c) => c.method === "PATCH" && c.url.includes("/issues/comments/"),
+      );
+      assert.match(issuePatch.url, new RegExp(`/repos/acme/demo/issues/comments/${commentId}$`));
+
+      const editedReview = await editPrComment(repo, {
+        prNumber: 12,
+        commentId,
+        type: "review",
+        body: "edited review",
+      });
+      assert.equal(editedReview.ok, true);
+      assert.equal(editedReview.pr.comments[0].body, "edited review");
+      const reviewPatch = api.state.calls.find(
+        (c) => c.method === "PATCH" && c.url.includes("/pulls/comments/"),
+      );
+      assert.match(reviewPatch.url, new RegExp(`/repos/acme/demo/pulls/comments/${commentId}$`));
+      assert.deepEqual(calls(), [], "gh must not run when the API answers");
+    });
+
+    it("editPrComment blocks a secret before any request is sent", async () => {
+      const api = fakeGithubApi(seed());
+      setGithubApi(api);
+      await commentPr(repo, { prNumber: 12, body: "first" });
+      const viewed = await viewPrDetail(repo, 12);
+      const commentId = viewed.pr.comments[0].id;
+      const before = api.state.calls.length;
+      const result = await editPrComment(repo, {
+        prNumber: 12,
+        commentId,
+        body: "key ghp_" + "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8",
+      });
+      assert.equal(result.ok, false);
+      assert.match(result.reason, /guardrails/);
+      assert.equal(api.state.calls.length, before);
+      assert.deepEqual(calls(), []);
+    });
+
+    it("setCommentReaction adds and removes the viewer's reaction over REST (#1795 feature 3)", async () => {
+      const api = fakeGithubApi(seed());
+      setGithubApi(api);
+      await commentPr(repo, { prNumber: 12, body: "first" });
+      const viewed = await viewPrDetail(repo, 12);
+      const commentId = viewed.pr.comments[0].id;
+
+      const added = await setCommentReaction(repo, { prNumber: 12, commentId, content: "+1" });
+      assert.equal(added.ok, true);
+      assert.ok(added.reactionId);
+      const post = api.state.calls.find((c) => c.method === "POST" && c.url.includes("/reactions"));
+      assert.match(post.url, new RegExp(`/issues/comments/${commentId}/reactions$`));
+      assert.deepEqual(post.body, { content: "+1" });
+
+      const after = await viewPrDetail(repo, 12);
+      assert.deepEqual(after.pr.comments[0].reactions, [
+        { content: "THUMBS_UP", count: 1, viewerHasReacted: true },
+      ]);
+
+      const removed = await setCommentReaction(repo, {
+        prNumber: 12,
+        commentId,
+        content: "+1",
+        remove: true,
+        reactionId: added.reactionId,
+      });
+      assert.equal(removed.ok, true);
+      const del = api.state.calls.find((c) => c.method === "DELETE");
+      assert.match(
+        del.url,
+        new RegExp(`/issues/comments/${commentId}/reactions/${added.reactionId}$`),
+      );
+
+      const final = await viewPrDetail(repo, 12);
+      assert.equal(final.pr.comments[0].reactions, undefined);
+      assert.deepEqual(calls(), [], "gh must not run when the API answers");
+    });
+
+    it("setCommentReaction rejects an unknown reaction content", async () => {
+      const api = fakeGithubApi(seed());
+      setGithubApi(api);
+      const result = await setCommentReaction(repo, {
+        prNumber: 12,
+        commentId: 1,
+        content: "nope",
+      });
+      assert.equal(result.ok, false);
+      assert.equal(result.reason, "invalid reaction");
+      assert.deepEqual(api.state.calls, []);
     });
 
     it("a missing PR is answered by the API, not retried on gh", async () => {

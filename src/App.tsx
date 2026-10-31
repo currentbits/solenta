@@ -348,6 +348,9 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     prClose,
     prReady,
     prMergeAt,
+    prUpdateBranch,
+    prCommentEdit,
+    prReaction,
     listIssues,
     setIssuePlanStatus,
     createIssue,
@@ -2383,6 +2386,9 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
               prClose={prClose}
               prReady={prReady}
               prMergeAt={prMergeAt}
+              prUpdateBranch={prUpdateBranch}
+              prCommentEdit={prCommentEdit}
+              prReaction={prReaction}
               restore={viewRestore?.view === "prs" ? viewRestore : null}
               onRestoreApplied={clearViewRestore}
             />

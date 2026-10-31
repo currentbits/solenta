@@ -261,6 +261,35 @@ export function createGit(ctx: DevCtx): Pick<CoderApi, "git" | "mergeQueue"> {
         if (!viewed.ok) return viewed;
         return { ok: true, pr: { ...viewed.pr, state: "MERGED", isDraft: false } };
       },
+      async prUpdateBranch(input: {
+        projectPath: string;
+        prNumber: number;
+      }): Promise<PrDetailResult> {
+        const viewed = await this.prDetail(input);
+        if (!viewed.ok) return viewed;
+        return { ok: true, pr: { ...viewed.pr, mergeStateStatus: "CLEAN" } };
+      },
+      async prCommentEdit(input: {
+        projectPath: string;
+        prNumber: number;
+        commentId: number;
+        body: string;
+      }): Promise<PrDetailResult> {
+        const viewed = await this.prDetail(input);
+        if (!viewed.ok) return viewed;
+        return {
+          ok: true,
+          pr: {
+            ...viewed.pr,
+            comments: viewed.pr.comments.map((c) =>
+              c.id === input.commentId ? { ...c, body: input.body } : c,
+            ),
+          },
+        };
+      },
+      async prReaction() {
+        return { ok: true as const };
+      },
       async prDiff(input: {
         projectPath: string;
         prNumber: number;

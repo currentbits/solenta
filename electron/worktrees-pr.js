@@ -470,10 +470,11 @@ function parsePrJson(stdout, branch, created) {
 }
 
 // reviewDecision/mergeable/statusCheckRollup/changedFiles feed the PR
-// triage inbox (#260); reviewRequests feeds reviewRequestedFromMe (#1763).
+// triage inbox (#260); reviewRequests feeds reviewRequestedFromMe (#1763);
+// author/labels feed the list-view query qualifiers (#1795 feature 4).
 // All from the same single list call.
 const PR_LIST_FIELDS =
-  "number,title,url,state,headRefName,isDraft,additions,deletions,updatedAt,changedFiles,mergeable,reviewDecision,statusCheckRollup,reviewRequests";
+  "number,title,url,state,headRefName,isDraft,additions,deletions,updatedAt,changedFiles,mergeable,reviewDecision,statusCheckRollup,reviewRequests,author,labels";
 const PR_LIST_FIELDS_FALLBACK = "number,title,url,state,headRefName";
 
 /**
@@ -544,6 +545,8 @@ function reviewRequestedFromLogin(reviewRequests, viewerLogin) {
  *   reviewDecision?: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED",
  *   checks?: "pass" | "fail" | "pending",
  *   reviewRequestedFromMe?: boolean,
+ *   author?: string,
+ *   labels?: string[],
  * }}
  */
 function parsePrListItem(row, viewerLogin) {
@@ -598,7 +601,40 @@ function parsePrListItem(row, viewerLogin) {
   if (reviewRequestedFromLogin(row && row.reviewRequests, viewerLogin)) {
     item.reviewRequestedFromMe = true;
   }
+  const author = prListAuthor(row && row.author);
+  if (author) item.author = author;
+  const labels = parsePrLabels(row && row.labels);
+  if (labels.length) item.labels = labels;
   return item;
+}
+
+/**
+ * gh's `author` field is `{ login }` from the API path and from real gh's
+ * `--json author`. Unresolvable -> undefined (omitted, same as other
+ * optional PrListItem fields).
+ * @param {unknown} raw
+ * @returns {string | undefined}
+ */
+function prListAuthor(raw) {
+  if (!raw || typeof raw !== "object") return undefined;
+  const login = /** @type {{ login?: unknown }} */ (raw).login;
+  return login != null && String(login).trim() ? String(login).trim() : undefined;
+}
+
+/**
+ * gh's `labels` field is an array of `{ name }`. Query qualifiers (#1795
+ * feature 4, `label:<name>`) match against the plain names.
+ * @param {unknown} raw
+ * @returns {string[]}
+ */
+function parsePrLabels(raw) {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  for (const row of raw) {
+    const name = row && typeof row === "object" ? row.name : null;
+    if (name != null && String(name).trim()) out.push(String(name).trim());
+  }
+  return out;
 }
 
 /**

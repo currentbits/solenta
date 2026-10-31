@@ -2968,6 +2968,10 @@ export interface PrListItem {
    * REST-token-only setup with no gh CLI at all).
    */
   reviewRequestedFromMe?: boolean;
+  /** PR author login, for the `author:<login|@me>` list query qualifier (#1795). */
+  author?: string;
+  /** Label names, for the repeatable `label:<name>` list query qualifier (#1795). */
+  labels?: string[];
 }
 
 /** Optional page for `git.listPrs`. Absent limit keeps the historic 50-row page. */
@@ -3022,12 +3026,42 @@ export type PrTemplateResult =
     }
   | { ok: false; reason: string };
 
+/** GitHub's 8 comment reactions (issue #1795 feature 3). */
+export type ReactionContent =
+  | "THUMBS_UP"
+  | "THUMBS_DOWN"
+  | "LAUGH"
+  | "HOORAY"
+  | "CONFUSED"
+  | "HEART"
+  | "ROCKET"
+  | "EYES";
+
+/** Aggregate reaction count on a comment, from `reactionGroups`. */
+export interface PrReaction {
+  content: ReactionContent;
+  count: number;
+  /** True when the signed-in viewer is one of the reactors. */
+  viewerHasReacted: boolean;
+}
+
 /** One issue-comment on a PR from `gh pr view --json comments`. */
 export interface PrComment {
+  /** REST comment id (resolved from `databaseId` or the comment URL), for Edit/React. */
+  id?: number;
+  /**
+   * Which REST family owns this comment's id: `/issues/comments/{id}` vs
+   * `/pulls/comments/{id}`. Always "issue" today: only top-level PR/issue
+   * comments are fetched, never inline review comments.
+   */
+  type: "issue" | "review";
   author: string;
   body: string;
   createdAt: string;
   url?: string;
+  /** True when the signed-in viewer wrote this comment; drives the Edit button. */
+  mine?: boolean;
+  reactions?: PrReaction[];
 }
 
 /** Full PR for the in-app workspace (issue #154). */
@@ -3045,6 +3079,16 @@ export interface PrDetail {
   deletions?: number;
   changedFiles?: number;
   mergeable?: "MERGEABLE" | "CONFLICTING" | "UNKNOWN";
+  /** Drives "Update branch" (issue #1795 feature 1) when BEHIND. */
+  mergeStateStatus?:
+    | "BEHIND"
+    | "BLOCKED"
+    | "CLEAN"
+    | "DIRTY"
+    | "DRAFT"
+    | "HAS_HOOKS"
+    | "UNKNOWN"
+    | "UNSTABLE";
   updatedAt?: string;
   reviewDecision?: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED";
   /** CI bucket counts, for the PR hover card (#1771). Absent when gh has none to report. */
@@ -3058,6 +3102,11 @@ export type PrDetailResult =
 
 export type PrCommentResult =
   | { ok: true; url?: string }
+  | { ok: false; reason: string };
+
+/** Add/remove a reaction (issue #1795 feature 3). Failures stay in-band. */
+export type PrReactionResult =
+  | { ok: true; reactionId?: number }
   | { ok: false; reason: string };
 
 /** One commit on a PR, for the Code tab picker (#1527). */
@@ -6865,6 +6914,43 @@ export interface CoderApi {
       method?: MergeMethod;
       auto?: boolean;
     }): Promise<PrDetailResult>;
+    /**
+     * Update a PR's head branch from its base (`gh pr update-branch`), shown
+     * when mergeStateStatus is BEHIND (issue #1795 feature 1).
+     */
+    prUpdateBranch(input: {
+      projectPath: string;
+      prNumber: number;
+      repo?: string;
+    }): Promise<PrDetailResult>;
+    /**
+     * Edit an issue comment or PR review comment in place (issue #1795
+     * feature 2). `type` routes to `/issues/comments/{id}` (default) or
+     * `/pulls/comments/{id}`.
+     */
+    prCommentEdit(input: {
+      projectPath: string;
+      prNumber: number;
+      repo?: string;
+      commentId: number;
+      type?: "issue" | "review";
+      body: string;
+    }): Promise<PrDetailResult>;
+    /**
+     * Add or remove the viewer's reaction on a comment (issue #1795 feature
+     * 3). `reactionId` (from a prior add in this session) skips the list
+     * round-trip when removing; omit it to look the viewer's reaction up by
+     * login instead.
+     */
+    prReaction(input: {
+      projectPath: string;
+      prNumber: number;
+      repo?: string;
+      commentId: number;
+      content: string;
+      remove?: boolean;
+      reactionId?: number;
+    }): Promise<PrReactionResult>;
     /**
      * PR file list + lazy/capped patch for the Code tab (#1527).
      * `commit` scopes to one SHA; `path` fetches that file only.
