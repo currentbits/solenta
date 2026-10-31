@@ -155,6 +155,38 @@ describe("providerAuth", () => {
     }
   });
 
+  it("isolated CLI home (#1808): the auth probe reads the instance's own home, not ~/.codex", async () => {
+    const fs = require("node:fs");
+    const os = require("node:os");
+    const path = require("node:path");
+    const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), "codex-userdata-"));
+    const b64 = (o) => Buffer.from(JSON.stringify(o)).toString("base64url");
+    const idToken = `${b64({ alg: "RS256" })}.${b64({ email: "iso@example.com" })}.sig`;
+    const isoHome = path.join(userDataPath, "provider-homes", "iso", "codex");
+    fs.mkdirSync(isoHome, { recursive: true });
+    fs.writeFileSync(path.join(isoHome, "auth.json"), JSON.stringify({ tokens: { id_token: idToken } }));
+    try {
+      const services = require("../services.js");
+      const store = {
+        getSettings: () => ({
+          providerInstances: [
+            { id: "iso", name: "solo", provider: "codex", configDir: null, isolatedHome: true, env: {} },
+          ],
+        }),
+      };
+      const probes = services.instanceAuthProbes(store, userDataPath);
+      assert.deepEqual(probes, [
+        { ref: "codex:iso", provider: "codex", env: { CODEX_HOME: isoHome } },
+      ]);
+      providerAuth.setExecFile(fakeExec(SIGNED_IN).fn);
+      await providerAuth.refresh({ env: { HOME: userDataPath }, instances: probes });
+      assert.equal(providerAuth.get("codex:iso"), "signedIn");
+      assert.deepEqual(providerAuth.account("codex:iso"), { email: "iso@example.com", plan: undefined });
+    } finally {
+      fs.rmSync(userDataPath, { recursive: true, force: true });
+    }
+  });
+
   it("install commands come from a fixed table", () => {
     assert.equal(providerAuth.installCommand("codex"), "npm install -g @openai/codex");
     assert.equal(providerAuth.installCommand("grok"), null);
@@ -217,5 +249,39 @@ describe("terminal:signIn", () => {
       handlers["terminal:signIn"](ctx, { provider: "codex", threadId: "nope" }),
       /Unknown thread/,
     );
+  });
+
+  it("isolated CLI home (#1808): sign-in types the login with the instance's own home", async () => {
+    const fs = require("node:fs");
+    const os = require("node:os");
+    const path = require("node:path");
+    const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), "codex-signin-userdata-"));
+    const writes = [];
+    const orig = { open: terminal.open, write: terminal.write, close: terminal.close };
+    terminal.open = () => {};
+    terminal.close = () => {};
+    terminal.write = (_t, data) => writes.push(data);
+    try {
+      const ctx = {
+        store: {
+          getThread: () => null,
+          getSettings: () => ({
+            providerInstances: [
+              { id: "iso", name: "solo", provider: "codex", configDir: null, isolatedHome: true, env: {} },
+            ],
+          }),
+        },
+        userDataPath,
+        broadcast: () => {},
+      };
+      await handlers["terminal:signIn"](ctx, { provider: "codex:iso" });
+      assert.equal(writes.length, 1);
+      const isoHome = path.join(userDataPath, "provider-homes", "iso", "codex");
+      assert.ok(writes[0].includes(`CODEX_HOME=`), writes[0]);
+      assert.ok(writes[0].includes(isoHome), writes[0]);
+    } finally {
+      Object.assign(terminal, orig);
+      fs.rmSync(userDataPath, { recursive: true, force: true });
+    }
   });
 });

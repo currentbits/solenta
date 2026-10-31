@@ -159,6 +159,36 @@ describe("teleport", () => {
     for (const line of lines) assert.equal(JSON.parse(line).cwd, realDir(wt));
   });
 
+  it("isolated CLI home (#1808): packThread reads the instance's own CLAUDE_CONFIG_DIR, not the shared home", () => {
+    const userDataPath = path.join(root, "userdata");
+    const isoHome = path.join(userDataPath, "provider-homes", "iso", "claude");
+    const wt = thread.worktreePath;
+    // Same session id as the shared-home file beforeEach wrote, but
+    // distinct content, so a wrong fallback to the shared home is
+    // observable (it would return "hello", not "iso hello").
+    const file = sessionPath(isoHome, wt);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, [
+      JSON.stringify({ type: "user", cwd: wt, sessionId: SID, message: { role: "user", content: "iso hi" } }),
+      JSON.stringify({ type: "assistant", cwd: wt, sessionId: SID, message: { role: "assistant", content: "iso hello" } }),
+      "",
+    ].join("\n"));
+    laptop.store.setSettings({
+      providerInstances: [{ id: "iso", name: "solo", provider: "claude", isolatedHome: true, env: {} }],
+    });
+    laptop.store.updateThread(thread.id, { providerInstance: "iso" });
+
+    const { payload } = teleport.packThread(laptop.store, thread.id, { userDataPath });
+    assert.match(payload.session, /iso hello/);
+
+    // Without userDataPath there is nowhere to resolve the isolated home,
+    // so it falls back to the default/shared CLAUDE_CONFIG_DIR - never a
+    // silent merge of the two homes.
+    const { payload: fallback } = teleport.packThread(laptop.store, thread.id);
+    assert.doesNotMatch(fallback.session, /iso hello/);
+    assert.match(fallback.session, /hello/);
+  });
+
   it("comes back: new commits, new edits, transcript and session land on the original thread", () => {
     const { remoteThread } = send();
     const rwt = remoteThread.worktreePath;

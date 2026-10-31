@@ -224,6 +224,67 @@ function linkOrSkip(src, dst) {
 }
 
 /**
+ * Copy the hook runtime into `dest` and write its hooks.json. Shared by the
+ * overlay (materializeCodexGuardrailHome) and the isolated-home path
+ * (materializeCodexGuardrailHooksInto, #1808) - the only difference between
+ * them is what happens to config.toml and whether a sourceHome gets
+ * symlinked in, both handled by the caller.
+ * @param {string} dest
+ * @param {number} [timeoutSec]
+ * @returns {ReturnType<typeof hookTrustTomlBlock>}
+ */
+function installHookRuntime(dest, timeoutSec) {
+  const hookDir = path.join(dest, "solenta-hooks");
+  copyGuardrailRuntime(hookDir);
+  const scriptPath = path.join(hookDir, "guardrail-hook.js");
+  fs.copyFileSync(
+    path.join(__dirname, "codex-guardrail-hook.js"),
+    scriptPath,
+  );
+  try {
+    fs.chmodSync(scriptPath, 0o755);
+  } catch {
+    // win32
+  }
+
+  const command = "node " + JSON.stringify(scriptPath);
+  // User hooks (#1724) run inside this hook, so its budget covers theirs.
+  const resolvedTimeout =
+    Number(timeoutSec) > 0 ? Math.ceil(Number(timeoutSec)) : OVERLAY_HOOK_TIMEOUT_SEC;
+  writeOverlayHooksJson(dest, command, resolvedTimeout);
+  return hookTrustTomlBlock({
+    dest,
+    command,
+    timeoutSec: resolvedTimeout,
+    statusMessage: OVERLAY_HOOK_STATUS,
+    matcher: OVERLAY_HOOK_MATCHER,
+  });
+}
+
+/**
+ * Append the trust block to config.toml, unless this exact key is already
+ * there. Unlike writeOverlayConfigToml (which always rewrites from a fresh
+ * sourceHome copy - correct for a disposable per-thread overlay), this
+ * caller's `dest` IS the long-lived home: re-appending on every turn would
+ * grow the file forever.
+ * @param {string} configPath
+ * @param {string} trustToml
+ * @param {string} key
+ */
+function ensureHookTrustInConfigToml(configPath, trustToml, key) {
+  let body = "";
+  try {
+    body = fs.readFileSync(configPath, "utf8");
+  } catch {
+    body = "";
+  }
+  if (body.includes(`[hooks.state.${tomlQuotedKey(key)}]`)) return;
+  if (body && !body.endsWith("\n")) body += "\n";
+  if (body) body += "\n";
+  fs.writeFileSync(configPath, body + trustToml, "utf8");
+}
+
+/**
  * @param {object} opts
  * @param {string} opts.dest
  * @param {string} [opts.sourceHome]
@@ -270,34 +331,32 @@ function materializeCodexGuardrailHome(opts) {
   // onto ~/.codex (#1226). Always replace that leftover with a real dir.
   ensurePrivateWriterLockDir(dest);
 
-  const hookDir = path.join(dest, "solenta-hooks");
-  copyGuardrailRuntime(hookDir);
-  const scriptPath = path.join(hookDir, "guardrail-hook.js");
-  fs.copyFileSync(
-    path.join(__dirname, "codex-guardrail-hook.js"),
-    scriptPath,
-  );
-  try {
-    fs.chmodSync(scriptPath, 0o755);
-  } catch {
-    // win32
-  }
-
-  const command = "node " + JSON.stringify(scriptPath);
-  // User hooks (#1724) run inside this hook, so its budget covers theirs.
-  const timeoutSec =
-    Number(opts && opts.timeoutSec) > 0
-      ? Math.ceil(Number(opts.timeoutSec))
-      : OVERLAY_HOOK_TIMEOUT_SEC;
-  writeOverlayHooksJson(dest, command, timeoutSec);
-  const { toml } = hookTrustTomlBlock({
-    dest,
-    command,
-    timeoutSec,
-    statusMessage: OVERLAY_HOOK_STATUS,
-    matcher: OVERLAY_HOOK_MATCHER,
-  });
+  const { toml } = installHookRuntime(dest, opts && opts.timeoutSec);
   writeOverlayConfigToml(dest, sourceHome, toml);
+
+  return dest;
+}
+
+/**
+ * Write just the hook materials - runtime, hooks.json, config trust - into
+ * an isolated-home instance's own CODEX_HOME (#1808), with none of the
+ * overlay's symlink farm or writer-lock swap: that machinery exists only to
+ * isolate a *shared* home's lock dir and link in a *separate* real home's
+ * sessions, and an isolated-home instance is neither - it is already its
+ * own exclusive folder. Idempotent: called before every turn, it must not
+ * duplicate the trust block or disturb the rest of the user's config.toml.
+ * @param {object} opts
+ * @param {string} opts.dest
+ * @param {number} [opts.timeoutSec]
+ * @returns {string} dest
+ */
+function materializeCodexGuardrailHooksInto(opts) {
+  const dest = path.resolve(String((opts && opts.dest) || ""));
+  if (!dest) throw new Error("materializeCodexGuardrailHooksInto: dest required");
+  fs.mkdirSync(dest, { recursive: true });
+
+  const { key, toml } = installHookRuntime(dest, opts && opts.timeoutSec);
+  ensureHookTrustInConfigToml(path.join(dest, "config.toml"), toml, key);
 
   return dest;
 }
@@ -400,6 +459,7 @@ function deployCodexGuardrailOverlay(opts) {
 
 module.exports = {
   materializeCodexGuardrailHome,
+  materializeCodexGuardrailHooksInto,
   codexGuardrailHomeFiles,
   deployCodexGuardrailOverlay,
   commandHookTrustedHash,

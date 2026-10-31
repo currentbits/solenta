@@ -152,6 +152,7 @@ module.exports = {
   "threads:teleportOut": async (ctx, input) => {
     return teleport.packThread(ctx.store, input && input.threadId, {
       isRunning: ctx.runner ? (id) => ctx.runner.isRunning(id) : undefined,
+      userDataPath: ctx.userDataPath,
     }).payload;
   },
   "threads:teleport": async (ctx, input) => {
@@ -161,6 +162,7 @@ module.exports = {
     const threadId = input && input.threadId;
     const { payload, tree } = teleport.packThread(ctx.store, threadId, {
       isRunning: ctx.runner ? (id) => ctx.runner.isRunning(id) : undefined,
+      userDataPath: ctx.userDataPath,
     });
     const target = {
       host: String(input.host || ""),
@@ -205,7 +207,7 @@ module.exports = {
       ctx.broadcast("thread:updated", threadDetailFor(ctx, threadId, false));
       throw new Error(`The thread is gone from ${to.label || to.host}, so nothing came back. This copy is unlocked as it was when it left.`);
     }
-    teleport.returnThread(ctx.store, threadId, payload);
+    teleport.returnThread(ctx.store, threadId, payload, { userDataPath: ctx.userDataPath });
     try {
       await ctx.invokeRemote(to, "threads:setArchived", [{ threadId: to.threadId, archived: true }]);
     } catch {
@@ -450,7 +452,7 @@ module.exports = {
     if (input && input.ejected === true && ctx.store.getThread(input.threadId)) {
       retireAgent(ctx, input.threadId);
     }
-    const updated = services.setEjected(ctx.store, input);
+    const updated = services.setEjected(ctx.store, input, { userDataPath: ctx.userDataPath });
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
     if (updated && input && input.ejected === false) {
       try {

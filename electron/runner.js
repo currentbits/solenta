@@ -1537,7 +1537,11 @@ function createRunner(opts) {
   /** The instance's CODEX_HOME, when this thread runs on one (#453). */
   function instanceCodexHome(thread) {
     try {
-      return (thread && (threadInstanceEnv(store.getSettings(), thread) || {}).CODEX_HOME) || null;
+      return (
+        (thread &&
+          (threadInstanceEnv(store.getSettings(), thread, { userDataPath }) || {}).CODEX_HOME) ||
+        null
+      );
     } catch {
       return null;
     }

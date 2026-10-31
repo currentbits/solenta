@@ -137,6 +137,40 @@ describe("setEjected copies the command (#554)", () => {
     );
   });
 
+  it("isolated CLI home (#1808): eject's resume command carries the instance's own CODEX_HOME", () => {
+    let copied = null;
+    store.setSettings({
+      providerInstances: [
+        { id: "iso", name: "solo", provider: "codex", isolatedHome: true, env: {} },
+      ],
+    });
+    services.setProvider(store, { threadId, provider: "codex:iso" });
+    store.updateThread(threadId, { sessionId: "codex-sess" });
+    services.setEjected(
+      store,
+      { threadId, ejected: true },
+      { writeText: (text) => { copied = text; }, userDataPath: tmpDir },
+    );
+    const isoHome = path.join(tmpDir, "provider-homes", "iso", "codex");
+    assert.equal(
+      copied,
+      `cd ${posixQuote(projectPath)} && CODEX_HOME=${posixQuote(isoHome)} codex exec resume ${posixQuote("codex-sess")}`,
+    );
+
+    // Without userDataPath, there is nowhere to resolve the isolated home,
+    // so the prefix is omitted rather than pointing at the wrong folder.
+    copied = null;
+    services.setEjected(
+      store,
+      { threadId, ejected: true },
+      { writeText: (text) => { copied = text; } },
+    );
+    assert.equal(
+      copied,
+      `cd ${posixQuote(projectPath)} && codex exec resume ${posixQuote("codex-sess")}`,
+    );
+  });
+
   it("eject still warns when usage.model has caught up to the picker but the rollout has not", () => {
     let copied = null;
     services.setProvider(store, { threadId, provider: "codex" });

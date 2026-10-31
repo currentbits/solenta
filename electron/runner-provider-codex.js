@@ -16,10 +16,16 @@ const { withProjectEnv } = require("./worktreeEnv.js");
 const { codexWorkspaceWriteArgs } = require("./codexWorkspaceWrite.js");
 const { getCodexMcpArgs, getCodexMcpEnv } = require("./memory-sup.js");
 const { guardrailsEnabled } = require("./guardrails.js");
-const { threadInstanceEnv, threadProviderRef, threadExtraArgv } = require("./providerInstances.js");
+const {
+  threadInstanceEnv,
+  threadProviderRef,
+  threadExtraArgv,
+  findInstance,
+} = require("./providerInstances.js");
 const {
   deployCodexGuardrailOverlay,
   materializeCodexGuardrailHome,
+  materializeCodexGuardrailHooksInto,
 } = require("./codex-guardrail.js");
 const path = require("node:path");
 const threadSecrets = require("./threadSecrets.js");
@@ -167,8 +173,19 @@ function createCodexRun(ctx) {
     // Named instance (#453): its CODEX_HOME and env ride this child only.
     // A base-provider key (#1714) rides local runs only.
     const instEnv =
-      threadInstanceEnv(store.getSettings(), thread, { local: !crossesBoundary(project) }) || {};
+      threadInstanceEnv(store.getSettings(), thread, {
+        local: !crossesBoundary(project),
+        userDataPath,
+      }) || {};
     const codexMcpEnv = { ...instEnv, ...getCodexMcpEnv() };
+    // Separate CLI home (#1808): already exclusive to this instance, so the
+    // per-thread writer-lock overlay below (whose whole point is isolating
+    // the lock dir from a shared ~/.codex) has nothing to do here.
+    const isolatedInstance = Boolean(
+      thread.providerInstance &&
+        findInstance(store.getSettings(), thread.provider, thread.providerInstance)
+          ?.isolatedHome,
+    );
     // #813: isolated CODEX_HOME PreToolUse. Local overlay stays on this
     // host. ssh/WSL deploys a remote overlay (#835) and prefixes
     // wrapCommand with env CODEX_HOME= via boundaryArgv.
@@ -196,6 +213,7 @@ function createCodexRun(ctx) {
     } else if (
       userDataPath &&
       !crossesBoundary(project) &&
+      !isolatedInstance &&
       // User PreToolUse hooks (#1724) ride the same overlay hook.
       (guardrailsEnabled() || (nativeHooks = ctx.userHookEvents.nativePreTool(threadId)))
     ) {
@@ -221,6 +239,28 @@ function createCodexRun(ctx) {
         codexMcpEnv.SOLENTA_WORKTREE = localCwd;
       } catch {
         // Overlay is best-effort; a failed isolate must not block the turn.
+      }
+    } else if (
+      isolatedInstance &&
+      codexMcpEnv.CODEX_HOME &&
+      !crossesBoundary(project) &&
+      // Same gate as the overlay branch: guardrails, or a user PreToolUse
+      // hook to run (#1724).
+      (guardrailsEnabled() || (nativeHooks = ctx.userHookEvents.nativePreTool(threadId)))
+    ) {
+      try {
+        if (!nativeHooks) nativeHooks = ctx.userHookEvents.nativePreTool(threadId);
+        // Hooks go straight into the instance's own exclusive home (#1808):
+        // no symlink farm, no writer-lock swap, just the hook materials.
+        materializeCodexGuardrailHooksInto({
+          dest: codexMcpEnv.CODEX_HOME,
+          ...(nativeHooks ? { timeoutSec: preToolBudgetSec(nativeHooks.hooks) } : {}),
+        });
+        if (nativeHooks) codexMcpEnv.SOLENTA_USER_HOOKS = nativeHooks.file;
+        args.push("-c", "features.hooks=true");
+        codexMcpEnv.SOLENTA_WORKTREE = localCwd;
+      } catch {
+        // Hook materialize is best-effort; a failed isolate must not block the turn.
       }
     }
     // Extra launch arguments (#1780): app-server takes no trailing prompt
