@@ -152,6 +152,71 @@ describe("mapFocusTurns", () => {
   });
 });
 
+describe("mapFocusTurns folds a settled turn's earlier replies (#1796)", () => {
+  const user = msg({ id: "u1", role: "user", text: "fix it", createdAt: 1 });
+  const reply1 = msg({
+    id: "a1",
+    role: "assistant",
+    text: "first reply",
+    createdAt: 2,
+    runId: "r1",
+  });
+  const reply2 = msg({
+    id: "a2",
+    role: "assistant",
+    text: "second reply",
+    createdAt: 3,
+    runId: "r1",
+  });
+  const reply3 = msg({
+    id: "a3",
+    role: "assistant",
+    text: "final reply",
+    createdAt: 4,
+    runId: "r1",
+  });
+
+  it("folds all but the last reply alongside tool activity, in document order", () => {
+    const read = tool("Read", { id: "tc-read", text: "Read a.ts" });
+    read.id = "t-read";
+    read.createdAt = 0.5; // before the first reply
+    const turns = mapFocusTurns([user, read, reply1, reply2, reply3]);
+    assert.equal(turns.length, 1);
+    assert.deepEqual(turns[0]!.activityIds, ["t-read", "a1", "a2"]);
+    assert.equal(turns[0]!.firstActivityId, "t-read");
+    assert.equal(turns[0]!.label, "Show 2 earlier replies and tool activity");
+  });
+
+  it("folds replies alone (no tool activity) with the plain 'Show N' wording", () => {
+    const turns = mapFocusTurns([user, reply1, reply2, reply3]);
+    assert.equal(turns.length, 1);
+    assert.deepEqual(turns[0]!.activityIds, ["a1", "a2"]);
+    assert.equal(turns[0]!.firstActivityId, "a1");
+    assert.equal(turns[0]!.label, "Show 2 earlier replies");
+  });
+
+  it("singular wording for exactly one earlier reply", () => {
+    const turns = mapFocusTurns([user, reply1, reply2]);
+    assert.equal(turns[0]!.label, "Show 1 earlier reply");
+    assert.deepEqual(turns[0]!.activityIds, ["a1"]);
+  });
+
+  it("a lone reply never folds on its own", () => {
+    const turns = mapFocusTurns([user, reply1]);
+    assert.deepEqual(turns, []);
+  });
+
+  it("never folds the live turn's replies", () => {
+    const turns = mapFocusTurns([user, reply1, reply2, reply3], {
+      liveTurnKey: "u1",
+    });
+    assert.equal(turns[0]!.live, true);
+    // Folding membership is independent of live; ThreadView is the one that
+    // skips rendering/hiding for a live turn (see hiddenFocusActivity).
+    assert.deepEqual(turns[0]!.activityIds, ["a1", "a2"]);
+  });
+});
+
 describe("turn keys", () => {
   it("walks back to the preceding user message", () => {
     const messages = [

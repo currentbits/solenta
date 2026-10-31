@@ -148,38 +148,82 @@ export function summarizeActivity(messages: ChatMessage[]): string {
   return parts.join(" · ");
 }
 
+function isReplyMessage(message: ChatMessage): boolean {
+  return message.role === "assistant" && !message.thinking;
+}
+
+/**
+ * Per turn: every tool/thinking row (as before) plus every assistant text
+ * reply, kept in document order so a turn's extra replies (#1796) can fold
+ * into the same row as its tool activity.
+ */
+function groupTurnRows(messages: ChatMessage[]): {
+  order: string[];
+  all: Map<string, ChatMessage[]>;
+  activity: Map<string, ChatMessage[]>;
+  replies: Map<string, ChatMessage[]>;
+} {
+  const all = new Map<string, ChatMessage[]>();
+  const activity = new Map<string, ChatMessage[]>();
+  const replies = new Map<string, ChatMessage[]>();
+  const order: string[] = [];
+  for (let i = 0; i < messages.length; i++) {
+    const message = messages[i]!;
+    const activityRow = isActivityMessage(message);
+    const replyRow = isReplyMessage(message);
+    if (!activityRow && !replyRow) continue;
+    const key = turnKey(messages, i);
+    if (!all.has(key)) {
+      all.set(key, []);
+      activity.set(key, []);
+      replies.set(key, []);
+      order.push(key);
+    }
+    all.get(key)!.push(message);
+    (activityRow ? activity : replies).get(key)!.push(message);
+  }
+  return { order, all, activity, replies };
+}
+
 export function mapFocusTurns(
   messages: ChatMessage[],
   opts: { liveTurnKey?: string | null } = {},
 ): FocusTurnSummary[] {
-  const groups = new Map<string, ChatMessage[]>();
-  const order: string[] = [];
-  for (let i = 0; i < messages.length; i++) {
-    const message = messages[i]!;
-    if (!isActivityMessage(message)) continue;
-    const key = turnKey(messages, i);
-    const list = groups.get(key);
-    if (list) list.push(message);
-    else {
-      groups.set(key, [message]);
-      order.push(key);
-    }
-  }
-  return order.map((key) => {
-    const activity = groups.get(key)!;
-    const running = [...activity]
+  const { order, all, activity, replies } = groupTurnRows(messages);
+  const turns: FocusTurnSummary[] = [];
+  for (const key of order) {
+    const turnActivity = activity.get(key)!;
+    const turnReplies = replies.get(key)!;
+    // All but the turn's LAST reply fold alongside its tool/thinking rows;
+    // a lone reply (nothing "earlier" to hide) never folds on its own.
+    const foldedReplies =
+      turnReplies.length > 1 ? turnReplies.slice(0, -1) : [];
+    if (turnActivity.length === 0 && foldedReplies.length === 0) continue;
+    const foldedIds = new Set([
+      ...turnActivity.map((m) => m.id),
+      ...foldedReplies.map((m) => m.id),
+    ]);
+    const folded = all.get(key)!.filter((m) => foldedIds.has(m.id));
+    const running = [...turnActivity]
       .reverse()
       .find((m) => m.tool && !m.tool.done);
-    const times = activity.map((m) => m.createdAt);
-    return {
+    const times = folded.map((m) => m.createdAt);
+    const label =
+      foldedReplies.length > 0
+        ? `Show ${foldedReplies.length} earlier ${plural(foldedReplies.length, "reply", "replies")}${
+            turnActivity.length > 0 ? " and tool activity" : ""
+          }`
+        : summarizeActivity(turnActivity);
+    turns.push({
       key,
-      firstActivityId: activity[0]!.id,
-      activityIds: activity.map((m) => m.id),
-      label: summarizeActivity(activity),
+      firstActivityId: folded[0]!.id,
+      activityIds: folded.map((m) => m.id),
+      label,
       live: opts.liveTurnKey != null && opts.liveTurnKey === key,
       runningToolName: running?.tool?.name ?? null,
       startedAt: Math.min(...times),
       endedAt: Math.max(...times),
-    };
-  });
+    });
+  }
+  return turns;
 }
