@@ -132,6 +132,35 @@ describe("automation_create MCP tool", () => {
     assert.equal(out.provider, "codex");
   });
 
+  it("accepts preset once with a future runAt, implied from runAt alone", async () => {
+    const h = createToolHandlers(makeDeps(store));
+    const runAt = new Date(Date.now() + 86_400_000).toISOString();
+    const out = await h.automation_create({
+      threadId: "t1",
+      projectId: "p1",
+      name: "One-off reminder",
+      prompt: "remind me",
+      runAt,
+    });
+    assert.equal(out.ok, true);
+    assert.equal(out.preset, "once");
+    assert.equal(out.runAt, runAt);
+    assert.equal(out.hour, null);
+    assert.equal(store.getAutomation(out.id).preset, "once");
+    await assert.rejects(
+      () =>
+        h.automation_create({
+          threadId: "t1",
+          projectId: "p1",
+          name: "Too late",
+          prompt: "go",
+          preset: "once",
+          runAt: new Date(Date.now() - 1000).toISOString(),
+        }),
+      /future/,
+    );
+  });
+
   it("rejects a cross-project threadId", async () => {
     const h = createToolHandlers(makeDeps(store));
     await assert.rejects(

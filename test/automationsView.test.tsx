@@ -305,6 +305,80 @@ describe("AutomationsView", () => {
     m.unmount();
   });
 
+  it("Once: picker renders with a min 1 minute out, validates, and saves (#1812)", async () => {
+    const created: AutomationWrite[] = [];
+    const m = await mount(
+      <AutomationsView
+        automations={[]}
+        projects={[p1]}
+        providers={providers}
+        onCreate={(input) => {
+          created.push(input);
+        }}
+        onUpdate={() => {}}
+        onRemove={() => {}}
+        onRunNow={() => {}}
+      />,
+    );
+    assert.equal(m.query('[name="runAt"]'), null, "hidden for other presets");
+    await m.change(m.query('[data-automation-create] [name="preset"]'), "once");
+    const runAt = m.query('[data-automation-create] [name="runAt"]') as HTMLInputElement | null;
+    assert.ok(runAt);
+    assert.equal(runAt.type, "datetime-local");
+    const min = new Date(runAt.min);
+    assert.ok(min.getTime() > Date.now(), "min is in the future (now + 1 minute)");
+
+    await m.type(m.query('[data-automation-create] [name="name"]'), "Ping me");
+    await m.type(m.query('[data-automation-create] [name="prompt"]'), "ping");
+    const submit = m.query("[data-automation-create] button[type=submit]");
+    await m.click(submit);
+    assert.equal(created.length, 0, "empty runAt blocks submit");
+    assert.ok(m.text().includes("Run time is required"));
+
+    // A value before `min` fails the input's own HTML5 constraint, which
+    // blocks the native form submit before React's handler ever runs — the
+    // same native guard a real browser applies. createFormError's matching
+    // "must be in the future" JS check is covered directly in automations.test.ts.
+    await m.type(runAt, "2000-01-01T09:00");
+    assert.equal(runAt.validity.valid, false, "a past value violates min");
+    await m.click(submit);
+    assert.equal(created.length, 0, "a past runAt still blocks submit");
+
+    const future = new Date(Date.now() + 2 * 86_400_000);
+    const p = (n: number) => String(n).padStart(2, "0");
+    const futureValue = `${future.getFullYear()}-${p(future.getMonth() + 1)}-${p(future.getDate())}T09:00`;
+    await m.type(runAt, futureValue);
+    await m.click(submit);
+    assert.equal(created.length, 1);
+    assert.equal(created[0].preset, "once");
+    assert.equal(created[0].runAt, futureValue);
+    assert.equal(created[0].hour, null);
+    m.unmount();
+  });
+
+  it("Once row: shows the upcoming time, Ran once after it fires, or Missed (#1812)", async () => {
+    const future = Date.now() + 86_400_000;
+    const m = await mount(
+      <AutomationsView
+        automations={[
+          auto({ id: "o1", name: "Upcoming", preset: "once", runAt: "2099-01-01T09:00", nextRunAt: future, enabled: true }),
+          auto({ id: "o2", name: "Done", preset: "once", runAt: "2020-01-01T09:00", nextRunAt: 1, enabled: false, lastRunAt: Date.now() }),
+          auto({ id: "o3", name: "Gone", preset: "once", runAt: "2020-01-01T09:00", nextRunAt: 1, enabled: false, lastRunAt: null }),
+        ]}
+        projects={[p1]}
+        providers={providers}
+        onCreate={() => {}}
+        onUpdate={() => {}}
+        onRemove={() => {}}
+        onRunNow={() => {}}
+      />,
+    );
+    assert.ok(m.text().includes("Once ·"));
+    assert.ok(m.text().includes("Ran once"));
+    assert.ok(m.text().includes("Missed"));
+    m.unmount();
+  });
+
   it("passes a typed model to onCreate when the provider has no model list", async () => {
     const created: unknown[] = [];
     const m = await mount(

@@ -23,9 +23,9 @@ const REPO_CONFIG_FILE = "solenta.json";
 const SLUG_RE = /^[a-z][a-z0-9-]{0,47}$/;
 const MAX_SHARED_AUTOMATIONS = 16;
 const PROMPT_MAX = 4000;
-const PRESETS = new Set(["hourly", "daily", "weekly", "cron"]);
+const PRESETS = new Set(["hourly", "daily", "weekly", "cron", "once"]);
 /** canonical()'s keys: anything else in a row is a typo (#438). */
-const ROW_KEYS = new Set(["id", "name", "prompt", "provider", "model", "preset", "hour", "cron", "trigger", "tier", "budget"]);
+const ROW_KEYS = new Set(["id", "name", "prompt", "provider", "model", "preset", "hour", "cron", "runAt", "trigger", "tier", "budget"]);
 
 /**
  * Overlay / merge id for a shared automation row.
@@ -80,6 +80,8 @@ function canonical(row) {
     hour: row.hour,
     // #1719: only cron rows carry it, so older files keep their hash.
     cron: row.cron || undefined,
+    // #1812: only "once" rows carry it, same reasoning as cron above.
+    runAt: row.runAt || undefined,
     trigger: row.trigger,
     tier: row.tier,
     // #286. undefined drops out of JSON.stringify, so rows without a cap
@@ -104,7 +106,7 @@ function automationsHash(rows) {
  * @returns {{ hour: number | null } | { error: string }}
  */
 function parseHour(preset, hour) {
-  if (preset === "hourly" || preset === "cron") return { hour: null };
+  if (preset === "hourly" || preset === "cron" || preset === "once") return { hour: null };
   if (hour == null || hour === "") {
     return { error: "solenta.json: hour is required for daily and weekly automations" };
   }
@@ -173,7 +175,7 @@ function parseRow(raw, index, seen) {
   const preset = typeof r.preset === "string" ? r.preset : "";
   if (!PRESETS.has(preset)) {
     return {
-      error: `solenta.json: ${at}.preset must be hourly, daily, weekly, or cron`,
+      error: `solenta.json: ${at}.preset must be hourly, daily, weekly, cron, or once`,
     };
   }
 
@@ -188,6 +190,20 @@ function parseRow(raw, index, seen) {
     }
   } else if (r.cron != null) {
     return { error: `solenta.json: ${at}.cron needs preset "cron"` };
+  }
+
+  // #1812: no future check here — a fired or long-committed "once" row's
+  // runAt is legitimately in the past, and this parse runs on every read.
+  let runAt = null;
+  if (preset === "once") {
+    try {
+      runAt = require("./automations.js").parseOnceRunAt(r.runAt, { requireFuture: false });
+    } catch (err) {
+      const msg = err && err.message ? String(err.message) : String(err);
+      return { error: `solenta.json: ${at}.runAt: ${msg}` };
+    }
+  } else if (r.runAt != null) {
+    return { error: `solenta.json: ${at}.runAt needs preset "once"` };
   }
 
   const hourParsed = parseHour(preset, r.hour);
@@ -232,6 +248,7 @@ function parseRow(raw, index, seen) {
       preset,
       hour: hourParsed.hour,
       ...(cron ? { cron } : {}),
+      ...(runAt ? { runAt } : {}),
       trigger,
       tier,
       ...(budget ? { budget } : {}),
@@ -359,7 +376,7 @@ function mergeAutomations(store, nowMs) {
             lastError: null,
             consecutiveFailures: 0,
             pendingRunThreadId: null,
-            nextRunAt: nextFire(row.preset, row.hour, nowMs, null, row.cron),
+            nextRunAt: nextFire(row.preset, row.hour, nowMs, null, row.cron, row.runAt),
             // #388: each machine calibrates a shared row from scratch.
             stage: "observe",
             graduate: true,
@@ -376,6 +393,7 @@ function mergeAutomations(store, nowMs) {
         preset: row.preset,
         hour: row.hour,
         ...(row.cron ? { cron: row.cron } : {}),
+        ...(row.runAt ? { runAt: row.runAt } : {}),
         trigger: row.trigger,
         tier: row.tier,
         ...(row.budget ? { budget: row.budget } : {}),
@@ -487,6 +505,7 @@ function ensureOverlay(store, auto) {
     preset: auto.preset,
     hour: auto.hour,
     ...(auto.cron ? { cron: auto.cron } : {}),
+    ...(auto.runAt ? { runAt: auto.runAt } : {}),
     trigger: auto.trigger || null,
     tier: auto.tier || null,
     enabled: auto.enabled,
@@ -502,7 +521,7 @@ function ensureOverlay(store, auto) {
     nextRunAt:
       typeof auto.nextRunAt === "number" && Number.isFinite(auto.nextRunAt)
         ? auto.nextRunAt
-        : nextFire(auto.preset, auto.hour, Date.now(), null, auto.cron),
+        : nextFire(auto.preset, auto.hour, Date.now(), null, auto.cron, auto.runAt),
   };
   const list = (store.getAutomations() || []).slice();
   list.push(overlay);

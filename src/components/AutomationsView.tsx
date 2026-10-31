@@ -6,6 +6,7 @@ import {
   createFormError,
   formatNextRun,
   isTriggerEvent,
+  onceStatusLabel,
   scheduleLabel,
   stageLabel,
   TRIGGER_EVENT_LABELS,
@@ -69,6 +70,7 @@ function definitionChanged(
     preset: AutomationPreset;
     hour: number | null;
     cron?: string;
+    runAt?: string;
     trigger: AutomationTrigger | null;
     tier: ModelRoute | null;
     budget: ThreadBudget | null;
@@ -83,11 +85,19 @@ function definitionChanged(
     fields.preset !== existing.preset ||
     fields.hour !== (existing.hour ?? null) ||
     fields.cron !== existing.cron ||
+    fields.runAt !== existing.runAt ||
     JSON.stringify(fields.trigger) !==
       JSON.stringify(existing.trigger || null) ||
     fields.tier !== (existing.tier ?? null) ||
     JSON.stringify(fields.budget) !== JSON.stringify(existing.budget || null)
   );
+}
+
+/** "YYYY-MM-DDTHH:mm" in local time, the value/min shape <input type="datetime-local"> needs (#1812). */
+function toDateTimeLocal(ms: number): string {
+  const d = new Date(ms);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
 function liveThreadKey(
@@ -298,6 +308,8 @@ export function AutomationsView({
   const [hour, setHour] = useState("9");
   // #1719: weekdays at 9:00 is the common first custom schedule.
   const [cron, setCron] = useState("0 9 * * 1-5");
+  // #1812: "" until the user picks a one-time run instant.
+  const [runAt, setRunAt] = useState("");
   // #242: "" = schedule mode, else the GitHub event this automation fires on.
   const [event, setEvent] = useState<AutomationTriggerEvent | "">("");
   const [branch, setBranch] = useState("");
@@ -350,6 +362,7 @@ export function AutomationsView({
     setTier(auto.tier ?? "");
     setHour(auto.hour != null ? String(auto.hour) : "9");
     setCron(auto.cron ?? "0 9 * * 1-5");
+    setRunAt(auto.runAt ?? "");
     setEvent(auto.trigger?.event ?? "");
     setBranch(auto.trigger?.branch ?? "");
     setLabel(auto.trigger?.label ?? "");
@@ -385,6 +398,7 @@ export function AutomationsView({
     setTier("");
     setHour("9");
     setCron("0 9 * * 1-5");
+    setRunAt("");
     setEvent("");
     setBranch("");
     setLabel("");
@@ -408,6 +422,7 @@ export function AutomationsView({
     setEvent(t.event ?? "");
     setPreset(t.preset ?? "hourly");
     setHour(String(t.hour ?? 9));
+    setRunAt("");
     setConclusion(t.conclusion ?? "");
     setBranch("");
     setLabel("");
@@ -458,11 +473,14 @@ export function AutomationsView({
 
   const needsHour = !event && (preset === "daily" || preset === "weekly");
   const usesCron = !event && preset === "cron";
+  const usesOnce = !event && preset === "once";
   const cronProblem = usesCron ? cronError(cron) : null;
   const cronPreview = useMemo(
     () => (usesCron && !cronProblem ? nextCronFires(cron, Date.now(), 3) : []),
     [usesCron, cronProblem, cron],
   );
+  // #1812: at least a minute out, so the picker never submits "now".
+  const minRunAt = useMemo(() => toDateTimeLocal(Date.now() + 60_000), []);
   const triggerType = isTriggerEvent(event)
     ? event.startsWith("linear_")
       ? "linear"
@@ -505,6 +523,7 @@ export function AutomationsView({
       preset: event ? "hourly" : preset,
       hour,
       cron,
+      runAt,
       event,
       org,
       project,
@@ -535,6 +554,7 @@ export function AutomationsView({
           preset: event ? ("hourly" as const) : preset,
           hour: needsHour ? Number(hour) : null,
           cron: usesCron ? cron.trim().replace(/\s+/g, " ") : undefined,
+          runAt: usesOnce ? runAt : undefined,
           trigger,
           tier: (tier || null) as ModelRoute | null,
           budget: cap,
@@ -549,6 +569,7 @@ export function AutomationsView({
           preset: nextDef.preset,
           hour: nextDef.hour,
           ...(nextDef.cron ? { cron: nextDef.cron } : {}),
+          ...(nextDef.runAt ? { runAt: nextDef.runAt } : {}),
           trigger: nextDef.trigger,
           memory,
           stage,
@@ -576,6 +597,7 @@ export function AutomationsView({
           preset: event ? "hourly" : preset,
           hour: needsHour ? Number(hour) : null,
           ...(usesCron ? { cron: cron.trim() } : {}),
+          ...(usesOnce ? { runAt } : {}),
           trigger,
           enabled: true,
           scope: writeScope,
@@ -797,6 +819,7 @@ export function AutomationsView({
                 <option value="daily">daily</option>
                 <option value="weekly">weekly</option>
                 <option value="cron">Custom (cron)</option>
+                <option value="once">Once</option>
               </optgroup>
               <optgroup label="GitHub event (polled every minute)">
                 {(
@@ -1019,6 +1042,20 @@ export function AutomationsView({
             )}
           </div>
         ) : null}
+        {usesOnce ? (
+          <label className={styles.field}>
+            <span className={styles.label}>Run at (local time)</span>
+            <input
+              className={styles.input}
+              type="datetime-local"
+              value={runAt}
+              min={minRunAt}
+              onChange={(e) => setRunAt(e.target.value)}
+              name="runAt"
+              aria-label="Run at"
+            />
+          </label>
+        ) : null}
         <label className={styles.field}>
           <span className={styles.label}>Prompt</span>
           <textarea
@@ -1189,10 +1226,12 @@ export function AutomationsView({
                   </span>
                 </div>
                 <div className={styles.rowMeta}>
-                  <span className={styles.schedule}>
+                  <span className={styles.schedule} data-automation-schedule="">
                     {auto.trigger
                       ? triggerLabel(auto.trigger)
-                      : scheduleLabel(auto.preset, auto.hour, auto.nextRunAt, auto.cron)}
+                      : auto.preset === "once"
+                        ? onceStatusLabel(auto)
+                        : scheduleLabel(auto.preset, auto.hour, auto.nextRunAt, auto.cron)}
                   </span>
                   {auto.model ? (
                     <span className={styles.schedule}>{auto.model}</span>
@@ -1205,7 +1244,7 @@ export function AutomationsView({
                       {stageLabel(auto, now)}
                     </span>
                   ) : null}
-                  {auto.trigger ? null : (
+                  {auto.trigger || (auto.preset === "once" && !auto.enabled) ? null : (
                     <span className={styles.next}>
                       {formatNextRun(auto.nextRunAt, now)}
                     </span>

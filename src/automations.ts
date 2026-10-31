@@ -193,6 +193,17 @@ export function formatHourLabel(hour: number): string {
   return `${hour}:00`;
 }
 
+/** "Fri 31 Oct, 15:00" (local time), used by preset "once" (#1812). */
+function formatOnceInstant(ms: number): string {
+  return new Date(ms).toLocaleString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 export function scheduleLabel(
   preset: AutomationPreset,
   hour: number | null,
@@ -201,10 +212,23 @@ export function scheduleLabel(
 ): string {
   if (preset === "hourly") return "hourly";
   if (preset === "cron") return `cron ${cron ?? ""}`.trim();
+  if (preset === "once") return `Once · ${formatOnceInstant(nextRunAt)}`;
   const h = hour ?? new Date(nextRunAt).getHours();
   if (preset === "daily") return `daily at ${formatHourLabel(h)}`;
   const day = WEEKDAYS[new Date(nextRunAt).getDay()] ?? "";
   return `weekly ${day} ${formatHourLabel(h)}`;
+}
+
+/**
+ * Row label for a preset "once" automation (#1812): upcoming (its runAt),
+ * "Ran once" after its single fire, or "Missed" when the scheduler's grace
+ * window passed before it ever fired (electron/automations.js settleMissedOnce).
+ */
+export function onceStatusLabel(
+  auto: Pick<AutomationInfo, "enabled" | "lastRunAt" | "nextRunAt">,
+): string {
+  if (!auto.enabled) return auto.lastRunAt != null ? "Ran once" : "Missed";
+  return `Once · ${formatOnceInstant(auto.nextRunAt)}`;
 }
 
 /** Future-aware relative label: "now", "in 5m", "in 2h", "in 3d". */
@@ -229,6 +253,7 @@ export function createFormError(input: {
   preset: AutomationPreset;
   hour: string;
   cron?: string;
+  runAt?: string;
   event?: string;
   org?: string;
   project?: string;
@@ -244,6 +269,13 @@ export function createFormError(input: {
   if (input.preset === "cron") {
     const err = cronError(input.cron ?? "");
     if (err) return err;
+  }
+  if (input.preset === "once" && !input.event) {
+    const raw = (input.runAt ?? "").trim();
+    if (!raw) return "Run time is required";
+    const t = new Date(raw).getTime();
+    if (Number.isNaN(t)) return "Run time is not a valid date";
+    if (t <= Date.now()) return "Run time must be in the future";
   }
   if (input.preset === "daily" || input.preset === "weekly") {
     if (input.hour === "") return "Hour is required";
@@ -267,6 +299,7 @@ export type AutomationCreateResult = {
   preset?: AutomationPreset;
   hour?: number | null;
   cron?: string;
+  runAt?: string;
   trigger?: AutomationTrigger | null;
   nextRunAt?: number;
 };
@@ -296,6 +329,7 @@ export function parseAutomationCreateResult(
           : undefined,
       hour: typeof parsed.hour === "number" ? parsed.hour : null,
       ...(typeof parsed.cron === "string" ? { cron: parsed.cron } : {}),
+      ...(typeof parsed.runAt === "string" ? { runAt: parsed.runAt } : {}),
       trigger,
       nextRunAt:
         typeof parsed.nextRunAt === "number" ? parsed.nextRunAt : undefined,

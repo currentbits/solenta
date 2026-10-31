@@ -68,7 +68,8 @@ const INSTRUCTIONS =
   "short title and a self-contained prompt; do not start the work yourself. " +
   "When the user describes a scheduled or GitHub-triggered workflow they want to keep " +
   "running, call automation_create with name, prompt, and either a schedule " +
-  "(hourly/daily/weekly or a cron expression) or a GitHub trigger; the result appears as a card with an " +
+  "(hourly/daily/weekly, a cron expression, or once at a future runAt for a single fire) " +
+  "or a GitHub trigger; the result appears as a card with an " +
   "Open in Automations link. " +
   "ask_user puts a real multiple-choice question in front of the user on your own " +
   "thread — it is the ONLY question channel that reaches them here, so use it " +
@@ -163,8 +164,8 @@ const INSTRUCTIONS =
   "not GitHub. " +
   "When the user describes a workflow to run later, call automation_create " +
   "with a name, prompt, provider, and either a schedule or a GitHub trigger " +
-  "(preset hourly/daily/weekly plus hour 0-23 for daily/weekly, or cron " +
-  "\"min hour dom month dow\"; or trigger " +
+  "(preset hourly/daily/weekly plus hour 0-23 for daily/weekly; cron " +
+  "\"min hour dom month dow\"; once with a future local-time runAt for a single fire; or trigger " +
   "event pr_opened, pr_merged, pr_labeled, review_submitted, push, " +
   "ci_completed, issue_opened with optional branch, label, conclusion). The automation is " +
   "created on this thread's project immediately. If a required field is " +
@@ -1113,12 +1114,19 @@ function createToolHandlers(deps) {
     const triggerRaw = args && args.trigger;
     const hasTrigger = triggerRaw != null && typeof triggerRaw === "object";
     const cronRaw = args && args.cron != null ? String(args.cron) : "";
-    // #1719: cron alone implies preset "cron".
+    const runAtRaw = args && args.runAt != null ? String(args.runAt) : "";
+    // #1719/#1812: cron or runAt alone implies its preset.
     const presetRaw =
-      args && args.preset != null ? String(args.preset) : cronRaw ? "cron" : "";
+      args && args.preset != null
+        ? String(args.preset)
+        : cronRaw
+          ? "cron"
+          : runAtRaw
+            ? "once"
+            : "";
     if (!hasTrigger && !presetRaw) {
       throw new Error(
-        "Schedule or GitHub trigger is required. Pass preset (hourly, daily, weekly), cron, or trigger.event.",
+        "Schedule or GitHub trigger is required. Pass preset (hourly, daily, weekly, once), cron, runAt, or trigger.event.",
       );
     }
     const created = addAutomation(store, {
@@ -1130,6 +1138,7 @@ function createToolHandlers(deps) {
       preset: presetRaw || "hourly",
       hour: hasTrigger ? null : args && args.hour,
       ...(cronRaw && !hasTrigger ? { cron: cronRaw } : {}),
+      ...(runAtRaw && !hasTrigger ? { runAt: runAtRaw } : {}),
       ...(typeof (args && args.enabled) === "boolean"
         ? { enabled: args.enabled }
         : {}),
@@ -1148,6 +1157,7 @@ function createToolHandlers(deps) {
       preset: created.preset,
       hour: created.hour,
       ...(created.cron ? { cron: created.cron } : {}),
+      ...(created.runAt ? { runAt: created.runAt } : {}),
       trigger: created.trigger || null,
       enabled: created.enabled,
       stage: created.stage,
@@ -2043,10 +2053,12 @@ function buildMcpServer(sdk, handlers, opts = {}) {
         "Create a Solenta automation on THIS thread's project. The user " +
         "describes a workflow in chat; you fill name, prompt, provider, and " +
         "either a schedule (hourly/daily/weekly, plus hour 0–23 for daily/" +
-        "weekly; or cron, a 5-field local-time expression like \"0 9 * * 1-5\" " +
-        "for weekdays at 9:00, at most every 5 minutes) or a GitHub trigger (pr_opened, pr_merged, pr_labeled, " +
+        "weekly; cron, a 5-field local-time expression like \"0 9 * * 1-5\" " +
+        "for weekdays at 9:00, at most every 5 minutes; or once, a single " +
+        "future runAt local-time instant like \"2026-11-01T15:00\" that fires " +
+        "exactly once and then disables itself) or a GitHub trigger (pr_opened, pr_merged, pr_labeled, " +
         "review_submitted, push, ci_completed, issue_opened — optional branch/label/" +
-        "conclusion filters). Validation rejects bad presets and triggers. " +
+        "conclusion filters). Validation rejects bad presets, a past runAt, and bad triggers. " +
         "The result appears as a card with an Open in Automations link. " +
         "threadId and projectId are YOUR OWN (stated at the end of your " +
         "prompt). Provider defaults to this thread's provider. New " +
@@ -2060,9 +2072,11 @@ function buildMcpServer(sdk, handlers, opts = {}) {
         prompt: z.string().min(1),
         provider: z.string().min(1).optional(),
         model: z.string().optional(),
-        preset: z.enum(["hourly", "daily", "weekly", "cron"]).optional(),
+        preset: z.enum(["hourly", "daily", "weekly", "cron", "once"]).optional(),
         hour: z.number().int().min(0).max(23).optional(),
         cron: z.string().min(1).optional(),
+        /** Preset "once": a future local-time instant, e.g. "2026-11-01T15:00". */
+        runAt: z.string().min(1).optional(),
         enabled: z.boolean().optional(),
         tier: z.enum(["auto", "fast", "balanced", "strong"]).optional(),
         stage: z.enum(["observe", "draft", "act"]).optional(),
