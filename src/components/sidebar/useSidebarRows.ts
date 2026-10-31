@@ -48,10 +48,11 @@ export function useSidebarRows({
     [displayThreads, settleOpts],
   );
 
-  // Grouped views have no Working shelf: busy rows stay in their groups.
+  // Grouped views have no Working/Watching shelf: those rows stay in their
+  // project/status/tag groups instead.
   const attentionThreads = useMemo(
-    () => [...flat.pinned, ...flat.active, ...flat.working],
-    [flat.pinned, flat.active, flat.working],
+    () => [...flat.pinned, ...flat.active, ...flat.working, ...flat.watching],
+    [flat.pinned, flat.active, flat.working, flat.watching],
   );
   const projectGroups = useMemo(
     () =>
@@ -119,6 +120,14 @@ export function useSidebarRows({
     () => workerIdsByRoot(flat.working, liveById),
     [flat.working, liveById],
   );
+  const visibleWatching = useMemo(
+    () => visibleFamilyRows(flat.watching, familyOpts),
+    [flat.watching, familyOpts],
+  );
+  const watchingFamilies = useMemo(
+    () => workerIdsByRoot(flat.watching, liveById),
+    [flat.watching, liveById],
+  );
   const searchFamilies = useMemo(
     () => workerIdsByRoot(displayThreads, liveById),
     [displayThreads, liveById],
@@ -135,6 +144,8 @@ export function useSidebarRows({
     activeFamilies,
     visibleWorking,
     workingFamilies,
+    visibleWatching,
+    watchingFamilies,
     searchFamilies,
   };
 }

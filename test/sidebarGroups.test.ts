@@ -291,6 +291,133 @@ describe("buildFlatSidebar (flat sidebar)", () => {
     assert.deepEqual(flat.archived.map((t) => t.id), ["gone"]);
   });
 
+  describe("Watching section (#1811)", () => {
+    it("files an idle thread with an active PR watch into Watching", () => {
+      const flat = buildFlatSidebar(
+        [
+          thread({
+            id: "watched",
+            projectId: "p1",
+            updatedAt: NOW,
+            prNumber: 42,
+            prState: "OPEN",
+          }),
+        ],
+        settleOpts,
+      );
+      assert.deepEqual(flat.watching.map((t) => t.id), ["watched"]);
+      assert.deepEqual(flat.active.map((t) => t.id), []);
+    });
+
+    it("a wake makes the thread working, which leaves Watching for the Working shelf", () => {
+      const flat = buildFlatSidebar(
+        [
+          thread({
+            id: "woke-up",
+            projectId: "p1",
+            updatedAt: NOW,
+            status: "working",
+            prNumber: 42,
+            prState: "OPEN",
+          }),
+        ],
+        settleOpts,
+      );
+      assert.deepEqual(flat.watching.map((t) => t.id), []);
+      assert.deepEqual(flat.working.map((t) => t.id), ["woke-up"]);
+    });
+
+    it("a watched thread that needs the user (awaiting input) stays in active", () => {
+      const flat = buildFlatSidebar(
+        [
+          thread({
+            id: "asks",
+            projectId: "p1",
+            updatedAt: NOW,
+            status: "working",
+            awaitingInput: true,
+            prNumber: 42,
+            prState: "OPEN",
+          }),
+        ],
+        settleOpts,
+      );
+      assert.deepEqual(flat.watching.map((t) => t.id), []);
+      assert.deepEqual(flat.active.map((t) => t.id), ["asks"]);
+    });
+
+    it("a pinned thread with an active watch stays pinned", () => {
+      const flat = buildFlatSidebar(
+        [
+          thread({
+            id: "pinned-watch",
+            projectId: "p1",
+            updatedAt: NOW,
+            pinnedAt: NOW - 1,
+            prNumber: 42,
+            prState: "OPEN",
+          }),
+        ],
+        settleOpts,
+      );
+      assert.deepEqual(flat.watching.map((t) => t.id), []);
+      assert.deepEqual(flat.pinned.map((t) => t.id), ["pinned-watch"]);
+    });
+
+    it("a snoozed thread with an active watch stays snoozed", () => {
+      const flat = buildFlatSidebar(
+        [
+          thread({
+            id: "snoozed-watch",
+            projectId: "p1",
+            updatedAt: NOW,
+            snoozedUntil: NOW + DAY_MS,
+            prNumber: 42,
+            prState: "OPEN",
+          }),
+        ],
+        settleOpts,
+      );
+      assert.deepEqual(flat.watching.map((t) => t.id), []);
+      assert.deepEqual(flat.snoozed.map((t) => t.id), ["snoozed-watch"]);
+    });
+
+    it("prWatch: false (checkoutPr default) keeps the thread in active, not Watching", () => {
+      const flat = buildFlatSidebar(
+        [
+          thread({
+            id: "unwatched",
+            projectId: "p1",
+            updatedAt: NOW,
+            prNumber: 42,
+            prState: "OPEN",
+            prWatch: false,
+          }),
+        ],
+        settleOpts,
+      );
+      assert.deepEqual(flat.watching.map((t) => t.id), []);
+      assert.deepEqual(flat.active.map((t) => t.id), ["unwatched"]);
+    });
+
+    it("a closed PR auto-settles rather than landing in Watching", () => {
+      const flat = buildFlatSidebar(
+        [
+          thread({
+            id: "closed-pr",
+            projectId: "p1",
+            updatedAt: NOW,
+            prNumber: 42,
+            prState: "CLOSED",
+          }),
+        ],
+        settleOpts,
+      );
+      assert.deepEqual(flat.watching.map((t) => t.id), []);
+      assert.deepEqual(flat.settled.map((t) => t.id), ["closed-pr"]);
+    });
+  });
+
   it("files quietly working families to the Working shelf; the inbox keeps the rest", () => {
     const flat = buildFlatSidebar(
       [
