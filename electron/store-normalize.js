@@ -433,6 +433,10 @@ function validateQuotaFailover(raw) {
  * feltEstimatePrompt: absent/junk → false. The "how much time did this save
  * you?" card is opt-in; only an explicit true asks.
  *
+ * suggestNextPrompt: absent/junk → false (issue #1806, Labs). The next-prompt
+ * ghost suggestion costs one extra fm completion per finished turn; off by
+ * default.
+ *
  * uiScale: Electron webContents zoom factor (issue #652). Absent/junk → 1;
  * otherwise snapped to 0.1 between 0.8 and 1.6.
  * theme: absent/junk → "dark" (the app was dark-only; upgrades must not
@@ -449,6 +453,12 @@ function validateQuotaFailover(raw) {
  *
  * confirmQuitWithActiveWork: only an explicit false opts out of the
  * accidental-quit dialog (issue #1195). Absent/junk keeps the confirm.
+ *
+ * pinchZoomWindow: default on; only an explicit false disables trackpad
+ * pinch-to-magnify the window (issue #1807).
+ *
+ * closeToTray: default off; only an explicit true opts into hiding behind
+ * a tray icon on window close instead of quitting (Windows/Linux, #1807).
  *
  * resumeInterruptedRuns: shipped opt-in (#1512 I3), then defaulted on
  * (#1788) for anyone who never chose. normalizeSettings cannot tell an
@@ -517,6 +527,7 @@ function normalizeSettings(raw) {
     notifyEvents: normalizeNotifyEvents(null),
     notificationProjects: [],
     feltEstimatePrompt: false,
+    suggestNextPrompt: false,
     uiScale: UI_SCALE_DEFAULT,
     theme: "dark",
     agentsPanelDefault: "closed",
@@ -524,6 +535,8 @@ function normalizeSettings(raw) {
     stayAwake: "agent",
     quotaWaitAutoResume: true,
     confirmQuitWithActiveWork: true,
+    pinchZoomWindow: true,
+    closeToTray: false,
     resumeInterruptedRuns: true,
     resumeInterruptedRunsSet: false,
     combineQueuedFollowUps: true,
@@ -674,6 +687,9 @@ function normalizeSettings(raw) {
   settings.feltEstimatePrompt =
     /** @type {{ feltEstimatePrompt?: unknown }} */ (obj).feltEstimatePrompt ===
     true;
+  settings.suggestNextPrompt =
+    /** @type {{ suggestNextPrompt?: unknown }} */ (obj).suggestNextPrompt ===
+    true;
   settings.uiScale = clampUiScale(
     /** @type {{ uiScale?: unknown }} */ (obj).uiScale,
   );
@@ -707,6 +723,15 @@ function normalizeSettings(raw) {
   settings.confirmQuitWithActiveWork =
     /** @type {{ confirmQuitWithActiveWork?: unknown }} */ (obj)
       .confirmQuitWithActiveWork !== false;
+  // pinchZoomWindow (#1807): default on; only an explicit false pins the
+  // visual zoom limit at 1 (no trackpad pinch magnification).
+  settings.pinchZoomWindow =
+    /** @type {{ pinchZoomWindow?: unknown }} */ (obj).pinchZoomWindow !== false;
+  // closeToTray (#1807): default off; only an explicit true opts in. The
+  // tray is Windows/Linux-only, but the setting itself normalizes the same
+  // everywhere so a synced store round-trips cleanly across platforms.
+  settings.closeToTray =
+    /** @type {{ closeToTray?: unknown }} */ (obj).closeToTray === true;
   // #1788: `resumeInterruptedRunsSet` only ever becomes true via setSettings
   // (store-settings-methods.js), the moment a human actually patches this
   // key. Absent -> never touched -> default true, whatever a prior save

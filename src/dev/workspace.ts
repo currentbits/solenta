@@ -267,6 +267,9 @@ export function createWorkspace(): Pick<CoderApi, "servers" | "simulator" | "pre
       async cancelInspect(_input: { threadId: string }) {
         return { ok: true };
       },
+      async setAudioMuted(input: { threadId: string; muted: boolean }) {
+        return { ok: true, muted: Boolean(input.muted) };
+      },
     },
     devserver: {
       async scripts(_input: { threadId: string }): Promise<string[]> {

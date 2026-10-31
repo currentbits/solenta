@@ -290,6 +290,38 @@ export function useCoderGitHub({
     [api],
   );
 
+  /** @-mention menu's open-issues row (#1805). */
+  const listOpenIssuesForMention = useCallback(
+    async (projectPath: string) => {
+      return api.issues.listOpenForMention(projectPath);
+    },
+    [api],
+  );
+
+  /** @-mention menu's discussions row (#1805). */
+  const listDiscussionsForMention = useCallback(
+    async (projectPath: string) => {
+      return api.issues.listDiscussionsForMention(projectPath);
+    },
+    [api],
+  );
+
+  /** Issue chip expansion at send (#1805). */
+  const issueDetailForMention = useCallback(
+    async (input: { projectPath: string; number: number }) => {
+      return api.issues.detailForMention(input);
+    },
+    [api],
+  );
+
+  /** Discussion chip expansion at send (#1805). */
+  const discussionDetailForMention = useCallback(
+    async (input: { projectPath: string; number: number }) => {
+      return api.issues.discussionDetailForMention(input);
+    },
+    [api],
+  );
+
   return {
     pushBranch,
     createPr,
@@ -312,5 +344,9 @@ export function useCoderGitHub({
     setIssuePlanStatus,
     createIssue,
     fetchIssue,
+    listOpenIssuesForMention,
+    listDiscussionsForMention,
+    issueDetailForMention,
+    discussionDetailForMention,
   };
 }

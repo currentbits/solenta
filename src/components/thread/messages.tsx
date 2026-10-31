@@ -40,6 +40,7 @@ import { captureCiteFromSelection, type ReplyTarget } from "../../replyContext";
 import { htmlFromToolOutput } from "../../htmlPage";
 import { Markdown } from "../Markdown";
 import { redactDisplay } from "../../redactDisplay";
+import { leadingSlashCommand, type SlashCommand } from "../../slashCommands";
 import { lazyNamed } from "../../lazyNamed";
 import {
   copyImageToClipboard,
@@ -1369,6 +1370,32 @@ export function shouldFoldUserText(text: string): boolean {
   return false;
 }
 
+/**
+ * Sent message text with a leading recognized `/command` picked out in the
+ * accent colour (#1805). Redaction runs on the whole string first; a slash
+ * command token never matches a secret rule, so slicing by its length after
+ * redaction stays aligned.
+ */
+function UserMessageText({
+  text,
+  cliCommands,
+}: {
+  text: string;
+  cliCommands?: readonly SlashCommand[];
+}) {
+  const redacted = redactDisplay(text);
+  const cmd = leadingSlashCommand(text, cliCommands);
+  if (!cmd) return <>{redacted}</>;
+  return (
+    <>
+      <span className={styles.slashCommandToken} data-slash-command="">
+        {redacted.slice(0, cmd.length)}
+      </span>
+      {redacted.slice(cmd.length)}
+    </>
+  );
+}
+
 const UserMessageBlock = memo(function UserMessageBlock({
   message,
   canEdit,
@@ -1384,6 +1411,7 @@ const UserMessageBlock = memo(function UserMessageBlock({
   onTogglePin,
   burstPosition = "single",
   threadId = null,
+  cliCommands,
 }: {
   message: ChatMessage;
   canEdit: boolean;
@@ -1403,6 +1431,8 @@ const UserMessageBlock = memo(function UserMessageBlock({
   burstPosition?: BurstPosition;
   /** Attachment chip context menu (#1794): Reveal/Open need the thread. */
   threadId?: string | null;
+  /** CLI/skill slash commands, for highlighting a leading /command (#1805). */
+  cliCommands?: readonly SlashCommand[];
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(message.text);
@@ -1686,7 +1716,7 @@ const UserMessageBlock = memo(function UserMessageBlock({
                 }
                 data-user-text-folded={folded && !expanded ? "" : undefined}
               >
-                {redactDisplay(message.text)}
+                <UserMessageText text={message.text} cliCommands={cliCommands} />
               </div>
               {folded && (
                 <button
@@ -1859,6 +1889,7 @@ export const MessageBlock = memo(function MessageBlock({
   onShowUser,
   onAddCommandOutput,
   burstPosition = "single",
+  cliCommands,
 }: {
   message: ChatMessage;
   autoExpandTool: boolean;
@@ -1903,6 +1934,9 @@ export const MessageBlock = memo(function MessageBlock({
   /** Back-to-back user messages (#1789): position within the bubble group;
    * only the user-message branch below uses it. */
   burstPosition?: BurstPosition;
+  /** CLI/skill slash commands, for highlighting a leading /command (#1805);
+   * only the user-message branch below uses it. */
+  cliCommands?: readonly SlashCommand[];
 }) {
   // Latch at mount; see ToolCallCard for why.
   const [entered] = useState(Boolean(animateIn));
@@ -1963,6 +1997,7 @@ export const MessageBlock = memo(function MessageBlock({
         onTogglePin={onTogglePin}
         burstPosition={burstPosition}
         threadId={threadId}
+        cliCommands={cliCommands}
       />
     );
   }

@@ -8,7 +8,7 @@ const { redactSettings } = require("./mcp.js");
 const updater = require("./updater.js");
 const feedback = require("./feedback.js");
 const { discoverSourceControl } = require("./sourceControl.js");
-const { applyZoom } = require("./zoom.js");
+const { applyZoom, applyPinchZoom } = require("./zoom.js");
 const { whenPathReady } = require("./pathEnv.js");
 const { KINDS } = require("./channels/index.js");
 
@@ -203,6 +203,20 @@ module.exports = {
     if (patch && Object.prototype.hasOwnProperty.call(patch, "uiScale")) {
       applyZoom(null, next.uiScale, ctx.store);
     }
+    // Live toggle, no restart (#1807): the window stays, only its visual
+    // zoom limit changes.
+    if (patch && Object.prototype.hasOwnProperty.call(patch, "pinchZoomWindow")) {
+      try {
+        const { BrowserWindow } = require("electron");
+        if (BrowserWindow && typeof BrowserWindow.getAllWindows === "function") {
+          for (const w of BrowserWindow.getAllWindows()) {
+            applyPinchZoom(w, next.pinchZoomWindow !== false);
+          }
+        }
+      } catch {
+        // not running under Electron (tests)
+      }
+    }
     // A cloud provider makes the mic usable without the local model (#1725).
     if (patch && Object.prototype.hasOwnProperty.call(patch, "speech") && ctx.speech) {
       ctx.speech.refresh();
@@ -263,7 +277,7 @@ module.exports = {
     // later list (picker or Agents pane opening) waits for a rate-limited one.
     const first = !providerAuth.started();
     const probing = providerAuth.refresh({
-      instances: services.instanceAuthProbes(ctx.store),
+      instances: services.instanceAuthProbes(ctx.store, ctx.userDataPath),
     });
     if (!first) await probing;
     return services.listProvidersForApi(ctx.store);

@@ -1,8 +1,12 @@
 /** Source control, issue and Planboard fixtures for the browser-dev fixture. */
 import type {
   CoderApi,
+  DiscussionDetailForMentionResult,
   FetchIssueResult,
+  IssueDetailForMentionResult,
   ListIssuesResult,
+  ListMentionDiscussionsResult,
+  ListMentionIssuesResult,
   PlanIssue,
   PlanStatus,
   SetPlanStatusResult,
@@ -209,6 +213,55 @@ export function createIssues(ctx: DevCtx): Pick<CoderApi, "vibeKanban" | "issues
               labels: ["plan:done"],
             },
           ]),
+        };
+      },
+      async listOpenForMention(
+        _projectPath: string,
+      ): Promise<ListMentionIssuesResult> {
+        return {
+          ok: true,
+          issues: [
+            { number: 1, title: "Ship the planboard" },
+            { number: 2, title: "Write the docs" },
+          ],
+        };
+      },
+      async listDiscussionsForMention(): Promise<ListMentionDiscussionsResult> {
+        return {
+          ok: true,
+          discussions: [{ number: 11, title: "How do checkpoints restore?" }],
+        };
+      },
+      async detailForMention(input: {
+        projectPath: string;
+        number: number;
+      }): Promise<IssueDetailForMentionResult> {
+        return {
+          ok: true,
+          issue: {
+            number: input.number,
+            title: `Issue #${input.number}`,
+            state: "OPEN",
+            labels: ["roadmap"],
+            body: `Dev stand-in body for issue #${input.number}.`,
+            comments: [{ author: "octocat", body: "Dev stand-in comment." }],
+          },
+        };
+      },
+      async discussionDetailForMention(input: {
+        projectPath: string;
+        number: number;
+      }): Promise<DiscussionDetailForMentionResult> {
+        return {
+          ok: true,
+          discussion: {
+            number: input.number,
+            title: `Discussion #${input.number}`,
+            state: "UNANSWERED",
+            labels: ["Q&A"],
+            body: `Dev stand-in body for discussion #${input.number}.`,
+            comments: [],
+          },
         };
       },
     },

@@ -42,6 +42,20 @@ const pr: ContextChip = {
   title: "Typed chips",
 };
 
+const issue: ContextChip = {
+  id: "is1",
+  kind: "issue",
+  number: 1805,
+  title: "Mention issues and discussions",
+};
+
+const discussion: ContextChip = {
+  id: "di1",
+  kind: "discussion",
+  number: 11,
+  title: "How do checkpoints restore?",
+};
+
 const skill: ContextChip = {
   id: "sk1",
   kind: "skill",
@@ -62,6 +76,14 @@ describe("contextChipLabel", () => {
   it("names each kind", () => {
     assert.equal(contextChipLabel(thread), "Fix the login");
     assert.equal(contextChipLabel(pr), "#1526 Typed chips");
+    assert.equal(
+      contextChipLabel(issue),
+      "Issue #1805 Mention issues and discussions",
+    );
+    assert.equal(
+      contextChipLabel(discussion),
+      "Discussion #11 How do checkpoints restore?",
+    );
     assert.equal(contextChipLabel(skill), "review-pr");
     assert.equal(contextChipLabel(term), "term · npm test · L12-14");
     assert.equal(contextChipLabel(quote), "Cite");
@@ -123,6 +145,55 @@ describe("formatContextChipsPrompt", () => {
     assert.match(out, /\+10 \/ −2/);
   });
 
+  it("expands an issue's state, labels, body, and last comments (#1805)", async () => {
+    const out = await formatContextChipsPrompt([issue], {
+      issueDetail: async (n) => {
+        assert.equal(n, 1805);
+        return {
+          number: 1805,
+          title: "Mention issues and discussions",
+          state: "OPEN",
+          labels: ["feature", "composer"],
+          body: "Add @issue and @discussion chips.",
+          comments: [{ author: "octocat", body: "Sounds good." }],
+        };
+      },
+    });
+    assert.match(out, /Issue #1805 Mention issues and discussions/);
+    assert.match(out, /OPEN · feature, composer/);
+    assert.match(out, /Add @issue and @discussion chips\./);
+    assert.match(out, /Comments:\n- octocat: Sounds good\./);
+  });
+
+  it("expands a discussion the same way, via its own loader", async () => {
+    const out = await formatContextChipsPrompt([discussion], {
+      discussionDetail: async (n) => {
+        assert.equal(n, 11);
+        return {
+          number: 11,
+          title: "How do checkpoints restore?",
+          state: "ANSWERED",
+          labels: ["Q&A"],
+          body: "Asking for a friend.",
+          comments: [],
+        };
+      },
+    });
+    assert.match(out, /Discussion #11 How do checkpoints restore\?/);
+    assert.match(out, /ANSWERED · Q&A/);
+    assert.match(out, /Asking for a friend\./);
+    assert.doesNotMatch(out, /Comments:/);
+  });
+
+  it("an issue/discussion chip with no loader, or a load error, says so", async () => {
+    const noLoader = await formatContextChipsPrompt([issue]);
+    assert.match(noLoader, /Could not load Issue #1805.*unavailable/);
+    const failed = await formatContextChipsPrompt([discussion], {
+      discussionDetail: async () => ({ error: "not found" }),
+    });
+    assert.match(failed, /Could not load Discussion #11.*not found/);
+  });
+
   it("expands a skill body", async () => {
     const out = await formatContextChipsPrompt([skill], {
       skillBody: async (name) => {
@@ -158,9 +229,12 @@ describe("parseContextChips", () => {
       { kind: "nope" },
       { kind: "pr", number: 1 },
       pr,
+      issue,
+      discussion,
+      { kind: "issue", number: "nope", title: "bad" },
       null,
     ]);
-    assert.deepEqual(kept.map((c) => c.id), ["th1", "pr1"]);
+    assert.deepEqual(kept.map((c) => c.id), ["th1", "pr1", "is1", "di1"]);
   });
 });
 
@@ -168,6 +242,8 @@ describe("filterMentionExtras", () => {
   const extras = [
     { kind: "thread" as const, id: "a", title: "Login bug" },
     { kind: "pr" as const, number: 12, title: "Add chips" },
+    { kind: "issue" as const, number: 1805, title: "Mention issues" },
+    { kind: "discussion" as const, number: 11, title: "Checkpoints Q&A" },
     { kind: "skill" as const, name: "review-pr", description: "Review a PR" },
   ];
 
@@ -185,6 +261,17 @@ describe("filterMentionExtras", () => {
     assert.deepEqual(
       rows.map((r) => r.kind),
       ["pr", "skill"],
+    );
+  });
+
+  it("matches an issue/discussion by number or title", () => {
+    assert.deepEqual(
+      filterMentionExtras(extras, "1805").map((r) => r.kind),
+      ["issue"],
+    );
+    assert.deepEqual(
+      filterMentionExtras(extras, "checkpoints").map((r) => r.kind),
+      ["discussion"],
     );
   });
 });

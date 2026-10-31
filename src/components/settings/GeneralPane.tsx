@@ -436,6 +436,62 @@ export function GeneralPane({
             still hides the app.
           </p>
         </div>
+        <div className={styles.field}>
+          <label className={styles.fieldRow}>
+            <input
+              type="checkbox"
+              data-pinch-zoom-window=""
+              checked={settings?.pinchZoomWindow !== false}
+              disabled={saving || settings == null}
+              onChange={(e) => {
+                setError(null);
+                void onSaveSettings({
+                  pinchZoomWindow: e.target.checked,
+                }).catch((err) => {
+                  setError(
+                    err instanceof Error && err.message
+                      ? err.message
+                      : "Failed to save settings",
+                  );
+                });
+              }}
+            />
+            <span>Pinch to zoom the window</span>
+          </label>
+          <p className={styles.note}>
+            A trackpad pinch magnifies the window like a browser, separate
+            from Cmd/Ctrl+Plus/Minus.
+          </p>
+        </div>
+        {status?.build.platform && status.build.platform !== "darwin" && (
+          <div className={styles.field}>
+            <label className={styles.fieldRow}>
+              <input
+                type="checkbox"
+                data-close-to-tray=""
+                checked={settings?.closeToTray === true}
+                disabled={saving || settings == null}
+                onChange={(e) => {
+                  setError(null);
+                  void onSaveSettings({
+                    closeToTray: e.target.checked,
+                  }).catch((err) => {
+                    setError(
+                      err instanceof Error && err.message
+                        ? err.message
+                        : "Failed to save settings",
+                    );
+                  });
+                }}
+              />
+              <span>Keep running in the tray when the window is closed</span>
+            </label>
+            <p className={styles.note}>
+              Closing the window hides it behind a tray icon instead of
+              quitting. Quit from the tray or the Quit menu to actually stop.
+            </p>
+          </div>
+        )}
         <div className={styles.field} data-webhook-settings="">
           <label className={styles.fieldLabel} htmlFor="webhook-url">
             Webhook URL
@@ -721,6 +777,12 @@ export function GeneralPane({
         setError={setError}
       />
       <DisplayPrefsSection />
+      <LabsSection
+        settings={settings}
+        saving={saving}
+        onSaveSettings={onSaveSettings}
+        setError={setError}
+      />
     </>
   );
 }
@@ -1085,6 +1147,55 @@ function DisplayPrefsSection() {
       <p className={styles.note}>
         A quiet strip above the composer with the 5-hour, weekly and
         context limits as percent left. Off by default.
+      </p>
+    </section>
+  );
+}
+
+/**
+ * Labs / experimental opt-ins (issue #1806): settings worth trying but not
+ * on by default, usually because they cost something (an extra model call,
+ * here) that most people would not expect from a plain toggle elsewhere.
+ */
+function LabsSection({
+  settings,
+  saving,
+  onSaveSettings,
+  setError,
+}: {
+  settings: AppSettings | null;
+  saving: boolean;
+  onSaveSettings: SettingsModalProps["onSaveSettings"];
+  setError: (error: string | null) => void;
+}) {
+  return (
+    <section className={styles.section} data-labs-prefs="">
+      <h3 className={styles.sectionLabel}>Labs</h3>
+      <label className={styles.fieldRow}>
+        <input
+          type="checkbox"
+          data-suggest-next-prompt-pref=""
+          checked={settings?.suggestNextPrompt ?? false}
+          disabled={saving || settings == null}
+          onChange={(e) => {
+            setError(null);
+            void onSaveSettings({
+              suggestNextPrompt: e.target.checked,
+            }).catch((err) => {
+              setError(
+                err instanceof Error && err.message
+                  ? err.message
+                  : "Failed to save settings",
+              );
+            });
+          }}
+        />
+        <span>Suggest a next prompt after each turn</span>
+      </label>
+      <p className={styles.note}>
+        Shows a dim suggestion in the empty composer after a thread finishes;
+        Tab or → accepts it. Uses one small extra model call per turn. Off by
+        default.
       </p>
     </section>
   );

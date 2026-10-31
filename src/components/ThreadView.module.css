@@ -3011,6 +3011,19 @@ button.diffLineGutter:focus-visible {
   pointer-events: none;
 }
 
+/* A leading recognized /command in a sent message (#1805), same accent used
+   for the composer's own slash palette. */
+.slashCommandToken {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* Paper's yellow on white needs the darker accent edge to read (mirrors
+   Composer.module.css .railButton/.star). */
+:global(:root[data-theme="light"]) .slashCommandToken {
+  color: var(--accent-border);
+}
+
 .userTextFoldToggle {
   display: block;
   margin-top: 6px;

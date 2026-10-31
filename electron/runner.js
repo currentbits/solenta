@@ -1537,7 +1537,11 @@ function createRunner(opts) {
   /** The instance's CODEX_HOME, when this thread runs on one (#453). */
   function instanceCodexHome(thread) {
     try {
-      return (thread && (threadInstanceEnv(store.getSettings(), thread) || {}).CODEX_HOME) || null;
+      return (
+        (thread &&
+          (threadInstanceEnv(store.getSettings(), thread, { userDataPath }) || {}).CODEX_HOME) ||
+        null
+      );
     } catch {
       return null;
     }
@@ -1898,6 +1902,14 @@ function createRunner(opts) {
     // erase its own stamp.
     if (!input.fromIdleCompact && thread.idleCompactedAt != null) {
       store.updateThread(threadId, { idleCompactedAt: null });
+    }
+
+    // Next-prompt ghost suggestion (#1806, Labs): any new turn starting
+    // invalidates a prior one — success or not, the composer's ghost must
+    // not survive into an unrelated turn. The next successful turn writes
+    // a fresh suggestion (or clears it again) via maybeSuggestNextPrompt.
+    if (thread.nextPromptSuggestion != null) {
+      store.updateThread(threadId, { nextPromptSuggestion: null });
     }
 
     // Ask mode (issue #392): cheap no-tools Q&A. Intercept BEFORE orch

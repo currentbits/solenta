@@ -83,12 +83,15 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
   };
   let notificationProjects: string[] = [];
   let feltEstimatePrompt = false;
+  let suggestNextPrompt = false;
   let uiScale = 1;
   let theme: AppSettings["theme"] = "dark";
   let agentsPanelDefault: AppSettings["agentsPanelDefault"] = "closed";
   let agentsPanelRememberLast = false;
   let stayAwake: AppSettings["stayAwake"] = "agent";
   let confirmQuitWithActiveWork = true;
+  let pinchZoomWindow = true;
+  let closeToTray = false;
   // #1788: default on for anyone who never chose, same as the electron store.
   let resumeInterruptedRuns = true;
   let combineQueuedFollowUps = true;
@@ -209,6 +212,7 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           },
           notificationProjects: notificationProjects.slice(),
           feltEstimatePrompt,
+          suggestNextPrompt,
           uiScale,
           theme,
           agentsPanelDefault,
@@ -216,6 +220,8 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           stayAwake,
           quotaWaitAutoResume: ctx.quotaWaitAutoResume,
           confirmQuitWithActiveWork,
+          pinchZoomWindow,
+          closeToTray,
           resumeInterruptedRuns,
           combineQueuedFollowUps,
           agentBugReports,
@@ -403,6 +409,14 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           }
           feltEstimatePrompt = patch.feltEstimatePrompt;
         }
+        if (
+          Object.prototype.hasOwnProperty.call(patch, "suggestNextPrompt")
+        ) {
+          if (typeof patch.suggestNextPrompt !== "boolean") {
+            throw new Error("suggestNextPrompt must be a boolean");
+          }
+          suggestNextPrompt = patch.suggestNextPrompt;
+        }
         if (Object.prototype.hasOwnProperty.call(patch, "uiScale")) {
           const v = patch.uiScale;
           if (typeof v !== "number" || !Number.isFinite(v)) {
@@ -449,6 +463,18 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
             throw new Error("confirmQuitWithActiveWork must be a boolean");
           }
           confirmQuitWithActiveWork = patch.confirmQuitWithActiveWork;
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, "pinchZoomWindow")) {
+          if (typeof patch.pinchZoomWindow !== "boolean") {
+            throw new Error("pinchZoomWindow must be a boolean");
+          }
+          pinchZoomWindow = patch.pinchZoomWindow;
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, "closeToTray")) {
+          if (typeof patch.closeToTray !== "boolean") {
+            throw new Error("closeToTray must be a boolean");
+          }
+          closeToTray = patch.closeToTray;
         }
         if (Object.prototype.hasOwnProperty.call(patch, "worktreeRoot")) {
           const v = typeof patch.worktreeRoot === "string" ? patch.worktreeRoot.trim() : "";
@@ -665,6 +691,7 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           },
           notificationProjects: notificationProjects.slice(),
           feltEstimatePrompt,
+          suggestNextPrompt,
           uiScale,
           theme,
           agentsPanelDefault,
@@ -672,6 +699,8 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           stayAwake,
           quotaWaitAutoResume: ctx.quotaWaitAutoResume,
           confirmQuitWithActiveWork,
+          pinchZoomWindow,
+          closeToTray,
           resumeInterruptedRuns,
           combineQueuedFollowUps,
           agentBugReports,

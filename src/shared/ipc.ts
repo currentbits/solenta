@@ -824,6 +824,14 @@ export interface ThreadInfo {
    */
   recap?: ThreadRecap | null;
   /**
+   * Ghost next-prompt suggestion (#1806, Labs opt-in): one short instruction
+   * fm guessed the user might give next, cached after a successful turn on
+   * this thread. Cleared on the next run start (electron/runner.js) so a
+   * stale suggestion never survives into an unrelated turn. Null/absent
+   * shows no ghost.
+   */
+  nextPromptSuggestion?: string | null;
+  /**
    * Epoch ms when the user pinned this thread; null = unpinned. Pinned
    * threads render first and NEVER auto-settle. Pin and an
    * explicit settle are mutually exclusive: setPinned(true) clears a
@@ -2747,6 +2755,17 @@ export interface PreviewSnapshot {
   canGoForward: boolean;
 }
 
+/**
+ * Sidebar audio indicator (#1807): whether the thread's bound guest
+ * webContents is currently playing audio, and whether the user muted it.
+ * Pushed on "preview:audioChanged" whenever either changes.
+ */
+export interface PreviewAudioState {
+  threadId: string;
+  audible: boolean;
+  muted: boolean;
+}
+
 export type PreviewViewportPreset = "fill" | "mobile" | "tablet" | "desktop";
 
 /**
@@ -3230,6 +3249,42 @@ export type SetPlanStatusResult =
   | { ok: true }
   | { ok: false; reason: string };
 
+/** One open issue or discussion row for the @-mention menu (#1805). */
+export interface MentionIssueRow {
+  number: number;
+  title: string;
+}
+
+/** @-mention menu open-issues list. Failures stay in-band so the row can retry. */
+export type ListMentionIssuesResult =
+  | { ok: true; issues: MentionIssueRow[] }
+  | { ok: false; reason: string };
+
+/**
+ * @-mention menu discussions list. Always `ok: true` — a repo without
+ * Discussions enabled, or any failure, resolves to an empty list; this row
+ * is a bonus beside the issue list, never a blocker.
+ */
+export type ListMentionDiscussionsResult = { ok: true; discussions: MentionIssueRow[] };
+
+/** One issue/discussion's detail for the @-mention chip expansion (#1805). */
+export interface MentionIssueDetail {
+  number: number;
+  title: string;
+  state: string;
+  labels: string[];
+  body: string;
+  comments: { author: string; body: string }[];
+}
+
+export type IssueDetailForMentionResult =
+  | { ok: true; issue: MentionIssueDetail }
+  | { ok: false; reason: string };
+
+export type DiscussionDetailForMentionResult =
+  | { ok: true; discussion: MentionIssueDetail }
+  | { ok: false; reason: string };
+
 /**
  * How hard a model should think. Persisted per thread, sent to the CLI.
  *
@@ -3518,6 +3573,13 @@ export interface ProviderInstance {
   provider: string;
   /** CLAUDE_CONFIG_DIR / CODEX_HOME. null = the CLI's default folder. */
   configDir: string | null;
+  /**
+   * Separate CLI home (#1808), claude/codex only: an exclusive home under
+   * Solenta's userData instead of configDir, with no sharing back to the
+   * CLI's real home. Turning it off reverts to the shared/default home;
+   * the isolated folder is kept on disk, not deleted.
+   */
+  isolatedHome?: boolean;
   /** Extra env for this instance's spawns only. Stored like MCP secrets. */
   env: Record<string, string>;
   /**
@@ -3936,6 +3998,14 @@ export interface AppSettings {
    */
   feltEstimatePrompt: boolean;
   /**
+   * Labs (issue #1806): after a turn finishes successfully on the open
+   * thread, run one cheap completion over the fm-title path and offer the
+   * result as a ghost suggestion in the empty composer. Opt-in: absent/false
+   * means no extra model call ever runs. Never fires for automation or
+   * notice-delivered turns (electron/fm-suggest.js maybeSuggestNextPrompt).
+   */
+  suggestNextPrompt: boolean;
+  /**
    * Electron webContents zoom factor (issue #652). Default 1; clamped to
    * 0.8–1.6 in 0.1 steps. View-menu zoom and the Settings control share this.
    */
@@ -3979,6 +4049,21 @@ export interface AppSettings {
    * Default on; only an explicit false opts out.
    */
   confirmQuitWithActiveWork: boolean;
+  /**
+   * Trackpad pinch magnifies the window like a browser, via
+   * webContents.setVisualZoomLevelLimits (issue #1807). Default on; an
+   * explicit false pins the limit at 1 (no visual zoom). Independent of
+   * uiScale/Cmd+±, which set the layout zoom factor instead.
+   */
+  pinchZoomWindow: boolean;
+  /**
+   * Windows/Linux only (issue #1807): closing the window hides it behind a
+   * tray icon instead of quitting. Default off. macOS is unaffected; it
+   * already keeps the app in the dock on window close. The tray's own Quit,
+   * the Quit menu, and an updater restart still go through the normal
+   * confirm-quit-with-active-work flow.
+   */
+  closeToTray: boolean;
   /**
    * After a restart, give each thread whose run was interrupted one
    * automatic follow-up turn (issue #1512 I3). Default off.
@@ -7193,6 +7278,35 @@ export interface CoderApi {
       title: string;
       body: string;
     }): Promise<CreateIssueResult>;
+    /**
+     * Open issues for the composer's @-mention menu: number + title only,
+     * cached ~60s per project on the main process (#1805). REST GET
+     * …/issues?state=open mixes PRs in; the main process drops them. Never
+     * rejects: failures come back as `{ ok: false, reason }`.
+     */
+    listOpenForMention(projectPath: string): Promise<ListMentionIssuesResult>;
+    /**
+     * Recent discussions for the @-mention menu, when the repo has
+     * Discussions enabled. Never rejects; an empty list (not an error)
+     * covers both "disabled" and any fetch failure.
+     */
+    listDiscussionsForMention(
+      projectPath: string,
+    ): Promise<ListMentionDiscussionsResult>;
+    /**
+     * One issue's title/state/labels/body/last comments, for the @-mention
+     * chip expansion (#1805). Never rejects: failures come back as
+     * `{ ok: false, reason }`.
+     */
+    detailForMention(input: {
+      projectPath: string;
+      number: number;
+    }): Promise<IssueDetailForMentionResult>;
+    /** Same shape as detailForMention, for a discussion chip. */
+    discussionDetailForMention(input: {
+      projectPath: string;
+      number: number;
+    }): Promise<DiscussionDetailForMentionResult>;
   };
   files: {
     /**
@@ -7496,6 +7610,8 @@ export interface CoderApi {
      */
     inspect(input: { threadId: string }): Promise<PreviewInspectResult>;
     cancelInspect(input: { threadId: string }): Promise<{ ok: boolean }>;
+    /** Mute/unmute the bound guest's audio from the sidebar indicator (#1807). */
+    setAudioMuted(input: { threadId: string; muted: boolean }): Promise<{ ok: boolean; muted: boolean }>;
   };
   /**
    * Desktop-only iOS Simulator pane (#248). Web invokes are denied before
@@ -7677,6 +7793,8 @@ export interface CoderApi {
   on(channel: "pairing:consent", cb: (pending: OauthConsentInfo) => void): () => void;
   /** createPr step progress: commit/push/create/link (#1803). */
   on(channel: "pr:progress", cb: (push: PrProgressPush) => void): () => void;
+  /** Desktop-only: a bound Browser pane's audio started/stopped, or its mute changed (#1807). */
+  on(channel: "preview:audioChanged", cb: (state: PreviewAudioState) => void): () => void;
 }
 
 declare global {

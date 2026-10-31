@@ -1347,6 +1347,7 @@ interface InstanceDraft {
   name: string;
   provider: string;
   configDir: string;
+  isolatedHome: boolean;
   env: Array<{ key: string; value: string }>;
   /** generic (#458): argv text, parsed by parseMcpArgv on submit. */
   command: string;
@@ -1366,6 +1367,7 @@ function emptyInstanceDraft(providers: readonly ProviderInfo[], provider?: strin
     name: "",
     provider: provider ?? fallback,
     configDir: "",
+    isolatedHome: false,
     env: [],
     command: "",
     fullAccess: "",
@@ -1387,6 +1389,7 @@ function draftFromInstance(inst: ProviderInstance): InstanceDraft {
     name: inst.name,
     provider: inst.provider,
     configDir: inst.configDir ?? "",
+    isolatedHome: inst.isolatedHome === true,
     env: Object.entries(inst.env).map(([key, value]) => ({ key, value })),
     command: argvText(inst.command),
     fullAccess: argvText(inst.fullAccessArgs),
@@ -1414,7 +1417,12 @@ function instanceFromDraft(draft: InstanceDraft, prev?: ProviderInstance): Provi
     id: draft.id ?? crypto.randomUUID().slice(0, 8),
     name,
     provider: draft.provider,
-    configDir: draft.configDir.trim() || null,
+    // Mutually exclusive with configDir: isolatedHome wins, and the typed
+    // folder is dropped so switching it off goes back to the shared home
+    // rather than a stale path (electron/providerInstances.js enforces the
+    // same rule server-side).
+    configDir: draft.isolatedHome ? null : draft.configDir.trim() || null,
+    ...(draft.isolatedHome && draft.provider in INSTANCE_PROVIDERS ? { isolatedHome: true } : {}),
     env,
     extraArgs: extraArgs.args,
   };
@@ -1464,7 +1472,9 @@ function InstanceSection({
           ? (inst.command ?? []).join(" ")
           : inst.openaiCompatible
             ? `${inst.openaiCompatible.models.length} configured model${inst.openaiCompatible.models.length === 1 ? "" : "s"}${inst.openaiCompatible.modelsUrl ? ` · lists from ${inst.openaiCompatible.modelsUrl}` : ""}`
-            : `${INSTANCE_PROVIDERS[inst.provider] ?? "Config folder"}: ${inst.configDir ?? "the CLI's usual folder"}`}
+            : inst.isolatedHome
+              ? "Separate CLI home"
+              : `${INSTANCE_PROVIDERS[inst.provider] ?? "Config folder"}: ${inst.configDir ?? "the CLI's usual folder"}`}
       </p>
       {draft ? (
         <InstanceForm
@@ -1673,25 +1683,45 @@ function InstanceForm({
           </div>
         </>
       ) : draft.provider in INSTANCE_PROVIDERS ? (
-        <div className={base.field}>
-          <label className={base.fieldLabel} htmlFor="instance-dir">
-            Config folder
-          </label>
-          <input
-            id="instance-dir"
-            className={base.input}
-            value={draft.configDir}
-            disabled={saving}
-            autoComplete="off"
-            spellCheck={false}
-            placeholder={draft.provider === "codex" ? "~/.codex-work" : "~/.claude-work"}
-            onChange={(e) => onChange({ ...draft, configDir: e.target.value })}
-          />
-          <p className={base.note}>
-            Sets {dirVar} for this instance, so it keeps its own sign-in,
-            settings and sessions. Empty uses the CLI&apos;s usual folder.
-          </p>
-        </div>
+        <>
+          <div className={base.field}>
+            <label className={base.fieldRow}>
+              <input
+                type="checkbox"
+                data-instance-isolated-home=""
+                checked={draft.isolatedHome}
+                disabled={saving}
+                onChange={(e) => onChange({ ...draft, isolatedHome: e.target.checked })}
+              />
+              Separate CLI home
+            </label>
+            <p className={base.note}>
+              Sessions, history and settings for this instance stay apart
+              from the CLI you run outside Solenta. You sign in again for
+              this instance. Turning this off goes back to the shared home;
+              the separate one stays on disk.
+            </p>
+          </div>
+          <div className={base.field}>
+            <label className={base.fieldLabel} htmlFor="instance-dir">
+              Config folder
+            </label>
+            <input
+              id="instance-dir"
+              className={base.input}
+              value={draft.configDir}
+              disabled={saving || draft.isolatedHome}
+              autoComplete="off"
+              spellCheck={false}
+              placeholder={draft.provider === "codex" ? "~/.codex-work" : "~/.claude-work"}
+              onChange={(e) => onChange({ ...draft, configDir: e.target.value })}
+            />
+            <p className={base.note}>
+              Sets {dirVar} for this instance, so it keeps its own sign-in,
+              settings and sessions. Empty uses the CLI&apos;s usual folder.
+            </p>
+          </div>
+        </>
       ) : null}
       {!generic && (
         <div className={base.field}>

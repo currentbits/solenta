@@ -213,7 +213,7 @@ module.exports = {
       : null;
     if (instance && !inst) throw new Error(`Unknown provider instance: ${provider}`);
     const dirVar = CONFIG_DIR_ENV[/** @type {"claude" | "codex"} */ (base)];
-    const configEnv = inst ? instanceEnv(inst) : {};
+    const configEnv = inst ? instanceEnv(inst, undefined, ctx.userDataPath) : {};
     const command = install
       ? providerAuth.installCommand(base)
       : providerAuth.loginCommand(base, {
@@ -293,5 +293,9 @@ module.exports = {
   "preview:cancelInspect": async (ctx, input) => {
     resolveDevServerRoot(ctx, input && input.threadId);
     return preview.cancelInspect(input);
+  },
+  "preview:setAudioMuted": async (ctx, input) => {
+    resolveDevServerRoot(ctx, input && input.threadId);
+    return preview.setAudioMuted(input);
   },
 };

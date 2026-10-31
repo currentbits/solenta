@@ -172,6 +172,19 @@ export const KEYBINDINGS: readonly KeybindingDef[] = [
     chord: "mod+shift+s",
   },
   {
+    id: "composer.cycleEffort",
+    label: "Cycle reasoning effort",
+    scope: "composer",
+    chord: "mod+shift+e",
+  },
+  {
+    id: "composer.toggleFast",
+    label: "Toggle fast mode",
+    scope: "composer",
+    // mod+shift+f is palette.content (Search file contents); next free slot.
+    chord: "mod+shift+g",
+  },
+  {
     id: "composer.stop",
     label: "Stop the live turn · close menus",
     scope: "composer",

@@ -97,6 +97,7 @@ class StoreSettingsMethods {
       notifyEvents: n.notifyEvents,
       notificationProjects: n.notificationProjects,
       feltEstimatePrompt: n.feltEstimatePrompt,
+      suggestNextPrompt: n.suggestNextPrompt,
       uiScale: n.uiScale,
       theme: n.theme,
       agentsPanelDefault: n.agentsPanelDefault,
@@ -104,6 +105,8 @@ class StoreSettingsMethods {
       stayAwake: n.stayAwake,
       quotaWaitAutoResume: n.quotaWaitAutoResume,
       confirmQuitWithActiveWork: n.confirmQuitWithActiveWork,
+      pinchZoomWindow: n.pinchZoomWindow,
+      closeToTray: n.closeToTray,
       resumeInterruptedRuns: n.resumeInterruptedRuns,
       combineQueuedFollowUps: n.combineQueuedFollowUps,
       agentBugReports: n.agentBugReports,
@@ -403,6 +406,13 @@ class StoreSettingsMethods {
       }
       this.data.settings.feltEstimatePrompt = v;
     }
+    if (Object.prototype.hasOwnProperty.call(patch, "suggestNextPrompt")) {
+      const v = patch.suggestNextPrompt;
+      if (typeof v !== "boolean") {
+        throw new Error("suggestNextPrompt must be a boolean");
+      }
+      this.data.settings.suggestNextPrompt = v;
+    }
     if (Object.prototype.hasOwnProperty.call(patch, "uiScale")) {
       const v = patch.uiScale;
       if (typeof v !== "number" || !Number.isFinite(v)) {
@@ -451,6 +461,20 @@ class StoreSettingsMethods {
         throw new Error("confirmQuitWithActiveWork must be a boolean");
       }
       this.data.settings.confirmQuitWithActiveWork = v;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "pinchZoomWindow")) {
+      const v = patch.pinchZoomWindow;
+      if (typeof v !== "boolean") {
+        throw new Error("pinchZoomWindow must be a boolean");
+      }
+      this.data.settings.pinchZoomWindow = v;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "closeToTray")) {
+      const v = patch.closeToTray;
+      if (typeof v !== "boolean") {
+        throw new Error("closeToTray must be a boolean");
+      }
+      this.data.settings.closeToTray = v;
     }
     if (Object.prototype.hasOwnProperty.call(patch, "worktreeRoot")) {
       this.data.settings.worktreeRoot = validateWorktreeRoot(patch.worktreeRoot);

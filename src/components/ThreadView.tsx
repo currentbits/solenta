@@ -38,9 +38,13 @@ import type {
   CoderApi,
   ConflictContext,
   DiffResult,
+  DiscussionDetailForMentionResult,
+  IssueDetailForMentionResult,
   ImageDiffInput,
   ImageDiffResult,
   GitSyncInfo,
+  ListMentionDiscussionsResult,
+  ListMentionIssuesResult,
   PrChecksResult,
   MergeMethod,
   PrInfo,
@@ -166,7 +170,9 @@ import {
 import {
   elementChip,
   quoteChipAsReply,
+  type ContextChipLoader,
   type InspectPick,
+  type MentionIssueApi,
   type MentionSourceApi,
   type TerminalChip,
 } from "../contextChips";
@@ -676,6 +682,24 @@ interface ThreadViewProps {
   mentions?: CoderApi["mentions"] | null;
   /** Where the @problems row sends a thread with no verify command. */
   onRevealVerifySettings?: () => void;
+  /** Composer @issue row (#1805): open issues, ~60s cache, number + title only. */
+  onListOpenIssuesForMention?: (
+    projectPath: string,
+  ) => Promise<ListMentionIssuesResult>;
+  /** Composer @discussion row (#1805). Absent hides the row. */
+  onListDiscussionsForMention?: (
+    projectPath: string,
+  ) => Promise<ListMentionDiscussionsResult>;
+  /** Issue chip expansion at send (#1805). */
+  onIssueDetailForMention?: (input: {
+    projectPath: string;
+    number: number;
+  }) => Promise<IssueDetailForMentionResult>;
+  /** Discussion chip expansion at send (#1805). */
+  onDiscussionDetailForMention?: (input: {
+    projectPath: string;
+    number: number;
+  }) => Promise<DiscussionDetailForMentionResult>;
   /** Desktop-only iOS Simulator pane (#248). */
   simulator?: CoderApi["simulator"] | null;
   simulatorStatus?: SimulatorStatus | null;
@@ -993,6 +1017,10 @@ export const ThreadView = memo(function ThreadView({
   preview,
   mentions,
   onRevealVerifySettings,
+  onListOpenIssuesForMention,
+  onListDiscussionsForMention,
+  onIssueDetailForMention,
+  onDiscussionDetailForMention,
   simulator,
   simulatorStatus,
   devServerStatus,
@@ -2275,6 +2303,48 @@ export const ThreadView = memo(function ThreadView({
       showCommit: (sha) => mentions.showCommit({ threadId, sha }),
     };
   }, [mentions, mentionThreadId, verifyCommand, onRevealVerifySettings]);
+
+  const mentionProjectPath = project?.path;
+  const mentionIssueApi = useMemo((): MentionIssueApi | undefined => {
+    if (!onListOpenIssuesForMention || !mentionProjectPath) return undefined;
+    const projectPath = mentionProjectPath;
+    return {
+      listOpenIssues: () =>
+        onListOpenIssuesForMention(projectPath).then((r) =>
+          r.ok ? r.issues : [],
+        ),
+      listDiscussions: onListDiscussionsForMention
+        ? () =>
+            onListDiscussionsForMention(projectPath).then((r) =>
+              r.ok ? r.discussions : [],
+            )
+        : undefined,
+    };
+  }, [onListOpenIssuesForMention, onListDiscussionsForMention, mentionProjectPath]);
+
+  const mentionContextChipLoader = useMemo((): ContextChipLoader | undefined => {
+    if (
+      (!onIssueDetailForMention && !onDiscussionDetailForMention) ||
+      !mentionProjectPath
+    ) {
+      return undefined;
+    }
+    const projectPath = mentionProjectPath;
+    return {
+      issueDetail: onIssueDetailForMention
+        ? (number: number) =>
+            onIssueDetailForMention({ projectPath, number }).then((r) =>
+              r.ok ? r.issue : { error: r.reason },
+            )
+        : undefined,
+      discussionDetail: onDiscussionDetailForMention
+        ? (number: number) =>
+            onDiscussionDetailForMention({ projectPath, number }).then((r) =>
+              r.ok ? r.discussion : { error: r.reason },
+            )
+        : undefined,
+    };
+  }, [onIssueDetailForMention, onDiscussionDetailForMention, mentionProjectPath]);
 
   const pickMentionFolder = useCallback(async () => {
     if (!onPickDirectory) return null;
@@ -5037,6 +5107,7 @@ export const ThreadView = memo(function ThreadView({
                     <MessageBlock
                       message={entry.message}
                       burstPosition={userBursts.get(entry.message.id)}
+                      cliCommands={cliCommands}
                       autoExpandTool={
                         verboseTools ||
                         entry.message.id === latestRunningToolId ||
@@ -5761,6 +5832,7 @@ export const ThreadView = memo(function ThreadView({
         workflowListError={workflowListError}
         onRetryWorkflows={onRetryWorkflows}
         sessionId={thread.sessionId}
+        nextPromptSuggestion={thread.nextPromptSuggestion ?? null}
         contextWindow={composerContextWindow}
         contextUsed={detail.usage?.contextTokens ?? null}
         onCompactFirst={nativeCompact ? handleCompact : undefined}
@@ -5839,6 +5911,8 @@ export const ThreadView = memo(function ThreadView({
         promptSnippets={promptSnippets}
         mentionThreads={mentionThreads}
         mentionSources={thread.ask ? undefined : mentionSources}
+        mentionIssueApi={thread.ask ? undefined : mentionIssueApi}
+        contextChipLoader={mentionContextChipLoader}
         onPickMentionFolder={
           onPickDirectory ? pickMentionFolder : undefined
         }

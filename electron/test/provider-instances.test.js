@@ -154,6 +154,62 @@ describe("providerInstances parsing", () => {
     }
   });
 
+  it("isolated CLI home (#1808): computed, exclusive, and ignores configDir", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "inst-home-"));
+    const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), "inst-userdata-"));
+    try {
+      const codexInst = {
+        id: "iso",
+        name: "solo",
+        provider: "codex",
+        configDir: null,
+        isolatedHome: true,
+        env: { K: "v" },
+      };
+      const env = inst.instanceEnv(codexInst, home, userDataPath);
+      const dir = path.join(userDataPath, "provider-homes", "iso", "codex");
+      assert.deepEqual(env, { K: "v", CODEX_HOME: dir });
+      assert.equal(fs.existsSync(dir), true);
+
+      // Claude goes through CLAUDE_CONFIG_DIR under its own provider folder.
+      const claudeInst = { ...codexInst, provider: "claude" };
+      assert.equal(
+        inst.instanceEnv(claudeInst, home, userDataPath).CLAUDE_CONFIG_DIR,
+        path.join(userDataPath, "provider-homes", "iso", "claude"),
+      );
+
+      // No userDataPath to resolve against: no dir var, never the shared home.
+      assert.deepEqual(inst.instanceEnv(codexInst, home), { K: "v" });
+
+      // A configDir alongside isolatedHome is ignored; isolatedHome wins.
+      const both = { ...codexInst, configDir: "~/.codex-work" };
+      assert.equal(inst.instanceEnv(both, home, userDataPath).CODEX_HOME, dir);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+      fs.rmSync(userDataPath, { recursive: true, force: true });
+    }
+  });
+
+  it("isolated CLI home (#1808): save drops configDir, and heals/validates the same way", () => {
+    const [saved] = inst.validateProviderInstances([
+      { id: "x", name: "x", provider: "codex", isolatedHome: true, configDir: "/should/be/dropped" },
+    ]);
+    assert.equal(saved.isolatedHome, true);
+    assert.equal(saved.configDir, null);
+
+    const [healed] = inst.normalizeProviderInstances([
+      { id: "x", name: "x", provider: "claude", isolatedHome: true, configDir: "/also/dropped" },
+    ]);
+    assert.equal(healed.isolatedHome, true);
+    assert.equal(healed.configDir, null);
+
+    // The base overlay row (id === provider) has no per-instance home concept.
+    const [overlay] = inst.validateProviderInstances([
+      { id: "codex", name: "Codex", provider: "codex", isolatedHome: true },
+    ]);
+    assert.equal("isolatedHome" in overlay, false);
+  });
+
   it("refuses to run a thread whose instance was removed", () => {
     assert.equal(inst.threadInstanceEnv({ providerInstances: [] }, { provider: "claude" }), undefined);
     assert.throws(
@@ -456,6 +512,173 @@ setInterval(() => {}, 500);
       );
     } finally {
       delete process.env.CODER_CODEX_BIN;
+    }
+  });
+
+  it("isolated CLI home (#1808): codex skips the per-thread writer-lock overlay, already exclusive", async () => {
+    store.setSettings({
+      providerInstances: [
+        { id: "iso", name: "solo", provider: "codex", isolatedHome: true, env: { OPENAI_BASE_URL: "https://x" } },
+      ],
+    });
+    /** @type {any[]} */
+    const seen = [];
+    runner.stopAll();
+    const core = await import(
+      pathToFileURL(path.join(__dirname, "../../core/dist/index.js")).href
+    );
+    process.env.CODER_CODEX_BIN = process.execPath;
+    try {
+      runner = createRunner({
+        store,
+        core,
+        pushFn() {},
+        tickMs: 15,
+        userDataPath: tmpDir,
+        runCodexFn: (opts) => {
+          seen.push(opts.envExtra);
+          setImmediate(() => opts.onExit({ code: 0, stderr: "" }));
+          return { kill() {}, respondJsonRpc() {}, respondJsonRpcError() {} };
+        },
+      });
+      const t = services.createThread(store, { projectId: project.id, title: "c", provider: "codex:iso" });
+      await runner.startRun({ threadId: t.id, prompt: "hi" });
+      await waitFor(() => seen.length === 1);
+      const env = seen[0];
+      assert.equal(env.OPENAI_BASE_URL, "https://x");
+      // The instance's own exclusive home, not a per-thread overlay dest.
+      assert.equal(env.CODEX_HOME, path.join(tmpDir, "provider-homes", "iso", "codex"));
+      assert.equal(
+        fs.existsSync(path.join(tmpDir, "codex-homes", t.id)),
+        false,
+        "the writer-lock overlay is never materialized for an already-exclusive home",
+      );
+    } finally {
+      delete process.env.CODER_CODEX_BIN;
+    }
+  });
+
+  it("isolated CLI home (#1808): still gets Solenta's PreToolUse hook, same shape as the overlay", async () => {
+    const overlayHome = path.join(tmpDir, "codex-overlay-src");
+    fs.mkdirSync(overlayHome);
+    store.setSettings({
+      providerInstances: [
+        { id: "ovl", name: "overlay", provider: "codex", configDir: overlayHome, env: {} },
+        { id: "iso", name: "solo", provider: "codex", isolatedHome: true, env: {} },
+      ],
+    });
+    /** @type {Record<string, any>} */
+    const seen = {};
+    runner.stopAll();
+    const core = await import(
+      pathToFileURL(path.join(__dirname, "../../core/dist/index.js")).href
+    );
+    process.env.CODER_CODEX_BIN = process.execPath;
+    try {
+      runner = createRunner({
+        store,
+        core,
+        pushFn() {},
+        tickMs: 15,
+        userDataPath: tmpDir,
+        runCodexFn: (opts) => {
+          seen[opts.envExtra.CODEX_HOME] = opts.args;
+          setImmediate(() => opts.onExit({ code: 0, stderr: "" }));
+          return { kill() {}, respondJsonRpc() {}, respondJsonRpcError() {} };
+        },
+      });
+      const ovlThread = services.createThread(store, { projectId: project.id, title: "ovl", provider: "codex:ovl" });
+      await runner.startRun({ threadId: ovlThread.id, prompt: "hi" });
+      await waitFor(() => Object.keys(seen).length === 1);
+      await waitFor(() => store.getThread(ovlThread.id).status === "done");
+      const isoThread = services.createThread(store, { projectId: project.id, title: "iso", provider: "codex:iso" });
+      await runner.startRun({ threadId: isoThread.id, prompt: "hi" });
+      await waitFor(() => Object.keys(seen).length === 2);
+      await waitFor(() => store.getThread(isoThread.id).status === "done");
+
+      const overlayDest = path.join(tmpDir, "codex-homes", ovlThread.id);
+      const isoDest = path.join(tmpDir, "provider-homes", "iso", "codex");
+      assert.ok(seen[overlayDest].includes("features.hooks=true"));
+      assert.ok(seen[isoDest].includes("features.hooks=true"));
+
+      // Same hooks.json shape (matcher, timeout, statusMessage), differing
+      // only in the per-home script path baked into `command`.
+      const overlayHooks = JSON.parse(fs.readFileSync(path.join(overlayDest, "hooks.json"), "utf8"));
+      const isoHooks = JSON.parse(fs.readFileSync(path.join(isoDest, "hooks.json"), "utf8"));
+      const strip = (h) => {
+        const copy = JSON.parse(JSON.stringify(h));
+        delete copy.hooks.PreToolUse[0].hooks[0].command;
+        return copy;
+      };
+      assert.deepEqual(strip(overlayHooks), strip(isoHooks));
+      assert.match(overlayHooks.hooks.PreToolUse[0].hooks[0].command, /^node /);
+      assert.match(isoHooks.hooks.PreToolUse[0].hooks[0].command, /^node /);
+
+      // The hook runtime script itself is byte-identical.
+      assert.equal(
+        fs.readFileSync(path.join(overlayDest, "solenta-hooks", "guardrail-hook.js"), "utf8"),
+        fs.readFileSync(path.join(isoDest, "solenta-hooks", "guardrail-hook.js"), "utf8"),
+      );
+
+      // Both persist a trust hash in config.toml (#1311).
+      const overlayCfg = fs.readFileSync(path.join(overlayDest, "config.toml"), "utf8");
+      const isoCfg = fs.readFileSync(path.join(isoDest, "config.toml"), "utf8");
+      assert.match(overlayCfg, /trusted_hash = "sha256:[0-9a-f]{64}"/);
+      assert.match(isoCfg, /trusted_hash = "sha256:[0-9a-f]{64}"/);
+
+      // Idempotent: a second turn on the isolated instance must not grow
+      // config.toml with a duplicate trust block.
+      await runner.startRun({ threadId: isoThread.id, prompt: "again" });
+      await waitFor(() => store.getThread(isoThread.id).status === "done");
+      const isoCfgAgain = fs.readFileSync(path.join(isoDest, "config.toml"), "utf8");
+      assert.equal(isoCfgAgain, isoCfg);
+    } finally {
+      delete process.env.CODER_CODEX_BIN;
+    }
+  });
+
+  it("isolated CLI home (#1808): guardrails off omits the hook, same as the overlay", async () => {
+    store.setSettings({
+      providerInstances: [
+        { id: "iso3", name: "solo3", provider: "codex", isolatedHome: true, env: {} },
+      ],
+    });
+    /** @type {any[]} */
+    const seen = [];
+    runner.stopAll();
+    const core = await import(
+      pathToFileURL(path.join(__dirname, "../../core/dist/index.js")).href
+    );
+    process.env.CODER_CODEX_BIN = process.execPath;
+    const prevGuardrails = process.env.CODER_GUARDRAILS;
+    process.env.CODER_GUARDRAILS = "off";
+    try {
+      runner = createRunner({
+        store,
+        core,
+        pushFn() {},
+        tickMs: 15,
+        userDataPath: tmpDir,
+        runCodexFn: (opts) => {
+          seen.push(opts);
+          setImmediate(() => opts.onExit({ code: 0, stderr: "" }));
+          return { kill() {}, respondJsonRpc() {}, respondJsonRpcError() {} };
+        },
+      });
+      const t = services.createThread(store, { projectId: project.id, title: "c3", provider: "codex:iso3" });
+      await runner.startRun({ threadId: t.id, prompt: "hi" });
+      await waitFor(() => seen.length === 1);
+      const { args, envExtra } = seen[0];
+      assert.equal(args.includes("features.hooks=true"), false, JSON.stringify(args));
+      assert.equal(
+        fs.existsSync(path.join(envExtra.CODEX_HOME, "hooks.json")),
+        false,
+        "guardrails off: no hook materials land in the isolated home either",
+      );
+    } finally {
+      delete process.env.CODER_CODEX_BIN;
+      if (prevGuardrails === undefined) delete process.env.CODER_GUARDRAILS;
+      else process.env.CODER_GUARDRAILS = prevGuardrails;
     }
   });
 

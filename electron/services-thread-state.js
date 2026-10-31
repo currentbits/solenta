@@ -755,16 +755,19 @@ function defaultClipboardWrite(text) {
  */
 /**
  * Only the config-dir var of a thread's named instance (#453): the rest of
- * its env may hold keys and must not land on the clipboard.
+ * its env may hold keys and must not land on the clipboard. `userDataPath`
+ * resolves an isolated instance's (#1808) own folder instead of the default
+ * home.
  * @param {import('./store').Store} store
  * @param {{ provider?: string, providerInstance?: string | null }} thread
+ * @param {string} [userDataPath]
  * @returns {Record<string, string> | undefined}
  */
-function instanceConfigEnv(store, thread) {
+function instanceConfigEnv(store, thread, userDataPath) {
   const { threadInstanceEnv, CONFIG_DIR_ENV } = require("./providerInstances.js");
   let env;
   try {
-    env = threadInstanceEnv(store.getSettings(), thread);
+    env = threadInstanceEnv(store.getSettings(), thread, { userDataPath });
   } catch {
     return undefined;
   }
@@ -781,7 +784,7 @@ function copyEjectCommand(store, thread, opts) {
     cwd,
     model: thread.model,
     sessionStartModel: thread.sessionStartModel,
-    configEnv: instanceConfigEnv(store, thread),
+    configEnv: instanceConfigEnv(store, thread, opts && opts.userDataPath),
   });
   const writeText =
     opts && typeof opts.writeText === "function"
@@ -827,6 +830,7 @@ function copyEjectCommand(store, thread, opts) {
  *   writeText?: (text: string) => void,
  *   env?: NodeJS.ProcessEnv,
  *   spawn?: typeof import('node:child_process').spawn,
+ *   userDataPath?: string,
  * } | null | undefined} [opts]
  */
 function setEjected(store, input, opts) {
@@ -847,7 +851,7 @@ function setEjected(store, input, opts) {
   } else {
     const { absorbSessionTurns } = require("./cli-sessions.js");
     // An instance thread's session lives in the instance's dir (#453).
-    const instanceHome = Object.values(instanceConfigEnv(store, next) || {})[0];
+    const instanceHome = Object.values(instanceConfigEnv(store, next, opts && opts.userDataPath) || {})[0];
     absorbSessionTurns(store, next, {
       home: (input && input.home) || instanceHome,
       cwd: specCwd(store, next),

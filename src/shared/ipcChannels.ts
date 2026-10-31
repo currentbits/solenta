@@ -36,6 +36,8 @@ export const PUSH_CHANNELS = [
   "pairing:consent",
   /** Create-PR step progress (commit/push/create/link), issue #1803. */
   "pr:progress",
+  /** Browser pane audio started/stopped, or its mute changed (#1807). */
+  "preview:audioChanged",
 ] as const;
 
 export type PushChannel = (typeof PUSH_CHANNELS)[number];
@@ -319,6 +321,10 @@ export const IPC_CHANNELS = [
   { ns: "issues", method: "list" },
   { ns: "issues", method: "setPlanStatus" },
   { ns: "issues", method: "create" },
+  { ns: "issues", method: "listOpenForMention" },
+  { ns: "issues", method: "listDiscussionsForMention" },
+  { ns: "issues", method: "detailForMention" },
+  { ns: "issues", method: "discussionDetailForMention" },
   { ns: "files", method: "list" },
   { ns: "files", method: "search" },
   { ns: "files", method: "image" },
@@ -374,6 +380,7 @@ export const IPC_CHANNELS = [
   { ns: "preview", method: "viewport" },
   { ns: "preview", method: "inspect" },
   { ns: "preview", method: "cancelInspect" },
+  { ns: "preview", method: "setAudioMuted" },
   { ns: "simulator", method: "capabilities" },
   { ns: "simulator", method: "selectDeveloperDir" },
   { ns: "simulator", method: "listDevices" },

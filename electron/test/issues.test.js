@@ -1150,3 +1150,196 @@ process.stdout.write("https://github.com/acme/demo/issues/5#issuecomment-gh\\n")
     assert.deepEqual(ghCalls(), ["issue comment 5 --body note"]);
   });
 });
+
+describe("@-mention issues/discussions (#1805)", () => {
+  const { setGithubApi } = require("../worktrees.js");
+  const {
+    listOpenIssuesForMention,
+    listOpenDiscussionsForMention,
+    issueDetailForMention,
+    discussionDetailForMention,
+  } = require("../issues.js");
+  let tmp;
+  let repo;
+  /** @type {Array<{ url: string, method: string, body: any }>} */
+  let calls;
+
+  async function fetchFn(url, init) {
+    const body = init.body ? JSON.parse(init.body) : null;
+    calls.push({ url, method: init.method, body });
+    const reply = (status, json) => ({ ok: status < 300, status, json: async () => json });
+    if (url.endsWith("/graphql")) {
+      const q = body.query;
+      const v = body.variables || {};
+      if (/discussions\(first/.test(q)) {
+        return reply(200, {
+          data: {
+            repository: {
+              hasDiscussionsEnabled: true,
+              discussions: {
+                nodes: [
+                  { number: 9, title: "How do checkpoints restore?" },
+                  { number: 3, title: "Roadmap feedback" },
+                ],
+              },
+            },
+          },
+        });
+      }
+      if (/discussion\(number:\$n\)/.test(q)) {
+        if (v.n !== 9) {
+          return reply(200, { data: { repository: { discussion: null } } });
+        }
+        return reply(200, {
+          data: {
+            repository: {
+              discussion: {
+                number: 9,
+                title: "How do checkpoints restore?",
+                body: "Asking for a friend.",
+                isAnswered: true,
+                category: { name: "Q&A" },
+                comments: {
+                  nodes: [{ author: { login: "octocat" }, body: "Use restoreCheckpoint." }],
+                },
+              },
+            },
+          },
+        });
+      }
+      return reply(200, { errors: [{ message: "unhandled" }] });
+    }
+    const p = new URL(url).pathname;
+    if (p === "/repos/acme/demo/issues" && init.method === "GET") {
+      return reply(200, [
+        { number: 5, title: "Fix it", state: "open" },
+        { number: 6, title: "A pull request", pull_request: { url: "x" } },
+        { number: 7, title: "Another issue", state: "open" },
+      ]);
+    }
+    if (p === "/repos/acme/demo/issues/5" && init.method === "GET") {
+      return reply(200, {
+        number: 5,
+        title: "Fix it",
+        state: "open",
+        labels: [{ name: "bug" }, { name: "plan:doing" }],
+        body: "Steps to reproduce.",
+      });
+    }
+    if (p === "/repos/acme/demo/issues/6" && init.method === "GET") {
+      return reply(200, { number: 6, title: "A pull request", pull_request: { url: "x" } });
+    }
+    if (p === "/repos/acme/demo/issues/5/comments" && init.method === "GET") {
+      return reply(200, [
+        { user: { login: "alice" }, body: "comment one" },
+        { user: { login: "bob" }, body: "comment two" },
+      ]);
+    }
+    return reply(404, { message: "Not Found" });
+  }
+
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), "coder-mention-issues-"));
+    repo = path.join(tmp, "repo");
+    fs.mkdirSync(repo);
+    git(repo, ["init", "-q"]);
+    git(repo, ["remote", "add", "origin", "https://github.com/acme/demo.git"]);
+    calls = [];
+    setGithubApi({ fetchFn, tokenFn: async () => "t0k" });
+  });
+
+  afterEach(async () => {
+    setGithubApi(null);
+    await rmTree(tmp);
+  });
+
+  it("lists open issues and drops pull requests mixed into the REST page", async () => {
+    const page = await listOpenIssuesForMention(repo);
+    assert.deepEqual(page, {
+      ok: true,
+      issues: [
+        { number: 5, title: "Fix it" },
+        { number: 7, title: "Another issue" },
+      ],
+    });
+    assert.ok(calls.some((c) => c.url.includes("/issues?")), "hit the REST issues page");
+  });
+
+  it("caches the list for ~60s, keyed per project", async () => {
+    let now = 1_000_000;
+    await listOpenIssuesForMention(repo, { now: () => now });
+    const firstCalls = calls.length;
+    now += 30_000;
+    await listOpenIssuesForMention(repo, { now: () => now });
+    assert.equal(calls.length, firstCalls, "cache hit skips the fetch");
+    now += 40_000;
+    await listOpenIssuesForMention(repo, { now: () => now });
+    assert.ok(calls.length > firstCalls, "cache expired, fetch again");
+  });
+
+  it("lists discussions when enabled; empty when the repo has them disabled", async () => {
+    const page = await listOpenDiscussionsForMention(repo, { now: () => 1_000 });
+    assert.deepEqual(page, {
+      ok: true,
+      discussions: [
+        { number: 9, title: "How do checkpoints restore?" },
+        { number: 3, title: "Roadmap feedback" },
+      ],
+    });
+
+    setGithubApi({
+      fetchFn: async (url, init) => {
+        calls.push({ url, method: init.method, body: null });
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ data: { repository: { hasDiscussionsEnabled: false } } }),
+        };
+      },
+      tokenFn: async () => "t0k",
+    });
+    // Past the ~60s TTL on the same project so this hits the new fetch, not
+    // the first call's cached rows.
+    const disabled = await listOpenDiscussionsForMention(repo, { now: () => 1_000 + 61_000 });
+    assert.deepEqual(disabled, { ok: true, discussions: [] });
+  });
+
+  it("fetches an issue's state/labels/body/last comments, and refuses a PR number", async () => {
+    const detail = await issueDetailForMention(repo, 5);
+    assert.deepEqual(detail, {
+      ok: true,
+      issue: {
+        number: 5,
+        title: "Fix it",
+        state: "OPEN",
+        labels: ["bug", "plan:doing"],
+        body: "Steps to reproduce.",
+        comments: [
+          { author: "alice", body: "comment one" },
+          { author: "bob", body: "comment two" },
+        ],
+      },
+    });
+
+    const prNumber = await issueDetailForMention(repo, 6);
+    assert.deepEqual(prNumber, { ok: false, reason: "issue not found" });
+  });
+
+  it("fetches a discussion's title/state/category/body/comments", async () => {
+    const detail = await discussionDetailForMention(repo, 9);
+    assert.deepEqual(detail, {
+      ok: true,
+      discussion: {
+        number: 9,
+        title: "How do checkpoints restore?",
+        state: "ANSWERED",
+        labels: ["Q&A"],
+        body: "Asking for a friend.",
+        comments: [{ author: "octocat", body: "Use restoreCheckpoint." }],
+      },
+    });
+
+    const missing = await discussionDetailForMention(repo, 404);
+    assert.equal(missing.ok, false);
+  });
+});

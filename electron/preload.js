@@ -18,6 +18,7 @@ const PUSH_CHANNELS = new Set([
   "clone:progress",
   "pairing:consent",
   "pr:progress",
+  "preview:audioChanged",
 ]);
 /* </ipc-push> */
 
@@ -368,6 +369,10 @@ const IPC_CHANNELS = Object.freeze([
   { ns: "issues", method: "list" },
   { ns: "issues", method: "setPlanStatus" },
   { ns: "issues", method: "create" },
+  { ns: "issues", method: "listOpenForMention" },
+  { ns: "issues", method: "listDiscussionsForMention" },
+  { ns: "issues", method: "detailForMention" },
+  { ns: "issues", method: "discussionDetailForMention" },
   { ns: "files", method: "list" },
   { ns: "files", method: "search" },
   { ns: "files", method: "image" },
@@ -423,6 +428,7 @@ const IPC_CHANNELS = Object.freeze([
   { ns: "preview", method: "viewport" },
   { ns: "preview", method: "inspect" },
   { ns: "preview", method: "cancelInspect" },
+  { ns: "preview", method: "setAudioMuted" },
   { ns: "simulator", method: "capabilities" },
   { ns: "simulator", method: "selectDeveloperDir" },
   { ns: "simulator", method: "listDevices" },

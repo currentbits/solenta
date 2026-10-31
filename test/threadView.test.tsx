@@ -604,6 +604,36 @@ describe("ThreadView message roles", () => {
     );
   });
 
+  it("highlights a leading recognized /command in a sent message (#1805)", () => {
+    const html = render({
+      detail: detail({
+        messages: [
+          msg({ id: "u1", role: "user", text: "/compact ship it", createdAt: 10 }),
+          msg({ id: "u2", role: "user", text: "/foo bar", createdAt: 20 }),
+        ],
+      }),
+    });
+    // The recognized token is its own span; the rest of the text follows as
+    // a plain sibling, so the two never sit in one contiguous string.
+    const cmdIdx = html.indexOf("/compact");
+    assert.ok(cmdIdx >= 0, "the /compact token must render");
+    assert.match(
+      html.slice(cmdIdx - 80, cmdIdx + 40),
+      /data-slash-command=""[^>]*>\/compact<\/span>/,
+      "expected /compact inside a slash-command span",
+    );
+    assert.ok(html.includes("ship it"), "the rest of the message still renders");
+
+    // An unrecognized /foo is never split out of its sentence.
+    const unknownIdx = html.indexOf("/foo bar");
+    assert.ok(unknownIdx >= 0, "/foo bar renders as one plain string");
+    assert.doesNotMatch(
+      html.slice(unknownIdx - 80, unknownIdx),
+      /data-slash-command/,
+      "an unrecognized /foo must not be highlighted",
+    );
+  });
+
   it("renders event messages as event lines, not as cards or user bubbles", () => {
     const html = render({
       detail: detail({
