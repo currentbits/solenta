@@ -11,7 +11,7 @@
 import assert from "node:assert/strict";
 import { describe, it, afterEach } from "node:test";
 import { act, cloneElement, useState } from "react";
-import { mount, unmountAll } from "./support/dom.ts";
+import { inAct, mount, unmountAll } from "./support/dom.ts";
 import { createFakeCoder, installFakeCoder } from "./support/fakeCoder.ts";
 import { SettingsModal, type SettingsPane } from "../src/components/SettingsModal";
 import type { MemoryProjectToolsApi } from "../src/components/MemoryTab";
@@ -1442,6 +1442,59 @@ describe("SettingsModal webhook (issue #167)", () => {
       m.query('[data-settings-nav="general"]'),
       "General matches slack",
     );
+    m.unmount();
+  });
+});
+
+describe("SettingsModal Find a setting results (#1793)", () => {
+  afterEach(() => unmountAll());
+
+  it("lists individual settings as Pane › Setting across at least three panes", async () => {
+    const m = await mount(modal());
+    const search = m.query("[data-settings-search]") as HTMLInputElement;
+    await m.type(search, "model");
+    const results = m.queryAll("[data-setting-match]");
+    assert.ok(results.length > 0, "query must surface setting matches");
+    const panes = new Set(
+      results.map((r) => r.getAttribute("data-setting-match")?.split(":")[0]),
+    );
+    assert.ok(
+      panes.size >= 3,
+      `expected matches from at least 3 panes, got ${[...panes].join(", ")}`,
+    );
+    // Rendered as "Pane › Setting".
+    const first = results[0]!;
+    assert.match(first.textContent || "", /›/, "pane › setting format");
+    m.unmount();
+  });
+
+  it("choosing a result switches pane, scrolls to and flashes the setting", async () => {
+    const m = await mount(modal());
+    const search = m.query("[data-settings-search]") as HTMLInputElement;
+    await m.type(search, "daily budget");
+    const match = m.query('[data-setting-match^="spending:"]');
+    assert.ok(match, "Daily budget result under Spending");
+    await m.click(match);
+    assert.equal(
+      m.query("[data-settings-pane]")?.getAttribute("data-settings-pane"),
+      "spending",
+      "picking a result switches to its pane",
+    );
+    // The jump runs off a requestAnimationFrame; let it fire.
+    await inAct(async () => {
+      await new Promise((r) => setTimeout(r, 30));
+    });
+    await m.flush();
+    const input = m.query("#daily-budget");
+    assert.ok(input, "daily budget field renders on Spending");
+    const row = input!.closest(".field");
+    assert.ok(row, "field wrapper found");
+    assert.ok(
+      (row!.getAttribute("class") || "").includes("settingFlash"),
+      "the row briefly flashes",
+    );
+    // The search collapses once a result is chosen.
+    assert.equal((m.query("[data-settings-search]") as HTMLInputElement).value, "");
     m.unmount();
   });
 });
