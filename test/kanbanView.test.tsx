@@ -3,11 +3,18 @@
  * Run: npm run test:renderer
  */
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { afterEach, describe, it } from "node:test";
 import * as React from "react";
 import { mount } from "./support/dom.ts";
 import { KanbanView } from "../src/components/KanbanView";
+import {
+  clearPrHoverCache,
+  PrHoverFetchContext,
+  type PrDetailFetcher,
+} from "../src/components/PrHoverCard";
 import type { ProjectInfo, ProviderInfo, ThreadInfo } from "../src/shared/ipc";
+
+afterEach(() => clearPrHoverCache());
 
 const project: ProjectInfo = {
   id: "p1",
@@ -282,6 +289,48 @@ describe("KanbanView", () => {
     assert.ok(m.text().includes("No threads on the board"));
     assert.ok(m.text().includes("New thread"));
     assert.equal(m.query("[data-kanban-column]"), null);
+    m.unmount();
+  });
+
+  it("passes the project path through so a card's PR badge is a hover target (#1796)", async () => {
+    const prDetail: PrDetailFetcher = async () => ({
+      ok: true,
+      pr: {
+        number: 12,
+        title: "Ship it",
+        body: "",
+        url: "https://github.com/acme/ledger/pull/12",
+        state: "OPEN",
+        isDraft: false,
+        headRefName: "feat/x",
+        comments: [],
+      },
+    });
+    const m = await mount(
+      <PrHoverFetchContext.Provider value={prDetail}>
+        <KanbanView
+          threads={[
+            thread({
+              id: "withpr",
+              title: "has a pr",
+              status: "idle",
+              prNumber: 12,
+              prUrl: "https://github.com/acme/ledger/pull/12",
+              prState: "OPEN",
+            }),
+          ]}
+          projects={[project]}
+          providers={providers}
+          onSelectThread={() => {}}
+        />
+      </PrHoverFetchContext.Provider>,
+    );
+    const badge = m.query("[data-pr-badge]");
+    assert.ok(badge, "PR badge renders");
+    assert.ok(
+      badge!.closest("[data-pr-hover-target]"),
+      "the PR badge is wrapped in a hover target now that KanbanView passes projectPath",
+    );
     m.unmount();
   });
 });

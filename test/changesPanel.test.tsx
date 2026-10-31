@@ -836,6 +836,58 @@ describe("Git pane Tree view (#1772)", () => {
   });
 });
 
+const MULTI_DIR_DIFF: DiffResult = {
+  files: [
+    { path: "dirA/one.ts", status: "M", additions: 1, deletions: 0 },
+    { path: "dirB/two.ts", status: "M", additions: 1, deletions: 0 },
+    { path: "README.md", status: "M", additions: 1, deletions: 0 },
+  ],
+  patch: "",
+  truncated: false,
+};
+
+describe("Git pane expand/collapse all (#1796)", () => {
+  it("hidden in List mode; toggles every directory and flips its own label in Tree mode", async () => {
+    const { m } = mountPanel({ diff: MULTI_DIR_DIFF });
+    const view = await m;
+    await view.flush();
+
+    assert.equal(view.query("[data-tree-collapse-all]"), null, "hidden in List mode");
+
+    await view.click(view.query("[data-tree-toggle='tree']"));
+    await view.flush();
+    const btn = view.query("[data-tree-collapse-all]");
+    assert.ok(btn, "shown in Tree mode");
+    assert.equal(btn!.textContent, "Collapse all", "starts as Collapse all: nothing collapsed yet");
+
+    await view.click(btn!);
+    await view.flush();
+    assert.equal(
+      view.query('[data-dir-row="dirA"]')?.getAttribute("aria-expanded"),
+      "false",
+    );
+    assert.equal(
+      view.query('[data-dir-row="dirB"]')?.getAttribute("aria-expanded"),
+      "false",
+    );
+    assert.deepEqual(
+      view.queryAll("[data-file-row]").map((el) => el.getAttribute("data-file-path")),
+      ["README.md"],
+      "only the ungrouped file remains visible",
+    );
+    assert.equal(view.query("[data-tree-collapse-all]")?.textContent, "Expand all");
+
+    await view.click(view.query("[data-tree-collapse-all]")!);
+    await view.flush();
+    assert.equal(
+      view.query('[data-dir-row="dirA"]')?.getAttribute("aria-expanded"),
+      "true",
+    );
+    assert.equal(view.queryAll("[data-file-row]").length, 3, "every file visible again");
+    assert.equal(view.query("[data-tree-collapse-all]")?.textContent, "Collapse all");
+  });
+});
+
 describe("Git pane +/- total (#1772)", () => {
   it("sums +/- across the visible files and respects Hide tests", async () => {
     const diff: DiffResult = {

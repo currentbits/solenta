@@ -54,11 +54,17 @@ import {
 import {
   FileCollapseHeader,
   TestFilesBar,
+  TreeCollapseAllButton,
   TreeListToggle,
   filterTestFiles,
   fileCollapsed,
 } from "../TurnDiffPanel";
-import { buildFileTree, type FileTreeDir, type FileTreeNode } from "../../fileTree";
+import {
+  allDirPaths,
+  buildFileTree,
+  type FileTreeDir,
+  type FileTreeNode,
+} from "../../fileTree";
 import { blastRadiusTitle, isCiWorkflowPath } from "../../blastRadius";
 import { middleTruncate } from "../../format";
 import {
@@ -1063,6 +1069,8 @@ export const ChangesPanel = memo(function ChangesPanel({
   }, [testFilter]);
   /** Tree view (#1772): built from the same visible files as the flat list. */
   const tree = useMemo(() => buildFileTree(testFilter.shown), [testFilter]);
+  /** Expand/collapse all (#1796): every directory path in the current tree. */
+  const allDirs = useMemo(() => allDirPaths(tree), [tree]);
 
   useEffect(() => {
     if (!diff || diff.files.length === 0) {
@@ -1613,6 +1621,13 @@ export const ChangesPanel = memo(function ChangesPanel({
                   <span className={styles.dels}>−{totals.deletions}</span>
                 </span>
                 <TreeListToggle />
+                {treeView ? (
+                  <TreeCollapseAllButton
+                    allDirs={allDirs}
+                    collapsedDirs={collapsedDirs}
+                    onSetCollapsed={setCollapsedDirs}
+                  />
+                ) : null}
               </div>
               <TestFilesBar {...testFilter} />
               <ReviewItineraryView

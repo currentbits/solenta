@@ -6213,6 +6213,110 @@ describe("ThreadView Focus / Summary mode (issue #461)", () => {
   });
 });
 
+describe("ThreadView Focus mode folds interim replies in a settled turn (#1796)", () => {
+  const threeReplies = () =>
+    detail({
+      messages: [
+        msg({ id: "u1", role: "user", text: "fix the pane", createdAt: 1 }),
+        msg({
+          id: "t1",
+          role: "tool",
+          text: "Read: foo.ts",
+          createdAt: 2,
+          runId: "run-1",
+          tool: {
+            id: "tc1",
+            name: "Read",
+            input: "x",
+            output: "export {}",
+            done: true,
+            isError: false,
+          },
+        }),
+        msg({
+          id: "a1",
+          role: "assistant",
+          text: "REPLY_ONE_EARLY",
+          createdAt: 3,
+          runId: "run-1",
+        }),
+        msg({
+          id: "a2",
+          role: "assistant",
+          text: "REPLY_TWO_MIDDLE",
+          createdAt: 4,
+          runId: "run-1",
+        }),
+        msg({
+          id: "a3",
+          role: "assistant",
+          text: "REPLY_THREE_FINAL",
+          createdAt: 5,
+          runId: "run-1",
+        }),
+      ],
+      thread: thread({ status: "idle" }),
+    });
+
+  it("shows only the last reply plus the fold; expanding reveals all in order", async () => {
+    setTranscriptViewMode("summary");
+    const m = await mount(view({ detail: threeReplies() }));
+    const row = m.query("[data-focus-turn='u1']");
+    assert.ok(row, "one focus row for the turn");
+    assert.equal(row!.textContent, "Show 2 earlier replies and tool activity");
+    assert.ok(
+      !m.text().includes("REPLY_ONE_EARLY"),
+      "first reply folded",
+    );
+    assert.ok(
+      !m.text().includes("REPLY_TWO_MIDDLE"),
+      "second reply folded",
+    );
+    assert.ok(
+      m.text().includes("REPLY_THREE_FINAL"),
+      "last reply stays visible",
+    );
+
+    await m.click(row!);
+    assert.ok(m.text().includes("REPLY_ONE_EARLY"), "expand reveals the first reply");
+    assert.ok(m.text().includes("REPLY_TWO_MIDDLE"), "expand reveals the second reply");
+    assert.ok(m.text().includes("REPLY_THREE_FINAL"), "and the last reply still shows");
+    const bodyText = m.text();
+    assert.ok(
+      bodyText.indexOf("REPLY_ONE_EARLY") < bodyText.indexOf("REPLY_TWO_MIDDLE") &&
+        bodyText.indexOf("REPLY_TWO_MIDDLE") < bodyText.indexOf("REPLY_THREE_FINAL"),
+      "expanded replies render in original order",
+    );
+    m.unmount();
+  });
+
+  it("never folds the live turn's replies", async () => {
+    setTranscriptViewMode("summary");
+    const live = threeReplies();
+    live.thread = thread({ status: "working", runStartedAt: 1 });
+    const m = await mount(view({ detail: live }));
+    assert.equal(
+      m.query("[data-focus-turn]"),
+      null,
+      "live turn does not collapse behind a fold",
+    );
+    assert.ok(m.text().includes("REPLY_ONE_EARLY"));
+    assert.ok(m.text().includes("REPLY_TWO_MIDDLE"));
+    assert.ok(m.text().includes("REPLY_THREE_FINAL"));
+    m.unmount();
+  });
+
+  it("Full mode (Normal) never folds replies", async () => {
+    setTranscriptViewMode("normal");
+    const m = await mount(view({ detail: threeReplies() }));
+    assert.equal(m.query("[data-focus-turn]"), null, "no fold row outside Summary");
+    assert.ok(m.text().includes("REPLY_ONE_EARLY"));
+    assert.ok(m.text().includes("REPLY_TWO_MIDDLE"));
+    assert.ok(m.text().includes("REPLY_THREE_FINAL"));
+    m.unmount();
+  });
+});
+
 describe("ThreadView queued follow-up wrap (issue #903)", () => {
   const longQueued =
     "Look at https://github.com/currentbits/solenta/issues/896 after the overflow fix. The second sentence is here so a one-line ellipsis cannot hide that this thought is distinct from the next queued note.";
