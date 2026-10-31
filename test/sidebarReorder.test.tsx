@@ -11,6 +11,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { inAct, mount } from "./support/dom";
 import { FRESH, sidebar, thread } from "./support/sidebarFixtures";
+import { THREAD_DRAG_MIME } from "../src/dropFiles";
 
 /** A DragEvent-shaped Event: jsdom's own DragEvent has no dataTransfer. */
 function dragEvent(type: string, clientY = 0): Event {
@@ -146,6 +147,24 @@ describe("sidebar drag/keyboard reorder (#1769)", () => {
       "false",
       "renaming disarms the drag",
     );
+    m.unmount();
+  });
+
+  it("dragstart still sets the thread MIME the composer drop reads (#1810)", async () => {
+    const threads = [thread({ id: "a" })];
+    const m = await mount(sidebar(threads));
+    const button = m.query('[data-thread-card="a"] button')!;
+    const setCalls: [string, string][] = [];
+    const ev = new window.Event("dragstart", { bubbles: true, cancelable: true });
+    Object.defineProperty(ev, "dataTransfer", {
+      value: {
+        setData: (type: string, value: string) => setCalls.push([type, value]),
+        effectAllowed: "",
+        dropEffect: "",
+      },
+    });
+    await inAct(() => button.dispatchEvent(ev));
+    assert.deepEqual(setCalls, [[THREAD_DRAG_MIME, "a"]]);
     m.unmount();
   });
 });

@@ -5,7 +5,9 @@ import {
   foldersFromCapturedItems,
   isFileDrag,
   isMentionPathDrag,
+  isThreadDrag,
   MENTION_PATH_MIME,
+  THREAD_DRAG_MIME,
   type DroppedFolder,
 } from "./dropFiles";
 
@@ -26,6 +28,12 @@ export function useFileDrop(
      * through to onFiles.
      */
     onMentionPath?: (path: string) => void;
+    /**
+     * Sidebar thread row drop (#1810): a thread id, handled as a thread
+     * context chip rather than an attachment or @mention. Checked before
+     * the OS-file path, same as onMentionPath.
+     */
+    onThreadDrop?: (threadId: string) => void;
   },
 ): boolean {
   const [dragging, setDragging] = useState(false);
@@ -35,6 +43,8 @@ export function useFileDrop(
   onDraggingRef.current = opts.onDraggingChange;
   const onMentionPathRef = useRef(opts.onMentionPath);
   onMentionPathRef.current = opts.onMentionPath;
+  const onThreadDropRef = useRef(opts.onThreadDrop);
+  onThreadDropRef.current = opts.onThreadDrop;
 
   useEffect(() => {
     const el = targetRef.current;
@@ -50,6 +60,12 @@ export function useFileDrop(
         e.preventDefault();
         return;
       }
+      if (isThreadDrag(e.dataTransfer)) {
+        if (!onThreadDropRef.current) return;
+        e.preventDefault();
+        setHover(true);
+        return;
+      }
       if (!isFileDrag(e.dataTransfer)) return;
       e.preventDefault();
       setHover(true);
@@ -60,12 +76,25 @@ export function useFileDrop(
         if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
         return;
       }
+      if (isThreadDrag(e.dataTransfer)) {
+        if (!onThreadDropRef.current) return;
+        e.preventDefault();
+        if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+        return;
+      }
       if (!isFileDrag(e.dataTransfer)) return;
       e.preventDefault();
       if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
     };
     const onDragLeave = (e: DragEvent) => {
       if (isMentionPathDrag(e.dataTransfer)) return;
+      if (isThreadDrag(e.dataTransfer)) {
+        if (!onThreadDropRef.current) return;
+        const next = e.relatedTarget;
+        if (next instanceof Node && el.contains(next)) return;
+        setHover(false);
+        return;
+      }
       if (!isFileDrag(e.dataTransfer)) return;
       const next = e.relatedTarget;
       if (next instanceof Node && el.contains(next)) return;
@@ -77,6 +106,15 @@ export function useFileDrop(
         e.preventDefault();
         e.stopPropagation();
         if (path) onMentionPathRef.current?.(path);
+        return;
+      }
+      if (isThreadDrag(e.dataTransfer)) {
+        const threadId = e.dataTransfer?.getData(THREAD_DRAG_MIME) ?? "";
+        if (!onThreadDropRef.current) return;
+        e.preventDefault();
+        e.stopPropagation();
+        setHover(false);
+        if (threadId) onThreadDropRef.current(threadId);
         return;
       }
       const captured = captureDropItems(e.dataTransfer);

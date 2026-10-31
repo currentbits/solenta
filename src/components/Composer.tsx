@@ -2027,6 +2027,30 @@ export const Composer = memo(function Composer({
     [writeDraft, closeMention],
   );
 
+  /**
+   * Sidebar thread row dropped on the composer (#1810): add the same
+   * thread context chip the @-mention menu's thread row would, skipping
+   * the composer's own thread and one already chipped.
+   */
+  const insertThreadChip = useCallback(
+    (droppedId: string) => {
+      if (droppedId === threadId) return;
+      if (contextChips.some((c) => c.kind === "thread" && c.threadId === droppedId)) {
+        return;
+      }
+      const title = mentionThreads?.find((t) => t.id === droppedId)?.title ?? droppedId;
+      const id =
+        typeof crypto !== "undefined" && crypto.randomUUID
+          ? crypto.randomUUID()
+          : `chip-${Date.now()}`;
+      setContextChips(threadId, (prev) => [
+        ...prev,
+        { id, kind: "thread", threadId: droppedId, title },
+      ]);
+    },
+    [threadId, contextChips, mentionThreads],
+  );
+
   const composerRef = useRef<HTMLDivElement>(null);
   const dropTargetRef = dropHostRef ?? composerRef;
   const fileDrag = useFileDrop(dropTargetRef, {
@@ -2037,6 +2061,7 @@ export const Composer = memo(function Composer({
     onFiles: acceptDroppedFiles,
     onDraggingChange: onFileDragChange,
     onMentionPath: insertMentionPath,
+    onThreadDrop: insertThreadChip,
   });
 
   const pickMode = async (mode: PermissionMode) => {
