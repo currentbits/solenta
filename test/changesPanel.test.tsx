@@ -13,6 +13,7 @@ import { revealFileLabel } from "../src/components/thread/ChangesPanel";
 import { setDiffHideTests, setDiffTreeView } from "../src/uiPrefs";
 import type {
   DiffResult,
+  PrProgressPush,
   ProjectInfo,
   ProviderInfo,
   ThreadDetail,
@@ -144,6 +145,8 @@ interface Spies {
   diffLoads: number;
   comments: string[];
   prs: Array<{ title: string; body?: string }>;
+  /** requestId the most recent onCreatePr call was minted with (#1803). */
+  lastPrRequestId: string | null;
 }
 
 function mountPanel(opts?: {
@@ -151,8 +154,15 @@ function mountPanel(opts?: {
   working?: boolean;
   diff?: DiffResult;
   /** Wire onCreatePr (shows Commit & PR); reject with this message when set. */
-  pr?: { fail?: string };
-}): { m: Promise<Mounted>; spies: Spies } {
+  pr?: { fail?: string; pending?: boolean };
+}): {
+  m: Promise<Mounted>;
+  spies: Spies;
+  /** Deliver one "pr:progress" push to subscribers (#1803). */
+  pushPrProgress: (push: PrProgressPush) => void;
+  /** Resolve or reject a `pr: { pending: true }` createPr call. */
+  settlePr: (err?: string) => void;
+} {
   const spies: Spies = {
     commits: [],
     reverts: [],
@@ -161,7 +171,14 @@ function mountPanel(opts?: {
     diffLoads: 0,
     comments: [],
     prs: [],
+    lastPrRequestId: null,
   };
+  const prListeners = new Set<(push: PrProgressPush) => void>();
+  const pushPrProgress = (push: PrProgressPush) => {
+    for (const cb of prListeners) cb(push);
+  };
+  let settlePrFn: ((err?: string) => void) | null = null;
+  const settlePr = (err?: string) => settlePrFn?.(err);
   const t = thread();
   if (opts?.archived) t.archived = true;
   if (opts?.working) t.status = "working";
@@ -213,6 +230,21 @@ function mountPanel(opts?: {
         opts?.pr
           ? async (input) => {
               spies.prs.push({ title: input.title, body: input.body });
+              spies.lastPrRequestId = input.requestId ?? null;
+              if (opts.pr?.pending) {
+                return new Promise((resolve, reject) => {
+                  settlePrFn = (err) =>
+                    err
+                      ? reject(new Error(err))
+                      : resolve({
+                          number: 7,
+                          url: "https://github.com/o/r/pull/7",
+                          state: "OPEN",
+                          branch: "coder/commit-flow",
+                          created: true,
+                        });
+                });
+              }
               if (opts.pr?.fail) throw new Error(opts.pr.fail);
               return {
                 number: 7,
@@ -224,9 +256,13 @@ function mountPanel(opts?: {
             }
           : undefined
       }
+      onPrProgress={(cb) => {
+        prListeners.add(cb);
+        return () => prListeners.delete(cb);
+      }}
     />,
   );
-  return { m, spies };
+  return { m, spies, pushPrProgress, settlePr };
 }
 
 /** The Changes panel footer — not the header next-action "Commit N files". */
@@ -298,6 +334,44 @@ describe("ChangesPanel commit flow", () => {
       view.container.textContent || "",
       /Committed, but the PR failed: gh is not authenticated/,
     );
+  });
+
+  it("shows push/create/link progress during Commit & PR, and the failed step on error (#1803)", async () => {
+    const { m, spies, pushPrProgress, settlePr } = mountPanel({
+      pr: { pending: true },
+    });
+    const view = await m;
+    await view.click(view.container.querySelector("[data-commit-and-pr]"));
+
+    const requestId = spies.lastPrRequestId;
+    assert.ok(requestId, "Commit & PR must mint a requestId");
+
+    await inAct(() => {
+      pushPrProgress({ requestId: requestId!, step: "commit", state: "skipped" });
+      pushPrProgress({ requestId: requestId!, step: "push", state: "start" });
+    });
+    assert.equal(
+      view.container
+        .querySelector('[data-pr-step="push"]')
+        ?.getAttribute("data-pr-step-state"),
+      "active",
+    );
+
+    await inAct(() => {
+      pushPrProgress({
+        requestId: requestId!,
+        step: "push",
+        state: "error",
+        detail: "git push timed out after 30s",
+      });
+    });
+    const pushRow = view.container.querySelector('[data-pr-step="push"]');
+    assert.equal(pushRow?.getAttribute("data-pr-step-state"), "error");
+    assert.match(pushRow?.textContent ?? "", /git push timed out after 30s/);
+
+    await inAct(async () => {
+      settlePr("git push timed out after 30s");
+    });
   });
 
   it("no Commit & PR without a PR path", async () => {

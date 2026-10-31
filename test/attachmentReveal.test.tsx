@@ -135,3 +135,98 @@ describe("attachment chip context menu (#1794)", () => {
     });
   });
 });
+
+/** Stub fetch + ClipboardItem + navigator.clipboard.write (issue #1801). */
+function withFakeImageClipboard<T>(
+  run: (calls: { fetched: string[]; copied: unknown[] }) => Promise<T>,
+): Promise<T> {
+  const calls = { fetched: [] as string[], copied: [] as unknown[] };
+  const prevFetch = globalThis.fetch;
+  const prevClipboardItem = (globalThis as { ClipboardItem?: unknown })
+    .ClipboardItem;
+  const prevClipboard = (navigator as { clipboard?: unknown }).clipboard;
+  (globalThis as { fetch: typeof fetch }).fetch = (async (src: string) => {
+    calls.fetched.push(src);
+    return { ok: true, blob: async () => ({ type: "image/png" }) };
+  }) as typeof fetch;
+  (globalThis as { ClipboardItem?: unknown }).ClipboardItem = class {
+    constructor(public data: unknown) {}
+  };
+  Object.defineProperty(navigator, "clipboard", {
+    value: {
+      write: async (items: unknown[]) => {
+        calls.copied.push(...items);
+      },
+    },
+    configurable: true,
+  });
+  return run(calls).finally(() => {
+    globalThis.fetch = prevFetch;
+    (globalThis as { ClipboardItem?: unknown }).ClipboardItem =
+      prevClipboardItem;
+    Object.defineProperty(navigator, "clipboard", {
+      value: prevClipboard,
+      configurable: true,
+    });
+  });
+}
+
+const withImageAttachment: ChatMessage = {
+  id: "u2",
+  role: "user",
+  text: "see this screenshot",
+  createdAt: 10,
+  runId: null,
+  attachments: [
+    { kind: "image", path: "/Users/t/project/shot.png", name: "shot.png" },
+  ],
+};
+
+describe("attachment chip Copy Image (#1801)", () => {
+  it("an image chip offers Copy Image alongside Open/Reveal and copies the resolved thumb", async () => {
+    await withFakeShell(async () => {
+      await withFakeImageClipboard(async (clip) => {
+        const dataUrl = "data:image/png;base64,ZZZZ";
+        const view = await mount(
+          <MessageBlock
+            message={withImageAttachment}
+            autoExpandTool={false}
+            threadId="t1"
+            onLoadAttachmentImage={async () => dataUrl}
+          />,
+        );
+        await view.flush();
+        const chip = view.query('[data-attachment-kind="image"]');
+        assert.ok(chip, "image chip rendered");
+        await rightClick(view, chip!);
+        const copyItem = document.querySelector(
+          "[data-copy-image]",
+        ) as HTMLElement | null;
+        assert.ok(copyItem, "Copy Image present alongside Open/Reveal");
+        assert.ok(
+          document.querySelector("[data-attachment-open]"),
+          "Open still present",
+        );
+        await view.click(copyItem);
+        await view.flush();
+        assert.deepEqual(clip.fetched, [dataUrl]);
+        assert.equal(clip.copied.length, 1);
+      });
+    });
+  });
+
+  it("no Copy Image on a non-image chip", async () => {
+    await withFakeShell(async () => {
+      const view = await mount(
+        <MessageBlock
+          message={withAttachment}
+          autoExpandTool={false}
+          threadId="t1"
+        />,
+      );
+      const chip = view.query('[data-attachment-kind="file"]');
+      await rightClick(view, chip!);
+      assert.equal(document.querySelector("[data-copy-image]"), null);
+    });
+  });
+});

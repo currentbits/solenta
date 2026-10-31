@@ -67,6 +67,8 @@ import {
 } from "../../fileTree";
 import { blastRadiusTitle, isCiWorkflowPath } from "../../blastRadius";
 import { middleTruncate } from "../../format";
+import type { PrSteps } from "../../prProgress";
+import { PrStepList } from "../PrStepList";
 import {
   buildReviewItinerary,
   hunkPatch,
@@ -738,6 +740,7 @@ export const ChangesPanel = memo(function ChangesPanel({
   onRevertHunk,
   onSuggest,
   onCommitAndPr,
+  prSteps,
   onComment,
 }: {
   open: boolean;
@@ -777,6 +780,12 @@ export const ChangesPanel = memo(function ChangesPanel({
    * one-click Commit & PR button; absent = no forge PR path here.
    */
   onCommitAndPr?: () => Promise<unknown>;
+  /**
+   * Committing/Pushing/Creating PR/Linking progress for an in-flight
+   * Commit & PR (issue #1803). Shown instead of the plain "Opening PR…"
+   * label while present.
+   */
+  prSteps?: PrSteps | null;
   /**
    * Hand a line or range comment to the composer draft (issue #162, #1493).
    * Comments batch there and go out with the next send, not one run each.
@@ -1858,6 +1867,7 @@ export const ChangesPanel = memo(function ChangesPanel({
                 </button>
               ) : null}
             </div>
+            {prSteps ? <PrStepList steps={prSteps} /> : null}
           </div>
           ) : null}
         </>

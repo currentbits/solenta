@@ -571,6 +571,66 @@ describe("update hint rows (issue #1529)", () => {
   });
 });
 
+describe("Settings favourites group (#1802)", () => {
+  const starred: ProviderInfo[] = [
+    provider({
+      modelInfo: [
+        { id: "claude-opus-5", label: "Opus 5", description: "Deepest reasoning", vendor: "Anthropic", favorite: true },
+        { id: "claude-sonnet-5", label: "Sonnet 5", description: "Everyday complex work", vendor: "Anthropic", recommended: true },
+      ],
+    }),
+    {
+      id: "codex",
+      name: "Codex",
+      available: true,
+      supportsResume: false,
+      models: ["codex-fast"],
+      modelInfo: [{ id: "codex-fast", label: "Codex Fast", description: "", vendor: "OpenAI", favorite: true }],
+      efforts: [],
+    },
+  ];
+  const base = {
+    providers: starred,
+    currentProviderId: "claude",
+    sessionLocked: false,
+    profiles: [],
+    query: "",
+    favourites: null,
+  };
+
+  it("groups starred models from every provider at the top, once", () => {
+    const rows = buildPickerRows(base);
+    assert.equal(rows[0].id, "claude-opus-5");
+    assert.equal(rows[0].groupHeading, "Favorites");
+    assert.equal(rows[1].id, "codex-fast");
+    assert.equal(rows[1].groupHeading, null, "same Favorites group, no per-provider heading");
+    // Not duplicated further down the list.
+    assert.equal(rows.filter((r) => r.id === "claude-opus-5").length, 1);
+    assert.equal(rows.filter((r) => r.id === "codex-fast").length, 1);
+    // The rest of the list still follows, headed by its own provider again.
+    assert.equal(rows.some((r) => r.groupHeading === "Claude Code"), true);
+    const sonnetIndex = rows.findIndex((r) => r.id === "claude-sonnet-5");
+    assert.ok(sonnetIndex > 1, "unstarred models trail the Favorites group");
+  });
+
+  it("search still filters the favourites group", () => {
+    const rows = buildPickerRows({ ...base, query: "fast" });
+    assert.equal(rows[0].id, "codex-fast");
+    assert.equal(rows[0].groupHeading, "Favorites");
+    assert.equal(rows.filter((r) => r.providerId === "codex").length, 1);
+  });
+
+  it("does not add a second Favorites header inside the local favouritesOnly view", () => {
+    const rows = buildPickerRows({ ...base, favourites: new Set(["claude:claude-opus-5"]) });
+    assert.equal(rows.every((r) => r.groupHeading !== "Favorites"), true);
+  });
+
+  it("omits the group when nothing is starred", () => {
+    const rows = buildPickerRows({ ...base, providers: MULTI });
+    assert.equal(rows.some((r) => r.groupHeading === "Favorites"), false);
+  });
+});
+
 describe("Auto row (#246)", () => {
   const base = {
     providers: MULTI,

@@ -17,6 +17,7 @@ const PUSH_CHANNELS = new Set([
   "terminal:data",
   "clone:progress",
   "pairing:consent",
+  "pr:progress",
 ]);
 /* </ipc-push> */
 

@@ -1389,6 +1389,11 @@ function applyModelPrefs(p, pref) {
   }
   const fav = new Set(pref.favorites);
   if (fav.size === 0) return;
+  // Marked here (not just sorted) so the composer picker can pull these
+  // into its own cross-provider "Favorites" group (#1802).
+  for (const info of p.modelInfo) {
+    if (fav.has(info.id)) info.favorite = true;
+  }
   const rank = (/** @type {string} */ id) => (fav.has(id) ? 0 : 1);
   // Array#sort is stable, so the catalog order holds within each group.
   p.models.sort((a, b) => rank(a) - rank(b));

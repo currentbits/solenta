@@ -25,6 +25,13 @@ export type PaletteItem = {
   /** Path (file/content) or action/thread/project id payload. */
   target?: string;
   score: number;
+  /**
+   * Thread/message rows only (#1800): the sidebar's status word and tone
+   * (statusLabelFor, same vocabulary/colours as ThreadCard), so a row shows
+   * Working/Waiting/Failed/etc without reinventing the status logic here.
+   */
+  statusText?: string;
+  statusTone?: string;
 };
 
 export type PaletteAction = {

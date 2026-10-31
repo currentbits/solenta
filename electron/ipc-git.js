@@ -231,6 +231,12 @@ module.exports = {
     });
   },
   "git:createPr": async (ctx, input) => {
+    // Progress stream (issue #1803): a caller-minted requestId tags each
+    // "pr:progress" push, same pattern as clone:progress (projectClone.js).
+    const requestId = typeof input.requestId === "string" ? input.requestId : "";
+    const onStep = requestId
+      ? (step) => ctx.broadcast("pr:progress", { requestId, ...step })
+      : undefined;
     const pr = await createPr({
       store: ctx.store,
       threadId: input.threadId,
@@ -239,6 +245,7 @@ module.exports = {
       draft: input.draft,
       allowOversize: Boolean(input && input.allowOversize),
       broadcast: ctx.broadcast,
+      onStep,
     });
     void require("./prReview.js").startPrReview({
       store: ctx.store,

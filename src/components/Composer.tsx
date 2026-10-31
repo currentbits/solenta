@@ -148,6 +148,7 @@ import {
   getPasteCardsEnabled,
   setComposerBusyAction,
   setLastReasoningEffort,
+  useComposerSpellcheckEnabled,
   useEnterSendsEnabled,
   useTranscriptViewMode,
   type ComposerBusyAction,
@@ -208,6 +209,13 @@ export interface ComposerProps {
   onSetAgent?: (agent: string | null) => void | Promise<void>;
   /** Registry from providers.list(). */
   providers: ProviderInfo[];
+  /**
+   * Star a model in the SAME store Settings → Providers favourites use
+   * (#1802), so it joins the picker's cross-provider Favorites group next
+   * load. Omitted means the row still toggles the picker's own local-only
+   * favouritesOnly star, just without persisting to Settings.
+   */
+  onToggleModelFavorite?: (providerId: string, modelId: string) => void | Promise<void>;
   /** Saved named profiles from settings. Empty hides the Profiles section. */
   agentProfiles?: AgentProfile[];
   /** thread.agentProfileId (#262): marks that profile row as selected. */
@@ -514,6 +522,7 @@ export const Composer = memo(function Composer({
   agents = [],
   onSetAgent,
   providers,
+  onToggleModelFavorite,
   agentProfiles = [],
   agentProfileId = null,
   workflows,
@@ -588,6 +597,7 @@ export const Composer = memo(function Composer({
   const canAttachImages = supportsImagesForModel(currentProviderInfo, model);
   const transcriptView = useTranscriptViewMode();
   const enterSends = useEnterSendsEnabled();
+  const spellcheckEnabled = useComposerSpellcheckEnabled();
   const { vimEnabled, vimMode, setVimMode, vimStateRef } =
     useComposerVim(threadId);
   const [viewOpen, setViewOpen] = useState(false);
@@ -1193,6 +1203,8 @@ export const Composer = memo(function Composer({
       writeModelFavourites(next);
       return next;
     });
+    // Default (id null) has no Settings-side favourites row to join (#1802).
+    if (row.id != null) void onToggleModelFavorite?.(row.providerId, row.id);
   };
 
   const closeModelPicker = useCallback((returnFocus: boolean) => {
@@ -2425,7 +2437,7 @@ export const Composer = memo(function Composer({
           placeholder={placeholder}
           rows={3}
           defaultValue={draftsRef.current[threadId] ?? ""}
-          spellCheck={false}
+          spellCheck={spellcheckEnabled && !vimEnabled}
           autoComplete="off"
           autoCorrect="off"
           autoCapitalize="off"

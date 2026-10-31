@@ -74,6 +74,7 @@ import type {
   ConflictForecast,
   DistilledMemory,
   DistilledWorkflow,
+  PrProgressPush,
   ProjectUpdateInput,
 } from "./shared/ipc";
 import { SIGNIN_TERMINAL_ID } from "./shared/ipc";
@@ -1676,6 +1677,24 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       handleProviderSignIn(providerId, { ...opts, shell: true }),
     [handleProviderSignIn],
   );
+  /**
+   * The composer picker's star (#1802) writes to the same per-provider
+   * favourites Settings → Providers edits, so a starred model joins the
+   * picker's cross-provider Favorites group next load.
+   */
+  const handleToggleModelFavorite = useCallback(
+    (providerId: string, modelId: string) => {
+      const all = settings?.providerModels ?? {};
+      const pref = all[providerId] ?? { favorites: [], custom: [] };
+      const favorites = pref.favorites.includes(modelId)
+        ? pref.favorites.filter((f) => f !== modelId)
+        : [...pref.favorites, modelId];
+      const next = { ...all, [providerId]: { ...pref, favorites } };
+      if (favorites.length === 0 && pref.custom.length === 0) delete next[providerId];
+      void saveSettings({ providerModels: next });
+    },
+    [settings, saveSettings],
+  );
   const closeSignInShell = useCallback(() => {
     setSignInShell(null);
     void refreshProviders();
@@ -1889,6 +1908,12 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
 
   const subscribeCloneProgress = useCallback(
     (cb: (push: CloneProgressPush) => void) => api.on("clone:progress", cb),
+    [api],
+  );
+
+  /** createPr step progress: commit/push/create/link (issue #1803). */
+  const subscribePrProgress = useCallback(
+    (cb: (push: PrProgressPush) => void) => api.on("pr:progress", cb),
     [api],
   );
 
@@ -2550,6 +2575,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onClearQuestion={clearQuestion}
         onAnswerSecret={answerSecret}
         onSetProvider={setProvider}
+        onToggleModelFavorite={handleToggleModelFavorite}
         onSetReasoningEffort={setReasoningEffort}
         onApplyAgentProfile={applyAgentProfile}
         onSetWebSearch={setWebSearch}
@@ -2646,6 +2672,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         listLocalServers={listLocalServers}
         onPush={pushBranch}
         onCreatePr={createPr}
+        onPrProgress={subscribePrProgress}
         onPrTemplate={prTemplate}
         onPrChecks={prChecks}
         onPrStatus={prStatus}

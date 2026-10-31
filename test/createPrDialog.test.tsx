@@ -8,6 +8,7 @@ import * as React from "react";
 import { mount } from "./support/dom.ts";
 import { CreatePrDialog } from "../src/components/CreatePrDialog";
 import type { PrTemplateResult } from "../src/shared/ipc";
+import { applyPrStep, initialPrSteps } from "../src/prProgress";
 
 function q(m: { container: HTMLElement }, sel: string): Element | null {
   return (
@@ -181,6 +182,86 @@ describe("CreatePrDialog Generate", () => {
       <CreatePrDialog initialTitle="x" pending={false} onSubmit={() => {}} onClose={() => {}} />,
     );
     assert.equal(q(m, "[data-create-pr-generate]"), null);
+    m.unmount();
+  });
+});
+
+describe("CreatePrDialog step progress (#1803)", () => {
+  it("renders nothing extra without a steps prop (plain 'Creating…' fallback)", async () => {
+    const m = await mount(
+      <CreatePrDialog
+        initialTitle="x"
+        pending={true}
+        onSubmit={() => {}}
+        onClose={() => {}}
+      />,
+    );
+    assert.equal(q(m, "[data-pr-steps]"), null);
+    assert.equal(q(m, "[data-create-pr-submit]")?.textContent, "Creating…");
+    m.unmount();
+  });
+
+  it("shows commit skipped, push done, create active, and link pending", async () => {
+    let steps = initialPrSteps();
+    steps = applyPrStep(steps, { step: "commit", state: "skipped" });
+    steps = applyPrStep(steps, { step: "push", state: "start" });
+    steps = applyPrStep(steps, { step: "push", state: "done" });
+    steps = applyPrStep(steps, { step: "create", state: "start" });
+    const m = await mount(
+      <CreatePrDialog
+        initialTitle="x"
+        pending={true}
+        steps={steps}
+        onSubmit={() => {}}
+        onClose={() => {}}
+      />,
+    );
+    assert.equal(
+      q(m, '[data-pr-step="commit"]')?.getAttribute("data-pr-step-state"),
+      "skipped",
+    );
+    assert.equal(
+      q(m, '[data-pr-step="push"]')?.getAttribute("data-pr-step-state"),
+      "done",
+    );
+    assert.equal(
+      q(m, '[data-pr-step="create"]')?.getAttribute("data-pr-step-state"),
+      "active",
+    );
+    assert.equal(
+      q(m, '[data-pr-step="link"]')?.getAttribute("data-pr-step-state"),
+      "pending",
+    );
+    m.unmount();
+  });
+
+  it("shows which step failed, with its error detail, and keeps the dialog open", async () => {
+    let steps = initialPrSteps();
+    steps = applyPrStep(steps, { step: "commit", state: "skipped" });
+    steps = applyPrStep(steps, { step: "push", state: "start" });
+    steps = applyPrStep(steps, {
+      step: "push",
+      state: "error",
+      detail: "git push timed out after 30s",
+    });
+    const m = await mount(
+      <CreatePrDialog
+        initialTitle="Keep me"
+        pending={false}
+        error="git push timed out after 30s"
+        steps={steps}
+        onSubmit={() => {}}
+        onClose={() => {}}
+      />,
+    );
+    const pushRow = q(m, '[data-pr-step="push"]');
+    assert.equal(pushRow?.getAttribute("data-pr-step-state"), "error");
+    assert.match(pushRow?.textContent ?? "", /git push timed out after 30s/);
+    // The dialog stays open with the title intact so the user can retry.
+    assert.equal(
+      (q(m, "[data-create-pr-title]") as HTMLInputElement).value,
+      "Keep me",
+    );
     m.unmount();
   });
 });

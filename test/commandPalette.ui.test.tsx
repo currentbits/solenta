@@ -293,3 +293,152 @@ describe("command palette ui", () => {
     );
   });
 });
+
+// #1800: palette rows show the sidebar's status word/tone (statusLabelFor),
+// not a reinvented vocabulary.
+describe("command palette status chip (#1800)", () => {
+  afterEach(() => {
+    document.body.replaceChildren();
+  });
+
+  function statusThreads(): ThreadInfo[] {
+    return [
+      thread({
+        id: "t-working",
+        title: "Working thread",
+        projectId: "p1",
+        status: "working",
+        updatedAt: 4,
+      }),
+      thread({
+        id: "t-wait",
+        title: "Waiting thread",
+        projectId: "p1",
+        status: "working",
+        awaitingInput: true,
+        updatedAt: 3,
+      }),
+      thread({
+        id: "t-failed",
+        title: "Failed thread",
+        projectId: "p1",
+        status: "failed",
+        updatedAt: 2,
+      }),
+      thread({
+        id: "t-done",
+        title: "Done thread",
+        projectId: "p1",
+        status: "done",
+        updatedAt: 100,
+        lastVisitedAt: 1,
+      }),
+    ];
+  }
+
+  function renderPalette(
+    over: Partial<CommandPaletteProps> = {},
+  ) {
+    return (
+      <CommandPalette
+        open
+        mode="command"
+        onClose={() => {}}
+        onModeChange={() => {}}
+        threads={statusThreads()}
+        projects={projects}
+        searchThreads={async () => ({ threads: [], truncated: false })}
+        searchMessages={async () => ({ hits: [], truncated: false })}
+        canSearchWorkspace={false}
+        onSelectThread={() => {}}
+        onSelectMessage={() => {}}
+        onSelectProject={() => {}}
+        onRunAction={() => {}}
+        onOpenFile={() => {}}
+        actions={PALETTE_ACTIONS}
+        {...over}
+      />
+    );
+  }
+
+  it("shows Working for a working thread", async () => {
+    const m = await mount(renderPalette());
+    const row = [...document.querySelectorAll('[data-palette-kind="thread"]')].find(
+      (el) => el.textContent?.includes("Working thread"),
+    ) as HTMLElement;
+    assert.ok(row, "working thread row renders");
+    const chip = row.querySelector("[data-palette-status]");
+    assert.ok(chip, "status chip renders");
+    assert.equal(chip?.getAttribute("data-palette-status"), "Working");
+    assert.equal(chip?.getAttribute("data-tone"), "working");
+    m.unmount();
+  });
+
+  it("shows Waiting for a thread awaiting input", async () => {
+    const m = await mount(renderPalette());
+    const row = [...document.querySelectorAll('[data-palette-kind="thread"]')].find(
+      (el) => el.textContent?.includes("Waiting thread"),
+    ) as HTMLElement;
+    assert.ok(row, "waiting thread row renders");
+    const chip = row.querySelector("[data-palette-status]");
+    assert.equal(chip?.getAttribute("data-palette-status"), "Waiting");
+    assert.equal(chip?.getAttribute("data-tone"), "attention");
+    m.unmount();
+  });
+
+  it("shows Failed for a failed thread", async () => {
+    const m = await mount(renderPalette());
+    const row = [...document.querySelectorAll('[data-palette-kind="thread"]')].find(
+      (el) => el.textContent?.includes("Failed thread"),
+    ) as HTMLElement;
+    assert.ok(row, "failed thread row renders");
+    const chip = row.querySelector("[data-palette-status]");
+    assert.equal(chip?.getAttribute("data-palette-status"), "Failed");
+    assert.equal(chip?.getAttribute("data-tone"), "failed");
+    m.unmount();
+  });
+
+  it("shows Done for an unread finished thread", async () => {
+    const m = await mount(renderPalette());
+    const doneRow = [...document.querySelectorAll('[data-palette-kind="thread"]')].find(
+      (el) => el.textContent?.includes("Done thread"),
+    ) as HTMLElement;
+    assert.ok(doneRow, "done thread row renders");
+    const chip = doneRow.querySelector("[data-palette-status]");
+    assert.equal(chip?.getAttribute("data-palette-status"), "Done");
+    assert.equal(chip?.getAttribute("data-tone"), "done");
+    m.unmount();
+  });
+
+  it("shows the matching status chip on a message-hit row (#1761)", async () => {
+    const m = await mount(
+      renderPalette({
+        searchMessages: async ({ query }: { query: string }) =>
+          query === "broke"
+            ? {
+                hits: [
+                  {
+                    threadId: "t-failed",
+                    messageId: "m1",
+                    snippet: "it broke during the run",
+                    createdAt: 5,
+                  },
+                ],
+                truncated: false,
+              }
+            : { hits: [], truncated: false },
+      }),
+    );
+    const input = m.query("[data-command-palette-input]") as HTMLInputElement;
+    await m.type(input, "broke");
+    await inAct(() => new Promise((r) => setTimeout(r, 200)));
+    await m.flush();
+    const messageRow = m.query('[data-palette-kind="message"]') as HTMLElement;
+    assert.ok(messageRow, "message row renders");
+    const chip = messageRow.querySelector("[data-palette-status]");
+    assert.ok(chip, "message row shows the hit thread's status");
+    assert.equal(chip?.getAttribute("data-palette-status"), "Failed");
+    assert.equal(chip?.getAttribute("data-tone"), "failed");
+    m.unmount();
+  });
+});

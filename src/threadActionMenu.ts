@@ -39,6 +39,7 @@ export type ThreadActionMenuId =
   | "regenerateTitle"
   | "tags"
   | "copyLink"
+  | "copyWorktreePath"
   | "move"
   | `project:${string}`
   | "mute"
@@ -78,6 +79,11 @@ export function buildThreadActionMenuItems(input: {
   showTags?: boolean;
   /** Copy solenta://thread/<id> (#186). */
   showCopyLink?: boolean;
+  /**
+   * Checkout path for Copy worktree path / Copy folder path (#1800): the
+   * project's path, used only when the thread has no worktree of its own.
+   */
+  projectPath?: string | null;
   /** Recategorize onto another project (issue #737). */
   showMove?: boolean;
   projects?: ReadonlyArray<ProjectInfo>;
@@ -206,6 +212,21 @@ export function buildThreadActionMenuItems(input: {
     });
   }
 
+  const copyPath = thread.worktreePath || input.projectPath || null;
+  if (copyPath) {
+    items.push({
+      id: "copyWorktreePath",
+      label: thread.worktreePath ? "Copy worktree path" : "Copy folder path",
+      separatorBefore:
+        !input.showRename &&
+        !input.showRegenerateTitle &&
+        !input.showTags &&
+        !input.showCopyLink &&
+        items.length > 0,
+      attrs: { "data-copy-worktree-path": thread.id },
+    });
+  }
+
   if (input.showMove) {
     const dests = (input.projects ?? []).filter(
       (p) => p.id !== thread.projectId,
@@ -222,6 +243,7 @@ export function buildThreadActionMenuItems(input: {
           !input.showRegenerateTitle &&
           !input.showTags &&
           !input.showCopyLink &&
+          !copyPath &&
           items.length > 0,
         attrs: { "data-move-project": thread.id },
         children: block

@@ -44,6 +44,7 @@ import type {
   PrChecksResult,
   MergeMethod,
   PrInfo,
+  PrProgressPush,
   PrTemplateResult,
   PermissionDecision,
   InputValues,
@@ -92,6 +93,12 @@ import {
   threadContextWindow,
 } from "../contextRing";
 import { buildTimeline, type TimelineEntry } from "../timeline";
+import {
+  applyPrStep,
+  initialPrSteps,
+  newPrRequestId,
+  type PrSteps,
+} from "../prProgress";
 import { collapseTimeline, type DisplayEntry } from "../toolGroups";
 import type { ShowUserAction } from "../showUser";
 import { RunArtifacts } from "./RunArtifacts";
@@ -219,6 +226,7 @@ import { TurnRail, turnLabel, type RailTurn } from "./thread/TurnRail";
 import { useTurnNavigation } from "./thread/useTurnNavigation";
 import { offsetTopWithin } from "../scrollNearest";
 import { bindingLabel } from "../keybindings";
+import { imageContextMenu } from "../contextMenu";
 import styles from "./ThreadView.module.css";
 import type { TaskGroupRollup } from "../taskGroup";
 import { lazyNamed } from "../lazyNamed";
@@ -444,6 +452,8 @@ interface ThreadViewProps {
     provider?: string;
     model?: string | null;
   }) => void | Promise<void>;
+  /** Composer picker star writes to Settings → Providers favourites (#1802). */
+  onToggleModelFavorite?: (providerId: string, modelId: string) => void | Promise<void>;
   onSetReasoningEffort: (
     effort: ReasoningEffort | null,
     threadId?: string,
@@ -683,7 +693,11 @@ interface ThreadViewProps {
     draft?: boolean;
     /** Override the PR-size cap for this creation (issue #402). */
     allowOversize?: boolean;
+    /** Tags this call's "pr:progress" pushes (issue #1803). */
+    requestId?: string;
   }) => Promise<PrInfo>;
+  /** Subscribe to "pr:progress"; returns the unsubscribe (issue #1803). */
+  onPrProgress?: (cb: (push: PrProgressPush) => void) => () => void;
   /** Repo PULL_REQUEST_TEMPLATE for the create-PR composer. */
   onPrTemplate?: (projectPath: string) => Promise<PrTemplateResult>;
   /** CI checks for the current PR. Failures stay in-band. */
@@ -899,6 +913,7 @@ export const ThreadView = memo(function ThreadView({
   onClearQuestion,
   onAnswerSecret,
   onSetProvider,
+  onToggleModelFavorite,
   onSetReasoningEffort,
   onApplyAgentProfile,
   onSetWebSearch,
@@ -984,6 +999,7 @@ export const ThreadView = memo(function ThreadView({
   listLocalServers,
   onPush,
   onCreatePr,
+  onPrProgress,
   onPrTemplate,
   onPrChecks,
   onPrStatus,
@@ -1182,7 +1198,15 @@ export const ThreadView = memo(function ThreadView({
   const [syncRefreshNonce, setSyncRefreshNonce] = useState(0);
   /** Brief inline confirmation after copying the thread id, `/copy`, or exporting a report. */
   const [copied, setCopied] = useState<
-    "id" | "link" | "reply" | "report" | "report-failed" | "report-md" | "report-md-failed" | null
+    | "id"
+    | "link"
+    | "path"
+    | "reply"
+    | "report"
+    | "report-failed"
+    | "report-md"
+    | "report-md-failed"
+    | null
   >(null);
   /** Header quick action currently in flight (issue #153). */
   const [commandRunningId, setCommandRunningId] = useState<string | null>(null);
@@ -1670,14 +1694,30 @@ export const ThreadView = memo(function ThreadView({
     Boolean(detail?.thread.worktreePath) &&
     !project?.remoteHost &&
     !isArchived;
+  // Committing/Pushing/Creating PR/Linking progress for the Changes panel's
+  // Commit & PR button (issue #1803): one in-flight request at a time, kept
+  // around after it settles so a failed step stays visible for retry.
+  const [commitAndPrSteps, setCommitAndPrSteps] = useState<PrSteps | null>(null);
+  const commitAndPrRequestId = useRef<string | null>(null);
+  useEffect(() => {
+    if (!onPrProgress) return;
+    return onPrProgress((push) => {
+      if (push.requestId !== commitAndPrRequestId.current) return;
+      setCommitAndPrSteps((prev) => applyPrStep(prev ?? initialPrSteps(), push));
+    });
+  }, [onPrProgress]);
   const handleCommitAndPr = useCallback(async () => {
     if (!detail || !onCreatePr) return;
     const text = await coderGit()
       ?.suggestPrText({ threadId: detail.thread.id })
       .catch(() => null);
+    const requestId = newPrRequestId();
+    commitAndPrRequestId.current = requestId;
+    setCommitAndPrSteps(initialPrSteps());
     return onCreatePr({
       title: text?.title || detail.thread.title,
       body: text?.body,
+      requestId,
     });
   }, [onCreatePr, detail?.thread.id, detail?.thread.title]);
   const handleDiffComment = useCallback(
@@ -2812,6 +2852,23 @@ export const ThreadView = memo(function ThreadView({
     return true;
   };
 
+  /**
+   * Same delegation as openClickedImage, for right-click (issue #1801): any
+   * image anywhere in the timeline offers Copy Image, with no per-site
+   * wiring. The lightbox's own full-size image is a sibling of this body,
+   * not inside it, so it gets the same handler directly (see ImageLightbox).
+   */
+  const onBodyContextMenu = (e: {
+    target: EventTarget | null;
+    preventDefault(): void;
+    clientX: number;
+    clientY: number;
+  }) => {
+    const img = e.target as HTMLImageElement | null;
+    if (!img || img.tagName !== "IMG") return;
+    imageContextMenu(e, img.src);
+  };
+
   if (!hasProjects) {
     return (
       <main className={styles.main}>
@@ -3125,11 +3182,19 @@ export const ThreadView = memo(function ThreadView({
   const workerNavLabel = handoffSource?.orchWorker ? "Parent worker" : "Task";
   const workersLabel = `Workers (${workerCount})`;
 
-  const handleCopy = async (what: "id" | "link") => {
+  // Copy worktree path (#1800): falls back to the project's checkout path
+  // for threads with no worktree of their own.
+  const copyPath = thread.worktreePath || project?.path || null;
+
+  const handleCopy = async (what: "id" | "link" | "path") => {
+    let text = `solenta://thread/${thread.id}`;
+    if (what === "id") text = thread.id;
+    else if (what === "path") {
+      if (!copyPath) return;
+      text = copyPath;
+    }
     try {
-      await navigator.clipboard.writeText(
-        what === "id" ? thread.id : `solenta://thread/${thread.id}`,
-      );
+      await navigator.clipboard.writeText(text);
     } catch {
       return;
     }
@@ -3629,6 +3694,21 @@ export const ThreadView = memo(function ThreadView({
                       >
                         {copied === "link" ? "Copied" : "Copy link"}
                       </button>
+                      {copyPath && (
+                        <button
+                          type="button"
+                          className={styles.menuItem}
+                          role="menuitem"
+                          data-copy-worktree-path=""
+                          onClick={() => void handleCopy("path")}
+                        >
+                          {copied === "path"
+                            ? "Copied"
+                            : thread.worktreePath
+                              ? "Copy worktree path"
+                              : "Copy folder path"}
+                        </button>
+                      )}
                       {onExportReport && (
                         <button
                           type="button"
@@ -3928,6 +4008,7 @@ export const ThreadView = memo(function ThreadView({
             onViewChanges={onViewChanges}
             onPush={onPush}
             onCreatePr={onCreatePr}
+            onPrProgress={onPrProgress}
             loadPrTemplate={
               project && onPrTemplate
                 ? () => onPrTemplate(project.path)
@@ -4522,6 +4603,7 @@ export const ThreadView = memo(function ThreadView({
                 onRevertHunk={onRevertHunk}
                 onSuggest={onSuggestCommitMessage}
                 onCommitAndPr={canCommitAndPr ? handleCommitAndPr : undefined}
+                prSteps={canCommitAndPr ? commitAndPrSteps : null}
                 onComment={
                   isArchived || !detail ? undefined : handleDiffComment
                 }
@@ -4732,6 +4814,7 @@ export const ThreadView = memo(function ThreadView({
         ref={bodyRef}
         onScroll={onBodyScroll}
         onClick={(e) => openClickedImage(e.target)}
+        onContextMenu={(e) => onBodyContextMenu(e)}
         onKeyDown={(e) => {
           if (e.key !== "Enter" && e.key !== " ") return;
           if (openClickedImage(e.target)) e.preventDefault();
@@ -5660,6 +5743,7 @@ export const ThreadView = memo(function ThreadView({
         agents={cliAgents}
         onSetAgent={onSetAgent}
         providers={providers}
+        onToggleModelFavorite={onToggleModelFavorite}
         agentProfiles={agentProfiles}
         agentProfileId={thread.agentProfileId ?? null}
         workflows={workflows}

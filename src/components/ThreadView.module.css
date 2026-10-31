@@ -2990,6 +2990,47 @@ button.diffLineGutter:focus-visible {
 }
 
 /*
+ * Fold a long user message (issue #1801): clamp to 8 lines with a fade into
+ * the bubble's own background, "Show more" below expands it back to full
+ * height, in component state so it resets per message, not globally.
+ */
+.userTextFolded {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 8;
+  overflow: hidden;
+  position: relative;
+}
+
+.userTextFolded::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 28px;
+  background: linear-gradient(to bottom, transparent, var(--overlay-hover));
+  pointer-events: none;
+}
+
+.userTextFoldToggle {
+  display: block;
+  margin-top: 6px;
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--info-fg);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.userTextFoldToggle:hover {
+  color: var(--info-fg-strong);
+}
+
+/*
  * Back-to-back user messages (#1789): no agent output between them reads as
  * one bubble group — tighter stacking, corners that flatten on the shared
  * edge like a chat app. `single` (the default) is untouched.

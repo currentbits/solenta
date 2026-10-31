@@ -398,3 +398,60 @@ describe("buildThreadActionMenuItems (contract)", () => {
     assert.equal(neither.some((i) => i.id === "duplicate"), false);
   });
 });
+
+describe("Copy worktree path / Copy folder path (#1800)", () => {
+  it("labels it 'Copy worktree path' when the thread has a worktree", () => {
+    const items = buildThreadActionMenuItems({
+      thread: { ...thread, worktreePath: "/tmp/wt" } as ThreadInfo,
+      providers,
+      snoozePresets: presets,
+      isSettled: false,
+      canSettle: true,
+      showSnooze: false,
+      showFork: false,
+      showRename: false,
+      showMute: false,
+      showSettle: false,
+      projectPath: "/tmp/project",
+    });
+    const item = items.find((i) => i.id === "copyWorktreePath");
+    assert.ok(item, "Copy worktree path item");
+    assert.equal(item?.label, "Copy worktree path");
+  });
+
+  it("labels it 'Copy folder path' and uses the project path for a non-worktree thread", () => {
+    const items = buildThreadActionMenuItems({
+      thread: { ...thread, worktreePath: null } as ThreadInfo,
+      providers,
+      snoozePresets: presets,
+      isSettled: false,
+      canSettle: true,
+      showSnooze: false,
+      showFork: false,
+      showRename: false,
+      showMute: false,
+      showSettle: false,
+      projectPath: "/tmp/project",
+    });
+    const item = items.find((i) => i.id === "copyWorktreePath");
+    assert.ok(item, "Copy folder path item");
+    assert.equal(item?.label, "Copy folder path");
+  });
+
+  it("hides the item when no worktree and no project path are known", () => {
+    const items = buildThreadActionMenuItems({
+      thread: { ...thread, worktreePath: null } as ThreadInfo,
+      providers,
+      snoozePresets: presets,
+      isSettled: false,
+      canSettle: true,
+      showSnooze: false,
+      showFork: false,
+      showRename: false,
+      showMute: false,
+      showSettle: false,
+      projectPath: null,
+    });
+    assert.equal(items.some((i) => i.id === "copyWorktreePath"), false);
+  });
+});

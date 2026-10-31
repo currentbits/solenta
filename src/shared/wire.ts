@@ -50,6 +50,8 @@ export const WIRE_PUSH_CHANNELS = [
   "terminal:data",
   // Add project from URL (#1506): clone progress lines.
   "clone:progress",
+  // Create-PR step progress (#1803): commit/push/create/link.
+  "pr:progress",
 ] as const;
 
 /**

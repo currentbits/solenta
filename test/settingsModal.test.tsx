@@ -22,9 +22,11 @@ import {
   getDivergenceCardEnabled,
   getHighContrastEnabled,
   getPasteCardsEnabled,
+  getSidebarPreview,
   getUsageLimitsStripEnabled,
   getWrapCodeBlocksEnabled,
   setChatWidth,
+  setComposerSpellcheckEnabled,
   setComposerVimEnabled,
   setDiffFilesCollapsed,
   setEnterSendsEnabled,
@@ -32,6 +34,7 @@ import {
   setHighContrastEnabled,
   setPasteCardsEnabled,
   setRunDurationEnabled,
+  setSidebarPreview,
   setUsageLimitsStripEnabled,
   setWrapCodeBlocksEnabled,
 } from "../src/uiPrefs";
@@ -152,6 +155,7 @@ afterEach(() => {
   unmountAll();
   setWrapCodeBlocksEnabled(false);
   setDiffFilesCollapsed(false);
+  setSidebarPreview("1");
 });
 
 describe("SettingsModal memory section", () => {
@@ -3130,10 +3134,35 @@ describe("SettingsModal Display group (moved from Environment)", () => {
     setRunDurationEnabled(false);
     setPasteCardsEnabled(true);
     setComposerVimEnabled(false);
+    setComposerSpellcheckEnabled(true);
     setUsageLimitsStripEnabled(false);
     setChatWidth("default");
     setHighContrastEnabled(false);
     document.documentElement.removeAttribute("data-contrast");
+  });
+
+  it("offers spellcheck in the composer on by default (#1801)", async () => {
+    setComposerSpellcheckEnabled(true);
+    const m = await mount(modal());
+    const card = m.query("[data-display-prefs]");
+    assert.ok(card, "Display group on General");
+    const box = card.querySelector(
+      "[data-composer-spellcheck-pref]",
+    ) as HTMLInputElement | null;
+    assert.ok(box, "spellcheck checkbox");
+    assert.equal(box.checked, true);
+    assert.match(card.textContent || "", /Spellcheck in the composer/);
+    m.unmount();
+  });
+
+  it("turns spellcheck in the composer off from the Display group", async () => {
+    setComposerSpellcheckEnabled(true);
+    const m = await mount(modal());
+    const box = m.query("[data-composer-spellcheck-pref]") as HTMLInputElement;
+    await m.click(box);
+    assert.equal(box.checked, false);
+    assert.equal(window.localStorage.getItem("coder.composerSpellcheck"), "off");
+    m.unmount();
   });
 
   it("offers vim motions off by default", async () => {
@@ -3284,6 +3313,27 @@ describe("SettingsModal Display group (moved from Environment)", () => {
     await m.change(select, "wide");
     assert.equal(getChatWidth(), "wide");
     assert.equal(window.localStorage.getItem("coder.chatWidth"), "wide");
+    m.unmount();
+  });
+
+  it("offers a Sidebar preview select, None/1/2/3 lines, defaulting to 1 line (#1802)", async () => {
+    setSidebarPreview("1");
+    const m = await mount(modal());
+    const card = m.query("[data-display-prefs]");
+    assert.ok(card, "Display group on General");
+    const select = card.querySelector(
+      "[data-sidebar-preview-pref]",
+    ) as HTMLSelectElement | null;
+    assert.ok(select, "sidebar preview select");
+    assert.equal(select.value, "1");
+    assert.deepEqual(
+      Array.from(select.options).map((o) => o.value),
+      ["none", "1", "2", "3"],
+    );
+    assert.match(card.textContent || "", /Sidebar preview/);
+    await m.change(select, "2");
+    assert.equal(getSidebarPreview(), "2");
+    assert.equal(window.localStorage.getItem("coder.sidebarPreview"), "2");
     m.unmount();
   });
 });

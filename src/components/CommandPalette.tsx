@@ -9,6 +9,7 @@ import {
 } from "react";
 import { useEscapeClose } from "../useEscapeClose";
 import { useModalFocus } from "../useModalFocus";
+import { statusLabelFor } from "./sidebar/status";
 import {
   groupPaletteItems,
   KIND_ORDER,
@@ -66,6 +67,17 @@ function projectName(
   projectId: string,
 ): string {
   return projects.find((p) => p.id === projectId)?.name ?? "";
+}
+
+/**
+ * Compact status chip for a palette row (#1800): reuses the sidebar's
+ * statusLabelFor rather than reinventing the status vocabulary/colours.
+ * No wait-state or "currently open" context here, so those two inputs are
+ * always null/false; that only affects the rarer delegating/woke labels.
+ */
+function threadStatus(thread: ThreadInfo): { text: string; tone: string } | null {
+  const label = statusLabelFor(thread, Date.now(), null, false);
+  return label ? { text: label.text, tone: label.tone } : null;
 }
 
 function threadSubtitle(
@@ -298,11 +310,14 @@ export function CommandPalette({
     const addThread = (thread: ThreadInfo, fromContent: boolean) => {
       if (seen.has(thread.id)) return;
       seen.add(thread.id);
+      const status = threadStatus(thread);
       seeds.push({
         id: `thread:${thread.id}`,
         kind: "thread",
         title: thread.title || "Untitled",
         subtitle: threadSubtitle(thread, projects, fromContent),
+        statusText: status?.text,
+        statusTone: status?.tone,
         haystack: [
           thread.title,
           projectName(projects, thread.projectId),
@@ -343,13 +358,19 @@ export function CommandPalette({
     // merged in after, sorted into KIND_ORDER's "message" slot.
     const messageItems: PaletteItem[] = messageHits
       .slice(0, MESSAGE_RESULT_CAP)
-      .map((hit) => ({
-        id: `message:${hit.threadId}:${hit.messageId}`,
-        kind: "message" as const,
-        title: byId.get(hit.threadId)?.title || "Untitled",
-        subtitle: hit.snippet,
-        score: 0,
-      }));
+      .map((hit) => {
+        const hitThread = byId.get(hit.threadId);
+        const status = hitThread ? threadStatus(hitThread) : null;
+        return {
+          id: `message:${hit.threadId}:${hit.messageId}`,
+          kind: "message" as const,
+          title: hitThread?.title || "Untitled",
+          subtitle: hit.snippet,
+          statusText: status?.text,
+          statusTone: status?.tone,
+          score: 0,
+        };
+      });
     const combined = [...ranked, ...messageItems];
     combined.sort(
       (a, b) => KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind),
@@ -578,6 +599,16 @@ export function CommandPalette({
                           </span>
                         ) : null}
                       </span>
+                      {item.statusText ? (
+                        <span
+                          className={styles.statusChip}
+                          data-palette-status={item.statusText}
+                          data-tone={item.statusTone}
+                        >
+                          <span className={styles.statusDot} aria-hidden />
+                          {item.statusText}
+                        </span>
+                      ) : null}
                       {item.shortcut ? (
                         <kbd className={styles.shortcut}>{item.shortcut}</kbd>
                       ) : null}
