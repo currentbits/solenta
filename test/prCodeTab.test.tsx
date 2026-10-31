@@ -239,6 +239,46 @@ describe("PR Code tab Tree view (#1772)", () => {
   });
 });
 
+describe("PR Code tab expand/collapse all (#1796)", () => {
+  const files: FileChange[] = [
+    { path: "dirA/one.ts", status: "M", additions: 1, deletions: 0 },
+    { path: "dirB/two.ts", status: "M", additions: 1, deletions: 0 },
+    { path: "README.md", status: "M", additions: 1, deletions: 0 },
+  ];
+
+  it("hidden in List mode; toggles every directory and flips its own label in Tree mode", async () => {
+    await withFakePrDiff(files, async () => {
+      const m = await mount(<PrCodeTab projectPath="/tmp/ledger" prNumber={11} />);
+      await m.flush();
+
+      assert.equal(m.query("[data-tree-collapse-all]"), null, "hidden in List mode");
+
+      await m.click(m.query("[data-tree-toggle='tree']"));
+      await m.flush();
+      const btn = m.query("[data-tree-collapse-all]");
+      assert.ok(btn, "shown in Tree mode");
+      assert.equal(btn!.textContent, "Collapse all");
+
+      await m.click(btn!);
+      await m.flush();
+      assert.equal(m.query('[data-dir-row="dirA"]')?.getAttribute("aria-expanded"), "false");
+      assert.equal(m.query('[data-dir-row="dirB"]')?.getAttribute("aria-expanded"), "false");
+      assert.deepEqual(
+        m.queryAll("[data-pr-code-file]").map((el) => el.getAttribute("data-pr-code-file")),
+        ["README.md"],
+      );
+      assert.equal(m.query("[data-tree-collapse-all]")?.textContent, "Expand all");
+
+      await m.click(m.query("[data-tree-collapse-all]")!);
+      await m.flush();
+      assert.equal(m.query('[data-dir-row="dirA"]')?.getAttribute("aria-expanded"), "true");
+      assert.equal(m.queryAll("[data-pr-code-file]").length, 3);
+      assert.equal(m.query("[data-tree-collapse-all]")?.textContent, "Collapse all");
+      m.unmount();
+    });
+  });
+});
+
 describe("PR Code tab copy path (#1772)", () => {
   const files: FileChange[] = [
     { path: "src/app.ts", status: "M", additions: 1, deletions: 0 },

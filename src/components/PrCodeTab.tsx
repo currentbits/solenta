@@ -18,12 +18,14 @@ import {
   FileCollapseHeader,
   FileHunks,
   TestFilesBar,
+  TreeCollapseAllButton,
   TreeListToggle,
   fileCollapsed,
   filterTestFiles,
 } from "./TurnDiffPanel";
 import { useDiffFilesCollapsed, useDiffHideTests, useDiffTreeView } from "../uiPrefs";
 import {
+  allDirPaths,
   buildFileTree,
   type FileTreeDir,
   type FileTreeNode,
@@ -270,6 +272,8 @@ export function PrCodeTab({
   const testFilter = useMemo(() => filterTestFiles(files, hideTests), [files, hideTests]);
   const shownFiles = testFilter.shown;
   const tree = useMemo(() => buildFileTree(shownFiles), [shownFiles]);
+  /** Expand/collapse all (#1796): every directory path in the current tree. */
+  const allDirs = useMemo(() => allDirPaths(tree), [tree]);
 
   const copyPath = (path: string) => {
     navigator.clipboard?.writeText(path).then(
@@ -469,6 +473,13 @@ export function PrCodeTab({
       {empty ? <p className={styles.hint}>No textual diff</p> : null}
 
       <TreeListToggle />
+      {treeView ? (
+        <TreeCollapseAllButton
+          allDirs={allDirs}
+          collapsedDirs={collapsedDirs}
+          onSetCollapsed={setCollapsedDirs}
+        />
+      ) : null}
       <TestFilesBar {...testFilter} />
       {shownFiles.length > 0 ? (
         treeView ? (
