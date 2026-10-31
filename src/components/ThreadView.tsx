@@ -44,6 +44,7 @@ import type {
   PrChecksResult,
   MergeMethod,
   PrInfo,
+  PrProgressPush,
   PrTemplateResult,
   PermissionDecision,
   InputValues,
@@ -92,6 +93,12 @@ import {
   threadContextWindow,
 } from "../contextRing";
 import { buildTimeline, type TimelineEntry } from "../timeline";
+import {
+  applyPrStep,
+  initialPrSteps,
+  newPrRequestId,
+  type PrSteps,
+} from "../prProgress";
 import { collapseTimeline, type DisplayEntry } from "../toolGroups";
 import type { ShowUserAction } from "../showUser";
 import { RunArtifacts } from "./RunArtifacts";
@@ -683,7 +690,11 @@ interface ThreadViewProps {
     draft?: boolean;
     /** Override the PR-size cap for this creation (issue #402). */
     allowOversize?: boolean;
+    /** Tags this call's "pr:progress" pushes (issue #1803). */
+    requestId?: string;
   }) => Promise<PrInfo>;
+  /** Subscribe to "pr:progress"; returns the unsubscribe (issue #1803). */
+  onPrProgress?: (cb: (push: PrProgressPush) => void) => () => void;
   /** Repo PULL_REQUEST_TEMPLATE for the create-PR composer. */
   onPrTemplate?: (projectPath: string) => Promise<PrTemplateResult>;
   /** CI checks for the current PR. Failures stay in-band. */
@@ -984,6 +995,7 @@ export const ThreadView = memo(function ThreadView({
   listLocalServers,
   onPush,
   onCreatePr,
+  onPrProgress,
   onPrTemplate,
   onPrChecks,
   onPrStatus,
@@ -1670,14 +1682,30 @@ export const ThreadView = memo(function ThreadView({
     Boolean(detail?.thread.worktreePath) &&
     !project?.remoteHost &&
     !isArchived;
+  // Committing/Pushing/Creating PR/Linking progress for the Changes panel's
+  // Commit & PR button (issue #1803): one in-flight request at a time, kept
+  // around after it settles so a failed step stays visible for retry.
+  const [commitAndPrSteps, setCommitAndPrSteps] = useState<PrSteps | null>(null);
+  const commitAndPrRequestId = useRef<string | null>(null);
+  useEffect(() => {
+    if (!onPrProgress) return;
+    return onPrProgress((push) => {
+      if (push.requestId !== commitAndPrRequestId.current) return;
+      setCommitAndPrSteps((prev) => applyPrStep(prev ?? initialPrSteps(), push));
+    });
+  }, [onPrProgress]);
   const handleCommitAndPr = useCallback(async () => {
     if (!detail || !onCreatePr) return;
     const text = await coderGit()
       ?.suggestPrText({ threadId: detail.thread.id })
       .catch(() => null);
+    const requestId = newPrRequestId();
+    commitAndPrRequestId.current = requestId;
+    setCommitAndPrSteps(initialPrSteps());
     return onCreatePr({
       title: text?.title || detail.thread.title,
       body: text?.body,
+      requestId,
     });
   }, [onCreatePr, detail?.thread.id, detail?.thread.title]);
   const handleDiffComment = useCallback(
@@ -3928,6 +3956,7 @@ export const ThreadView = memo(function ThreadView({
             onViewChanges={onViewChanges}
             onPush={onPush}
             onCreatePr={onCreatePr}
+            onPrProgress={onPrProgress}
             loadPrTemplate={
               project && onPrTemplate
                 ? () => onPrTemplate(project.path)
@@ -4522,6 +4551,7 @@ export const ThreadView = memo(function ThreadView({
                 onRevertHunk={onRevertHunk}
                 onSuggest={onSuggestCommitMessage}
                 onCommitAndPr={canCommitAndPr ? handleCommitAndPr : undefined}
+                prSteps={canCommitAndPr ? commitAndPrSteps : null}
                 onComment={
                   isArchived || !detail ? undefined : handleDiffComment
                 }

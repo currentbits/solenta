@@ -1,0 +1,41 @@
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.row[data-pr-step-state="active"],
+.row[data-pr-step-state="done"] {
+  color: var(--text);
+}
+
+.row[data-pr-step-state="error"] {
+  color: var(--danger-fg);
+}
+
+.icon {
+  width: 14px;
+  flex-shrink: 0;
+  text-align: center;
+  font-family: var(--mono);
+}
+
+.label {
+  flex-shrink: 0;
+}
+
+.detail {
+  color: var(--danger-fg);
+  overflow-wrap: anywhere;
+}

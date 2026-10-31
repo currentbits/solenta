@@ -9,12 +9,19 @@ import type {
   MergeOptionsResult,
   PrChecksResult,
   PrInfo,
+  PrProgressPush,
   PrTemplateResult,
   SourceControlDiscovery,
   ThreadInfo,
 } from "../../shared/ipc";
 import { isEmptyDiff } from "../../diffView";
 import { createPrPrompt, isPrTooLargeMessage, splitPrPrompt } from "../../prUi";
+import {
+  applyPrStep,
+  initialPrSteps,
+  newPrRequestId,
+  type PrSteps,
+} from "../../prProgress";
 import { CreatePrDialog } from "../CreatePrDialog";
 import { PublishDialog } from "../PublishDialog";
 import {
@@ -74,6 +81,7 @@ export function NextGitActionButton({
   onViewChanges,
   onPush,
   onCreatePr,
+  onPrProgress,
   loadPrTemplate,
   onPrChecks,
   onPrStatus,
@@ -99,7 +107,10 @@ export function NextGitActionButton({
     body?: string;
     draft?: boolean;
     allowOversize?: boolean;
+    requestId?: string;
   }) => Promise<PrInfo>;
+  /** Subscribe to "pr:progress"; returns the unsubscribe (issue #1803). */
+  onPrProgress?: (cb: (push: PrProgressPush) => void) => () => void;
   loadPrTemplate?: () => Promise<PrTemplateResult>;
   onPrChecks?: () => Promise<PrChecksResult>;
   onPrStatus?: () => Promise<PrInfo | null>;
@@ -118,6 +129,18 @@ export function NextGitActionButton({
   const [sync, setSync] = useState<GitSyncInfo | null>(null);
   const [checks, setChecks] = useState<PrChecksResult | null>(null);
   const [pending, setPending] = useState(false);
+  // Committing/Pushing/Creating PR/Linking progress for the create-PR
+  // composer (issue #1803); kept after a failure so the dialog can show
+  // which step died, cleared each time the dialog reopens.
+  const [prSteps, setPrSteps] = useState<PrSteps | null>(null);
+  const prRequestIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!onPrProgress) return;
+    return onPrProgress((push) => {
+      if (push.requestId !== prRequestIdRef.current) return;
+      setPrSteps((prev) => applyPrStep(prev ?? initialPrSteps(), push));
+    });
+  }, [onPrProgress]);
   const [flash, setFlash] = useState<string | null>(null);
   /** Size-cap refusal message while the split/override choice is showing. */
   const [oversizeMsg, setOversizeMsg] = useState<string | null>(null);
@@ -327,6 +350,7 @@ export function NextGitActionButton({
     lastPrRequest.current = prRequest;
     if (onCreatePr) {
       setComposerError(null);
+      setPrSteps(null);
       setComposerOpen(true);
     } else {
       void onStartRun(createPrPrompt(providerName));
@@ -401,6 +425,7 @@ export function NextGitActionButton({
     if (action.kind === "create-pr") {
       if (onCreatePr) {
         setComposerError(null);
+        setPrSteps(null);
         setComposerOpen(true);
         return;
       }
@@ -500,9 +525,12 @@ export function NextGitActionButton({
       body: input.body,
       draft: input.draft,
     };
+    const requestId = newPrRequestId();
+    prRequestIdRef.current = requestId;
+    setPrSteps(initialPrSteps());
     setPending(true);
     try {
-      await onCreatePr(input);
+      await onCreatePr({ ...input, requestId });
       setComposerOpen(false);
       setComposerError(null);
       setOversizeMsg(null);
@@ -561,6 +589,7 @@ export function NextGitActionButton({
       pending={pending}
       error={composerError}
       oversize={oversizeMsg != null}
+      steps={prSteps}
       onSubmit={(input) => void submitPr(input)}
       onSplit={() => {
         setComposerOpen(false);
