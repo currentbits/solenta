@@ -18,6 +18,7 @@ const PUSH_CHANNELS = new Set([
   "clone:progress",
   "pairing:consent",
   "pr:progress",
+  "preview:audioChanged",
 ]);
 /* </ipc-push> */
 
@@ -423,6 +424,7 @@ const IPC_CHANNELS = Object.freeze([
   { ns: "preview", method: "viewport" },
   { ns: "preview", method: "inspect" },
   { ns: "preview", method: "cancelInspect" },
+  { ns: "preview", method: "setAudioMuted" },
   { ns: "simulator", method: "capabilities" },
   { ns: "simulator", method: "selectDeveloperDir" },
   { ns: "simulator", method: "listDevices" },

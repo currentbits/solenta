@@ -294,4 +294,8 @@ module.exports = {
     resolveDevServerRoot(ctx, input && input.threadId);
     return preview.cancelInspect(input);
   },
+  "preview:setAudioMuted": async (ctx, input) => {
+    resolveDevServerRoot(ctx, input && input.threadId);
+    return preview.setAudioMuted(input);
+  },
 };

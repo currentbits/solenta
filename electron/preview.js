@@ -21,6 +21,9 @@ const PANE_CLOSED =
   "Browser pane is not open on this thread. Open Views → Browser, then retry.";
 const MAX_SHOT_WIDTH = 1600;
 const INITIAL_LOAD_WAIT_MS = 2000;
+// Fallback only: Electron >=27 emits `audio-state-changed` itself, so this
+// timer never starts on a real build (issue #1807).
+const AUDIO_POLL_MS = 1000;
 // Our page scripts run here: the page cannot see or patch them, and the
 // world's globals (snapshot refs) die with the document.
 const ISOLATED_WORLD_ID = 1191;
@@ -52,6 +55,8 @@ const CONSOLE_LEVELS = ["debug", "info", "warning", "error"];
  *   seq: number,
  *   emulation: { preset: string, width: number, height: number, scale: number } | null,
  *   natural: { width: number, height: number } | null,
+ *   audible: boolean,
+ *   muted: boolean,
  *   detach: () => void,
  * }} Session
  */
@@ -67,6 +72,13 @@ let lookupWebContents = defaultLookup;
 
 /** @type {(url: string) => void} */
 let openExternal = defaultOpenExternal;
+
+/**
+ * Pushed on every audible/muted change (#1807). main.js wires this to
+ * broadcast("preview:audioChanged", ...); tests read the raw calls.
+ * @type {(threadId: string, state: { audible: boolean, muted: boolean }) => void}
+ */
+let audioPush = () => {};
 
 function defaultLookup(id) {
   try {
@@ -104,11 +116,19 @@ function setOpenExternal(fn) {
   openExternal = typeof fn === "function" ? fn : defaultOpenExternal;
 }
 
+/**
+ * @param {(threadId: string, state: { audible: boolean, muted: boolean }) => void} fn
+ */
+function setAudioPush(fn) {
+  audioPush = typeof fn === "function" ? fn : () => {};
+}
+
 function resetForTests() {
   for (const s of sessions.values()) s.detach();
   sessions.clear();
   lookupWebContents = defaultLookup;
   openExternal = defaultOpenExternal;
+  audioPush = () => {};
 }
 
 /**
@@ -252,6 +272,8 @@ function attachSession(threadId, wc, webContentsId) {
     seq: 0,
     emulation: null,
     natural: null,
+    audible: typeof wc.isCurrentlyAudible === "function" ? Boolean(wc.isCurrentlyAudible()) : false,
+    muted: typeof wc.isAudioMuted === "function" ? Boolean(wc.isAudioMuted()) : false,
     detach: () => {},
   };
   const push = (/** @type {"console" | "network"} */ kind, cap, entry) => {
@@ -329,9 +351,11 @@ function attachSession(threadId, wc, webContentsId) {
     web.onCompleted((d) => finish(d, null));
     web.onErrorOccurred((d) => finish(d, d.error || "failed"));
   }
+  const audioOff = attachAudio(threadId, wc, s);
 
   s.detach = () => {
     s.detach = () => {};
+    audioOff();
     if (typeof wc.removeListener === "function") {
       wc.removeListener("console-message", onConsole);
       wc.removeListener("did-navigate", onNavigate);
@@ -360,6 +384,48 @@ function attachSession(threadId, wc, webContentsId) {
     started.clear();
   };
   return s;
+}
+
+function notifyAudio(threadId, s) {
+  audioPush(threadId, { audible: s.audible, muted: s.muted });
+}
+
+/**
+ * Sidebar audio indicator (#1807). Electron >=27 emits `audio-state-changed`
+ * on the guest webContents whenever media starts or stops playing; a host
+ * that cannot deliver that event (older Electron, a test double without
+ * `.on`) falls back to polling isCurrentlyAudible(). Pushes once immediately
+ * so a rebind mid-playback (pane reopened) reports the current state right
+ * away rather than waiting for the next change.
+ * @param {string} threadId
+ * @param {any} wc
+ * @param {Session} s
+ * @returns {() => void} detach
+ */
+function attachAudio(threadId, wc, s) {
+  const hasEvents = typeof wc.on === "function";
+  const onAudioState = (_event, audible) => {
+    s.audible = Boolean(audible);
+    notifyAudio(threadId, s);
+  };
+  if (hasEvents) wc.on("audio-state-changed", onAudioState);
+  let pollTimer = null;
+  if (!hasEvents && typeof wc.isCurrentlyAudible === "function") {
+    pollTimer = setInterval(() => {
+      const next = Boolean(wc.isCurrentlyAudible());
+      if (next !== s.audible) {
+        s.audible = next;
+        notifyAudio(threadId, s);
+      }
+    }, AUDIO_POLL_MS);
+  }
+  notifyAudio(threadId, s);
+  return () => {
+    if (hasEvents && typeof wc.removeListener === "function") {
+      wc.removeListener("audio-state-changed", onAudioState);
+    }
+    if (pollTimer) clearInterval(pollTimer);
+  };
 }
 
 function requireSession(threadId) {
@@ -1451,6 +1517,22 @@ async function inspect(input) {
 }
 
 /**
+ * Mute/unmute the bound guest's audio from the sidebar indicator (#1807).
+ * Updates the session eagerly and pushes immediately, rather than waiting
+ * for the next audio-state-changed tick.
+ * @param {{ threadId?: string, muted?: boolean }} input
+ */
+function setAudioMuted(input) {
+  const threadId = threadIdOf(input);
+  const { s, wc } = requireSession(threadId);
+  const muted = Boolean(input && input.muted);
+  if (typeof wc.setAudioMuted === "function") wc.setAudioMuted(muted);
+  s.muted = muted;
+  notifyAudio(threadId, s);
+  return { ok: true, muted };
+}
+
+/**
  * @param {{ threadId?: string }} input
  */
 async function cancelInspect(input) {
@@ -1487,7 +1569,9 @@ module.exports = {
   cancelInspect,
   inspectScript,
   cropRect,
+  setAudioMuted,
   setWebContentsLookup,
   setOpenExternal,
+  setAudioPush,
   resetForTests,
 };

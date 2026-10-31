@@ -2747,6 +2747,17 @@ export interface PreviewSnapshot {
   canGoForward: boolean;
 }
 
+/**
+ * Sidebar audio indicator (#1807): whether the thread's bound guest
+ * webContents is currently playing audio, and whether the user muted it.
+ * Pushed on "preview:audioChanged" whenever either changes.
+ */
+export interface PreviewAudioState {
+  threadId: string;
+  audible: boolean;
+  muted: boolean;
+}
+
 export type PreviewViewportPreset = "fill" | "mobile" | "tablet" | "desktop";
 
 /**
@@ -7496,6 +7507,8 @@ export interface CoderApi {
      */
     inspect(input: { threadId: string }): Promise<PreviewInspectResult>;
     cancelInspect(input: { threadId: string }): Promise<{ ok: boolean }>;
+    /** Mute/unmute the bound guest's audio from the sidebar indicator (#1807). */
+    setAudioMuted(input: { threadId: string; muted: boolean }): Promise<{ ok: boolean; muted: boolean }>;
   };
   /**
    * Desktop-only iOS Simulator pane (#248). Web invokes are denied before
@@ -7677,6 +7690,8 @@ export interface CoderApi {
   on(channel: "pairing:consent", cb: (pending: OauthConsentInfo) => void): () => void;
   /** createPr step progress: commit/push/create/link (#1803). */
   on(channel: "pr:progress", cb: (push: PrProgressPush) => void): () => void;
+  /** Desktop-only: a bound Browser pane's audio started/stopped, or its mute changed (#1807). */
+  on(channel: "preview:audioChanged", cb: (state: PreviewAudioState) => void): () => void;
 }
 
 declare global {

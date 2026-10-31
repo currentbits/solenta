@@ -48,7 +48,7 @@ const {
   deepLinkFromArgv,
   resolveProjectRef,
 } = require("./deepLinks.js");
-const { guestWebviewPolicy, attachGuestPolicy } = require("./preview.js");
+const { guestWebviewPolicy, attachGuestPolicy, setAudioPush } = require("./preview.js");
 const {
   createMemorySupervisor,
   getMemoryStatus,
@@ -532,6 +532,10 @@ function broadcast(channel, payload) {
     webAccess.broadcast(channel, payload);
   }
 }
+
+// Sidebar audio indicator (#1807): preview.js owns the per-thread session
+// state; this just fans its changes out like any other push.
+setAudioPush((threadId, state) => broadcast("preview:audioChanged", { threadId, ...state }));
 
 function isAnyWindowFocused() {
   for (const win of BrowserWindow.getAllWindows()) {

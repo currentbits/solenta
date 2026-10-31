@@ -869,6 +869,10 @@ export interface UseCoderResult {
   /** Desktop-only iOS Simulator pane (#248). */
   simulator: CoderApi["simulator"];
   simulatorStatus: SimulatorStatus | null;
+  /** Browser pane audio indicator (#1807): live audible/muted per thread. */
+  audioByThread: ReadonlyMap<string, { audible: boolean; muted: boolean }>;
+  /** Toggle the Browser pane's audio mute from the sidebar indicator (#1807). */
+  setThreadAudioMuted: (threadId: string, muted: boolean) => Promise<void>;
   /** Arm or clear the thread's verification command (issue #296). */
   setVerifyCommand: (threadId: string, command: string | null) => Promise<void>;
   /** Run the thread's verification command now. Rejects on an active run. */
@@ -1062,6 +1066,10 @@ export function useCoder(): UseCoderResult {
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
   const [simulatorStatus, setSimulatorStatus] =
     useState<SimulatorStatus | null>(null);
+  /** Browser pane audio indicator (#1807): live audible/muted per thread. */
+  const [audioByThread, setAudioByThread] = useState<
+    ReadonlyMap<string, { audible: boolean; muted: boolean }>
+  >(() => new Map());
   const selectedRef = useRef<string | null>(
     detachedId ?? bootSnapshot?.selectedThreadId ?? null,
   );
@@ -1435,6 +1443,7 @@ export function useCoder(): UseCoderResult {
     let unsubUpdated: (() => void) | undefined;
     let unsubBoot: (() => void) | undefined;
     let unsubSimulator: (() => void) | undefined;
+    let unsubAudio: (() => void) | undefined;
 
     // A list reply is current as of the last push seq only when no push
     // arrived while it was in flight: main may build the list, then send a
@@ -1624,6 +1633,18 @@ export function useCoder(): UseCoderResult {
     } catch {
       // Web/old preload: simulator pushes are desktop-only.
     }
+    try {
+      unsubAudio = api.on("preview:audioChanged", (next) => {
+        if (cancelled || !next || typeof next.threadId !== "string") return;
+        setAudioByThread((prev) => {
+          const map = new Map(prev);
+          map.set(next.threadId, { audible: Boolean(next.audible), muted: Boolean(next.muted) });
+          return map;
+        });
+      });
+    } catch {
+      // Web/old preload: the Browser pane is desktop-only.
+    }
     void loadBootLists();
 
     // Shared 60s interval for the spend meter (same pattern as sidebar age tick).
@@ -1638,6 +1659,7 @@ export function useCoder(): UseCoderResult {
       unsubBoot?.();
       unsubStayAwake();
       unsubSimulator?.();
+      unsubAudio?.();
       window.clearInterval(statusHandle);
     };
   }, [api, applyThreads, refreshStatus, reloadDetail, refreshTrashed]);
@@ -2150,6 +2172,24 @@ export function useCoder(): UseCoderResult {
     [api, applyThreads],
   );
 
+  /**
+   * Toggle the Browser pane's audio mute from the sidebar indicator (#1807).
+   * Applies the resulting state optimistically; the real push (same shape)
+   * then confirms it, so a stale read never sticks.
+   */
+  const setThreadAudioMuted = useCallback(
+    async (threadId: string, muted: boolean) => {
+      const result = await api.preview.setAudioMuted({ threadId, muted });
+      setAudioByThread((prev) => {
+        const map = new Map(prev);
+        const current = map.get(threadId);
+        map.set(threadId, { audible: current?.audible ?? false, muted: result.muted });
+        return map;
+      });
+    },
+    [api],
+  );
+
   const runCommand = useCallback(
     async (threadId: string, actionId?: string, trustRepoConfig?: string) => {
       const run = api.threads.runCommand({
@@ -2497,6 +2537,8 @@ export function useCoder(): UseCoderResult {
     mentions: api.mentions,
     simulator: api.simulator,
     simulatorStatus,
+    audioByThread,
+    setThreadAudioMuted,
     setVerifyCommand,
     runVerify,
     exportReport: api.threads.exportReport,
