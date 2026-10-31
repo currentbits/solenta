@@ -67,6 +67,19 @@ export const setRunDurationEnabled = runDuration.set;
 export const useRunDurationEnabled = runDuration.use;
 
 /**
+ * "Increase contrast" (#1797), Settings → General → Appearance. Off (the
+ * default) leaves the OS `prefers-contrast: more` media query in charge
+ * (src/index.css); the stronger text/border/focus variables apply either
+ * way once the preference turns on. Settings.tsx (or anything applying it
+ * at boot) is the one that actually writes `data-contrast` — see
+ * applyContrast in ../contrast.ts — this module only persists the choice.
+ */
+const highContrast = makeFlagPref("coder.highContrast", false);
+export const getHighContrastEnabled = highContrast.get;
+export const setHighContrastEnabled = highContrast.set;
+export const useHighContrastEnabled = highContrast.use;
+
+/**
  * Transcript density (issue #461). Default is Normal: today's collapsed
  * tool cards. Summary hides settled-turn tools behind one line. Verbose
  * is the old #750 switch. `coder.verboseTools=on` still migrates to Verbose.
