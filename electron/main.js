@@ -97,7 +97,7 @@ const {
 } = require("./quitGuard.js");
 const { installAppMenu } = require("./menu.js");
 const { bootFirstPaint } = require("./boot.js");
-const { applyZoom, clampUiScale } = require("./zoom.js");
+const { applyZoom, clampUiScale, applyPinchZoom } = require("./zoom.js");
 const mediaProtocol = require("./media-protocol.js");
 const { createRunArtifactStore } = require("./run-artifact-store.js");
 const { createThreadListEncoder } = require("./threadListPush.js");
@@ -327,6 +327,11 @@ function currentUiScale() {
   return store ? store.getSettings().uiScale : 1;
 }
 
+/** Trackpad pinch magnifies the window (#1807); default on. */
+function currentPinchZoomEnabled() {
+  return store ? store.getSettings().pinchZoomWindow !== false : true;
+}
+
 function applyUiScale(win, factor) {
   if (!store) {
     const next = clampUiScale(factor);
@@ -430,6 +435,9 @@ function createWindow(opts = {}) {
   win.webContents.on("did-finish-load", () => {
     try {
       win.webContents.setZoomFactor(clampUiScale(currentUiScale()));
+      // Trackpad pinch magnifies the window like a browser (#1807); separate
+      // from the zoomFactor line above (layout zoom, Cmd+±).
+      applyPinchZoom(win, currentPinchZoomEnabled());
     } catch {
       // contents may already be gone
     }

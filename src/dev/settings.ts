@@ -89,6 +89,7 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
   let agentsPanelRememberLast = false;
   let stayAwake: AppSettings["stayAwake"] = "agent";
   let confirmQuitWithActiveWork = true;
+  let pinchZoomWindow = true;
   // #1788: default on for anyone who never chose, same as the electron store.
   let resumeInterruptedRuns = true;
   let combineQueuedFollowUps = true;
@@ -216,6 +217,7 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           stayAwake,
           quotaWaitAutoResume: ctx.quotaWaitAutoResume,
           confirmQuitWithActiveWork,
+          pinchZoomWindow,
           resumeInterruptedRuns,
           combineQueuedFollowUps,
           agentBugReports,
@@ -450,6 +452,12 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           }
           confirmQuitWithActiveWork = patch.confirmQuitWithActiveWork;
         }
+        if (Object.prototype.hasOwnProperty.call(patch, "pinchZoomWindow")) {
+          if (typeof patch.pinchZoomWindow !== "boolean") {
+            throw new Error("pinchZoomWindow must be a boolean");
+          }
+          pinchZoomWindow = patch.pinchZoomWindow;
+        }
         if (Object.prototype.hasOwnProperty.call(patch, "worktreeRoot")) {
           const v = typeof patch.worktreeRoot === "string" ? patch.worktreeRoot.trim() : "";
           if (v && !v.startsWith("/")) {
@@ -672,6 +680,7 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           stayAwake,
           quotaWaitAutoResume: ctx.quotaWaitAutoResume,
           confirmQuitWithActiveWork,
+          pinchZoomWindow,
           resumeInterruptedRuns,
           combineQueuedFollowUps,
           agentBugReports,

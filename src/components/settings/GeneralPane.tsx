@@ -436,6 +436,33 @@ export function GeneralPane({
             still hides the app.
           </p>
         </div>
+        <div className={styles.field}>
+          <label className={styles.fieldRow}>
+            <input
+              type="checkbox"
+              data-pinch-zoom-window=""
+              checked={settings?.pinchZoomWindow !== false}
+              disabled={saving || settings == null}
+              onChange={(e) => {
+                setError(null);
+                void onSaveSettings({
+                  pinchZoomWindow: e.target.checked,
+                }).catch((err) => {
+                  setError(
+                    err instanceof Error && err.message
+                      ? err.message
+                      : "Failed to save settings",
+                  );
+                });
+              }}
+            />
+            <span>Pinch to zoom the window</span>
+          </label>
+          <p className={styles.note}>
+            A trackpad pinch magnifies the window like a browser, separate
+            from Cmd/Ctrl+Plus/Minus.
+          </p>
+        </div>
         <div className={styles.field} data-webhook-settings="">
           <label className={styles.fieldLabel} htmlFor="webhook-url">
             Webhook URL

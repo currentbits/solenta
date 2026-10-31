@@ -450,6 +450,12 @@ function validateQuotaFailover(raw) {
  * confirmQuitWithActiveWork: only an explicit false opts out of the
  * accidental-quit dialog (issue #1195). Absent/junk keeps the confirm.
  *
+ * pinchZoomWindow: default on; only an explicit false disables trackpad
+ * pinch-to-magnify the window (issue #1807).
+ *
+ * closeToTray: default off; only an explicit true opts into hiding behind
+ * a tray icon on window close instead of quitting (Windows/Linux, #1807).
+ *
  * resumeInterruptedRuns: shipped opt-in (#1512 I3), then defaulted on
  * (#1788) for anyone who never chose. normalizeSettings cannot tell an
  * unset value from an explicit `false` once a store round-trips through
@@ -524,6 +530,8 @@ function normalizeSettings(raw) {
     stayAwake: "agent",
     quotaWaitAutoResume: true,
     confirmQuitWithActiveWork: true,
+    pinchZoomWindow: true,
+    closeToTray: false,
     resumeInterruptedRuns: true,
     resumeInterruptedRunsSet: false,
     combineQueuedFollowUps: true,
@@ -707,6 +715,15 @@ function normalizeSettings(raw) {
   settings.confirmQuitWithActiveWork =
     /** @type {{ confirmQuitWithActiveWork?: unknown }} */ (obj)
       .confirmQuitWithActiveWork !== false;
+  // pinchZoomWindow (#1807): default on; only an explicit false pins the
+  // visual zoom limit at 1 (no trackpad pinch magnification).
+  settings.pinchZoomWindow =
+    /** @type {{ pinchZoomWindow?: unknown }} */ (obj).pinchZoomWindow !== false;
+  // closeToTray (#1807): default off; only an explicit true opts in. The
+  // tray is Windows/Linux-only, but the setting itself normalizes the same
+  // everywhere so a synced store round-trips cleanly across platforms.
+  settings.closeToTray =
+    /** @type {{ closeToTray?: unknown }} */ (obj).closeToTray === true;
   // #1788: `resumeInterruptedRunsSet` only ever becomes true via setSettings
   // (store-settings-methods.js), the moment a human actually patches this
   // key. Absent -> never touched -> default true, whatever a prior save

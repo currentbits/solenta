@@ -3991,6 +3991,13 @@ export interface AppSettings {
    */
   confirmQuitWithActiveWork: boolean;
   /**
+   * Trackpad pinch magnifies the window like a browser, via
+   * webContents.setVisualZoomLevelLimits (issue #1807). Default on; an
+   * explicit false pins the limit at 1 (no visual zoom). Independent of
+   * uiScale/Cmd+±, which set the layout zoom factor instead.
+   */
+  pinchZoomWindow: boolean;
+  /**
    * After a restart, give each thread whose run was interrupted one
    * automatic follow-up turn (issue #1512 I3). Default off.
    */
