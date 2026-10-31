@@ -58,3 +58,43 @@ export async function showContextMenu(
   }
   return showContextMenuFallback(items, position);
 }
+
+/**
+ * Copy Image (issue #1801). Every image in the transcript already resolves
+ * to a fetchable src by the time it is on screen -- a data: URL, or a
+ * solenta-media:// URL served by electron/media-protocol.js with
+ * supportFetchAPI/corsEnabled set -- so the renderer can read it back as a
+ * Blob and hand it to the Clipboard API directly. No IPC, no main-process
+ * path validation: this never reads anything the page was not already
+ * showing.
+ */
+export async function copyImageToClipboard(src: string): Promise<boolean> {
+  try {
+    const res = await fetch(src);
+    const blob = await res.blob();
+    const ClipboardItemCtor = (
+      globalThis as { ClipboardItem?: typeof ClipboardItem }
+    ).ClipboardItem;
+    if (!ClipboardItemCtor) return false;
+    await navigator.clipboard.write([
+      new ClipboardItemCtor({ [blob.type || "image/png"]: blob }),
+    ]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Right-click on any transcript image: the one "Copy Image" entry. */
+export function imageContextMenu(
+  e: { preventDefault(): void; clientX: number; clientY: number },
+  src: string,
+): void {
+  e.preventDefault();
+  const items: ContextMenuItem[] = [
+    { id: "copy-image", label: "Copy Image", attrs: { "data-copy-image": "" } },
+  ];
+  void showContextMenu(items, { x: e.clientX, y: e.clientY }).then((id) => {
+    if (id === "copy-image") void copyImageToClipboard(src);
+  });
+}

@@ -155,6 +155,66 @@ function suggestion(
   };
 }
 
+/** Right-click: fires the DOM `contextmenu` event the real browser sends. */
+async function rightClickOn(m: { flush(): Promise<void> }, el: Element) {
+  await inAct(() => {
+    el.dispatchEvent(
+      new MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        clientX: 10,
+        clientY: 10,
+      }),
+    );
+  });
+  await m.flush();
+}
+
+/**
+ * Copy Image (issue #1801) reads the image's already-on-screen src back as a
+ * Blob (fetch) and hands it to the Clipboard API -- no IPC. Stub all three
+ * jsdom-missing pieces so the renderer path is exercised end to end.
+ */
+function stubImageClipboard() {
+  const fetched: string[] = [];
+  const copied: unknown[] = [];
+  const prevFetch = globalThis.fetch;
+  const prevClipboardItem = (globalThis as { ClipboardItem?: unknown })
+    .ClipboardItem;
+  const prevClipboard = (navigator as { clipboard?: unknown }).clipboard;
+  (globalThis as { fetch: typeof fetch }).fetch = (async (src: string) => {
+    fetched.push(src);
+    return { ok: true, blob: async () => ({ type: "image/png" }) };
+  }) as typeof fetch;
+  (globalThis as { ClipboardItem?: unknown }).ClipboardItem = class {
+    data: unknown;
+    constructor(data: unknown) {
+      this.data = data;
+    }
+  };
+  Object.defineProperty(navigator, "clipboard", {
+    value: {
+      write: async (items: unknown[]) => {
+        copied.push(...items);
+      },
+    },
+    configurable: true,
+  });
+  return {
+    fetched,
+    copied,
+    restore: () => {
+      globalThis.fetch = prevFetch;
+      (globalThis as { ClipboardItem?: unknown }).ClipboardItem =
+        prevClipboardItem;
+      Object.defineProperty(navigator, "clipboard", {
+        value: prevClipboard,
+        configurable: true,
+      });
+    },
+  };
+}
+
 const noopAsync = async () => {};
 const noopSave = async () =>
   ({ id: "wf", name: "standard", phases: [] }) as WorkflowTemplateInfo;
@@ -2988,6 +3048,34 @@ describe("ThreadView image-only user messages (issue #1759)", () => {
     assert.ok(box, "clicking the image must open the lightbox");
     assert.equal(m.query("img.lightboxImg")?.getAttribute("src"), dataUrl);
     m.unmount();
+  });
+
+  it("right-clicking an image-only attachment offers Copy Image and copies it (#1801)", async () => {
+    const dataUrl = "data:image/png;base64,ZZZZ";
+    const clip = stubImageClipboard();
+    try {
+      const m = await mount(
+        view({
+          onLoadAttachmentImage: async () => dataUrl,
+          detail: detail({
+            messages: [
+              msg({ id: "u1", role: "user", text: "", createdAt: 10, attachments: [img(1)] }),
+            ],
+          }),
+        }),
+      );
+      await m.flush();
+      await rightClickOn(m, m.query("img.singleImage") as HTMLElement);
+      const copyItem = document.querySelector("[data-copy-image]");
+      assert.ok(copyItem, "Copy Image offered on a right-clicked image");
+      await m.click(copyItem as HTMLElement);
+      await m.flush();
+      assert.equal(clip.copied.length, 1, "clipboard.write called once");
+      assert.deepEqual(clip.fetched, [dataUrl]);
+      m.unmount();
+    } finally {
+      clip.restore();
+    }
   });
 });
 

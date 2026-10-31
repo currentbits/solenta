@@ -41,7 +41,12 @@ import { htmlFromToolOutput } from "../../htmlPage";
 import { Markdown } from "../Markdown";
 import { redactDisplay } from "../../redactDisplay";
 import { lazyNamed } from "../../lazyNamed";
-import { showContextMenu, type ContextMenuItem } from "../../contextMenu";
+import {
+  copyImageToClipboard,
+  imageContextMenu,
+  showContextMenu,
+  type ContextMenuItem,
+} from "../../contextMenu";
 import { revealFileLabel } from "./ChangesPanel";
 
 // lazyNamed, not lazy: mount() preloads it, so tests never suspend on it.
@@ -265,6 +270,7 @@ export function ImageLightbox({
         // one) from bubbling into the backdrop's onClick and closing the
         // lightbox right after a plain click opened/toggled it.
         onClick={(e) => e.stopPropagation()}
+        onContextMenu={(e) => imageContextMenu(e, src)}
         onWheel={onWheel}
         onDoubleClick={onDoubleClick}
         onPointerDown={onPointerDown}
@@ -1122,30 +1128,53 @@ function coderShell(): CoderApi["shell"] | undefined {
  * an attachment's absolute path (electron/ipc-files.js
  * resolveAllowedShellPath allows `<userDataPath>/attachments` alongside the
  * thread worktree), so no new IPC is needed.
+ *
+ * An image chip also offers Copy Image (#1801), using the thumb src this
+ * chip already resolved. stopPropagation matters here: the thread body
+ * below also delegates onContextMenu to any `<img>` for the same feature
+ * (markdown/tool-result images with no chip of their own), and this chip's
+ * own menu must win instead of both popping at once.
  */
 function attachmentContextMenu(
-  e: { preventDefault(): void; clientX: number; clientY: number },
+  e: { preventDefault(): void; stopPropagation(): void; clientX: number; clientY: number },
   attachment: AttachmentInfo,
   threadId: string | null,
+  imageSrc?: string | null,
 ): void {
   e.preventDefault();
-  if (!threadId) return;
-  const items: ContextMenuItem[] = [
-    { id: "open", label: "Open", attrs: { "data-attachment-open": "" } },
-    {
-      id: "reveal",
-      label: revealFileLabel(),
-      attrs: { "data-attachment-reveal": "" },
-    },
-  ];
+  e.stopPropagation();
+  const items: ContextMenuItem[] = [];
+  if (threadId) {
+    items.push(
+      { id: "open", label: "Open", attrs: { "data-attachment-open": "" } },
+      {
+        id: "reveal",
+        label: revealFileLabel(),
+        attrs: { "data-attachment-reveal": "" },
+      },
+    );
+  }
+  if (attachment.kind === "image" && imageSrc) {
+    items.push({
+      id: "copy-image",
+      label: "Copy Image",
+      separatorBefore: items.length > 0,
+      attrs: { "data-copy-image": "" },
+    });
+  }
+  if (items.length === 0) return;
   void showContextMenu(items, { x: e.clientX, y: e.clientY }).then((id) => {
     if (!id) return;
+    if (id === "copy-image") {
+      void copyImageToClipboard(imageSrc!);
+      return;
+    }
     const shell = coderShell();
     if (!shell) return;
     if (id === "open") {
-      void shell.openPath({ threadId, path: attachment.path });
+      void shell.openPath({ threadId: threadId!, path: attachment.path });
     } else if (id === "reveal") {
-      void shell.reveal({ threadId, path: attachment.path });
+      void shell.reveal({ threadId: threadId!, path: attachment.path });
     }
   });
 }
@@ -1167,7 +1196,7 @@ function TranscriptAttachmentChip({
       className={styles.attachmentChip}
       data-attachment-kind={attachment.kind}
       title={attachment.path}
-      onContextMenu={(e) => attachmentContextMenu(e, attachment, threadId)}
+      onContextMenu={(e) => attachmentContextMenu(e, attachment, threadId, thumb)}
     >
       {attachment.kind === "image" && thumb ? (
         <img
