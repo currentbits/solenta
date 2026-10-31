@@ -73,12 +73,19 @@ function snapshotWorktree(cwd) {
   });
 }
 
-/** Where Claude reads/writes this thread's session (#453 instance-aware). */
-function claudeHomeFor(store, thread) {
+/**
+ * Where Claude reads/writes this thread's session (#453 instance-aware,
+ * #1808 isolated-home-aware: `userDataPath` resolves an isolated instance's
+ * own CLAUDE_CONFIG_DIR instead of falling through to the default home).
+ * @param {import('./store').Store} store
+ * @param {object} thread
+ * @param {string} [userDataPath]
+ */
+function claudeHomeFor(store, thread, userDataPath) {
   const { threadInstanceEnv } = require("./providerInstances.js");
   let env = null;
   try {
-    env = threadInstanceEnv(store.getSettings(), thread);
+    env = threadInstanceEnv(store.getSettings(), thread, { userDataPath });
   } catch {
     // unknown instance: the default home
   }
@@ -110,7 +117,7 @@ function refuseToPack(thread, opts) {
  * Build the payload for one idle thread. Read-only on this host.
  * @param {import('./store').Store} store
  * @param {string} threadId
- * @param {{ isRunning?: (id: string) => boolean }} [opts]
+ * @param {{ isRunning?: (id: string) => boolean, userDataPath?: string }} [opts]
  */
 function packThread(store, threadId, opts) {
   const thread = store.getThread(threadId);
@@ -142,7 +149,7 @@ function packThread(store, threadId, opts) {
 
   let session = "";
   if (thread.sessionId) {
-    const file = findClaudeSessionFile(claudeHomeFor(store, thread), cwd, thread.sessionId);
+    const file = findClaudeSessionFile(claudeHomeFor(store, thread, opts && opts.userDataPath), cwd, thread.sessionId);
     if (!file) throw new Error("This thread's Claude session file was not found, so the conversation cannot move.");
     session = fs.readFileSync(file, "utf8");
   }
@@ -384,8 +391,9 @@ function rollbackThread(store, threadId) {
  * @param {import('./store').Store} store
  * @param {string} threadId
  * @param {object} payload
+ * @param {{ userDataPath?: string }} [opts]
  */
-function returnThread(store, threadId, payload) {
+function returnThread(store, threadId, payload, opts) {
   validatePayload(payload);
   const thread = store.getThread(threadId);
   if (!thread || !thread.teleportedTo) throw new Error("This thread is not teleported.");
@@ -409,7 +417,7 @@ function returnThread(store, threadId, payload) {
   git(cwd, ["clean", "-fdq"]);
   applyPatch(cwd, payload);
   if (payload.sessionId && payload.session) {
-    relocateClaudeSession(claudeHomeFor(store, thread), cwd, payload.sessionId, payload.session);
+    relocateClaudeSession(claudeHomeFor(store, thread, opts && opts.userDataPath), cwd, payload.sessionId, payload.session);
   }
   store.setMessages(threadId, payload.messages);
   store.updateThread(threadId, {

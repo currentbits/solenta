@@ -558,6 +558,130 @@ setInterval(() => {}, 500);
     }
   });
 
+  it("isolated CLI home (#1808): still gets Solenta's PreToolUse hook, same shape as the overlay", async () => {
+    const overlayHome = path.join(tmpDir, "codex-overlay-src");
+    fs.mkdirSync(overlayHome);
+    store.setSettings({
+      providerInstances: [
+        { id: "ovl", name: "overlay", provider: "codex", configDir: overlayHome, env: {} },
+        { id: "iso", name: "solo", provider: "codex", isolatedHome: true, env: {} },
+      ],
+    });
+    /** @type {Record<string, any>} */
+    const seen = {};
+    runner.stopAll();
+    const core = await import(
+      pathToFileURL(path.join(__dirname, "../../core/dist/index.js")).href
+    );
+    process.env.CODER_CODEX_BIN = process.execPath;
+    try {
+      runner = createRunner({
+        store,
+        core,
+        pushFn() {},
+        tickMs: 15,
+        userDataPath: tmpDir,
+        runCodexFn: (opts) => {
+          seen[opts.envExtra.CODEX_HOME] = opts.args;
+          setImmediate(() => opts.onExit({ code: 0, stderr: "" }));
+          return { kill() {}, respondJsonRpc() {}, respondJsonRpcError() {} };
+        },
+      });
+      const ovlThread = services.createThread(store, { projectId: project.id, title: "ovl", provider: "codex:ovl" });
+      await runner.startRun({ threadId: ovlThread.id, prompt: "hi" });
+      await waitFor(() => Object.keys(seen).length === 1);
+      await waitFor(() => store.getThread(ovlThread.id).status === "done");
+      const isoThread = services.createThread(store, { projectId: project.id, title: "iso", provider: "codex:iso" });
+      await runner.startRun({ threadId: isoThread.id, prompt: "hi" });
+      await waitFor(() => Object.keys(seen).length === 2);
+      await waitFor(() => store.getThread(isoThread.id).status === "done");
+
+      const overlayDest = path.join(tmpDir, "codex-homes", ovlThread.id);
+      const isoDest = path.join(tmpDir, "provider-homes", "iso", "codex");
+      assert.ok(seen[overlayDest].includes("features.hooks=true"));
+      assert.ok(seen[isoDest].includes("features.hooks=true"));
+
+      // Same hooks.json shape (matcher, timeout, statusMessage), differing
+      // only in the per-home script path baked into `command`.
+      const overlayHooks = JSON.parse(fs.readFileSync(path.join(overlayDest, "hooks.json"), "utf8"));
+      const isoHooks = JSON.parse(fs.readFileSync(path.join(isoDest, "hooks.json"), "utf8"));
+      const strip = (h) => {
+        const copy = JSON.parse(JSON.stringify(h));
+        delete copy.hooks.PreToolUse[0].hooks[0].command;
+        return copy;
+      };
+      assert.deepEqual(strip(overlayHooks), strip(isoHooks));
+      assert.match(overlayHooks.hooks.PreToolUse[0].hooks[0].command, /^node /);
+      assert.match(isoHooks.hooks.PreToolUse[0].hooks[0].command, /^node /);
+
+      // The hook runtime script itself is byte-identical.
+      assert.equal(
+        fs.readFileSync(path.join(overlayDest, "solenta-hooks", "guardrail-hook.js"), "utf8"),
+        fs.readFileSync(path.join(isoDest, "solenta-hooks", "guardrail-hook.js"), "utf8"),
+      );
+
+      // Both persist a trust hash in config.toml (#1311).
+      const overlayCfg = fs.readFileSync(path.join(overlayDest, "config.toml"), "utf8");
+      const isoCfg = fs.readFileSync(path.join(isoDest, "config.toml"), "utf8");
+      assert.match(overlayCfg, /trusted_hash = "sha256:[0-9a-f]{64}"/);
+      assert.match(isoCfg, /trusted_hash = "sha256:[0-9a-f]{64}"/);
+
+      // Idempotent: a second turn on the isolated instance must not grow
+      // config.toml with a duplicate trust block.
+      await runner.startRun({ threadId: isoThread.id, prompt: "again" });
+      await waitFor(() => store.getThread(isoThread.id).status === "done");
+      const isoCfgAgain = fs.readFileSync(path.join(isoDest, "config.toml"), "utf8");
+      assert.equal(isoCfgAgain, isoCfg);
+    } finally {
+      delete process.env.CODER_CODEX_BIN;
+    }
+  });
+
+  it("isolated CLI home (#1808): guardrails off omits the hook, same as the overlay", async () => {
+    store.setSettings({
+      providerInstances: [
+        { id: "iso3", name: "solo3", provider: "codex", isolatedHome: true, env: {} },
+      ],
+    });
+    /** @type {any[]} */
+    const seen = [];
+    runner.stopAll();
+    const core = await import(
+      pathToFileURL(path.join(__dirname, "../../core/dist/index.js")).href
+    );
+    process.env.CODER_CODEX_BIN = process.execPath;
+    const prevGuardrails = process.env.CODER_GUARDRAILS;
+    process.env.CODER_GUARDRAILS = "off";
+    try {
+      runner = createRunner({
+        store,
+        core,
+        pushFn() {},
+        tickMs: 15,
+        userDataPath: tmpDir,
+        runCodexFn: (opts) => {
+          seen.push(opts);
+          setImmediate(() => opts.onExit({ code: 0, stderr: "" }));
+          return { kill() {}, respondJsonRpc() {}, respondJsonRpcError() {} };
+        },
+      });
+      const t = services.createThread(store, { projectId: project.id, title: "c3", provider: "codex:iso3" });
+      await runner.startRun({ threadId: t.id, prompt: "hi" });
+      await waitFor(() => seen.length === 1);
+      const { args, envExtra } = seen[0];
+      assert.equal(args.includes("features.hooks=true"), false, JSON.stringify(args));
+      assert.equal(
+        fs.existsSync(path.join(envExtra.CODEX_HOME, "hooks.json")),
+        false,
+        "guardrails off: no hook materials land in the isolated home either",
+      );
+    } finally {
+      delete process.env.CODER_CODEX_BIN;
+      if (prevGuardrails === undefined) delete process.env.CODER_GUARDRAILS;
+      else process.env.CODER_GUARDRAILS = prevGuardrails;
+    }
+  });
+
   it("extra launch arguments (#1780) join the codex app-server argv; denylisted flags are rejected on save", async () => {
     assert.throws(
       () => inst.validateProviderInstances([

@@ -25,6 +25,7 @@ const {
 const {
   deployCodexGuardrailOverlay,
   materializeCodexGuardrailHome,
+  materializeCodexGuardrailHooksInto,
 } = require("./codex-guardrail.js");
 const path = require("node:path");
 const threadSecrets = require("./threadSecrets.js");
@@ -238,6 +239,28 @@ function createCodexRun(ctx) {
         codexMcpEnv.SOLENTA_WORKTREE = localCwd;
       } catch {
         // Overlay is best-effort; a failed isolate must not block the turn.
+      }
+    } else if (
+      isolatedInstance &&
+      codexMcpEnv.CODEX_HOME &&
+      !crossesBoundary(project) &&
+      // Same gate as the overlay branch: guardrails, or a user PreToolUse
+      // hook to run (#1724).
+      (guardrailsEnabled() || (nativeHooks = ctx.userHookEvents.nativePreTool(threadId)))
+    ) {
+      try {
+        if (!nativeHooks) nativeHooks = ctx.userHookEvents.nativePreTool(threadId);
+        // Hooks go straight into the instance's own exclusive home (#1808):
+        // no symlink farm, no writer-lock swap, just the hook materials.
+        materializeCodexGuardrailHooksInto({
+          dest: codexMcpEnv.CODEX_HOME,
+          ...(nativeHooks ? { timeoutSec: preToolBudgetSec(nativeHooks.hooks) } : {}),
+        });
+        if (nativeHooks) codexMcpEnv.SOLENTA_USER_HOOKS = nativeHooks.file;
+        args.push("-c", "features.hooks=true");
+        codexMcpEnv.SOLENTA_WORKTREE = localCwd;
+      } catch {
+        // Hook materialize is best-effort; a failed isolate must not block the turn.
       }
     }
     // Extra launch arguments (#1780): app-server takes no trailing prompt
