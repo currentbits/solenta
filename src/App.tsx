@@ -74,6 +74,7 @@ import type {
   ConflictForecast,
   DistilledMemory,
   DistilledWorkflow,
+  PrProgressPush,
   ProjectUpdateInput,
 } from "./shared/ipc";
 import { SIGNIN_TERMINAL_ID } from "./shared/ipc";
@@ -1910,6 +1911,12 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     [api],
   );
 
+  /** createPr step progress: commit/push/create/link (issue #1803). */
+  const subscribePrProgress = useCallback(
+    (cb: (push: PrProgressPush) => void) => api.on("pr:progress", cb),
+    [api],
+  );
+
   const discoverRecentRepos = useCallback(
     () => api.projects.discoverRecent(),
     [api],
@@ -2665,6 +2672,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         listLocalServers={listLocalServers}
         onPush={pushBranch}
         onCreatePr={createPr}
+        onPrProgress={subscribePrProgress}
         onPrTemplate={prTemplate}
         onPrChecks={prChecks}
         onPrStatus={prStatus}

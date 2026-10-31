@@ -4,7 +4,9 @@ import { canSubmitPr } from "../prUi";
 import { useEscapeClose } from "../useEscapeClose";
 import { useModalFocus } from "../useModalFocus";
 import type { PrTemplateFile, PrTemplateResult } from "../shared/ipc";
+import type { PrSteps } from "../prProgress";
 import { Markdown } from "./Markdown";
+import { PrStepList } from "./PrStepList";
 import styles from "./CreatePrDialog.module.css";
 
 export interface CreatePrDialogProps {
@@ -15,6 +17,12 @@ export interface CreatePrDialogProps {
   pending: boolean;
   error?: string | null;
   oversize?: boolean;
+  /**
+   * Committing/Pushing/Creating PR/Linking progress for the in-flight
+   * submit (issue #1803). Omit (or null) to fall back to the plain
+   * "Creating…" button label.
+   */
+  steps?: PrSteps | null;
   onSubmit: (input: { title: string; body: string; draft: boolean }) => void;
   onSplit?: () => void;
   onCreateAnyway?: () => void;
@@ -28,6 +36,7 @@ export function CreatePrDialog({
   pending,
   error,
   oversize = false,
+  steps,
   onSubmit,
   onSplit,
   onCreateAnyway,
@@ -210,6 +219,7 @@ export function CreatePrDialog({
             />
             Create as draft
           </label>
+          {steps ? <PrStepList steps={steps} /> : null}
           {error || generateError ? (
             <p className={styles.error} data-create-pr-error="">
               {error || generateError}

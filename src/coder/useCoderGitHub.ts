@@ -55,6 +55,8 @@ export function useCoderGitHub({
       body?: string;
       draft?: boolean;
       allowOversize?: boolean;
+      /** Tags this call's "pr:progress" pushes (issue #1803). */
+      requestId?: string;
     }) => {
       if (!selectedThreadId) {
         throw new Error("No thread selected");
@@ -67,6 +69,7 @@ export function useCoderGitHub({
           body: input.body,
           draft: input.draft,
           allowOversize: input.allowOversize,
+          requestId: input.requestId,
         });
         if (selectedRef.current !== threadId) return pr;
         // createPr records prNumber/prUrl on the thread; refresh so the badge updates.

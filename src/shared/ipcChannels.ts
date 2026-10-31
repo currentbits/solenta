@@ -34,6 +34,8 @@ export const PUSH_CHANNELS = [
   "terminal:data",
   "clone:progress",
   "pairing:consent",
+  /** Create-PR step progress (commit/push/create/link), issue #1803. */
+  "pr:progress",
 ] as const;
 
 export type PushChannel = (typeof PUSH_CHANNELS)[number];

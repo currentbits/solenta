@@ -622,6 +622,11 @@ function buildDevCoder(): CoderApi {
       if (channel === "pairing:consent") {
         return () => {};
       }
+      // ponytail: dev/browser fixture never streams real PR progress; the
+      // owning component just shows its final pending/error state.
+      if (channel === "pr:progress") {
+        return () => {};
+      }
       if (channel === "speech:changed") {
         const fn = cb as (status: SpeechStatus) => void;
         listeners["speech:changed"].add(fn);

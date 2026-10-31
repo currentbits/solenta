@@ -671,6 +671,8 @@ export interface UseCoderResult {
     draft?: boolean;
     /** Override the PR-size cap for this creation (issue #402). */
     allowOversize?: boolean;
+    /** Tags this call's "pr:progress" pushes (issue #1803). */
+    requestId?: string;
   }) => Promise<PrInfo>;
   /** Live PR for the selected thread's branch, or null when none. */
   prStatus: () => Promise<PrInfo | null>;
