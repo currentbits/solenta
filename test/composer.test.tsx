@@ -218,6 +218,9 @@ function composer(
     onShell?: (command: string) => Promise<unknown>;
     onEditLastQueued?: () => void;
     onSendInBackground?: boolean;
+    contextWindow?: number | null;
+    contextUsed?: number | null;
+    onCompactFirst?: () => void;
   } = {},
 ) {
   // Seed the emulation from the thread this element renders with, so the
@@ -282,6 +285,9 @@ function composer(
       })}
       onRemoveWorkflow={async () => {}}
       sessionId={over.sessionId === undefined ? null : over.sessionId}
+      contextWindow={over.contextWindow}
+      contextUsed={over.contextUsed}
+      onCompactFirst={over.onCompactFirst}
       workspaceStrip={over.workspaceStrip}
       disabled={over.disabled ?? false}
       busy={over.busy ?? false}
@@ -791,6 +797,101 @@ describe("Composer send", () => {
     );
     await m.click(m.query('button[aria-label="Send"]'));
     assert.equal(h.sends.length, 0, "whitespace Send must not call onSend");
+    m.unmount();
+  });
+});
+
+describe("Composer oversized-send guard (#1797)", () => {
+  it("warns instead of sending when the estimate outruns the window", async () => {
+    const h = makeHarness();
+    // ~4 chars/token: 400 chars ≈ 100 tokens, well past the 20 left.
+    const m = await mount(
+      composer(h, { contextWindow: 1000, contextUsed: 980 }),
+    );
+    const ta = m.query("textarea");
+    await m.type(ta, "x".repeat(400));
+    await m.click(m.query('button[aria-label="Send"]'));
+
+    assert.equal(h.sends.length, 0, "the oversized send must be held back");
+    assert.ok(
+      m.query("[data-oversized-prompt-warning]"),
+      "an inline confirm must appear instead",
+    );
+    assert.ok(m.query("[data-oversized-send-anyway]"));
+    assert.ok(m.query("[data-oversized-cancel]"));
+    m.unmount();
+  });
+
+  it("sends normally when the estimate fits the remaining window", async () => {
+    const h = makeHarness();
+    const m = await mount(
+      composer(h, { contextWindow: 200_000, contextUsed: 0 }),
+    );
+    const ta = m.query("textarea");
+    await m.type(ta, "a small prompt");
+    await m.click(m.query('button[aria-label="Send"]'));
+
+    assert.deepEqual(h.sends, ["a small prompt"]);
+    assert.equal(m.query("[data-oversized-prompt-warning]"), null);
+    m.unmount();
+  });
+
+  it("sends without warning when the window is unknown", async () => {
+    const h = makeHarness();
+    const m = await mount(
+      composer(h, { contextWindow: null, contextUsed: null }),
+    );
+    const ta = m.query("textarea");
+    await m.type(ta, "x".repeat(10_000));
+    await m.click(m.query('button[aria-label="Send"]'));
+
+    assert.equal(
+      h.sends.length,
+      1,
+      "an unknown window must never block a send",
+    );
+    assert.equal(m.query("[data-oversized-prompt-warning]"), null);
+    m.unmount();
+  });
+
+  it("Send anyway resumes the same send that was held back", async () => {
+    const h = makeHarness();
+    const m = await mount(
+      composer(h, { contextWindow: 1000, contextUsed: 980 }),
+    );
+    const ta = m.query("textarea");
+    await m.type(ta, "x".repeat(400));
+    await m.click(m.query('button[aria-label="Send"]'));
+    assert.equal(h.sends.length, 0);
+
+    await m.click(m.query("[data-oversized-send-anyway]"));
+    assert.equal(h.sends.length, 1, "Send anyway must resume the held send");
+    assert.equal(m.query("[data-oversized-prompt-warning]"), null);
+    m.unmount();
+  });
+
+  it("Compact first is offered only when onCompactFirst is wired, and fires it", async () => {
+    const h = makeHarness();
+    let compacted = 0;
+    const m = await mount(
+      composer(h, {
+        contextWindow: 1000,
+        contextUsed: 980,
+        onCompactFirst: () => {
+          compacted += 1;
+        },
+      }),
+    );
+    const ta = m.query("textarea");
+    await m.type(ta, "x".repeat(400));
+    await m.click(m.query('button[aria-label="Send"]'));
+
+    const compactBtn = m.query("[data-oversized-compact-first]");
+    assert.ok(compactBtn, "Compact first must render when the hook is given");
+    await m.click(compactBtn);
+    assert.equal(compacted, 1);
+    assert.equal(h.sends.length, 0, "Compact first must not itself send");
+    assert.equal(m.query("[data-oversized-prompt-warning]"), null);
     m.unmount();
   });
 });

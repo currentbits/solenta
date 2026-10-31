@@ -1706,6 +1706,21 @@ export const ThreadView = memo(function ThreadView({
       }),
     };
   }, [detail, providers]);
+  /**
+   * Window for the oversized-send guard (#1797): same lookup as `ring`, but
+   * kept even when there is no measured usage yet (a fresh thread still has
+   * a documented window and 0 used, which `ring` would hide as a dead zero).
+   */
+  const composerContextWindow = useMemo(() => {
+    if (!detail) return null;
+    const modelId = detail.usage?.model ?? detail.thread.model;
+    return threadContextWindow(
+      detail.usage?.contextWindow,
+      providers,
+      detail.thread.provider,
+      modelId,
+    );
+  }, [detail, providers]);
   const showUsageLimitsStrip = useUsageLimitsStripEnabled();
   const handleForkFresh = useCallback(() => {
     if (isWorking || !onFork) return;
@@ -5635,6 +5650,9 @@ export const ThreadView = memo(function ThreadView({
         workflowListError={workflowListError}
         onRetryWorkflows={onRetryWorkflows}
         sessionId={thread.sessionId}
+        contextWindow={composerContextWindow}
+        contextUsed={detail.usage?.contextTokens ?? null}
+        onCompactFirst={nativeCompact ? handleCompact : undefined}
         statusTab={composerStatus}
         workspaceStrip={
           !project ||
