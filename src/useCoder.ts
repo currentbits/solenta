@@ -60,6 +60,10 @@ import type {
   PlanStatus,
   SetPlanStatusResult,
   ListIssuesResult,
+  ListMentionIssuesResult,
+  ListMentionDiscussionsResult,
+  IssueDetailForMentionResult,
+  DiscussionDetailForMentionResult,
   ListPrsOptions,
   ListPrsResult,
   CheckoutPrResult,
@@ -762,6 +766,24 @@ export interface UseCoderResult {
     number: number,
     status: PlanStatus,
   ) => Promise<SetPlanStatusResult>;
+  /** @-mention menu's open-issues row (#1805). Failures are in-band. */
+  listOpenIssuesForMention: (
+    projectPath: string,
+  ) => Promise<ListMentionIssuesResult>;
+  /** @-mention menu's discussions row (#1805). Always resolves. */
+  listDiscussionsForMention: (
+    projectPath: string,
+  ) => Promise<ListMentionDiscussionsResult>;
+  /** Issue chip expansion at send (#1805). Failures are in-band. */
+  issueDetailForMention: (input: {
+    projectPath: string;
+    number: number;
+  }) => Promise<IssueDetailForMentionResult>;
+  /** Discussion chip expansion at send (#1805). Failures are in-band. */
+  discussionDetailForMention: (input: {
+    projectPath: string;
+    number: number;
+  }) => Promise<DiscussionDetailForMentionResult>;
   /** Cross-thread newest-first activity feed. */
   listActivity: () => Promise<ActivityItem[]>;
   /** Per-day / provider / model usage ledger. */
@@ -1926,6 +1948,10 @@ export function useCoder(): UseCoderResult {
     setIssuePlanStatus,
     createIssue,
     fetchIssue,
+    listOpenIssuesForMention,
+    listDiscussionsForMention,
+    issueDetailForMention,
+    discussionDetailForMention,
   } = useCoderGitHub({
     api,
     selectedThreadId,
@@ -2456,6 +2482,10 @@ export function useCoder(): UseCoderResult {
     setIssuePlanStatus,
     createIssue,
     fetchIssue,
+    listOpenIssuesForMention,
+    listDiscussionsForMention,
+    issueDetailForMention,
+    discussionDetailForMention,
     listActivity,
     listUsageByDay,
     listProviderLimits,

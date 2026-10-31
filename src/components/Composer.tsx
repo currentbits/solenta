@@ -121,6 +121,7 @@ import {
   type ContextChip,
   type ContextChipLoader,
   type MentionExtra,
+  type MentionIssueApi,
   type MentionSourceApi,
 } from "../contextChips";
 import {
@@ -360,6 +361,11 @@ export interface ComposerProps {
   /** @url/@terminal/@problems/@git-changes/@<commit> (#1722). Absent hides those rows. */
   mentionSources?: MentionSourceApi;
   /**
+   * @issue / @discussion rows (#1805), fetched lazily once per menu open
+   * with a ~60s cache on the main process. Absent hides both rows.
+   */
+  mentionIssueApi?: MentionIssueApi;
+  /**
    * Native folder picker for the mention popup's "Browse folder" row.
    * Returns a repo-relative token (trailing slash) or null if cancelled.
    */
@@ -569,6 +575,7 @@ export const Composer = memo(function Composer({
   mentionPrs,
   mentionSkills,
   mentionSources,
+  mentionIssueApi,
   onPickMentionFolder,
   replyTo = null,
   onClearReply,
@@ -911,6 +918,7 @@ export const Composer = memo(function Composer({
       setContextChips(threadId, (prev) => [...prev, chip]),
     mentionSources,
     onAcceptSource: acceptSource,
+    mentionIssueApi,
     onPickMentionFolder,
     disabled,
     writeDraft,

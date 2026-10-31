@@ -3230,6 +3230,42 @@ export type SetPlanStatusResult =
   | { ok: true }
   | { ok: false; reason: string };
 
+/** One open issue or discussion row for the @-mention menu (#1805). */
+export interface MentionIssueRow {
+  number: number;
+  title: string;
+}
+
+/** @-mention menu open-issues list. Failures stay in-band so the row can retry. */
+export type ListMentionIssuesResult =
+  | { ok: true; issues: MentionIssueRow[] }
+  | { ok: false; reason: string };
+
+/**
+ * @-mention menu discussions list. Always `ok: true` — a repo without
+ * Discussions enabled, or any failure, resolves to an empty list; this row
+ * is a bonus beside the issue list, never a blocker.
+ */
+export type ListMentionDiscussionsResult = { ok: true; discussions: MentionIssueRow[] };
+
+/** One issue/discussion's detail for the @-mention chip expansion (#1805). */
+export interface MentionIssueDetail {
+  number: number;
+  title: string;
+  state: string;
+  labels: string[];
+  body: string;
+  comments: { author: string; body: string }[];
+}
+
+export type IssueDetailForMentionResult =
+  | { ok: true; issue: MentionIssueDetail }
+  | { ok: false; reason: string };
+
+export type DiscussionDetailForMentionResult =
+  | { ok: true; discussion: MentionIssueDetail }
+  | { ok: false; reason: string };
+
 /**
  * How hard a model should think. Persisted per thread, sent to the CLI.
  *
@@ -7193,6 +7229,35 @@ export interface CoderApi {
       title: string;
       body: string;
     }): Promise<CreateIssueResult>;
+    /**
+     * Open issues for the composer's @-mention menu: number + title only,
+     * cached ~60s per project on the main process (#1805). REST GET
+     * …/issues?state=open mixes PRs in; the main process drops them. Never
+     * rejects: failures come back as `{ ok: false, reason }`.
+     */
+    listOpenForMention(projectPath: string): Promise<ListMentionIssuesResult>;
+    /**
+     * Recent discussions for the @-mention menu, when the repo has
+     * Discussions enabled. Never rejects; an empty list (not an error)
+     * covers both "disabled" and any fetch failure.
+     */
+    listDiscussionsForMention(
+      projectPath: string,
+    ): Promise<ListMentionDiscussionsResult>;
+    /**
+     * One issue's title/state/labels/body/last comments, for the @-mention
+     * chip expansion (#1805). Never rejects: failures come back as
+     * `{ ok: false, reason }`.
+     */
+    detailForMention(input: {
+      projectPath: string;
+      number: number;
+    }): Promise<IssueDetailForMentionResult>;
+    /** Same shape as detailForMention, for a discussion chip. */
+    discussionDetailForMention(input: {
+      projectPath: string;
+      number: number;
+    }): Promise<DiscussionDetailForMentionResult>;
   };
   files: {
     /**

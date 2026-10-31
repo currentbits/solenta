@@ -881,6 +881,339 @@ async function createIssue(projectPath, input) {
   return { ok: true, number, url };
 }
 
+/**
+ * @-mention menu list cache (#1805): project-scoped, ~60s, so repeated menu
+ * opens in the same project do not refetch. Keyed by checkout cwd; only a
+ * successful fetch is cached, so a transient failure retries next open.
+ */
+const MENTION_LIST_TTL_MS = 60_000;
+/** @type {Map<string, { at: number, rows: {number:number, title:string}[] }>} */
+const mentionIssuesCache = new Map();
+/** @type {Map<string, { at: number, rows: {number:number, title:string}[] }>} */
+const mentionDiscussionsCache = new Map();
+
+/**
+ * @param {Map<string, { at: number, rows: any[] }>} cache
+ * @param {string} key
+ * @param {() => number} now
+ */
+function cachedMentionRows(cache, key, now) {
+  const hit = cache.get(key);
+  if (hit && now() - hit.at < MENTION_LIST_TTL_MS) return hit.rows;
+  return null;
+}
+
+/**
+ * Open issues for the @-mention menu: number + title only (#1805). GitHub
+ * only, same scope as the "pr" chip. The REST issues page mixes PRs in;
+ * rows carrying `pull_request` are dropped.
+ *
+ * @param {string} projectPath
+ * @param {{ now?: () => number }} [opts]
+ * @returns {Promise<{ ok: true, issues: { number: number, title: string }[] } | { ok: false, reason: string }>}
+ */
+async function listOpenIssuesForMention(projectPath, opts = {}) {
+  const cwd = cwdOf(projectPath);
+  if (!cwd) return { ok: false, reason: "not a GitHub repo" };
+  const now = opts.now || Date.now;
+  const cached = cachedMentionRows(mentionIssuesCache, cwd, now);
+  if (cached) return { ok: true, issues: cached };
+
+  const originUrl = originUrlOf(projectPath);
+  if (!originUrl || !(await isGitHubPrRemote(originUrl))) {
+    return { ok: false, reason: "not a GitHub repo" };
+  }
+  const repo = ownerRepoFromRemote(originUrl);
+  if (!repo) return { ok: false, reason: "not a GitHub repo" };
+
+  const listed = await ghApiTryAsync(
+    cwd,
+    ["api", `repos/${repo.owner}/${repo.repo}/issues?state=open&per_page=100`],
+    ghOptsOf(projectPath),
+  );
+  if (!listed.ok) {
+    if (listed.enoent) return { ok: false, reason: "gh missing" };
+    const errText = listed.stderr || listed.combined || listed.stdout || "";
+    if (isGhAuthFailure(errText)) return { ok: false, reason: "auth" };
+    return { ok: false, reason: tailErr(errText, "gh issue list failed") };
+  }
+  let rows;
+  try {
+    const trimmed = String(listed.stdout || "").trim();
+    rows = JSON.parse(trimmed === "" ? "[]" : trimmed);
+  } catch {
+    return { ok: false, reason: "gh returned unparseable issue list JSON" };
+  }
+  if (!Array.isArray(rows)) {
+    return { ok: false, reason: "gh returned incomplete issue list JSON" };
+  }
+  const issues = [];
+  for (const row of rows) {
+    // The REST issues endpoint mixes pull requests into the same page;
+    // only a true PR row carries `pull_request`.
+    if (!row || row.pull_request != null) continue;
+    const number = Number(row.number);
+    const title = row.title != null ? String(row.title) : "";
+    if (!Number.isInteger(number) || number <= 0 || !title) continue;
+    issues.push({ number, title });
+  }
+  mentionIssuesCache.set(cwd, { at: now(), rows: issues });
+  return { ok: true, issues };
+}
+
+/**
+ * Recent discussions for the @-mention menu (#1805), when the repo has
+ * Discussions enabled. GraphQL only (REST has no discussions endpoint); the
+ * generic `gh api graphql` passthrough (electron/github.js ghIssue) already
+ * answers any query, so this is one call, same shape as listIssuePage's
+ * issues() query. Discussions disabled, or any failure, resolves to an
+ * empty list rather than an error — this menu row is a bonus, never a
+ * blocker for the issue list beside it.
+ *
+ * @param {string} projectPath
+ * @param {{ now?: () => number }} [opts]
+ * @returns {Promise<{ ok: true, discussions: { number: number, title: string }[] }>}
+ */
+async function listOpenDiscussionsForMention(projectPath, opts = {}) {
+  const cwd = cwdOf(projectPath);
+  if (!cwd) return { ok: true, discussions: [] };
+  const now = opts.now || Date.now;
+  const cached = cachedMentionRows(mentionDiscussionsCache, cwd, now);
+  if (cached) return { ok: true, discussions: cached };
+
+  try {
+    const originUrl = originUrlOf(projectPath);
+    if (!originUrl || !(await isGitHubPrRemote(originUrl))) {
+      return { ok: true, discussions: [] };
+    }
+    const repo = ownerRepoFromRemote(originUrl);
+    if (!repo) return { ok: true, discussions: [] };
+
+    const query =
+      "query($owner:String!,$repo:String!){ repository(owner:$owner,name:$repo){ hasDiscussionsEnabled discussions(first:50, orderBy:{field:UPDATED_AT,direction:DESC}){ nodes{ number title } } } }";
+    const listed = await ghApiTryAsync(
+      cwd,
+      [
+        "api",
+        "graphql",
+        "-f",
+        `query=${query}`,
+        "-f",
+        `owner=${repo.owner}`,
+        "-f",
+        `repo=${repo.repo}`,
+      ],
+      ghOptsOf(projectPath),
+    );
+    if (!listed.ok) return { ok: true, discussions: [] };
+    const data = JSON.parse(listed.stdout);
+    const node = data && data.data && data.data.repository;
+    if (!node || !node.hasDiscussionsEnabled) {
+      mentionDiscussionsCache.set(cwd, { at: now(), rows: [] });
+      return { ok: true, discussions: [] };
+    }
+    const nodes = (node.discussions && node.discussions.nodes) || [];
+    const discussions = [];
+    for (const row of nodes) {
+      const number = Number(row && row.number);
+      const title = row && row.title != null ? String(row.title) : "";
+      if (!Number.isInteger(number) || number <= 0 || !title) continue;
+      discussions.push({ number, title });
+    }
+    mentionDiscussionsCache.set(cwd, { at: now(), rows: discussions });
+    return { ok: true, discussions };
+  } catch {
+    return { ok: true, discussions: [] };
+  }
+}
+
+/** Comments carried into an issue/discussion mention chip (#1805). */
+const MENTION_COMMENT_CAP = 5;
+/** Per-comment payload guard; the renderer applies its own display cap. */
+const MENTION_COMMENT_BODY_CAP = 4_000;
+
+/** @param {unknown} text */
+function capCommentBody(text) {
+  const s = text == null ? "" : String(text);
+  return s.length > MENTION_COMMENT_BODY_CAP
+    ? `${s.slice(0, MENTION_COMMENT_BODY_CAP)}\n[… truncated …]`
+    : s;
+}
+
+/**
+ * One issue's title/state/labels/body/last comments, for the @-mention chip
+ * expansion (#1805) — the same information viewPrDetail gives the PR chip.
+ * Separate from fetchIssue (ticket ingestion), which only carries
+ * number/title/body/url. Never throws.
+ *
+ * @param {string} projectPath
+ * @param {unknown} number
+ * @returns {Promise<{ ok: true, issue: { number: number, title: string, state: string, labels: string[], body: string, comments: { author: string, body: string }[] } } | { ok: false, reason: string }>}
+ */
+async function issueDetailForMention(projectPath, number) {
+  try {
+    const cwd = cwdOf(projectPath);
+    const issueNumber = Number(number);
+    if (!cwd) return { ok: false, reason: "not a GitHub repo" };
+    if (!Number.isInteger(issueNumber) || issueNumber <= 0) {
+      return { ok: false, reason: "invalid issue reference" };
+    }
+    const originUrl = originUrlOf(projectPath);
+    if (!originUrl || !(await isGitHubPrRemote(originUrl))) {
+      return { ok: false, reason: "not a GitHub repo" };
+    }
+    const repo = ownerRepoFromRemote(originUrl);
+    if (!repo) return { ok: false, reason: "not a GitHub repo" };
+    const ghOpts = ghOptsOf(projectPath);
+
+    const viewed = await ghApiTryAsync(
+      cwd,
+      ["api", `repos/${repo.owner}/${repo.repo}/issues/${issueNumber}`],
+      ghOpts,
+    );
+    if (!viewed.ok) {
+      if (viewed.enoent) return { ok: false, reason: "gh missing" };
+      const errText = viewed.stderr || viewed.combined || viewed.stdout || "";
+      if (isGhAuthFailure(errText)) return { ok: false, reason: "auth" };
+      if (isIssueNotFound(errText)) return { ok: false, reason: "issue not found" };
+      return { ok: false, reason: tailErr(errText, "gh issue view failed") };
+    }
+    let row;
+    try {
+      row = JSON.parse(String(viewed.stdout || "").trim() || "{}");
+    } catch {
+      return { ok: false, reason: "gh returned unparseable issue JSON" };
+    }
+    if (row.pull_request != null) return { ok: false, reason: "issue not found" };
+    const title = row.title != null ? String(row.title) : "";
+    if (!title) return { ok: false, reason: "gh returned incomplete issue JSON" };
+    const state = String(row.state || "").toUpperCase() === "CLOSED" ? "CLOSED" : "OPEN";
+    const labels = Array.isArray(row.labels)
+      ? row.labels
+          .map((l) => (typeof l === "string" ? l : l && l.name != null ? String(l.name) : ""))
+          .filter(Boolean)
+      : [];
+    const body = bannerUntrustedBody(row.body == null ? "" : String(row.body));
+
+    let comments = [];
+    const commented = await ghApiTryAsync(
+      cwd,
+      ["api", `repos/${repo.owner}/${repo.repo}/issues/${issueNumber}/comments?per_page=100`],
+      ghOpts,
+    );
+    if (commented.ok) {
+      try {
+        const rows = JSON.parse(String(commented.stdout || "").trim() || "[]");
+        if (Array.isArray(rows)) {
+          comments = rows.slice(-MENTION_COMMENT_CAP).map((c) => ({
+            author: c && c.user && c.user.login != null ? String(c.user.login) : "",
+            body: capCommentBody(bannerUntrustedBody(c && c.body != null ? String(c.body) : "")),
+          }));
+        }
+      } catch {
+        // Comments are best-effort; the issue body alone is still useful.
+      }
+    }
+    return { ok: true, issue: { number: issueNumber, title, state, labels, body, comments } };
+  } catch (err) {
+    const msg = err && err.message ? String(err.message) : String(err);
+    return { ok: false, reason: msg || "issue fetch failed" };
+  }
+}
+
+/**
+ * One discussion's title/body/last comments for the @-mention chip
+ * expansion (#1805). `labels` carries the discussion's category (if any) so
+ * the chip renders uniformly with issueDetailForMention; `state` is
+ * "ANSWERED"/"UNANSWERED". Never throws.
+ *
+ * @param {string} projectPath
+ * @param {unknown} number
+ * @returns {Promise<{ ok: true, discussion: { number: number, title: string, state: string, labels: string[], body: string, comments: { author: string, body: string }[] } } | { ok: false, reason: string }>}
+ */
+async function discussionDetailForMention(projectPath, number) {
+  try {
+    const cwd = cwdOf(projectPath);
+    const discussionNumber = Number(number);
+    if (!cwd) return { ok: false, reason: "not a GitHub repo" };
+    if (!Number.isInteger(discussionNumber) || discussionNumber <= 0) {
+      return { ok: false, reason: "invalid discussion reference" };
+    }
+    const originUrl = originUrlOf(projectPath);
+    if (!originUrl || !(await isGitHubPrRemote(originUrl))) {
+      return { ok: false, reason: "not a GitHub repo" };
+    }
+    const repo = ownerRepoFromRemote(originUrl);
+    if (!repo) return { ok: false, reason: "not a GitHub repo" };
+
+    const query =
+      "query($owner:String!,$repo:String!,$n:Int!){ repository(owner:$owner,name:$repo){ discussion(number:$n){ number title body isAnswered category{ name } comments(last:5){ nodes{ author{ login } body } } } } }";
+    const listed = await ghApiTryAsync(
+      cwd,
+      [
+        "api",
+        "graphql",
+        "-f",
+        `query=${query}`,
+        "-f",
+        `owner=${repo.owner}`,
+        "-f",
+        `repo=${repo.repo}`,
+        "-F",
+        `n=${discussionNumber}`,
+      ],
+      ghOptsOf(projectPath),
+    );
+    if (!listed.ok) {
+      if (listed.enoent) return { ok: false, reason: "gh missing" };
+      const errText = listed.stderr || listed.combined || listed.stdout || "";
+      if (isGhAuthFailure(errText)) return { ok: false, reason: "auth" };
+      return { ok: false, reason: tailErr(errText, "gh discussion view failed") };
+    }
+    let data;
+    try {
+      data = JSON.parse(listed.stdout);
+    } catch {
+      return { ok: false, reason: "gh returned unparseable discussion JSON" };
+    }
+    if (data && Array.isArray(data.errors) && data.errors.length) {
+      return {
+        ok: false,
+        reason: tailErr(data.errors.map((e) => e.message).join("; "), "gh discussion view failed"),
+      };
+    }
+    const discussion =
+      data && data.data && data.data.repository && data.data.repository.discussion;
+    if (!discussion) return { ok: false, reason: "discussion not found" };
+    const title = discussion.title != null ? String(discussion.title) : "";
+    if (!title) return { ok: false, reason: "discussion not found" };
+    const body = bannerUntrustedBody(discussion.body == null ? "" : String(discussion.body));
+    const category =
+      discussion.category && discussion.category.name != null
+        ? String(discussion.category.name)
+        : "";
+    const nodes = (discussion.comments && discussion.comments.nodes) || [];
+    const comments = nodes.map((c) => ({
+      author: c && c.author && c.author.login != null ? String(c.author.login) : "",
+      body: capCommentBody(bannerUntrustedBody(c && c.body != null ? String(c.body) : "")),
+    }));
+    return {
+      ok: true,
+      discussion: {
+        number: discussionNumber,
+        title,
+        state: discussion.isAnswered ? "ANSWERED" : "UNANSWERED",
+        labels: category ? [category] : [],
+        body,
+        comments,
+      },
+    };
+  } catch (err) {
+    const msg = err && err.message ? String(err.message) : String(err);
+    return { ok: false, reason: msg || "discussion fetch failed" };
+  }
+}
+
 module.exports = {
   bannerUntrustedBody,
   parseIssueRef,
@@ -899,4 +1232,8 @@ module.exports = {
   parseIssueListJson,
   ownerRepoFromRemote,
   originUrlOf,
+  listOpenIssuesForMention,
+  listOpenDiscussionsForMention,
+  issueDetailForMention,
+  discussionDetailForMention,
 };

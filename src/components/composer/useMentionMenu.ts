@@ -12,6 +12,7 @@ import {
   sourceMentionRows,
   type ContextChip,
   type MentionExtra,
+  type MentionIssueApi,
   type MentionSourceApi,
 } from "../../contextChips";
 import type { MentionCommit, PromptSnippet } from "../../shared/ipc";
@@ -31,6 +32,7 @@ export function useMentionMenu({
   onAcceptExtra,
   mentionSources,
   onAcceptSource,
+  mentionIssueApi,
   onPickMentionFolder,
   disabled,
   writeDraft,
@@ -45,6 +47,8 @@ export function useMentionMenu({
   /** @url/@terminal/@problems/@git-changes/@<commit> rows (#1722). */
   mentionSources?: MentionSourceApi;
   onAcceptSource?: (extra: SourceExtra) => void;
+  /** Open-issue/discussion rows (#1805), fetched lazily once per menu open. */
+  mentionIssueApi?: MentionIssueApi;
   onPickMentionFolder?: () => Promise<string | null>;
   disabled: boolean;
   writeDraft: (text: string, caret?: number) => void;
@@ -65,6 +69,14 @@ export function useMentionMenu({
   /** Recent commits, fetched once each time the popup opens. */
   const [commits, setCommits] = useState<readonly MentionCommit[]>([]);
   const commitsAsked = useRef(false);
+  /** Open issues/discussions, fetched once each time the popup opens (#1805). */
+  const [issueRows, setIssueRows] = useState<
+    readonly { number: number; title: string }[]
+  >([]);
+  const [discussionRows, setDiscussionRows] = useState<
+    readonly { number: number; title: string }[]
+  >([]);
+  const issuesAsked = useRef(false);
   const sourceRows =
     mention && mentionSources
       ? sourceMentionRows(mention.query, {
@@ -72,10 +84,23 @@ export function useMentionMenu({
           commits,
         })
       : { sources: [], commits: [] };
+  const issueExtras: MentionExtra[] = issueRows.map((r) => ({
+    kind: "issue",
+    number: r.number,
+    title: r.title,
+  }));
+  const discussionExtras: MentionExtra[] = discussionRows.map((r) => ({
+    kind: "discussion",
+    number: r.number,
+    title: r.title,
+  }));
   const extraMatches = mention
     ? [
         ...sourceRows.sources,
-        ...filterMentionExtras([...(mentionExtras ?? [])], mention.query),
+        ...filterMentionExtras(
+          [...(mentionExtras ?? []), ...issueExtras, ...discussionExtras],
+          mention.query,
+        ),
         ...sourceRows.commits,
       ]
     : [];
@@ -95,7 +120,10 @@ export function useMentionMenu({
     }
     setMention((prev) => (prev == null ? prev : null));
     commitsAsked.current = false;
+    issuesAsked.current = false;
     setMentionFiles((prev) => (prev.length === 0 ? prev : []));
+    setIssueRows((prev) => (prev.length === 0 ? prev : []));
+    setDiscussionRows((prev) => (prev.length === 0 ? prev : []));
     setMentionIndex((prev) => (prev === 0 ? prev : 0));
   }, []);
 
@@ -107,7 +135,8 @@ export function useMentionMenu({
       (!onListFiles &&
         !promptSnippets?.length &&
         !mentionExtras?.length &&
-        !mentionSources) ||
+        !mentionSources &&
+        !mentionIssueApi) ||
       disabled
     ) {
       closeMention();
@@ -127,6 +156,17 @@ export function useMentionMenu({
         .listCommits()
         .then(setCommits)
         .catch(() => setCommits([]));
+    }
+    if (mentionIssueApi && !issuesAsked.current) {
+      issuesAsked.current = true;
+      mentionIssueApi
+        .listOpenIssues()
+        .then(setIssueRows)
+        .catch(() => setIssueRows([]));
+      mentionIssueApi
+        .listDiscussions?.()
+        .then(setDiscussionRows)
+        .catch(() => setDiscussionRows([]));
     }
     if (mentionTimer.current) clearTimeout(mentionTimer.current);
     if (!onListFiles) return;
@@ -148,6 +188,7 @@ export function useMentionMenu({
     promptSnippets,
     mentionExtras,
     mentionSources,
+    mentionIssueApi,
     disabled,
     closeMention,
   ]);
@@ -221,6 +262,13 @@ export function useMentionMenu({
         onAcceptExtra({
           id,
           kind: "pr",
+          number: extra.number,
+          title: extra.title,
+        });
+      } else if (extra.kind === "issue" || extra.kind === "discussion") {
+        onAcceptExtra({
+          id,
+          kind: extra.kind,
           number: extra.number,
           title: extra.title,
         });

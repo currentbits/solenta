@@ -44,7 +44,16 @@ const {
   spotlightLane,
   heartbeatLane,
 } = require("./mergeQueue.js");
-const { fetchIssue, listIssues, setPlanStatus, createIssue } = require("./issues.js");
+const {
+  fetchIssue,
+  listIssues,
+  setPlanStatus,
+  createIssue,
+  listOpenIssuesForMention,
+  listOpenDiscussionsForMention,
+  issueDetailForMention,
+  discussionDetailForMention,
+} = require("./issues.js");
 const {
   readPrTemplate,
   viewPrDetail,
@@ -452,6 +461,24 @@ module.exports = {
       title: input && input.title,
       body: input && input.body,
     });
+  },
+  "issues:listOpenForMention": async (ctx, projectPath) => {
+    return listOpenIssuesForMention(issueTargetFor(ctx.store, projectPath));
+  },
+  "issues:listDiscussionsForMention": async (ctx, projectPath) => {
+    return listOpenDiscussionsForMention(issueTargetFor(ctx.store, projectPath));
+  },
+  "issues:detailForMention": async (ctx, input) => {
+    return issueDetailForMention(
+      issueTargetFor(ctx.store, input && input.projectPath),
+      input && input.number,
+    );
+  },
+  "issues:discussionDetailForMention": async (ctx, input) => {
+    return discussionDetailForMention(
+      issueTargetFor(ctx.store, input && input.projectPath),
+      input && input.number,
+    );
   },
   "git:listCheckpoints": async (ctx, input) => {
     return listCheckpoints({

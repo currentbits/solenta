@@ -4,6 +4,7 @@
  */
 import type {
   MentionCommit,
+  MentionIssueDetail,
   MentionSourceResult,
   PreviewInspectResult,
 } from "./shared/ipc";
@@ -19,6 +20,8 @@ export const MENTION_EMPTY_CAP = 8;
 export type ContextChipKind =
   | "thread"
   | "pr"
+  | "issue"
+  | "discussion"
   | "skill"
   | "terminal"
   | "quote"
@@ -37,6 +40,20 @@ export interface ThreadChip extends ChipBase {
 
 export interface PrChip extends ChipBase {
   kind: "pr";
+  number: number;
+  title: string;
+}
+
+/** A GitHub issue mentioned with `@` (#1805). */
+export interface IssueChip extends ChipBase {
+  kind: "issue";
+  number: number;
+  title: string;
+}
+
+/** A GitHub discussion mentioned with `@` (#1805). */
+export interface DiscussionChip extends ChipBase {
+  kind: "discussion";
   number: number;
   title: string;
 }
@@ -103,6 +120,8 @@ export interface SourceChip extends ChipBase {
 export type ContextChip =
   | ThreadChip
   | PrChip
+  | IssueChip
+  | DiscussionChip
   | SkillChip
   | TerminalChip
   | QuoteChip
@@ -177,6 +196,8 @@ export function elementChipPrompt(chip: ElementChip): string {
 export type MentionExtra =
   | { kind: "thread"; id: string; title: string }
   | { kind: "pr"; number: number; title: string }
+  | { kind: "issue"; number: number; title: string }
+  | { kind: "discussion"; number: number; title: string }
   | { kind: "skill"; name: string; description: string }
   | {
       kind: "source";
@@ -201,6 +222,18 @@ export interface MentionSourceApi {
   gitChanges(): Promise<MentionSourceResult>;
   listCommits(): Promise<MentionCommit[]>;
   showCommit(sha: string): Promise<MentionSourceResult>;
+}
+
+/**
+ * Thread-bound reader for the @-mention menu's issue/discussion rows
+ * (#1805). ThreadView builds it; absent disables both rows. Lists are
+ * fetched lazily once per menu open and cached ~60s on the main process, so
+ * repeated opens are cheap.
+ */
+export interface MentionIssueApi {
+  listOpenIssues(): Promise<Array<{ number: number; title: string }>>;
+  /** Absent (not just an empty resolve) skips the discussions fetch entirely. */
+  listDiscussions?(): Promise<Array<{ number: number; title: string }>>;
 }
 
 const URL_QUERY = /^https?:\/\/\S+$/i;
@@ -283,10 +316,15 @@ export type PrDetailLoad =
 
 export type SkillBodyLoad = string | { error: string };
 
+/** Issue/discussion chip expansion (#1805): title, state, labels, body, comments. */
+export type IssueDetailLoad = MentionIssueDetail | { error: string };
+
 export interface ContextChipLoader {
   threadDigest?: (threadId: string) => Promise<string>;
   prDetail?: (number: number) => Promise<PrDetailLoad>;
   skillBody?: (name: string) => Promise<SkillBodyLoad>;
+  issueDetail?: (number: number) => Promise<IssueDetailLoad>;
+  discussionDetail?: (number: number) => Promise<IssueDetailLoad>;
 }
 
 export function quoteChipAsReply(chip: QuoteChip): {
@@ -313,6 +351,10 @@ export function contextChipLabel(chip: ContextChip): string {
   }
   if (chip.kind === "thread") return chip.title || chip.threadId;
   if (chip.kind === "pr") return `#${chip.number} ${chip.title}`.trim();
+  if (chip.kind === "issue") return `Issue #${chip.number} ${chip.title}`.trim();
+  if (chip.kind === "discussion") {
+    return `Discussion #${chip.number} ${chip.title}`.trim();
+  }
   if (chip.kind === "skill") return chip.name;
   if (chip.kind === "element") return `el · ${chip.label}`;
   if (chip.kind === "quote") {
@@ -356,6 +398,18 @@ export function commandOutputChip(
 function capBody(text: string): string {
   if (text.length <= CONTEXT_BODY_CAP) return text;
   return `${text.slice(0, CONTEXT_BODY_CAP)}\n[… truncated …]`;
+}
+
+/** Issue/discussion chip body (#1805): state/labels, body, then last comments. */
+function formatIssueLikeDetail(label: string, detail: MentionIssueDetail): string {
+  const meta = [detail.state, detail.labels.join(", ")].filter(Boolean).join(" · ");
+  const body = capBody((detail.body || "").trim());
+  const comments = detail.comments.length
+    ? `\n\nComments:\n${detail.comments
+        .map((c) => `- ${c.author || "unknown"}: ${c.body.trim()}`)
+        .join("\n")}`
+    : "";
+  return `${label}${meta ? `\n${meta}` : ""}${body ? `\n\n${body}` : ""}${comments}`;
 }
 
 /** Same shape as electron/ask.js formatThreadDigest. */
@@ -436,6 +490,17 @@ async function expandOne(
       return loadError(label, err instanceof Error ? err.message : "failed");
     }
   }
+  if (chip.kind === "issue" || chip.kind === "discussion") {
+    const loader = chip.kind === "issue" ? load?.issueDetail : load?.discussionDetail;
+    if (!loader) return loadError(label, "unavailable");
+    try {
+      const detail = await loader(chip.number);
+      if ("error" in detail) return loadError(label, detail.error);
+      return formatIssueLikeDetail(label, detail);
+    } catch (err) {
+      return loadError(label, err instanceof Error ? err.message : "failed");
+    }
+  }
   if (!load?.skillBody) return loadError(label, "unavailable");
   try {
     const body = await load.skillBody(chip.name);
@@ -490,7 +555,7 @@ function parseOneChip(row: unknown): ContextChip | null {
     if (!threadId || title == null) return null;
     return { id, kind, threadId, title };
   }
-  if (kind === "pr") {
+  if (kind === "pr" || kind === "issue" || kind === "discussion") {
     const number = row.number;
     const title = asString(row.title);
     if (typeof number !== "number" || !Number.isFinite(number) || title == null) {
@@ -595,11 +660,11 @@ function mentionExtraHits(e: MentionExtra, q: string): boolean {
   if (!q) return true;
   if (e.kind === "source" || e.kind === "commit") return true;
   if (e.kind === "thread") return e.title.toLowerCase().includes(q);
-  if (e.kind === "pr") {
+  if (e.kind === "pr" || e.kind === "issue" || e.kind === "discussion") {
     return (
       e.title.toLowerCase().includes(q) ||
       String(e.number).includes(q) ||
-      `pr#${e.number}`.includes(q)
+      `${e.kind}#${e.number}`.includes(q)
     );
   }
   return (

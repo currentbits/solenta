@@ -7,7 +7,9 @@ import styles from "../Composer.module.css";
 
 function extraLabel(extra: MentionExtra): string {
   if (extra.kind === "thread") return extra.title;
-  if (extra.kind === "pr") return `#${extra.number} ${extra.title}`;
+  if (extra.kind === "pr" || extra.kind === "issue" || extra.kind === "discussion") {
+    return `#${extra.number} ${extra.title}`;
+  }
   if (extra.kind === "source") return extra.hint;
   if (extra.kind === "commit") return `${extra.short} ${extra.subject || "(typed sha)"}`;
   return extra.name;
@@ -16,13 +18,17 @@ function extraLabel(extra: MentionExtra): string {
 function extraKindPrefix(extra: MentionExtra): string {
   if (extra.kind === "thread") return "Thread";
   if (extra.kind === "pr") return "PR";
+  if (extra.kind === "issue") return "Issue";
+  if (extra.kind === "discussion") return "Discussion";
   if (extra.kind === "source") return `@${extra.source}`;
   if (extra.kind === "commit") return "Commit";
   return "Skill";
 }
 
 function extraKey(extra: MentionExtra): string {
-  if (extra.kind === "pr") return `pr:${extra.number}`;
+  if (extra.kind === "pr" || extra.kind === "issue" || extra.kind === "discussion") {
+    return `${extra.kind}:${extra.number}`;
+  }
   if (extra.kind === "thread") return `thread:${extra.id}`;
   if (extra.kind === "source") return `source:${extra.source}`;
   if (extra.kind === "commit") return `commit:${extra.sha}`;

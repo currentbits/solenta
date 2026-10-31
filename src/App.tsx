@@ -356,6 +356,10 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     listIssues,
     setIssuePlanStatus,
     createIssue,
+    listOpenIssuesForMention,
+    listDiscussionsForMention,
+    issueDetailForMention,
+    discussionDetailForMention,
     listActivity,
     listUsageByDay,
     listProviderLimits,
@@ -2666,6 +2670,10 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         preview={preview}
         mentions={mentions}
         onRevealVerifySettings={revealVerifySettings}
+        onListOpenIssuesForMention={listOpenIssuesForMention}
+        onListDiscussionsForMention={listDiscussionsForMention}
+        onIssueDetailForMention={issueDetailForMention}
+        onDiscussionDetailForMention={discussionDetailForMention}
         simulator={simulator}
         simulatorStatus={simulatorStatus}
         devServerStatus={devServerStatus}
