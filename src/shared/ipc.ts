@@ -3998,6 +3998,14 @@ export interface AppSettings {
    */
   pinchZoomWindow: boolean;
   /**
+   * Windows/Linux only (issue #1807): closing the window hides it behind a
+   * tray icon instead of quitting. Default off. macOS is unaffected; it
+   * already keeps the app in the dock on window close. The tray's own Quit,
+   * the Quit menu, and an updater restart still go through the normal
+   * confirm-quit-with-active-work flow.
+   */
+  closeToTray: boolean;
+  /**
    * After a restart, give each thread whose run was interrupted one
    * automatic follow-up turn (issue #1512 I3). Default off.
    */

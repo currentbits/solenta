@@ -11,7 +11,7 @@ process.noAsar = true;
 // runtime version, so app updates never load stale bytecode.
 require("node:module").enableCompileCache?.();
 
-const { app, BrowserWindow, ipcMain, dialog, shell, Notification, nativeTheme, nativeImage, protocol, net, powerSaveBlocker, powerMonitor, session } = require("electron");
+const { app, BrowserWindow, ipcMain, dialog, shell, Notification, nativeTheme, nativeImage, protocol, net, powerSaveBlocker, powerMonitor, session, Tray, Menu } = require("electron");
 const { overlayLabel, overlayDescription, overlayBitmap } = require("./taskbarOverlay.js");
 const { windowBackgroundColor, nativeThemeSource } = require("./theme.js");
 const { createStayAwake } = require("./caffeinate.js");
@@ -49,6 +49,7 @@ const {
   resolveProjectRef,
 } = require("./deepLinks.js");
 const { guestWebviewPolicy, attachGuestPolicy, setAudioPush } = require("./preview.js");
+const { createTray, shouldHideOnClose } = require("./tray.js");
 const {
   createMemorySupervisor,
   getMemoryStatus,
@@ -222,6 +223,10 @@ let memorySupervisor = null;
 
 /** @type {ReturnType<typeof createRunner> | null} */
 let runner = null;
+
+/** Windows/Linux close-to-tray (#1807); null on macOS or when disabled at boot. */
+/** @type {ReturnType<typeof createTray> | null} */
+let trayController = null;
 
 /** @type {ReturnType<typeof installShutdown> | null} */
 let shutdown = null;
@@ -443,10 +448,26 @@ function createWindow(opts = {}) {
     }
   });
 
-  // Windows/Linux last-window close is a quit. Prevent destroying the
-  // window before the active-work dialog can cancel (#1195). macOS close
-  // hides the window and leaves the app running.
+  // Windows/Linux close-to-tray (#1807): hide instead of quitting. Checked
+  // before the quit-on-last-close path below, and never while a real quit
+  // (Quit menu, tray Quit, updater restart, SIGINT/SIGTERM) is underway.
   win.on("close", (event) => {
+    if (
+      !threadId &&
+      trayController &&
+      shouldHideOnClose({
+        platform: process.platform,
+        closeToTray: Boolean(store && store.getSettings().closeToTray),
+        shuttingDown: Boolean(shutdown && shutdown.isActive && shutdown.isActive()),
+      })
+    ) {
+      event.preventDefault();
+      win.hide();
+      return;
+    }
+    // Windows/Linux last-window close is a quit. Prevent destroying the
+    // window before the active-work dialog can cancel (#1195). macOS close
+    // hides the window and leaves the app running.
     if (
       threadId ||
       !shouldBlockWindowClose({
@@ -993,6 +1014,26 @@ app.whenReady().then(async () => {
       store.getThreads().some((t) => t.status === "working"),
     onChange: (state) => broadcast("stayAwake:changed", state),
   });
+
+  // Windows/Linux close-to-tray (#1807). Created unconditionally on these
+  // platforms so toggling the setting on later takes effect without a
+  // restart; macOS is unaffected (it already stays in the dock). The
+  // running count reads `runner` lazily, so it is correct once assigned
+  // below even though the tray is created first.
+  if (process.platform === "win32" || process.platform === "linux") {
+    const icon = windowIcon();
+    if (icon) {
+      trayController = createTray({
+        Tray,
+        Menu,
+        iconPath: icon,
+        getRunningCount: () => (runner ? runner.listActiveThreadIds().length : 0),
+        onShow: () => focusMainWindow(),
+        // Always the real quit path: before-quit still confirms active work.
+        onQuit: () => app.quit(),
+      });
+    }
+  }
 
   runner = createRunner({
     store,
