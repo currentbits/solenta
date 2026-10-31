@@ -355,6 +355,10 @@ export const ThreadCard = memo(function ThreadCard({
     else if (id === "copyLink") {
       void navigator.clipboard?.writeText(`solenta://thread/${thread.id}`).catch(() => {});
     }
+    else if (id === "copyWorktreePath") {
+      const path = thread.worktreePath || projectPath;
+      if (path) void navigator.clipboard?.writeText(path).catch(() => {});
+    }
     else if (id.startsWith("project:")) {
       void onSetThreadProject?.(thread.id, id.slice("project:".length));
     } else if (id === "mute") void onSetMuted?.(thread.id, true);
@@ -389,6 +393,7 @@ export const ThreadCard = memo(function ThreadCard({
       showRegenerateTitle: Boolean(onRegenerateTitle),
       showTags: Boolean(onSetTags),
       showCopyLink: true,
+      projectPath,
       showMove: Boolean(onSetThreadProject),
       projects: listMoveProjects?.() ?? [],
       showMute: Boolean(onSetMuted),

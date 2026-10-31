@@ -1202,6 +1202,58 @@ describe("ThreadView mounted interactions", () => {
     m.unmount();
   });
 
+  it("Copy worktree path copies thread.worktreePath and shows Copied (#1800)", async () => {
+    const copied: string[] = [];
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: async (text: string) => { copied.push(text); } },
+      configurable: true,
+    });
+    // thread() fixture defaults worktreePath to "/tmp/wt".
+    const m = await mount(view({}));
+    await m.click(m.query("[data-thread-title-menu]"));
+    const item = m.query("[data-copy-worktree-path]");
+    assert.ok(item, "Copy worktree path item");
+    assert.equal(item?.textContent, "Copy worktree path");
+    await m.click(item);
+    assert.deepEqual(copied, ["/tmp/wt"]);
+    assert.equal(
+      m.query("[data-copy-worktree-path]")?.textContent,
+      "Copied",
+      "flashes Copied right after the click, menu still open",
+    );
+    m.unmount();
+  });
+
+  it("labels it Copy folder path and copies the project path for a non-worktree thread (#1800)", async () => {
+    const copied: string[] = [];
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: async (text: string) => { copied.push(text); } },
+      configurable: true,
+    });
+    const m = await mount(
+      view({ detail: detail({ thread: thread({ worktreePath: null }) }) }),
+    );
+    await m.click(m.query("[data-thread-title-menu]"));
+    const item = m.query("[data-copy-worktree-path]");
+    assert.ok(item, "Copy folder path item");
+    assert.equal(item?.textContent, "Copy folder path");
+    await m.click(item);
+    assert.deepEqual(copied, ["/tmp/repo"], "falls back to the project path");
+    m.unmount();
+  });
+
+  it("hides Copy worktree path / Copy folder path when neither path is known", async () => {
+    const m = await mount(
+      view({
+        project: null,
+        detail: detail({ thread: thread({ worktreePath: null }) }),
+      }),
+    );
+    await m.click(m.query("[data-thread-title-menu]"));
+    assert.equal(m.query("[data-copy-worktree-path]"), null);
+    m.unmount();
+  });
+
   it("double-clicking the title starts an inline rename and Enter saves it (#1783)", async () => {
     const renamed: string[] = [];
     const m = await mount(

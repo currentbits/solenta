@@ -1182,7 +1182,15 @@ export const ThreadView = memo(function ThreadView({
   const [syncRefreshNonce, setSyncRefreshNonce] = useState(0);
   /** Brief inline confirmation after copying the thread id, `/copy`, or exporting a report. */
   const [copied, setCopied] = useState<
-    "id" | "link" | "reply" | "report" | "report-failed" | "report-md" | "report-md-failed" | null
+    | "id"
+    | "link"
+    | "path"
+    | "reply"
+    | "report"
+    | "report-failed"
+    | "report-md"
+    | "report-md-failed"
+    | null
   >(null);
   /** Header quick action currently in flight (issue #153). */
   const [commandRunningId, setCommandRunningId] = useState<string | null>(null);
@@ -3125,11 +3133,19 @@ export const ThreadView = memo(function ThreadView({
   const workerNavLabel = handoffSource?.orchWorker ? "Parent worker" : "Task";
   const workersLabel = `Workers (${workerCount})`;
 
-  const handleCopy = async (what: "id" | "link") => {
+  // Copy worktree path (#1800): falls back to the project's checkout path
+  // for threads with no worktree of their own.
+  const copyPath = thread.worktreePath || project?.path || null;
+
+  const handleCopy = async (what: "id" | "link" | "path") => {
+    let text = `solenta://thread/${thread.id}`;
+    if (what === "id") text = thread.id;
+    else if (what === "path") {
+      if (!copyPath) return;
+      text = copyPath;
+    }
     try {
-      await navigator.clipboard.writeText(
-        what === "id" ? thread.id : `solenta://thread/${thread.id}`,
-      );
+      await navigator.clipboard.writeText(text);
     } catch {
       return;
     }
@@ -3629,6 +3645,21 @@ export const ThreadView = memo(function ThreadView({
                       >
                         {copied === "link" ? "Copied" : "Copy link"}
                       </button>
+                      {copyPath && (
+                        <button
+                          type="button"
+                          className={styles.menuItem}
+                          role="menuitem"
+                          data-copy-worktree-path=""
+                          onClick={() => void handleCopy("path")}
+                        >
+                          {copied === "path"
+                            ? "Copied"
+                            : thread.worktreePath
+                              ? "Copy worktree path"
+                              : "Copy folder path"}
+                        </button>
+                      )}
                       {onExportReport && (
                         <button
                           type="button"
