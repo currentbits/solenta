@@ -15,6 +15,8 @@ import { applyContrast } from "../../contrast";
 import {
   CHAT_WIDTH_MODES,
   CHAT_WIDTH_LABELS,
+  SIDEBAR_PREVIEW_MODES,
+  SIDEBAR_PREVIEW_LABELS,
   setChatWidth,
   setComposerVimEnabled,
   setDiffFilesCollapsed,
@@ -23,6 +25,7 @@ import {
   setHighContrastEnabled,
   setPasteCardsEnabled,
   setRunDurationEnabled,
+  setSidebarPreview,
   setUsageLimitsStripEnabled,
   setWrapCodeBlocksEnabled,
   useChatWidth,
@@ -33,9 +36,11 @@ import {
   useHighContrastEnabled,
   usePasteCardsEnabled,
   useRunDurationEnabled,
+  useSidebarPreview,
   useUsageLimitsStripEnabled,
   useWrapCodeBlocksEnabled,
   type ChatWidth,
+  type SidebarPreview,
 } from "../../uiPrefs";
 import styles from "../SettingsModal.module.css";
 import type { SettingsDraftKey, SettingsModalProps } from "../SettingsModal";
@@ -932,6 +937,7 @@ function DisplayPrefsSection() {
   const diffFilesCollapsed = useDiffFilesCollapsed();
   const chatWidth = useChatWidth();
   const highContrast = useHighContrastEnabled();
+  const sidebarPreview = useSidebarPreview();
   return (
     <section className={styles.section} data-display-prefs="">
       <h3 className={styles.sectionLabel}>Display</h3>
@@ -953,6 +959,28 @@ function DisplayPrefsSection() {
           ))}
         </select>
       </div>
+      <div className={styles.field}>
+        <label className={styles.fieldLabel} htmlFor="sidebar-preview-pref">
+          Sidebar preview
+        </label>
+        <select
+          id="sidebar-preview-pref"
+          className={styles.input}
+          data-sidebar-preview-pref=""
+          value={sidebarPreview}
+          onChange={(e) => setSidebarPreview(e.target.value as SidebarPreview)}
+        >
+          {SIDEBAR_PREVIEW_MODES.map((mode) => (
+            <option key={mode} value={mode}>
+              {SIDEBAR_PREVIEW_LABELS[mode]}
+            </option>
+          ))}
+        </select>
+      </div>
+      <p className={styles.note}>
+        How many lines of a thread's title show in the sidebar row. None
+        hides it and tightens the row.
+      </p>
       <label className={styles.fieldRow}>
         <input
           type="checkbox"

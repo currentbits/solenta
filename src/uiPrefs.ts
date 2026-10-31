@@ -201,6 +201,68 @@ export function useChatWidth(): ChatWidth {
 }
 
 /**
+ * Sidebar thread-row title length (#1802). Today's behaviour (ThreadCard's
+ * one-line, ellipsis-truncated title) is "1", the default. "2"/"3" let a
+ * long title wrap further via line-clamp instead of truncating; "none"
+ * drops the title line from the row entirely, tightening it.
+ */
+export const SIDEBAR_PREVIEW_MODES = ["none", "1", "2", "3"] as const;
+export type SidebarPreview = (typeof SIDEBAR_PREVIEW_MODES)[number];
+
+export const SIDEBAR_PREVIEW_LABELS: Record<SidebarPreview, string> = {
+  none: "None",
+  "1": "1 line",
+  "2": "2 lines",
+  "3": "3 lines",
+};
+
+const SIDEBAR_PREVIEW_KEY = "coder.sidebarPreview";
+let sidebarPreview: SidebarPreview | null = null;
+const sidebarPreviewListeners = new Set<() => void>();
+
+function parseSidebarPreview(raw: string | null): SidebarPreview | null {
+  return SIDEBAR_PREVIEW_MODES.includes(raw as SidebarPreview)
+    ? (raw as SidebarPreview)
+    : null;
+}
+
+export function getSidebarPreview(): SidebarPreview {
+  if (sidebarPreview != null) return sidebarPreview;
+  try {
+    const stored = parseSidebarPreview(window.localStorage.getItem(SIDEBAR_PREVIEW_KEY));
+    if (stored) {
+      sidebarPreview = stored;
+      return stored;
+    }
+  } catch {
+    // Private mode / quota: fall through to the default.
+  }
+  sidebarPreview = "1";
+  return "1";
+}
+
+export function setSidebarPreview(mode: SidebarPreview): void {
+  sidebarPreview = mode;
+  try {
+    window.localStorage.setItem(SIDEBAR_PREVIEW_KEY, mode);
+  } catch {
+    // Private mode / quota: the choice just stops surviving a relaunch.
+  }
+  for (const l of sidebarPreviewListeners) l();
+}
+
+export function useSidebarPreview(): SidebarPreview {
+  return useSyncExternalStore(
+    (onChange) => {
+      sidebarPreviewListeners.add(onChange);
+      return () => sidebarPreviewListeners.delete(onChange);
+    },
+    getSidebarPreview,
+    () => "1",
+  );
+}
+
+/**
  * Collapse large pastes into labeled cards (issue #381). On by default;
  * Settings → General → Display can turn it off so a paste lands in the textarea as text.
  */

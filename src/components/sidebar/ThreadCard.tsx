@@ -28,6 +28,7 @@ import { isPinned, resolveSnoozePresets } from "../../threadSnooze";
 import { isUnread } from "../../threadUnread";
 import { ProjectIcon } from "../ProjectIcon";
 import { PrHoverTarget, repoFromGithubUrl } from "../PrHoverCard";
+import { useSidebarPreview } from "../../uiPrefs";
 import {
   subagentNames,
   waitLabel,
@@ -238,6 +239,7 @@ export const ThreadCard = memo(function ThreadCard({
   dragging?: boolean;
 }) {
   const working = thread.status === "working";
+  const sidebarPreview = useSidebarPreview();
   const settleOverride = isSettled ? ("active" as const) : ("settled" as const);
   const settleLabel = isSettled ? "Keep thread active" : "Settle thread";
   const showUnread = !active && isUnread(thread);
@@ -665,11 +667,12 @@ export const ThreadCard = memo(function ThreadCard({
                 }
               }}
             />
-          ) : (
+          ) : sidebarPreview === "none" ? null : (
             <div
               className={styles.cardTitle}
               title={thread.title}
               data-regenerating-title={regeneratingTitle ? "" : undefined}
+              data-sidebar-preview={sidebarPreview}
             >
               {regeneratingTitle ? "Regenerating…" : shownTitle}
             </div>

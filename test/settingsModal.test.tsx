@@ -22,6 +22,7 @@ import {
   getDivergenceCardEnabled,
   getHighContrastEnabled,
   getPasteCardsEnabled,
+  getSidebarPreview,
   getUsageLimitsStripEnabled,
   getWrapCodeBlocksEnabled,
   setChatWidth,
@@ -32,6 +33,7 @@ import {
   setHighContrastEnabled,
   setPasteCardsEnabled,
   setRunDurationEnabled,
+  setSidebarPreview,
   setUsageLimitsStripEnabled,
   setWrapCodeBlocksEnabled,
 } from "../src/uiPrefs";
@@ -152,6 +154,7 @@ afterEach(() => {
   unmountAll();
   setWrapCodeBlocksEnabled(false);
   setDiffFilesCollapsed(false);
+  setSidebarPreview("1");
 });
 
 describe("SettingsModal memory section", () => {
@@ -3284,6 +3287,27 @@ describe("SettingsModal Display group (moved from Environment)", () => {
     await m.change(select, "wide");
     assert.equal(getChatWidth(), "wide");
     assert.equal(window.localStorage.getItem("coder.chatWidth"), "wide");
+    m.unmount();
+  });
+
+  it("offers a Sidebar preview select, None/1/2/3 lines, defaulting to 1 line (#1802)", async () => {
+    setSidebarPreview("1");
+    const m = await mount(modal());
+    const card = m.query("[data-display-prefs]");
+    assert.ok(card, "Display group on General");
+    const select = card.querySelector(
+      "[data-sidebar-preview-pref]",
+    ) as HTMLSelectElement | null;
+    assert.ok(select, "sidebar preview select");
+    assert.equal(select.value, "1");
+    assert.deepEqual(
+      Array.from(select.options).map((o) => o.value),
+      ["none", "1", "2", "3"],
+    );
+    assert.match(card.textContent || "", /Sidebar preview/);
+    await m.change(select, "2");
+    assert.equal(getSidebarPreview(), "2");
+    assert.equal(window.localStorage.getItem("coder.sidebarPreview"), "2");
     m.unmount();
   });
 });
