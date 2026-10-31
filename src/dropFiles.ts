@@ -29,6 +29,20 @@ export function isMentionPathDrag(dt: DataTransfer | null | undefined): boolean 
   return Boolean(dt?.types && Array.from(dt.types).includes(MENTION_PATH_MIME));
 }
 
+/**
+ * Sidebar thread row drag payload (#1810): a thread id, set by
+ * ThreadCard's dragstart (also used by detach-to-window and the #1769
+ * reorder, which both read it via onDragStartRow/onDragEndRow state
+ * instead of the MIME). Lets the composer's drop handler add a thread
+ * context chip instead of treating the drop as files or a reorder.
+ */
+export const THREAD_DRAG_MIME = "application/x-solenta-thread";
+
+/** True when a drag carries a sidebar thread row's THREAD_DRAG_MIME payload. */
+export function isThreadDrag(dt: DataTransfer | null | undefined): boolean {
+  return Boolean(dt?.types && Array.from(dt.types).includes(THREAD_DRAG_MIME));
+}
+
 export type DroppedFolderFile = { relativePath: string; dataUrl: string };
 export type DroppedFolder = { name: string; files: DroppedFolderFile[] };
 

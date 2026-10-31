@@ -351,6 +351,7 @@ describe("flatVisibleThreadIds (flat sidebar)", () => {
     pinned: [t("pin1")],
     active: [t("a1"), t("a2")],
     working: [t("w0")],
+    watching: [t("wa0")],
     snoozed: [t("z1")],
     settled: [t("s1"), t("s2")],
     archived: [t("arc1")],
@@ -360,11 +361,39 @@ describe("flatVisibleThreadIds (flat sidebar)", () => {
     const ids = flatVisibleThreadIds({
       flat,
       workingOpen: true,
+      watchingOpen: true,
       snoozedOpen: true,
       settledOpen: true,
       settledVisibleCount: 2,
     });
-    assert.deepEqual(ids, ["pin1", "a1", "a2", "w0", "z1", "s1", "s2"]);
+    assert.deepEqual(
+      ids,
+      ["pin1", "a1", "a2", "w0", "wa0", "z1", "s1", "s2"],
+    );
+  });
+
+  it("collapsed Watching shelf carves out only the selected thread", () => {
+    const ids = flatVisibleThreadIds({
+      flat,
+      workingOpen: false,
+      watchingOpen: false,
+      snoozedOpen: false,
+      settledOpen: false,
+      settledVisibleCount: 10,
+      selectedThreadId: "wa0",
+    });
+    assert.deepEqual(ids, ["pin1", "a1", "a2", "wa0"]);
+  });
+
+  it("omitting watchingOpen collapses the shelf (defaults falsy)", () => {
+    const ids = flatVisibleThreadIds({
+      flat,
+      workingOpen: false,
+      snoozedOpen: false,
+      settledOpen: false,
+      settledVisibleCount: 10,
+    });
+    assert.deepEqual(ids, ["pin1", "a1", "a2"]);
   });
 
   it("collapsed Working shelf carves out only the selected thread", () => {
@@ -433,6 +462,7 @@ describe("flatVisibleThreadIds (flat sidebar)", () => {
         pinned: [],
         active: [t("orch"), t("w1"), t("w2")],
         working: [],
+        watching: [],
         snoozed: [],
         settled: [],
         archived: [],

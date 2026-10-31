@@ -96,6 +96,73 @@ describe("Sidebar is a flat list (no project groups)", () => {
     m.unmount();
   });
 
+  it("folds idle watched-PR threads into a collapsed-by-default Watching shelf (#1811)", async () => {
+    await clearSidebarStorage();
+    const threads = [
+      thread({
+        id: "watched",
+        title: "watched pr",
+        status: "idle",
+        prNumber: 123,
+        prState: "OPEN",
+        createdAt: FRESH + 10,
+        updatedAt: FRESH + 10,
+        projectId: "p1",
+      }),
+      thread({
+        id: "plain",
+        title: "plain idle",
+        status: "idle",
+        createdAt: FRESH + 5,
+        updatedAt: FRESH + 5,
+        projectId: "p1",
+      }),
+    ];
+    const m = await mount(sidebar(threads, { projects: [p1] }));
+    const toggle = m.query("[data-watching-shelf-toggle]")!;
+    assert.ok(toggle, "Watching shelf renders");
+    assert.equal(
+      toggle.getAttribute("aria-expanded"),
+      "false",
+      "collapsed by default",
+    );
+    assert.match(toggle.textContent ?? "", /^Watching · 1$/);
+    assert.ok(!cardTitles(m).includes("watched"), "watched is folded away");
+    assert.ok(cardTitles(m).includes("plain"), "plain idle stays in the inbox");
+    await m.click(toggle);
+    assert.ok(cardTitles(m).includes("watched"), "expanding shows watched");
+    assert.equal(window.localStorage.getItem("sidebar:watchingOpen"), "1");
+    const statusEl = m.query(
+      '[data-thread-card="watched"] [data-status-label]',
+    );
+    assert.ok(statusEl, "status line renders for the watched row");
+    assert.equal(statusEl!.getAttribute("data-status-label"), "Watching #123");
+    m.unmount();
+  });
+
+  it("a wake moves the thread from Watching to the Working shelf", async () => {
+    await clearSidebarStorage();
+    window.localStorage.setItem("sidebar:watchingOpen", "1");
+    const threads = [
+      thread({
+        id: "woken",
+        title: "woken worker",
+        status: "working",
+        runStartedAt: FRESH,
+        prNumber: 7,
+        prState: "OPEN",
+        createdAt: FRESH,
+        updatedAt: FRESH,
+        projectId: "p1",
+      }),
+    ];
+    const m = await mount(sidebar(threads, { projects: [p1] }));
+    assert.equal(m.query("[data-watching-shelf-toggle]"), null);
+    const workingToggle = m.query("[data-working-shelf-toggle]")!;
+    assert.ok(workingToggle, "Working shelf renders instead");
+    m.unmount();
+  });
+
   it("retires group chrome and paints a slug on every card", async () => {
     await clearSidebarStorage();
     const m = await mount(sidebar(THREADS, { projects: [p1, p2] }));
@@ -1743,6 +1810,9 @@ describe("Sidebar card anatomy + hover actions", () => {
       prNumber: 12,
       prUrl: "https://github.com/acme/ledger/pull/12",
       prState: "OPEN",
+      // #1811: an idle thread with an active PR watch now folds into the
+      // Watching shelf; this test is about card anatomy, not the watch.
+      prWatch: false,
       provider: "claude",
       createdAt: FRESH + 10,
       updatedAt: FRESH + 10,
@@ -1811,6 +1881,9 @@ describe("Sidebar card anatomy + hover actions", () => {
       prNumber: 12,
       prUrl: "https://github.com/acme/ledger/pull/12",
       prState: "OPEN",
+      // #1811: an idle thread with an active PR watch now folds into the
+      // Watching shelf; this test is about the PR hover card, not the watch.
+      prWatch: false,
       createdAt: FRESH + 10,
       updatedAt: FRESH + 10,
     });

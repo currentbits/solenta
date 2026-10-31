@@ -84,15 +84,17 @@ export function buildVisibleThreadIds(input: VisibleListInput): string[] {
 
 /**
  * Ordered visible ids for the flat sidebar — mirrors render order:
- * pinned → active → working shelf → snoozed shelf → settled shelf (settled then archived,
- * paged by settledVisibleCount). A collapsed shelf contributes only the
- * selected thread (carve-out: the open thread never vanishes); the same
- * carve-out applies past the settled page cap. Search mode does not use
- * this — search renders a flat hit list and its ids come straight from it.
+ * pinned → active → working shelf → watching shelf → snoozed shelf →
+ * settled shelf (settled then archived, paged by settledVisibleCount).
+ * A collapsed shelf contributes only the selected thread (carve-out: the
+ * open thread never vanishes); the same carve-out applies past the settled
+ * page cap. Search mode does not use this — search renders a flat hit list
+ * and its ids come straight from it.
  */
 export function flatVisibleThreadIds(input: {
   flat: FlatSidebar;
   workingOpen: boolean;
+  watchingOpen?: boolean;
   snoozedOpen: boolean;
   settledOpen: boolean;
   settledVisibleCount: number;
@@ -126,6 +128,12 @@ export function flatVisibleThreadIds(input: {
     for (const t of input.flat.working) push(t.id);
   } else {
     carveOut(input.flat.working);
+  }
+
+  if (input.watchingOpen) {
+    for (const t of input.flat.watching) push(t.id);
+  } else {
+    carveOut(input.flat.watching);
   }
 
   if (input.snoozedOpen) {
@@ -256,7 +264,7 @@ export function stepVisibleId(
 /**
  * Thread to select after settling the open thread (#1790). `orderedIds` is
  * the eligible order from BEFORE the settle (buildFlatSidebar's
- * pinned+active+working+snoozed, in render order) — settled/archived are
+ * pinned+active+working+watching+snoozed, in render order) — settled/archived are
  * excluded since settling is what moves `settledId` into one of them. No
  * wrap, unlike stepVisibleId: next below; the last item falls back to the
  * one above; alone in the list, leaves the selection unchanged (null).

@@ -19,6 +19,36 @@ const MAX_CONSECUTIVE_FAILURES = 3;
 const MEMORY_TAG = "automation-memory";
 const MAX_MEMORY_CHARS = 4000;
 
+// Issue #1812: preset "once" fires a single time at/after runAt. If the app
+// was not running when runAt arrived, the next tick still fires it as long
+// as it is within this grace window of runAt; past it, the fire is skipped
+// and the automation is marked missed instead.
+// ponytail: fixed 24h grace, add a per-automation knob if anyone asks.
+const ONCE_GRACE_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Parse+validate a preset "once" runAt. Stored and compared as a
+ * Date-parseable string in local time (same convention as hour/cron: no
+ * timezone offset, so it reads back the same wall-clock time it was set
+ * with). Throws a readable Error.
+ *
+ * @param {unknown} raw
+ * @param {{ nowMs?: number, requireFuture?: boolean }} [opts]
+ * @returns {string} the trimmed input, unchanged (storage format)
+ */
+function parseOnceRunAt(raw, opts) {
+  const str = String(raw == null ? "" : raw).trim();
+  if (!str) throw new Error("runAt is required for preset once");
+  const t = new Date(str).getTime();
+  if (Number.isNaN(t)) throw new Error(`runAt is not a valid date: "${str}"`);
+  const requireFuture = !opts || opts.requireFuture !== false;
+  const now = (opts && opts.nowMs) ?? Date.now();
+  if (requireFuture && t <= now) {
+    throw new Error("runAt must be in the future");
+  }
+  return str;
+}
+
 // Issue #388: calibration lifecycle. A new automation only reports
 // (observe), then drafts, then acts. With graduate on, each stage moves up
 // once STAGE_MS has passed, it has run in that stage, and its last run
@@ -74,15 +104,20 @@ function graduatedStage(auto, now) {
  * Missed slots are skipped, never replayed. Days move by calendar date, so
  * the local wall-clock hour survives DST.
  * cron: next match of the 5-field expression (#1719, electron/cron.js).
+ * once: the fixed runAt instant, regardless of fromMs (#1812).
  *
- * @param {"hourly" | "daily" | "weekly" | "cron"} preset
+ * @param {"hourly" | "daily" | "weekly" | "cron" | "once"} preset
  * @param {number | null} hour
  * @param {number} fromMs
  * @param {number | null} [anchorMs]
  * @param {string | null} [cron]
+ * @param {string | null} [runAt]
  * @returns {number}
  */
-function nextFire(preset, hour, fromMs, anchorMs, cron) {
+function nextFire(preset, hour, fromMs, anchorMs, cron, runAt) {
+  if (preset === "once") {
+    return new Date(parseOnceRunAt(runAt, { requireFuture: false })).getTime();
+  }
   if (preset === "cron") {
     const next = require("./cron.js").nextCronFire(String(cron || ""), fromMs);
     if (next == null) throw new Error(`Cron never fires: ${cron}`);
@@ -136,6 +171,30 @@ function dueAutomations(automations, nowMs) {
       Number.isFinite(a.nextRunAt) &&
       a.nextRunAt <= nowMs,
   );
+}
+
+/**
+ * Disable (without firing) any enabled "once" automation whose runAt is
+ * further in the past than ONCE_GRACE_MS — the app was not running to
+ * catch it in time. Must run before dueAutomations picks the same tick's
+ * due list, or a missed one would fire instead of being marked missed.
+ * Saves via caller.
+ *
+ * @param {{ store: import("./store").Store }} ctx
+ * @param {number} nowMs
+ * @returns {boolean} whether any automation changed
+ */
+function settleMissedOnce(ctx, nowMs) {
+  const { mergeAutomations, ensureOverlay } = require("./automations-file.js");
+  let changed = false;
+  for (const auto of mergeAutomations(ctx.store, nowMs)) {
+    if (!auto || !auto.enabled || auto.preset !== "once") continue;
+    if (nowMs - auto.nextRunAt <= ONCE_GRACE_MS) continue;
+    ensureOverlay(ctx.store, auto);
+    patchAutomation(ctx.store, auto.id, { enabled: false });
+    changed = true;
+  }
+  return changed;
 }
 
 /**
@@ -326,13 +385,15 @@ function pruneAutomationThreads(store, automationId) {
  */
 async function runAutomation(ctx, auto, now, opts) {
   const services = require("./services.js");
-  const nextRunAt = nextFire(auto.preset, auto.hour, now, auto.nextRunAt, auto.cron);
+  const nextRunAt = nextFire(auto.preset, auto.hour, now, auto.nextRunAt, auto.cron, auto.runAt);
   // #388: settle ran first in the tick, so the breaker count is current.
   const life = graduatedStage(auto, now);
   patchAutomation(ctx.store, auto.id, {
     lastRunAt: now,
     nextRunAt,
     lastError: null,
+    // #1812: a single-shot automation never fires again, success or not.
+    ...(auto.preset === "once" ? { enabled: false } : {}),
     ...life,
   });
   ctx.store.save();
@@ -504,6 +565,13 @@ function startScheduler(ctx) {
       canAutoFire,
     } = require("./automations-file.js");
     if (gcOrphanOverlays(ctx.store)) ctx.store.save();
+    // #1812: mark grace-missed "once" rows before computing due, or a
+    // stale-by-days runAt would fire instead of landing as Missed.
+    try {
+      if (settleMissedOnce(ctx, now)) ctx.store.save();
+    } catch {
+      // Never let bookkeeping stall the scheduler.
+    }
     const due = dueAutomations(mergeAutomations(ctx.store, now), now)
       .filter((a) => canAutoFire(ctx.store, a));
     for (const auto of due) {
@@ -545,14 +613,17 @@ module.exports = {
   MAX_THREADS_PER_AUTOMATION,
   MAX_CONSECUTIVE_FAILURES,
   MAX_MEMORY_CHARS,
+  ONCE_GRACE_MS,
   STAGES,
   STAGE_MS,
   graduatedStage,
   nextFire,
+  parseOnceRunAt,
   extractMemory,
   buildRunPrompt,
   patchAutomation,
   settleAutomationRuns,
+  settleMissedOnce,
   dueAutomations,
   listAutomationRuns,
   runAutomation,

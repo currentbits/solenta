@@ -27,6 +27,7 @@ import { loadHosts } from "../../remoteHosts";
 import { isPinned, resolveSnoozePresets } from "../../threadSnooze";
 import { isUnread } from "../../threadUnread";
 import { ProjectIcon } from "../ProjectIcon";
+import { THREAD_DRAG_MIME } from "../../dropFiles";
 import { PrHoverTarget, repoFromGithubUrl } from "../PrHoverCard";
 import { useSidebarPreview } from "../../uiPrefs";
 import {
@@ -488,7 +489,7 @@ export const ThreadCard = memo(function ThreadCard({
         // detach stays desktop-only at the onDragEnd check below.
         draggable={!renaming}
         onDragStart={(e) => {
-          e.dataTransfer.setData("application/x-solenta-thread", thread.id);
+          e.dataTransfer.setData(THREAD_DRAG_MIME, thread.id);
           e.dataTransfer.effectAllowed = "move";
           onDragStartRow?.(thread.id);
         }}
