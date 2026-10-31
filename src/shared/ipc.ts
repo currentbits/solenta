@@ -3292,6 +3292,8 @@ export interface ModelInfo {
    * to use GPT-6.1-Sol". The picker shows it and disables the row.
    */
   updateHint?: string;
+  /** Starred in Settings → Providers (#1714); sorts first there and in the composer picker's Favorites group (#1802). */
+  favorite?: boolean;
 }
 
 /**

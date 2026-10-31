@@ -154,6 +154,8 @@ interface Harness {
   modes: PermissionMode[];
   providerSets: { provider?: string; model?: string | null }[];
   efforts: (ReasoningEffort | null)[];
+  /** onToggleModelFavorite calls (#1802): the Settings-side favourites write. */
+  favoriteToggles: { providerId: string; modelId: string }[];
   webSearches: boolean[];
   fasts: boolean[];
   /**
@@ -183,6 +185,7 @@ function makeHarness(provider = "claude"): Harness {
     modes: [],
     providerSets: [],
     efforts: [],
+    favoriteToggles: [],
     webSearches: [],
     fasts: [],
     callOrder: [],
@@ -245,6 +248,9 @@ function composer(
       webSearch={over.webSearch === true}
       fast={over.fast === true}
       providers={over.providers ?? PROVIDERS}
+      onToggleModelFavorite={(providerId, modelId) => {
+        harness.favoriteToggles.push({ providerId, modelId });
+      }}
       onProviderSignIn={over.onProviderSignIn}
       onShell={over.onShell}
       ask={over.ask ?? false}
@@ -1711,6 +1717,72 @@ describe("Composer model favourites (#1429)", () => {
       m.query('button[aria-label="Favourite Claude Code Opus 4"]')?.getAttribute("aria-pressed"),
       "false",
     );
+    m.unmount();
+  });
+
+  it("the star also writes through to the Settings favourites store (#1802)", async () => {
+    window.localStorage.removeItem("solenta.modelFavourites");
+    const h = makeHarness();
+    const m = await mount(composer(h, { provider: "claude", model: null }));
+    await m.click(m.query('button[aria-label^="Model:"]'));
+    const star = m.query(
+      'button[aria-label="Favourite Claude Code Opus 4"]',
+    ) as HTMLButtonElement;
+    await m.click(star);
+    assert.deepEqual(h.favoriteToggles, [{ providerId: "claude", modelId: "claude-opus-4" }]);
+    await m.click(star);
+    assert.deepEqual(
+      h.favoriteToggles,
+      [
+        { providerId: "claude", modelId: "claude-opus-4" },
+        { providerId: "claude", modelId: "claude-opus-4" },
+      ],
+      "un-starring calls through too; the caller decides add vs remove",
+    );
+    m.unmount();
+  });
+});
+
+describe("Composer Settings favourites group (#1802)", () => {
+  afterEach(() => window.localStorage.removeItem("solenta.modelFavourites"));
+
+  it("groups a Settings-starred model at the top, ahead of the normal list", async () => {
+    const starred: ProviderInfo = {
+      ...CLAUDE_WITH_INFO,
+      modelInfo: CLAUDE_WITH_INFO.modelInfo.map((m) =>
+        m.id === "claude-opus-4" ? { ...m, favorite: true } : m,
+      ),
+    };
+    const h = makeHarness();
+    const m = await mount(
+      composer(h, { provider: "claude", model: null, providers: [starred, CODEX, GROK, KIMI_LIKE] }),
+    );
+    await m.click(m.query('button[aria-label^="Model:"]'));
+    const headings = m.queryAll('[class*="modelGroupHeading"]').map((n) => n.textContent);
+    assert.equal(headings[0], "Favorites");
+    const rows = m
+      .queryAll('[role="option"] button[class*="modelRow"]')
+      .map((b) => (b.textContent || "").replace(/\s+/g, " ").trim());
+    assert.equal(rows[0], "Opus 4claude-opus-4");
+    assert.equal(rows.filter((r) => r === "Opus 4claude-opus-4").length, 1, "not duplicated");
+  });
+
+  it("a search query still filters the Favorites group", async () => {
+    const starred: ProviderInfo = {
+      ...CLAUDE_WITH_INFO,
+      modelInfo: CLAUDE_WITH_INFO.modelInfo.map((m) =>
+        m.id === "claude-opus-4" ? { ...m, favorite: true } : m,
+      ),
+    };
+    const h = makeHarness();
+    const m = await mount(composer(h, { provider: "claude", model: null, providers: [starred] }));
+    await m.click(m.query('button[aria-label^="Model:"]'));
+    await m.type(m.query('input[aria-label="Search models"]'), "sonnet");
+    const rows = m
+      .queryAll('[role="option"] button[class*="modelRow"]')
+      .map((b) => (b.textContent || "").replace(/\s+/g, " ").trim());
+    assert.equal(rows.some((r) => r.startsWith("Opus 4")), false, "non-matching favourite drops out");
+    assert.equal(rows.some((r) => r.startsWith("Sonnet 4")), true);
     m.unmount();
   });
 });
