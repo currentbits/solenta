@@ -159,12 +159,25 @@ function migrateAutomation(a) {
       // fall through to hourly
     }
   }
+  // #1812: same healing for a "once" row whose runAt no longer parses.
+  // Not a future check — a long-fired row's runAt is legitimately past.
+  let onceOk = false;
+  if (a.preset === "once") {
+    try {
+      require("./automations.js").parseOnceRunAt(a.runAt, { requireFuture: false });
+      onceOk = true;
+    } catch {
+      // fall through to hourly
+    }
+  }
   const preset =
     a.preset === "daily" || a.preset === "weekly" || a.preset === "hourly"
       ? a.preset
       : cronOk
         ? "cron"
-        : "hourly";
+        : onceOk
+          ? "once"
+          : "hourly";
   let hour = null;
   if (preset === "daily" || preset === "weekly") {
     hour =

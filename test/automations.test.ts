@@ -66,6 +66,29 @@ describe("triggerLabel / createFormError (#1588)", () => {
     assert.equal(createFormError({ ...base, event: "sentry_issue", org: "acme", project: "" }), "Sentry project is required");
     assert.equal(createFormError({ ...base, event: "sentry_issue", org: "acme", project: "pump" }), null);
   });
+
+  it("preset once requires a future runAt (#1812)", () => {
+    const base = {
+      name: "n",
+      projectId: "p",
+      prompt: "go",
+      provider: "claude",
+      preset: "once" as const,
+      hour: "",
+    };
+    assert.equal(createFormError({ ...base, runAt: "" }), "Run time is required");
+    assert.equal(createFormError({ ...base, runAt: "not a date" }), "Run time is not a valid date");
+    assert.equal(
+      createFormError({ ...base, runAt: new Date(Date.now() - 1000).toISOString() }),
+      "Run time must be in the future",
+    );
+    assert.equal(
+      createFormError({ ...base, runAt: new Date(Date.now() + 86_400_000).toISOString() }),
+      null,
+    );
+    // Event mode ignores the schedule entirely.
+    assert.equal(createFormError({ ...base, event: "push", runAt: "" }), null);
+  });
 });
 
 describe("automationRunDisplayStatus", () => {

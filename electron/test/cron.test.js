@@ -308,3 +308,116 @@ describe("cron automations round trip", () => {
     }
   });
 });
+
+describe("once automations file round trip (#1812)", () => {
+  const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "coder-once-"));
+
+  it("project: writes runAt to solenta.json and merges it back", () => {
+    const dir = tmp();
+    try {
+      const store = new Store(path.join(dir, "store.json"));
+      store.setProjects([{ id: "p1", name: "p", path: dir }]);
+      const runAt = new Date(Date.now() + 86_400_000).toISOString();
+      services.addAutomation(store, {
+        projectId: "p1",
+        name: "One-off sweep",
+        prompt: "Sweep",
+        provider: "claude",
+        preset: "once",
+        runAt,
+        scope: "project",
+      });
+      const file = JSON.parse(fs.readFileSync(path.join(dir, "solenta.json"), "utf8"));
+      assert.equal(file.automations[0].preset, "once");
+      assert.equal(file.automations[0].runAt, runAt);
+      assert.equal(file.automations[0].hour, null);
+      const merged = mergeAutomations(store, Date.now()).find((a) => a.id === "shared:p1:one-off-sweep");
+      assert.equal(merged.runAt, runAt);
+      assert.equal(merged.nextRunAt, new Date(runAt).getTime());
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("solenta.json validation: once rows, bad runAt, stray runAt; a fired row's past runAt still parses", () => {
+    const row = {
+      id: "nightly",
+      name: "Nightly",
+      prompt: "p",
+      provider: "claude",
+      model: null,
+      preset: "daily",
+      hour: 3,
+      trigger: null,
+      tier: null,
+    };
+    const onceRow = { ...row, preset: "once", hour: null, runAt: "2099-01-01T09:00" };
+    assert.equal(parseAutomations({ automations: [onceRow] }).automations[0].runAt, "2099-01-01T09:00");
+    // A long-fired row's runAt is legitimately in the past; parsing it must
+    // not error the whole section out (electron/automations-file.js parseRow).
+    assert.equal(
+      parseAutomations({ automations: [{ ...onceRow, runAt: "2000-01-01T09:00" }] }).automations[0].runAt,
+      "2000-01-01T09:00",
+    );
+    assert.match(
+      parseAutomations({ automations: [{ ...onceRow, runAt: "not a date" }] }).error,
+      /automations\[0\]\.runAt: runAt is not a valid date/,
+    );
+    assert.match(
+      parseAutomations({ automations: [{ ...onceRow, runAt: "" }] }).error,
+      /automations\[0\]\.runAt: runAt is required/,
+    );
+    assert.match(
+      parseAutomations({ automations: [{ ...row, runAt: "2099-01-01T09:00" }] }).error,
+      /runAt needs preset "once"/,
+    );
+  });
+
+  it("store migration keeps a valid once row and heals a broken one", () => {
+    const ok = migrateAutomation({ id: "a", preset: "once", runAt: "2099-01-01T09:00" });
+    assert.equal(ok.preset, "once");
+    assert.equal(ok.runAt, "2099-01-01T09:00");
+    assert.equal(ok.hour, null);
+    assert.equal(migrateAutomation({ id: "b", preset: "once", runAt: "not a date" }).preset, "hourly");
+  });
+
+  it("automation_create accepts runAt (preset implied) and rejects a past one", async () => {
+    const dir = tmp();
+    try {
+      const store = new Store(path.join(dir, "store.json"));
+      store.setProjects([{ id: "p1", slug: "acme/app", name: "Alpha", path: dir }]);
+      store.setThreads([{ id: "t1", projectId: "p1", title: "T", status: "idle", provider: "claude" }]);
+      const h = createToolHandlers({
+        store,
+        runner: { startRun: async () => ({}) },
+        forkThread: () => ({ id: "fork-1" }),
+        getProvider: () => null,
+      });
+      const runAt = new Date(Date.now() + 86_400_000).toISOString();
+      const out = await h.automation_create({
+        threadId: "t1",
+        projectId: "p1",
+        name: "Ping me",
+        prompt: "ping",
+        runAt,
+      });
+      assert.equal(out.ok, true);
+      assert.equal(out.preset, "once");
+      assert.equal(out.runAt, runAt);
+      assert.equal(out.hour, null);
+      await assert.rejects(
+        h.automation_create({
+          threadId: "t1",
+          projectId: "p1",
+          name: "x",
+          prompt: "y",
+          preset: "once",
+          runAt: new Date(Date.now() - 1000).toISOString(),
+        }),
+        /future/,
+      );
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

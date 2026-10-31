@@ -15,6 +15,7 @@ const {
   listAutomationRuns,
   MAX_THREADS_PER_AUTOMATION,
   STAGE_MS,
+  ONCE_GRACE_MS,
   graduatedStage,
   buildRunPrompt,
 } = require("../automations.js");
@@ -1294,5 +1295,146 @@ describe("automation CRUD + scheduler", () => {
     assert.equal(listed.automationId, id);
     assert.deepEqual(listed.runs, []);
     assert.equal(listed.retentionLimitReached, false);
+  });
+});
+
+describe("preset once (#1812)", () => {
+  let tmpDir;
+  let store;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-auto-once-"));
+    store = new Store(path.join(tmpDir, "store.json"));
+    store.setProjects([
+      { id: "p1", slug: "acme/app", name: "app", path: tmpDir },
+    ]);
+    store.saveNow();
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function makeOnce(runAt) {
+    return services.addAutomation(store, {
+      projectId: "p1",
+      name: "Reminder",
+      prompt: "ping me",
+      provider: "claude",
+      preset: "once",
+      runAt,
+    });
+  }
+
+  function makeDueAt(nextRunAt) {
+    const runAt = new Date(Date.now() + 86_400_000).toISOString();
+    const created = makeOnce(runAt);
+    store.setAutomations([
+      { ...store.getAutomation(created.id), nextRunAt },
+    ]);
+    store.saveNow();
+    return created;
+  }
+
+  it("create: hour is null, nextRunAt is the parsed runAt", () => {
+    const runAt = new Date(Date.now() + 86_400_000).toISOString();
+    const created = makeOnce(runAt);
+    assert.equal(created.preset, "once");
+    assert.equal(created.runAt, runAt);
+    assert.equal(created.hour, null);
+    assert.equal(created.nextRunAt, new Date(runAt).getTime());
+    assert.equal(created.enabled, true);
+  });
+
+  it("rejects a runAt in the past, and a missing one", () => {
+    assert.throws(
+      () => makeOnce(new Date(Date.now() - 1000).toISOString()),
+      /future/,
+    );
+    assert.throws(() => makeOnce(""), /runAt is required/);
+  });
+
+  it("fires at runAt and disables itself (does not fire twice)", async () => {
+    const created = makeDueAt(Date.now() - 1000);
+    const started = [];
+    const sched = startScheduler({
+      store,
+      runner: { startRun: async (input) => started.push(input) },
+      intervalMs: 60 * 60 * 1000,
+    });
+    try {
+      await sched.tick();
+      await sched.tick();
+    } finally {
+      sched.stop();
+    }
+    assert.equal(started.length, 1, "fires exactly once across two ticks");
+    const after = store.getAutomation(created.id);
+    assert.equal(after.enabled, false);
+    assert.ok(after.lastRunAt);
+    assert.equal(after.runAt, created.runAt, "runAt is kept for the row's history");
+  });
+
+  it("missed beyond the grace window: disabled without firing, lastRunAt stays null", async () => {
+    const created = makeDueAt(Date.now() - (ONCE_GRACE_MS + 60_000));
+    const started = [];
+    const sched = startScheduler({
+      store,
+      runner: { startRun: async (input) => started.push(input) },
+      intervalMs: 60 * 60 * 1000,
+    });
+    try {
+      await sched.tick();
+    } finally {
+      sched.stop();
+    }
+    assert.equal(started.length, 0, "a long-missed once never fires");
+    const after = store.getAutomation(created.id);
+    assert.equal(after.enabled, false);
+    assert.equal(after.lastRunAt, null);
+  });
+
+  it("fires on startup within the grace window", async () => {
+    const created = makeDueAt(Date.now() - (ONCE_GRACE_MS - 60_000));
+    const started = [];
+    const sched = startScheduler({
+      store,
+      runner: { startRun: async (input) => started.push(input) },
+      intervalMs: 60 * 60 * 1000,
+    });
+    try {
+      await sched.tick();
+    } finally {
+      sched.stop();
+    }
+    assert.equal(started.length, 1, "a catch-uppable once still fires once");
+    assert.ok(store.getAutomation(created.id).lastRunAt);
+  });
+
+  it("editing an already-fired once keeps its (now past) runAt without re-validating it", () => {
+    const created = makeDueAt(Date.now() - 1000);
+    // Simulate time having passed since the fire: runAt itself is now past,
+    // same as it would genuinely be well after the automation fired.
+    const pastRunAt = new Date(Date.now() - 1000).toISOString();
+    store.setAutomations([
+      {
+        ...store.getAutomation(created.id),
+        runAt: pastRunAt,
+        enabled: false,
+        lastRunAt: Date.now(),
+      },
+    ]);
+    store.saveNow();
+    const renamed = services.updateAutomation(store, {
+      id: created.id,
+      name: "Reminder (renamed)",
+    });
+    assert.equal(renamed.name, "Reminder (renamed)");
+    assert.equal(renamed.runAt, pastRunAt);
+    // Explicitly resubmitting that same past runAt is still rejected.
+    assert.throws(
+      () => services.updateAutomation(store, { id: created.id, runAt: pastRunAt }),
+      /future/,
+    );
   });
 });
