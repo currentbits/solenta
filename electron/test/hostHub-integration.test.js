@@ -111,7 +111,7 @@ describe("hostHub × real remote Solenta Web host", () => {
     const core = await import(pathToFileURL(path.join(__dirname, "../../core/dist/index.js")).href);
     runner = createRunner({ store, core, pushFn: broadcast, tickMs: 15, userDataPath: tmp });
     const ipc = require("../ipc.js");
-    const ctx = ipc.makeCtx({ dialog: {}, store, runner, broadcast, worktreeBase: "", userDataPath: tmp });
+    const ctx = ipc.makeCtx({ dialog: {}, store, runner, broadcast, worktreeBase: path.join(tmp, "worktrees"), userDataPath: tmp });
     server = await startWebServer({ host: "127.0.0.1", port: 0, token: "remote-token", ctx, handlers: ipc.IPC_HANDLERS });
 
     hub = createHostHub({
@@ -203,16 +203,27 @@ describe("hostHub × real remote Solenta Web host", () => {
     await waitFor(() => hub.list()[0].status === "offline");
     assert.match(hub.list()[0].error, /rejected this token/);
   });
-  it("thread_fork with host starts the worker there and wakes the lead when it ends (#1821)", async () => {
+  it("drives a worker on another computer like a local one: fork, wake, status, send, merge (#1821)", async () => {
     const { createRemoteWorkers } = require("../remoteWorkers.js");
     const { createToolHandlers } = require("../orchServer.js");
-    // The lead's computer: its own store, same repo name as the remote's.
+    // Both computers share one origin; the remote's repo pushes to it.
+    const origin = path.join(tmp, "origin.git");
+    execFileSync("git", ["init", "-q", "--bare", origin]);
+    const remoteRepo = project.path;
+    git(remoteRepo, ["branch", "-M", "main"]);
+    git(remoteRepo, ["remote", "add", "origin", origin]);
+    git(remoteRepo, ["push", "-q", "origin", "main"]);
+    git(origin, ["symbolic-ref", "HEAD", "refs/heads/main"]);
     const leadDir = path.join(tmp, "lead");
-    fs.mkdirSync(path.join(leadDir, "repo"), { recursive: true });
-    git(path.join(leadDir, "repo"), ["init", "-q"]);
+    fs.mkdirSync(leadDir);
+    const leadRepo = path.join(leadDir, "repo");
+    execFileSync("git", ["clone", "-q", origin, leadRepo]);
+    git(leadRepo, ["config", "user.email", "t@example.com"]);
+    git(leadRepo, ["config", "user.name", "t"]);
     const leadStore = new Store(path.join(leadDir, "store.json"));
-    const leadProject = await services.addProject(leadStore, path.join(leadDir, "repo"));
-    assert.equal(leadProject.slug.toLowerCase(), project.slug.toLowerCase());
+    const leadProject = await services.addProject(leadStore, leadRepo);
+    // Same origin = same slug on both sides; the remote project predates its origin here.
+    store.setProjects(store.getProjects().map((p) => (p.id === project.id ? { ...p, slug: leadProject.slug } : p)));
     const lead = services.createThread(leadStore, { projectId: leadProject.id, title: "lead" });
 
     const delivered = [];
@@ -230,36 +241,58 @@ describe("hostHub × real remote Solenta Web host", () => {
 
       const handlers = createToolHandlers({
         store: leadStore,
-        runner: { startRun: () => assert.fail("ran locally") },
+        runner: { startRun: () => assert.fail("ran locally"), isAutoTurn: () => false },
         forkThread: () => assert.fail("forked locally"),
         getProvider: () => ({}),
-        forkRemote: (input) => workers.fork(input),
+        remoteWorkers: workers,
       });
+      const ids = { threadId: lead.id, projectId: leadProject.id };
       await assert.rejects(
-        handlers.thread_fork({ threadId: lead.id, projectId: leadProject.id, host: "Nowhere", prompt: "x" }),
+        handlers.thread_fork({ ...ids, host: "Nowhere", prompt: "x" }),
         /No computer called "Nowhere".*"Box"/,
       );
-      const res = await handlers.thread_fork({
-        threadId: lead.id, projectId: leadProject.id, host: "box", prompt: "count the files", title: "Counter", worktree: false,
-      });
+
+      // Fork: the worker lives in the remote store, in its own worktree there.
+      const res = await handlers.thread_fork({ ...ids, host: "box", prompt: "add a file", title: "Adder" });
       assert.equal(res.host, "Box");
-      const remote = store.getThread(res.threadId);
-      assert.ok(remote, "worker lives in the remote store");
-      assert.equal(remote.projectId, project.id);
-      assert.equal(remote.title, "Counter");
       assert.ok(!leadStore.getThread(res.threadId), "not in the lead store");
+      await waitFor(() => delivered.length === 1);
+      assert.match(delivered[0].line, new RegExp(`^Worker thread ${res.threadId} \\("Adder"\\) on Box finished with status done\\. Last reply: .* branch \\S+ on Box`));
+      const far = store.getThread(res.threadId);
+      assert.equal(far.projectId, project.id);
+      assert.ok(far.worktreePath, "worker got a worktree on the remote");
 
-      await waitFor(() => delivered.length > 0);
-      assert.equal(delivered.length, 1);
-      assert.equal(delivered[0].threadId, lead.id);
-      assert.match(delivered[0].line, new RegExp(`Worker thread ${res.threadId} \\("Counter"\\) on Box finished with status done`));
-      assert.match(delivered[0].line, /Last reply: /);
-      assert.equal(leadStore.getThread(lead.id).remoteWorkers, null);
+      // The worker commits on its branch over there.
+      fs.writeFileSync(path.join(far.worktreePath, "added.txt"), "from box\n");
+      git(far.worktreePath, ["add", "added.txt"]);
+      git(far.worktreePath, ["-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "add file"]);
 
-      // Later pushes for the same thread do not wake the lead again.
-      await leadHub.invoke("me@box:4620", "threads:rename", [{ threadId: res.threadId, title: "renamed" }]).catch(() => {});
+      const st = await handlers.thread_status({ threadId: res.threadId });
+      assert.equal(st.status, "done");
+      assert.equal(st.host, "Box");
+      assert.equal(st.branch, far.branch);
+      const listed = (await handlers.threads_list({ projectId: leadProject.id })).find((t) => t.id === res.threadId);
+      assert.deepEqual([listed.host, listed.handoffFrom, listed.status], ["Box", lead.id, "done"]);
+
+      // A follow-up runs there and wakes the lead again, once.
+      const sent = await handlers.thread_send({ ...ids, threadId: res.threadId, prompt: "and again" });
+      assert.equal(sent.outcome, "delivered");
+      await waitFor(() => delivered.length === 2);
+      assert.match(delivered[1].line, /finished with status done/);
       await new Promise((r) => setTimeout(r, 200));
-      assert.equal(delivered.length, 1);
+      assert.equal(delivered.length, 2);
+
+      // Stop and merge are the user's call, same as for a local worker.
+      await assert.rejects(handlers.thread_stop({ ...ids, threadId: res.threadId }), /user's decision/);
+      const mergeArgs = { ...ids, workerThreadId: res.threadId, expectedPath: leadRepo, expectedBranch: "main" };
+      await assert.rejects(handlers.thread_merge(mergeArgs), /user's decision/);
+      const merged = await handlers.thread_merge({ ...mergeArgs, approved: true });
+      assert.equal(merged.merged, true);
+      assert.equal(merged.host, "Box");
+      assert.equal(fs.readFileSync(path.join(leadRepo, "added.txt"), "utf8"), "from box\n");
+      assert.match(execFileSync("git", ["log", "-1", "--format=%B"], { cwd: leadRepo, encoding: "utf8" }), /Squashed from .* on Box/);
+      assert.equal(execFileSync("git", ["ls-remote", "--heads", origin, far.branch], { encoding: "utf8" }).trim(), "", "pushed branch removed again");
+      await waitFor(() => !store.getThread(res.threadId).worktreePath);
     } finally {
       leadHub.close();
     }
