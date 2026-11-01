@@ -3509,6 +3509,15 @@ export interface RemoteInstallResult {
   restartNeeded: boolean;
 }
 
+/** "ssh:prompt" push: ssh's own prompt text, relayed by askpass (#1818). */
+export interface SshPromptInfo {
+  id: string;
+  host: string;
+  prompt: string;
+  /** hostkey: answer "yes" to trust; password covers key passphrases too. */
+  kind: "password" | "hostkey" | "other";
+}
+
 export interface ProviderInfo {
   id: string;
   /** Display name, e.g. "Claude Code". */
@@ -5583,6 +5592,8 @@ export interface CoderApi {
     setSidebarHosts(
       hosts: Array<{ host: string; remotePort: number; label?: string }>,
     ): Promise<SidebarHostStatus[]>;
+    /** Answer an "ssh:prompt" push; null cancels. Desktop only (#1818). */
+    answerSshPrompt(input: { id: string; answer: string | null }): Promise<void>;
   };
   /**
    * Proxied to the local shared-memory server by the main process (the
@@ -7837,6 +7848,8 @@ export interface CoderApi {
   on(channel: "clone:progress", cb: (push: CloneProgressPush) => void): () => void;
   /** Desktop: a hosted agent is waiting on the in-app OAuth consent screen (#1541). */
   on(channel: "pairing:consent", cb: (pending: OauthConsentInfo) => void): () => void;
+  /** Desktop: an ssh child of Remote Connections is asking something (#1818). */
+  on(channel: "ssh:prompt", cb: (prompt: SshPromptInfo) => void): () => void;
   /** createPr step progress: commit/push/create/link (#1803). */
   on(channel: "pr:progress", cb: (push: PrProgressPush) => void): () => void;
   /** Desktop-only: a bound Browser pane's audio started/stopped, or its mute changed (#1807). */

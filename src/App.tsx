@@ -59,6 +59,7 @@ import {
 } from "./commandPalette";
 import { ConnectionBanner } from "./components/ConnectionBanner";
 import { OauthConsentDialog } from "./components/OauthConsentDialog";
+import { SshPromptDialog } from "./components/SshPromptDialog";
 import { PrHoverFetchContext } from "./components/PrHoverCard";
 import { isWebMode } from "./shared/wire";
 import { isBuildMismatch } from "./buildMismatch";
@@ -2961,6 +2962,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         )}
         </Suspense>
         <OauthConsentDialog projects={projects} />
+        <SshPromptDialog />
         <ResumeNotice
           threads={threads}
           onStopAll={(ids) => {

@@ -120,9 +120,9 @@ export function ConnectionsSection({ onOpen, onForget, onInstall, onSidebarHosts
       <ol className={`${styles.fieldNote} ${styles.connectionSteps}`} data-connection-steps="">
         <li>Install Solenta on that computer: the Mac app, or the Linux tarball in ~/solenta.</li>
         <li>
-          Check that <code>ssh {host.trim() || "user@host"}</code> works in a
-          terminal here without a password prompt (an SSH key or agent, and
-          the host key already accepted).
+          Turn on SSH there: Remote Login on a Mac, sshd on Linux. Solenta asks
+          for a password, or to trust a computer it has not seen before, right
+          here.
         </li>
         <li>
           Enter the SSH host and press Connect. Solenta starts there if it is

@@ -23,6 +23,7 @@ const {
   closeRemoteConnections,
   invokeRemote,
 } = require("../remoteConnections.js");
+const { classifySshPrompt, createSshPrompts, startAskpassServer } = require("../sshAskpass.js");
 
 async function waitFor(check, timeoutMs = 5_000) {
   const deadline = Date.now() + timeoutMs;
@@ -42,24 +43,142 @@ describe("remote Connections", () => {
     ]);
   });
 
-  it("pins host keys and explains the ssh failures BatchMode cannot prompt for", () => {
+  it("pins host keys and explains ssh failures", () => {
     const args = sshArgs("work", 50000, 4620);
     assert.equal(args[args.indexOf("StrictHostKeyChecking=yes") - 1], "-o");
+    assert.ok(args.includes("BatchMode=yes"), "no askpass: never prompt");
     assert.match(
       explainSshFailure("work", "No ED25519 host key is known for work and you have requested strict checking.\nHost key verification failed.\n", 255),
-      /Run "ssh work" in a terminal once/,
+      /choose Trust when Solenta shows its fingerprint/,
     );
     assert.match(
       explainSshFailure("work", "@@@ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! @@@\nHost key verification failed.", 255),
       /host key for work changed/,
     );
-    assert.match(explainSshFailure("work", "user@work: Permission denied (publickey).", 255), /key-based login/);
+    assert.match(explainSshFailure("work", "user@work: Permission denied (publickey).", 255), /Check the user name and password/);
     assert.match(explainSshFailure("work", "ssh: connect to host work port 22: Connection refused\n", 255), /Remote Login/);
     assert.match(explainSshFailure("wrok", "ssh: Could not resolve hostname wrok: nodename nor servname provided\n", 255), /Cannot find wrok/);
     assert.match(explainSshFailure("work", "ssh: connect to host work port 22: Operation timed out\n", 255), /did not answer/);
     assert.equal(explainSshFailure("work", "kex_exchange_identification: read: Connection reset\n", 255),
       "kex_exchange_identification: read: Connection reset");
     assert.equal(explainSshFailure("work", "", null), "SSH exited (unknown).");
+  });
+
+  it("asks in the app instead of BatchMode when the askpass relay is up (#1818)", async () => {
+    const args = sshArgs("work", 50000, 4620, true);
+    assert.equal(args.includes("BatchMode=yes"), false);
+    assert.ok(args.includes("StrictHostKeyChecking=ask"), "unknown keys asked, changed keys still fail");
+    assert.ok(args.includes("NumberOfPasswordPrompts=1"));
+    for (const bad of ["StrictHostKeyChecking=no", "StrictHostKeyChecking=accept-new", "StrictHostKeyChecking=yes"]) {
+      assert.equal(args.includes(bad), false);
+    }
+    assert.match(
+      explainSshFailure("work", "@@@ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! @@@\nHost key verification failed.", 255),
+      /host key for work changed/,
+    );
+
+    const forgotten = [];
+    const askpass = {
+      env: (host) => ({ SSH_ASKPASS: "/x/ssh-askpass.sh", SSH_ASKPASS_REQUIRE: "force", SOLENTA_ASKPASS_HOST: host }),
+      forget: (host) => forgotten.push(host),
+    };
+    if (process.platform === "win32") return;
+    let seen = null;
+    const execFile = (code, stderr = "") => (cmd, a, opts, cb) => {
+      seen = { args: a, env: opts.env };
+      cb(code ? Object.assign(new Error("exit"), { code }) : null, "tok\n", stderr);
+    };
+    assert.equal(await readRemoteToken("me@box", 4620, { execFile: execFile(0), askpass }), "tok");
+    assert.ok(seen.args.includes("StrictHostKeyChecking=ask"));
+    assert.equal(seen.args.includes("BatchMode=yes"), false);
+    assert.equal(seen.env.SSH_ASKPASS_REQUIRE, "force");
+    assert.equal(seen.env.SOLENTA_ASKPASS_HOST, "me@box");
+    assert.equal(seen.env.PATH, process.env.PATH, "keeps the rest of the env");
+    await readRemoteToken("me@box", 4620, { execFile: execFile(0), askpass: null });
+    assert.equal(seen.env, undefined, "no relay: no askpass env");
+    assert.ok(seen.args.includes("BatchMode=yes"));
+
+    await assert.rejects(
+      readRemoteToken("me@box", 4620, { execFile: execFile(255, "me@box: Permission denied (password).\n"), askpass }),
+      /refused the login/,
+    );
+    assert.deepEqual(forgotten, ["me@box"], "a refused password is not replayed");
+  });
+
+  it("classifies ssh prompts", () => {
+    assert.equal(classifySshPrompt("The authenticity of host 'work (10.0.0.2)' can't be established.\nED25519 key fingerprint is SHA256:abc.\nAre you sure you want to continue connecting (yes/no/[fingerprint])? "), "hostkey");
+    assert.equal(classifySshPrompt("me@work's password: "), "password");
+    assert.equal(classifySshPrompt("Enter passphrase for key '/Users/me/.ssh/id_ed25519': "), "password");
+    assert.equal(classifySshPrompt("Verification code: "), "other");
+  });
+
+  it("routes prompts to the renderer, cancels without a window, and remembers passwords per host", async () => {
+    const sent = [];
+    const target = new EventEmitter();
+    let targets = [target];
+    const prompts = createSshPrompts({ send: (p) => { sent.push(p); return targets; }, timeoutMs: 200 });
+
+    const first = prompts.ask({ host: "me@work", prompt: "me@work's password: " });
+    assert.equal(sent[0].kind, "password");
+    assert.equal(sent[0].host, "me@work");
+    prompts.answer(sent[0].id, "hunter2");
+    assert.equal(await first, "hunter2");
+    // The tunnel ssh asks again right after prepare: answered from memory.
+    assert.equal(await prompts.ask({ host: "me@work", prompt: "me@work's password: " }), "hunter2");
+    assert.equal(sent.length, 1);
+    prompts.forget("me@work");
+    const again = prompts.ask({ host: "me@work", prompt: "me@work's password: " });
+    assert.equal(sent.length, 2);
+    prompts.answer(sent[1].id, null);
+    assert.equal(await again, null, "cancel");
+
+    // Host keys are never remembered: ssh records them in known_hosts.
+    const key = prompts.ask({ host: "me@work", prompt: "Are you sure you want to continue connecting (yes/no/[fingerprint])?" });
+    assert.equal(sent[2].kind, "hostkey");
+    prompts.answer(sent[2].id, "yes");
+    assert.equal(await key, "yes");
+
+    assert.equal(await prompts.ask({ host: "a", prompt: "x" }), null, "times out");
+    const gone = prompts.ask({ host: "a", prompt: "y" });
+    target.emit("destroyed");
+    assert.equal(await gone, null, "window closed");
+    targets = [];
+    assert.equal(await prompts.ask({ host: "a", prompt: "z" }), null, "no window to ask");
+  });
+
+  it("relays a prompt from the askpass helper and prints the answer", { skip: process.platform === "win32" }, async () => {
+    const { execFile } = require("node:child_process");
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "askpass-"));
+    const asked = [];
+    const relay = await startAskpassServer({
+      dir,
+      nodePath: process.execPath,
+      ask: async (req) => {
+        asked.push(req);
+        return req.prompt.includes("cancel") ? null : "s3cret pass";
+      },
+    });
+    const helper = (prompt, env) => new Promise((resolve) => {
+      execFile(relay.env("me@work").SSH_ASKPASS, [prompt], { env: { ...process.env, ...env }, timeout: 10_000 },
+        (err, stdout) => resolve({ code: err ? err.code : 0, stdout }));
+    });
+    try {
+      const env = relay.env("me@work");
+      assert.equal(env.SSH_ASKPASS_REQUIRE, "force");
+      assert.ok(env.DISPLAY);
+      assert.equal(fs.statSync(env.SSH_ASKPASS).mode & 0o777, 0o700);
+      assert.deepEqual(await helper("me@work's password: ", env), { code: 0, stdout: "s3cret pass\n" });
+      assert.deepEqual(asked, [{ host: "me@work", prompt: "me@work's password: " }]);
+      assert.equal((await helper("cancel me", env)).code, 1);
+      // Without the launch secret the relay never asks anyone.
+      const wrong = await helper("me@work's password: ", { ...env, SOLENTA_ASKPASS_SECRET: "nope" });
+      assert.equal(wrong.code, 1);
+      assert.equal(wrong.stdout, "");
+      assert.equal(asked.length, 2);
+    } finally {
+      relay.close();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("prepares the host over SSH: starts Solenta when nothing answers, then prints the token", async () => {
@@ -428,7 +547,7 @@ describe("remote Connections", () => {
       const spawned = ports.length;
       await assert.rejects(
         openRemoteConnection({ host: "unknown@work", token: "" }, deps),
-        /not in known_hosts yet/,
+        /could not verify the SSH host key/,
       );
       assert.equal(ports.length, spawned);
 

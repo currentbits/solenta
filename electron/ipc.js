@@ -80,6 +80,7 @@ function makeCtx(deps) {
     installRemoteSolenta: deps.installRemoteSolenta,
     invokeRemote: deps.invokeRemote,
     hostHub: deps.hostHub || null,
+    answerSshPrompt: deps.answerSshPrompt,
     webAccess: deps.webAccess || null,
     channels: deps.channels || null,
     getMcpFunnel:

@@ -7,13 +7,6 @@ const { crewIntegration } = require("./crewIntegration.js");
 const { retireAgent, runRetention } = require("./ipc-shared.js");
 
 /**
- * Shared get/peek payload. Selecting a thread (get) stamps lastVisitedAt;
- * peeking a sibling for the divergence compare must not (issue #393).
- * `opts` (issue #1786) pages the transcript: { limit?, before? }, same
- * cursor rule as threads:getOlderMessages. Omitted entirely, this returns
- * the newest default-sized page, not the whole history.
- */
-/**
  * Stop and teleport (#1817): stop the run, then wait for it to go idle.
  * Stopped turns never drain queued prompts (#1203), so those still travel.
  */
@@ -30,6 +23,13 @@ async function stopForTeleport(ctx, threadId, timeoutMs = 30_000) {
   }
 }
 
+/**
+ * Shared get/peek payload. Selecting a thread (get) stamps lastVisitedAt;
+ * peeking a sibling for the divergence compare must not (issue #393).
+ * `opts` (issue #1786) pages the transcript: { limit?, before? }, same
+ * cursor rule as threads:getOlderMessages. Omitted entirely, this returns
+ * the newest default-sized page, not the whole history.
+ */
 function threadDetailFor(ctx, id, markVisited, opts) {
   const workflow =
     typeof ctx.runner.getActiveWorkflow === "function"
@@ -175,7 +175,7 @@ module.exports = {
       throw new Error("Teleport requires the desktop app.");
     }
     const threadId = input && input.threadId;
-    if (input.stop === true) await stopForTeleport(ctx, threadId);
+    if (input && input.stop === true) await stopForTeleport(ctx, threadId);
     const { payload, tree } = teleport.packThread(ctx.store, threadId, {
       isRunning: ctx.runner ? (id) => ctx.runner.isRunning(id) : undefined,
       userDataPath: ctx.userDataPath,

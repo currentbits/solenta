@@ -111,8 +111,25 @@ const {
   invokeRemote,
   openHostTunnel,
   closeRemoteConnections,
+  setSshAskpass,
 } = require("./remoteConnections.js");
 const { createHostHub } = require("./hostHub.js");
+const { createSshPrompts, startAskpassServer } = require("./sshAskpass.js");
+
+// In-app SSH prompts (#1818): main windows only, never the web bridge or a
+// remote window, so a password prompt cannot leave this machine.
+const sshPrompts = createSshPrompts({
+  send: (payload) => {
+    const targets = [];
+    for (const win of BrowserWindow.getAllWindows()) {
+      // Detached thread windows too would show a second copy of the dialog.
+      if (win.isDestroyed() || win.solentaRemote || win.solentaThreadId) continue;
+      win.webContents.send("ssh:prompt", payload);
+      targets.push(win.webContents);
+    }
+    return targets;
+  },
+});
 
 // Custom img protocol (issue #145): registerSchemesAsPrivileged MUST run
 // before app.ready or Electron ignores it.
@@ -798,6 +815,15 @@ app.whenReady().then(async () => {
   });
 
   const userData = app.getPath("userData");
+  // Windows ssh keeps BatchMode: no askpass relay there.
+  if (process.platform !== "win32") {
+    startAskpassServer({
+      dir: path.join(userData, "ssh-askpass"),
+      ask: (req) => sshPrompts.ask(req),
+    })
+      .then((relay) => setSshAskpass({ env: relay.env, forget: (host) => sshPrompts.forget(host) }))
+      .catch((err) => console.warn(`ssh askpass relay failed to start: ${err.message}`));
+  }
   // Cached signed catalog now, release refresh in the background (#1529).
   void require("./remoteCatalog.js").initRemoteCatalog(userData);
   try {
@@ -1184,6 +1210,7 @@ app.whenReady().then(async () => {
     installRemoteSolenta,
     invokeRemote,
     hostHub,
+    answerSshPrompt: (id, answer) => sshPrompts.answer(id, answer),
   });
   // Desktop-only like contextMenu:show: windows are main's, never the web bridge's.
   ipcMain.handle("window:detachThread", (_event, threadId) => openThreadWindow(threadId));
@@ -1480,6 +1507,7 @@ shutdown = installShutdown({
 
 /** Servers, schedulers, and child processes: last, after runs and the device. */
 function teardownServices() {
+  sshPrompts.cancelAll();
   closeRemoteConnections();
   hostHub.close();
   // No token refresh (and store write) mid-shutdown.

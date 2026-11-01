@@ -129,6 +129,14 @@ module.exports = {
     }
     return ctx.installRemoteSolenta(input);
   },
+  // Answer to an "ssh:prompt" push (#1818); null cancels. Never logged.
+  "app:answerSshPrompt": async (ctx, input) => {
+    if (ctx.transport !== "desktop" || !ctx.answerSshPrompt) {
+      throw new Error("Remote Connections require the desktop app.");
+    }
+    const id = typeof input?.id === "string" ? input.id : "";
+    ctx.answerSshPrompt(id, typeof input?.answer === "string" ? input.answer : null);
+  },
   "memory:search": async (ctx, input) => {
     return ctx.memory.search(input || { query: "" });
   },

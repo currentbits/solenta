@@ -437,6 +437,7 @@ function buildDevCoder(): CoderApi {
       async installRemoteSolenta(): Promise<RemoteInstallResult> {
         throw new Error("Remote Connections require the desktop app.");
       },
+      async answerSshPrompt(): Promise<void> {},
       async feedback(input: {
         text: string;
         threadId?: string;
@@ -623,7 +624,7 @@ function buildDevCoder(): CoderApi {
           devCloneProgress.delete(fn);
         };
       }
-      if (channel === "pairing:consent") {
+      if (channel === "pairing:consent" || channel === "ssh:prompt") {
         return () => {};
       }
       // ponytail: dev/browser fixture never streams real PR progress; the
