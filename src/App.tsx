@@ -1893,7 +1893,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   const submitAddPath = useCallback(
     async (
       path: string,
-      remotes?: { remoteHost?: string; remotePath?: string },
+      remotes?: { remoteHost?: string; remotePath?: string; onHost?: string },
     ) => {
       // Modal closes itself on success, or stays open to show the
       // Windows doctor list (#435) when checks failed.
@@ -1903,14 +1903,15 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   );
 
   const submitCreateProject = useCallback(
-    async (name: string, parentDir: string) => {
-      return createProject({ name, parentDir });
+    async (name: string, parentDir: string, onHost?: string) => {
+      return createProject({ name, parentDir, ...(onHost ? { onHost } : {}) });
     },
     [createProject],
   );
 
   const cancelClone = useCallback(
-    (cloneId: string) => void api.projects.cancelClone({ cloneId }),
+    (cloneId: string, onHost?: string) =>
+      void api.projects.cancelClone({ cloneId, ...(onHost ? { onHost } : {}) }),
     [api],
   );
 
@@ -2985,6 +2986,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
             onCancelClone={cancelClone}
             onCloneProgress={subscribeCloneProgress}
             onBrowse={browseFilesystem}
+            computers={sidebarHosts.filter((h) => h.status === "online")}
             currentProjectCwd={
               (selectedProjectId
                 ? projectById.get(selectedProjectId)?.path

@@ -61,13 +61,13 @@ interface AddProjectPathModalProps {
   /** Add an existing checkout: path (or remote host/path pair). */
   onSubmit: (
     path: string,
-    remotes?: { remoteHost?: string; remotePath?: string },
+    remotes?: { remoteHost?: string; remotePath?: string; onHost?: string },
   ) => Promise<unknown>;
   /** Create a brand-new folder + git repo inside an existing parent dir. */
-  onCreate: (name: string, parentDir: string) => Promise<unknown>;
+  onCreate: (name: string, parentDir: string, onHost?: string) => Promise<unknown>;
   /** git clone a URL into parentDir, then add it (#1506). Omit to hide. */
   onClone?: (input: CloneProjectInput) => Promise<unknown>;
-  onCancelClone?: (cloneId: string) => void;
+  onCancelClone?: (cloneId: string, onHost?: string) => void;
   /** Subscribe to "clone:progress"; returns the unsubscribe. */
   onCloneProgress?: (cb: (push: CloneProgressPush) => void) => () => void;
   /**
@@ -79,6 +79,8 @@ interface AddProjectPathModalProps {
   onBrowse: (input: FsBrowseInput) => Promise<FsBrowseResult>;
   /** Active project cwd so `./` and `../` can resolve. */
   currentProjectCwd?: string | null;
+  /** Other Solenta hosts the project can live on instead (#1819). */
+  computers?: Array<{ key: string; label: string }>;
 }
 
 /**
@@ -96,10 +98,20 @@ export function AddProjectPathModal({
   onClone,
   onCancelClone,
   onCloneProgress,
-  onPickDirectory,
-  onBrowse,
-  currentProjectCwd,
+  onPickDirectory: onPickDirectoryHere,
+  onBrowse: browseHere,
+  currentProjectCwd: cwdHere,
+  computers = [],
 }: AddProjectPathModalProps) {
+  // "" is this computer. Another host's project lives (and its folders are
+  // browsed) there; the local picker, cwd and SSH fields do not apply.
+  const [onHost, setOnHost] = useState("");
+  const onBrowse = useCallback(
+    (input: FsBrowseInput) => browseHere(onHost ? { ...input, onHost } : input),
+    [browseHere, onHost],
+  );
+  const onPickDirectory = onHost ? undefined : onPickDirectoryHere;
+  const currentProjectCwd = onHost ? null : cwdHere;
   const [mode, setMode] = useState<"existing" | "create" | "clone">(
     "existing",
   );
@@ -140,7 +152,7 @@ export function AddProjectPathModal({
   useEscapeClose(!pending, handleClose);
   useModalFocus(true, dialogRef);
 
-  const host = remoteHost.trim();
+  const host = onHost ? "" : remoteHost.trim();
   const rpath = remotePath.trim();
   const canSubmit =
     mode === "clone"
@@ -178,6 +190,7 @@ export function AddProjectPathModal({
             parentDir: resolved.path,
             ...(cloneName.trim() ? { name: cloneName.trim() } : {}),
             cloneId,
+            ...(onHost ? { onHost } : {}),
           });
           if (!cloned) {
             setError("Could not clone that repository.");
@@ -200,7 +213,9 @@ export function AddProjectPathModal({
           setError(resolved.error);
           return;
         }
-        const created = await onCreate(name.trim(), resolved.path);
+        const created = onHost
+          ? await onCreate(name.trim(), resolved.path, onHost)
+          : await onCreate(name.trim(), resolved.path);
         if (!created) {
           setError("Could not create that project.");
           return;
@@ -228,7 +243,9 @@ export function AddProjectPathModal({
         }
         const remotes = host
           ? { remoteHost: host, remotePath: rpath }
-          : undefined;
+          : onHost
+            ? { onHost }
+            : undefined;
         const added = await onSubmit(submitPath, remotes);
         if (!added) {
           setError("Could not add that path.");
@@ -378,6 +395,37 @@ export function AddProjectPathModal({
               </button>
             ) : null}
           </div>
+
+          {computers.length > 0 ? (
+            <div className={styles.field}>
+              <label className={styles.fieldLabel} htmlFor="add-project-computer">
+                Computer
+              </label>
+              <select
+                id="add-project-computer"
+                className={styles.input}
+                data-add-project-computer=""
+                value={onHost}
+                disabled={pending}
+                onChange={(e) => {
+                  setOnHost(e.target.value);
+                  setError(null);
+                }}
+              >
+                <option value="">This computer</option>
+                {computers.map((c) => (
+                  <option key={c.key} value={c.key}>
+                    {c.label}
+                  </option>
+                ))}
+              </select>
+              {onHost ? (
+                <p className={styles.fieldNote} data-add-project-computer-note="">
+                  Paths are on that computer. Its agents run there.
+                </p>
+              ) : null}
+            </div>
+          ) : null}
 
           {mode === "clone" ? (
             <>
@@ -533,6 +581,7 @@ export function AddProjectPathModal({
                   Solenta will create and initialize it.
                 </p>
               </div>
+              {onHost ? null : (<>
               <div className={styles.field}>
                 <label
                   className={styles.fieldLabel}
@@ -572,6 +621,7 @@ export function AddProjectPathModal({
                   inputDataAttr="data-add-project-remote-path"
                 />
               </div>
+              </>)}
             </>
           )}
 
@@ -606,7 +656,10 @@ export function AddProjectPathModal({
                 className={styles.btn}
                 data-add-project-clone-cancel=""
                 onClick={() => {
-                  if (cloneIdRef.current) onCancelClone(cloneIdRef.current);
+                  if (cloneIdRef.current) {
+                    if (onHost) onCancelClone(cloneIdRef.current, onHost);
+                    else onCancelClone(cloneIdRef.current);
+                  }
                 }}
               >
                 Stop clone

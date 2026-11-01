@@ -124,6 +124,20 @@ describe("hostHub", () => {
     assert.deepEqual(remote.state.calls.at(-3), { channel: "threads:get", args: ["r1"] });
   });
 
+  it("runs onHost calls on that host, without the routing key, and tags new projects", async () => {
+    const remote = await fakeHost();
+    const { hub } = makeHub(remote);
+    cleanup.push(() => remote.close(), () => hub.close());
+    hub.setHosts([HOST]);
+    await waitFor(() => hub.list()[0].status === "online");
+    remote.state.projects = [];
+    const origCalls = remote.state.calls.length;
+    await hub.route("fs:browse", [{ path: "~", onHost: "me@box:4620" }], () => assert.fail("ran locally"));
+    assert.deepEqual(remote.state.calls[origCalls], { channel: "fs:browse", args: [{ path: "~" }] });
+    assert.equal(hub.route("fs:browse", [{ path: "~" }], async () => null), null, "no onHost: local");
+    await assert.rejects(hub.route("fs:browse", [{ path: "~", onHost: "gone:1" }], async () => null), /no longer in the sidebar/);
+  });
+
   it("applies the host's row-patch pushes and refetches on a gap", async () => {
     const remote = await fakeHost({ threads: [{ id: "r1", projectId: "rp", title: "a" }] });
     const { hub, pushes } = makeHub(remote);

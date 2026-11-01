@@ -309,6 +309,15 @@ function createHostHub(deps) {
   /** @param {unknown[]} args */
   function ownerOf(args) {
     if (hosts.size === 0) return null;
+    // Calls that create something on a host (add/clone a project, browse
+    // its folders) name it explicitly with `onHost: key`.
+    for (const arg of args.slice(0, 2)) {
+      if (arg && typeof arg === "object" && typeof arg.onHost === "string" && arg.onHost) {
+        const entry = hosts.get(arg.onHost);
+        if (entry) return entry;
+        throw new Error("That computer is no longer in the sidebar.");
+      }
+    }
     for (const arg of args.slice(0, 2)) {
       const ids = typeof arg === "string"
         ? [arg]
@@ -322,9 +331,14 @@ function createHostHub(deps) {
     return null;
   }
 
-  // Thread-shaped results get the host tag so the renderer can tell them apart.
-  function tagResult(entry, result) {
+  // Thread- and project-shaped results get the host tag so the renderer can
+  // tell them apart, and their ids route here before the next list.
+  function tagResult(entry, channel, result) {
     if (!result || typeof result !== "object" || Array.isArray(result)) return result;
+    if (channel.startsWith("projects:") && typeof result.id === "string" && typeof result.path === "string") {
+      entry.projectIds.add(result.id);
+      return { ...result, host: entry.tag };
+    }
     if (result.thread && typeof result.thread === "object" && typeof result.thread.id === "string") {
       if (result.thread.projectId) entry.threadIds.add(result.thread.id);
       return { ...result, thread: { ...result.thread, host: entry.tag } };
@@ -374,9 +388,19 @@ function createHostHub(deps) {
         return mergeProjects(rows);
       });
     }
-    const entry = ownerOf(args);
+    let entry;
+    try {
+      entry = ownerOf(args);
+    } catch (err) {
+      return Promise.reject(err);
+    }
     if (!entry) return null;
-    return send(entry, channel, args, INVOKE_TIMEOUT_MS).then((result) => tagResult(entry, result));
+    const sent = args.map((arg) => {
+      if (!arg || typeof arg !== "object" || !("onHost" in arg)) return arg;
+      const { onHost: _drop, ...rest } = arg;
+      return rest;
+    });
+    return send(entry, channel, sent, INVOKE_TIMEOUT_MS).then((result) => tagResult(entry, channel, result));
   }
 
   function close() {

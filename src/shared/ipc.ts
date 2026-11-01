@@ -380,6 +380,8 @@ export interface AgentConfigWriteResult {
 export interface AddProjectOptions {
   remoteHost?: string;
   remotePath?: string;
+  /** Another Solenta host in the sidebar (#1819): run there, by host key. */
+  onHost?: string;
 }
 
 /** One directory in an `fs:browse` listing (#609). */
@@ -396,6 +398,8 @@ export interface FsBrowseInput {
   environment?: string | null;
   /** Active project cwd; required to resolve `./` and `../`. */
   cwd?: string | null;
+  /** Another Solenta host in the sidebar (#1819): run there, by host key. */
+  onHost?: string;
 }
 
 export interface FsBrowseResult {
@@ -412,6 +416,8 @@ export interface FsBrowseResult {
 export interface CreateProjectInput {
   name: string;
   parentDir: string;
+  /** Another Solenta host in the sidebar (#1819): run there, by host key. */
+  onHost?: string;
 }
 
 /** projects.clone (#1506). `name` defaults to the repo name in the URL. */
@@ -421,6 +427,8 @@ export interface CloneProjectInput {
   name?: string;
   /** Caller-minted id that tags "clone:progress" pushes and cancelClone. */
   cloneId?: string;
+  /** Another Solenta host in the sidebar (#1819): run there, by host key. */
+  onHost?: string;
 }
 
 /** One git progress line for an in-flight clone, pushed on "clone:progress". */
@@ -5829,7 +5837,7 @@ export interface CoderApi {
      */
     clone(input: CloneProjectInput): Promise<ProjectInfo>;
     /** Stop the clone tagged `cloneId`. Unknown ids are a no-op. */
-    cancelClone(input: { cloneId: string }): Promise<void>;
+    cancelClone(input: { cloneId: string; onHost?: string }): Promise<void>;
     /**
      * The built-in Scratch workspace ("start without a project", #1411):
      * created on first call under Solenta's data dir, no git. Idempotent.
