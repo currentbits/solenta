@@ -1,0 +1,44 @@
+# Headless server bundles (#1829), built and booted on the hardware each one
+# targets: Apple Silicon, Intel Mac, Linux x64 and Linux ARM. Each job runs
+# its archive's own bundled Node (not the runner's), adds a repo, runs a
+# thread in a worktree and types into a real PTY. That is the only place the
+# darwin-x64 and linux-arm64 bundles run before a release ships them.
+name: server-bundle
+
+on:
+  push:
+    paths:
+      - "electron/**"
+      - "core/**"
+      - "memory-server/**"
+      - "package.json"
+      - "package-lock.json"
+      - "scripts/package-server.sh"
+      - "scripts/smoke-server-bundle.js"
+      - ".github/workflows/server-bundle.yml"
+  workflow_dispatch:
+
+jobs:
+  bundle:
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: macos-latest, target: darwin-arm64 }
+          - { runner: macos-15-intel, target: darwin-x64 }
+          - { runner: ubuntu-latest, target: linux-x64 }
+          - { runner: ubuntu-24.04-arm, target: linux-arm64 }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: "**/package-lock.json"
+      - run: npm ci
+      - run: npm ci --prefix core
+      - run: npm ci --prefix memory-server
+      - run: bash scripts/package-server.sh ${{ matrix.target }}
+      - run: node scripts/smoke-server-bundle.js out/solenta-server-*-${{ matrix.target }}.tar.gz

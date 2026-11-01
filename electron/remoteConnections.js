@@ -242,10 +242,69 @@ const NOT_INSTALLED_EXIT = 3;
 const DID_NOT_START_EXIT = 4;
 const TOO_OLD_EXIT = 5;
 const HEADLESS_LOG = "$HOME/.solenta-headless.log";
-function prepareHostCommand(port) {
+const NO_SERVER_BUILD_EXIT = 6;
+const SERVER_LOCK_EXIT = 7;
+const SERVER_TARGETS = ["darwin-arm64", "darwin-x64", "linux-x64", "linux-arm64"];
+const SERVER_MATCH = "/.solenta/server/[^ ]*/app/electron/server/index.js";
+
+// Nothing installed (#1829): set up this version's headless server, T3-style.
+// Side by side under ~/.solenta/server/<version>, checked against the sha256
+// this computer passes in (so the download's transport does not matter),
+// one installer at a time per version. Data lives in ~/.solenta/data, apart
+// from a desktop Solenta's. No single quotes: this runs inside sh -c '...'.
+function provisionServerLines(p, server) {
+  const v = String(server.version);
+  if (!/^[\w.+-]+$/.test(v)) throw new Error("Unexpected server version.");
+  const arms = SERVER_TARGETS.filter((t) => server.byTarget[t]).map((t) => {
+    const { url, sha256 } = server.byTarget[t];
+    if (!/^https?:\/\/[\w./%:+-]+$/.test(url) || !/^[0-9a-f]{64}$/.test(sha256)) throw new Error("Unexpected server download.");
+    return `    ${t}) url="${url}"; sum=${sha256} ;;`;
+  });
+  return `
+  base="$HOME/.solenta/server"; dir="$base/${v}"
+  case "$(uname -s)-$(uname -m)" in
+    Darwin-arm64) t=darwin-arm64 ;; Darwin-x86_64) t=darwin-x64 ;;
+    Linux-x86_64|Linux-amd64) t=linux-x64 ;; Linux-aarch64|Linux-arm64) t=linux-arm64 ;;
+    *) exit ${NO_SERVER_BUILD_EXIT} ;;
+  esac
+  url=""
+  case "$t" in
+${arms.join("\n")}
+  esac
+  [ -n "$url" ] || exit ${NO_SERVER_BUILD_EXIT}
+  if [ ! -f "$dir/.install-complete" ]; then
+    mkdir -p "$base"
+    i=0
+    until mkdir "$base/.lock-${v}" 2>/dev/null; do i=$((i+1)); [ "$i" -gt 600 ] && exit ${SERVER_LOCK_EXIT}; sleep 1; done
+    trap "rm -rf \"$base/.lock-${v}\"" EXIT
+    if [ ! -f "$dir/.install-complete" ]; then
+      tmp="$base/.staging-$$"; rm -rf "$tmp"; mkdir -p "$tmp"
+      if command -v curl >/dev/null 2>&1; then curl -fsSL -o "$tmp/s.tgz" "$url" || exit 12
+      elif command -v wget >/dev/null 2>&1; then wget -q -O "$tmp/s.tgz" "$url" || exit 12
+      else exit 13; fi
+      got="$( (sha256sum "$tmp/s.tgz" 2>/dev/null || shasum -a 256 "$tmp/s.tgz") | cut -d" " -f1)"
+      [ "$got" = "$sum" ] || { rm -rf "$tmp"; exit 14; }
+      tar -xzf "$tmp/s.tgz" -C "$tmp" || { rm -rf "$tmp"; exit 15; }
+      rm -rf "$dir"; mv "$tmp/solenta-server" "$dir"; rm -rf "$tmp"
+      echo ${v} > "$dir/.install-complete"
+    fi
+  fi
+  mkdir -p "$HOME/.solenta/data"
+  nohup "$dir/bin/solenta-server" --port ${p} --data-dir "$HOME/.solenta/data" >"${HEADLESS_LOG}" 2>&1 </dev/null &`;
+}
+
+/**
+ * @param {number} port
+ * @param {{ version: string, byTarget: Record<string, { url: string, sha256: string }> } | null} [server]
+ *   this version's headless server downloads, when published (#1829)
+ */
+function prepareHostCommand(port, server = null) {
   const p = Number(port);
   return `sh -c '
-tok() { cat "$HOME/Library/Application Support/Solenta/web-token" 2>/dev/null || cat "\${XDG_CONFIG_HOME:-$HOME/.config}/Solenta/web-token" 2>/dev/null; }
+tok() {
+  if pgrep -f "${SERVER_MATCH}" >/dev/null 2>&1; then cat "$HOME/.solenta/data/web-token" 2>/dev/null; return; fi
+  cat "$HOME/Library/Application Support/Solenta/web-token" 2>/dev/null || cat "\${XDG_CONFIG_HOME:-$HOME/.config}/Solenta/web-token" 2>/dev/null || cat "$HOME/.solenta/data/web-token" 2>/dev/null
+}
 up() { command -v curl >/dev/null 2>&1 || return 0; curl -s -o /dev/null -m 2 "http://127.0.0.1:${p}/"; }
 running() {
   if [ "$(uname -s)" = Darwin ]; then ps -axo comm= | grep -E "/Contents/MacOS/Solenta( Nightly)?$" | head -n 1; return; fi
@@ -279,8 +338,11 @@ if ! up; then
       for b in "$HOME/solenta/solenta" "$HOME/solenta/solenta-nightly" "$HOME/.local/share/solenta/solenta" /opt/solenta/solenta; do
         if [ -z "$bin" ] && [ -x "$b" ]; then bin="$b"; fi
       done
-      [ -n "$bin" ] || exit ${NOT_INSTALLED_EXIT}
-      nohup "$bin" --headless --serve-web=${p} --no-sandbox >"${HEADLESS_LOG}" 2>&1 </dev/null &
+      if [ -n "$bin" ]; then
+        nohup "$bin" --headless --serve-web=${p} --no-sandbox >"${HEADLESS_LOG}" 2>&1 </dev/null &
+      else${server ? provisionServerLines(p, server) : `
+        exit ${NOT_INSTALLED_EXIT}`}
+      fi
     fi
   fi
   i=0
@@ -293,19 +355,54 @@ fi
 tok'`;
 }
 
+/**
+ * This build's headless server downloads (#1829), from its GitHub release:
+ * `solenta-server-<version>-<os>-<arch>.tar.gz` with the sha256 GitHub
+ * stamps on each asset. Null when none are published (older releases, a
+ * dev tree): connect then needs Solenta installed there, as before.
+ */
+const serverDownloadsByTag = new Map();
+async function serverDownloads(deps = {}) {
+  if (deps.serverDownloads !== undefined) return deps.serverDownloads;
+  const updater = deps.updater || require("./updater.js");
+  // Only a tagged release has a server built from exactly this code.
+  const { tag } = updater.buildStamp();
+  if (!tag) return null;
+  if (serverDownloadsByTag.has(tag)) return serverDownloadsByTag.get(tag);
+  try {
+    const release = await updater.fetchTag(tag, deps.fetch);
+    const byTarget = {};
+    let version = null;
+    for (const a of (release && release.assets) || []) {
+      const m = /^solenta-server-(.+)-(darwin-arm64|darwin-x64|linux-x64|linux-arm64)\.tar\.gz$/.exec(String(a.name || ""));
+      const sha = /^sha256:([0-9a-f]{64})$/.exec(String(a.digest || ""));
+      if (!m || !sha) continue;
+      version = m[1];
+      byTarget[m[2]] = { url: String(a.browser_download_url), sha256: sha[1] };
+    }
+    const found = version ? { version, byTarget } : null;
+    serverDownloadsByTag.set(tag, found);
+    return found;
+  } catch {
+    // Offline or rate-limited: connect still works where Solenta is installed.
+    return null;
+  }
+}
+
 // "" when the host has no token file; throws on ssh failures (exit 255) so
 // host-key and login problems surface before any tunnel is opened, and when
 // Solenta is missing on the host or would not start.
-function readRemoteToken(host, remotePort = DEFAULT_REMOTE_PORT, deps = {}) {
+async function readRemoteToken(host, remotePort = DEFAULT_REMOTE_PORT, deps = {}) {
   const env = sshEnv(host, deps);
+  const server = await serverDownloads(deps);
   return new Promise((resolve, reject) => {
     (deps.execFile || execFile)("ssh", [
       "-T",
       ...sshAuthOptions(!!env),
       "-o", "ConnectTimeout=10",
       host,
-      prepareHostCommand(remotePort),
-    ], { timeout: 90_000, maxBuffer: 64 * 1024, ...(env ? { env } : {}) }, (err, stdout, stderr) => {
+      prepareHostCommand(remotePort, server),
+    ], { timeout: server ? 15 * 60_000 : 90_000, maxBuffer: 64 * 1024, ...(env ? { env } : {}) }, (err, stdout, stderr) => {
       if (err && (err.code === 255 || err.killed)) {
         return reject(new Error(err.killed
           ? `Timed out preparing Solenta on ${host}.`
@@ -318,6 +415,15 @@ function readRemoteToken(host, remotePort = DEFAULT_REMOTE_PORT, deps = {}) {
         // The log tail can hold the serve banner; never put its token in UI text.
         const tail = String(stderr || "").split("\n").filter((l) => !/token/i.test(l)).join("\n").trim();
         return reject(new Error(`Solenta did not start on ${host}. On a Mac someone must be logged in to the desktop; on Linux see ~/.solenta-headless.log there. If Solenta was already open there, restart it and connect again.${tail ? `\n${tail}` : ""}`));
+      }
+      if (err && err.code === NO_SERVER_BUILD_EXIT) {
+        return reject(new Error(`There is no Solenta server build for ${host}'s system. Builds exist for macOS and Linux on Intel and ARM; install Solenta there yourself.`));
+      }
+      if (err && err.code === SERVER_LOCK_EXIT) {
+        return reject(new Error(`Another connect is still setting Solenta up on ${host}. Try again in a minute.`));
+      }
+      if (err && INSTALL_EXITS[err.code] && server) {
+        return reject(new Error(`Setting up Solenta on ${host} failed: ${INSTALL_EXITS[err.code]}`));
       }
       if (err && err.code === TOO_OLD_EXIT) {
         return reject(new Error(`Solenta is open on ${host} with web access off, and that version cannot turn it on remotely. On ${host}, turn on Settings > Connections > Serve Solenta Web, or update Solenta there, then connect again.`));
