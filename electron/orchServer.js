@@ -417,6 +417,25 @@ function createToolHandlers(deps) {
     return thread;
   }
 
+  const remote = deps.remoteWorkers || null;
+
+  /**
+   * A worker thread_fork started on another computer (#1821): not in this
+   * store, recorded on one of this project's leads. Null otherwise.
+   * @param {unknown} id
+   * @param {unknown} claimed - projectId the caller says it is working in
+   */
+  function remoteWorker(id, claimed) {
+    const key = id != null ? String(id) : "";
+    if (!remote || !key || store.getThread(key)) return null;
+    const hit = remote.find(key);
+    const lead = hit && store.getThread(hit.leadId);
+    if (!lead) return null;
+    // thread_status alone takes no projectId; the rest require one.
+    if (boundProjectId || claimed) assertSameProject(lead, claimed);
+    return { lead, w: hit.w };
+  }
+
   /**
    * Kill a kept-alive CLI the way ipc.retireAgent does on archive/settle.
    * @param {string} threadId
@@ -449,6 +468,7 @@ function createToolHandlers(deps) {
           "the projectId stated at the end of your prompt.",
       );
     }
+    const far = remote ? remote.listFor(pid) : [];
     return store
       .getThreads()
       .filter((t) => String(t.projectId || "") === pid)
@@ -467,7 +487,8 @@ function createToolHandlers(deps) {
           settledOverride: t.settledOverride ?? null,
           snoozedUntil: t.snoozedUntil ?? null,
         };
-      });
+      })
+      .concat(far);
   }
 
   async function thread_fork(args) {
@@ -477,10 +498,10 @@ function createToolHandlers(deps) {
     }
     assertSameProject(source, args.projectId);
     if (args.host != null) {
-      if (typeof deps.forkRemote !== "function") {
+      if (!remote) {
         throw new Error("Forking onto another computer is not available here.");
       }
-      return deps.forkRemote({
+      return remote.fork({
         lead: source,
         host: String(args.host),
         prompt: args.prompt,
@@ -696,7 +717,46 @@ function createToolHandlers(deps) {
    * its sub-crew onto its own branch — that branch is still gated upstream,
    * when the main thread asks about landing IT.
    */
+  /**
+   * The checkout a merge lands in, checked against the destination the user
+   * approved (expectedPath + expectedBranch).
+   */
+  function approvedDestination(self, args) {
+    // Match the runner's cwd selection. Omitting intoPath invokes Git-tab
+    // base/default-branch routing, which can select a different checkout.
+    const intoPath = self.worktreePath || projectOf(self)?.path;
+    if (!intoPath) throw new Error("Merge destination checkout is unavailable.");
+    if (
+      typeof args.expectedPath !== "string" || !path.isAbsolute(args.expectedPath) ||
+      typeof args.expectedBranch !== "string" || !args.expectedBranch.trim()
+    ) {
+      throw new Error(
+        "thread_merge requires expectedPath (absolute session checkout path) and " +
+        "expectedBranch naming the destination the user approved. Verify your cwd " +
+        "and current Git branch before asking for approval.",
+      );
+    }
+    const { gitTry } = require("./worktrees.js");
+    const destinationPath = fs.realpathSync(intoPath);
+    const current = gitTry(intoPath, ["symbolic-ref", "--quiet", "--short", "HEAD"]);
+    const destinationBranch = current.ok ? current.stdout.trim() : "";
+    if (
+      fs.realpathSync(args.expectedPath) !== destinationPath ||
+      !destinationBranch || args.expectedBranch !== destinationBranch
+    ) {
+      throw new Error(
+        `Merge destination mismatch: approved ${args.expectedPath} on ${args.expectedBranch}; ` +
+        `actual ${destinationPath} on ${destinationBranch || "detached or unavailable HEAD"}. ` +
+        "Nothing was merged. Restore the approved destination, or ask the user " +
+        "before changing it. Do not substitute the actual destination automatically.",
+      );
+    }
+    return { intoPath, destinationPath, destinationBranch };
+  }
+
   async function thread_merge(args) {
+    const far = remoteWorker(args.workerThreadId, args.projectId);
+    if (far) return mergeRemoteWorker(args, far);
     const { self, worker } = requireLandableWorker(args);
     if (!worker.worktreePath) {
       return {
@@ -717,35 +777,8 @@ function createToolHandlers(deps) {
           : "Merging a worker onto your project checkout's current branch",
       );
     }
-    // Match the runner's cwd selection. Omitting intoPath invokes Git-tab
-    // base/default-branch routing, which can select a different checkout.
-    const intoPath = self.worktreePath || projectOf(self)?.path;
-    if (!intoPath) throw new Error("Merge destination checkout is unavailable.");
-    if (
-      typeof args.expectedPath !== "string" || !path.isAbsolute(args.expectedPath) ||
-      typeof args.expectedBranch !== "string" || !args.expectedBranch.trim()
-    ) {
-      throw new Error(
-        "thread_merge requires expectedPath (absolute session checkout path) and " +
-        "expectedBranch naming the destination the user approved. Verify your cwd " +
-        "and current Git branch before asking for approval.",
-      );
-    }
-    const { mergeWorktree, gitTry } = require("./worktrees.js");
-    const destinationPath = fs.realpathSync(intoPath);
-    const current = gitTry(intoPath, ["symbolic-ref", "--quiet", "--short", "HEAD"]);
-    const destinationBranch = current.ok ? current.stdout.trim() : "";
-    if (
-      fs.realpathSync(args.expectedPath) !== destinationPath ||
-      !destinationBranch || args.expectedBranch !== destinationBranch
-    ) {
-      throw new Error(
-        `Merge destination mismatch: approved ${args.expectedPath} on ${args.expectedBranch}; ` +
-        `actual ${destinationPath} on ${destinationBranch || "detached or unavailable HEAD"}. ` +
-        "Nothing was merged. Restore the approved destination, or ask the user " +
-        "before changing it. Do not substitute the actual destination automatically.",
-      );
-    }
+    const { intoPath, destinationPath, destinationBranch } = approvedDestination(self, args);
+    const { mergeWorktree } = require("./worktrees.js");
     const branch = worker.branch ?? null;
     mergeWorktree({
       store,
@@ -787,7 +820,121 @@ function createToolHandlers(deps) {
    * The worker's worktree and branch SURVIVE on purpose. Review asks for
    * changes, and thread_send puts the same worker back to work on them.
    */
+  /**
+   * Same preflight as requireLandableWorker for a worker on another
+   * computer: the caller forked it, and it is not still running there.
+   */
+  async function requireLandableRemote(args, far) {
+    const self = store.getThread(resolveBoundCaller(args.threadId));
+    if (!self) throw new Error(`Unknown thread: ${args.threadId}`);
+    assertSameProject(self, args.projectId);
+    if (far.lead.id !== self.id) {
+      throw new Error(
+        `Thread ${far.w.threadId} is not one of your workers (it was forked by ` +
+          `${far.lead.id}, not ${self.id}). You can only land workers you forked.`,
+      );
+    }
+    const st = await remote.status(far.w);
+    if (st.status === "working" || st.status === "quota-wait") {
+      throw new Error(
+        `Worker ${far.w.threadId} is still running on ${far.w.hostLabel}; wait ` +
+          `for its finish notice before landing it.`,
+      );
+    }
+    return self;
+  }
+
+  /**
+   * thread_merge for a worker on another computer (#1821). That computer
+   * pushes the worker's branch to origin; this checkout fetches it and
+   * squashes it in, then the pushed branch and the far worktree are removed.
+   */
+  async function mergeRemoteWorker(args, far) {
+    const self = await requireLandableRemote(args, far);
+    assertUserApproved(self, args, "Merging a worker onto your branch");
+    const { intoPath, destinationPath, destinationBranch } = approvedDestination(self, args);
+    const { gitTry } = require("./worktrees.js");
+    const dirty = gitTry(intoPath, ["status", "--porcelain", "--untracked-files=no"]);
+    if (!dirty.ok || dirty.stdout.trim()) {
+      throw new Error("Your checkout has uncommitted changes. Commit or stash them, then merge again.");
+    }
+    let pushed;
+    try {
+      pushed = await remote.call(far.w, "git:push", [{ threadId: far.w.threadId }]);
+    } catch (err) {
+      throw new Error(`${far.w.hostLabel} could not push the worker's branch: ${err && err.message ? err.message : err}`);
+    }
+    const branch = String((pushed && pushed.branch) || "");
+    const net = { env: { GIT_TERMINAL_PROMPT: "0" }, timeout: 60_000 };
+    const fetched = gitTry(intoPath, ["fetch", "origin", branch], net);
+    if (!fetched.ok) {
+      throw new Error(`Could not fetch ${branch} from origin: ${(fetched.stderr || fetched.combined || "").trim().slice(-300)}`);
+    }
+    const squash = gitTry(intoPath, ["merge", "--squash", "FETCH_HEAD"]);
+    if (!squash.ok) {
+      gitTry(intoPath, ["reset", "--merge"]);
+      throw new Error(
+        `Merging ${branch} conflicts with ${destinationBranch}. Nothing was merged. ` +
+          `thread_send the worker to rebase onto ${destinationBranch} and push, or open a pull request (thread_pr).`,
+      );
+    }
+    const files = gitTry(intoPath, ["diff", "--cached", "--name-only"]);
+    const names = files.ok ? files.stdout.split("\n").filter(Boolean) : [];
+    if (!names.length) {
+      return { merged: false, branch, reason: "The worker's branch has nothing this checkout does not already have." };
+    }
+    // ponytail: CI workflow edits always go through review here, not the
+    // local sign-off card; a PR is the reviewed path.
+    if (names.some((f) => f.startsWith(".github/workflows/"))) {
+      gitTry(intoPath, ["reset", "--merge"]);
+      throw new Error(
+        `${branch} changes CI workflows (.github/workflows). Nothing was merged. ` +
+          `Open a pull request for it instead (thread_pr) so the change is reviewed.`,
+      );
+    }
+    const title = far.w.title || branch;
+    const commit = gitTry(intoPath, ["commit", "-q", "-m", `${title}\n\nSquashed from ${branch} (worker ${far.w.threadId} on ${far.w.hostLabel}).`]);
+    if (!commit.ok) {
+      gitTry(intoPath, ["reset", "--merge"]);
+      throw new Error(`Commit failed: ${(commit.stderr || commit.combined || "").trim().slice(-300)}`);
+    }
+    // Tidy up like a local merge: the pushed branch and the far worktree.
+    gitTry(intoPath, ["push", "origin", "--delete", branch], net);
+    // The squash is unknown to that checkout, so it lists the branch as
+    // unmerged; force only then, never over uncommitted files.
+    let cleanup = null;
+    try {
+      await remote.call(far.w, "git:removeWorktree", [{ threadId: far.w.threadId }]);
+    } catch (err) {
+      const msg = String((err && err.message) || err);
+      if (/uncommitted:/.test(msg) || !/unmerged:/.test(msg)) {
+        cleanup = `Left the worker's worktree on ${far.w.hostLabel}: ${msg.slice(0, 300)}`;
+      } else {
+        await remote.call(far.w, "git:removeWorktree", [{ threadId: far.w.threadId, force: true }]).catch((e) => {
+          cleanup = `Left the worker's worktree on ${far.w.hostLabel}: ${String((e && e.message) || e).slice(0, 300)}`;
+        });
+      }
+    }
+    return {
+      merged: true, branch, host: far.w.hostLabel, into: destinationBranch, intoPath: destinationPath,
+      ...(cleanup ? { cleanup } : {}),
+    };
+  }
+
   async function thread_pr(args) {
+    const far = remoteWorker(args.workerThreadId, args.projectId);
+    if (far) {
+      const self = await requireLandableRemote(args, far);
+      assertUserApproved(self, args, "Opening a pull request");
+      const pr = await remote.call(far.w, "git:createPr", [{
+        threadId: far.w.threadId,
+        title: args.title,
+        body: args.body,
+        draft: args.draft,
+        allowOversize: args.allowOversize,
+      }]);
+      return { ...pr, host: far.w.hostLabel };
+    }
     const { self, worker } = requireLandableWorker(args);
     if (!worker.worktreePath) {
       throw new Error(
@@ -817,6 +964,8 @@ function createToolHandlers(deps) {
   }
 
   async function thread_send(args) {
+    const far = remoteWorker(args.threadId, args.projectId);
+    if (far) return remote.send(far.lead.id, far.w, String(args.prompt));
     const thread = store.getThread(args.threadId);
     if (!thread) {
       throw new Error(`Unknown thread: ${args.threadId}`);
@@ -907,6 +1056,8 @@ function createToolHandlers(deps) {
   }
 
   async function thread_status(args) {
+    const far = remoteWorker(args.threadId, args.projectId);
+    if (far) return remote.status(far.w);
     const thread = store.getThread(args.threadId);
     if (!thread) {
       throw new Error(`Unknown thread: ${args.threadId}`);
@@ -1295,6 +1446,12 @@ function createToolHandlers(deps) {
   }
 
   async function thread_archive(args) {
+    const far = remoteWorker(args.threadId, args.projectId);
+    if (far) {
+      if (args.archived) assertCrossThreadApproved(args, "Archiving another thread");
+      await remote.call(far.w, "threads:setArchived", [{ threadId: far.w.threadId, archived: Boolean(args.archived) }]);
+      return { threadId: far.w.threadId, archived: Boolean(args.archived), host: far.w.hostLabel };
+    }
     requireOwnThread(args);
     if (args.archived) {
       assertCrossThreadApproved(args, "Archiving another thread");
@@ -1325,6 +1482,11 @@ function createToolHandlers(deps) {
   }
 
   async function thread_settle(args) {
+    const far = remoteWorker(args.threadId, args.projectId);
+    if (far) {
+      await remote.call(far.w, "threads:setSettled", [{ threadId: far.w.threadId, override: args.override }]);
+      return { threadId: far.w.threadId, settledOverride: args.override, host: far.w.hostLabel };
+    }
     requireOwnThread(args);
     const updated = setSettled(
       store,
@@ -1342,6 +1504,12 @@ function createToolHandlers(deps) {
   }
 
   async function thread_stop(args) {
+    const far = remoteWorker(args.threadId, args.projectId);
+    if (far) {
+      assertCrossThreadApproved(args, "Stopping another thread");
+      await remote.call(far.w, "runs:stop", [{ threadId: far.w.threadId }]);
+      return { threadId: far.w.threadId, host: far.w.hostLabel };
+    }
     requireOwnThread(args);
     assertCrossThreadApproved(args, "Stopping another thread");
     await runner.stopRun({ threadId: args.threadId });
@@ -1349,6 +1517,11 @@ function createToolHandlers(deps) {
   }
 
   async function thread_rename(args) {
+    const far = remoteWorker(args.threadId, args.projectId);
+    if (far) {
+      const updated = await remote.call(far.w, "threads:rename", [{ threadId: far.w.threadId, title: args.title }]);
+      return { threadId: far.w.threadId, title: updated && updated.title, host: far.w.hostLabel };
+    }
     requireOwnThread(args);
     const updated = renameThread(store, {
       threadId: args.threadId,
@@ -1713,8 +1886,10 @@ function buildMcpServer(sdk, handlers, opts = {}) {
         "start the worker on that computer instead, in its copy of this repo (an unknown name " +
         "lists the connected ones). It starts from " +
         "that computer's checkout, not your commits, so push first if it needs them. You are " +
-        "woken when it finishes, but thread_merge and thread_pr cannot land it from here. " +
-        "pool and tier do not apply there. Returns the new threadId.",
+        "woken when it finishes, and thread_status, thread_send, thread_stop, thread_merge, " +
+        "thread_pr, thread_archive, thread_settle and thread_rename take its threadId like a " +
+        "local worker's (thread_merge brings its branch here through origin). pool and tier do " +
+        "not apply there. Returns the new threadId.",
       inputSchema: {
         threadId: z.string().min(1),
         projectId: z.string().min(1),
@@ -2595,7 +2770,7 @@ function isGitHubProject(project) {
  * @param {(id: string) => unknown} [opts.getProvider] - inject for tests
  * @param {(channel: string, payload: unknown) => void} [opts.broadcast] - same fan-out as IPC
  * @param {() => object | null} [opts.getIosSimulator] - optional; resolves the simulator service after recover()
- * @param {(input: object) => Promise<{ threadId: string, host: string }>} [opts.forkRemote] - thread_fork onto another computer (#1821)
+ * @param {ReturnType<typeof import("./remoteWorkers.js").createRemoteWorkers>} [opts.remoteWorkers] - workers on another computer (#1821)
  */
 function createOrchServer(opts) {
   const {
@@ -2655,7 +2830,7 @@ function createOrchServer(opts) {
       userDataPath,
       getIosSimulator,
       log,
-      forkRemote: opts.forkRemote,
+      remoteWorkers: opts.remoteWorkers,
     };
 
     server = http.createServer(async (req, res) => {

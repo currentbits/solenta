@@ -1433,7 +1433,7 @@ app.whenReady().then(async () => {
     deliver: (input) => runner.deliverNotice(input),
   });
   orchServer = createOrchServer({
-    forkRemote: (input) => remoteWorkers.fork(input),
+    remoteWorkers,
     store,
     runner,
     userDataPath: userData,

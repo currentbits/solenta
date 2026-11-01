@@ -37,7 +37,7 @@ function createRemoteWorkers({ store, hub, deliver }) {
     if (!leads) {
       leads = new Set(
         store.getThreads()
-          .filter((t) => Array.isArray(t.remoteWorkers) && t.remoteWorkers.length)
+          .filter((t) => Array.isArray(t.remoteWorkers) && t.remoteWorkers.some((w) => w.out))
           .map((t) => t.id),
       );
     }
@@ -91,6 +91,9 @@ function createRemoteWorkers({ store, hub, deliver }) {
       hostLabel: host.label,
       threadId: created.id,
       title: created.title || null,
+      // Out = the lead is owed a wake-up; first = its first run (#1821).
+      out: true,
+      first: true,
     };
     const fresh = store.getThread(lead.id);
     store.updateThread(lead.id, {
@@ -103,23 +106,127 @@ function createRemoteWorkers({ store, hub, deliver }) {
     return { threadId: created.id, host: host.label };
   }
 
-  // The worker is a new thread: idle until its first run, which ends done
-  // or failed. Idle after a run means it was stopped, so count it only once
-  // the worker was seen working.
+  /** Replace one worker record on its lead. */
+  function patch(leadId, threadId, fields) {
+    const lead = store.getThread(leadId);
+    if (!lead || !Array.isArray(lead.remoteWorkers)) return;
+    store.updateThread(leadId, {
+      remoteWorkers: lead.remoteWorkers.map((w) => (w.threadId === threadId ? { ...w, ...fields } : w)),
+    });
+    store.saveNow();
+  }
+
+  /** The lead that forked this remote worker, or null. */
+  function find(threadId) {
+    for (const t of store.getThreads()) {
+      const w = Array.isArray(t.remoteWorkers) && t.remoteWorkers.find((r) => r.threadId === threadId);
+      if (w) return { leadId: t.id, w };
+    }
+    return null;
+  }
+
+  function call(w, channel, args) {
+    return hub.invoke(w.hostKey, channel, args);
+  }
+
+  /** threads_list rows for this project's remote workers, from the hub's list. */
+  function listFor(projectId) {
+    const out = [];
+    for (const t of store.getThreads()) {
+      if (t.projectId !== projectId || !Array.isArray(t.remoteWorkers)) continue;
+      for (const w of t.remoteWorkers) {
+        const row = hub.threadsOf(w.hostKey).find((r) => r.id === w.threadId);
+        out.push({
+          id: w.threadId,
+          title: (row && row.title) || w.title,
+          provider: (row && row.provider) || null,
+          status: row ? row.status : null,
+          handoffFrom: t.id,
+          projectId: t.projectId,
+          host: w.hostLabel,
+          reachable: Boolean(row),
+        });
+      }
+    }
+    return out;
+  }
+
+  async function status(w) {
+    const detail = await call(w, "threads:get", [w.threadId]);
+    const t = (detail && detail.thread) || {};
+    const lastError = t.lastError ? String(t.lastError) : null;
+    return {
+      status: t.status ?? null,
+      title: t.title ?? null,
+      provider: t.provider ?? null,
+      host: w.hostLabel,
+      branch: t.branch || null,
+      lastAssistantText: lastReplyLine(detail) || null,
+      lastError,
+      awaitingInput: t.status === "working" && t.awaitingInput === true,
+    };
+  }
+
+  /**
+   * thread_send to a remote worker: start a turn, or queue it behind the
+   * running one the same way a local send does. Either way the lead is owed
+   * a wake-up when that turn ends.
+   */
+  async function send(leadId, w, prompt) {
+    const row = hub.threadsOf(w.hostKey).find((r) => r.id === w.threadId);
+    let queued = Boolean(row && RUNNING.has(row.status));
+    // Arm before starting: the host's working/done pushes can land before
+    // runs:start answers. A queued prompt runs after the current turn, so
+    // that turn's end is skipped.
+    const arm = () => {
+      patch(leadId, w.threadId, { out: true, first: false, sawWorking: queued, skip: queued ? 1 : 0 });
+      pendingLeads().add(leadId);
+    };
+    arm();
+    try {
+      if (!queued) {
+        try {
+          await call(w, "runs:start", [{ threadId: w.threadId, prompt }]);
+        } catch (err) {
+          if (!/already active/i.test(String(err && err.message))) throw err;
+          queued = true;
+          arm();
+        }
+      }
+      if (queued) {
+        await call(w, "threads:setQueued", [{ threadId: w.threadId, prompt, inbound: true }]);
+      }
+    } catch (err) {
+      patch(leadId, w.threadId, { out: false });
+      throw err;
+    }
+    return { outcome: queued ? "queued" : "delivered", threadId: w.threadId, host: w.hostLabel };
+  }
+
+  // First run: the worker is a new thread, idle until it starts, and a run
+  // ends done or failed. Later runs start from done, so they only count
+  // once seen working. Idle after working = stopped.
   function finished(w, row) {
     if (!row) return false;
     if (RUNNING.has(row.status)) {
       w.sawWorking = true;
       return false;
     }
-    return row.status === "done" || row.status === "failed" || w.sawWorking === true;
+    const ended = w.sawWorking === true || (w.first === true && (row.status === "done" || row.status === "failed"));
+    if (!ended) return false;
+    if (w.skip > 0) {
+      w.skip -= 1;
+      w.sawWorking = false;
+      return false;
+    }
+    return true;
   }
 
   async function wake(leadId, w, row) {
     let reply = "";
     let branch = "";
     try {
-      const detail = await hub.invoke(w.hostKey, "threads:get", [w.threadId]);
+      const detail = await call(w, "threads:get", [w.threadId]);
       reply = lastReplyLine(detail);
       branch = (detail && detail.thread && detail.thread.branch) || "";
     } catch {
@@ -127,12 +234,14 @@ function createRemoteWorkers({ store, hub, deliver }) {
     }
     const status = row.status === "failed" ? "failed" : row.status === "idle" ? "stopped" : "done";
     const title = w.title ? ` ("${w.title}")` : "";
+    // Same report-then-ask contract as a local worker's notice.
     const land =
-      status === "done"
-        ? ` Its work is on ${w.hostLabel}${branch ? `, branch ${branch}` : ""}, not on this` +
-          ` computer: thread_merge and thread_pr cannot land it from here. Tell the user` +
-          ` what it built and ask whether to open a pull request from that thread on` +
-          ` ${w.hostLabel} (it is in the sidebar). Do not land it before they answer.`
+      status === "done" && branch
+        ? ` Its work is still only on branch ${branch} on ${w.hostLabel}: check it` +
+          ` (thread_status), then tell the user what it built and ask whether to merge` +
+          ` it here (thread_merge) or open a pull request (thread_pr) with workerThreadId` +
+          ` ${w.threadId}. Do not land it before they answer. If other workers have` +
+          ` finished too, ask about all of them in one question.`
         : "";
     deliver({
       threadId: leadId,
@@ -150,19 +259,20 @@ function createRemoteWorkers({ store, hub, deliver }) {
     const byId = new Map(rows.map((r) => [r.id, r]));
     for (const leadId of [...set]) {
       const lead = store.getThread(leadId);
-      const out = (lead && Array.isArray(lead.remoteWorkers)) ? lead.remoteWorkers : [];
-      const done = out.filter((w) => w.hostKey === key && finished(w, byId.get(w.threadId)));
-      if (!lead || done.length) {
-        const left = out.filter((w) => !done.includes(w));
-        if (lead) store.updateThread(leadId, { remoteWorkers: left.length ? left : null });
-        if (!left.length) set.delete(leadId);
+      const all = lead && Array.isArray(lead.remoteWorkers) ? lead.remoteWorkers : [];
+      const done = all.filter((w) => w.out && w.hostKey === key && finished(w, byId.get(w.threadId)));
+      if (done.length) {
+        store.updateThread(leadId, {
+          remoteWorkers: all.map((w) => (done.includes(w) ? { ...w, out: false, first: false, sawWorking: false } : w)),
+        });
         store.saveNow();
       }
+      if (!lead || !all.some((w) => w.out && !done.includes(w))) set.delete(leadId);
       for (const w of done) void wake(leadId, w, byId.get(w.threadId));
     }
   }
 
-  return { fork, onHostThreads };
+  return { fork, onHostThreads, find, call, listFor, status, send };
 }
 
 module.exports = { createRemoteWorkers };
