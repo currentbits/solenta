@@ -189,6 +189,23 @@ describe("hostHub", () => {
     assert.ok(pushes.some((p) => p.channel === "hosts:changed"));
   });
 
+  it("does not retry a refused login until the host is saved again", async () => {
+    let tries = 0;
+    const { hub } = makeHub({ port: 0 }, {
+      openTunnel: async () => {
+        tries += 1;
+        throw new Error("SSH refused the login to me@box. Check the user name and password.");
+      },
+    });
+    cleanup.push(() => hub.close());
+    hub.setHosts([HOST]);
+    await waitFor(() => hub.list()[0].status === "offline");
+    await new Promise((r) => setTimeout(r, 150));
+    assert.equal(tries, 1, "no background retry, so no repeated password prompt");
+    hub.setHosts([HOST]);
+    await waitFor(() => tries === 2);
+  });
+
   it("drops a host's rows when it is removed", async () => {
     const remote = await fakeHost({ threads: [{ id: "r1", projectId: "rp", title: "a" }] });
     const { hub } = makeHub(remote);

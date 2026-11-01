@@ -24,6 +24,7 @@ const LIST_TIMEOUT_MS = 5_000;
 // Pushes relayed as-is to the windows. threads:changed is merged instead;
 // select/boot/settings-style pushes would steer this window, so they stay.
 const RELAYED_PUSHES = new Set(["terminal:data", "pr:progress", "clone:progress"]);
+const NO_RETRY = /refused the login|host key|rejected this computer's token|No web token found|not installed on/i;
 // Arg fields that name the thread or project a call acts on.
 const ID_FIELDS = ["threadId", "projectId", "id", "parentThreadId", "sourceThreadId"];
 
@@ -182,6 +183,13 @@ function createHostHub(deps) {
     entry.pending.clear();
     if (entry.removed || entry.retry) return;
     setStatus(entry, "offline", why);
+    // A refused login, host key or token will not heal by retrying, and with
+    // in-app SSH prompts (#1818) each retry would ask again. Wait for the
+    // user: Connect, or Show in sidebar off and on, calls setHosts again.
+    if (NO_RETRY.test(why || "")) {
+      entry.parked = true;
+      return;
+    }
     const delay = RETRY_DELAYS_MS[Math.min(entry.attempt, RETRY_DELAYS_MS.length - 1)];
     entry.attempt += 1;
     entry.retry = setTimer(() => {
@@ -276,6 +284,12 @@ function createHostHub(deps) {
     for (const [key, h] of want) {
       const label = (typeof h.label === "string" && h.label.trim()) || h.host;
       const held = hosts.get(key);
+      if (held && held.parked) {
+        // Saved again after a refusal: try once more.
+        held.parked = false;
+        held.attempt = 0;
+        void connect(held);
+      }
       if (held) {
         if (held.label !== label) {
           held.label = label;
