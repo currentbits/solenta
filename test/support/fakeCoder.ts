@@ -371,6 +371,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
   let projects = opts.projects ?? [project()];
   let spaces = opts.spaces ?? [];
   let threads = opts.threads ?? [thread()];
+  let peers: Array<{ key: string; url: string; label: string }> = [];
   const trashed = new Map<
     string,
     TrashedThreadInfo & { thread: ThreadInfo }
@@ -838,6 +839,16 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         rec("app.forgetRemoteConnection", [input], undefined),
       setSidebarHosts: (hosts: unknown) =>
         rec("app.setSidebarHosts", [hosts], []),
+      listPeers: () => rec("app.listPeers", [], peers),
+      linkPeer: (input: { link: string; label?: string }) => {
+        const url = new URL(input.link).origin;
+        peers = [...peers.filter((p) => p.url !== url), { key: url, url, label: input.label || new URL(url).hostname }];
+        return rec("app.linkPeer", [input], peers);
+      },
+      unlinkPeer: (input: { key: string }) => {
+        peers = peers.filter((p) => p.key !== input.key);
+        return rec("app.unlinkPeer", [input], peers);
+      },
       diagnosticsPreview: () =>
         rec("app.diagnosticsPreview", [], [
           "app.json",

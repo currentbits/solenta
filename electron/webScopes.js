@@ -403,6 +403,10 @@ const BY_SCOPE = {
     // Crew relay (#1821): the lead's computer, on the owner's full token.
     "threads:setCrewRelay",
     "threads:crewReply",
+    // Linked computers (#1832): tokens for other Solentas; owner only.
+    "app:listPeers",
+    "app:linkPeer",
+    "app:unlinkPeer",
     // Host-side effects: open apps, read arbitrary host paths, capture windows.
     "shell:reveal",
     "shell:openPath",

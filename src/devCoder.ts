@@ -22,6 +22,7 @@ import type {
   PrInfo,
   RemoteConnectionResult,
   SidebarHostStatus,
+  PeerLink,
   RemoteInstallResult,
   SpeechStatus,
   ThreadDetail,
@@ -426,6 +427,15 @@ function buildDevCoder(): CoderApi {
       },
       async forgetRemoteConnection(): Promise<void> {},
       async setSidebarHosts(): Promise<SidebarHostStatus[]> {
+        return [];
+      },
+      async listPeers(): Promise<PeerLink[]> {
+        return [];
+      },
+      async linkPeer(): Promise<PeerLink[]> {
+        throw new Error("Linked computers need a running Solenta.");
+      },
+      async unlinkPeer(): Promise<PeerLink[]> {
         return [];
       },
       async diagnosticsPreview(): Promise<string[]> {

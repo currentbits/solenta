@@ -593,6 +593,7 @@ function pushWindows(channel, payload) {
 // store and runner exist.
 let remoteWorkers = null;
 let crewRelay = null;
+let peerLinks = null;
 // Remote Solenta hosts shown in this window's sidebar (#1819).
 const hostHub = createHostHub({
   openTunnel: (input, onClose) => openHostTunnel(input, {}, onClose),
@@ -1199,6 +1200,16 @@ app.whenReady().then(async () => {
     log: (msg) => console.warn(msg),
   });
 
+  // Linked computers (#1832): this Solenta's agents fork onto them, desktop
+  // or headless. SOLENTA_LINK (solenta-server --link) links one at boot.
+  peerLinks = require("./peerLinks.js").createPeerLinks({ userDataPath: userData, hub: hostHub });
+  peerLinks.start();
+  if (process.env.SOLENTA_LINK) {
+    peerLinks.link({ link: process.env.SOLENTA_LINK, label: process.env.SOLENTA_LINK_LABEL || "" }).then(
+      (rows) => console.warn(`linked computers: ${rows.map((r) => r.label).join(", ")}`),
+      (err) => console.warn(`linked computers: ${err && err.message ? err.message : err}`),
+    );
+  }
   // Workers other computers forked here reach their crew there (#1821).
   crewRelay = require("./crewRelay.js").createCrewRelay({
     store,
@@ -1208,6 +1219,7 @@ app.whenReady().then(async () => {
     channels,
     webAccess,
     crewRelay,
+    peerLinks,
     ipcMain,
     dialog,
     store,

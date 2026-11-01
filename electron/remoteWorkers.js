@@ -47,13 +47,13 @@ function createRemoteWorkers({ store, hub, deliver, runner }) {
 
   function findHost(name) {
     const want = String(name).trim().toLowerCase();
-    const hosts = hub.list();
+    const hosts = hub.list({ peers: true });
     const host = hosts.find((h) => h.key.toLowerCase() === want || h.label.toLowerCase() === want);
     if (!host) {
       const names = hosts.map((h) => `"${h.label}"`).join(", ");
       throw new Error(
         `No computer called "${name}" is in the sidebar. ` +
-          (names ? `Connected computers: ${names}.` : "None are: add one in Settings → Connections and turn on Show in sidebar."),
+          (names ? `Connected computers: ${names}.` : "None are: link one in Settings → Connections → Linked computers, or add a Connection with Show in sidebar on."),
       );
     }
     if (host.status !== "online") {

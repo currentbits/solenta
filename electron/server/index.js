@@ -27,6 +27,8 @@ function parseArgs(argv) {
     if (flag === "--port") out.port = Number(value());
     else if (flag === "--host") out.host = value();
     else if (flag === "--data-dir") out.dataDir = path.resolve(value());
+    else if (flag === "--link") out.link = value();
+    else if (flag === "--link-label") out.linkLabel = value();
     else if (flag === "--version") out.version = true;
     else if (flag === "--help") out.help = true;
     else throw new Error(`Unknown option ${argv[i]}. Try --help.`);
@@ -50,7 +52,7 @@ if (opts.version) {
   process.exit(0);
 }
 if (opts.help) {
-  console.log("solenta-server [--port N] [--host ADDR] [--data-dir DIR]\nRuns Solenta's web host without the desktop app.");
+  console.log("solenta-server [--port N] [--host ADDR] [--data-dir DIR] [--link DEVICE_LINK [--link-label NAME]]\nRuns Solenta's web host without the desktop app. --link lets its agents fork workers onto another Solenta (paste a Full access device link from that computer).");
   process.exit(0);
 }
 
@@ -58,6 +60,8 @@ fs.mkdirSync(opts.dataDir, { recursive: true, mode: 0o700 });
 // No keychain here: settings secrets stay in the 0600 store, like dev builds.
 process.env.SOLENTA_ENABLE_SAFE_STORAGE = "0";
 process.env.SOLENTA_SERVER = "1";
+if (opts.link) process.env.SOLENTA_LINK = opts.link;
+if (opts.linkLabel) process.env.SOLENTA_LINK_LABEL = opts.linkLabel;
 
 const electron = createElectronShim({ userData: opts.dataDir, appPath: appRoot, version });
 const load = Module._load;
