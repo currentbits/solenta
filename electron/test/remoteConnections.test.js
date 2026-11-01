@@ -43,6 +43,24 @@ describe("remote Connections", () => {
     ]);
   });
 
+  it("reads a direct address or pairing link, and keeps plain http on private networks (#1824)", () => {
+    const link = validateConnection({ url: "https://mini.tail1234.ts.net/?token=abc", label: "" });
+    assert.deepEqual(
+      { key: link.key, url: link.url, host: link.host, remotePort: link.remotePort, token: link.token, label: link.label },
+      { key: "https://mini.tail1234.ts.net", url: "https://mini.tail1234.ts.net", host: "mini.tail1234.ts.net", remotePort: 443, token: "abc", label: "mini.tail1234.ts.net" },
+    );
+    assert.equal(validateConnection({ url: "https://box.example.com/?token=abc", token: "typed" }).token, "typed");
+    for (const ok of ["http://192.168.1.20:4620", "http://10.0.0.5:4620", "http://100.101.2.3:4620", "http://mini:4620", "http://mini.local:4620", "http://[fd7a:115c::1]:4620"]) {
+      assert.equal(validateConnection({ url: ok }).url, new URL(ok).origin, ok);
+    }
+    for (const bad of ["http://box.example.com:4620", "http://8.8.8.8:4620", "http://100.200.1.1:4620"]) {
+      assert.throws(() => validateConnection({ url: bad }), /unencrypted/, bad);
+    }
+    assert.throws(() => validateConnection({ url: "ftp://mini" }), /https:\/\/ or http:\/\//);
+    assert.throws(() => validateConnection({ url: "https://me:pw@mini.ts.net" }), /user name/);
+    assert.throws(() => validateConnection({ url: "not a url" }), /Enter an address/);
+  });
+
   it("pins host keys and explains ssh failures", () => {
     const args = sshArgs("work", 50000, 4620);
     assert.equal(args[args.indexOf("StrictHostKeyChecking=yes") - 1], "-o");

@@ -68,10 +68,63 @@ function tokenStoreFor(deps) {
   return defaultTokens;
 }
 
+// Plain http sends the token unencrypted, so it is only allowed where the
+// network is the user's own: loopback, private and link-local ranges,
+// Tailscale's 100.64/10 (WireGuard-encrypted), and LAN-style names.
+function isPrivateHostname(hostname) {
+  const h = hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  const v4 = /^(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(h);
+  if (v4) {
+    const [a, b] = [Number(v4[1]), Number(v4[2])];
+    return a === 10 || a === 127 || (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 168) || (a === 169 && b === 254) || (a === 100 && b >= 64 && b <= 127);
+  }
+  if (h.includes(":")) return h === "::1" || /^f[cd]/.test(h) || /^fe[89ab]/.test(h);
+  return !h.includes(".") || /\.(local|lan|home\.arpa|internal|ts\.net)$/.test(h);
+}
+
+// Direct route (#1824): a Solenta Web address, or the pairing link from
+// Add device on that computer, which carries the token as ?token=.
+function parseDirectUrl(raw) {
+  let u;
+  try {
+    u = new URL(raw.trim());
+  } catch {
+    throw new Error("Enter an address like https://mini.tailnet.ts.net or http://192.168.1.20:4620.");
+  }
+  if (u.protocol !== "https:" && u.protocol !== "http:") {
+    throw new Error("The address must start with https:// or http://.");
+  }
+  if (u.username || u.password) throw new Error("Leave the user name out of the address.");
+  if (u.protocol === "http:" && !isPrivateHostname(u.hostname)) {
+    throw new Error(`Plain http:// would send the token unencrypted to ${u.hostname}. Use an https:// address, such as the one Expose over Tailscale gives on that computer.`);
+  }
+  return {
+    url: u.origin,
+    hostname: u.hostname.replace(/^\[|\]$/g, ""),
+    port: Number(u.port) || (u.protocol === "https:" ? 443 : 80),
+    linkToken: (u.searchParams.get("token") || "").trim(),
+  };
+}
+
 function validateConnection(input) {
   const host = typeof input?.host === "string" ? input.host.trim() : "";
   const label = typeof input?.label === "string" ? input.label.trim() : "";
   const token = typeof input?.token === "string" ? input.token.trim() : "";
+  if (typeof input?.url === "string" && input.url.trim()) {
+    const direct = parseDirectUrl(input.url);
+    const typed = token || direct.linkToken;
+    if (typed.length > 1024) throw new Error("Enter the device token from that computer.");
+    return {
+      key: direct.url,
+      url: direct.url,
+      host: direct.hostname,
+      label: label.slice(0, 60) || direct.hostname,
+      token: typed,
+      remotePort: direct.port,
+      remember: input?.remember !== false,
+    };
+  }
   const remotePort = input?.remotePort ?? DEFAULT_REMOTE_PORT;
   // Arguments go to spawn without a shell, but a leading dash could still be
   // interpreted by ssh as an option. SSH config aliases and user@host work.
@@ -85,6 +138,8 @@ function validateConnection(input) {
     throw new Error("Enter the Solenta Web token from the remote host.");
   }
   return {
+    key: `${host}:${remotePort}`,
+    url: null,
     host,
     label: label.slice(0, 60) || host,
     token,
@@ -376,12 +431,19 @@ async function installRemoteSolenta(input, deps = {}) {
   };
 }
 
+// ws:// for a forwarded loopback port, ws(s):// for a direct address.
+function wsUrlFor(target) {
+  return typeof target === "number"
+    ? `ws://127.0.0.1:${target}/ws`
+    : `${target.replace(/^http/, "ws")}/ws`;
+}
+
 // After the token check: which Solenta and which agents the host has, for
 // the Connections row. One extra socket; null when the host is too old to
-// answer or slow, never an error.
-function inspectHost(port, token, timeoutMs = 8_000) {
+// answer or slow, never an error. `target` is a loopback port or an origin.
+function inspectHost(target, token, timeoutMs = 8_000) {
   return new Promise((resolve) => {
-    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+    const ws = new WebSocket(wsUrlFor(target));
     const replies = new Map();
     const done = (value) => {
       clearTimeout(timer);
@@ -454,12 +516,15 @@ function freeLoopbackPort() {
   });
 }
 
-function probeToken(port, token) {
+// Checks the token on a loopback port (the SSH forward) or a direct
+// origin. A direct host that never answers fails with `unreachable`.
+function probeToken(target, token, opts = {}) {
+  const unreachable = opts.unreachable || "SSH tunnel is not ready.";
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+    const ws = new WebSocket(wsUrlFor(target));
     let opened = false;
     let settled = false;
-    const timer = setTimeout(() => done(new Error("SSH tunnel is not ready.")), 1_000);
+    const timer = setTimeout(() => done(new Error(unreachable)), opts.timeoutMs ?? 1_000);
     const done = (err) => {
       if (settled) return;
       settled = true;
@@ -477,12 +542,14 @@ function probeToken(port, token) {
       } catch {
         // A different service owns the forwarded port.
       }
-      done(new Error("The forwarded port is not a Solenta Web host."));
+      done(new Error(typeof target === "number"
+        ? "The forwarded port is not a Solenta Web host."
+        : `${target} is not a Solenta Web host.`));
     });
     ws.once("close", () => done(new Error(opened
       ? "The remote Solenta host rejected this token."
-      : "SSH tunnel is not ready.")));
-    ws.once("error", () => done(new Error("SSH tunnel is not ready.")));
+      : unreachable)));
+    ws.once("error", () => done(new Error(unreachable)));
   });
 }
 
@@ -549,9 +616,148 @@ function spawnTunnel(spawnFn, host, backPort, remotePort, onClose, deps = {}) {
   return child;
 }
 
+// The isolated desktop window for one host's Solenta Web. Links leaving
+// `origin` open in the browser. Destroyed again if the page will not load.
+async function createHostWindow({ origin, title, token, deps, onClosed }) {
+  const { BrowserWindow, shell } = deps.electron || require("electron");
+  const win = new BrowserWindow({
+    width: 1440,
+    height: 900,
+    minWidth: 900,
+    minHeight: 600,
+    show: false,
+    title,
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      partition: `solenta-remote-${crypto.randomUUID()}`,
+    },
+  });
+  win.solentaRemote = true;
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//.test(url) && new URL(url).origin !== origin) {
+      void shell.openExternal(url);
+    }
+    return { action: "deny" };
+  });
+  win.webContents.on("will-navigate", (event, url) => {
+    if (new URL(url).origin === origin) return;
+    event.preventDefault();
+    if (/^https?:\/\//.test(url)) void shell.openExternal(url);
+  });
+  // Keep the window title ours; the remote page would overwrite it.
+  win.on("page-title-updated", (event) => event.preventDefault());
+  win.on("closed", onClosed);
+  // Web hosts accept a query token and scrub it after boot.
+  try {
+    await win.loadURL(`${origin}/?token=${encodeURIComponent(token)}`);
+  } catch {
+    if (!win.isDestroyed()) win.destroy();
+    throw new Error("Unable to load the remote Solenta window.");
+  }
+  return win;
+}
+
+// Already connected (or connecting): bring its window forward instead.
+function focusOpen(key) {
+  const prior = active.get(key);
+  if (!prior) return null;
+  if (prior.win && !prior.win.isDestroyed()) {
+    prior.win.show();
+    prior.win.focus();
+  }
+  return prior.promise;
+}
+
+// A keychain token the host no longer accepts is deleted, and the user is
+// asked for the current one.
+function savedTokenRejected(err, fromKeychain, tokens, key) {
+  if (!fromKeychain || !/rejected this token/.test(err.message)) return err;
+  try { tokens.delete(key); } catch { /* best effort */ }
+  return new Error("The remote Solenta host rejected the saved token. Enter its current token.");
+}
+
+// After the window opened: keep (or drop) the proven token and report
+// which Solenta the host runs.
+async function connectedResult(conn, token, inspected, deps) {
+  let tokenSaved = false;
+  try {
+    const tokens = tokenStoreFor(deps);
+    if (conn.remember) tokenSaved = tokens.set(conn.key, token);
+    else tokens.delete(conn.key);
+  } catch {
+    // The window is open; a failed save only means asking next time.
+  }
+  const info = await inspected;
+  const mine = deps.localVersion ?? localVersion();
+  const remote = info && info.version
+    ? { ...info, outdated: Boolean(mine) && compareVersions(info.version, mine) < 0 }
+    : null;
+  return {
+    host: conn.host,
+    remotePort: conn.remotePort,
+    ...(conn.url ? { url: conn.url } : {}),
+    tokenSaved,
+    remote,
+    localVersion: mine,
+  };
+}
+
+const DIRECT_PROBE_MS = 10_000;
+
+function unreachableText(url) {
+  return `Nothing answered at ${url}. On that computer, open Settings > Connections > Let other devices in and turn on Serve Solenta Web, plus Expose over Tailscale or Allow devices on my network, and check that this computer is on the same network or tailnet.`;
+}
+
+// Direct route (#1824): no SSH, so nothing starts Solenta on the host; it
+// must already serve its web UI at `url`. The token is a device token.
+async function openDirectConnection(conn, deps) {
+  const { url, key, label } = conn;
+  const tokens = tokenStoreFor(deps);
+  let token = conn.token;
+  let fromKeychain = false;
+  if (!token) {
+    token = tokens.get(key);
+    fromKeychain = !!token;
+  }
+  if (!token) {
+    throw new Error(`Enter a device token for ${label}. On that computer, open Settings > Connections > Let other devices in, add a device with Full access, and paste its link or token here.`);
+  }
+  const prior = focusOpen(key);
+  if (prior) return prior;
+  const entry = { child: null, win: null, promise: null, closing: false, front: null, backPort: null, sockets: new Set() };
+  active.set(key, entry);
+  entry.promise = (async () => {
+    try {
+      await (deps.probeToken || probeToken)(url, token, { timeoutMs: DIRECT_PROBE_MS, unreachable: unreachableText(url) });
+      const inspected = (deps.inspectHost || inspectHost)(url, token).catch(() => null);
+      const win = await createHostWindow({
+        origin: url,
+        title: `${label} · Solenta`,
+        token,
+        deps,
+        onClosed: () => {
+          entry.closing = true;
+          active.delete(key);
+        },
+      });
+      entry.win = win;
+      win.show();
+      return await connectedResult(conn, token, inspected, deps);
+    } catch (err) {
+      active.delete(key);
+      if (entry.win && !entry.win.isDestroyed()) entry.win.destroy();
+      throw savedTokenRejected(err, fromKeychain, tokens, key);
+    }
+  })();
+  return entry.promise;
+}
+
 async function openRemoteConnection(input, deps = {}) {
-  const { host, label, remotePort, remember, token: typed } = validateConnection(input);
-  const key = `${host}:${remotePort}`;
+  const conn = validateConnection(input);
+  if (conn.url) return openDirectConnection(conn, deps);
+  const { host, label, remotePort, token: typed, key } = conn;
   const tokens = tokenStoreFor(deps);
   // Typed, then the host's own token file over SSH (always current), then
   // the keychain copy for hosts whose token file cannot be read.
@@ -567,14 +773,8 @@ async function openRemoteConnection(input, deps = {}) {
   if (!token) {
     throw new Error(`No web token found on ${host}. In Solenta there, open Settings > Connections, add a device and paste its token here.`);
   }
-  const prior = active.get(key);
-  if (prior) {
-    if (prior.win && !prior.win.isDestroyed()) {
-      prior.win.show();
-      prior.win.focus();
-    }
-    return prior.promise;
-  }
+  const prior = focusOpen(key);
+  if (prior) return prior;
 
   const entry = {
     child: null, win: null, promise: null, closing: false, reconnecting: false,
@@ -662,71 +862,25 @@ async function openRemoteConnection(input, deps = {}) {
       entry.backPort = child.backPort;
       // Runs while the window loads; only the Connections row waits for it.
       const inspected = (deps.inspectHost || inspectHost)(port, token).catch(() => null);
-      const { BrowserWindow, shell } = deps.electron || require("electron");
-      const win = new BrowserWindow({
-        width: 1440,
-        height: 900,
-        minWidth: 900,
-        minHeight: 600,
-        show: false,
+      const win = await createHostWindow({
+        origin: `http://127.0.0.1:${port}`,
         title,
-        webPreferences: {
-          contextIsolation: true,
-          nodeIntegration: false,
-          sandbox: true,
-          partition: `solenta-remote-${crypto.randomUUID()}`,
+        token,
+        deps,
+        onClosed: () => {
+          entry.closing = true;
+          active.delete(key);
+          closeEntry(entry);
         },
       });
       entry.win = win;
-      win.solentaRemote = true;
-      const origin = `http://127.0.0.1:${port}`;
-      win.webContents.setWindowOpenHandler(({ url }) => {
-        if (/^https?:\/\//.test(url) && new URL(url).origin !== origin) {
-          void shell.openExternal(url);
-        }
-        return { action: "deny" };
-      });
-      win.webContents.on("will-navigate", (event, url) => {
-        if (new URL(url).origin === origin) return;
-        event.preventDefault();
-        if (/^https?:\/\//.test(url)) void shell.openExternal(url);
-      });
-      // Keep the window title ours; the remote page would overwrite it.
-      win.on("page-title-updated", (event) => event.preventDefault());
-      win.on("closed", () => {
-        entry.closing = true;
-        active.delete(key);
-        closeEntry(entry);
-      });
-      // Existing web hosts accept a query token and scrub it after boot.
-      try {
-        await win.loadURL(`${origin}/?token=${encodeURIComponent(token)}`);
-      } catch {
-        throw new Error("Unable to load the remote Solenta window.");
-      }
       win.show();
-      let tokenSaved = false;
-      try {
-        if (remember) tokenSaved = tokens.set(key, token);
-        else tokens.delete(key);
-      } catch {
-        // The window is open; a failed save only means asking next time.
-      }
-      const info = await inspected;
-      const mine = deps.localVersion ?? localVersion();
-      const remote = info && info.version
-        ? { ...info, outdated: Boolean(mine) && compareVersions(info.version, mine) < 0 }
-        : null;
-      return { host, remotePort, tokenSaved, remote, localVersion: mine };
+      return await connectedResult(conn, token, inspected, deps);
     } catch (err) {
       active.delete(key);
       if (entry.win && !entry.win.isDestroyed()) entry.win.destroy();
       closeEntry(entry);
-      if (fromKeychain && /rejected this token/.test(err.message)) {
-        try { tokens.delete(key); } catch { /* best effort */ }
-        throw new Error("The remote Solenta host rejected the saved token. Enter its current token.");
-      }
-      throw err;
+      throw savedTokenRejected(err, fromKeychain, tokens, key);
     }
   })().catch((err) => {
     active.delete(key);
@@ -744,8 +898,7 @@ function closeEntry(entry) {
 }
 
 function forgetRemoteConnection(input, deps = {}) {
-  const { host, remotePort } = validateConnection({ ...input, token: "" });
-  tokenStoreFor(deps).delete(`${host}:${remotePort}`);
+  tokenStoreFor(deps).delete(validateConnection({ ...input, token: "" }).key);
 }
 
 function closeRemoteConnections() {
@@ -758,9 +911,9 @@ function closeRemoteConnections() {
 
 // One invoke on the host's web API over a tunnel of its own, no window.
 // The reply can be large (Teleport back, #1702), hence the raised maxPayload.
-function wsInvoke(port, token, channel, args, timeoutMs) {
+function wsInvoke(wsUrl, token, channel, args, timeoutMs) {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`, { maxPayload: 128 * 1024 * 1024 });
+    const ws = new WebSocket(wsUrl, { maxPayload: 128 * 1024 * 1024 });
     let settled = false;
     const done = (err, value) => {
       if (settled) return;
@@ -798,9 +951,9 @@ function wsInvoke(port, token, channel, args, timeoutMs) {
  * host prep as Connect: the host's token file over SSH, then the keychain.
  */
 async function invokeRemote(input, channel, args, deps = {}) {
-  const { child, token } = await openHostTunnel(input, deps);
+  const { child, token, wsUrl } = await openHostTunnel(input, deps);
   try {
-    return await wsInvoke(child.backPort, token, channel, args, deps.timeoutMs ?? 10 * 60_000);
+    return await wsInvoke(wsUrl, token, channel, args, deps.timeoutMs ?? 10 * 60_000);
   } finally {
     child.kill();
   }
@@ -812,7 +965,17 @@ async function invokeRemote(input, channel, args, deps = {}) {
  * The caller owns `child` and kills it when done.
  */
 async function openHostTunnel(input, deps = {}, onClose) {
-  const { host, remotePort } = validateConnection({ host: input && input.host, remotePort: input && input.remotePort, token: "" });
+  const conn = validateConnection({ host: input && input.host, remotePort: input && input.remotePort, url: input && input.url, label: input && input.label, token: "" });
+  if (conn.url) {
+    // Direct route: no tunnel to own, so `child` only satisfies the shape.
+    const token = tokenStoreFor(deps).get(conn.key);
+    if (!token) {
+      throw new Error(`No web token found for ${conn.label}. Connect to it once from Settings > Connections with its device token.`);
+    }
+    await (deps.probeToken || probeToken)(conn.url, token, { timeoutMs: DIRECT_PROBE_MS, unreachable: unreachableText(conn.url) });
+    return { child: { backPort: null, kill() {} }, token, wsUrl: wsUrlFor(conn.url) };
+  }
+  const { host, remotePort } = conn;
   const token = (await readRemoteToken(host, remotePort, deps)) || tokenStoreFor(deps).get(`${host}:${remotePort}`);
   if (!token) {
     throw new Error(`No web token found on ${host}. Connect to it once from Settings > Connections.`);
@@ -824,7 +987,7 @@ async function openHostTunnel(input, deps = {}, onClose) {
     child.kill();
     throw err;
   }
-  return { child, token };
+  return { child, token, wsUrl: wsUrlFor(child.backPort) };
 }
 
 module.exports = {
@@ -840,6 +1003,7 @@ module.exports = {
   inspectHost,
   compareVersions,
   probeToken,
+  parseDirectUrl,
   createTokenStore,
   openRemoteConnection,
   forgetRemoteConnection,

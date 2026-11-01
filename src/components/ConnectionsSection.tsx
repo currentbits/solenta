@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { CoderApi, RemoteAgentInfo, RemoteHostInfo, RemoteInstallResult, SidebarHostStatus } from "../shared/ipc";
 import { accountLine } from "../providerAccounts";
-import { loadHosts, pushSidebarHosts, STORAGE_KEY, type SavedHost } from "../remoteHosts";
+import { hostKeyOf, loadHosts, pushSidebarHosts, STORAGE_KEY, type SavedHost } from "../remoteHosts";
 import styles from "./SettingsModal.module.css";
 
 type OpenConnection = CoderApi["app"]["openRemoteConnection"];
@@ -32,7 +32,10 @@ export function ConnectionsSection({ onOpen, onForget, onInstall, onSidebarHosts
   const [hosts, setHosts] = useState(loadHosts);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [label, setLabel] = useState("");
+  // SSH host, or a direct route by address and device token (#1824).
+  const [mode, setMode] = useState<"ssh" | "address">("ssh");
   const [host, setHost] = useState("");
+  const [url, setUrl] = useState("");
   const [remotePort, setRemotePort] = useState("4620");
   const [token, setToken] = useState("");
   const [remember, setRemember] = useState(true);
@@ -56,24 +59,29 @@ export function ConnectionsSection({ onOpen, onForget, onInstall, onSidebarHosts
     setError(null);
     setRemote(null);
     try {
-      const result = await onOpen({
-        host: host.trim(),
-        label: label.trim() || host.trim(),
-        remotePort: Number(remotePort),
-        token: token.trim(),
-        remember,
-      });
+      const result = await onOpen(mode === "address"
+        ? { host: "", url: url.trim(), label: label.trim(), token: token.trim(), remember }
+        : {
+          host: host.trim(),
+          label: label.trim() || host.trim(),
+          remotePort: Number(remotePort),
+          token: token.trim(),
+          remember,
+        });
       const profile: SavedHost = {
         id: selectedId || crypto.randomUUID(),
         label: label.trim() || result.host,
         host: result.host,
         remotePort: result.remotePort,
+        ...(result.url ? { url: result.url } : {}),
         tokenSaved: result.tokenSaved,
         inSidebar,
       };
       saveHosts([profile, ...hosts.filter((item) => item.id !== profile.id)].slice(0, 30));
       setSelectedId(profile.id);
       setToken("");
+      // A pasted pairing link carries the token: keep only the address.
+      if (result.url) setUrl(result.url);
       if (result.remote) setRemote({ host: result.host, info: result.remote, localVersion: result.localVersion });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -117,6 +125,20 @@ export function ConnectionsSection({ onOpen, onForget, onInstall, onSidebarHosts
         thread you start in one of its projects runs on that computer, even
         with this one asleep. Connect also opens it in its own window.
       </p>
+      {mode === "address" ? (
+        <ol className={`${styles.fieldNote} ${styles.connectionSteps}`} data-connection-steps="address">
+          <li>
+            On that computer, open Settings &gt; Connections &gt; Let other
+            devices in and turn on Serve Solenta Web. Then press Expose over
+            Tailscale (HTTPS), or turn on Allow devices on my network.
+          </li>
+          <li>Under Devices there, add a device with Full access and copy its link.</li>
+          <li>
+            Paste the link as the Address here and press Connect. That computer
+            has to keep Solenta open; nothing starts it from here.
+          </li>
+        </ol>
+      ) : (
       <ol className={`${styles.fieldNote} ${styles.connectionSteps}`} data-connection-steps="">
         <li>Install Solenta on that computer: the Mac app, or the Linux tarball in ~/solenta.</li>
         <li>
@@ -130,12 +152,13 @@ export function ConnectionsSection({ onOpen, onForget, onInstall, onSidebarHosts
           read over SSH, so leave Token blank.
         </li>
       </ol>
+      )}
       {hosts.map((item) => {
-        const live = item.inSidebar ? sidebarHosts.find((h) => h.key === `${item.host}:${item.remotePort}`) : undefined;
+        const live = item.inSidebar ? sidebarHosts.find((h) => h.key === hostKeyOf(item)) : undefined;
         return (
         <div className={styles.connectionRow} key={item.id}>
           <span>
-            {item.label} <small>{item.host}:{item.remotePort}{item.tokenSaved ? " · token saved" : ""}{live ? ` · ${STATUS_TEXT[live.status]}` : ""}</small>
+            {item.label} <small>{hostKeyOf(item)}{item.tokenSaved ? " · token saved" : ""}{live ? ` · ${STATUS_TEXT[live.status]}` : ""}</small>
             {live?.status === "offline" && live.error ? <small className={styles.fieldError} data-connection-host-error=""> {live.error}</small> : null}
           </span>
           <label className={styles.fieldRow}>
@@ -150,7 +173,9 @@ export function ConnectionsSection({ onOpen, onForget, onInstall, onSidebarHosts
           <button type="button" className={styles.btn} onClick={() => {
             setSelectedId(item.id);
             setLabel(item.label);
-            setHost(item.host);
+            setMode(item.url ? "address" : "ssh");
+            setUrl(item.url ?? "");
+            setHost(item.url ? "" : item.host);
             setRemotePort(String(item.remotePort));
             setToken("");
             setRemember(true);
@@ -160,7 +185,7 @@ export function ConnectionsSection({ onOpen, onForget, onInstall, onSidebarHosts
           <button type="button" className={styles.btn} aria-label={`Forget ${item.label}`} onClick={() => {
             void (async () => {
               try {
-                await onForget?.({ host: item.host, remotePort: item.remotePort });
+                await onForget?.({ host: item.host, remotePort: item.remotePort, ...(item.url ? { url: item.url } : {}) });
                 saveHosts(hosts.filter((other) => other.id !== item.id));
                 if (selectedId === item.id) setSelectedId(null);
               } catch (err) {
@@ -176,17 +201,42 @@ export function ConnectionsSection({ onOpen, onForget, onInstall, onSidebarHosts
         <input className={styles.input} data-connection-label="" value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Workstation" />
       </label>
       <label className={styles.field}>
-        <span className={styles.fieldLabel}>SSH host</span>
-        <input className={styles.input} data-connection-host="" value={host} onChange={(e) => setHost(e.target.value)} placeholder="user@host or SSH alias" autoComplete="off" />
+        <span className={styles.fieldLabel}>Connect over</span>
+        <select className={styles.input} data-connection-mode="" value={mode} onChange={(e) => {
+          setMode(e.target.value === "address" ? "address" : "ssh");
+          setError(null);
+        }}>
+          <option value="ssh">SSH</option>
+          <option value="address">Address (Tailscale or your network)</option>
+        </select>
       </label>
-      <label className={styles.field}>
-        <span className={styles.fieldLabel}>Solenta Web port on host</span>
-        <input className={styles.input} data-connection-port="" type="number" min="1" max="65535" value={remotePort} onChange={(e) => setRemotePort(e.target.value)} />
-      </label>
-      <label className={styles.field}>
-        <span className={styles.fieldLabel}>Token (optional)</span>
-        <input className={styles.input} data-connection-token="" type="password" value={token} onChange={(e) => setToken(e.target.value)} autoComplete="off" spellCheck={false} placeholder="Leave blank to read it over SSH" />
-      </label>
+      {mode === "address" ? (
+        <>
+          <label className={styles.field}>
+            <span className={styles.fieldLabel}>Address</span>
+            <input className={styles.input} data-connection-url="" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://mini.tailnet.ts.net, or the device link" autoComplete="off" spellCheck={false} />
+          </label>
+          <label className={styles.field}>
+            <span className={styles.fieldLabel}>Device token</span>
+            <input className={styles.input} data-connection-token="" type="password" value={token} onChange={(e) => setToken(e.target.value)} autoComplete="off" spellCheck={false} placeholder="Blank if the link has it, or one is saved" />
+          </label>
+        </>
+      ) : (
+        <>
+          <label className={styles.field}>
+            <span className={styles.fieldLabel}>SSH host</span>
+            <input className={styles.input} data-connection-host="" value={host} onChange={(e) => setHost(e.target.value)} placeholder="user@host or SSH alias" autoComplete="off" />
+          </label>
+          <label className={styles.field}>
+            <span className={styles.fieldLabel}>Solenta Web port on host</span>
+            <input className={styles.input} data-connection-port="" type="number" min="1" max="65535" value={remotePort} onChange={(e) => setRemotePort(e.target.value)} />
+          </label>
+          <label className={styles.field}>
+            <span className={styles.fieldLabel}>Token (optional)</span>
+            <input className={styles.input} data-connection-token="" type="password" value={token} onChange={(e) => setToken(e.target.value)} autoComplete="off" spellCheck={false} placeholder="Leave blank to read it over SSH" />
+          </label>
+        </>
+      )}
       <label className={styles.fieldRow}>
         <input type="checkbox" data-connection-remember="" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
         <span>Remember token on this computer (encrypted with the system keychain)</span>
@@ -245,13 +295,14 @@ export function ConnectionsSection({ onOpen, onForget, onInstall, onSidebarHosts
         </div>
       ) : null}
       <div className={styles.fieldRow}>
-        <button type="button" data-connection-open="" className={`${styles.btn} ${styles.btnPrimary}`} disabled={!onOpen || busy || !host.trim()} onClick={() => void connect()}>
+        <button type="button" data-connection-open="" className={`${styles.btn} ${styles.btnPrimary}`} disabled={!onOpen || busy || !(mode === "address" ? url : host).trim()} onClick={() => void connect()}>
           {busy ? "Connecting…" : "Connect"}
         </button>
         <button type="button" className={styles.btn} onClick={() => {
           setSelectedId(null);
           setLabel("");
           setHost("");
+          setUrl("");
           setRemotePort("4620");
           setToken("");
           setRemember(true);

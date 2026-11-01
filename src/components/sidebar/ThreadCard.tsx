@@ -391,7 +391,7 @@ export const ThreadCard = memo(function ThreadCard({
     if (menuBusy.current || renaming || editingTags) return;
     const presets = resolveSnoozePresets(Date.now());
     const teleportTargets = onTeleport
-      ? loadHosts().map((h) => ({ host: h.host, remotePort: h.remotePort, label: h.label }))
+      ? loadHosts().map((h) => ({ host: h.host, remotePort: h.remotePort, label: h.label, ...(h.url ? { url: h.url } : {}) }))
       : undefined;
     const items = buildThreadActionMenuItems({
       thread,

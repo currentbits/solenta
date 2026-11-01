@@ -216,6 +216,26 @@ describe("hostHub", () => {
     assert.equal(hub.mergeThreads(LOCAL), LOCAL, "no hosts: the local array itself");
     assert.equal(hub.route("threads:list", [], async () => LOCAL), null);
   });
+
+  it("keys a direct host by its address and drops one that stops answering pings (#1824)", async () => {
+    const remote = await fakeHost({ threads: [{ id: "r1", projectId: "rp", title: "a" }] });
+    const { hub } = makeHub(remote, {
+      openTunnel: async (input) => {
+        assert.equal(input.url, `http://127.0.0.1:${remote.port}`);
+        return { child: { backPort: null, kill() {} }, token: "tok", wsUrl: `ws://127.0.0.1:${remote.port}/ws` };
+      },
+    });
+    cleanup.push(() => remote.close(), () => hub.close());
+    const [row] = hub.setHosts([{ host: "127.0.0.1", remotePort: remote.port, url: `http://127.0.0.1:${remote.port}/`, label: "Mini" }]);
+    assert.equal(row.key, `http://127.0.0.1:${remote.port}`);
+    await waitFor(() => hub.mergeThreads([]).length === 1);
+    assert.equal(hub.ownerOf(["r1"]).key, row.key);
+    // A host gone silent (sleep, network change) never closes the socket.
+    for (const ws of remote.state.sockets) ws._socket.pause();
+    await waitFor(() => hub.list()[0].status === "offline");
+    assert.match(hub.list()[0].error, /stopped answering/);
+    await waitFor(() => hub.list()[0].status === "online");
+  });
 });
 
 describe("applyListPush", () => {

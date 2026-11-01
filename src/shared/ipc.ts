@@ -59,7 +59,7 @@ export type FilePreview =
  * this machine's own rows. Calls naming such a row run on that host.
  */
 export interface HostTag {
-  /** host:remotePort of the saved Connection. */
+  /** host:remotePort of the saved Connection, or its address (#1824). */
   key: string;
   label: string;
   status: SidebarHostStatus["status"];
@@ -70,6 +70,8 @@ export interface SidebarHostStatus {
   key: string;
   host: string;
   remotePort: number;
+  /** Set for a direct route: the host's Solenta Web origin, no SSH (#1824). */
+  url?: string;
   label: string;
   status: "connecting" | "online" | "offline";
   /** Why the last connect failed or the link dropped. */
@@ -3487,12 +3489,16 @@ export type TeleportPayload = { version: number } & Record<string, unknown>;
 export interface TeleportTarget {
   host: string;
   remotePort: number;
+  /** Direct route (#1824): reach the host at this origin instead of over SSH. */
+  url?: string;
   label: string;
 }
 
 export interface RemoteConnectionResult {
   host: string;
   remotePort: number;
+  /** The normalized origin, for a direct route (#1824). */
+  url?: string;
   tokenSaved: boolean;
   remote?: RemoteHostInfo | null;
   localVersion?: string;
@@ -5568,9 +5574,18 @@ export interface CoderApi {
      * the written path, or null when the dialog was cancelled. Desktop only.
      */
     exportDiagnostics(): Promise<string | null>;
-    /** Open an SSH-forwarded Solenta Web host in an isolated desktop window. */
+    /**
+     * Open another computer's Solenta Web in an isolated desktop window:
+     * over SSH, or directly at `url` with a device token (#1824).
+     */
     openRemoteConnection(input: {
       host: string;
+      /**
+       * Solenta Web address (https://, or http:// on a private network or
+       * tailnet), or the pairing link from Add device, which carries the
+       * token. Set it and `host` is ignored.
+       */
+      url?: string;
       label?: string;
       remotePort?: number;
       /** Blank reads userData/web-token on the host over SSH, then the saved token. */
@@ -5579,7 +5594,7 @@ export interface CoderApi {
       remember?: boolean;
     }): Promise<RemoteConnectionResult>;
     /** Delete the saved web token for host:port. */
-    forgetRemoteConnection(input: { host: string; remotePort?: number }): Promise<void>;
+    forgetRemoteConnection(input: { host: string; remotePort?: number; url?: string }): Promise<void>;
     /**
      * Install or update this build's Linux tarball in ~/solenta on an SSH
      * host, checked against the release's sha256. Linux x86_64 only.
@@ -5590,7 +5605,7 @@ export interface CoderApi {
      * (#1819). Replaces the previous set; resolves each host's state. Desktop only.
      */
     setSidebarHosts(
-      hosts: Array<{ host: string; remotePort: number; label?: string }>,
+      hosts: Array<{ host: string; remotePort: number; url?: string; label?: string }>,
     ): Promise<SidebarHostStatus[]>;
     /** Answer an "ssh:prompt" push; null cancels. Desktop only (#1818). */
     answerSshPrompt(input: { id: string; answer: string | null }): Promise<void>;

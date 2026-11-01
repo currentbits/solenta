@@ -38,6 +38,34 @@ const services = require("../services.js");
 const { createRunner } = require("../runner.js");
 const { createThreadListEncoder } = require("../threadListPush.js");
 const { createHostHub } = require("../hostHub.js");
+const { openHostTunnel, openRemoteConnection, invokeRemote, closeRemoteConnections } = require("../remoteConnections.js");
+
+function memoryTokens() {
+  const m = new Map();
+  return {
+    map: m,
+    get: (k) => m.get(k) || "",
+    set: (k, v) => { m.set(k, v); return true; },
+    delete: (k) => { m.delete(k); },
+  };
+}
+
+// Records the window remoteConnections would open; loads nothing.
+function fakeElectron(loaded) {
+  class BrowserWindow {
+    constructor() {
+      this.webContents = { setWindowOpenHandler() {}, on() {} };
+      this.destroyed = false;
+    }
+    on() {}
+    loadURL(url) { loaded.push(url); return Promise.resolve(); }
+    show() {}
+    focus() {}
+    isDestroyed() { return this.destroyed; }
+    destroy() { this.destroyed = true; }
+  }
+  return { BrowserWindow, shell: {}, dialog: {} };
+}
 
 function git(cwd, args) {
   execFileSync("git", args, { cwd, stdio: "ignore" });
@@ -125,5 +153,54 @@ describe("hostHub × real remote Solenta Web host", () => {
     const detail = await hub.route("threads:get", [created.id], () => assert.fail("ran locally"));
     assert.ok(detail.messages.some((m) => m.role === "user" && /hello there/.test(m.text)));
     assert.equal(detail.thread.host.label, "Box");
+  });
+
+  it("reaches a host directly by address and device token, no SSH (#1824)", async () => {
+    const origin = `http://127.0.0.1:${server.port}`;
+    const tokens = memoryTokens();
+    const loaded = [];
+    // Pasting Add device's link: the token comes out of it, the window
+    // loads the origin, and only the origin keys the keychain copy.
+    const opened = await openRemoteConnection(
+      { host: "", url: `${origin}/?token=remote-token`, label: "Direct" },
+      { tokens, electron: fakeElectron(loaded), inspectHost: async () => null, localVersion: "1.0.0" },
+    );
+    assert.deepEqual(
+      { url: opened.url, host: opened.host, remotePort: opened.remotePort, tokenSaved: opened.tokenSaved },
+      { url: origin, host: "127.0.0.1", remotePort: server.port, tokenSaved: true },
+    );
+    assert.deepEqual(loaded, [`${origin}/?token=remote-token`]);
+    assert.deepEqual([...tokens.map.entries()], [[origin, "remote-token"]]);
+    closeRemoteConnections();
+
+    // One-off invoke (Teleport's path) with the saved token.
+    const rows = await invokeRemote({ url: origin }, "projects:list", [], { tokens });
+    assert.deepEqual(rows.map((p) => p.id), [project.id]);
+
+    // The sidebar hub through the real openHostTunnel.
+    hub.close();
+    hub = createHostHub({
+      openTunnel: (input, onClose) => openHostTunnel(input, { tokens }, onClose),
+      pushWindows: (channel, payload) => windowPushes.push({ channel, payload }),
+      onThreadsChanged: () => { windowLists += 1; },
+    });
+    const listed = hub.setHosts([{ host: "127.0.0.1", remotePort: server.port, url: `${origin}/`, label: "Direct" }]);
+    assert.equal(listed[0].key, origin);
+    await waitFor(() => hub.mergeThreads([]).some((t) => t.title === "alpha"));
+    const created = await hub.route("threads:create", [{ projectId: project.id, title: "direct" }], () => assert.fail("ran locally"));
+    assert.equal(created.host.key, origin);
+    assert.ok(store.getThread(created.id), "thread lives in the remote store");
+
+    // A token the host does not know: the hub parks instead of retrying.
+    hub.close();
+    tokens.set(origin, "wrong");
+    hub = createHostHub({
+      openTunnel: (input, onClose) => openHostTunnel(input, { tokens }, onClose),
+      pushWindows: () => {},
+      onThreadsChanged: () => {},
+    });
+    hub.setHosts([{ host: "127.0.0.1", remotePort: server.port, url: origin }]);
+    await waitFor(() => hub.list()[0].status === "offline");
+    assert.match(hub.list()[0].error, /rejected this token/);
   });
 });
