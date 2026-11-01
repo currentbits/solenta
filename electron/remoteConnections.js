@@ -6,6 +6,7 @@ const fs = require("node:fs");
 const net = require("node:net");
 const path = require("node:path");
 const { WebSocket } = require("ws");
+const { PROMPT_TIMEOUT_MS } = require("./sshAskpass.js");
 
 const DEFAULT_REMOTE_PORT = 4620;
 // Tunnel respawn backoff after an unexpected SSH exit, about a minute total.
@@ -92,7 +93,34 @@ function validateConnection(input) {
   };
 }
 
-// Turn ssh's stderr into an instruction. BatchMode cannot prompt, so first
+// In-app prompts (#1818): main sets { env(host), forget(host) } once the
+// askpass relay is up. Unset (tests, Windows) keeps BatchMode.
+let sshAskpass = null;
+function setSshAskpass(value) {
+  sshAskpass = value;
+}
+
+function askpassFor(deps) {
+  if (process.platform === "win32") return null;
+  return deps.askpass !== undefined ? deps.askpass : sshAskpass;
+}
+
+// Env for an ssh child: askpass only for the ssh processes spawned here.
+function sshEnv(host, deps = {}) {
+  const askpass = askpassFor(deps);
+  return askpass ? { ...process.env, ...askpass.env(host) } : undefined;
+}
+
+// The web token goes over this ssh: unknown host keys are asked about in
+// the app, changed ones still fail, even if ~/.ssh/config relaxes checking
+// for this host. One password try so a wrong one fails fast.
+function sshAuthOptions(interactive) {
+  return interactive
+    ? ["-o", "StrictHostKeyChecking=ask", "-o", "NumberOfPasswordPrompts=1"]
+    : ["-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes"];
+}
+
+// Turn ssh's stderr into an instruction. Without askpass (Windows) first
 // contact and password logins have to be settled in a terminal once.
 function explainSshFailure(host, stderr, code) {
   const text = stderr.trim();
@@ -100,10 +128,14 @@ function explainSshFailure(host, stderr, code) {
     return `The SSH host key for ${host} changed. Solenta will not send the web token until you verify the new key and update known_hosts.`;
   }
   if (/Host key verification failed/.test(text)) {
-    return `${host} is not in known_hosts yet. Run "ssh ${host}" in a terminal once to verify its host key, then connect again.`;
+    return process.platform === "win32"
+      ? `${host} is not in known_hosts yet. Run "ssh ${host}" in a terminal once to verify its host key, then connect again.`
+      : `Solenta could not verify the SSH host key for ${host}. Connect again and choose Trust when Solenta shows its fingerprint.`;
   }
   if (/Permission denied/.test(text)) {
-    return `SSH refused the login to ${host}. Connections need key-based login (an SSH key or agent); passwords cannot be entered here.`;
+    return process.platform === "win32"
+      ? `SSH refused the login to ${host}. Connections need key-based login (an SSH key or agent); passwords cannot be entered here.`
+      : `SSH refused the login to ${host}. Check the user name and password, or the SSH key or agent, then connect again.`;
   }
   if (/Could not resolve hostname/.test(text)) {
     return `Cannot find ${host}. Check the name, or add it as a Host in ~/.ssh/config.`;
@@ -117,15 +149,18 @@ function explainSshFailure(host, stderr, code) {
   return text || `SSH exited (${code ?? "unknown"}).`;
 }
 
-function sshArgs(host, localPort, remotePort) {
+// explainSshFailure, and a refused password is not offered to ssh again.
+function sshFailure(host, stderr, code, deps = {}) {
+  if (/Permission denied/.test(stderr)) askpassFor(deps)?.forget?.(host);
+  return explainSshFailure(host, stderr, code);
+}
+
+function sshArgs(host, localPort, remotePort, interactive = false) {
   return [
     // -v only for the "Entering interactive session" readiness line; debug
     // lines are filtered out of every message shown to the user.
     "-v", "-N", "-T",
-    "-o", "BatchMode=yes",
-    // The web token goes down this tunnel: refuse unknown or changed host
-    // keys even if ~/.ssh/config relaxes checking for this host.
-    "-o", "StrictHostKeyChecking=yes",
+    ...sshAuthOptions(interactive),
     "-o", "ExitOnForwardFailure=yes",
     "-o", "ConnectTimeout=10",
     "-o", "ServerAliveInterval=15",
@@ -207,19 +242,19 @@ tok'`;
 // host-key and login problems surface before any tunnel is opened, and when
 // Solenta is missing on the host or would not start.
 function readRemoteToken(host, remotePort = DEFAULT_REMOTE_PORT, deps = {}) {
+  const env = sshEnv(host, deps);
   return new Promise((resolve, reject) => {
     (deps.execFile || execFile)("ssh", [
       "-T",
-      "-o", "BatchMode=yes",
-      "-o", "StrictHostKeyChecking=yes",
+      ...sshAuthOptions(!!env),
       "-o", "ConnectTimeout=10",
       host,
       prepareHostCommand(remotePort),
-    ], { timeout: 90_000, maxBuffer: 64 * 1024 }, (err, stdout, stderr) => {
+    ], { timeout: 90_000, maxBuffer: 64 * 1024, ...(env ? { env } : {}) }, (err, stdout, stderr) => {
       if (err && (err.code === 255 || err.killed)) {
         return reject(new Error(err.killed
           ? `Timed out preparing Solenta on ${host}.`
-          : explainSshFailure(host, String(stderr || ""), err.code)));
+          : sshFailure(host, String(stderr || ""), err.code, deps)));
       }
       if (err && err.code === NOT_INSTALLED_EXIT) {
         return reject(new Error(`Solenta is not installed on ${host}. Install it there first: the app in /Applications on a Mac, or the Linux tarball unpacked to ~/solenta or on PATH as "solenta".`));
@@ -314,18 +349,18 @@ async function linuxReleaseAsset(deps = {}) {
 async function installRemoteSolenta(input, deps = {}) {
   const { host } = validateConnection({ host: input && input.host, token: "" });
   const asset = await linuxReleaseAsset(deps);
+  const env = sshEnv(host, deps);
   const stdout = await new Promise((resolve, reject) => {
     (deps.execFile || execFile)("ssh", [
       "-T",
-      "-o", "BatchMode=yes",
-      "-o", "StrictHostKeyChecking=yes",
+      ...sshAuthOptions(!!env),
       "-o", "ConnectTimeout=10",
       host,
       installHostCommand(asset.url, asset.sha256),
-    ], { timeout: 10 * 60_000, maxBuffer: 256 * 1024 }, (err, out, stderr) => {
+    ], { timeout: 10 * 60_000, maxBuffer: 256 * 1024, ...(env ? { env } : {}) }, (err, out, stderr) => {
       if (!err) return resolve(String(out));
       if (err.killed) return reject(new Error(`Timed out installing Solenta on ${host}.`));
-      if (err.code === 255) return reject(new Error(explainSshFailure(host, String(stderr || ""), err.code)));
+      if (err.code === 255) return reject(new Error(sshFailure(host, String(stderr || ""), err.code, deps)));
       reject(new Error(INSTALL_EXITS[err.code] || `Installing on ${host} failed: ${String(stderr || "").trim() || `exit ${err.code}`}`));
     });
   });
@@ -456,7 +491,8 @@ function probeToken(port, token) {
 // listening" is logged BEFORE bind(), so it proves nothing; with
 // ExitOnForwardFailure, ssh only enters the session once every bind worked.
 async function waitForHost(child, token) {
-  const deadline = Date.now() + 15_000;
+  // An in-app password or host-key prompt may hold ssh before it is ready.
+  const deadline = Date.now() + 15_000 + (child.interactive ? PROMPT_TIMEOUT_MS : 0);
   while (Date.now() < deadline) {
     if (child.failure) throw child.failure;
     if (!child.ready) {
@@ -476,10 +512,13 @@ async function waitForHost(child, token) {
 
 // ssh -L to the host's web port. Sets child.ready once ssh owns the
 // forward and child.failure on exit; onClose runs after the failure is set.
-function spawnTunnel(spawnFn, host, backPort, remotePort, onClose) {
-  const child = spawnFn("ssh", sshArgs(host, backPort, remotePort), {
+function spawnTunnel(spawnFn, host, backPort, remotePort, onClose, deps = {}) {
+  const env = sshEnv(host, deps);
+  const child = spawnFn("ssh", sshArgs(host, backPort, remotePort, !!env), {
     stdio: ["ignore", "ignore", "pipe"],
+    ...(env ? { env } : {}),
   });
+  child.interactive = !!env;
   child.backPort = backPort;
   child.ready = false;
   child.failure = null;
@@ -504,7 +543,7 @@ function spawnTunnel(spawnFn, host, backPort, remotePort, onClose) {
   child.once("close", (code) => {
     if (partial) onLine(partial);
     partial = "";
-    child.failure = new Error(explainSshFailure(host, stderr, code));
+    child.failure = new Error(sshFailure(host, stderr, code, deps));
     onClose?.();
   });
   return child;
@@ -574,7 +613,7 @@ async function openRemoteConnection(input, deps = {}) {
     const child = spawnTunnel(spawnFn, host, backPort, remotePort, () => {
       if (entry.backPort === backPort) entry.backPort = null;
       if (entry.win && !entry.closing && !entry.reconnecting) void reconnect(child.failure);
-    });
+    }, deps);
     entry.child = child;
     return child;
   };
@@ -759,23 +798,40 @@ function wsInvoke(port, token, channel, args, timeoutMs) {
  * host prep as Connect: the host's token file over SSH, then the keychain.
  */
 async function invokeRemote(input, channel, args, deps = {}) {
-  const { host, remotePort } = validateConnection({ host: input && input.host, remotePort: input && input.remotePort, token: "" });
-  const token = (await readRemoteToken(host, remotePort, deps)) || tokenStoreFor(deps).get(`${host}:${remotePort}`);
-  if (!token) {
-    throw new Error(`No web token found on ${host}. Connect to it once from Settings > Connections.`);
-  }
-  const child = spawnTunnel(deps.spawn || spawn, host, await freeLoopbackPort(), remotePort);
+  const { child, token } = await openHostTunnel(input, deps);
   try {
-    await waitForHost(child, token);
     return await wsInvoke(child.backPort, token, channel, args, deps.timeoutMs ?? 10 * 60_000);
   } finally {
     child.kill();
   }
 }
 
+/**
+ * A ready tunnel to a saved host's web API, no window: the host is prepared
+ * (started if needed) and the token proven. `onClose` runs when ssh exits.
+ * The caller owns `child` and kills it when done.
+ */
+async function openHostTunnel(input, deps = {}, onClose) {
+  const { host, remotePort } = validateConnection({ host: input && input.host, remotePort: input && input.remotePort, token: "" });
+  const token = (await readRemoteToken(host, remotePort, deps)) || tokenStoreFor(deps).get(`${host}:${remotePort}`);
+  if (!token) {
+    throw new Error(`No web token found on ${host}. Connect to it once from Settings > Connections.`);
+  }
+  const child = spawnTunnel(deps.spawn || spawn, host, await freeLoopbackPort(), remotePort, onClose, deps);
+  try {
+    await waitForHost(child, token);
+  } catch (err) {
+    child.kill();
+    throw err;
+  }
+  return { child, token };
+}
+
 module.exports = {
   validateConnection,
   sshArgs,
+  sshEnv,
+  setSshAskpass,
   explainSshFailure,
   readRemoteToken,
   prepareHostCommand,
@@ -789,4 +845,5 @@ module.exports = {
   forgetRemoteConnection,
   closeRemoteConnections,
   invokeRemote,
+  openHostTunnel,
 };

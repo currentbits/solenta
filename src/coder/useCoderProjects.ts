@@ -23,7 +23,7 @@ export function useCoderProjects({
 }) {
   const addProject = useCallback(async (
     path?: string,
-    opts?: { remoteHost?: string; remotePath?: string },
+    opts?: { remoteHost?: string; remotePath?: string; onHost?: string },
   ) => {
     try {
       const trimmed = typeof path === "string" ? path.trim() : "";
@@ -33,7 +33,9 @@ export function useCoderProjects({
             remoteHost,
             remotePath: opts?.remotePath?.trim() || undefined,
           }
-        : undefined;
+        : opts?.onHost
+          ? { onHost: opts.onHost }
+          : undefined;
       // Native folder picker cannot run without Electron. Web callers must
       // pass a path (the path-input modal). Never fall through to addViaDialog.
       if (isWebMode() && !trimmed && !remoteHost) return null;
@@ -59,6 +61,7 @@ export function useCoderProjects({
       const p = await api.projects.create({
         name: input.name.trim(),
         parentDir: input.parentDir.trim(),
+        ...(input.onHost ? { onHost: input.onHost } : {}),
       });
       setProjects((prev) => {
         if (prev.some((x) => x.id === p.id)) return prev;

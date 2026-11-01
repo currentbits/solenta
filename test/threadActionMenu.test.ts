@@ -328,7 +328,12 @@ describe("buildThreadActionMenuItems (contract)", () => {
     assert.equal(noWt?.whenLabel, "Needs a worktree");
     const codex = { ...ready, provider: "codex" } as ThreadInfo;
     assert.equal(buildThreadActionMenuItems({ ...base, thread: codex, teleportTargets: targets })
-      .some((i) => i.id === "teleport"), false);
+      .find((i) => i.id === "teleport")?.disabled, false, "any provider (#1817)");
+    const working = { ...ready, status: "working" } as ThreadInfo;
+    const stopGo = buildThreadActionMenuItems({ ...base, thread: working, teleportTargets: targets })
+      .find((i) => i.id === "teleport");
+    assert.equal(stopGo?.label, "Stop and teleport to…");
+    assert.deepEqual(stopGo?.children?.map((c) => c.label), ["Stop and teleport to box", "Stop and teleport to Build VM"]);
     assert.equal(buildThreadActionMenuItems({ ...base, thread: ready, teleportTargets: [] })
       .some((i) => i.id === "teleport"), false);
     const away = { ...ready, teleportedTo: { ...targets[1], threadId: "r1" } } as ThreadInfo;

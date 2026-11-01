@@ -38,6 +38,10 @@ export const PUSH_CHANNELS = [
   "pr:progress",
   /** Browser pane audio started/stopped, or its mute changed (#1807). */
   "preview:audioChanged",
+  /** Connection state of the hosts shown in the sidebar (#1819). Desktop only. */
+  "hosts:changed",
+  /** Desktop: ssh wants a password or a new host key trusted (#1818). */
+  "ssh:prompt",
 ] as const;
 
 export type PushChannel = (typeof PUSH_CHANNELS)[number];
@@ -53,6 +57,8 @@ export const IPC_CHANNELS = [
   { ns: "app", method: "openRemoteConnection" },
   { ns: "app", method: "forgetRemoteConnection" },
   { ns: "app", method: "installRemoteSolenta" },
+  { ns: "app", method: "setSidebarHosts" },
+  { ns: "app", method: "answerSshPrompt" },
   { ns: "memory", method: "search" },
   { ns: "memory", method: "recent" },
   { ns: "memory", method: "get" },

@@ -79,6 +79,8 @@ function makeCtx(deps) {
     forgetRemoteConnection: deps.forgetRemoteConnection,
     installRemoteSolenta: deps.installRemoteSolenta,
     invokeRemote: deps.invokeRemote,
+    hostHub: deps.hostHub || null,
+    answerSshPrompt: deps.answerSshPrompt,
     webAccess: deps.webAccess || null,
     channels: deps.channels || null,
     getMcpFunnel:
@@ -157,8 +159,13 @@ function registerIpc(deps) {
   const { ipcMain } = deps;
   const ctx = makeCtx(deps);
   ctx.transport = "desktop";
+  // Calls naming another host's thread or project go to that host (#1819).
+  const hub = deps.hostHub || null;
   for (const [channel, fn] of Object.entries(IPC_HANDLERS)) {
-    ipcMain.handle(channel, async (_event, ...args) => fn(ctx, ...args));
+    ipcMain.handle(channel, async (_event, ...args) => {
+      const routed = hub && hub.route(channel, args, () => fn(ctx, ...args));
+      return routed || fn(ctx, ...args);
+    });
   }
   // Native Menu.popup needs the sender window. Keep this out of
   // IPC_HANDLERS so the web bridge never tries to pop a menu on the server.

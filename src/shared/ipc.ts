@@ -54,8 +54,32 @@ export type FilePreview =
   | { kind: "binary"; size: number }
   | { kind: "tooLarge"; size: number };
 
+/**
+ * The other Solenta host a project or thread lives on (#1819). Absent on
+ * this machine's own rows. Calls naming such a row run on that host.
+ */
+export interface HostTag {
+  /** host:remotePort of the saved Connection. */
+  key: string;
+  label: string;
+  status: SidebarHostStatus["status"];
+}
+
+/** One saved Connection shown in the sidebar (#1819). */
+export interface SidebarHostStatus {
+  key: string;
+  host: string;
+  remotePort: number;
+  label: string;
+  status: "connecting" | "online" | "offline";
+  /** Why the last connect failed or the link dropped. */
+  error: string | null;
+}
+
 export interface ProjectInfo {
   id: string;
+  /** Set when the project lives on another Solenta host (#1819). */
+  host?: HostTag;
   /** e.g. "acme/rocket", derived from git remote or folder name */
   slug: string;
   name: string;
@@ -356,6 +380,8 @@ export interface AgentConfigWriteResult {
 export interface AddProjectOptions {
   remoteHost?: string;
   remotePath?: string;
+  /** Another Solenta host in the sidebar (#1819): run there, by host key. */
+  onHost?: string;
 }
 
 /** One directory in an `fs:browse` listing (#609). */
@@ -372,6 +398,8 @@ export interface FsBrowseInput {
   environment?: string | null;
   /** Active project cwd; required to resolve `./` and `../`. */
   cwd?: string | null;
+  /** Another Solenta host in the sidebar (#1819): run there, by host key. */
+  onHost?: string;
 }
 
 export interface FsBrowseResult {
@@ -388,6 +416,8 @@ export interface FsBrowseResult {
 export interface CreateProjectInput {
   name: string;
   parentDir: string;
+  /** Another Solenta host in the sidebar (#1819): run there, by host key. */
+  onHost?: string;
 }
 
 /** projects.clone (#1506). `name` defaults to the repo name in the URL. */
@@ -397,6 +427,8 @@ export interface CloneProjectInput {
   name?: string;
   /** Caller-minted id that tags "clone:progress" pushes and cancelClone. */
   cloneId?: string;
+  /** Another Solenta host in the sidebar (#1819): run there, by host key. */
+  onHost?: string;
 }
 
 /** One git progress line for an in-flight clone, pushed on "clone:progress". */
@@ -646,6 +678,8 @@ export interface PrLink {
 export interface ThreadInfo {
   id: string;
   projectId: string;
+  /** Set when the thread lives on another Solenta host (#1819). */
+  host?: HostTag;
   title: string;
   /** Started from a chat channel (#1718); results go back to that chat. */
   channel?: { kind: ChannelKind; chatId: string } | null;
@@ -3475,6 +3509,15 @@ export interface RemoteInstallResult {
   restartNeeded: boolean;
 }
 
+/** "ssh:prompt" push: ssh's own prompt text, relayed by askpass (#1818). */
+export interface SshPromptInfo {
+  id: string;
+  host: string;
+  prompt: string;
+  /** hostkey: answer "yes" to trust; password covers key passphrases too. */
+  kind: "password" | "hostkey" | "other";
+}
+
 export interface ProviderInfo {
   id: string;
   /** Display name, e.g. "Claude Code". */
@@ -5542,6 +5585,15 @@ export interface CoderApi {
      * host, checked against the release's sha256. Linux x86_64 only.
      */
     installRemoteSolenta(input: { host: string }): Promise<RemoteInstallResult>;
+    /**
+     * Show these saved Connections' projects and threads in this window
+     * (#1819). Replaces the previous set; resolves each host's state. Desktop only.
+     */
+    setSidebarHosts(
+      hosts: Array<{ host: string; remotePort: number; label?: string }>,
+    ): Promise<SidebarHostStatus[]>;
+    /** Answer an "ssh:prompt" push; null cancels. Desktop only (#1818). */
+    answerSshPrompt(input: { id: string; answer: string | null }): Promise<void>;
   };
   /**
    * Proxied to the local shared-memory server by the main process (the
@@ -5796,7 +5848,7 @@ export interface CoderApi {
      */
     clone(input: CloneProjectInput): Promise<ProjectInfo>;
     /** Stop the clone tagged `cloneId`. Unknown ids are a no-op. */
-    cancelClone(input: { cloneId: string }): Promise<void>;
+    cancelClone(input: { cloneId: string; onHost?: string }): Promise<void>;
     /**
      * The built-in Scratch workspace ("start without a project", #1411):
      * created on first call under Solenta's data dir, no git. Idempotent.
@@ -6202,11 +6254,12 @@ export interface CoderApi {
      */
     setEjected(input: { threadId: string; ejected: boolean }): Promise<ThreadInfo>;
     /**
-     * Teleport (#1702): move an idle Claude worktree thread (branch,
-     * uncommitted diff, session, transcript) to a saved remote host.
+     * Teleport (#1702): move an idle worktree thread (branch, uncommitted
+     * diff, transcript, queued prompts; Claude also its session) to a
+     * saved remote host. `stop` ends a running turn first (#1817).
      * Desktop only. The thread stays here, locked, until teleportBack.
      */
-    teleport(input: { threadId: string } & TeleportTarget): Promise<ThreadInfo>;
+    teleport(input: { threadId: string; stop?: boolean } & TeleportTarget): Promise<ThreadInfo>;
     /** Bring a teleported thread home and archive the remote copy. */
     teleportBack(input: { threadId: string }): Promise<ThreadInfo>;
     /**
@@ -7795,10 +7848,14 @@ export interface CoderApi {
   on(channel: "clone:progress", cb: (push: CloneProgressPush) => void): () => void;
   /** Desktop: a hosted agent is waiting on the in-app OAuth consent screen (#1541). */
   on(channel: "pairing:consent", cb: (pending: OauthConsentInfo) => void): () => void;
+  /** Desktop: an ssh child of Remote Connections is asking something (#1818). */
+  on(channel: "ssh:prompt", cb: (prompt: SshPromptInfo) => void): () => void;
   /** createPr step progress: commit/push/create/link (#1803). */
   on(channel: "pr:progress", cb: (push: PrProgressPush) => void): () => void;
   /** Desktop-only: a bound Browser pane's audio started/stopped, or its mute changed (#1807). */
   on(channel: "preview:audioChanged", cb: (state: PreviewAudioState) => void): () => void;
+  /** Desktop-only: a sidebar host connected, dropped or was removed (#1819). */
+  on(channel: "hosts:changed", cb: (hosts: SidebarHostStatus[]) => void): () => void;
 }
 
 declare global {

@@ -9,6 +9,7 @@ import type { ProjectInfo } from "../../shared/ipc";
 import { browseMatchTier } from "../../browsePath";
 import { ProjectIcon } from "../ProjectIcon";
 import { Icon } from "./Icon";
+import { HostChip } from "./HostChip";
 import styles from "../Sidebar.module.css";
 
 /**
@@ -149,6 +150,7 @@ export function ScopeMenu({
                 size={16}
               />
               {p.slug || p.name}
+              <HostChip host={p.host} />
               {p.folders?.length ? (
                 <span
                   className={styles.folderChip}

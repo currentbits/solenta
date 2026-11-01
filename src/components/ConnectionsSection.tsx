@@ -1,12 +1,19 @@
 import { useState } from "react";
-import type { CoderApi, RemoteAgentInfo, RemoteHostInfo, RemoteInstallResult } from "../shared/ipc";
+import type { CoderApi, RemoteAgentInfo, RemoteHostInfo, RemoteInstallResult, SidebarHostStatus } from "../shared/ipc";
 import { accountLine } from "../providerAccounts";
-import { loadHosts, STORAGE_KEY, type SavedHost } from "../remoteHosts";
+import { loadHosts, pushSidebarHosts, STORAGE_KEY, type SavedHost } from "../remoteHosts";
 import styles from "./SettingsModal.module.css";
 
 type OpenConnection = CoderApi["app"]["openRemoteConnection"];
 type ForgetConnection = CoderApi["app"]["forgetRemoteConnection"];
 type InstallSolenta = CoderApi["app"]["installRemoteSolenta"];
+type SetSidebarHosts = CoderApi["app"]["setSidebarHosts"];
+
+const STATUS_TEXT: Record<SidebarHostStatus["status"], string> = {
+  connecting: "connecting…",
+  online: "in sidebar",
+  offline: "offline",
+};
 
 function agentState(a: RemoteAgentInfo): string {
   if (!a.available) return "Not installed";
@@ -14,10 +21,13 @@ function agentState(a: RemoteAgentInfo): string {
   if (a.auth === "signedIn") return accountLine(a) ?? "Ready";
   return "Installed";
 }
-export function ConnectionsSection({ onOpen, onForget, onInstall }: {
+export function ConnectionsSection({ onOpen, onForget, onInstall, onSidebarHosts, sidebarHosts = [] }: {
   onOpen?: OpenConnection;
   onForget?: ForgetConnection;
   onInstall?: InstallSolenta;
+  onSidebarHosts?: SetSidebarHosts;
+  /** Live state of the hosts shown in the sidebar (hosts:changed). */
+  sidebarHosts?: SidebarHostStatus[];
 }) {
   const [hosts, setHosts] = useState(loadHosts);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -26,6 +36,7 @@ export function ConnectionsSection({ onOpen, onForget, onInstall }: {
   const [remotePort, setRemotePort] = useState("4620");
   const [token, setToken] = useState("");
   const [remember, setRemember] = useState(true);
+  const [inSidebar, setInSidebar] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // What the last Connect learned about the other computer.
@@ -36,6 +47,7 @@ export function ConnectionsSection({ onOpen, onForget, onInstall }: {
   const saveHosts = (next: SavedHost[]) => {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
     setHosts(next);
+    void pushSidebarHosts(onSidebarHosts, next);
   };
 
   const connect = async () => {
@@ -57,6 +69,7 @@ export function ConnectionsSection({ onOpen, onForget, onInstall }: {
         host: result.host,
         remotePort: result.remotePort,
         tokenSaved: result.tokenSaved,
+        inSidebar,
       };
       saveHosts([profile, ...hosts.filter((item) => item.id !== profile.id)].slice(0, 30));
       setSelectedId(profile.id);
@@ -99,15 +112,17 @@ export function ConnectionsSection({ onOpen, onForget, onInstall }: {
   return (
     <section className={styles.section} data-connections="">
       <p className={styles.fieldNote}>
-        Open the Solenta running on another computer in its own window. Its
-        projects, agents, and worktrees stay on that computer.
+        Work on another computer&apos;s Solenta from here. With Show in
+        sidebar on, its projects and threads appear in this window, and a
+        thread you start in one of its projects runs on that computer, even
+        with this one asleep. Connect also opens it in its own window.
       </p>
       <ol className={`${styles.fieldNote} ${styles.connectionSteps}`} data-connection-steps="">
         <li>Install Solenta on that computer: the Mac app, or the Linux tarball in ~/solenta.</li>
         <li>
-          Check that <code>ssh {host.trim() || "user@host"}</code> works in a
-          terminal here without a password prompt (an SSH key or agent, and
-          the host key already accepted).
+          Turn on SSH there: Remote Login on a Mac, sshd on Linux. Solenta asks
+          for a password, or to trust a computer it has not seen before, right
+          here.
         </li>
         <li>
           Enter the SSH host and press Connect. Solenta starts there if it is
@@ -115,9 +130,23 @@ export function ConnectionsSection({ onOpen, onForget, onInstall }: {
           read over SSH, so leave Token blank.
         </li>
       </ol>
-      {hosts.map((item) => (
+      {hosts.map((item) => {
+        const live = item.inSidebar ? sidebarHosts.find((h) => h.key === `${item.host}:${item.remotePort}`) : undefined;
+        return (
         <div className={styles.connectionRow} key={item.id}>
-          <span>{item.label} <small>{item.host}:{item.remotePort}{item.tokenSaved ? " · token saved" : ""}</small></span>
+          <span>
+            {item.label} <small>{item.host}:{item.remotePort}{item.tokenSaved ? " · token saved" : ""}{live ? ` · ${STATUS_TEXT[live.status]}` : ""}</small>
+            {live?.status === "offline" && live.error ? <small className={styles.fieldError} data-connection-host-error=""> {live.error}</small> : null}
+          </span>
+          <label className={styles.fieldRow}>
+            <input
+              type="checkbox"
+              data-connection-sidebar={item.id}
+              checked={item.inSidebar === true}
+              onChange={(e) => saveHosts(hosts.map((other) => other.id === item.id ? { ...other, inSidebar: e.target.checked } : other))}
+            />
+            <span>Show in sidebar</span>
+          </label>
           <button type="button" className={styles.btn} onClick={() => {
             setSelectedId(item.id);
             setLabel(item.label);
@@ -125,6 +154,7 @@ export function ConnectionsSection({ onOpen, onForget, onInstall }: {
             setRemotePort(String(item.remotePort));
             setToken("");
             setRemember(true);
+            setInSidebar(item.inSidebar === true);
             setError(null);
           }}>Use</button>
           <button type="button" className={styles.btn} aria-label={`Forget ${item.label}`} onClick={() => {
@@ -139,7 +169,8 @@ export function ConnectionsSection({ onOpen, onForget, onInstall }: {
             })();
           }}>Forget</button>
         </div>
-      ))}
+        );
+      })}
       <label className={styles.field}>
         <span className={styles.fieldLabel}>Name</span>
         <input className={styles.input} data-connection-label="" value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Workstation" />
@@ -159,6 +190,10 @@ export function ConnectionsSection({ onOpen, onForget, onInstall }: {
       <label className={styles.fieldRow}>
         <input type="checkbox" data-connection-remember="" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
         <span>Remember token on this computer (encrypted with the system keychain)</span>
+      </label>
+      <label className={styles.fieldRow}>
+        <input type="checkbox" data-connection-in-sidebar="" checked={inSidebar} onChange={(e) => setInSidebar(e.target.checked)} />
+        <span>Show its projects and threads in this window&apos;s sidebar</span>
       </label>
       {error && <p className={styles.fieldError} role="alert">{error}</p>}
       {notInstalled && onInstall ? (
@@ -220,6 +255,7 @@ export function ConnectionsSection({ onOpen, onForget, onInstall }: {
           setRemotePort("4620");
           setToken("");
           setRemember(true);
+          setInSidebar(true);
           setError(null);
         }}>New host</button>
       </div>

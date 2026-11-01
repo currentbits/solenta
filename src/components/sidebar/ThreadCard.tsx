@@ -24,6 +24,7 @@ import {
 import { buildThreadActionMenuItems } from "../../threadActionMenu";
 import { CustomSnoozeDialog } from "../CustomSnoozeDialog";
 import { loadHosts } from "../../remoteHosts";
+import { HostChip } from "./HostChip";
 import { isPinned, resolveSnoozePresets } from "../../threadSnooze";
 import { isUnread } from "../../threadUnread";
 import { ProjectIcon } from "../ProjectIcon";
@@ -208,7 +209,7 @@ export const ThreadCard = memo(function ThreadCard({
   listMoveProjects?: () => readonly ProjectInfo[];
   onSetEjected?: (threadId: string, ejected: boolean) => void | Promise<void>;
   /** Teleport to a saved host, or back with null (#1702). */
-  onTeleport?: (threadId: string, target: TeleportTarget | null) => void | Promise<void>;
+  onTeleport?: (threadId: string, target: TeleportTarget | null, stop?: boolean) => void | Promise<void>;
   onRenameThread?: (threadId: string, title: string) => void | Promise<void>;
   /** Regenerate the title from current activity (issue #1774). */
   onRegenerateTitle?: (threadId: string) => void | Promise<void>;
@@ -381,7 +382,7 @@ export const ThreadCard = memo(function ThreadCard({
     else if (id === "teleportBack") void onTeleport?.(thread.id, null);
     else if (id.startsWith("teleport:")) {
       const target = teleportTargets[Number(id.slice("teleport:".length))];
-      if (target) void onTeleport?.(thread.id, target);
+      if (target) void onTeleport?.(thread.id, target, thread.status === "working");
     }
     else if (id === "detach") detachThread(thread.id);
   };
@@ -508,6 +509,7 @@ export const ThreadCard = memo(function ThreadCard({
               {slug}
             </span>
           )}
+          <HostChip host={thread.host} />
           {pinned && (
             <span className={styles.pinFlag} data-pin-flag="" title="Pinned" aria-hidden>
               <Icon size={10}>

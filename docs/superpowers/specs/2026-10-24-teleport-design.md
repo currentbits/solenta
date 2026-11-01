@@ -43,8 +43,10 @@ The native Claude jsonl. Sender: `findClaudeSessionFile` against the
 thread's Claude home (provider-instance aware). Receiver writes
 `<claude home>/projects/<encodeClaudeProjectDir(realpath(worktree))>/<sessionId>.jsonl`
 and rewrites each line's top-level `cwd` to the new worktree. Other
-providers are refused in slice 1; later slices copy their native file or fall
-back to the store's existing `replayContext` transcript replay.
+providers (#1817) send no session (`sessionId: null`, `session: ""`); the
+receiving thread gets `replayContext: true`, so its first turn replays the
+transcript. Same on the way back. Queued prompts (`thread.queued`) travel
+both ways.
 
 ## Q2 Git state
 
@@ -56,14 +58,20 @@ patch. Gitignored files stay where they are and are listed in the result.
 
 ## Q3 Refusals
 
-- Run active, queued prompts, or status not idle-like.
-- Provider is not Claude.
+- Run active without `stop: true` (the menu offers "Stop and teleport to…",
+  which stops the run and waits up to 30 s for idle), or quota-wait.
+- Queued prompts with files attached (the files are paths on this disk).
 - Thread has no worktree (it would mutate the project checkout).
 - Thread already teleported away.
-- Remote too old (no `threads:teleportIn` channel).
-- Remote has no project whose origin slug matches.
-- Claude not available on the remote.
-- Effort not honoured for the model on the remote (model id copied exactly).
+- Remote too old (no `threads:teleportIn` channel, or it only reads v1
+  payloads: v2 adds `provider`, `originUrl`, `queued`; v1 is still read).
+- Remote has no project whose origin slug matches and the payload has no
+  `originUrl` (v1). With one, the remote clones origin beside its most
+  recently added local project (else `~/code`) and adds it.
+- The thread's provider is not available on the remote (or locally, for
+  Teleport back).
+- Effort not honoured for the model on the remote (model id copied
+  exactly; skipped for providers without efforts).
 - Branch exists on the receiving side and the incoming head does not
   fast-forward it.
 - Bundle prerequisites missing after fetching origin.

@@ -26,7 +26,7 @@ import { ChannelsSection } from "./settings/ChannelsSection";
 import { ConnectionsSection } from "./ConnectionsSection";
 import { WebAccessSection } from "./WebAccessSection";
 import { isWebMode } from "../shared/wire";
-import type { CoderApi } from "../shared/ipc";
+import type { CoderApi, SidebarHostStatus } from "../shared/ipc";
 import { PaneIcon } from "./settings/PaneIcon";
 import { SpendingPane } from "./settings/SpendingPane";
 import { ThreadsPane } from "./settings/ThreadsPane";
@@ -186,6 +186,9 @@ export interface SettingsModalProps {
   onOpenConnection?: CoderApi["app"]["openRemoteConnection"];
   onForgetConnection?: CoderApi["app"]["forgetRemoteConnection"];
   onInstallSolenta?: CoderApi["app"]["installRemoteSolenta"];
+  onSidebarHosts?: CoderApi["app"]["setSidebarHosts"];
+  /** Live state of the Connections shown in the sidebar (#1819). */
+  sidebarHosts?: SidebarHostStatus[];
   /** Optional memory-scope rename seam (#179). When omitted reads window.coder. */
   onRenameMemoryScope?: CoderApi["memory"]["renameScope"];
   /** Project picker default for Spotlight and Project tools: the selected thread's project. */
@@ -287,6 +290,8 @@ export function SettingsModal({
   onOpenConnection,
   onForgetConnection,
   onInstallSolenta,
+  onSidebarHosts,
+  sidebarHosts,
   onRenameMemoryScope,
   currentProjectId = null,
   onSetSpotlight,
@@ -916,7 +921,7 @@ export function SettingsModal({
           <>
           <WebAccessSection active={open && pane === "connections"} />
           <p className={styles.sectionLabel}>Connect to another computer</p>
-          <ConnectionsSection onOpen={onOpenConnection} onForget={onForgetConnection} onInstall={onInstallSolenta} />
+          <ConnectionsSection onOpen={onOpenConnection} onForget={onForgetConnection} onInstall={onInstallSolenta} onSidebarHosts={onSidebarHosts} sidebarHosts={sidebarHosts} />
           <p className={styles.note} data-connections-remote-project-hint="">
             Only need one repo from a server, in this window? Add it as a
             project with a Remote host instead (Add project, then Remote

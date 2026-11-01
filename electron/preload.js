@@ -19,6 +19,8 @@ const PUSH_CHANNELS = new Set([
   "pairing:consent",
   "pr:progress",
   "preview:audioChanged",
+  "hosts:changed",
+  "ssh:prompt",
 ]);
 /* </ipc-push> */
 
@@ -101,6 +103,8 @@ const IPC_CHANNELS = Object.freeze([
   { ns: "app", method: "openRemoteConnection" },
   { ns: "app", method: "forgetRemoteConnection" },
   { ns: "app", method: "installRemoteSolenta" },
+  { ns: "app", method: "setSidebarHosts" },
+  { ns: "app", method: "answerSshPrompt" },
   { ns: "memory", method: "search" },
   { ns: "memory", method: "recent" },
   { ns: "memory", method: "get" },

@@ -836,6 +836,8 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         }),
       forgetRemoteConnection: (input: unknown) =>
         rec("app.forgetRemoteConnection", [input], undefined),
+      setSidebarHosts: (hosts: unknown) =>
+        rec("app.setSidebarHosts", [hosts], []),
       diagnosticsPreview: () =>
         rec("app.diagnosticsPreview", [], [
           "app.json",
@@ -853,6 +855,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           aptCommand: null,
           restartNeeded: false,
         }),
+      answerSshPrompt: (input: unknown) => rec("app.answerSshPrompt", [input], undefined),
     },
     memory: {
       search: (input: unknown) => rec("memory.search", [input], [] as MemoryEntryInfo[]),
@@ -4507,7 +4510,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       if (channel === "simulator:focus") {
         return () => {};
       }
-      if (channel === "pairing:consent") {
+      if (channel === "pairing:consent" || channel === "ssh:prompt") {
         return () => {};
       }
       if (channel === "speech:changed") {

@@ -337,3 +337,52 @@ describe("Add project: clone from URL (#1506)", () => {
     m.unmount();
   });
 });
+
+describe("Add project on another computer (#1819)", () => {
+  it("routes add and browse to the chosen host and hides this computer's options", async () => {
+    const added: unknown[] = [];
+    const browsed: unknown[] = [];
+    const m = await mount(
+      <AddProjectPathModal
+        onClose={() => {}}
+        onSubmit={async (path, remotes) => {
+          added.push([path, remotes]);
+          return { id: "rp" };
+        }}
+        onCreate={async () => ({})}
+        onBrowse={async (input) => {
+          browsed.push(input);
+          return { parentPath: "/", existed: true, entries: [] } satisfies FsBrowseResult;
+        }}
+        onPickDirectory={async () => null}
+        computers={[{ key: "me@box:4620", label: "Box" }]}
+      />,
+    );
+    assert.ok(m.query("[data-add-project-remote-host]"), "SSH fields show for this computer");
+    await m.change(m.query("[data-add-project-computer]"), "me@box:4620");
+    assert.equal(m.query("[data-add-project-remote-host]"), null);
+    assert.ok(m.query("[data-add-project-computer-note]"));
+    await m.type(m.query("[data-add-project-path-input]"), "/srv/app");
+    await m.click(m.query("[data-add-project-path-submit]"));
+    await m.flush();
+    assert.deepEqual(added, [["/srv/app", { onHost: "me@box:4620" }]]);
+    assert.ok(
+      browsed.some((b) => (b as { onHost?: string }).onHost === "me@box:4620"),
+      "folders are listed on Box",
+    );
+    m.unmount();
+  });
+
+  it("shows no Computer field without other hosts", async () => {
+    const m = await mount(
+      <AddProjectPathModal
+        onClose={() => {}}
+        onSubmit={async () => ({})}
+        onCreate={async () => ({})}
+        onBrowse={async () => ({ parentPath: "/", existed: true, entries: [] }) satisfies FsBrowseResult}
+      />,
+    );
+    assert.equal(m.query("[data-add-project-computer]"), null);
+    m.unmount();
+  });
+});

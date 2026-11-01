@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
+  SidebarHostStatus,
   AutoApprove,
   ActivityItem,
   TeleportTarget,
@@ -120,6 +121,8 @@ import type {
   ThreadSearchMessagesResult,
 } from "./shared/ipc";
 import { resolveCoderApi } from "./coderApi";
+import { isWebMode } from "./shared/wire";
+import { pushSidebarHosts } from "./remoteHosts";
 import {
   mergeThreadPatch,
   patchThreadList,
@@ -918,6 +921,8 @@ export interface UseCoderResult {
   saveSettings: (patch: Partial<AppSettings>) => Promise<AppSettings>;
   /** Derived stay-awake state from main (issue #364); null until loaded. */
   stayAwake: StayAwakeStatus | null;
+  /** Connections shown in the sidebar and their link state (#1819). */
+  sidebarHosts: SidebarHostStatus[];
   /** Set the stay-awake mode (persisted via settings.stayAwake). */
   setStayAwakeMode: (mode: StayAwakeMode) => Promise<AppSettings>;
   /** POST a test payload to the saved webhook URL (issue #167). */
@@ -1085,6 +1090,7 @@ export function useCoder(): UseCoderResult {
   const [appStatus, setAppStatus] = useState<AppStatus | null>(null);
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [stayAwake, setStayAwake] = useState<StayAwakeStatus | null>(null);
+  const [sidebarHosts, setSidebarHosts] = useState<SidebarHostStatus[]>([]);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
   const [simulatorStatus, setSimulatorStatus] =
     useState<SimulatorStatus | null>(null);
@@ -1685,6 +1691,28 @@ export function useCoder(): UseCoderResult {
       window.clearInterval(statusHandle);
     };
   }, [api, applyThreads, refreshStatus, reloadDetail, refreshTrashed]);
+
+  // Saved Connections shown in the sidebar (#1819): main keeps their links
+  // open; hand it the saved set at boot (again on boot:ready, #618).
+  useEffect(() => {
+    if (isWebMode() || typeof api.app?.setSidebarHosts !== "function") return;
+    const unsubs: Array<() => void> = [];
+    const push = () => {
+      void pushSidebarHosts((hosts) => api.app.setSidebarHosts(hosts)).then(setSidebarHosts);
+    };
+    try {
+      unsubs.push(api.on("hosts:changed", (next) => {
+        if (Array.isArray(next)) setSidebarHosts(next);
+      }));
+      unsubs.push(api.on("boot:ready", push));
+    } catch {
+      // Old preload without the push.
+    }
+    push();
+    return () => {
+      for (const off of unsubs) off();
+    };
+  }, [api]);
 
   // Load ThreadDetail when selection changes. threads.get stamps lastVisitedAt
   // (select = visit); merge the returned row into the list so the sidebar
@@ -2579,6 +2607,7 @@ export function useCoder(): UseCoderResult {
     settings,
     saveSettings,
     stayAwake,
+    sidebarHosts,
     setStayAwakeMode,
     testWebhook,
     refreshStatus,

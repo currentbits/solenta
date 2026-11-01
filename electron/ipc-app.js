@@ -115,11 +115,27 @@ module.exports = {
     }
     ctx.forgetRemoteConnection(input);
   },
+  // Hosts whose threads show in this window (#1819); the list lives in the
+  // renderer's saved Connections, so it hands the hub the current set.
+  "app:setSidebarHosts": async (ctx, hosts) => {
+    if (ctx.transport !== "desktop" || !ctx.hostHub) {
+      throw new Error("Remote Connections require the desktop app.");
+    }
+    return ctx.hostHub.setHosts(hosts);
+  },
   "app:installRemoteSolenta": async (ctx, input) => {
     if (ctx.transport !== "desktop" || !ctx.installRemoteSolenta) {
       throw new Error("Remote Connections require the desktop app.");
     }
     return ctx.installRemoteSolenta(input);
+  },
+  // Answer to an "ssh:prompt" push (#1818); null cancels. Never logged.
+  "app:answerSshPrompt": async (ctx, input) => {
+    if (ctx.transport !== "desktop" || !ctx.answerSshPrompt) {
+      throw new Error("Remote Connections require the desktop app.");
+    }
+    const id = typeof input?.id === "string" ? input.id : "";
+    ctx.answerSshPrompt(id, typeof input?.answer === "string" ? input.answer : null);
   },
   "memory:search": async (ctx, input) => {
     return ctx.memory.search(input || { query: "" });

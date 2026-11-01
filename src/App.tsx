@@ -59,6 +59,7 @@ import {
 } from "./commandPalette";
 import { ConnectionBanner } from "./components/ConnectionBanner";
 import { OauthConsentDialog } from "./components/OauthConsentDialog";
+import { SshPromptDialog } from "./components/SshPromptDialog";
 import { PrHoverFetchContext } from "./components/PrHoverCard";
 import { isWebMode } from "./shared/wire";
 import { isBuildMismatch } from "./buildMismatch";
@@ -471,6 +472,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     trustAutomationsFile,
     listAutomationRuns,
     refreshAutomations,
+    sidebarHosts,
   } = useCoder();
 
   useEffect(() => {
@@ -1892,7 +1894,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   const submitAddPath = useCallback(
     async (
       path: string,
-      remotes?: { remoteHost?: string; remotePath?: string },
+      remotes?: { remoteHost?: string; remotePath?: string; onHost?: string },
     ) => {
       // Modal closes itself on success, or stays open to show the
       // Windows doctor list (#435) when checks failed.
@@ -1902,14 +1904,15 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   );
 
   const submitCreateProject = useCallback(
-    async (name: string, parentDir: string) => {
-      return createProject({ name, parentDir });
+    async (name: string, parentDir: string, onHost?: string) => {
+      return createProject({ name, parentDir, ...(onHost ? { onHost } : {}) });
     },
     [createProject],
   );
 
   const cancelClone = useCallback(
-    (cloneId: string) => void api.projects.cancelClone({ cloneId }),
+    (cloneId: string, onHost?: string) =>
+      void api.projects.cancelClone({ cloneId, ...(onHost ? { onHost } : {}) }),
     [api],
   );
 
@@ -2890,6 +2893,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
           onOpenConnection={(input) => api.app.openRemoteConnection(input)}
           onForgetConnection={(input) => api.app.forgetRemoteConnection(input)}
           onInstallSolenta={(input) => api.app.installRemoteSolenta(input)}
+          onSidebarHosts={(hosts) => api.app.setSidebarHosts(hosts)}
+          sidebarHosts={sidebarHosts}
           projects={projects}
           currentProjectId={project?.id ?? null}
           onSetSpotlight={setSpotlight}
@@ -2957,6 +2962,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         )}
         </Suspense>
         <OauthConsentDialog projects={projects} />
+        <SshPromptDialog />
         <ResumeNotice
           threads={threads}
           onStopAll={(ids) => {
@@ -2982,6 +2988,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
             onCancelClone={cancelClone}
             onCloneProgress={subscribeCloneProgress}
             onBrowse={browseFilesystem}
+            computers={sidebarHosts.filter((h) => h.status === "online")}
             currentProjectCwd={
               (selectedProjectId
                 ? projectById.get(selectedProjectId)?.path

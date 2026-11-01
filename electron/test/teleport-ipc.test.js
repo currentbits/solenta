@@ -146,12 +146,31 @@ describe("teleport IPC", () => {
   });
 
   it("unlocks the local thread when the send fails", async () => {
+    // No project there, and a local-path origin is not a URL it may clone.
     remote.store.setProjects([]);
     await assert.rejects(
       IPC_HANDLERS["threads:teleport"](laptop.ctx, { threadId, host: "box", remotePort: 4620, label: "box" }),
-      /No project for acme\/demo/,
+      /Use owner\/repo/,
     );
     assert.equal(laptop.store.getThread(threadId).teleportedTo, null);
+  });
+
+  it("refuses a running thread unless asked to stop it, then stops, waits and sends", async () => {
+    let running = true;
+    const stops = [];
+    laptop.ctx.runner = {
+      isRunning: () => running,
+      stopRun: async (input) => {
+        stops.push(input.threadId);
+        setTimeout(() => (running = false), 50);
+      },
+    };
+    const target = { host: "box", remotePort: 4620, label: "Box" };
+    await assert.rejects(IPC_HANDLERS["threads:teleport"](laptop.ctx, { threadId, ...target }), /Stop and teleport/);
+    assert.deepEqual(stops, []);
+    const sent = await IPC_HANDLERS["threads:teleport"](laptop.ctx, { threadId, ...target, stop: true });
+    assert.deepEqual(stops, [threadId]);
+    assert.ok(sent.teleportedTo.threadId);
   });
 
   it("is desktop only for the driving side", async () => {

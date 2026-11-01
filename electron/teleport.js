@@ -1,13 +1,14 @@
 "use strict";
 
 /**
- * Teleport (#1702): move an idle Claude thread to another Solenta host and
+ * Teleport (#1702, #1817): move an idle thread to another Solenta host and
  * back. One JSON payload carries everything, both directions:
  *
  *   bundle  - `git bundle` of the branch commits origin lacks (base64)
  *   patch   - binary diff of uncommitted + untracked non-ignored files
- *   session - the Claude jsonl, relocated on arrival
- *   messages, model, effort, permission mode
+ *   session - the Claude jsonl, relocated on arrival; other providers send
+ *             none and replay the transcript on their first turn there
+ *   messages, queued prompts, model, effort, permission mode
  *
  * Nothing is pushed to origin. Gitignored files stay where they are.
  * See docs/superpowers/specs/2026-10-24-teleport-design.md.
@@ -24,7 +25,8 @@ const {
 } = require("./cli-sessions-claude.js");
 const { isPathSafeSessionId } = require("./cli-sessions-shared.js");
 
-const PAYLOAD_VERSION = 1;
+// v2 (#1817): any provider, originUrl, queued. v1 (Claude only) still reads.
+const PAYLOAD_VERSION = 2;
 // ponytail: whole payload in one WS frame; stream it if real branches hit this.
 const MAX_PAYLOAD_BYTES = 50 * 1024 * 1024;
 const MAX_IGNORED_LISTED = 50;
@@ -54,6 +56,12 @@ function originSlug(cwd) {
   const { slugFromRemoteUrl } = require("./services-projects.js");
   const slug = slugFromRemoteUrl(r.stdout);
   return slug ? slug.toLowerCase() : null;
+}
+
+/** origin's URL as configured (before insteadOf rewrites), for a clone elsewhere. */
+function originUrl(cwd) {
+  const r = gitTry(cwd, ["config", "--get", "remote.origin.url"]);
+  return r.ok ? r.stdout.trim() : null;
 }
 
 /**
@@ -99,16 +107,16 @@ function claudeHomeFor(store, thread, userDataPath) {
  */
 function refuseToPack(thread, opts) {
   if (!thread) return "Unknown thread.";
-  if (thread.provider !== "claude") return "Teleport supports Claude threads only for now.";
   if (!thread.worktreePath) return "Teleport needs a thread with its own worktree.";
   if (thread.teleportedTo) return `This thread is already on ${thread.teleportedTo.label || thread.teleportedTo.host}.`;
   if (thread.ejected === true) return "Reclaim this thread from the terminal first.";
   const running = opts && typeof opts.isRunning === "function" && opts.isRunning(thread.id);
   if (running || thread.status === "working" || thread.status === "quota-wait") {
-    return "Wait for the run to finish, or stop it, before teleporting.";
+    return "This thread is running. Use Stop and teleport, or wait for the run to finish.";
   }
-  if (Array.isArray(thread.queued) ? thread.queued.length : thread.queued) {
-    return "This thread has queued prompts. Send or clear them before teleporting.";
+  // ponytail: queued files are paths on this disk; carry them when someone asks.
+  if (thread.queued && Array.isArray(thread.queued.attachments) && thread.queued.attachments.length) {
+    return "A queued prompt has files attached. Send or remove them before teleporting.";
   }
   return null;
 }
@@ -147,8 +155,9 @@ function packThread(store, threadId, opts) {
   const ignored = gitTry(cwd, ["ls-files", "--others", "--ignored", "--exclude-standard", "--directory"])
     .stdout.split("\n").map((s) => s.trim()).filter(Boolean);
 
+  const provider = thread.provider || "claude";
   let session = "";
-  if (thread.sessionId) {
+  if (provider === "claude" && thread.sessionId) {
     const file = findClaudeSessionFile(claudeHomeFor(store, thread, opts && opts.userDataPath), cwd, thread.sessionId);
     if (!file) throw new Error("This thread's Claude session file was not found, so the conversation cannot move.");
     session = fs.readFileSync(file, "utf8");
@@ -156,13 +165,14 @@ function packThread(store, threadId, opts) {
 
   const payload = {
     version: PAYLOAD_VERSION,
-    provider: "claude",
+    provider,
     originSlug: slug,
+    originUrl: originUrl(cwd),
     branch,
     head,
     bundle,
     patch: patch.toString("base64"),
-    sessionId: thread.sessionId || null,
+    sessionId: provider === "claude" ? thread.sessionId || null : null,
     session,
     thread: {
       title: thread.title,
@@ -172,6 +182,7 @@ function packThread(store, threadId, opts) {
       baseBranch: thread.baseBranch ?? null,
     },
     messages: store.getMessages(threadId) || [],
+    queued: thread.queued || null,
     ignored: ignored.slice(0, MAX_IGNORED_LISTED),
   };
   if (JSON.stringify(payload).length > MAX_PAYLOAD_BYTES) {
@@ -182,10 +193,11 @@ function packThread(store, threadId, opts) {
 
 /** Shape check before anything touches git or the store. */
 function validatePayload(p) {
-  if (!p || typeof p !== "object" || p.version !== PAYLOAD_VERSION) {
+  if (!p || typeof p !== "object" || (p.version !== 1 && p.version !== PAYLOAD_VERSION)) {
     throw new Error("This Solenta cannot read that teleport. Update both computers to the same version.");
   }
-  if (p.provider !== "claude") throw new Error("Teleport supports Claude threads only for now.");
+  if (p.version === 1 && p.provider !== "claude") throw new Error("Teleport supports Claude threads only for now.");
+  if (typeof p.provider !== "string" || !p.provider) throw new Error("Teleport payload has no provider.");
   if (!/^[0-9a-f]{40,64}$/.test(String(p.head))) throw new Error("Teleport payload has no valid head commit.");
   if (typeof p.branch !== "string" || !p.branch || p.branch.startsWith("-")) {
     throw new Error("Teleport payload has no valid branch.");
@@ -197,6 +209,61 @@ function validatePayload(p) {
   if (!Array.isArray(p.messages) || !p.thread || typeof p.thread !== "object") {
     throw new Error("Teleport payload is incomplete.");
   }
+}
+
+/**
+ * Refuse a payload whose provider (or effort) this host cannot run.
+ * @param {object} p
+ * @param {Array<{ id: string, name?: string, available?: boolean, auth?: string }>} providers
+ */
+function checkProvider(p, providers) {
+  const info = (providers || []).find((x) => x && x.id === p.provider);
+  if (!info || !info.available || info.auth === "signedOut") {
+    throw new Error(`${(info && info.name) || p.provider} is not installed or not signed in on this computer.`);
+  }
+  const { getProvider, honouredEfforts } = require("./providers.js");
+  const { model, reasoningEffort } = p.thread;
+  const efforts = honouredEfforts(getProvider(p.provider), model);
+  if (reasoningEffort && efforts.length && !efforts.includes(reasoningEffort)) {
+    throw new Error(`Effort "${reasoningEffort}" is not available for ${model || "the default model"} here.`);
+  }
+}
+
+/** Thread fields that carry the conversation: the jsonl for Claude, a replay otherwise. */
+function sessionPatch(p) {
+  const { normalizeQueued } = require("./queued.js");
+  const native = p.provider === "claude" && p.sessionId && p.session;
+  return {
+    sessionId: native ? p.sessionId : null,
+    replayContext: !native && p.messages.length > 0,
+    queued: normalizeQueued(p.queued),
+  };
+}
+
+/** Most recently added local project's parent folder, else ~/code. */
+function cloneParentDir(store) {
+  const local = (store.getProjects() || []).filter((x) => x && !x.remoteHost && x.scratch !== true && x.path);
+  const dir = local.length ? path.dirname(local[local.length - 1].path) : path.join(os.homedir(), "code");
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+/** The project for the payload's origin here, cloning it when there is none. */
+async function projectForPayload(store, p) {
+  const found = findProjectByOrigin(store, p.originSlug);
+  if (found) return found;
+  if (!p.originUrl) {
+    throw new Error(`No project for ${p.originSlug} on this computer. Add that repo here first, then teleport again.`);
+  }
+  const services = require("./services.js");
+  const { cloneProject } = require("./projectClone.js");
+  const added = await cloneProject(
+    { url: p.originUrl, parentDir: cloneParentDir(store) },
+    { addProject: (target) => services.addProject(store, target) },
+  );
+  const project = added && store.getProject(added.id);
+  if (!project) throw new Error(`Cloned ${p.originSlug} but could not add it as a project.`);
+  return project;
 }
 
 /**
@@ -306,24 +373,17 @@ function findProjectByOrigin(store, slug) {
  * @param {{
  *   worktreeBase: string,
  *   broadcast?: (channel: string, data: unknown) => void,
- *   claudeAvailable: boolean,
+ *   providers: Array<{ id: string, name?: string, available?: boolean, auth?: string }>,
  *   claudeHome?: string,
  *   from?: { threadId?: string, host?: string },
  * }} opts
- * @returns {{ threadId: string, title: string }}
+ * @returns {Promise<{ threadId: string, title: string }>}
  */
-function receiveThread(store, payload, opts) {
+async function receiveThread(store, payload, opts) {
   validatePayload(payload);
-  if (!opts.claudeAvailable) throw new Error("Claude Code is not installed or not signed in on this computer.");
-  const { getProvider, honouredEfforts } = require("./providers.js");
+  checkProvider(payload, opts.providers);
   const { model, reasoningEffort } = payload.thread;
-  if (reasoningEffort && !honouredEfforts(getProvider("claude"), model).includes(reasoningEffort)) {
-    throw new Error(`Effort "${reasoningEffort}" is not available for ${model || "the default model"} here.`);
-  }
-  const project = findProjectByOrigin(store, payload.originSlug);
-  if (!project) {
-    throw new Error(`No project for ${payload.originSlug} on this computer. Add that repo here first, then teleport again.`);
-  }
+  const project = await projectForPayload(store, payload);
   const repo = project.path;
   importCommits(repo, payload);
   const existing = gitTry(repo, ["rev-parse", "-q", "--verify", `refs/heads/${payload.branch}`]);
@@ -343,7 +403,7 @@ function receiveThread(store, payload, opts) {
   const thread = services.createThread(store, {
     projectId: project.id,
     title: payload.thread.title,
-    provider: "claude",
+    provider: payload.provider,
     model,
     projectDefaults: false,
   });
@@ -357,11 +417,12 @@ function receiveThread(store, payload, opts) {
     });
     const ready = setupWorktree({ store, threadId: thread.id, worktreeBase: opts.worktreeBase, broadcast: opts.broadcast });
     applyPatch(ready.worktreePath, payload);
-    if (payload.sessionId && payload.session) {
+    const conv = sessionPatch(payload);
+    if (conv.sessionId) {
       relocateClaudeSession(opts.claudeHome || resolveClaudeHome(), ready.worktreePath, payload.sessionId, payload.session);
     }
     store.setMessages(thread.id, payload.messages);
-    store.updateThread(thread.id, { sessionId: payload.sessionId || null });
+    store.updateThread(thread.id, conv);
     store.save();
   } catch (err) {
     rollbackThread(store, thread.id);
@@ -391,10 +452,11 @@ function rollbackThread(store, threadId) {
  * @param {import('./store').Store} store
  * @param {string} threadId
  * @param {object} payload
- * @param {{ userDataPath?: string }} [opts]
+ * @param {{ userDataPath?: string, providers?: Array<{ id: string, available?: boolean }> }} [opts]
  */
 function returnThread(store, threadId, payload, opts) {
   validatePayload(payload);
+  if (opts && opts.providers) checkProvider(payload, opts.providers);
   const thread = store.getThread(threadId);
   if (!thread || !thread.teleportedTo) throw new Error("This thread is not teleported.");
   const cwd = thread.worktreePath;
@@ -416,12 +478,14 @@ function returnThread(store, threadId, payload, opts) {
   git(cwd, ["reset", "--hard", "-q", payload.head]);
   git(cwd, ["clean", "-fdq"]);
   applyPatch(cwd, payload);
-  if (payload.sessionId && payload.session) {
+  const conv = sessionPatch(payload);
+  if (conv.sessionId) {
     relocateClaudeSession(claudeHomeFor(store, thread, opts && opts.userDataPath), cwd, payload.sessionId, payload.session);
   }
   store.setMessages(threadId, payload.messages);
   store.updateThread(threadId, {
-    sessionId: payload.sessionId || null,
+    ...conv,
+    provider: payload.provider,
     model: payload.thread.model ?? null,
     reasoningEffort: payload.thread.reasoningEffort ?? null,
     permissionMode: payload.thread.permissionMode || "default",
