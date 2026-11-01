@@ -30,9 +30,25 @@ export interface WorkspaceStripProps {
   onSetFromOrigin?: (fromOrigin: boolean) => Promise<unknown>;
   /** Thread has sent: show where it runs (read-only), with its branch. */
   started?: { branch: string | null } | null;
+  /**
+   * Machines the draft can run on (#1835): this computer and each connected
+   * computer with the same repo. Shown only when there is a choice.
+   */
+  machines?: MachineOption[];
+  onSetMachine?: (projectId: string) => Promise<unknown>;
+  /** Read-only: the computer a started thread runs on, when not this one. */
+  machineLabel?: string | null;
 }
 
-type Open = "workspace" | "base" | null;
+export interface MachineOption {
+  /** That machine's copy of the project. */
+  projectId: string;
+  label: string;
+  current: boolean;
+  online: boolean;
+}
+
+type Open = "workspace" | "base" | "machine" | null;
 
 export function WorkspaceStrip({
   worktree,
@@ -45,6 +61,9 @@ export function WorkspaceStrip({
   fromOrigin = false,
   onSetFromOrigin,
   started = null,
+  machines = [],
+  onSetMachine,
+  machineLabel = null,
 }: WorkspaceStripProps) {
   const [open, setOpen] = useState<Open>(null);
   const [branches, setBranches] = useState<{
@@ -103,6 +122,12 @@ export function WorkspaceStrip({
   if (started) {
     return (
       <div className={`${styles.strip} ${styles.readOnly}`} data-workspace-strip="readonly">
+        {machineLabel ? (
+          <span className={styles.label} data-workspace-machine-label="">
+            <MachineGlyph />
+            {machineLabel} ·
+          </span>
+        ) : null}
         <span className={styles.label} data-workspace-label={worktree ? "worktree" : "local"}>
           {worktree ? <WorktreeGlyph /> : <FolderGlyph />}
           {worktree ? "worktree" : "local checkout"}
@@ -116,6 +141,53 @@ export function WorkspaceStrip({
 
   return (
     <div className={styles.strip} ref={rootRef} data-workspace-strip="">
+      {machines.length > 1 && onSetMachine ? (
+        <div className={styles.anchor}>
+          <button
+            type="button"
+            className={styles.trigger}
+            data-workspace-machine={machines.find((m) => m.current)?.label ?? ""}
+            aria-haspopup="menu"
+            aria-expanded={open === "machine"}
+            title="Computer this thread runs on"
+            onClick={() => setOpen((o) => (o === "machine" ? null : "machine"))}
+          >
+            <MachineGlyph />
+            {machines.find((m) => m.current)?.label ?? "This computer"}
+            <Chevron />
+          </button>
+          {open === "machine" && (
+            <div className={styles.menu} role="menu" aria-label="Computer">
+              <div className={styles.menuLabel}>Runs on</div>
+              {machines.map((m) => (
+                <button
+                  key={m.projectId}
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={m.current}
+                  className={styles.item}
+                  data-workspace-machine-option={m.label}
+                  disabled={!m.online && !m.current}
+                  onClick={() => {
+                    if (m.current) {
+                      setOpen(null);
+                      return;
+                    }
+                    void run(() => onSetMachine(m.projectId));
+                  }}
+                >
+                  <MachineGlyph />
+                  <span className={styles.itemText}>
+                    {m.label}
+                    <small>{m.online ? (m.current ? "Runs here" : "Same repo there") : "Offline"}</small>
+                  </span>
+                  {m.current && <Check />}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : null}
       <div className={styles.anchor}>
         <button
           type="button"
@@ -340,6 +412,15 @@ function WorktreeGlyph() {
     <Svg>
       <path d="M2.5 4A1.5 1.5 0 0 1 4 2.5h2.2a1.5 1.5 0 0 1 1.1.5l.8 1a1.5 1.5 0 0 0 1.1.5H12A1.5 1.5 0 0 1 13.5 6v5A1.5 1.5 0 0 1 12 12.5H4A1.5 1.5 0 0 1 2.5 11V4Z" />
       <circle cx="8" cy="8.5" r="1.3" />
+    </Svg>
+  );
+}
+
+function MachineGlyph() {
+  return (
+    <Svg>
+      <rect x="2.5" y="3" width="11" height="7.5" rx="1.2" />
+      <path d="M6 13h4M8 10.5V13" />
     </Svg>
   );
 }
