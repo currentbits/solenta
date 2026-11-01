@@ -52,8 +52,9 @@ describe("remote workers (#1821)", () => {
     await tick();
     assert.equal(delivered.length, 1);
     assert.equal(delivered[0].threadId, "lead");
-    assert.match(delivered[0].line, /^Worker thread w1 \("go"\) on Box finished with status done\. Last reply: All done Its work is on Box, branch coder\/w1/);
-    assert.equal(store.getThread("lead").remoteWorkers, null);
+    assert.match(delivered[0].line, /^Worker thread w1 \("go"\) on Box finished with status done\. Last reply: All done Its work is still only on branch coder\/w1 on Box/);
+    assert.equal(store.getThread("lead").remoteWorkers[0].out, false, "kept on record, no longer owed");
+    assert.equal(rw.find("w1").leadId, "lead");
   });
 
   it("reports a stop and a failure, and picks up workers saved before a restart", async () => {
@@ -61,8 +62,8 @@ describe("remote workers (#1821)", () => {
       id: "lead",
       projectId: "p",
       remoteWorkers: [
-        { hostKey: "box:1", hostLabel: "Box", threadId: "a", title: null },
-        { hostKey: "box:1", hostLabel: "Box", threadId: "b", title: null },
+        { hostKey: "box:1", hostLabel: "Box", threadId: "a", title: null, out: true, first: true },
+        { hostKey: "box:1", hostLabel: "Box", threadId: "b", title: null, out: true, first: true },
       ],
     }]);
     const delivered = [];
@@ -71,7 +72,26 @@ describe("remote workers (#1821)", () => {
     rw.onHostThreads("box:1", [{ id: "a", status: "idle" }, { id: "b", status: "failed" }]);
     await tick();
     assert.deepEqual(delivered.map((d) => d.line.match(/thread (\w) .*status (\w+)/).slice(1)), [["b", "failed"], ["a", "stopped"]]);
-    assert.doesNotMatch(delivered[0].line, /Its work is on/);
+    assert.doesNotMatch(delivered[0].line, /Its work/);
+  });
+
+  it("a follow-up queued behind a running turn wakes the lead after the follow-up, not before", async () => {
+    const rows = [{ id: "w1", status: "working" }];
+    const calls = [];
+    const store = fakeStore([{ id: "lead", projectId: "p", remoteWorkers: [{ hostKey: "box:1", hostLabel: "Box", threadId: "w1", title: null, out: false }] }]);
+    const delivered = [];
+    const rw = createRemoteWorkers({ store, hub: fakeHub(rows, calls), deliver: (i) => delivered.push(i) });
+    const res = await rw.send("lead", rw.find("w1").w, "more");
+    assert.equal(res.outcome, "queued");
+    assert.deepEqual(calls, ["threads:setQueued"]);
+    rw.onHostThreads("box:1", [{ id: "w1", status: "done" }]);
+    await tick();
+    assert.equal(delivered.length, 0, "the turn that was already running");
+    rw.onHostThreads("box:1", [{ id: "w1", status: "working" }]);
+    rw.onHostThreads("box:1", [{ id: "w1", status: "done" }]);
+    await tick();
+    assert.equal(delivered.length, 1);
+    assert.deepEqual(rw.listFor("p").map((r) => [r.id, r.host, r.handoffFrom]), [["w1", "Box", "lead"]]);
   });
 
   it("names the connected computers and a missing repo", async () => {
