@@ -123,6 +123,20 @@ module.exports = {
     }
     return ctx.hostHub.setHosts(hosts);
   },
+  // Linked computers (#1832): this Solenta's agents may fork onto them. Any
+  // transport, so a headless server is linked from its own web UI.
+  "app:listPeers": async (ctx) => {
+    if (!ctx.peerLinks) return [];
+    return ctx.peerLinks.list();
+  },
+  "app:linkPeer": async (ctx, input) => {
+    if (!ctx.peerLinks) throw new Error("Linked computers are not available here.");
+    return ctx.peerLinks.link(input);
+  },
+  "app:unlinkPeer": async (ctx, input) => {
+    if (!ctx.peerLinks) throw new Error("Linked computers are not available here.");
+    return ctx.peerLinks.unlink(input);
+  },
   "app:installRemoteSolenta": async (ctx, input) => {
     if (ctx.transport !== "desktop" || !ctx.installRemoteSolenta) {
       throw new Error("Remote Connections require the desktop app.");

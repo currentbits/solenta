@@ -163,6 +163,8 @@ function createHostHub(deps) {
       deps.onThreadsChanged();
       return;
     }
+    // A linked computer (#1832) feeds delegation, not the window.
+    if (entry.peer && channel !== "crew:call" && channel !== "boot:ready") return;
     if (channel === "thread:updated") {
       if (!payload || !payload.thread) return;
       deps.pushWindows(channel, { ...payload, thread: { ...payload.thread, host: entry.tag } });
@@ -223,7 +225,7 @@ function createHostHub(deps) {
     if (entry.status !== "online") setStatus(entry, "connecting", entry.error);
     let opened;
     try {
-      opened = await deps.openTunnel({ host: entry.host, remotePort: entry.remotePort, url: entry.url, label: entry.label }, () => {
+      opened = await deps.openTunnel({ host: entry.host, remotePort: entry.remotePort, url: entry.url, label: entry.label, ...(entry.token ? { token: entry.token } : {}) }, () => {
         if (entry.child === opened?.child) dropSocket(entry, "SSH connection ended.");
       });
     } catch (err) {
@@ -299,13 +301,35 @@ function createHostHub(deps) {
     hosts.delete(entry.key);
   }
 
+  // Two sources share one socket per computer: the sidebar's Connections
+  // (shown in this window) and linked computers (#1832), which this Solenta's
+  // agents delegate to and which stay out of the window. Sidebar wins a tie.
+  let sidebarInput = [];
+  let peerInput = [];
+
   /**
    * Replace the set of hosts shown here. Unchanged hosts keep their socket.
    * @param {Array<{ host: string, remotePort: number, url?: string, label?: string }>} input
    */
   function setHosts(input) {
+    sidebarInput = Array.isArray(input) ? input : [];
+    return apply();
+  }
+
+  /**
+   * Replace the linked computers (#1832): address + token, never shown in
+   * the window's lists.
+   * @param {Array<{ url: string, label?: string, token: string }>} input
+   */
+  function setPeers(input) {
+    peerInput = (Array.isArray(input) ? input : []).filter((h) => h && h.url).map((h) => ({ ...h, peer: true }));
+    apply();
+    return list({ peers: true });
+  }
+
+  function apply() {
     const want = new Map();
-    for (const h of Array.isArray(input) ? input : []) {
+    for (const h of [...peerInput, ...sidebarInput]) {
       if (!h) continue;
       if (typeof h.url === "string" && h.url) {
         let origin;
@@ -330,6 +354,12 @@ function createHostHub(deps) {
     for (const [key, h] of want) {
       const label = (typeof h.label === "string" && h.label.trim()) || h.host;
       const held = hosts.get(key);
+      const peer = h.peer === true;
+      if (held && (held.peer !== peer || held.token !== h.token)) {
+        held.peer = peer;
+        held.token = h.token;
+        retag(held);
+      }
       if (held && held.parked) {
         // Saved again after a refusal: try once more.
         held.parked = false;
@@ -344,7 +374,7 @@ function createHostHub(deps) {
         continue;
       }
       const entry = {
-        key, host: h.host, remotePort: h.remotePort, url: h.url, label, beat: null,
+        key, host: h.host, remotePort: h.remotePort, url: h.url, label, beat: null, peer, token: h.token,
         status: "connecting", error: null, tag: null,
         ws: null, child: null, pending: new Map(), nextId: 0, attempt: 0, retry: null, removed: false,
         threads: [], threadIds: new Set(), threadCache: new Map(), taggedThreads: [], listSeq: null,
@@ -362,8 +392,10 @@ function createHostHub(deps) {
     return list();
   }
 
-  function list() {
-    return [...hosts.values()].map((e) => ({
+  /** The window's hosts; `{ peers: true }` adds linked computers. */
+  function list(opts = {}) {
+    return [...hosts.values()].filter((e) => opts.peers || !e.peer).map((e) => ({
+      ...(e.peer ? { peer: true } : {}),
       key: e.key, host: e.host, remotePort: e.remotePort, ...(e.url ? { url: e.url } : {}),
       label: e.label, status: e.status, error: e.error,
     }));
@@ -417,14 +449,14 @@ function createHostHub(deps) {
   function mergeThreads(local) {
     if (hosts.size === 0) return local;
     const out = Array.isArray(local) ? local.slice() : [];
-    for (const entry of hosts.values()) out.push(...entry.taggedThreads);
+    for (const entry of hosts.values()) if (!entry.peer) out.push(...entry.taggedThreads);
     return out;
   }
 
   function mergeProjects(local) {
     if (hosts.size === 0) return local;
     const out = Array.isArray(local) ? local.slice() : [];
-    for (const entry of hosts.values()) out.push(...entry.taggedProjects);
+    for (const entry of hosts.values()) if (!entry.peer) out.push(...entry.taggedProjects);
     return out;
   }
 
@@ -485,7 +517,7 @@ function createHostHub(deps) {
     for (const entry of [...hosts.values()]) remove(entry);
   }
 
-  return { setHosts, list, route, ownerOf, mergeThreads, mergeProjects, invoke, projectsOf, threadsOf, close };
+  return { setHosts, setPeers, list, route, ownerOf, mergeThreads, mergeProjects, invoke, projectsOf, threadsOf, close };
 }
 
 module.exports = { createHostHub, applyListPush, RELAYED_PUSHES };

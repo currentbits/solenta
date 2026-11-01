@@ -1074,7 +1074,8 @@ async function openHostTunnel(input, deps = {}, onClose) {
   const conn = validateConnection({ host: input && input.host, remotePort: input && input.remotePort, url: input && input.url, label: input && input.label, token: "" });
   if (conn.url) {
     // Direct route: no tunnel to own, so `child` only satisfies the shape.
-    const token = tokenStoreFor(deps).get(conn.key);
+    // A linked computer (#1832) carries its own token: no keychain on a server.
+    const token = (input && typeof input.token === "string" && input.token) || tokenStoreFor(deps).get(conn.key);
     if (!token) {
       throw new Error(`No web token found for ${conn.label}. Connect to it once from Settings > Connections with its device token.`);
     }

@@ -189,6 +189,10 @@ renamed, the app name inside it is not.
 - **Workers on another computer:** an agent can pass `host` (the computer's
   name in the sidebar) to `thread_fork`. The worker starts there, in that
   computer's copy of the same repo, and the agent is woken when it finishes.
+  This works wherever the agent runs, desktop or headless server: link
+  the other computer under Settings > Connections > Linked computers (paste
+  a Full access device link from it), or start the server with
+  `solenta-server --link <device link>`.
   Status, follow-ups, stop, archive and rename work on it like on a local
   worker, and it shares the crew's task list and peer messages with workers on
   this computer. Landing is still the user's call: a PR opens from that

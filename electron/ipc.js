@@ -81,6 +81,7 @@ function makeCtx(deps) {
     invokeRemote: deps.invokeRemote,
     hostHub: deps.hostHub || null,
     crewRelay: deps.crewRelay || null,
+    peerLinks: deps.peerLinks || null,
     answerSshPrompt: deps.answerSshPrompt,
     webAccess: deps.webAccess || null,
     channels: deps.channels || null,

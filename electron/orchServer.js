@@ -1917,7 +1917,7 @@ function buildMcpServer(sdk, handlers, opts = {}) {
         "the prompt) to pick the worker's model through the project's routing preferences: fast " +
         "for triage/reformat chores, strong for architecture and hard debugging. A tier with no " +
         "profile configured keeps the default worker model. " +
-        "Pass host (a computer's name from the sidebar, set up in Settings → Connections) to " +
+        "Pass host (a computer's name: a sidebar Connection, or a Linked computer from Settings → Connections) to " +
         "start the worker on that computer instead, in its copy of this repo (an unknown name " +
         "lists the connected ones). It starts from " +
         "that computer's checkout, not your commits, so push first if it needs them. You are " +

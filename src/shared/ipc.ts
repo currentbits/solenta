@@ -78,6 +78,13 @@ export interface SidebarHostStatus {
   error: string | null;
 }
 
+/** A linked computer (#1832): address and name, never its token. */
+export interface PeerLink {
+  key: string;
+  url: string;
+  label: string;
+}
+
 export interface ProjectInfo {
   id: string;
   /** Set when the project lives on another Solenta host (#1819). */
@@ -5611,6 +5618,15 @@ export interface CoderApi {
      * Show these saved Connections' projects and threads in this window
      * (#1819). Replaces the previous set; resolves each host's state. Desktop only.
      */
+    /**
+     * Linked computers (#1832): other Solentas this one's agents can fork
+     * workers onto (thread_fork host), on the desktop app or a headless
+     * server. link takes the device link from "Let other devices in" on that
+     * computer (Full access). Tokens are never returned.
+     */
+    listPeers(): Promise<PeerLink[]>;
+    linkPeer(input: { link: string; label?: string; token?: string }): Promise<PeerLink[]>;
+    unlinkPeer(input: { key: string }): Promise<PeerLink[]>;
     setSidebarHosts(
       hosts: Array<{ host: string; remotePort: number; url?: string; label?: string }>,
     ): Promise<SidebarHostStatus[]>;

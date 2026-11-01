@@ -24,6 +24,7 @@ import styles from "./SettingsModal.module.css";
 import { IntegrationsSection } from "./IntegrationsSection";
 import { ChannelsSection } from "./settings/ChannelsSection";
 import { ConnectionsSection } from "./ConnectionsSection";
+import { LinkedComputersSection } from "./LinkedComputersSection";
 import { WebAccessSection } from "./WebAccessSection";
 import { isWebMode } from "../shared/wire";
 import type { CoderApi, SidebarHostStatus } from "../shared/ipc";
@@ -450,7 +451,7 @@ export function SettingsModal({
     setError(null);
   };
   const visiblePanes = SETTINGS_PANES.filter((id) => {
-    if (id === "connections" && isWebMode()) return false;
+    // A headless server links its computers from its web UI (#1832).
     if (!navFilter) return true;
     const meta = PANE_META[id];
     return (
@@ -917,11 +918,15 @@ export function SettingsModal({
           </>
           )}
 
+          {pane === "connections" && isWebMode() && (
+            <LinkedComputersSection active={open && pane === "connections"} />
+          )}
           {pane === "connections" && !isWebMode() && (
           <>
           <WebAccessSection active={open && pane === "connections"} />
           <p className={styles.sectionLabel}>Connect to another computer</p>
           <ConnectionsSection onOpen={onOpenConnection} onForget={onForgetConnection} onInstall={onInstallSolenta} onSidebarHosts={onSidebarHosts} sidebarHosts={sidebarHosts} />
+          <LinkedComputersSection active={open && pane === "connections"} />
           <p className={styles.note} data-connections-remote-project-hint="">
             Only need one repo from a server, in this window? Add it as a
             project with a Remote host instead (Add project, then Remote

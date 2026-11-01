@@ -332,4 +332,57 @@ describe("hostHub × real remote Solenta Web host", () => {
       leadHub.close();
     }
   });
+  it("a lead with no sidebar, only a linked computer, forks there and is woken (#1832)", async () => {
+    const { createRemoteWorkers } = require("../remoteWorkers.js");
+    const { createToolHandlers } = require("../orchServer.js");
+    // Like a headless server: no window, no saved Connections, no keychain.
+    const leadDir = path.join(tmp, "headless-lead");
+    fs.mkdirSync(path.join(leadDir, "repo"), { recursive: true });
+    git(path.join(leadDir, "repo"), ["init", "-q"]);
+    const leadStore = new Store(path.join(leadDir, "store.json"));
+    const leadProject = await services.addProject(leadStore, path.join(leadDir, "repo"));
+    store.setProjects(store.getProjects().map((p) => (p.id === project.id ? { ...p, slug: leadProject.slug } : p)));
+    const lead = services.createThread(leadStore, { projectId: leadProject.id, title: "lead" });
+    const delivered = [];
+    const windowish = [];
+    let workers = null;
+    const leadHub = createHostHub({
+      openTunnel: (input, onClose) => openHostTunnel(input, { tokens: memoryTokens() }, onClose),
+      pushWindows: (channel, payload) => windowish.push({ channel, payload }),
+      onThreadsChanged: () => {},
+      onHostThreads: (key, rows) => workers?.onHostThreads(key, rows),
+      onCrewCall: (key, call) => workers?.onCrewCall(key, call),
+    });
+    const runner = { startRun: () => assert.fail("ran locally"), isAutoTurn: () => false, deliverNotice: (i) => delivered.push(i) };
+    workers = createRemoteWorkers({ store: leadStore, hub: leadHub, runner, deliver: (i) => delivered.push(i) });
+    const { createPeerLinks } = require("../peerLinks.js");
+    const links = createPeerLinks({ userDataPath: leadDir, hub: leadHub });
+    try {
+      await links.link({ link: `http://127.0.0.1:${server.port}/?token=remote-token`, label: "Mac" });
+      const key = `http://127.0.0.1:${server.port}`;
+      await waitFor(() => leadHub.list({ peers: true })[0]?.status === "online" && leadHub.projectsOf(key).length > 0);
+      const handlers = createToolHandlers({
+        store: leadStore, runner, forkThread: () => assert.fail(), getProvider: () => ({}), remoteWorkers: workers,
+      });
+      const res = await handlers.thread_fork({ threadId: lead.id, projectId: leadProject.id, host: "Mac", prompt: "go", worktree: false });
+      assert.equal(res.host, "Mac");
+      assert.ok(store.getThread(res.threadId), "worker runs on the linked computer");
+      await waitFor(() => delivered.some((d) => /finished with status done/.test(d.line)));
+      assert.equal(store.getThread(res.threadId).crewRelay.leadId, lead.id);
+      // Its crew tools reach the lead over the link too.
+      await handlers.task_add({ threadId: lead.id, projectId: leadProject.id, tasks: [{ title: "via link" }] });
+      const onMac = createToolHandlers({
+        store, runner, crewRelay, forkThread: () => {}, getProvider: () => ({}),
+        boundThreadId: res.threadId, boundProjectId: project.id,
+      });
+      const listed = await onMac.task_list({ threadId: res.threadId, projectId: project.id });
+      assert.deepEqual(listed.tasks.map((t) => t.title), ["via link"]);
+      assert.ok(
+        windowish.every((p) => p.channel === "hosts:changed" && p.payload.length === 0),
+        "nothing from a linked computer reaches a window",
+      );
+    } finally {
+      leadHub.close();
+    }
+  });
 });

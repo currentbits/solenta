@@ -236,6 +236,37 @@ describe("hostHub", () => {
     assert.match(hub.list()[0].error, /stopped answering/);
     await waitFor(() => hub.list()[0].status === "online");
   });
+
+  it("keeps linked computers connected but out of the window, and lets the sidebar win (#1832)", async () => {
+    const remote = await fakeHost({ token: "peer-tok", threads: [{ id: "r1", projectId: "rp", title: "a" }], projects: [{ id: "rp" }] });
+    const origin = `http://127.0.0.1:${remote.port}`;
+    const seen = [];
+    const { hub, pushes } = makeHub(remote, {
+      openTunnel: async (input) => {
+        seen.push(input);
+        return { child: { backPort: null, kill() {} }, token: input.token || "tok", wsUrl: `ws://127.0.0.1:${remote.port}/ws` };
+      },
+    });
+    cleanup.push(() => remote.close(), () => hub.close());
+    const rows = hub.setPeers([{ url: `${origin}/`, label: "Mac", token: "peer-tok" }]);
+    assert.deepEqual(rows.map((r) => [r.key, r.peer]), [[origin, true]]);
+    assert.equal(seen[0].token, "peer-tok", "the link's own token, not the keychain");
+    await waitFor(() => hub.list({ peers: true })[0].status === "online");
+    await waitFor(() => hub.ownerOf(["r1"]) !== null);
+    assert.deepEqual(hub.list(), [], "not a sidebar host");
+    assert.deepEqual(hub.mergeThreads([]), [], "its threads stay out of the window");
+    assert.ok(pushes.every((p) => p.channel !== "hosts:changed" || p.payload.length === 0));
+    assert.equal(hub.threadsOf(origin).length, 1, "but delegation still sees them");
+
+    // The same computer also saved with Show in sidebar: one socket, shown.
+    hub.setHosts([{ host: "127.0.0.1", remotePort: remote.port, url: origin, label: "Mac" }]);
+    await waitFor(() => hub.mergeThreads([]).length === 1);
+    assert.equal(hub.list().length, 1);
+    assert.equal(seen.length, 1, "no second connection");
+    // Unlinked while still in the sidebar: stays.
+    hub.setPeers([]);
+    assert.equal(hub.list().length, 1);
+  });
 });
 
 describe("applyListPush", () => {
