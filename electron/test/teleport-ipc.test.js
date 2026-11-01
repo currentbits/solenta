@@ -145,6 +145,14 @@ describe("teleport IPC", () => {
     assert.equal(remote.store.getThread(remoteId).archived, true);
   });
 
+  it("carries a direct route's address there and back (#1824)", async () => {
+    const target = { host: "mini.tail1234.ts.net", remotePort: 443, url: "https://mini.tail1234.ts.net", label: "Mini" };
+    const sent = await IPC_HANDLERS["threads:teleport"](laptop.ctx, { threadId, ...target });
+    assert.equal(sent.teleportedTo.url, target.url);
+    await IPC_HANDLERS["threads:teleportBack"](laptop.ctx, { threadId });
+    assert.deepEqual([...new Set(calls.map((c) => c.target.url))], [target.url]);
+  });
+
   it("unlocks the local thread when the send fails", async () => {
     // No project there, and a local-path origin is not a URL it may clone.
     remote.store.setProjects([]);

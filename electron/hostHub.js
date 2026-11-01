@@ -24,7 +24,10 @@ const LIST_TIMEOUT_MS = 5_000;
 // Pushes relayed as-is to the windows. threads:changed is merged instead;
 // select/boot/settings-style pushes would steer this window, so they stay.
 const RELAYED_PUSHES = new Set(["terminal:data", "pr:progress", "clone:progress"]);
-const NO_RETRY = /refused the login|host key|rejected this computer's token|No web token found|not installed on/i;
+// Direct routes (#1824) have no ssh keepalive: ping, and drop a socket
+// that misses a pong so a sleeping network shows offline and reconnects.
+const HEARTBEAT_MS = 30_000;
+const NO_RETRY = /refused the login|host key|rejected this computer's token|rejected this token|No web token found|not installed on|Plain http|must start with|Enter an address/i;
 // Arg fields that name the thread or project a call acts on.
 const ID_FIELDS = ["threadId", "projectId", "id", "parentThreadId", "sourceThreadId"];
 
@@ -49,13 +52,14 @@ function applyListPush(prev, push, heldSeq) {
   return upserts.size === 0 ? out : null;
 }
 
+// A direct route is keyed by its origin, an SSH host by host:port.
 function hostKey(h) {
-  return `${h.host}:${h.remotePort}`;
+  return h.url || `${h.host}:${h.remotePort}`;
 }
 
 /**
  * @param {{
- *   openTunnel: (input: { host: string, remotePort: number }, onClose: () => void) => Promise<{ child: { backPort: number, kill: () => void }, token: string }>,
+ *   openTunnel: (input: { host: string, remotePort: number, url?: string | null, label?: string }, onClose: () => void) => Promise<{ child: { backPort: number | null, kill: () => void }, token: string, wsUrl?: string }>,
  *   pushWindows: (channel: string, payload: unknown) => void,
  *   onThreadsChanged: () => void,
  *   WebSocketImpl?: typeof WebSocket,
@@ -171,6 +175,8 @@ function createHostHub(deps) {
   function dropSocket(entry, why) {
     const ws = entry.ws;
     entry.ws = null;
+    if (entry.beat) clearTimer(entry.beat);
+    entry.beat = null;
     if (ws) {
       try { ws.terminate(); } catch { /* already gone */ }
     }
@@ -203,7 +209,7 @@ function createHostHub(deps) {
     if (entry.status !== "online") setStatus(entry, "connecting", entry.error);
     let opened;
     try {
-      opened = await deps.openTunnel({ host: entry.host, remotePort: entry.remotePort }, () => {
+      opened = await deps.openTunnel({ host: entry.host, remotePort: entry.remotePort, url: entry.url, label: entry.label }, () => {
         if (entry.child === opened?.child) dropSocket(entry, "SSH connection ended.");
       });
     } catch (err) {
@@ -215,8 +221,23 @@ function createHostHub(deps) {
       return;
     }
     entry.child = opened.child;
-    const ws = new WS(`ws://127.0.0.1:${opened.child.backPort}/ws`, { maxPayload: 128 * 1024 * 1024 });
+    const ws = new WS(opened.wsUrl || `ws://127.0.0.1:${opened.child.backPort}/ws`, { maxPayload: 128 * 1024 * 1024 });
     entry.ws = ws;
+    if (entry.url && typeof ws.ping === "function") {
+      let alive = true;
+      ws.on("pong", () => { alive = true; });
+      const beat = () => {
+        if (entry.ws !== ws) return;
+        if (!alive) {
+          dropSocket(entry, `${entry.label} stopped answering.`);
+          return;
+        }
+        alive = false;
+        try { ws.ping(); } catch { /* close follows */ }
+        entry.beat = setTimer(beat, HEARTBEAT_MS);
+      };
+      entry.beat = setTimer(beat, HEARTBEAT_MS);
+    }
     ws.on("open", () => ws.send(JSON.stringify({ kind: "auth", token: opened.token })));
     ws.on("message", (raw) => {
       let msg;
@@ -266,13 +287,24 @@ function createHostHub(deps) {
 
   /**
    * Replace the set of hosts shown here. Unchanged hosts keep their socket.
-   * @param {Array<{ host: string, remotePort: number, label?: string }>} input
+   * @param {Array<{ host: string, remotePort: number, url?: string, label?: string }>} input
    */
   function setHosts(input) {
     const want = new Map();
     for (const h of Array.isArray(input) ? input : []) {
-      if (!h || typeof h.host !== "string" || !Number.isInteger(h.remotePort)) continue;
-      want.set(hostKey(h), h);
+      if (!h) continue;
+      if (typeof h.url === "string" && h.url) {
+        let origin;
+        try {
+          origin = new URL(h.url).origin;
+        } catch {
+          continue;
+        }
+        want.set(origin, { ...h, url: origin, host: typeof h.host === "string" && h.host ? h.host : new URL(origin).hostname });
+        continue;
+      }
+      if (typeof h.host !== "string" || !Number.isInteger(h.remotePort)) continue;
+      want.set(hostKey(h), { ...h, url: null });
     }
     let changed = false;
     for (const entry of [...hosts.values()]) {
@@ -298,7 +330,7 @@ function createHostHub(deps) {
         continue;
       }
       const entry = {
-        key, host: h.host, remotePort: h.remotePort, label,
+        key, host: h.host, remotePort: h.remotePort, url: h.url, label, beat: null,
         status: "connecting", error: null, tag: null,
         ws: null, child: null, pending: new Map(), nextId: 0, attempt: 0, retry: null, removed: false,
         threads: [], threadIds: new Set(), threadCache: new Map(), taggedThreads: [], listSeq: null,
@@ -317,7 +349,10 @@ function createHostHub(deps) {
   }
 
   function list() {
-    return [...hosts.values()].map((e) => ({ key: e.key, host: e.host, remotePort: e.remotePort, label: e.label, status: e.status, error: e.error }));
+    return [...hosts.values()].map((e) => ({
+      key: e.key, host: e.host, remotePort: e.remotePort, ...(e.url ? { url: e.url } : {}),
+      label: e.label, status: e.status, error: e.error,
+    }));
   }
 
   /** @param {unknown[]} args */

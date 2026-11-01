@@ -174,3 +174,37 @@ it("shows a connected host in the sidebar and hands main the shown set (#1819)",
   assert.match(window.localStorage.getItem("coder.remoteConnections") || "", /"inSidebar":false/);
   m.unmount();
 });
+
+it("adds a computer by address with a pasted device link, keeping only the address (#1824)", async () => {
+  const opened: unknown[] = [];
+  const pushed: unknown[] = [];
+  const forgot: unknown[] = [];
+  const m = await mount(<ConnectionsSection
+    onOpen={async (input) => {
+      opened.push(input);
+      return { host: "mini.tail1234.ts.net", remotePort: 443, url: "https://mini.tail1234.ts.net", tokenSaved: true };
+    }}
+    onForget={async (input) => { forgot.push(input); }}
+    onSidebarHosts={async (hosts) => {
+      pushed.push(hosts);
+      return [];
+    }}
+    sidebarHosts={[{ key: "https://mini.tail1234.ts.net", host: "mini.tail1234.ts.net", remotePort: 443, url: "https://mini.tail1234.ts.net", label: "Mini", status: "online", error: null }]}
+  />);
+  await m.change(m.query("[data-connection-mode]"), "address");
+  assert.equal(m.query("[data-connection-host]"), null, "no SSH host field");
+  assert.match(m.query('[data-connection-steps="address"]')?.textContent || "", /Full access/);
+  await m.type(m.query("[data-connection-label]"), "Mini");
+  await m.type(m.query("[data-connection-url]"), "https://mini.tail1234.ts.net/?token=link-secret");
+  await m.click(m.query("[data-connection-open]"));
+  assert.deepEqual(opened, [{ host: "", url: "https://mini.tail1234.ts.net/?token=link-secret", label: "Mini", token: "", remember: true }]);
+  assert.equal((m.query("[data-connection-url]") as HTMLInputElement).value, "https://mini.tail1234.ts.net");
+  const saved = window.localStorage.getItem("coder.remoteConnections") || "";
+  assert.match(saved, /"url":"https:\/\/mini\.tail1234\.ts\.net"/);
+  assert.doesNotMatch(saved, /link-secret/);
+  assert.deepEqual(pushed.at(-1), [{ host: "mini.tail1234.ts.net", remotePort: 443, label: "Mini", url: "https://mini.tail1234.ts.net" }]);
+  assert.match(m.container.textContent || "", /https:\/\/mini\.tail1234\.ts\.net · token saved · in sidebar/);
+  await m.click(m.query('[aria-label="Forget Mini"]'));
+  assert.deepEqual(forgot, [{ host: "mini.tail1234.ts.net", remotePort: 443, url: "https://mini.tail1234.ts.net" }]);
+  m.unmount();
+});

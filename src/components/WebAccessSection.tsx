@@ -170,8 +170,9 @@ export function WebAccessSection({ active }: { active: boolean }) {
       <p className={styles.note} data-web-howto="">
         Solenta Web serves this app to a browser or phone. Turn it on, add a
         device below, then scan its QR code or open its link on that device.
-        Other computers running Solenta can connect over SSH without a device
-        (Connect to another computer, below).
+        Another computer running Solenta can connect over SSH without a
+        device, or by address with a Full access device&apos;s link (Connect
+        to another computer, below).
       </p>
       <div className={styles.memoryRow} data-web-state={status.running ? "on" : "off"}>
         <span className={styles.memoryDot} data-on={status.running ? "true" : undefined} aria-hidden />

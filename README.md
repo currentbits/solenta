@@ -178,6 +178,11 @@ renamed, the app name inside it is not.
   needed and the token is read over SSH. A Linux host without Solenta gets an
   Install button (this version, checksum-verified, into `~/solenta`); an older
   one gets Update. Its agents and their sign-ins are listed after connecting.
+- **Another computer without SSH:** on that computer, turn on Solenta Web plus
+  Expose over Tailscale (or Allow devices on my network) and add a device with
+  Full access. Here, set Connect over to Address and paste the device link.
+  Plain `http://` is only accepted for private, tailnet and `.local` addresses.
+  Nothing starts Solenta there, so keep it open.
 - **Linux server without a display:** `~/solenta/solenta --headless --no-sandbox`
   (implies `--serve-web`; systemd unit in site/docs.html#headless).
 

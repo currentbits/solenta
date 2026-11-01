@@ -183,6 +183,8 @@ module.exports = {
     const target = {
       host: String(input.host || ""),
       remotePort: input.remotePort,
+      // A direct route (#1824) is reached by address, no SSH.
+      ...(typeof input.url === "string" && input.url ? { url: input.url } : {}),
       label: String(input.label || input.host || ""),
     };
     // Pending first, so no run starts here while the payload is in flight.
