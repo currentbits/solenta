@@ -260,7 +260,8 @@ function readRemoteToken(host, remotePort = DEFAULT_REMOTE_PORT, deps = {}) {
         return reject(new Error(`Solenta is not installed on ${host}. Install it there first: the app in /Applications on a Mac, or the Linux tarball unpacked to ~/solenta or on PATH as "solenta".`));
       }
       if (err && err.code === DID_NOT_START_EXIT) {
-        const tail = String(stderr || "").trim();
+        // The log tail can hold the serve banner; never put its token in UI text.
+        const tail = String(stderr || "").split("\n").filter((l) => !/token/i.test(l)).join("\n").trim();
         return reject(new Error(`Solenta did not start on ${host}. On a Mac someone must be logged in to the desktop; on Linux see ~/.solenta-headless.log there. If Solenta was already open there, restart it and connect again.${tail ? `\n${tail}` : ""}`));
       }
       if (err && err.code === TOO_OLD_EXIT) {

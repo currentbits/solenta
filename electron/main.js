@@ -78,6 +78,7 @@ const {
 } = require("./pathEnv.js");
 const {
   parseServeWebArgs,
+  needsVirtualDisplay,
   startWebServer,
   loadOrCreateToken,
   serveBanner,
@@ -156,9 +157,20 @@ installCrashGuard({
 startLoopLag();
 
 const serveOpts = parseServeWebArgs(process.argv);
-// --headless: no window ever. On Linux without a display Chromium already
-// picked its headless platform from the same switch; GPU init would still
-// crash there, and nothing is drawn anyway.
+// Linux --headless with no display would abort in GTK init: rerun this same
+// command under xvfb-run. spawnSync blocks this process's main thread, so its
+// own GTK init never runs; it just exits with the child's status.
+if (needsVirtualDisplay(serveOpts)) {
+  const r = require("node:child_process").spawnSync(
+    "xvfb-run", ["-a", process.execPath, ...process.argv.slice(1)], { stdio: "inherit" },
+  );
+  if (r.error) {
+    console.error("Solenta --headless needs a display on Linux. Install xvfb (it provides xvfb-run; apt install xvfb), or set DISPLAY, then start Solenta again.");
+  }
+  process.exit(r.error ? 1 : (r.status ?? 1));
+}
+// --headless: no window ever. GPU init would still crash on a display-less
+// host, and nothing is drawn anyway.
 if (serveOpts.headless) app.disableHardwareAcceleration();
 
 // GUI launches get a bare launchd PATH; rebuild the user's real PATH before

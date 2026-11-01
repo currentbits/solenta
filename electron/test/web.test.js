@@ -194,6 +194,16 @@ describe("parseServeWebArgs", () => {
     assert.equal(parseServeWebArgs(["--serve-web=4700"]).headless, false);
   });
 
+  it("needsVirtualDisplay: only Linux --headless with no X or Wayland display", () => {
+    const { needsVirtualDisplay } = require("../webServer.js");
+    const h = { headless: true };
+    assert.equal(needsVirtualDisplay(h, "linux", {}), true);
+    assert.equal(needsVirtualDisplay(h, "linux", { DISPLAY: ":99" }), false, "xvfb-run child must not relaunch again");
+    assert.equal(needsVirtualDisplay(h, "linux", { WAYLAND_DISPLAY: "wayland-0" }), false);
+    assert.equal(needsVirtualDisplay(h, "darwin", {}), false);
+    assert.equal(needsVirtualDisplay({ headless: false }, "linux", {}), false);
+  });
+
   it("serveBanner: loopback gets no QR and a pointer to the LAN flag", () => {
     const { serveBanner } = require("../webServer.js");
     const out = serveBanner({ token: "t0k", urls: [{ kind: "local", url: "http://127.0.0.1:4620" }] });

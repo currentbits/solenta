@@ -217,6 +217,10 @@ describe("remote Connections", () => {
       /Solenta did not start on me@box[\s\S]*libnss3/,
     );
     await assert.rejects(
+      readRemoteToken("me@box", 4620, { execFile: run(4, "", "solenta-web: token s3cret\n  Token    s3cret\n  Link     http://x/?token=s3cret\nGtk-ERROR\n") }),
+      (err) => /Gtk-ERROR/.test(err.message) && !err.message.includes("s3cret"),
+    );
+    await assert.rejects(
       readRemoteToken("me@box", 4620, { execFile: run(5) }),
       /open on me@box with web access off[\s\S]*Serve Solenta Web/,
     );
