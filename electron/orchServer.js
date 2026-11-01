@@ -476,6 +476,19 @@ function createToolHandlers(deps) {
       throw new Error(`Unknown thread: ${args.threadId}`);
     }
     assertSameProject(source, args.projectId);
+    if (args.host != null) {
+      if (typeof deps.forkRemote !== "function") {
+        throw new Error("Forking onto another computer is not available here.");
+      }
+      return deps.forkRemote({
+        lead: source,
+        host: String(args.host),
+        prompt: args.prompt,
+        title: args.title != null ? String(args.title) : undefined,
+        provider: args.provider != null ? String(args.provider) : undefined,
+        worktree: args.worktree !== false,
+      });
+    }
     /** @type {{ threadId: string, provider?: string, pool?: string, worktree?: boolean, title?: string, prompt?: string }} */
     const input = { threadId: args.threadId, prompt: args.prompt };
     if (args.provider != null) {
@@ -1695,7 +1708,13 @@ function buildMcpServer(sdk, handlers, opts = {}) {
         "provider are ignored. Optionally pass tier (fast, balanced, strong, or auto to classify " +
         "the prompt) to pick the worker's model through the project's routing preferences: fast " +
         "for triage/reformat chores, strong for architecture and hard debugging. A tier with no " +
-        "profile configured keeps the default worker model. Returns the new threadId.",
+        "profile configured keeps the default worker model. " +
+        "Pass host (a computer's name from the sidebar, set up in Settings → Connections) to " +
+        "start the worker on that computer instead, in its copy of this repo (an unknown name " +
+        "lists the connected ones). It starts from " +
+        "that computer's checkout, not your commits, so push first if it needs them. You are " +
+        "woken when it finishes, but thread_merge and thread_pr cannot land it from here. " +
+        "pool and tier do not apply there. Returns the new threadId.",
       inputSchema: {
         threadId: z.string().min(1),
         projectId: z.string().min(1),
@@ -1705,6 +1724,7 @@ function buildMcpServer(sdk, handlers, opts = {}) {
         prompt: z.string().min(1),
         title: z.string().min(1).optional(),
         worktree: z.boolean().optional(),
+        host: z.string().min(1).optional(),
       },
     },
     async (args) => json(await handlers.thread_fork(args)),
@@ -2575,6 +2595,7 @@ function isGitHubProject(project) {
  * @param {(id: string) => unknown} [opts.getProvider] - inject for tests
  * @param {(channel: string, payload: unknown) => void} [opts.broadcast] - same fan-out as IPC
  * @param {() => object | null} [opts.getIosSimulator] - optional; resolves the simulator service after recover()
+ * @param {(input: object) => Promise<{ threadId: string, host: string }>} [opts.forkRemote] - thread_fork onto another computer (#1821)
  */
 function createOrchServer(opts) {
   const {
@@ -2634,6 +2655,7 @@ function createOrchServer(opts) {
       userDataPath,
       getIosSimulator,
       log,
+      forkRemote: opts.forkRemote,
     };
 
     server = http.createServer(async (req, res) => {

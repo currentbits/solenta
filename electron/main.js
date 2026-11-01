@@ -588,10 +588,14 @@ function pushWindows(channel, payload) {
   }
 }
 
+// Workers started on another computer by thread_fork (#1821). Set once
+// store and runner exist.
+let remoteWorkers = null;
 // Remote Solenta hosts shown in this window's sidebar (#1819).
 const hostHub = createHostHub({
   openTunnel: (input, onClose) => openHostTunnel(input, {}, onClose),
   pushWindows,
+  onHostThreads: (key, rows) => remoteWorkers?.onHostThreads(key, rows),
   onThreadsChanged: () => {
     if (store) {
       pushWindows("threads:changed", encodeWindowThreads(hostHub.mergeThreads(require("./services.js").listThreads(store))));
@@ -1423,7 +1427,13 @@ app.whenReady().then(async () => {
   // In-main orchestrator MCP server (coder-threads): lets any agent drive
   // other threads. Needs store + runner, so it starts after both exist.
   // Fails soft internally; never block app start on it.
+  remoteWorkers = require("./remoteWorkers.js").createRemoteWorkers({
+    store,
+    hub: hostHub,
+    deliver: (input) => runner.deliverNotice(input),
+  });
   orchServer = createOrchServer({
+    forkRemote: (input) => remoteWorkers.fork(input),
     store,
     runner,
     userDataPath: userData,

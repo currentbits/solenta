@@ -182,6 +182,10 @@ renamed, the app name inside it is not.
   Expose over Tailscale (or Allow devices on my network) and add a device with
   Full access. Here, set Connect over to Address and paste the device link.
   Plain `http://` is only accepted for private, tailnet and `.local` addresses.
+- **Workers on another computer:** an agent can pass `host` (the computer's
+  name in the sidebar) to `thread_fork`. The worker starts there, in that
+  computer's copy of the same repo, and the agent is woken when it finishes.
+  Its branch stays on that computer; open a PR from its thread there.
   Nothing starts Solenta there, so keep it open.
 - **Linux server without a display:** `~/solenta/solenta --headless --no-sandbox`
   (implies `--serve-web`; systemd unit in site/docs.html#headless).
