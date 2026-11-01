@@ -49,13 +49,14 @@ describe("remote Connections", () => {
     assert.ok(args.includes("BatchMode=yes"), "no askpass: never prompt");
     assert.match(
       explainSshFailure("work", "No ED25519 host key is known for work and you have requested strict checking.\nHost key verification failed.\n", 255),
-      /choose Trust when Solenta shows its fingerprint/,
+      // Windows keeps BatchMode (#1818), so it still points at a terminal.
+      process.platform === "win32" ? /Run "ssh work" in a terminal once/ : /choose Trust when Solenta shows its fingerprint/,
     );
     assert.match(
       explainSshFailure("work", "@@@ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! @@@\nHost key verification failed.", 255),
       /host key for work changed/,
     );
-    assert.match(explainSshFailure("work", "user@work: Permission denied (publickey).", 255), /Check the user name and password/);
+    assert.match(explainSshFailure("work", "user@work: Permission denied (publickey).", 255), process.platform === "win32" ? /key-based login/ : /Check the user name and password/);
     assert.match(explainSshFailure("work", "ssh: connect to host work port 22: Connection refused\n", 255), /Remote Login/);
     assert.match(explainSshFailure("wrok", "ssh: Could not resolve hostname wrok: nodename nor servname provided\n", 255), /Cannot find wrok/);
     assert.match(explainSshFailure("work", "ssh: connect to host work port 22: Operation timed out\n", 255), /did not answer/);
@@ -547,7 +548,7 @@ describe("remote Connections", () => {
       const spawned = ports.length;
       await assert.rejects(
         openRemoteConnection({ host: "unknown@work", token: "" }, deps),
-        /could not verify the SSH host key/,
+        process.platform === "win32" ? /not in known_hosts yet/ : /could not verify the SSH host key/,
       );
       assert.equal(ports.length, spawned);
 
