@@ -1752,6 +1752,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   });
 
   const {
+    farLinks,
     handoffSource,
     workerCount,
     previousWorktree,
@@ -2706,6 +2707,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onOpenAutomations={handleOpenAutomation}
         onIntegrateWorker={selectedThreadId ? integrateSelectedWorker : undefined}
         handoffSource={handoffSource}
+        farLinks={farLinks}
         taskGroup={taskGroup}
         taskTargets={taskTargets}
         onAddTaskRepo={handleAddTaskRepo}

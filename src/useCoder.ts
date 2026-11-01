@@ -1701,8 +1701,19 @@ export function useCoder(): UseCoderResult {
       void pushSidebarHosts((hosts) => api.app.setSidebarHosts(hosts)).then(setSidebarHosts);
     };
     try {
+      const online = new Set<string>();
       unsubs.push(api.on("hosts:changed", (next) => {
-        if (Array.isArray(next)) setSidebarHosts(next);
+        if (!Array.isArray(next)) return;
+        setSidebarHosts(next);
+        // Pushes missed while a computer was away are not replayed (#1831):
+        // refetch the open thread when its computer comes back.
+        const openHost = detailRef.current?.thread.host?.key;
+        for (const h of next) {
+          const back = h.status === "online" && !online.has(h.key);
+          if (h.status === "online") online.add(h.key);
+          else online.delete(h.key);
+          if (back && h.key === openHost) setDetailRetryNonce((n) => n + 1);
+        }
       }));
       unsubs.push(api.on("boot:ready", push));
     } catch {

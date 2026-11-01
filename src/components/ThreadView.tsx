@@ -1,3 +1,4 @@
+import type { FarLink, FarLinks } from "../app/useThreadRoster";
 import {
   Fragment,
   memo,
@@ -301,6 +302,27 @@ function swapQueuedItem<T>(items: T[], index: number, delta: number): T[] {
   const [item] = next.splice(index, 1);
   next.splice(dest, 0, item!);
   return next;
+}
+
+/**
+ * A thread on another computer (#1831). Opens it here, live, when that
+ * computer is connected; otherwise says how to connect, like T3's
+ * "Runs on X. Connect to it to open the thread there."
+ */
+function FarLinkButton({ link, label, onOpen, attr }: { link: FarLink; label: string; onOpen?: (id: string) => void; attr: string }) {
+  const where = link.host ?? "that computer";
+  return (
+    <button
+      type="button"
+      className={styles.handoffLink}
+      {...{ [attr]: link.id }}
+      disabled={!link.reachable || !onOpen}
+      title={link.reachable ? `Open it here (runs on ${where})` : `Runs on ${where}. Turn on Show in sidebar for ${where} in Settings → Connections to watch it here.`}
+      onClick={() => onOpen?.(link.id)}
+    >
+      {label}
+    </button>
+  );
 }
 
 interface ThreadViewProps {
@@ -834,6 +856,8 @@ interface ThreadViewProps {
    * identity on every stream tick, which would defeat the memo (issue #91).
    */
   handoffSource?: ThreadInfo | null;
+  /** Threads on other computers this one links to (#1831); resolved in App. */
+  farLinks?: FarLinks | null;
   /** Multi-repo task (#263) roll-up across repos; resolved in App like handoffSource. */
   taskGroup?: TaskGroupRollup | null;
   /** Projects this thread's task can add a repo thread in. */
@@ -1068,6 +1092,7 @@ export const ThreadView = memo(function ThreadView({
   onOpenAutomations,
   onIntegrateWorker,
   handoffSource = null,
+  farLinks = null,
   taskGroup = null,
   taskTargets = EMPTY_TASK_TARGETS,
   onAddTaskRepo,
@@ -3417,6 +3442,9 @@ export const ThreadView = memo(function ThreadView({
             ? `Teleporting to ${detail.thread.teleportedTo.label}…`
             : `Running on ${detail.thread.teleportedTo.label}. Sends here are paused until it comes back.`}
         </span>
+        {farLinks?.to ? (
+          <FarLinkButton link={farLinks.to} label={`Open on ${farLinks.to.host ?? "that computer"}`} onOpen={onSelectThread} attr="data-teleport-open" />
+        ) : null}
         {onTeleportBack && !detail.thread.teleportedTo.pending ? (
           <button
             type="button"
@@ -4758,6 +4786,40 @@ export const ThreadView = memo(function ThreadView({
           </span>
         </div>
       )}
+      {farLinks && (farLinks.workers.length > 0 || farLinks.lead || farLinks.from) ? (
+        <div className={styles.handoffBanner} data-far-links="">
+          <span className={styles.handoffBannerText}>
+            {farLinks.lead ? (
+              <span data-far-lead="">
+                From{" "}
+                <FarLinkButton link={farLinks.lead} label={farLinks.lead.title} onOpen={onSelectThread} attr="data-far-lead-open" />
+              </span>
+            ) : null}
+            {farLinks.from ? (
+              <span data-far-from="">
+                Teleported here from{" "}
+                <FarLinkButton link={farLinks.from} label="the original" onOpen={onSelectThread} attr="data-far-from-open" />
+              </span>
+            ) : null}
+            {farLinks.workers.length > 0 ? (
+              <span data-far-workers="">
+                {farLinks.workers.length === 1 ? "Worker on another computer: " : "Workers on other computers: "}
+                {farLinks.workers.map((w, i) => (
+                  <span key={w.id}>
+                    {i > 0 ? ", " : null}
+                    <FarLinkButton
+                      link={w}
+                      label={`${w.title} on ${w.host ?? "another computer"}${w.status ? ` · ${w.status}` : ""}`}
+                      onOpen={onSelectThread}
+                      attr="data-far-worker"
+                    />
+                  </span>
+                ))}
+              </span>
+            ) : null}
+          </span>
+        </div>
+      ) : null}
       {taskGroup && (
         <div className={styles.handoffBanner} data-task-group="">
           <div className={styles.handoffBannerText}>
