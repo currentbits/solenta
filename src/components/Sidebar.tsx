@@ -268,7 +268,7 @@ export interface SidebarProps {
   /** Eject/reclaim the provider session so the raw CLI can own it (#554). */
   onSetEjected?: (threadId: string, ejected: boolean) => void | Promise<void>;
   /** Teleport to a saved host, or back with null (#1702). */
-  onTeleport?: (threadId: string, target: TeleportTarget | null) => void | Promise<void>;
+  onTeleport?: (threadId: string, target: TeleportTarget | null, stop?: boolean) => void | Promise<void>;
   /** Rename a thread from the row menu. */
   onRenameThread?: (threadId: string, title: string) => void | Promise<void>;
   /**

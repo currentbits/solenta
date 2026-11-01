@@ -21,6 +21,11 @@ const teleport = require("../teleport.js");
 const { rmTree } = require("./support/rmTree.js");
 
 const SID = "11111111-2222-4333-8444-555555555555";
+const PROVIDERS = [
+  { id: "claude", name: "Claude Code", available: true },
+  { id: "codex", name: "Codex", available: true },
+  { id: "opencode", name: "OpenCode", available: true },
+];
 
 function git(cwd, args) {
   return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
@@ -123,11 +128,11 @@ describe("teleport", () => {
     rmTree(root);
   });
 
-  function send() {
+  async function send() {
     const { payload, tree } = teleport.packThread(laptop.store, thread.id);
-    const got = teleport.receiveThread(remote.store, JSON.parse(JSON.stringify(payload)), {
+    const got = await teleport.receiveThread(remote.store, JSON.parse(JSON.stringify(payload)), {
       worktreeBase: remote.worktreeBase,
-      claudeAvailable: true,
+      providers: PROVIDERS,
       claudeHome: remote.claudeHome,
       from: { threadId: thread.id },
     });
@@ -137,8 +142,8 @@ describe("teleport", () => {
     return { payload, remoteThread: remote.store.getThread(got.threadId) };
   }
 
-  it("moves branch, uncommitted diff, session, model and effort; ignored files stay", () => {
-    const { payload, remoteThread } = send();
+  it("moves branch, uncommitted diff, session, model and effort; ignored files stay", async () => {
+    const { payload, remoteThread } = await send();
     assert.deepEqual(payload.ignored, ["secret.env"]);
     const wt = remoteThread.worktreePath;
     assert.equal(remoteThread.branch, thread.branch);
@@ -152,6 +157,7 @@ describe("teleport", () => {
     assert.equal(remoteThread.reasoningEffort, "high");
     assert.equal(remoteThread.permissionMode, "acceptEdits");
     assert.equal(remoteThread.sessionId, SID);
+    assert.equal(remoteThread.replayContext, false);
     assert.equal(remoteThread.teleportedFrom.threadId, thread.id);
     assert.deepEqual(remote.store.getMessages(remoteThread.id).map((m) => m.text), ["hi", "hello"]);
     const lines = fs.readFileSync(sessionPath(remote.claudeHome, wt), "utf8").split("\n").filter(Boolean);
@@ -189,8 +195,8 @@ describe("teleport", () => {
     assert.match(fallback.session, /hello/);
   });
 
-  it("comes back: new commits, new edits, transcript and session land on the original thread", () => {
-    const { remoteThread } = send();
+  it("comes back: new commits, new edits, transcript and session land on the original thread", async () => {
+    const { remoteThread } = await send();
     const rwt = remoteThread.worktreePath;
     git(rwt, ["config", "user.email", "t@example.com"]);
     git(rwt, ["config", "user.name", "T"]);
@@ -220,8 +226,8 @@ describe("teleport", () => {
     assert.equal(JSON.parse(lines[2]).cwd, realDir(wt));
   });
 
-  it("refuses to bring a thread back over local edits made since it left", () => {
-    const { remoteThread } = send();
+  it("refuses to bring a thread back over local edits made since it left", async () => {
+    const { remoteThread } = await send();
     fs.writeFileSync(path.join(thread.worktreePath, "a.txt"), "typed here meanwhile\n");
     process.env.CLAUDE_CONFIG_DIR = remote.claudeHome;
     const back = teleport.packThread(remote.store, remoteThread.id).payload;
@@ -229,32 +235,109 @@ describe("teleport", () => {
     assert.equal(fs.readFileSync(path.join(thread.worktreePath, "a.txt"), "utf8"), "typed here meanwhile\n");
   });
 
-  it("refuses busy, non-Claude, worktree-less, and already-teleported threads", () => {
-    assert.match(teleport.refuseToPack({ ...thread, status: "working" }), /run to finish/);
-    assert.match(teleport.refuseToPack(thread, { isRunning: () => true }), /run to finish/);
-    assert.match(teleport.refuseToPack({ ...thread, queued: [{ prompt: "x" }] }), /queued prompts/);
-    assert.match(teleport.refuseToPack({ ...thread, provider: "codex" }), /Claude threads only/);
+  it("refuses busy, worktree-less, queued-file and already-teleported threads", () => {
+    assert.match(teleport.refuseToPack({ ...thread, status: "working" }), /Stop and teleport/);
+    assert.match(teleport.refuseToPack(thread, { isRunning: () => true }), /Stop and teleport/);
+    assert.match(teleport.refuseToPack({ ...thread, queued: { prompt: "x", attachments: [{ path: "/a.png" }] } }), /files attached/);
+    assert.equal(teleport.refuseToPack({ ...thread, queued: { prompt: "x", items: ["x"] } }), null);
+    assert.equal(teleport.refuseToPack({ ...thread, provider: "codex" }), null);
     assert.match(teleport.refuseToPack({ ...thread, worktreePath: null }), /own worktree/);
     assert.match(teleport.refuseToPack({ ...thread, teleportedTo: { host: "box" } }), /already on box/);
     assert.equal(teleport.refuseToPack(thread), null);
   });
 
-  it("refuses on arrival without the repo, Claude, the effort, or a fast-forward", () => {
+  it("refuses on arrival without the repo, the provider, the effort, or a fast-forward", async () => {
     const { payload } = teleport.packThread(laptop.store, thread.id);
-    const opts = { worktreeBase: remote.worktreeBase, claudeAvailable: true, claudeHome: remote.claudeHome };
-    assert.throws(() => teleport.receiveThread(remote.store, payload, { ...opts, claudeAvailable: false }), /not installed or not signed in/);
-    assert.throws(
-      () => teleport.receiveThread(remote.store, { ...payload, thread: { ...payload.thread, reasoningEffort: "ludicrous" } }, opts),
+    const opts = { worktreeBase: remote.worktreeBase, providers: PROVIDERS, claudeHome: remote.claudeHome };
+    await assert.rejects(
+      teleport.receiveThread(remote.store, payload, { ...opts, providers: [{ id: "claude", name: "Claude Code", available: false }] }),
+      /Claude Code is not installed or not signed in/,
+    );
+    await assert.rejects(teleport.receiveThread(remote.store, { ...payload, provider: "kimi" }, opts), /kimi is not installed/);
+    await assert.rejects(
+      teleport.receiveThread(remote.store, { ...payload, thread: { ...payload.thread, reasoningEffort: "ludicrous" } }, opts),
       /Effort "ludicrous" is not available/,
     );
-    assert.throws(() => teleport.receiveThread(remote.store, { ...payload, originSlug: "other/repo" }, opts), /No project for other\/repo/);
+    // v1 senders carry no originUrl: still the old refusal.
+    await assert.rejects(
+      teleport.receiveThread(remote.store, { ...payload, version: 1, originUrl: undefined, originSlug: "other/repo" }, opts),
+      /No project for other\/repo/,
+    );
+    assert.throws(() => teleport.validatePayload({ ...payload, version: 1, provider: "codex" }), /Claude threads only/);
     git(remote.repo, ["branch", payload.branch, "origin/main"]);
     git(remote.repo, ["checkout", "-q", payload.branch]);
     git(remote.repo, ["config", "user.email", "t@example.com"]);
     git(remote.repo, ["config", "user.name", "T"]);
     git(remote.repo, ["commit", "-q", "--allow-empty", "-m", "diverged"]);
     git(remote.repo, ["checkout", "-q", "main"]);
-    assert.throws(() => teleport.receiveThread(remote.store, payload, opts), /already exists here with different commits/);
+    await assert.rejects(teleport.receiveThread(remote.store, payload, opts), /already exists here with different commits/);
     assert.equal(remote.store.getThreads().length, 0);
+  });
+
+  it("non-Claude: no session travels, both sides replay the transcript; queued prompts ride along", async () => {
+    laptop.store.updateThread(thread.id, {
+      provider: "codex",
+      model: null,
+      queued: { prompt: "next\n\nthen", items: ["next", "then"] },
+    });
+    thread = laptop.store.getThread(thread.id);
+    const { payload, remoteThread } = await send();
+    assert.equal(payload.version, 2);
+    assert.equal(payload.provider, "codex");
+    assert.equal(payload.sessionId, null);
+    assert.equal(payload.session, "");
+    assert.equal(remoteThread.provider, "codex");
+    assert.equal(remoteThread.sessionId, null);
+    assert.equal(remoteThread.replayContext, true);
+    assert.equal(remoteThread.reasoningEffort, "high");
+    assert.deepEqual(remoteThread.queued.items, ["next", "then"]);
+    assert.deepEqual(remote.store.getMessages(remoteThread.id).map((m) => m.text), ["hi", "hello"]);
+
+    // Ran there (the replay was consumed), queue edited, then back.
+    remote.store.updateThread(remoteThread.id, { replayContext: false, sessionId: "codex-sess", queued: { prompt: "last", items: ["last"] } });
+    const back = teleport.packThread(remote.store, remoteThread.id).payload;
+    assert.equal(back.sessionId, null);
+    const updated = teleport.returnThread(laptop.store, thread.id, JSON.parse(JSON.stringify(back)), { providers: PROVIDERS });
+    assert.equal(updated.provider, "codex");
+    assert.equal(updated.sessionId, null);
+    assert.equal(updated.replayContext, true);
+    assert.deepEqual(updated.queued.items, ["last"]);
+    assert.equal(updated.teleportedTo, null);
+  });
+
+  it("skips the effort check for providers without efforts", async () => {
+    laptop.store.updateThread(thread.id, { provider: "opencode", model: null, reasoningEffort: "whatever" });
+    thread = laptop.store.getThread(thread.id);
+    const { remoteThread } = await send();
+    assert.equal(remoteThread.provider, "opencode");
+  });
+
+  it("clones the repo when the receiver has no project for it", async () => {
+    // An https origin the clone accepts, rewritten to the bare repo by a
+    // throwaway global git config, so nothing touches the network.
+    const bare = path.join(root, "acme", "demo.git");
+    const url = "https://git.example.invalid/acme/demo.git";
+    const gitconfig = path.join(root, "gitconfig");
+    fs.writeFileSync(gitconfig, `[url "${bare}"]\n\tinsteadOf = ${url}\n`);
+    const prevGlobal = process.env.GIT_CONFIG_GLOBAL;
+    process.env.GIT_CONFIG_GLOBAL = gitconfig;
+    try {
+      git(thread.worktreePath, ["remote", "set-url", "origin", url]);
+      // The remote only knows an unrelated repo; clones land beside it.
+      const other = path.join(root, "remote", "repos", "other");
+      fs.mkdirSync(other, { recursive: true });
+      git(other, ["init", "-q"]);
+      remote.store.setProjects([{ id: "p-other", slug: "other", name: "other", path: other }]);
+
+      const { payload, remoteThread } = await send();
+      assert.equal(payload.originUrl, url);
+      const project = remote.store.getProject(remoteThread.projectId);
+      assert.equal(realDir(project.path), realDir(path.join(root, "remote", "repos", "demo")));
+      assert.equal(fs.readFileSync(path.join(remoteThread.worktreePath, "a.txt"), "utf8"), "a edited\n");
+      assert.equal(fs.readFileSync(path.join(remoteThread.worktreePath, "committed.txt"), "utf8"), "local commit\n");
+    } finally {
+      if (prevGlobal === undefined) delete process.env.GIT_CONFIG_GLOBAL;
+      else process.env.GIT_CONFIG_GLOBAL = prevGlobal;
+    }
   });
 });

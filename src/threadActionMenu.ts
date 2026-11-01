@@ -56,7 +56,8 @@ export function threadTeleportBlockReason(
   thread: Pick<ThreadInfo, "worktreePath" | "status" | "ejected">,
 ): string | null {
   if (!thread.worktreePath) return "Needs a worktree";
-  if (thread.status === "working" || thread.status === "quota-wait") return "Run is active";
+  // A working thread offers Stop and teleport instead (#1817).
+  if (thread.status === "quota-wait") return "Run is active";
   if (thread.ejected) return "Ejected to terminal";
   return null;
 }
@@ -284,11 +285,12 @@ export function buildThreadActionMenuItems(input: {
       separatorBefore: items.length > 0,
       attrs: { "data-teleport-back": thread.id },
     });
-  } else if (thread.provider === "claude" && input.teleportTargets?.length) {
+  } else if (input.teleportTargets?.length) {
     const block = threadTeleportBlockReason(thread);
+    const stop = thread.status === "working" ? "Stop and teleport" : "Teleport";
     items.push({
       id: "teleport",
-      label: "Teleport to…",
+      label: `${stop} to…`,
       disabled: Boolean(block),
       whenLabel: block ?? undefined,
       separatorBefore: !input.showEject && items.length > 0,
@@ -297,7 +299,7 @@ export function buildThreadActionMenuItems(input: {
         ? undefined
         : input.teleportTargets.map((t, i) => ({
             id: `teleport:${i}`,
-            label: t.label,
+            label: stop === "Teleport" ? t.label : `${stop} to ${t.label}`,
             whenLabel: t.label === t.host ? undefined : t.host,
             attrs: { "data-teleport-target": t.host },
           })),

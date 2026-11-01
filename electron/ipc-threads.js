@@ -13,6 +13,23 @@ const { retireAgent, runRetention } = require("./ipc-shared.js");
  * cursor rule as threads:getOlderMessages. Omitted entirely, this returns
  * the newest default-sized page, not the whole history.
  */
+/**
+ * Stop and teleport (#1817): stop the run, then wait for it to go idle.
+ * Stopped turns never drain queued prompts (#1203), so those still travel.
+ */
+async function stopForTeleport(ctx, threadId, timeoutMs = 30_000) {
+  const busy = () =>
+    Boolean(ctx.runner && ctx.runner.isRunning(threadId)) ||
+    (ctx.store.getThread(threadId) || {}).status === "working";
+  if (!busy()) return;
+  await ctx.runner.stopRun({ threadId });
+  const until = Date.now() + timeoutMs;
+  while (busy()) {
+    if (Date.now() > until) throw new Error("The run did not stop within 30 seconds, so the thread stayed here.");
+    await new Promise((r) => setTimeout(r, 200));
+  }
+}
+
 function threadDetailFor(ctx, id, markVisited, opts) {
   const workflow =
     typeof ctx.runner.getActiveWorkflow === "function"
@@ -138,12 +155,10 @@ module.exports = {
   // thread, invoked over its web API by the other Solenta; teleport and
   // teleportBack drive them from this desktop.
   "threads:teleportIn": async (ctx, payload) => {
-    const providers = await services.listProvidersForApi(ctx.store);
-    const claude = providers.find((p) => p.id === "claude");
-    const got = teleport.receiveThread(ctx.store, payload, {
+    const got = await teleport.receiveThread(ctx.store, payload, {
       worktreeBase: ctx.worktreeBase,
       broadcast: ctx.broadcast,
-      claudeAvailable: Boolean(claude && claude.available && claude.auth !== "signedOut"),
+      providers: await services.listProvidersForApi(ctx.store),
       from: payload && payload.from,
     });
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
@@ -160,6 +175,7 @@ module.exports = {
       throw new Error("Teleport requires the desktop app.");
     }
     const threadId = input && input.threadId;
+    if (input.stop === true) await stopForTeleport(ctx, threadId);
     const { payload, tree } = teleport.packThread(ctx.store, threadId, {
       isRunning: ctx.runner ? (id) => ctx.runner.isRunning(id) : undefined,
       userDataPath: ctx.userDataPath,
@@ -207,7 +223,10 @@ module.exports = {
       ctx.broadcast("thread:updated", threadDetailFor(ctx, threadId, false));
       throw new Error(`The thread is gone from ${to.label || to.host}, so nothing came back. This copy is unlocked as it was when it left.`);
     }
-    teleport.returnThread(ctx.store, threadId, payload, { userDataPath: ctx.userDataPath });
+    teleport.returnThread(ctx.store, threadId, payload, {
+      userDataPath: ctx.userDataPath,
+      providers: await services.listProvidersForApi(ctx.store),
+    });
     try {
       await ctx.invokeRemote(to, "threads:setArchived", [{ threadId: to.threadId, archived: true }]);
     } catch {

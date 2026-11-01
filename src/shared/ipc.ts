@@ -6243,11 +6243,12 @@ export interface CoderApi {
      */
     setEjected(input: { threadId: string; ejected: boolean }): Promise<ThreadInfo>;
     /**
-     * Teleport (#1702): move an idle Claude worktree thread (branch,
-     * uncommitted diff, session, transcript) to a saved remote host.
+     * Teleport (#1702): move an idle worktree thread (branch, uncommitted
+     * diff, transcript, queued prompts; Claude also its session) to a
+     * saved remote host. `stop` ends a running turn first (#1817).
      * Desktop only. The thread stays here, locked, until teleportBack.
      */
-    teleport(input: { threadId: string } & TeleportTarget): Promise<ThreadInfo>;
+    teleport(input: { threadId: string; stop?: boolean } & TeleportTarget): Promise<ThreadInfo>;
     /** Bring a teleported thread home and archive the remote copy. */
     teleportBack(input: { threadId: string }): Promise<ThreadInfo>;
     /**

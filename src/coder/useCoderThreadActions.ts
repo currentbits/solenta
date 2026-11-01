@@ -643,13 +643,14 @@ export function useCoderThreadActions({
     [api, applyThreads],
   );
 
-  // Teleport (#1702): target null brings the thread back. Errors (busy
-  // thread, missing repo on the host, SSH) land on the run error banner.
+  // Teleport (#1702): target null brings the thread back; stop first ends
+  // a running turn (#1817). Errors (busy thread, missing provider on the
+  // host, SSH) land on the run error banner.
   const teleport = useCallback(
-    async (threadId: string, target: TeleportTarget | null) => {
+    async (threadId: string, target: TeleportTarget | null, stop?: boolean) => {
       try {
         const thread = target
-          ? await api.threads.teleport({ threadId, ...target })
+          ? await api.threads.teleport({ threadId, ...target, ...(stop ? { stop: true } : {}) })
           : await api.threads.teleportBack({ threadId });
         applyThreads(
           threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
