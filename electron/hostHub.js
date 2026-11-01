@@ -62,6 +62,7 @@ function hostKey(h) {
  *   openTunnel: (input: { host: string, remotePort: number, url?: string | null, label?: string }, onClose: () => void) => Promise<{ child: { backPort: number | null, kill: () => void }, token: string, wsUrl?: string }>,
  *   pushWindows: (channel: string, payload: unknown) => void,
  *   onThreadsChanged: () => void,
+ *   onHostThreads?: (key: string, rows: any[]) => void,
  *   WebSocketImpl?: typeof WebSocket,
  *   setTimer?: (fn: () => void, ms: number) => unknown,
  *   clearTimer?: (t: unknown) => void,
@@ -118,6 +119,7 @@ function createHostHub(deps) {
     entry.threads = rows;
     entry.threadIds = new Set(rows.map((t) => t.id));
     entry.taggedThreads = tagRows(entry, rows, "threadCache");
+    deps.onHostThreads?.(entry.key, rows);
   }
 
   function setProjects(entry, rows) {
@@ -452,11 +454,26 @@ function createHostHub(deps) {
     return send(entry, channel, sent, INVOKE_TIMEOUT_MS).then((result) => tagResult(entry, channel, result));
   }
 
+  /** Call one host by key, e.g. to start a worker there (#1821). */
+  function invoke(key, channel, args) {
+    const entry = hosts.get(key);
+    if (!entry) return Promise.reject(new Error("That computer is no longer in the sidebar."));
+    return send(entry, channel, args, INVOKE_TIMEOUT_MS).then((result) => tagResult(entry, channel, result));
+  }
+
+  function projectsOf(key) {
+    return hosts.get(key)?.projects || [];
+  }
+
+  function threadsOf(key) {
+    return hosts.get(key)?.threads || [];
+  }
+
   function close() {
     for (const entry of [...hosts.values()]) remove(entry);
   }
 
-  return { setHosts, list, route, ownerOf, mergeThreads, mergeProjects, close };
+  return { setHosts, list, route, ownerOf, mergeThreads, mergeProjects, invoke, projectsOf, threadsOf, close };
 }
 
 module.exports = { createHostHub, applyListPush, RELAYED_PUSHES };

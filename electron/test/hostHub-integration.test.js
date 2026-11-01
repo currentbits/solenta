@@ -203,4 +203,65 @@ describe("hostHub × real remote Solenta Web host", () => {
     await waitFor(() => hub.list()[0].status === "offline");
     assert.match(hub.list()[0].error, /rejected this token/);
   });
+  it("thread_fork with host starts the worker there and wakes the lead when it ends (#1821)", async () => {
+    const { createRemoteWorkers } = require("../remoteWorkers.js");
+    const { createToolHandlers } = require("../orchServer.js");
+    // The lead's computer: its own store, same repo name as the remote's.
+    const leadDir = path.join(tmp, "lead");
+    fs.mkdirSync(path.join(leadDir, "repo"), { recursive: true });
+    git(path.join(leadDir, "repo"), ["init", "-q"]);
+    const leadStore = new Store(path.join(leadDir, "store.json"));
+    const leadProject = await services.addProject(leadStore, path.join(leadDir, "repo"));
+    assert.equal(leadProject.slug.toLowerCase(), project.slug.toLowerCase());
+    const lead = services.createThread(leadStore, { projectId: leadProject.id, title: "lead" });
+
+    const delivered = [];
+    let workers = null;
+    const leadHub = createHostHub({
+      openTunnel: async () => ({ child: { backPort: server.port, kill() {} }, token: "remote-token" }),
+      pushWindows: () => {},
+      onThreadsChanged: () => {},
+      onHostThreads: (key, rows) => workers?.onHostThreads(key, rows),
+    });
+    workers = createRemoteWorkers({ store: leadStore, hub: leadHub, deliver: (input) => delivered.push(input) });
+    try {
+      leadHub.setHosts([{ host: "me@box", remotePort: 4620, label: "Box" }]);
+      await waitFor(() => leadHub.list()[0].status === "online" && leadHub.projectsOf("me@box:4620").length > 0);
+
+      const handlers = createToolHandlers({
+        store: leadStore,
+        runner: { startRun: () => assert.fail("ran locally") },
+        forkThread: () => assert.fail("forked locally"),
+        getProvider: () => ({}),
+        forkRemote: (input) => workers.fork(input),
+      });
+      await assert.rejects(
+        handlers.thread_fork({ threadId: lead.id, projectId: leadProject.id, host: "Nowhere", prompt: "x" }),
+        /No computer called "Nowhere".*"Box"/,
+      );
+      const res = await handlers.thread_fork({
+        threadId: lead.id, projectId: leadProject.id, host: "box", prompt: "count the files", title: "Counter", worktree: false,
+      });
+      assert.equal(res.host, "Box");
+      const remote = store.getThread(res.threadId);
+      assert.ok(remote, "worker lives in the remote store");
+      assert.equal(remote.projectId, project.id);
+      assert.equal(remote.title, "Counter");
+      assert.ok(!leadStore.getThread(res.threadId), "not in the lead store");
+
+      await waitFor(() => delivered.length > 0);
+      assert.equal(delivered.length, 1);
+      assert.equal(delivered[0].threadId, lead.id);
+      assert.match(delivered[0].line, new RegExp(`Worker thread ${res.threadId} \\("Counter"\\) on Box finished with status done`));
+      assert.match(delivered[0].line, /Last reply: /);
+      assert.equal(leadStore.getThread(lead.id).remoteWorkers, null);
+
+      // Later pushes for the same thread do not wake the lead again.
+      await leadHub.invoke("me@box:4620", "threads:rename", [{ threadId: res.threadId, title: "renamed" }]).catch(() => {});
+      await new Promise((r) => setTimeout(r, 200));
+      assert.equal(delivered.length, 1);
+    } finally {
+      leadHub.close();
+    }
+  });
 });
