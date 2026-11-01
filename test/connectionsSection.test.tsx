@@ -150,3 +150,27 @@ it("an older Mac host gets a pointer, not an Update button", async () => {
   assert.equal(m.query("[data-connection-update]"), null);
   assert.match(m.query("[data-connection-remote]")?.textContent || "", /Update it on that computer/);
 });
+
+it("shows a connected host in the sidebar and hands main the shown set (#1819)", async () => {
+  const pushed: unknown[] = [];
+  const m = await mount(<ConnectionsSection
+    onOpen={async (input) => ({ host: input.host, remotePort: input.remotePort ?? 4620, tokenSaved: true })}
+    onSidebarHosts={async (hosts) => {
+      pushed.push(hosts);
+      return [];
+    }}
+    sidebarHosts={[{ key: "user@work:4620", host: "user@work", remotePort: 4620, label: "Work", status: "offline", error: "Cannot find user@work." }]}
+  />);
+  await m.type(m.query("[data-connection-label]"), "Work");
+  await m.type(m.query("[data-connection-host]"), "user@work");
+  await m.click(m.query("[data-connection-open]"));
+  assert.deepEqual(pushed.at(-1), [{ host: "user@work", remotePort: 4620, label: "Work" }]);
+  assert.match(m.container.textContent || "", /offline/);
+  assert.match(m.query("[data-connection-host-error]").textContent || "", /Cannot find user@work/);
+  const toggle = m.query("[data-connection-sidebar]") as HTMLInputElement;
+  assert.equal(toggle.checked, true);
+  await m.click(toggle);
+  assert.deepEqual(pushed.at(-1), []);
+  assert.match(window.localStorage.getItem("coder.remoteConnections") || "", /"inSidebar":false/);
+  m.unmount();
+});

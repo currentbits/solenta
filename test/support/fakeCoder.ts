@@ -836,6 +836,8 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         }),
       forgetRemoteConnection: (input: unknown) =>
         rec("app.forgetRemoteConnection", [input], undefined),
+      setSidebarHosts: (hosts: unknown) =>
+        rec("app.setSidebarHosts", [hosts], []),
       diagnosticsPreview: () =>
         rec("app.diagnosticsPreview", [], [
           "app.json",

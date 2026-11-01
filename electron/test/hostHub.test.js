@@ -1,0 +1,200 @@
+"use strict";
+
+const { describe, it, afterEach } = require("node:test");
+const assert = require("node:assert/strict");
+const http = require("node:http");
+const { WebSocketServer } = require("ws");
+const { createHostHub, applyListPush } = require("../hostHub.js");
+
+async function waitFor(check, timeoutMs = 5_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (!check()) {
+    if (Date.now() > deadline) throw new Error("timed out waiting for condition");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
+/** A stand-in remote Solenta Web host: auth + invoke + push. */
+async function fakeHost({ token = "tok", threads = [], projects = [] } = {}) {
+  const server = http.createServer();
+  const wss = new WebSocketServer({ server, path: "/ws" });
+  const state = { threads, projects, calls: [], sockets: new Set() };
+  wss.on("connection", (ws) => {
+    let authed = false;
+    ws.on("message", (raw) => {
+      const msg = JSON.parse(String(raw));
+      if (!authed) {
+        if (msg.kind !== "auth" || msg.token !== token) return ws.close(4401);
+        authed = true;
+        state.sockets.add(ws);
+        ws.send(JSON.stringify({ kind: "auth-ok" }));
+        return;
+      }
+      state.calls.push({ channel: msg.channel, args: msg.args });
+      let result;
+      if (msg.channel === "threads:list") result = state.threads;
+      else if (msg.channel === "projects:list") result = state.projects;
+      else if (msg.channel === "threads:get") result = { thread: state.threads.find((t) => t.id === msg.args[0]), messages: [] };
+      else if (msg.channel === "threads:create") result = { id: "r-new", projectId: msg.args[0].projectId, title: "new" };
+      else if (msg.channel === "boom") return ws.send(JSON.stringify({ kind: "reply", id: msg.id, error: "remote failed" }));
+      ws.send(JSON.stringify({ kind: "reply", id: msg.id, result }));
+    });
+    ws.on("close", () => state.sockets.delete(ws));
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  return {
+    state,
+    port: server.address().port,
+    push(channel, payload) {
+      for (const ws of state.sockets) ws.send(JSON.stringify({ kind: "push", channel, payload }));
+    },
+    dropAll() {
+      for (const ws of state.sockets) ws.terminate();
+    },
+    close: () => new Promise((resolve) => {
+      for (const ws of wss.clients) ws.terminate();
+      wss.close(() => server.close(() => resolve()));
+    }),
+  };
+}
+
+function makeHub(remote, overrides = {}) {
+  const pushes = [];
+  let changed = 0;
+  let tunnels = 0;
+  const hub = createHostHub({
+    openTunnel: async () => {
+      tunnels += 1;
+      return { child: { backPort: remote.port, kill() {} }, token: "tok" };
+    },
+    pushWindows: (channel, payload) => pushes.push({ channel, payload }),
+    onThreadsChanged: () => { changed += 1; },
+    // Fast retries for the reconnect test.
+    setTimer: (fn, ms) => setTimeout(fn, Math.min(ms, 60)),
+    ...overrides,
+  });
+  return { hub, pushes, changed: () => changed, tunnels: () => tunnels };
+}
+
+const LOCAL = [{ id: "l1", projectId: "lp", title: "local" }];
+const HOST = { host: "me@box", remotePort: 4620, label: "Box" };
+
+describe("hostHub", () => {
+  /** @type {Array<() => unknown>} */
+  let cleanup = [];
+  afterEach(async () => {
+    for (const fn of cleanup.reverse()) await fn();
+    cleanup = [];
+  });
+
+  it("merges a host's threads and projects, tagged, after local rows", async () => {
+    const remote = await fakeHost({
+      threads: [{ id: "r1", projectId: "rp", title: "remote" }],
+      projects: [{ id: "rp", name: "repo" }],
+    });
+    const { hub } = makeHub(remote);
+    cleanup.push(() => remote.close(), () => hub.close());
+    hub.setHosts([HOST]);
+    await waitFor(() => hub.mergeThreads(LOCAL).length === 2);
+    const merged = hub.mergeThreads(LOCAL);
+    assert.equal(merged[0], LOCAL[0], "local row untouched");
+    assert.deepEqual(merged[1].host, { key: "me@box:4620", label: "Box", status: "online" });
+    // Same source row → same tagged object, so the encoder sends a patch.
+    assert.equal(hub.mergeThreads(LOCAL)[1], merged[1]);
+    const projects = await hub.route("projects:list", [], async () => [{ id: "lp" }]);
+    assert.deepEqual(projects.map((p) => [p.id, p.host?.label]), [["lp", undefined], ["rp", "Box"]]);
+  });
+
+  it("forwards calls naming a remote thread or project and tags thread results", async () => {
+    const remote = await fakeHost({
+      threads: [{ id: "r1", projectId: "rp", title: "remote" }],
+      projects: [{ id: "rp", name: "repo" }],
+    });
+    const { hub } = makeHub(remote);
+    cleanup.push(() => remote.close(), () => hub.close());
+    hub.setHosts([HOST]);
+    await waitFor(() => hub.ownerOf(["rp"]) != null);
+    assert.equal(hub.route("threads:get", ["l1"], async () => "local"), null, "local ids stay local");
+    const detail = await hub.route("threads:get", ["r1"], () => assert.fail("ran locally"));
+    assert.equal(detail.thread.host.label, "Box");
+    const created = await hub.route("threads:create", [{ projectId: "rp" }], () => assert.fail("ran locally"));
+    assert.equal(created.host.label, "Box");
+    assert.ok(hub.ownerOf([{ threadId: "r-new" }]), "a created thread routes before the next list push");
+    await assert.rejects(hub.route("boom", [{ threadId: "r1" }], async () => null), /remote failed/);
+    assert.deepEqual(remote.state.calls.at(-3), { channel: "threads:get", args: ["r1"] });
+  });
+
+  it("applies the host's row-patch pushes and refetches on a gap", async () => {
+    const remote = await fakeHost({ threads: [{ id: "r1", projectId: "rp", title: "a" }] });
+    const { hub, pushes } = makeHub(remote);
+    cleanup.push(() => remote.close(), () => hub.close());
+    hub.setHosts([HOST]);
+    await waitFor(() => hub.mergeThreads([]).length === 1);
+    remote.push("threads:changed", { seq: 5, threads: [{ id: "r1", projectId: "rp", title: "b" }] });
+    await waitFor(() => hub.mergeThreads([])[0].title === "b");
+    remote.push("threads:changed", { seq: 6, base: 5, upserts: [{ id: "r1", projectId: "rp", title: "c" }], removedIds: [] });
+    await waitFor(() => hub.mergeThreads([])[0].title === "c");
+    // Base we never saw: refetch threads:list.
+    remote.state.threads = [{ id: "r2", projectId: "rp", title: "fresh" }];
+    remote.push("threads:changed", { seq: 9, base: 8, upserts: [], removedIds: ["r1"] });
+    await waitFor(() => hub.mergeThreads([])[0]?.id === "r2");
+    remote.push("thread:updated", { thread: { id: "r2", projectId: "rp", title: "fresh" }, seq: 1 });
+    remote.push("boot:ready", null);
+    remote.push("terminal:data", { id: "t", data: "x" });
+    await waitFor(() => pushes.some((p) => p.channel === "terminal:data"));
+    const updated = pushes.find((p) => p.channel === "thread:updated");
+    assert.equal(updated.payload.thread.host.label, "Box");
+    assert.ok(!pushes.some((p) => p.channel === "boot:ready"), "remote boot:ready does not reach the window");
+  });
+
+  it("goes offline on a drop, refuses calls, then reconnects", async () => {
+    const remote = await fakeHost({ threads: [{ id: "r1", projectId: "rp", title: "a" }] });
+    const { hub, tunnels } = makeHub(remote);
+    cleanup.push(() => remote.close(), () => hub.close());
+    hub.setHosts([HOST]);
+    await waitFor(() => hub.list()[0].status === "online");
+    remote.dropAll();
+    await waitFor(() => hub.list()[0].status !== "online");
+    // Still owned by Box while it is down: refused, never run locally.
+    await assert.rejects(hub.route("threads:get", ["r1"], () => assert.fail("ran locally")), /Box is (offline|still connecting)/);
+    await waitFor(() => hub.list()[0].status === "online");
+    assert.ok(tunnels() >= 2, "a fresh tunnel per reconnect");
+    // Rows from the last list stay visible while offline.
+    assert.equal(hub.mergeThreads([]).length, 1);
+  });
+
+  it("reports a host that cannot be reached and keeps its slot", async () => {
+    const { hub, pushes } = makeHub({ port: 0 }, {
+      openTunnel: async () => { throw new Error("Cannot find box."); },
+      setTimer: () => 0,
+    });
+    cleanup.push(() => hub.close());
+    hub.setHosts([HOST]);
+    await waitFor(() => hub.list()[0].status === "offline");
+    assert.equal(hub.list()[0].error, "Cannot find box.");
+    assert.ok(pushes.some((p) => p.channel === "hosts:changed"));
+  });
+
+  it("drops a host's rows when it is removed", async () => {
+    const remote = await fakeHost({ threads: [{ id: "r1", projectId: "rp", title: "a" }] });
+    const { hub } = makeHub(remote);
+    cleanup.push(() => remote.close(), () => hub.close());
+    hub.setHosts([HOST]);
+    await waitFor(() => hub.mergeThreads([]).length === 1);
+    hub.setHosts([]);
+    assert.equal(hub.mergeThreads(LOCAL), LOCAL, "no hosts: the local array itself");
+    assert.equal(hub.route("threads:list", [], async () => LOCAL), null);
+  });
+});
+
+describe("applyListPush", () => {
+  const a = { id: "a" };
+  const b = { id: "b" };
+  it("replaces on full pushes and patches on the held base only", () => {
+    assert.deepEqual(applyListPush([a], [b], null), [b]);
+    assert.deepEqual(applyListPush([a], { seq: 2, threads: [b] }, null), [b]);
+    assert.deepEqual(applyListPush([a, b], { seq: 3, base: 2, upserts: [{ id: "a", x: 1 }], removedIds: ["b"] }, 2), [{ id: "a", x: 1 }]);
+    assert.equal(applyListPush([a], { seq: 3, base: 1, upserts: [], removedIds: [] }, 2), null);
+    assert.equal(applyListPush([a], { seq: 3, base: 2, upserts: [{ id: "new" }], removedIds: [] }, 2), null);
+  });
+});

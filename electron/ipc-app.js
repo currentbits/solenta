@@ -115,6 +115,14 @@ module.exports = {
     }
     ctx.forgetRemoteConnection(input);
   },
+  // Hosts whose threads show in this window (#1819); the list lives in the
+  // renderer's saved Connections, so it hands the hub the current set.
+  "app:setSidebarHosts": async (ctx, hosts) => {
+    if (ctx.transport !== "desktop" || !ctx.hostHub) {
+      throw new Error("Remote Connections require the desktop app.");
+    }
+    return ctx.hostHub.setHosts(hosts);
+  },
   "app:installRemoteSolenta": async (ctx, input) => {
     if (ctx.transport !== "desktop" || !ctx.installRemoteSolenta) {
       throw new Error("Remote Connections require the desktop app.");

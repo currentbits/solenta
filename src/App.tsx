@@ -471,6 +471,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     trustAutomationsFile,
     listAutomationRuns,
     refreshAutomations,
+    sidebarHosts,
   } = useCoder();
 
   useEffect(() => {
@@ -2890,6 +2891,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
           onOpenConnection={(input) => api.app.openRemoteConnection(input)}
           onForgetConnection={(input) => api.app.forgetRemoteConnection(input)}
           onInstallSolenta={(input) => api.app.installRemoteSolenta(input)}
+          onSidebarHosts={(hosts) => api.app.setSidebarHosts(hosts)}
+          sidebarHosts={sidebarHosts}
           projects={projects}
           currentProjectId={project?.id ?? null}
           onSetSpotlight={setSpotlight}

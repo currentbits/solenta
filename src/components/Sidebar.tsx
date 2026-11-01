@@ -90,6 +90,7 @@ import {
   type CliImportProvider,
 } from "./ImportCliSessionModal";
 import { Icon } from "./sidebar/Icon";
+import { HostChip } from "./sidebar/HostChip";
 import { ThreadCard, type SelectOpts } from "./sidebar/ThreadCard";
 import { SettledRow, SnoozedRow } from "./sidebar/rows";
 import {
@@ -814,7 +815,7 @@ export const Sidebar = memo(function Sidebar({
     return projects[0] ?? null;
   })();
   const createTargetLabel = createTargetProject
-    ? `New thread in ${createTargetProject.slug || createTargetProject.name}`
+    ? `New thread in ${createTargetProject.slug || createTargetProject.name}${createTargetProject.host ? ` on ${createTargetProject.host.label}` : ""}`
     : "New thread";
   const queryLower = trimmedQuery.toLowerCase();
   const searchInFlight = searching && (searchLoading || searchResults == null);
@@ -1786,6 +1787,7 @@ export const Sidebar = memo(function Sidebar({
                     size={16}
                   />
                   {p.slug || p.name}
+                  <HostChip host={p.host} />
                 </button>
               ))}
             </div>

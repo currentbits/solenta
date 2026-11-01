@@ -388,6 +388,7 @@ const BY_SCOPE = {
     "app:openRemoteConnection",
     "app:forgetRemoteConnection",
     "app:installRemoteSolenta",
+    "app:setSidebarHosts",
     // Diagnostics zip (#1723): host logs + native save dialog; desktop only.
     "app:diagnosticsPreview",
     "app:exportDiagnostics",

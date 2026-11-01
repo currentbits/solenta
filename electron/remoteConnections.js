@@ -758,18 +758,33 @@ function wsInvoke(port, token, channel, args, timeoutMs) {
  * host prep as Connect: the host's token file over SSH, then the keychain.
  */
 async function invokeRemote(input, channel, args, deps = {}) {
+  const { child, token } = await openHostTunnel(input, deps);
+  try {
+    return await wsInvoke(child.backPort, token, channel, args, deps.timeoutMs ?? 10 * 60_000);
+  } finally {
+    child.kill();
+  }
+}
+
+/**
+ * A ready tunnel to a saved host's web API, no window: the host is prepared
+ * (started if needed) and the token proven. `onClose` runs when ssh exits.
+ * The caller owns `child` and kills it when done.
+ */
+async function openHostTunnel(input, deps = {}, onClose) {
   const { host, remotePort } = validateConnection({ host: input && input.host, remotePort: input && input.remotePort, token: "" });
   const token = (await readRemoteToken(host, remotePort, deps)) || tokenStoreFor(deps).get(`${host}:${remotePort}`);
   if (!token) {
     throw new Error(`No web token found on ${host}. Connect to it once from Settings > Connections.`);
   }
-  const child = spawnTunnel(deps.spawn || spawn, host, await freeLoopbackPort(), remotePort);
+  const child = spawnTunnel(deps.spawn || spawn, host, await freeLoopbackPort(), remotePort, onClose);
   try {
     await waitForHost(child, token);
-    return await wsInvoke(child.backPort, token, channel, args, deps.timeoutMs ?? 10 * 60_000);
-  } finally {
+  } catch (err) {
     child.kill();
+    throw err;
   }
+  return { child, token };
 }
 
 module.exports = {
@@ -788,4 +803,5 @@ module.exports = {
   forgetRemoteConnection,
   closeRemoteConnections,
   invokeRemote,
+  openHostTunnel,
 };

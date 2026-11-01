@@ -24,6 +24,7 @@ import {
 import { buildThreadActionMenuItems } from "../../threadActionMenu";
 import { CustomSnoozeDialog } from "../CustomSnoozeDialog";
 import { loadHosts } from "../../remoteHosts";
+import { HostChip } from "./HostChip";
 import { isPinned, resolveSnoozePresets } from "../../threadSnooze";
 import { isUnread } from "../../threadUnread";
 import { ProjectIcon } from "../ProjectIcon";
@@ -508,6 +509,7 @@ export const ThreadCard = memo(function ThreadCard({
               {slug}
             </span>
           )}
+          <HostChip host={thread.host} />
           {pinned && (
             <span className={styles.pinFlag} data-pin-flag="" title="Pinned" aria-hidden>
               <Icon size={10}>

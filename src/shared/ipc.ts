@@ -54,8 +54,32 @@ export type FilePreview =
   | { kind: "binary"; size: number }
   | { kind: "tooLarge"; size: number };
 
+/**
+ * The other Solenta host a project or thread lives on (#1819). Absent on
+ * this machine's own rows. Calls naming such a row run on that host.
+ */
+export interface HostTag {
+  /** host:remotePort of the saved Connection. */
+  key: string;
+  label: string;
+  status: SidebarHostStatus["status"];
+}
+
+/** One saved Connection shown in the sidebar (#1819). */
+export interface SidebarHostStatus {
+  key: string;
+  host: string;
+  remotePort: number;
+  label: string;
+  status: "connecting" | "online" | "offline";
+  /** Why the last connect failed or the link dropped. */
+  error: string | null;
+}
+
 export interface ProjectInfo {
   id: string;
+  /** Set when the project lives on another Solenta host (#1819). */
+  host?: HostTag;
   /** e.g. "acme/rocket", derived from git remote or folder name */
   slug: string;
   name: string;
@@ -646,6 +670,8 @@ export interface PrLink {
 export interface ThreadInfo {
   id: string;
   projectId: string;
+  /** Set when the thread lives on another Solenta host (#1819). */
+  host?: HostTag;
   title: string;
   /** Started from a chat channel (#1718); results go back to that chat. */
   channel?: { kind: ChannelKind; chatId: string } | null;
@@ -5542,6 +5568,13 @@ export interface CoderApi {
      * host, checked against the release's sha256. Linux x86_64 only.
      */
     installRemoteSolenta(input: { host: string }): Promise<RemoteInstallResult>;
+    /**
+     * Show these saved Connections' projects and threads in this window
+     * (#1819). Replaces the previous set; resolves each host's state. Desktop only.
+     */
+    setSidebarHosts(
+      hosts: Array<{ host: string; remotePort: number; label?: string }>,
+    ): Promise<SidebarHostStatus[]>;
   };
   /**
    * Proxied to the local shared-memory server by the main process (the
@@ -7799,6 +7832,8 @@ export interface CoderApi {
   on(channel: "pr:progress", cb: (push: PrProgressPush) => void): () => void;
   /** Desktop-only: a bound Browser pane's audio started/stopped, or its mute changed (#1807). */
   on(channel: "preview:audioChanged", cb: (state: PreviewAudioState) => void): () => void;
+  /** Desktop-only: a sidebar host connected, dropped or was removed (#1819). */
+  on(channel: "hosts:changed", cb: (hosts: SidebarHostStatus[]) => void): () => void;
 }
 
 declare global {

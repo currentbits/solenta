@@ -109,8 +109,10 @@ const {
   forgetRemoteConnection,
   installRemoteSolenta,
   invokeRemote,
+  openHostTunnel,
   closeRemoteConnections,
 } = require("./remoteConnections.js");
+const { createHostHub } = require("./hostHub.js");
 
 // Custom img protocol (issue #145): registerSchemesAsPrivileged MUST run
 // before app.ready or Electron ignores it.
@@ -546,17 +548,36 @@ function sendWhenLoaded(win, channel, payload) {
 }
 
 const encodeThreadList = createThreadListEncoder();
+// Windows also see other hosts' threads (#1819), so they get their own seq.
+const encodeWindowThreads = createThreadListEncoder();
 
-function broadcast(channel, payload) {
-  // Row patches instead of the whole list (#1475); see threadListPush.js.
-  if (channel === "threads:changed" && Array.isArray(payload)) {
-    payload = encodeThreadList(payload);
-  }
+function pushWindows(channel, payload) {
   for (const win of BrowserWindow.getAllWindows()) {
     if (!win.isDestroyed() && !win.solentaRemote) {
       win.webContents.send(channel, payload);
     }
   }
+}
+
+// Remote Solenta hosts shown in this window's sidebar (#1819).
+const hostHub = createHostHub({
+  openTunnel: (input, onClose) => openHostTunnel(input, {}, onClose),
+  pushWindows,
+  onThreadsChanged: () => {
+    if (store) {
+      pushWindows("threads:changed", encodeWindowThreads(hostHub.mergeThreads(require("./services.js").listThreads(store))));
+    }
+  },
+});
+
+function broadcast(channel, payload) {
+  // Row patches instead of the whole list (#1475); see threadListPush.js.
+  if (channel === "threads:changed" && Array.isArray(payload)) {
+    pushWindows(channel, encodeWindowThreads(hostHub.mergeThreads(payload)));
+    if (webAccess) webAccess.broadcast(channel, encodeThreadList(payload));
+    return;
+  }
+  pushWindows(channel, payload);
   if (webAccess) {
     webAccess.broadcast(channel, payload);
   }
@@ -1162,6 +1183,7 @@ app.whenReady().then(async () => {
     forgetRemoteConnection,
     installRemoteSolenta,
     invokeRemote,
+    hostHub,
   });
   // Desktop-only like contextMenu:show: windows are main's, never the web bridge's.
   ipcMain.handle("window:detachThread", (_event, threadId) => openThreadWindow(threadId));
@@ -1459,6 +1481,7 @@ shutdown = installShutdown({
 /** Servers, schedulers, and child processes: last, after runs and the device. */
 function teardownServices() {
   closeRemoteConnections();
+  hostHub.close();
   // No token refresh (and store write) mid-shutdown.
   if (mcpOauthRefreshTimer) {
     clearInterval(mcpOauthRefreshTimer);

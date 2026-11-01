@@ -170,6 +170,18 @@
   letter-spacing: 0;
 }
 
+/* #1819: the other machine a project or thread runs on. */
+.hostChip {
+  composes: folderChip;
+  flex-shrink: 0;
+}
+
+.hostChip[data-host-status="connecting"],
+.hostChip[data-host-status="offline"] {
+  opacity: 0.55;
+  border-style: dashed;
+}
+
 .viewRow {
   display: flex;
   align-items: center;
