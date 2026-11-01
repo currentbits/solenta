@@ -28,9 +28,10 @@ function lastReplyLine(detail) {
  *   store: any,
  *   hub: ReturnType<typeof import("./hostHub.js").createHostHub>,
  *   deliver: (input: { threadId: string, line: string }) => void,
+ *   runner?: any,
  * }} deps
  */
-function createRemoteWorkers({ store, hub, deliver }) {
+function createRemoteWorkers({ store, hub, deliver, runner }) {
   /** Leads with a remote worker still out. Built from the store on first use. */
   let leads = null;
   function pendingLeads() {
@@ -85,6 +86,9 @@ function createRemoteWorkers({ store, hub, deliver }) {
       worktree: input.worktree !== false,
       ...(input.provider ? { provider: input.provider } : {}),
     }]);
+    // Its task_* and peer_send calls come back here (crew relay). An older
+    // Solenta there lacks the channel: the worker just runs without a crew.
+    await hub.invoke(host.key, "threads:setCrewRelay", [{ threadId: created.id, leadId: lead.id, leadTitle: lead.title || null }]).catch(() => {});
     await hub.invoke(host.key, "runs:start", [{ threadId: created.id, prompt: input.prompt }]);
     const record = {
       hostKey: host.key,
@@ -272,7 +276,47 @@ function createRemoteWorkers({ store, hub, deliver }) {
     }
   }
 
-  return { fork, onHostThreads, find, call, listFor, status, send };
+  /**
+   * Hub hook: a worker on `hostKey` called a crew tool (task_*, peer_send).
+   * Run it here as that worker, against its lead's crew. Null when the
+   * worker is not one of ours, so another desktop on that host answers.
+   */
+  function onCrewCall(hostKey, payload) {
+    const { RELAYED_TOOLS } = require("./crewRelay.js");
+    const hit = payload && find(String(payload.workerId || ""));
+    if (!hit || hit.w.hostKey !== hostKey) return null;
+    const lead = store.getThread(hit.leadId);
+    if (!lead) return Promise.reject(new Error("Your lead thread no longer exists."));
+    if (!RELAYED_TOOLS.has(payload.tool)) return Promise.reject(new Error(`${payload.tool} does not run on the lead's computer.`));
+    const workerId = hit.w.threadId;
+    // The worker as this store sees it: a crew member of its lead.
+    const stub = {
+      id: workerId, title: hit.w.title, projectId: lead.projectId,
+      orchWorker: true, handoffFrom: lead.id, status: "working",
+    };
+    const asWorker = new Proxy(store, {
+      get(target, key) {
+        if (key === "getThread") return (id) => (String(id) === workerId ? stub : target.getThread(id));
+        const v = target[key];
+        return typeof v === "function" ? v.bind(target) : v;
+      },
+    });
+    const { createToolHandlers } = require("./orchServer.js");
+    const handlers = createToolHandlers({
+      store: asWorker,
+      runner: runner || {},
+      forkThread: () => { throw new Error("not available"); },
+      getProvider: () => null,
+      remoteWorkers: api,
+      boundProjectId: lead.projectId,
+      boundThreadId: workerId,
+    });
+    const args = payload.args && typeof payload.args === "object" ? payload.args : {};
+    return handlers[payload.tool]({ ...args, threadId: workerId, projectId: lead.projectId });
+  }
+
+  const api = { fork, onHostThreads, find, call, listFor, status, send, onCrewCall };
+  return api;
 }
 
 module.exports = { createRemoteWorkers };

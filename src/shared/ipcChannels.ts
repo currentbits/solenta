@@ -168,6 +168,8 @@ export const IPC_CHANNELS = [
   { ns: "threads", method: "teleportBack" },
   { ns: "threads", method: "teleportIn" },
   { ns: "threads", method: "teleportOut" },
+  { ns: "threads", method: "setCrewRelay" },
+  { ns: "threads", method: "crewReply" },
   { ns: "threads", method: "create" },
   { ns: "threads", method: "get" },
   { ns: "threads", method: "peek" },

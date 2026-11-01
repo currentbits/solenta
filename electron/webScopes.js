@@ -400,6 +400,9 @@ const BY_SCOPE = {
     "threads:teleportOut",
     "threads:teleport",
     "threads:teleportBack",
+    // Crew relay (#1821): the lead's computer, on the owner's full token.
+    "threads:setCrewRelay",
+    "threads:crewReply",
     // Host-side effects: open apps, read arbitrary host paths, capture windows.
     "shell:reveal",
     "shell:openPath",
@@ -429,7 +432,7 @@ for (const [scope, channels] of Object.entries(BY_SCOPE)) {
 }
 
 /** Push channels that are not plain read. Everything else needs read. */
-const PUSH_SCOPE = new Map([["terminal:data", "terminal:observe"]]);
+const PUSH_SCOPE = new Map([["terminal:data", "terminal:observe"], ["crew:call", "full"]]);
 
 function scopeForChannel(channel) {
   return CHANNEL_SCOPE.get(channel) || "full";

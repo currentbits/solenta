@@ -39,7 +39,7 @@ describe("remote workers (#1821)", () => {
     const rw = createRemoteWorkers({ store, hub: fakeHub([{ id: "w1", status: "idle" }], calls), deliver: (i) => delivered.push(i) });
     const res = await rw.fork({ lead: store.getThread("lead"), host: "Box", prompt: "go" });
     assert.deepEqual(res, { threadId: "w1", host: "Box" });
-    assert.deepEqual(calls, ["threads:create", "runs:start"]);
+    assert.deepEqual(calls, ["threads:create", "threads:setCrewRelay", "runs:start"]);
     await tick();
     assert.equal(delivered.length, 0, "stale idle row is not a finish");
 
@@ -92,6 +92,14 @@ describe("remote workers (#1821)", () => {
     await tick();
     assert.equal(delivered.length, 1);
     assert.deepEqual(rw.listFor("p").map((r) => [r.id, r.host, r.handoffFrom]), [["w1", "Box", "lead"]]);
+  });
+
+  it("answers crew calls only for its own worker on that host, and only crew tools", async () => {
+    const store = fakeStore([{ id: "lead", projectId: "p", remoteWorkers: [{ hostKey: "box:1", hostLabel: "Box", threadId: "w1", title: null }] }]);
+    const rw = createRemoteWorkers({ store, hub: fakeHub([]), deliver() {} });
+    assert.equal(rw.onCrewCall("other:1", { callId: "c", workerId: "w1", tool: "task_list", args: {} }), null, "same id from another computer");
+    assert.equal(rw.onCrewCall("box:1", { callId: "c", workerId: "nope", tool: "task_list", args: {} }), null);
+    await assert.rejects(rw.onCrewCall("box:1", { callId: "c", workerId: "w1", tool: "thread_merge", args: {} }), /does not run on the lead's computer/);
   });
 
   it("names the connected computers and a missing repo", async () => {

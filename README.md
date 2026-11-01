@@ -186,8 +186,9 @@ renamed, the app name inside it is not.
   name in the sidebar) to `thread_fork`. The worker starts there, in that
   computer's copy of the same repo, and the agent is woken when it finishes.
   Status, follow-ups, stop, archive and rename work on it like on a local
-  worker. Landing is still the user's call: a PR opens from that computer, and
-  a merge brings its branch here through origin.
+  worker, and it shares the crew's task list and peer messages with workers on
+  this computer. Landing is still the user's call: a PR opens from that
+  computer, and a merge brings its branch here through origin.
   Nothing starts Solenta there, so keep it open.
 - **Linux server without a display:** `~/solenta/solenta --headless --no-sandbox`
   (implies `--serve-web`; systemd unit in site/docs.html#headless).

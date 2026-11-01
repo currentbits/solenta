@@ -591,11 +591,13 @@ function pushWindows(channel, payload) {
 // Workers started on another computer by thread_fork (#1821). Set once
 // store and runner exist.
 let remoteWorkers = null;
+let crewRelay = null;
 // Remote Solenta hosts shown in this window's sidebar (#1819).
 const hostHub = createHostHub({
   openTunnel: (input, onClose) => openHostTunnel(input, {}, onClose),
   pushWindows,
   onHostThreads: (key, rows) => remoteWorkers?.onHostThreads(key, rows),
+  onCrewCall: (key, call) => (remoteWorkers ? remoteWorkers.onCrewCall(key, call) : null),
   onThreadsChanged: () => {
     if (store) {
       pushWindows("threads:changed", encodeWindowThreads(hostHub.mergeThreads(require("./services.js").listThreads(store))));
@@ -1196,9 +1198,15 @@ app.whenReady().then(async () => {
     log: (msg) => console.warn(msg),
   });
 
+  // Workers other computers forked here reach their crew there (#1821).
+  crewRelay = require("./crewRelay.js").createCrewRelay({
+    store,
+    pushWeb: (channel, payload) => webAccess && webAccess.broadcast(channel, payload),
+  });
   registered = registerIpc({
     channels,
     webAccess,
+    crewRelay,
     ipcMain,
     dialog,
     store,
@@ -1430,10 +1438,12 @@ app.whenReady().then(async () => {
   remoteWorkers = require("./remoteWorkers.js").createRemoteWorkers({
     store,
     hub: hostHub,
+    runner,
     deliver: (input) => runner.deliverNotice(input),
   });
   orchServer = createOrchServer({
     remoteWorkers,
+    crewRelay,
     store,
     runner,
     userDataPath: userData,

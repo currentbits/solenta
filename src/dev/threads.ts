@@ -612,6 +612,12 @@ export function createThreads(ctx: DevCtx): Pick<CoderApi, "threads"> {
       async teleportIn(): Promise<{ threadId: string; title: string }> {
         throw new Error("Teleport requires the desktop app.");
       },
+      async setCrewRelay(): Promise<never> {
+        throw new Error("Crew relay requires the desktop app.");
+      },
+      async crewReply(): Promise<never> {
+        throw new Error("Crew relay requires the desktop app.");
+      },
       async teleportOut(): Promise<never> {
         throw new Error("Teleport requires the desktop app.");
       },
