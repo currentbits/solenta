@@ -5,6 +5,22 @@ import { isDirectCrewChild, sameCrewProject } from "../crewIntegration";
 import { taskGroupRollup, taskRepoTargets } from "../taskGroup";
 import type { TaskGroupRollup } from "../taskGroup";
 
+/** One thread on another computer, as a link (#1831). */
+export interface FarLink {
+  id: string;
+  title: string;
+  host: string | null;
+  status: string | null;
+  /** Its computer is connected, so the thread opens here live. */
+  reachable: boolean;
+}
+export interface FarLinks {
+  workers: FarLink[];
+  lead: FarLink | null;
+  to: FarLink | null;
+  from: FarLink | null;
+}
+
 /**
  * Values the memo'd panes derive from the churning thread list. Each one only
  * moves when the part the pane cares about moves (issue #91).
@@ -136,7 +152,32 @@ export function useThreadRoster({
     return { taskGroup: v.rollup, taskTargets: v.targets };
   }, [taskKey]);
 
+  /**
+   * Work on other computers this thread links to (#1831), T3-style: each a
+   * live thread you can open here when its computer is connected. Value-keyed
+   * so stream ticks elsewhere keep the identity.
+   */
+  const farKey = useMemo(() => {
+    const cur = visibleDetail?.thread;
+    if (!cur) return "null";
+    const row = (id: string | undefined | null) => (id ? threads.find((t) => t.id === id) ?? null : null);
+    const link = (id: string, title: string | null, host: string | null) => {
+      const r = row(id);
+      return { id, title: r?.title || title || "Untitled", host: r?.host?.label ?? host, status: r?.status ?? null, reachable: Boolean(r) };
+    };
+    const workers = (cur.remoteWorkers ?? []).map((w) => link(w.threadId, w.title, w.hostLabel));
+    const lead = cur.crewRelay ? link(cur.crewRelay.leadId, cur.crewRelay.leadTitle, null) : null;
+    const to = cur.teleportedTo?.threadId && !cur.teleportedTo.pending
+      ? link(cur.teleportedTo.threadId, cur.title, cur.teleportedTo.label ?? null)
+      : null;
+    const from = cur.teleportedFrom ? link(cur.teleportedFrom.threadId, cur.title, null) : null;
+    if (!workers.length && !lead && !to && !from) return "null";
+    return JSON.stringify({ workers, lead, to, from });
+  }, [threads, visibleDetail?.thread]);
+  const farLinks = useMemo(() => JSON.parse(farKey) as FarLinks | null, [farKey]);
+
   return {
+    farLinks,
     taskGroup,
     taskTargets,
     handoffSource,

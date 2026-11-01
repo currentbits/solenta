@@ -924,6 +924,13 @@ export interface ThreadInfo {
   /** Teleport (#1702): this thread arrived from another host. */
   teleportedFrom?: { threadId: string; at: number } | null;
   /**
+   * Workers this lead forked onto other computers (#1821). They run and
+   * live there; `out` while a finish notice is still owed.
+   */
+  remoteWorkers?: Array<{ threadId: string; hostKey: string; hostLabel: string; title: string | null; out?: boolean }> | null;
+  /** This thread is a worker another computer's lead forked here (#1821). */
+  crewRelay?: { leadId: string; leadTitle: string | null } | null;
+  /**
    * Free-text user scratch pad (issue #194). Empty string when unset.
    * Never bumps updatedAt. Purely user-facing: the agent never reads it
    * (this is NOT agent memory).
