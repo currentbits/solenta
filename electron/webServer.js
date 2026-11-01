@@ -99,6 +99,18 @@ function parseServeWebArgs(argv) {
 }
 
 /**
+ * --headless on Linux with no X or Wayland display: Electron's GTK init
+ * aborts (SIGTRAP, "Can't create a GtkStyleContext without a display
+ * connection") after main.js has started. --ozone-platform=headless does not
+ * avoid it on every host; a virtual display from xvfb-run does.
+ *
+ * @param {{ headless: boolean }} opts
+ */
+function needsVirtualDisplay(opts, platform = process.platform, env = process.env) {
+  return Boolean(opts.headless) && platform === "linux" && !env.DISPLAY && !env.WAYLAND_DISPLAY;
+}
+
+/**
  * @param {string} raw
  */
 function parsePort(raw) {
@@ -570,6 +582,7 @@ module.exports = {
   DEFAULT_PORT,
   HOST_FLAG_HELP,
   parseServeWebArgs,
+  needsVirtualDisplay,
   loadOrCreateToken,
   terminalQr,
   serveBanner,
