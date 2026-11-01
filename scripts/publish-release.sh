@@ -7,7 +7,8 @@
 # prod builds update from GET /releases/latest; nightly builds update from the
 # newest prerelease. Both compare the release tag against the releaseTag
 # stamped into the bundle by package-app.sh / package-cross.sh.
-# Assets: macos-arm64 (live swap), win32-x64 and linux-x64 (stage + helper
+# Assets: solenta-server-<tag>-<os>-<arch>.tar.gz (headless server, #1829),
+# macos-arm64 (live swap), win32-x64 and linux-x64 (stage + helper
 # swap on Restart).
 #
 # Operator checklist — one throwaway worktree, then remove it:
@@ -59,6 +60,9 @@ fi
 
 bash scripts/package-app.sh --channel "$CHANNEL" --tag "$TAG"
 bash scripts/package-cross.sh --channel "$CHANNEL" --tag "$TAG"
+# Headless server per target (#1829): SSH connect sets it up on a computer
+# with no Solenta installed.
+bash scripts/package-server.sh
 
 # Nightly bundles carry their own name (package-app.sh) so both channels can
 # sit side by side in /Applications. The asset name keeps the platform token
@@ -81,6 +85,13 @@ for cross in "linux-x64.tar.gz" "win32-x64.zip"; do
   if [[ "$src" != "$dst" ]]; then
     mv "$src" "$dst"
   fi
+  ASSETS+=("$dst")
+done
+# Named by tag: each nightly gets its own ~/.solenta/server/<tag> there.
+for target in darwin-arm64 darwin-x64 linux-x64 linux-arm64; do
+  dst="out/solenta-server-${TAG}-${target}.tar.gz"
+  mv "out/solenta-server-${VERSION}-${target}.tar.gz" "$dst"
+  rm -f "out/solenta-server-${VERSION}-${target}.tar.gz.sha256"
   ASSETS+=("$dst")
 done
 

@@ -175,9 +175,13 @@ renamed, the app name inside it is not.
   on Solenta Web, add a device, scan its QR code. Tailscale gives HTTPS.
 - **Another computer:** Settings > Connections > Connect to another computer.
   Enter its SSH host (key login, host key accepted). Solenta starts there if
-  needed and the token is read over SSH. A Linux host without Solenta gets an
-  Install button (this version, checksum-verified, into `~/solenta`); an older
-  one gets Update. Its agents and their sign-ins are listed after connecting.
+  needed and the token is read over SSH. A Mac or Linux computer with no
+  Solenta at all needs nothing installed: connecting sets up this release's
+  headless server there (checksum-verified, into `~/.solenta/server/<release>`,
+  side by side, data in `~/.solenta/data`) and starts it. An older desktop
+  Solenta there gets Update. Its agents and their sign-ins are listed after
+  connecting. To run the server by hand: `solenta-server --port 4620` from
+  the release's `solenta-server-*.tar.gz`.
 - **Another computer without SSH:** on that computer, turn on Solenta Web plus
   Expose over Tailscale (or Allow devices on my network) and add a device with
   Full access. Here, set Connect over to Address and paste the device link.

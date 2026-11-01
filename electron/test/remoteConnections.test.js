@@ -1,5 +1,7 @@
 "use strict";
 
+const { execFileSync } = require("node:child_process");
+
 const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
@@ -198,6 +200,54 @@ describe("remote Connections", () => {
       relay.close();
       fs.rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it("sets up this release's headless server when the host has no Solenta (#1829)", async () => {
+    const sum = "a".repeat(64);
+    const release = {
+      assets: [
+        { name: "solenta-server-nightly-1-linux-x64.tar.gz", browser_download_url: "https://github.com/x/linux-x64.tar.gz", digest: `sha256:${sum}` },
+        { name: "solenta-server-nightly-1-darwin-arm64.tar.gz", browser_download_url: "https://github.com/x/darwin-arm64.tar.gz", digest: `sha256:${"b".repeat(64)}` },
+        { name: "solenta-server-nightly-1-linux-arm64.tar.gz", browser_download_url: "https://github.com/x/nodigest.tar.gz" },
+        { name: "Solenta-nightly-1-linux-x64.tar.gz", browser_download_url: "https://github.com/x/app.tar.gz", digest: `sha256:${sum}` },
+      ],
+    };
+    const updater = (tag) => ({ buildStamp: () => ({ tag, channel: "nightly" }), fetchTag: async () => release });
+    let sent = "";
+    const run = (code, stdout = "") => (_cmd, args, opts, cb) => {
+      sent = args.at(-1);
+      assert.ok(opts.timeout >= 10 * 60_000, "leaves time for a download");
+      cb(code ? Object.assign(new Error("exit"), { code }) : null, stdout, "");
+    };
+    assert.equal(await readRemoteToken("me@box", 4620, { execFile: run(0, "tok\n"), updater: updater("test-1829") }), "tok");
+    const inner = sent.slice(7, -1);
+    assert.equal(inner.includes("'"), false, "no inner single quotes");
+    assert.match(inner, /dir="\$base\/nightly-1"/, "named by the release tag in the asset");
+    assert.match(inner, /linux-x64\) url="https:\/\/github\.com\/x\/linux-x64\.tar\.gz"; sum=a{64} ;;/);
+    assert.match(inner, /darwin-arm64\) url=/);
+    assert.doesNotMatch(inner, /nodigest|app\.tar\.gz/, "unsigned or desktop assets are not offered");
+    assert.match(inner, /\[ "\$got" = "\$sum" \] \|\| \{ rm -rf "\$tmp"; exit 14; \}/);
+    assert.match(inner, /nohup "\$dir\/bin\/solenta-server" --port 4620 --data-dir "\$HOME\/.solenta\/data"/);
+    assert.ok(inner.indexOf("exit 3") === -1, "nothing installed no longer stops the connect");
+    // The generated script parses as POSIX sh (checked, never run).
+    execFileSync("sh", ["-n"], { input: inner });
+
+    await assert.rejects(
+      readRemoteToken("me@box", 4620, { execFile: run(14), updater: updater("nightly-1") }),
+      /Setting up Solenta on me@box failed: The download did not match the release checksum/,
+    );
+    await assert.rejects(
+      readRemoteToken("me@box", 4620, { execFile: run(6), serverDownloads: { version: "v1", byTarget: {} } }),
+      /no Solenta server build for me@box/,
+    );
+  });
+
+  it("offers no server download from a dev tree", async () => {
+    let sent = "";
+    const run = (_cmd, args, _opts, cb) => { sent = args.at(-1); cb(null, "tok", ""); };
+    const fetchTag = () => assert.fail("no release lookup without a tag");
+    await readRemoteToken("me@box", 4620, { execFile: run, updater: { buildStamp: () => ({ tag: null }), fetchTag } });
+    assert.equal(sent, prepareHostCommand(4620));
   });
 
   it("prepares the host over SSH: starts Solenta when nothing answers, then prints the token", async () => {
