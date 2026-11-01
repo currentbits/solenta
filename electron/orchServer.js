@@ -437,6 +437,21 @@ function createToolHandlers(deps) {
   }
 
   /**
+   * This thread is a worker another computer forked here (#1821): its crew
+   * lives there, so the task and peer tools run there. Null otherwise.
+   * @param {string} tool
+   * @param {{ threadId?: unknown, projectId?: unknown }} args
+   */
+  function crewRelayed(tool, args) {
+    const relay = deps.crewRelay;
+    const thread = relay ? relay.relayedThread(tool, String(args.threadId || "")) : null;
+    if (!thread) return null;
+    assertSameProject(thread, args.projectId);
+    const { threadId: _self, projectId: _project, ...rest } = args;
+    return relay.call(thread, tool, rest);
+  }
+
+  /**
    * Kill a kept-alive CLI the way ipc.retireAgent does on archive/settle.
    * @param {string} threadId
    */
@@ -1352,6 +1367,8 @@ function createToolHandlers(deps) {
   }
 
   async function task_add(args) {
+    const relayed = crewRelayed("task_add", args);
+    if (relayed) return relayed;
     const thread = store.getThread(args.threadId);
     if (!thread) {
       throw new Error(`Unknown thread: ${args.threadId}`);
@@ -1364,6 +1381,8 @@ function createToolHandlers(deps) {
   }
 
   async function task_list(args) {
+    const relayed = crewRelayed("task_list", args);
+    if (relayed) return relayed;
     const thread = store.getThread(args.threadId);
     if (!thread) {
       throw new Error(`Unknown thread: ${args.threadId}`);
@@ -1373,6 +1392,8 @@ function createToolHandlers(deps) {
   }
 
   async function task_claim(args) {
+    const relayed = crewRelayed("task_claim", args);
+    if (relayed) return relayed;
     const thread = store.getThread(args.threadId);
     if (!thread) {
       throw new Error(`Unknown thread: ${args.threadId}`);
@@ -1385,6 +1406,8 @@ function createToolHandlers(deps) {
   }
 
   async function task_complete(args) {
+    const relayed = crewRelayed("task_complete", args);
+    if (relayed) return relayed;
     const thread = store.getThread(args.threadId);
     if (!thread) {
       throw new Error(`Unknown thread: ${args.threadId}`);
@@ -1413,6 +1436,8 @@ function createToolHandlers(deps) {
   }
 
   async function task_release(args) {
+    const relayed = crewRelayed("task_release", args);
+    if (relayed) return relayed;
     const thread = store.getThread(args.threadId);
     if (!thread) {
       throw new Error(`Unknown thread: ${args.threadId}`);
@@ -1426,11 +1451,21 @@ function createToolHandlers(deps) {
   }
 
   async function peer_send(args) {
+    const relayed = crewRelayed("peer_send", args);
+    if (relayed) return relayed;
     const from = store.getThread(args.threadId);
     if (!from) {
       throw new Error(`Unknown thread: ${args.threadId}`);
     }
     assertSameProject(from, args.projectId);
+    // A peer on another computer (#1821): its message starts or queues a
+    // turn there, same as a local peer's wake-up.
+    const far = remoteWorker(args.toThreadId, args.projectId);
+    if (far) {
+      const title = from.title == null ? "" : String(from.title);
+      await remote.send(far.lead.id, far.w, `[peer from ${from.id} ("${title}")] ${args.message}`);
+      return { delivered: true, toThreadId: far.w.threadId, host: far.w.hostLabel };
+    }
     const to = store.getThread(args.toThreadId);
     if (!to) {
       throw new Error(`Unknown thread: ${args.toThreadId}`);
@@ -1888,7 +1923,8 @@ function buildMcpServer(sdk, handlers, opts = {}) {
         "that computer's checkout, not your commits, so push first if it needs them. You are " +
         "woken when it finishes, and thread_status, thread_send, thread_stop, thread_merge, " +
         "thread_pr, thread_archive, thread_settle and thread_rename take its threadId like a " +
-        "local worker's (thread_merge brings its branch here through origin). pool and tier do " +
+        "local worker's (thread_merge brings its branch here through origin). Its task_* and " +
+        "peer_send calls reach your crew here, and peer_send reaches it there. pool and tier do " +
         "not apply there. Returns the new threadId.",
       inputSchema: {
         threadId: z.string().min(1),
@@ -2831,6 +2867,7 @@ function createOrchServer(opts) {
       getIosSimulator,
       log,
       remoteWorkers: opts.remoteWorkers,
+      crewRelay: opts.crewRelay,
     };
 
     server = http.createServer(async (req, res) => {

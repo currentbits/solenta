@@ -63,6 +63,7 @@ function hostKey(h) {
  *   pushWindows: (channel: string, payload: unknown) => void,
  *   onThreadsChanged: () => void,
  *   onHostThreads?: (key: string, rows: any[]) => void,
+ *   onCrewCall?: (key: string, call: { callId: string, workerId: string, tool: string, args: object }) => Promise<unknown> | null,
  *   WebSocketImpl?: typeof WebSocket,
  *   setTimer?: (fn: () => void, ms: number) => unknown,
  *   clearTimer?: (t: unknown) => void,
@@ -165,6 +166,17 @@ function createHostHub(deps) {
     if (channel === "thread:updated") {
       if (!payload || !payload.thread) return;
       deps.pushWindows(channel, { ...payload, thread: { ...payload.thread, host: entry.tag } });
+      return;
+    }
+    if (channel === "crew:call") {
+      // A worker forked onto that host calls its crew tools here (#1821).
+      // null = not one of ours: another desktop on that host answers.
+      const pending = payload && deps.onCrewCall ? deps.onCrewCall(entry.key, payload) : null;
+      if (!pending) return;
+      void Promise.resolve(pending).then(
+        (result) => ({ callId: payload.callId, result }),
+        (err) => ({ callId: payload.callId, error: err && err.message ? err.message : String(err) }),
+      ).then((answer) => send(entry, "threads:crewReply", [answer], LIST_TIMEOUT_MS)).catch(() => {});
       return;
     }
     if (channel === "boot:ready") {

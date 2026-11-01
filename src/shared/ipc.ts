@@ -6285,6 +6285,13 @@ export interface CoderApi {
     teleportIn(payload: TeleportPayload): Promise<{ threadId: string; title: string }>;
     teleportOut(input: { threadId: string }): Promise<TeleportPayload>;
     /**
+     * Crew relay (#1821), called by the lead's computer over this host's web
+     * API, never by the renderer: setCrewRelay marks a worker it forked here,
+     * crewReply answers a `crew:call` push for that worker's task and peer tools.
+     */
+    setCrewRelay(input: { threadId: string; leadId: string; leadTitle?: string | null }): Promise<{ ok: true }>;
+    crewReply(input: { callId: string; result?: unknown; error?: string }): Promise<{ ok: boolean }>;
+    /**
      * Per-thread inbound policy for messages from other threads (issue #551).
      * accept / queue-only / refuse. Never bumps updatedAt.
      */

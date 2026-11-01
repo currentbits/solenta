@@ -2594,6 +2594,8 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       },
       teleportIn: () => Promise.reject(new Error("not in the fake")),
       teleportOut: () => Promise.reject(new Error("not in the fake")),
+      setCrewRelay: () => Promise.reject(new Error("not in the fake")),
+      crewReply: () => Promise.reject(new Error("not in the fake")),
       setEjected: (input: unknown) => {
         const i = input as { threadId: string; ejected: boolean };
         calls.push({ channel: "threads.setEjected", args: [input] });

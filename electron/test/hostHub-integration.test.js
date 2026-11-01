@@ -80,7 +80,7 @@ async function waitFor(check, timeoutMs = 15_000) {
 }
 
 describe("hostHub × real remote Solenta Web host", () => {
-  let tmp, store, runner, server, hub, project, prevSimulate;
+  let tmp, store, runner, server, hub, project, prevSimulate, crewRelay;
   const windowPushes = [];
   let windowLists = 0;
 
@@ -111,7 +111,8 @@ describe("hostHub × real remote Solenta Web host", () => {
     const core = await import(pathToFileURL(path.join(__dirname, "../../core/dist/index.js")).href);
     runner = createRunner({ store, core, pushFn: broadcast, tickMs: 15, userDataPath: tmp });
     const ipc = require("../ipc.js");
-    const ctx = ipc.makeCtx({ dialog: {}, store, runner, broadcast, worktreeBase: path.join(tmp, "worktrees"), userDataPath: tmp });
+    crewRelay = require("../crewRelay.js").createCrewRelay({ store, pushWeb: (c, p) => server && server.broadcast(c, p) });
+    const ctx = ipc.makeCtx({ dialog: {}, store, runner, broadcast, crewRelay, worktreeBase: path.join(tmp, "worktrees"), userDataPath: tmp });
     server = await startWebServer({ host: "127.0.0.1", port: 0, token: "remote-token", ctx, handlers: ipc.IPC_HANDLERS });
 
     hub = createHostHub({
@@ -233,15 +234,21 @@ describe("hostHub × real remote Solenta Web host", () => {
       pushWindows: () => {},
       onThreadsChanged: () => {},
       onHostThreads: (key, rows) => workers?.onHostThreads(key, rows),
+      onCrewCall: (key, call) => workers?.onCrewCall(key, call),
     });
-    workers = createRemoteWorkers({ store: leadStore, hub: leadHub, deliver: (input) => delivered.push(input) });
+    const leadRunner = {
+      startRun: () => assert.fail("ran locally"),
+      isAutoTurn: () => false,
+      deliverNotice: (input) => delivered.push(input),
+    };
+    workers = createRemoteWorkers({ store: leadStore, hub: leadHub, runner: leadRunner, deliver: (input) => delivered.push(input) });
     try {
       leadHub.setHosts([{ host: "me@box", remotePort: 4620, label: "Box" }]);
       await waitFor(() => leadHub.list()[0].status === "online" && leadHub.projectsOf("me@box:4620").length > 0);
 
       const handlers = createToolHandlers({
         store: leadStore,
-        runner: { startRun: () => assert.fail("ran locally"), isAutoTurn: () => false },
+        runner: leadRunner,
         forkThread: () => assert.fail("forked locally"),
         getProvider: () => ({}),
         remoteWorkers: workers,
@@ -281,6 +288,34 @@ describe("hostHub × real remote Solenta Web host", () => {
       assert.match(delivered[1].line, /finished with status done/);
       await new Promise((r) => setTimeout(r, 200));
       assert.equal(delivered.length, 2);
+
+      // Crew tools: the worker calls them on Box, they run against the
+      // lead's crew here (task list, peer messages), both directions.
+      assert.equal(store.getThread(res.threadId).crewRelay.leadId, lead.id);
+      const onBox = createToolHandlers({
+        store, runner, crewRelay, forkThread: () => {}, getProvider: () => ({}),
+        boundThreadId: res.threadId, boundProjectId: project.id,
+      });
+      await handlers.task_add({ ...ids, tasks: [{ title: "write docs" }] });
+      const boxIds = { threadId: res.threadId, projectId: project.id };
+      const listed2 = await onBox.task_list(boxIds);
+      assert.equal(listed2.rootThreadId, lead.id);
+      assert.deepEqual(listed2.tasks.map((t) => t.title), ["write docs"]);
+      const claimed = await onBox.task_claim(boxIds);
+      assert.equal(claimed.task.owner, res.threadId);
+      const before = delivered.length;
+      await onBox.task_complete({ ...boxIds, taskId: claimed.task.id, note: "done there" });
+      assert.equal(leadStore.getCrewTasks(lead.id)[0].status, "done");
+      assert.match(delivered[before].line, /\[crew\] finished t1 \("write docs"\): done there/);
+      await onBox.peer_send({ ...boxIds, toThreadId: lead.id, message: "hi lead" });
+      assert.match(delivered.at(-1).line, new RegExp(`^\\[peer from ${res.threadId} .*\\] hi lead$`));
+      assert.equal(delivered.at(-1).threadId, lead.id);
+      // The lead's peer message runs a turn over there and wakes it after.
+      const n = delivered.length;
+      const peer = await handlers.peer_send({ ...ids, toThreadId: res.threadId, message: "hi worker" });
+      assert.equal(peer.host, "Box");
+      await waitFor(() => delivered.length === n + 1);
+      assert.ok((await leadHub.invoke("me@box:4620", "threads:get", [res.threadId])).messages.some((m) => m.role === "user" && /\[peer from .*\] hi worker/.test(m.text)));
 
       // Stop and merge are the user's call, same as for a local worker.
       await assert.rejects(handlers.thread_stop({ ...ids, threadId: res.threadId }), /user's decision/);

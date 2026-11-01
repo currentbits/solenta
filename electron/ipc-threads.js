@@ -164,6 +164,14 @@ module.exports = {
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
     return got;
   },
+  "threads:setCrewRelay": async (ctx, input) => {
+    if (!ctx.crewRelay) throw new Error("Crew relay is not available here.");
+    return ctx.crewRelay.attach(input);
+  },
+  "threads:crewReply": async (ctx, input) => {
+    if (!ctx.crewRelay) throw new Error("Crew relay is not available here.");
+    return ctx.crewRelay.reply(input);
+  },
   "threads:teleportOut": async (ctx, input) => {
     return teleport.packThread(ctx.store, input && input.threadId, {
       isRunning: ctx.runner ? (id) => ctx.runner.isRunning(id) : undefined,
