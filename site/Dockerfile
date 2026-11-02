@@ -4,5 +4,6 @@ FROM nginx:alpine
 # between nginx:alpine image refreshes.
 RUN apk upgrade --no-cache
 COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY security-headers.conf /etc/nginx/snippets/seo-headers.conf
 COPY . /usr/share/nginx/html
-RUN rm -f /usr/share/nginx/html/nginx.conf /usr/share/nginx/html/Dockerfile
+RUN rm -f /usr/share/nginx/html/nginx.conf /usr/share/nginx/html/Dockerfile /usr/share/nginx/html/security-headers.conf

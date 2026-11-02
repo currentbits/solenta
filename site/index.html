@@ -3,15 +3,15 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Solenta - run Claude Code, Codex and Cursor agents in parallel, with shared memory</title>
-  <meta name="description" content="Free, open-source desktop app for running AI coding agents in parallel: Claude Code, Codex, Cursor, OpenCode, Kimi and Grok, each in its own git worktree, sharing one local memory and a planboard that is your GitHub issues." />
+  <title>Solenta: run Claude Code, Codex and Cursor in parallel</title>
+  <meta name="description" content="Free, open-source desktop app that runs Claude Code, Codex, Cursor and more in parallel, each in its own git worktree, with one shared local memory." />
   <link rel="canonical" href="https://solenta.app/" />
   <link rel="image_src" href="https://solenta.app/assets/card.png?v=4" />
   <meta property="og:type" content="website" />
   <meta property="og:site_name" content="Solenta" />
   <meta property="og:url" content="https://solenta.app/" />
-  <meta property="og:title" content="Solenta - every agent starts where the last one stopped" />
-  <meta property="og:description" content="Free, open-source desktop app for running AI coding agents in parallel: Claude Code, Codex, Cursor, OpenCode, Kimi and Grok, each in its own git worktree, sharing one local memory and a planboard that is your GitHub issues." />
+  <meta property="og:title" content="Solenta: every agent starts where the last one stopped" />
+  <meta property="og:description" content="Free, open-source desktop app that runs Claude Code, Codex, Cursor and more in parallel, each in its own git worktree, with one shared local memory." />
   <meta property="og:image" content="https://solenta.app/assets/card.png?v=4" />
   <meta property="og:image:secure_url" content="https://solenta.app/assets/card.png?v=4" />
   <meta property="og:image:type" content="image/png" />
@@ -20,14 +20,16 @@
   <meta property="og:image:alt" content="Solenta. Your agents remember." />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:site" content="@currentbitsNET" />
-  <meta name="twitter:title" content="Solenta - every agent starts where the last one stopped" />
-  <meta name="twitter:description" content="Free, open-source desktop app for running AI coding agents in parallel: Claude Code, Codex, Cursor, OpenCode, Kimi and Grok, each in its own git worktree, sharing one local memory and a planboard that is your GitHub issues." />
+  <meta name="twitter:title" content="Solenta: every agent starts where the last one stopped" />
+  <meta name="twitter:description" content="Free, open-source desktop app that runs Claude Code, Codex, Cursor and more in parallel, each in its own git worktree, with one shared local memory." />
   <meta name="twitter:image" content="https://solenta.app/assets/card.png?v=4" />
   <meta name="twitter:image:alt" content="Solenta. Your agents remember." />
   <meta name="theme-color" content="#f5f5f2" />
   <link rel="icon" href="assets/icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="apple-touch-icon.png" />
   <script>document.documentElement.classList.add("js");</script>
-  <link rel="stylesheet" href="style.css?v=11" />
+  <link rel="preload" href="fonts/Geist-Variable.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="stylesheet" href="style.css?v=12" />
   <script src="https://unpkg.com/@phosphor-icons/web@2.1.1" defer></script>
   <!-- First-party stats: no cookies, no personal data, so no consent banner.
        stats.js beacons pageviews and data-event clicks to stats.solenta.app. -->
@@ -37,7 +39,7 @@
   <script src="consent.js" defer></script>
   <!-- Structured data for search and answer engines. The FAQPage mirrors #faq
        word for word; electron/test/site-jsonld.test.js fails when they drift. -->
-  <script type="application/ld+json">{"@context": "https://schema.org", "@type": "SoftwareApplication", "name": "Solenta", "url": "https://solenta.app/", "applicationCategory": "DeveloperApplication", "operatingSystem": "macOS, Windows, Linux", "description": "Free, open-source desktop app for running AI coding agents in parallel: Claude Code, Codex, Cursor, OpenCode, Kimi and Grok, each in its own git worktree, sharing one local memory and a planboard that is your GitHub issues.", "license": "https://opensource.org/licenses/MIT", "downloadUrl": "https://github.com/currentbits/solenta/releases/latest", "sameAs": ["https://github.com/currentbits/solenta"], "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"}}</script>
+  <script type="application/ld+json">{"@context":"https://schema.org","@type":"SoftwareApplication","name":"Solenta","url":"https://solenta.app/","applicationCategory":"DeveloperApplication","operatingSystem":"macOS, Windows, Linux","description":"Free, open-source desktop app that runs Claude Code, Codex, Cursor and more in parallel, each in its own git worktree, with one shared local memory.","license":"https://opensource.org/licenses/MIT","downloadUrl":"https://github.com/currentbits/solenta/releases/latest","sameAs":["https://github.com/currentbits/solenta"],"offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},"softwareVersion":"0.28.0","releaseNotes":"https://solenta.app/changelog.html","screenshot":"https://solenta.app/assets/screen-main.png","image":"https://solenta.app/assets/card.png?v=4","isAccessibleForFree":true}</script>
   <script type="application/ld+json">{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "How do I run multiple AI coding agents at once?", "acceptedAnswer": {"@type": "Answer", "text": "Open a thread per task in Solenta. Each thread runs the agent CLI you pick (Claude Code, Codex, Cursor, Kimi, Grok or OpenCode) in its own git worktree, so parallel agents never share a working copy. Threads that need you stay up top, and you can fork one task across several providers and keep the best diff."}}, {"@type": "Question", "name": "How do I stop parallel coding agents from stepping on each other?", "acceptedAnswer": {"@type": "Answer", "text": "Give every agent its own git worktree on its own branch. Solenta does that per thread automatically, and a thread only settles green once its verify command exits 0, so \"done\" means your checks passed, not that the agent said so."}}, {"@type": "Question", "name": "Is Solenta a coding agent?", "acceptedAnswer": {"@type": "Answer", "text": "No. Solenta is the desktop app that runs your coding agents. It drives the agent CLIs you already installed, on your own subscriptions, and adds shared memory, a planboard, worktrees, verify gates and spend caps around them."}}, {"@type": "Question", "name": "Which agents can Solenta run?", "acceptedAnswer": {"@type": "Answer", "text": "Claude Code, Codex, Cursor, Kimi, Grok and OpenCode. Install the CLIs you want to drive and Solenta finds them on your PATH. Permission modes, model overrides and session resume are per provider."}}, {"@type": "Question", "name": "Does my code leave my machine?", "acceptedAnswer": {"@type": "Answer", "text": "Only inside the prompts your chosen agent CLI sends to its provider, same as running that CLI yourself. Solenta adds nothing on top: memory is a local SQLite file, plans are your own GitHub issues, and there is no Solenta cloud."}}, {"@type": "Question", "name": "Do I pay Solenta for tokens?", "acceptedAnswer": {"@type": "Answer", "text": "No. Bring your own subscription or API key per provider. Solenta never resells tokens and never sits in the billing path."}}, {"@type": "Question", "name": "What does the planboard need?", "acceptedAnswer": {"@type": "Answer", "text": "The GitHub CLI signed in, and a project whose origin is on GitHub. Without those, threads, memory and everything else work exactly the same; the board simply stays off."}}, {"@type": "Question", "name": "Is it free?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. MIT licensed, with releases for macOS, Windows and Linux."}}]}</script>
 </head>
 <body>
@@ -46,7 +48,7 @@
 
 <nav class="nav">
   <div class="nav-inner">
-    <a class="brand" href="index.html">
+    <a class="brand" href="./">
       <img src="assets/icon.svg" alt="" />
       Solenta
     </a>
@@ -62,6 +64,7 @@
   </div>
 </nav>
 
+<main id="main">
 <header class="hero">
   <div class="hero-bg" aria-hidden="true">
     <div class="hero-grid"></div>
@@ -96,7 +99,10 @@
     <div class="hero-shot">
       <div class="shot-wrap">
         <div class="shot">
-          <img src="assets/screen-main.png?v=3" alt="Solenta running a thread: recalled memories, agent messages, the plan, and the composer in one reading column" />
+          <picture>
+            <source type="image/webp" srcset="assets/screen-main-800.webp?v=3 800w, assets/screen-main-1680.webp?v=3 1680w" sizes="(max-width: 1128px) calc(100vw - 50px), 1078px" />
+            <img src="assets/screen-main.png?v=3" width="1680" height="1050" alt="Solenta running a thread: recalled memories, agent messages, the plan, and the composer in one reading column" fetchpriority="high" decoding="async" />
+          </picture>
         </div>
       </div>
     </div>
@@ -124,6 +130,7 @@
       <div class="section-head reveal">
         <p class="eyebrow">Shared memory</p>
         <h2>Your agents <span class="em">remember.</span></h2>
+        <a class="feature-docs" href="docs.html#memory">Read the memory docs</a>
         <p>
           What one thread learns, the next one knows. Solenta injects a local
           memory server into every agent session automatically, so decisions
@@ -164,6 +171,7 @@
   <div class="wrap">
     <div class="section-head reveal">
       <h2>Your planboard is your <span class="em">issue tracker.</span></h2>
+        <a class="feature-docs" href="docs.html#views">Read the views docs</a>
       <p>
         The board is plain GitHub issues with labels, so nothing is trapped in
         a local database. Agents update it with <code>gh</code>. Your teammates
@@ -218,19 +226,25 @@
     <div class="bento">
       <div class="cell cell-a reveal">
         <h3>Multi-phase Build workflows</h3>
+        <a class="feature-docs" href="docs.html#workflows">Read the workflows docs</a>
         <p>Seed, analyze, verify, judge, synthesize. Fan out agents per phase, give each phase its own provider, and watch every phase settle live.</p>
         <div class="cell-img">
-          <img src="assets/screen-agents.png?v=3" alt="The Agents tab showing a settled workflow with phases Seed, Analyze, Verify, Judge and Synthesize, plus crew tasks" />
+          <picture>
+            <source type="image/webp" srcset="assets/screen-agents-800.webp?v=3 800w, assets/screen-agents-1680.webp?v=3 1680w" sizes="(max-width: 900px) calc(100vw - 50px), (max-width: 1200px) calc((100vw - 64px) * 2 / 3 - 2px), 761px" />
+            <img src="assets/screen-agents.png?v=3" width="1680" height="1050" alt="The Agents tab showing a settled workflow with phases Seed, Analyze, Verify, Judge and Synthesize, plus crew tasks" loading="lazy" decoding="async" />
+          </picture>
         </div>
       </div>
       <div class="cell cell-b reveal">
         <div class="cell-icon"><i class="ph ph-squares-four"></i></div>
         <h3>Six providers, one UI</h3>
+        <a class="feature-docs" href="docs.html#threads">Read the threads docs</a>
         <p>Claude Code, Codex, Cursor, Kimi, Grok and OpenCode with sticky permission modes, model overrides and session resume.</p>
       </div>
       <div class="cell cell-e reveal">
         <div class="cell-icon"><i class="ph ph-terminal-window"></i></div>
         <h3>Terminal and browser, in the thread</h3>
+        <a class="feature-docs" href="docs.html#panes">Read the panes docs</a>
         <p>A shell in the thread's worktree and an embedded browser on your dev server, beside the transcript. Screenshot the page into the composer, or let the agent click through it itself.</p>
       </div>
       <div class="cell cell-e reveal">
@@ -241,60 +255,77 @@
       <div class="cell cell-e cell-tint reveal">
         <div class="cell-icon"><i class="ph ph-users-three"></i></div>
         <h3>Agent teams, not just fan-out</h3>
+        <a class="feature-docs" href="docs.html#orchestration">Read the orchestration docs</a>
         <p>Workers share a crew task list and message each other directly. A shared per-repo code index goes into every dispatched prompt, so a fresh worker starts knowing where things live.</p>
       </div>
       <div class="cell cell-e reveal">
         <div class="cell-icon"><i class="ph ph-chalkboard-teacher"></i></div>
         <h3>Teach mode</h3>
+        <a class="feature-docs" href="docs.html#teach">Read the teach docs</a>
         <p>Hints, not solutions, on every provider. Autonomy steps up as reviews pass, and permission modes stay gated to the current rung.</p>
       </div>
       <div class="cell cell-e reveal">
         <div class="cell-icon"><i class="ph ph-chat-circle-dots"></i></div>
         <h3>Ask first</h3>
+        <a class="feature-docs" href="docs.html#ask">Read the ask docs</a>
         <p>Read-only questions about the repo, answered from the code index and shared memory. No worktree, no tools, no spend. Start work when you are ready to change things.</p>
       </div>
       <div class="cell cell-e reveal">
         <div class="cell-icon"><i class="ph ph-list-checks"></i></div>
         <h3>Spec, then dispatch</h3>
+        <a class="feature-docs" href="docs.html#spec">Read the spec docs</a>
         <p>Requirements, design, tasks, each one gated until you approve. Then Dispatch forks a worker per unblocked checkbox, and Converge fills in what the repo is still missing.</p>
       </div>
       <div class="cell cell-e reveal">
         <div class="cell-icon"><i class="ph ph-path"></i></div>
         <h3>A review itinerary, not a file list</h3>
+        <a class="feature-docs" href="docs.html#review">Read the review docs</a>
         <p>Every agent diff gets a risk-ranked read order: CI and config first, then reuse, the critical path, tests, and the rest. Environment is a tab in the inspector, not a pile of cards.</p>
       </div>
       <div class="cell cell-e cell-tint reveal">
         <div class="cell-icon"><i class="ph ph-seal-check"></i></div>
         <h3>Green means verified</h3>
+        <a class="feature-docs" href="docs.html#guardrails">Read the guardrails docs</a>
         <p>A thread only settles green once its verify command exits 0. Guardrails protect the config a worker may not touch, and scan what it brings back for injection and secrets.</p>
       </div>
       <div class="cell cell-e reveal">
         <div class="cell-icon"><i class="ph ph-chart-line-up"></i></div>
         <h3>Fleet analytics from ground truth</h3>
+        <a class="feature-docs" href="docs.html#analytics">Read the analytics docs</a>
         <p>Merge rate, review tax, rework and cost per merged PR, read off git and GitHub, not off what the agents say about themselves.</p>
       </div>
       <div class="cell cell-e reveal">
         <div class="cell-icon"><i class="ph ph-wallet"></i></div>
         <h3>Spend caps</h3>
+        <a class="feature-docs" href="docs.html#spend">Read the spend docs</a>
         <p>Set a daily budget. A run that would cross it never starts. Token burn is visible per thread.</p>
       </div>
       <div class="cell cell-e cell-tint reveal">
         <div class="cell-icon"><i class="ph ph-globe"></i></div>
         <h3>Web mode and SSH</h3>
+        <a class="feature-docs" href="docs.html#web-mode">Read the web mode docs</a>
         <p><code>--serve-web</code> puts the UI in a browser behind a token. Connections opens that UI on another machine through SSH. A remote project runs the agent on that host instead.</p>
       </div>
       <div class="cell cell-e reveal">
         <h3>Kanban, when threads pile up</h3>
+        <a class="feature-docs" href="docs.html#views">Read the views docs</a>
         <p>Working, idle, done, failed. Every thread at a glance.</p>
         <div class="cell-img">
-          <img src="assets/screen-kanban.png?v=3" alt="The Kanban view grouping threads by status" />
+          <picture>
+            <source type="image/webp" srcset="assets/screen-kanban-800.webp?v=3 800w, assets/screen-kanban-1680.webp?v=3 1680w" sizes="(max-width: 900px) calc(100vw - 50px), (max-width: 1200px) calc((100vw - 64px) / 2 - 2px), 567px" />
+            <img src="assets/screen-kanban.png?v=3" width="1680" height="1050" alt="The Kanban view grouping threads by status" loading="lazy" decoding="async" />
+          </picture>
         </div>
       </div>
       <div class="cell cell-e reveal">
         <h3>Automations on a schedule</h3>
+        <a class="feature-docs" href="docs.html#automations">Read the automations docs</a>
         <p>Recurring prompts against any project: hourly, daily, weekly, with the provider and model you pick.</p>
         <div class="cell-img">
-          <img src="assets/screen-automations.png?v=3" alt="The Automations view with a form to schedule a prompt" />
+          <picture>
+            <source type="image/webp" srcset="assets/screen-automations-800.webp?v=3 800w, assets/screen-automations-1680.webp?v=3 1680w" sizes="(max-width: 900px) calc(100vw - 50px), (max-width: 1200px) calc((100vw - 64px) / 2 - 2px), 567px" />
+            <img src="assets/screen-automations.png?v=3" width="1680" height="1050" alt="The Automations view with a form to schedule a prompt" loading="lazy" decoding="async" />
+          </picture>
         </div>
       </div>
     </div>
@@ -452,6 +483,7 @@
   <div class="wrap">
     <div class="section-head reveal">
       <h2>Install in a minute.</h2>
+        <a class="feature-docs" href="docs.html#getting-started">Read the getting started docs</a>
       <p>Grab the archive for your platform, then install whichever agent CLIs you want to drive. Solenta finds them on your PATH.</p>
       <p class="release-line" data-tag hidden></p>
     </div>
@@ -520,9 +552,11 @@
   </div>
 </section>
 
+</main>
+
 <footer>
   <div class="wrap footer-inner">
-    <a class="brand" href="index.html">
+    <a class="brand" href="./">
       <img src="assets/icon.svg" alt="" width="18" height="18" />
       Solenta
     </a>
