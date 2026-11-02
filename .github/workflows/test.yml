@@ -40,6 +40,10 @@ jobs:
         os: [macos-latest, windows-latest, ubuntu-latest]
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Sitemap freshness checks need the actual last HTML edit, not the
+          # shallow boundary's unrelated commit date.
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22

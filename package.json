@@ -6,6 +6,7 @@
   "description": "Solenta - desktop agentic development tool",
   "main": "electron/main.js",
   "scripts": {
+    "build:site": "node scripts/build-llms.js && node scripts/build-sitemap.js",
     "dev": "node scripts/dev.js",
     "dev:browser": "vite",
     "build": "npm run typecheck && vite build",

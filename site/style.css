@@ -22,6 +22,16 @@
   font-display: swap;
 }
 @font-face {
+  /* Calculated from the bundled Geist with fontkit 2.0.4, using Next.js's
+     weighted Latin average and Arial metrics. See docs/seo-audit-2026-11-02.md. */
+  font-family: "Geist Fallback";
+  src: local("Arial");
+  size-adjust: 107.19%;
+  ascent-override: 85.83%;
+  descent-override: 20.52%;
+  line-gap-override: 9.33%;
+}
+@font-face {
   font-family: "Geist Mono";
   src: url("fonts/GeistMono-Variable.woff2") format("woff2");
   font-weight: 100 900;
@@ -55,7 +65,7 @@
   --radius-ctl: 9px;
   --max: 1200px;
   --ease: cubic-bezier(0.16, 1, 0.3, 1);
-  --font-sans: "Geist", -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-sans: "Geist", "Geist Fallback", system-ui, sans-serif;
   --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, monospace;
 }
 
@@ -85,7 +95,8 @@ a:focus-visible, .btn:focus-visible, summary:focus-visible {
   outline-offset: 3px;
   border-radius: 4px;
 }
-img { max-width: 100%; display: block; }
+img { max-width: 100%; height: auto; display: block; }
+picture { display: block; }
 code, pre, .mono { font-family: var(--font-mono); }
 
 ::-webkit-scrollbar { width: 10px; height: 10px; }
@@ -605,6 +616,7 @@ section#agents { padding: clamp(56px, 7vw, 88px) 0; }
 }
 .cell p { margin: 0; color: var(--muted); font-size: 14.5px; line-height: 1.65; }
 .cell p code { color: var(--ink); font-size: 0.9em; }
+.feature-docs { display: inline-block; margin-bottom: 10px; font-size: 13px; text-decoration: underline; text-underline-offset: 3px; }
 .cell .cell-img {
   margin: 20px -26px -26px;
   border-top: 1px solid var(--border);
@@ -917,7 +929,7 @@ footer {
   align-items: center;
   gap: 24px;
   flex-wrap: wrap;
-  color: var(--dim);
+  color: var(--muted);
   font-size: 13.5px;
 }
 .footer-inner a { color: var(--muted); transition: color 0.2s; }
@@ -1002,7 +1014,7 @@ footer {
 }
 .doc-table th {
   text-align: left;
-  color: var(--dim);
+  color: var(--muted);
   font-weight: 560;
   font-size: 12.5px;
   padding: 8px 12px 8px 0;
