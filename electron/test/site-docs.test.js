@@ -12,6 +12,7 @@ const ROOT = path.join(__dirname, "../..");
 const read = (file) => fs.readFileSync(path.join(ROOT, "site", file), "utf8");
 const source = fs.readFileSync(path.join(ROOT, "site-content/docs.html"), "utf8");
 const { topics } = sections(source);
+const topicForId = Object.fromEntries(topics.flatMap((topic) => topic.ids.map((id) => [id, topic.id])));
 const parse = (html, url = "https://solenta.app/") => new JSDOM(html, { url }).window.document;
 const plain = (html) => parse(html).body.textContent.replace(/\s+/g, " ").trim();
 
@@ -22,6 +23,11 @@ test("docs migration preserves every source section, ID and topic order", () => 
     const doc = parse(read(`docs/${topic.id}/index.html`));
     const body = doc.querySelector("[data-doc-content]");
     assert.equal(plain(body.innerHTML), plain(topic.nodes.join("\n")), topic.id);
+    const sourceLinks = [...parse(topic.nodes.join("\n")).querySelectorAll("a[href]")].map((a) => {
+      const href = a.getAttribute("href"), id = href.startsWith("#") ? href.slice(1) : null;
+      return id && topicForId[id] ? `docs/${topicForId[id]}${id === topicForId[id] ? "" : `#${id}`}` : href;
+    });
+    assert.deepEqual([...body.querySelectorAll("a[href]")].map((a) => a.getAttribute("href")), sourceLinks, topic.id);
     for (const id of topic.ids.filter((id) => id !== topic.id)) assert.ok(body.querySelector(`[id="${id}"]`), id);
     assert.equal(doc.querySelector("[data-doc-section]").dataset.docTitle, topic.title);
   }
