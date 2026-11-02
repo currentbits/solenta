@@ -1,0 +1,309 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <base href="../../" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Threads and providers | Solenta docs</title>
+  <meta name="description" content="Choose an agent provider, permission mode and model for each Solenta thread. Follow-up turns resume the same provider session and conversation." />
+  <link rel="canonical" href="https://solenta.app/docs/threads" />
+  <link rel="image_src" href="https://solenta.app/assets/card.png?v=4" />
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="Solenta" />
+  <meta property="og:url" content="https://solenta.app/docs/threads" />
+  <meta property="og:title" content="Threads and providers | Solenta docs" />
+  <meta property="og:description" content="Choose an agent provider, permission mode and model for each Solenta thread. Follow-up turns resume the same provider session and conversation." />
+  <meta property="og:image" content="https://solenta.app/assets/card.png?v=4" />
+  <meta property="og:image:secure_url" content="https://solenta.app/assets/card.png?v=4" />
+  <meta property="og:image:type" content="image/png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="Solenta. Your agents remember." />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:site" content="@currentbitsNET" />
+  <meta name="twitter:title" content="Threads and providers | Solenta docs" />
+  <meta name="twitter:description" content="Choose an agent provider, permission mode and model for each Solenta thread. Follow-up turns resume the same provider session and conversation." />
+  <meta name="twitter:image" content="https://solenta.app/assets/card.png?v=4" />
+  <meta name="twitter:image:alt" content="Solenta. Your agents remember." />
+  <meta name="theme-color" content="#f5f5f2" />
+  <link rel="icon" href="assets/icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="apple-touch-icon.png" />
+  <script>document.documentElement.classList.add("js");</script>
+  <link rel="preload" href="fonts/Geist-Variable.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="stylesheet" href="style.css?v=13" />
+  <!-- First-party stats: no cookies, no personal data, so no consent banner.
+       stats.js beacons pageviews and data-event clicks to stats.solenta.app. -->
+  <script src="stats.js" defer></script>
+  <!-- Meterbird analytics, cookieless until the visitor allows it in the
+       consent.js banner; replay only after "Allow". -->
+  <script src="consent.js" defer></script>
+
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"TechArticle","headline":"Threads and providers","description":"Choose an agent provider, permission mode and model for each Solenta thread. Follow-up turns resume the same provider session and conversation.","url":"https://solenta.app/docs/threads","image":"https://solenta.app/assets/card.png?v=4","dateModified":"2026-11-02","author":{"@id":"https://solenta.app/#org"},"publisher":{"@id":"https://solenta.app/#org"},"about":{"@type":"SoftwareApplication","name":"Solenta","url":"https://solenta.app/"}}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Solenta","item":"https://solenta.app/"},{"@type":"ListItem","position":2,"name":"Docs","item":"https://solenta.app/docs.html"},{"@type":"ListItem","position":3,"name":"Threads and providers","item":"https://solenta.app/docs/threads"}]}</script>
+
+</head>
+<body>
+<nav class="nav">
+  <div class="nav-inner">
+    <a class="brand" href="./">
+      <img src="assets/icon.svg" alt="" />
+      Solenta
+    </a>
+    <div class="nav-links">
+      <a href="docs.html" class="active">Docs</a>
+      <a href="changelog.html">Changelog</a>
+      <a href="https://github.com/currentbits/solenta/discussions">Discussions</a>
+      <a href="https://github.com/currentbits/solenta">GitHub</a>
+      <a class="nav-cta" href="./#install">
+        Download
+      </a>
+    </div>
+  </div>
+</nav>
+
+<div class="wrap"><div class="docs-layout"><nav class="docs-nav" aria-label="Docs topics"><a href="docs/getting-started">Getting started</a>
+<a href="docs/memory">Shared memory</a>
+<a href="docs/views">Inbox, Planboard, Review</a>
+<a class="active" aria-current="page" href="docs/threads">Threads and providers</a>
+<a href="docs/cli-sessions">Import, eject and reclaim</a>
+<a href="docs/codex">Codex sessions</a>
+<a href="docs/palette">Command palette</a>
+<a href="docs/worktrees">Worktrees and pull requests</a>
+<a href="docs/workflows">Build workflows</a>
+<a href="docs/orchestration">Orchestration</a>
+<a href="docs/guardrails">Guardrails and verification</a>
+<a href="docs/spec">Spec mode</a>
+<a href="docs/teach">Teach mode</a>
+<a href="docs/ask">Ask mode</a>
+<a href="docs/review">Review itinerary</a>
+<a href="docs/skills">Skills</a>
+<a href="docs/automations">Automations</a>
+<a href="docs/dev-servers">Dev servers</a>
+<a href="docs/project-config">Project config files</a>
+<a href="docs/panes">Terminal and Browser panes</a>
+<a href="docs/spend">Spend guardrails</a>
+<a href="docs/analytics">Usage and fleet analytics</a>
+<a href="docs/integrations">External MCP pairing</a>
+<a href="docs/updates">Notifications and updates</a>
+<a href="docs/web-mode">Phones and browsers</a>
+<a href="docs/ssh">Other computers and SSH</a>
+<a href="docs/windows">Windows</a>
+<a href="docs/performance">Performance and memory use</a>
+<a href="docs/architecture">Architecture</a></nav><main class="docs-content"><p><a href="docs.html">All docs</a></p><h1>Threads and providers</h1><p class="lede">A thread is one provider session against one project. It keeps its own permission mode, an optional model override, and its conversation.</p><section data-doc-section="threads" data-doc-title="Threads and providers"><div data-doc-content><p>
+        A <strong>thread</strong> is one provider session against one project.
+        It keeps its own permission mode, an optional model override, and its
+        conversation. After the first turn, the provider session id is locked
+        in and follow-up turns resume where the previous one stopped.
+      </p>
+<ul>
+        <li><strong>Permission mode</strong> is sticky per thread: Ask first, Accept edits, Plan mode, Auto review, or Full access. <strong>Auto review</strong> lets the CLI's own reviewer approve routine actions (Claude and Codex) and still sends you anything it will not approve.</li>
+        <li><strong>Model picker</strong> lists the provider's known models; providers without a list accept free-form model ids.</li>
+        <li><strong>Reasoning effort</strong> can be set per thread where the provider supports it. On models with a fast tier, <strong>Speed</strong> sets Fast and the model button reads "· Fast".</li>
+        <li><strong>Auto</strong> in the model picker routes the first turn by task tier: fast, balanced or strong, picked from the prompt. Map each tier to an agent profile in Edit Project, <strong>Model routing</strong>. Routing never changes the permission mode.</li>
+        <li><strong>Agent</strong> picks a custom CLI agent for the thread on Claude and OpenCode (passed as <code>--agent</code>), from the project's and your own agent files.</li>
+        <li><strong>Fork and hand off</strong> copies a thread, optionally onto another provider, and starts it on a new prompt. <strong>Fork from here</strong> on an assistant message copies the conversation only up to that message; on Claude the native session is forked at that point.</li>
+        <li><strong>Best of N</strong> sends one prompt to several providers at once so you can compare the results. Tick <strong>Plan only</strong> to have each one draft a plan without building. On the plan card you like, pick a provider next to <strong>Implement in a new thread</strong> to build it there.</li>
+        <li><strong>Agent profiles</strong> save a provider + model + effort + permission combination under a name, so a thread can be set up in one click instead of four. A profile can also carry a <a href="docs/guardrails#governance">governance policy</a>.</li>
+        <li><strong>Open in new window</strong> in a sidebar thread's menu, <kbd>⌘⇧O</kbd>, or dragging the card out of the window detaches the thread into a window of its own, while the main window stays the fleet overview. A thread that already has a window gets that window focused, and notifications for it open there.</li>
+        <li><strong>Edit and resubmit</strong> rewinds to any past message of yours, lets you change it, and runs again from that point.</li>
+        <li><strong>Scratch notes</strong> are a free-text field per thread, edited from the header and previewed in the sidebar, for the context that is not worth a memory entry.</li>
+        <li><strong>Rename</strong> a thread from its header or the sidebar menu when the auto-generated title stops describing the work.</li>
+        <li><strong>Snooze</strong> hides a thread until a preset (an hour, this evening, tomorrow, next week) without stopping the agent. A thread that blocks on you, or fails after you hid it, wakes early and shows a <em>Woke</em> pill. <em>Settle on merge</em> archives the thread when its PR lands.</li>
+        <li><strong>Drop</strong> images and folders anywhere on the transcript, not only on the composer strip.</li>
+        <li><strong>Pin a message</strong> in the transcript to jump back to it. Pins take an optional label. The agent never reads them.</li>
+        <li><strong>Files on a question.</strong> When an agent asks you something, you can attach supporting files to the answer, not only type it.</li>
+      </ul>
+<p>
+        The sidebar is a flat list, not per-project groups. Each card
+        carries its project slug and, when the repo has one, its favicon
+        or app icon; a scope filter at the top of the list limits every
+        section to one repo, and status, provider, and tag filters plus
+        group-by sit next to it. Each card uses a small provider mark instead
+        of the harness name. <strong>Pinned</strong> threads sit in their
+        own block at the top (oldest pin first) and never auto-settle.
+        Below that, threads that need attention, then a
+        <strong>Working</strong> shelf for quiet runs (a crew stays there
+        while a background worker is still going), a
+        <strong>Snoozed</strong> shelf (wake-soonest first) and a
+        <strong>Settled</strong> shelf (newest wrap-up first, archived
+        threads at the tail). Forks and subagents nest under the thread
+        that started them; idle stopped fork workers drop off the list.
+        Delegating, Orchestrating and Working show on the card.
+        Right-click a card, or its overflow button, for the thread-actions
+        menu: snooze (a nested submenu of presets), pin, fork or hand off,
+        rename, mute, and settle. The menu is the native Electron menu
+        when the app can show one, otherwise a keyboard-driven overlay
+        (arrows, Home, End, Escape).
+      </p>
+<p>
+        <kbd>⌘N</kbd> starts a new thread, <kbd>⌘⇧N</kbd> starts one in a
+        chosen project. <kbd>⌘K</kbd> opens the
+        <a href="docs/palette">command palette</a>. Esc or Ctrl+C stops the
+        live turn, including while the run is still preparing to launch.
+        Quitting the app asks if agents are still working, then SIGKILLs
+        detached CLIs so they do not linger. Click the project slug in the
+        header to start another thread there. The composer's
+        <code>/</code> palette lists orchestration commands, the CLI verbs,
+        and the underlying CLI's own skills and custom commands.
+        <code>/btw</code> (or <kbd>⌥Enter</kbd> on a plain draft) asks a
+        side question on the same thread without interrupting the live run.
+        A card, not a new thread, not the follow-up queue. <code>/usage</code>
+        opens live account quotas (five-hour and weekly windows where the
+        provider reports them). A mic on the composer transcribes locally,
+        and optional vim mode adds Insert and Normal motions.
+        <code>/goal &lt;text&gt;</code> sets a standing goal for the thread,
+        shown as a chip in the header; a bare <code>/goal</code> clears it.
+        Codex uses its native goal and keeps taking turns until the goal
+        is done. Other providers get the goal as a note on each prompt.
+      </p>
+<p>
+        <kbd>⌘F</kbd> finds text in the open thread, including messages
+        outside the rendered tail and collapsed tool groups, and in loaded
+        diffs in the Git pane. Enter and <kbd>⇧Enter</kbd> step through
+        matches. Threads with eight or more prompts get a tick rail on the
+        right edge, one mark per prompt; hover it for the labeled outline
+        and click to put that prompt at the top. <code>/jump auth</code>
+        opens the same outline filtered to prompts containing "auth".
+        <kbd>⌘⇧T</kbd> reopens the last closed pane.
+        <strong>Copy link</strong> in the thread header menu or the sidebar
+        menu copies a <code>solenta://thread/&lt;id&gt;</code> link that
+        opens the thread; the project filter menu copies
+        <code>solenta://project/&lt;id&gt;</code> links. A thread id in an
+        assistant reply is a link when it belongs to this project.
+      </p>
+<p>
+        Coming back to a thread that sat idle for half an hour or more
+        shows a dismissible <strong>Recap</strong> card: what was asked,
+        what changed, where it stands, and what is open. It is built
+        locally after each turn, so no provider is billed. While the agent
+        thinks, the working row shows the last line of its latest thought
+        instead of just Thinking.
+      </p>
+<p>
+        Agents can render an <code>html</code> block, or an MCP tool's UI,
+        as a page inside the transcript. It runs in a sandboxed frame with
+        no network access. When an agent calls <code>secret_request</code>,
+        a masked <strong>Secret requested</strong> card asks for the value.
+        Provide puts it only in the environment of that thread's runs for
+        24 hours, never in the transcript, and the value is redacted from
+        any output that echoes it. It survives a restart in its own
+        owner-only file in the app's data folder, encrypted only when OS
+        credential encryption is turned on. When an MCP server asks a Claude run for
+        input mid-turn, the question shows as an input card instead of
+        failing.
+      </p>
+<p>
+        A thread that fails keeps its <strong>failure reason</strong> and shows
+        it on the sidebar card and in the Agents panel, so a red thread says
+        what went wrong without being opened.
+      </p>
+<p>
+        When a provider returns a usage-limit error with a reset clock, the
+        thread parks as <strong>quota-wait</strong> instead of failing. A
+        banner names the resume time; the same prompt is sent again when
+        the quota resets, or immediately with Resume now. Exhausted
+        balance with no clock is still a hard fail. Solenta's own daily
+        and orchestration spend caps are a separate gate and do not park
+        this way.
+      </p>
+<p>
+        <strong>New thread</strong> on the search row follows your defaults:
+        <em>Isolate new threads in a git worktree</em> and
+        <em>Delegate new threads to a worker</em> in Settings, the second
+        winning over the first. The caret beside it lists the other ways in:
+      </p>
+<ul>
+        <li><strong>New worktree thread</strong>: its own git worktree and branch, so the agent never touches your checkout.</li>
+        <li><strong>New orchestrator thread</strong>: the thread hands its first prompt to a worker in a worktree and supervises instead of editing (see <a href="docs/orchestration">Orchestration</a>).</li>
+        <li><strong>New plain thread</strong>: straight in the project checkout, no worktree.</li>
+        <li><strong>New teach thread</strong>: hints and review, not a finished solution (see <a href="docs/teach">Teach mode</a>).</li>
+        <li><strong>New ask thread</strong>: read-only repo Q&amp;A; no worktree (see <a href="docs/ask">Ask mode</a>).</li>
+        <li><strong>From an issue</strong>: start from a GitHub or Linear issue.</li>
+      </ul>
+<p>
+        On a draft, the strip under the composer chooses
+        <strong>Local checkout</strong>, <strong>New worktree</strong>, or
+        <strong>Previous worktree</strong> (stacked on the project's latest
+        other worktree branch). That choice locks after the first message.
+      </p>
+<h2 id="steering">Queue or steer</h2>
+<p>
+        While Claude or Codex is running, choose <strong>Queue</strong> to send
+        your draft after this turn, or <strong>Steer</strong> to inject guidance
+        into the live turn. <kbd>⌘Enter</kbd> follows that choice;
+        <kbd>⌘⇧Enter</kbd> steers directly. A delivered steer appears on the
+        current turn with a Steered label. If the live turn ends before
+        delivery, Solenta can fall back to queueing; a failed delivery keeps
+        your draft. Other providers use the follow-up queue.
+      </p>
+<p>
+        A failed or stopped turn leaves queued instructions waiting for you.
+        Failed queue edits keep their text, and Retry uses the actual failed
+        message, including a machine-delivered worker notice. A side question
+        through <code>/btw</code> remains a separate card.
+      </p>
+<h2 id="transcript-tools">Pins, quotes and attachments</h2>
+<p>
+        Pin a message and optionally label it, then use the pin to jump back
+        even when it is outside the currently rendered transcript. Pins are
+        your bookmarks and are not added to the agent's prompt. Select text
+        inside an assistant reply and choose the quote action or press
+        <kbd>⌘⇧C</kbd> (Cite) to attach that selection as a quote chip for
+        your next send. A draft can hold several quote chips, each with an
+        optional note.
+      </p>
+<p>
+        Type <code>@</code> in the composer to attach more than files. The
+        list shows your prompt snippets first, then threads, PRs and skills,
+        then files. A thread, PR or skill becomes a chip that survives a
+        restart and is expanded into the prompt when you send. Files still
+        insert <code>@path</code>. Save reusable text in Settings, Agents,
+        <strong>Prompt snippets</strong>, then insert one with
+        <code>@name</code>.
+      </p>
+<p>
+        Attach a screen recording (<code>.mp4</code>, <code>.m4v</code>,
+        <code>.mov</code>, <code>.webm</code>) and the agent gets up to
+        eight sampled frames, each labelled with the clip name and time.
+        Queued follow-ups show their files as chips, and cancelling a
+        queued follow-up gives back both the text and the files.
+      </p>
+<p>
+        A Claude thread that sat idle past the prompt cache window with a
+        large context shows a strip above the composer:
+        <strong>Compact first</strong> compacts the conversation before
+        your next send re-reads all of it.
+      </p>
+<p>
+        Question cards accept supporting files on each answer. Those files
+        belong to that question, separate from the composer draft. In web
+        mode the paperclip accepts ordinary files and offers a folder picker;
+        dropping a directory preserves its tree. Images are available only
+        for models that accept them. Screenshots captured from Browser stay
+        with the thread that requested them if you switch before capture ends.
+      </p></div></section><nav class="topic-neighbors" aria-label="Adjacent topics"><a href="docs/views">Inbox, Planboard, Review</a> <span aria-hidden="true">·</span> <a href="docs/cli-sessions">Import, eject and reclaim</a></nav></main></div></div>
+<footer>
+  <div class="wrap footer-inner">
+    <a class="brand" href="./">
+      <img src="assets/icon.svg" alt="" width="18" height="18" />
+      Solenta
+    </a>
+    <span>Free and open source under MIT.</span>
+    <span class="spacer"></span>
+    <a href="docs.html">Docs</a>
+    <a href="changelog.html">Changelog</a>
+    <a href="compare/solenta-vs-conductor">vs Conductor</a>
+    <a href="compare/solenta-vs-claude-squad">vs Claude Squad</a>
+    <a href="alternatives/conductor">Conductor alternatives</a>
+    <a href="https://github.com/currentbits/solenta/discussions">Discussions</a>
+    <a href="https://github.com/currentbits/solenta">GitHub</a>
+    <a href="https://github.com/currentbits/solenta/releases">Releases</a>
+    <a href="https://x.com/currentbitsNET">@currentbitsNET</a>
+    <a href="https://verifieddr.com/website/solenta-app" target="_blank"><img src="https://verifieddr.com/badge/solenta-app.svg?style=minimal" alt="Verified DR - Verified Domain Rating for solenta.app" width="200" height="24" /></a>
+    <a href="https://nicklaunches.com/products/solenta/?utm_source=solenta.app&utm_medium=badge&utm_campaign=featured" target="_blank" rel="noopener"><img src="https://nicklaunches.com/badges/featured.png" alt="Solenta on Nick Launches" width="244" height="56" /></a>
+  </div>
+</footer>
+
+<script src="main.js?v=5"></script>
+</body>
+</html>

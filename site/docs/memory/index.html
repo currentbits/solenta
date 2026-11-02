@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <base href="../../" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Shared Memory for Claude Code, Codex and Cursor Agents</title>
+  <meta name="description" content="One local memory server every agent in Solenta reads and writes over MCP, so the next agent starts where the last one stopped. Free and open source." />
+  <link rel="canonical" href="https://solenta.app/docs/memory" />
+  <link rel="image_src" href="https://solenta.app/assets/card.png?v=4" />
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="Solenta" />
+  <meta property="og:url" content="https://solenta.app/docs/memory" />
+  <meta property="og:title" content="Shared Memory for Claude Code, Codex and Cursor Agents" />
+  <meta property="og:description" content="One local memory server every agent in Solenta reads and writes over MCP, so the next agent starts where the last one stopped. Free and open source." />
+  <meta property="og:image" content="https://solenta.app/assets/card.png?v=4" />
+  <meta property="og:image:secure_url" content="https://solenta.app/assets/card.png?v=4" />
+  <meta property="og:image:type" content="image/png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="Solenta. Your agents remember." />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:site" content="@currentbitsNET" />
+  <meta name="twitter:title" content="Shared Memory for Claude Code, Codex and Cursor Agents" />
+  <meta name="twitter:description" content="One local memory server every agent in Solenta reads and writes over MCP, so the next agent starts where the last one stopped. Free and open source." />
+  <meta name="twitter:image" content="https://solenta.app/assets/card.png?v=4" />
+  <meta name="twitter:image:alt" content="Solenta. Your agents remember." />
+  <meta name="theme-color" content="#f5f5f2" />
+  <link rel="icon" href="assets/icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="apple-touch-icon.png" />
+  <script>document.documentElement.classList.add("js");</script>
+  <link rel="preload" href="fonts/Geist-Variable.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="stylesheet" href="style.css?v=13" />
+  <!-- First-party stats: no cookies, no personal data, so no consent banner.
+       stats.js beacons pageviews and data-event clicks to stats.solenta.app. -->
+  <script src="stats.js" defer></script>
+  <!-- Meterbird analytics, cookieless until the visitor allows it in the
+       consent.js banner; replay only after "Allow". -->
+  <script src="consent.js" defer></script>
+
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"TechArticle","headline":"Shared memory for AI coding agents","description":"One local memory server every agent in Solenta reads and writes over MCP, so the next agent starts where the last one stopped. Free and open source.","url":"https://solenta.app/docs/memory","image":"https://solenta.app/assets/card.png?v=4","dateModified":"2026-11-02","author":{"@id":"https://solenta.app/#org"},"publisher":{"@id":"https://solenta.app/#org"},"about":{"@type":"SoftwareApplication","name":"Solenta","url":"https://solenta.app/"}}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Solenta","item":"https://solenta.app/"},{"@type":"ListItem","position":2,"name":"Docs","item":"https://solenta.app/docs.html"},{"@type":"ListItem","position":3,"name":"Shared memory","item":"https://solenta.app/docs/memory"}]}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"FAQPage","mainEntity":[{"@type":"Question","name":"Is memory shared across agent providers?","acceptedAnswer":{"@type":"Answer","text":"Solenta injects its local memory server into agent sessions when it is healthy. Entries one thread stores can be recalled by a later thread."}},{"@type":"Question","name":"Can I inspect what agents remember?","acceptedAnswer":{"@type":"Answer","text":"Yes. The Memory tab lets you search, read and store entries, browse older memories and inspect their citations. Save as memory drafts an entry for review before storing it."}},{"@type":"Question","name":"Does local memory mean my model provider receives no project context?","acceptedAnswer":{"@type":"Answer","text":"No. Your chosen CLI sends prompts to its provider. Solenta keeps the memory database local, while recalled entries included in a prompt follow that prompt."}}]}</script>
+
+</head>
+<body>
+<nav class="nav">
+  <div class="nav-inner">
+    <a class="brand" href="./">
+      <img src="assets/icon.svg" alt="" />
+      Solenta
+    </a>
+    <div class="nav-links">
+      <a href="docs.html" class="active">Docs</a>
+      <a href="changelog.html">Changelog</a>
+      <a href="https://github.com/currentbits/solenta/discussions">Discussions</a>
+      <a href="https://github.com/currentbits/solenta">GitHub</a>
+      <a class="nav-cta" href="./#install">
+        Download
+      </a>
+    </div>
+  </div>
+</nav>
+
+<div class="wrap"><div class="docs-layout"><nav class="docs-nav" aria-label="Docs topics"><a href="docs/getting-started">Getting started</a>
+<a class="active" aria-current="page" href="docs/memory">Shared memory</a>
+<a href="docs/views">Inbox, Planboard, Review</a>
+<a href="docs/threads">Threads and providers</a>
+<a href="docs/cli-sessions">Import, eject and reclaim</a>
+<a href="docs/codex">Codex sessions</a>
+<a href="docs/palette">Command palette</a>
+<a href="docs/worktrees">Worktrees and pull requests</a>
+<a href="docs/workflows">Build workflows</a>
+<a href="docs/orchestration">Orchestration</a>
+<a href="docs/guardrails">Guardrails and verification</a>
+<a href="docs/spec">Spec mode</a>
+<a href="docs/teach">Teach mode</a>
+<a href="docs/ask">Ask mode</a>
+<a href="docs/review">Review itinerary</a>
+<a href="docs/skills">Skills</a>
+<a href="docs/automations">Automations</a>
+<a href="docs/dev-servers">Dev servers</a>
+<a href="docs/project-config">Project config files</a>
+<a href="docs/panes">Terminal and Browser panes</a>
+<a href="docs/spend">Spend guardrails</a>
+<a href="docs/analytics">Usage and fleet analytics</a>
+<a href="docs/integrations">External MCP pairing</a>
+<a href="docs/updates">Notifications and updates</a>
+<a href="docs/web-mode">Phones and browsers</a>
+<a href="docs/ssh">Other computers and SSH</a>
+<a href="docs/windows">Windows</a>
+<a href="docs/performance">Performance and memory use</a>
+<a href="docs/architecture">Architecture</a></nav><main class="docs-content"><p><a href="docs.html">All docs</a></p><h1>Shared memory for AI coding agents</h1><p class="lede">Solenta supervises a small local memory server (HTTP + MCP, SQLite with full-text and vector search). When it is healthy, it is injected into agent sessions automatically, so decisions and gotchas one thread stores are visible to the next.</p><section data-doc-section="memory" data-doc-title="Shared memory"><div data-doc-content><p>
+        Solenta supervises a small local <strong>memory server</strong> (HTTP +
+        MCP, SQLite with full-text and vector search). When it is healthy, it
+        is injected into agent sessions automatically, so decisions and gotchas
+        one thread stores are visible to the next. The Memory tab in the right
+        panel lets you search, read and store entries yourself. The server is
+        localhost-only and bearer-token gated.
+      </p>
+<p>
+        Entries carry <strong>provenance</strong> (which agent wrote them),
+        and each agent builds a trust score from how its entries hold up, which
+        ranks what comes back on a search. Facts can carry
+        <strong>file:line, thread or commit citations</strong>; before a fact
+        is injected, those file citations are checked against the current
+        worktree and contradicted entries are invalidated. Assistant
+        replies in the transcript carry the same idea as
+        <strong>tier labels</strong>: a chip for repo paths the turn
+        read or cited, one for shared-memory tools, one for GitHub
+        issue or PR refs. A message long enough to make a claim
+        (240 characters) with none of those sources is tagged
+        <em>model prior knowledge</em>. Short chatter is left unlabeled.
+        The stored embeddings are reused to fold near-duplicates together
+        and to surface entries that contradict each other, and the memory
+        graph records co-occurrence edges so related entries can be walked,
+        not just matched on text.
+      </p>
+<p>
+        Above facts sit <strong>strategy</strong> entries: distilled
+        <em>how we work here</em> notes that survive a single thread.
+        <code>memory_distill</code> is how a finished run gets folded into
+        that layer instead of leaving a pile of one-off observations.
+      </p>
+<p>
+        <strong>Config doctor</strong> lives in Settings, Memory, under
+        Project tools, next to the code map. It lints the repo's
+        <code>AGENTS.md</code>, <code>CLAUDE.md</code>, and sibling
+        instruction files against a six-axis rubric (commands,
+        architecture, patterns, conciseness, currency, actionability)
+        and against shared-memory conventions, strategies, and verified
+        decisions. Preview generates those files from memory without
+        writing; Write from memory confirms, then writes
+        <code>AGENTS.md</code> / <code>CLAUDE.md</code> /
+        <code>GEMINI.md</code>. Scoring and generation are
+        deterministic, no model in the loop.
+      </p>
+<p>
+        A <strong>hypothesis ledger</strong> records what an agent
+        tried and ruled out. The next thread on the same problem is handed that
+        list, so it does not spend its first ten minutes re-walking dead ends.
+        A per-repo <strong>code index</strong> of symbols is built once and
+        injected into every dispatched prompt, so a fresh worker starts knowing
+        where things live.
+      </p>
+<p>
+        Each entry has an <strong>inclusion mode</strong> that decides when
+        it is injected: <em>always</em> (the default), <em>glob</em> (when a
+        file in play matches its globs), <em>auto</em> (when the prompt
+        shares most of its title's words) or <em>manual</em> (when the
+        prompt mentions <code>#</code> plus the first eight characters of
+        its id). Conditional entries still show up in search.
+      </p>
+<p>
+        <strong>Save as memory…</strong> in a finished thread's menu drafts
+        a shared memory entry from the run. You review and edit the draft
+        before anything is stored.
+      </p>
+<p>
+        Two repos with the same folder name get separate memory scopes. The
+        first keeps the plain name; later ones get a short suffix. Settings,
+        Memory lists repos that share a folder name, with a Rename box per
+        scope that moves its memories along.
+      </p>
+<h2 id="memory-browser">Browse the full memory library</h2>
+<p>
+        The Memory tab starts with your project's entries. Search by text or
+        filter by knowledge, convention, strategy or task. Use
+        <strong>+</strong> to add one, and load older memories to browse past
+        the first page. Expand an entry to read its body and citations. When
+        memories need a decision, a review banner opens the queue. The footer
+        shows when consolidation last ran and links to Settings for the code
+        map and config doctor.
+      </p>
+<p>
+        Switching projects discards the previous project's config-doctor
+        preview and write confirmation, so a stale preview cannot write
+        another repository's instructions.
+      </p></div><div data-doc-extra><h2 id="memory-recall">Recall and review</h2>
+<p>Inclusion modes control when an entry is injected. Always includes it in bootstrap context. Glob matches files, auto uses the prompt's overlap with the entry title, and manual includes an entry when the prompt names its shortened memory ID. Conditional entries remain searchable.</p>
+<p>Stored facts can become stale. Checking a file citation does not prove that every remembered statement is still correct. Review recalled context and the resulting diff, and use a verify command for the project's checks.</p>
+
+<h2 id="memory-privacy">Local storage and model requests</h2>
+<p>The shared memory database stays local. Your chosen agent CLI still sends its prompts to its provider, as it would when you ran that CLI yourself. Recalled entries included in a prompt follow that provider's normal request path. Local storage does not mean that a model request contains no project context.</p>
+
+<h2 id="memory-external-client">Connect a local MCP client</h2>
+<p>The memory server and the coder-threads task server are separate MCP endpoints. The pairings described under <a href="docs/integrations">External MCP pairing</a> launch and track tasks. Do not use those pairing tokens as memory-server credentials.</p>
+<p>For a local client that supports Streamable HTTP MCP and custom request headers, use the connection fields below. Solenta must be running with a healthy memory server. Read its current port and bearer token from <code>memory-server.json</code> in Solenta's application data directory. Do not post the token in a prompt or put it on a command line.</p>
+<table class="doc-table"><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
+<tr><td>Transport</td><td>Streamable HTTP</td></tr>
+<tr><td>URL</td><td><code>http://127.0.0.1:&lt;port&gt;/mcp</code>, using the port in the memory-server configuration</td></tr>
+<tr><td>Request header</td><td><code>Authorization: Bearer &lt;token&gt;</code>, using that configuration's memory-server token</td></tr>
+</tbody></table>
+<p>Client configuration field names differ. Keep the endpoint on localhost and use the client's private configuration or secret storage for the bearer token. The memory server's endpoint is not the public task-pairing URL. Read tools such as <code>memory_bootstrap</code> and <code>memory_search</code> use the project scope supplied by the client.</p>
+
+<h2 id="memory-questions">Questions about shared memory</h2>
+<div class="faq-list">
+<details data-faq><summary>Is memory shared across agent providers?</summary><p>Solenta injects its local memory server into agent sessions when it is healthy. Entries one thread stores can be recalled by a later thread.</p></details>
+<details data-faq><summary>Can I inspect what agents remember?</summary><p>Yes. The Memory tab lets you search, read and store entries, browse older memories and inspect their citations. Save as memory drafts an entry for review before storing it.</p></details>
+<details data-faq><summary>Does local memory mean my model provider receives no project context?</summary><p>No. Your chosen CLI sends prompts to its provider. Solenta keeps the memory database local, while recalled entries included in a prompt follow that prompt.</p></details>
+</div>
+</div></section><nav class="topic-neighbors" aria-label="Adjacent topics"><a href="docs/getting-started">Getting started</a> <span aria-hidden="true">·</span> <a href="docs/views">Inbox, Planboard, Review</a></nav></main></div></div>
+<footer>
+  <div class="wrap footer-inner">
+    <a class="brand" href="./">
+      <img src="assets/icon.svg" alt="" width="18" height="18" />
+      Solenta
+    </a>
+    <span>Free and open source under MIT.</span>
+    <span class="spacer"></span>
+    <a href="docs.html">Docs</a>
+    <a href="changelog.html">Changelog</a>
+    <a href="compare/solenta-vs-conductor">vs Conductor</a>
+    <a href="compare/solenta-vs-claude-squad">vs Claude Squad</a>
+    <a href="alternatives/conductor">Conductor alternatives</a>
+    <a href="https://github.com/currentbits/solenta/discussions">Discussions</a>
+    <a href="https://github.com/currentbits/solenta">GitHub</a>
+    <a href="https://github.com/currentbits/solenta/releases">Releases</a>
+    <a href="https://x.com/currentbitsNET">@currentbitsNET</a>
+    <a href="https://verifieddr.com/website/solenta-app" target="_blank"><img src="https://verifieddr.com/badge/solenta-app.svg?style=minimal" alt="Verified DR - Verified Domain Rating for solenta.app" width="200" height="24" /></a>
+    <a href="https://nicklaunches.com/products/solenta/?utm_source=solenta.app&utm_medium=badge&utm_campaign=featured" target="_blank" rel="noopener"><img src="https://nicklaunches.com/badges/featured.png" alt="Solenta on Nick Launches" width="244" height="56" /></a>
+  </div>
+</footer>
+
+<script src="main.js?v=5"></script>
+</body>
+</html>

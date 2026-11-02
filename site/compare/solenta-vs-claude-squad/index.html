@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <base href="../../" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Solenta vs Claude Squad: parallel coding agents compared</title>
+  <meta name="description" content="Compare Solenta's desktop workflow with Claude Squad's terminal workflow: agents, worktrees, memory, issue tracking and source licenses." />
+  <link rel="canonical" href="https://solenta.app/compare/solenta-vs-claude-squad" />
+  <link rel="image_src" href="https://solenta.app/assets/card.png?v=4" />
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="Solenta" />
+  <meta property="og:url" content="https://solenta.app/compare/solenta-vs-claude-squad" />
+  <meta property="og:title" content="Solenta vs Claude Squad: parallel coding agents compared" />
+  <meta property="og:description" content="Compare Solenta's desktop workflow with Claude Squad's terminal workflow: agents, worktrees, memory, issue tracking and source licenses." />
+  <meta property="og:image" content="https://solenta.app/assets/card.png?v=4" />
+  <meta property="og:image:secure_url" content="https://solenta.app/assets/card.png?v=4" />
+  <meta property="og:image:type" content="image/png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="Solenta. Your agents remember." />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:site" content="@currentbitsNET" />
+  <meta name="twitter:title" content="Solenta vs Claude Squad: parallel coding agents compared" />
+  <meta name="twitter:description" content="Compare Solenta's desktop workflow with Claude Squad's terminal workflow: agents, worktrees, memory, issue tracking and source licenses." />
+  <meta name="twitter:image" content="https://solenta.app/assets/card.png?v=4" />
+  <meta name="twitter:image:alt" content="Solenta. Your agents remember." />
+  <meta name="theme-color" content="#f5f5f2" />
+  <link rel="icon" href="assets/icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="apple-touch-icon.png" />
+  <script>document.documentElement.classList.add("js");</script>
+  <link rel="preload" href="fonts/Geist-Variable.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="stylesheet" href="style.css?v=13" />
+  <!-- First-party stats: no cookies, no personal data, so no consent banner.
+       stats.js beacons pageviews and data-event clicks to stats.solenta.app. -->
+  <script src="stats.js" defer></script>
+  <!-- Meterbird analytics, cookieless until the visitor allows it in the
+       consent.js banner; replay only after "Allow". -->
+  <script src="consent.js" defer></script>
+
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage","name":"Solenta vs Claude Squad: parallel coding agents compared","description":"Compare Solenta's desktop workflow with Claude Squad's terminal workflow: agents, worktrees, memory, issue tracking and source licenses.","url":"https://solenta.app/compare/solenta-vs-claude-squad","dateModified":"2026-11-02","publisher":{"@id":"https://solenta.app/#org"}}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Solenta","item":"https://solenta.app/"},{"@type":"ListItem","position":2,"name":"Compare","item":"https://solenta.app/#compare"},{"@type":"ListItem","position":3,"name":"Solenta vs Claude Squad: parallel coding agents compared","item":"https://solenta.app/compare/solenta-vs-claude-squad"}]}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"FAQPage","mainEntity":[{"@type":"Question","name":"Are Solenta and Claude Squad both coding agents?","acceptedAnswer":{"@type":"Answer","text":"They run agent programs rather than replacing those programs. Solenta finds supported CLIs on your PATH. Claude Squad's README describes managing configurable agent programs in terminal sessions."}},{"@type":"Question","name":"Do Windows build targets prove native Windows support?","acceptedAnswer":{"@type":"Answer","text":"No. Claude Squad's release configuration lists Windows targets, but its README also requires tmux. This comparison has not verified a native Windows runtime setup."}},{"@type":"Question","name":"Can I import Claude Squad's database into Solenta?","acceptedAnswer":{"@type":"Answer","text":"This page does not claim a database importer. Solenta's documented import workflow imports existing sessions from supported provider CLIs, which is a different source of history."}}]}</script>
+
+</head>
+<body>
+<nav class="nav">
+  <div class="nav-inner">
+    <a class="brand" href="./">
+      <img src="assets/icon.svg" alt="" />
+      Solenta
+    </a>
+    <div class="nav-links">
+      <a href="docs.html" class="active">Docs</a>
+      <a href="changelog.html">Changelog</a>
+      <a href="https://github.com/currentbits/solenta/discussions">Discussions</a>
+      <a href="https://github.com/currentbits/solenta">GitHub</a>
+      <a class="nav-cta" href="./#install">
+        Download
+      </a>
+    </div>
+  </div>
+</nav>
+
+<div class="wrap"><div class="docs-layout"><main class="docs-content"><h1>Solenta vs Claude Squad</h1>
+<p>Choose Solenta if you want desktop worktree threads with shared local memory, verification and an issue-backed planboard. Choose Claude Squad if you want a terminal interface for configurable local agent programs with tmux and Git worktrees.</p>
+<p>Facts checked on <strong>2 November 2026</strong>. “Claude Squad” here means <a href="https://github.com/smtg-ai/claude-squad">smtg-ai/claude-squad</a>. The comparison uses its own repository and documentation, rather than similarly named products.</p>
+<h2>Documented differences</h2>
+<div class="table-scroll"><table class="doc-table"><thead><tr><th>Area</th><th>Solenta</th><th>Claude Squad</th></tr></thead><tbody><tr><td>Platforms</td><td>Desktop releases for macOS, Windows and Linux. <a href="./#install">Downloads</a></td><td>Terminal interface requiring tmux. Release configuration lists macOS, Linux and Windows build targets; those targets alone do not establish tested native Windows compatibility. <a href="https://github.com/smtg-ai/claude-squad#readme">README</a>, <a href="https://github.com/smtg-ai/claude-squad/blob/main/.goreleaser.yaml">build configuration</a></td></tr><tr><td>Agents</td><td>Claude Code, Codex, Cursor, Kimi, Grok, OpenCode and Muse Code, using installed CLIs. <a href="docs/threads">Threads</a></td><td>README names Claude Code, Codex, Gemini and Aider and documents a configurable program command. The repository description also names OpenCode and Amp. <a href="https://github.com/smtg-ai/claude-squad">Repository and README</a></td></tr><tr><td>Isolation</td><td>A thread can have its own Git worktree and branch. <a href="docs/worktrees">Worktrees</a></td><td>tmux sessions and per-task Git worktrees. <a href="https://github.com/smtg-ai/claude-squad#how-it-works">How it works</a></td></tr><tr><td>Shared memory</td><td>Local SQLite, full-text and vector search over token-gated MCP. <a href="docs/memory">Memory</a></td><td>Not assessed in this comparison. The README alone does not establish whether equivalent persistent memory is available. <a href="https://github.com/smtg-ai/claude-squad#readme">README</a></td></tr><tr><td>Issues</td><td>A planboard backed by GitHub or GitLab issues. <a href="docs/views">Views</a></td><td>Issue-board behavior was not assessed. A GitHub CLI prerequisite alone does not establish a planboard. <a href="https://github.com/smtg-ai/claude-squad#readme">README</a></td></tr><tr><td>Verification</td><td>A configured verify command must exit 0 for a thread to settle green. <a href="docs/guardrails">Verification</a></td><td>README describes review and checkout controls. An enforced verification gate was not assessed here. <a href="https://github.com/smtg-ai/claude-squad#readme">README</a></td></tr><tr><td>Spend caps</td><td>A daily budget blocks new runs after the cap is reached. <a href="docs/spend">Spend</a></td><td>Hard spend-cap behavior was not assessed. <a href="https://github.com/smtg-ai/claude-squad#readme">README</a></td></tr><tr><td>License</td><td>MIT. <a href="https://github.com/currentbits/solenta/blob/main/LICENSE">License</a></td><td>AGPL-3.0. <a href="https://github.com/smtg-ai/claude-squad/blob/main/LICENSE.md">License</a></td></tr><tr><td>Price</td><td>Free app; bring your own agent subscriptions or API keys. <a href="./#faq">FAQ</a></td><td>The repository provides source and installation instructions. This comparison makes no subscription-price claim; the source license alone is not a pricing statement. <a href="https://github.com/smtg-ai/claude-squad#readme">README</a></td></tr></tbody></table></div>
+<p>“Not assessed” means this comparison does not establish whether a feature is present or absent. Check the current repository and try the workflow before relying on those rows.</p>
+<h2>Choose Solenta if</h2>
+<ul>
+<li>You want a desktop interface with stored project memory shared between supported agent sessions.</li>
+<li>You want a planboard on your GitHub or GitLab issues alongside worktree threads.</li>
+<li>You want a configured verify command and a daily budget in that interface.</li>
+</ul>
+<h2>Choose Claude Squad if</h2>
+<ul>
+<li>You prefer a terminal interface and already use tmux.</li>
+<li>You want its documented configurable agent-program command.</li>
+<li>Its worktree, review and checkout controls fit your existing terminal workflow.</li>
+</ul>
+<h2>Bring existing CLI sessions into Solenta</h2>
+<p>Add the repository as a Solenta project, open the caret beside <strong>New thread</strong>, choose a supported provider's import action, and select its sessions. Re-importing appends new turns without duplicating the thread. This imports provider CLI history; it does not import Claude Squad's own session database. See <a href="docs/cli-sessions">import, eject and reclaim</a>.</p>
+<p>Keep any existing branches you still need. Start a small new worktree thread, configure verification, and review its changes through your normal Git workflow.</p>
+<h2>Questions</h2><div class="faq-list"><details data-faq=""><summary>Are Solenta and Claude Squad both coding agents?</summary><p>They run agent programs rather than replacing those programs. Solenta finds supported CLIs on your PATH. Claude Squad's README describes managing configurable agent programs in terminal sessions.</p></details><details data-faq=""><summary>Do Windows build targets prove native Windows support?</summary><p>No. Claude Squad's release configuration lists Windows targets, but its README also requires tmux. This comparison has not verified a native Windows runtime setup.</p></details><details data-faq=""><summary>Can I import Claude Squad's database into Solenta?</summary><p>This page does not claim a database importer. Solenta's documented import workflow imports existing sessions from supported provider CLIs, which is a different source of history.</p></details></div>
+
+
+
+
+
+
+<h2>More comparisons</h2>
+<ul>
+<li><a href="compare/solenta-vs-conductor">Solenta vs Conductor</a></li>
+<li><a href="alternatives/conductor">Conductor alternatives</a></li>
+<li><a href="guides/run-coding-agents-in-parallel">Run AI coding agents in parallel</a></li>
+</ul></main></div></div>
+<footer>
+  <div class="wrap footer-inner">
+    <a class="brand" href="./">
+      <img src="assets/icon.svg" alt="" width="18" height="18" />
+      Solenta
+    </a>
+    <span>Free and open source under MIT.</span>
+    <span class="spacer"></span>
+    <a href="docs.html">Docs</a>
+    <a href="changelog.html">Changelog</a>
+    <a href="compare/solenta-vs-conductor">vs Conductor</a>
+    <a href="compare/solenta-vs-claude-squad">vs Claude Squad</a>
+    <a href="alternatives/conductor">Conductor alternatives</a>
+    <a href="https://github.com/currentbits/solenta/discussions">Discussions</a>
+    <a href="https://github.com/currentbits/solenta">GitHub</a>
+    <a href="https://github.com/currentbits/solenta/releases">Releases</a>
+    <a href="https://x.com/currentbitsNET">@currentbitsNET</a>
+    <a href="https://verifieddr.com/website/solenta-app" target="_blank"><img src="https://verifieddr.com/badge/solenta-app.svg?style=minimal" alt="Verified DR - Verified Domain Rating for solenta.app" width="200" height="24" /></a>
+    <a href="https://nicklaunches.com/products/solenta/?utm_source=solenta.app&utm_medium=badge&utm_campaign=featured" target="_blank" rel="noopener"><img src="https://nicklaunches.com/badges/featured.png" alt="Solenta on Nick Launches" width="244" height="56" /></a>
+  </div>
+</footer>
+
+<script src="main.js?v=5"></script>
+</body>
+</html>
