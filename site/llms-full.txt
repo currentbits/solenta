@@ -1,8 +1,8 @@
 # How Solenta works
 
-> Source: https://solenta.app/docs.html — generated from that page by scripts/build-llms.js.
+> Source: https://solenta.app/docs.html, generated from the docs overview and topic pages by scripts/build-llms.js.
 
-Solenta is a local-first desktop app: agents share a persistent local memory, so a later thread can pick up what an earlier one stored, and the Planboard is the project's GitHub issues. Each thread can run Claude Code, Codex, Cursor, Kimi, Grok, OpenCode or Muse Code in its own git worktree. Everything below matches the current app.
+Solenta is a local-first desktop app: agents share a persistent local memory, so a later thread can pick up what an earlier one stored, and the Planboard is the project's GitHub or GitLab issues. Each thread can run Claude Code, Codex, Cursor, Kimi, Grok, OpenCode or Muse Code in its own git worktree. Everything below matches the current app.
 
 ## Getting started
 
@@ -18,7 +18,7 @@ Solenta does not bundle any agent. Install the CLIs you want to use and it finds
 - **OpenCode** (`opencode`)
 - **Muse Code** (`muse`)
 
-Add a project from the project menu in the sidebar (**New project**). The destination path is typeable and browsable; a folder that is not a git repository yet is initialized on add. Remove a project from that same menu when you no longer want it in the list. A project is local, or a remote one (see [Other computers and SSH](https://solenta.app/docs.html#ssh)). **New thread** is the button on the search row. Type a prompt and the run streams in live.
+Add a project from the project menu in the sidebar (**New project**). The destination path is typeable and browsable; a folder that is not a git repository yet is initialized on add. Remove a project from that same menu when you no longer want it in the list. A project is local, or a remote one (see [Other computers and SSH](https://solenta.app/docs/ssh)). **New thread** is the button on the search row. Type a prompt and the run streams in live.
 
 First launch opens a short wizard: pick an installed agent, add a project, then start a **first thread**. The composer stays empty so you write the prompt yourself. An example is on the last step if you want one. Replay the tour any time from Settings, Show welcome tour.
 
@@ -46,11 +46,49 @@ The Memory tab starts with your project's entries. Search by text or filter by k
 
 Switching projects discards the previous project's config-doctor preview and write confirmation, so a stale preview cannot write another repository's instructions.
 
+### Recall and review
+
+Inclusion modes control when an entry is injected. Always includes it in bootstrap context. Glob matches files, auto uses the prompt's overlap with the entry title, and manual includes an entry when the prompt names its shortened memory ID. Conditional entries remain searchable.
+
+Stored facts can become stale. Checking a file citation does not prove that every remembered statement is still correct. Review recalled context and the resulting diff, and use a verify command for the project's checks.
+
+### Local storage and model requests
+
+The shared memory database stays local. Your chosen agent CLI still sends its prompts to its provider, as it would when you ran that CLI yourself. Recalled entries included in a prompt follow that provider's normal request path. Local storage does not mean that a model request contains no project context.
+
+### Connect a local MCP client
+
+The memory server and the coder-threads task server are separate MCP endpoints. The pairings described under [External MCP pairing](https://solenta.app/docs/integrations) launch and track tasks. Do not use those pairing tokens as memory-server credentials.
+
+For a local client that supports Streamable HTTP MCP and custom request headers, use the connection fields below. Solenta must be running with a healthy memory server. Read its current port and bearer token from `memory-server.json` in Solenta's application data directory. Do not post the token in a prompt or put it on a command line.
+
+| Field | Value |
+| --- | --- |
+| Transport | Streamable HTTP |
+| URL | `http://127.0.0.1:<port>/mcp`, using the port in the memory-server configuration |
+| Request header | `Authorization: Bearer <token>`, using that configuration's memory-server token |
+
+Client configuration field names differ. Keep the endpoint on localhost and use the client's private configuration or secret storage for the bearer token. The memory server's endpoint is not the public task-pairing URL. Read tools such as `memory_bootstrap` and `memory_search` use the project scope supplied by the client.
+
+### Questions about shared memory
+
+### Is memory shared across agent providers?
+
+Solenta injects its local memory server into agent sessions when it is healthy. Entries one thread stores can be recalled by a later thread.
+
+### Can I inspect what agents remember?
+
+Yes. The Memory tab lets you search, read and store entries, browse older memories and inspect their citations. Save as memory drafts an entry for review before storing it.
+
+### Does local memory mean my model provider receives no project context?
+
+No. Your chosen CLI sends prompts to its provider. Solenta keeps the memory database local, while recalled entries included in a prompt follow that prompt.
+
 ## Inbox, Planboard, Review
 
 The sidebar is the inbox. Threads that need you stay up top. Quiet runs fold into a **Working** shelf at the bottom, next to **Snoozed** and **Settled**. Footer icons are Threads, Planboard, Review, and More. The right-hand inspector is Environment, Agents, Memory, and Skills. It is not a second home for settings.
 
-- **Planboard** shows one project's plan as its GitHub issues in Todo / In progress / Done. Cards open the issue on GitHub, and **Start task** on a Todo card opens a thread on it, in worktree, orchestrator or plain mode.
+- **Planboard** shows one project's plan as its GitHub or GitLab issues in Todo / In progress / Done. Cards open the issue on its host, and **Start task** on a Todo card opens a thread on it, in worktree, orchestrator or plain mode.
 - **Review** lists the open PRs per project with their checks, and jumps to the thread that opened one. The **Needs me** toggle swaps the per-project groups for one list of agent PRs across projects, sorted by what each needs: ready to merge, needs your review, stale or closeable, or waiting on the agent or CI.
 - **More** holds Activity, Kanban, Automations, Usage, Fleet, Insights, and the morning digest.
 - **Kanban** groups every thread by status (working, waiting on you, done, failed) so a pile of parallel runs stays readable.
@@ -87,7 +125,7 @@ A **thread** is one provider session against one project. It keeps its own permi
 - **Agent** picks a custom CLI agent for the thread on Claude and OpenCode (passed as `--agent`), from the project's and your own agent files.
 - **Fork and hand off** copies a thread, optionally onto another provider, and starts it on a new prompt. **Fork from here** on an assistant message copies the conversation only up to that message; on Claude the native session is forked at that point.
 - **Best of N** sends one prompt to several providers at once so you can compare the results. Tick **Plan only** to have each one draft a plan without building. On the plan card you like, pick a provider next to **Implement in a new thread** to build it there.
-- **Agent profiles** save a provider + model + effort + permission combination under a name, so a thread can be set up in one click instead of four. A profile can also carry a [governance policy](https://solenta.app/docs.html#governance).
+- **Agent profiles** save a provider + model + effort + permission combination under a name, so a thread can be set up in one click instead of four. A profile can also carry a [governance policy](https://solenta.app/docs/guardrails#governance).
 - **Open in new window** in a sidebar thread's menu, `⌘⇧O`, or dragging the card out of the window detaches the thread into a window of its own, while the main window stays the fleet overview. A thread that already has a window gets that window focused, and notifications for it open there.
 - **Edit and resubmit** rewinds to any past message of yours, lets you change it, and runs again from that point.
 - **Scratch notes** are a free-text field per thread, edited from the header and previewed in the sidebar, for the context that is not worth a memory entry.
@@ -99,7 +137,7 @@ A **thread** is one provider session against one project. It keeps its own permi
 
 The sidebar is a flat list, not per-project groups. Each card carries its project slug and, when the repo has one, its favicon or app icon; a scope filter at the top of the list limits every section to one repo, and status, provider, and tag filters plus group-by sit next to it. Each card uses a small provider mark instead of the harness name. **Pinned** threads sit in their own block at the top (oldest pin first) and never auto-settle. Below that, threads that need attention, then a **Working** shelf for quiet runs (a crew stays there while a background worker is still going), a **Snoozed** shelf (wake-soonest first) and a **Settled** shelf (newest wrap-up first, archived threads at the tail). Forks and subagents nest under the thread that started them; idle stopped fork workers drop off the list. Delegating, Orchestrating and Working show on the card. Right-click a card, or its overflow button, for the thread-actions menu: snooze (a nested submenu of presets), pin, fork or hand off, rename, mute, and settle. The menu is the native Electron menu when the app can show one, otherwise a keyboard-driven overlay (arrows, Home, End, Escape).
 
-`⌘N` starts a new thread, `⌘⇧N` starts one in a chosen project. `⌘K` opens the [command palette](https://solenta.app/docs.html#palette). Esc or Ctrl+C stops the live turn, including while the run is still preparing to launch. Quitting the app asks if agents are still working, then SIGKILLs detached CLIs so they do not linger. Click the project slug in the header to start another thread there. The composer's `/` palette lists orchestration commands, the CLI verbs, and the underlying CLI's own skills and custom commands. `/btw` (or `⌥Enter` on a plain draft) asks a side question on the same thread without interrupting the live run. A card, not a new thread, not the follow-up queue. `/usage` opens live account quotas (five-hour and weekly windows where the provider reports them). A mic on the composer transcribes locally, and optional vim mode adds Insert and Normal motions. `/goal <text>` sets a standing goal for the thread, shown as a chip in the header; a bare `/goal` clears it. Codex uses its native goal and keeps taking turns until the goal is done. Other providers get the goal as a note on each prompt.
+`⌘N` starts a new thread, `⌘⇧N` starts one in a chosen project. `⌘K` opens the [command palette](https://solenta.app/docs/palette). Esc or Ctrl+C stops the live turn, including while the run is still preparing to launch. Quitting the app asks if agents are still working, then SIGKILLs detached CLIs so they do not linger. Click the project slug in the header to start another thread there. The composer's `/` palette lists orchestration commands, the CLI verbs, and the underlying CLI's own skills and custom commands. `/btw` (or `⌥Enter` on a plain draft) asks a side question on the same thread without interrupting the live run. A card, not a new thread, not the follow-up queue. `/usage` opens live account quotas (five-hour and weekly windows where the provider reports them). A mic on the composer transcribes locally, and optional vim mode adds Insert and Normal motions. `/goal <text>` sets a standing goal for the thread, shown as a chip in the header; a bare `/goal` clears it. Codex uses its native goal and keeps taking turns until the goal is done. Other providers get the goal as a note on each prompt.
 
 `⌘F` finds text in the open thread, including messages outside the rendered tail and collapsed tool groups, and in loaded diffs in the Git pane. Enter and `⇧Enter` step through matches. Threads with eight or more prompts get a tick rail on the right edge, one mark per prompt; hover it for the labeled outline and click to put that prompt at the top. `/jump auth` opens the same outline filtered to prompts containing "auth". `⌘⇧T` reopens the last closed pane. **Copy link** in the thread header menu or the sidebar menu copies a `solenta://thread/<id>` link that opens the thread; the project filter menu copies `solenta://project/<id>` links. A thread id in an assistant reply is a link when it belongs to this project.
 
@@ -114,10 +152,10 @@ When a provider returns a usage-limit error with a reset clock, the thread parks
 **New thread** on the search row follows your defaults: *Isolate new threads in a git worktree* and *Delegate new threads to a worker* in Settings, the second winning over the first. The caret beside it lists the other ways in:
 
 - **New worktree thread**: its own git worktree and branch, so the agent never touches your checkout.
-- **New orchestrator thread**: the thread hands its first prompt to a worker in a worktree and supervises instead of editing (see [Orchestration](https://solenta.app/docs.html#orchestration)).
+- **New orchestrator thread**: the thread hands its first prompt to a worker in a worktree and supervises instead of editing (see [Orchestration](https://solenta.app/docs/orchestration)).
 - **New plain thread**: straight in the project checkout, no worktree.
-- **New teach thread**: hints and review, not a finished solution (see [Teach mode](https://solenta.app/docs.html#teach)).
-- **New ask thread**: read-only repo Q&A; no worktree (see [Ask mode](https://solenta.app/docs.html#ask)).
+- **New teach thread**: hints and review, not a finished solution (see [Teach mode](https://solenta.app/docs/teach)).
+- **New ask thread**: read-only repo Q&A; no worktree (see [Ask mode](https://solenta.app/docs/ask)).
 - **From an issue**: start from a GitHub or Linear issue.
 
 On a draft, the strip under the composer chooses **Local checkout**, **New worktree**, or **Previous worktree** (stacked on the project's latest other worktree branch). That choice locks after the first message.
@@ -184,7 +222,7 @@ A worktree thread can start on a chosen local **base branch**, shown in the head
 
 The header carries one **next-action** button that names the next git step (commit, push, open a PR, watch checks, or merge) instead of a row of always-visible controls. Create PR works on an unpublished worktree without a prior Push. Create PR opens a **PR workspace** dialog: title, an editable body, a draft toggle and a markdown preview. The body starts from the repo's `PULL_REQUEST_TEMPLATE` in the root, `docs/` or `.github/`, including files in a `PULL_REQUEST_TEMPLATE/` folder. After the PR is open you can view it, edit the body, comment, mark it ready, close it or merge it from the same pane, without a trip to the browser. Its **Code** tab reviews the PR's files in the app, across all commits or one at a time. Mark files viewed; a file that changes in a later push flips to Changed. A thread can link several PRs, including ones in other repos, and a stacked chain offers **Rebase stack** and **Merge stack**. File paths in the transcript open the file in that worktree. Create PR refuses a diff larger than the configured **PR size cap** (default 400 changed lines) before anything is pushed. The header then offers to split the branch into a stack of smaller PRs, or to create this one anyway. Empty the cap in Settings to disable it.
 
-Claude shell-command permission cards allow editing before approval. Codex command cards are read-only; see [Codex sessions](https://solenta.app/docs.html#codex) for their approval controls.
+Claude shell-command permission cards allow editing before approval. Codex command cards are read-only; see [Codex sessions](https://solenta.app/docs/codex) for their approval controls.
 
 Answer permission and plan cards from the keyboard, like the CLIs: `y` accepts (or approves the plan), `n` denies (or keeps planning), and `a` always allows for the rest of the session. A pending permission outranks typing: the keys work even while the composer has focus, and are not typed into it. The card's own fields (the command, the rule, plan notes) keep their keys, and a card the guardrail flagged as risky never takes keys from the composer. Always-allow on a shell command is a prefix rule such as `npm test:*`, not all of Bash; edit it, or allow the whole tool, under **Always-allow options**.
 
@@ -214,6 +252,8 @@ For a local project, Environment's **Lanes** section lets a thread **Claim lane*
 
 **Spotlight** is a per-project opt-in in Settings, Git. It does not merge or publish a lane. **Recycle wedged** reclaims eligible stale lanes; live runs and previews stay protected. Claimed lanes keep their heartbeat even when you switch away from Git or to another local project.
 
+For the manual Git commands and a complete thread-per-task workflow, read [How to run AI coding agents in parallel](https://solenta.app/guides/run-coding-agents-in-parallel).
+
 ## Build workflows
 
 Type `/workflow` in the composer to run a multi-phase workflow template instead of a single prompt. Phases run in order (seed, analyze, verify, judge, synthesize), phases can fan out to several agents, and each phase can use a different provider. A failed phase agent retries once on the same slot; you can also retry it from the transcript. The Agents panel shows every phase and worker settling in real time. You can write your own templates in the composer.
@@ -228,7 +268,7 @@ A multi-phase run that was cut off by a crash or quit is kept. Retry on an inter
 
 An **orchestrator thread** never edits your code itself. Its first prompt goes straight to a worker thread in its own worktree, and the orchestrator supervises: it can fork more workers, poll them, review what they produce, and merge. Create one from the sidebar caret, from a Planboard card, or make it the default for every new thread with *Delegate new threads to a worker* in Settings.
 
-Workers nest under the thread that spawned them in the sidebar. While any of them is still running, the parent reads **Delegating** and stays on the Working shelf rather than reporting itself done. Stopping an orchestrator stops its crew. Like worktrees, orchestrator threads are local-only: an [SSH remote project](https://solenta.app/docs.html#ssh) always gets a plain thread. An agent that forks a worker on a remote project is refused rather than silently sharing the remote checkout, unless it asks for a shared checkout explicitly.
+Workers nest under the thread that spawned them in the sidebar. While any of them is still running, the parent reads **Delegating** and stays on the Working shelf rather than reporting itself done. Stopping an orchestrator stops its crew. Like worktrees, orchestrator threads are local-only: an [SSH remote project](https://solenta.app/docs/ssh) always gets a plain thread. An agent that forks a worker on a remote project is refused rather than silently sharing the remote checkout, unless it asks for a shared checkout explicitly.
 
 A worker row in the Agents panel has a **Stop** button while it runs. A worker an agent forks can never run in a higher permission mode than its lead. When a worker finishes, the lead's wake notice carries a **worker result** card: the diff summary, the verify verdict when a verify command is set, ruled-out hypotheses and review risks. Pending crew notices are saved to disk. After a restart they wait for you, and the lead shows **Resume crew** with the number of held updates.
 
@@ -321,7 +361,7 @@ On a project with an Xcode workspace or project, or a `Package.swift` for an App
 
 Automations run a prompt on a schedule: hourly, daily at an hour, or weekly. Each automation targets a project with its own provider and optional model, and can be paused with a toggle. **Run now** fires one immediately. Runs appear as threads, so scheduled work is as inspectable as interactive work.
 
-A finished thread can be **repeated** rather than retyped: put its prompt on a schedule as a new automation, or distill the run into a [Build workflow](https://solenta.app/docs.html#workflows) when the shape of it is worth keeping.
+A finished thread can be **repeated** rather than retyped: put its prompt on a schedule as a new automation, or distill the run into a [Build workflow](https://solenta.app/docs/workflows) when the shape of it is worth keeping.
 
 Use **Edit** to change an automation in place. Its recent runs link to the corresponding transcripts, including live and quota-wait runs. Changing a name, prompt or model keeps the schedule's identity; changing the schedule recalculates its next run. History retention removes completed old runs, preserving unfinished work.
 

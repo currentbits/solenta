@@ -25,11 +25,12 @@ test("public pages have unique, bounded snippets, one main and one H1", () => {
     assert.equal(doc.querySelector('link[rel="preload"]').getAttribute("href"), "fonts/Geist-Variable.woff2");
     // The same relative links must resolve to the directory root on both hosts.
     for (const root of ["https://solenta.app/", "https://currentbits.github.io/solenta/"]) {
-      assert.equal(new URL(doc.querySelector("a.brand").getAttribute("href"), root + file).href, root);
+      const mirrored = new JSDOM(read(file), { url: root + file }).window.document;
+      assert.equal(mirrored.querySelector("a.brand").href, root, file);
     }
     assert.equal(doc.querySelector('a[href^="index.html"]'), null);
   }
-  assert.equal(titles.size, 3); assert.equal(descriptions.size, 3);
+  assert.equal(titles.size, PAGES.length); assert.equal(descriptions.size, PAGES.length);
 });
 
 test("responsive screenshots preserve PNG fallback and prioritize only the hero", () => {
@@ -59,16 +60,20 @@ test("responsive screenshots preserve PNG fallback and prioritize only the hero"
 });
 
 test("home features and ten newest releases link to existing documentation sections", () => {
-  const ids = new Set([...page("docs.html").querySelectorAll("[id]")].map((e) => e.id));
   for (const file of ["index.html", "changelog.html"]) {
     const doc = page(file);
-    const links = [...doc.querySelectorAll('a[href^="docs.html#"]')];
-    for (const link of links) assert.ok(ids.has(link.hash.slice(1)), `${file}: ${link.href}`);
-    if (file === "index.html") assert.ok(new Set(links.map((link) => link.hash)).size >= 14);
+    const links = [...doc.querySelectorAll('a[href^="docs/"]')];
+    assert.equal(doc.querySelector('a[href^="docs.html#"]'), null);
+    for (const link of links) {
+      const target = link.getAttribute("href").split("#")[0] + "/index.html";
+      assert.ok(fs.existsSync(path.join(ROOT, "site", target)), `${file}: ${link.href}`);
+      if (link.hash) assert.ok(page(target).getElementById(link.hash.slice(1)), `${file}: ${link.href}`);
+    }
+    if (file === "index.html") assert.ok(new Set(links.map((link) => link.pathname)).size >= 14);
     else for (const heading of [...doc.querySelectorAll("h2")].slice(0, 10)) {
       let node = heading.nextElementSibling, linked = false;
       while (node && node.tagName !== "H2") {
-        linked ||= !!node.querySelector('a[href^="docs.html#"]');
+        linked ||= !!node.querySelector('a[href^="docs/"]');
         node = node.nextElementSibling;
       }
       assert.ok(linked, heading.textContent);

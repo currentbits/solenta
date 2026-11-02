@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <base href="../../" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Guardrails and verification | Solenta docs</title>
+  <meta name="description" content="Protect worker configuration, apply tool guardrails and set a verify command in Solenta. A thread settles green only after verification exits with code 0." />
+  <link rel="canonical" href="https://solenta.app/docs/guardrails" />
+  <link rel="image_src" href="https://solenta.app/assets/card.png?v=4" />
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="Solenta" />
+  <meta property="og:url" content="https://solenta.app/docs/guardrails" />
+  <meta property="og:title" content="Guardrails and verification | Solenta docs" />
+  <meta property="og:description" content="Protect worker configuration, apply tool guardrails and set a verify command in Solenta. A thread settles green only after verification exits with code 0." />
+  <meta property="og:image" content="https://solenta.app/assets/card.png?v=4" />
+  <meta property="og:image:secure_url" content="https://solenta.app/assets/card.png?v=4" />
+  <meta property="og:image:type" content="image/png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="Solenta. Your agents remember." />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:site" content="@currentbitsNET" />
+  <meta name="twitter:title" content="Guardrails and verification | Solenta docs" />
+  <meta name="twitter:description" content="Protect worker configuration, apply tool guardrails and set a verify command in Solenta. A thread settles green only after verification exits with code 0." />
+  <meta name="twitter:image" content="https://solenta.app/assets/card.png?v=4" />
+  <meta name="twitter:image:alt" content="Solenta. Your agents remember." />
+  <meta name="theme-color" content="#f5f5f2" />
+  <link rel="icon" href="assets/icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="apple-touch-icon.png" />
+  <script>document.documentElement.classList.add("js");</script>
+  <link rel="preload" href="fonts/Geist-Variable.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="stylesheet" href="style.css?v=13" />
+  <!-- First-party stats: no cookies, no personal data, so no consent banner.
+       stats.js beacons pageviews and data-event clicks to stats.solenta.app. -->
+  <script src="stats.js" defer></script>
+  <!-- Meterbird analytics, cookieless until the visitor allows it in the
+       consent.js banner; replay only after "Allow". -->
+  <script src="consent.js" defer></script>
+
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"TechArticle","headline":"Guardrails and verification","description":"Protect worker configuration, apply tool guardrails and set a verify command in Solenta. A thread settles green only after verification exits with code 0.","url":"https://solenta.app/docs/guardrails","image":"https://solenta.app/assets/card.png?v=4","dateModified":"2026-11-02","author":{"@id":"https://solenta.app/#org"},"publisher":{"@id":"https://solenta.app/#org"},"about":{"@type":"SoftwareApplication","name":"Solenta","url":"https://solenta.app/"}}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Solenta","item":"https://solenta.app/"},{"@type":"ListItem","position":2,"name":"Docs","item":"https://solenta.app/docs.html"},{"@type":"ListItem","position":3,"name":"Guardrails and verification","item":"https://solenta.app/docs/guardrails"}]}</script>
+
+</head>
+<body>
+<nav class="nav">
+  <div class="nav-inner">
+    <a class="brand" href="./">
+      <img src="assets/icon.svg" alt="" />
+      Solenta
+    </a>
+    <div class="nav-links">
+      <a href="docs.html" class="active">Docs</a>
+      <a href="changelog.html">Changelog</a>
+      <a href="https://github.com/currentbits/solenta/discussions">Discussions</a>
+      <a href="https://github.com/currentbits/solenta">GitHub</a>
+      <a class="nav-cta" href="./#install">
+        Download
+      </a>
+    </div>
+  </div>
+</nav>
+
+<div class="wrap"><div class="docs-layout"><nav class="docs-nav" aria-label="Docs topics"><a href="docs/getting-started">Getting started</a>
+<a href="docs/memory">Shared memory</a>
+<a href="docs/views">Inbox, Planboard, Review</a>
+<a href="docs/threads">Threads and providers</a>
+<a href="docs/cli-sessions">Import, eject and reclaim</a>
+<a href="docs/codex">Codex sessions</a>
+<a href="docs/palette">Command palette</a>
+<a href="docs/worktrees">Worktrees and pull requests</a>
+<a href="docs/workflows">Build workflows</a>
+<a href="docs/orchestration">Orchestration</a>
+<a class="active" aria-current="page" href="docs/guardrails">Guardrails and verification</a>
+<a href="docs/spec">Spec mode</a>
+<a href="docs/teach">Teach mode</a>
+<a href="docs/ask">Ask mode</a>
+<a href="docs/review">Review itinerary</a>
+<a href="docs/skills">Skills</a>
+<a href="docs/automations">Automations</a>
+<a href="docs/dev-servers">Dev servers</a>
+<a href="docs/project-config">Project config files</a>
+<a href="docs/panes">Terminal and Browser panes</a>
+<a href="docs/spend">Spend guardrails</a>
+<a href="docs/analytics">Usage and fleet analytics</a>
+<a href="docs/integrations">External MCP pairing</a>
+<a href="docs/updates">Notifications and updates</a>
+<a href="docs/web-mode">Phones and browsers</a>
+<a href="docs/ssh">Other computers and SSH</a>
+<a href="docs/windows">Windows</a>
+<a href="docs/performance">Performance and memory use</a>
+<a href="docs/architecture">Architecture</a></nav><main class="docs-content"><p><a href="docs.html">All docs</a></p><h1>Guardrails and verification</h1><p class="lede">An orchestrator owns the rules its workers run under. It can mark protected config: files a worker is not allowed to edit, so an agent cannot quietly loosen the settings it is working inside.</p><section data-doc-section="guardrails" data-doc-title="Guardrails and verification"><div data-doc-content><p>
+        An orchestrator owns the rules its workers run under. It can mark
+        <strong>protected config</strong>: files a worker is not allowed to
+        edit, so an agent cannot quietly loosen the settings it is working
+        inside. <strong>Hook packs</strong> are installed into a worker at spawn
+        time, so the checks apply from its first tool call rather than being
+        remembered later. What comes back is scanned for
+        <strong>prompt injection</strong> and for <strong>secrets</strong>,
+        because content a worker read from an issue, a page or a dependency is
+        untrusted input. Deny-tier tools are blocked even when the CLI is in
+        always-approve, on Grok, Cursor, Codex, OpenCode, and Muse.
+      </p>
+<p>
+        Separately, a thread can carry a <strong>verify command</strong>. The
+        thread only settles green once that command exits 0; if it fails, the
+        thread stays open with the output attached. It is the difference between
+        an agent saying it is done and the build agreeing. After a PR merges,
+        the same command can run again on a delay
+        (<strong>post-merge verification</strong>) and reopen the thread if the
+        build regressed.
+      </p>
+<h2 id="governance">Governance policies</h2>
+<p>
+        An agent profile can carry a <strong>policy</strong>: a default of
+        ask or allow, plus up to 40 rules. Each rule matches a tool, a bash
+        command, a write path or a network target by glob, and blocks,
+        denies, asks or allows. The most severe matching rule wins. A bash
+        rule matches each subcommand, so <code>npm publish</code> also
+        catches <code>cd x &amp;&amp; npm publish</code>. A denied call is
+        logged in the transcript with no card; an ask card says which rule
+        raised it. If you edit a command on the card, the edited version is
+        checked again before Allow goes through.
+      </p>
+<p>
+        Every decision is written to a signed, chained audit log. Settings,
+        Advanced shows the last 50 entries and a <strong>Verify
+        chain</strong> button that detects tampering. Secrets are redacted
+        before anything is written. In v1 policies apply to Claude threads,
+        and only to calls the CLI asks about: Accept edits, Full access, and
+        allow lists in your Claude settings skip the check.
+      </p></div></section><nav class="topic-neighbors" aria-label="Adjacent topics"><a href="docs/orchestration">Orchestration</a> <span aria-hidden="true">·</span> <a href="docs/spec">Spec mode</a></nav></main></div></div>
+<footer>
+  <div class="wrap footer-inner">
+    <a class="brand" href="./">
+      <img src="assets/icon.svg" alt="" width="18" height="18" />
+      Solenta
+    </a>
+    <span>Free and open source under MIT.</span>
+    <span class="spacer"></span>
+    <a href="docs.html">Docs</a>
+    <a href="changelog.html">Changelog</a>
+    <a href="compare/solenta-vs-conductor">vs Conductor</a>
+    <a href="compare/solenta-vs-claude-squad">vs Claude Squad</a>
+    <a href="alternatives/conductor">Conductor alternatives</a>
+    <a href="https://github.com/currentbits/solenta/discussions">Discussions</a>
+    <a href="https://github.com/currentbits/solenta">GitHub</a>
+    <a href="https://github.com/currentbits/solenta/releases">Releases</a>
+    <a href="https://x.com/currentbitsNET">@currentbitsNET</a>
+    <a href="https://verifieddr.com/website/solenta-app" target="_blank"><img src="https://verifieddr.com/badge/solenta-app.svg?style=minimal" alt="Verified DR - Verified Domain Rating for solenta.app" width="200" height="24" /></a>
+    <a href="https://nicklaunches.com/products/solenta/?utm_source=solenta.app&utm_medium=badge&utm_campaign=featured" target="_blank" rel="noopener"><img src="https://nicklaunches.com/badges/featured.png" alt="Solenta on Nick Launches" width="244" height="56" /></a>
+  </div>
+</footer>
+
+<script src="main.js?v=5"></script>
+</body>
+</html>

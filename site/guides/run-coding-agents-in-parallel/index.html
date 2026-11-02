@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <base href="../../" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>How to Run Claude Code, Codex and Cursor in Parallel</title>
+  <meta name="description" content="Run several AI coding agents on one repo without conflicts: one git worktree per agent, a verify gate before merge, and a shared memory." />
+  <link rel="canonical" href="https://solenta.app/guides/run-coding-agents-in-parallel" />
+  <link rel="image_src" href="https://solenta.app/assets/card.png?v=4" />
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="Solenta" />
+  <meta property="og:url" content="https://solenta.app/guides/run-coding-agents-in-parallel" />
+  <meta property="og:title" content="How to Run Claude Code, Codex and Cursor in Parallel" />
+  <meta property="og:description" content="Run several AI coding agents on one repo without conflicts: one git worktree per agent, a verify gate before merge, and a shared memory." />
+  <meta property="og:image" content="https://solenta.app/assets/card.png?v=4" />
+  <meta property="og:image:secure_url" content="https://solenta.app/assets/card.png?v=4" />
+  <meta property="og:image:type" content="image/png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="Solenta. Your agents remember." />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:site" content="@currentbitsNET" />
+  <meta name="twitter:title" content="How to Run Claude Code, Codex and Cursor in Parallel" />
+  <meta name="twitter:description" content="Run several AI coding agents on one repo without conflicts: one git worktree per agent, a verify gate before merge, and a shared memory." />
+  <meta name="twitter:image" content="https://solenta.app/assets/card.png?v=4" />
+  <meta name="twitter:image:alt" content="Solenta. Your agents remember." />
+  <meta name="theme-color" content="#f5f5f2" />
+  <link rel="icon" href="assets/icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="apple-touch-icon.png" />
+  <script>document.documentElement.classList.add("js");</script>
+  <link rel="preload" href="fonts/Geist-Variable.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="stylesheet" href="style.css?v=13" />
+  <!-- First-party stats: no cookies, no personal data, so no consent banner.
+       stats.js beacons pageviews and data-event clicks to stats.solenta.app. -->
+  <script src="stats.js" defer></script>
+  <!-- Meterbird analytics, cookieless until the visitor allows it in the
+       consent.js banner; replay only after "Allow". -->
+  <script src="consent.js" defer></script>
+
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"TechArticle","headline":"How to run AI coding agents in parallel","description":"Run several AI coding agents on one repo without conflicts: one git worktree per agent, a verify gate before merge, and a shared memory.","url":"https://solenta.app/guides/run-coding-agents-in-parallel","image":"https://solenta.app/assets/card.png?v=4","dateModified":"2026-11-02","author":{"@id":"https://solenta.app/#org"},"publisher":{"@id":"https://solenta.app/#org"},"about":{"@type":"SoftwareApplication","name":"Solenta","url":"https://solenta.app/"}}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Solenta","item":"https://solenta.app/"},{"@type":"ListItem","position":2,"name":"How to run AI coding agents in parallel","item":"https://solenta.app/guides/run-coding-agents-in-parallel"}]}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"FAQPage","mainEntity":[{"@type":"Question","name":"Can Claude Code, Codex and Cursor work on one repository at once?","acceptedAnswer":{"@type":"Answer","text":"Yes. Give each task its own Git worktree and branch, then run the chosen agent\nfrom that worktree. In Solenta, choose a worktree for each thread."}},{"@type":"Question","name":"Do worktrees prevent every merge conflict?","acceptedAnswer":{"@type":"Answer","text":"No. They keep working files separate while the agents run. Branches that change\nthe same code can still need conflict resolution when you merge them."}},{"@type":"Question","name":"Does an agent saying it is done mean the checks passed?","acceptedAnswer":{"@type":"Answer","text":"No. In Solenta, set a verify command and inspect its result. A thread settles\ngreen only after that command exits with code 0."}}]}</script>
+
+</head>
+<body>
+<nav class="nav">
+  <div class="nav-inner">
+    <a class="brand" href="./">
+      <img src="assets/icon.svg" alt="" />
+      Solenta
+    </a>
+    <div class="nav-links">
+      <a href="docs.html" class="active">Docs</a>
+      <a href="changelog.html">Changelog</a>
+      <a href="https://github.com/currentbits/solenta/discussions">Discussions</a>
+      <a href="https://github.com/currentbits/solenta">GitHub</a>
+      <a class="nav-cta" href="./#install">
+        Download
+      </a>
+    </div>
+  </div>
+</nav>
+
+<div class="wrap"><div class="docs-layout"><main class="docs-content"><h1>How to run AI coding agents in parallel</h1><p>Open a thread per task in Solenta. Each thread runs the agent CLI you pick in
+its own git worktree, so parallel agents never share a working copy.</p>
+<p>You can also create the worktrees yourself. Give each task a branch, run your
+chosen agent from that task's directory, and review and test the result before
+merging it.</p>
+<h2>Create two worktrees by hand</h2>
+<p>Start in an existing Git repository with a committed <code>main</code> branch. The example
+uses two new branches and two sibling directories. Choose different names if
+these branches or directories already exist.</p>
+<pre><code class="language-sh">git worktree add -b agent/task-a ../task-a main
+git worktree add -b agent/task-b ../task-b main
+git worktree list
+</code></pre>
+<p>The list contains your original checkout and the two new directories. Task A
+uses <code>agent/task-a</code>; task B uses <code>agent/task-b</code>. Run one installed agent CLI in
+each task directory and give it a separate task.</p>
+<p>Keep related changes together. Two worktrees prevent agents from overwriting
+the same working files, but changes to the same code can still conflict when
+you merge the branches. Review each branch and run the project's checks before
+merging it through your normal Git or pull-request workflow.</p>
+<h2>Keep processes and dependencies separate too</h2>
+<p>Worktrees isolate working files. They do not assign application ports or change
+hard-coded data paths. Give development servers different ports and keep their
+data and cache directories separate when the project needs that isolation.</p>
+<p>Check the project's setup instructions in each worktree. Keep lockfile changes
+with the branch that needs them and review competing dependency changes before
+merging. A second checkout does not resolve incompatible dependency edits for
+you.</p>
+<p>Solenta's <a href="docs/dev-servers">dev-server documentation</a>
+describes its separate data, configuration, cache and temporary directories.
+A claimed lane sets the port. Applications must respect those environment
+settings; Solenta does not rewrite hard-coded ports or paths.</p>
+<h2>Remove finished worktrees</h2>
+<p>After reviewing and merging the work, return to the original checkout. Remove
+the working directories, then delete the finished branches:</p>
+<pre><code class="language-sh">git worktree remove ../task-a
+git worktree remove ../task-b
+git branch -d agent/task-a agent/task-b
+git worktree list
+</code></pre>
+<p>The example ends with only the original checkout. These commands use no force
+flags. If Git refuses removal or branch deletion, inspect the remaining changes
+or unmerged commits before deciding what to keep.</p>
+<h2>Run the same workflow in Solenta</h2>
+<ol>
+<li>Add the repository as a project and open a thread for the first task.</li>
+<li>Choose a new worktree and the agent CLI you want to run.</li>
+<li>Open another worktree thread for the second task. Give each thread a prompt
+that describes its own change.</li>
+<li>Set the project's verify command. A thread settles green only after that
+command exits with code 0; a failing check keeps the thread open with its
+output attached.</li>
+<li>Set a daily budget in Settings if you want to stop new runs once the cap is
+reached. Inspect the per-thread usage and cost in the composer footer.</li>
+<li>Review each thread's diff and checks, then open and review its pull request.</li>
+</ol>
+<p>Read the existing docs for
+<a href="docs/worktrees">worktrees and pull requests</a>,
+<a href="docs/guardrails">verification</a>, and
+<a href="docs/spend">spend guardrails</a>.</p>
+<h2>Use separate tasks or an agent team</h2>
+<p>Use separate threads for work that can be reviewed and merged independently.
+When workers need a shared task list and direct messages, Solenta's orchestrator
+can run them as a crew. Workers still have their own worktrees. The lead reviews
+their results and integrates the work before the final verification and merge.</p>
+<p>See <a href="docs/orchestration">orchestration</a> for crew tasks,
+worker permissions, handoffs and integration. Shared memory lets later sessions
+recall stored project decisions and gotchas; it does not replace reviewing a
+worker's diff.</p>
+<h2>Questions</h2><div class="faq-list"><details data-faq=""><summary>Can Claude Code, Codex and Cursor work on one repository at once?</summary><p>Yes. Give each task its own Git worktree and branch, then run the chosen agent
+from that worktree. In Solenta, choose a worktree for each thread.</p></details><details data-faq=""><summary>Do worktrees prevent every merge conflict?</summary><p>No. They keep working files separate while the agents run. Branches that change
+the same code can still need conflict resolution when you merge them.</p></details><details data-faq=""><summary>Does an agent saying it is done mean the checks passed?</summary><p>No. In Solenta, set a verify command and inspect its result. A thread settles
+green only after that command exits with code 0.</p></details></div>
+
+
+
+
+
+</main></div></div>
+<footer>
+  <div class="wrap footer-inner">
+    <a class="brand" href="./">
+      <img src="assets/icon.svg" alt="" width="18" height="18" />
+      Solenta
+    </a>
+    <span>Free and open source under MIT.</span>
+    <span class="spacer"></span>
+    <a href="docs.html">Docs</a>
+    <a href="changelog.html">Changelog</a>
+    <a href="compare/solenta-vs-conductor">vs Conductor</a>
+    <a href="compare/solenta-vs-claude-squad">vs Claude Squad</a>
+    <a href="alternatives/conductor">Conductor alternatives</a>
+    <a href="https://github.com/currentbits/solenta/discussions">Discussions</a>
+    <a href="https://github.com/currentbits/solenta">GitHub</a>
+    <a href="https://github.com/currentbits/solenta/releases">Releases</a>
+    <a href="https://x.com/currentbitsNET">@currentbitsNET</a>
+    <a href="https://verifieddr.com/website/solenta-app" target="_blank"><img src="https://verifieddr.com/badge/solenta-app.svg?style=minimal" alt="Verified DR - Verified Domain Rating for solenta.app" width="200" height="24" /></a>
+    <a href="https://nicklaunches.com/products/solenta/?utm_source=solenta.app&utm_medium=badge&utm_campaign=featured" target="_blank" rel="noopener"><img src="https://nicklaunches.com/badges/featured.png" alt="Solenta on Nick Launches" width="244" height="56" /></a>
+  </div>
+</footer>
+
+<script src="main.js?v=5"></script>
+</body>
+</html>

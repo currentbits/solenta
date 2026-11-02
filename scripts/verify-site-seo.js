@@ -32,9 +32,21 @@ async function verify(base) {
     assert.match(entry.querySelector("lastmod").textContent, /^\d{4}-\d{2}-\d{2}$/);
     const response = await get(new URL(canonical).pathname);
     assert.equal(response.status, 200, canonical);
+    assert.match(response.headers.get("cache-control"), /max-age=0, must-revalidate/, canonical);
+    assert.equal(response.headers.get("x-frame-options"), "DENY", canonical);
+    assert.match(response.headers.get("content-security-policy-report-only") || "", /frame-ancestors 'none'/, canonical);
     const doc = new JSDOM(await response.text()).window.document;
     assert.equal(doc.querySelector('link[rel="canonical"]').href, canonical);
+    const pathname = new URL(canonical).pathname;
+    if (/^\/(docs|guides|compare|alternatives)\//.test(pathname)) {
+      for (const suffix of ["/", "/index.html"]) {
+        const redirect = await get(`${pathname}${suffix}?source=seo-check`);
+        assert.equal(redirect.status, 301, pathname + suffix);
+        assert.equal(redirect.headers.get("location"), `${pathname}?source=seo-check`);
+      }
+    }
   }
+  for (const route of ["/docs/missing-topic", "/compare/missing-comparison", "/guides/missing-guide"]) assert.equal((await get(route)).status, 404, route);
   console.log(`SEO HTTP checks passed: ${entries.length} sitemap pages, redirects, cache policy, headers, icons and 404s`);
 }
 if (!process.argv[2]) throw new Error("Usage: node scripts/verify-site-seo.js <base URL>");

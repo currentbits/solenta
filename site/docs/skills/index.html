@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <base href="../../" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Skills | Solenta documentation</title>
+  <meta name="description" content="Find installed skills in Solenta, manage user skills and MCP servers, and preview imports from Claude Code, Codex or Cursor before copying them." />
+  <link rel="canonical" href="https://solenta.app/docs/skills" />
+  <link rel="image_src" href="https://solenta.app/assets/card.png?v=4" />
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="Solenta" />
+  <meta property="og:url" content="https://solenta.app/docs/skills" />
+  <meta property="og:title" content="Skills | Solenta documentation" />
+  <meta property="og:description" content="Find installed skills in Solenta, manage user skills and MCP servers, and preview imports from Claude Code, Codex or Cursor before copying them." />
+  <meta property="og:image" content="https://solenta.app/assets/card.png?v=4" />
+  <meta property="og:image:secure_url" content="https://solenta.app/assets/card.png?v=4" />
+  <meta property="og:image:type" content="image/png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="Solenta. Your agents remember." />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:site" content="@currentbitsNET" />
+  <meta name="twitter:title" content="Skills | Solenta documentation" />
+  <meta name="twitter:description" content="Find installed skills in Solenta, manage user skills and MCP servers, and preview imports from Claude Code, Codex or Cursor before copying them." />
+  <meta name="twitter:image" content="https://solenta.app/assets/card.png?v=4" />
+  <meta name="twitter:image:alt" content="Solenta. Your agents remember." />
+  <meta name="theme-color" content="#f5f5f2" />
+  <link rel="icon" href="assets/icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="apple-touch-icon.png" />
+  <script>document.documentElement.classList.add("js");</script>
+  <link rel="preload" href="fonts/Geist-Variable.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="stylesheet" href="style.css?v=13" />
+  <!-- First-party stats: no cookies, no personal data, so no consent banner.
+       stats.js beacons pageviews and data-event clicks to stats.solenta.app. -->
+  <script src="stats.js" defer></script>
+  <!-- Meterbird analytics, cookieless until the visitor allows it in the
+       consent.js banner; replay only after "Allow". -->
+  <script src="consent.js" defer></script>
+
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"TechArticle","headline":"Skills","description":"Find installed skills in Solenta, manage user skills and MCP servers, and preview imports from Claude Code, Codex or Cursor before copying them.","url":"https://solenta.app/docs/skills","image":"https://solenta.app/assets/card.png?v=4","dateModified":"2026-11-02","author":{"@id":"https://solenta.app/#org"},"publisher":{"@id":"https://solenta.app/#org"},"about":{"@type":"SoftwareApplication","name":"Solenta","url":"https://solenta.app/"}}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Solenta","item":"https://solenta.app/"},{"@type":"ListItem","position":2,"name":"Docs","item":"https://solenta.app/docs.html"},{"@type":"ListItem","position":3,"name":"Skills","item":"https://solenta.app/docs/skills"}]}</script>
+
+</head>
+<body>
+<nav class="nav">
+  <div class="nav-inner">
+    <a class="brand" href="./">
+      <img src="assets/icon.svg" alt="" />
+      Solenta
+    </a>
+    <div class="nav-links">
+      <a href="docs.html" class="active">Docs</a>
+      <a href="changelog.html">Changelog</a>
+      <a href="https://github.com/currentbits/solenta/discussions">Discussions</a>
+      <a href="https://github.com/currentbits/solenta">GitHub</a>
+      <a class="nav-cta" href="./#install">
+        Download
+      </a>
+    </div>
+  </div>
+</nav>
+
+<div class="wrap"><div class="docs-layout"><nav class="docs-nav" aria-label="Docs topics"><a href="docs/getting-started">Getting started</a>
+<a href="docs/memory">Shared memory</a>
+<a href="docs/views">Inbox, Planboard, Review</a>
+<a href="docs/threads">Threads and providers</a>
+<a href="docs/cli-sessions">Import, eject and reclaim</a>
+<a href="docs/codex">Codex sessions</a>
+<a href="docs/palette">Command palette</a>
+<a href="docs/worktrees">Worktrees and pull requests</a>
+<a href="docs/workflows">Build workflows</a>
+<a href="docs/orchestration">Orchestration</a>
+<a href="docs/guardrails">Guardrails and verification</a>
+<a href="docs/spec">Spec mode</a>
+<a href="docs/teach">Teach mode</a>
+<a href="docs/ask">Ask mode</a>
+<a href="docs/review">Review itinerary</a>
+<a class="active" aria-current="page" href="docs/skills">Skills</a>
+<a href="docs/automations">Automations</a>
+<a href="docs/dev-servers">Dev servers</a>
+<a href="docs/project-config">Project config files</a>
+<a href="docs/panes">Terminal and Browser panes</a>
+<a href="docs/spend">Spend guardrails</a>
+<a href="docs/analytics">Usage and fleet analytics</a>
+<a href="docs/integrations">External MCP pairing</a>
+<a href="docs/updates">Notifications and updates</a>
+<a href="docs/web-mode">Phones and browsers</a>
+<a href="docs/ssh">Other computers and SSH</a>
+<a href="docs/windows">Windows</a>
+<a href="docs/performance">Performance and memory use</a>
+<a href="docs/architecture">Architecture</a></nav><main class="docs-content"><p><a href="docs.html">All docs</a></p><h1>Skills</h1><p class="lede">The Skills tab is the installed list. Search by name or description, and open the filter menu for source (user, project, catalog) and provider.</p><section data-doc-section="skills" data-doc-title="Skills"><div data-doc-content><p>
+        The Skills tab is the installed list. Search by name or description,
+        and open the filter menu for source (user, project, catalog) and
+        provider. <strong>Manage</strong> opens Settings, Skills &amp; MCP,
+        which holds the catalog, add-skill, MCP servers, and import.
+        Project skills remain read-only, while user-installed skills can be
+        managed and synchronized to the provider directories on this machine.
+        When installed copies have drifted, a banner offers Sync.
+      </p>
+<p>
+        In Settings, open <strong>Import from other
+        tools</strong> to scan Claude Code, Codex or Cursor. Preview skills,
+        slash commands, MCP servers, memories and instruction files, select
+        the items you want, and import them. This is a one-way copy; the source
+        provider home stays in place. Already imported items are identified.
+        Local MCP commands and plugin code require their separate trust
+        choices; scanning the preview does not execute them.
+      </p>
+<p>
+        Enabled Codex and Cursor plugin commands also appear directly in the
+        composer's slash palette without importing first. Namespaced commands
+        keep plugin names from colliding with existing commands. Disabled or
+        unlisted plugin-cache entries are not offered.
+      </p>
+<p>
+        In Settings, <strong>MCP servers</strong>, local command arguments accept quoted
+        paths and values containing spaces, or a JSON array of strings. Invalid
+        quoting shows an error and preserves the draft. Trust the local command
+        only after reviewing what it launches.
+      </p>
+<p>
+        On a project with an Xcode workspace or project, or a
+        <code>Package.swift</code> for an Apple platform, Settings, Skills
+        &amp; MCP shows an <strong>Xcode</strong> card. One click adds
+        MobileBuildMCP when it is on your <code>PATH</code>, otherwise
+        Apple's <code>xcrun mcpbridge</code>. The card shows the exact
+        command first, and offers install hints for whatever is missing.
+      </p></div></section><nav class="topic-neighbors" aria-label="Adjacent topics"><a href="docs/review">Review itinerary</a> <span aria-hidden="true">·</span> <a href="docs/automations">Automations</a></nav></main></div></div>
+<footer>
+  <div class="wrap footer-inner">
+    <a class="brand" href="./">
+      <img src="assets/icon.svg" alt="" width="18" height="18" />
+      Solenta
+    </a>
+    <span>Free and open source under MIT.</span>
+    <span class="spacer"></span>
+    <a href="docs.html">Docs</a>
+    <a href="changelog.html">Changelog</a>
+    <a href="compare/solenta-vs-conductor">vs Conductor</a>
+    <a href="compare/solenta-vs-claude-squad">vs Claude Squad</a>
+    <a href="alternatives/conductor">Conductor alternatives</a>
+    <a href="https://github.com/currentbits/solenta/discussions">Discussions</a>
+    <a href="https://github.com/currentbits/solenta">GitHub</a>
+    <a href="https://github.com/currentbits/solenta/releases">Releases</a>
+    <a href="https://x.com/currentbitsNET">@currentbitsNET</a>
+    <a href="https://verifieddr.com/website/solenta-app" target="_blank"><img src="https://verifieddr.com/badge/solenta-app.svg?style=minimal" alt="Verified DR - Verified Domain Rating for solenta.app" width="200" height="24" /></a>
+    <a href="https://nicklaunches.com/products/solenta/?utm_source=solenta.app&utm_medium=badge&utm_campaign=featured" target="_blank" rel="noopener"><img src="https://nicklaunches.com/badges/featured.png" alt="Solenta on Nick Launches" width="244" height="56" /></a>
+  </div>
+</footer>
+
+<script src="main.js?v=5"></script>
+</body>
+</html>

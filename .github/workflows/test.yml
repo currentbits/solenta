@@ -50,6 +50,11 @@ jobs:
           cache: npm
           cache-dependency-path: "**/package-lock.json"
       - run: npm ci
+      - name: Check generated marketing site
+        if: runner.os == 'Linux'
+        run: |
+          npm run build:site
+          git diff --exit-code -- site
       - run: npm ci --prefix core
       - run: npm ci --prefix memory-server
       - run: npx vite build

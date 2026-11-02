@@ -953,6 +953,8 @@ footer {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  max-height: calc(100vh - 112px);
+  overflow-y: auto;
 }
 .docs-nav a {
   color: var(--muted);
@@ -964,7 +966,7 @@ footer {
 }
 .docs-nav a:hover { color: var(--ink); text-decoration: none; background: rgba(25, 25, 24, 0.05); }
 .docs-nav a.active { color: var(--ink); border-left-color: var(--accent); background: rgba(25, 25, 24, 0.05); }
-.docs-content { max-width: 760px; }
+.docs-content { max-width: 760px; min-width: 0; width: 100%; }
 .docs-content h1 {
   font-size: clamp(30px, 3.4vw, 40px);
   letter-spacing: -0.03em;
@@ -988,6 +990,13 @@ footer {
 .docs-content strong { color: var(--ink); font-weight: 620; }
 .docs-content a { text-decoration: underline; text-underline-offset: 3px; text-decoration-color: color-mix(in oklch, var(--accent) 80%, var(--ink)); text-decoration-thickness: 2px; }
 .docs-content a:hover { text-decoration-color: var(--ink); }
+.topic-neighbors { display: flex; gap: 18px; justify-content: space-between; border-top: 1px solid var(--border); margin-top: 48px; padding-top: 20px; }
+.docs-content [data-doc-overview] section { padding: 0; margin: 0 0 36px; }
+.docs-content [data-doc-overview] h2 { margin-top: 24px; }
+.docs-content [data-doc-section] { padding: 0; }
+.docs-content .doc-table td { overflow-wrap: anywhere; }
+.table-scroll { overflow-x: auto; margin-bottom: 24px; }
+.table-scroll .doc-table { min-width: 580px; }
 .docs-content code {
   background: rgba(25, 25, 24, 0.06);
   border: 1px solid var(--border);
@@ -1110,10 +1119,13 @@ html.js .reveal.in {
   .docs-nav {
     position: static;
     flex-direction: row;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     gap: 4px;
+    max-height: none;
+    overflow-x: auto;
+    padding-bottom: 8px;
   }
-  .docs-nav a { border-left: none; border: 1px solid var(--border); }
+  .docs-nav a { flex-shrink: 0; border-left: none; border: 1px solid var(--border); }
   .nav-links { gap: 16px; }
 }
 

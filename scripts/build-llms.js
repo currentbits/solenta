@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Writes site/llms-full.txt: the whole of docs.html as Markdown, so an agent
+// Writes site/llms-full.txt: the docs overview and ordered topics as Markdown, so an agent
 // can read the docs in one fetch (https://llmstxt.org). site/llms.txt is the
 // short hand-written index that points here.
 //
@@ -32,7 +32,7 @@ function inline(node) {
       return `\`${node.textContent}\``;
     case "A": {
       const href = node.getAttribute("href") || "";
-      const url = href.startsWith("#") ? BASE + href : href;
+      const url = href.startsWith("#") ? BASE + href : href.startsWith("docs/") || href.startsWith("guides/") ? `https://solenta.app/${href}` : href;
       return `[${inner}](${url})`;
     }
     case "BR":
@@ -71,16 +71,40 @@ function block(node) {
       rows.splice(1, 0, `|${" --- |".repeat(cols)}`);
       return [rows.join("\n")];
     }
+    case "DETAILS": {
+      const summary = node.querySelector("summary");
+      return [`### ${text(summary)}`, ...[...node.children].filter((child) => child !== summary).flatMap(block)];
+    }
     default:
       return [...node.childNodes].flatMap(block);
   }
 }
 
-function render(html) {
+function render(html, readTopic = (id) => fs.readFileSync(path.join(SITE, "docs", id, "index.html"), "utf8")) {
   const { document } = new JSDOM(html).window;
   const main = document.querySelector("main.docs-content");
-  const intro = `> Source: ${BASE} — generated from that page by scripts/build-llms.js.`;
-  const [title, ...rest] = [...main.childNodes].flatMap(block).filter(Boolean);
+  let nodes = [...main.childNodes];
+  if (main.querySelector("[data-doc-overview]")) {
+    nodes = [main.querySelector("h1"), main.querySelector(".lede")];
+    for (const link of main.querySelectorAll("a[data-doc-topic]")) {
+      const topic = new JSDOM(readTopic(link.dataset.docTopic)).window.document;
+      const section = topic.querySelector("[data-doc-section]");
+      // A topic's former H2 is its page H1. Restore the original subsection
+      // depth when recombining standalone pages into one document.
+      for (const h2 of section.querySelectorAll("h2")) {
+        const h3 = document.createElement("h3");
+        h3.innerHTML = h2.innerHTML;
+        h2.replaceWith(h3);
+      }
+      const heading = document.createElement("h2");
+      heading.textContent = section.dataset.docTitle;
+      nodes.push(heading, ...section.querySelector("[data-doc-content]").childNodes);
+      const extra = section.querySelector("[data-doc-extra]");
+      if (extra) nodes.push(...extra.childNodes);
+    }
+  }
+  const intro = `> Source: ${BASE}, generated from the docs overview and topic pages by scripts/build-llms.js.`;
+  const [title, ...rest] = nodes.flatMap(block).filter(Boolean);
   return [title, intro, ...rest].join("\n\n") + "\n";
 }
 
