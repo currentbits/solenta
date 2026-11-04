@@ -5,7 +5,8 @@
  *
  * `codex exec` has no control_request. PreToolUse in an isolated
  * CODEX_HOME is the pre-exec gate. Ask is deny: Codex parses ask then
- * continues the tool. --dangerously-bypass-hook-trust is added by
+ * continues the tool. On a Full access thread (SOLENTA_PERMISSION_MODE)
+ * ask rules let the tool run (#1841). --dangerously-bypass-hook-trust is added by
  * workflow `codex exec` so noninteractive exec does not skip an
  * untrusted hook. Interactive `app-server` rejects that flag (#1309);
  * persist hooks.state trusted_hash in the isolated home instead (#1311).

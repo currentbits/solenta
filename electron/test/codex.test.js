@@ -772,6 +772,7 @@ describe("runner codex provider", () => {
     });
     process.env.CODER_FAKE_CODEX_SCENARIO = "success";
     const thread = store.getThreads()[0];
+    store.updateThread(thread.id, { permissionMode: "bypassPermissions" });
     await runner.startRun({ threadId: thread.id, prompt: "guard me" });
     await waitFor(() => store.getThread(thread.id).status === "done");
 
@@ -793,6 +794,8 @@ describe("runner codex provider", () => {
     assert.match(cfg, /hooks\.json:pre_tool_use:0:0/);
     const env = JSON.parse(fs.readFileSync(argvFile + ".env.json", "utf8"));
     assert.equal(env.CODEX_HOME, dest);
+    // The hook skips ask-tier rules only on Full access threads (#1841).
+    assert.equal(env.SOLENTA_PERMISSION_MODE, "bypassPermissions");
   });
 
   it("nonzero exit without stream sets failed + stderr", async () => {

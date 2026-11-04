@@ -165,9 +165,10 @@ function insertBeforeLast(args, extras) {
  * @param {string} toolName
  * @param {unknown} input
  * @param {string | null | undefined} worktreePath
+ * @param {boolean} [allowAsk] - the hook lets ask verdicts run (Codex Full access, #1841)
  * @returns {string | null}
  */
-function guardrailNotice(toolName, input, worktreePath) {
+function guardrailNotice(toolName, input, worktreePath, allowAsk = false) {
   let parsed = input;
   if (typeof input === "string") {
     try {
@@ -187,7 +188,7 @@ function guardrailNotice(toolName, input, worktreePath) {
     { tool_name: rawName, tool_input: parsed },
     worktreePath,
   );
-  if (out.decision !== "deny") return null;
+  if (out.decision !== "deny" || (allowAsk && out.asked)) return null;
   return `Guardrail blocked ${rawName}: ${out.rule}: ${out.reason}`;
 }
 
