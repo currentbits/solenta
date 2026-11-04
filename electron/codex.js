@@ -1,7 +1,7 @@
 "use strict";
 
 const { runJsonLines, SIGKILL_AFTER_MS } = require("./agent.js");
-const { harvestToolResult } = require("./tool-images.js");
+const { harvestToolResult, readImageFile } = require("./tool-images.js");
 
 
 /**
@@ -303,7 +303,7 @@ function shortSummary(name, value) {
  * @param {object} ev
  * @returns {{
  *   id: string,
- *   kind: "reasoning" | "file_change" | "mcp_tool_call" | "web_search" | "todo_list",
+ *   kind: "reasoning" | "file_change" | "mcp_tool_call" | "web_search" | "todo_list" | "image_view" | "image_generation",
  *   phase: "started" | "updated" | "completed",
  *   text?: string,
  *   name?: string,
@@ -440,6 +440,56 @@ function extractLiveItem(ev) {
       isError: false,
       done: phase === "completed",
       query,
+    };
+  }
+
+  // view_image carries only the path; image_gen carries base64 in `result`.
+  // Both were dropped, so the user never saw what the agent looked at (#1844).
+  if (itemType === "imageView" || itemType === "image_view") {
+    const file = String(item.path || "");
+    const img = phase === "completed" ? readImageFile(file) : null;
+    return {
+      id: id || `image-view-${file.slice(-32)}`,
+      kind: "image_view",
+      phase,
+      name: "ViewImage",
+      summary: shortSummary("ViewImage", file),
+      input: file,
+      output: null,
+      ...(img ? { images: [img] } : {}),
+      isError: false,
+      done: phase === "completed",
+    };
+  }
+
+  if (itemType === "imageGeneration" || itemType === "image_generation") {
+    const prompt = String(item.revisedPrompt || item.revised_prompt || "");
+    const saved = String(item.savedPath || item.saved_path || "");
+    const failed = status === "failed" || Boolean(item.failure);
+    let img = null;
+    if (phase === "completed" && !failed) {
+      img =
+        typeof item.result === "string" && item.result
+          ? { mediaType: "image/png", data: item.result }
+          : readImageFile(saved);
+    }
+    return {
+      id: id || `image-gen-${saved.slice(-32)}`,
+      kind: "image_generation",
+      phase,
+      name: "ImageGen",
+      summary: shortSummary("ImageGen", prompt),
+      input: prompt,
+      output: failed
+        ? typeof item.failure === "string" && item.failure
+          ? item.failure
+          : "failed"
+        : phase === "completed"
+          ? saved || "completed"
+          : null,
+      ...(img ? { images: [img] } : {}),
+      isError: failed,
+      done: phase === "completed",
     };
   }
 

@@ -538,6 +538,26 @@ async function listIssues(projectPath) {
 
 const PLAN_LABELS = ["plan:todo", "plan:doing", "plan:done"];
 
+/** GitHub's flaky GraphQL failure (#1843); gh and the API path both surface it. */
+const GH_TRANSIENT = /something went wrong while executing your query/i;
+let transientBackoffMs = 1000;
+
+/** Test hook: shorten the transient-error backoff. */
+function setTransientBackoffMs(ms) {
+  transientBackoffMs = ms;
+}
+
+/**
+ * ghApiTryAsync, retried once after a short backoff on GH_TRANSIENT only.
+ * Callers pass idempotent ops (label swaps, close, view).
+ */
+async function ghRetryTry(cwd, args, opts) {
+  const res = await ghApiTryAsync(cwd, args, opts);
+  if (res.ok || !GH_TRANSIENT.test(res.stderr || res.combined || res.stdout || "")) return res;
+  await new Promise((resolve) => setTimeout(resolve, transientBackoffMs));
+  return ghApiTryAsync(cwd, args, opts);
+}
+
 /**
  * Move an issue's plan:* label (Planboard "Start task" → plan:doing).
  * Never throws; failures come back as `{ ok: false, reason }`.
@@ -545,7 +565,8 @@ const PLAN_LABELS = ["plan:todo", "plan:doing", "plan:done"];
  * gh refuses the whole edit when a --remove-label name is not a label in the
  * repo, so a repo that only has some of the plan:* labels falls back to
  * adding the new one and leaving the stale one — the column still moves
- * (plan:doing outranks plan:todo).
+ * (plan:doing outranks plan:todo). A fresh repo without the target label
+ * gets it created, then the add is retried (#1843).
  *
  * @param {string} projectPath
  * @param {unknown} number
@@ -573,7 +594,7 @@ async function setPlanStatus(projectPath, number, status) {
   const ghOpts = ghOptsOf(projectPath);
 
   const base = ["issue", "edit", String(issueNumber), "--add-label", label];
-  let edited = await ghApiTryAsync(
+  let edited = await ghRetryTry(
     cwd,
     [
       ...base,
@@ -583,11 +604,29 @@ async function setPlanStatus(projectPath, number, status) {
     ghOpts,
   );
   let errText = edited.stderr || edited.combined || edited.stdout || "";
-  if (!edited.ok && !edited.enoent && /not found/i.test(errText)) {
-    edited = await ghApiTryAsync(cwd, base, ghOpts);
+  const labelMissing = () =>
+    !edited.ok && !edited.enoent && /not found/i.test(errText) && !isIssueNotFound(errText);
+  if (labelMissing()) {
+    edited = await ghRetryTry(cwd, base, ghOpts);
+    errText = edited.stderr || edited.combined || edited.stdout || "";
+  }
+  if (labelMissing()) {
+    // `label` is one of PLAN_LABELS (checked above); never create arbitrary names here.
+    await ghApiTryAsync(cwd, ["label", "create", label], ghOpts);
+    edited = await ghRetryTry(cwd, base, ghOpts);
     errText = edited.stderr || edited.combined || edited.stdout || "";
   }
   if (edited.ok) return { ok: true };
+  if (GH_TRANSIENT.test(errText)) {
+    // The failed write may still have landed: the label being there is success.
+    const viewed = await ghApiTryAsync(cwd, ["issue", "view", String(issueNumber), "--json", "labels"], ghOpts);
+    try {
+      const row = JSON.parse(String(viewed.stdout || "").trim() || "{}");
+      if (viewed.ok && (row.labels || []).some((l) => l && l.name === label)) return { ok: true };
+    } catch {
+      // fall through to the original error
+    }
+  }
   if (edited.enoent) return { ok: false, reason: "gh missing" };
   if (isGhAuthFailure(errText)) return { ok: false, reason: "auth" };
   if (isIssueNotFound(errText)) return { ok: false, reason: "issue not found" };
@@ -689,7 +728,7 @@ async function completeIssue(projectPath, number, opts) {
   }
   const ghOpts = ghOptsOf(projectPath);
 
-  const viewed = await ghApiTryAsync(
+  const viewed = await ghRetryTry(
     cwd,
     ["issue", "view", String(issueNumber), "--json", "state,labels"],
     ghOpts,
@@ -722,7 +761,7 @@ async function completeIssue(projectPath, number, opts) {
   const comment = opts && typeof opts.comment === "string" ? opts.comment : "";
   const args = ["issue", "close", String(issueNumber)];
   if (comment) args.push("--comment", comment);
-  const closed = await ghApiTryAsync(cwd, args, ghOpts);
+  const closed = await ghRetryTry(cwd, args, ghOpts);
   if (closed.ok) return { ok: true };
   if (!moved.ok) return moved;
   const closeErr = closed.stderr || closed.combined || closed.stdout || "";
@@ -1229,6 +1268,7 @@ module.exports = {
   commentIssue,
   labelIssue,
   createIssue,
+  setTransientBackoffMs,
   parseIssueListJson,
   ownerRepoFromRemote,
   originUrlOf,

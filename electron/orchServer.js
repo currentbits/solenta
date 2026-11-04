@@ -31,7 +31,6 @@ const {
   setQueued,
   renameThread,
   listThreads,
-  planboardNoteFor,
   refreshWorkerSnapshot,
   linkPullRequest,
   addAutomation,
@@ -160,8 +159,8 @@ const INSTRUCTIONS =
   "not through sandboxed gh, and there is no repo argument: writes stay on " +
   "this thread's origin. issue_comment posts a comment without changing " +
   "labels or closing the issue. issue_label adds non-plan labels (triage: " +
-  "type, priority, duplicate, needs-info). The tools are omitted when the origin is " +
-  "not GitHub. " +
+  "type, priority, duplicate, needs-info). Without a forge origin they return " +
+  "an error saying to add one. " +
   "When the user describes a workflow to run later, call automation_create " +
   "with a name, prompt, provider, and either a schedule or a GitHub trigger " +
   "(preset hourly/daily/weekly plus hour 0-23 for daily/weekly; cron " +
@@ -172,7 +171,7 @@ const INSTRUCTIONS =
   "missing, ask_user. Do not invent a trigger or schedule they did not ask for. " +
   "link_pull_request attaches a GitHub PR to this thread (including a PR " +
   "in another repo via repo=owner/name). The first link becomes the " +
-  "thread's primary PR. " +
+  "thread's primary PR; pass primary=true to make a replacement PR primary. " +
   "pr_view, pr_update, pr_comment, pr_merge, ci_logs and ci_rerun work on " +
   "this thread's linked PR through Solenta's GitHub API client; use them " +
   "instead of gh.";
@@ -1578,53 +1577,69 @@ function createToolHandlers(deps) {
     return project && project.path ? project : "";
   }
 
+  /**
+   * The issue_* tools are listed for every bound project, since agent CLIs
+   * cache tools/list and an origin added mid-thread must still work (#1843).
+   * Say how to get an origin instead of the bare "not a GitHub repo".
+   */
+  function planboardResult(res) {
+    return res && res.ok === false && res.reason === "not a GitHub repo"
+      ? {
+          ok: false,
+          reason:
+            "this project has no GitHub/GitLab origin yet; add one with " +
+            "`git remote add origin <url>` in the project checkout, then retry",
+        }
+      : res;
+  }
+
   async function issue_create(args) {
     const thread = requireOwnThread(args);
     const { createIssue } = require("./issues.js");
-    return createIssue(issueTargetOf(thread), {
+    return planboardResult(await createIssue(issueTargetOf(thread), {
       title: args && args.title,
       body: args && args.body,
-    });
+    }));
   }
 
   async function issue_set_plan(args) {
     const thread = requireOwnThread(args);
     const { setPlanStatus } = require("./issues.js");
-    return setPlanStatus(
+    return planboardResult(await setPlanStatus(
       issueTargetOf(thread),
       args && args.number,
       args && args.status,
-    );
+    ));
   }
 
   async function issue_complete(args) {
     const thread = requireOwnThread(args);
     const { completeIssue } = require("./issues.js");
-    return completeIssue(issueTargetOf(thread), args && args.number, {
+    return planboardResult(await completeIssue(issueTargetOf(thread), args && args.number, {
       comment: args && args.comment,
-    });
+    }));
   }
 
   async function issue_comment(args) {
     const thread = requireOwnThread(args);
     const { commentIssue } = require("./issues.js");
-    return commentIssue(
+    return planboardResult(await commentIssue(
       issueTargetOf(thread),
       args && args.number,
       args && args.body,
-    );
+    ));
   }
 
   async function issue_label(args) {
     const thread = requireOwnThread(args);
     const { labelIssue } = require("./issues.js");
-    return labelIssue(issueTargetOf(thread), args && args.number, args && args.labels);
+    return planboardResult(await labelIssue(issueTargetOf(thread), args && args.number, args && args.labels));
   }
 
   async function issue_list(args) {
     const thread = requireOwnThread(args);
     const { listIssuePage } = require("./issues.js");
-    return listIssuePage(issueTargetOf(thread), args);
+    return planboardResult(await listIssuePage(issueTargetOf(thread), args));
   }
 
   async function link_pull_request(args) {
@@ -1634,6 +1649,7 @@ function createToolHandlers(deps) {
       number: args.number,
       repo: args.repo,
       url: args.url,
+      primary: args.primary,
     });
   }
 
@@ -1866,7 +1882,7 @@ function createToolHandlers(deps) {
  * @param {{ McpServer: unknown, z: unknown }} sdk
  * @param {ReturnType<typeof createToolHandlers>} handlers
  * @param {{ planboard?: boolean, github?: boolean, bugReports?: boolean, browser?: boolean }} [opts] - planboard:
- *   GitHub-origin sessions only (#849); github: PR/CI tools on GitHub
+ *   every project-bound session (#849, #1843); github: PR/CI tools on GitHub
  *   origins only (#1749); bugReports: false hides solenta_bug_report (#1703);
  *   browser: false hides preview when the bound thread's browserAccess is
  *   off (#1797) — the handler also gates every action, so this only saves
@@ -2152,10 +2168,12 @@ function buildMcpServer(sdk, handlers, opts = {}) {
                     description: z.string().optional(),
                   }),
                 )
-                .min(2),
+                .min(2)
+                .describe("2-4 options per question; at least 2 are required"),
             }),
           )
-          .min(1),
+          .min(1)
+          .describe("At least 1 question (up to 8 are shown)"),
       },
     },
     async (args) => json(await handlers.ask_user(args)),
@@ -2180,7 +2198,7 @@ function buildMcpServer(sdk, handlers, opts = {}) {
         projectId: z.string().min(1),
         target: z.enum(["diff", "file", "terminal"]),
         path: z.string().min(1).optional(),
-        line: z.number().int().min(1).optional(),
+        line: z.number().int().min(1).optional().describe("1-based line, integer >= 1"),
         reason: z.string().optional(),
       },
     },
@@ -2304,7 +2322,7 @@ function buildMcpServer(sdk, handlers, opts = {}) {
         provider: z.string().min(1).optional(),
         model: z.string().optional(),
         preset: z.enum(["hourly", "daily", "weekly", "cron", "once"]).optional(),
-        hour: z.number().int().min(0).max(23).optional(),
+        hour: z.number().int().min(0).max(23).optional().describe("Integer 0-23, local time"),
         cron: z.string().min(1).optional(),
         /** Preset "once": a future local-time instant, e.g. "2026-11-01T15:00". */
         runAt: z.string().min(1).optional(),
@@ -2391,7 +2409,8 @@ function buildMcpServer(sdk, handlers, opts = {}) {
               needs: z.array(z.string().min(1)).optional(),
             }),
           )
-          .min(1),
+          .min(1)
+          .describe("At least 1 task"),
       },
     },
     async (args) => json(await handlers.task_add(args)),
@@ -2558,14 +2577,15 @@ function buildMcpServer(sdk, handlers, opts = {}) {
       description:
         "Link a GitHub pull request to this thread, including a PR in " +
         "another repo. The first linked PR becomes the thread's primary " +
-        "PR number. projectId is YOUR OWN project id; the thread must " +
-        "belong to it.",
+        "PR number; primary=true makes this PR the primary one instead. " +
+        "projectId is YOUR OWN project id; the thread must belong to it.",
       inputSchema: {
         threadId: z.string().min(1),
         projectId: z.string().min(1),
         number: z.number().int().positive(),
         repo: z.string().min(1).optional(),
         url: z.string().min(1).optional(),
+        primary: z.boolean().optional(),
       },
     },
     async (args) => json(await handlers.link_pull_request(args)),
@@ -2674,7 +2694,7 @@ function buildMcpServer(sdk, handlers, opts = {}) {
           threadId: z.string().min(1),
           projectId: z.string().min(1),
           state: z.enum(["open", "closed", "all"]).optional(),
-          limit: z.number().int().min(1).max(100).optional(),
+          limit: z.number().int().min(1).max(100).optional().describe("Integer 1-100 (default 50)"),
           cursor: z.string().max(1024).optional(),
           number: z.number().int().positive().optional(),
         },
@@ -2763,7 +2783,7 @@ function buildMcpServer(sdk, handlers, opts = {}) {
           threadId: z.string().min(1),
           projectId: z.string().min(1),
           number: z.number().int().positive(),
-          labels: z.array(z.string().min(1)).min(1),
+          labels: z.array(z.string().min(1)).min(1).describe("At least 1 label"),
         },
       },
       async (args) => json(await handlers.issue_label(args)),
@@ -2947,9 +2967,7 @@ function createOrchServer(opts) {
               : null;
           const boundThread = boundThreadId ? store.getThread(boundThreadId) : null;
           mcp = buildMcpServer(sdk, handlers, {
-            planboard: Boolean(
-              boundProject && planboardNoteFor(boundProject),
-            ),
+            planboard: Boolean(boundProject),
             bugReports: bugReportsEnabled(store),
             github: Boolean(boundProject && isGitHubProject(boundProject)),
             browser: !boundThread || boundThread.browserAccess !== false,

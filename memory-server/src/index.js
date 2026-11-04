@@ -137,13 +137,23 @@ const inclusionMode = z
 const inclusionGlobs = z
   .array(z.string().min(1))
   .describe('Repo-relative globs for inclusion glob, e.g. "electron/**/*.js"; a slash-less glob matches basenames')
-const staleAfterDays = z
-  .number()
-  .int()
-  .min(1)
-  .max(3650)
+/**
+ * A bounded integer that rounds and clamps any finite number into range
+ * instead of rejecting it (#1846): agents guess 0.8 or 7 for a 1-5 scale and
+ * then loop on the validation error. Non-numbers still fail validation.
+ */
+function clampedInt(min, max = Infinity) {
+  return z.preprocess(
+    (v) => (typeof v === 'number' && Number.isFinite(v) ? Math.min(max, Math.max(min, Math.round(v))) : v),
+    z.number().int().min(min).max(max),
+  )
+}
+const importance = clampedInt(1, 5).describe(
+  'Integer 1-5 (5 = most important; defaults by type). Other numbers are rounded and clamped to 1-5.',
+)
+const staleAfterDays = clampedInt(1, 3650)
   .describe(
-    'Freshness horizon for facts that change (versions, prices, owners): full rank for this many days after the last write, then ranked as stale. Superseding restarts it. Omit for facts that stay true until contradicted.',
+    'Integer 1-3650 (rounded and clamped). Freshness horizon for facts that change (versions, prices, owners): full rank for this many days after the last write, then ranked as stale. Superseding restarts it. Omit for facts that stay true until contradicted.',
   )
 const citationSchema = z.object({
   kind: z.enum(['file', 'thread', 'commit']),
@@ -218,7 +228,7 @@ export function buildServer(memory, opts = {}) {
         project: z.string().optional(),
         agent: z.string().optional(),
         status: taskStatus.optional(),
-        importance: z.number().int().min(1).max(5).optional(),
+        importance: importance.optional(),
         force: z.boolean().optional(),
         citations: z.array(citationSchema).optional(),
         inclusion: inclusionMode.optional(),
@@ -259,7 +269,7 @@ export function buildServer(memory, opts = {}) {
         project: z.string().optional(),
         agent: z.string().optional().describe('Only return entries written by this agent'),
         type: entryType.optional(),
-        limit: z.number().int().positive().max(100).optional(),
+        limit: clampedInt(1, 100).optional().describe('Integer 1-100 (rounded and clamped)'),
       },
     },
     async (args) => json(await memory.search(scoped(args))),
@@ -292,7 +302,7 @@ export function buildServer(memory, opts = {}) {
         title: z.string().optional(),
         body: z.string().optional(),
         status: taskStatus.optional(),
-        importance: z.number().int().min(1).max(5).optional(),
+        importance: importance.optional(),
         agent: z.string().optional(),
         project: z.string().optional(),
         citations: z.array(citationSchema).optional(),
@@ -329,8 +339,8 @@ export function buildServer(memory, opts = {}) {
     {
       description: 'Newest live memory entries (excerpt form). Limit max 50.',
       inputSchema: {
-        limit: z.number().int().positive().max(50).optional(),
-        offset: z.number().int().min(0).optional(),
+        limit: clampedInt(1, 50).optional().describe('Integer 1-50 (rounded and clamped)'),
+        offset: clampedInt(0).optional().describe('Integer >= 0 (rounded and clamped)'),
         project: z.string().optional(),
         type: entryType.optional(),
       },
@@ -417,7 +427,7 @@ export function buildServer(memory, opts = {}) {
       inputSchema: {
         query: z.string().min(1),
         project: z.string().optional(),
-        limit: z.number().int().positive().max(20).optional(),
+        limit: clampedInt(1, 20).optional().describe('Integer 1-20 (rounded and clamped)'),
       },
     },
     async (args) => json(memory.sessionSearch(scoped(args))),

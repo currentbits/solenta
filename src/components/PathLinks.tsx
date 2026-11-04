@@ -189,14 +189,17 @@ export function useResolvedMap(paths: string[]): Record<string, string | null> {
   return syncMap ?? asyncMap;
 }
 
-function PathAnchor({
+export function PathAnchor({
   hit,
   abs,
   openPath,
+  children,
 }: {
   hit: PathRef;
   abs: string;
   openPath: PathLinkHandlers["openPath"];
+  /** Link text; defaults to the matched path. */
+  children?: ReactNode;
 }) {
   const go = (e: MouseEvent | KeyboardEvent) => {
     e.preventDefault();
@@ -218,7 +221,7 @@ function PathAnchor({
         if (e.key === "Enter" || e.key === " ") go(e);
       }}
     >
-      {hit.raw}
+      {children ?? hit.raw}
     </span>
   );
 }

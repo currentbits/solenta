@@ -293,6 +293,72 @@ describe("codex event parse helpers", () => {
     );
   });
 
+  it("turns view_image and image_gen items into tool images (#1844)", () => {
+    const png =
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-img-"));
+    try {
+      const file = path.join(dir, "01 today.png");
+      fs.writeFileSync(file, Buffer.from(png, "base64"));
+      // App-server shape from the live store: path only, no bytes.
+      const viewItem = { type: "imageView", id: "exec-v1", path: file };
+      const started = extractLiveItem({ type: "item.started", item: viewItem });
+      assert.equal(started.name, "ViewImage");
+      assert.equal(started.done, false);
+      assert.equal(started.images, undefined, "bytes read once, on completion");
+      const view = extractLiveItem({ type: "item.completed", item: viewItem });
+      assert.equal(view.kind, "image_view");
+      assert.equal(view.done, true);
+      assert.equal(view.input, file);
+      assert.deepEqual(view.images, [{ mediaType: "image/png", data: png }]);
+
+      const gone = extractLiveItem({
+        type: "item.completed",
+        item: { ...viewItem, path: path.join(dir, "missing.png") },
+      });
+      assert.equal(gone.images, undefined);
+
+      const gen = extractLiveItem({
+        type: "item.completed",
+        item: {
+          type: "imageGeneration",
+          id: "exec-g1",
+          status: "completed",
+          revisedPrompt: "a mobile mockup",
+          result: png,
+          failure: null,
+          savedPath: file,
+        },
+      });
+      assert.equal(gen.kind, "image_generation");
+      assert.equal(gen.name, "ImageGen");
+      assert.equal(gen.output, file);
+      assert.equal(gen.isError, false);
+      assert.deepEqual(gen.images, [{ mediaType: "image/png", data: png }]);
+
+      const fromDisk = extractLiveItem({
+        type: "item.completed",
+        item: { type: "imageGeneration", id: "exec-g2", savedPath: file },
+      });
+      assert.equal(fromDisk.images[0].data, png);
+
+      const failed = extractLiveItem({
+        type: "item.completed",
+        item: {
+          type: "imageGeneration",
+          id: "exec-g3",
+          status: "failed",
+          failure: "moderation",
+        },
+      });
+      assert.equal(failed.isError, true);
+      assert.equal(failed.output, "moderation");
+      assert.equal(failed.images, undefined);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("extracts official completed-only file_change and web_search (#171)", () => {
     const edit = extractLiveItem({
       type: "item.completed",

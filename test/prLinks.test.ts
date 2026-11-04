@@ -4,8 +4,48 @@ import {
   allLinkedPrsSettled,
   anyLinkedPrOpen,
   normalizePrLinks,
+  parseRepoSlug,
   upsertPrLink,
 } from "../src/prLinks.ts";
+
+describe("parseRepoSlug (#1842)", () => {
+  it("matches electron/prLinks.js for PR, MR, remote and ssh inputs", () => {
+    assert.equal(parseRepoSlug("https://github.com/currentbits/solenta/pull/1838"), "currentbits/solenta");
+    assert.equal(parseRepoSlug("https://gitlab.com/group/sub/repo/-/merge_requests/7"), "group/sub/repo");
+    assert.equal(parseRepoSlug("https://github.com/acme/app"), "acme/app");
+    assert.equal(parseRepoSlug("https://github.com/acme/app.git"), "acme/app");
+    assert.equal(parseRepoSlug("git@github.com:acme/app.git"), "acme/app");
+    assert.equal(parseRepoSlug("git@gitlab.com:group/sub/repo.git"), "group/sub/repo");
+    assert.equal(parseRepoSlug(""), null);
+  });
+});
+
+describe("PR link dedup (#1842)", () => {
+  const url = "https://github.com/currentbits/solenta/pull/1838";
+
+  it("heals a stored pull/N repo and folds the retry duplicate", () => {
+    assert.deepEqual(
+      normalizePrLinks({
+        prLinks: [
+          { number: 1838, repo: "pull/1838", url },
+          { number: 1838, repo: "currentbits/solenta", url },
+        ],
+      }),
+      [{ number: 1838, repo: "currentbits/solenta", url }],
+    );
+  });
+
+  it("upsert replaces a same-url link whose repo was missing", () => {
+    assert.deepEqual(
+      upsertPrLink([{ number: 1838, url, state: "OPEN" }], {
+        number: 1838,
+        repo: "currentbits/solenta",
+        url,
+      }),
+      [{ number: 1838, repo: "currentbits/solenta", url, state: "OPEN" }],
+    );
+  });
+});
 
 describe("normalizePrLinks", () => {
   it("falls back to the legacy prNumber row", () => {

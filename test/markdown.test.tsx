@@ -153,7 +153,11 @@ describe("Markdown", () => {
   });
 });
 
-const EXISTING = new Set(["src/foo.ts", "images/1.jpg"]);
+const EXISTING = new Set([
+  "src/foo.ts",
+  "images/1.jpg",
+  "/wt/design/01 today.png",
+]);
 
 function linked(
   text: string,
@@ -164,7 +168,10 @@ function linked(
     <PathLinkProvider
       resolvePaths={(paths) =>
         Object.fromEntries(
-          paths.map((p) => [p, EXISTING.has(p) ? `/wt/${p}` : null]),
+          paths.map((p) => [
+            p,
+            !EXISTING.has(p) ? null : p.startsWith("/") ? p : `/wt/${p}`,
+          ]),
         )
       }
       openPath={(abs, opts) => {
@@ -206,6 +213,32 @@ describe("Markdown path links", () => {
     assert.equal(link.getAttribute("data-path-line"), "12");
     await m.click(link);
     assert.deepEqual(opened, ["/wt/src/foo.ts"]);
+  });
+
+  it("opens a markdown link to a workspace file instead of a dead anchor (#1844)", async () => {
+    const opened: string[] = [];
+    const m = await mount(
+      linked(
+        "- [Home screen](</wt/design/01 today.png>)\n- [Notes](src/foo.ts)\n- [Gone](/wt/nope.png)\n- [Top](#top)",
+        opened,
+      ),
+    );
+    await m.flush();
+    const links = [...m.container.querySelectorAll("[data-path-link]")];
+    assert.deepEqual(
+      links.map((l) => l.textContent),
+      ["Home screen", "Notes"],
+    );
+    await m.click(links[0]);
+    await m.click(links[1]);
+    assert.deepEqual(opened, ["/wt/design/01 today.png", "/wt/src/foo.ts"]);
+    assert.match(m.text(), /Gone/, "a missing file stays as text");
+    const anchors = [...m.container.querySelectorAll("a")];
+    assert.deepEqual(
+      anchors.map((a) => a.getAttribute("href")),
+      ["#top"],
+      "only the in-page anchor stays an <a>",
+    );
   });
 
   it("leaves http links alone", async () => {

@@ -9,6 +9,9 @@ function prLinkKey(link) {
   return `${String((link && link.repo) || "").trim().toLowerCase()}#${Number(link && link.number)}`;
 }
 
+// Older parseRepoSlug stored the last two URL segments, e.g. "pull/1838" (#1842).
+const MALFORMED_REPO = /^(pull|merge_requests)\/\d+$/i;
+
 function normalizePrLink(raw) {
   if (!raw || typeof raw !== "object") return null;
   const number = Number(raw.number);
@@ -16,23 +19,32 @@ function normalizePrLink(raw) {
   const link = { number };
   if (raw.repo != null && String(raw.repo).trim()) link.repo = String(raw.repo).trim();
   if (raw.url != null && String(raw.url).trim()) link.url = String(raw.url).trim();
+  if (link.repo && MALFORMED_REPO.test(link.repo)) {
+    const healed = parseRepoSlug(link.url);
+    if (healed) link.repo = healed;
+    else delete link.repo;
+  }
   const state = String(raw.state || "").toUpperCase();
   if (state === "OPEN" || state === "CLOSED" || state === "MERGED") link.state = state;
   if (raw.title != null && String(raw.title).trim()) link.title = String(raw.title).trim();
   return link;
 }
 
+/** Same PR: same repo+number, or same number+url where one side lacks a repo. */
+function samePrLink(a, b) {
+  if (prLinkKey(a) === prLinkKey(b)) return true;
+  return a.number === b.number && !!a.url && a.url === b.url && (!a.repo || !b.repo);
+}
+
 function normalizePrLinks(thread) {
   const raw = thread && Array.isArray(thread.prLinks) ? thread.prLinks : [];
   const out = [];
-  const seen = new Set();
   for (const row of raw) {
     const link = normalizePrLink(row);
     if (!link) continue;
-    const key = prLinkKey(link);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(link);
+    const i = out.findIndex((l) => samePrLink(l, link));
+    if (i < 0) out.push(link);
+    else if (!out[i].repo && link.repo) out[i] = { ...out[i], repo: link.repo };
   }
   const primary = Number(thread && thread.prNumber);
   if (Number.isInteger(primary) && primary > 0) {
@@ -50,31 +62,38 @@ function normalizePrLinks(thread) {
 }
 
 function upsertPrLink(links, next) {
-  const key = prLinkKey(next);
-  const existing = (links || []).find((l) => prLinkKey(l) === key);
-  const out = (links || []).filter((l) => prLinkKey(l) !== key);
-  out.push({ ...existing, ...next, number: next.number });
+  const existing = (links || []).find((l) => samePrLink(l, next));
+  const out = (links || []).filter((l) => !samePrLink(l, next));
+  const merged = { ...existing, ...next, number: next.number };
+  const repo = next.repo || (existing && existing.repo);
+  if (repo) merged.repo = repo;
+  else delete merged.repo;
+  out.push(merged);
   return out;
+}
+
+/**
+ * owner/repo from a slug, remote URL, or PR/MR URL. GitLab subgroups keep
+ * the full path (group/sub/repo), matching parseGitlabIssueUrl's owner.
+ */
+function repoFromPath(pathname) {
+  const p = String(pathname || "")
+    .replace(/\/-\/.*$/, "")
+    .replace(/\/(?:pull|issues)\/\d+(?:\/.*)?$/, "")
+    .replace(/\.git$/i, "");
+  const parts = p.split("/").filter(Boolean);
+  return parts.length >= 2 ? parts.join("/") : null;
 }
 
 function parseRepoSlug(value) {
   const raw = String(value || "").trim().replace(/\.git$/i, "");
   if (!raw) return null;
-  if (/^[^/\s]+\/[^/\s]+$/.test(raw)) return raw;
   const ssh = raw.match(/^git@[^:]+:(.+)$/);
-  if (ssh) {
-    const parts = ssh[1].replace(/^\/+/, "").split("/").filter(Boolean);
-    if (parts.length >= 2) {
-      return `${parts[parts.length - 2]}/${parts[parts.length - 1]}`;
-    }
-  }
+  if (ssh) return repoFromPath(ssh[1]);
+  if (/^[^/\s]+\/[^/\s]+$/.test(raw)) return raw;
   try {
     const withProto = /^[a-z]+:\/\//i.test(raw) ? raw : `https://${raw}`;
-    const u = new URL(withProto);
-    const parts = u.pathname.replace(/^\/+/, "").split("/").filter(Boolean);
-    if (parts.length >= 2) {
-      return `${parts[parts.length - 2]}/${parts[parts.length - 1]}`;
-    }
+    return repoFromPath(new URL(withProto).pathname);
   } catch {
     /* not a URL */
   }
@@ -135,8 +154,8 @@ function stackContaining(stacks, prNumber) {
 }
 
 /**
- * Attach a PR to a thread. First link becomes prNumber/prUrl/prState.
- * Never bumps updatedAt.
+ * Attach a PR to a thread. First link (or `primary: true`) becomes
+ * prNumber/prUrl/prState. Never bumps updatedAt.
  */
 function linkPullRequest(store, input) {
   const threadId = input && input.threadId;
@@ -156,14 +175,15 @@ function linkPullRequest(store, input) {
   });
   if (!link) throw new Error("invalid pull request");
   const links = upsertPrLink(normalizePrLinks(thread), link);
-  const primary = thread.prNumber == null ? link : null;
+  const explicit = input && input.primary === true;
+  const primary = explicit || thread.prNumber == null ? links[links.length - 1] : null;
   const patch = {
     prLinks: links,
     ...(primary
       ? {
           prNumber: primary.number,
-          prUrl: primary.url || thread.prUrl || null,
-          prState: primary.state || thread.prState || null,
+          prUrl: primary.url || (explicit ? null : thread.prUrl) || null,
+          prState: primary.state || (explicit ? null : thread.prState) || null,
         }
       : {}),
   };

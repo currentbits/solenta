@@ -199,6 +199,45 @@ describe('HTTP auth and health', () => {
     await mcp.close()
   })
 
+  it('memory_store states the importance range and rounds/clamps it (#1846)', async () => {
+    const transport = new StreamableHTTPClientTransport(new URL(`${baseURL}/mcp`), {
+      requestInit: { headers: { Authorization: `Bearer ${TOKEN}` } },
+    })
+    const mcp = new Client({ name: 'test-importance', version: '0.0.0' })
+    await mcp.connect(transport)
+
+    const { tools } = await mcp.listTools()
+    const props = (name) => tools.find((t) => t.name === name).inputSchema.properties
+    assert.match(props('memory_store').importance.description, /integer 1-5/i)
+    assert.match(props('memory_supersede').importance.description, /integer 1-5/i)
+    assert.match(props('memory_store').staleAfterDays.description, /1-3650/)
+    assert.match(props('memory_search').limit.description, /1-100/)
+    assert.match(props('memory_recent').limit.description, /1-50/)
+    assert.match(props('memory_recent').offset.description, />= 0/)
+    assert.match(props('session_search').limit.description, /1-20/)
+
+    for (const [given, want] of [[0.8, 1], [7, 5], [3.6, 4]]) {
+      const res = await mcp.callTool({
+        name: 'memory_store',
+        arguments: { type: 'knowledge', title: `Importance ${given}`, body: `clamp check zebra${want} ${given}`, importance: given, force: true },
+      })
+      assert.ok(!res.isError, res.content[0].text)
+      const { id } = JSON.parse(res.content[0].text)
+      assert.equal(memory.get(id).importance, want, `importance ${given}`)
+    }
+
+    const recent = await mcp.callTool({ name: 'memory_recent', arguments: { limit: 500, offset: -2.4 } })
+    assert.ok(!recent.isError, recent.content[0].text)
+
+    const bad = await mcp.callTool({
+      name: 'memory_store',
+      arguments: { type: 'knowledge', title: 'Bad importance', body: 'not a number', importance: 'high' },
+    })
+    assert.equal(bad.isError, true)
+
+    await mcp.close()
+  })
+
   it('?project= bind scopes search and rejects a foreign project (issue #671)', async () => {
     memory.store({
       type: 'knowledge',

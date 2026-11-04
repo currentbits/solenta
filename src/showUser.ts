@@ -9,11 +9,11 @@ export type ShowUserAction = {
   reason: string | null;
 };
 
-/** Bare or `mcp__coder-threads__show_user`. */
+/** Bare, `mcp__coder-threads__show_user`, or Codex `coder-threads/show_user`. */
 export function isShowUserMessage(message: ChatMessage): boolean {
   return (
     message.role === "tool" &&
-    /(?:^|__)show_user$/i.test(message.tool?.name ?? "")
+    /(?:^|__|\/)show_user$/i.test(message.tool?.name ?? "")
   );
 }
 
