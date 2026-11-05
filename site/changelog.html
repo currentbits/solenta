@@ -36,7 +36,7 @@
   <!-- Meterbird analytics, cookieless until the visitor allows it in the
        consent.js banner; replay only after "Allow". -->
   <script src="consent.js" defer></script>
-<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage","name":"Solenta changelog","url":"https://solenta.app/changelog.html","dateModified":"2026-11-02","about":{"@type":"SoftwareApplication","name":"Solenta","url":"https://solenta.app/","softwareVersion":"0.28.0","datePublished":"2026-10-31"},"publisher":{"@id":"https://solenta.app/#org"},"breadcrumb":{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Solenta","item":"https://solenta.app/"},{"@type":"ListItem","position":2,"name":"Changelog","item":"https://solenta.app/changelog.html"}]}}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage","name":"Solenta changelog","url":"https://solenta.app/changelog.html","dateModified":"2026-11-05","about":{"@type":"SoftwareApplication","name":"Solenta","url":"https://solenta.app/","softwareVersion":"0.29.0","datePublished":"2026-11-05"},"publisher":{"@id":"https://solenta.app/#org"},"breadcrumb":{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Solenta","item":"https://solenta.app/"},{"@type":"ListItem","position":2,"name":"Changelog","item":"https://solenta.app/changelog.html"}]}}</script>
 </head>
 <body>
 
@@ -65,6 +65,36 @@
       <p class="lede">
         Every notable change to Solenta, newest first.
       </p>
+
+      <h2 id="v0-29-0">0.29.0 <small>2026-11-05</small></h2>
+      <h3>Added</h3>
+      <ul>
+        <li><strong>Your other computers in one window.</strong> Turn on Show in sidebar for a saved connection and that computer's projects and threads appear next to yours, tagged with its name. A thread you start in one of its projects runs there, and Add project can create or clone a project on that computer.</li>
+        <li><strong>Connect by address.</strong> Paste the device link from the other computer's Let other devices in, and Solenta connects straight to it, with no SSH. The token goes to the keychain.</li>
+        <li><strong><a href="docs/ssh">Headless server</a> with nothing installed.</strong> Connect over SSH to a Mac or Linux computer that has no Solenta, and it downloads a checksum-checked server for that machine and starts it. Linux <code>--headless</code> runs without a display.</li>
+        <li><strong>Linked computers.</strong> Link another Solenta, desktop or headless, from Settings › Connections or with <code>solenta-server --link</code>, so agents running anywhere can hand work to it.</li>
+        <li><strong><a href="docs/orchestration">Workers on other computers</a>.</strong> A lead can fork a worker onto another computer, in that computer's copy of the repo. You can steer, stop, open a PR for and merge it like a local worker, it shares the crew task list and messages, and the lead wakes when it finishes.</li>
+        <li><strong>See remote work from where it started.</strong> A lead lists its workers on other computers with their status, each opening the live thread, and a teleported thread links to its copy.</li>
+        <li><strong>Teleport any thread.</strong> Teleport works for every provider, clones the project on the other computer if it is missing, brings queued prompts along, and can stop a running thread first. SSH password and host-key prompts show up in the app.</li>
+        <li><strong><a href="docs/spend">Usage</a> in the menu bar.</strong> An opt-in menu bar item shows each account's 5-hour and weekly usage. Pick an account there to make it the default for each CLI's new threads and terminals.</li>
+        <li><strong>Send workers to an account.</strong> A lead can send a worker to a named account, or to whichever account has the most quota left. Crew rows and fleet stats show each worker's account.</li>
+        <li><strong><a href="docs/memory">Fusion</a>.</strong> Settings › Memory › Fusion finds where AGENTS.md, CLAUDE.md and .cursorrules disagree, and syncs one agreed block into each file. Text outside the block is never changed.</li>
+      </ul>
+      <h3>Changed</h3>
+      <ul>
+        <li><strong>Calmer interface.</strong> Warmer neutrals, a clear text hierarchy, four corner radii instead of twenty, mono type only for code and paths, and quieter header, composer and settings chrome.</li>
+        <li><strong>Two-line thread cards.</strong> The title and status share the first line, and project, branch, PR and provider share the second, so more threads fit.</li>
+        <li><strong>Icons in ⌘K.</strong> Every palette row starts with its own icon, and the palette and settings blur the app behind them.</li>
+        <li><strong><a href="docs/guardrails">Full access</a> on every agent.</strong> Full access now auto-answers guardrail asks on Claude and Codex approvals too. Your own ask and deny rules still apply.</li>
+        <li><strong>Always allow covers the command.</strong> It remembers the command, such as <code>git push</code>, instead of its exact text, so the same command stops asking in that thread.</li>
+      </ul>
+      <h3>Fixed</h3>
+      <ul>
+        <li><strong>Fewer guardrail false alarms.</strong> Commands are judged by what actually runs, not words in quoted text or heredocs.</li>
+        <li><strong>PR links and Planboard.</strong> Linked PR URLs resolve to the right repo, and Planboard creates its own <code>plan:*</code> labels and retries a flaky GitHub error.</li>
+        <li><strong>Codex images.</strong> Images Codex views or generates show up in the thread, and local file links in replies open.</li>
+        <li><strong>Crew merges.</strong> A worker whose worktree vanished can still be merged.</li>
+      </ul>
 
       <h2 id="v0-28-0">0.28.0 <small>2026-10-31</small></h2>
       <h3>Added</h3>
