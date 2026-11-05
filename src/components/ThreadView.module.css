@@ -152,12 +152,9 @@
   justify-content: flex-end;
 }
 
+/* Spacing alone separates the icon cluster. */
 .headerDivider {
-  width: 1px;
-  height: 16px;
-  background: var(--border-soft);
-  flex-shrink: 0;
-  margin: 0 2px;
+  display: none;
 }
 
 .header .iconBtn,
@@ -748,6 +745,12 @@ a.btn {
 /* Cost is data, not an action: tabular figures in tertiary ink. */
 .header .sandboxBadge[data-cost-badge] {
   pointer-events: none;
+}
+
+/* The next git action is the primary action: full ink. */
+.header [data-next-git-action] {
+  color: var(--text);
+  font-weight: 500;
 }
 
 /* Header chrome: only the next git action keeps an outline; Fork, Hand off
@@ -3817,7 +3820,6 @@ button.diffLineGutter:focus-visible {
 .planStep[data-plan-step="doing"]::before {
   border-color: var(--accent-edge);
   background: radial-gradient(circle, var(--accent-dot) 0 2.5px, transparent 3px);
-  box-shadow: var(--accent-mark-ring);
 }
 
 /* Done: a green check-circle, and the step steps back to tertiary ink. */

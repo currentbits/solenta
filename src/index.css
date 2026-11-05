@@ -162,8 +162,8 @@
   --accent-dot: var(--accent);
   --accent-edge: #857c00;
   /* One neutral edge for every yellow mark on paper, same shape as dark. */
-  /* Highlighter on paper: true yellow with a crisp ink edge. */
-  --accent-mark-ring: 0 0 0 1.5px rgba(25, 25, 24, 0.85);
+  /* Paper: true yellow with a faint inset edge, no dark outline. */
+  --accent-mark-ring: inset 0 0 0 1px rgba(0, 0, 0, 0.15);
   --blue: #1e40af;
   --blue-soft: rgba(30, 64, 175, 0.1);
   --blue-border: rgba(30, 64, 175, 0.35);

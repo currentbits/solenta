@@ -304,6 +304,7 @@ export function GeneralPane({
           </p>
         </div>
         <div className={styles.field}>
+          <span className={styles.fieldLabel}>Notifications</span>
           <label className={styles.fieldRow}>
             <input
               type="checkbox"

@@ -1233,8 +1233,7 @@
 
 /* Pinned threads end with a gap, not a rule. */
 .pinnedDivider {
-  height: 1px;
-  margin: 2px 10px;
+  display: none;
 }
 
 .shelf {
@@ -1283,15 +1282,21 @@
 /* F7 mono micro-labels (#1429): "WORKING · 1" then a hairline. */
 /* Labels for the pinned and recent groups: the same voice as the shelf
    headers below, so every group in the list is named. */
+/* Same box as a shelf header (28px, 11px inset) so every group header in
+   the list sits on one rhythm. */
 .groupLabel {
-  padding: 6px 8px 4px 11px;
+  display: flex;
+  align-items: center;
+  height: 28px;
+  margin-top: 8px;
+  padding: 0 8px 0 11px;
   font: 500 11px var(--font);
   letter-spacing: 0.03em;
   color: var(--text-dim);
 }
 
-.pinnedDivider + .groupLabel {
-  padding-top: 10px;
+.groupLabel:first-child {
+  margin-top: 0;
 }
 
 .shelfLabelSnoozed,
@@ -2062,4 +2067,11 @@
 /* Inside the named Pinned group the pin glyph repeats the label. */
 .groupLabel[data-group-label="pinned"] ~ * .pinFlag {
   display: none;
+}
+
+/* Calm states (queued, watching) show the glyph only, so the title keeps
+   its width; the word stays in the DOM and the tooltip. */
+.cardLine2 .statusLabel:is([data-tone="queued"], [data-tone="watching"]) {
+  font-size: 0;
+  gap: 0;
 }

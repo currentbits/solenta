@@ -550,7 +550,7 @@ label.fieldRow:has(> input[type="checkbox"]) {
 
 .note {
   margin: 0;
-  max-width: 520px;
+  max-width: 480px;
   font-size: 12px;
   line-height: 1.5;
   color: var(--text-dim);
@@ -729,7 +729,7 @@ label.fieldRow:has(> input[type="checkbox"]) {
 }
 
 .navItem[data-active="true"] {
-  background: var(--overlay-strong);
+  background: var(--overlay-hover);
   color: var(--text);
 }
 
