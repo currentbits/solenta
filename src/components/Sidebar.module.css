@@ -728,6 +728,10 @@
   min-width: 0;
 }
 
+.cardSlug::after {
+  content: "\00a0·";
+}
+
 .cardSlug {
   font-size: 11px;
   color: var(--text-dim);

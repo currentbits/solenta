@@ -99,7 +99,8 @@
 .card {
   position: relative;
   background: var(--card);
-  border: 1px solid var(--border);
+  /* The same hairline as the plan card above; the fill sets it apart. */
+  border: 1px solid var(--border-soft);
   border-radius: var(--radius-card);
   padding: 14px 14px 10px;
   transition:
@@ -199,6 +200,8 @@
 }
 
 select.agentSelect {
+  /* Size to the chosen option so picker gaps stay even. */
+  field-sizing: content;
   padding-right: 26px;
   background-position: right 8px center;
 }
@@ -1507,4 +1510,10 @@ select.agentSelect {
   margin-bottom: 6px;
   color: var(--green);
   font-size: 12px;
+}
+
+/* Paper's card fill is close to the canvas, so the composer keeps the
+   control border there. */
+:global(:root[data-theme="light"]) .card {
+  border-color: var(--border);
 }

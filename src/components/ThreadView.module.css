@@ -560,7 +560,7 @@ button.project:focus-visible {
 
 .actions {
   display: flex;
-  gap: 8px;
+  gap: 4px;
   flex-shrink: 0;
   align-items: center;
 }
@@ -3012,16 +3012,8 @@ button.diffLineGutter:focus-visible {
   background: var(--card-hover);
 }
 
-.message p {
-  margin: 0 0 10px;
-  color: var(--text-muted);
-  line-height: 1.6;
-  font-size: 13.5px;
-}
-
-.message p:last-child {
-  margin-bottom: 0;
-}
+/* Agent prose paragraphs take their size, ink and spacing from
+   Markdown.module.css (.md p); no per-message override here. */
 
 .messageUser {
   display: flex;
