@@ -74,6 +74,7 @@ if (process.env.CODER_FAKE_MUSE_ARGV_FILE) {
       XDG_DATA_HOME: process.env.XDG_DATA_HOME || "",
       HOME: process.env.HOME || "",
       SOLENTA_WORKTREE: process.env.SOLENTA_WORKTREE || "",
+      SOLENTA_PERMISSION_MODE: process.env.SOLENTA_PERMISSION_MODE || "",
     }),
     "utf8",
   );
@@ -201,6 +202,7 @@ describe("muse runner integration", () => {
     assert.ok(
       env.XDG_CONFIG_HOME.startsWith(path.join(tmpDir, "muse-homes", thread.id)),
     );
+    assert.equal(env.SOLENTA_PERMISSION_MODE, "default");
   });
 
   it("resume: later turns pass the stored --session-id", async () => {
@@ -234,6 +236,8 @@ describe("muse runner integration", () => {
     );
     assert.ok(!argv.includes("--yolo"));
     assert.ok(!argv.includes("--approval-mode"));
+    // The PreToolUse hook lets ask rules run on Full access (#1853).
+    assert.equal(readEnv().SOLENTA_PERMISSION_MODE, "bypassPermissions");
   });
 
   it("fails the run when the overlay throws", async () => {

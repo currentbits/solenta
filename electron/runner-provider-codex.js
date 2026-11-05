@@ -261,6 +261,7 @@ function createCodexRun(ctx) {
         if (nativeHooks) codexMcpEnv.SOLENTA_USER_HOOKS = nativeHooks.file;
         args.push("-c", "features.hooks=true");
         codexMcpEnv.SOLENTA_WORKTREE = localCwd;
+        codexMcpEnv.SOLENTA_PERMISSION_MODE = thread.permissionMode || "default";
       } catch {
         // Hook materialize is best-effort; a failed isolate must not block the turn.
       }

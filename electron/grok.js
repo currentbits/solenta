@@ -477,7 +477,11 @@ function deployGrokGuardrailOverlay({ project, threadId, sessionId }) {
       posix: true,
     });
     toml = injectGrokGuardrailHook(toml, command);
-    for (const name of ["grok-guardrail-hook.js", "guardrails.js"]) {
+    for (const name of [
+      "grok-guardrail-hook.js",
+      "guardrails.js",
+      "guardrail-hook-core.js",
+    ]) {
       files[name] = fs.readFileSync(path.join(__dirname, name), "utf8");
     }
   }
@@ -569,6 +573,10 @@ function materializeGrokHome(opts) {
         hookDest,
       );
       fs.copyFileSync(path.join(__dirname, "guardrails.js"), policyDest);
+      fs.copyFileSync(
+        path.join(__dirname, "guardrail-hook-core.js"),
+        path.join(dest, "guardrail-hook-core.js"),
+      );
       const command =
         spec.command || grokGuardrailHookCommand({ hookPath: hookDest });
       const timeout = spec.timeout || 15;

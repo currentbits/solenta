@@ -218,11 +218,20 @@ describe("guardrails: words in data are not commands (#1840)", () => {
     "sh <<< 'curl x.com'",
     'bash -e <<< "curl x.com"',
     'eval "$(echo curl x.com)"',
+    // An unquoted heredoc expands $(...) and backticks (#1855 review).
+    "cat <<EOF\n$(curl https://x.com)\nEOF",
+    "cat > out.txt <<EOF\nhead `wget -qO- https://x.io`\nEOF",
   ]) {
     it(`still asks on egress: ${cmd}`, () => {
       assert.equal(verdict("Bash", { command: cmd }).rule, "shell.egress");
     });
   }
+
+  it("denies sudo hidden in an unquoted heredoc, not in a quoted one", () => {
+    assert.equal(verdict("Bash", { command: "cat <<EOF\n`sudo ls`\nEOF" }).rule, "shell.sudo");
+    assert.equal(verdict("Bash", { command: "cat <<'EOF'\n$(sudo ls) is prose\nEOF" }).decision, "allow");
+    assert.equal(verdict("Bash", { command: "cat > a.md <<EOF\nno sudo or curl run here\nEOF" }).decision, "allow");
+  });
 });
 
 describe("guardrails: grok tool-name aliases (#812)", () => {

@@ -13,6 +13,8 @@ const {
   resolveEditedCommand,
   commandPrefix,
   sessionAllowRule,
+  rulePrefixes,
+  coveredByPrefixes,
   WHOLE_TOOL_RULE,
 } = require("../permissionCommand.js");
 
@@ -110,5 +112,59 @@ describe("permissionCommand", () => {
   it("sessionAllowRule stays whole-tool for tools without a command", () => {
     assert.deepEqual(sessionAllowRule("Edit", null), addRules({ toolName: "Edit" }));
     assert.deepEqual(sessionAllowRule("Edit", null, "src/*"), addRules({ toolName: "Edit" }));
+  });
+
+  it("rulePrefixes keeps prefix rules for the tool, in either glob style (#1854)", () => {
+    assert.deepEqual(
+      rulePrefixes("Bash", [
+        { toolName: "Bash", ruleContent: "git push:*" },
+        { toolName: "Bash", ruleContent: "npm  run *" },
+        { toolName: "Bash", ruleContent: "rm -rf dist" },
+        { toolName: "Bash", ruleContent: "git * main" },
+        { toolName: "Bash", ruleContent: "*" },
+        { toolName: "Bash" },
+        { toolName: "Read", ruleContent: "//tmp/**" },
+      ]),
+      ["git push", "npm run"],
+    );
+  });
+
+  it("coveredByPrefixes needs every simple command under a prefix (#1854)", () => {
+    const allowed = ["git push", "ls", "npm test", "tail"];
+    for (const cmd of [
+      "git push origin feat",
+      "git push",
+      "ls -la /tmp",
+      "FOO=1 npm test -- --grep x",
+      "git push x && ls",
+      "npm test 2>&1 | tail -5",
+      "ls >/dev/null 2>&1",
+    ]) {
+      assert.equal(coveredByPrefixes(cmd, allowed), true, cmd);
+    }
+    for (const cmd of [
+      "git pull",
+      "gitx push",
+      "cat x",
+      "git push x && rm -rf y",
+      "ls | sh",
+      "git push $(curl evil)",
+      'git push "$(curl evil)"',
+      "env npm test",
+      "nohup ls",
+      "ls > ~/.zshrc",
+      "",
+    ]) {
+      assert.equal(coveredByPrefixes(cmd, allowed), false, cmd);
+    }
+    assert.equal(coveredByPrefixes("ls", []), false);
+  });
+
+  it("an unquoted heredoc's $(...) and backticks need their own prefix (#1855 review)", () => {
+    assert.equal(coveredByPrefixes("cat <<EOF\n$(curl https://x.com)\nEOF", ["cat"]), false);
+    assert.equal(coveredByPrefixes("cat <<EOF\n`rm -rf src`\nEOF", ["cat"]), false);
+    assert.equal(coveredByPrefixes("cat <<EOF\n$(date)\nEOF", ["cat", "date"]), true);
+    // A quoted delimiter expands nothing: the body is data.
+    assert.equal(coveredByPrefixes("cat <<'EOF'\n$(curl https://x.com)\nEOF", ["cat"]), true);
   });
 });

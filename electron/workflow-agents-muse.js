@@ -156,6 +156,8 @@ function spawnAgentMuse(opts) {
   }
 
   const museBin = binary || resolveBin(entry);
+  // The PreToolUse hook lets ask rules run on Full access (#1853).
+  museEnv = { ...museEnv, SOLENTA_PERMISSION_MODE: permissionMode || "default" };
   const spawn = resolveWorkflowSpawn(project, museBin, args, cwd, museEnv);
   const handle = runMuse({
     binary: spawn.binary,
@@ -191,7 +193,12 @@ function spawnAgentMuse(opts) {
       }
       const tool = museExtractTool(ev);
       if (tool && tool.phase === "start") {
-        notePhaseGuardrail(opts, tool.name, tool.input);
+        notePhaseGuardrail(
+          opts,
+          tool.name,
+          tool.input,
+          permissionMode === "bypassPermissions",
+        );
       }
     },
     onExit: ({ code, stderr, fullStdout: stdout, gotJson: parsed }) => {

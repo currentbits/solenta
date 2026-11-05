@@ -140,6 +140,7 @@ function spawnPhaseAgent(opts) {
       providerEntry: entry,
       onText,
       reasoningEffort,
+      permissionMode,
       userDataPath,
       threadId,
       projectId,
