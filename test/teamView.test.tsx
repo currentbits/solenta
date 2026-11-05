@@ -164,6 +164,39 @@ describe("Agents team view", () => {
     m.unmount();
   });
 
+  it("names the worker's account and the selected thread's (#1857)", async () => {
+    const providers: ProviderInfo[] = [
+      ...PROVIDERS,
+      { ...PROVIDERS[0]!, id: "claude:team", name: "Claude Code (team)" },
+    ];
+    const teamWorker = summary({
+      id: "t-team",
+      title: "Team worker",
+      providerInstance: "team",
+      handoffFrom: "t-orch",
+      orchWorker: true,
+      projectId: "p1",
+    });
+    const m = await mount(
+      <AgentsContent
+        workflow={null}
+        thread={thread({ providerInstance: "team" })}
+        usage={null}
+        providers={providers}
+        rosterKey="t-orch:idle"
+        listThreadSummaries={async () => [ORCHESTRATOR, teamWorker]}
+      />,
+    );
+    await m.flush();
+    const rows = [...m.container.querySelectorAll("li")].map((li) => li.textContent ?? "");
+    assert.ok(
+      rows.some((t) => t.includes("Claude Code (team)") && t.includes("Team worker")),
+      "worker row shows the account",
+    );
+    assert.match(m.text(), /Claude Code \(team\) · idle/, "session line shows it too");
+    m.unmount();
+  });
+
   it("working worker rows carry a Stop button; idle and done rows do not (#1531)", async () => {
     const stopped: string[] = [];
     const selected: string[] = [];
