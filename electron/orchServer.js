@@ -768,11 +768,57 @@ function createToolHandlers(deps) {
     return { intoPath, destinationPath, destinationBranch };
   }
 
+  /**
+   * The branch a worker still holds after its worktree folder vanished
+   * (#1848). The missing-dir recovery and GC clear worktreePath AND branch,
+   * keeping the ref name in retainedBranch (#1404), so no worktreePath does
+   * not mean the worker ran in the checkout. Null when it never had a
+   * branch; throws when the ref is gone too, rather than claim the work
+   * already landed.
+   */
+  function lostWorktreeBranch(worker) {
+    const branch = worker.branch || worker.retainedBranch;
+    if (!branch) return null;
+    const project = projectOf(worker);
+    const { gitTry } = require("./worktrees.js");
+    const ref = project && gitTry(project.path, [
+      "show-ref", "--verify", "--quiet", `refs/heads/${branch}`,
+    ]);
+    if (!ref || !ref.ok) {
+      throw new Error(
+        `Worker ${worker.id}'s worktree and its branch ${branch} are both ` +
+          `missing. Nothing was merged, and its changes are NOT in your ` +
+          `checkout. Recover the commits (git reflog) and recreate the branch ` +
+          `(git branch ${branch} <commit>), then merge again.`,
+      );
+    }
+    return branch;
+  }
+
+  /** Re-add the worker's worktree on its surviving branch (no setup script). */
+  function restoreLostWorktree(worker, branch) {
+    const { ensureWorktreePresent, resolveWorktreeDir } = require("./worktrees.js");
+    const project = projectOf(worker);
+    // ponytail: default worktree base, not settings.worktreeRoot; the dir
+    // only lives until the merge/PR cleanup or the worker's next turn.
+    const base = path.join(userDataPath || require("node:os").tmpdir(), "worktrees");
+    const { dir } = resolveWorktreeDir(project, base, worker.id);
+    ensureWorktreePresent(project.path, dir, branch);
+    store.updateThread(worker.id, {
+      worktreePath: dir,
+      branch,
+      retainedBranch: null,
+      pendingWorktree: false,
+    });
+    store.save();
+  }
+
   async function thread_merge(args) {
     const far = remoteWorker(args.workerThreadId, args.projectId);
     if (far) return mergeRemoteWorker(args, far);
     const { self, worker } = requireLandableWorker(args);
-    if (!worker.worktreePath) {
+    const lost = worker.worktreePath ? null : lostWorktreeBranch(worker);
+    if (!worker.worktreePath && !lost) {
       return {
         merged: false,
         reason:
@@ -792,8 +838,16 @@ function createToolHandlers(deps) {
       );
     }
     const { intoPath, destinationPath, destinationBranch } = approvedDestination(self, args);
+    if (lost === destinationBranch) {
+      return {
+        merged: false,
+        branch: lost,
+        reason: `The worker's branch ${lost} is the destination branch itself; nothing to merge.`,
+      };
+    }
+    if (lost) restoreLostWorktree(worker, lost);
     const { mergeWorktree } = require("./worktrees.js");
-    const branch = worker.branch ?? null;
+    const branch = lost || worker.branch || null;
     mergeWorktree({
       store,
       threadId: worker.id,
@@ -950,7 +1004,8 @@ function createToolHandlers(deps) {
       return { ...pr, host: far.w.hostLabel };
     }
     const { self, worker } = requireLandableWorker(args);
-    if (!worker.worktreePath) {
+    const lost = worker.worktreePath ? null : lostWorktreeBranch(worker);
+    if (!worker.worktreePath && !lost) {
       throw new Error(
         `Worker ${worker.id} ran in the project checkout without a worktree, so ` +
           `it has no branch of its own to propose. Its changes are already in ` +
@@ -958,6 +1013,7 @@ function createToolHandlers(deps) {
       );
     }
     assertUserApproved(self, args, "Opening a pull request");
+    if (lost) restoreLostWorktree(worker, lost);
     const { createPr } = require("./worktrees.js");
     const pr = await createPr({
       store,

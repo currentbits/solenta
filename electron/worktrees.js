@@ -47,6 +47,7 @@ const {
   listFiles,
   lsFiles,
   searchFiles,
+  ensureWorktreePresent,
 } = require("./worktrees-changes.js");
 const {
   RETENTION_SWEEP_INTERVAL_MS,
@@ -217,6 +218,7 @@ module.exports = {
   scheduleRetention,
   DEFAULT_WORKTREE_RETENTION,
   ensureWorktree,
+  ensureWorktreePresent,
   isPrRefreshCandidate,
   isGitHubRemote,
   isGitHubRemoteAsync,
