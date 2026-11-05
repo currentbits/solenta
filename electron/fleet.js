@@ -5,6 +5,7 @@ const {
   listPrsRaw,
   PR_LIST_FIELDS_FALLBACK,
 } = require("./worktrees.js");
+const { threadProviderRef } = require("./providerInstances.js");
 
 const DEFAULT_DAYS = 90;
 const DURABILITY_WINDOW_DAYS = 14;
@@ -416,7 +417,8 @@ async function collectFleetInner(opts) {
       threadId: thread.id,
       projectId: thread.projectId,
       title: thread.title != null ? String(thread.title) : "",
-      provider: thread.provider != null ? String(thread.provider) : "",
+      // Per account (#1857): claude:team is its own row.
+      provider: thread.provider != null ? threadProviderRef(thread) : "",
       model: thread.model != null ? thread.model : null,
       createdAt: thread.createdAt,
       endedAt: thread.updatedAt,

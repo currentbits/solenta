@@ -267,6 +267,21 @@ describe("collectFleet", () => {
     assert.equal(result.threads[0].turns, 2);
   });
 
+  it("labels a named-account thread with its ref (#1857)", async () => {
+    const result = await collect({
+      store: makeStore({
+        threads: [
+          thread({ id: "base", createdAt: NOW - DAY }),
+          thread({ id: "team", createdAt: NOW - DAY, providerInstance: "team" }),
+        ],
+      }),
+    });
+    assert.deepEqual(
+      result.threads.map((t) => [t.threadId, t.provider]).sort(),
+      [["base", "claude"], ["team", "claude:team"]],
+    );
+  });
+
   it("a missing merge commit leaves linesAdded/linesSurviving null, not zero", async () => {
     const result = await collect({
       store: makeStore({

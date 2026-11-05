@@ -499,6 +499,37 @@ function threadExtraArgv(settings, thread) {
 }
 
 /**
+ * Named-account refs a lead can pass as thread_fork provider (#1857), by
+ * base provider in settings order: claude → ["claude:work", "claude:team"].
+ * Base overlays are the default account itself, never a ref of their own.
+ * @param {{ providerInstances?: unknown } | null | undefined} settings
+ * @returns {Map<string, string[]>}
+ */
+function accountRefsByProvider(settings) {
+  const list = Array.isArray(settings && settings.providerInstances)
+    ? settings.providerInstances
+    : [];
+  /** @type {Map<string, string[]>} */
+  const out = new Map();
+  for (const inst of list) {
+    if (!inst || !inst.id || !inst.provider || isBaseOverlay(inst)) continue;
+    const refs = out.get(inst.provider) || [];
+    refs.push(providerRef(inst.provider, inst.id));
+    out.set(inst.provider, refs);
+  }
+  return out;
+}
+
+/**
+ * Providers whose instances are separate subscriptions with their own quota,
+ * so `<provider>:auto` (#1857) can choose between them.
+ * @param {string} provider
+ */
+function supportsAutoAccount(provider) {
+  return Object.prototype.hasOwnProperty.call(CONFIG_DIR_ENV, provider);
+}
+
+/**
  * Display name: "Claude (work)".
  * @param {string} baseName
  * @param {ProviderInstance} inst
@@ -595,5 +626,7 @@ module.exports = {
   isolatedHomeDir,
   threadInstanceEnv,
   threadExtraArgv,
+  accountRefsByProvider,
+  supportsAutoAccount,
   instanceDisplayName,
 };
