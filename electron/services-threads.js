@@ -2040,6 +2040,7 @@ function threadSummaries(store, input) {
         id: t.id,
         title: t.title,
         provider: t.provider,
+        ...(t.providerInstance ? { providerInstance: t.providerInstance } : {}),
         status: t.status,
         handoffFrom: t.handoffFrom ?? null,
         orchWorker: t.orchWorker === true,

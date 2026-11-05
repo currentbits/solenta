@@ -265,15 +265,46 @@ function formatPoolMenu(pool, opts) {
 }
 
 /**
+ * Named accounts the lead can fork onto (#1857). Empty string when there are
+ * none, or when a pinned pool ignores thread_fork provider anyway.
+ * @param {SubagentPool | null | undefined} pool
+ * @param {{ providerInstances?: unknown } | null | undefined} settings
+ * @returns {string}
+ */
+function formatAccountMenu(pool, settings) {
+  if (pool && pool.force && pool.defaultAlias) return "";
+  const {
+    accountRefsByProvider,
+    supportsAutoAccount,
+  } = require("./providerInstances.js");
+  const lines = [];
+  for (const [provider, refs] of accountRefsByProvider(settings)) {
+    const auto = supportsAutoAccount(provider)
+      ? `, or ${provider}:auto for the ${provider} account with the most quota left`
+      : "";
+    // A custom CLI (#458) is only ever an instance; bare generic is no ref.
+    const base = provider === "generic" ? "" : `${provider} (default account), `;
+    lines.push(`- ${provider}: ${base}${refs.join(", ")}${auto}`);
+  }
+  if (lines.length === 0) return "";
+  return (
+    "[Worker accounts] Pass provider=<ref> on thread_fork to run a worker on " +
+    `one account. Valid refs:\n${lines.join("\n")}`
+  );
+}
+
+/**
  * Dispatch note. Same coder-threads gate as selfIdNoteFor: with no thread
  * tools in the run there is nothing to pass these aliases to.
  * Across an ssh/WSL boundary the worker CLI runs on the other side, so a
  * local binary check would hide valid aliases (#1403); list them all.
  * @param {SubagentPool | null | undefined} pool
  * @param {{ remoteHost?: string, path?: string } | null} [project]
+ * @param {{ providerInstances?: unknown } | null} [settings] - lists named
+ *   accounts (#1857)
  * @returns {string}
  */
-function subagentPoolNoteFor(pool, project) {
+function subagentPoolNoteFor(pool, project, settings) {
   try {
     const { activeServers } = require("./memory-sup.js");
     if (!activeServers().some((s) => s.name === "coder-threads")) return "";
@@ -285,10 +316,12 @@ function subagentPoolNoteFor(pool, project) {
   const menu = formatPoolMenu(pool, {
     isAvailable: remote ? () => true : providerBinAvailable,
   });
-  if (!menu) return "";
+  const accounts = formatAccountMenu(pool, settings);
+  const tail = accounts ? `\n\n${accounts}` : "";
+  if (!menu) return tail;
   return remote
-    ? `\n\n${menu}\nWorker CLIs run on the project's remote side; availability is checked when the worker starts.`
-    : `\n\n${menu}`;
+    ? `\n\n${menu}\nWorker CLIs run on the project's remote side; availability is checked when the worker starts.${tail}`
+    : `\n\n${menu}${tail}`;
 }
 
 /**
@@ -302,7 +335,9 @@ function providerBinAvailable(providerId) {
       resolveBin,
       isBinAvailable,
     } = require("./providers.js");
-    const entry = getProvider(providerId);
+    // An alias may name an account ref (claude:team, #1857).
+    const { parseProviderRef } = require("./providerInstances.js");
+    const entry = getProvider(parseProviderRef(providerId).provider);
     if (!entry) return false;
     if (entry.kind === "simulate") return true;
     return isBinAvailable(resolveBin(entry));
@@ -458,6 +493,7 @@ module.exports = {
   validateSubagentPool,
   resolveSubagentPool,
   formatPoolMenu,
+  formatAccountMenu,
   subagentPoolNoteFor,
   poolFromStore,
   nextPoolEntry,
