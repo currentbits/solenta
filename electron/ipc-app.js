@@ -256,6 +256,9 @@ module.exports = {
     if (ctx.stayAwake) {
       ctx.stayAwake.evaluate();
     }
+    // Menu bar usage (#1859): the toggle, the default account or the
+    // instance list changed; rebuild (or remove) the menu.
+    if (ctx.usageMenu) ctx.usageMenu.sync();
     return withSecretStorage(ctx, redactSettings(next));
   },
   "stayAwake:status": async (ctx) => {

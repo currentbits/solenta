@@ -4132,6 +4132,12 @@ export interface AppSettings {
    */
   closeToTray: boolean;
   /**
+   * Subscription usage and the account picker in the menu bar (#1859): its
+   * own menu bar item on macOS, extra rows in the close-to-tray menu on
+   * Windows/Linux. Picking an account sets defaultProvider. Default off.
+   */
+  menuBarUsage: boolean;
+  /**
    * After a restart, give each thread whose run was interrupted one
    * automatic follow-up turn (issue #1512 I3). Default off.
    */

@@ -107,6 +107,7 @@ class StoreSettingsMethods {
       confirmQuitWithActiveWork: n.confirmQuitWithActiveWork,
       pinchZoomWindow: n.pinchZoomWindow,
       closeToTray: n.closeToTray,
+      menuBarUsage: n.menuBarUsage,
       resumeInterruptedRuns: n.resumeInterruptedRuns,
       combineQueuedFollowUps: n.combineQueuedFollowUps,
       agentBugReports: n.agentBugReports,
@@ -475,6 +476,13 @@ class StoreSettingsMethods {
         throw new Error("closeToTray must be a boolean");
       }
       this.data.settings.closeToTray = v;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "menuBarUsage")) {
+      const v = patch.menuBarUsage;
+      if (typeof v !== "boolean") {
+        throw new Error("menuBarUsage must be a boolean");
+      }
+      this.data.settings.menuBarUsage = v;
     }
     if (Object.prototype.hasOwnProperty.call(patch, "worktreeRoot")) {
       this.data.settings.worktreeRoot = validateWorktreeRoot(patch.worktreeRoot);

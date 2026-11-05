@@ -460,6 +460,9 @@ function validateQuotaFailover(raw) {
  * closeToTray: default off; only an explicit true opts into hiding behind
  * a tray icon on window close instead of quitting (Windows/Linux, #1807).
  *
+ * menuBarUsage: default off; only an explicit true shows subscription
+ * usage and the account picker in the menu bar / tray (#1859).
+ *
  * resumeInterruptedRuns: shipped opt-in (#1512 I3), then defaulted on
  * (#1788) for anyone who never chose. normalizeSettings cannot tell an
  * unset value from an explicit `false` once a store round-trips through
@@ -537,6 +540,7 @@ function normalizeSettings(raw) {
     confirmQuitWithActiveWork: true,
     pinchZoomWindow: true,
     closeToTray: false,
+    menuBarUsage: false,
     resumeInterruptedRuns: true,
     resumeInterruptedRunsSet: false,
     combineQueuedFollowUps: true,
@@ -732,6 +736,9 @@ function normalizeSettings(raw) {
   // everywhere so a synced store round-trips cleanly across platforms.
   settings.closeToTray =
     /** @type {{ closeToTray?: unknown }} */ (obj).closeToTray === true;
+  // menuBarUsage (#1859): default off; only an explicit true opts in.
+  settings.menuBarUsage =
+    /** @type {{ menuBarUsage?: unknown }} */ (obj).menuBarUsage === true;
   // #1788: `resumeInterruptedRunsSet` only ever becomes true via setSettings
   // (store-settings-methods.js), the moment a human actually patches this
   // key. Absent -> never touched -> default true, whatever a prior save

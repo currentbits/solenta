@@ -276,6 +276,10 @@ if [[ ! -f assets/Solenta.icns ]]; then
 fi
 cp assets/Solenta.icns "$APP_BUNDLE/Contents/Resources/Solenta.icns"
 echo "icon: Contents/Resources/Solenta.icns"
+# Menu bar usage item (#1859): electron/main.js loads ../assets/trayTemplate.png
+# (the @2x rep by name), so both land next to electron/ in the app dir.
+mkdir -p "$APP_DIR/assets"
+cp assets/trayTemplate.png assets/trayTemplate@2x.png "$APP_DIR/assets/"
 
 # NeMo-Speech.cpp Metal runtime. Dest is Contents/Resources (process.resourcesPath),
 # not Resources/app — electron/speech.js joins resourcesPath/speech/bin/nemo-speech.

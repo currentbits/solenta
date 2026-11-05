@@ -92,6 +92,7 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
   let confirmQuitWithActiveWork = true;
   let pinchZoomWindow = true;
   let closeToTray = false;
+  let menuBarUsage = false;
   // #1788: default on for anyone who never chose, same as the electron store.
   let resumeInterruptedRuns = true;
   let combineQueuedFollowUps = true;
@@ -222,6 +223,7 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           confirmQuitWithActiveWork,
           pinchZoomWindow,
           closeToTray,
+          menuBarUsage,
           resumeInterruptedRuns,
           combineQueuedFollowUps,
           agentBugReports,
@@ -476,6 +478,12 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           }
           closeToTray = patch.closeToTray;
         }
+        if (Object.prototype.hasOwnProperty.call(patch, "menuBarUsage")) {
+          if (typeof patch.menuBarUsage !== "boolean") {
+            throw new Error("menuBarUsage must be a boolean");
+          }
+          menuBarUsage = patch.menuBarUsage;
+        }
         if (Object.prototype.hasOwnProperty.call(patch, "worktreeRoot")) {
           const v = typeof patch.worktreeRoot === "string" ? patch.worktreeRoot.trim() : "";
           if (v && !v.startsWith("/")) {
@@ -701,6 +709,7 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           confirmQuitWithActiveWork,
           pinchZoomWindow,
           closeToTray,
+          menuBarUsage,
           resumeInterruptedRuns,
           combineQueuedFollowUps,
           agentBugReports,

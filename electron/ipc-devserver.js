@@ -12,6 +12,7 @@ const devservers = require("./devservers.js");
 const terminal = require("./terminal.js");
 const preview = require("./preview.js");
 const providerAuth = require("./providerAuth.js");
+const { wslTarget } = require("./wsl.js");
 const {
   parseProviderRef,
   findInstance,
@@ -87,6 +88,40 @@ function terminalRoot(ctx, threadId) {
   return { root, project, logDir: terminalLogDir(ctx) };
 }
 
+/**
+ * Which account a new terminal's `claude` / `codex` use (#1859): the
+ * thread's own for its CLI, the default account (Settings > Default
+ * provider, also picked from the menu bar) for the other. Only the config
+ * dir var, never an instance's keys. Empty = the CLI's usual login.
+ *
+ * @param {any} ctx
+ * @param {unknown} threadId
+ * @returns {Record<string, string>}
+ */
+function terminalAccountEnv(ctx, threadId) {
+  const settings = ctx.store.getSettings();
+  const thread = threadId === SIGNIN_TERMINAL_ID ? null : ctx.store.getThread(threadId);
+  // A remote or WSL shell cannot see this Mac's config folders.
+  const project = thread ? ctx.store.getProject(thread.projectId) : null;
+  if (project && (project.remoteHost || wslTarget(project))) return {};
+  const threadRef = thread && thread.provider
+    ? thread.providerInstance ? `${thread.provider}:${thread.providerInstance}` : thread.provider
+    : "";
+  /** @type {Record<string, string>} */
+  const out = {};
+  const decided = new Set();
+  for (const ref of [threadRef, settings.defaultProvider || ""]) {
+    const { provider, instance } = parseProviderRef(ref);
+    const dirVar = CONFIG_DIR_ENV[/** @type {"claude" | "codex"} */ (provider)];
+    if (!dirVar || decided.has(provider)) continue;
+    decided.add(provider);
+    const inst = instance ? findInstance(settings, provider, instance) : null;
+    const dir = inst ? instanceEnv(inst, undefined, ctx.userDataPath)[dirVar] : "";
+    if (dir) out[dirVar] = dir;
+  }
+  return out;
+}
+
 /** IPC_HANDLERS rows for servers:*, devserver:*, terminal:*, preview:*; ipc.js spreads them in. */
 module.exports = {
   "servers:list": async (ctx, input) => {
@@ -156,7 +191,7 @@ module.exports = {
     const { root, project, logDir } = terminalRoot(ctx, threadId);
     return terminal.open(threadId, root, {
       project,
-      env: { ...process.env, ...projectEnvFor(project, root) },
+      env: { ...process.env, ...projectEnvFor(project, root), ...terminalAccountEnv(ctx, threadId) },
       termId: input && input.termId,
       cols: input && input.cols,
       rows: input && input.rows,
