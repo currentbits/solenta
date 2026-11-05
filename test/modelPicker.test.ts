@@ -88,6 +88,12 @@ const MULTI: ProviderInfo[] = [
 ];
 
 describe("buildModelRows", () => {
+  it("names the per-CLI default account in the base row's heading (#1859)", () => {
+    const rows = buildModelRows(provider({ defaultAccount: "Work" }));
+    assert.equal(rows[0]!.groupHeading, "Claude Code · Work account");
+    assert.equal(rows[0]!.providerId, "claude");
+  });
+
   it("leads with Default, then modelInfo labels (never raw ids as labels when info exists)", () => {
     const rows = buildModelRows(provider());
     // Default + 2 models + Custom
