@@ -24,6 +24,9 @@ const configDoctor = require("./configDoctor.js");
 const START = "solenta:fusion:start";
 const END = "solenta:fusion:end";
 const MARKER_SHA_RE = /solenta:fusion:start sha:([0-9a-f]+)/;
+// `keep:` lists command picks the user made against the package manager,
+// so the next plan treats them as picks instead of re-deriving them.
+const MARKER_KEEP_RE = /solenta:fusion:start sha:[0-9a-f]+ keep:([\w,]+)/;
 
 const FACT_KEYS = Object.freeze([
   ["packageManager", "Package manager"],
@@ -391,8 +394,22 @@ function blockBody(agreed, conflicts, pm, explicit) {
 
 // ponytail: HTML comments for every file; .cursorrules and .windsurfrules have
 // no comment syntax of their own and are read as markdown anyway.
-function renderBlock(body, sha) {
-  return `<!-- ${START} sha:${sha} -->\n${body}\n<!-- ${END} -->\n`;
+function renderBlock(body, sha, keep) {
+  const kept = keep && keep.length ? ` keep:${keep.join(",")}` : "";
+  return `<!-- ${START} sha:${sha}${kept} -->\n${body}\n<!-- ${END} -->\n`;
+}
+
+/**
+ * The one import decision, shared by preview and sync: CLAUDE.md gets
+ * `@AGENTS.md` only when AGENTS.md will hold the shared block, i.e. it is
+ * selected, or it already holds exactly this body.
+ */
+function claudeImports(files, opts, body) {
+  if (!opts.importInClaude || !body) return false;
+  const agents = files.find((f) => f.path === "AGENTS.md");
+  if (!agents) return false;
+  const selected = !opts.paths || opts.paths.includes("AGENTS.md");
+  return selected || blockInner(agents.content) === body;
 }
 
 /** Replace the block in place, or append it after the existing text. */
@@ -417,22 +434,31 @@ function blockSha(files, body) {
 }
 
 /**
- * Synced when at least one file carries a block and every block's hash
- * matches the files as they are now.
+ * Synced when at least one file carries a block, every block's hash matches
+ * the files as they are now, and every block says the same thing. CLAUDE.md's
+ * `@AGENTS.md` counts as AGENTS.md's block. `disagree` names every
+ * block-bearing file when the blocks differ.
  */
 function fusionStatus(files) {
-  let blocks = 0;
+  const agents = files.find((f) => f.path === "AGENTS.md");
+  const agentsBody = agents ? blockInner(agents.content) : null;
   let synced = true;
   let syncedAt = 0;
+  const bodies = new Map();
   for (const f of files) {
     const m = MARKER_SHA_RE.exec(f.content);
     if (!m) continue;
-    blocks += 1;
-    if (m[1] !== blockSha(files, blockInner(f.content))) synced = false;
+    const inner = blockInner(f.content) ?? "";
+    if (m[1] !== blockSha(files, inner)) synced = false;
+    const effective =
+      f.path === "CLAUDE.md" && inner.trim() === "@AGENTS.md" ? agentsBody : inner;
+    bodies.set(f.path, effective);
     syncedAt = Math.max(syncedAt, f.mtimeMs || 0);
   }
-  synced = synced && blocks > 0;
-  return { synced, syncedAt: synced ? syncedAt : null };
+  const distinct = new Set(bodies.values());
+  const disagree = distinct.size > 1 || distinct.has(null) ? [...bodies.keys()] : [];
+  synced = synced && bodies.size > 0 && disagree.length === 0;
+  return { synced, syncedAt: synced ? syncedAt : null, disagree };
 }
 
 function toLines(text) {
@@ -478,22 +504,29 @@ function unifiedDiff(rel, before, after) {
  *
  * @param {Array<{ path: string, content: string, mtimeMs?: number }>} files
  * @param {{ picks?: Record<string, string>, importInClaude?: boolean, paths?: string[] }} [opts]
- *   `paths` limits which files get the block (default: all); the rest keep
- *   their current text and still count toward the hash.
+ *   `paths` are the ticked files (default: all). Diffs cover every file so an
+ *   unticked one can be ticked again; the import decision uses `paths`.
  */
 function planFusion(files, opts = {}) {
   const { agreed, conflicts } = analyzeFiles(files);
   const withBlock = files.find((f) => findBlock(f.content));
   const previous = withBlock && findBlock(withBlock.content);
   const previousBlock = previous ? withBlock.content.slice(previous.from, previous.to) : "";
+  const keptBefore = new Set(((MARKER_KEEP_RE.exec(previousBlock) || [])[1] || "").split(","));
   const picks = opts.picks || {};
   const explicit = new Set();
   // FACT_KEYS order puts the package manager first, so `pm` is settled
   // before any command conflict derives its default from it.
   let pm = (agreed.find((f) => f.key === "packageManager") || {}).value || null;
   for (const c of conflicts) {
+    const kept = keptBefore.has(c.id)
+      ? c.options.find((o) => previousBlock.includes(`\`${o.value}\``))
+      : null;
     if (c.options.some((o) => o.value === picks[c.id])) {
       c.pick = picks[c.id];
+      explicit.add(c.id);
+    } else if (kept) {
+      c.pick = kept.value;
       explicit.add(c.id);
     } else {
       c.pick = defaultPick(c, previousBlock, pm);
@@ -502,14 +535,19 @@ function planFusion(files, opts = {}) {
   }
   for (const f of agreed) f.fused = f.key === "packageManager" ? f.value : translateCommand(f.value, pm);
   const body = blockBody(agreed, conflicts, pm, explicit);
-  const targets = new Set(opts.paths || files.map((f) => f.path));
-  const agentsSynced = files.some((f) => f.path === "AGENTS.md" && targets.has(f.path));
+  // Only overrides that differ from what the package manager would derive.
+  const keep = conflicts
+    .filter((c) => explicit.has(c.id) && FACT_LABEL[c.key] && c.key !== "packageManager")
+    .filter((c) => translateCommand(c.pick, pm) !== c.pick)
+    .map((c) => c.id);
   const bodyFor = (rel) =>
-    opts.importInClaude && agentsSynced && rel === "CLAUDE.md" ? "@AGENTS.md" : body;
+    rel === "CLAUDE.md" && claudeImports(files, opts, body) ? "@AGENTS.md" : body;
 
+  // Every file gets a proposed block; `opts.paths` (the ticked files) only
+  // feeds the import decision here, and syncFusion writes just those.
   const after = files.map((f) =>
-    body && targets.has(f.path)
-      ? applyBlock(f.content, renderBlock(bodyFor(f.path), blockSha(files, bodyFor(f.path))))
+    body
+      ? applyBlock(f.content, renderBlock(bodyFor(f.path), blockSha(files, bodyFor(f.path)), keep))
       : f.content,
   );
   return {
@@ -533,7 +571,7 @@ function planFusion(files, opts = {}) {
 
 /**
  * @param {string} root
- * @param {{ picks?: Record<string, string>, importInClaude?: boolean }} [opts]
+ * @param {{ picks?: Record<string, string>, importInClaude?: boolean, paths?: string[] }} [opts]
  */
 function previewFusion(root, opts) {
   const { after, ...plan } = planFusion(discoverFusionFiles(root), opts);
@@ -569,6 +607,7 @@ module.exports = {
   applyBlock,
   translateCommand,
   blockSha,
+  claudeImports,
   fusionStatus,
   unifiedDiff,
   planFusion,

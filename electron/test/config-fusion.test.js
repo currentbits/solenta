@@ -309,6 +309,83 @@ describe("syncFusion on disk", () => {
   });
 });
 
+describe("Codex review regressions (#1862)", () => {
+  // AGENTS.md says npm, CLAUDE.md says pnpm: a package-manager and a Test conflict.
+  const A = "# A\n\n- Test: `npm test`\n";
+  const C = "# C\n\n- Test: `pnpm test`\n";
+
+  it("status reports disagreeing blocks and names the files", () => {
+    write("AGENTS.md", A);
+    write("CLAUDE.md", C);
+    fusion.syncFusion(tmp, { picks: { packageManager: "npm" }, paths: ["AGENTS.md", "CLAUDE.md"] });
+    assert.equal(fusion.previewFusion(tmp, { picks: { packageManager: "npm" } }).status.synced, true);
+
+    fusion.syncFusion(tmp, { picks: { packageManager: "pnpm" }, paths: ["CLAUDE.md"] });
+    assert.match(read("AGENTS.md"), /Package manager: npm/);
+    assert.match(read("CLAUDE.md"), /Package manager: pnpm/);
+    const status = fusion.previewFusion(tmp, {}).status;
+    assert.equal(status.synced, false);
+    assert.deepEqual(status.disagree, ["AGENTS.md", "CLAUDE.md"]);
+  });
+
+  it("treats CLAUDE.md's @AGENTS.md import as AGENTS.md's block", () => {
+    write("AGENTS.md", A);
+    write("CLAUDE.md", C);
+    const r = fusion.syncFusion(tmp, { importInClaude: true, paths: ["AGENTS.md", "CLAUDE.md"] });
+    assert.match(read("CLAUDE.md"), /\n@AGENTS\.md\n/);
+    assert.deepEqual(r.status, { synced: true, syncedAt: r.status.syncedAt, disagree: [] });
+  });
+
+  it("preview matches the write when AGENTS.md is unticked with the import on", () => {
+    write("AGENTS.md", A);
+    write("CLAUDE.md", C);
+    const opts = { importInClaude: true, paths: ["CLAUDE.md"] };
+    const preview = fusion.previewFusion(tmp, opts);
+    const claudeDiff = preview.diffs.find((d) => d.path === "CLAUDE.md").diff;
+    assert.doesNotMatch(claudeDiff, /@AGENTS\.md/, "AGENTS.md has no block yet, so no import");
+    assert.match(claudeDiff, /\+- Package manager:/);
+    // AGENTS.md still gets a diff so it can be ticked again.
+    assert.equal(preview.diffs.find((d) => d.path === "AGENTS.md").changed, true);
+    fusion.syncFusion(tmp, opts);
+    assert.equal(read("AGENTS.md"), A);
+    const written = read("CLAUDE.md");
+    for (const line of claudeDiff.split("\n").filter((l) => l.startsWith("+") && !l.startsWith("+++"))) {
+      assert.ok(written.includes(`${line.slice(1)}\n`), `written CLAUDE.md has ${line}`);
+    }
+
+    // Once AGENTS.md holds the shared block, the import applies even unticked.
+    fusion.syncFusion(tmp, { paths: ["AGENTS.md"] });
+    const again = fusion.previewFusion(tmp, opts);
+    assert.match(again.diffs.find((d) => d.path === "CLAUDE.md").diff, /\+@AGENTS\.md/);
+    fusion.syncFusion(tmp, opts);
+    assert.match(read("CLAUDE.md"), /\n@AGENTS\.md\n/);
+  });
+
+  it("keeps an explicit command override across plans: sync, then re-plan, gives zero changes", () => {
+    write("AGENTS.md", A);
+    write("CLAUDE.md", C);
+    const paths = ["AGENTS.md", "CLAUDE.md"];
+    fusion.syncFusion(tmp, { picks: { packageManager: "pnpm", test: "npm test" }, paths });
+    assert.match(read("AGENTS.md"), /keep:test -->/);
+    assert.match(read("AGENTS.md"), /- Test: `npm test`\n/);
+    const before = { a: read("AGENTS.md"), c: read("CLAUDE.md") };
+
+    // Reopen: no picks from the UI. The override survives and nothing changes.
+    const plan = fusion.previewFusion(tmp, {});
+    assert.equal(plan.conflicts.find((c) => c.key === "packageManager").pick, "pnpm");
+    assert.equal(plan.conflicts.find((c) => c.key === "test").pick, "npm test");
+    assert.deepEqual(plan.diffs.filter((d) => d.changed), []);
+    assert.equal(plan.status.synced, true);
+    assert.deepEqual(fusion.syncFusion(tmp, { paths }).written, []);
+    assert.deepEqual({ a: read("AGENTS.md"), c: read("CLAUDE.md") }, before);
+
+    // Picking the manager's own command drops the override again.
+    fusion.syncFusion(tmp, { picks: { test: "pnpm test" }, paths });
+    assert.doesNotMatch(read("AGENTS.md"), /keep:/);
+    assert.match(read("AGENTS.md"), /- Test: `pnpm test`\n/);
+  });
+});
+
 describe("services.fusionPlan / fusionSync", () => {
   const services = require("../services.js");
   const storeFor = (project) => ({

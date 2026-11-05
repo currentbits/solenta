@@ -632,7 +632,7 @@ function ConfigDoctorCard({
 }
 
 function fusionStatusLabel(status: FusionPlan["status"]): string {
-  if (!status.synced) return "Not synced";
+  if (!status.synced) return status.disagree?.length ? "Not synced (blocks disagree)" : "Not synced";
   const age = status.syncedAt == null ? "now" : formatRelativeAge(status.syncedAt);
   return age === "now" ? "Synced just now" : `Synced ${age} ago`;
 }
@@ -670,8 +670,11 @@ function FusionCard({
   const [refresh, setRefresh] = useState(0);
   const liveProjectRef = useRef(projectId);
   liveProjectRef.current = projectId;
+  /** File list of the last plan, so a preview can name the ticked files. */
+  const filesRef = useRef<string[] | null>(null);
 
   useEffect(() => {
+    filesRef.current = null;
     setPlan(null);
     setPicks({});
     setImportInClaude(false);
@@ -682,9 +685,13 @@ function FusionCard({
 
   useEffect(() => {
     let live = true;
-    fusionPlan({ projectId, picks, importInClaude }).then(
+    // Same ticked set Sync will send, so the CLAUDE.md import previews as written.
+    const paths = filesRef.current?.filter((p) => !skipped.has(p));
+    fusionPlan({ projectId, picks, importInClaude, paths }).then(
       (next) => {
-        if (live && liveProjectRef.current === projectId) setPlan(next);
+        if (!live || liveProjectRef.current !== projectId) return;
+        filesRef.current = next.files.map((f) => f.path);
+        setPlan(next);
       },
       (err: unknown) => {
         if (live && liveProjectRef.current === projectId) setError(errorMessage(err));
@@ -693,7 +700,7 @@ function FusionCard({
     return () => {
       live = false;
     };
-  }, [fusionPlan, projectId, picks, importInClaude, refresh]);
+  }, [fusionPlan, projectId, picks, importInClaude, skipped, refresh]);
 
   const changed = plan?.diffs.filter((d) => d.changed) ?? [];
   const ticked = changed.filter((d) => !skipped.has(d.path)).map((d) => d.path);
@@ -745,6 +752,11 @@ function FusionCard({
           <p className={styles.doctorMeta}>
             One shared block in every agent&apos;s instruction file. Text outside the block is never changed.
           </p>
+          {plan?.status.disagree?.length ? (
+            <p className={styles.doctorGap} data-fusion-disagree="">
+              Blocks disagree: {plan.status.disagree.join(", ")}
+            </p>
+          ) : null}
           {plan && plan.files.length === 0 ? (
             <p className={styles.doctorMeta}>No AGENTS.md, CLAUDE.md, GEMINI.md or .cursorrules in this project.</p>
           ) : null}

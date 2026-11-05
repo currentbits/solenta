@@ -144,6 +144,28 @@ describe("Fusion card", () => {
     assert.deepEqual(planCalls.at(-1)?.picks, { packageManager: "pnpm", test: "npm test" });
   });
 
+  it("previews with the ticked files and names disagreeing blocks", async () => {
+    const planCalls: FusionInput[] = [];
+    const m = await mount(
+      <MemoryProjectTools
+        projectId="p1"
+        projectSlug="coder"
+        fusionPlan={async (input) => {
+          planCalls.push(input);
+          const plan = planFor(input, false);
+          plan.status = { synced: false, syncedAt: null, disagree: ["AGENTS.md", "CLAUDE.md"] };
+          return plan;
+        }}
+      />,
+    );
+    assert.equal(m.query("[data-fusion-status]")?.textContent, "Not synced (blocks disagree)");
+    await m.click(m.query("[data-fusion] summary"));
+    assert.equal(m.query("[data-fusion-disagree]")?.textContent, "Blocks disagree: AGENTS.md, CLAUDE.md");
+    assert.equal(planCalls[0].paths, undefined, "first plan: every file");
+    await m.click(m.query('[data-fusion-diff="AGENTS.md"] input[type="checkbox"]'));
+    assert.deepEqual(planCalls.at(-1)?.paths, ["CLAUDE.md"]);
+  });
+
   it("offers the CLAUDE.md import and passes it to the plan", async () => {
     const planCalls: FusionInput[] = [];
     const m = await mount(

@@ -427,6 +427,8 @@ export interface FusionStatus {
   synced: boolean;
   /** Newest mtime of a synced file; null when not synced. */
   syncedAt: number | null;
+  /** Files whose blocks say different things (CLAUDE.md's @AGENTS.md counts as AGENTS.md's). */
+  disagree?: string[];
 }
 
 export interface FusionPlan {
@@ -450,6 +452,8 @@ export interface FusionInput {
   picks?: Record<string, string>;
   /** CLAUDE.md gets `@AGENTS.md` instead of a copy when AGENTS.md is synced. */
   importInClaude?: boolean;
+  /** Ticked files. The preview uses them for the CLAUDE.md import decision. */
+  paths?: string[];
 }
 
 export interface FusionSyncResult {
