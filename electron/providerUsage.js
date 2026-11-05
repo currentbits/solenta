@@ -628,7 +628,9 @@ const DEFAULT_FETCHERS = {
  * @returns {Promise<object[]>}
  */
 async function fetchProviderLimits(opts = {}) {
-  const ids = knownProviderIds();
+  // `only` (#1857): skip the other base providers; callers pass only the
+  // instances they want.
+  const ids = knownProviderIds().filter((id) => !opts.only || id === opts.only);
   const rows = await Promise.all(
     ids.map(async (id) => {
       const fn =
@@ -671,6 +673,60 @@ async function fetchProviderLimits(opts = {}) {
   return [...rows, ...instanceRows];
 }
 
+/** An account at or above this in its 5-hour or weekly window is skipped. */
+const PICK_SKIP_PERCENT = 95;
+
+/**
+ * `<provider>:auto` (#1857): the account with the lowest max(5-hour %,
+ * weekly %), ties to the soonest reset of that window. Accounts at
+ * PICK_SKIP_PERCENT or more are skipped. With no usage known for any
+ * candidate the default account (refs[0]) wins.
+ *
+ * ponytail: only the unprefixed "5-hour"/"weekly" windows count, so
+ * Claude's per-model weekly windows and Codex's per-model pools are ignored.
+ *
+ * @param {string[]} refs - candidates, the default account first
+ * @param {object[]} rows - fetchProviderLimits rows
+ * @returns {{ ref: string, note: string }}
+ */
+function pickAccountByQuota(refs, rows) {
+  /** @type {{ ref: string, top: { label: string, usedPercent: number, resetsAt: number | null } }[]} */
+  const open = [];
+  const unknown = [];
+  const full = [];
+  for (const ref of refs) {
+    const row = (rows || []).find((r) => r && r.provider === ref && r.status === "ok");
+    const wins = row
+      ? row.windows.filter((w) => w && (w.label === "5-hour" || w.label === "weekly"))
+      : [];
+    if (wins.length === 0) {
+      unknown.push(ref);
+      continue;
+    }
+    const top = wins.reduce((a, b) => (b.usedPercent > a.usedPercent ? b : a));
+    if (top.usedPercent >= PICK_SKIP_PERCENT) full.push(ref);
+    else open.push({ ref, top });
+  }
+  const resetOf = (/** @type {{ resetsAt: number | null }} */ w) =>
+    w.resetsAt == null ? Infinity : w.resetsAt;
+  open.sort(
+    (a, b) =>
+      a.top.usedPercent - b.top.usedPercent || resetOf(a.top) - resetOf(b.top) || 0,
+  );
+  if (open.length > 0) {
+    const { ref, top } = open[0];
+    return { ref, note: `Picked ${ref}, ${Math.round(top.usedPercent)}% of ${top.label} used` };
+  }
+  if (unknown.length > 0) {
+    const ref = unknown.includes(refs[0]) ? refs[0] : unknown[0];
+    return { ref, note: `Picked ${ref}, no usage known for ${unknown.join(", ")}` };
+  }
+  throw new Error(
+    `Every account is at least ${PICK_SKIP_PERCENT}% used (${full.join(", ")}). ` +
+      "Pass one of them explicitly to run anyway, or wait for a reset.",
+  );
+}
+
 module.exports = {
   TIMEOUT_MS,
   FIVE_HOUR_SECONDS,
@@ -680,6 +736,8 @@ module.exports = {
   MSG_TIMEOUT,
   MSG_FAILED,
   fetchProviderLimits,
+  pickAccountByQuota,
+  PICK_SKIP_PERCENT,
   fetchClaude,
   fetchCodex,
   fetchGrok,
