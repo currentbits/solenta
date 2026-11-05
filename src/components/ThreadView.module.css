@@ -2234,13 +2234,6 @@ button.diffLineGutter:focus-visible {
   padding-inline: 24px;
 }
 
-/* The plan card's fill reaches past the column so its text shares the
-   prose edge. */
-.body > .planCard {
-  width: auto;
-  max-width: none;
-  margin-inline: max(-14px, calc((100% - var(--thread-column)) / 2 - 14px));
-}
 
 .card {
   background: transparent;
@@ -2570,11 +2563,39 @@ button.diffLineGutter:focus-visible {
   flex-shrink: 0;
 }
 
-/* Repo and memory dots stay neutral: yellow is kept for selection and the
-   brand mark, and colour here only flags the "prior knowledge" warning. */
+/* Repo and memory carry no dot: the provenance reads as plain words on the
+   meta line. Only the "prior knowledge" warning keeps a coloured mark. */
 .provChip[data-tier="repo"]::before,
-.provChip[data-tier="memory"]::before {
-  background: color-mix(in srgb, var(--text-dim) 70%, transparent);
+.provChip[data-tier="memory"]::before,
+.provChip[data-tier="issue"]::before {
+  display: none;
+}
+
+/* Provenance and the meta footer share one line, separated by middots. */
+.message {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 8px;
+}
+
+.message > * {
+  flex: 1 1 100%;
+  min-width: 0;
+}
+
+.message > .provStrip,
+.message > .msgMeta {
+  flex: 0 1 auto;
+}
+
+.message > .provStrip {
+  gap: 4px 8px;
+}
+
+.message > .provStrip + .msgMeta::before {
+  content: "·";
+  color: var(--text-dim);
 }
 
 .provChip[data-tier="prior"]::before {
@@ -3686,10 +3707,11 @@ button.diffLineGutter:focus-visible {
   flex-direction: column;
   gap: 8px;
   padding: 12px 14px;
-  /* Same box as the composer card below it: one surface, one hairline. */
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--card);
+  /* A quiet box: lighter than the composer below it, which stays the one
+     strong surface at the foot of the thread. */
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  background: var(--overlay-soft);
   box-shadow: none;
   font-size: 13px;
 }
@@ -4993,12 +5015,11 @@ a.menuItem {
    and workspace strip directly under it; the first send drops the layout
    back to the normal transcript. */
 /* The composer shares the transcript's reading column (#1429). Composer
-   pads itself 20px a side, and its card reaches 14px past the column like
-   the plan card does, so their box edges line up and the placeholder sits
-   on the prose edge. */
+   pads itself 20px a side, so the column grows by that and the card's box
+   edges sit on the prose column's edges. */
 .composerColumn {
   width: 100%;
-  max-width: calc(var(--thread-column) + 68px);
+  max-width: calc(var(--thread-column) + 40px);
   margin: 0 auto;
   flex-shrink: 0;
 }

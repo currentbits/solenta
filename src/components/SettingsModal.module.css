@@ -6,7 +6,7 @@
   place-items: center;
   padding: 24px;
   background: var(--scrim);
-  backdrop-filter: blur(3px);
+  backdrop-filter: blur(2px);
 }
 
 .modal {
@@ -818,7 +818,7 @@ label.fieldRow:has(> input[type="checkbox"]) {
   flex-direction: column;
   gap: 24px;
   /* Rows scroll out under a short fade, not a hard slice at the modal edge. */
-  mask-image: linear-gradient(to top, transparent 0, #000 24px);
+  mask-image: linear-gradient(to top, transparent 0, #000 44px);
 }
 
 .content > .fieldError {
