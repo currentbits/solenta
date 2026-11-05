@@ -11,6 +11,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { execFileSync } = require("node:child_process");
 const {
   usageMenuItems,
   usageTitle,
@@ -28,6 +29,7 @@ const win = (label, usedPercent, resetsAt = null) => ({ label, usedPercent, rese
 const instances = [
   { id: "personal", name: "Personal", provider: "claude", configDir: "/tmp/p", env: {} },
   { id: "team", name: "Team", provider: "claude", configDir: "/tmp/t", env: {} },
+  { id: "work", name: "Work", provider: "codex", configDir: "/tmp/cw", env: { SECRET: "x" } },
 ];
 
 const usage = [
@@ -37,9 +39,12 @@ const usage = [
   { provider: "cursor", status: "unavailable", windows: [], fetchedAt: null },
   { provider: "claude:personal", status: "ok", windows: [win("5-hour", 2.4, NOW + 30 * 60000), win("weekly", 0)], fetchedAt: NOW },
   { provider: "claude:team", status: "error", windows: [], fetchedAt: null, message: "request timed out" },
+  { provider: "codex:work", status: "ok", windows: [win("weekly", 12)], fetchedAt: NOW },
   // A removed instance's stale row is not an account.
   { provider: "claude:gone", status: "ok", windows: [win("5-hour", 9)], fetchedAt: NOW },
 ];
+
+const SETTINGS = { providerInstances: instances, defaultProvider: null, defaultAccounts: { claude: "personal" } };
 
 function items(over = {}) {
   return usageMenuItems({
@@ -47,7 +52,7 @@ function items(over = {}) {
     instances,
     providerName,
     accountOf: (ref) => (ref === "claude:personal" ? { email: "me@example.com", plan: "max" } : undefined),
-    selectedRef: "claude:personal",
+    settings: SETTINGS,
     now: NOW,
     onPick: () => {},
     onRefresh: () => {},
@@ -57,7 +62,7 @@ function items(over = {}) {
 
 describe("usageMenuItems (#1859)", () => {
   it("one checkable row per account, grouped under each CLI", () => {
-    const labels = items().map((i) => i.label || i.type);
+    const labels = items({ updatedAt: NOW - 3 * 60000 }).map((i) => i.label || i.type);
     assert.deepEqual(labels, [
       "Claude Code",
       "Default — 5-hour 40% · week 10%",
@@ -65,22 +70,27 @@ describe("usageMenuItems (#1859)", () => {
       "Team — no usage data",
       "Codex",
       "Default — week 55%",
+      "Work — week 12%",
       "Grok",
       "Default — no usage data",
       "separator",
+      "Updated 3 min ago",
       "Refresh usage",
     ]);
   });
 
-  it("checks the selected account and greys accounts with no data", () => {
+  it("one checkmark per CLI: its default account", () => {
     const rows = items().filter((i) => i.type === "checkbox");
-    const personal = rows.find((r) => r.label.startsWith("Personal"));
-    assert.equal(personal.checked, true);
-    assert.equal(personal.enabled, true);
-    assert.equal(rows.filter((r) => r.checked).length, 1);
-    const team = rows.find((r) => r.label.startsWith("Team"));
-    assert.equal(team.enabled, false);
-    // CLI headers are labels, not choices.
+    assert.deepEqual(
+      rows.filter((r) => r.checked).map((r) => r.label.split(" — ")[0]),
+      ["Personal", "Default", "Default"],
+    );
+  });
+
+  it("rows with no usage data stay pickable", () => {
+    const rows = items().filter((i) => i.type === "checkbox");
+    for (const r of rows) assert.notEqual(r.enabled, false, r.label);
+    // CLI headers and the age line are labels, not choices.
     assert.equal(items()[0].enabled, false);
   });
 
@@ -98,42 +108,57 @@ describe("usageMenuItems (#1859)", () => {
     const picked = [];
     let refreshed = 0;
     const menu = items({ onPick: (ref) => picked.push(ref), onRefresh: () => refreshed++ });
-    menu.find((i) => i.label === "Default — week 55%").click();
+    menu.find((i) => i.label === "Work — week 12%").click();
     menu.find((i) => i.label === "Refresh usage").click();
-    assert.deepEqual(picked, ["codex"]);
+    assert.deepEqual(picked, ["codex:work"]);
     assert.equal(refreshed, 1);
   });
 
   it("before the first answer it says so instead of an empty menu", () => {
     const menu = items({ usage: null, loading: true });
     assert.equal(menu[0].label, "Loading usage…");
-    assert.equal(menu.at(-1).label, "Refresh usage");
+    assert.equal(menu.at(-1).label, "Refreshing…");
     assert.equal(menu.at(-1).enabled, false);
   });
 });
 
 describe("usageTitle (#1859)", () => {
-  it("is the selected account and its 5-hour %", () => {
-    assert.equal(usageTitle({ usage, instances, providerName, selectedRef: "claude:personal" }), "Personal 2%");
+  const title = (settings, u = usage) => usageTitle({ usage: u, instances, providerName, settings: { providerInstances: instances, ...settings } });
+
+  it("is the default provider's selected account and its 5-hour %", () => {
+    assert.equal(title({ defaultAccounts: { claude: "personal" } }), "Personal 2%");
+    // Picking a Codex account does not move the title off Claude Code.
+    assert.equal(title({ defaultAccounts: { codex: "work" } }), "Claude Code 40%");
+    assert.equal(title({ defaultProvider: "codex", defaultAccounts: { codex: "work" } }), "Work 12%");
   });
 
   it("falls back to the first window, then to the bare name, then empty", () => {
-    assert.equal(usageTitle({ usage, instances, providerName, selectedRef: "codex" }), "Codex 55%");
-    assert.equal(usageTitle({ usage, instances, providerName, selectedRef: "claude:team" }), "Team");
-    assert.equal(usageTitle({ usage: null, instances, providerName, selectedRef: "claude" }), "");
+    assert.equal(title({ defaultProvider: "codex" }), "Codex 55%");
+    assert.equal(title({ defaultAccounts: { claude: "team" } }), "Team");
+    assert.equal(title({}, null), "");
   });
 });
 
 describe("default account (#1859)", () => {
-  it("is settings.defaultProvider, Claude Code when unset", () => {
-    assert.equal(selectedAccountRef({ defaultProvider: null }), "claude");
-    assert.equal(selectedAccountRef({ defaultProvider: "codex" }), "codex");
+  it("is settings.defaultAccounts per CLI; the CLI's own login when unset or removed", () => {
+    assert.equal(selectedAccountRef(SETTINGS, "claude"), "claude:personal");
+    assert.equal(selectedAccountRef(SETTINGS, "codex"), "codex");
+    assert.equal(selectedAccountRef({ ...SETTINGS, defaultAccounts: { claude: "gone" } }, "claude"), "claude");
   });
 
-  it("picking keeps the default model on the same CLI and clears it across CLIs", () => {
-    const s = { defaultProvider: "claude", defaultModel: "opus" };
-    assert.deepEqual(defaultAccountPatch(s, "claude:team"), { defaultProvider: "claude:team", defaultModel: "opus" });
-    assert.deepEqual(defaultAccountPatch(s, "codex"), { defaultProvider: "codex", defaultModel: null });
+  it("picking a Codex account sets only codex's default account", () => {
+    const s = { defaultProvider: "claude", defaultModel: "opus", defaultAccounts: { claude: "personal" } };
+    assert.deepEqual(defaultAccountPatch(s, "codex:work"), { defaultAccounts: { claude: "personal", codex: "work" } });
+    // The CLI's own login clears the entry.
+    assert.deepEqual(defaultAccountPatch(s, "claude"), { defaultAccounts: {} });
+  });
+
+  it("a default provider pinned to another account of that CLI loosens to the bare CLI", () => {
+    assert.deepEqual(defaultAccountPatch({ defaultProvider: "claude:team" }, "claude:personal"), {
+      defaultAccounts: { claude: "personal" },
+      defaultProvider: "claude",
+    });
+    assert.equal(defaultAccountPatch({ defaultProvider: "claude:team" }, "codex:work").defaultProvider, undefined);
   });
 });
 
@@ -141,8 +166,15 @@ function fakeTray(calls) {
   return class FakeTray {
     constructor(icon) {
       calls.push({ op: "new", icon });
+      this.listeners = {};
     }
     setToolTip() {}
+    on(ev, fn) {
+      this.listeners[ev] = fn;
+    }
+    popUpContextMenu(m) {
+      calls.push({ op: "menu", m });
+    }
     setTitle(t) {
       calls.push({ op: "title", t });
     }
@@ -155,10 +187,13 @@ function fakeTray(calls) {
   };
 }
 
+
 function harness(over = {}) {
   const calls = [];
-  const settings = { menuBarUsage: false, defaultProvider: null, defaultModel: null, providerInstances: instances, ...over.settings };
+  const settings = { menuBarUsage: false, defaultProvider: null, defaultModel: null, defaultAccounts: {}, providerInstances: instances, ...over.settings };
   let fetches = 0;
+  let clock = NOW;
+  const timers = [];
   const ctrl = createUsageMenu({
     platform: "darwin",
     headless: false,
@@ -174,20 +209,36 @@ function harness(over = {}) {
     providerName,
     onShow: () => {},
     onQuit: () => {},
-    now: () => NOW,
+    now: () => clock,
+    setInterval: (fn, ms) => {
+      const t = { fn, ms, cleared: false };
+      timers.push(t);
+      return t;
+    },
+    clearInterval: (t) => {
+      t.cleared = true;
+    },
     ...over.opts,
   });
-  return { ctrl, calls, settings, fetches: () => fetches };
+  /** Click the menu bar item; returns the menu it popped up. */
+  const lastMenu = () => {
+    ctrl.menuBar.listeners.click();
+    return calls.filter((c) => c.op === "menu").at(-1).m;
+  };
+  const lastTitle = () => calls.filter((c) => c.op === "title").at(-1).t;
+  return { ctrl, calls, settings, timers, lastMenu, lastTitle, fetches: () => fetches, tick: (ms) => (clock += ms) };
 }
 
 describe("createUsageMenu (#1859)", () => {
-  it("creates nothing while the setting is off", async () => {
+  it("creates nothing while the setting is off", () => {
     const h = harness();
     h.ctrl.sync();
     h.ctrl.setUsage(usage);
+    h.ctrl.setLive("claude", [win("5-hour", 1)]);
     assert.equal(h.ctrl.menuBar, null);
     assert.equal(h.calls.length, 0);
     assert.equal(h.fetches(), 0);
+    assert.equal(h.timers.length, 0);
     assert.equal(h.ctrl.items(), null);
   });
 
@@ -200,7 +251,7 @@ describe("createUsageMenu (#1859)", () => {
   });
 
   it("on macOS: one menu bar Tray, fetched once, titled with the selected account", async () => {
-    const h = harness({ settings: { menuBarUsage: true, defaultProvider: "claude:personal" } });
+    const h = harness({ settings: { menuBarUsage: true, defaultAccounts: { claude: "personal" } } });
     h.ctrl.sync();
     // Turning on fetches once; a refresh while in flight joins it.
     await h.ctrl.refresh();
@@ -210,32 +261,63 @@ describe("createUsageMenu (#1859)", () => {
     await h.ctrl.refresh();
     assert.equal(h.fetches(), 2);
     assert.equal(h.calls.filter((c) => c.op === "new").length, 1);
-    assert.equal(h.calls.filter((c) => c.op === "title").at(-1).t, "Personal 2%");
-    const menu = h.calls.filter((c) => c.op === "menu").at(-1).m;
-    assert.deepEqual(menu.slice(-4).map((i) => i.label || i.type), ["Refresh usage", "Open Solenta", "separator", "Quit"]);
+    assert.equal(h.lastTitle(), "Personal 2%");
+    assert.deepEqual(h.lastMenu().slice(-5).map((i) => i.label || i.type), ["Updated just now", "Refresh usage", "Open Solenta", "separator", "Quit"]);
   });
 
-  it("picking an account sets the default provider and retitles", async () => {
-    const h = harness({ settings: { menuBarUsage: true, defaultProvider: "claude:personal", defaultModel: "opus" } });
+  it("picking a Codex account leaves defaultProvider alone and sets codex's default account", () => {
+    const h = harness({ settings: { menuBarUsage: true, defaultProvider: "claude", defaultModel: "opus", defaultAccounts: { claude: "personal" } } });
     h.ctrl.setUsage(usage);
-    const menu = h.calls.filter((c) => c.op === "menu").at(-1).m;
-    menu.find((i) => i.label.startsWith("Default — 5-hour 40%")).click();
+    h.lastMenu().find((i) => i.label === "Work — week 12%").click();
     assert.equal(h.settings.defaultProvider, "claude");
     assert.equal(h.settings.defaultModel, "opus");
-    assert.equal(h.calls.filter((c) => c.op === "title").at(-1).t, "Claude Code 40%");
+    assert.deepEqual(h.settings.defaultAccounts, { claude: "personal", codex: "work" });
+    assert.equal(h.lastTitle(), "Personal 2%");
+    assert.equal(h.lastMenu().find((i) => i.label === "Work — week 12%").checked, true);
   });
 
-  it("turning the setting off removes the menu bar item", () => {
+  it("opening the menu refetches stale data and leaves fresh data alone", async () => {
     const h = harness({ settings: { menuBarUsage: true } });
     h.ctrl.setUsage(usage);
-    assert.ok(h.ctrl.menuBar);
+    h.tick(60 * 1000);
+    assert.ok(h.lastMenu().some((i) => i.label === "Updated 1 min ago"));
+    await h.ctrl.refresh();
+    assert.equal(h.fetches(), 1, "the refresh above was the only fetch: a minute old is fresh");
+    h.tick(3 * 60 * 1000);
+    const stale = h.lastMenu();
+    assert.ok(stale.some((i) => i.label === "Refreshing…"), "three minutes old: refetch started on open");
+    await h.ctrl.refresh();
+    assert.equal(h.fetches(), 2);
+    assert.ok(h.lastMenu().some((i) => i.label === "Updated just now"), "the next open shows the answer");
+  });
+
+  it("live run windows update the matching account's row and the title", () => {
+    const h = harness({ settings: { menuBarUsage: true, defaultAccounts: { claude: "personal" } } });
+    h.ctrl.setUsage(usage);
+    h.ctrl.setLive("claude:personal", [win("5-hour", 63)]);
+    assert.equal(h.lastTitle(), "Personal 63%");
+    assert.ok(h.lastMenu().some((i) => i.label === "Personal — 5-hour 63% · week 0%"), "weekly kept, 5-hour replaced");
+    // A row with no data yet gains one.
+    h.ctrl.setLive("claude:team", [win("weekly", 7)]);
+    assert.ok(h.lastMenu().some((i) => i.label === "Team — week 7%"));
+  });
+
+  it("one 15-minute timer while on, cleared when turned off", async () => {
+    const h = harness({ settings: { menuBarUsage: true } });
+    h.ctrl.setUsage(usage);
+    assert.equal(h.timers.length, 1);
+    assert.equal(h.timers[0].ms, 15 * 60 * 1000);
+    h.timers[0].fn();
+    await h.ctrl.refresh();
+    assert.equal(h.fetches(), 1);
     h.settings.menuBarUsage = false;
     h.ctrl.sync();
+    assert.equal(h.timers[0].cleared, true);
     assert.equal(h.ctrl.menuBar, null);
     assert.ok(h.calls.some((c) => c.op === "destroy"));
   });
 
-  it("on Windows/Linux: no Tray of its own, rows go into the existing tray menu", () => {
+  it("on Windows/Linux: no Tray of its own, rows go into the existing tray menu", async () => {
     let changes = 0;
     const h = harness({ settings: { menuBarUsage: true }, opts: { platform: "win32", onChange: () => changes++ } });
     h.ctrl.setUsage(usage);
@@ -245,13 +327,54 @@ describe("createUsageMenu (#1859)", () => {
     assert.equal(menu[0].label, "Show Solenta");
     assert.ok(menu.some((i) => i.label === "Personal — 5-hour 2% · week 0%"));
     assert.equal(menu.at(-1).label, "Quit");
+    // Right-click on stale data refetches.
+    h.tick(3 * 60 * 1000);
+    h.ctrl.refreshIfStale();
+    await h.ctrl.refresh();
+    assert.equal(h.fetches(), 1);
     // Off: the close-to-tray menu is exactly what it was.
     h.settings.menuBarUsage = false;
     assert.equal(trayMenuTemplate({ runningCount: 1, onShow() {}, onQuit() {}, usageItems: h.ctrl.items() }).length, 4);
   });
 });
 
-describe("menuBarUsage setting + IPC hooks (#1859)", () => {
+describe("live run windows (#1859)", () => {
+  const usageMod = require("../providerUsage.js");
+
+  it("claude rate_limit_event: utilization fraction to %, five_hour/seven_day labels", () => {
+    const [w] = usageMod.claudeRateLimitWindows({ status: "allowed_warning", rateLimitType: "five_hour", utilization: 0.81, resetsAt: 1_800_000_000 });
+    assert.equal(w.label, "5-hour");
+    assert.equal(Math.round(w.usedPercent), 81);
+    assert.equal(w.resetsAt, 1_800_000_000_000);
+    assert.equal(usageMod.claudeRateLimitWindows({ rateLimitType: "seven_day", utilization: 0.2 })[0].label, "weekly");
+    // No utilization (below the CLI's alert thresholds): nothing is known.
+    assert.deepEqual(usageMod.claudeRateLimitWindows({ status: "allowed", rateLimitType: "five_hour" }), []);
+    assert.deepEqual(usageMod.claudeRateLimitWindows({ rateLimitType: "overage", utilization: 0.5 }), []);
+  });
+
+  it("codex account/rateLimits/updated becomes an account.rate_limits event", () => {
+    const { notificationToJsonl } = require("../codex-appserver.js");
+    const ev = notificationToJsonl({
+      method: "account/rateLimits/updated",
+      params: { rateLimits: { primary: { usedPercent: 30, windowDurationMins: 10080, resetsAt: 1_800_000_000 } } },
+    });
+    assert.equal(ev.type, "account.rate_limits");
+    assert.equal(ev.windows[0].label, "weekly");
+    assert.equal(ev.windows[0].usedPercent, 30);
+  });
+
+  it("reportLiveUsage reaches listeners under the account ref", () => {
+    const seen = [];
+    const off = usageMod.onLiveUsage((ref, w) => seen.push([ref, w.length]));
+    usageMod.reportLiveUsage("claude:personal", [win("5-hour", 5)]);
+    usageMod.reportLiveUsage("claude", []);
+    off();
+    usageMod.reportLiveUsage("claude", [win("5-hour", 5)]);
+    assert.deepEqual(seen, [["claude:personal", 1]]);
+  });
+});
+
+describe("menuBarUsage / defaultAccounts settings + IPC hooks (#1859)", () => {
   let dir;
   beforeEach(() => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), "solenta-menubar-"));
@@ -264,14 +387,44 @@ describe("menuBarUsage setting + IPC hooks (#1859)", () => {
     const { Store, normalizeSettings } = require("../store");
     assert.equal(normalizeSettings({}).menuBarUsage, false);
     assert.equal(normalizeSettings({ menuBarUsage: "yes" }).menuBarUsage, false);
+    assert.deepEqual(normalizeSettings({}).defaultAccounts, {});
+    assert.deepEqual(normalizeSettings({ defaultAccounts: { claude: " work ", codex: 3, "Bad Key": "x" } }).defaultAccounts, { claude: "work" });
     const store = new Store(path.join(dir, "store.json"));
     const { IPC_HANDLERS, makeCtx } = require("../ipc");
     let syncs = 0;
     const ctx = makeCtx({ store, usageMenu: { sync: () => syncs++, setUsage() {} } });
-    const next = await IPC_HANDLERS["settings:set"](ctx, { menuBarUsage: true });
+    const next = await IPC_HANDLERS["settings:set"](ctx, { menuBarUsage: true, defaultAccounts: { codex: "work" } });
     assert.equal(next.menuBarUsage, true);
+    assert.deepEqual(next.defaultAccounts, { codex: "work" });
     assert.equal(syncs, 1);
     await assert.rejects(IPC_HANDLERS["settings:set"](ctx, { menuBarUsage: 1 }), /menuBarUsage must be a boolean/);
+    await assert.rejects(IPC_HANDLERS["settings:set"](ctx, { defaultAccounts: "work" }), /defaultAccounts must be an object/);
+  });
+
+  it("a new thread on a bare provider uses that CLI's default account; explicit and forked ones keep theirs", async () => {
+    const { Store } = require("../store");
+    const services = require("../services");
+    const store = new Store(path.join(dir, "store.json"));
+    store.setSettings({ providerInstances: instances, defaultAccounts: { claude: "team" } });
+    const repo = path.join(dir, "app");
+    fs.mkdirSync(repo);
+    execFileSync("git", ["init"], { cwd: repo, stdio: "ignore" });
+    const project = await services.addProject(store, repo);
+    const bare = services.createThread(store, { projectId: project.id, title: "a", provider: "claude" });
+    assert.equal(bare.provider, "claude");
+    assert.equal(bare.providerInstance, "team");
+    const unset = services.createThread(store, { projectId: project.id, title: "b" });
+    assert.equal(unset.providerInstance, "team");
+    const explicit = services.createThread(store, { projectId: project.id, title: "c", provider: "claude:personal" });
+    assert.equal(explicit.providerInstance, "personal");
+    const codex = services.createThread(store, { projectId: project.id, title: "d", provider: "codex" });
+    assert.equal(codex.providerInstance, undefined);
+    const fork = services.createThread(store, { projectId: project.id, title: "e", provider: "claude", projectDefaults: false });
+    assert.equal(fork.providerInstance, undefined);
+    // The picker's base row names the default account.
+    const list = await services.listProvidersForApi(store);
+    assert.equal(list.find((p) => p.id === "claude").defaultAccount, "Team");
+    assert.equal(list.find((p) => p.id === "codex").defaultAccount, undefined);
   });
 });
 
@@ -293,7 +446,7 @@ describe("terminal account env (#1859)", () => {
   function ctxFor(thread, settings, project = { id: "p", path: "/tmp" }) {
     return {
       store: {
-        getSettings: () => ({ providerInstances: instances.concat({ id: "work", name: "Work", provider: "codex", configDir: "/tmp/cw", env: { SECRET: "x" } }), ...settings }),
+        getSettings: () => ({ providerInstances: instances, defaultProvider: null, defaultAccounts: {}, ...settings }),
         getThread: () => thread,
         getProject: () => project,
       },
@@ -302,26 +455,27 @@ describe("terminal account env (#1859)", () => {
   }
   const handler = require("../ipc-devserver.js")["terminal:open"];
 
-  it("new terminals use the default account the menu picked", async () => {
-    await handler(ctxFor({ id: "t1", projectId: "p", provider: "codex" }, { defaultProvider: "claude:team" }), { threadId: "t1" });
+  it("new terminals use each CLI's default account", async () => {
+    await handler(ctxFor({ id: "t1", projectId: "p", provider: "grok" }, { defaultAccounts: { claude: "team", codex: "work" } }), { threadId: "t1" });
     assert.equal(opened[0].CLAUDE_CONFIG_DIR, "/tmp/t");
+    assert.equal(opened[0].CODEX_HOME, "/tmp/cw");
+    assert.equal(opened[0].SECRET, undefined, "only the config dir, never instance keys");
   });
 
-  it("the thread's own account wins for its CLI; keys never leak", async () => {
+  it("the thread's own account wins for its CLI", async () => {
     await handler(
-      ctxFor({ id: "t1", projectId: "p", provider: "codex", providerInstance: "work" }, { defaultProvider: "codex" }),
+      ctxFor({ id: "t1", projectId: "p", provider: "claude", providerInstance: "personal" }, { defaultAccounts: { claude: "team" } }),
       { threadId: "t1" },
     );
-    assert.equal(opened[0].CODEX_HOME, "/tmp/cw");
-    assert.equal(opened[0].SECRET, undefined);
-    // A thread on the default Claude login keeps it even if another is the default.
-    await handler(ctxFor({ id: "t1", projectId: "p", provider: "claude" }, { defaultProvider: "claude:team" }), { threadId: "t1" });
+    assert.equal(opened[0].CLAUDE_CONFIG_DIR, "/tmp/p");
+    // A thread on the CLI's own login keeps it even if another is the default.
+    await handler(ctxFor({ id: "t1", projectId: "p", provider: "claude" }, { defaultAccounts: { claude: "team" } }), { threadId: "t1" });
     assert.equal(opened[1].CLAUDE_CONFIG_DIR, process.env.CLAUDE_CONFIG_DIR);
   });
 
   it("remote projects get no local config dirs", async () => {
     await handler(
-      ctxFor({ id: "t1", projectId: "p", provider: "codex" }, { defaultProvider: "claude:team" }, { id: "p", path: "/tmp", remoteHost: "box" }),
+      ctxFor({ id: "t1", projectId: "p", provider: "grok" }, { defaultAccounts: { claude: "team" } }, { id: "p", path: "/tmp", remoteHost: "box" }),
       { threadId: "t1" },
     );
     assert.equal(opened[0].CLAUDE_CONFIG_DIR, process.env.CLAUDE_CONFIG_DIR);

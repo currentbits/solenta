@@ -234,8 +234,9 @@ function usageMenuItems(opts) {
  *
  * Freshness without a tight poll: every usage:providerLimits answer
  * (`setUsage`), live windows from runs (`setLive`), a refetch when the menu
- * opens on data older than 2 minutes (`refreshIfStale`), and one 15-minute
- * timer while the setting is on, for an idle app whose window has reset.
+ * opens on data older than 2 minutes (`refreshIfStale`; the menu is built
+ * at each click so its age line is current), and one 15-minute timer while
+ * the setting is on, for an idle app whose window has reset.
  *
  * @param {{
  *   platform: NodeJS.Platform,
@@ -377,17 +378,27 @@ function createUsageMenu(opts) {
     if (!menuBar) {
       menuBar = new opts.Tray(opts.icon);
       menuBar.setToolTip("Solenta");
+      // Built at click time, not stored with setContextMenu: the age line
+      // and percentages are as of opening, and opening on stale data refetches
+      // (the next open shows the answer; an open NSMenu cannot be re-laid).
+      menuBar.on("click", open);
+      menuBar.on("right-click", open);
     }
-    const v = view();
-    menuBar.setTitle(usageTitle(v));
-    const menu = opts.Menu.buildFromTemplate([
-      ...usageMenuItems(v),
+    menuBar.setTitle(usageTitle(view()));
+  }
+
+  function buildMenu() {
+    return opts.Menu.buildFromTemplate([
+      ...usageMenuItems(view()),
       { label: "Open Solenta", click: opts.onShow },
       { type: "separator" },
       { label: "Quit", click: opts.onQuit },
     ]);
-    if (menu && typeof menu.on === "function") menu.on("menu-will-show", refreshIfStale);
-    menuBar.setContextMenu(menu);
+  }
+
+  function open() {
+    refreshIfStale();
+    if (menuBar) menuBar.popUpContextMenu(buildMenu());
   }
 
   return {
