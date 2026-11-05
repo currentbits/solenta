@@ -804,6 +804,66 @@
   min-width: 0;
 }
 
+.fusionConflict {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  margin: 0;
+  padding: 8px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+}
+
+.fusionLegend {
+  padding: 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.fusionOption {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.fusionValue {
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.fusionSources {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.fusionDiffBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.diffAdd {
+  color: var(--green);
+}
+
+.diffDel {
+  color: var(--danger-fg);
+}
+
+.diffHunk {
+  color: var(--text-dim);
+}
+
 .queueList {
   list-style: none;
   margin: 0;

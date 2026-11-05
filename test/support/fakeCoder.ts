@@ -2008,6 +2008,21 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           projectId: input.projectId,
           written: ["AGENTS.md"],
         }),
+      fusionPlan: (input: { projectId: string }) =>
+        rec("projects.fusionPlan", [input], {
+          projectId: input.projectId,
+          files: [],
+          agreed: [],
+          conflicts: [],
+          diffs: [],
+          status: { synced: false, syncedAt: null },
+        }),
+      fusionSync: (input: { projectId: string; paths: string[] }) =>
+        rec("projects.fusionSync", [input], {
+          projectId: input.projectId,
+          written: input.paths,
+          status: { synced: true, syncedAt: 0 },
+        }),
       moveConfigToRepo: (input: { projectId: string }) =>
         rec("projects.moveConfigToRepo", [input], {
           threadId: "t-migrate",

@@ -54,6 +54,9 @@ import type {
   AgentConfigDoctorReport,
   AgentConfigPreview,
   AgentConfigWriteResult,
+  FusionInput,
+  FusionPlan,
+  FusionSyncResult,
   ProjectCodeMap,
   PermissionDecision,
   InputValues,
@@ -991,6 +994,8 @@ export interface UseCoderResult {
     projectId: string;
     targets?: string[];
   }) => Promise<AgentConfigWriteResult>;
+  fusionPlan: (input: FusionInput) => Promise<FusionPlan>;
+  fusionSync: (input: FusionInput & { paths: string[] }) => Promise<FusionSyncResult>;
   /** Dedicated MCP CRUD; results are public redacted definitions only. */
   listMcpServers: () => Promise<McpServerDefinition[]>;
   saveMcpServer: (input: McpServerSaveInput) => Promise<McpServerDefinition>;
@@ -2334,6 +2339,8 @@ export function useCoder(): UseCoderResult {
     lintAgentConfig,
     previewAgentConfig,
     writeAgentConfig,
+    fusionPlan,
+    fusionSync,
     listMcpServers,
     saveMcpServer,
     removeMcpServer,
@@ -2640,6 +2647,8 @@ export function useCoder(): UseCoderResult {
     lintAgentConfig,
     previewAgentConfig,
     writeAgentConfig,
+    fusionPlan,
+    fusionSync,
     listMcpServers,
     saveMcpServer,
     removeMcpServer,

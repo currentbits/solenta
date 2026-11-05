@@ -5,6 +5,9 @@ import type {
   AgentConfigDoctorReport,
   AgentConfigPreview,
   AgentConfigWriteResult,
+  FusionInput,
+  FusionPlan,
+  FusionSyncResult,
   ProjectCodeMap,
   ProjectInfo,
   RecentRepoGroup,
@@ -13,11 +16,101 @@ import type {
 import type { DevCtx } from "./context.ts";
 import { id } from "./util.ts";
 
+/** Browser-dev Fusion fixture: AGENTS.md says npm, CLAUDE.md says pnpm. */
+function devFusionPlan(projectId: string, input: FusionInput, syncedAt: number | null): FusionPlan {
+  const pm = input.picks?.packageManager ?? "npm";
+  const test = input.picks?.test ?? "npm test";
+  const indent =
+    input.picks?.["line:dev"] ?? "Use 2-space indentation in TypeScript files.";
+  const block = (path: string, lineNo: number, body: string[]) =>
+    [
+      `--- a/${path}`,
+      `+++ b/${path}`,
+      `@@ -${lineNo},3 +${lineNo},${body.length + 6} @@`,
+      " ## Style",
+      " ",
+      " - Keep commits small and focused.",
+      "+",
+      "+<!-- solenta:fusion:start sha:3f2a9c1d7e44 -->",
+      ...body.map((l) => `+${l}`),
+      "+<!-- solenta:fusion:end -->",
+    ].join("\n");
+  const shared = [
+    "## Shared instructions",
+    "",
+    `- Package manager: ${pm}`,
+    `- Test: \`${test}\``,
+    `- ${indent}`,
+  ];
+  const changed = syncedAt == null;
+  return {
+    projectId,
+    files: [
+      { path: "AGENTS.md", kind: "agents", kindLabel: "Codex, Grok, OpenCode and others", hasBlock: !changed },
+      { path: "CLAUDE.md", kind: "claude", kindLabel: "Claude Code", hasBlock: !changed },
+      { path: ".cursorrules", kind: "cursor", kindLabel: "Cursor", hasBlock: false },
+    ],
+    agreed: [
+      {
+        key: "build",
+        label: "Build",
+        value: "npm run build",
+        sources: [{ path: "AGENTS.md", line: 9 }],
+      },
+    ],
+    conflicts: [
+      {
+        id: "packageManager",
+        key: "packageManager",
+        label: "Package manager",
+        pick: pm,
+        options: [
+          { value: "npm", sources: [{ path: "AGENTS.md", line: 7 }, { path: ".cursorrules", line: 2 }] },
+          { value: "pnpm", sources: [{ path: "CLAUDE.md", line: 8 }] },
+        ],
+      },
+      {
+        id: "test",
+        key: "test",
+        label: "Test",
+        pick: test,
+        options: [
+          { value: "npm test", sources: [{ path: "AGENTS.md", line: 8 }, { path: ".cursorrules", line: 2 }] },
+          { value: "pnpm test", sources: [{ path: "CLAUDE.md", line: 9 }] },
+        ],
+      },
+      {
+        id: "line:dev",
+        key: "line",
+        label: "Similar lines",
+        pick: indent,
+        options: [
+          { value: "Use 2-space indentation in TypeScript files.", sources: [{ path: "AGENTS.md", line: 13 }] },
+          { value: "Use 4-space indentation in TypeScript files.", sources: [{ path: "CLAUDE.md", line: 13 }] },
+        ],
+      },
+    ],
+    diffs: [
+      { path: "AGENTS.md", diff: changed ? block("AGENTS.md", 12, shared) : "", changed },
+      {
+        path: "CLAUDE.md",
+        diff: changed
+          ? block("CLAUDE.md", 12, input.importInClaude ? ["@AGENTS.md"] : shared)
+          : "",
+        changed,
+      },
+      { path: ".cursorrules", diff: block(".cursorrules", 1, shared), changed: true },
+    ],
+    status: { synced: !changed, syncedAt },
+  };
+}
+
 /** "clone:progress" subscribers for the browser-dev mock (#1506). */
 export const devCloneProgress = new Set<(push: CloneProgressPush) => void>();
 const devCloneCancels = new Map<string, () => void>();
 
 export function createProjects(ctx: DevCtx): Pick<CoderApi, "projects" | "spaces"> {
+  let fusionSyncedAt: number | null = null;
   const { details, runStates, clearedDiff, emitThreads, clearRunTimer } = ctx;
   let spaces: SpaceInfo[] = [];
 
@@ -417,6 +510,17 @@ export function createProjects(ctx: DevCtx): Pick<CoderApi, "projects" | "spaces
       },
       async writeAgentConfig(): Promise<AgentConfigWriteResult> {
         throw new Error("Config doctor writes are not available in browser dev");
+      },
+      async fusionPlan(input: FusionInput): Promise<FusionPlan> {
+        return devFusionPlan(input.projectId, input, fusionSyncedAt);
+      },
+      async fusionSync(input: FusionInput & { paths: string[] }): Promise<FusionSyncResult> {
+        fusionSyncedAt = Date.now();
+        return {
+          projectId: input.projectId,
+          written: input.paths,
+          status: { synced: true, syncedAt: fusionSyncedAt },
+        };
       },
       async moveConfigToRepo(): Promise<{ threadId: string; prUrl: string; prNumber: number }> {
         throw new Error("Moving settings to solenta.json is not available in browser dev");

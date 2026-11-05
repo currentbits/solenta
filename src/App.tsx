@@ -434,6 +434,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     lintAgentConfig,
     previewAgentConfig,
     writeAgentConfig,
+    fusionPlan,
+    fusionSync,
     listMcpServers,
     saveMcpServer,
     removeMcpServer,
@@ -2905,6 +2907,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
             lintAgentConfig,
             previewAgentConfig,
             writeAgentConfig,
+            fusionPlan,
+            fusionSync,
           }}
           skills={{
             listMcpServers,

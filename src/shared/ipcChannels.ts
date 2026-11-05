@@ -151,6 +151,8 @@ export const IPC_CHANNELS = [
   { ns: "projects", method: "lintAgentConfig" },
   { ns: "projects", method: "previewAgentConfig" },
   { ns: "projects", method: "writeAgentConfig" },
+  { ns: "projects", method: "fusionPlan" },
+  { ns: "projects", method: "fusionSync" },
   { ns: "projects", method: "moveConfigToRepo" },
   { ns: "spaces", method: "list" },
   { ns: "spaces", method: "add" },
