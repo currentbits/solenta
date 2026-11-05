@@ -43,6 +43,9 @@
   --accent-soft: rgba(242, 229, 31, 0.12);
   --accent-border: rgba(242, 229, 31, 0.45);
   --mark: rgba(242, 229, 31, 0.3);
+  /* Small yellow dots and bars. Paper swaps in a deeper ochre that still
+     reads as the brand yellow but survives on a near-white ground. */
+  --accent-dot: var(--accent);
   /* Small yellow marks (diamonds, notches). Dark needs no edge; paper does. */
   --accent-edge: var(--accent);
   --accent-mark-ring: none;
@@ -105,7 +108,8 @@
   --radius-lg: 12px;
   --radius-pill: 999px;
   /* Transcript + composer share one centred reading column (#1429). */
-  --thread-column: 736px;
+  /* ~75 characters of 14px Geist per line. */
+  --thread-column: 688px;
   --sidebar-width: 300px;
   --agents-width: 380px;
   --agents-rail-width: 32px;
@@ -150,6 +154,7 @@
   /* Yellow on paper is ~1.2:1, so borders and rings on light use olive. */
   --accent-border: rgba(133, 124, 0, 0.55);
   --mark: rgba(242, 229, 31, 0.7);
+  --accent-dot: #c4b200;
   --accent-edge: #857c00;
   --accent-mark-ring: 0 0 0 1px rgba(133, 124, 0, 0.65);
   --blue: #1e40af;
@@ -286,10 +291,7 @@ select:focus-visible {
 
 /* Native controls take the ink, never the OS blue. */
 input[type="checkbox"],
-input[type="radio"] {
-  accent-color: var(--accent);
-}
-
+input[type="radio"],
 progress {
   accent-color: var(--text);
 }

@@ -29,6 +29,11 @@
   border-bottom: 1px solid var(--border-soft);
 }
 
+.searchIcon {
+  flex-shrink: 0;
+  color: var(--text-dim);
+}
+
 .input {
   flex: 1;
   min-width: 0;
@@ -38,7 +43,7 @@
   background: transparent;
   color: var(--text);
   font: inherit;
-  font-size: 14px;
+  font-size: 15px;
 }
 
 .input::placeholder {

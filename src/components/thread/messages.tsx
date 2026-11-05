@@ -727,6 +727,7 @@ type StepIconKind =
   | "search"
   | "agents"
   | "thinking"
+  | "done"
   | "tool";
 
 function stepIconForTools(names: string[]): StepIconKind {
@@ -769,6 +770,12 @@ const STEP_ICON_PATHS: Record<StepIconKind, ReactNode> = {
   ),
   thinking: (
     <path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1" />
+  ),
+  done: (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="m8.5 12.5 2.5 2.5 4.5-5" />
+    </>
   ),
   tool: (
     <path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.4-.6-.6-2.4z" />
@@ -2020,6 +2027,7 @@ export const MessageBlock = memo(function MessageBlock({
     const [eventHead, ...eventRest] = message.text.split(/\r?\n/);
     const eventBody = eventRest.join("\n").trim();
     const kickoff = /^kicked off \d+ subagent/i.test(eventHead ?? "");
+    const finished = /^run complete\b/i.test(eventHead ?? "");
     return (
       <section
         className={`${styles.eventLine}${entered ? ` ${styles.streamIn}` : ""}`}
@@ -2027,7 +2035,7 @@ export const MessageBlock = memo(function MessageBlock({
       >
         <div className={styles.eventRow}>
           <StepLine
-            icon={kickoff ? "agents" : "tool"}
+            icon={kickoff ? "agents" : finished ? "done" : "tool"}
             open={eventOpen}
             onToggle={
               kickoff && eventBody ? () => setEventOpen((v) => !v) : undefined

@@ -12,12 +12,14 @@
   display: inline-grid;
   place-items: center;
   border-radius: var(--radius-xs);
-  color: #fff;
+  /* Initials tiles are an identifier, not a signal: the seeded hue tints
+     the letters and a faint wash, so a column of them reads as calm ink,
+     not confetti. */
+  color: color-mix(in srgb, var(--avatar) 70%, var(--text));
+  background: color-mix(in srgb, var(--avatar) 20%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--avatar) 22%, transparent);
   font-family: var(--font);
   font-weight: 600;
-  /* Initials tiles are an identifier, not a signal: mute the seeded hue so a
-     column of them reads as calm ink, not confetti. */
-  filter: saturate(0.55) brightness(0.88);
   line-height: 1;
   letter-spacing: -0.02em;
   pointer-events: none;

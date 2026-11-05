@@ -1167,8 +1167,8 @@ a.btn {
 }
 
 .stepMore {
-  margin-left: auto;
-  padding-left: 12px;
+  margin-left: 4px;
+  padding-left: 4px;
   flex-shrink: 0;
   font-size: 12px;
   color: var(--text-dim);
@@ -2552,8 +2552,7 @@ button.diffLineGutter:focus-visible {
 
 /* Memory wears the brand yellow everywhere else (pulse, recall diamond). */
 .provChip[data-tier="memory"]::before {
-  background: var(--accent);
-  box-shadow: var(--accent-mark-ring);
+  background: var(--accent-dot);
 }
 
 .provChip[data-tier="prior"]::before {
@@ -3748,7 +3747,7 @@ button.diffLineGutter:focus-visible {
 
 .planStep[data-plan-step="doing"]::before {
   border-color: var(--accent-edge);
-  background: radial-gradient(circle, var(--accent) 0 2.5px, transparent 3px);
+  background: radial-gradient(circle, var(--accent-dot) 0 2.5px, transparent 3px);
 }
 
 .planStep[data-plan-step="done"]::before {
@@ -5272,4 +5271,37 @@ button.heroProject:hover {
   overflow-wrap: anywhere;
   /* An env spec's setup is a multi-line script (#396). */
   white-space: pre-wrap;
+}
+
+/* One meta line per run of assistant messages: earlier messages in the run
+   float theirs (time + actions) at the top right, on hover only, so the run
+   reads as one block of prose instead of prose/meta/prose/meta. */
+.settledRow:has(> .message):has(+ .settledRow > .message) > .message {
+  position: relative;
+}
+
+.settledRow:has(> .message):has(+ .settledRow > .message)
+  > .message
+  > .msgMeta {
+  position: absolute;
+  top: -10px;
+  right: 0;
+  margin: 0;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  box-shadow: 0 0 0 1px var(--border-soft);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+
+.settledRow:has(> .message):has(+ .settledRow > .message):hover
+  > .message
+  > .msgMeta,
+.settledRow:has(> .message):has(+ .settledRow > .message)
+  > .message
+  > .msgMeta:focus-within {
+  opacity: 1;
+  pointer-events: auto;
 }

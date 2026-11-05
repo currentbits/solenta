@@ -550,7 +550,7 @@
   width: 3px;
   height: 18px;
   margin-top: -9px;
-  background: var(--accent);
+  background: var(--accent-dot);
   box-shadow: var(--accent-mark-ring);
   border-radius: var(--radius-pill);
   pointer-events: none;
@@ -1842,11 +1842,12 @@
   }
 }
 
-/* Inbox: Working / Snoozed / Settled sit at the foot of a short list. */
+/* Inbox: Working / Snoozed / Settled follow the list instead of pinning to
+   the foot, so a short list doesn't leave a dead band mid-sidebar. */
 .shelves {
   display: flex;
   flex-direction: column;
-  margin-top: auto;
+  margin-top: 12px;
 }
 
 /* Calm sidebar (#1409): one search row — filter toggle, project scope and
@@ -1912,7 +1913,7 @@
   height: 8px;
   margin: 0 1px;
   border-radius: 2px;
-  background: var(--accent);
+  background: var(--accent-dot);
   box-shadow: var(--accent-mark-ring);
   transform: rotate(45deg);
 }

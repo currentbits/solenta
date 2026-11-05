@@ -110,7 +110,7 @@
 /* Typing focus is a quiet lift of the edge, not a yellow halo: the empty
    composer must never be the loudest thing on screen. */
 .card:has(.textarea:focus) {
-  border-color: color-mix(in srgb, var(--text) 22%, var(--border));
+  border-color: color-mix(in srgb, var(--text) 14%, var(--border));
   box-shadow: 0 0 0 3px var(--overlay-soft);
 }
 
@@ -122,7 +122,7 @@
   background: transparent;
   color: var(--text);
   line-height: 1.5;
-  min-height: 48px;
+  min-height: 40px;
   max-height: 12lh;
   overflow-y: auto;
   field-sizing: content;
