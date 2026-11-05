@@ -256,6 +256,13 @@ export const ThreadCard = memo(function ThreadCard({
   const settleLabel = isSettled ? "Keep thread active" : "Settle thread";
   const showUnread = !active && isUnread(thread);
   const label = statusLabelFor(thread, now, wait, active);
+  // The card's own PR badge already shows the number, so the visible status
+  // drops the "#N" suffix ("Watching #112" -> "Watching"); data-status-label
+  // keeps the full text.
+  const labelText =
+    label && thread.prUrl && thread.prNumber != null
+      ? label.text.replace(` #${thread.prNumber}`, "")
+      : label?.text;
   const pulse = statusPulseFor(thread, now, wait ?? null, active);
   const pinned = isPinned(thread);
   const showProject = showSlug && !compact;
@@ -559,7 +566,7 @@ export const ThreadCard = memo(function ThreadCard({
                     {...label.flags}
                   >
                     <StatusMarker tone={label.tone} pulse={pulse} />
-                    {label.text}
+                    {labelText}
                   </span>
                 ) : (
                   <span className={styles.age}>

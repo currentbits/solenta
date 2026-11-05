@@ -208,7 +208,7 @@
 
 .shortcut {
   flex-shrink: 0;
-  font-family: var(--mono);
+  font-family: var(--font);
   font-size: 11px;
   color: var(--text-muted);
   background: var(--overlay-hover);

@@ -157,7 +157,7 @@
 /* Spacing, not a rule, separates the pickers. */
 .sep {
   flex-shrink: 0;
-  width: 4px;
+  width: 0;
 }
 
 .pill {
@@ -165,7 +165,7 @@
   align-items: center;
   gap: 5px;
   height: 28px;
-  padding: 0 9px;
+  padding: 0 8px;
   border-radius: var(--radius-sm);
   background: transparent;
   /* Ghost pills: the hover tint is the affordance, not a border. */
@@ -999,7 +999,8 @@ select.agentSelect {
 /* Nothing to send: neutral, so yellow only ever means "ready". A dimmed
    yellow reads as olive on ink. */
 .send:disabled {
-  background: var(--overlay-hover);
+  opacity: 1;
+  background: var(--overlay-strong);
   color: var(--text-dim);
   box-shadow: none;
   cursor: not-allowed;

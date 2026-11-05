@@ -1174,16 +1174,19 @@ a.btn {
   white-space: nowrap;
 }
 
+/* Show/Hide reads as a link: a step brighter than the row, underlined on hover. */
 .stepMore {
   margin-left: 4px;
   padding-left: 4px;
+  text-underline-offset: 3px;
   flex-shrink: 0;
   font-size: 12px;
-  color: var(--text-dim);
+  color: var(--text-muted);
 }
 
 .toolGroupToggle:hover .stepMore {
-  color: var(--text-muted);
+  color: var(--text);
+  text-decoration: underline;
 }
 
 /* Memory moments (#1429 F5): the yellow diamond and the marker stripe. */
@@ -2576,7 +2579,7 @@ button.diffLineGutter:focus-visible {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  column-gap: 8px;
+  column-gap: 6px;
 }
 
 .message > * {
@@ -2590,7 +2593,13 @@ button.diffLineGutter:focus-visible {
 }
 
 .message > .provStrip {
-  gap: 4px 8px;
+  gap: 4px 6px;
+}
+
+/* One separator everywhere on the meta line: " · ". */
+.message > .provStrip > .provChip:not(:last-child)::after {
+  content: "·";
+  color: var(--text-dim);
 }
 
 .message > .provStrip + .msgMeta::before {
