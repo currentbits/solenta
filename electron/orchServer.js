@@ -9,7 +9,11 @@ const { createRequire } = require("node:module");
 const { registerMcpServer, unregisterMcpServer } = require("./memory-sup.js");
 const pairing = require("./pairing.js");
 const oauth = require("./mcpOauth.js");
-const { startWithPoolFailover, poolFromStore } = require("./subagentPool.js");
+const {
+  startWithPoolFailover,
+  poolFromStore,
+  resolveSubagentPool,
+} = require("./subagentPool.js");
 const { resolveBin, isBinAvailable } = require("./providers.js");
 const {
   parseProviderRef,
@@ -534,8 +538,10 @@ function createToolHandlers(deps) {
       const { pickAccountByQuota } = require("./providerUsage.js");
       const rows = await fetchProviderLimits({
         only: provider,
+        // The base overlay probe (ref === provider) stays: it is the env the
+        // default account actually runs with.
         instances: instanceAuthProbes(store, userDataPath).filter(
-          (p) => p.provider === provider && p.ref !== provider,
+          (p) => p.provider === provider,
         ),
       });
       return pickAccountByQuota([provider, ...refs], rows);
@@ -572,8 +578,18 @@ function createToolHandlers(deps) {
     /** @type {{ ref: string, note: string | null } | null} */
     let picked = null;
     if (args.provider != null) {
-      picked = await resolveForkProvider(String(args.provider));
-      input.provider = picked.ref;
+      // Same precedence forkWorkerThread applies: a pinned pool or an
+      // explicit alias ignores provider, so do not validate or pick for it.
+      const poolWins =
+        resolveSubagentPool(poolFromStore(store), {
+          pool: args.pool,
+          provider: String(args.provider),
+        })?.fromPool === true;
+      if (poolWins) input.provider = String(args.provider);
+      else {
+        picked = await resolveForkProvider(String(args.provider));
+        input.provider = picked.ref;
+      }
     }
     if (args.pool != null) input.pool = String(args.pool);
     if (args.worktree === false) input.worktree = false;

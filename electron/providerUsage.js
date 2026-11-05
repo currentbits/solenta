@@ -631,14 +631,23 @@ async function fetchProviderLimits(opts = {}) {
   // `only` (#1857): skip the other base providers; callers pass only the
   // instances they want.
   const ids = knownProviderIds().filter((id) => !opts.only || id === opts.only);
+  const env = opts.env || process.env;
+  const probes = opts.instances || [];
   const rows = await Promise.all(
     ids.map(async (id) => {
       const fn =
         (opts.fetchers && opts.fetchers[id]) ||
         DEFAULT_FETCHERS[id] ||
         unsupportedFetcher(id);
+      // A probe whose ref is the base id is the default account's own env
+      // (base overlay, #1714): fetch the base row under it, not twice.
+      const overlay = probes.find((inst) => inst.ref === id);
       try {
-        const row = await fn({ ...opts, providerId: id });
+        const row = await fn({
+          ...opts,
+          providerId: id,
+          ...(overlay ? { env: { ...env, ...overlay.env } } : {}),
+        });
         if (row && typeof row === "object" && row.provider) return row;
         return errorUsage(id, MSG_FAILED);
       } catch {
@@ -648,9 +657,8 @@ async function fetchProviderLimits(opts = {}) {
   );
   // Named instances (#453): the base fetcher under the instance's env (its
   // config dir holds a different login), reported under the instance ref.
-  const env = opts.env || process.env;
   const instanceRows = await Promise.all(
-    (opts.instances || []).map(async (inst) => {
+    probes.filter((inst) => !ids.includes(inst.ref)).map(async (inst) => {
       const fn =
         (opts.fetchers && opts.fetchers[inst.provider]) ||
         DEFAULT_FETCHERS[inst.provider];

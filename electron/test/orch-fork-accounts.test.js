@@ -10,7 +10,14 @@ const { knownProviderIds } = require("../providers.js");
 // #1857: thread_fork onto a named account, or the one with the most quota.
 
 const INSTANCES = [
-  { id: "claude", provider: "claude", name: "Base", configDir: null, env: {} },
+  // Base overlay (#1714): the default account's own env.
+  {
+    id: "claude",
+    provider: "claude",
+    name: "Base",
+    configDir: null,
+    env: { CLAUDE_CODE_OAUTH_TOKEN: "base-tok" },
+  },
   { id: "work", provider: "claude", name: "work", configDir: null, env: {} },
   { id: "team", provider: "claude", name: "team", configDir: null, env: {} },
   { id: "alt", provider: "codex", name: "alt", configDir: null, env: {} },
@@ -24,7 +31,7 @@ function row(provider, windows, status = "ok") {
   return { provider, status, windows, fetchedAt: 1 };
 }
 
-function makeDeps(usageRows = []) {
+function makeDeps(usageRows = [], subagentPool = { defaultAlias: null, force: false, entries: [] }) {
   const threads = [
     { id: "lead", provider: "claude", projectId: "p1", permissionMode: "default" },
   ];
@@ -46,7 +53,7 @@ function makeDeps(usageRows = []) {
     save: () => {},
     getSettings: () => ({
       providerInstances: INSTANCES,
-      subagentPool: { defaultAlias: null, force: false, entries: [] },
+      subagentPool,
     }),
   };
   const forks = [];
@@ -78,13 +85,20 @@ function makeDeps(usageRows = []) {
   };
 }
 
-const fork = (deps, provider) =>
+const fork = (deps, provider, extra = {}) =>
   createToolHandlers(deps).thread_fork({
     threadId: "lead",
     projectId: "p1",
     prompt: "go",
     provider,
+    ...extra,
   });
+
+const ALL_FULL = [
+  row("claude", [win("5-hour", 100)]),
+  row("claude:work", [win("weekly", 99)]),
+  row("claude:team", [win("5-hour", 96)]),
+];
 
 describe("thread_fork account refs (#1857)", () => {
   it("forks onto a named account", async () => {
@@ -118,12 +132,35 @@ describe("thread_fork account refs (#1857)", () => {
     assert.equal(deps.forks[0].provider, "claude:team");
     assert.equal(deps.messages.w1[0].role, "event");
     assert.equal(deps.messages.w1[0].text, "Picked claude:team, 30% of weekly used");
-    // Only the claude rows are fetched, and the base overlay is not a probe.
+    // Only the claude rows are fetched; the default account is probed with
+    // its base overlay env, each named account with its own.
     assert.equal(deps.usageCalls[0].only, "claude");
-    assert.deepEqual(
-      deps.usageCalls[0].instances.map((p) => p.ref),
-      ["claude:work", "claude:team"],
-    );
+    const probes = deps.usageCalls[0].instances;
+    assert.deepEqual(probes.map((p) => p.ref), ["claude", "claude:work", "claude:team"]);
+    assert.equal(probes[0].env.CLAUDE_CODE_OAUTH_TOKEN, "base-tok");
+    assert.equal(probes[1].env.CLAUDE_CODE_OAUTH_TOKEN, undefined);
+  });
+
+  it("a pinned pool ignores provider, so :auto never fetches or blocks", async () => {
+    const entry = { alias: "pinned", provider: "claude", model: null, description: "Pinned" };
+    const deps = makeDeps(ALL_FULL, { defaultAlias: "pinned", force: true, entries: [entry] });
+    await fork(deps, "claude:auto");
+    assert.equal(deps.usageCalls.length, 0);
+    assert.equal(deps.forks[0].provider, "claude");
+    assert.equal(deps.messages.w1, undefined, "no pick note for a pick that did not happen");
+  });
+
+  it("an explicit pool alias ignores provider, even an unknown account", async () => {
+    const entry = { alias: "team", provider: "claude:team", model: null, description: "Team" };
+    const deps = makeDeps(ALL_FULL, { defaultAlias: null, force: false, entries: [entry] });
+    await fork(deps, "claude:auto", { pool: "team" });
+    await fork(deps, "claude:nope", { pool: "team" });
+    assert.equal(deps.usageCalls.length, 0);
+    assert.deepEqual(deps.forks.map((f) => f.provider), ["claude:team", "claude:team"]);
+  });
+
+  it("without the pool, all accounts full still refuses :auto", async () => {
+    await assert.rejects(() => fork(makeDeps(ALL_FULL), "claude:auto"), /Every account is at least 95% used/);
   });
 
   it("auto on a provider with no named accounts is rejected", async () => {
@@ -207,5 +244,25 @@ describe("fetchProviderLimits only (#1857)", () => {
     });
     assert.deepEqual(rows.map((r) => r.provider), ["claude", "claude:team"]);
     assert.deepEqual(seen, ["claude", "claude"]);
+  });
+
+  it("fetches the default row once, under the base overlay's env", async () => {
+    const { fetchProviderLimits } = require("../providerUsage.js");
+    const tokens = [];
+    const fetcher = async (opts) => {
+      tokens.push([opts.providerId, opts.env.CLAUDE_CODE_OAUTH_TOKEN]);
+      return row(opts.providerId, []);
+    };
+    const rows = await fetchProviderLimits({
+      only: "claude",
+      env: { PATH: "/bin" },
+      fetchers: { claude: fetcher },
+      instances: [
+        { ref: "claude", provider: "claude", env: { CLAUDE_CODE_OAUTH_TOKEN: "base-tok" } },
+        { ref: "claude:team", provider: "claude", env: { CLAUDE_CODE_OAUTH_TOKEN: "team-tok" } },
+      ],
+    });
+    assert.deepEqual(rows.map((r) => r.provider), ["claude", "claude:team"]);
+    assert.deepEqual(tokens, [["claude", "base-tok"], ["claude", "team-tok"]]);
   });
 });
