@@ -107,6 +107,8 @@
   --radius-xs: 4px;
   --radius-sm: 6px;
   --radius: 8px;
+  /* The two stacked boxes at the foot of a thread (plan, composer). */
+  --radius-card: 10px;
   --radius-lg: 12px;
   --radius-pill: 999px;
   /* Transcript + composer share one centred reading column (#1429). */

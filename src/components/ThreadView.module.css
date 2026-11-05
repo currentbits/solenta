@@ -1156,7 +1156,7 @@ a.btn {
   padding: 3px 0;
   font-size: 13px;
   font-weight: 400;
-  color: var(--text-muted);
+  color: color-mix(in srgb, var(--text-muted) 70%, var(--text-dim));
   text-align: left;
 }
 
@@ -2164,7 +2164,8 @@ button.diffLineGutter:focus-visible {
   mask-image: linear-gradient(to bottom, transparent 0, #000 12px);
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  /* One block rhythm: 20px between transcript blocks. */
+  gap: 20px;
 }
 
 /*
@@ -2330,7 +2331,7 @@ button.diffLineGutter:focus-visible {
 }
 
 .eventLine {
-  padding: 4px 0;
+  padding: 0;
 }
 
 .eventRow {
@@ -2478,7 +2479,7 @@ button.diffLineGutter:focus-visible {
 }
 
 .msgMeta {
-  margin-top: 6px;
+  margin-top: 4px;
   font-family: var(--font);
   font-size: 11.5px;
   color: var(--text-dim);
@@ -2545,7 +2546,7 @@ button.diffLineGutter:focus-visible {
 
 /* Provenance tier strip under an assistant message (issue #404). */
 .provStrip {
-  margin-top: 6px;
+  margin-top: 4px;
   display: flex;
   flex-wrap: wrap;
   gap: 4px 14px;
@@ -2686,7 +2687,7 @@ button.diffLineGutter:focus-visible {
   flex-direction: column;
   gap: 6px;
   /* auto keeps it inside the shared reading column (#1429). */
-  margin: 8px auto 4px;
+  margin: 0 auto;
 }
 
 .suggestedRow {
@@ -3738,7 +3739,7 @@ button.diffLineGutter:focus-visible {
   /* An outline, not a surface: the composer below stays the one filled box
      at the foot of the thread. */
   border: 1px solid var(--border-soft);
-  border-radius: var(--radius);
+  border-radius: var(--radius-card);
   background: transparent;
   box-shadow: none;
   font-size: 13px;
@@ -5395,5 +5396,5 @@ button.heroProject:hover {
    one quiet group between pieces of prose. */
 .body > :is(.settledRow:has(> .eventLine), .toolGroup)
   + :is(.settledRow:has(> .eventLine), .toolGroup) {
-  margin-top: -8px;
+  margin-top: -14px;
 }

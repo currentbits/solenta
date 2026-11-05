@@ -71,6 +71,12 @@
   gap: 16px;
 }
 
+/* Groups on a pane are separated by a hairline, not just whitespace. */
+.section + .section {
+  padding-top: 24px;
+  border-top: 1px solid var(--border-soft);
+}
+
 .sectionLabel {
   margin: 0;
   font-size: 12px;
