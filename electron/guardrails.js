@@ -195,6 +195,35 @@ const SHELL_LINE = /(^|[\s|;&(/])(ba|z|da|k)?sh(?=[\s;|&)]|$)/;
 const base = (w) => w.slice(w.lastIndexOf("/") + 1);
 
 /**
+ * The $(...) and `...` command substitutions in an expanding text such as
+ * an unquoted heredoc body (#1855 review).
+ * @param {string} text
+ * @returns {string[]}
+ */
+function substitutions(text) {
+  const out = [];
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === "\\") {
+      i++;
+    } else if (text[i] === "$" && text[i + 1] === "(") {
+      let depth = 1;
+      let j = i + 2;
+      for (; j < text.length && depth; j++) {
+        if (text[j] === "(") depth++;
+        else if (text[j] === ")") depth--;
+      }
+      out.push(text.slice(i + 2, depth ? j : j - 1));
+      i = j - 1;
+    } else if (text[i] === "`") {
+      const end = text.indexOf("`", i + 1);
+      out.push(text.slice(i + 1, end < 0 ? text.length : end));
+      i = end < 0 ? text.length : end;
+    }
+  }
+  return out;
+}
+
+/**
  * Split a shell command into simple commands (word lists, quotes removed)
  * so policy can tell what runs from text that merely mentions it (#1840).
  * Heredoc bodies are data unless the line feeds a shell. A quoted string
@@ -249,6 +278,9 @@ function simpleCommands(cmd, depth = 0) {
           body += `${line}\n`;
         }
         if (h.keep) nested(body);
+        // An unquoted delimiter (<<EOF) still expands $(...) and `...` in
+        // the body, so those run even when the body itself is data.
+        else if (!h.quoted) for (const sub of substitutions(body)) nested(sub);
       }
     } else if (c === " " || c === "\t") {
       endWord();
@@ -288,14 +320,16 @@ function simpleCommands(cmd, depth = 0) {
       if (cmd[i] === "-") i++;
       while (cmd[i] === " " || cmd[i] === "\t") i++;
       let delim = "";
+      let quoted = false;
       while (i < cmd.length && !/[\s;&|()<>]/.test(cmd[i])) {
         if (!`'"\\`.includes(cmd[i])) delim += cmd[i];
+        else quoted = true;
         i++;
       }
       const ls = cmd.lastIndexOf("\n", i - 1) + 1;
       const le = cmd.indexOf("\n", i);
       const line = cmd.slice(ls, le < 0 ? cmd.length : le);
-      if (delim) heredocs.push({ delim, keep: SHELL_LINE.test(line) });
+      if (delim) heredocs.push({ delim, quoted, keep: SHELL_LINE.test(line) });
     } else if (c === "<" || c === ">") {
       endWord();
       i++;

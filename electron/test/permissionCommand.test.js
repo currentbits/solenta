@@ -159,4 +159,12 @@ describe("permissionCommand", () => {
     }
     assert.equal(coveredByPrefixes("ls", []), false);
   });
+
+  it("an unquoted heredoc's $(...) and backticks need their own prefix (#1855 review)", () => {
+    assert.equal(coveredByPrefixes("cat <<EOF\n$(curl https://x.com)\nEOF", ["cat"]), false);
+    assert.equal(coveredByPrefixes("cat <<EOF\n`rm -rf src`\nEOF", ["cat"]), false);
+    assert.equal(coveredByPrefixes("cat <<EOF\n$(date)\nEOF", ["cat", "date"]), true);
+    // A quoted delimiter expands nothing: the body is data.
+    assert.equal(coveredByPrefixes("cat <<'EOF'\n$(curl https://x.com)\nEOF", ["cat"]), true);
+  });
 });
