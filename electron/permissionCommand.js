@@ -1,5 +1,7 @@
 "use strict";
 
+const { simpleCommands, commandChain } = require("./guardrails.js");
+
 /**
  * Edit-before-approve (#509): extract / apply a shell command on a tool
  * permission, and derive the session-rule prefix for allow-always-after-edit.
@@ -29,6 +31,7 @@ const TWO_TOKEN_BINS = new Set([
   "cargo",
   "go",
   "git",
+  "gh",
   "docker",
   "kubectl",
   "composer",
@@ -201,6 +204,54 @@ function sessionAllowRule(toolName, command, alwaysRule, suggested) {
   };
 }
 
+/**
+ * Command prefixes (`git push`) in the session rules Always allow sent for
+ * `toolName` (#1854): `git push:*` or the CLI's newer `git push *` gives
+ * "git push". The whole-tool rule and exact rules give none; the exact
+ * command key covers those.
+ * @param {string} toolName
+ * @param {{ toolName: string, ruleContent?: string }[]} rules
+ * @returns {string[]}
+ */
+function rulePrefixes(toolName, rules) {
+  return (rules || [])
+    .filter((r) => r.toolName === toolName && typeof r.ruleContent === "string")
+    .map((r) => /^(.*?)(?::\*| \*)$/.exec(r.ruleContent.trim()))
+    // A `*` left mid-rule is a glob, not a prefix.
+    .map((m) => (m && !m[1].includes("*") ? m[1].trim().split(/\s+/).join(" ") : ""))
+    .filter(Boolean);
+}
+
+/** Redirects that write nowhere new: `2>&1`, `>/dev/null`. */
+const HARMLESS_REDIRECTS = /\d?>&\d|&?\d?>\s*\/dev\/null/g;
+
+/**
+ * Whether every simple command in `command` starts with one of `prefixes`
+ * (word for word), so `git push origin x && ls -la` needs both `git push`
+ * and `ls` remembered. A wrapper (env, xargs, nohup, ...) runs a later word,
+ * so it never matches a prefix of its own.
+ * ponytail: any other `>`, even a quoted one, asks again; a prefix rule must
+ * not stretch to `ls > ~/.zshrc`. Parse redirect targets if that re-asks too
+ * often.
+ * @param {string} command
+ * @param {string[]} prefixes
+ */
+function coveredByPrefixes(command, prefixes) {
+  if (!prefixes.length) return false;
+  const plain = command.replace(HARMLESS_REDIRECTS, " ");
+  if (plain.includes(">")) return false;
+  const segs = simpleCommands(plain);
+  const wanted = prefixes.map((p) => p.split(" "));
+  return (
+    segs.length > 0 &&
+    segs.every((seg) => {
+      if (commandChain(seg).names.length !== 1) return false;
+      const words = seg.slice(seg.findIndex((w) => !/^[A-Za-z_]\w*=/.test(w)));
+      return wanted.some((t) => t.every((tok, i) => words[i] === tok));
+    })
+  );
+}
+
 module.exports = {
   WHOLE_TOOL_RULE,
   commandField,
@@ -211,4 +262,6 @@ module.exports = {
   suggestedAllowRules,
   ruleLabel,
   sessionAllowRule,
+  rulePrefixes,
+  coveredByPrefixes,
 };

@@ -71,6 +71,7 @@ if (process.env.CODER_FAKE_OPENCODE_ARGV_FILE) {
       OPENCODE_CONFIG_DIR: process.env.OPENCODE_CONFIG_DIR || "",
       SOLENTA_WORKTREE: process.env.SOLENTA_WORKTREE || "",
       OPENCODE_CLIENT: process.env.OPENCODE_CLIENT || "",
+      SOLENTA_PERMISSION_MODE: process.env.SOLENTA_PERMISSION_MODE || "",
     }),
     "utf8",
   );
@@ -625,6 +626,17 @@ describe("opencode runner integration", () => {
     assert.ok(
       fs.existsSync(path.join(dest, "plugins", "solenta-guardrail.js")),
     );
+    assert.equal(env.SOLENTA_PERMISSION_MODE, "default");
+  });
+
+  it("passes a Full access thread's mode to the plugin (#1853)", async () => {
+    const thread = store.getThreads()[0];
+    store.updateThread(thread.id, { permissionMode: "bypassPermissions" });
+    await runner.startRun({ threadId: thread.id, prompt: "do the thing" });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+
+    const env = JSON.parse(fs.readFileSync(argvFile + ".env.json", "utf8"));
+    assert.equal(env.SOLENTA_PERMISSION_MODE, "bypassPermissions");
   });
 
   it("second turn passes -s with captured sessionID", async () => {

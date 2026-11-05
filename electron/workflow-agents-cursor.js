@@ -116,6 +116,7 @@ function spawnAgentCursor(opts) {
         insertBeforeLast(args, ["--plugin-dir", dest]);
         cursorWrapEnv = {
           SOLENTA_WORKTREE: (project && project.remotePath) || cwd,
+          SOLENTA_PERMISSION_MODE: permissionMode || "default",
         };
       }
     } catch {
@@ -135,7 +136,12 @@ function spawnAgentCursor(opts) {
     binary: spawn.binary,
     args: spawn.args,
     cwd: spawn.cwd,
-    env: withProjectEnv(project, undefined, cwd),
+    // The preToolUse hook lets ask rules run on Full access (#1853).
+    env: withProjectEnv(
+      project,
+      { SOLENTA_PERMISSION_MODE: permissionMode || "default" },
+      cwd,
+    ),
     onEvent: (ev) => {
       gotJson = true;
       if (!ev || typeof ev !== "object") return;
@@ -162,7 +168,12 @@ function spawnAgentCursor(opts) {
       for (const tool of cursorExtractTools(ev)) {
         if (tool.phase === "start") {
           const parsed = cursorParseToolArgs(tool.input);
-          notePhaseGuardrail(opts, tool.name, parsed || tool.input);
+          notePhaseGuardrail(
+            opts,
+            tool.name,
+            parsed || tool.input,
+            permissionMode === "bypassPermissions",
+          );
         }
       }
     },

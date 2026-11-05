@@ -569,6 +569,8 @@ setInterval(() => {}, 500);
     });
     /** @type {Record<string, any>} */
     const seen = {};
+    /** @type {Record<string, any>} */
+    const seenMode = {};
     runner.stopAll();
     const core = await import(
       pathToFileURL(path.join(__dirname, "../../core/dist/index.js")).href
@@ -583,6 +585,7 @@ setInterval(() => {}, 500);
         userDataPath: tmpDir,
         runCodexFn: (opts) => {
           seen[opts.envExtra.CODEX_HOME] = opts.args;
+          seenMode[opts.envExtra.CODEX_HOME] = opts.envExtra.SOLENTA_PERMISSION_MODE;
           setImmediate(() => opts.onExit({ code: 0, stderr: "" }));
           return { kill() {}, respondJsonRpc() {}, respondJsonRpcError() {} };
         },
@@ -592,6 +595,7 @@ setInterval(() => {}, 500);
       await waitFor(() => Object.keys(seen).length === 1);
       await waitFor(() => store.getThread(ovlThread.id).status === "done");
       const isoThread = services.createThread(store, { projectId: project.id, title: "iso", provider: "codex:iso" });
+      store.updateThread(isoThread.id, { permissionMode: "bypassPermissions" });
       await runner.startRun({ threadId: isoThread.id, prompt: "hi" });
       await waitFor(() => Object.keys(seen).length === 2);
       await waitFor(() => store.getThread(isoThread.id).status === "done");
@@ -600,6 +604,9 @@ setInterval(() => {}, 500);
       const isoDest = path.join(tmpDir, "provider-homes", "iso", "codex");
       assert.ok(seen[overlayDest].includes("features.hooks=true"));
       assert.ok(seen[isoDest].includes("features.hooks=true"));
+      // Both homes tell the hook the thread's mode (#1841, #1853).
+      assert.equal(seenMode[overlayDest], "default");
+      assert.equal(seenMode[isoDest], "bypassPermissions");
 
       // Same hooks.json shape (matcher, timeout, statusMessage), differing
       // only in the per-home script path baked into `command`.

@@ -295,6 +295,7 @@ fs.writeFileSync(process.env.CODER_FAKE_CURSOR_SEEN_FILE, JSON.stringify({
   home,
   mcp,
   argv: process.argv.slice(2),
+  permissionMode: process.env.SOLENTA_PERMISSION_MODE || "",
 }));
 function emit(obj) { process.stdout.write(JSON.stringify(obj) + "\\n"); }
 emit({ type: "system", subtype: "init", session_id: "cursor-sess-1", model: "auto" });
@@ -363,6 +364,7 @@ emit({
         title: "Cursor Isolate",
       });
       services.setProvider(store, { threadId: thread.id, provider: "cursor" });
+      store.updateThread(thread.id, { permissionMode: "bypassPermissions" });
 
       await runner.startRun({ threadId: thread.id, prompt: "stay in project" });
       await waitFor(() => store.getThread(thread.id).status === "done");
@@ -377,6 +379,8 @@ emit({
         new RegExp(`projectId=${project.id}`),
       );
       assert.ok(!mcp.mcpServers.girder);
+      // The preToolUse hook lets ask rules run on Full access (#1853).
+      assert.equal(seen.permissionMode, "bypassPermissions");
     } finally {
       if (runner) runner.stopAll();
       resetMemorySupForTests();

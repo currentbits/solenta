@@ -13,11 +13,12 @@
  *
  * stdout JSON `{ decision, reason }` is the grok contract. Exit 2 is a
  * backup deny. ask is treated as deny: a hook `ask` is auto-approved
- * when the client is in always-approve / YOLO.
+ * when the client is in always-approve / YOLO. On a Full access thread
+ * only deny rules block (#1853).
  */
 
 const path = require("node:path");
-const { classifyTool } = require("./guardrails.js");
+const { hookGuardrailDecision } = require("./guardrail-hook-core.js");
 
 const HOOK_MARK = "# solenta-guardrail-hook";
 
@@ -51,47 +52,44 @@ function parseToolInput(input) {
 
 /**
  * @param {object} payload
- * @returns {{ decision: "allow" | "deny", reason: string }}
+ * @param {string} [permissionMode] - defaults to SOLENTA_PERMISSION_MODE
  */
-function decideGrokGuardrail(payload) {
+function grokVerdict(payload, permissionMode) {
   const p = payload && typeof payload === "object" ? payload : {};
   const toolName = mapGrokToolName(p.toolName || p.tool_name || "");
   const input = parseToolInput(p.toolInput || p.tool_input || p.input);
   const worktreePath =
     p.cwd || p.workspaceRoot || process.env.CODER_GROK_WORKTREE || null;
-  let verdict;
-  try {
-    verdict = classifyTool({ toolName, input, worktreePath });
-  } catch {
-    return { decision: "allow", reason: "" };
-  }
-  if (!verdict || verdict.decision === "allow") {
-    return { decision: "allow", reason: "" };
-  }
-  const rule = verdict.rule || "policy";
-  const reason = verdict.reason || "blocked";
-  return {
-    decision: "deny",
-    reason: `Blocked by Solenta guardrails (${rule}): ${reason}`,
-  };
+  return hookGuardrailDecision(
+    { tool_name: toolName, tool_input: input },
+    worktreePath,
+    permissionMode,
+  );
+}
+
+/**
+ * @param {object} payload
+ * @param {string} [permissionMode] - defaults to SOLENTA_PERMISSION_MODE
+ * @returns {{ decision: "allow" | "deny", reason: string }}
+ */
+function decideGrokGuardrail(payload, permissionMode) {
+  const out = grokVerdict(payload, permissionMode);
+  if (out.decision !== "deny") return { decision: "allow", reason: "" };
+  return { decision: "deny", reason: out.message };
 }
 
 /**
  * Event line for the Solenta transcript (same wording as the Claude seam).
- * @param {{ toolName: string, input?: unknown, worktreePath?: string | null }} opts
+ * @param {{ toolName: string, input?: unknown, worktreePath?: string | null, permissionMode?: string }} opts
  * @returns {string | null}
  */
-function grokGuardrailNotice({ toolName, input, worktreePath }) {
-  const out = decideGrokGuardrail({
-    toolName,
-    toolInput: input,
-    cwd: worktreePath,
-  });
+function grokGuardrailNotice({ toolName, input, worktreePath, permissionMode }) {
+  const out = grokVerdict(
+    { toolName, toolInput: input, cwd: worktreePath },
+    permissionMode || "",
+  );
   if (out.decision !== "deny") return null;
-  const rawName = String(toolName || "tool");
-  const m = /Blocked by Solenta guardrails \(([^)]+)\): (.*)$/.exec(out.reason);
-  if (!m) return `Guardrail blocked ${rawName}: ${out.reason}`;
-  return `Guardrail blocked ${rawName}: ${m[1]}: ${m[2]}`;
+  return `Guardrail blocked ${String(toolName || "tool")}: ${out.rule}: ${out.reason}`;
 }
 
 function tomlString(value) {

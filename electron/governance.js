@@ -476,6 +476,19 @@ function evaluateUnsafe(input) {
 }
 
 /**
+ * Whether Full access (bypassPermissions) answers this ask itself (#1854):
+ * the asks nobody wrote down, i.e. the profile.default fallback and builtin
+ * guardrail asks. Explicit profile/MCP ask rules and questions (MATRIX_SKIP)
+ * still reach the user; denies never get here.
+ * @param {{ decision: string, layer: string, declared: { tool: string } }} ev - evaluate()'s result
+ */
+function fullAccessAllows(ev) {
+  if (ev.decision !== "ask") return false;
+  if (ev.layer === "profile.default") return true;
+  return ev.layer === "builtin" && !MATRIX_SKIP.has(ev.declared.tool);
+}
+
+/**
  * Network rules for one host, most severe first (#803 proxy). null when no
  * rule matches: the proxy then lets it through, same as an unmatched call.
  * @param {{ rules?: Array<{ kind: string, match: string, action: string }> } | null | undefined} policy
@@ -559,6 +572,7 @@ module.exports = {
   normalizeCall,
   actionHash,
   evaluate,
+  fullAccessAllows,
   networkVerdict,
   threadPolicy,
   mcpToolRules,

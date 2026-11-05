@@ -179,7 +179,12 @@ function createOpencodeRun(ctx) {
         // Overlay is best-effort; a failed isolate must not block the turn.
       }
     }
-    opencodeEnv = { ...opencodeEnv, ...OPENCODE_CLIENT_ENV };
+    opencodeEnv = {
+      ...opencodeEnv,
+      ...OPENCODE_CLIENT_ENV,
+      // The tool.execute.before plugin lets ask rules run on Full access (#1853).
+      SOLENTA_PERMISSION_MODE: thread.permissionMode || "default",
+    };
     // OpenAI-compatible provider (#1714): its key env plus a `provider`
     // block in the config layer. runner.js already refused a removed
     // instance and a remote project.
@@ -476,6 +481,7 @@ function createOpencodeRun(ctx) {
               tool.name,
               tool.input,
               thread.worktreePath || project.path,
+              thread.permissionMode === "bypassPermissions",
             );
             if (notice) appendMessage(threadId, "event", notice, runId);
             // Post-tool text starts a fresh message below the tool call.

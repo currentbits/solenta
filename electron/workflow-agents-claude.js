@@ -98,6 +98,8 @@ function spawnAgentClaude(opts) {
       GROK_HOME: dest,
       GROK_CLAUDE_MCPS_ENABLED: "false",
       GROK_CURSOR_MCPS_ENABLED: "false",
+      // The overlay hook lets ask rules run on Full access (#1853).
+      SOLENTA_PERMISSION_MODE: permissionMode || "default",
     };
   }
   const agentBin = binary || (entry ? resolveBin(entry) : null) ||
@@ -146,6 +148,7 @@ function spawnAgentClaude(opts) {
               toolName: block.name,
               input: block.input,
               worktreePath: (opts.project && opts.project.remotePath) || cwd,
+              permissionMode,
             });
             if (notice) opts.appendMessage(opts.threadId, "event", notice, opts.runId || null);
           }

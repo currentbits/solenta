@@ -111,7 +111,12 @@ function spawnAgentOpencode(opts) {
       // Deploy miss must not kill the phase; stream notice remains.
     }
   }
-  opencodeEnv = { ...opencodeEnv, ...OPENCODE_CLIENT_ENV };
+  opencodeEnv = {
+    ...opencodeEnv,
+    ...OPENCODE_CLIENT_ENV,
+    // The tool.execute.before plugin lets ask rules run on Full access (#1853).
+    SOLENTA_PERMISSION_MODE: permissionMode || "default",
+  };
 
   const opencodeBin = binary || resolveBin(entry);
   const spawn = resolveWorkflowSpawn(
@@ -153,7 +158,12 @@ function spawnAgentOpencode(opts) {
       if (sid) capturedSessionId = sid;
       const tool = opencodeExtractTool(ev);
       if (tool && tool.phase === "start") {
-        notePhaseGuardrail(opts, tool.name, tool.input);
+        notePhaseGuardrail(
+          opts,
+          tool.name,
+          tool.input,
+          permissionMode === "bypassPermissions",
+        );
       }
     },
     onExit: ({ code, stderr, fullStdout: stdout, gotJson: parsed }) => {

@@ -42,6 +42,7 @@ function spawnAgentKimi(opts) {
     providerEntry,
     onText,
     reasoningEffort,
+    permissionMode,
     userDataPath,
     threadId,
     projectId,
@@ -124,6 +125,8 @@ function spawnAgentKimi(opts) {
     honouredEfforts(entry, model || null),
   );
   if (effortEnv) kimiEnv = { ...kimiEnv, ...effortEnv };
+  // The PreToolUse hook lets ask rules run on Full access (#1853).
+  kimiEnv = { ...kimiEnv, SOLENTA_PERMISSION_MODE: permissionMode || "default" };
 
   const kimiBin = binary || resolveBin(entry);
   const spawn = resolveWorkflowSpawn(project, kimiBin, args, cwd, kimiEnv);
@@ -152,7 +155,12 @@ function spawnAgentKimi(opts) {
       }
       for (const tool of kimiExtractTools(ev)) {
         if (tool.phase === "start") {
-          notePhaseGuardrail(opts, tool.name, tool.input);
+          notePhaseGuardrail(
+            opts,
+            tool.name,
+            tool.input,
+            permissionMode === "bypassPermissions",
+          );
         }
       }
     },

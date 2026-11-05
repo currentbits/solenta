@@ -22,6 +22,7 @@ const TWO_TOKEN_BINS = new Set([
   "cargo",
   "go",
   "git",
+  "gh",
   "docker",
   "kubectl",
   "composer",

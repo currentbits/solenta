@@ -7,12 +7,13 @@
  * event = "PreToolUse" runs before the tool (and before permission
  * checks). Exit 2 or stdout
  * `{ hookSpecificOutput: { permissionDecision: "deny" } }` blocks.
- * Fail-open on crash. Ask is deny: kimi has no Solenta prompt channel.
+ * Fail-open on crash. Ask is deny: kimi has no Solenta prompt channel,
+ * except on a Full access thread (#1853).
  */
 
 const path = require("node:path");
 const {
-  decideGuardrail,
+  hookGuardrailDecision,
   runStdinHook,
 } = require("./guardrail-hook-core.js");
 
@@ -64,7 +65,7 @@ function kimiGuardrailHookCommand(opts = {}) {
 if (require.main === module) {
   runStdinHook((payload) => {
     const worktree = process.env.SOLENTA_WORKTREE || process.cwd();
-    const out = decideGuardrail(payload, worktree);
+    const out = hookGuardrailDecision(payload, worktree);
     if (out.decision === "deny") {
       process.stdout.write(
         JSON.stringify({

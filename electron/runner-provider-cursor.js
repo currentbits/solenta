@@ -163,6 +163,7 @@ function createCursorRun(ctx) {
           insertBeforeLast(args, ["--plugin-dir", dest]);
           cursorWrapEnv = {
             SOLENTA_WORKTREE: project.remotePath || localCwd,
+            SOLENTA_PERMISSION_MODE: thread.permissionMode || "default",
           };
         }
       } catch {
@@ -348,6 +349,11 @@ function createCursorRun(ctx) {
       local: !crossesBoundary(project),
     });
     if (keyEnv) cursorEnv = { ...cursorEnv, ...keyEnv };
+    // The preToolUse hook lets ask rules run on Full access (#1853).
+    cursorEnv = {
+      ...cursorEnv,
+      SOLENTA_PERMISSION_MODE: thread.permissionMode || "default",
+    };
     if (abortIfCancelled(threadId, runId)) return { runId };
     const handle = runCursor({
       binary: spawn.binary,
@@ -446,6 +452,7 @@ function createCursorRun(ctx) {
               tool.name,
               args || tool.input,
               thread.worktreePath || project.path,
+              thread.permissionMode === "bypassPermissions",
             );
             if (notice) appendMessage(threadId, "event", notice, runId);
             noteCursorSubagent(threadId, tool, args, "running");
