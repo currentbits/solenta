@@ -6,6 +6,7 @@ import type {
   CloneProjectInput,
   FsBrowseInput,
   FsBrowseResult,
+  HistoryProject,
   ProjectInfo,
   WindowsDoctorCheck,
 } from "../shared/ipc";
@@ -15,6 +16,8 @@ import {
   resolveAddProjectPath,
 } from "../browsePath";
 import { PathBrowser } from "./PathBrowser";
+import { HistoryProjectPicker } from "./HistoryProjectPicker";
+import type { CliImportProvider } from "./ImportCliSessionModal";
 import styles from "./SettingsModal.module.css";
 
 function failedDoctorChecks(result: unknown): WindowsDoctorCheck[] {
@@ -81,6 +84,14 @@ interface AddProjectPathModalProps {
   currentProjectCwd?: string | null;
   /** Other Solenta hosts the project can live on instead (#1819). */
   computers?: Array<{ key: string; label: string }>;
+  /** Folders from the agent CLIs' history (#1858). Omit to hide the mode. */
+  onDiscoverHistory?: () => Promise<HistoryProject[]>;
+  /** Import one CLI session into a project; enables the post-add offer. */
+  onImportCliSession?: (input: {
+    sessionId: string;
+    projectId: string;
+    provider?: CliImportProvider;
+  }) => Promise<unknown>;
 }
 
 /**
@@ -102,6 +113,8 @@ export function AddProjectPathModal({
   onBrowse: browseHere,
   currentProjectCwd: cwdHere,
   computers = [],
+  onDiscoverHistory,
+  onImportCliSession,
 }: AddProjectPathModalProps) {
   // "" is this computer. Another host's project lives (and its folders are
   // browsed) there; the local picker, cwd and SSH fields do not apply.
@@ -112,9 +125,15 @@ export function AddProjectPathModal({
   );
   const onPickDirectory = onHost ? undefined : onPickDirectoryHere;
   const currentProjectCwd = onHost ? null : cwdHere;
-  const [mode, setMode] = useState<"existing" | "create" | "clone">(
-    "existing",
-  );
+  const [mode, setMode] = useState<
+    "existing" | "create" | "clone" | "history"
+  >("existing");
+  const [historyPath, setHistoryPath] = useState<string | null>(null);
+  // Added from history with sessions to offer: the import step (#1858).
+  const [historyAdded, setHistoryAdded] = useState<{
+    projectId: string;
+    row: HistoryProject;
+  } | null>(null);
   const [cloneUrl, setCloneUrl] = useState("");
   const [cloneName, setCloneName] = useState("");
   const [cloneProgress, setCloneProgress] = useState<string | null>(null);
@@ -270,6 +289,61 @@ export function AddProjectPathModal({
     }
   };
 
+  // Same add path as "Add existing"; the row is the typed path.
+  const addFromHistory = async (row: HistoryProject) => {
+    if (pending) return;
+    setPending(true);
+    setHistoryPath(row.path);
+    setError(null);
+    try {
+      const added = await onSubmit(row.path);
+      if (!added) {
+        setError("Could not add that path.");
+        return;
+      }
+      const failed = failedDoctorChecks(added);
+      const projectId = (added as ProjectInfo).id;
+      if (failed.length) setDoctorIssues(failed);
+      else if (onImportCliSession && projectId && row.recentSessions.length) {
+        setHistoryAdded({ projectId, row });
+      } else onClose();
+    } catch (err) {
+      setError(
+        err instanceof Error && err.message
+          ? err.message
+          : "Could not add that path.",
+      );
+    } finally {
+      setPending(false);
+      setHistoryPath(null);
+    }
+  };
+
+  const importRecent = async () => {
+    if (pending || !historyAdded || !onImportCliSession) return;
+    setPending(true);
+    setError(null);
+    try {
+      // Oldest first, so the newest import ends up selected.
+      for (const s of [...historyAdded.row.recentSessions].reverse()) {
+        await onImportCliSession({
+          sessionId: s.sessionId,
+          projectId: historyAdded.projectId,
+          provider: s.provider as CliImportProvider,
+        });
+      }
+      onClose();
+    } catch (err) {
+      setError(
+        err instanceof Error && err.message
+          ? err.message
+          : "Could not import those sessions.",
+      );
+    } finally {
+      setPending(false);
+    }
+  };
+
   const onEnter = (e: React.KeyboardEvent) => {
     if (e.key === "Enter") {
       e.preventDefault();
@@ -308,7 +382,46 @@ export function AddProjectPathModal({
           </button>
         </div>
         <div className={styles.body}>
-          {doctorIssues ? (
+          {historyAdded ? (
+            <>
+              <p className={styles.doctorLead} data-history-import-offer="">
+                Added {historyAdded.row.name}. Import its{" "}
+                {historyAdded.row.recentSessions.length === 1
+                  ? "most recent session"
+                  : `${historyAdded.row.recentSessions.length} most recent sessions`}{" "}
+                as threads too?
+              </p>
+              {error && (
+                <p className={styles.fieldError} role="alert">
+                  {error}
+                </p>
+              )}
+              <div className={styles.fieldRow}>
+                <button
+                  type="button"
+                  className={`${styles.btn} ${styles.btnPrimary}`}
+                  data-history-import=""
+                  disabled={pending}
+                  onClick={() => void importRecent()}
+                >
+                  {pending
+                    ? "Importing…"
+                    : historyAdded.row.recentSessions.length === 1
+                      ? "Import 1 session"
+                      : `Import ${historyAdded.row.recentSessions.length} sessions`}
+                </button>
+                <button
+                  type="button"
+                  className={styles.btn}
+                  data-history-import-skip=""
+                  disabled={pending}
+                  onClick={onClose}
+                >
+                  Not now
+                </button>
+              </div>
+            </>
+          ) : doctorIssues ? (
             <>
               <p className={styles.doctorLead}>
                 Project added. Fix these before they bite:
@@ -394,6 +507,25 @@ export function AddProjectPathModal({
                 Clone from URL
               </button>
             ) : null}
+            {onDiscoverHistory && !onHost ? (
+              <button
+                type="button"
+                className={
+                  mode === "history"
+                    ? `${styles.btn} ${styles.btnPrimary}`
+                    : styles.btn
+                }
+                data-add-project-mode-history=""
+                aria-pressed={mode === "history"}
+                disabled={pending}
+                onClick={() => {
+                  setMode("history");
+                  setError(null);
+                }}
+              >
+                From CLI history…
+              </button>
+            ) : null}
           </div>
 
           {computers.length > 0 ? (
@@ -409,6 +541,8 @@ export function AddProjectPathModal({
                 disabled={pending}
                 onChange={(e) => {
                   setOnHost(e.target.value);
+                  // History is this computer's; another host has its own.
+                  if (mode === "history") setMode("existing");
                   setError(null);
                 }}
               >
@@ -427,7 +561,14 @@ export function AddProjectPathModal({
             </div>
           ) : null}
 
-          {mode === "clone" ? (
+          {mode === "history" && onDiscoverHistory && !onHost ? (
+            <HistoryProjectPicker
+              discover={onDiscoverHistory}
+              onPick={(row) => void addFromHistory(row)}
+              disabled={pending}
+              pendingPath={historyPath}
+            />
+          ) : mode === "clone" ? (
             <>
               <div className={styles.field}>
                 <label
@@ -631,6 +772,7 @@ export function AddProjectPathModal({
             </p>
           )}
           <div className={styles.fieldRow}>
+            {mode === "history" ? null : (
             <button
               type="button"
               className={`${styles.btn} ${styles.btnPrimary}`}
@@ -650,6 +792,7 @@ export function AddProjectPathModal({
                     ? "Clone"
                     : "Add"}
             </button>
+            )}
             {pending && mode === "clone" && onCancelClone ? (
               <button
                 type="button"

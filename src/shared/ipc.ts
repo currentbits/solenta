@@ -3721,6 +3721,20 @@ export interface RecentRepo {
   preselected: boolean;
 }
 
+/** A folder found in the CLIs' session history (#1858). */
+export interface HistoryProject {
+  /** Main checkout for a worktree, else the folder itself. */
+  path: string;
+  name: string;
+  /** Newest session there, epoch ms. */
+  lastActiveAt: number;
+  /** Provider ids whose sessions ran there. */
+  providers: string[];
+  sessions: number;
+  /** Newest few sessions, newest first, for threads.importCliSession. */
+  recentSessions: Array<{ provider: string; sessionId: string }>;
+}
+
 /** Checkouts that share a git remote ("owner/repo"); null remote = one checkout. */
 export interface RecentRepoGroup {
   remote: string | null;
@@ -5877,6 +5891,11 @@ export interface CoderApi {
      * the CLIs' session stores; already-added projects are left out.
      */
     discoverRecent(): Promise<RecentRepoGroup[]>;
+    /**
+     * Every folder a provider CLI ran in that is not a project yet, newest
+     * first, at most ~200 (#1858). Worktrees map to their main checkout.
+     */
+    discoverHistory(): Promise<HistoryProject[]>;
     /** Create a new folder + git repo at parentDir/name, then add it as a project. */
     create(input: CreateProjectInput): Promise<ProjectInfo>;
     /**

@@ -4,7 +4,7 @@ const services = require("./services.js");
 const { browseFilesystem } = require("./fsBrowse.js");
 const { retireAgent } = require("./ipc-shared.js");
 const { cloneProject, cancelClone } = require("./projectClone.js");
-const { discoverRecentRepos } = require("./recentRepos.js");
+const { discoverRecentRepos, discoverHistoryProjects } = require("./recentRepos.js");
 
 /** IPC_HANDLERS rows for projects:*, fs:*, spaces:*; ipc.js spreads them in. */
 module.exports = {
@@ -18,6 +18,13 @@ module.exports = {
   "projects:discoverRecent": async (ctx) => {
     return discoverRecentRepos({
       existingPaths: services.listProjects(ctx.store).map((p) => p.path),
+    });
+  },
+  // Add project → From CLI history (#1858): every folder, not just recent repos.
+  "projects:discoverHistory": async (ctx) => {
+    return discoverHistoryProjects({
+      existingPaths: services.listProjects(ctx.store).map((p) => p.path),
+      worktreeRoots: [ctx.worktreeBase],
     });
   },
   "projects:ensureScratch": async (ctx) => {

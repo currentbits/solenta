@@ -1932,6 +1932,10 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     () => api.projects.discoverRecent(),
     [api],
   );
+  const discoverHistoryProjects = useCallback(
+    () => api.projects.discoverHistory(),
+    [api],
+  );
   // One at a time: each add runs git checks, and projects.add is not batched.
   const addProjectPaths = useCallback(
     async (paths: string[]) => {
@@ -2999,6 +3003,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
             onPickDirectory={
               isWebMode() ? undefined : pickProjectDirectory
             }
+            onDiscoverHistory={discoverHistoryProjects}
+            onImportCliSession={handleImportCliSession}
           />
         )}
         {editProject && (
