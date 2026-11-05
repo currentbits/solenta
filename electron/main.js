@@ -79,6 +79,7 @@ const {
 const {
   parseServeWebArgs,
   needsVirtualDisplay,
+  relaunchHeadless,
   startWebServer,
   loadOrCreateToken,
   serveBanner,
@@ -158,13 +159,16 @@ startLoopLag();
 
 const serveOpts = parseServeWebArgs(process.argv);
 // Linux --headless with no display would abort in GTK init: rerun this same
-// command under xvfb-run. spawnSync blocks this process's main thread, so its
-// own GTK init never runs; it just exits with the child's status.
+// command with --ozone-platform=headless, or under xvfb-run if that fails
+// fast. spawnSync blocks this process's main thread, so its own GTK init
+// never runs; it just exits with the child's status.
 // The plain-Node server (#1829) has no GTK to init.
 if (process.versions.electron && needsVirtualDisplay(serveOpts)) {
-  const r = require("node:child_process").spawnSync(
-    "xvfb-run", ["-a", process.execPath, ...process.argv.slice(1)], { stdio: "inherit" },
-  );
+  const r = relaunchHeadless({
+    spawnSync: require("node:child_process").spawnSync,
+    execPath: process.execPath,
+    args: process.argv.slice(1),
+  });
   if (r.error) {
     console.error("Solenta --headless needs a display on Linux. Install xvfb (it provides xvfb-run; apt install xvfb), or set DISPLAY, then start Solenta again.");
   }
