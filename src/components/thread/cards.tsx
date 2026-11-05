@@ -445,11 +445,11 @@ export function PermissionPrompt({
             className={styles.permissionAllow}
             disabled={sent || empty || ruleEmpty}
             data-permission-always=""
-            title={rule}
+            title={`Remember ${rule} for this thread: later commands starting with it run without asking`}
             onClick={always}
             aria-keyshortcuts="a"
           >
-            <KeyHint k="a" /> Always allow <code>{rule}</code>
+            <KeyHint k="a" /> Always allow <code>{rule}</code> in this thread
           </button>
         ) : acceptAlways ? (
           <button

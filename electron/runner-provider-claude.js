@@ -37,7 +37,7 @@ const { copyGuardrailRuntime } = require("./guardrail-hook-core.js");
 const { claudeSettingsHooks } = require("./user-hooks.js");
 const threadSecrets = require("./threadSecrets.js");
 const { classifyTool } = require("./guardrails.js");
-const { evaluate, threadPolicy } = require("./governance.js");
+const { evaluate, fullAccessAllows, threadPolicy } = require("./governance.js");
 const { appendAudit } = require("./governanceAudit.js");
 const { suggestedAllowRules } = require("./permissionCommand.js");
 const {
@@ -777,7 +777,7 @@ function createClaudeRun(ctx) {
               sessionAllows: e.sessionAllows,
               mcpRules: gov.mcpRules,
             });
-            const auditRow = (decision, executed) =>
+            const auditRow = (decision, executed, reason = ev.reason) =>
               appendAudit({
                 threadId,
                 profileId: gov.profileId,
@@ -789,7 +789,7 @@ function createClaudeRun(ctx) {
                 decision,
                 layer: ev.layer,
                 rule: ev.rule,
-                reason: ev.reason,
+                reason,
               });
 
             if (ev.decision === "deny") {
@@ -840,6 +840,19 @@ function createClaudeRun(ctx) {
             const governed =
               Boolean(gov.policy && gov.policy.rules.length) ||
               ev.layer.startsWith("mcp.");
+            // #1854: Full access, read live so a mid-run switch applies to
+            // the next call, answers the asks no rule spelled out.
+            const fullAccess =
+              (live || thread).permissionMode === "bypassPermissions" &&
+              fullAccessAllows(ev);
+            if (fullAccess) {
+              handle.respond(requestId, {
+                behavior: "allow",
+                updatedInput: rawInput,
+              });
+              auditRow("allow", ev.declared, "full access");
+              return;
+            }
             if (
               ev.decision === "allow" ||
               takeRestartGrant(threadId, toolName, rawInput) ||

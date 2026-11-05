@@ -715,6 +715,8 @@ module.exports = {
   setGuardrailsEnabled,
   classifyTool,
   classifyCommand,
+  simpleCommands,
+  commandChain,
   scanInjection,
   scanSecrets,
   SECRET_RULES,

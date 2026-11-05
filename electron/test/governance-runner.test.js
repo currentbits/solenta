@@ -358,6 +358,102 @@ describe("runner × governance matrix (issue #262)", () => {
     assert.equal(runner.getPendingPermission(thread.id), null);
     await waitFor(() => store.getThread(thread.id).status === "done");
   });
+
+  /** One can_use_tool; answers any card with `decision`. */
+  async function once(name, input, decision = "deny") {
+    tool(name, input);
+    if (fs.existsSync(ctrlFile)) fs.rmSync(ctrlFile);
+    await runner.startRun({ threadId: thread.id, prompt: "go" });
+    let ctrl;
+    await waitFor(
+      () =>
+        runner.getPendingPermission(thread.id) != null ||
+        (ctrl = readJsonIfComplete(ctrlFile)) !== undefined,
+    );
+    const pending = runner.getPendingPermission(thread.id);
+    if (pending) {
+      runner.respondPermission({ threadId: thread.id, requestId: pending.requestId, decision });
+      await waitFor(() => (ctrl = readJsonIfComplete(ctrlFile)) !== undefined);
+    }
+    await waitFor(() => store.getThread(thread.id).status === "done");
+    return { pending, ctrl };
+  }
+
+  it("Full access answers profile.default and builtin asks itself (#1854)", async () => {
+    store.updateThread(thread.id, { agentProfileId: null, permissionMode: "bypassPermissions" });
+    for (const [name, input, layer] of [
+      ["Bash", { command: "ls /tmp" }, "profile.default"],
+      ["Edit", { file_path: "/tmp/x.txt", old_string: "a", new_string: "b" }, "profile.default"],
+      ["Bash", { command: "curl https://example.com" }, "builtin"],
+    ]) {
+      const { pending, ctrl } = await once(name, input);
+      assert.equal(pending, null, JSON.stringify(input));
+      assert.equal(ctrl.response.response.behavior, "allow");
+      const [row] = listAudit({ threadId: thread.id });
+      assert.equal(row.decision, "allow");
+      assert.equal(row.layer, layer);
+      assert.equal(row.reason, "full access");
+    }
+    // Denies stay denies.
+    const { pending, ctrl } = await once("Bash", { command: "sudo rm x" });
+    assert.equal(pending, null);
+    assert.equal(ctrl.response.response.behavior, "deny");
+  });
+
+  it("Full access still prompts for written ask rules and questions (#1854)", async () => {
+    store.setSettings({
+      mcpServers: [{ name: "srv", command: "x", trusted: true, toolRules: { poke: "ask" } }],
+    });
+    // Profile `git push` ask rule.
+    store.updateThread(thread.id, { permissionMode: "bypassPermissions" });
+    let r = await once("Bash", { command: "git push origin main" });
+    assert.equal(r.pending.guardrail.layer, "profile.ask");
+    store.updateThread(thread.id, { agentProfileId: null, permissionMode: "bypassPermissions" });
+    r = await once("mcp__srv__poke", {});
+    assert.equal(r.pending.guardrail.layer, "mcp.ask");
+    r = await once("AskUserQuestion", {
+      questions: [{ question: "Which?", header: "Pick", multiSelect: false,
+        options: [{ label: "A", description: "a" }, { label: "B", description: "b" }] }],
+    });
+    assert.ok(r.pending, "question card");
+    r = await once("ExitPlanMode", { plan: "do it" });
+    assert.ok(r.pending, "plan card");
+  });
+
+  it("the same ask prompts off Full access, and a mid-run switch is read live", async () => {
+    store.updateThread(thread.id, { agentProfileId: null, permissionMode: "default" });
+    tool("Bash", { command: "ls /tmp" });
+    await runner.startRun({ threadId: thread.id, prompt: "go" });
+    await waitFor(() => runner.getPendingPermission(thread.id) != null);
+    assert.equal(listAudit({ threadId: thread.id })[0].layer, "profile.default");
+    runner.respondPermission({
+      threadId: thread.id,
+      requestId: runner.getPendingPermission(thread.id).requestId,
+      decision: "deny",
+    });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+    store.updateThread(thread.id, { permissionMode: "bypassPermissions" });
+    assert.equal((await once("Bash", { command: "ls /tmp" })).pending, null);
+  });
+
+  it("Always allow remembers the command prefix, not only the exact text (#1854)", async () => {
+    store.updateThread(thread.id, { agentProfileId: null });
+    const first = await once("Bash", { command: "git push origin a" }, "allowAlways");
+    assert.ok(first.pending);
+    assert.deepEqual(store.getThread(thread.id).alwaysAllowRules, [
+      { toolName: "Bash", prefix: "git push" },
+    ]);
+    // Same prefix, other args: no card. Exact repeat still matches.
+    for (const command of ["git push origin b", "git push origin a"]) {
+      const r = await once("Bash", { command });
+      assert.equal(r.pending, null, command);
+      assert.equal(r.ctrl.response.response.behavior, "allow");
+    }
+    // Another program, or a compound with an unremembered part: asks.
+    for (const command of ["git pull", "git push origin b && rm -r build"]) {
+      assert.ok((await once("Bash", { command })).pending, command);
+    }
+  });
 });
 
 describe("setPermissionMode × auto-approve (#1721)", () => {
