@@ -239,6 +239,34 @@ export function SpendingPane({
           as runs finish. Default 4; empty means no cap.
         </p>
       </div>
+      <div className={styles.field}>
+        <label className={styles.fieldRow}>
+          <input
+            type="checkbox"
+            data-menu-bar-usage=""
+            checked={settings?.menuBarUsage === true}
+            disabled={saving || settings == null}
+            onChange={(e) => {
+              setError(null);
+              void onSaveSettings({ menuBarUsage: e.target.checked }).catch((err) => {
+                setError(
+                  err instanceof Error && err.message
+                    ? err.message
+                    : "Failed to save settings",
+                );
+              });
+            }}
+          />
+          <span>
+            Show usage in the {status?.build.platform === "darwin" ? "menu bar" : "tray"}
+          </span>
+        </label>
+        <p className={styles.note}>
+          Each account&apos;s 5-hour and weekly usage. Picking an account
+          makes it the default for new threads and terminals; running
+          threads keep theirs.
+        </p>
+      </div>
       <ModelPricesEditor
         key={settings ? "loaded" : "loading"}
         settings={settings}

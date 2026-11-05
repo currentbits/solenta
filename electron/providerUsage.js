@@ -681,6 +681,51 @@ async function fetchProviderLimits(opts = {}) {
   return [...rows, ...instanceRows];
 }
 
+/**
+ * Live windows from runs (#1859): Claude's `rate_limit_event` and Codex's
+ * `account/rateLimits/updated` arrive mid-turn. Listeners (the menu bar)
+ * get `(ref, windows)` for the thread's account ref.
+ * @type {Set<(ref: string, windows: object[]) => void>}
+ */
+const liveListeners = new Set();
+
+/** @param {(ref: string, windows: object[]) => void} fn @returns {() => void} unsubscribe */
+function onLiveUsage(fn) {
+  liveListeners.add(fn);
+  return () => liveListeners.delete(fn);
+}
+
+/** @param {string} ref @param {object[]} windows */
+function reportLiveUsage(ref, windows) {
+  if (!ref || !Array.isArray(windows) || !windows.length) return;
+  for (const fn of liveListeners) {
+    try {
+      fn(ref, windows);
+    } catch {
+      // A listener bug never breaks a run.
+    }
+  }
+}
+
+const CLAUDE_LIMIT_TYPES = { five_hour: ["5-hour", FIVE_HOUR_SECONDS], seven_day: ["weekly", WEEK_SECONDS] };
+
+/**
+ * Claude stream-json `rate_limit_event.rate_limit_info`. `utilization` is a
+ * 0-1 fraction (claude 2.1.x keeps its own alert thresholds, 0.75/0.9, in
+ * the same field) and is often absent below them; then nothing is known.
+ * @param {unknown} info
+ * @returns {object[]}
+ */
+function claudeRateLimitWindows(info) {
+  if (!info || typeof info !== "object") return [];
+  const i = /** @type {Record<string, unknown>} */ (info);
+  const kind = CLAUDE_LIMIT_TYPES[/** @type {keyof typeof CLAUDE_LIMIT_TYPES} */ (String(i.rateLimitType))];
+  const u = asNumber(i.utilization);
+  if (!kind || u == null) return [];
+  const win = makeWindow(u * 100, i.resetsAt, kind[1], kind[0]);
+  return win ? [win] : [];
+}
+
 /** An account at or above this in its 5-hour or weekly window is skipped. */
 const PICK_SKIP_PERCENT = 95;
 
@@ -736,6 +781,9 @@ function pickAccountByQuota(refs, rows) {
 }
 
 module.exports = {
+  onLiveUsage,
+  reportLiveUsage,
+  claudeRateLimitWindows,
   TIMEOUT_MS,
   FIVE_HOUR_SECONDS,
   WEEK_SECONDS,

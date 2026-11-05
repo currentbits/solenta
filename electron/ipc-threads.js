@@ -690,7 +690,8 @@ module.exports = {
     const updated = leaveProfile(
       ctx,
       input.threadId,
-      services.setProvider(ctx.store, input),
+      // The picker's bare row is labelled with the default account (#1859).
+      services.setProvider(ctx.store, { ...input, useDefaultAccount: true }),
     );
     services.recordLastUsedDefaults(ctx.store, input.threadId);
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));

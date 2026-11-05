@@ -15,6 +15,7 @@ const {
   parsePromptSnippets,
   DEFAULT_AUTO_SETTLE_AFTER_DAYS,
   normalizeDefaultProvider,
+  normalizeDefaultAccounts,
   normalizeDefaultModel,
   validateGitTextModel,
   validateQuotaFailover,
@@ -107,6 +108,8 @@ class StoreSettingsMethods {
       confirmQuitWithActiveWork: n.confirmQuitWithActiveWork,
       pinchZoomWindow: n.pinchZoomWindow,
       closeToTray: n.closeToTray,
+      menuBarUsage: n.menuBarUsage,
+      defaultAccounts: n.defaultAccounts,
       resumeInterruptedRuns: n.resumeInterruptedRuns,
       combineQueuedFollowUps: n.combineQueuedFollowUps,
       agentBugReports: n.agentBugReports,
@@ -475,6 +478,20 @@ class StoreSettingsMethods {
         throw new Error("closeToTray must be a boolean");
       }
       this.data.settings.closeToTray = v;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "menuBarUsage")) {
+      const v = patch.menuBarUsage;
+      if (typeof v !== "boolean") {
+        throw new Error("menuBarUsage must be a boolean");
+      }
+      this.data.settings.menuBarUsage = v;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "defaultAccounts")) {
+      const v = patch.defaultAccounts;
+      if (!v || typeof v !== "object" || Array.isArray(v)) {
+        throw new Error("defaultAccounts must be an object");
+      }
+      this.data.settings.defaultAccounts = normalizeDefaultAccounts(v);
     }
     if (Object.prototype.hasOwnProperty.call(patch, "worktreeRoot")) {
       this.data.settings.worktreeRoot = validateWorktreeRoot(patch.worktreeRoot);

@@ -3694,6 +3694,8 @@ export interface ProviderInfo {
    */
   baseProvider?: string;
   instanceId?: string;
+  /** Base rows (#1859): name of the default account new threads of this CLI use. */
+  defaultAccount?: string;
   /**
    * A custom CLI row (#458): raw stdout transcript, no work-log cards,
    * usage, resume or sign-in state. The UI labels it so.
@@ -4224,6 +4226,18 @@ export interface AppSettings {
    * confirm-quit-with-active-work flow.
    */
   closeToTray: boolean;
+  /**
+   * Subscription usage and the account picker in the menu bar (#1859): its
+   * own menu bar item on macOS, extra rows in the close-to-tray menu on
+   * Windows/Linux. Picking an account sets defaultProvider. Default off.
+   */
+  menuBarUsage: boolean;
+  /**
+   * Per-CLI default account (#1859): provider id -> instance id, e.g.
+   * `{ claude: "work" }`. New threads on a bare provider and new terminals
+   * use it; absent = the CLI's own login. Set from the menu bar.
+   */
+  defaultAccounts: Record<string, string>;
   /**
    * After a restart, give each thread whose run was interrupted one
    * automatic follow-up turn (issue #1512 I3). Default off.

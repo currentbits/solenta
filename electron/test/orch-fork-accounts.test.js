@@ -31,7 +31,7 @@ function row(provider, windows, status = "ok") {
   return { provider, status, windows, fetchedAt: 1 };
 }
 
-function makeDeps(usageRows = [], subagentPool = { defaultAlias: null, force: false, entries: [] }) {
+function makeDeps(usageRows = [], subagentPool = { defaultAlias: null, force: false, entries: [] }, extraSettings = {}) {
   const threads = [
     { id: "lead", provider: "claude", projectId: "p1", permissionMode: "default" },
   ];
@@ -54,6 +54,7 @@ function makeDeps(usageRows = [], subagentPool = { defaultAlias: null, force: fa
     getSettings: () => ({
       providerInstances: INSTANCES,
       subagentPool,
+      ...extraSettings,
     }),
   };
   const forks = [];
@@ -107,6 +108,37 @@ describe("thread_fork account refs (#1857)", () => {
     assert.equal(deps.forks[0].provider, "claude:team");
     assert.equal(deps.store.getThread("w1").providerInstance, "team");
     assert.equal(deps.usageCalls.length, 0);
+  });
+
+  it("a bare provider follows the per-CLI default account (#1859), like a new thread", async () => {
+    const pool = { defaultAlias: null, force: false, entries: [] };
+    const deps = makeDeps([], pool, { defaultAccounts: { claude: "work" } });
+    await fork(deps, "claude");
+    assert.equal(deps.forks[0].provider, "claude:work");
+    assert.equal(deps.store.getThread("w1").providerInstance, "work");
+    // A pinned defaultProvider wins over defaultAccounts, as for new threads.
+    const pinned = makeDeps([], pool, { defaultProvider: "claude:team", defaultAccounts: { claude: "work" } });
+    await fork(pinned, "claude");
+    assert.equal(pinned.forks[0].provider, "claude:team");
+    // No default account: the CLI's own login, as before.
+    const plain = makeDeps();
+    await fork(plain, "claude");
+    assert.equal(plain.forks[0].provider, "claude");
+    assert.equal(plain.usageCalls.length, 0);
+  });
+
+  it(":auto still picks by quota; with no usage known the per-CLI default wins", async () => {
+    const pool = { defaultAlias: null, force: false, entries: [] };
+    const byQuota = makeDeps(
+      [row("claude", [win("5-hour", 40)]), row("claude:work", [win("5-hour", 90)]), row("claude:team", [win("5-hour", 5)])],
+      pool,
+      { defaultAccounts: { claude: "work" } },
+    );
+    await fork(byQuota, "claude:auto");
+    assert.equal(byQuota.forks[0].provider, "claude:team");
+    const unknown = makeDeps([], pool, { defaultAccounts: { claude: "work" } });
+    await fork(unknown, "claude:auto");
+    assert.equal(unknown.forks[0].provider, "claude:work");
   });
 
   it("rejects an unknown account and lists the valid refs", async () => {
