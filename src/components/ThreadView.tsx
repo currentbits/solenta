@@ -1,4 +1,5 @@
 import type { FarLink, FarLinks } from "../app/useThreadRoster";
+import type { MachineOption } from "./WorkspaceStrip";
 import {
   Fragment,
   memo,
@@ -794,6 +795,9 @@ interface ThreadViewProps {
   onStartWithoutProject?: (threadId: string) => void;
   /** Draft strip "Previous worktree" source (latest other worktree thread). */
   previousWorktree?: { branch: string; title: string } | null;
+  /** Draft strip machine picker (#1835): where this draft can run. */
+  draftMachines?: MachineOption[];
+  onMoveDraftToMachine?: (threadId: string, projectId: string) => Promise<void>;
   /** Unmerged worktree files plus capped conflict-marker snippets. */
   conflictContext?: (threadId: string) => Promise<ConflictContext>;
   /** Open the thread worktree in the configured editor. */
@@ -1065,6 +1069,8 @@ export const ThreadView = memo(function ThreadView({
   listBaseBranches,
   onSetBaseBranch,
   onSetPendingWorktree,
+  draftMachines,
+  onMoveDraftToMachine,
   previousWorktree,
   heroProjects,
   onMoveDraftToProject,
@@ -5908,6 +5914,7 @@ export const ThreadView = memo(function ThreadView({
             detail.messages.some((m) => m.role === "user") ? (
             <WorkspaceStrip
               started={{ branch: thread.branch }}
+              machineLabel={thread.host?.label ?? null}
               worktree={Boolean(thread.worktreePath)}
               projectPath={project.path}
               baseBranch={thread.baseBranch ?? null}
@@ -5934,6 +5941,10 @@ export const ThreadView = memo(function ThreadView({
                   : undefined
               }
               previous={previousWorktree}
+              machines={draftMachines}
+              onSetMachine={
+                onMoveDraftToMachine ? (projectId) => onMoveDraftToMachine(thread.id, projectId) : undefined
+              }
             />
           ) : undefined
         }
