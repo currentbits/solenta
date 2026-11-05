@@ -30,6 +30,7 @@ import {
   GithubMark,
   isGithubUrl,
   linkifyNode,
+  PathAnchor,
   PathLinkContext,
   ThreadLinkContext,
   useResolvedMap,
@@ -53,12 +54,13 @@ function markdownUrlTransform(url: string): string {
 }
 
 /**
- * Relative / file / absolute image srcs are workspace or Grok session files,
- * not URLs on the renderer origin. Remote http(s)/data/solenta-media stay.
+ * Relative / file / absolute image srcs and link hrefs are workspace or Grok
+ * session files, not URLs on the renderer origin. Remote
+ * http(s)/data/solenta-media and in-page #anchors stay.
  */
-function localPathFromImgSrc(src: string): string | null {
+function localPathFromUrl(src: string): string | null {
   const s = src.trim();
-  if (!s) return null;
+  if (!s || s.startsWith("#") || s.startsWith("//")) return null;
   if (/^https?:\/\//i.test(s)) return null;
   if (s.startsWith("data:") || s.startsWith("solenta-media:")) return null;
   if (s.startsWith("file:")) {
@@ -69,14 +71,19 @@ function localPathFromImgSrc(src: string): string | null {
     }
   }
   if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(s)) return null;
-  return s;
+  // micromark percent-encodes `<path with spaces.png>`.
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return s;
+  }
 }
 
 const NO_PATHS: string[] = [];
 
 function MarkdownImage({ src, alt }: { src?: string; alt?: string }) {
   const api = useContext(PathLinkContext);
-  const local = src ? localPathFromImgSrc(src) : null;
+  const local = src ? localPathFromUrl(src) : null;
   const sessionAbs = local ? api?.sessionImages?.[local] : undefined;
   const absDirect = local && isAbsolutePath(local) ? local : null;
   const rel = local && !absDirect && !sessionAbs ? local : "";
@@ -113,6 +120,44 @@ function MarkdownImage({ src, alt }: { src?: string; alt?: string }) {
       title={alt || undefined}
       tabIndex={0}
     />
+  );
+}
+
+/**
+ * `[mockup](/abs/design/01.png)` names a workspace file: a target=_blank
+ * anchor to it opened nothing (#1844), so it opens like a path link instead.
+ */
+function MarkdownLink({ href, children }: { href?: string; children?: ReactNode }) {
+  const api = useContext(PathLinkContext);
+  const links = useContext(ThreadLinkContext);
+  const local = href ? localPathFromUrl(href) : null;
+  const paths = useMemo(() => (local ? [local] : NO_PATHS), [local]);
+  const abs = useResolvedMap(paths)[local ?? ""];
+  if (!local) {
+    const github = isGithubUrl(href);
+    const anchor = (
+      <a href={href} target="_blank" rel="noreferrer">
+        {github ? <GithubMark className={styles.githubMark} /> : null}
+        {children}
+      </a>
+    );
+    const ref = github ? prRefFromGithubUrl(href) : null;
+    if (!ref) return anchor;
+    return (
+      <PrHoverTarget projectPath={links?.projectPath} repo={ref.repo} number={ref.number}>
+        {anchor}
+      </PrHoverTarget>
+    );
+  }
+  if (!api || !abs) return <>{children}</>;
+  return (
+    <PathAnchor
+      hit={{ raw: local, path: local, start: 0, end: 0 }}
+      abs={abs}
+      openPath={api.openPath}
+    >
+      {children}
+    </PathAnchor>
   );
 }
 
@@ -271,23 +316,7 @@ const COMPONENTS: Components = {
   h3: (props) => <h3>{linkifyNode(props.children)}</h3>,
   h4: (props) => <h4>{linkifyNode(props.children)}</h4>,
   blockquote: (props) => <blockquote>{linkifyNode(props.children)}</blockquote>,
-  a: (props) => {
-    const links = useContext(ThreadLinkContext);
-    const github = isGithubUrl(props.href);
-    const anchor = (
-      <a href={props.href} target="_blank" rel="noreferrer">
-        {github ? <GithubMark className={styles.githubMark} /> : null}
-        {props.children}
-      </a>
-    );
-    const ref = github ? prRefFromGithubUrl(props.href) : null;
-    if (!ref) return anchor;
-    return (
-      <PrHoverTarget projectPath={links?.projectPath} repo={ref.repo} number={ref.number}>
-        {anchor}
-      </PrHoverTarget>
-    );
-  },
+  a: (props) => <MarkdownLink href={props.href}>{props.children}</MarkdownLink>,
   img: (props) => <MarkdownImage src={props.src} alt={props.alt} />,
 };
 

@@ -1612,6 +1612,8 @@ describe("orch-server HTTP", () => {
     const autoSchema = list.body.result.tools.find((t) => t.name === "automation_create").inputSchema;
     assert.equal(autoSchema.properties.cron.type, "string");
     assert.ok(autoSchema.properties.preset.enum.includes("cron"));
+    const linkSchema = list.body.result.tools.find((t) => t.name === "link_pull_request").inputSchema;
+    assert.equal(linkSchema.properties.primary.type, "boolean");
     const names = list.body.result.tools.map((t) => t.name).sort();
     assert.deepEqual(names, [
       "ask_user",

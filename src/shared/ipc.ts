@@ -6348,13 +6348,15 @@ export interface CoderApi {
     setPrWatch(input: { threadId: string; enabled: boolean }): Promise<ThreadInfo>;
     /**
      * Link a pull request to this thread (#1527), including PRs in
-     * another repo. First link becomes `prNumber`. Never bumps updatedAt.
+     * another repo. First link (or `primary: true`) becomes `prNumber`.
+     * Never bumps updatedAt.
      */
     linkPullRequest(input: {
       threadId: string;
       number: number;
       repo?: string;
       url?: string;
+      primary?: boolean;
     }): Promise<ThreadInfo>;
     /**
      * Set or clear the per-thread scratch pad. Trims, caps at

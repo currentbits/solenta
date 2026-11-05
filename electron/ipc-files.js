@@ -179,6 +179,8 @@ const RESOLVE_PATHS_MAX = 500;
 
 /** Files pane (#1506): preview cap, entries per directory, whole-tree cap. */
 const PREVIEW_MAX_BYTES = 1024 * 1024;
+/** Same cap as the Changes pane: a generated mockup PNG is 1-2 MB (#1844). */
+const IMAGE_PREVIEW_MAX_BYTES = 8 * 1024 * 1024;
 const TREE_DIR_MAX = 2000;
 const TREE_ALL_MAX = 20000;
 const IMAGE_MIME = {
@@ -322,10 +324,11 @@ async function readPreview(root, raw) {
   const stat = await fs.promises.stat(abs);
   if (!stat.isFile()) throw new Error("Not a file");
   const size = stat.size;
-  if (size > PREVIEW_MAX_BYTES) return { kind: "tooLarge", size };
-  const buf = await fs.promises.readFile(abs);
   const ext = path.extname(abs).slice(1).toLowerCase();
   const mime = IMAGE_MIME[ext];
+  const cap = mime ? IMAGE_PREVIEW_MAX_BYTES : PREVIEW_MAX_BYTES;
+  if (size > cap) return { kind: "tooLarge", size };
+  const buf = await fs.promises.readFile(abs);
   if (mime) {
     return { kind: "image", size, dataUrl: `data:${mime};base64,${buf.toString("base64")}` };
   }

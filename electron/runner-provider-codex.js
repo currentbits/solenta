@@ -205,6 +205,7 @@ function createCodexRun(ctx) {
           codexWrapEnv = {
             CODEX_HOME: dest,
             SOLENTA_WORKTREE: project.remotePath || localCwd,
+            SOLENTA_PERMISSION_MODE: thread.permissionMode || "default",
           };
         }
       } catch {
@@ -237,6 +238,7 @@ function createCodexRun(ctx) {
         args.push("-c", "features.hooks=true");
         codexMcpEnv.CODEX_HOME = dest;
         codexMcpEnv.SOLENTA_WORKTREE = localCwd;
+        codexMcpEnv.SOLENTA_PERMISSION_MODE = thread.permissionMode || "default";
       } catch {
         // Overlay is best-effort; a failed isolate must not block the turn.
       }
@@ -611,6 +613,7 @@ function createCodexRun(ctx) {
               "Bash",
               { command: cmd.command },
               thread.worktreePath || project.path,
+              thread.permissionMode === "bypassPermissions",
             );
             if (notice) appendMessage(threadId, "event", notice, runId);
             // Post-tool text starts a fresh message below the tool call.

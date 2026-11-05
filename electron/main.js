@@ -1086,8 +1086,10 @@ app.whenReady().then(async () => {
   // platforms so toggling the setting on later takes effect without a
   // restart; macOS is unaffected (it already stays in the dock). The
   // running count reads `runner` lazily, so it is correct once assigned
-  // below even though the tray is created first.
-  if (process.platform === "win32" || process.platform === "linux") {
+  // below even though the tray is created first. Never headless: there is
+  // no window to hide, and on Linux the tray's GTK status icon aborts the
+  // process with no display (#1845).
+  if (!serveOpts.headless && (process.platform === "win32" || process.platform === "linux")) {
     const icon = windowIcon();
     if (icon) {
       trayController = createTray({

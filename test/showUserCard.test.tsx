@@ -52,6 +52,15 @@ describe("show_user card (#293)", () => {
     assert.equal(isGroupable(shown()), false);
   });
 
+  it("Codex names the tool coder-threads/show_user (#1844)", async () => {
+    const msg = shown();
+    msg.tool!.name = "coder-threads/show_user";
+    const m = await mount(<MessageBlock message={msg} autoExpandTool />);
+    assert.ok(m.query("[data-show-user=file]"), "Codex call renders as a Show card");
+    assert.equal(isGroupable(msg), false);
+    m.unmount();
+  });
+
   it("a live card opens its pane once; Show re-opens it", async () => {
     const calls: ShowUserAction[] = [];
     const m = await mount(

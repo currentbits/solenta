@@ -325,7 +325,7 @@ if ! up; then
     if [ -n "$app" ]; then
       open -n -g -a "$app" --args --serve-web=${p} --handoff-only || exit ${DID_NOT_START_EXIT}
     else
-      nohup "$exe" --headless --serve-web=${p} --handoff-only --no-sandbox >"${HEADLESS_LOG}" 2>&1 </dev/null &
+      nohup "$exe" --headless --serve-web=${p} --handoff-only --no-sandbox >>"${HEADLESS_LOG}" 2>&1 </dev/null &
     fi
   else
     for a in /Applications/Solenta.app "$HOME/Applications/Solenta.app" "/Applications/Solenta Nightly.app"; do
@@ -348,7 +348,7 @@ if ! up; then
   i=0
   until up; do
     i=$((i+1))
-    if [ "$i" -gt 60 ]; then tail -n 5 "${HEADLESS_LOG}" >&2 2>/dev/null; exit ${DID_NOT_START_EXIT}; fi
+    if [ "$i" -gt 60 ]; then tail -n 40 "${HEADLESS_LOG}" >&2 2>/dev/null; exit ${DID_NOT_START_EXIT}; fi
     sleep 1
   done
 fi
@@ -392,6 +392,19 @@ async function serverDownloads(deps = {}) {
 // "" when the host has no token file; throws on ssh failures (exit 255) so
 // host-key and login problems surface before any tunnel is opened, and when
 // Solenta is missing on the host or would not start.
+// The host log carries the web token (banner, ?token= link, its QR code),
+// and the UI shows this text. Keep only what explains the failure: its
+// error lines when there are any, else the last few lines.
+function headlessLogTail(text) {
+  const lines = String(text || "").split("\n")
+    .map((l) => l.trimEnd()
+      .replace(/(token[=:\s]+)[^\s&"']+/gi, "$1[redacted]")
+      .replace(/(Bearer\s+)\S+/gi, "$1[redacted]"))
+    .filter((l) => l.trim() && !/[\u2580\u2584\u2588]/.test(l));
+  const failed = lines.filter((l) => /error|fatal|crash|abort|trap|segmentation|cannot|not found|denied/i.test(l));
+  return (failed.length ? failed : lines).slice(-5).join("\n");
+}
+
 async function readRemoteToken(host, remotePort = DEFAULT_REMOTE_PORT, deps = {}) {
   const env = sshEnv(host, deps);
   const server = await serverDownloads(deps);
@@ -412,8 +425,7 @@ async function readRemoteToken(host, remotePort = DEFAULT_REMOTE_PORT, deps = {}
         return reject(new Error(`Solenta is not installed on ${host}. Install it there first: the app in /Applications on a Mac, or the Linux tarball unpacked to ~/solenta or on PATH as "solenta".`));
       }
       if (err && err.code === DID_NOT_START_EXIT) {
-        // The log tail can hold the serve banner; never put its token in UI text.
-        const tail = String(stderr || "").split("\n").filter((l) => !/token/i.test(l)).join("\n").trim();
+        const tail = headlessLogTail(stderr);
         return reject(new Error(`Solenta did not start on ${host}. On a Mac someone must be logged in to the desktop; on Linux see ~/.solenta-headless.log there. If Solenta was already open there, restart it and connect again.${tail ? `\n${tail}` : ""}`));
       }
       if (err && err.code === NO_SERVER_BUILD_EXIT) {
@@ -1104,6 +1116,7 @@ module.exports = {
   setSshAskpass,
   explainSshFailure,
   readRemoteToken,
+  headlessLogTail,
   prepareHostCommand,
   installHostCommand,
   installRemoteSolenta,

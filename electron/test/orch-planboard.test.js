@@ -400,17 +400,27 @@ process.stdout.write(JSON.stringify({ data: { repository: { issues: { nodes,
     assert.deepEqual(calls(callsPath), []);
   });
 
-  it("returns not a GitHub repo without spawning gh", async () => {
+  it("says to add an origin, without spawning gh, when there is no forge origin (#1843)", async () => {
     const h = createToolHandlers(githubDeps());
-    assert.deepEqual(
-      await h.issue_create({
-        threadId: "t3",
-        projectId: "p2",
-        title: "chip",
-      }),
-      { ok: false, reason: "not a GitHub repo" },
-    );
+    const res = await h.issue_create({
+      threadId: "t3",
+      projectId: "p2",
+      title: "chip",
+    });
+    assert.equal(res.ok, false);
+    assert.match(res.reason, /no GitHub\/GitLab origin yet.*git remote add origin/);
     assert.deepEqual(calls(callsPath), []);
+  });
+
+  it("works once an origin is added mid-thread (#1843)", async () => {
+    const h = createToolHandlers(githubDeps());
+    const before = await h.issue_set_plan({ threadId: "t3", projectId: "p2", number: 77, status: "doing" });
+    assert.equal(before.ok, false);
+    execFileSync("git", ["remote", "set-url", "origin", "https://github.com/acme/demo.git"], { cwd: gitlab });
+    assert.deepEqual(
+      await h.issue_set_plan({ threadId: "t3", projectId: "p2", number: 77, status: "doing" }),
+      { ok: true },
+    );
   });
 });
 
@@ -492,7 +502,7 @@ describe("planboard MCP tools/list gate (issue #849)", () => {
     return toolNames(list.body);
   }
 
-  it("omits issue_* tools when the bound project origin is not GitHub", async () => {
+  it("lists issue_* tools even before the bound project has a forge origin (#1843)", async () => {
     const gitlab = makeRepo(
       tmpDir,
       "gl",
@@ -507,7 +517,7 @@ describe("planboard MCP tools/list gate (issue #849)", () => {
     const names = await listTools(port, token, "projectId=p1");
     assert.ok(names.includes("threads_list"), "server must still list other tools");
     for (const t of PLANBOARD_TOOLS) {
-      assert.equal(names.includes(t), false, `${t} should be omitted`);
+      assert.equal(names.includes(t), true, `${t} should be listed`);
     }
   });
 
@@ -527,6 +537,34 @@ describe("planboard MCP tools/list gate (issue #849)", () => {
     for (const t of PLANBOARD_TOOLS) {
       assert.equal(names.includes(t), true, `${t} should be listed`);
     }
+  });
+
+  it("states zod min/max limits in field descriptions (#1846)", async () => {
+    const gh = makeRepo(tmpDir, "gh-limits", "https://github.com/acme/demo.git");
+    const { port, token } = await startOrch(
+      makeStore(
+        { p1: { id: "p1", name: "Alpha", path: gh } },
+        [{ id: "t1", title: "First", projectId: "p1", status: "idle" }],
+      ),
+    );
+    const list = await mcpPost(
+      port,
+      token,
+      { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} },
+      { query: "projectId=p1" },
+    );
+    const props = (name) =>
+      list.body.result.tools.find((t) => t.name === name).inputSchema.properties;
+    // Codex drops minItems from tool declarations; descriptions survive.
+    const ask = props("ask_user").questions;
+    assert.match(ask.description, /at least 1 question/i);
+    assert.match(ask.items.properties.options.description, /2-4 options/);
+    assert.match(ask.items.properties.options.description, /at least 2/);
+    assert.match(props("show_user").line.description, />= 1/);
+    assert.match(props("automation_create").hour.description, /0-23/);
+    assert.match(props("task_add").tasks.description, /at least 1 task/i);
+    assert.match(props("issue_list").limit.description, /1-100/);
+    assert.match(props("issue_label").labels.description, /at least 1 label/i);
   });
 
   it("exposes Planboard through Claude's generated config, without leaking the binding", async () => {

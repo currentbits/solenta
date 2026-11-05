@@ -41,15 +41,16 @@ function resolveWorkflowSpawn(project, binary, args, localCwd, env) {
  * @param {object} opts
  * @param {string} toolName
  * @param {unknown} input
+ * @param {boolean} [allowAsk]
  */
-function notePhaseGuardrail(opts, toolName, input) {
+function notePhaseGuardrail(opts, toolName, input, allowAsk = false) {
   if (typeof opts.appendMessage !== "function" || !opts.threadId) return;
   const project = opts.project;
   const worktreePath =
     opts.worktreePath ||
     (project && (project.remotePath || project.path)) ||
     opts.cwd;
-  const notice = guardrailNotice(toolName, input, worktreePath);
+  const notice = guardrailNotice(toolName, input, worktreePath, allowAsk);
   if (notice) {
     opts.appendMessage(opts.threadId, "event", notice, opts.runId || null);
   }

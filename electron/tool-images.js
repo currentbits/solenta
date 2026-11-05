@@ -176,6 +176,23 @@ function harvestToolResult(value) {
 }
 
 /**
+ * An image file on disk as a tool image. Codex view_image names only the
+ * path it showed the model, never the bytes (#1844).
+ * @param {unknown} file
+ * @returns {{ mediaType: string, data: string } | null}
+ */
+function readImageFile(file) {
+  const p = String(file || "");
+  const mediaType = MEDIA_BY_EXT[path.extname(p).slice(1).toLowerCase()];
+  if (!mediaType) return null;
+  try {
+    return { mediaType, data: fs.readFileSync(p).toString("base64") };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * `name` is either a legacy basename (`uuid.png`) or `threadId/uuid.png`.
  * Never a traversal: each segment is a SAFE_ID / basename with a known ext.
  * @param {string} userDataPath
@@ -279,6 +296,7 @@ module.exports = {
   extractImages,
   redactImages,
   harvestToolResult,
+  readImageFile,
   saveToolImages,
   readToolImage,
   resolveToolImagePath,

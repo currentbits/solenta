@@ -140,6 +140,19 @@ describe("files pane IPC", () => {
       { kind: "binary", size: 4 },
     );
 
+    // A 1.5 MB mockup PNG, by absolute path, still previews (#1844).
+    const mockup = path.join(repo, "mockup.png");
+    fs.writeFileSync(mockup, Buffer.alloc(1.5 * 1024 * 1024, 7));
+    const shot = await handlers["files:read"]({ threadId: thread.id, path: mockup });
+    assert.equal(shot.kind, "image");
+    assert.equal(shot.size, 1.5 * 1024 * 1024);
+
+    fs.writeFileSync(path.join(repo, "huge.png"), Buffer.alloc(8 * 1024 * 1024 + 1));
+    assert.deepEqual(
+      await handlers["files:read"]({ threadId: thread.id, path: "huge.png" }),
+      { kind: "tooLarge", size: 8 * 1024 * 1024 + 1 },
+    );
+
     fs.writeFileSync(path.join(repo, "big.txt"), "a".repeat(1024 * 1024 + 1));
     assert.deepEqual(
       await handlers["files:read"]({ threadId: thread.id, path: "big.txt" }),

@@ -24,7 +24,8 @@ function dumpArgv() {
           ([k]) =>
             k.startsWith("CODER_MCP_TOKEN_") ||
             k === "CODEX_HOME" ||
-            k === "SOLENTA_WORKTREE",
+            k === "SOLENTA_WORKTREE" ||
+            k === "SOLENTA_PERMISSION_MODE",
         ),
       ),
     ),

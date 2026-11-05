@@ -557,6 +557,9 @@ describe("one map, two transports + packaging", () => {
     const main = fs.readFileSync(path.join(__dirname, "../main.js"), "utf8");
     assert.match(main, /if \(serveOpts\.headless\) app\.disableHardwareAcceleration\(\);/);
     assert.match(main, /createWindow: serveOpts\.headless \? \(\) => \{\} : createWindow/);
+    // #1845: the tray's GTK status icon aborts a display-less Linux host.
+    assert.match(main, /if \(!serveOpts\.headless && \(process\.platform === "win32" \|\| process\.platform === "linux"\)\) \{\s*const icon = windowIcon\(\);\s*if \(icon\) \{\s*trayController = createTray/);
+    assert.equal((main.match(/createTray\(/g) || []).length, 1, "no other tray creation path");
     // macOS takes the lock too, or a terminal --serve-web opens a second store
     // writer; only --serve-web launches exit there (prod and nightly co-run).
     assert.match(main, /const gotLock = app\.requestSingleInstanceLock\(\);/);
