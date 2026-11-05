@@ -389,7 +389,7 @@ export function AddProjectPathModal({
                 {historyAdded.row.recentSessions.length === 1
                   ? "most recent session"
                   : `${historyAdded.row.recentSessions.length} most recent sessions`}{" "}
-                as threads too?
+                too?
               </p>
               {error && (
                 <p className={styles.fieldError} role="alert">
