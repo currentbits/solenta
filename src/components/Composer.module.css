@@ -170,9 +170,10 @@
   background: transparent;
   /* Ghost pills: the hover tint is the affordance, not a border. */
   border: 1px solid transparent;
+  /* Pickers sit below the placeholder in weight: they're settings, not text. */
   color: var(--text-muted);
-  font-size: 12px;
-  font-weight: 500;
+  font-size: 12.5px;
+  font-weight: 400;
   white-space: nowrap;
   transition:
     background-color 0.12s ease,

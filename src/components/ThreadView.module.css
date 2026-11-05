@@ -243,8 +243,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  height: 30px;
+  width: 28px;
+  height: 28px;
   padding: 0;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
@@ -594,7 +594,7 @@ button.project:focus-visible {
   align-items: center;
   justify-content: center;
   width: 30px;
-  height: 30px;
+  height: 28px;
   padding: 0;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
@@ -719,8 +719,8 @@ button.project:focus-visible {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  height: 30px;
-  padding: 0 12px;
+  height: 28px;
+  padding: 0 10px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
   background: transparent;
@@ -919,7 +919,7 @@ a.btn {
 
 /* Merge method picker beside the merge / auto-merge button (#1493 D). */
 .mergeMethod {
-  height: 30px;
+  height: 28px;
   padding: 0 6px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
@@ -4811,7 +4811,7 @@ a.menuItem {
   align-items: center;
   justify-content: center;
   width: 24px;
-  height: 30px;
+  height: 28px;
   margin-left: -9px;
   border: 1px solid var(--border);
   border-left-color: var(--border-soft);
