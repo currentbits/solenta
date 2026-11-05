@@ -496,8 +496,9 @@ select.input {
 
 .note {
   margin: 0;
-  font-size: 11.5px;
-  line-height: 1.4;
+  max-width: 560px;
+  font-size: 12px;
+  line-height: 1.5;
   color: var(--text-dim);
 }
 

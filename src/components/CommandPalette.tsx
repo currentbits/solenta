@@ -625,7 +625,7 @@ export function CommandPalette({
             <kbd>↓</kbd> move
           </span>
           <span>
-            <kbd>⏎</kbd> open
+            <kbd>↵</kbd> open
           </span>
           <span>
             <kbd>esc</kbd> close

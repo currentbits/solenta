@@ -102,7 +102,6 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   padding: 14px 14px 10px;
-  box-shadow: var(--shadow-sm);
   transition:
     border-color 0.15s ease,
     box-shadow 0.15s ease;
@@ -112,7 +111,7 @@
    composer must never be the loudest thing on screen. */
 .card:has(.textarea:focus) {
   border-color: color-mix(in srgb, var(--text) 22%, var(--border));
-  box-shadow: var(--shadow-sm), 0 0 0 3px var(--overlay-soft);
+  box-shadow: 0 0 0 3px var(--overlay-soft);
 }
 
 .textarea {
@@ -123,7 +122,7 @@
   background: transparent;
   color: var(--text);
   line-height: 1.5;
-  min-height: 64px;
+  min-height: 48px;
   max-height: 12lh;
   overflow-y: auto;
   field-sizing: content;
@@ -156,12 +155,10 @@
 }
 
 /* Hairline between the model, effort and access pills. */
+/* Spacing, not a rule, separates the pickers. */
 .sep {
   flex-shrink: 0;
-  width: 1px;
-  height: 16px;
-  margin: 0 4px;
-  background: var(--border);
+  width: 4px;
 }
 
 .pill {
@@ -201,9 +198,15 @@
   cursor: not-allowed;
 }
 
+select.agentSelect {
+  padding-right: 26px;
+  background-position: right 8px center;
+}
+
 .agentSelect {
   appearance: none;
-  max-width: 16ch;
+  /* Room for the shared select chevron (index.css) on top of the label. */
+  max-width: calc(16ch + 26px);
   overflow: hidden;
   text-overflow: ellipsis;
   cursor: pointer;
@@ -1004,12 +1007,10 @@
 
 /* Worktree tab tucked under the card (#1429 item 7): inset 14px, bottom
    radius, no top border so it hangs off the card's own bottom edge. */
+/* The worktree line is a caption under the card, not a second box. */
 .meta {
-  margin: 0 14px;
-  padding: 0 6px;
-  border: 1px solid var(--border);
-  border-top: 0;
-  border-radius: 0 0 12px 12px;
+  margin: 2px 14px 0;
+  padding: 0 4px;
 }
 
 /* Pending attachments sit inside the card, above the textarea, so they read

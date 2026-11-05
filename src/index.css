@@ -16,10 +16,10 @@
 :root {
   color-scheme: dark;
   /* Warm ink neutrals from solenta.app, not a cool grey (#1429). */
-  --bg: #121110;
+  --bg: #111010;
   --bg-elevated: #191816;
   /* Sidebar surface: one step up from the canvas so the shell reads as two planes. */
-  --panel: #161513;
+  --panel: #171614;
   --card: #1c1b19;
   --card-hover: #252420;
   /* Controls (buttons, inputs, popovers) use --border.
@@ -27,6 +27,9 @@
   --border: #2d2b27;
   --border-soft: #221f1c;
   --text: #ecebe6;
+  /* Long-form reading text (transcript prose): a step below --text so a
+     page of agent output doesn't glare. */
+  --text-body: #d3d0c8;
   /* Secondary text, ~7.4:1 on --card. */
   --text-muted: #aeaba3;
   /* Tertiary text (meta, timestamps, placeholders), ~5:1 on --card (AA). */
@@ -127,14 +130,15 @@
 :root[data-theme="light"] {
   color-scheme: light;
   /* solenta.app paper and ink (#1429). */
-  --bg: #fbfbf8;
+  --bg: #fafaf7;
   --bg-elevated: #ffffff;
-  --panel: #f3f2ee;
+  --panel: #efeee9;
   --card: #f6f5f1;
   --card-hover: #ecebe6;
   --border: #e0dfd8;
   --border-soft: #eae9e3;
   --text: #1c1b19;
+  --text-body: #2f2e2a;
   /* Secondary text, ~7.6:1 on --card. */
   --text-muted: #53514b;
   /* Tertiary text, ~5:1 on --card (AA). */
@@ -282,10 +286,34 @@ select:focus-visible {
 
 /* Native controls take the ink, never the OS blue. */
 input[type="checkbox"],
-input[type="radio"],
-input[type="range"],
+input[type="radio"] {
+  accent-color: var(--accent);
+}
+
 progress {
   accent-color: var(--text);
+}
+
+/* Range: a hairline track and a small ink thumb instead of the OS knob. */
+input[type="range"] {
+  appearance: none;
+  background: transparent;
+}
+
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: var(--radius-pill);
+  background: var(--track);
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: -5px;
+  border-radius: 50%;
+  background: var(--text);
+  box-shadow: 0 0 0 3px var(--bg-elevated);
 }
 
 /* One chevron for every native select. Only the background-image longhands,

@@ -540,19 +540,19 @@
   background: var(--overlay-hover);
 }
 
-/* F4 notch (#1429): the logo diamond marks the open thread. */
+/* F4 notch (#1429): a short yellow bar inside the row's left inset marks
+   the open thread. */
 .card[data-active="true"]::after {
   content: "";
   position: absolute;
-  left: -4px;
+  left: 3px;
   top: 50%;
-  width: 7px;
-  height: 7px;
-  margin-top: -3.5px;
+  width: 3px;
+  height: 18px;
+  margin-top: -9px;
   background: var(--accent);
   box-shadow: var(--accent-mark-ring);
-  border-radius: 1.5px;
-  transform: rotate(45deg);
+  border-radius: var(--radius-pill);
   pointer-events: none;
 }
 
@@ -1109,8 +1109,9 @@
 }
 
 /* GitHub's PR colours: open green, merged violet, closed red. */
+/* Open is the normal state, so it stays ink; colour marks merged/closed. */
 .prLink[data-pr-state="open"] {
-  color: var(--green);
+  color: var(--text-dim);
 }
 
 .prLink[data-pr-state="merged"] {
@@ -1140,6 +1141,7 @@
   margin-left: auto;
   flex-shrink: 0;
   color: var(--text-dim);
+  opacity: 0.6;
 }
 
 .waitRow,

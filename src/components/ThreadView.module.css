@@ -1141,8 +1141,13 @@ a.btn {
   padding: 3px 0;
   font-size: 13px;
   font-weight: 400;
-  color: var(--text-muted);
+  color: var(--text-dim);
   text-align: left;
+}
+
+/* Tool rows are status, not content: one step below prose, brighten on hover. */
+.toolGroupToggle:hover {
+  color: var(--text-muted);
 }
 
 .stepIcon {
@@ -2545,8 +2550,10 @@ button.diffLineGutter:focus-visible {
   background: var(--green);
 }
 
+/* Memory wears the brand yellow everywhere else (pulse, recall diamond). */
 .provChip[data-tier="memory"]::before {
-  background: var(--blue);
+  background: var(--accent);
+  box-shadow: var(--accent-mark-ring);
 }
 
 .provChip[data-tier="prior"]::before {
@@ -2788,6 +2795,16 @@ button.diffLineGutter:focus-visible {
   font-weight: 550;
   color: var(--text-muted);
   white-space: nowrap;
+}
+
+/* Cost is a reading, not a control: plain tabular text, no outline. */
+.sandboxBadge[data-cost-badge] {
+  border-color: transparent;
+  padding: 0 4px;
+  font-weight: 500;
+  font-size: 12px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
 }
 
 .sandboxBadge[data-sandboxed="yes"] {
