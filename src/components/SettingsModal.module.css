@@ -6,6 +6,7 @@
   place-items: center;
   padding: 24px;
   background: var(--scrim);
+  backdrop-filter: blur(2px);
 }
 
 .modal {
@@ -67,7 +68,13 @@
 .section {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 24px;
+}
+
+/* Groups on a pane are separated by a hairline, not just whitespace. */
+.section + .section {
+  padding-top: 24px;
+  border-top: 1px solid var(--border-soft);
 }
 
 .sectionLabel {
@@ -93,6 +100,11 @@
 select.input {
   flex: 0 0 auto;
   width: min(100%, 280px);
+  height: 32px;
+  padding-top: 0;
+  padding-bottom: 0;
+  border-color: var(--border);
+  background-color: var(--card-hover);
 }
 
 .fieldRow {
@@ -100,6 +112,15 @@ select.input {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+/* Per-event notification toggles are children of the "Desktop
+   notification" switch: indent them onto its label edge. */
+[data-notify-events] {
+  display: flex;
+  flex-direction: column;
+  margin-top: 6px;
+  padding-left: 24px;
 }
 
 /* Help under a checkbox hangs from the label, not the tile. */
@@ -223,7 +244,7 @@ label.fieldRow:has(> input[type="checkbox"]) {
 .range {
   flex: 1;
   min-width: 0;
-  max-width: 320px;
+  max-width: 280px;
   height: 28px;
 }
 
@@ -510,9 +531,26 @@ label.fieldRow:has(> input[type="checkbox"]) {
   overflow-wrap: anywhere;
 }
 
+/* Shortcuts in help text: the same keycap as the palette footer. */
+.kbd {
+  display: inline-grid;
+  place-items: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: var(--radius-xs);
+  background: var(--overlay-hover);
+  font-family: var(--font);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
+  color: var(--text-muted);
+  vertical-align: 0;
+}
+
 .note {
   margin: 0;
-  max-width: 520px;
+  max-width: 480px;
   font-size: 12px;
   line-height: 1.5;
   color: var(--text-dim);
@@ -592,6 +630,7 @@ label.fieldRow:has(> input[type="checkbox"]) {
 /* Settings window — two-pane, same chrome as Workflows. Other consumers
    of this module keep .modal at the compact 480px size. */
 .settingsModal {
+  position: relative;
   display: flex;
   flex-direction: column;
   width: min(860px, 100%);
@@ -602,6 +641,26 @@ label.fieldRow:has(> input[type="checkbox"]) {
   box-shadow: var(--shadow-modal);
   overflow: hidden;
   outline: none;
+}
+
+/* No title bar: the pane heading is the only heading, and the close button
+   floats in the content's top-right corner. The h2 stays for screen readers. */
+.settingsModal > .header {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 2;
+  padding: 0;
+  border: none;
+}
+
+.settingsModal > .header .title {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 .shell {
@@ -623,7 +682,7 @@ label.fieldRow:has(> input[type="checkbox"]) {
   margin: 10px 10px 6px;
   padding: 7px 10px 7px 30px;
   border-radius: var(--radius);
-  border: 1px solid var(--border);
+  border: 1px solid transparent;
   background: var(--input-fill) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%238f8c84' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='m20 20-4-4'/%3E%3C/svg%3E") no-repeat 10px center / 14px;
   color: var(--text);
   font-size: 12px;
@@ -670,7 +729,7 @@ label.fieldRow:has(> input[type="checkbox"]) {
 }
 
 .navItem[data-active="true"] {
-  background: var(--overlay-strong);
+  background: var(--overlay-hover);
   color: var(--text);
 }
 
@@ -792,11 +851,12 @@ label.fieldRow:has(> input[type="checkbox"]) {
   min-height: 0;
   overflow: auto;
   padding: 20px 24px 40px;
+  scroll-padding-bottom: 24px;
   display: flex;
   flex-direction: column;
   gap: 24px;
   /* Rows scroll out under a short fade, not a hard slice at the modal edge. */
-  mask-image: linear-gradient(to top, transparent 0, #000 24px);
+  mask-image: linear-gradient(to top, transparent 0, #000 14px);
 }
 
 .content > .fieldError {

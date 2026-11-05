@@ -84,7 +84,7 @@
   --overlay-hover: rgba(255, 255, 240, 0.07);
   --overlay-strong: rgba(255, 255, 240, 0.14);
   --track: #2e2e2b;
-  --scrim: rgba(0, 0, 0, 0.55);
+  --scrim: rgba(0, 0, 0, 0.45);
   --scrim-heavy: rgba(0, 0, 0, 0.78);
   --input-fill: rgba(0, 0, 0, 0.25);
   --spinner-track: rgba(255, 255, 255, 0.35);
@@ -99,12 +99,16 @@
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.18);
   --shadow-pop:
     0 12px 32px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.35);
-  --shadow-modal: 0 24px 64px rgba(0, 0, 0, 0.55);
+  /* Overlays: a deep soft drop plus a faint top hairline for lift. */
+  --shadow-modal:
+    0 24px 64px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 240, 0.04);
   /* Four radii only: xs keycaps/badges, sm controls/chips, base rows and
      cards, lg the composer, palette, menus and modals. */
   --radius-xs: 4px;
   --radius-sm: 6px;
   --radius: 8px;
+  /* The two stacked boxes at the foot of a thread (plan, composer). */
+  --radius-card: 10px;
   --radius-lg: 12px;
   --radius-pill: 999px;
   /* Transcript + composer share one centred reading column (#1429). */
@@ -154,9 +158,12 @@
   /* Yellow on paper is ~1.2:1, so borders and rings on light use olive. */
   --accent-border: rgba(133, 124, 0, 0.55);
   --mark: rgba(242, 229, 31, 0.36);
-  --accent-dot: #c4b200;
+  /* Paper keeps the true yellow; the edge comes from --accent-mark-ring. */
+  --accent-dot: var(--accent);
   --accent-edge: #857c00;
-  --accent-mark-ring: 0 0 0 1px rgba(133, 124, 0, 0.65);
+  /* One neutral edge for every yellow mark on paper, same shape as dark. */
+  /* Paper: true yellow with a faint inset edge, no dark outline. */
+  --accent-mark-ring: inset 0 0 0 1px rgba(0, 0, 0, 0.15);
   --blue: #1e40af;
   --blue-soft: rgba(30, 64, 175, 0.1);
   --blue-border: rgba(30, 64, 175, 0.35);
@@ -325,8 +332,8 @@ input[type="checkbox"]::before {
 }
 
 input[type="checkbox"]:checked {
-  background: var(--text);
-  border-color: var(--text);
+  background: var(--text-muted);
+  border-color: var(--text-muted);
 }
 
 input[type="checkbox"]:checked::before {
@@ -352,7 +359,12 @@ input[type="range"] {
 input[type="range"]::-webkit-slider-runnable-track {
   height: 4px;
   border-radius: var(--radius-pill);
-  background: var(--track);
+  background: linear-gradient(
+      var(--text-dim),
+      var(--text-dim)
+    )
+    0 0 / var(--fill, 0%) 100% no-repeat,
+    var(--track);
 }
 
 input[type="range"]::-webkit-slider-thumb {
@@ -361,7 +373,7 @@ input[type="range"]::-webkit-slider-thumb {
   height: 14px;
   margin-top: -5px;
   border-radius: 50%;
-  background: var(--text);
+  background: var(--text-muted);
   box-shadow: 0 0 0 3px var(--bg-elevated);
 }
 

@@ -4093,6 +4093,9 @@ export const ThreadView = memo(function ThreadView({
         </div>
         <div className={styles.headerTrail}>
           <div className={styles.actions}>
+          {/* Cost leads the cluster: when it appears, the actions to its
+              right stay put. */}
+          <CostBadge usage={detail.usage} />
           {!thread.ask && !isDraftHeader && (
           <NextGitActionButton
             thread={thread}
@@ -4142,7 +4145,6 @@ export const ThreadView = memo(function ThreadView({
               onFork={onFork}
             />
           ) : null}
-          <CostBadge usage={detail.usage} />
           {ring?.view.warn ? ringBadge : null}
           {hasDetails ? (
           <div className={styles.detailsWrap} ref={detailsRef}>

@@ -145,19 +145,17 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  /* Same 4px step as the action cluster, so header controls space evenly. */
+  gap: 4px;
   flex-shrink: 0;
   min-width: 0;
   max-width: 100%;
   justify-content: flex-end;
 }
 
+/* Spacing alone separates the icon cluster. */
 .headerDivider {
-  width: 1px;
-  height: 16px;
-  background: var(--border-soft);
-  flex-shrink: 0;
-  margin: 0 2px;
+  display: none;
 }
 
 .header .iconBtn,
@@ -243,8 +241,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  height: 30px;
+  width: 28px;
+  height: 28px;
   padding: 0;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
@@ -560,7 +558,7 @@ button.project:focus-visible {
 
 .actions {
   display: flex;
-  gap: 8px;
+  gap: 4px;
   flex-shrink: 0;
   align-items: center;
 }
@@ -594,7 +592,7 @@ button.project:focus-visible {
   align-items: center;
   justify-content: center;
   width: 30px;
-  height: 30px;
+  height: 28px;
   padding: 0;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
@@ -719,8 +717,8 @@ button.project:focus-visible {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  height: 30px;
-  padding: 0 12px;
+  height: 28px;
+  padding: 0 10px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
   background: transparent;
@@ -743,6 +741,17 @@ a.btn {
 .btn:hover:not(:disabled) {
   color: var(--text);
   background: var(--card-hover);
+}
+
+/* Cost is data, not an action: tabular figures in tertiary ink. */
+.header .sandboxBadge[data-cost-badge] {
+  pointer-events: none;
+}
+
+/* The next git action is the primary action: full ink. */
+.header [data-next-git-action] {
+  color: var(--text);
+  font-weight: 500;
 }
 
 /* Header chrome: only the next git action keeps an outline; Fork, Hand off
@@ -919,7 +928,7 @@ a.btn {
 
 /* Merge method picker beside the merge / auto-merge button (#1493 D). */
 .mergeMethod {
-  height: 30px;
+  height: 28px;
   padding: 0 6px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
@@ -1141,15 +1150,15 @@ a.btn {
   display: flex;
   align-items: center;
   gap: 9px;
-  /* Hanging icon: the 14px glyph + 9px gap sit in the gutter so every step
-     label starts on the same left edge as the prose. */
-  width: calc(100% + 23px);
-  margin-left: -23px;
+  /* Hanging icon: a 16px glyph box + 10px gap sit in the gutter so every
+     step label starts on the same left edge as the prose. */
+  width: calc(100% + 26px);
+  margin-left: -26px;
   min-width: 0;
   padding: 3px 0;
-  font-size: 12.5px;
+  font-size: 13px;
   font-weight: 400;
-  color: var(--text-dim);
+  color: color-mix(in srgb, var(--text-muted) 70%, var(--text-dim));
   text-align: left;
 }
 
@@ -1159,8 +1168,8 @@ a.btn {
 }
 
 .stepIcon {
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
   flex-shrink: 0;
   color: var(--text-dim);
   display: inline-grid;
@@ -1174,39 +1183,42 @@ a.btn {
   white-space: nowrap;
 }
 
+/* Show/Hide reads as a link: a step brighter than the row, underlined on hover. */
 .stepMore {
   margin-left: 4px;
   padding-left: 4px;
+  text-underline-offset: 3px;
   flex-shrink: 0;
   font-size: 12px;
   color: var(--text-dim);
 }
 
 .toolGroupToggle:hover .stepMore {
-  color: var(--text-muted);
+  color: var(--text);
+  text-decoration: underline;
 }
 
 /* Memory moments (#1429 F5): the yellow diamond and the marker stripe. */
+/* A passive event: an outline diamond in the icon ink, so yellow stays for
+   the active step and the brand mark. */
 .memoryDiamond {
   display: block;
   width: 8px;
   height: 8px;
   border-radius: 1.5px;
   transform: rotate(45deg);
-  background: var(--accent);
-  box-shadow: var(--accent-mark-ring);
+  border: 1.5px solid currentColor;
 }
 
-/* The recalled count reads as emphasis, not a highlighter swipe. */
+/* The recalled count reads as the row's own text, not a highlight. */
 .mark {
-  color: var(--text);
-  font-weight: 500;
+  color: inherit;
 }
 
 .memoryList {
   list-style: none;
-  margin: 2px 0 8px -17px;
-  padding: 0 0 0 16px;
+  margin: 2px 0 8px -18px;
+  padding: 0 0 0 17px;
   border-left: 1px solid var(--border);
   font-size: 12.5px;
   color: var(--text-muted);
@@ -1214,6 +1226,8 @@ a.btn {
 
 .memoryList li {
   padding: 2px 0;
+  font-size: 13px;
+  color: var(--text-muted);
 }
 
 .memoryMeta {
@@ -2152,7 +2166,8 @@ button.diffLineGutter:focus-visible {
   mask-image: linear-gradient(to bottom, transparent 0, #000 12px);
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  /* One block rhythm: 24px between transcript blocks. */
+  gap: 24px;
 }
 
 /*
@@ -2234,13 +2249,6 @@ button.diffLineGutter:focus-visible {
   padding-inline: 24px;
 }
 
-/* The plan card's fill reaches past the column so its text shares the
-   prose edge. */
-.body > .planCard {
-  width: auto;
-  max-width: none;
-  margin-inline: max(-14px, calc((100% - var(--thread-column)) / 2 - 14px));
-}
 
 .card {
   background: transparent;
@@ -2256,6 +2264,11 @@ button.diffLineGutter:focus-visible {
   width: 100%;
   text-align: left;
   color: var(--text);
+}
+
+.runHeaderIcon {
+  flex-shrink: 0;
+  color: var(--text-dim);
 }
 
 .chevron {
@@ -2325,7 +2338,7 @@ button.diffLineGutter:focus-visible {
 }
 
 .eventLine {
-  padding: 4px 0;
+  padding: 0;
 }
 
 .eventRow {
@@ -2473,9 +2486,9 @@ button.diffLineGutter:focus-visible {
 }
 
 .msgMeta {
-  margin-top: 6px;
+  margin-top: 4px;
   font-family: var(--font);
-  font-size: 11.5px;
+  font-size: 11px;
   color: var(--text-dim);
   display: flex;
   align-items: baseline;
@@ -2540,7 +2553,7 @@ button.diffLineGutter:focus-visible {
 
 /* Provenance tier strip under an assistant message (issue #404). */
 .provStrip {
-  margin-top: 6px;
+  margin-top: 4px;
   display: flex;
   flex-wrap: wrap;
   gap: 4px 14px;
@@ -2553,7 +2566,7 @@ button.diffLineGutter:focus-visible {
   gap: 6px;
   height: 18px;
   padding: 0;
-  font-size: 11.5px;
+  font-size: 11px;
   font-weight: 450;
   color: var(--text-dim);
   white-space: nowrap;
@@ -2570,14 +2583,55 @@ button.diffLineGutter:focus-visible {
   flex-shrink: 0;
 }
 
-/* Repo and memory dots stay neutral: yellow is kept for selection and the
-   brand mark, and colour here only flags the "prior knowledge" warning. */
+/* Repo and memory carry no dot: the provenance reads as plain words on the
+   meta line. Only the "prior knowledge" warning keeps a coloured mark. */
 .provChip[data-tier="repo"]::before,
-.provChip[data-tier="memory"]::before {
-  background: color-mix(in srgb, var(--text-dim) 70%, transparent);
+.provChip[data-tier="memory"]::before,
+.provChip[data-tier="issue"]::before {
+  display: none;
+}
+
+/* Provenance and the meta footer share one line, separated by middots. */
+.message {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 0;
+}
+
+.message > * {
+  flex: 1 1 100%;
+  min-width: 0;
+}
+
+.message > .provStrip,
+.message > .msgMeta {
+  flex: 0 1 auto;
+}
+
+.message > .provStrip {
+  gap: 4px 0;
+}
+
+.message > .provStrip > .provChip {
+  gap: 0;
+}
+
+/* One separator everywhere on the meta line, spaced like the " · " inside
+   the meta string itself. */
+.message > .provStrip > .provChip:not(:last-child)::after,
+.message > .provStrip + .msgMeta::before {
+  content: "\00a0·\00a0";
+  white-space: pre;
+  color: var(--text-dim);
+}
+
+.message > .provStrip + .msgMeta::before {
+  margin-right: -6px;
 }
 
 .provChip[data-tier="prior"]::before {
+  margin-right: 6px;
   background: var(--amber);
 }
 
@@ -2640,7 +2694,7 @@ button.diffLineGutter:focus-visible {
   flex-direction: column;
   gap: 6px;
   /* auto keeps it inside the shared reading column (#1429). */
-  margin: 8px auto 4px;
+  margin: 0 auto;
 }
 
 .suggestedRow {
@@ -2820,6 +2874,9 @@ button.diffLineGutter:focus-visible {
 
 /* Cost is a reading, not a control: plain tabular text, no outline. */
 .sandboxBadge[data-cost-badge] {
+  /* A reserved slot so a changing amount never shifts the header actions. */
+  min-width: 48px;
+  justify-content: flex-end;
   border-color: transparent;
   padding: 0 4px;
   font-weight: 500;
@@ -2959,16 +3016,8 @@ button.diffLineGutter:focus-visible {
   background: var(--card-hover);
 }
 
-.message p {
-  margin: 0 0 10px;
-  color: var(--text-muted);
-  line-height: 1.6;
-  font-size: 13.5px;
-}
-
-.message p:last-child {
-  margin-bottom: 0;
-}
+/* Agent prose paragraphs take their size, ink and spacing from
+   Markdown.module.css (.md p); no per-message override here. */
 
 .messageUser {
   display: flex;
@@ -3686,10 +3735,11 @@ button.diffLineGutter:focus-visible {
   flex-direction: column;
   gap: 8px;
   padding: 12px 14px;
-  /* Same box as the composer card below it: one surface, one hairline. */
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--card);
+  /* An outline, not a surface: the composer below stays the one filled box
+     at the foot of the thread. */
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-card);
+  background: transparent;
   box-shadow: none;
   font-size: 13px;
 }
@@ -4338,12 +4388,12 @@ button.diffLineGutter:focus-visible {
 .runHeader {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   width: 100%;
   margin: -6px auto -10px;
   padding: 2px;
-  /* Hang the chevron in the gutter like the step icons: label on the prose edge. */
-  transform: translateX(-22px);
+  /* Hang the clock in the gutter like the step icons: label on the prose edge. */
+  transform: translateX(-28px);
   border: none;
   background: transparent;
   color: var(--text-dim);
@@ -4811,8 +4861,10 @@ a.menuItem {
   align-items: center;
   justify-content: center;
   width: 24px;
-  height: 30px;
-  margin-left: -9px;
+  height: 28px;
+  /* Overlap the action gap (4px) plus one border so the split reads as
+     one control with a single seam. */
+  margin-left: -5px;
   border: 1px solid var(--border);
   border-left-color: var(--border-soft);
   border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
@@ -4993,12 +5045,11 @@ a.menuItem {
    and workspace strip directly under it; the first send drops the layout
    back to the normal transcript. */
 /* The composer shares the transcript's reading column (#1429). Composer
-   pads itself 20px a side, and its card reaches 14px past the column like
-   the plan card does, so their box edges line up and the placeholder sits
-   on the prose edge. */
+   pads itself 20px a side, so the column grows by that and the card's box
+   edges sit on the prose column's edges. */
 .composerColumn {
   width: 100%;
-  max-width: calc(var(--thread-column) + 68px);
+  max-width: calc(var(--thread-column) + 40px);
   margin: 0 auto;
   flex-shrink: 0;
 }
@@ -5338,4 +5389,12 @@ button.heroProject:hover {
   > .msgMeta:focus-within {
   opacity: 1;
   pointer-events: auto;
+}
+
+/* Consecutive event rows ("Read 1 file", "Kicked off…", "Run complete")
+   sit 8px apart instead of the 16px block gap, so routine steps read as
+   one quiet group between pieces of prose. */
+.body > :is(.settledRow:has(> .eventLine), .toolGroup)
+  + :is(.settledRow:has(> .eventLine), .toolGroup) {
+  margin-top: -18px;
 }

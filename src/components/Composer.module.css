@@ -99,8 +99,9 @@
 .card {
   position: relative;
   background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
+  /* The same hairline as the plan card above; the fill sets it apart. */
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-card);
   padding: 14px 14px 10px;
   transition:
     border-color 0.15s ease,
@@ -145,19 +146,21 @@
   margin-top: 8px;
 }
 
+/* Ghost padding hangs outside the text edge, so the first chip's glyph
+   lines up with the placeholder above it. */
 .pills {
+  margin-left: -8px;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 2px;
+  gap: 4px;
   min-width: 0;
 }
 
 /* Hairline between the model, effort and access pills. */
-/* Spacing, not a rule, separates the pickers. */
+/* Spacing, not a rule, separates the pickers: the row gap alone. */
 .sep {
-  flex-shrink: 0;
-  width: 4px;
+  display: none;
 }
 
 .pill {
@@ -165,14 +168,15 @@
   align-items: center;
   gap: 5px;
   height: 28px;
-  padding: 0 9px;
+  padding: 0 8px;
   border-radius: var(--radius-sm);
   background: transparent;
   /* Ghost pills: the hover tint is the affordance, not a border. */
   border: 1px solid transparent;
+  /* Pickers sit below the placeholder in weight: they're settings, not text. */
   color: var(--text-muted);
-  font-size: 12px;
-  font-weight: 500;
+  font-size: 12.5px;
+  font-weight: 400;
   white-space: nowrap;
   transition:
     background-color 0.12s ease,
@@ -198,6 +202,8 @@
 }
 
 select.agentSelect {
+  /* Size to the chosen option so picker gaps stay even. */
+  field-sizing: content;
   padding-right: 26px;
   background-position: right 8px center;
 }
@@ -968,7 +974,7 @@ select.agentSelect {
 .send {
   width: 30px;
   height: 30px;
-  border-radius: var(--radius);
+  border-radius: var(--radius-sm);
   background: var(--accent);
   color: var(--text-on-accent);
   display: grid;
@@ -998,9 +1004,10 @@ select.agentSelect {
 /* Nothing to send: neutral, so yellow only ever means "ready". A dimmed
    yellow reads as olive on ink. */
 .send:disabled {
-  background: var(--overlay-hover);
+  opacity: 1;
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--border);
   color: var(--text-dim);
-  box-shadow: none;
   cursor: not-allowed;
 }
 
@@ -1461,6 +1468,7 @@ select.agentSelect {
 .modelGroup {
   display: inline-flex;
   align-items: center;
+  gap: 4px;
 }
 
 /* The effort pill reads as a plain level ("High"), no icon. */
@@ -1505,4 +1513,10 @@ select.agentSelect {
   margin-bottom: 6px;
   color: var(--green);
   font-size: 12px;
+}
+
+/* Paper's card fill is close to the canvas, so the composer keeps the
+   control border there. */
+:global(:root[data-theme="light"]) .card {
+  border-color: var(--border);
 }

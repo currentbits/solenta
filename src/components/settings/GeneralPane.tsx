@@ -231,7 +231,7 @@ export function GeneralPane({
           </select>
           <p className={styles.note}>
             How the right sidebar starts. You can still open or hide it
-            from the rail or with ⌘ + .
+            from the rail or with <kbd className={styles.kbd}>⌘.</kbd>
           </p>
           <label className={styles.fieldRow}>
             <input
@@ -255,7 +255,7 @@ export function GeneralPane({
             <span>Remember last agents-panel state</span>
           </label>
           <p className={styles.note}>
-            Keep the last ⌘ + . or rail toggle across launches. Closed
+            Keep the last <kbd className={styles.kbd}>⌘.</kbd> or rail toggle across launches. Closed
             or Open above is the fallback when there is no last state.
           </p>
         </div>
@@ -273,6 +273,10 @@ export function GeneralPane({
               max={UI_SCALE_MAX}
               step={UI_SCALE_STEP}
               value={uiScale}
+              // Track fill left of the thumb (index.css range styles).
+              style={{
+                ["--fill" as string]: `${((uiScale - UI_SCALE_MIN) / (UI_SCALE_MAX - UI_SCALE_MIN)) * 100}%`,
+              }}
               disabled={saving || settings == null}
               aria-valuetext={formatUiScale(uiScale)}
               onChange={(e) => {
@@ -300,6 +304,7 @@ export function GeneralPane({
           </p>
         </div>
         <div className={styles.field}>
+          <span className={styles.fieldLabel}>Notifications</span>
           <label className={styles.fieldRow}>
             <input
               type="checkbox"
