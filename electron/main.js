@@ -1092,7 +1092,8 @@ app.whenReady().then(async () => {
 
   // Usage in the menu bar (#1859): its own macOS menu bar item, or extra
   // rows in the tray below. Off until the setting is on; usage arrives with
-  // each usage:providerLimits answer and Refresh usage, no poll of its own.
+  // each usage:providerLimits answer, live run windows, a refetch when the
+  // menu opens on stale data, and one 15-minute timer while on.
   if (!serveOpts.headless) {
     usageMenu = createUsageMenu({
       platform: process.platform,
@@ -1107,8 +1108,8 @@ app.whenReady().then(async () => {
         return img;
       })() : null,
       getSettings: () => store.getSettings(),
-      // Same setting as Settings > Threads > Default provider: new threads
-      // and new terminals use it, running threads keep theirs.
+      // settings.defaultAccounts: new threads and terminals of that CLI use
+      // it; running threads and the default provider keep theirs.
       saveSettings: (patch) => require("./services.js").setSettings(store, patch),
       fetchUsage: () =>
         require("./providerUsage.js").fetchProviderLimits({
@@ -1125,6 +1126,8 @@ app.whenReady().then(async () => {
         if (trayController) trayController.refresh();
       },
     });
+    const menu = usageMenu;
+    require("./providerUsage.js").onLiveUsage((ref, windows) => menu.setLive(ref, windows));
   }
 
   // Windows/Linux close-to-tray (#1807). Created unconditionally on these
@@ -1142,7 +1145,12 @@ app.whenReady().then(async () => {
         Menu,
         iconPath: icon,
         getRunningCount: () => (runner ? runner.listActiveThreadIds().length : 0),
-        getUsageItems: () => (usageMenu ? usageMenu.items() : null),
+        // Right-click builds the menu: the moment to refetch stale usage.
+        getUsageItems: () => {
+          if (!usageMenu) return null;
+          usageMenu.refreshIfStale();
+          return usageMenu.items();
+        },
         onShow: () => focusMainWindow(),
         // Always the real quit path: before-quit still confirms active work.
         onQuit: () => app.quit(),

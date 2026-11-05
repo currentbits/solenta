@@ -291,6 +291,23 @@ function normalizeDefaultProvider(raw) {
 }
 
 /**
+ * Settings.defaultAccounts (#1859): provider id -> instance id. Junk keys
+ * and non-string ids are dropped; an id whose instance is gone is kept here
+ * and ignored at use (defaultAccountFor), so re-adding it restores it.
+ * @param {unknown} raw
+ * @returns {Record<string, string>}
+ */
+function normalizeDefaultAccounts(raw) {
+  /** @type {Record<string, string>} */
+  const out = {};
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return out;
+  for (const [k, v] of Object.entries(raw)) {
+    if (/^[a-z0-9-]{1,40}$/.test(k) && typeof v === "string" && v.trim()) out[k] = v.trim();
+  }
+  return out;
+}
+
+/**
  * Settings.defaultModel (issue #711). Absent/junk/empty → null (provider
  * default). Custom ids are allowed; the CLI is the allowlist.
  * @param {unknown} raw
@@ -463,6 +480,9 @@ function validateQuotaFailover(raw) {
  * menuBarUsage: default off; only an explicit true shows subscription
  * usage and the account picker in the menu bar / tray (#1859).
  *
+ * defaultAccounts: per-CLI default account (#1859), `{ claude: "work" }`.
+ * Only string instance ids survive; absent = the CLI's own login.
+ *
  * resumeInterruptedRuns: shipped opt-in (#1512 I3), then defaulted on
  * (#1788) for anyone who never chose. normalizeSettings cannot tell an
  * unset value from an explicit `false` once a store round-trips through
@@ -541,6 +561,7 @@ function normalizeSettings(raw) {
     pinchZoomWindow: true,
     closeToTray: false,
     menuBarUsage: false,
+    defaultAccounts: {},
     resumeInterruptedRuns: true,
     resumeInterruptedRunsSet: false,
     combineQueuedFollowUps: true,
@@ -739,6 +760,9 @@ function normalizeSettings(raw) {
   // menuBarUsage (#1859): default off; only an explicit true opts in.
   settings.menuBarUsage =
     /** @type {{ menuBarUsage?: unknown }} */ (obj).menuBarUsage === true;
+  settings.defaultAccounts = normalizeDefaultAccounts(
+    /** @type {{ defaultAccounts?: unknown }} */ (obj).defaultAccounts,
+  );
   // #1788: `resumeInterruptedRunsSet` only ever becomes true via setSettings
   // (store-settings-methods.js), the moment a human actually patches this
   // key. Absent -> never touched -> default true, whatever a prior save
@@ -1057,6 +1081,7 @@ module.exports = {
   parsePromptSnippets,
   DEFAULT_AUTO_SETTLE_AFTER_DAYS,
   normalizeDefaultProvider,
+  normalizeDefaultAccounts,
   normalizeDefaultModel,
   normalizeGitTextModel,
   validateGitTextModel,

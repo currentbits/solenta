@@ -400,6 +400,20 @@ function findInstance(settings, provider, id) {
 }
 
 /**
+ * Per-CLI default account (#1859, settings.defaultAccounts): the instance id
+ * new threads and terminals of `provider` use when none was picked. null =
+ * the CLI's own login, also when the saved instance was removed.
+ * @param {{ defaultAccounts?: unknown, providerInstances?: unknown } | null | undefined} settings
+ * @param {string} provider
+ * @returns {string | null}
+ */
+function defaultAccountFor(settings, provider) {
+  const map = settings && settings.defaultAccounts;
+  const id = map && typeof map === "object" ? /** @type {Record<string, unknown>} */ (map)[provider] : null;
+  return typeof id === "string" && findInstance(settings, provider, id) ? id : null;
+}
+
+/**
  * Computed home for an isolated-home instance (#1808): exclusive, under
  * Solenta's own userData, never shared with the real CLI home.
  * @param {string} userDataPath
@@ -591,6 +605,7 @@ module.exports = {
   normalizeProviderInstances,
   validateProviderInstances,
   findInstance,
+  defaultAccountFor,
   instanceEnv,
   isolatedHomeDir,
   threadInstanceEnv,

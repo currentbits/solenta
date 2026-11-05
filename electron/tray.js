@@ -71,22 +71,56 @@ function inMinutes(ms) {
   return m >= 60 ? "1h" : `${m}m`;
 }
 
-/** The account new threads and terminals use: settings.defaultProvider. */
-function selectedAccountRef(settings) {
-  const ref = settings && typeof settings.defaultProvider === "string" ? settings.defaultProvider.trim() : "";
-  return ref || "claude";
+/** Data older than this is refetched when the menu opens. */
+const STALE_MS = 2 * 60 * 1000;
+/** The one timed refresh while the setting is on: covers an idle app whose window reset. */
+const IDLE_REFRESH_MS = 15 * 60 * 1000;
+
+/** @param {number} ms */
+function ago(ms) {
+  const m = Math.floor(ms / 60000);
+  if (m < 1) return "just now";
+  if (m < 60) return `${m} min ago`;
+  return `${Math.floor(m / 60)} h ago`;
 }
 
 /**
- * Settings patch for picking an account. Reuses the Threads pane's default
- * provider; the default model survives only on the same CLI.
- * @param {{ defaultProvider?: string | null, defaultModel?: string | null }} settings
+ * The account new `base` threads and terminals use (settings.defaultAccounts):
+ * `base:<id>`, or `base` for the CLI's own login (also when the id is gone).
+ * @param {any} settings
+ * @param {string} base
+ */
+function selectedAccountRef(settings, base) {
+  const map = (settings && settings.defaultAccounts) || {};
+  const id = typeof map[base] === "string" ? map[base] : "";
+  const known = id && ((settings && settings.providerInstances) || []).some((i) => i.provider === base && i.id === id);
+  return known ? `${base}:${id}` : base;
+}
+
+/** The CLI the title follows: the default provider's, else Claude Code. */
+function titleProvider(settings) {
+  const ref = settings && typeof settings.defaultProvider === "string" ? settings.defaultProvider.trim() : "";
+  return (ref || "claude").split(":")[0];
+}
+
+/**
+ * Settings patch for picking an account: only that CLI's default account.
+ * Which agent new threads use (defaultProvider) never changes; a default
+ * provider pinned to another account of the same CLI is loosened to the bare
+ * CLI so the pick takes effect.
+ * @param {any} settings
  * @param {string} ref
  */
 function defaultAccountPatch(settings, ref) {
-  const base = (r) => String(r || "claude").split(":")[0];
-  const sameCli = base(settings && settings.defaultProvider) === base(ref);
-  return { defaultProvider: ref, defaultModel: sameCli ? (settings && settings.defaultModel) || null : null };
+  const [base, id] = ref.split(":");
+  const map = { ...((settings && settings.defaultAccounts) || {}) };
+  if (id) map[base] = id;
+  else delete map[base];
+  /** @type {Record<string, unknown>} */
+  const patch = { defaultAccounts: map };
+  const dp = settings && typeof settings.defaultProvider === "string" ? settings.defaultProvider : "";
+  if (dp.startsWith(`${base}:`)) patch.defaultProvider = base;
+  return patch;
 }
 
 /**
@@ -121,29 +155,33 @@ function windowOf(row, label) {
 }
 
 /**
- * Menu bar title, e.g. "Personal 2%": the selected account and its 5-hour
- * % (the first reported window when there is no 5-hour one).
- * @param {{ usage: object[] | null, instances?: object[], providerName: (id: string) => string, selectedRef: string }} opts
+ * Menu bar title, e.g. "Personal 2%": the default provider's selected
+ * account and its 5-hour % (the first reported window when there is no
+ * 5-hour one).
+ * @param {{ usage: object[] | null, instances?: object[], providerName: (id: string) => string, settings: any }} opts
  */
 function usageTitle(opts) {
-  const acct = usageAccounts(opts).find((a) => a.ref === opts.selectedRef);
+  const ref = selectedAccountRef(opts.settings, titleProvider(opts.settings));
+  const acct = usageAccounts(opts).find((a) => a.ref === ref);
   if (!acct) return "";
   const win = windowOf(acct.row, "5-hour") || (acct.row.status === "ok" ? (acct.row.windows || [])[0] : null);
   return win ? `${acct.short} ${pct(win.usedPercent)}` : acct.short;
 }
 
 /**
- * Account rows plus "Refresh usage" (pure; tests build it from fake data).
- * "Personal — 5-hour 2% · week 0%", the sign-in email/plan and a near
- * reset as the sublabel. Accounts with no usage data are greyed.
+ * Account rows, their age and "Refresh usage" (pure; tests build it from
+ * fake data). "Personal — 5-hour 2% · week 0%", the sign-in email/plan and a
+ * near reset as the sublabel. One checkmark per CLI: its default account.
+ * Accounts with no usage data stay pickable.
  *
  * @param {{
  *   usage: object[] | null,
  *   instances?: object[],
  *   providerName: (id: string) => string,
  *   accountOf?: (ref: string) => { email?: string, plan?: string } | undefined,
- *   selectedRef: string,
+ *   settings: any,
  *   now: number,
+ *   updatedAt?: number | null,
  *   onPick: (ref: string) => void,
  *   onRefresh: () => void,
  *   loading?: boolean,
@@ -174,15 +212,18 @@ function usageMenuItems(opts) {
       label: `${acct.name} — ${parts.length ? parts.join(" · ") : "no usage data"}`,
       ...(sub.length ? { sublabel: sub.join(" · ") } : {}),
       type: "checkbox",
-      checked: acct.ref === opts.selectedRef,
-      enabled: parts.length > 0,
+      checked: acct.ref === selectedAccountRef(opts.settings, acct.base),
       click: () => opts.onPick(acct.ref),
     });
   }
   if (!items.length) {
     items.push({ label: opts.loading ? "Loading usage…" : "No usage data", enabled: false });
   }
-  items.push({ type: "separator" }, { label: "Refresh usage", enabled: !opts.loading, click: opts.onRefresh });
+  items.push({ type: "separator" });
+  if (opts.updatedAt != null) {
+    items.push({ label: `Updated ${ago(opts.now - opts.updatedAt)}`, enabled: false });
+  }
+  items.push({ label: opts.loading ? "Refreshing…" : "Refresh usage", enabled: !opts.loading, click: opts.onRefresh });
   return items;
 }
 
@@ -190,14 +231,17 @@ function usageMenuItems(opts) {
  * Owns "Show usage in the menu bar". On macOS it is its own menu bar Tray;
  * on Windows/Linux the existing close-to-tray menu pulls `items()` instead
  * (`onChange` rebuilds it). Never created headless or with the setting off.
- * Usage arrives through `setUsage` (every usage:providerLimits answer) and
- * `refresh()` (Refresh usage, and once when it first turns on); no poll.
+ *
+ * Freshness without a tight poll: every usage:providerLimits answer
+ * (`setUsage`), live windows from runs (`setLive`), a refetch when the menu
+ * opens on data older than 2 minutes (`refreshIfStale`), and one 15-minute
+ * timer while the setting is on, for an idle app whose window has reset.
  *
  * @param {{
  *   platform: NodeJS.Platform,
  *   headless: boolean,
  *   Tray: new (icon: any) => any,
- *   Menu: { buildFromTemplate: (t: unknown[]) => unknown },
+ *   Menu: { buildFromTemplate: (t: unknown[]) => any },
  *   icon: any,
  *   getSettings: () => any,
  *   saveSettings: (patch: object) => void,
@@ -208,16 +252,25 @@ function usageMenuItems(opts) {
  *   onQuit: () => void,
  *   onChange?: () => void,
  *   now?: () => number,
+ *   setInterval?: typeof setInterval,
+ *   clearInterval?: typeof clearInterval,
  * }} opts
  */
 function createUsageMenu(opts) {
   const now = opts.now || Date.now;
-  /** @type {object[] | null} */
+  const every = opts.setInterval || setInterval;
+  const stopEvery = opts.clearInterval || clearInterval;
+  /** @type {any[] | null} */
   let usage = null;
   /** @type {Promise<void> | null} */
   let fetching = null;
   let fetchedOnce = false;
+  /** Last full fetch; drives refresh-on-open. */
+  let fetchedAt = 0;
+  /** Last full fetch or live window; shown as "Updated …". */
+  let updatedAt = 0;
   let menuBar = null;
+  let timer = null;
 
   const enabled = () => !opts.headless && opts.getSettings().menuBarUsage === true;
 
@@ -228,8 +281,9 @@ function createUsageMenu(opts) {
       instances: s.providerInstances || [],
       providerName: opts.providerName,
       accountOf: opts.accountOf,
-      selectedRef: selectedAccountRef(s),
+      settings: s,
       now: now(),
+      updatedAt: updatedAt || null,
       loading: Boolean(fetching),
       onPick: pick,
       onRefresh: () => void refresh(),
@@ -252,7 +306,10 @@ function createUsageMenu(opts) {
     fetching = Promise.resolve()
       .then(opts.fetchUsage)
       .then((rows) => {
-        if (Array.isArray(rows)) usage = rows;
+        if (Array.isArray(rows)) {
+          usage = rows;
+          fetchedAt = updatedAt = now();
+        }
       })
       .catch(() => {})
       .finally(() => {
@@ -263,15 +320,47 @@ function createUsageMenu(opts) {
     return fetching;
   }
 
+  /** Menu opened: refetch when the data is over 2 minutes old. */
+  function refreshIfStale() {
+    if (enabled() && !fetching && now() - fetchedAt > STALE_MS) void refresh();
+  }
+
   /** @param {object[]} rows */
   function setUsage(rows) {
     if (!Array.isArray(rows)) return;
     usage = rows;
+    fetchedAt = updatedAt = now();
+    sync();
+  }
+
+  /**
+   * Live windows from a run on account `ref`: replace same-label windows on
+   * that row, keep the rest.
+   * @param {string} ref @param {any[]} windows
+   */
+  function setLive(ref, windows) {
+    if (!Array.isArray(windows) || !windows.length) return;
+    const rows = usage ? usage.slice() : [];
+    const at = rows.findIndex((r) => r && r.provider === ref);
+    const prev = at >= 0 && rows[at].status === "ok" ? rows[at].windows || [] : [];
+    const labels = new Set(windows.map((w) => w.label));
+    const row = { provider: ref, status: "ok", windows: [...prev.filter((w) => !labels.has(w.label)), ...windows], fetchedAt: now() };
+    if (at >= 0) rows[at] = row;
+    else rows.push(row);
+    usage = rows;
+    updatedAt = now();
     sync();
   }
 
   function sync() {
     const on = enabled();
+    if (on && !timer) {
+      timer = every(() => void refresh(), IDLE_REFRESH_MS);
+      if (timer && typeof timer.unref === "function") timer.unref();
+    } else if (!on && timer) {
+      stopEvery(timer);
+      timer = null;
+    }
     if (on && !fetchedOnce && !usage) {
       void refresh();
       return;
@@ -291,26 +380,30 @@ function createUsageMenu(opts) {
     }
     const v = view();
     menuBar.setTitle(usageTitle(v));
-    menuBar.setContextMenu(
-      opts.Menu.buildFromTemplate([
-        ...usageMenuItems(v),
-        { label: "Open Solenta", click: opts.onShow },
-        { type: "separator" },
-        { label: "Quit", click: opts.onQuit },
-      ]),
-    );
+    const menu = opts.Menu.buildFromTemplate([
+      ...usageMenuItems(v),
+      { label: "Open Solenta", click: opts.onShow },
+      { type: "separator" },
+      { label: "Quit", click: opts.onQuit },
+    ]);
+    if (menu && typeof menu.on === "function") menu.on("menu-will-show", refreshIfStale);
+    menuBar.setContextMenu(menu);
   }
 
   return {
     items,
     sync,
     refresh,
+    refreshIfStale,
     setUsage,
+    setLive,
     /** The macOS menu bar Tray, or null. */
     get menuBar() {
       return menuBar;
     },
     destroy() {
+      if (timer) stopEvery(timer);
+      timer = null;
       if (menuBar) menuBar.destroy();
       menuBar = null;
     },
@@ -359,6 +452,7 @@ module.exports = {
   trayMenuTemplate,
   createTray,
   selectedAccountRef,
+  titleProvider,
   defaultAccountPatch,
   usageTitle,
   usageMenuItems,

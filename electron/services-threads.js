@@ -21,6 +21,7 @@ const {
   providerRef,
   threadProviderRef,
   findInstance,
+  defaultAccountFor,
   instanceEnv,
   instanceDisplayName,
   isBaseOverlay,
@@ -244,7 +245,15 @@ function createThread(store, input) {
     settings,
     defaults && defaults.provider,
   );
-  const { provider, instance: providerInstance } = parseProviderRef(providerRefId);
+  const { provider, instance: pickedInstance } = parseProviderRef(providerRefId);
+  // Per-CLI default account (#1859): a bare provider gets the account picked
+  // in the menu bar. Forks, automations and memory passes keep their own,
+  // under the same skips as project defaults.
+  const providerInstance =
+    pickedInstance ||
+    (input.projectDefaults === false || input.automationId || input.memoryConsolidate
+      ? null
+      : defaultAccountFor(settings, provider));
   const entry = getProvider(provider);
   let model;
   if (
@@ -1316,7 +1325,9 @@ async function listProvidersForApi(store, opts) {
     .filter((inst) => inst.provider === "generic")
     .map((inst) => genericProviderInfo(inst));
   for (const p of base) {
-    list.push(p);
+    const acct = defaultAccountFor(settings, p.id);
+    const acctInst = acct ? findInstance(settings, p.id, acct) : null;
+    list.push(acctInst ? { ...p, defaultAccount: acctInst.name } : p);
     for (const inst of instances) {
       if (inst.provider !== p.id) continue;
       if (inst.openaiCompatible) {

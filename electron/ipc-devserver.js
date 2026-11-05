@@ -16,6 +16,7 @@ const { wslTarget } = require("./wsl.js");
 const {
   parseProviderRef,
   findInstance,
+  defaultAccountFor,
   instanceEnv,
   CONFIG_DIR_ENV,
 } = require("./providerInstances.js");
@@ -90,9 +91,9 @@ function terminalRoot(ctx, threadId) {
 
 /**
  * Which account a new terminal's `claude` / `codex` use (#1859): the
- * thread's own for its CLI, the default account (Settings > Default
- * provider, also picked from the menu bar) for the other. Only the config
- * dir var, never an instance's keys. Empty = the CLI's usual login.
+ * thread's own for its CLI, the per-CLI default account (settings
+ * defaultAccounts, picked from the menu bar) for every other. Only the
+ * config dir var, never an instance's keys. Empty = the CLI's usual login.
  *
  * @param {any} ctx
  * @param {unknown} threadId
@@ -104,18 +105,13 @@ function terminalAccountEnv(ctx, threadId) {
   // A remote or WSL shell cannot see this Mac's config folders.
   const project = thread ? ctx.store.getProject(thread.projectId) : null;
   if (project && (project.remoteHost || wslTarget(project))) return {};
-  const threadRef = thread && thread.provider
-    ? thread.providerInstance ? `${thread.provider}:${thread.providerInstance}` : thread.provider
-    : "";
   /** @type {Record<string, string>} */
   const out = {};
-  const decided = new Set();
-  for (const ref of [threadRef, settings.defaultProvider || ""]) {
-    const { provider, instance } = parseProviderRef(ref);
-    const dirVar = CONFIG_DIR_ENV[/** @type {"claude" | "codex"} */ (provider)];
-    if (!dirVar || decided.has(provider)) continue;
-    decided.add(provider);
-    const inst = instance ? findInstance(settings, provider, instance) : null;
+  for (const [cli, dirVar] of Object.entries(CONFIG_DIR_ENV)) {
+    const id = thread && thread.provider === cli
+      ? thread.providerInstance || null
+      : defaultAccountFor(settings, cli);
+    const inst = id ? findInstance(settings, cli, id) : null;
     const dir = inst ? instanceEnv(inst, undefined, ctx.userDataPath)[dirVar] : "";
     if (dir) out[dirVar] = dir;
   }

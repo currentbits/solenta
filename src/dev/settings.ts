@@ -93,6 +93,7 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
   let pinchZoomWindow = true;
   let closeToTray = false;
   let menuBarUsage = false;
+  let defaultAccounts: Record<string, string> = {};
   // #1788: default on for anyone who never chose, same as the electron store.
   let resumeInterruptedRuns = true;
   let combineQueuedFollowUps = true;
@@ -224,6 +225,7 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           pinchZoomWindow,
           closeToTray,
           menuBarUsage,
+          defaultAccounts,
           resumeInterruptedRuns,
           combineQueuedFollowUps,
           agentBugReports,
@@ -484,6 +486,13 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           }
           menuBarUsage = patch.menuBarUsage;
         }
+        if (Object.prototype.hasOwnProperty.call(patch, "defaultAccounts")) {
+          const v = patch.defaultAccounts;
+          if (!v || typeof v !== "object" || Array.isArray(v)) {
+            throw new Error("defaultAccounts must be an object");
+          }
+          defaultAccounts = { ...v };
+        }
         if (Object.prototype.hasOwnProperty.call(patch, "worktreeRoot")) {
           const v = typeof patch.worktreeRoot === "string" ? patch.worktreeRoot.trim() : "";
           if (v && !v.startsWith("/")) {
@@ -710,6 +719,7 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           pinchZoomWindow,
           closeToTray,
           menuBarUsage,
+          defaultAccounts,
           resumeInterruptedRuns,
           combineQueuedFollowUps,
           agentBugReports,

@@ -980,6 +980,14 @@ function createClaudeRun(ctx) {
           return;
         }
 
+        // Live quota for the menu bar (#1859), under this thread's account.
+        if (type === "rate_limit_event") {
+          require("./providerUsage.js").reportLiveUsage(
+            threadProviderRef(thread),
+            require("./providerUsage.js").claudeRateLimitWindows(ev.rate_limit_info),
+          );
+        }
+
         if (type === "system" && ev.subtype === "init") {
           if (typeof ev.session_id === "string" && ev.session_id) {
             capturedSessionId = ev.session_id;
