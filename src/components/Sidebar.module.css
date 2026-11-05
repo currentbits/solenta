@@ -3,7 +3,7 @@
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: var(--bg-elevated);
+  background: var(--panel);
   border-right: 1px solid var(--border-soft);
   min-width: 0;
 }
@@ -32,7 +32,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: var(--blue);
+  color: var(--accent-edge);
   line-height: 1;
 }
 
@@ -394,10 +394,10 @@
   gap: 8px;
   margin: 8px 8px 2px;
   min-width: 0;
-  font: 500 10.5px var(--mono);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font: 600 11.5px var(--font);
+  letter-spacing: 0.01em;
   color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
 }
 
 .filterGroupHeader::after {
@@ -540,19 +540,24 @@
   background: var(--overlay-hover);
 }
 
-/* F4 notch (#1429): the logo diamond marks the open thread. */
+.card[data-active="true"] .cardTitle {
+  font-weight: 500;
+  color: var(--text);
+}
+
+/* F4 notch (#1429) retired: the filled row and full-ink title are the one
+   selection signal. Kept as a hook for high contrast below. */
 .card[data-active="true"]::after {
-  content: "";
+  content: none;
   position: absolute;
-  left: -4px;
+  left: 5px;
   top: 50%;
-  width: 7px;
-  height: 7px;
-  margin-top: -3.5px;
-  background: var(--accent);
+  width: 2px;
+  height: 16px;
+  margin-top: -8px;
+  background: var(--accent-dot);
   box-shadow: var(--accent-mark-ring);
-  border-radius: 1.5px;
-  transform: rotate(45deg);
+  border-radius: var(--radius-pill);
   pointer-events: none;
 }
 
@@ -653,8 +658,13 @@
 }
 
 .card[data-unread="true"] .cardTitle {
-  font-weight: 600;
+  font-weight: 500;
   color: var(--text);
+}
+
+/* Paper needs a firmer fill for the open row to register. */
+:global(:root[data-theme="light"]) .card[data-active="true"] {
+  background: var(--overlay-strong);
 }
 
 .card[data-archived="true"] {
@@ -964,9 +974,11 @@
 
 .cardTitle {
   font-size: 13px;
-  font-weight: 600;
   line-height: 1.35;
-  color: var(--text);
+  /* Unselected titles sit a step down in weight and ink; the open thread
+     gets full ink at 500. */
+  font-weight: 400;
+  color: color-mix(in srgb, var(--text) 60%, var(--text-muted));
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1075,13 +1087,14 @@
 
 /* F2 (#1429): branches and PR numbers in Geist Mono. */
 .cardBranch {
-  font: 11.5px var(--mono);
+  font: 11.5px var(--font);
   color: var(--text-dim);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;
   flex: 1;
+  font-variant-numeric: tabular-nums;
 }
 
 .cardBranchSpacer {
@@ -1092,7 +1105,7 @@
 .prLink {
   pointer-events: auto;
   flex-shrink: 0;
-  font: 11.5px var(--mono);
+  font: 11.5px var(--font);
   font-variant-numeric: tabular-nums;
   color: var(--text-muted);
   text-decoration: none;
@@ -1108,8 +1121,9 @@
 }
 
 /* GitHub's PR colours: open green, merged violet, closed red. */
+/* Open is the normal state, so it stays ink; colour marks merged/closed. */
 .prLink[data-pr-state="open"] {
-  color: var(--green);
+  color: var(--text-dim);
 }
 
 .prLink[data-pr-state="merged"] {
@@ -1139,6 +1153,7 @@
   margin-left: auto;
   flex-shrink: 0;
   color: var(--text-dim);
+  opacity: 0.6;
 }
 
 .waitRow,
@@ -1203,10 +1218,10 @@
   display: block;
 }
 
+/* Pinned threads end with a gap, not a rule. */
 .pinnedDivider {
   height: 1px;
   margin: 6px 10px;
-  background: var(--border-soft);
 }
 
 .shelf {
@@ -1229,7 +1244,8 @@
   width: 100%;
   min-width: 0;
   flex: 1;
-  padding: 6px 8px;
+  /* 11px lines the shelf label up with the card text below it. */
+  padding: 6px 8px 6px 11px;
   border-radius: var(--radius-sm);
   text-align: left;
 }
@@ -1254,11 +1270,11 @@
 /* F7 mono micro-labels (#1429): "WORKING · 1" then a hairline. */
 .shelfLabelSnoozed,
 .shelfLabelSettled {
-  font: 500 10.5px var(--mono);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font: 500 12px var(--font);
+  letter-spacing: 0.01em;
   color: var(--text-dim);
   flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
 }
 
 .shelfRuleSnoozed,
@@ -1269,7 +1285,7 @@
 
 .shelfRuleSnoozed,
 .shelfRuleSettled {
-  background: var(--border-soft);
+  background: transparent;
 }
 
 .shelfChevron {
@@ -1280,6 +1296,13 @@
 
 .shelfToggle .shelfChevron {
   color: var(--text-dim);
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.shelfToggle:hover .shelfChevron,
+.shelfToggle:focus-visible .shelfChevron {
+  opacity: 1;
 }
 
 .shelfToggle[aria-expanded="true"] .shelfChevron,
@@ -1803,8 +1826,9 @@
   height: 30px;
   padding: 0 6px;
   border-radius: var(--radius-sm);
-  font: 11px var(--mono);
+  font: 11px var(--font);
   color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
 }
 
 .stopAllButton:hover {
@@ -1838,11 +1862,12 @@
   }
 }
 
-/* Inbox: Working / Snoozed / Settled sit at the foot of a short list. */
+/* Inbox: Working / Snoozed / Settled follow the list instead of pinning to
+   the foot, so a short list doesn't leave a dead band mid-sidebar. */
 .shelves {
   display: flex;
   flex-direction: column;
-  margin-top: auto;
+  margin-top: 12px;
 }
 
 /* Calm sidebar (#1409): one search row — filter toggle, project scope and
@@ -1896,8 +1921,10 @@
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
-  font: 11px var(--mono);
+  flex-shrink: 0;
+  font: 11.5px var(--font);
   color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
 }
 
 .memoryDiamond {
@@ -1906,7 +1933,7 @@
   height: 8px;
   margin: 0 1px;
   border-radius: 2px;
-  background: var(--accent);
+  background: var(--accent-dot);
   box-shadow: var(--accent-mark-ring);
   transform: rotate(45deg);
 }
@@ -1979,10 +2006,11 @@
 
 .searchKbd {
   flex-shrink: 0;
-  font-family: var(--mono);
+  font-family: var(--font);
   font-size: 10.5px;
   color: var(--text-dim);
   opacity: 0.8;
+  font-variant-numeric: tabular-nums;
 }
 
 .cardWorktree {

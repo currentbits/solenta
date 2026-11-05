@@ -11,7 +11,7 @@
   display: grid;
   place-items: center;
   pointer-events: none;
-  border-radius: 14px;
+  border-radius: var(--radius-lg);
   border: 1.5px dashed var(--blue-border);
   background: color-mix(in srgb, var(--bg) 70%, transparent);
   color: var(--text);
@@ -44,7 +44,7 @@
   height: 20px;
   display: grid;
   place-items: center;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   color: var(--danger-fg);
   font-size: 14px;
   line-height: 1;
@@ -100,17 +100,17 @@
   position: relative;
   background: var(--card);
   border: 1px solid var(--border);
-  border-radius: 16px;
+  border-radius: var(--radius-lg);
   padding: 14px 14px 10px;
   transition:
     border-color 0.15s ease,
     box-shadow 0.15s ease;
 }
 
-/* Yellow focus edge (#1429 F3): only while typing, not when a pill has focus. */
+/* Typing focus is a quiet lift of the edge, not a yellow halo: the empty
+   composer must never be the loudest thing on screen. */
 .card:has(.textarea:focus) {
-  border-color: var(--accent-border);
-  box-shadow: 0 0 0 3px var(--accent-soft);
+  border-color: color-mix(in srgb, var(--text) 14%, var(--border));
 }
 
 .textarea {
@@ -121,7 +121,7 @@
   background: transparent;
   color: var(--text);
   line-height: 1.5;
-  min-height: 64px;
+  min-height: 40px;
   max-height: 12lh;
   overflow-y: auto;
   field-sizing: content;
@@ -134,7 +134,7 @@
 }
 
 .textarea::placeholder {
-  color: var(--text-dim);
+  color: color-mix(in srgb, var(--text-dim) 60%, var(--text-muted));
 }
 
 .controls {
@@ -154,12 +154,10 @@
 }
 
 /* Hairline between the model, effort and access pills. */
+/* Spacing, not a rule, separates the pickers. */
 .sep {
   flex-shrink: 0;
-  width: 1px;
-  height: 16px;
-  margin: 0 4px;
-  background: var(--border);
+  width: 4px;
 }
 
 .pill {
@@ -168,7 +166,7 @@
   gap: 5px;
   height: 28px;
   padding: 0 9px;
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   background: transparent;
   /* Ghost pills: the hover tint is the affordance, not a border. */
   border: 1px solid transparent;
@@ -199,9 +197,15 @@
   cursor: not-allowed;
 }
 
+select.agentSelect {
+  padding-right: 26px;
+  background-position: right 8px center;
+}
+
 .agentSelect {
   appearance: none;
-  max-width: 16ch;
+  /* Room for the shared select chevron (index.css) on top of the label. */
+  max-width: calc(16ch + 26px);
   overflow: hidden;
   text-overflow: ellipsis;
   cursor: pointer;
@@ -248,7 +252,7 @@
   padding: 10px;
   overflow: auto;
   outline: none;
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   border: 1px solid var(--border);
   background: var(--bg-elevated);
   box-shadow: var(--shadow-pop);
@@ -308,7 +312,7 @@
   align-items: flex-start;
   gap: 8px;
   padding: 6px 6px;
-  border-radius: 8px;
+  border-radius: var(--radius);
   cursor: pointer;
 }
 
@@ -390,7 +394,7 @@
   margin: 0;
   padding: 4px;
   list-style: none;
-  border-radius: 8px;
+  border-radius: var(--radius);
   border: 1px solid var(--border);
   background: var(--bg-elevated);
   box-shadow: var(--shadow-pop);
@@ -411,7 +415,7 @@
   width: 100%;
   box-sizing: border-box;
   padding: 7px 10px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--border);
   background: var(--input-fill);
   color: var(--text);
@@ -436,7 +440,7 @@
   width: 100%;
   text-align: left;
   padding: 7px 10px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   color: var(--text-muted);
   font-size: 12px;
   font-weight: 500;
@@ -530,7 +534,7 @@
   height: min(400px, calc(100vh - 140px));
   margin: 0;
   padding: 0;
-  border-radius: 14px;
+  border-radius: var(--radius-lg);
   border: 1px solid var(--border);
   background: var(--bg-elevated);
   box-shadow: var(--shadow-pop);
@@ -596,7 +600,7 @@
   place-items: center;
   width: 32px;
   height: 32px;
-  border-radius: 8px;
+  border-radius: var(--radius);
   color: var(--text-muted);
   font-size: 13px;
   background: transparent;
@@ -678,7 +682,7 @@
   top: 0;
   left: 0;
   right: 0;
-  border-radius: 8px;
+  border-radius: var(--radius);
   background: var(--overlay-hover);
   pointer-events: none;
   transition:
@@ -688,19 +692,19 @@
 
 .modelList:focus-visible {
   box-shadow: inset 0 0 0 1px var(--blue-border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
 }
 
 .modelGroupHeading {
-  font-family: var(--mono);
+  font-family: var(--font);
   font-size: 10.5px;
-  font-weight: 500;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-weight: 600;
+  letter-spacing: 0.01em;
   color: var(--text-dim);
   padding: 8px 8px 4px;
   pointer-events: none;
   user-select: none;
+  font-variant-numeric: tabular-nums;
 }
 
 .modelGroupHeading:first-child {
@@ -724,7 +728,7 @@
   min-width: 0;
   text-align: left;
   padding: 7px 8px;
-  border-radius: 8px;
+  border-radius: var(--radius);
   color: var(--text-muted);
   background: transparent;
   transition:
@@ -767,7 +771,7 @@
   width: 28px;
   height: 28px;
   margin-right: 2px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   color: var(--text-dim);
   font-size: 13px;
   background: transparent;
@@ -804,7 +808,7 @@
   gap: 6px;
   margin: 0 8px 6px;
   padding: 8px;
-  border-radius: 8px;
+  border-radius: var(--radius);
   background: var(--overlay-soft);
 }
 
@@ -835,7 +839,7 @@
 
 .effortChip {
   padding: 3px 8px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   color: var(--text-muted);
   font-size: 12px;
   background: transparent;
@@ -964,7 +968,7 @@
 .send {
   width: 30px;
   height: 30px;
-  border-radius: 9px;
+  border-radius: var(--radius);
   background: var(--accent);
   color: var(--text-on-accent);
   display: grid;
@@ -1002,12 +1006,10 @@
 
 /* Worktree tab tucked under the card (#1429 item 7): inset 14px, bottom
    radius, no top border so it hangs off the card's own bottom edge. */
+/* The worktree line is a caption under the card, aligned to its text. */
 .meta {
-  margin: 0 14px;
-  padding: 0 6px;
-  border: 1px solid var(--border);
-  border-top: 0;
-  border-radius: 0 0 10px 10px;
+  margin: 2px 0 0;
+  padding: 0 8px;
 }
 
 /* Pending attachments sit inside the card, above the textarea, so they read
@@ -1052,7 +1054,7 @@
   color: var(--text-muted);
   background: var(--bg-elevated);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
 }
 
 .reviewCommentChip {
@@ -1115,7 +1117,7 @@
 .attachmentThumb {
   width: 22px;
   height: 22px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   object-fit: cover;
   flex-shrink: 0;
 }
@@ -1124,7 +1126,7 @@
   display: inline-flex;
   padding: 0;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: none;
   cursor: pointer;
 }
@@ -1450,7 +1452,7 @@
   padding: 6px 12px;
   border: 1px solid var(--border);
   border-bottom: 0;
-  border-radius: 10px 10px 0 0;
+  border-radius: 12px 12px 0 0;
   background: var(--overlay-soft);
   font-size: 12.5px;
   color: var(--text-muted);

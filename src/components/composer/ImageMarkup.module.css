@@ -13,7 +13,7 @@
   flex-direction: column;
   width: min(1100px, 100%);
   max-height: 100%;
-  border-radius: 14px;
+  border-radius: var(--radius-lg);
   border: 1px solid var(--border);
   background: var(--bg-elevated);
   box-shadow: var(--shadow-modal);
@@ -94,7 +94,7 @@
 .canvas {
   max-width: 100%;
   max-height: calc(100vh - 200px);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   touch-action: none;
   cursor: crosshair;
 }

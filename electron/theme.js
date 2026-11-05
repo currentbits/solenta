@@ -5,8 +5,8 @@
  * `src/index.css` `--bg` for the matching theme so the BrowserWindow does
  * not flash the other theme before the renderer paints.
  */
-const WINDOW_BG_DARK = "#0f0f0e";
-const WINDOW_BG_LIGHT = "#f5f5f2";
+const WINDOW_BG_DARK = "#111010";
+const WINDOW_BG_LIGHT = "#fafaf7";
 
 /**
  * @param {unknown} preference

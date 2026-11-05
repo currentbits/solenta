@@ -50,6 +50,7 @@ import {
   formatTokenSum,
   providerDisplayName,
   shortSessionId,
+  threadProviderRef,
 } from "../format";
 import { buildWaitStates, waitLabel, type WaitState } from "../waiting";
 import {
@@ -365,7 +366,7 @@ function SessionLine({
     (usage.inputTokens > 0 ||
       usage.outputTokens > 0 ||
       Number(usage.contextTokens) > 0);
-  const parts = [providerDisplayName(thread.provider, providers), thread.status];
+  const parts = [providerDisplayName(threadProviderRef(thread), providers), thread.status];
   if (usageUnreported) parts.push("usage not reported");
   else if (usage) {
     parts.push(
@@ -2220,7 +2221,7 @@ function TeamRow({
       >
         <span className={styles.roleChip}>{role}</span>
         <span className={styles.teamProvider}>
-          {providerDisplayName(summary.provider, providers)}
+          {providerDisplayName(threadProviderRef(summary), providers)}
         </span>
         <span className={styles.teamTitle}>{summary.title}</span>
         {/* A worker stalled on a permission prompt still reads "working"

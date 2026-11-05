@@ -188,7 +188,7 @@
   z-index: 20;
   min-width: 168px;
   padding: 4px;
-  border-radius: 8px;
+  border-radius: var(--radius);
   border: 1px solid var(--border);
   background: var(--bg-elevated);
   box-shadow: var(--shadow-pop);
@@ -201,7 +201,7 @@
   gap: 12px;
   width: 100%;
   padding: 7px 10px;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   border: none;
   background: transparent;
   color: var(--text);

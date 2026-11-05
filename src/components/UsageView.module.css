@@ -48,7 +48,7 @@
   display: inline-flex;
   align-items: stretch;
   padding: 2px;
-  border-radius: 8px;
+  border-radius: var(--radius);
   background: var(--card);
 }
 
@@ -58,7 +58,7 @@
   height: 26px;
   padding: 0 11px;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-dim);
   font-size: 12.5px;
@@ -84,7 +84,7 @@
   height: 30px;
   padding: 0 8px;
   border: 1px solid var(--border);
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   background: var(--card);
   color: var(--text);
   font-size: 12px;
@@ -102,7 +102,7 @@
   width: 30px;
   height: 30px;
   border: none;
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-dim);
   cursor: pointer;

@@ -344,6 +344,42 @@ describe("formatPoolMenu / subagentPoolNoteFor", () => {
     assert.equal(subagentPoolNoteFor(pool()), "");
   });
 
+  // #1857: the lead learns which named accounts it can fork onto.
+  it("note lists named account refs and :auto, even with no pool", () => {
+    const settings = {
+      providerInstances: [
+        { id: "claude", provider: "claude", name: "Base", env: {} },
+        { id: "team", provider: "claude", name: "team", env: {} },
+        { id: "box", provider: "generic", name: "Box", env: {} },
+      ],
+    };
+    registerMcpServer({
+      name: "coder-threads",
+      port: 1234,
+      token: "tok",
+      userDataPath: fs.mkdtempSync(path.join(os.tmpdir(), "pool-accounts-")),
+    });
+    try {
+      const note = subagentPoolNoteFor(EMPTY_SUBAGENT_POOL, null, settings);
+      assert.match(note, /^\[Worker accounts\] Pass provider=<ref> on thread_fork/m);
+      assert.match(
+        note,
+        /- claude: claude \(default account\), claude:team, or claude:auto for the claude account with the most quota left/,
+      );
+      // A custom CLI is a ref, but has no subscriptions to pick between.
+      assert.match(note, /- generic: generic:box$/m);
+      assert.match(subagentPoolNoteFor(pool(), null, settings), /\[Worker pool\][\s\S]*\[Worker accounts\]/);
+      // Pinned pools ignore thread_fork provider, so say nothing.
+      assert.doesNotMatch(
+        subagentPoolNoteFor(pool({ force: true }), null, settings),
+        /Worker accounts/,
+      );
+      assert.equal(subagentPoolNoteFor(EMPTY_SUBAGENT_POOL, null, {}), "");
+    } finally {
+      unregisterMcpServer("coder-threads");
+    }
+  });
+
   // #1403: the worker CLI runs on the ssh host / inside the WSL distro, so a
   // missing local binary must not hide its alias from the lead.
   it("boundary projects list aliases whose CLI is missing locally", async () => {

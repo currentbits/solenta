@@ -158,7 +158,7 @@
   flex-direction: column;
   gap: 8px;
   padding: 12px 14px;
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
   border: 1px solid var(--border);
   background: var(--input-fill);
 }
@@ -229,7 +229,7 @@
   align-items: center;
   gap: 4px;
   padding: 0 4px 0 10px;
-  border-radius: 8px;
+  border-radius: var(--radius);
   border: 1px solid var(--border);
   background: var(--input-fill);
 }
@@ -284,7 +284,7 @@
 .models {
   display: flex;
   flex-direction: column;
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
   border: 1px solid var(--border);
   overflow: hidden;
 }
@@ -380,7 +380,7 @@
 .tag {
   flex-shrink: 0;
   padding: 0 5px;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: var(--overlay-hover);
   font-size: 9.5px;
   font-weight: 600;
@@ -494,7 +494,7 @@
   flex-direction: column;
   gap: 4px;
   padding: 10px 12px;
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
   border: 1px solid var(--border);
   background: var(--card);
   text-align: left;
