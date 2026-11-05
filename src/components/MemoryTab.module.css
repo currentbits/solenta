@@ -804,52 +804,25 @@
   min-width: 0;
 }
 
-.fusionConflict {
+/* Fusion rows reuse .doctorFiles; these only group and align them. */
+.fusionGroup {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 8px;
   min-width: 0;
-  margin: 0;
-  padding: 8px;
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius-sm);
 }
 
-.fusionLegend {
-  padding: 0 4px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text);
-}
-
-.fusionOption {
+.fusionPick {
   display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 6px;
+  align-items: center;
+  gap: 8px;
   min-width: 0;
-  font-size: 12px;
-  color: var(--text);
+  cursor: pointer;
 }
 
-.fusionValue {
-  font-size: 11px;
-  overflow-wrap: anywhere;
-}
-
-.fusionSources {
-  margin-left: auto;
+.fusionPick input {
   flex-shrink: 0;
-  font-size: 11px;
-  color: var(--text-dim);
-  font-variant-numeric: tabular-nums;
-}
-
-.fusionDiffBlock {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
+  margin: 0;
 }
 
 .diffAdd {

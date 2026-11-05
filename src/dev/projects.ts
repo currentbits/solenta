@@ -19,7 +19,7 @@ import { id } from "./util.ts";
 /** Browser-dev Fusion fixture: AGENTS.md says npm, CLAUDE.md says pnpm. */
 function devFusionPlan(projectId: string, input: FusionInput, syncedAt: number | null): FusionPlan {
   const pm = input.picks?.packageManager ?? "npm";
-  const test = input.picks?.test ?? "npm test";
+  const test = input.picks?.test ?? `${pm} test`;
   const indent =
     input.picks?.["line:dev"] ?? "Use 2-space indentation in TypeScript files.";
   const block = (path: string, lineNo: number, body: string[]) =>
@@ -40,6 +40,7 @@ function devFusionPlan(projectId: string, input: FusionInput, syncedAt: number |
     "",
     `- Package manager: ${pm}`,
     `- Test: \`${test}\``,
+    `- Build: \`${pm === "npm" ? "npm run build" : `${pm} build`}\``,
     `- ${indent}`,
   ];
   const changed = syncedAt == null;
@@ -55,6 +56,7 @@ function devFusionPlan(projectId: string, input: FusionInput, syncedAt: number |
         key: "build",
         label: "Build",
         value: "npm run build",
+        fused: pm === "npm" ? "npm run build" : `${pm} build`,
         sources: [{ path: "AGENTS.md", line: 9 }],
       },
     ],

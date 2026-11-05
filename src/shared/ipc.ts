@@ -437,7 +437,8 @@ export interface FusionPlan {
     kindLabel: string;
     hasBlock: boolean;
   }>;
-  agreed: Array<{ key: FusionFactKey; label: string } & FusionOption>;
+  /** `fused` is the value written to the block: commands under the picked package manager. */
+  agreed: Array<{ key: FusionFactKey; label: string; fused: string } & FusionOption>;
   conflicts: FusionConflict[];
   /** One unified diff per file; empty when nothing would change. */
   diffs: Array<{ path: string; diff: string; changed: boolean }>;

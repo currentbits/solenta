@@ -12,7 +12,9 @@ import type { FusionInput, FusionPlan } from "../src/shared/ipc";
 afterEach(unmountAll);
 
 function planFor(input: FusionInput, synced: boolean): FusionPlan {
+  // Mirrors main: the Test default follows the package-manager pick until touched.
   const pm = input.picks?.packageManager ?? "npm";
+  const test = input.picks?.test ?? `${pm} test`;
   const diff = (path: string) =>
     synced
       ? ""
@@ -23,7 +25,15 @@ function planFor(input: FusionInput, synced: boolean): FusionPlan {
       { path: "AGENTS.md", kind: "agents", kindLabel: "Codex, Grok, OpenCode and others", hasBlock: synced },
       { path: "CLAUDE.md", kind: "claude", kindLabel: "Claude Code", hasBlock: synced },
     ],
-    agreed: [{ key: "build", label: "Build", value: "npm run build", sources: [{ path: "AGENTS.md", line: 9 }] }],
+    agreed: [
+      {
+        key: "build",
+        label: "Build",
+        value: "npm run build",
+        fused: pm === "npm" ? "npm run build" : `${pm} build`,
+        sources: [{ path: "AGENTS.md", line: 9 }],
+      },
+    ],
     conflicts: [
       {
         id: "packageManager",
@@ -33,6 +43,16 @@ function planFor(input: FusionInput, synced: boolean): FusionPlan {
         options: [
           { value: "npm", sources: [{ path: "AGENTS.md", line: 5 }] },
           { value: "pnpm", sources: [{ path: "CLAUDE.md", line: 5 }] },
+        ],
+      },
+      {
+        id: "test",
+        key: "test",
+        label: "Test",
+        pick: test,
+        options: [
+          { value: "npm test", sources: [{ path: "AGENTS.md", line: 6 }] },
+          { value: "pnpm test", sources: [{ path: "CLAUDE.md", line: 6 }] },
         ],
       },
     ],
@@ -90,6 +110,38 @@ describe("Fusion card", () => {
     assert.ok(m.query("[data-fusion-wrote]")?.textContent?.includes("Wrote AGENTS.md"));
     assert.equal(m.query("[data-fusion-status]")?.textContent, "Synced just now");
     assert.ok(m.text().includes("Nothing to change."));
+  });
+
+  it("changing the package-manager pick moves the Test default until Test is touched", async () => {
+    const planCalls: FusionInput[] = [];
+    const m = await mount(
+      <MemoryProjectTools
+        projectId="p1"
+        projectSlug="coder"
+        fusionPlan={async (input) => {
+          planCalls.push(input);
+          return planFor(input, false);
+        }}
+      />,
+    );
+    await m.click(m.query("[data-fusion] summary"));
+    const radio = (id: string, value: string) =>
+      m.query(`[data-fusion-conflict="${id}"] input[value="${value}"]`) as HTMLInputElement;
+    assert.equal(radio("test", "npm test").checked, true);
+    assert.ok(m.query("[data-fusion-agreed]")?.textContent?.includes("Build npm run build"));
+    assert.ok(!m.query("[data-fusion-agreed]")?.textContent?.includes("→"));
+
+    await m.click(radio("packageManager", "pnpm"));
+    assert.equal(radio("test", "pnpm test").checked, true, "Test default follows pnpm");
+    assert.deepEqual(planCalls.at(-1)?.picks, { packageManager: "pnpm" }, "Test stays untouched");
+    assert.ok(m.query("[data-fusion-agreed]")?.textContent?.includes("Build npm run build → pnpm build"));
+
+    // Once Test is picked by hand, the package manager no longer moves it.
+    await m.click(radio("test", "npm test"));
+    await m.click(radio("packageManager", "npm"));
+    await m.click(radio("packageManager", "pnpm"));
+    assert.equal(radio("test", "npm test").checked, true);
+    assert.deepEqual(planCalls.at(-1)?.picks, { packageManager: "pnpm", test: "npm test" });
   });
 
   it("offers the CLAUDE.md import and passes it to the plan", async () => {

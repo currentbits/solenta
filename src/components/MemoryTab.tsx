@@ -760,59 +760,86 @@ function FusionCard({
               </ul>
               {plan.agreed.length > 0 ? (
                 <p className={styles.doctorMeta} data-fusion-agreed="">
-                  Agreed by every file: {plan.agreed.map((f) => `${f.label} ${f.value}`).join(" · ")}
+                  Agreed by every file:{" "}
+                  {plan.agreed
+                    .map((f) =>
+                      f.fused && f.fused !== f.value
+                        ? `${f.label} ${f.value} → ${f.fused}`
+                        : `${f.label} ${f.value}`,
+                    )
+                    .join(" · ")}
                 </p>
               ) : null}
               {plan.conflicts.map((c) => (
-                <fieldset key={c.id} className={styles.fusionConflict} data-fusion-conflict={c.id}>
-                  <legend className={styles.fusionLegend}>{c.label}</legend>
-                  {c.options.map((o) => (
-                    <label key={o.value} className={styles.fusionOption}>
-                      <input
-                        type="radio"
-                        name={`fusion-${c.id}`}
-                        value={o.value}
-                        checked={(picks[c.id] ?? c.pick) === o.value}
-                        onChange={() => setPicks((prev) => ({ ...prev, [c.id]: o.value }))}
-                      />
-                      <code className={styles.fusionValue}>{o.value}</code>
-                      <span className={styles.fusionSources}>
-                        {o.sources.map((src) => `${src.path}:${src.line}`).join(", ")}
-                      </span>
-                    </label>
-                  ))}
-                </fieldset>
+                <div
+                  key={c.id}
+                  className={styles.fusionGroup}
+                  role="radiogroup"
+                  aria-label={c.label}
+                  data-fusion-conflict={c.id}
+                >
+                  <span className={styles.doctorMeta}>{c.label}</span>
+                  <ul className={styles.doctorFiles}>
+                    {c.options.map((o) => (
+                      <li key={o.value}>
+                        <label className={styles.fusionPick}>
+                          <input
+                            type="radio"
+                            name={`fusion-${c.id}`}
+                            value={o.value}
+                            checked={(picks[c.id] ?? c.pick) === o.value}
+                            onChange={() => setPicks((prev) => ({ ...prev, [c.id]: o.value }))}
+                          />
+                          <span className={styles.doctorFilePath}>{o.value}</span>
+                        </label>
+                        <span className={styles.doctorFileGrade}>
+                          {o.sources.map((src) => `${src.path}:${src.line}`).join(", ")}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
               ))}
               {paths.has("AGENTS.md") && paths.has("CLAUDE.md") ? (
-                <label className={styles.fusionOption}>
-                  <input
-                    type="checkbox"
-                    checked={importInClaude}
-                    onChange={(e) => setImportInClaude(e.target.checked)}
-                  />
-                  CLAUDE.md imports <code className={styles.fusionValue}>@AGENTS.md</code> instead of a copy
-                </label>
+                <ul className={styles.doctorFiles}>
+                  <li>
+                    <label className={styles.fusionPick}>
+                      <input
+                        type="checkbox"
+                        checked={importInClaude}
+                        onChange={(e) => setImportInClaude(e.target.checked)}
+                      />
+                      <span className={styles.doctorFilePath}>
+                        CLAUDE.md imports @AGENTS.md instead of a copy
+                      </span>
+                    </label>
+                  </li>
+                </ul>
               ) : null}
               {changed.length === 0 ? (
                 <p className={styles.doctorMeta}>Nothing to change.</p>
               ) : null}
               {changed.map((d) => (
-                <div key={d.path} className={styles.fusionDiffBlock} data-fusion-diff={d.path}>
-                  <label className={styles.fusionOption}>
-                    <input
-                      type="checkbox"
-                      checked={!skipped.has(d.path)}
-                      onChange={(e) =>
-                        setSkipped((prev) => {
-                          const next = new Set(prev);
-                          if (e.target.checked) next.delete(d.path);
-                          else next.add(d.path);
-                          return next;
-                        })
-                      }
-                    />
-                    {d.path}
-                  </label>
+                <div key={d.path} className={styles.fusionGroup} data-fusion-diff={d.path}>
+                  <ul className={styles.doctorFiles}>
+                    <li>
+                      <label className={styles.fusionPick}>
+                        <input
+                          type="checkbox"
+                          checked={!skipped.has(d.path)}
+                          onChange={(e) =>
+                            setSkipped((prev) => {
+                              const next = new Set(prev);
+                              if (e.target.checked) next.delete(d.path);
+                              else next.add(d.path);
+                              return next;
+                            })
+                          }
+                        />
+                        <span className={styles.doctorFilePath}>{d.path}</span>
+                      </label>
+                    </li>
+                  </ul>
                   <pre className={styles.doctorPreview}>
                     {d.diff.split("\n").map((line, i) => (
                       <span key={i} className={DIFF_LINE_CLASS[diffLineKind(line)]}>

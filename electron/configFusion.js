@@ -152,6 +152,58 @@ function commandCategory(cmd) {
   return null;
 }
 
+// Package-manager subcommands that are not `pnpm <script>` shorthand.
+const PM_BUILTINS = new Set([
+  "add", "remove", "rm", "exec", "dlx", "why", "publish", "link", "update", "upgrade",
+  "outdated", "version", "init", "create", "config", "list", "ls", "audit", "pack", "x",
+]);
+const EXEC_FOR = Object.freeze({ npm: "npx", pnpm: "pnpm dlx", yarn: "yarn dlx", bun: "bunx" });
+
+/** Package manager a command runs under (npx → npm, bunx → bun), or null. */
+function commandPm(cmd) {
+  const m = PM_RE.exec(cmd);
+  if (!m) return null;
+  return m[1] === "npx" ? "npm" : m[1] === "bunx" ? "bun" : m[1];
+}
+
+/**
+ * Split a package-manager command into what it does, independent of the
+ * manager: install, run a script (keeping its name and args), or exec a bin.
+ * Anything else (publish, add, …) returns null and is never translated.
+ */
+function parsePmCommand(cmd) {
+  const [head, sub = "", ...more] = cmd.split(" ");
+  const rest = more.join(" ");
+  if (head === "npx" || head === "bunx") return { kind: "exec", rest: cmd.slice(head.length + 1) };
+  if (!["npm", "pnpm", "yarn", "bun"].includes(head)) return null;
+  if (INSTALL_RE.test(cmd)) return { kind: "install", rest: "" };
+  if (sub === "dlx" && head !== "npm" && head !== "bun") return { kind: "exec", rest };
+  if (sub === "run" || sub === "run-script") return rest ? { kind: "script", rest } : null;
+  if (sub === "test" || sub === "start") return { kind: "script", rest: [sub, rest].filter(Boolean).join(" ") };
+  if (head !== "npm" && sub && !sub.startsWith("-") && !PM_BUILTINS.has(sub)) {
+    return { kind: "script", rest: [sub, rest].filter(Boolean).join(" ") };
+  }
+  return null;
+}
+
+/**
+ * Same command under another package manager:
+ * `npm run build` → `pnpm build`, `npm test` → `pnpm test`,
+ * `npm install` → `pnpm install`, `npx tsc` → `pnpm dlx tsc`.
+ */
+function translateCommand(cmd, pm) {
+  const from = commandPm(cmd);
+  const parsed = pm && from && from !== pm ? parsePmCommand(cmd) : null;
+  if (!parsed) return cmd;
+  if (parsed.kind === "install") return `${pm} install`;
+  if (parsed.kind === "exec") return `${EXEC_FOR[pm]} ${parsed.rest}`;
+  const [script, ...args] = parsed.rest.split(" ");
+  if (pm === "npm") {
+    return ["npm", script === "test" || script === "start" ? script : `run ${script}`, ...args].join(" ");
+  }
+  return [pm === "bun" ? "bun run" : pm, script, ...args].join(" ");
+}
+
 /** @param {string} line */
 function lineTokens(line) {
   return String(line).toLowerCase().match(/[a-z0-9]+/g) || [];
@@ -283,10 +335,21 @@ function analyzeFiles(files) {
   return { agreed, conflicts };
 }
 
-/** Default pick: what the last sync chose, else the most-cited option. */
-function defaultPick(conflict, previousBlock) {
+/**
+ * Default pick, used until the user touches the picker.
+ * Package manager: what the last sync chose, else the most-cited option
+ * (ties go to the file found first, AGENTS.md before CLAUDE.md).
+ * Commands: only options that run under that package manager are
+ * candidates when any exist, then the same last-sync / most-cited rule.
+ */
+function defaultPick(conflict, previousBlock, pm) {
+  let options = conflict.options;
+  if (pm && conflict.key !== "packageManager" && conflict.key !== "line") {
+    const same = options.filter((o) => commandPm(o.value) === pm);
+    if (same.length) options = same;
+  }
   if (previousBlock) {
-    const hit = conflict.options.find((o) =>
+    const hit = options.find((o) =>
       conflict.key === "packageManager"
         ? previousBlock.includes(`Package manager: ${o.value}\n`)
         : conflict.key === "line"
@@ -295,18 +358,19 @@ function defaultPick(conflict, previousBlock) {
     );
     if (hit) return hit.value;
   }
-  let best = conflict.options[0];
-  for (const o of conflict.options) if (o.sources.length > best.sources.length) best = o;
+  let best = options[0];
+  for (const o of options) if (o.sources.length > best.sources.length) best = o;
   return best.value;
 }
 
 /** Block body lines, before markers are added. */
-function blockBody(agreed, conflicts) {
-  const chosen = new Map(agreed.map((f) => [f.key, f.value]));
+function blockBody(agreed, conflicts, pm, explicit) {
+  const chosen = new Map(agreed.map((f) => [f.key, f.fused]));
   const lines = [];
   for (const c of conflicts) {
     if (c.key === "line") lines.push(c.pick);
-    else chosen.set(c.key, c.pick);
+    // A command the user picked by hand is written as picked.
+    else chosen.set(c.key, explicit.has(c.id) ? c.pick : translateCommand(c.pick, pm));
   }
   const facts = [];
   for (const [key, label] of FACT_KEYS) {
@@ -423,12 +487,21 @@ function planFusion(files, opts = {}) {
   const previous = withBlock && findBlock(withBlock.content);
   const previousBlock = previous ? withBlock.content.slice(previous.from, previous.to) : "";
   const picks = opts.picks || {};
+  const explicit = new Set();
+  // FACT_KEYS order puts the package manager first, so `pm` is settled
+  // before any command conflict derives its default from it.
+  let pm = (agreed.find((f) => f.key === "packageManager") || {}).value || null;
   for (const c of conflicts) {
-    c.pick = c.options.some((o) => o.value === picks[c.id])
-      ? picks[c.id]
-      : defaultPick(c, previousBlock);
+    if (c.options.some((o) => o.value === picks[c.id])) {
+      c.pick = picks[c.id];
+      explicit.add(c.id);
+    } else {
+      c.pick = defaultPick(c, previousBlock, pm);
+    }
+    if (c.key === "packageManager") pm = c.pick;
   }
-  const body = blockBody(agreed, conflicts);
+  for (const f of agreed) f.fused = f.key === "packageManager" ? f.value : translateCommand(f.value, pm);
+  const body = blockBody(agreed, conflicts, pm, explicit);
   const targets = new Set(opts.paths || files.map((f) => f.path));
   const agentsSynced = files.some((f) => f.path === "AGENTS.md" && targets.has(f.path));
   const bodyFor = (rel) =>
@@ -494,6 +567,7 @@ module.exports = {
   extractFileFacts,
   analyzeFiles,
   applyBlock,
+  translateCommand,
   blockSha,
   fusionStatus,
   unifiedDiff,

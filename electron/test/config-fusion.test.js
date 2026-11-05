@@ -162,13 +162,67 @@ describe("applyBlock / planFusion", () => {
     const block = plan.after["AGENTS.md"].slice(AGENTS.length);
     assert.match(block, /- Package manager: pnpm\n/);
     assert.match(block, /- Test: `pnpm test`\n/);
-    // Unpicked: most-cited, ties go to the first file.
-    assert.match(block, /- Build: `npm run build`\n/);
+    // Unpicked commands follow the picked package manager.
+    assert.match(block, /- Build: `pnpm run build`\n/);
+    assert.match(block, /- Install: `pnpm install`\n/);
     assert.ok(plan.after["AGENTS.md"].startsWith(AGENTS));
     const diff = plan.diffs.find((d) => d.path === "CLAUDE.md");
     assert.equal(diff.changed, true);
     assert.match(diff.diff, /^--- a\/CLAUDE\.md\n\+\+\+ b\/CLAUDE\.md\n@@ -11,3 \+11,15 @@/);
     assert.ok(diff.diff.split("\n").slice(3).every((l) => !l.startsWith("-")));
+  });
+
+  it("translates commands into another package manager, keeping script names", () => {
+    const cases = [
+      ["npm run build", "pnpm", "pnpm build"],
+      ["npm test", "pnpm", "pnpm test"],
+      ["npm install", "pnpm", "pnpm install"],
+      ["npm ci", "yarn", "yarn install"],
+      ["npx tsc --noEmit", "pnpm", "pnpm dlx tsc --noEmit"],
+      ["npx tsc --noEmit", "yarn", "yarn dlx tsc --noEmit"],
+      ["npx tsc --noEmit", "bun", "bunx tsc --noEmit"],
+      ["npm run test:electron -- --watch", "bun", "bun run test:electron -- --watch"],
+      ["pnpm lint", "npm", "npm run lint"],
+      ["yarn test", "npm", "npm test"],
+      ["pnpm dlx prettier .", "npm", "npx prettier ."],
+      ["npm publish", "pnpm", "npm publish"],
+      ["cargo test", "pnpm", "cargo test"],
+      ["pnpm run build", "pnpm", "pnpm run build"],
+    ];
+    for (const [cmd, pm, want] of cases) {
+      assert.equal(fusion.translateCommand(cmd, pm), want, `${cmd} under ${pm}`);
+    }
+  });
+
+  it("pnpm picked: Test defaults to pnpm, agreed npm commands are translated", () => {
+    const files = [
+      { path: "AGENTS.md", content: "- Test: `npm test`\n- Build: `npm run build`\n- Lint: `npm run lint`\n" },
+      { path: "CLAUDE.md", content: "- Test: `pnpm test`\n- Lint: `npm run lint`\n" },
+      { path: "GEMINI.md", content: "- Test: `npm test`\n" },
+    ];
+    // npm is most cited, so pnpm only wins when picked.
+    const unpicked = fusion.planFusion(files);
+    assert.equal(unpicked.conflicts.find((c) => c.key === "packageManager").pick, "npm");
+    assert.equal(unpicked.conflicts.find((c) => c.key === "test").pick, "npm test");
+
+    const plan = fusion.planFusion(files, { picks: { packageManager: "pnpm" } });
+    assert.equal(plan.conflicts.find((c) => c.key === "test").pick, "pnpm test");
+    const block = plan.after["AGENTS.md"];
+    assert.match(block, /- Test: `pnpm test`\n/);
+    assert.match(block, /- Build: `pnpm build`\n/);
+    assert.match(block, /- Lint: `pnpm lint`\n/);
+    assert.doesNotMatch(block.slice(block.indexOf("solenta:fusion:start")), /`npm /);
+    assert.deepEqual(
+      plan.agreed.filter((f) => f.key !== "packageManager").map((f) => [f.value, f.fused]),
+      [
+        ["npm run build", "pnpm build"],
+        ["npm run lint", "pnpm lint"],
+      ],
+    );
+
+    // A command picked by hand is kept as picked, even against the manager.
+    const manual = fusion.planFusion(files, { picks: { packageManager: "pnpm", test: "npm test" } });
+    assert.match(manual.after["AGENTS.md"], /- Test: `npm test`\n/);
   });
 
   it("lets CLAUDE.md import AGENTS.md instead of a copy", () => {
