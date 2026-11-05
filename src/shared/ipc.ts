@@ -1649,6 +1649,8 @@ export interface ThreadSummaryInfo {
   id: string;
   title: string;
   provider: string;
+  /** Named account of `provider` (#453); absent on the default account. */
+  providerInstance?: string | null;
   status: ThreadStatus;
   handoffFrom: string | null;
   /**

@@ -9,8 +9,19 @@ const { createRequire } = require("node:module");
 const { registerMcpServer, unregisterMcpServer } = require("./memory-sup.js");
 const pairing = require("./pairing.js");
 const oauth = require("./mcpOauth.js");
-const { startWithPoolFailover, poolFromStore } = require("./subagentPool.js");
+const {
+  startWithPoolFailover,
+  poolFromStore,
+  resolveSubagentPool,
+} = require("./subagentPool.js");
 const { resolveBin, isBinAvailable } = require("./providers.js");
+const {
+  parseProviderRef,
+  providerRef,
+  threadProviderRef,
+  accountRefsByProvider,
+  supportsAutoAccount,
+} = require("./providerInstances.js");
 const {
   forkWorkerThread,
   dirtySnapshotWarning,
@@ -34,6 +45,7 @@ const {
   refreshWorkerSnapshot,
   linkPullRequest,
   addAutomation,
+  instanceAuthProbes,
 } = require("./services.js");
 const { stop: stopDevServer } = require("./devservers.js");
 const prTools = require("./prTools.js");
@@ -354,6 +366,8 @@ async function loadOrCreateConfig(file) {
 function createToolHandlers(deps) {
   const { store, runner, forkThread, getProvider, broadcast, userDataPath } =
     deps;
+  const fetchProviderLimits =
+    deps.fetchProviderLimits || require("./providerUsage.js").fetchProviderLimits;
   const getIosSimulator =
     typeof deps.getIosSimulator === "function" ? deps.getIosSimulator : null;
   const log = typeof deps.log === "function" ? deps.log : undefined;
@@ -505,6 +519,41 @@ function createToolHandlers(deps) {
       .concat(far);
   }
 
+  /**
+   * thread_fork provider (#1857): a base id, `<id>:<instance>` naming an
+   * account that exists, or `<id>:auto` for the one with the most quota left.
+   * @param {string} raw
+   * @returns {Promise<{ ref: string, note: string | null }>}
+   */
+  async function resolveForkProvider(raw) {
+    const { provider, instance } = parseProviderRef(raw);
+    if (!getProvider(provider)) {
+      throw new Error(`Unknown provider: ${raw}`);
+    }
+    if (!instance) return { ref: provider, note: null };
+    const settings = typeof store.getSettings === "function" ? store.getSettings() : null;
+    const refs = accountRefsByProvider(settings).get(provider) || [];
+    const auto = supportsAutoAccount(provider) && refs.length > 0;
+    if (instance === "auto" && auto) {
+      const { pickAccountByQuota } = require("./providerUsage.js");
+      const rows = await fetchProviderLimits({
+        only: provider,
+        // The base overlay probe (ref === provider) stays: it is the env the
+        // default account actually runs with.
+        instances: instanceAuthProbes(store, userDataPath).filter(
+          (p) => p.provider === provider,
+        ),
+      });
+      return pickAccountByQuota([provider, ...refs], rows);
+    }
+    const ref = providerRef(provider, instance);
+    if (!refs.includes(ref)) {
+      const valid = [provider, ...refs, ...(auto ? [`${provider}:auto`] : [])];
+      throw new Error(`Unknown account: ${raw}. Valid ${provider} refs: ${valid.join(", ")}`);
+    }
+    return { ref, note: null };
+  }
+
   async function thread_fork(args) {
     const source = store.getThread(args.threadId);
     if (!source) {
@@ -526,11 +575,21 @@ function createToolHandlers(deps) {
     }
     /** @type {{ threadId: string, provider?: string, pool?: string, worktree?: boolean, title?: string, prompt?: string }} */
     const input = { threadId: args.threadId, prompt: args.prompt };
+    /** @type {{ ref: string, note: string | null } | null} */
+    let picked = null;
     if (args.provider != null) {
-      if (!getProvider(String(args.provider))) {
-        throw new Error(`Unknown provider: ${args.provider}`);
+      // Same precedence forkWorkerThread applies: a pinned pool or an
+      // explicit alias ignores provider, so do not validate or pick for it.
+      const poolWins =
+        resolveSubagentPool(poolFromStore(store), {
+          pool: args.pool,
+          provider: String(args.provider),
+        })?.fromPool === true;
+      if (poolWins) input.provider = String(args.provider);
+      else {
+        picked = await resolveForkProvider(String(args.provider));
+        input.provider = picked.ref;
       }
-      input.provider = String(args.provider);
     }
     if (args.pool != null) input.pool = String(args.pool);
     if (args.worktree === false) input.worktree = false;
@@ -538,6 +597,15 @@ function createToolHandlers(deps) {
     // orchWorker + lazy worktree live in services.forkWorkerThread, shared
     // with the runner's pendingFork dispatch.
     let fork = forkWorkerThread(store, input, forkThread);
+    // A pinned pool ignores provider, so only say what actually ran.
+    if (picked && picked.note && threadProviderRef(fork) === picked.ref) {
+      store.appendMessage(fork.id, {
+        id: crypto.randomUUID(),
+        role: "event",
+        text: picked.note,
+        createdAt: Date.now(),
+      });
+    }
     const warning = dirtySnapshotWarning(fork);
     try {
       // #246: a declared tier routes the worker's first turn through the
@@ -552,7 +620,7 @@ function createToolHandlers(deps) {
         startRun: (runInput) => runner.startRun(runInput),
         setProvider,
         isAvailable: (id) => {
-          const entry = getProvider(id);
+          const entry = getProvider(parseProviderRef(id).provider);
           if (!entry) return false;
           return isBinAvailable(resolveBin(entry));
         },
@@ -1983,6 +2051,10 @@ function buildMcpServer(sdk, handlers, opts = {}) {
         "pass worktree:false to run it in the project checkout instead. SSH remote projects " +
         "cannot host worker worktrees: a default fork there is refused, and worktree:false " +
         "runs the worker in the shared remote checkout alongside any other worker. " +
+        "provider is a provider id (claude) or a named account ref (claude:team) from the " +
+        "[Worker accounts] list in your prompt; <provider>:auto (claude:auto) picks that " +
+        "provider's account with the most 5-hour and weekly quota left, skipping any at 95% " +
+        "or more. An unknown account is rejected with the valid refs. " +
         "Optionally pass pool (an alias from the worker pool listed in your prompt) instead of " +
         "provider. Omit both to use the pool default. When the pool is pinned (force), pool and " +
         "provider are ignored. Optionally pass tier (fast, balanced, strong, or auto to classify " +

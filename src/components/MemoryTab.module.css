@@ -409,7 +409,7 @@
 
 .projectTag {
   align-self: flex-start;
-  font-family: var(--mono);
+  font-family: var(--font);
   font-size: 11px;
   color: var(--text-dim);
   padding: 1px 6px;
@@ -420,6 +420,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .formRow {

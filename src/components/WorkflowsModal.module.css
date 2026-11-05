@@ -13,7 +13,7 @@
   flex-direction: column;
   width: min(920px, 100%);
   height: min(640px, 100%);
-  border-radius: 14px;
+  border-radius: var(--radius-lg);
   border: 1px solid var(--border);
   background: var(--bg-elevated);
   box-shadow: var(--shadow-modal);
@@ -42,7 +42,7 @@
   height: 28px;
   display: grid;
   place-items: center;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   color: var(--text-muted);
   font-size: 16px;
   line-height: 1;
@@ -86,7 +86,7 @@
   width: 100%;
   text-align: left;
   padding: 8px 10px;
-  border-radius: 8px;
+  border-radius: var(--radius);
   color: var(--text-muted);
   font-size: 12px;
   font-weight: 500;
@@ -140,7 +140,7 @@
 .newBtn {
   width: 100%;
   padding: 7px 10px;
-  border-radius: 8px;
+  border-radius: var(--radius);
   border: 1px solid var(--border);
   background: var(--overlay-soft);
   color: var(--text-muted);
@@ -201,7 +201,7 @@
 .textarea {
   width: 100%;
   padding: 8px 10px;
-  border-radius: 8px;
+  border-radius: var(--radius);
   border: 1px solid var(--border);
   background: var(--card);
   color: var(--text);
@@ -232,7 +232,7 @@
 
 .phaseCard {
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
   background: var(--card);
   padding: 12px;
   display: flex;
@@ -264,7 +264,7 @@
   height: 26px;
   display: grid;
   place-items: center;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--border);
   background: var(--overlay-soft);
   color: var(--text-muted);
@@ -344,7 +344,7 @@
 
 .btn {
   padding: 7px 12px;
-  border-radius: 8px;
+  border-radius: var(--radius);
   border: 1px solid var(--border);
   background: var(--overlay-soft);
   color: var(--text-muted);

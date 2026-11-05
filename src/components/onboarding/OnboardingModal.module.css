@@ -348,7 +348,7 @@ fieldset.setupSection:disabled {
   flex: 1;
   min-width: 0;
   padding: 8px 10px;
-  border-radius: 8px;
+  border-radius: var(--radius);
   border: 1px solid var(--border);
   background: var(--input-fill);
   color: var(--text);

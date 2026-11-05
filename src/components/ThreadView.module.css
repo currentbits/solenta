@@ -57,7 +57,7 @@
   gap: 8px 12px;
   padding: 7px 10px 7px 16px;
   border-bottom: 1px solid var(--border-soft);
-  background: var(--bg-elevated);
+  background: var(--bg);
   flex-shrink: 0;
   min-height: 44px;
 }
@@ -485,9 +485,9 @@
 }
 
 .project {
-  color: var(--text-muted);
+  color: var(--text-dim);
   font-family: var(--font);
-  font-size: 13.5px;
+  font-size: 13px;
   white-space: nowrap;
   /* A fixed cap, not 45%: the crumb shrinks to a short title like
      "New Thread" and a percentage then clipped the slug. */
@@ -540,7 +540,7 @@ button.project:focus-visible {
 
 .threadTitle {
   font-weight: 600;
-  font-size: 13.5px;
+  font-size: 14px;
   letter-spacing: -0.015em;
   color: var(--text);
   overflow: hidden;
@@ -629,7 +629,7 @@ button.project:focus-visible {
   z-index: 20;
   min-width: 168px;
   padding: 4px;
-  border-radius: 8px;
+  border-radius: var(--radius);
   border: 1px solid var(--border);
   background: var(--bg-elevated);
   box-shadow: var(--shadow-pop);
@@ -639,7 +639,7 @@ button.project:focus-visible {
   display: block;
   width: 100%;
   padding: 7px 10px;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   border: none;
   background: transparent;
   color: var(--text);
@@ -743,6 +743,18 @@ a.btn {
 .btn:hover:not(:disabled) {
   color: var(--text);
   background: var(--card-hover);
+}
+
+/* Header chrome: only the next git action keeps an outline; Fork, Hand off
+   and friends are ghost buttons whose hover fill is the affordance. */
+.header .btn:not([data-next-git-action]):not(.btnPrimary) {
+  border-color: transparent;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.header .btn:not([data-next-git-action]):not(.btnPrimary):hover:not(:disabled) {
+  color: var(--text);
 }
 
 .btn:focus-visible {
@@ -1129,13 +1141,21 @@ a.btn {
   display: flex;
   align-items: center;
   gap: 9px;
-  width: 100%;
+  /* Hanging icon: the 14px glyph + 9px gap sit in the gutter so every step
+     label starts on the same left edge as the prose. */
+  width: calc(100% + 23px);
+  margin-left: -23px;
   min-width: 0;
   padding: 3px 0;
-  font-size: 13px;
+  font-size: 12.5px;
   font-weight: 400;
-  color: var(--text-muted);
+  color: var(--text-dim);
   text-align: left;
+}
+
+/* Tool rows are status, not content: one step below prose, brighten on hover. */
+.toolGroupToggle:hover {
+  color: var(--text-muted);
 }
 
 .stepIcon {
@@ -1155,8 +1175,8 @@ a.btn {
 }
 
 .stepMore {
-  margin-left: auto;
-  padding-left: 12px;
+  margin-left: 4px;
+  padding-left: 4px;
   flex-shrink: 0;
   font-size: 12px;
   color: var(--text-dim);
@@ -1177,18 +1197,15 @@ a.btn {
   box-shadow: var(--accent-mark-ring);
 }
 
+/* The recalled count reads as emphasis, not a highlighter swipe. */
 .mark {
-  padding: 0 2px;
   color: var(--text);
-  background-image: linear-gradient(var(--mark), var(--mark));
-  background-repeat: no-repeat;
-  background-size: 100% 46%;
-  background-position: 0 85%;
+  font-weight: 500;
 }
 
 .memoryList {
   list-style: none;
-  margin: 2px 0 8px 6px;
+  margin: 2px 0 8px -17px;
   padding: 0 0 0 16px;
   border-left: 1px solid var(--border);
   font-size: 12.5px;
@@ -1201,9 +1218,10 @@ a.btn {
 
 .memoryMeta {
   margin-left: 8px;
-  font-family: var(--mono);
+  font-family: var(--font);
   font-size: 11px;
   color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
 }
 
 .toolHeader {
@@ -1300,7 +1318,7 @@ a.btn {
   height: auto;
   margin: 10px 12px;
   border: 1px solid var(--border-soft);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   cursor: zoom-in;
 }
 
@@ -1447,7 +1465,7 @@ a.btn {
   display: grid;
   place-items: center;
   border: 1px solid var(--border);
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--text);
   font-size: 10px;
@@ -1826,9 +1844,10 @@ button.diffLineGutter:focus-visible {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-family: var(--mono);
+  font-family: var(--font);
   font-size: 11.5px;
   color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
 }
 
 .largeDiffNote {
@@ -2129,6 +2148,8 @@ button.diffLineGutter:focus-visible {
      its own block (code blocks, tables), the pane itself stays fixed. */
   overflow-x: hidden;
   padding: 24px 24px 16px;
+  /* Content scrolls out under a short fade, never a hard slice at the header. */
+  mask-image: linear-gradient(to bottom, transparent 0, #000 12px);
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -2202,6 +2223,25 @@ button.diffLineGutter:focus-visible {
   contain-intrinsic-size: auto 220px;
 }
 
+/* content-visibility clips paint to the row box, so the box reaches 24px into
+   the gutter on each side (padding keeps the content on the column). That
+   leaves room for the hanging step icons. margin % is of the body width, so
+   this stays centred at every width and never overflows a narrow pane. */
+.body > .settledRow {
+  width: auto;
+  max-width: none;
+  margin-inline: max(-24px, calc((100% - var(--thread-column)) / 2 - 24px));
+  padding-inline: 24px;
+}
+
+/* The plan card's fill reaches past the column so its text shares the
+   prose edge. */
+.body > .planCard {
+  width: auto;
+  max-width: none;
+  margin-inline: max(-14px, calc((100% - var(--thread-column)) / 2 - 14px));
+}
+
 .card {
   background: transparent;
   border: none;
@@ -2255,7 +2295,7 @@ button.diffLineGutter:focus-visible {
 .checkbox {
   width: 16px;
   height: 16px;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   border: 1px solid var(--border);
   display: grid;
   place-items: center;
@@ -2296,7 +2336,7 @@ button.diffLineGutter:focus-visible {
 }
 
 .eventTitle {
-  margin: 2px 0 6px 23px;
+  margin: 2px 0 6px;
   font-size: 12.5px;
   color: var(--text-muted);
   white-space: pre-wrap;
@@ -2312,7 +2352,7 @@ button.diffLineGutter:focus-visible {
   max-height: 320px;
   overflow-y: auto;
   border: 1px solid var(--border-soft);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   user-select: text;
 }
 
@@ -2380,7 +2420,7 @@ button.diffLineGutter:focus-visible {
 }
 
 .message {
-  padding: 2px 2px;
+  padding: 2px 0;
 }
 
 /**
@@ -2434,7 +2474,7 @@ button.diffLineGutter:focus-visible {
 
 .msgMeta {
   margin-top: 6px;
-  font-family: var(--mono);
+  font-family: var(--font);
   font-size: 11.5px;
   color: var(--text-dim);
   display: flex;
@@ -2442,6 +2482,7 @@ button.diffLineGutter:focus-visible {
   flex-wrap: wrap;
   gap: 6px;
   user-select: none;
+  font-variant-numeric: tabular-nums;
 }
 
 .msgActions {
@@ -2499,42 +2540,45 @@ button.diffLineGutter:focus-visible {
 
 /* Provenance tier strip under an assistant message (issue #404). */
 .provStrip {
-  margin-top: 8px;
+  margin-top: 6px;
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 4px 14px;
   user-select: none;
 }
 
 .provChip {
   display: inline-flex;
   align-items: center;
-  height: 20px;
-  padding: 0 7px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-  font-size: 10.5px;
-  font-weight: 550;
-  color: var(--text-muted);
+  gap: 6px;
+  height: 18px;
+  padding: 0;
+  font-size: 11.5px;
+  font-weight: 450;
+  color: var(--text-dim);
   white-space: nowrap;
   cursor: default;
 }
 
-.provChip[data-tier="repo"] {
-  color: var(--green);
+/* The tier is a 5px dot, not a coloured outline: the chip stays quiet. */
+.provChip::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
 }
 
-.provChip[data-tier="memory"] {
-  color: var(--blue);
+/* Repo and memory dots stay neutral: yellow is kept for selection and the
+   brand mark, and colour here only flags the "prior knowledge" warning. */
+.provChip[data-tier="repo"]::before,
+.provChip[data-tier="memory"]::before {
+  background: color-mix(in srgb, var(--text-dim) 70%, transparent);
 }
 
-.provChip[data-tier="issue"] {
-  color: var(--text);
-}
-
-.provChip[data-tier="prior"] {
-  color: var(--amber);
-  border-style: dashed;
+.provChip[data-tier="prior"]::before {
+  background: var(--amber);
 }
 
 /* Per-run review strip: a tidy card row tucked under the run's last message. */
@@ -2655,7 +2699,7 @@ button.diffLineGutter:focus-visible {
   max-width: 100%;
   max-height: 100%;
   object-fit: contain;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   cursor: zoom-in;
   touch-action: none;
 }
@@ -2772,6 +2816,16 @@ button.diffLineGutter:focus-visible {
   font-weight: 550;
   color: var(--text-muted);
   white-space: nowrap;
+}
+
+/* Cost is a reading, not a control: plain tabular text, no outline. */
+.sandboxBadge[data-cost-badge] {
+  border-color: transparent;
+  padding: 0 4px;
+  font-weight: 500;
+  font-size: 12px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
 }
 
 .sandboxBadge[data-sandboxed="yes"] {
@@ -2931,7 +2985,7 @@ button.diffLineGutter:focus-visible {
 .inboundCard {
   max-width: min(72ch, 85%);
   padding: 10px 14px;
-  border-radius: 4px 14px 14px 14px;
+  border-radius: 4px 12px 12px 14px;
   background: var(--card);
 }
 
@@ -2980,7 +3034,7 @@ button.diffLineGutter:focus-visible {
 .userBubble {
   max-width: min(72ch, 85%);
   padding: 10px 14px;
-  border-radius: 14px 14px 4px 14px;
+  border-radius: 12px 12px 4px 14px;
   background: var(--overlay-hover);
   color: var(--text);
   line-height: 1.55;
@@ -3062,15 +3116,15 @@ button.diffLineGutter:focus-visible {
 }
 
 .messageUser[data-burst="first"] .userBubble {
-  border-radius: 14px 14px 4px 4px;
+  border-radius: 12px 12px 4px 4px;
 }
 
 .messageUser[data-burst="middle"] .userBubble {
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
 }
 
 .messageUser[data-burst="last"] .userBubble {
-  border-radius: 4px 4px 4px 14px;
+  border-radius: 4px 4px 4px 12px;
 }
 
 .steerLabel {
@@ -3123,7 +3177,7 @@ button.diffLineGutter:focus-visible {
   cursor: pointer;
   list-style: none;
   text-align: left;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
 }
 
 .workerActivitySummary::-webkit-details-marker,
@@ -3195,7 +3249,7 @@ button.diffLineGutter:focus-visible {
   width: 100%;
   min-height: 72px;
   padding: 10px 14px;
-  border-radius: 14px 14px 4px 14px;
+  border-radius: 12px 12px 4px 14px;
   background: var(--blue-soft);
   border: 1px solid var(--blue-border);
   color: var(--info-fg-strong);
@@ -3256,7 +3310,7 @@ button.diffLineGutter:focus-visible {
 .attachmentThumb {
   width: 22px;
   height: 22px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   object-fit: cover;
   flex-shrink: 0;
   cursor: zoom-in;
@@ -3288,7 +3342,7 @@ button.diffLineGutter:focus-visible {
   display: block;
   height: 192px;
   max-width: 100%;
-  border-radius: 14px 14px 4px 14px;
+  border-radius: 12px 12px 4px 14px;
   overflow: hidden;
   background: var(--border-soft);
 }
@@ -3317,7 +3371,7 @@ button.diffLineGutter:focus-visible {
   width: 320px;
   height: 192px;
   gap: 2px;
-  border-radius: 14px 14px 4px 14px;
+  border-radius: 12px 12px 4px 14px;
   overflow: hidden;
   background: var(--border);
 }
@@ -3382,7 +3436,7 @@ button.diffLineGutter:focus-visible {
 .emptyGlyph {
   width: 48px;
   height: 48px;
-  border-radius: 14px;
+  border-radius: var(--radius-lg);
   display: grid;
   place-items: center;
   background: var(--card);
@@ -3394,7 +3448,7 @@ button.diffLineGutter:focus-visible {
 .emptyGlyphSm {
   width: 40px;
   height: 40px;
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   box-shadow: none;
 }
 
@@ -3584,7 +3638,7 @@ button.diffLineGutter:focus-visible {
   margin-right: 2px;
   padding: 0 4px;
   border: 1px solid currentColor;
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   font: inherit;
   font-size: 10.5px;
   line-height: 1.4;
@@ -3631,13 +3685,13 @@ button.diffLineGutter:focus-visible {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 8px 0 8px 10px;
-  border: none;
-  border-left: 2px solid color-mix(in srgb, var(--text) 35%, transparent);
-  border-radius: 0;
-  background: none;
+  padding: 12px 14px;
+  /* Same box as the composer card below it: one surface, one hairline. */
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--card);
   box-shadow: none;
-  font-size: 12.5px;
+  font-size: 13px;
 }
 
 .planCardHead {
@@ -3647,7 +3701,7 @@ button.diffLineGutter:focus-visible {
 }
 
 .planCardTitle {
-  font-weight: 500;
+  font-weight: 600;
   color: var(--text);
 }
 
@@ -3660,8 +3714,9 @@ button.diffLineGutter:focus-visible {
 
 .planProgress {
   color: var(--text-dim);
-  font-family: var(--mono);
+  font-family: var(--font);
   font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
 }
 
 .planToggle {
@@ -3697,16 +3752,16 @@ button.diffLineGutter:focus-visible {
   overflow-wrap: anywhere;
 }
 
-/* Plan diamonds (#1429 F4): todo hollow, doing half-yellow, done green. */
+/* Plan steps: todo an empty ring, doing a yellow-cored ring, done solid green. */
 .planStep::before {
   content: "";
   flex-shrink: 0;
-  width: 9px;
-  height: 9px;
+  width: 10px;
+  height: 10px;
   box-sizing: border-box;
   border: 1.5px solid var(--text-dim);
-  border-radius: 2px;
-  transform: translateY(1px) rotate(45deg);
+  border-radius: 50%;
+  transform: translateY(1px);
 }
 
 .planStep[data-plan-step="doing"] {
@@ -3715,12 +3770,19 @@ button.diffLineGutter:focus-visible {
 
 .planStep[data-plan-step="doing"]::before {
   border-color: var(--accent-edge);
-  background: linear-gradient(135deg, var(--accent) 50%, transparent 50%);
+  background: radial-gradient(circle, var(--accent-dot) 0 2.5px, transparent 3px);
+}
+
+/* Done: a green check-circle, and the step steps back to tertiary ink. */
+.planStep[data-plan-step="done"] {
+  color: var(--text-dim);
 }
 
 .planStep[data-plan-step="done"]::before {
-  border-color: var(--green);
+  border: none;
   background: var(--green);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath fill-rule='evenodd' d='M6 0a6 6 0 1 1 0 12A6 6 0 0 1 6 0ZM3.3 6l2.1 2 3.5-3.7-.8-.8-2.7 2.9-1.3-1.2Z'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath fill-rule='evenodd' d='M6 0a6 6 0 1 1 0 12A6 6 0 0 1 6 0ZM3.3 6l2.1 2 3.5-3.7-.8-.8-2.7 2.9-1.3-1.2Z'/%3E%3C/svg%3E") center / contain no-repeat;
 }
 
 .permissionActions {
@@ -3842,7 +3904,7 @@ button.diffLineGutter:focus-visible {
   flex: none;
   min-width: 18px;
   height: 18px;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   border: 1px solid var(--border);
   display: inline-flex;
   align-items: center;
@@ -3990,10 +4052,11 @@ button.diffLineGutter:focus-visible {
 }
 
 .statusElapsed {
-  font-family: var(--mono);
+  font-family: var(--font);
   font-size: 11.5px;
   color: var(--text-dim);
   white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .statusStrip .stopBtn,
@@ -4093,7 +4156,8 @@ button.diffLineGutter:focus-visible {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-family: var(--mono);
+  font-family: var(--font);
+  font-variant-numeric: tabular-nums;
 }
 
 /* Queued follow-up: the status strip, muted — it is waiting, not running. */
@@ -4278,6 +4342,8 @@ button.diffLineGutter:focus-visible {
   width: 100%;
   margin: -6px auto -10px;
   padding: 2px;
+  /* Hang the chevron in the gutter like the step icons: label on the prose edge. */
+  transform: translateX(-22px);
   border: none;
   background: transparent;
   color: var(--text-dim);
@@ -4639,8 +4705,9 @@ a.menuItem {
 }
 
 .worktreeLineBranch {
-  font-family: var(--mono);
+  font-family: var(--font);
   font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
 }
 
 .worktreeLineSpinner {
@@ -4844,7 +4911,7 @@ a.menuItem {
   justify-content: center;
   width: 24px;
   height: 22px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   color: var(--text-dim);
 }
 
@@ -4890,9 +4957,9 @@ a.menuItem {
   max-width: 420px;
   height: 26px;
   padding: 0 10px;
-  border: 1px dashed var(--border);
-  border-radius: var(--radius-pill);
-  background: transparent;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: var(--overlay-soft);
   color: var(--text-muted);
   font: inherit;
   font-size: 12px;
@@ -4900,7 +4967,7 @@ a.menuItem {
 }
 
 .suggestedChip:hover:not(:disabled) {
-  border-style: solid;
+  background: var(--overlay-hover);
   color: var(--text);
 }
 
@@ -4911,7 +4978,7 @@ a.menuItem {
   width: 22px;
   height: 22px;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-dim);
   cursor: pointer;
@@ -4926,10 +4993,12 @@ a.menuItem {
    and workspace strip directly under it; the first send drops the layout
    back to the normal transcript. */
 /* The composer shares the transcript's reading column (#1429). Composer
-   pads itself 20px a side, so the column grows by that to line up. */
+   pads itself 20px a side, and its card reaches 14px past the column like
+   the plan card does, so their box edges line up and the placeholder sits
+   on the prose edge. */
 .composerColumn {
   width: 100%;
-  max-width: calc(var(--thread-column) + 40px);
+  max-width: calc(var(--thread-column) + 68px);
   margin: 0 auto;
   flex-shrink: 0;
 }
@@ -5094,9 +5163,10 @@ a.menuItem {
   padding: 5px 14px;
   border: 1px solid var(--border);
   border-radius: 999px;
-  font-family: var(--mono);
+  font-family: var(--font);
   font-size: 11.5px;
   color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
 }
 
 .memoryPill .memoryDiamond {
@@ -5159,7 +5229,7 @@ button.heroProject:hover {
   gap: 8px;
   padding: 7px 8px;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-muted);
   font: inherit;
@@ -5235,4 +5305,37 @@ button.heroProject:hover {
   overflow-wrap: anywhere;
   /* An env spec's setup is a multi-line script (#396). */
   white-space: pre-wrap;
+}
+
+/* One meta line per run of assistant messages: earlier messages in the run
+   float theirs (time + actions) at the top right, on hover only, so the run
+   reads as one block of prose instead of prose/meta/prose/meta. */
+.settledRow:has(> .message):has(+ .settledRow > .message) > .message {
+  position: relative;
+}
+
+.settledRow:has(> .message):has(+ .settledRow > .message)
+  > .message
+  > .msgMeta {
+  position: absolute;
+  top: -10px;
+  right: 0;
+  margin: 0;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  box-shadow: 0 0 0 1px var(--border-soft);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+
+.settledRow:has(> .message):has(+ .settledRow > .message):hover
+  > .message
+  > .msgMeta,
+.settledRow:has(> .message):has(+ .settledRow > .message)
+  > .message
+  > .msgMeta:focus-within {
+  opacity: 1;
+  pointer-events: auto;
 }

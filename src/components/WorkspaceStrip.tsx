@@ -105,7 +105,7 @@ export function WorkspaceStrip({
       <div className={`${styles.strip} ${styles.readOnly}`} data-workspace-strip="readonly">
         <span className={styles.label} data-workspace-label={worktree ? "worktree" : "local"}>
           {worktree ? <WorktreeGlyph /> : <FolderGlyph />}
-          {worktree ? "worktree" : "local checkout"}
+          {worktree ? "Worktree" : "Local checkout"}
           {started.branch ? ` · ${started.branch}` : ""}
         </span>
         <span className={styles.spacer} />
