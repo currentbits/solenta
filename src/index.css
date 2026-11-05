@@ -156,7 +156,8 @@
   /* Yellow on paper is ~1.2:1, so borders and rings on light use olive. */
   --accent-border: rgba(133, 124, 0, 0.55);
   --mark: rgba(242, 229, 31, 0.36);
-  --accent-dot: #c4b200;
+  /* Paper keeps the true yellow; the edge comes from --accent-mark-ring. */
+  --accent-dot: var(--accent);
   --accent-edge: #857c00;
   --accent-mark-ring: 0 0 0 1px rgba(133, 124, 0, 0.65);
   --blue: #1e40af;
@@ -363,7 +364,7 @@ input[type="range"]::-webkit-slider-thumb {
   height: 14px;
   margin-top: -5px;
   border-radius: 50%;
-  background: var(--text);
+  background: var(--text-muted);
   box-shadow: 0 0 0 3px var(--bg-elevated);
 }
 

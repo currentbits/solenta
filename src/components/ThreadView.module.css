@@ -1200,10 +1200,9 @@ a.btn {
   box-shadow: var(--accent-mark-ring);
 }
 
-/* The recalled count reads as emphasis, not a highlighter swipe. */
+/* The recalled count reads as the row's own text, not a highlight. */
 .mark {
-  color: var(--text);
-  font-weight: 500;
+  color: inherit;
 }
 
 .memoryList {
@@ -1217,6 +1216,8 @@ a.btn {
 
 .memoryList li {
   padding: 2px 0;
+  font-size: 13px;
+  color: var(--text-muted);
 }
 
 .memoryMeta {
@@ -2579,7 +2580,7 @@ button.diffLineGutter:focus-visible {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  column-gap: 6px;
+  column-gap: 0;
 }
 
 .message > * {
@@ -2593,21 +2594,28 @@ button.diffLineGutter:focus-visible {
 }
 
 .message > .provStrip {
-  gap: 4px 6px;
+  gap: 4px 0;
 }
 
-/* One separator everywhere on the meta line: " · ". */
-.message > .provStrip > .provChip:not(:last-child)::after {
-  content: "·";
+.message > .provStrip > .provChip {
+  gap: 0;
+}
+
+/* One separator everywhere on the meta line, spaced like the " · " inside
+   the meta string itself. */
+.message > .provStrip > .provChip:not(:last-child)::after,
+.message > .provStrip + .msgMeta::before {
+  content: "\00a0·\00a0";
+  white-space: pre;
   color: var(--text-dim);
 }
 
 .message > .provStrip + .msgMeta::before {
-  content: "·";
-  color: var(--text-dim);
+  margin-right: -6px;
 }
 
 .provChip[data-tier="prior"]::before {
+  margin-right: 6px;
   background: var(--amber);
 }
 
@@ -2850,6 +2858,9 @@ button.diffLineGutter:focus-visible {
 
 /* Cost is a reading, not a control: plain tabular text, no outline. */
 .sandboxBadge[data-cost-badge] {
+  /* A reserved slot so a changing amount never shifts the header actions. */
+  min-width: 48px;
+  justify-content: flex-end;
   border-color: transparent;
   padding: 0 4px;
   font-weight: 500;
@@ -3802,6 +3813,7 @@ button.diffLineGutter:focus-visible {
 .planStep[data-plan-step="doing"]::before {
   border-color: var(--accent-edge);
   background: radial-gradient(circle, var(--accent-dot) 0 2.5px, transparent 3px);
+  box-shadow: var(--accent-mark-ring);
 }
 
 /* Done: a green check-circle, and the step steps back to tertiary ink. */

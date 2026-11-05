@@ -231,7 +231,7 @@ export function GeneralPane({
           </select>
           <p className={styles.note}>
             How the right sidebar starts. You can still open or hide it
-            from the rail or with ⌘ + .
+            from the rail or with <kbd className={styles.kbd}>⌘.</kbd>
           </p>
           <label className={styles.fieldRow}>
             <input
@@ -255,7 +255,7 @@ export function GeneralPane({
             <span>Remember last agents-panel state</span>
           </label>
           <p className={styles.note}>
-            Keep the last ⌘ + . or rail toggle across launches. Closed
+            Keep the last <kbd className={styles.kbd}>⌘.</kbd> or rail toggle across launches. Closed
             or Open above is the fallback when there is no last state.
           </p>
         </div>

@@ -727,7 +727,7 @@ export function HeaderForkControl({
             title="Hand off to another provider"
             onClick={() => setOpen((v) => !v)}
           >
-            Hand off to…
+            Hand off
           </button>
           {open && (
             <div className={styles.menu} role="menu" data-thread-handoff-menu="">

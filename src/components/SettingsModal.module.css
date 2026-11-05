@@ -511,6 +511,22 @@ label.fieldRow:has(> input[type="checkbox"]) {
   overflow-wrap: anywhere;
 }
 
+/* Shortcuts in help text: the same keycap as the palette footer. */
+.kbd {
+  display: inline-grid;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: var(--radius-xs);
+  background: var(--overlay-hover);
+  font-family: var(--font);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+  vertical-align: 1px;
+}
+
 .note {
   margin: 0;
   max-width: 520px;

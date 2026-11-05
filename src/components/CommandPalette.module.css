@@ -58,10 +58,7 @@
 
 .mode {
   flex-shrink: 0;
-  padding: 2px 6px;
-  border-radius: var(--radius-xs);
-  background: var(--overlay-soft);
-  font-size: 11px;
+  font-size: 11.5px;
   font-weight: 500;
   color: var(--text-dim);
 }
@@ -109,7 +106,7 @@
 }
 
 .row[data-highlighted="true"] {
-  background: var(--card-hover);
+  background: var(--overlay-strong);
 }
 
 .rowIcon {
