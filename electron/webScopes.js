@@ -61,6 +61,7 @@ const BY_SCOPE = {
     "projects:codeMap",
     "projects:lintAgentConfig",
     "projects:previewAgentConfig",
+    "projects:fusionPlan",
     "spaces:list",
     "threads:list",
     "threads:summaries",
@@ -222,6 +223,7 @@ const BY_SCOPE = {
   ],
   files: [
     "projects:writeAgentConfig",
+    "projects:fusionSync",
     "workflows:exportToRepo",
     "threads:exportReport",
     "threads:exportReportMarkdown",

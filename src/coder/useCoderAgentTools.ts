@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import type {
   CoderApi,
+  FusionInput,
   HarnessInstallRequest,
   HarnessSourceId,
   McpInstallRequest,
@@ -30,6 +31,20 @@ export function useCoderAgentTools(api: CoderApi) {
   const writeAgentConfig = useCallback(
     async (input: { projectId: string; targets?: string[] }) => {
       return api.projects.writeAgentConfig(input);
+    },
+    [api],
+  );
+
+  const fusionPlan = useCallback(
+    async (input: FusionInput) => {
+      return api.projects.fusionPlan(input);
+    },
+    [api],
+  );
+
+  const fusionSync = useCallback(
+    async (input: FusionInput & { paths: string[] }) => {
+      return api.projects.fusionSync(input);
     },
     [api],
   );
@@ -197,6 +212,8 @@ export function useCoderAgentTools(api: CoderApi) {
     lintAgentConfig,
     previewAgentConfig,
     writeAgentConfig,
+    fusionPlan,
+    fusionSync,
     listMcpServers,
     saveMcpServer,
     removeMcpServer,

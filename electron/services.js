@@ -190,6 +190,8 @@ const {
   lintAgentConfig,
   previewAgentConfig,
   writeAgentConfig,
+  fusionPlan,
+  fusionSync,
 } = require("./services-projects.js");
 const {
   validateWorkflowTemplate,
@@ -218,6 +220,8 @@ module.exports = {
   lintAgentConfig,
   previewAgentConfig,
   writeAgentConfig,
+  fusionPlan,
+  fusionSync,
   createThread,
   recordLastUsedDefaults,
   instanceAuthProbes,

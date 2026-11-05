@@ -805,6 +805,39 @@
   min-width: 0;
 }
 
+/* Fusion rows reuse .doctorFiles; these only group and align them. */
+.fusionGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.fusionPick {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.fusionPick input {
+  flex-shrink: 0;
+  margin: 0;
+}
+
+.diffAdd {
+  color: var(--green);
+}
+
+.diffDel {
+  color: var(--danger-fg);
+}
+
+.diffHunk {
+  color: var(--text-dim);
+}
+
 .queueList {
   list-style: none;
   margin: 0;
