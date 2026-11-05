@@ -1200,6 +1200,7 @@ a.btn {
 .mark {
   padding: 0 2px;
   color: var(--text);
+  font-weight: 500;
   background-image: linear-gradient(var(--mark), var(--mark));
   background-repeat: no-repeat;
   background-size: 100% 46%;
@@ -2152,7 +2153,7 @@ button.diffLineGutter:focus-visible {
   overflow-x: hidden;
   padding: 24px 24px 16px;
   /* Content scrolls out under a short fade, never a hard slice at the header. */
-  mask-image: linear-gradient(to bottom, transparent 0, #000 16px);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 32px);
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -2573,13 +2574,11 @@ button.diffLineGutter:focus-visible {
   flex-shrink: 0;
 }
 
-.provChip[data-tier="repo"]::before {
-  background: var(--green);
-}
-
-/* Memory wears the brand yellow everywhere else (pulse, recall diamond). */
+/* Repo and memory dots stay neutral: yellow is kept for selection and the
+   brand mark, and colour here only flags the "prior knowledge" warning. */
+.provChip[data-tier="repo"]::before,
 .provChip[data-tier="memory"]::before {
-  background: var(--accent-dot);
+  background: color-mix(in srgb, var(--text-dim) 70%, transparent);
 }
 
 .provChip[data-tier="prior"]::before {

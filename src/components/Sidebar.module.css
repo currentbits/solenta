@@ -545,10 +545,10 @@
   color: var(--text);
 }
 
-/* F4 notch (#1429): a short yellow bar inside the row's left inset marks
-   the open thread. */
+/* F4 notch (#1429) retired: the filled row and full-ink title are the one
+   selection signal. Kept as a hook for high contrast below. */
 .card[data-active="true"]::after {
-  content: "";
+  content: none;
   position: absolute;
   left: 5px;
   top: 50%;
@@ -1213,10 +1213,10 @@
   display: block;
 }
 
+/* Pinned threads end with a gap, not a rule. */
 .pinnedDivider {
   height: 1px;
   margin: 6px 10px;
-  background: var(--border-soft);
 }
 
 .shelf {

@@ -15,8 +15,9 @@
   margin-bottom: 0;
 }
 
+/* Paragraphs inside one message stay a group: 6px, not a blank line. */
 .md p {
-  margin: 8px 0;
+  margin: 6px 0;
 }
 
 .md ul,
