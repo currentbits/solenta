@@ -85,16 +85,16 @@ function ago(ms) {
 }
 
 /**
- * The account new `base` threads and terminals use (settings.defaultAccounts):
- * `base:<id>`, or `base` for the CLI's own login (also when the id is gone).
+ * The account new `base` threads and terminals use (defaultAccountFor: the
+ * pin in defaultProvider, then defaultAccounts): `base:<id>`, or `base` for
+ * the CLI's own login (also when the id is gone).
  * @param {any} settings
  * @param {string} base
  */
 function selectedAccountRef(settings, base) {
-  const map = (settings && settings.defaultAccounts) || {};
-  const id = typeof map[base] === "string" ? map[base] : "";
-  const known = id && ((settings && settings.providerInstances) || []).some((i) => i.provider === base && i.id === id);
-  return known ? `${base}:${id}` : base;
+  // The same effective default new threads and terminals use, pin included.
+  const id = require("./providerInstances.js").defaultAccountFor(settings, base);
+  return id ? `${base}:${id}` : base;
 }
 
 /** The CLI the title follows: the default provider's, else Claude Code. */
@@ -105,9 +105,10 @@ function titleProvider(settings) {
 
 /**
  * Settings patch for picking an account: only that CLI's default account.
- * Which agent new threads use (defaultProvider) never changes; a default
- * provider pinned to another account of the same CLI is loosened to the bare
- * CLI so the pick takes effect.
+ * Which agent new threads use (defaultProvider) never changes. A default
+ * provider pinned to an account of the same CLI has its pin stripped into
+ * defaultAccounts (bare CLI + map entry), so there is one source of truth
+ * for that CLI's account and the pick takes effect.
  * @param {any} settings
  * @param {string} ref
  */

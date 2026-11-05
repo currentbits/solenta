@@ -95,6 +95,21 @@ function isKnownProviderRef(ref, settings) {
 }
 
 /**
+ * Provider ref -> `{ provider, instance }` for storing on a thread (#1859).
+ * An explicit instance always wins; a bare provider takes its effective
+ * default account (defaultAccountFor) when `useDefault`, else stays on the
+ * CLI's own login. createThread and setProvider both resolve through here,
+ * so the account a picker row is labelled with is the one stored.
+ * @param {any} settings
+ * @param {unknown} ref
+ * @param {boolean} useDefault
+ */
+function resolveAccountRef(settings, ref, useDefault) {
+  const { provider, instance } = parseProviderRef(ref);
+  return { provider, instance: instance || (useDefault ? defaultAccountFor(settings, provider) : null) };
+}
+
+/**
  * Model for a newly created thread. Explicit input.model wins (including
  * null). Otherwise settings.defaultModel applies only when the provider
  * also came from settings — an explicit provider should not inherit a
@@ -245,15 +260,13 @@ function createThread(store, input) {
     settings,
     defaults && defaults.provider,
   );
-  const { provider, instance: pickedInstance } = parseProviderRef(providerRefId);
-  // Per-CLI default account (#1859): a bare provider gets the account picked
-  // in the menu bar. Forks, automations and memory passes keep their own,
-  // under the same skips as project defaults.
-  const providerInstance =
-    pickedInstance ||
-    (input.projectDefaults === false || input.automationId || input.memoryConsolidate
-      ? null
-      : defaultAccountFor(settings, provider));
+  // Per-CLI default account (#1859) for a bare provider. Forks, automations
+  // and memory passes keep their own, under the same skips as project defaults.
+  const { provider, instance: providerInstance } = resolveAccountRef(
+    settings,
+    providerRefId,
+    !(input.projectDefaults === false || input.automationId || input.memoryConsolidate),
+  );
   const entry = getProvider(provider);
   let model;
   if (
@@ -1170,8 +1183,18 @@ function setProvider(store, input) {
     return decorateThread(store, thread);
   }
 
-  // input.provider is a ref: "claude" or "claude:<instanceId>" (#453).
-  const ref = providerProvided ? parseProviderRef(input.provider) : null;
+  // input.provider is a ref: "claude" or "claude:<instanceId>" (#453). A
+  // bare ref from the user's picker (useDefaultAccount) takes the default
+  // account its row is labelled with (#1859); internal callers (failover,
+  // profiles, routing) keep the exact ref, and automation/memory threads
+  // never pick one up.
+  const ref = providerProvided
+    ? resolveAccountRef(
+        store.getSettings(),
+        input.provider,
+        input.useDefaultAccount === true && !thread.automationId && !thread.memoryConsolidate,
+      )
+    : null;
   if (ref) {
     const generic = ref.provider === "generic";
     if (!generic && !isKnownProviderId(ref.provider)) {

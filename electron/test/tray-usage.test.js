@@ -153,6 +153,12 @@ describe("default account (#1859)", () => {
     assert.deepEqual(defaultAccountPatch(s, "claude"), { defaultAccounts: {} });
   });
 
+  it("a pinned defaultProvider is that CLI's effective default account", () => {
+    const pinned = { providerInstances: instances, defaultProvider: "claude:team", defaultAccounts: { claude: "personal" } };
+    assert.equal(selectedAccountRef(pinned, "claude"), "claude:team");
+    assert.equal(selectedAccountRef(pinned, "codex"), "codex");
+  });
+
   it("a default provider pinned to another account of that CLI loosens to the bare CLI", () => {
     assert.deepEqual(defaultAccountPatch({ defaultProvider: "claude:team" }, "claude:personal"), {
       defaultAccounts: { claude: "personal" },
@@ -291,6 +297,22 @@ describe("createUsageMenu (#1859)", () => {
     assert.ok(h.lastMenu().some((i) => i.label === "Updated just now"), "the next open shows the answer");
   });
 
+  it("a pinned defaultProvider drives title and checkmark; picking another account keeps both consistent", () => {
+    const h = harness({ settings: { menuBarUsage: true, defaultProvider: "claude:team", defaultAccounts: {} } });
+    h.ctrl.setUsage(usage);
+    assert.equal(h.lastTitle(), "Team");
+    const checked = () => h.lastMenu().filter((i) => i.checked).map((i) => i.label.split(" — ")[0]);
+    assert.deepEqual(checked(), ["Team", "Default", "Default"]);
+    h.lastMenu().find((i) => i.label.startsWith("Personal")).click();
+    // Pin stripped into defaultAccounts: still Claude Code, now Personal.
+    assert.equal(h.settings.defaultProvider, "claude");
+    assert.deepEqual(h.settings.defaultAccounts, { claude: "personal" });
+    assert.equal(h.lastTitle(), "Personal 2%");
+    assert.deepEqual(checked(), ["Personal", "Default", "Default"]);
+    const { defaultAccountFor } = require("../providerInstances.js");
+    assert.equal(defaultAccountFor(h.settings, "claude"), "personal", "new threads agree with the menu");
+  });
+
   it("live run windows update the matching account's row and the title", () => {
     const h = harness({ settings: { menuBarUsage: true, defaultAccounts: { claude: "personal" } } });
     h.ctrl.setUsage(usage);
@@ -421,10 +443,61 @@ describe("menuBarUsage / defaultAccounts settings + IPC hooks (#1859)", () => {
     assert.equal(codex.providerInstance, undefined);
     const fork = services.createThread(store, { projectId: project.id, title: "e", provider: "claude", projectDefaults: false });
     assert.equal(fork.providerInstance, undefined);
+    // A pinned defaultProvider is the effective default for new threads too.
+    store.setSettings({ defaultProvider: "claude:personal" });
+    assert.equal(services.createThread(store, { projectId: project.id, title: "f", provider: "claude" }).providerInstance, "personal");
+    store.setSettings({ defaultProvider: null });
     // The picker's base row names the default account.
     const list = await services.listProvidersForApi(store);
     assert.equal(list.find((p) => p.id === "claude").defaultAccount, "Team");
     assert.equal(list.find((p) => p.id === "codex").defaultAccount, undefined);
+  });
+});
+
+describe("switching an existing thread's provider (#1859)", () => {
+  let dir;
+  let store;
+  let project;
+  const services = require("../services");
+  const { IPC_HANDLERS, makeCtx } = require("../ipc");
+  beforeEach(async () => {
+    const { Store } = require("../store");
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "solenta-setprov-"));
+    store = new Store(path.join(dir, "store.json"));
+    store.setSettings({ providerInstances: instances, defaultAccounts: { claude: "team" } });
+    const repo = path.join(dir, "app");
+    fs.mkdirSync(repo);
+    execFileSync("git", ["init"], { cwd: repo, stdio: "ignore" });
+    project = await services.addProject(store, repo);
+  });
+  afterEach(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+  const ctx = () => makeCtx({ store, broadcast() {} });
+
+  it("the picker's bare row uses the default account it is labelled with", async () => {
+    const t = services.createThread(store, { projectId: project.id, title: "a", provider: "codex" });
+    const next = await IPC_HANDLERS["threads:setProvider"](ctx(), { threadId: t.id, provider: "claude" });
+    assert.equal(next.provider, "claude");
+    assert.equal(store.getThread(t.id).providerInstance, "team");
+    // The row label and what is stored agree.
+    const row = (await services.listProvidersForApi(store)).find((p) => p.id === "claude");
+    assert.equal(row.defaultAccount, "Team");
+  });
+
+  it("an explicitly chosen instance is untouched", async () => {
+    const t = services.createThread(store, { projectId: project.id, title: "b", provider: "codex" });
+    await IPC_HANDLERS["threads:setProvider"](ctx(), { threadId: t.id, provider: "claude:personal" });
+    assert.equal(store.getThread(t.id).providerInstance, "personal");
+  });
+
+  it("internal callers and automation threads keep the exact ref", () => {
+    const t = services.createThread(store, { projectId: project.id, title: "c", provider: "claude:personal" });
+    services.setProvider(store, { threadId: t.id, provider: "claude" });
+    assert.equal(store.getThread(t.id).providerInstance ?? null, null, "quota failover asks for exactly `claude`");
+    const auto = services.createThread(store, { projectId: project.id, title: "d", provider: "codex", automationId: "a1" });
+    services.setProvider(store, { threadId: auto.id, provider: "claude", useDefaultAccount: true });
+    assert.equal(store.getThread(auto.id).providerInstance ?? null, null);
   });
 });
 
@@ -460,6 +533,11 @@ describe("terminal account env (#1859)", () => {
     assert.equal(opened[0].CLAUDE_CONFIG_DIR, "/tmp/t");
     assert.equal(opened[0].CODEX_HOME, "/tmp/cw");
     assert.equal(opened[0].SECRET, undefined, "only the config dir, never instance keys");
+  });
+
+  it("a pinned defaultProvider is the terminal's default too", async () => {
+    await handler(ctxFor({ id: "t1", projectId: "p", provider: "grok" }, { defaultProvider: "claude:personal", defaultAccounts: { claude: "team" } }), { threadId: "t1" });
+    assert.equal(opened[0].CLAUDE_CONFIG_DIR, "/tmp/p");
   });
 
   it("the thread's own account wins for its CLI", async () => {

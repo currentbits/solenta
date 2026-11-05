@@ -400,14 +400,20 @@ function findInstance(settings, provider, id) {
 }
 
 /**
- * Per-CLI default account (#1859, settings.defaultAccounts): the instance id
- * new threads and terminals of `provider` use when none was picked. null =
- * the CLI's own login, also when the saved instance was removed.
- * @param {{ defaultAccounts?: unknown, providerInstances?: unknown } | null | undefined} settings
+ * Effective default account of `provider` (#1859): the instance id new
+ * threads, terminals and the menu bar use when none was picked. Precedence:
+ * an instance pinned in settings.defaultProvider (`claude:work`) when it
+ * names this provider, then settings.defaultAccounts[provider], then null =
+ * the CLI's own login (also when the saved instance was removed).
+ * @param {{ defaultProvider?: unknown, defaultAccounts?: unknown, providerInstances?: unknown } | null | undefined} settings
  * @param {string} provider
  * @returns {string | null}
  */
 function defaultAccountFor(settings, provider) {
+  const pinned = parseProviderRef(settings && settings.defaultProvider);
+  if (pinned.provider === provider && pinned.instance && findInstance(settings, provider, pinned.instance)) {
+    return pinned.instance;
+  }
   const map = settings && settings.defaultAccounts;
   const id = map && typeof map === "object" ? /** @type {Record<string, unknown>} */ (map)[provider] : null;
   return typeof id === "string" && findInstance(settings, provider, id) ? id : null;
