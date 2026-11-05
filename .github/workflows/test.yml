@@ -144,3 +144,72 @@ jobs:
       - name: Smoke
         if: runner.os == 'Linux'
         run: xvfb-run --auto-servernum npm run test:smoke
+
+  # #1849: Linux --headless with no DISPLAY/WAYLAND_DISPLAY must boot, serve
+  # and stop cleanly. main.js relaunches itself with --ozone-platform=headless
+  # (the ozone leg, which must not start Xvfb) and falls back to xvfb-run if
+  # that child fails within 5 s (the xvfb leg runs that fallback command).
+  # The #1847 no-tray rule is under test in both.
+  headless-linux:
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+        display: [ozone, xvfb]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: "**/package-lock.json"
+      - run: npm ci
+      - run: npm ci --prefix core
+      - run: npm ci --prefix memory-server
+      - run: npm run build --prefix core
+      - run: npx vite build
+      - name: Install Electron runtime libs
+        run: >
+          sudo apt-get update && sudo apt-get install -y
+          ${{ matrix.display == 'xvfb' && 'xvfb' || '' }}
+          libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2
+          libgtk-3-0 libgbm1 libasound2t64 libxcomposite1 libxdamage1
+          libxfixes3 libxrandr2 libxkbcommon0
+      - name: Boot --headless with no display (${{ matrix.display }})
+        env:
+          WRAP: ${{ matrix.display == 'xvfb' && 'xvfb-run -a' || '' }}
+        run: |
+          set -u
+          home="$(mktemp -d)"
+          log="$RUNNER_TEMP/headless.log"
+          # setsid: one process group, so the cleanup kill also reaps helpers and Xvfb.
+          setsid env -u DISPLAY -u WAYLAND_DISPLAY -u XDG_CONFIG_HOME HOME="$home" \
+            $WRAP "$(node -p 'require("electron")')" . --headless --serve-web=4620 --no-sandbox \
+            >"$log" 2>&1 &
+          pid=$!
+          sleep 8
+          ok=1
+          kill -0 "$pid" 2>/dev/null || { echo "::error::solenta --headless exited within 8 s"; ok=0; }
+          if [ "$ok" = 1 ]; then
+            curl -sf -o /dev/null --retry 20 --retry-connrefused --retry-delay 1 http://127.0.0.1:4620/ \
+              || { echo "::error::nothing answered on 127.0.0.1:4620"; ok=0; }
+          fi
+          echo "Xvfb processes:"
+          if pgrep -a Xvfb; then xvfb=1; else echo "(none)"; xvfb=0; fi
+          if [ "${{ matrix.display }}" = xvfb ] && [ "$xvfb" = 0 ]; then echo "::error::xvfb-run started no Xvfb"; ok=0; fi
+          if [ "${{ matrix.display }}" = ozone ] && [ "$xvfb" = 1 ]; then echo "::error::fell back to xvfb-run; the ozone child failed"; ok=0; fi
+          # Stop like `kill <server pid>`: SIGTERM only the Electron main process,
+          # the child of the relaunching parent or of xvfb-run. A group SIGTERM
+          # races Chromium's helper processes and FATALs. $pid exits with its status.
+          main="$(pgrep -P "$pid" -f -- --serve-web=4620 | head -n 1)"
+          [ -n "$main" ] || { echo "::error::no relaunched Electron main process under $pid"; ok=0; main="$pid"; }
+          kill "$main" 2>/dev/null || true
+          for _ in $(seq 15); do kill -0 "$pid" 2>/dev/null || break; sleep 1; done
+          # bash -e: a crashed child must not end the step before the log.
+          kill -- -"$pid" 2>/dev/null || true; status=0; wait "$pid" 2>/dev/null || status=$?
+          echo "exit status after SIGTERM to main: $status"
+          [ "$status" = 0 ] || { echo "::error::did not exit cleanly on SIGTERM"; ok=0; }
+          echo "::group::solenta log"; cat "$log"; echo "::endgroup::"
+          [ "$ok" = 1 ]
