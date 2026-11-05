@@ -332,7 +332,7 @@
   overflow-y: auto;
   overflow-wrap: anywhere;
   padding: 4px;
-  border-radius: 8px;
+  border-radius: var(--radius);
   border: 1px solid var(--border);
   background: var(--bg-elevated);
   box-shadow: var(--shadow-pop);
@@ -343,7 +343,7 @@
   width: 100%;
   padding: 7px 10px;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: var(--bg);
   color: var(--text);
   font: inherit;
@@ -360,7 +360,7 @@
   width: 100%;
   padding: 7px 10px;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--text);
   font: inherit;

@@ -161,9 +161,10 @@
 }
 
 .elapsed {
-  font-family: var(--mono);
+  font-family: var(--font);
   font-size: 12px;
   color: var(--danger-fg);
+  font-variant-numeric: tabular-nums;
 }
 
 .axTree {

@@ -61,8 +61,9 @@ export function PaneIcon({ id }: { id: SettingsPane }) {
         </>
       ) : id === "integrations" ? (
         <>
-          <path d="M8 7h3v3H8zM13 14h3v3h-3z" />
-          <path d="M11 8.5h2.5A2.5 2.5 0 0 1 16 11M13 15.5h-2.5A2.5 2.5 0 0 1 8 13" />
+          <rect x="3" y="3" width="7" height="7" rx="1.5" />
+          <rect x="14" y="14" width="7" height="7" rx="1.5" />
+          <path d="M10 6.5h4a3.5 3.5 0 0 1 3.5 3.5v4M14 17.5h-4A3.5 3.5 0 0 1 6.5 14v-4" />
         </>
       ) : id === "connections" ? (
         <>
@@ -78,9 +79,10 @@ export function PaneIcon({ id }: { id: SettingsPane }) {
         </>
       ) : (
         <>
-          <circle cx="12" cy="12" r="3" />
-          <path d="M4.5 12H8M16 12h3.5M12 4.5V8M12 16v3.5" />
-          <path d="m7 7 2.2 2.2M14.8 14.8 17 17M17 7l-2.2 2.2M9.2 14.8 7 17" />
+          <path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1" />
+          <circle cx="15" cy="6" r="2" />
+          <circle cx="9" cy="12" r="2" />
+          <circle cx="17" cy="18" r="2" />
         </>
       )}
     </svg>

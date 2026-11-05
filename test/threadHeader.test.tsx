@@ -954,7 +954,7 @@ describe("draft workspace strip under the composer", () => {
     await m.flush();
     const strip = m.query("[data-workspace-strip]");
     assert.equal(strip?.getAttribute("data-workspace-strip"), "readonly");
-    assert.equal(strip?.textContent, "local checkout · main");
+    assert.equal(strip?.textContent, "Local checkout · main");
     assert.equal(m.query("[data-workspace-trigger]"), null, "no picker after send");
     m.unmount();
   });
@@ -974,7 +974,7 @@ describe("draft workspace strip under the composer", () => {
     assert.equal(strip?.getAttribute("data-workspace-strip"), "readonly");
     assert.equal(
       strip?.textContent,
-      "worktree · coder/header-features-abc123from release",
+      "Worktree · coder/header-features-abc123from release",
     );
     assert.equal(m.query("[data-workspace-base]"), null, "base is not editable");
     m.unmount();

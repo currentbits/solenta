@@ -526,6 +526,19 @@ export function CommandPalette({
         onMouseDown={(e) => e.stopPropagation()}
       >
         <div className={styles.searchRow}>
+          <svg
+            className={styles.searchIcon}
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeLinecap="round"
+            aria-hidden="true"
+          >
+            <circle cx="11" cy="11" r="7" />
+            <path d="m20 20-4-4" />
+          </svg>
           <input
             ref={inputRef}
             className={styles.input}
@@ -625,7 +638,7 @@ export function CommandPalette({
             <kbd>↓</kbd> move
           </span>
           <span>
-            <kbd>⏎</kbd> open
+            <kbd>↵</kbd> open
           </span>
           <span>
             <kbd>esc</kbd> close

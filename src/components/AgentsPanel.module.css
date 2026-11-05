@@ -543,12 +543,13 @@
 }
 
 .agentLabel {
-  font-family: var(--mono);
+  font-family: var(--font);
   font-size: 12px;
   color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .agentModel {
@@ -587,8 +588,9 @@
 }
 
 .tokens {
-  font-family: var(--mono);
+  font-family: var(--font);
   color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
 }
 
 /* ── Git tab ─────────────────────────────────────────────── */
@@ -893,7 +895,7 @@
   height: 20px;
   display: grid;
   place-items: center;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   color: var(--danger-fg);
   font-size: 14px;
   line-height: 1;

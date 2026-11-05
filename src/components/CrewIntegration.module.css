@@ -16,12 +16,13 @@
   font-size: 12px;
   font-weight: 550;
   color: var(--text-muted);
-  font-family: var(--mono);
+  font-family: var(--font);
   letter-spacing: -0.01em;
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
   align-items: baseline;
+  font-variant-numeric: tabular-nums;
 }
 
 .route {
