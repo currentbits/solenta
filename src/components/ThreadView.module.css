@@ -1181,7 +1181,7 @@ a.btn {
   text-underline-offset: 3px;
   flex-shrink: 0;
   font-size: 12px;
-  color: var(--text-muted);
+  color: var(--text-dim);
 }
 
 .toolGroupToggle:hover .stepMore {
