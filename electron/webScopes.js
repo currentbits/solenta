@@ -56,6 +56,7 @@ const BY_SCOPE = {
     "automations:listRuns",
     "projects:list",
     "projects:discoverRecent",
+    "projects:discoverHistory",
     "projects:resolveIcon",
     "projects:codeMap",
     "projects:lintAgentConfig",
