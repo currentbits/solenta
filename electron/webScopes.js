@@ -222,6 +222,7 @@ const BY_SCOPE = {
   ],
   files: [
     "projects:writeAgentConfig",
+    "projects:fusionSync",
     "workflows:exportToRepo",
     "threads:exportReport",
     "threads:exportReportMarkdown",
