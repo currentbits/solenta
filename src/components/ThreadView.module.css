@@ -3735,11 +3735,11 @@ button.diffLineGutter:focus-visible {
   flex-direction: column;
   gap: 8px;
   padding: 12px 14px;
-  /* A quiet box: lighter than the composer below it, which stays the one
-     strong surface at the foot of the thread. */
+  /* An outline, not a surface: the composer below stays the one filled box
+     at the foot of the thread. */
   border: 1px solid var(--border-soft);
-  border-radius: var(--radius-lg);
-  background: var(--overlay-soft);
+  border-radius: var(--radius);
+  background: transparent;
   box-shadow: none;
   font-size: 13px;
 }

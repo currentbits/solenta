@@ -596,7 +596,9 @@ export function CommandPalette({
             spellCheck={false}
             data-command-palette-input=""
           />
-          <span className={styles.mode}>{actionsOnly ? "Actions" : paletteModeLabel(mode)}</span>
+          {actionsOnly || mode !== "command" ? (
+            <span className={styles.mode}>{actionsOnly ? "Actions" : paletteModeLabel(mode)}</span>
+          ) : null}
         </div>
         <div
           ref={listRef}

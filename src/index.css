@@ -159,7 +159,8 @@
   /* Paper keeps the true yellow; the edge comes from --accent-mark-ring. */
   --accent-dot: var(--accent);
   --accent-edge: #857c00;
-  --accent-mark-ring: 0 0 0 1px rgba(133, 124, 0, 0.65);
+  /* One neutral edge for every yellow mark on paper, same shape as dark. */
+  --accent-mark-ring: 0 0 0 1px rgba(0, 0, 0, 0.28);
   --blue: #1e40af;
   --blue-soft: rgba(30, 64, 175, 0.1);
   --blue-border: rgba(30, 64, 175, 0.35);

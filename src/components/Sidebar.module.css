@@ -666,10 +666,7 @@
   color: var(--text);
 }
 
-/* Paper needs a firmer fill for the open row to register. */
-:global(:root[data-theme="light"]) .card[data-active="true"] {
-  background: var(--overlay-strong);
-}
+
 
 .card[data-archived="true"] {
   opacity: 0.55;
@@ -1281,8 +1278,8 @@
 /* F7 mono micro-labels (#1429): "WORKING · 1" then a hairline. */
 .shelfLabelSnoozed,
 .shelfLabelSettled {
-  font: 500 12px var(--font);
-  letter-spacing: 0.01em;
+  font: 500 11px var(--font);
+  letter-spacing: 0.03em;
   color: var(--text-dim);
   flex-shrink: 0;
   font-variant-numeric: tabular-nums;

@@ -108,6 +108,14 @@ select.input {
   flex-wrap: wrap;
 }
 
+/* Per-event notification toggles are children of the "Desktop
+   notification" switch: indent them onto its label edge. */
+[data-notify-events] {
+  display: flex;
+  flex-direction: column;
+  padding-left: 24px;
+}
+
 /* Help under a checkbox hangs from the label, not the tile. */
 label.fieldRow:has(> input[type="checkbox"]) + .note {
   padding-left: 24px;

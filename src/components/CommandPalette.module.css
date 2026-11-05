@@ -209,7 +209,7 @@
   font-size: 11px;
   color: var(--text-muted);
   background: var(--overlay-hover);
-  border: 1px solid var(--border-soft);
+  border: none;
   border-radius: var(--radius-xs);
   padding: 1px 5px;
 }
