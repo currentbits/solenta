@@ -1276,6 +1276,19 @@
 }
 
 /* F7 mono micro-labels (#1429): "WORKING · 1" then a hairline. */
+/* Labels for the pinned and recent groups: the same voice as the shelf
+   headers below, so every group in the list is named. */
+.groupLabel {
+  padding: 6px 8px 4px 11px;
+  font: 500 11px var(--font);
+  letter-spacing: 0.03em;
+  color: var(--text-dim);
+}
+
+.pinnedDivider + .groupLabel {
+  padding-top: 10px;
+}
+
 .shelfLabelSnoozed,
 .shelfLabelSettled {
   font: 500 11px var(--font);

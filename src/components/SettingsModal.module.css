@@ -99,7 +99,7 @@
 /* A select is a choice, not a text field: size it to its options. */
 select.input {
   flex: 0 0 auto;
-  width: min(100%, 240px);
+  width: min(100%, 280px);
   height: 32px;
   padding-top: 0;
   padding-bottom: 0;
@@ -243,7 +243,7 @@ label.fieldRow:has(> input[type="checkbox"]) {
 .range {
   flex: 1;
   min-width: 0;
-  max-width: 320px;
+  max-width: 280px;
   height: 28px;
 }
 
@@ -534,16 +534,17 @@ label.fieldRow:has(> input[type="checkbox"]) {
 .kbd {
   display: inline-grid;
   place-items: center;
-  min-width: 18px;
-  height: 18px;
+  min-width: 16px;
+  height: 16px;
   padding: 0 4px;
   border-radius: var(--radius-xs);
   background: var(--overlay-hover);
   font-family: var(--font);
   font-size: 11px;
   font-weight: 500;
+  line-height: 1;
   color: var(--text-muted);
-  vertical-align: 1px;
+  vertical-align: 0;
 }
 
 .note {

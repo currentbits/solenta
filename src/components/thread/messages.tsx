@@ -2430,6 +2430,23 @@ export function RunHeaderRow({
       title={`${collapsed ? "Show this run" : "Hide this run"} · ${timeTitle}`}
       onClick={onToggle}
     >
+      {/* Same hanging glyph column as the step rows: a clock, with the
+          disclosure chevron trailing the label. */}
+      <svg
+        className={styles.runHeaderIcon}
+        width="16"
+        height="16"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+      >
+        <circle cx="12" cy="12" r="8.5" />
+        <path d="M12 7.5V12l3 2" />
+      </svg>
+      <span className={styles.runHeaderLabel}>{header.label}</span>
       <span className={styles.chevron} data-open={!collapsed}>
         <svg
           width="9"
@@ -2445,7 +2462,6 @@ export function RunHeaderRow({
           <path d="M3.5 2 6.5 5 3.5 8" />
         </svg>
       </span>
-      <span className={styles.runHeaderLabel}>{header.label}</span>
     </button>
   );
 }

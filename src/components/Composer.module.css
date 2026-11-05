@@ -1000,9 +1000,9 @@ select.agentSelect {
    yellow reads as olive on ink. */
 .send:disabled {
   opacity: 1;
-  background: var(--overlay-strong);
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--border);
   color: var(--text-dim);
-  box-shadow: none;
   cursor: not-allowed;
 }
 

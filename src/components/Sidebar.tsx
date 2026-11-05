@@ -2087,6 +2087,11 @@ export const Sidebar = memo(function Sidebar({
                       })
                     : (
                     <>
+                      {visiblePinned.length > 0 && (
+                        <div className={styles.groupLabel} data-group-label="pinned">
+                          Pinned
+                        </div>
+                      )}
                       {visiblePinned.map((thread) =>
                         renderCard(thread, pinnedFamilies, true),
                       )}
@@ -2096,6 +2101,11 @@ export const Sidebar = memo(function Sidebar({
                           data-pinned-divider=""
                           aria-hidden
                         />
+                      )}
+                      {visibleActive.length > 0 && (
+                        <div className={styles.groupLabel} data-group-label="recent">
+                          Recent
+                        </div>
                       )}
                       {visibleActive.map((thread) =>
                         renderCard(thread, activeFamilies, true),
