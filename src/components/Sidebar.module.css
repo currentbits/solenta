@@ -547,9 +547,9 @@
   position: absolute;
   left: 3px;
   top: 50%;
-  width: 3px;
-  height: 18px;
-  margin-top: -9px;
+  width: 2px;
+  height: 16px;
+  margin-top: -8px;
   background: var(--accent-dot);
   box-shadow: var(--accent-mark-ring);
   border-radius: var(--radius-pill);
@@ -1272,7 +1272,7 @@
 
 .shelfRuleSnoozed,
 .shelfRuleSettled {
-  background: var(--border-soft);
+  background: transparent;
 }
 
 .shelfChevron {
@@ -1283,6 +1283,13 @@
 
 .shelfToggle .shelfChevron {
   color: var(--text-dim);
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.shelfToggle:hover .shelfChevron,
+.shelfToggle:focus-visible .shelfChevron {
+  opacity: 1;
 }
 
 .shelfToggle[aria-expanded="true"] .shelfChevron,

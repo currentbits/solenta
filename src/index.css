@@ -17,7 +17,7 @@
   color-scheme: dark;
   /* Warm ink neutrals from solenta.app, not a cool grey (#1429). */
   --bg: #111010;
-  --bg-elevated: #191816;
+  --bg-elevated: #1b1a18;
   /* Sidebar surface: one step up from the canvas so the shell reads as two planes. */
   --panel: #171614;
   --card: #1c1b19;
@@ -42,7 +42,7 @@
   --accent-hover: #f7ed4a;
   --accent-soft: rgba(242, 229, 31, 0.12);
   --accent-border: rgba(242, 229, 31, 0.45);
-  --mark: rgba(242, 229, 31, 0.3);
+  --mark: rgba(242, 229, 31, 0.2);
   /* Small yellow dots and bars. Paper swaps in a deeper ochre that still
      reads as the brand yellow but survives on a near-white ground. */
   --accent-dot: var(--accent);
@@ -153,7 +153,7 @@
   --accent-soft: rgba(242, 229, 31, 0.22);
   /* Yellow on paper is ~1.2:1, so borders and rings on light use olive. */
   --accent-border: rgba(133, 124, 0, 0.55);
-  --mark: rgba(242, 229, 31, 0.7);
+  --mark: rgba(196, 178, 0, 0.28);
   --accent-dot: #c4b200;
   --accent-edge: #857c00;
   --accent-mark-ring: 0 0 0 1px rgba(133, 124, 0, 0.65);
@@ -263,6 +263,7 @@ body {
 
 button,
 input,
+select,
 textarea {
   font: inherit;
   color: inherit;
@@ -290,10 +291,56 @@ select:focus-visible {
 }
 
 /* Native controls take the ink, never the OS blue. */
-input[type="checkbox"],
 input[type="radio"],
 progress {
   accent-color: var(--text);
+}
+
+/* Checkbox: a 14px ink tile, not the OS square. */
+input[type="checkbox"] {
+  appearance: none;
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  border-radius: var(--radius-xs);
+  border: 1px solid color-mix(in srgb, var(--text) 32%, transparent);
+  background: transparent;
+  display: inline-grid;
+  place-content: center;
+  cursor: pointer;
+  transition:
+    background-color 0.12s ease,
+    border-color 0.12s ease;
+}
+
+input[type="checkbox"]::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  background: var(--bg);
+  clip-path: polygon(14% 52%, 0 66%, 38% 100%, 100% 22%, 86% 8%, 38% 72%);
+  transform: scale(0);
+  transition: transform 0.12s ease;
+}
+
+input[type="checkbox"]:checked {
+  background: var(--text);
+  border-color: var(--text);
+}
+
+input[type="checkbox"]:checked::before {
+  transform: scale(1);
+}
+
+input[type="checkbox"]:indeterminate::before {
+  clip-path: inset(40% 0 40% 0);
+  transform: scale(1);
+}
+
+input[type="checkbox"]:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 /* Range: a hairline track and a small ink thumb instead of the OS knob. */

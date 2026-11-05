@@ -135,7 +135,7 @@
 }
 
 .textarea::placeholder {
-  color: var(--text-dim);
+  color: color-mix(in srgb, var(--text-dim) 60%, var(--text-muted));
 }
 
 .controls {
@@ -1007,10 +1007,10 @@ select.agentSelect {
 
 /* Worktree tab tucked under the card (#1429 item 7): inset 14px, bottom
    radius, no top border so it hangs off the card's own bottom edge. */
-/* The worktree line is a caption under the card, not a second box. */
+/* The worktree line is a caption under the card, aligned to its text. */
 .meta {
-  margin: 2px 14px 0;
-  padding: 0 4px;
+  margin: 2px 0 0;
+  padding: 0 8px;
 }
 
 /* Pending attachments sit inside the card, above the textarea, so they read

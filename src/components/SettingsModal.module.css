@@ -66,7 +66,7 @@
 .section {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 16px;
 }
 
 .sectionLabel {
@@ -99,6 +99,15 @@ select.input {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+/* Checkbox rows: a 28px line with the label set 10px off the tile. */
+label.fieldRow:has(> input[type="checkbox"]) {
+  min-height: 28px;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
 }
 
 .connectionRow {
