@@ -504,7 +504,7 @@
 /*
  * The list scrolls but is still a flex COLUMN, so its rows are flex items and
  * shrink to fit the viewport unless told not to — a 4-line card (wait row)
- * squashed to its 64px min-height and its text spilled over the next card.
+ * squashed to its 48px min-height and its text spilled over the next card.
  */
 .list > *,
 .shelf > * {
@@ -517,11 +517,12 @@
   flex-direction: column;
   width: 100%;
   /* min-height is a floor: .list is a scrolling flex column, so without
-     flex-shrink:0 a card taller than 64px (wait row, subagent rows) gets
-     squashed back to 64px and its last line paints over the next card. */
+     flex-shrink:0 a card taller than 48px (wait row, subagent rows) gets
+     squashed back to 48px and its last line paints over the next card.
+     Two lines: title + status, then project · branch · PR. */
   flex-shrink: 0;
-  min-height: 64px;
-  padding: 7px 10px;
+  min-height: 48px;
+  padding: 8px 10px;
   border-radius: var(--radius-sm);
   border: 1px solid transparent;
   background: transparent;

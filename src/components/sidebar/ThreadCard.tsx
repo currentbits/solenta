@@ -501,194 +501,6 @@ export const ThreadCard = memo(function ThreadCard({
         aria-label={selectLabel}
       />
       <div className={styles.cardBody}>
-        {!compact && (
-        <div className={styles.cardLine1}>
-          <ProjectIcon url={iconUrl} name={slug} seed={thread.projectId} size={16} />
-          {showProject && (
-            <span className={styles.cardSlug} data-card-slug="">
-              {slug}
-            </span>
-          )}
-          <HostChip host={thread.host} />
-          {pinned && (
-            <span className={styles.pinFlag} data-pin-flag="" title="Pinned" aria-hidden>
-              <Icon size={10}>
-                <path d="M12 17v5" />
-                <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1" />
-              </Icon>
-            </span>
-          )}
-          {audio?.audible && (
-            <button
-              type="button"
-              className={styles.iconBtn}
-              aria-label={audio.muted ? "Unmute thread audio" : "Mute thread audio"}
-              title={
-                audio.muted
-                  ? "Audio muted (click to unmute)"
-                  : "Playing audio (click to mute)"
-              }
-              data-audio-indicator={thread.id}
-              data-audio-muted={audio.muted ? "true" : undefined}
-              onClick={(e) => {
-                e.stopPropagation();
-                void onSetAudioMuted?.(thread.id, !audio.muted);
-              }}
-            >
-              <Icon size={12}>
-                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
-                {audio.muted ? (
-                  <>
-                    <line x1="23" y1="9" x2="17" y2="15" />
-                    <line x1="17" y1="9" x2="23" y2="15" />
-                  </>
-                ) : (
-                  <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
-                )}
-              </Icon>
-            </button>
-          )}
-          <span className={styles.cardSlot}>
-            <span className={styles.cardStatus}>
-              {label ? (
-                <span
-                  className={styles.statusLabel}
-                  data-status-label={label.text}
-                  data-tone={label.tone}
-                  data-dim={
-                    (label.tone === "working" || label.tone === "delegating") &&
-                    !active
-                      ? "true"
-                      : undefined
-                  }
-                  title={label.title}
-                  {...label.flags}
-                >
-                  <StatusMarker tone={label.tone} pulse={pulse} />
-                  {label.text}
-                </span>
-              ) : (
-                <span className={styles.age}>
-                  {formatRelativeAge(thread.updatedAt, now)}
-                </span>
-              )}
-            </span>
-            {hasActions && (
-              <span className={styles.cardActions} data-card-actions="">
-                {onSetSnoozed && (
-                  <button
-                    type="button"
-                    className={styles.iconBtn}
-                    aria-label={
-                      thread.snoozedUntil != null
-                        ? "Wake thread now"
-                        : "Snooze thread"
-                    }
-                    title={thread.snoozedUntil != null ? "Wake" : "Snooze"}
-                    aria-haspopup={
-                      thread.snoozedUntil != null ? undefined : "menu"
-                    }
-                    data-snooze-btn={thread.id}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (thread.snoozedUntil != null) {
-                        void onSetSnoozed(thread.id, null);
-                        return;
-                      }
-                      if (menuBusy.current) return;
-                      const rect = e.currentTarget.getBoundingClientRect();
-                      const presets = resolveSnoozePresets(Date.now());
-                      menuBusy.current = true;
-                      setMenuOpen(true);
-                      onToggleSnoozeMenu?.(thread.id);
-                      void showContextMenu(
-                        [
-                          ...presets.map((p) => ({
-                            id: `snooze:${p.id}`,
-                            label: p.label,
-                            whenLabel: p.whenLabel,
-                            attrs: { "data-snooze-preset": p.id },
-                          })),
-                          {
-                            id: "snooze:custom",
-                            label: "Custom…",
-                            separatorBefore: true,
-                            attrs: { "data-snooze-custom": "" },
-                          },
-                        ],
-                        { x: rect.right, y: rect.bottom },
-                      )
-                        .then((id) => {
-                          if (id) applyMenuId(id, presets, []);
-                        })
-                        .finally(() => {
-                          menuBusy.current = false;
-                          setMenuOpen(false);
-                          onToggleSnoozeMenu?.(null);
-                        });
-                    }}
-                  >
-                    <Icon size={13}>
-                      <circle cx="12" cy="12" r="10" />
-                      <path d="M12 6v6l4 2" />
-                    </Icon>
-                  </button>
-                )}
-                {onSetSettled && (
-                  <button
-                    type="button"
-                    className={styles.iconBtn}
-                    aria-label={settleLabel}
-                    title={
-                      working && !isSettled
-                        ? "Cannot settle while a run is active"
-                        : settleLabel
-                    }
-                    data-settle-btn={thread.id}
-                    disabled={working && !isSettled}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void onSetSettled(thread.id, settleOverride);
-                    }}
-                  >
-                    <Icon size={13}>
-                      <path d="M20 6 9 17l-5-5" />
-                    </Icon>
-                  </button>
-                )}
-                {(onSetSnoozed || onFork || onDuplicate || onRenameThread || onSetMuted || onSetEjected || onSetSettled || onSetPinned || onSetTags || onSetThreadProject) && (
-                  <button
-                    type="button"
-                    className={styles.iconBtn}
-                    aria-label={`Thread actions: ${thread.title}`}
-                    title="Thread actions"
-                    aria-haspopup="menu"
-                    aria-expanded={menuOpen}
-                    data-more-btn={thread.id}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      const rect = e.currentTarget.getBoundingClientRect();
-                      void openThreadMenu({ x: rect.right, y: rect.bottom });
-                    }}
-                  >
-                    <svg
-                      width="13"
-                      height="13"
-                      viewBox="0 0 16 16"
-                      fill="currentColor"
-                      aria-hidden="true"
-                    >
-                      <circle cx="3.25" cy="8" r="1.25" />
-                      <circle cx="8" cy="8" r="1.25" />
-                      <circle cx="12.75" cy="8" r="1.25" />
-                    </svg>
-                  </button>
-                )}
-              </span>
-            )}
-          </span>
-        </div>
-        )}
         <div className={styles.cardLine2}>
           {showUnread && <span className={styles.srOnly}>unread</span>}
           {renaming ? (
@@ -727,6 +539,149 @@ export const ThreadCard = memo(function ThreadCard({
           )}
           {contentMatch && (
             <span className={styles.inMessagesTag}>in messages</span>
+          )}
+          {!compact && (
+            <>
+            <span className={styles.cardSlot}>
+              <span className={styles.cardStatus}>
+                {label ? (
+                  <span
+                    className={styles.statusLabel}
+                    data-status-label={label.text}
+                    data-tone={label.tone}
+                    data-dim={
+                      (label.tone === "working" || label.tone === "delegating") &&
+                      !active
+                        ? "true"
+                        : undefined
+                    }
+                    title={label.title}
+                    {...label.flags}
+                  >
+                    <StatusMarker tone={label.tone} pulse={pulse} />
+                    {label.text}
+                  </span>
+                ) : (
+                  <span className={styles.age}>
+                    {formatRelativeAge(thread.updatedAt, now)}
+                  </span>
+                )}
+              </span>
+              {hasActions && (
+                <span className={styles.cardActions} data-card-actions="">
+                  {onSetSnoozed && (
+                    <button
+                      type="button"
+                      className={styles.iconBtn}
+                      aria-label={
+                        thread.snoozedUntil != null
+                          ? "Wake thread now"
+                          : "Snooze thread"
+                      }
+                      title={thread.snoozedUntil != null ? "Wake" : "Snooze"}
+                      aria-haspopup={
+                        thread.snoozedUntil != null ? undefined : "menu"
+                      }
+                      data-snooze-btn={thread.id}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (thread.snoozedUntil != null) {
+                          void onSetSnoozed(thread.id, null);
+                          return;
+                        }
+                        if (menuBusy.current) return;
+                        const rect = e.currentTarget.getBoundingClientRect();
+                        const presets = resolveSnoozePresets(Date.now());
+                        menuBusy.current = true;
+                        setMenuOpen(true);
+                        onToggleSnoozeMenu?.(thread.id);
+                        void showContextMenu(
+                          [
+                            ...presets.map((p) => ({
+                              id: `snooze:${p.id}`,
+                              label: p.label,
+                              whenLabel: p.whenLabel,
+                              attrs: { "data-snooze-preset": p.id },
+                            })),
+                            {
+                              id: "snooze:custom",
+                              label: "Custom…",
+                              separatorBefore: true,
+                              attrs: { "data-snooze-custom": "" },
+                            },
+                          ],
+                          { x: rect.right, y: rect.bottom },
+                        )
+                          .then((id) => {
+                            if (id) applyMenuId(id, presets, []);
+                          })
+                          .finally(() => {
+                            menuBusy.current = false;
+                            setMenuOpen(false);
+                            onToggleSnoozeMenu?.(null);
+                          });
+                      }}
+                    >
+                      <Icon size={13}>
+                        <circle cx="12" cy="12" r="10" />
+                        <path d="M12 6v6l4 2" />
+                      </Icon>
+                    </button>
+                  )}
+                  {onSetSettled && (
+                    <button
+                      type="button"
+                      className={styles.iconBtn}
+                      aria-label={settleLabel}
+                      title={
+                        working && !isSettled
+                          ? "Cannot settle while a run is active"
+                          : settleLabel
+                      }
+                      data-settle-btn={thread.id}
+                      disabled={working && !isSettled}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void onSetSettled(thread.id, settleOverride);
+                      }}
+                    >
+                      <Icon size={13}>
+                        <path d="M20 6 9 17l-5-5" />
+                      </Icon>
+                    </button>
+                  )}
+                  {(onSetSnoozed || onFork || onDuplicate || onRenameThread || onSetMuted || onSetEjected || onSetSettled || onSetPinned || onSetTags || onSetThreadProject) && (
+                    <button
+                      type="button"
+                      className={styles.iconBtn}
+                      aria-label={`Thread actions: ${thread.title}`}
+                      title="Thread actions"
+                      aria-haspopup="menu"
+                      aria-expanded={menuOpen}
+                      data-more-btn={thread.id}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        const rect = e.currentTarget.getBoundingClientRect();
+                        void openThreadMenu({ x: rect.right, y: rect.bottom });
+                      }}
+                    >
+                      <svg
+                        width="13"
+                        height="13"
+                        viewBox="0 0 16 16"
+                        fill="currentColor"
+                        aria-hidden="true"
+                      >
+                        <circle cx="3.25" cy="8" r="1.25" />
+                        <circle cx="8" cy="8" r="1.25" />
+                        <circle cx="12.75" cy="8" r="1.25" />
+                      </svg>
+                    </button>
+                  )}
+                </span>
+              )}
+            </span>
+            </>
           )}
           {compact && (
             <span className={styles.cardSlot}>
@@ -814,125 +769,174 @@ export const ThreadCard = memo(function ThreadCard({
             </div>
           )
         )}
-        {!compact && hasLine3 && (
-          <div className={styles.cardLine3}>
-            {thread.worktreePath ? (
-              <span
-                className={styles.cardWorktree}
-                data-card-worktree=""
-                role="img"
-                aria-label="Worktree"
-                title={`Worktree: ${thread.worktreePath}`}
-              >
-                <svg
-                  width="12"
-                  height="12"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  <path d="M2.5 4A1.5 1.5 0 0 1 4 2.5h2.2a1.5 1.5 0 0 1 1.1.5l.8 1a1.5 1.5 0 0 0 1.1.5H12A1.5 1.5 0 0 1 13.5 6v5A1.5 1.5 0 0 1 12 12.5H4A1.5 1.5 0 0 1 2.5 11V4Z" />
-                  <circle cx="8" cy="8.5" r="1.3" />
-                </svg>
-              </span>
-            ) : null}
-            {thread.branch ? (
-              <span
-                className={styles.cardBranch}
-                data-card-branch=""
-                title={thread.branch}
-              >
-                {middleTruncate(thread.branch, 32, 0.65)}
-              </span>
-            ) : (
-              <span className={styles.cardBranchSpacer} />
-            )}
-            {thread.prNumber != null && thread.prUrl && (
-              <PrHoverTarget
-                projectPath={projectPath}
-                repo={repoFromGithubUrl(thread.prUrl)}
-                number={thread.prNumber}
-              >
-                <a
-                  className={styles.prLink}
-                  data-pr-badge=""
-                  data-pr-state={thread.prState?.toLowerCase()}
-                  title={
-                    thread.prState
-                      ? `PR #${thread.prNumber} ${thread.prState.toLowerCase()}`
-                      : undefined
-                  }
-                  href={thread.prUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onPointerDown={(e) => e.stopPropagation()}
-                  onClick={(e) => e.stopPropagation()}
+        {!compact && (
+        <div className={styles.cardLine1}>
+          <ProjectIcon url={iconUrl} name={slug} seed={thread.projectId} size={16} />
+          {showProject && (
+            <span className={styles.cardSlug} data-card-slug="">
+              {slug}
+            </span>
+          )}
+          <HostChip host={thread.host} />
+          {pinned && (
+            <span className={styles.pinFlag} data-pin-flag="" title="Pinned" aria-hidden>
+              <Icon size={10}>
+                <path d="M12 17v5" />
+                <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1" />
+              </Icon>
+            </span>
+          )}
+          {audio?.audible && (
+            <button
+              type="button"
+              className={styles.iconBtn}
+              aria-label={audio.muted ? "Unmute thread audio" : "Mute thread audio"}
+              title={
+                audio.muted
+                  ? "Audio muted (click to unmute)"
+                  : "Playing audio (click to mute)"
+              }
+              data-audio-indicator={thread.id}
+              data-audio-muted={audio.muted ? "true" : undefined}
+              onClick={(e) => {
+                e.stopPropagation();
+                void onSetAudioMuted?.(thread.id, !audio.muted);
+              }}
+            >
+              <Icon size={12}>
+                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                {audio.muted ? (
+                  <>
+                    <line x1="23" y1="9" x2="17" y2="15" />
+                    <line x1="17" y1="9" x2="23" y2="15" />
+                  </>
+                ) : (
+                  <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+                )}
+              </Icon>
+            </button>
+          )}
+          {hasLine3 && (
+            <>
+              {thread.worktreePath ? (
+                <span
+                  className={styles.cardWorktree}
+                  data-card-worktree=""
+                  role="img"
+                  aria-label="Worktree"
+                  title={`Worktree: ${thread.worktreePath}`}
                 >
                   <svg
-                    width="10"
-                    height="10"
+                    width="12"
+                    height="12"
                     viewBox="0 0 16 16"
                     fill="none"
                     stroke="currentColor"
-                    strokeWidth="1.6"
+                    strokeWidth="1.5"
                     strokeLinecap="round"
+                    strokeLinejoin="round"
                     aria-hidden="true"
                   >
-                    <circle cx="4" cy="3.5" r="1.5" />
-                    <circle cx="4" cy="12.5" r="1.5" />
-                    <circle cx="12" cy="12.5" r="1.5" />
-                    <path
-                      d={
-                        thread.prState === "MERGED"
-                          ? "M4 5v6M4 5c0 4 8 3 8 6"
-                          : "M4 5v6M12 11V6a2 2 0 0 0-2-2H8"
-                      }
-                    />
+                    <path d="M2.5 4A1.5 1.5 0 0 1 4 2.5h2.2a1.5 1.5 0 0 1 1.1.5l.8 1a1.5 1.5 0 0 0 1.1.5H12A1.5 1.5 0 0 1 13.5 6v5A1.5 1.5 0 0 1 12 12.5H4A1.5 1.5 0 0 1 2.5 11V4Z" />
+                    <circle cx="8" cy="8.5" r="1.3" />
                   </svg>
-                  #{thread.prNumber}
-                </a>
-              </PrHoverTarget>
-            )}
-            <ConflictForecastBadge
-              threadId={thread.id}
-              forecast={conflictForecast}
-              titles={threadTitles}
-            />
-            {providerId ? (
-              <ProviderMark
-                providerId={providerId}
-                providers={providers}
-                className={styles.cardProvider}
-              />
-            ) : null}
-            {hasDraft ? (
-              <span
-                className={styles.cardDraft}
-                data-card-draft=""
-                role="img"
-                aria-label="Unsent draft"
-                title="Unsent draft"
-              >
-                <svg
-                  width="11"
-                  height="11"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
+                </span>
+              ) : null}
+              {thread.branch ? (
+                <span
+                  className={styles.cardBranch}
+                  data-card-branch=""
+                  title={thread.branch}
                 >
-                  <path d="M11.4 2.4a1.4 1.4 0 0 1 2 2L5 12.8l-3 .8.8-3Z" />
-                </svg>
-              </span>
-            ) : null}
-          </div>
+                  {middleTruncate(thread.branch, 32, 0.65)}
+                </span>
+              ) : (
+                <span className={styles.cardBranchSpacer} />
+              )}
+              {thread.prNumber != null && thread.prUrl && (
+                <PrHoverTarget
+                  projectPath={projectPath}
+                  repo={repoFromGithubUrl(thread.prUrl)}
+                  number={thread.prNumber}
+                >
+                  <a
+                    className={styles.prLink}
+                    data-pr-badge=""
+                    data-pr-state={thread.prState?.toLowerCase()}
+                    title={
+                      thread.prState
+                        ? `PR #${thread.prNumber} ${thread.prState.toLowerCase()}`
+                        : undefined
+                    }
+                    href={thread.prUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <svg
+                      width="10"
+                      height="10"
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.6"
+                      strokeLinecap="round"
+                      aria-hidden="true"
+                    >
+                      <circle cx="4" cy="3.5" r="1.5" />
+                      <circle cx="4" cy="12.5" r="1.5" />
+                      <circle cx="12" cy="12.5" r="1.5" />
+                      <path
+                        d={
+                          thread.prState === "MERGED"
+                            ? "M4 5v6M4 5c0 4 8 3 8 6"
+                            : "M4 5v6M12 11V6a2 2 0 0 0-2-2H8"
+                        }
+                      />
+                    </svg>
+                    #{thread.prNumber}
+                  </a>
+                </PrHoverTarget>
+              )}
+              <ConflictForecastBadge
+                threadId={thread.id}
+                forecast={conflictForecast}
+                titles={threadTitles}
+              />
+              {providerId ? (
+                <ProviderMark
+                  providerId={providerId}
+                  providers={providers}
+                  className={styles.cardProvider}
+                />
+              ) : null}
+              {hasDraft ? (
+                <span
+                  className={styles.cardDraft}
+                  data-card-draft=""
+                  role="img"
+                  aria-label="Unsent draft"
+                  title="Unsent draft"
+                >
+                  <svg
+                    width="11"
+                    height="11"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M11.4 2.4a1.4 1.4 0 0 1 2 2L5 12.8l-3 .8.8-3Z" />
+                  </svg>
+                </span>
+              ) : null}
+            </>
+          )}
+        </div>
         )}
         {!compact && familySummary && onToggleFamily && (
           <button
