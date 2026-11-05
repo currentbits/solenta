@@ -760,7 +760,7 @@ function FusionCard({
               </ul>
               {plan.agreed.length > 0 ? (
                 <p className={styles.doctorMeta} data-fusion-agreed="">
-                  Agreed: {plan.agreed.map((f) => `${f.label} ${f.value}`).join(" · ")}
+                  Agreed by every file: {plan.agreed.map((f) => `${f.label} ${f.value}`).join(" · ")}
                 </p>
               ) : null}
               {plan.conflicts.map((c) => (

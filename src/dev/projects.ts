@@ -99,7 +99,7 @@ function devFusionPlan(projectId: string, input: FusionInput, syncedAt: number |
           : "",
         changed,
       },
-      { path: ".cursorrules", diff: block(".cursorrules", 1, shared), changed: true },
+      { path: ".cursorrules", diff: changed ? block(".cursorrules", 1, shared) : "", changed },
     ],
     status: { synced: !changed, syncedAt },
   };
