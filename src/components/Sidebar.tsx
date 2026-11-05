@@ -2089,7 +2089,7 @@ export const Sidebar = memo(function Sidebar({
                     <>
                       {visiblePinned.length > 0 && (
                         <div className={styles.groupLabel} data-group-label="pinned">
-                          Pinned
+                          {`Pinned · ${visiblePinned.length}`}
                         </div>
                       )}
                       {visiblePinned.map((thread) =>
@@ -2104,7 +2104,7 @@ export const Sidebar = memo(function Sidebar({
                       )}
                       {visibleActive.length > 0 && (
                         <div className={styles.groupLabel} data-group-label="recent">
-                          Recent
+                          {`Recent · ${visibleActive.length}`}
                         </div>
                       )}
                       {visibleActive.map((thread) =>
