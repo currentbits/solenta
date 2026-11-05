@@ -969,7 +969,7 @@ select.agentSelect {
 .send {
   width: 30px;
   height: 30px;
-  border-radius: var(--radius);
+  border-radius: var(--radius-sm);
   background: var(--accent);
   color: var(--text-on-accent);
   display: grid;

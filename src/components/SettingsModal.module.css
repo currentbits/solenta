@@ -93,7 +93,12 @@
 /* A select is a choice, not a text field: size it to its options. */
 select.input {
   flex: 0 0 auto;
-  width: min(100%, 280px);
+  width: min(100%, 240px);
+  height: 32px;
+  padding-top: 0;
+  padding-bottom: 0;
+  border-color: var(--border-soft);
+  background-color: var(--card);
 }
 
 .fieldRow {
@@ -830,11 +835,12 @@ label.fieldRow:has(> input[type="checkbox"]) {
   min-height: 0;
   overflow: auto;
   padding: 20px 24px 40px;
+  scroll-padding-bottom: 24px;
   display: flex;
   flex-direction: column;
   gap: 24px;
   /* Rows scroll out under a short fade, not a hard slice at the modal edge. */
-  mask-image: linear-gradient(to top, transparent 0, #000 44px);
+  mask-image: linear-gradient(to top, transparent 0, #000 14px);
 }
 
 .content > .fieldError {

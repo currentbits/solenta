@@ -745,6 +745,13 @@ a.btn {
   background: var(--card-hover);
 }
 
+/* Cost is data, not an action: mono figures in tertiary ink. */
+.header .sandboxBadge[data-cost-badge] {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  pointer-events: none;
+}
+
 /* Header chrome: only the next git action keeps an outline; Fork, Hand off
    and friends are ghost buttons whose hover fill is the affordance. */
 .header .btn:not([data-next-git-action]):not(.btnPrimary) {
@@ -1141,15 +1148,15 @@ a.btn {
   display: flex;
   align-items: center;
   gap: 9px;
-  /* Hanging icon: the 14px glyph + 9px gap sit in the gutter so every step
-     label starts on the same left edge as the prose. */
-  width: calc(100% + 23px);
-  margin-left: -23px;
+  /* Hanging icon: a 16px glyph box + 10px gap sit in the gutter so every
+     step label starts on the same left edge as the prose. */
+  width: calc(100% + 26px);
+  margin-left: -26px;
   min-width: 0;
   padding: 3px 0;
-  font-size: 12.5px;
+  font-size: 13px;
   font-weight: 400;
-  color: var(--text-dim);
+  color: var(--text-muted);
   text-align: left;
 }
 
@@ -1159,8 +1166,8 @@ a.btn {
 }
 
 .stepIcon {
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
   flex-shrink: 0;
   color: var(--text-dim);
   display: inline-grid;
@@ -1190,14 +1197,15 @@ a.btn {
 }
 
 /* Memory moments (#1429 F5): the yellow diamond and the marker stripe. */
+/* A passive event: an outline diamond in the icon ink, so yellow stays for
+   the active step and the brand mark. */
 .memoryDiamond {
   display: block;
   width: 8px;
   height: 8px;
   border-radius: 1.5px;
   transform: rotate(45deg);
-  background: var(--accent);
-  box-shadow: var(--accent-mark-ring);
+  border: 1.5px solid currentColor;
 }
 
 /* The recalled count reads as the row's own text, not a highlight. */
@@ -1207,8 +1215,8 @@ a.btn {
 
 .memoryList {
   list-style: none;
-  margin: 2px 0 8px -17px;
-  padding: 0 0 0 16px;
+  margin: 2px 0 8px -18px;
+  padding: 0 0 0 17px;
   border-left: 1px solid var(--border);
   font-size: 12.5px;
   color: var(--text-muted);
@@ -2259,7 +2267,7 @@ button.diffLineGutter:focus-visible {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 12px;
+  width: 16px;
   flex-shrink: 0;
   color: var(--text-dim);
   transition: transform 0.12s ease;
@@ -3730,7 +3738,7 @@ button.diffLineGutter:focus-visible {
   /* A quiet box: lighter than the composer below it, which stays the one
      strong surface at the foot of the thread. */
   border: 1px solid var(--border-soft);
-  border-radius: var(--radius);
+  border-radius: var(--radius-lg);
   background: var(--overlay-soft);
   box-shadow: none;
   font-size: 13px;
@@ -4381,12 +4389,12 @@ button.diffLineGutter:focus-visible {
 .runHeader {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   width: 100%;
   margin: -6px auto -10px;
   padding: 2px;
   /* Hang the chevron in the gutter like the step icons: label on the prose edge. */
-  transform: translateX(-22px);
+  transform: translateX(-28px);
   border: none;
   background: transparent;
   color: var(--text-dim);
@@ -5380,4 +5388,12 @@ button.heroProject:hover {
   > .msgMeta:focus-within {
   opacity: 1;
   pointer-events: auto;
+}
+
+/* Consecutive event rows ("Read 1 file", "Kicked off…", "Run complete")
+   sit 8px apart instead of the 16px block gap, so routine steps read as
+   one quiet group between pieces of prose. */
+.body > :is(.settledRow:has(> .eventLine), .toolGroup)
+  + :is(.settledRow:has(> .eventLine), .toolGroup) {
+  margin-top: -8px;
 }

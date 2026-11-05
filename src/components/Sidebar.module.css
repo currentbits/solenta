@@ -734,6 +734,8 @@
 .cardSlug {
   font-size: 11px;
   color: var(--text-dim);
+  /* The branch absorbs truncation; the project name stays whole. */
+  flex-shrink: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -979,9 +981,8 @@
 .cardTitle {
   font-size: 13px;
   line-height: 1.35;
-  /* Unselected titles sit a step down in weight and ink; the open thread
-     gets full ink at 500. */
-  font-weight: 400;
+  /* Unselected titles sit a step down in ink; the open thread gets full ink. */
+  font-weight: 500;
   color: color-mix(in srgb, var(--text) 60%, var(--text-muted));
   white-space: nowrap;
   overflow: hidden;
@@ -1091,7 +1092,7 @@
 
 /* F2 (#1429): branches and PR numbers in Geist Mono. */
 .cardBranch {
-  font: 11.5px var(--font);
+  font: 11px var(--font);
   color: var(--text-dim);
   overflow: hidden;
   text-overflow: ellipsis;
