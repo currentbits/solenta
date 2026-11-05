@@ -1136,7 +1136,10 @@ a.btn {
   display: flex;
   align-items: center;
   gap: 9px;
-  width: 100%;
+  /* Hanging icon: the 14px glyph + 9px gap sit in the gutter so every step
+     label starts on the same left edge as the prose. */
+  width: calc(100% + 23px);
+  margin-left: -23px;
   min-width: 0;
   padding: 3px 0;
   font-size: 13px;
@@ -1200,7 +1203,7 @@ a.btn {
 
 .memoryList {
   list-style: none;
-  margin: 2px 0 8px 6px;
+  margin: 2px 0 8px -17px;
   padding: 0 0 0 16px;
   border-left: 1px solid var(--border);
   font-size: 12.5px;
@@ -2144,7 +2147,7 @@ button.diffLineGutter:focus-visible {
   overflow-x: hidden;
   padding: 24px 24px 16px;
   /* Content scrolls out under a short fade, never a hard slice at the header. */
-  mask-image: linear-gradient(to bottom, transparent 0, #000 28px);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 16px);
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -2216,6 +2219,25 @@ button.diffLineGutter:focus-visible {
 .settledRow {
   content-visibility: auto;
   contain-intrinsic-size: auto 220px;
+}
+
+/* content-visibility clips paint to the row box, so the box reaches 24px into
+   the gutter on each side (padding keeps the content on the column). That
+   leaves room for the hanging step icons. margin % is of the body width, so
+   this stays centred at every width and never overflows a narrow pane. */
+.body > .settledRow {
+  width: auto;
+  max-width: none;
+  margin-inline: max(-24px, calc((100% - var(--thread-column)) / 2 - 24px));
+  padding-inline: 24px;
+}
+
+/* The plan card's fill reaches past the column so its text shares the
+   prose edge. */
+.body > .planCard {
+  width: auto;
+  max-width: none;
+  margin-inline: max(-14px, calc((100% - var(--thread-column)) / 2 - 14px));
 }
 
 .card {
@@ -2312,7 +2334,7 @@ button.diffLineGutter:focus-visible {
 }
 
 .eventTitle {
-  margin: 2px 0 6px 23px;
+  margin: 2px 0 6px;
   font-size: 12.5px;
   color: var(--text-muted);
   white-space: pre-wrap;
@@ -2396,7 +2418,7 @@ button.diffLineGutter:focus-visible {
 }
 
 .message {
-  padding: 2px 2px;
+  padding: 2px 0;
 }
 
 /**
@@ -3665,7 +3687,7 @@ button.diffLineGutter:focus-visible {
   gap: 8px;
   padding: 12px 14px;
   border: none;
-  border-radius: var(--radius);
+  border-radius: var(--radius-lg);
   background: var(--overlay-soft);
   box-shadow: none;
   font-size: 13px;
@@ -4961,10 +4983,12 @@ a.menuItem {
    and workspace strip directly under it; the first send drops the layout
    back to the normal transcript. */
 /* The composer shares the transcript's reading column (#1429). Composer
-   pads itself 20px a side, so the column grows by that to line up. */
+   pads itself 20px a side, and its card reaches 14px past the column like
+   the plan card does, so their box edges line up and the placeholder sits
+   on the prose edge. */
 .composerColumn {
   width: 100%;
-  max-width: calc(var(--thread-column) + 40px);
+  max-width: calc(var(--thread-column) + 68px);
   margin: 0 auto;
   flex-shrink: 0;
 }

@@ -67,6 +67,7 @@
   min-height: 0;
   overflow-y: auto;
   padding: 6px;
+  mask-image: linear-gradient(to top, transparent 0, #000 20px);
 }
 
 .group {

@@ -29,7 +29,7 @@
   --text: #ecebe6;
   /* Long-form reading text (transcript prose): a step below --text so a
      page of agent output doesn't glare. */
-  --text-body: #d3d0c8;
+  --text-body: #dedbd3;
   /* Secondary text, ~7.4:1 on --card. */
   --text-muted: #aeaba3;
   /* Tertiary text (meta, timestamps, placeholders), ~5:1 on --card (AA). */
@@ -142,7 +142,7 @@
   --border: #e0dfd8;
   --border-soft: #eae9e3;
   --text: #1c1b19;
-  --text-body: #2f2e2a;
+  --text-body: #292823;
   /* Secondary text, ~7.6:1 on --card. */
   --text-muted: #53514b;
   /* Tertiary text, ~5:1 on --card (AA). */

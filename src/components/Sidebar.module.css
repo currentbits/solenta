@@ -540,6 +540,10 @@
   background: var(--overlay-hover);
 }
 
+.card[data-active="true"] .cardTitle {
+  color: var(--text);
+}
+
 /* F4 notch (#1429): a short yellow bar inside the row's left inset marks
    the open thread. */
 .card[data-active="true"]::after {
@@ -966,7 +970,8 @@
   font-size: 13px;
   font-weight: 500;
   line-height: 1.35;
-  color: var(--text);
+  /* Unselected titles sit a half-step down; the open thread gets full ink. */
+  color: color-mix(in srgb, var(--text) 78%, var(--text-muted));
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

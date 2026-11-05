@@ -217,6 +217,7 @@ label.fieldRow:has(> input[type="checkbox"]) {
 .range {
   flex: 1;
   min-width: 0;
+  max-width: 320px;
   height: 28px;
 }
 
@@ -784,10 +785,12 @@ label.fieldRow:has(> input[type="checkbox"]) {
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: 20px 24px 24px;
+  padding: 20px 24px 40px;
   display: flex;
   flex-direction: column;
   gap: 24px;
+  /* Rows scroll out under a short fade, not a hard slice at the modal edge. */
+  mask-image: linear-gradient(to top, transparent 0, #000 24px);
 }
 
 .content > .fieldError {
