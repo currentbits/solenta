@@ -1,4 +1,4 @@
-const { describe, it, beforeEach, afterEach } = require("node:test");
+const { describe, it, beforeEach, afterEach, mock } = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
@@ -87,11 +87,15 @@ describe("spendByDay and settings", () => {
   let filePath;
 
   beforeEach(() => {
+    // Store load prunes day keys older than 90 days from the real clock, so
+    // the fixed Aug 2026 dates below expired on 2026-11-05. Pin "now" to them.
+    mock.timers.enable({ apis: ["Date"], now: new Date(2026, 7, 6, 12, 0, 0) });
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-spend-"));
     filePath = path.join(tmpDir, "store.json");
   });
 
   afterEach(async () => {
+    mock.timers.reset();
     await rmTree(tmpDir);
   });
 
