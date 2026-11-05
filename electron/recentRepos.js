@@ -33,7 +33,9 @@ const PER_SOURCE = 300;
 /** Distinct cwds resolved with git, newest first. */
 const MAX_DIRS = 80;
 const MAX_GROUPS = 20;
-const HEAD_BYTES = 64 * 1024;
+const HEAD_CHUNK = 16 * 1024;
+/** Claude's first cwd can sit ~90KB in, after big hook attachment lines. */
+const HEAD_MAX = 256 * 1024;
 /** Folders "From CLI history" lists at most (#1858). */
 const MAX_HISTORY = 200;
 /** Newest sessions kept per folder, for the import offer after adding. */
@@ -43,25 +45,30 @@ const PRESELECT_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
 /** ...and it is one of the newest this many. */
 const PRESELECT_MAX = 3;
 
-/** @param {string} file */
-function readHead(file) {
-  const fd = fs.openSync(file, "r");
-  try {
-    const buf = Buffer.alloc(HEAD_BYTES);
-    return buf.toString("utf8", 0, fs.readSync(fd, buf, 0, HEAD_BYTES, 0));
-  } finally {
-    fs.closeSync(fd);
-  }
-}
+const CWD_FIELD = /"cwd"\s*:\s*("(?:[^"\\]|\\.)*")/;
 
 /**
  * First `"cwd": "…"` in the file head. Claude jsonl lines and the Codex
- * session_meta line both carry one.
+ * session_meta line both carry one. Reads 16KB chunks and stops at the
+ * first match, or at HEAD_MAX.
  * @param {string} file
  */
 function cwdField(file) {
-  const m = readHead(file).match(/"cwd"\s*:\s*("(?:[^"\\]|\\.)*")/);
-  return m ? JSON.parse(m[1]) : null;
+  const fd = fs.openSync(file, "r");
+  try {
+    const buf = Buffer.alloc(HEAD_MAX);
+    let len = 0;
+    while (len < HEAD_MAX) {
+      const n = fs.readSync(fd, buf, len, Math.min(HEAD_CHUNK, HEAD_MAX - len), len);
+      if (n === 0) break;
+      len += n;
+      const m = buf.toString("utf8", 0, len).match(CWD_FIELD);
+      if (m) return JSON.parse(m[1]);
+    }
+    return null;
+  } finally {
+    fs.closeSync(fd);
+  }
 }
 
 /**
@@ -117,8 +124,9 @@ function unflattenPath(name, cache) {
 
 /** @type {SessionSource[]} */
 const SOURCES = [
-  // projects/<flattened-cwd>/<id>.jsonl: one cwd per group dir.
-  { provider: "claude", walk: walkClaudeSessions, cwd: cwdField, group: path.dirname },
+  // projects/<flattened-cwd>/<id>.jsonl. The flattening is lossy (my-app and
+  // my/app share a dir), so every session's own cwd is read, not the dir's.
+  { provider: "claude", walk: walkClaudeSessions, cwd: cwdField },
   {
     provider: "codex",
     walk: (home, onFile) => walkCodexRollouts(resolveCodexHome(home), onFile),

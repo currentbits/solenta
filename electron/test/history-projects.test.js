@@ -197,6 +197,35 @@ describe("discoverHistoryProjects (#1858)", () => {
     assert.ok(names.includes("app") && !names.includes("added"));
   });
 
+  it("splits one Claude dir shared by my-app and my/app by each session's own cwd", () => {
+    const base = path.join(root, "clash");
+    const dash = path.join(base, "code", "my-app");
+    const slash = path.join(base, "code", "my", "app");
+    fs.mkdirSync(dash, { recursive: true });
+    fs.mkdirSync(slash, { recursive: true });
+    const clashHomes = { ...homes, claude: path.join(base, ".claude"), codex: path.join(base, ".codex"), cursor: path.join(base, ".cursor") };
+    // Claude flattens both to the same dir name.
+    const group = dash.replace(/[^A-Za-z0-9]/g, "-");
+    assert.equal(group, slash.replace(/[^A-Za-z0-9]/g, "-"));
+    const write = (id, cwd, daysAgo, pad = "") =>
+      session(
+        path.join(clashHomes.claude, "projects", group, `${id}.jsonl`),
+        `{"type":"summary","pad":"${pad}"}\n{"type":"user","cwd":${JSON.stringify(cwd)}}\n`,
+        daysAgo,
+      );
+    write("dash0001", dash, 1);
+    write("dash0002", dash, 3);
+    // Newest file in the dir is my/app, with its cwd past the first 64KB.
+    write("slash001", slash, 0.5, "x".repeat(100 * 1024));
+    const rows = discoverHistoryProjects({ homes: clashHomes, homeDir: base, tmpRoots: [] });
+    const byPath = Object.fromEntries(rows.map((r) => [r.path, r]));
+    assert.deepEqual(Object.keys(byPath).sort(), [slash, dash].sort());
+    assert.equal(byPath[dash].sessions, 2);
+    assert.equal(byPath[slash].sessions, 1);
+    assert.deepEqual(byPath[dash].recentSessions.map((r) => r.sessionId), ["dash0001", "dash0002"]);
+    assert.deepEqual(byPath[slash].recentSessions.map((r) => r.sessionId), ["slash001"]);
+  });
+
   it("unflattens a Cursor dir name back to the existing folder", () => {
     const flat = dirs.web.replace(/[^A-Za-z0-9]/g, "-");
     assert.equal(unflattenPath(flat, new Map()), dirs.web);
