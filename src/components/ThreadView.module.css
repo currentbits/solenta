@@ -485,9 +485,9 @@
 }
 
 .project {
-  color: var(--text-muted);
+  color: var(--text-dim);
   font-family: var(--font);
-  font-size: 13.5px;
+  font-size: 13px;
   white-space: nowrap;
   /* A fixed cap, not 45%: the crumb shrinks to a short title like
      "New Thread" and a percentage then clipped the slug. */
@@ -540,7 +540,7 @@ button.project:focus-visible {
 
 .threadTitle {
   font-weight: 600;
-  font-size: 13.5px;
+  font-size: 14px;
   letter-spacing: -0.015em;
   color: var(--text);
   overflow: hidden;
@@ -750,6 +750,11 @@ a.btn {
 .header .btn:not([data-next-git-action]):not(.btnPrimary) {
   border-color: transparent;
   font-weight: 500;
+  color: var(--text-muted);
+}
+
+.header .btn:not([data-next-git-action]):not(.btnPrimary):hover:not(:disabled) {
+  color: var(--text);
 }
 
 .btn:focus-visible {
@@ -3686,9 +3691,10 @@ button.diffLineGutter:focus-visible {
   flex-direction: column;
   gap: 8px;
   padding: 12px 14px;
-  border: none;
+  /* Same box as the composer card below it: one surface, one hairline. */
+  border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  background: var(--overlay-soft);
+  background: var(--card);
   box-shadow: none;
   font-size: 13px;
 }
@@ -4334,6 +4340,8 @@ button.diffLineGutter:focus-visible {
   width: 100%;
   margin: -6px auto -10px;
   padding: 2px;
+  /* Hang the chevron in the gutter like the step icons: label on the prose edge. */
+  transform: translateX(-22px);
   border: none;
   background: transparent;
   color: var(--text-dim);

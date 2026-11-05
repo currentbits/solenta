@@ -153,7 +153,7 @@
   --accent-soft: rgba(242, 229, 31, 0.22);
   /* Yellow on paper is ~1.2:1, so borders and rings on light use olive. */
   --accent-border: rgba(133, 124, 0, 0.55);
-  --mark: rgba(196, 178, 0, 0.28);
+  --mark: rgba(242, 229, 31, 0.45);
   --accent-dot: #c4b200;
   --accent-edge: #857c00;
   --accent-mark-ring: 0 0 0 1px rgba(133, 124, 0, 0.65);

@@ -541,6 +541,7 @@
 }
 
 .card[data-active="true"] .cardTitle {
+  font-weight: 500;
   color: var(--text);
 }
 
@@ -549,7 +550,7 @@
 .card[data-active="true"]::after {
   content: "";
   position: absolute;
-  left: 3px;
+  left: 5px;
   top: 50%;
   width: 2px;
   height: 16px;
@@ -968,10 +969,11 @@
 
 .cardTitle {
   font-size: 13px;
-  font-weight: 500;
   line-height: 1.35;
-  /* Unselected titles sit a half-step down; the open thread gets full ink. */
-  color: color-mix(in srgb, var(--text) 78%, var(--text-muted));
+  /* Unselected titles sit a step down in weight and ink; the open thread
+     gets full ink at 500. */
+  font-weight: 400;
+  color: color-mix(in srgb, var(--text) 60%, var(--text-muted));
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
