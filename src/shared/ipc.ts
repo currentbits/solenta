@@ -385,6 +385,83 @@ export interface AgentConfigWriteResult {
   written: string[];
 }
 
+/** Instruction-file Fusion (#1856). */
+export type FusionFileKind =
+  | "agents"
+  | "claude"
+  | "gemini"
+  | "cursor"
+  | "copilot"
+  | "windsurf";
+
+export type FusionFactKey =
+  | "packageManager"
+  | "install"
+  | "test"
+  | "build"
+  | "lint"
+  | "format";
+
+export interface FusionSource {
+  path: string;
+  /** 1-based. */
+  line: number;
+}
+
+export interface FusionOption {
+  value: string;
+  sources: FusionSource[];
+}
+
+export interface FusionConflict {
+  /** Fact key, or `line:<hash>` for near-duplicate lines. */
+  id: string;
+  key: FusionFactKey | "line";
+  label: string;
+  options: FusionOption[];
+  /** Effective pick: the caller's, else the last sync's, else most-cited. */
+  pick: string;
+}
+
+export interface FusionStatus {
+  synced: boolean;
+  /** Newest mtime of a synced file; null when not synced. */
+  syncedAt: number | null;
+  /** Files whose blocks say different things (CLAUDE.md's @AGENTS.md counts as AGENTS.md's). */
+  disagree?: string[];
+}
+
+export interface FusionPlan {
+  projectId: string;
+  files: Array<{
+    path: string;
+    kind: FusionFileKind;
+    kindLabel: string;
+    hasBlock: boolean;
+  }>;
+  /** `fused` is the value written to the block: commands under the picked package manager. */
+  agreed: Array<{ key: FusionFactKey; label: string; fused: string } & FusionOption>;
+  conflicts: FusionConflict[];
+  /** One unified diff per file; empty when nothing would change. */
+  diffs: Array<{ path: string; diff: string; changed: boolean }>;
+  status: FusionStatus;
+}
+
+export interface FusionInput {
+  projectId: string;
+  picks?: Record<string, string>;
+  /** CLAUDE.md gets `@AGENTS.md` instead of a copy when AGENTS.md is synced. */
+  importInClaude?: boolean;
+  /** Ticked files. The preview uses them for the CLAUDE.md import decision. */
+  paths?: string[];
+}
+
+export interface FusionSyncResult {
+  projectId: string;
+  written: string[];
+  status: FusionStatus;
+}
+
 /** Optional remotes for projects.add. Empty/absent = local project. */
 export interface AddProjectOptions {
   remoteHost?: string;
@@ -5946,6 +6023,10 @@ export interface CoderApi {
       projectId: string;
       targets?: string[];
     }): Promise<AgentConfigWriteResult>;
+    /** Instruction-file Fusion plan: conflicts, picks and per-file diffs (#1856). */
+    fusionPlan(input: FusionInput): Promise<FusionPlan>;
+    /** Write the fusion block into the ticked files only. */
+    fusionSync(input: FusionInput & { paths: string[] }): Promise<FusionSyncResult>;
     /**
      * #438: open a PR (from a new worktree thread) that moves the stored
      * setup command and quick actions into solenta.json.
