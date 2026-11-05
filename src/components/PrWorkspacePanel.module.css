@@ -23,10 +23,11 @@
 
 .heading {
   margin: 0;
-  font-family: var(--mono);
+  font-family: var(--font);
   font-size: 13px;
   font-weight: 650;
   color: var(--text);
+  font-variant-numeric: tabular-nums;
 }
 
 .prPicker {
@@ -124,7 +125,7 @@
   display: grid;
   place-items: center;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-muted);
   font-size: 16px;

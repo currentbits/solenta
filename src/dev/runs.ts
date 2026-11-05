@@ -620,7 +620,7 @@ export function tickSessionRun(detail: ThreadDetail, run: RunState, t: number): 
   detail.messages.push({
     id: id("msg"),
     role: "assistant",
-    text: "Done. Permission mode is wired to threads.setPermissionMode and the session card reflects live usage.",
+    text: "Done. Permission mode is wired to `threads.setPermissionMode` and the session card reflects live usage.",
     createdAt: t,
     runId: run.runId,
   });

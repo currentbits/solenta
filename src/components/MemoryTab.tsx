@@ -4,6 +4,9 @@ import type {
   AgentConfigPreview,
   AgentConfigWriteResult,
   DistilledMemory,
+  FusionInput,
+  FusionPlan,
+  FusionSyncResult,
   ProjectCodeMap,
   MemoryAutoResolved,
   MemoryCitation,
@@ -14,6 +17,7 @@ import type {
   ProjectInfo,
 } from "../shared/ipc";
 import { formatRelativeAge } from "../format";
+import { diffLineKind } from "../diffView";
 import styles from "./MemoryTab.module.css";
 import inspector from "./Inspector.module.css";
 import { InspectorBanner, InspectorSection } from "./InspectorSection";
@@ -627,6 +631,262 @@ function ConfigDoctorCard({
   );
 }
 
+function fusionStatusLabel(status: FusionPlan["status"]): string {
+  if (!status.synced) return status.disagree?.length ? "Not synced (blocks disagree)" : "Not synced";
+  const age = status.syncedAt == null ? "now" : formatRelativeAge(status.syncedAt);
+  return age === "now" ? "Synced just now" : `Synced ${age} ago`;
+}
+
+const DIFF_LINE_CLASS: Record<string, string | undefined> = {
+  add: styles.diffAdd,
+  del: styles.diffDel,
+  hunk: styles.diffHunk,
+  meta: styles.diffHunk,
+};
+
+/**
+ * Instruction-file Fusion (#1856): one shared block in AGENTS.md, CLAUDE.md,
+ * GEMINI.md, .cursorrules… Conflicts get a picker; every pick re-plans so the
+ * diffs always show exactly what Sync will write. The status loads with the
+ * card so the project shows "Synced"/"Not synced" while still collapsed.
+ */
+function FusionCard({
+  projectId,
+  fusionPlan,
+  fusionSync,
+}: {
+  projectId: string;
+  fusionPlan: (input: FusionInput) => Promise<FusionPlan>;
+  fusionSync?: (input: FusionInput & { paths: string[] }) => Promise<FusionSyncResult>;
+}) {
+  const [opened, setOpened] = useState(false);
+  const [plan, setPlan] = useState<FusionPlan | null>(null);
+  const [picks, setPicks] = useState<Record<string, string>>({});
+  const [importInClaude, setImportInClaude] = useState(false);
+  const [skipped, setSkipped] = useState<Set<string>>(() => new Set());
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [wrote, setWrote] = useState<string[] | null>(null);
+  const [refresh, setRefresh] = useState(0);
+  const liveProjectRef = useRef(projectId);
+  liveProjectRef.current = projectId;
+  /** File list of the last plan, so a preview can name the ticked files. */
+  const filesRef = useRef<string[] | null>(null);
+
+  useEffect(() => {
+    filesRef.current = null;
+    setPlan(null);
+    setPicks({});
+    setImportInClaude(false);
+    setSkipped(new Set());
+    setError(null);
+    setWrote(null);
+  }, [projectId]);
+
+  useEffect(() => {
+    let live = true;
+    // Same ticked set Sync will send, so the CLAUDE.md import previews as written.
+    const paths = filesRef.current?.filter((p) => !skipped.has(p));
+    fusionPlan({ projectId, picks, importInClaude, paths }).then(
+      (next) => {
+        if (!live || liveProjectRef.current !== projectId) return;
+        filesRef.current = next.files.map((f) => f.path);
+        setPlan(next);
+      },
+      (err: unknown) => {
+        if (live && liveProjectRef.current === projectId) setError(errorMessage(err));
+      },
+    );
+    return () => {
+      live = false;
+    };
+  }, [fusionPlan, projectId, picks, importInClaude, skipped, refresh]);
+
+  const changed = plan?.diffs.filter((d) => d.changed) ?? [];
+  const ticked = changed.filter((d) => !skipped.has(d.path)).map((d) => d.path);
+  const paths = new Set(plan?.files.map((f) => f.path));
+
+  const onSync = async () => {
+    if (!fusionSync || ticked.length === 0) return;
+    const forProject = projectId;
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await fusionSync({ projectId: forProject, picks, importInClaude, paths: ticked });
+      if (liveProjectRef.current !== forProject) return;
+      setWrote(result.written);
+      setRefresh((n) => n + 1);
+    } catch (err) {
+      if (liveProjectRef.current === forProject) setError(errorMessage(err));
+    } finally {
+      if (liveProjectRef.current === forProject) setBusy(false);
+    }
+  };
+
+  return (
+    <details className={styles.section} data-fusion="" open={opened}>
+      <summary
+        className={styles.disclosureSummary}
+        onClick={(e) => {
+          e.preventDefault();
+          setOpened((on) => !on);
+        }}
+      >
+        <span className={styles.sectionTitle}>Fusion</span>
+        {plan && plan.files.length > 0 ? (
+          <span
+            className={`${styles.grade} ${plan.status.synced ? styles.gradeGood : styles.gradeMid}`}
+            data-fusion-status={plan.status.synced ? "synced" : "not-synced"}
+          >
+            {fusionStatusLabel(plan.status)}
+          </span>
+        ) : null}
+      </summary>
+      {opened ? (
+        <>
+          {error ? (
+            <p className={styles.formError} role="alert">
+              {error}
+            </p>
+          ) : null}
+          <p className={styles.doctorMeta}>
+            One shared block in every agent&apos;s instruction file. Text outside the block is never changed.
+          </p>
+          {plan?.status.disagree?.length ? (
+            <p className={styles.doctorGap} data-fusion-disagree="">
+              Blocks disagree: {plan.status.disagree.join(", ")}
+            </p>
+          ) : null}
+          {plan && plan.files.length === 0 ? (
+            <p className={styles.doctorMeta}>No AGENTS.md, CLAUDE.md, GEMINI.md or .cursorrules in this project.</p>
+          ) : null}
+          {plan && plan.files.length > 0 ? (
+            <>
+              <ul className={styles.doctorFiles} data-fusion-files="">
+                {plan.files.map((f) => (
+                  <li key={f.path}>
+                    <span className={styles.doctorFilePath}>{f.path}</span>
+                    <span className={styles.doctorFileGrade}>{f.kindLabel}</span>
+                  </li>
+                ))}
+              </ul>
+              {plan.agreed.length > 0 ? (
+                <p className={styles.doctorMeta} data-fusion-agreed="">
+                  Agreed by every file:{" "}
+                  {plan.agreed
+                    .map((f) =>
+                      f.fused && f.fused !== f.value
+                        ? `${f.label} ${f.value} → ${f.fused}`
+                        : `${f.label} ${f.value}`,
+                    )
+                    .join(" · ")}
+                </p>
+              ) : null}
+              {plan.conflicts.map((c) => (
+                <div
+                  key={c.id}
+                  className={styles.fusionGroup}
+                  role="radiogroup"
+                  aria-label={c.label}
+                  data-fusion-conflict={c.id}
+                >
+                  <span className={styles.doctorMeta}>{c.label}</span>
+                  <ul className={styles.doctorFiles}>
+                    {c.options.map((o) => (
+                      <li key={o.value}>
+                        <label className={styles.fusionPick}>
+                          <input
+                            type="radio"
+                            name={`fusion-${c.id}`}
+                            value={o.value}
+                            checked={(picks[c.id] ?? c.pick) === o.value}
+                            onChange={() => setPicks((prev) => ({ ...prev, [c.id]: o.value }))}
+                          />
+                          <span className={styles.doctorFilePath}>{o.value}</span>
+                        </label>
+                        <span className={styles.doctorFileGrade}>
+                          {o.sources.map((src) => `${src.path}:${src.line}`).join(", ")}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+              {paths.has("AGENTS.md") && paths.has("CLAUDE.md") ? (
+                <ul className={styles.doctorFiles}>
+                  <li>
+                    <label className={styles.fusionPick}>
+                      <input
+                        type="checkbox"
+                        checked={importInClaude}
+                        onChange={(e) => setImportInClaude(e.target.checked)}
+                      />
+                      <span className={styles.doctorFilePath}>
+                        CLAUDE.md imports @AGENTS.md instead of a copy
+                      </span>
+                    </label>
+                  </li>
+                </ul>
+              ) : null}
+              {changed.length === 0 ? (
+                <p className={styles.doctorMeta}>Nothing to change.</p>
+              ) : null}
+              {changed.map((d) => (
+                <div key={d.path} className={styles.fusionGroup} data-fusion-diff={d.path}>
+                  <ul className={styles.doctorFiles}>
+                    <li>
+                      <label className={styles.fusionPick}>
+                        <input
+                          type="checkbox"
+                          checked={!skipped.has(d.path)}
+                          onChange={(e) =>
+                            setSkipped((prev) => {
+                              const next = new Set(prev);
+                              if (e.target.checked) next.delete(d.path);
+                              else next.add(d.path);
+                              return next;
+                            })
+                          }
+                        />
+                        <span className={styles.doctorFilePath}>{d.path}</span>
+                      </label>
+                    </li>
+                  </ul>
+                  <pre className={styles.doctorPreview}>
+                    {d.diff.split("\n").map((line, i) => (
+                      <span key={i} className={DIFF_LINE_CLASS[diffLineKind(line)]}>
+                        {line}
+                        {"\n"}
+                      </span>
+                    ))}
+                  </pre>
+                </div>
+              ))}
+              {wrote ? (
+                <p className={styles.doctorWrote} data-fusion-wrote="">
+                  {wrote.length ? `Wrote ${wrote.join(", ")}` : "Already in sync"}
+                </p>
+              ) : null}
+              {fusionSync ? (
+                <div className={styles.doctorActions}>
+                  <button
+                    type="button"
+                    className={styles.saveBtn}
+                    disabled={busy || ticked.length === 0}
+                    onClick={() => void onSync()}
+                  >
+                    Sync
+                  </button>
+                </div>
+              ) : null}
+            </>
+          ) : null}
+        </>
+      ) : null}
+    </details>
+  );
+}
+
 /** Code map + config doctor callbacks (Settings → Memory → Project tools). */
 export interface MemoryProjectToolsApi {
   loadCodeMap?: (input: { projectId: string }) => Promise<ProjectCodeMap>;
@@ -641,6 +901,8 @@ export interface MemoryProjectToolsApi {
     projectId: string;
     targets?: string[];
   }) => Promise<AgentConfigWriteResult>;
+  fusionPlan?: (input: FusionInput) => Promise<FusionPlan>;
+  fusionSync?: (input: FusionInput & { paths: string[] }) => Promise<FusionSyncResult>;
 }
 
 /**
@@ -655,8 +917,10 @@ export function MemoryProjectTools({
   lintAgentConfig,
   previewAgentConfig,
   writeAgentConfig,
+  fusionPlan,
+  fusionSync,
 }: { projectId: string; projectSlug: string | null } & MemoryProjectToolsApi) {
-  if (!loadCodeMap && !lintAgentConfig) return null;
+  if (!loadCodeMap && !lintAgentConfig && !fusionPlan) return null;
   return (
     <div className={styles.secondary} data-memory-project-tools="">
       {loadCodeMap ? (
@@ -670,6 +934,9 @@ export function MemoryProjectTools({
           previewAgentConfig={previewAgentConfig}
           writeAgentConfig={writeAgentConfig}
         />
+      ) : null}
+      {fusionPlan ? (
+        <FusionCard projectId={projectId} fusionPlan={fusionPlan} fusionSync={fusionSync} />
       ) : null}
     </div>
   );

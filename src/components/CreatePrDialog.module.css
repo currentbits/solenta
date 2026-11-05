@@ -13,7 +13,7 @@
   flex-direction: column;
   width: min(560px, 100%);
   max-height: min(720px, 100%);
-  border-radius: 14px;
+  border-radius: var(--radius-lg);
   border: 1px solid var(--border);
   background: var(--bg-elevated);
   box-shadow: var(--shadow-modal);
@@ -44,7 +44,7 @@
   display: grid;
   place-items: center;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-muted);
   font-size: 16px;
