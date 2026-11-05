@@ -386,6 +386,11 @@ function createKimiRun(ctx) {
       honouredEfforts(providerEntry, thread.model || null),
     );
     if (effortEnv) kimiEnv = { ...kimiEnv, ...effortEnv };
+    // The PreToolUse hook lets ask rules run on Full access (#1853).
+    kimiEnv = {
+      ...kimiEnv,
+      SOLENTA_PERMISSION_MODE: thread.permissionMode || "default",
+    };
     const spawn = resolveSpawn(project, binary, args, localCwd, kimiEnv, threadId);
 
     if (abortIfCancelled(threadId, runId)) return { runId };
@@ -469,6 +474,7 @@ function createKimiRun(ctx) {
                 tool.name,
                 tool.input,
                 thread.worktreePath || project.path,
+                thread.permissionMode === "bypassPermissions",
               );
               if (notice) appendMessage(threadId, "event", notice, runId);
               // Post-tool text starts a fresh message below the tool call.

@@ -7,6 +7,7 @@
  * break `require`. Ask is deny: Cursor does not enforce ask under
  * --force, Codex treat ask as a hook failure and continues the tool,
  * OpenCode cannot raise a native prompt from tool.execute.before.
+ * On a Full access thread only deny rules block (#1841, #1853).
  */
 
 const fs = require("node:fs");
@@ -58,6 +59,35 @@ function decideGuardrail(payload, worktreePath) {
     asked: verdict.decision === "ask",
     message: `Blocked by Solenta guardrails (${rule}): ${reason}`,
   };
+}
+
+// The hook cannot raise a prompt, so tell the agent retrying is pointless
+// and which user setting would allow it (#1841).
+const ASK_HINT =
+  " This agent cannot show an approval prompt for this rule, so retrying," +
+  " even with escalated sandbox permissions, is blocked again. Ask the user" +
+  " to run it, or to set this thread's permissions to Full access (or turn" +
+  " guardrails off in Settings > Advanced).";
+
+/**
+ * decideGuardrail for a hook with no prompt channel: ask is deny, except
+ * on a Full access thread, where only deny rules block (#1841, #1853).
+ * The runner passes the thread's mode as SOLENTA_PERMISSION_MODE.
+ * @param {unknown} payload
+ * @param {string | null | undefined} worktreePath
+ * @param {string | undefined} [permissionMode]
+ */
+function hookGuardrailDecision(
+  payload,
+  worktreePath,
+  permissionMode = process.env.SOLENTA_PERMISSION_MODE,
+) {
+  const out = decideGuardrail(payload, worktreePath);
+  if (out.decision !== "deny" || !out.asked) return out;
+  if (permissionMode === "bypassPermissions") {
+    return { decision: "allow", rule: null, reason: "", message: "" };
+  }
+  return { ...out, message: out.message + ASK_HINT };
 }
 
 /**
@@ -165,7 +195,7 @@ function insertBeforeLast(args, extras) {
  * @param {string} toolName
  * @param {unknown} input
  * @param {string | null | undefined} worktreePath
- * @param {boolean} [allowAsk] - the hook lets ask verdicts run (Codex Full access, #1841)
+ * @param {boolean} [allowAsk] - the hook lets ask verdicts run (Full access, #1841)
  * @returns {string | null}
  */
 function guardrailNotice(toolName, input, worktreePath, allowAsk = false) {
@@ -184,17 +214,19 @@ function guardrailNotice(toolName, input, worktreePath, allowAsk = false) {
     parsed = {};
   }
   const rawName = String(toolName || "tool");
-  const out = decideGuardrail(
+  const out = hookGuardrailDecision(
     { tool_name: rawName, tool_input: parsed },
     worktreePath,
+    allowAsk ? "bypassPermissions" : "",
   );
-  if (out.decision !== "deny" || (allowAsk && out.asked)) return null;
+  if (out.decision !== "deny") return null;
   return `Guardrail blocked ${rawName}: ${out.rule}: ${out.reason}`;
 }
 
 module.exports = {
   normalizeToolCall,
   decideGuardrail,
+  hookGuardrailDecision,
   parseHookPayload,
   runStdinHook,
   copyGuardrailRuntime,

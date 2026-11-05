@@ -318,6 +318,7 @@ function createClaudeRun(ctx) {
           toolName,
           input: inputObj,
           worktreePath: thread.worktreePath || project.path,
+          permissionMode: thread.permissionMode,
         });
         if (notice) {
           grokGuardrailNoticed.add(toolId);
@@ -566,6 +567,8 @@ function createClaudeRun(ctx) {
             GROK_HOME: dest,
             GROK_CLAUDE_MCPS_ENABLED: "false",
             GROK_CURSOR_MCPS_ENABLED: "false",
+            // The overlay hook lets ask rules run on Full access (#1853).
+            SOLENTA_PERMISSION_MODE: thread.permissionMode || "default",
           };
         } catch (err) {
           completeWorkLogStep(threadId, startingId);
