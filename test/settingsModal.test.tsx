@@ -450,6 +450,37 @@ describe("SettingsModal delete branch on merge/close (#1763)", () => {
   });
 });
 
+describe("SettingsModal menu bar usage (#1859)", () => {
+  it("off by default, saves on toggle, names the menu bar on macOS", async () => {
+    const patches: Partial<AppSettings>[] = [];
+    const m = await mount(
+      modal({
+        initialPane: "spending",
+        status: status({ build: { platform: "darwin" } }),
+        onSaveSettings: async (patch) => {
+          patches.push(patch);
+          return { dailyBudgetUsd: 5, autoSettleAfterDays: 3, menuBarUsage: patch.menuBarUsage ?? false };
+        },
+      }),
+    );
+    const box = m.query("[data-menu-bar-usage]") as HTMLInputElement;
+    assert.ok(box, "menu bar usage checkbox");
+    assert.equal(box.checked, false, "off by default");
+    assert.ok(m.text().includes("Show usage in the menu bar"));
+    await m.click(box);
+    assert.deepEqual(patches, [{ menuBarUsage: true }]);
+    m.unmount();
+  });
+
+  it("says tray off macOS", async () => {
+    const m = await mount(
+      modal({ initialPane: "spending", status: status({ build: { platform: "win32" } }) }),
+    );
+    assert.ok(m.text().includes("Show usage in the tray"));
+    m.unmount();
+  });
+});
+
 describe("SettingsModal default merge method (#1781)", () => {
   it("prefills from settings and saves the picked method", async () => {
     const patches: Partial<AppSettings>[] = [];

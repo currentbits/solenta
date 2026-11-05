@@ -472,6 +472,10 @@ function createCodexRun(ctx) {
       onEvent: (ev) => {
         if (!guard()) return;
 
+        if (ev.type === "account.rate_limits") {
+          require("./providerUsage.js").reportLiveUsage(threadProviderRef(thread), ev.windows);
+          return;
+        }
         if (ev.type === "goal.updated") {
           if (services.applyNativeGoal(store, threadId, ev.goal)) {
             store.save();

@@ -21,6 +21,7 @@ const {
   threadProviderRef,
   accountRefsByProvider,
   supportsAutoAccount,
+  defaultAccountFor,
 } = require("./providerInstances.js");
 const {
   forkWorkerThread,
@@ -530,8 +531,11 @@ function createToolHandlers(deps) {
     if (!getProvider(provider)) {
       throw new Error(`Unknown provider: ${raw}`);
     }
-    if (!instance) return { ref: provider, note: null };
     const settings = typeof store.getSettings === "function" ? store.getSettings() : null;
+    // A bare provider follows the per-CLI default account (#1859), so a
+    // worker lands where a new thread of that CLI would.
+    const fallback = defaultAccountFor(settings, provider);
+    if (!instance) return { ref: providerRef(provider, fallback), note: null };
     const refs = accountRefsByProvider(settings).get(provider) || [];
     const auto = supportsAutoAccount(provider) && refs.length > 0;
     if (instance === "auto" && auto) {
@@ -544,7 +548,10 @@ function createToolHandlers(deps) {
           (p) => p.provider === provider,
         ),
       });
-      return pickAccountByQuota([provider, ...refs], rows);
+      // The effective default account goes first: it wins when no usage is known.
+      const candidates = [provider, ...refs];
+      const first = providerRef(provider, fallback);
+      return pickAccountByQuota([first, ...candidates.filter((r) => r !== first)], rows);
     }
     const ref = providerRef(provider, instance);
     if (!refs.includes(ref)) {

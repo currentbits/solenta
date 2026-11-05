@@ -87,7 +87,7 @@ const PANE_META: Record<
   spending: {
     label: "Spending",
     hint: "Caps that stop a runaway day or a runaway crew.",
-    keywords: "budget daily orchestration spend usd cap money cost unmetered kimi cursor concurrent concurrency parallel runs queue",
+    keywords: "budget daily orchestration spend usd cap money cost unmetered kimi cursor concurrent concurrency parallel runs queue menu bar tray usage account quota",
   },
   git: {
     label: "Git",

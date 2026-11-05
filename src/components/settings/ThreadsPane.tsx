@@ -234,6 +234,7 @@ export function ThreadsPane({
             {providers.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.name}
+                {p.defaultAccount ? ` · ${p.defaultAccount} account` : ""}
                 {!p.available ? " (not installed)" : ""}
               </option>
             ))}

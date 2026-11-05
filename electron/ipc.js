@@ -66,6 +66,7 @@ function makeCtx(deps) {
     userDataPath,
     memory: createMemoryProxy({ userDataPath }),
     stayAwake: deps.stayAwake || null,
+    usageMenu: deps.usageMenu || null,
     speech: deps.speech || null,
     cleanupRunArtifacts: deps.cleanupRunArtifacts,
     getIosSimulator,

@@ -148,7 +148,10 @@ export function buildModelRows(
   const disabledReason = unavailable ? "not installed" : null;
   const base = {
     providerId: provider.id,
-    providerName: provider.name,
+    // The per-CLI default account (#1859) new threads on this row use.
+    providerName: provider.defaultAccount
+      ? `${provider.name} · ${provider.defaultAccount} account`
+      : provider.name,
     unavailable,
     disabled: unavailable,
     disabledReason,
@@ -161,7 +164,7 @@ export function buildModelRows(
       label: "Default",
       vendor: provider.name,
       description: "Use the provider default model",
-      groupHeading: provider.name,
+      groupHeading: base.providerName,
     },
   ];
 
