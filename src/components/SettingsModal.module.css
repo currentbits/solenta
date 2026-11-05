@@ -102,6 +102,11 @@ select.input {
   flex-wrap: wrap;
 }
 
+/* Help under a checkbox hangs from the label, not the tile. */
+label.fieldRow:has(> input[type="checkbox"]) + .note {
+  padding-left: 24px;
+}
+
 /* Checkbox rows: a 28px line with the label set 10px off the tile. */
 label.fieldRow:has(> input[type="checkbox"]) {
   min-height: 28px;
@@ -507,7 +512,7 @@ label.fieldRow:has(> input[type="checkbox"]) {
 
 .note {
   margin: 0;
-  max-width: 560px;
+  max-width: 520px;
   font-size: 12px;
   line-height: 1.5;
   color: var(--text-dim);
@@ -616,10 +621,10 @@ label.fieldRow:has(> input[type="checkbox"]) {
 
 .navSearch {
   margin: 10px 10px 6px;
-  padding: 7px 10px;
+  padding: 7px 10px 7px 30px;
   border-radius: var(--radius);
   border: 1px solid var(--border);
-  background: var(--input-fill);
+  background: var(--input-fill) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%238f8c84' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='m20 20-4-4'/%3E%3C/svg%3E") no-repeat 10px center / 14px;
   color: var(--text);
   font-size: 12px;
 }
