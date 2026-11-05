@@ -150,15 +150,14 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 2px;
+  gap: 4px;
   min-width: 0;
 }
 
 /* Hairline between the model, effort and access pills. */
-/* Spacing, not a rule, separates the pickers. */
+/* Spacing, not a rule, separates the pickers: the row gap alone. */
 .sep {
-  flex-shrink: 0;
-  width: 0;
+  display: none;
 }
 
 .pill {
@@ -1466,6 +1465,7 @@ select.agentSelect {
 .modelGroup {
   display: inline-flex;
   align-items: center;
+  gap: 4px;
 }
 
 /* The effort pill reads as a plain level ("High"), no icon. */

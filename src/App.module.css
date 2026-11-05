@@ -37,7 +37,8 @@
   background:
     linear-gradient(var(--border-soft), var(--border-soft)) 0 43px / 100% 1px
       no-repeat,
-    var(--panel);
+    var(--bg);
+  /* Collapsed, the rail sits on the canvas fill behind a hairline seam. */
   border-left: 1px solid var(--border-soft);
 }
 

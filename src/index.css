@@ -162,7 +162,8 @@
   --accent-dot: var(--accent);
   --accent-edge: #857c00;
   /* One neutral edge for every yellow mark on paper, same shape as dark. */
-  --accent-mark-ring: 0 0 0 1px rgba(110, 100, 0, 0.7);
+  /* Highlighter on paper: true yellow with a crisp ink edge. */
+  --accent-mark-ring: 0 0 0 1.5px rgba(25, 25, 24, 0.85);
   --blue: #1e40af;
   --blue-soft: rgba(30, 64, 175, 0.1);
   --blue-border: rgba(30, 64, 175, 0.35);
@@ -358,7 +359,12 @@ input[type="range"] {
 input[type="range"]::-webkit-slider-runnable-track {
   height: 4px;
   border-radius: var(--radius-pill);
-  background: var(--track);
+  background: linear-gradient(
+      var(--text-dim),
+      var(--text-dim)
+    )
+    0 0 / var(--fill, 0%) 100% no-repeat,
+    var(--track);
 }
 
 input[type="range"]::-webkit-slider-thumb {

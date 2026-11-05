@@ -273,6 +273,10 @@ export function GeneralPane({
               max={UI_SCALE_MAX}
               step={UI_SCALE_STEP}
               value={uiScale}
+              // Track fill left of the thumb (index.css range styles).
+              style={{
+                ["--fill" as string]: `${((uiScale - UI_SCALE_MIN) / (UI_SCALE_MAX - UI_SCALE_MIN)) * 100}%`,
+              }}
               disabled={saving || settings == null}
               aria-valuetext={formatUiScale(uiScale)}
               onChange={(e) => {

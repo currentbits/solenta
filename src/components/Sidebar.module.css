@@ -729,7 +729,8 @@
 }
 
 .cardSlug::after {
-  content: "\00a0·";
+  content: "·";
+  margin-left: 6px;
 }
 
 .cardSlug {
@@ -1319,15 +1320,9 @@
   transition: transform 0.15s ease;
 }
 
+/* The chevron always shows, so a collapsed shelf reads as collapsed. */
 .shelfToggle .shelfChevron {
   color: var(--text-dim);
-  opacity: 0;
-  transition: opacity 0.12s ease;
-}
-
-.shelfToggle:hover .shelfChevron,
-.shelfToggle:focus-visible .shelfChevron {
-  opacity: 1;
 }
 
 .shelfToggle[aria-expanded="true"] .shelfChevron,
@@ -2062,4 +2057,9 @@
 .headerNav [data-sidebar-collapse] {
   width: 26px;
   height: 26px;
+}
+
+/* Inside the named Pinned group the pin glyph repeats the label. */
+.groupLabel[data-group-label="pinned"] ~ * .pinFlag {
+  display: none;
 }
