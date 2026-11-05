@@ -1,7 +1,7 @@
 .icon {
   flex-shrink: 0;
   display: block;
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   object-fit: contain;
   background: var(--card);
   pointer-events: none;
@@ -11,10 +11,13 @@
   flex-shrink: 0;
   display: inline-grid;
   place-items: center;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   color: #fff;
   font-family: var(--font);
-  font-weight: 700;
+  font-weight: 600;
+  /* Initials tiles are an identifier, not a signal: mute the seeded hue so a
+     column of them reads as calm ink, not confetti. */
+  filter: saturate(0.55) brightness(0.88);
   line-height: 1;
   letter-spacing: -0.02em;
   pointer-events: none;

@@ -29,7 +29,7 @@
   flex: 0 0 auto;
   padding: 2px 8px;
   border: 1px solid var(--border);
-  border-radius: 5px;
+  border-radius: var(--radius-xs);
   background: var(--overlay-soft);
   color: var(--text-muted);
   font-size: 11px;

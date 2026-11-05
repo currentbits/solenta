@@ -57,7 +57,7 @@
   gap: 8px 12px;
   padding: 7px 10px 7px 16px;
   border-bottom: 1px solid var(--border-soft);
-  background: var(--bg-elevated);
+  background: var(--bg);
   flex-shrink: 0;
   min-height: 44px;
 }
@@ -629,7 +629,7 @@ button.project:focus-visible {
   z-index: 20;
   min-width: 168px;
   padding: 4px;
-  border-radius: 8px;
+  border-radius: var(--radius);
   border: 1px solid var(--border);
   background: var(--bg-elevated);
   box-shadow: var(--shadow-pop);
@@ -639,7 +639,7 @@ button.project:focus-visible {
   display: block;
   width: 100%;
   padding: 7px 10px;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   border: none;
   background: transparent;
   color: var(--text);
@@ -743,6 +743,13 @@ a.btn {
 .btn:hover:not(:disabled) {
   color: var(--text);
   background: var(--card-hover);
+}
+
+/* Header chrome: only the next git action keeps an outline; Fork, Hand off
+   and friends are ghost buttons whose hover fill is the affordance. */
+.header .btn:not([data-next-git-action]):not(.btnPrimary) {
+  border-color: transparent;
+  font-weight: 500;
 }
 
 .btn:focus-visible {
@@ -1201,9 +1208,10 @@ a.btn {
 
 .memoryMeta {
   margin-left: 8px;
-  font-family: var(--mono);
+  font-family: var(--font);
   font-size: 11px;
   color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
 }
 
 .toolHeader {
@@ -1300,7 +1308,7 @@ a.btn {
   height: auto;
   margin: 10px 12px;
   border: 1px solid var(--border-soft);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   cursor: zoom-in;
 }
 
@@ -1447,7 +1455,7 @@ a.btn {
   display: grid;
   place-items: center;
   border: 1px solid var(--border);
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--text);
   font-size: 10px;
@@ -1826,9 +1834,10 @@ button.diffLineGutter:focus-visible {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-family: var(--mono);
+  font-family: var(--font);
   font-size: 11.5px;
   color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
 }
 
 .largeDiffNote {
@@ -2255,7 +2264,7 @@ button.diffLineGutter:focus-visible {
 .checkbox {
   width: 16px;
   height: 16px;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   border: 1px solid var(--border);
   display: grid;
   place-items: center;
@@ -2312,7 +2321,7 @@ button.diffLineGutter:focus-visible {
   max-height: 320px;
   overflow-y: auto;
   border: 1px solid var(--border-soft);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   user-select: text;
 }
 
@@ -2434,7 +2443,7 @@ button.diffLineGutter:focus-visible {
 
 .msgMeta {
   margin-top: 6px;
-  font-family: var(--mono);
+  font-family: var(--font);
   font-size: 11.5px;
   color: var(--text-dim);
   display: flex;
@@ -2442,6 +2451,7 @@ button.diffLineGutter:focus-visible {
   flex-wrap: wrap;
   gap: 6px;
   user-select: none;
+  font-variant-numeric: tabular-nums;
 }
 
 .msgActions {
@@ -2509,32 +2519,38 @@ button.diffLineGutter:focus-visible {
 .provChip {
   display: inline-flex;
   align-items: center;
+  gap: 6px;
   height: 20px;
   padding: 0 7px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-  font-size: 10.5px;
-  font-weight: 550;
-  color: var(--text-muted);
+  border-radius: var(--radius-xs);
+  background: var(--overlay-soft);
+  font-size: 11.5px;
+  font-weight: 450;
+  color: var(--text-dim);
   white-space: nowrap;
   cursor: default;
 }
 
-.provChip[data-tier="repo"] {
-  color: var(--green);
+/* The tier is a 5px dot, not a coloured outline: the chip stays quiet. */
+.provChip::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
 }
 
-.provChip[data-tier="memory"] {
-  color: var(--blue);
+.provChip[data-tier="repo"]::before {
+  background: var(--green);
 }
 
-.provChip[data-tier="issue"] {
-  color: var(--text);
+.provChip[data-tier="memory"]::before {
+  background: var(--blue);
 }
 
-.provChip[data-tier="prior"] {
-  color: var(--amber);
-  border-style: dashed;
+.provChip[data-tier="prior"]::before {
+  background: var(--amber);
 }
 
 /* Per-run review strip: a tidy card row tucked under the run's last message. */
@@ -2655,7 +2671,7 @@ button.diffLineGutter:focus-visible {
   max-width: 100%;
   max-height: 100%;
   object-fit: contain;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   cursor: zoom-in;
   touch-action: none;
 }
@@ -2931,7 +2947,7 @@ button.diffLineGutter:focus-visible {
 .inboundCard {
   max-width: min(72ch, 85%);
   padding: 10px 14px;
-  border-radius: 4px 14px 14px 14px;
+  border-radius: 4px 12px 12px 14px;
   background: var(--card);
 }
 
@@ -2980,7 +2996,7 @@ button.diffLineGutter:focus-visible {
 .userBubble {
   max-width: min(72ch, 85%);
   padding: 10px 14px;
-  border-radius: 14px 14px 4px 14px;
+  border-radius: 12px 12px 4px 14px;
   background: var(--overlay-hover);
   color: var(--text);
   line-height: 1.55;
@@ -3062,15 +3078,15 @@ button.diffLineGutter:focus-visible {
 }
 
 .messageUser[data-burst="first"] .userBubble {
-  border-radius: 14px 14px 4px 4px;
+  border-radius: 12px 12px 4px 4px;
 }
 
 .messageUser[data-burst="middle"] .userBubble {
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
 }
 
 .messageUser[data-burst="last"] .userBubble {
-  border-radius: 4px 4px 4px 14px;
+  border-radius: 4px 4px 4px 12px;
 }
 
 .steerLabel {
@@ -3123,7 +3139,7 @@ button.diffLineGutter:focus-visible {
   cursor: pointer;
   list-style: none;
   text-align: left;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
 }
 
 .workerActivitySummary::-webkit-details-marker,
@@ -3195,7 +3211,7 @@ button.diffLineGutter:focus-visible {
   width: 100%;
   min-height: 72px;
   padding: 10px 14px;
-  border-radius: 14px 14px 4px 14px;
+  border-radius: 12px 12px 4px 14px;
   background: var(--blue-soft);
   border: 1px solid var(--blue-border);
   color: var(--info-fg-strong);
@@ -3256,7 +3272,7 @@ button.diffLineGutter:focus-visible {
 .attachmentThumb {
   width: 22px;
   height: 22px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   object-fit: cover;
   flex-shrink: 0;
   cursor: zoom-in;
@@ -3288,7 +3304,7 @@ button.diffLineGutter:focus-visible {
   display: block;
   height: 192px;
   max-width: 100%;
-  border-radius: 14px 14px 4px 14px;
+  border-radius: 12px 12px 4px 14px;
   overflow: hidden;
   background: var(--border-soft);
 }
@@ -3317,7 +3333,7 @@ button.diffLineGutter:focus-visible {
   width: 320px;
   height: 192px;
   gap: 2px;
-  border-radius: 14px 14px 4px 14px;
+  border-radius: 12px 12px 4px 14px;
   overflow: hidden;
   background: var(--border);
 }
@@ -3382,7 +3398,7 @@ button.diffLineGutter:focus-visible {
 .emptyGlyph {
   width: 48px;
   height: 48px;
-  border-radius: 14px;
+  border-radius: var(--radius-lg);
   display: grid;
   place-items: center;
   background: var(--card);
@@ -3394,7 +3410,7 @@ button.diffLineGutter:focus-visible {
 .emptyGlyphSm {
   width: 40px;
   height: 40px;
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   box-shadow: none;
 }
 
@@ -3584,7 +3600,7 @@ button.diffLineGutter:focus-visible {
   margin-right: 2px;
   padding: 0 4px;
   border: 1px solid currentColor;
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   font: inherit;
   font-size: 10.5px;
   line-height: 1.4;
@@ -3631,13 +3647,12 @@ button.diffLineGutter:focus-visible {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 8px 0 8px 10px;
+  padding: 12px 14px;
   border: none;
-  border-left: 2px solid color-mix(in srgb, var(--text) 35%, transparent);
-  border-radius: 0;
-  background: none;
+  border-radius: var(--radius);
+  background: var(--overlay-soft);
   box-shadow: none;
-  font-size: 12.5px;
+  font-size: 13px;
 }
 
 .planCardHead {
@@ -3647,7 +3662,7 @@ button.diffLineGutter:focus-visible {
 }
 
 .planCardTitle {
-  font-weight: 500;
+  font-weight: 600;
   color: var(--text);
 }
 
@@ -3660,8 +3675,9 @@ button.diffLineGutter:focus-visible {
 
 .planProgress {
   color: var(--text-dim);
-  font-family: var(--mono);
+  font-family: var(--font);
   font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
 }
 
 .planToggle {
@@ -3697,16 +3713,16 @@ button.diffLineGutter:focus-visible {
   overflow-wrap: anywhere;
 }
 
-/* Plan diamonds (#1429 F4): todo hollow, doing half-yellow, done green. */
+/* Plan steps: todo an empty ring, doing a yellow-cored ring, done solid green. */
 .planStep::before {
   content: "";
   flex-shrink: 0;
-  width: 9px;
-  height: 9px;
+  width: 10px;
+  height: 10px;
   box-sizing: border-box;
   border: 1.5px solid var(--text-dim);
-  border-radius: 2px;
-  transform: translateY(1px) rotate(45deg);
+  border-radius: 50%;
+  transform: translateY(1px);
 }
 
 .planStep[data-plan-step="doing"] {
@@ -3715,7 +3731,7 @@ button.diffLineGutter:focus-visible {
 
 .planStep[data-plan-step="doing"]::before {
   border-color: var(--accent-edge);
-  background: linear-gradient(135deg, var(--accent) 50%, transparent 50%);
+  background: radial-gradient(circle, var(--accent) 0 2.5px, transparent 3px);
 }
 
 .planStep[data-plan-step="done"]::before {
@@ -3842,7 +3858,7 @@ button.diffLineGutter:focus-visible {
   flex: none;
   min-width: 18px;
   height: 18px;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   border: 1px solid var(--border);
   display: inline-flex;
   align-items: center;
@@ -3990,10 +4006,11 @@ button.diffLineGutter:focus-visible {
 }
 
 .statusElapsed {
-  font-family: var(--mono);
+  font-family: var(--font);
   font-size: 11.5px;
   color: var(--text-dim);
   white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .statusStrip .stopBtn,
@@ -4093,7 +4110,8 @@ button.diffLineGutter:focus-visible {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-family: var(--mono);
+  font-family: var(--font);
+  font-variant-numeric: tabular-nums;
 }
 
 /* Queued follow-up: the status strip, muted — it is waiting, not running. */
@@ -4639,8 +4657,9 @@ a.menuItem {
 }
 
 .worktreeLineBranch {
-  font-family: var(--mono);
+  font-family: var(--font);
   font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
 }
 
 .worktreeLineSpinner {
@@ -4844,7 +4863,7 @@ a.menuItem {
   justify-content: center;
   width: 24px;
   height: 22px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   color: var(--text-dim);
 }
 
@@ -4890,9 +4909,9 @@ a.menuItem {
   max-width: 420px;
   height: 26px;
   padding: 0 10px;
-  border: 1px dashed var(--border);
-  border-radius: var(--radius-pill);
-  background: transparent;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: var(--overlay-soft);
   color: var(--text-muted);
   font: inherit;
   font-size: 12px;
@@ -4900,7 +4919,7 @@ a.menuItem {
 }
 
 .suggestedChip:hover:not(:disabled) {
-  border-style: solid;
+  background: var(--overlay-hover);
   color: var(--text);
 }
 
@@ -4911,7 +4930,7 @@ a.menuItem {
   width: 22px;
   height: 22px;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-dim);
   cursor: pointer;
@@ -5094,9 +5113,10 @@ a.menuItem {
   padding: 5px 14px;
   border: 1px solid var(--border);
   border-radius: 999px;
-  font-family: var(--mono);
+  font-family: var(--font);
   font-size: 11.5px;
   color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
 }
 
 .memoryPill .memoryDiamond {
@@ -5159,7 +5179,7 @@ button.heroProject:hover {
   gap: 8px;
   padding: 7px 8px;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-muted);
   font: inherit;

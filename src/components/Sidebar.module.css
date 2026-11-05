@@ -3,7 +3,7 @@
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: var(--bg-elevated);
+  background: var(--panel);
   border-right: 1px solid var(--border-soft);
   min-width: 0;
 }
@@ -32,7 +32,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: var(--blue);
+  color: var(--accent-edge);
   line-height: 1;
 }
 
@@ -394,10 +394,10 @@
   gap: 8px;
   margin: 8px 8px 2px;
   min-width: 0;
-  font: 500 10.5px var(--mono);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font: 600 11.5px var(--font);
+  letter-spacing: 0.01em;
   color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
 }
 
 .filterGroupHeader::after {
@@ -964,7 +964,7 @@
 
 .cardTitle {
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
   line-height: 1.35;
   color: var(--text);
   white-space: nowrap;
@@ -1075,13 +1075,14 @@
 
 /* F2 (#1429): branches and PR numbers in Geist Mono. */
 .cardBranch {
-  font: 11.5px var(--mono);
+  font: 11.5px var(--font);
   color: var(--text-dim);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;
   flex: 1;
+  font-variant-numeric: tabular-nums;
 }
 
 .cardBranchSpacer {
@@ -1092,7 +1093,7 @@
 .prLink {
   pointer-events: auto;
   flex-shrink: 0;
-  font: 11.5px var(--mono);
+  font: 11.5px var(--font);
   font-variant-numeric: tabular-nums;
   color: var(--text-muted);
   text-decoration: none;
@@ -1254,11 +1255,11 @@
 /* F7 mono micro-labels (#1429): "WORKING · 1" then a hairline. */
 .shelfLabelSnoozed,
 .shelfLabelSettled {
-  font: 500 10.5px var(--mono);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font: 600 11.5px var(--font);
+  letter-spacing: 0.01em;
   color: var(--text-dim);
   flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
 }
 
 .shelfRuleSnoozed,
@@ -1803,8 +1804,9 @@
   height: 30px;
   padding: 0 6px;
   border-radius: var(--radius-sm);
-  font: 11px var(--mono);
+  font: 11px var(--font);
   color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
 }
 
 .stopAllButton:hover {
@@ -1896,8 +1898,10 @@
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
-  font: 11px var(--mono);
+  flex-shrink: 0;
+  font: 11.5px var(--font);
   color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
 }
 
 .memoryDiamond {
@@ -1979,10 +1983,11 @@
 
 .searchKbd {
   flex-shrink: 0;
-  font-family: var(--mono);
+  font-family: var(--font);
   font-size: 10.5px;
   color: var(--text-dim);
   opacity: 0.8;
+  font-variant-numeric: tabular-nums;
 }
 
 .cardWorktree {

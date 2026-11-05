@@ -1,6 +1,6 @@
 .md {
-  font-size: 13.5px;
-  line-height: 1.6;
+  font-size: 14px;
+  line-height: 1.65;
   color: var(--text);
   user-select: text;
   /* Long unbroken strings (URLs, hashes, paths) wrap instead of widening the pane. */
@@ -38,16 +38,21 @@
 }
 
 .md h1 {
-  font-size: 17px;
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
 }
 
 .md h2 {
-  font-size: 15.5px;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
 }
 
 .md h3,
 .md h4 {
   font-size: 14px;
+  font-weight: 600;
 }
 
 .md a {
