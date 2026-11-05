@@ -10,7 +10,7 @@ import { describe, it } from "node:test";
 import { mount } from "./support/dom.ts";
 import { createFakeCoder, installFakeCoder } from "./support/fakeCoder.ts";
 import type { HistoryProject } from "../src/shared/ipc";
-import { usedAgo } from "../src/components/HistoryProjectPicker";
+import { HistoryProjectPicker, usedAgo } from "../src/components/HistoryProjectPicker";
 import App from "../src/App";
 
 const DAY = 86_400_000;
@@ -117,6 +117,15 @@ describe("Add project: from CLI history", () => {
   it("says so when the history has no new folders", async () => {
     const { m } = await openHistory([]);
     assert.ok(m.query("[data-history-empty]"));
+    m.unmount();
+  });
+
+  it("shows a loading line while discovery is still running", async () => {
+    const m = await mount(
+      <HistoryProjectPicker discover={() => new Promise(() => {})} onPick={() => {}} />,
+    );
+    assert.ok(m.query("[data-history-loading]"));
+    assert.equal(m.query("[data-history-project]"), null);
     m.unmount();
   });
 

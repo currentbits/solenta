@@ -6,7 +6,11 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { execFileSync } = require("node:child_process");
-const { discoverHistoryProjects, unflattenPath } = require("../recentRepos.js");
+const {
+  discoverHistoryProjects,
+  discoverHistoryProjectsAsync,
+  unflattenPath,
+} = require("../recentRepos.js");
 
 const git = (cwd, ...args) => execFileSync("git", args, { cwd, stdio: "pipe" }).toString().trim();
 
@@ -143,6 +147,54 @@ describe("discoverHistoryProjects (#1858)", () => {
       tmpRoots: [],
     });
     assert.deepEqual(rows, []);
+  });
+
+  it("scans off the main thread: the event loop keeps ticking while it runs", async () => {
+    // Enough history that a sync scan would hold the loop for a while.
+    const big = path.join(root, "big");
+    const bigHomes = { ...homes, claude: path.join(big, ".claude"), codex: path.join(big, ".codex") };
+    for (let i = 0; i < 400; i++) {
+      const dir = path.join(big, "work", `p${i}`);
+      fs.mkdirSync(dir, { recursive: true });
+      const line = `{"type":"user","cwd":${JSON.stringify(dir)}}\n`;
+      for (let j = 0; j < 3; j++) {
+        fs.mkdirSync(path.join(bigHomes.claude, "projects", `-p${i}`), { recursive: true });
+        fs.writeFileSync(path.join(bigHomes.claude, "projects", `-p${i}`, `b${i}x${j}.jsonl`), line);
+      }
+      const day = path.join(bigHomes.codex, "sessions", "2026", "11", "05");
+      fs.mkdirSync(day, { recursive: true });
+      fs.writeFileSync(
+        path.join(day, `rollout-2026-11-05T10-00-00-c${i}.jsonl`),
+        `{"type":"session_meta","payload":{"cwd":${JSON.stringify(dir)}}}\n`,
+      );
+    }
+    let ticks = 0;
+    let done = false;
+    const tick = () => {
+      if (done) return;
+      ticks += 1;
+      setImmediate(tick);
+    };
+    setImmediate(tick);
+    const rows = await discoverHistoryProjectsAsync({ homes: bigHomes, homeDir: big, tmpRoots: [] });
+    done = true;
+    assert.equal(rows.length, 200, "capped at 200");
+    assert.equal(rows[0].sessions, 4, "3 Claude + 1 Codex");
+    // A sync scan inside the promise would let at most one tick through.
+    assert.ok(ticks > 5, `event loop ticked ${ticks} times during the scan`);
+  });
+
+  it("reuses the scan for a minute unless the project list changes", async () => {
+    const opts = { homes, homeDir: home, tmpRoots: [path.join(root, "tmp")], existingPaths: [dirs.added] };
+    const first = discoverHistoryProjectsAsync(opts);
+    assert.equal(discoverHistoryProjectsAsync({ ...opts }), first, "same inputs: cached");
+    assert.notEqual(
+      discoverHistoryProjectsAsync({ ...opts, existingPaths: [dirs.added, dirs.app] }),
+      first,
+      "a newly added project rescans",
+    );
+    const names = (await first).map((r) => r.name);
+    assert.ok(names.includes("app") && !names.includes("added"));
   });
 
   it("unflattens a Cursor dir name back to the existing folder", () => {

@@ -3,6 +3,7 @@
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { isMainThread, parentPort, workerData } = require("node:worker_threads");
 const { walkClaudeSessions } = require("./cli-sessions-claude.js");
 const { resolveCodexHome, walkCodexRollouts } = require("./cli-sessions-codex.js");
 const { walkGrokSessions } = require("./cli-sessions-grok.js");
@@ -354,8 +355,8 @@ function realKey(p) {
  * }} [opts]
  * @returns {HistoryProject[]}
  */
-// ponytail: sync fs on the main process, ~200ms warm / ~1.3s cold for ~2k
-// sessions. Move to a worker thread if histories get much bigger.
+// Sync fs: ~200ms warm / ~1.3s cold for ~2k sessions. Callers on the main
+// process go through discoverHistoryProjectsAsync, which runs it in a worker.
 function discoverHistoryProjects(opts = {}) {
   const homeDir = opts.homeDir || os.homedir();
   const isTmp = tmpCheck(opts.tmpRoots);
@@ -467,7 +468,7 @@ async function discoverRecentRepos(opts = {}) {
   const homeDir = opts.homeDir || os.homedir();
   const isTmp = tmpCheck(opts.tmpRoots);
 
-  const dirs = [...collectSessionDirs(opts.homes || {})]
+  const dirs = [.../** @type {Map<string, SessionDir>} */ (await runOffThread("collect", [opts.homes || {}]))]
     .filter(([cwd]) => !isTmp(cwd) && fs.existsSync(cwd))
     .sort((a, b) => b[1].lastActiveMs - a[1].lastActiveMs)
     .slice(0, MAX_DIRS);
@@ -517,4 +518,77 @@ async function discoverRecentRepos(opts = {}) {
   return list;
 }
 
-module.exports = { discoverRecentRepos, collectSessionDirs, discoverHistoryProjects, unflattenPath };
+/** Sync scans a worker may run, by name. */
+const JOBS = {
+  collect: collectSessionDirs,
+  history: discoverHistoryProjects,
+};
+
+/**
+ * Run a sync scan from JOBS in a worker thread, so reading thousands of
+ * session files never freezes the main process (and every window with it).
+ *
+ * @param {keyof typeof JOBS} job
+ * @param {unknown[]} args structured-cloneable
+ * @returns {Promise<unknown>}
+ */
+function runOffThread(job, args) {
+  return new Promise((resolve, reject) => {
+    const { Worker } = require("node:worker_threads");
+    const worker = new Worker(__filename, { workerData: { recentReposJob: job, args } });
+    // Required modules can leave handles open in the worker; end it ourselves.
+    worker.once("message", (result) => {
+      resolve(result);
+      void worker.terminate();
+    });
+    worker.once("error", reject);
+    worker.once("exit", (code) => {
+      reject(new Error(`CLI history scan exited with code ${code}`));
+    });
+  });
+}
+
+const HISTORY_TTL_MS = 60_000;
+/** @type {{ key: string, at: number, promise: Promise<HistoryProject[]> } | null} */
+let historyCache = null;
+
+/**
+ * discoverHistoryProjects off the main thread. Reopening the picker within a
+ * minute with the same projects reuses the scan; adding one changes the key.
+ *
+ * @param {Parameters<typeof discoverHistoryProjects>[0]} [opts]
+ * @returns {Promise<HistoryProject[]>}
+ */
+function discoverHistoryProjectsAsync(opts = {}) {
+  const key = JSON.stringify([
+    [...(opts.existingPaths || [])].map(normalizePathKey).sort(),
+    opts.worktreeRoots || [],
+    opts.homes || {},
+    opts.homeDir || "",
+    opts.tmpRoots || null,
+  ]);
+  const now = Date.now();
+  if (historyCache && historyCache.key === key && now - historyCache.at < HISTORY_TTL_MS) {
+    return historyCache.promise;
+  }
+  const promise = /** @type {Promise<HistoryProject[]>} */ (runOffThread("history", [opts]));
+  const entry = { key, at: now, promise };
+  historyCache = entry;
+  promise.catch(() => {
+    if (historyCache === entry) historyCache = null;
+  });
+  return promise;
+}
+
+if (!isMainThread && parentPort && workerData && workerData.recentReposJob in JOBS) {
+  const job = JOBS[/** @type {keyof typeof JOBS} */ (workerData.recentReposJob)];
+  parentPort.postMessage(/** @type {Function} */ (job)(...workerData.args));
+}
+
+module.exports = {
+  discoverRecentRepos,
+  collectSessionDirs,
+  discoverHistoryProjects,
+  discoverHistoryProjectsAsync,
+  unflattenPath,
+};
