@@ -34,6 +34,20 @@ describe("findPathRefs", () => {
     assert.equal(col[0].col, 4);
   });
 
+  it("keeps compiler positions separate from file names", () => {
+    for (const path of ["src/foo.ts", "src/routes/(app)/page.tsx", "C:\\repo\\foo.ts"]) {
+      for (const suffix of ["(12,3)", "(12, 3)", "(12)"]) {
+        const text = `${path}${suffix}: error TS2322`;
+        const hits = findPathRefs(text);
+        assert.equal(hits.length, 1, text);
+        assert.equal(hits[0].path, path);
+        assert.equal(hits[0].line, 12);
+        assert.equal(hits[0].col, suffix.includes(",") ? 3 : undefined);
+        assert.equal(text.slice(hits[0].start, hits[0].end), `${path}${suffix}`);
+      }
+    }
+  });
+
   it("leaves http links alone", () => {
     assert.deepEqual(findPathRefs("see https://example.com/src/foo.ts"), []);
     assert.deepEqual(findPathRefs("docs at http://localhost:5173/src/foo.ts"), []);

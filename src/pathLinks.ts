@@ -85,7 +85,8 @@ export function splitLineSuffix(raw: string): {
   line?: number;
   col?: number;
 } {
-  const m = raw.match(/^(.*?):(\d+)(?::(\d+))?$/);
+  const m = raw.match(/^(.*?):(\d+)(?::(\d+))?$/) ??
+    raw.match(/^(.*?)\((\d+)(?:,\s*(\d+))?\)$/);
   if (!m) return { path: raw };
   // `C:` alone is a drive, not `file:12`.
   if (/^[A-Za-z]$/.test(m[1])) return { path: raw };
@@ -135,6 +136,14 @@ export function findPathRefs(text: string): PathRef[] {
     }
     let j = i + 1;
     while (j < text.length && PATH_CHAR.test(text[j]) && !inRange(blocked, j)) {
+      // Compiler positions are suffixes, unlike parentheses in route directories.
+      if (text[j] === "(" && fileExt(text.slice(i, j))) {
+        const position = text.slice(j).match(/^\(\d+(?:,\s*\d+)?\)/);
+        if (position) {
+          j += position[0].length;
+          break;
+        }
+      }
       j += 1;
     }
     const trimmed = trimPathToken(text.slice(i, j));
