@@ -377,7 +377,10 @@ function normalizeAutomationInput(store, input, existing) {
     scope = "private";
   }
 
+  const destination = require("./automation-destination.js").destinationFields(src, base);
+  if (destination.sessionMode !== "new-thread") require("./automation-destination.js").destinationThread(store, { ...destination, projectId, provider, model, tier }, null, true);
   return {
+    ...destination,
     name,
     projectId,
     prompt,
@@ -479,6 +482,7 @@ function sharedSlug(auto) {
 }
 
 const DEFINITION_KEYS = [
+  "sessionMode", "destinationThreadId",
   "name",
   "prompt",
   "provider",
@@ -498,6 +502,8 @@ const DEFINITION_KEYS = [
  */
 function definitionChanged(fields, existing) {
   return DEFINITION_KEYS.some((key) => {
+    if (key === "sessionMode") return (fields[key] || "new-thread") !== (existing[key] || "new-thread");
+    if (key === "destinationThreadId") return (fields[key] || null) !== (existing[key] || null);
     if (key === "trigger" || key === "budget") {
       return JSON.stringify(fields[key]) !== JSON.stringify(existing[key] || null);
     }
@@ -512,6 +518,8 @@ function definitionChanged(fields, existing) {
 function definitionRow(fields, slug) {
   return {
     id: slug,
+    sessionMode: fields.sessionMode,
+    destinationThreadId: fields.destinationThreadId,
     name: fields.name,
     prompt: fields.prompt,
     provider: fields.provider,
@@ -570,6 +578,8 @@ function addAutomation(store, input) {
       id,
       projectId: project.id,
       scope: "project",
+      sessionMode: fields.sessionMode,
+      destinationThreadId: fields.destinationThreadId,
       name: fields.name,
       prompt: fields.prompt,
       provider: fields.provider,

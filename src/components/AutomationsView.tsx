@@ -48,7 +48,7 @@ export interface AutomationsViewProps {
    * thread when a retained id has since been deleted. Omit while the
    * list is still loading — treat runs as openable.
    */
-  liveThreads?: Array<{ id: string; status: ThreadStatus }>;
+  liveThreads?: Array<{ id: string; status: ThreadStatus; projectId?: string; title?: string; provider?: string; model?: string | null; archived?: boolean; permissionMode?: string }>;
   /** Open this row in the form (automation_create card, #1599). */
   focusId?: string | null;
   onCreate: (input: AutomationWrite) => Promise<void> | void;
@@ -63,6 +63,8 @@ export interface AutomationsViewProps {
 /** Same keys `updateAutomation` uses to decide whether to rewrite solenta.json. */
 function definitionChanged(
   fields: {
+    sessionMode?: "new-thread" | "continue" | "fresh";
+    destinationThreadId?: string | null;
     name: string;
     prompt: string;
     provider: string;
@@ -78,6 +80,8 @@ function definitionChanged(
   existing: AutomationInfo,
 ): boolean {
   return (
+    (fields.sessionMode || "new-thread") !== (existing.sessionMode || "new-thread") ||
+    (fields.destinationThreadId || null) !== (existing.destinationThreadId || null) ||
     fields.name !== existing.name ||
     fields.prompt !== existing.prompt ||
     fields.provider !== existing.provider ||
@@ -104,7 +108,7 @@ function liveThreadKey(
   threads: AutomationsViewProps["liveThreads"],
 ): string {
   if (!threads) return "";
-  return threads.map((t) => t.id).join("\n");
+  return threads.map((t) => `${t.id}:${t.status}`).join("\n");
 }
 
 function AutomationRunHistory({
@@ -117,7 +121,7 @@ function AutomationRunHistory({
   automation: AutomationInfo;
   loadRuns: (id: string) => Promise<AutomationRunsResult>;
   onSelectThread?: (id: string) => void;
-  liveThreads?: Array<{ id: string; status: ThreadStatus }>;
+  liveThreads?: Array<{ id: string; status: ThreadStatus; projectId?: string; title?: string; provider?: string; model?: string | null; archived?: boolean; permissionMode?: string }>;
   now: number;
 }) {
   const [result, setResult] = useState<AutomationRunsResult | null>(null);
@@ -145,7 +149,7 @@ function AutomationRunHistory({
     return () => {
       cancelled = true;
     };
-  }, [automation.id, idsKey]);
+  }, [automation.id, automation.lastRunAt, automation.pendingRunThreadId, idsKey]);
 
   const liveById = useMemo(() => {
     const map = new Map<string, ThreadStatus>();
@@ -156,7 +160,7 @@ function AutomationRunHistory({
 
   const resolved = (result?.runs ?? []).map((run) => {
     const missing = liveLoaded && !liveById.has(run.threadId);
-    const status = liveById.get(run.threadId) ?? run.status;
+    const status = !run.id || run.pending ? (liveById.get(run.threadId) ?? run.status) : run.status;
     return { ...run, status, missing };
   });
   const latest = resolved[0] ?? null;
@@ -224,7 +228,7 @@ function AutomationRunHistory({
           {expanded ? (
             <ul className={styles.runs} data-automation-runs="">
               {resolved.map((run) => (
-                <li key={run.threadId}>
+                <li key={run.id || run.threadId}>
                   {run.missing ? (
                     <div
                       className={styles.runRow}
@@ -301,6 +305,8 @@ export function AutomationsView({
   const [provider, setProvider] = useState(
     draft?.provider ?? providers[0]?.id ?? "claude",
   );
+  const [sessionMode, setSessionMode] = useState<"new-thread" | "continue" | "fresh">("new-thread");
+  const [destinationThreadId, setDestinationThreadId] = useState("");
   const [model, setModel] = useState(draft?.model ?? "");
   const [preset, setPreset] = useState<AutomationPreset>("hourly");
   // #246: "" = run on the provider/model above.
@@ -356,6 +362,8 @@ export function AutomationsView({
     setName(auto.name);
     setProjectId(auto.projectId);
     setPrompt(auto.prompt);
+    setSessionMode(auto.sessionMode || "new-thread");
+    setDestinationThreadId(auto.destinationThreadId || "");
     setProvider(auto.provider);
     setModel(auto.model ?? "");
     setPreset(auto.preset);
@@ -393,6 +401,8 @@ export function AutomationsView({
     setEditingId(null);
     setName("");
     setPrompt("");
+    setSessionMode("new-thread");
+    setDestinationThreadId("");
     setModel("");
     setPreset("hourly");
     setTier("");
@@ -515,6 +525,7 @@ export function AutomationsView({
    */
   const submit = async () => {
     if (savingRef.current) return;
+    if (sessionMode !== "new-thread" && !destinationThreadId) { setFormError("Choose a destination thread"); return; }
     const error = createFormError({
       name,
       projectId,
@@ -547,6 +558,8 @@ export function AutomationsView({
         const editing = automations.find((a) => a.id === editingId);
         const hadTier = editing?.tier;
         const nextDef = {
+          sessionMode,
+          destinationThreadId: sessionMode === "new-thread" ? null : destinationThreadId.trim(),
           name: name.trim(),
           prompt,
           provider,
@@ -561,6 +574,8 @@ export function AutomationsView({
         };
         await onUpdate({
           id: editingId,
+          sessionMode,
+          destinationThreadId: sessionMode === "new-thread" ? null : destinationThreadId.trim(),
           name: nextDef.name,
           prompt: nextDef.prompt,
           provider: nextDef.provider,
@@ -588,6 +603,8 @@ export function AutomationsView({
       } else {
         const writeScope = projectScopeBlocked ? "private" : scope;
         await onCreate({
+          sessionMode,
+          destinationThreadId: sessionMode === "new-thread" ? null : destinationThreadId.trim(),
           name: name.trim(),
           projectId,
           prompt,
@@ -609,7 +626,9 @@ export function AutomationsView({
         setWroteFile(writeScope === "project");
         setName("");
         setPrompt("");
-        setModel("");
+        setSessionMode("new-thread");
+    setDestinationThreadId("");
+    setModel("");
         setTier("");
         setBudget(budgetToDraft(null));
         setScope("private");
@@ -1057,6 +1076,23 @@ export function AutomationsView({
           </label>
         ) : null}
         <label className={styles.field}>
+          <span className={styles.label}>Session mode</span>
+          <select className={styles.select} aria-label="Session mode" value={sessionMode} onChange={(e) => setSessionMode(e.target.value as typeof sessionMode)}>
+            <option value="new-thread">New thread for every run</option>
+            <option value="continue">Continue a fixed thread</option>
+            <option value="fresh">Fixed thread, fresh agent context</option>
+          </select>
+        </label>
+        {sessionMode !== "new-thread" && <label className={styles.field}>
+          <span className={styles.label}>Destination thread</span>
+          <select className={styles.select} aria-label="Destination thread" value={destinationThreadId} onChange={(e) => setDestinationThreadId(e.target.value)} required>
+            <option value="">Choose a thread</option>
+            {destinationThreadId && !liveThreads?.some((t) => t.id === destinationThreadId && t.projectId === projectId && !t.archived && t.provider === provider && (t.model || "") === model && (!t.permissionMode || t.permissionMode === "default")) && <option value={destinationThreadId}>Saved destination unavailable or incompatible</option>}
+            {liveThreads?.filter((t) => t.projectId === projectId && !t.archived && t.provider === provider && (t.model || "") === model && (!t.permissionMode || t.permissionMode === "default")).map((t) => <option key={t.id} value={t.id}>{t.title || "Untitled thread"} · {t.model || "Default model"}</option>)}
+          </select>
+          <span>Use a thread in this project with the same provider and model and default permissions. Busy threads are skipped. Fixed threads keep lifetime usage; automation caps can tighten their existing limits.</span>
+        </label>}
+        <label className={styles.field}>
           <span className={styles.label}>Prompt</span>
           <textarea
             className={styles.textarea}
@@ -1098,6 +1134,7 @@ export function AutomationsView({
               disabled={saving}
               onClick={() => {
                 if (savingRef.current) return;
+    if (sessionMode !== "new-thread" && !destinationThreadId) { setFormError("Choose a destination thread"); return; }
                 clearEdit();
               }}
             >
@@ -1330,6 +1367,7 @@ export function AutomationsView({
                     disabled={saving}
                     onClick={() => {
                       if (savingRef.current) return;
+    if (sessionMode !== "new-thread" && !destinationThreadId) { setFormError("Choose a destination thread"); return; }
                       fillFrom(auto);
                     }}
                   >

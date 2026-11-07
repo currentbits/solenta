@@ -326,6 +326,20 @@ describe("project-scope writes", () => {
     assert.equal(services.listAutomations(store)[0].memory, "notes");
   });
 
+  it("legacy shared overlay edits preserve exact file bytes, hash, and trust", () => {
+    const dir = tempRepo([ROW]);
+    const store = new Store(path.join(dir, "store.json"));
+    store.setProjects([{ id: "p1", name: "p", path: dir }]);
+    const before = fs.readFileSync(path.join(dir, "solenta.json"), "utf8");
+    const hash = readAutomations(dir).hash;
+    services.trustFile(store, { projectId: "p1", hash });
+    services.updateAutomation(store, { id: "shared:p1:pr-triage", enabled: true });
+    services.updateAutomation(store, { id: "shared:p1:pr-triage", memory: "notes", enabled: false });
+    assert.equal(fs.readFileSync(path.join(dir, "solenta.json"), "utf8"), before);
+    assert.equal(readAutomations(dir).hash, hash);
+    assert.equal(store.getProject("p1").automationsTrust, hash);
+  });
+
   it("remove drops the slug; invalid JSON is not clobbered; remote is rejected", () => {
     const dir = tempRepo([ROW]);
     const store = new Store(path.join(dir, "store.json"));

@@ -304,8 +304,14 @@ function settleAutomationRuns(ctx) {
     const t = ctx.store.getThread(auto.pendingRunThreadId);
     if (t && (t.status === "working" || t.status === "quota-wait")) continue;
     changed = true;
+    if (auto.pendingRunId && auto.runHistory?.length) patchAutomation(ctx.store, auto.id, {
+      pendingRunId: null,
+      runHistory: auto.runHistory.map((r) => r.runId === auto.pendingRunId ? { ...r, status: t?.status || "failed" } : r),
+    });
     if (t) {
-      const last = ctx.store.getLastAssistantMessage(t.id);
+      const last = auto.pendingRunId
+        ? ctx.store.getMessages(t.id).filter((m) => m.role === "assistant" && m.runId === auto.pendingRunId).at(-1)
+        : ctx.store.getLastAssistantMessage(t.id);
       const memory = extractMemory(last && last.text);
       if (memory != null) patchAutomation(ctx.store, auto.id, { memory });
     }
@@ -368,7 +374,7 @@ function pruneAutomationThreads(store, automationId) {
   indexed.sort((a, b) => (b.t.createdAt - a.t.createdAt) || (b.i - a.i));
   for (let i = MAX_THREADS_PER_AUTOMATION; i < indexed.length; i++) {
     const t = indexed[i].t;
-    if (isRetainedAutomationThread(t)) continue;
+    if (isRetainedAutomationThread(t) || require("./automations-file.js").mergeAutomations(store, Date.now()).some((a) => a.destinationThreadId === t.id || a.runHistory?.some((r) => r.threadId === t.id))) continue;
     services.purgeThread(store, t.id);
   }
 }
@@ -383,7 +389,25 @@ function pruneAutomationThreads(store, automationId) {
  * @param {number} now
  * @param {{ rethrow?: boolean, triggerNote?: string }} [opts]
  */
+const firingByStore = new WeakMap();
 async function runAutomation(ctx, auto, now, opts) {
+  let firing = firingByStore.get(ctx.store);
+  if (!firing) firingByStore.set(ctx.store, firing = new Set());
+  const keys = [`automation:${auto.id}`];
+  if (auto.sessionMode && auto.sessionMode !== "new-thread") keys.push(`thread:${auto.destinationThreadId}`);
+  if (keys.some((key) => firing.has(key))) {
+    const error = new Error("Automation destination is already starting a run");
+    if (opts?.rethrow) throw error;
+    return;
+  }
+  for (const key of keys) firing.add(key);
+  try {
+    return await fireAutomation(ctx, auto, now, opts);
+  } finally {
+    for (const key of keys) firing.delete(key);
+  }
+}
+async function fireAutomation(ctx, auto, now, opts) {
   const services = require("./services.js");
   const nextRunAt = nextFire(auto.preset, auto.hour, now, auto.nextRunAt, auto.cron, auto.runAt);
   // #388: settle ran first in the tick, so the breaker count is current.
@@ -400,7 +424,12 @@ async function runAutomation(ctx, auto, now, opts) {
 
   let runErr = null;
   try {
-    const thread = services.createThread(ctx.store, {
+    settleAutomationRuns(ctx);
+    const pending = ctx.store.getAutomation(auto.id)?.pendingRunThreadId;
+    const pendingThread = pending && ctx.store.getThread(pending);
+    if (auto.sessionMode && auto.sessionMode !== "new-thread" && pendingThread && (pendingThread.status === "working" || pendingThread.status === "quota-wait")) throw Object.assign(new Error("Automation still has an unfinished run; run skipped"), { code: "AUTOMATION_DESTINATION_BUSY" });
+    const target = require("./automation-destination.js").destinationThread(ctx.store, auto, ctx.runner);
+    const thread = target || services.createThread(ctx.store, {
       projectId: auto.projectId,
       title: auto.name,
       automationId: auto.id,
@@ -409,8 +438,12 @@ async function runAutomation(ctx, auto, now, opts) {
     // #286: the automation's cap is harness state on the thread it fires.
     const { budgetPatchFrom } = require("./budgetCaps.js");
     const capped = budgetPatchFrom(auto);
-    if (capped.budget) ctx.store.updateThread(thread.id, capped);
-    services.setProvider(ctx.store, {
+    if (capped.budget) {
+      const budget = { ...(thread.budget || {}) };
+      for (const [key, limit] of Object.entries(capped.budget)) budget[key] = Math.min(budget[key] ?? Infinity, limit);
+      ctx.store.updateThread(thread.id, { budget });
+    }
+    if (!target) services.setProvider(ctx.store, {
       threadId: thread.id,
       provider: auto.provider,
       model: auto.model,
@@ -420,25 +453,31 @@ async function runAutomation(ctx, auto, now, opts) {
     if (typeof ctx.broadcast === "function") {
       ctx.broadcast("threads:changed", services.listThreads(ctx.store));
     }
-    await ctx.runner.startRun({
+    const launch = await (target ? ctx.runner.startAutomationRun.bind(ctx.runner) : ctx.runner.startRun.bind(ctx.runner))({
+      ...(target ? { automationId: auto.id } : {}),
       threadId: thread.id,
       prompt: buildRunPrompt({ ...auto, ...life }, opts && opts.triggerNote),
     });
     patchAutomation(ctx.store, auto.id, {
       lastError: null,
       pendingRunThreadId: thread.id,
+      ...((target || ctx.store.getAutomation(auto.id)?.runHistory?.length) && launch?.runId ? { pendingRunId: launch.runId, runHistory: [
+        { id: require("node:crypto").randomUUID(), threadId: thread.id, newThread: !target, runId: launch.runId, startedAt: now, status: "working" },
+        ...(ctx.store.getAutomation(auto.id)?.runHistory || []),
+      ].slice(0, MAX_THREADS_PER_AUTOMATION) } : {}),
     });
     ctx.store.save();
   } catch (err) {
     runErr = err;
-    recordFailure(ctx, auto.id, errorText(err));
+    if (err?.code === "AUTOMATION_DESTINATION_BUSY") patchAutomation(ctx.store, auto.id, { lastError: errorText(err) });
+    else recordFailure(ctx, auto.id, errorText(err));
     ctx.store.save();
   }
 
   // #134: prune after startRun so a thrown purge cannot undo a completed fire.
   // Own try/catch: retention failure must not stamp lastError or fail the run.
   try {
-    pruneAutomationThreads(ctx.store, auto.id);
+    if (!auto.sessionMode || auto.sessionMode === "new-thread") pruneAutomationThreads(ctx.store, auto.id);
     ctx.store.save();
     const { scheduleImagePruneFromStore } = require("./image-store.js");
     void scheduleImagePruneFromStore(ctx.store);
@@ -473,6 +512,7 @@ function listAutomationRuns(store, automationId) {
   if (!auto) {
     throw new Error(`Unknown automation: ${id}`);
   }
+  const fixedRuns = (auto.runHistory || []).map(({ id, threadId, runId, startedAt, status }, i) => ({ id, threadId, runId, startedAt, status, pending: auto.pendingRunId === runId && auto.pendingRunThreadId === threadId }));
   const indexed = store
     .getThreads()
     .map((t, i) => ({ t, i }))
@@ -480,15 +520,16 @@ function listAutomationRuns(store, automationId) {
       ({ t }) =>
         t &&
         t.automationId === id &&
+        !auto.runHistory?.some((r) => r.newThread && r.threadId === t.id) &&
         t.projectId === auto.projectId &&
         t.memoryConsolidate !== true,
     );
   indexed.sort((a, b) => b.t.createdAt - a.t.createdAt || b.i - a.i);
-  const runs = indexed.map(({ t }) => ({
+  const runs = [...fixedRuns, ...indexed.map(({ t }) => ({
     threadId: t.id,
     startedAt: t.createdAt,
     status: t.status || "idle",
-  }));
+  }))].sort((a, b) => b.startedAt - a.startedAt);
   return {
     automationId: id,
     runs,

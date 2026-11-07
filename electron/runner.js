@@ -1798,7 +1798,14 @@ function createRunner(opts) {
    * appended) any throw — budget, missing CLI, worktree setup — puts that
    * queue back in front of whatever was queued since.
    */
+  const automationStart = Symbol("configured automation start");
+  function startAutomationRun(input) {
+    return startRun({ threadId: input.threadId, prompt: input.prompt, [automationStart]: input.automationId });
+  }
+
   async function startRun(input) {
+    // Capture completed fixed-destination automation outcomes before a manual turn changes the row.
+    if (require("./automations.js").settleAutomationRuns({ store })) store.save();
     const fold = { taken: null };
     try {
       return await startRunFolded(input, fold);
@@ -1836,7 +1843,7 @@ function createRunner(opts) {
     // queued as the next prompt. fromNotice is skipped so a worker
     // quoting `/btw` cannot open a card on itself. fromInbound is skipped
     // so a cross-thread body that happens to start with `/btw` is data.
-    if (!input.fromNotice && !input.fromInbound) {
+    if (!input[automationStart] && !input.fromNotice && !input.fromInbound) {
       const question = btw.parseBtwCommand(prompt);
       if (question) {
         const thread = await startBtw({ threadId, question });
@@ -1855,9 +1862,17 @@ function createRunner(opts) {
       );
     }
 
-    const thread = store.getThread(threadId);
+    let thread = store.getThread(threadId);
     if (!thread) {
       throw new Error(`Unknown thread: ${threadId}`);
+    }
+    const configuredAutomationId = input[automationStart];
+    const automation = configuredAutomationId
+      ? require("./automations-file.js").mergeAutomations(store, Date.now()).find((a) => a.id === configuredAutomationId)
+      : null;
+    if (configuredAutomationId) {
+      if (!automation || automation.destinationThreadId !== threadId || !automation.sessionMode || automation.sessionMode === "new-thread") throw new Error("Automation destination configuration changed before launch");
+      require("./automation-destination.js").destinationThread(store, automation, { isRunning, getPendingPermission });
     }
     if (services.isTrashed(thread)) {
       throw new Error("Cannot start a run on a deleted thread");
@@ -1930,6 +1945,7 @@ function createRunner(opts) {
     // otherwise fan out again — and the cheap `/` test keeps the provider
     // probe (`which`) off the ordinary send path.
     if (
+      !input[automationStart] &&
       !input.fromNotice &&
       !input.fromInbound &&
       String(prompt).trimStart().startsWith("/")
@@ -2128,6 +2144,7 @@ function createRunner(opts) {
         (store.getSettings().maxConcurrentRuns != null &&
           (!runSlotsFree() || runQueueOrder().length > 0)))
     ) {
+      if (automation) throw Object.assign(new Error("Automation destination is waiting for a run slot; run skipped"), { code: "AUTOMATION_DESTINATION_BUSY" });
       fold.taken = null;
       return enqueueRun(threadId, input, prompt, attachments);
     }
@@ -2152,6 +2169,13 @@ function createRunner(opts) {
           fromQuotaFailover: input.fromQuotaFailover,
         });
       }
+    }
+
+    // Only explicitly configured fixed fresh-session fires may reset context,
+    // after all admission and preflight gates have accepted the run.
+    if (automation?.sessionMode === "fresh") {
+      freshAgentContext({ threadId });
+      thread = store.getThread(threadId);
     }
 
     // Prefix is CLI-only and must see the retained tail BEFORE this turn's
@@ -3357,6 +3381,7 @@ function createRunner(opts) {
   queueMicrotask(admitQueuedRuns);
 
   return {
+    startAutomationRun,
     startRun,
     steerRun,
     startBtw,

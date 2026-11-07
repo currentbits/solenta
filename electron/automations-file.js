@@ -25,7 +25,7 @@ const MAX_SHARED_AUTOMATIONS = 16;
 const PROMPT_MAX = 4000;
 const PRESETS = new Set(["hourly", "daily", "weekly", "cron", "once"]);
 /** canonical()'s keys: anything else in a row is a typo (#438). */
-const ROW_KEYS = new Set(["id", "name", "prompt", "provider", "model", "preset", "hour", "cron", "runAt", "trigger", "tier", "budget"]);
+const ROW_KEYS = new Set(["sessionMode", "destinationThreadId", "id", "name", "prompt", "provider", "model", "preset", "hour", "cron", "runAt", "trigger", "tier", "budget"]);
 
 /**
  * Overlay / merge id for a shared automation row.
@@ -71,6 +71,8 @@ function slugFromName(name, taken) {
  */
 function canonical(row) {
   return {
+    sessionMode: row.sessionMode,
+    destinationThreadId: row.destinationThreadId,
     id: row.id,
     name: row.name,
     prompt: row.prompt,
@@ -238,8 +240,12 @@ function parseRow(raw, index, seen) {
     return { error: `solenta.json: ${at}.${msg}` };
   }
 
+  let destination;
+  try { destination = require("./automation-destination.js").destinationFields(r); }
+  catch (err) { return { error: `solenta.json: ${at}: ${err.message}` }; }
   return {
     row: {
+      ...(r.sessionMode !== undefined || r.destinationThreadId !== undefined ? destination : {}),
       id,
       name,
       prompt,
@@ -388,6 +394,8 @@ function mergeAutomations(store, nowMs) {
         projectId: project.id,
         name: row.name,
         prompt: row.prompt,
+        sessionMode: row.sessionMode,
+        destinationThreadId: row.destinationThreadId,
         provider: row.provider,
         model: row.model,
         preset: row.preset,
@@ -500,6 +508,8 @@ function ensureOverlay(store, auto) {
     scope: "project",
     name: auto.name,
     prompt: auto.prompt,
+    sessionMode: auto.sessionMode,
+    destinationThreadId: auto.destinationThreadId,
     provider: auto.provider,
     model: auto.model,
     preset: auto.preset,

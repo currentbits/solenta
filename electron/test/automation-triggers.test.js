@@ -280,6 +280,7 @@ describe("event-triggered automations", () => {
     return startScheduler({
       store,
       runner: {
+        startAutomationRun: async (input) => { started.push(input); return { runId: "fixed" }; },
         startRun: async (input) => {
           started.push(input);
           return { runId: "r" };
@@ -308,6 +309,25 @@ describe("event-triggered automations", () => {
       ...extra,
     });
   }
+
+  it("GitHub events continue the configured fixed destination without changing ownership", async () => {
+    const t = services.createThread(store, { projectId: "p1", provider: "claude", model: null });
+    services.setProvider(store, { threadId: t.id, provider: "claude", model: null });
+    addPrOpened({ sessionMode: "continue", destinationThreadId: t.id });
+    const started = [];
+    const sched = scheduler(started);
+    try {
+      rows = [{ number: 10, title: "old", user: { login: "x" } }];
+      await sched.tick();
+      rows = [{ number: 11, title: "new", user: { login: "x" } }, ...rows];
+      await sched.tick();
+      assert.equal(started.length, 1);
+      assert.equal(started[0].threadId, t.id);
+      assert.match(started[0].prompt, /GitHub pr_opened/);
+      assert.equal(store.getThreads().length, 1);
+      assert.equal(store.getThread(t.id).automationId, null);
+    } finally { sched.stop(); }
+  });
 
   it("baselines on the first poll, then batches new PRs into one run", async () => {
     const auto = addPrOpened();

@@ -72,6 +72,8 @@
         "additionalProperties": false,
         "required": ["id", "name", "prompt", "provider", "preset"],
         "properties": {
+          "sessionMode": { "enum": ["new-thread", "continue", "fresh"] },
+          "destinationThreadId": { "type": ["string", "null"] },
           "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,47}$" },
           "name": { "type": "string", "minLength": 1 },
           "prompt": { "type": "string", "minLength": 1, "maxLength": 4000 },

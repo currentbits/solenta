@@ -53,6 +53,23 @@ describe("run queue (maxConcurrentRuns)", () => {
     else process.env.CODER_SIMULATE = prevSimulate;
   });
 
+  it("a fixed fresh automation skips a full run slot without resetting or queuing its destination", async () => {
+    const [a, b] = ids;
+    const target = store.getThread(b);
+    store.updateThread(b, { sessionId: "human-session" });
+    store.appendMessage(b, { id: "human", role: "assistant", text: "HUMAN CONTEXT", createdAt: 1 });
+    const automation = services.addAutomation(store, { projectId: target.projectId, name: "Fresh", prompt: "go", provider: target.provider, model: target.model, preset: "hourly", sessionMode: "fresh", destinationThreadId: b });
+    await runner.startRun({ threadId: a, prompt: "occupy slot" });
+    const before = store.getMessages(b).slice();
+    await assert.rejects(require("../automations.js").runNow({ store, runner }, automation.id), /run slot.*skipped/);
+    assert.equal(store.getThread(b).sessionId, "human-session");
+    assert.equal(store.getThread(b).contextBoundaryId, undefined);
+    assert.equal(store.getThread(b).runQueue, undefined);
+    assert.deepEqual(store.getMessages(b), before);
+    assert.equal(store.getAutomation(automation.id).pendingRunThreadId, null);
+    assert.equal(store.getAutomation(automation.id).consecutiveFailures, 0);
+  });
+
   it("defaults to 4 and validates", () => {
     assert.equal(new Store(path.join(tmpDir, "x.json")).getSettings().maxConcurrentRuns, 4);
     assert.throws(() => store.setSettings({ maxConcurrentRuns: 0 }));

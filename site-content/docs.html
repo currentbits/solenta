@@ -1124,6 +1124,20 @@
       </p>
 
       <p>
+        <strong>Session mode</strong> defaults to a new thread for every run.
+        Choose <strong>Continue a fixed thread</strong> to keep its provider conversation,
+        or <strong>Fixed thread, fresh agent context</strong> to start each run with clean
+        agent context while keeping visible history, workspace and accumulated usage.
+        Select a destination in the same project with the same provider and model,
+        default permissions, and no account override, additional grants or routing.
+        Busy destinations and unresolved input are skipped without pausing the automation.
+        Automation budgets can tighten a fixed thread's limits and count its existing
+        lifetime spend, tokens and turns; fresh context does not reset these counters.
+        Project definitions persist <code>sessionMode</code> (<code>new-thread</code>,
+        <code>continue</code> or <code>fresh</code>) and <code>destinationThreadId</code>.
+        A destination missing on another machine fails visibly rather than creating a thread.
+      </p>
+<p>
         Use <strong>Edit</strong> to change an automation in place. Its recent
         runs link to the corresponding transcripts, including live and
         quota-wait runs. Changing a name, prompt or model keeps the schedule's

@@ -130,6 +130,63 @@ describe("provider switch keeps context (#1493)", () => {
     return store.getThread(thread.id);
   }
 
+  it("fresh automation preflight failures retain the human session and context", async () => {
+    const thread = threadWithHistory();
+    const automation = services.addAutomation(store, { projectId: project.id, name: "Fresh", prompt: "go", provider: thread.provider, model: thread.model, preset: "hourly", sessionMode: "fresh", destinationThreadId: thread.id });
+    const { runNow } = require("../automations.js");
+    process.env.CODER_AGENT_CMD = agentCmd(logFile);
+    const before = store.getMessages(thread.id).slice();
+    store.updateThread(thread.id, { budget: { usd: 1 } });
+    store.setUsage(thread.id, { costUsd: 2, inputTokens: 5, turns: 1 });
+    await assert.rejects(runNow({ store, runner }, automation.id), /Thread budget reached/);
+    store.updateThread(thread.id, { budget: null });
+    store.setSettings({ dailyBudgetUsd: 1 });
+    const spendToday = store.getSpendToday;
+    store.getSpendToday = () => 2;
+    await assert.rejects(runNow({ store, runner }, automation.id), /Daily budget reached/);
+    store.getSpendToday = spendToday;
+    store.setSettings({ dailyBudgetUsd: null });
+    delete process.env.CODER_AGENT_CMD;
+    const binEnv = getProvider(thread.provider).binEnv;
+    const priorBin = process.env[binEnv];
+    process.env[binEnv] = path.join(tmpDir, "missing-provider");
+    try {
+      await assert.rejects(runNow({ store, runner }, automation.id), /Provider binary not found/);
+    } finally {
+      if (priorBin === undefined) delete process.env[binEnv]; else process.env[binEnv] = priorBin;
+    }
+    assert.equal(store.getThread(thread.id).sessionId, "sess-claude");
+    assert.equal(store.getThread(thread.id).contextBoundaryId, undefined);
+    assert.deepEqual(store.getMessages(thread.id), before);
+    assert.equal(store.getUsage(thread.id).costUsd, 2);
+  });
+
+  it("fixed automation continuation preserves context while explicit fresh mode excludes old history", async () => {
+    const thread = threadWithHistory();
+    process.env.CODER_AGENT_CMD = agentCmd(logFile);
+    const automation = services.addAutomation(store, {
+      projectId: project.id, name: "Review", prompt: "AUTOMATION REQUEST", provider: thread.provider,
+      model: thread.model, preset: "hourly", sessionMode: "continue", destinationThreadId: thread.id,
+    });
+    const { runNow, settleAutomationRuns, listAutomationRuns } = require("../automations.js");
+    await runNow({ store, runner }, automation.id);
+    await waitFor(() => !runner.isRunning(thread.id));
+    assert.equal(store.getThread(thread.id).contextBoundaryId, undefined);
+    assert.equal(store.getThread(thread.id).sessionId, "sess-claude");
+    settleAutomationRuns({ store });
+    services.updateAutomation(store, { id: automation.id, sessionMode: "fresh" });
+    await runNow({ store, runner }, automation.id);
+    await waitFor(() => !runner.isRunning(thread.id));
+    settleAutomationRuns({ store });
+    assert.ok(store.getThread(thread.id).contextBoundaryId);
+    assert.equal(store.getThread(thread.id).freshContextPending, false);
+    assert.ok(store.getMessages(thread.id).some((m) => m.text === "PARSER HALF DONE"));
+    assert.ok(!store.getContextMessages(thread.id).some((m) => m.text === "PARSER HALF DONE"));
+    assert.equal(store.getThreads().length, 1);
+    assert.equal(listAutomationRuns(store, automation.id).runs.length, 2);
+    assert.notEqual(listAutomationRuns(store, automation.id).runs[0].id, listAutomationRuns(store, automation.id).runs[1].id);
+  });
+
   it("fresh context retains visible history and identity across reload without old handoff", async () => {
     const thread = threadWithHistory();
     store.updateThread(thread.id, { handoffFrom: "old-source", replayContext: true,

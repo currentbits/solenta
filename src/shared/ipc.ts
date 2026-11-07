@@ -3930,6 +3930,8 @@ export type AutomationStage = "observe" | "draft" | "act";
 
 /** A scheduled agent run (Synara-style automation). */
 export interface AutomationInfo {
+  sessionMode?: "new-thread" | "continue" | "fresh";
+  destinationThreadId?: string | null;
   id: string;
   projectId: string;
   /** Private rows stay on this machine; project rows come from solenta.json. */
@@ -3972,6 +3974,8 @@ export interface AutomationInfo {
 }
 
 export interface AutomationWrite {
+  sessionMode?: "new-thread" | "continue" | "fresh";
+  destinationThreadId?: string | null;
   projectId: string;
   name: string;
   prompt: string;
@@ -4003,6 +4007,10 @@ export interface AutomationWrite {
  * typed `automationId` stamp on the thread, not the title.
  */
 export interface AutomationRunInfo {
+  /** Stable per-fire identity for fixed destinations. */
+  id?: string;
+  runId?: string | null;
+  pending?: boolean;
   threadId: string;
   /** Thread create time; the fire that minted this run. */
   startedAt: number;
