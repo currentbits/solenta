@@ -197,3 +197,41 @@ describe("PrWorkspacePanel reactions (#1795 feature 3)", () => {
     m.unmount();
   });
 });
+
+
+describe("PrWorkspacePanel comment context", () => {
+  it("retries partial comment loading and keeps review-summary ids separate from editable comments", async () => {
+    let loads = 0;
+    const pr: PrDetail = {
+      ...basePr,
+      commentsError: "Some PR comments couldn't be loaded.",
+      comments: [
+        { id: 1, type: "issue", author: "me", body: "ordinary", createdAt: "", mine: true },
+        { id: 1, type: "review-summary", author: "reviewer", body: "summary", createdAt: "" },
+      ],
+    };
+    const m = await mount(
+      <PrWorkspacePanel
+        projectPath="/tmp/ledger"
+        prNumber={11}
+        matchedThread={null}
+        {...noop}
+        prDetail={async () => {
+          loads++;
+          return ok(loads > 1 ? { ...pr, commentsError: undefined } : pr);
+        }}
+        prCommentEdit={async () => ok(pr)}
+        onSelectThread={() => {}}
+        onClose={() => {}}
+      />,
+    );
+    await m.click(m.query("[data-pr-comment-edit]"));
+    assert.equal(m.queryAll("[data-pr-comment-edit-form]").length, 1);
+    assert.match(m.queryAll("[data-pr-comment-item]")[1].textContent || "", /summary/);
+    await m.click(m.byText("Retry comments"));
+    await m.flush();
+    assert.equal(loads, 2);
+    assert.equal(m.byText("Retry comments"), null);
+    m.unmount();
+  });
+});

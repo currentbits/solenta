@@ -3217,16 +3217,18 @@ export interface PrReaction {
   viewerHasReacted: boolean;
 }
 
-/** One issue-comment on a PR from `gh pr view --json comments`. */
+/** An ordinary comment, submitted review, or inline discussion comment on a PR. */
 export interface PrComment {
   /** REST comment id (resolved from `databaseId` or the comment URL), for Edit/React. */
   id?: number;
-  /**
-   * Which REST family owns this comment's id: `/issues/comments/{id}` vs
-   * `/pulls/comments/{id}`. Always "issue" today: only top-level PR/issue
-   * comments are fetched, never inline review comments.
-   */
-  type: "issue" | "review";
+  /** Submitted review bodies have a different REST family from inline comments. */
+  type: "issue" | "review" | "review-summary";
+  path?: string;
+  line?: number;
+  startLine?: number;
+  side?: "LEFT" | "RIGHT";
+  outdated?: boolean;
+  diffHunk?: string;
   author: string;
   body: string;
   createdAt: string;
@@ -3266,6 +3268,8 @@ export interface PrDetail {
   /** CI bucket counts, for the PR hover card (#1771). Absent when gh has none to report. */
   checks?: { passing: number; failing: number; pending: number };
   comments: PrComment[];
+  /** Some comment sources failed; available comments remain usable. */
+  commentsError?: string;
 }
 
 export type PrDetailResult =

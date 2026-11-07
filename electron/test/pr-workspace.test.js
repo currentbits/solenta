@@ -125,6 +125,19 @@ if (args[0] === "pr" && args[1] === "view") {
   process.exit(0);
 }
 
+if (args[0] === "api") {
+  const match = args[1].match(/repos\\/[^/]+\\/[^/]+\\/(issues|pulls)\\/(\\d+)\\/(comments|reviews)/);
+  if (match) {
+    const pr = findPr(match[2]);
+    const rows = match[1] === "issues" ? (pr.comments || []).map(function (c) {
+      return { id: c.databaseId || Number((c.url || "").split("-").pop()), body: c.body, user: c.author, created_at: c.createdAt, html_url: c.url };
+    }) : match[3] === "reviews" ? pr.reviews || [] : pr.inlineComments || [];
+    const page = Number(new URL("https://api.example/" + args[1]).searchParams.get("page")) || 1;
+    process.stdout.write(JSON.stringify(rows.slice((page - 1) * 100, page * 100)));
+    process.exit(0);
+  }
+}
+
 if (args[0] === "pr" && args[1] === "checks") {
   const pr = findPr(args[2]);
   if (!pr) {
@@ -697,6 +710,53 @@ describe("gh PR workspace actions", () => {
         headRefName: "feat/ship",
         mergeable: "MERGEABLE",
       }],
+    });
+
+    it("loads every comment family with pagination, file context and stable source URLs", async () => {
+      const data = seed();
+      data.prs[0].comments = Array.from({ length: 101 }, (_, i) => ({ body: `ordinary ${i}`, author: "reviewer" }));
+      data.prs[0].reviews = Array.from({ length: 101 }, (_, i) => ({ id: 2000 + i, user: { login: "reviewer" }, body: `review ${i}`, submitted_at: "2026-10-01T00:00:00Z" }));
+      data.prs[0].inlineComments = Array.from({ length: 101 }, (_, i) => ({
+        id: 3000 + i, user: { login: "inline-reviewer" }, body: `inline ${i}`,
+        path: "src/app.ts", line: null, original_line: 12, original_start_line: 10,
+        side: "LEFT", diff_hunk: "@@ -10 +10 @@\n-old", created_at: "2026-10-02T00:00:00Z",
+      }));
+      const api = fakeGithubApi(data);
+      setGithubApi(api);
+      const viewed = await viewPrDetail(repo, 12);
+      assert.equal(viewed.ok, true);
+      assert.equal(viewed.pr.commentsError, undefined);
+      assert.equal(viewed.pr.comments.length, 303);
+      assert.equal(viewed.pr.comments.filter((c) => c.type === "issue").length, 101);
+      assert.equal(viewed.pr.comments.filter((c) => c.type === "review-summary").length, 101);
+      const inline = viewed.pr.comments.find((c) => c.id === 3100);
+      assert.equal(inline.url, "https://github.com/acme/demo/pull/12#discussion_r3100");
+      assert.equal(inline.author, "inline-reviewer");
+      assert.equal(inline.path, "src/app.ts");
+      assert.equal(inline.line, 12);
+      assert.equal(inline.startLine, 10);
+      assert.equal(inline.side, "LEFT");
+      assert.equal(inline.outdated, true);
+      assert.match(inline.diffHunk, /old/);
+      assert.equal(viewed.pr.comments.find((c) => c.id === 2100).url, "https://github.com/acme/demo/pull/12#pullrequestreview-2100");
+      for (const endpoint of ["issues/12/comments", "pulls/12/reviews", "pulls/12/comments"]) {
+        assert.ok(api.state.calls.some((call) => call.url.includes(`${endpoint}?per_page=100&page=2`)));
+      }
+      assert.deepEqual(calls(), []);
+    });
+
+    it("keeps available comments and reports a failed comment source", async () => {
+      const api = fakeGithubApi({ prs: [{ ...seed().prs[0], comments: [{ body: "available" }] }] });
+      setGithubApi({ ...api, fetchFn: (url, init) => url.includes("/reviews?")
+        ? Promise.resolve({ ok: false, status: 403, json: async () => ({ message: "forbidden" }) })
+        : api.fetchFn(url, init) });
+      // GHE must not retry the failed source through a locally authenticated gh.
+      git(repo, ["remote", "set-url", "origin", "https://ghe.corp.example/acme/demo.git"]);
+      const viewed = await viewPrDetail(repo, 12);
+      assert.equal(viewed.ok, true);
+      assert.equal(viewed.pr.comments[0].body, "available");
+      assert.match(viewed.pr.commentsError, /couldn't be loaded/);
+      assert.deepEqual(calls(), []);
     });
 
     it("view/comment/edit/ready/close run on the API with no gh call", async () => {

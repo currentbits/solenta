@@ -9,6 +9,8 @@ import {
   type WheelEvent as ReactWheelEvent,
 } from "react";
 import { useCoder } from "./useCoder";
+import { addPrCommentToDraft } from "./prCommentContext";
+import type { PrListViewProps } from "./components/PrListView";
 import { isDevBuild } from "./coderApi";
 import { demoProviderLimits } from "./providerUsageDemo";
 import { ErrorBoundary } from "./components/ErrorBoundary";
@@ -913,6 +915,17 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     },
     [createThread],
   );
+
+  const handleAddPrCommentToAgent: NonNullable<PrListViewProps["onAddPrCommentToAgent"]> = async (projectId, input) => {
+    if (!projects.some((project) => project.id === projectId)) throw new Error("Project is no longer available");
+    const thread = input.threadId
+      ? threadsRef.current.find((item) => item.id === input.threadId && item.projectId === projectId && !item.archived)
+      : await createThread("New Thread", projectId, { select: false, inheritProvider: false });
+    if (!thread) throw new Error("Agent thread is no longer available");
+    addPrCommentToDraft(thread.id, input.pr, input.comment);
+    handleSelectThread(thread.id);
+    setRevealThreadId(thread.id);
+  };
 
   const handleCreateThreadPlain = useCallback(() => {
     void createThread("New Thread");
@@ -2421,6 +2434,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
               listPrs={listPrs}
               onSelectThread={handleSelectThread}
               onCheckoutPr={handleCheckoutPr}
+              onAddPrCommentToAgent={handleAddPrCommentToAgent}
               prDetail={prDetail}
               prEdit={prEdit}
               prComment={prComment}

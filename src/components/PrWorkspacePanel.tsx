@@ -109,6 +109,8 @@ export interface PrWorkspacePanelProps {
     remove?: boolean;
     reactionId?: number;
   }) => Promise<PrReactionResult>;
+  agentThreads?: ThreadInfo[];
+  onAddToAgent?: (input: { threadId: string | null; pr: PrDetail; comment: PrComment }) => Promise<void>;
   onSelectThread: (id: string) => void;
   onClose: () => void;
 }
@@ -126,9 +128,18 @@ export function PrWorkspacePanel({
   prUpdateBranch,
   prCommentEdit,
   prReaction,
+  agentThreads = [],
+  onAddToAgent,
   onSelectThread,
   onClose,
 }: PrWorkspacePanelProps) {
+  const matchedAgentId = agentThreads.some((thread) => thread.id === matchedThread?.id)
+    ? matchedThread?.id ?? ""
+    : "";
+  const [agentThreadId, setAgentThreadId] = useState(matchedAgentId);
+  useEffect(() => {
+    setAgentThreadId(matchedAgentId);
+  }, [projectPath, prNumber, matchedAgentId]);
   const [pr, setPr] = useState<PrDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -137,7 +148,7 @@ export function PrWorkspacePanel({
   const [comment, setComment] = useState("");
   const [preview, setPreview] = useState(false);
   const [pending, setPending] = useState<string | null>(null);
-  const [editingComment, setEditingComment] = useState<number | null>(null);
+  const [editingComment, setEditingComment] = useState<string | null>(null);
   const [editCommentBody, setEditCommentBody] = useState("");
   const [reactionPickerFor, setReactionPickerFor] = useState<number | null>(null);
   // Reaction id cached per comment+content from a same-session add, so a
@@ -260,7 +271,7 @@ export function PrWorkspacePanel({
   const prArgs = { projectPath, prNumber: activePr, ...(activeRepo ? { repo: activeRepo } : {}) };
 
   const saveCommentEdit = async (row: PrComment) => {
-    if (!prCommentEdit || row.id == null || pending) return;
+    if (!prCommentEdit || row.id == null || row.type === "review-summary" || pending) return;
     setPending("editComment");
     try {
       const result = await prCommentEdit({
@@ -309,7 +320,7 @@ export function PrWorkspacePanel({
     }
     setPr({
       ...pr,
-      comments: pr.comments.map((c) => (c.id === rowId ? { ...c, reactions: list } : c)),
+      comments: pr.comments.map((c) => (c.type === row.type && c.id === rowId ? { ...c, reactions: list } : c)),
     });
     setReactionPickerFor(null);
     try {
@@ -698,14 +709,37 @@ export function PrWorkspacePanel({
 
           <section className={styles.comments}>
             <h3 className={styles.subhead}>Discussion</h3>
+            {onAddToAgent ? (
+              <label className={styles.codePicker}>
+                Add comments to
+                <select
+                  aria-label="Agent draft"
+                  value={agentThreadId}
+                  onChange={(event) => setAgentThreadId(event.target.value)}
+                >
+                  <option value="">New thread</option>
+                  {agentThreads.map((thread) => (
+                    <option key={thread.id} value={thread.id}>{thread.title}</option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+            {pr.commentsError ? (
+              <div className={styles.actions}>
+                <p className={styles.error} role="status">{pr.commentsError}</p>
+                <button type="button" className={styles.ghost} disabled={loading} onClick={() => void load()}>
+                  Retry comments
+                </button>
+              </div>
+            ) : null}
             {pr.comments.length === 0 ? (
               <p className={styles.hint}>No comments yet</p>
             ) : (
               pr.comments.map((row, index) => {
-                const editing = row.id != null && editingComment === row.id;
+                const editing = row.id != null && editingComment === `${row.type}:${row.id}`;
                 return (
                   <article
-                    key={row.id ?? row.url ?? `${row.author}-${index}`}
+                    key={`${row.type}:${row.id ?? row.url ?? `${row.author}-${index}`}`}
                     className={styles.comment}
                     data-pr-comment-item=""
                   >
@@ -716,14 +750,35 @@ export function PrWorkspacePanel({
                           {formatRelativeAge(Date.parse(row.createdAt) || 0, now)}
                         </span>
                       ) : null}
-                      {prCommentEdit && row.mine && row.id != null && !editing ? (
+                      {onAddToAgent ? (
+                        <button
+                          type="button"
+                          className={styles.ghost}
+                          data-pr-comment-add-to-agent=""
+                          disabled={pending != null}
+                          onClick={async () => {
+                            if (pending) return;
+                            setPending("addToAgent");
+                            try {
+                              await onAddToAgent({ threadId: agentThreadId || null, pr, comment: row });
+                            } catch (err) {
+                              setError(rejectReason(err, "Couldn't add this comment to the draft"));
+                            } finally {
+                              setPending(null);
+                            }
+                          }}
+                        >
+                          Add to agent
+                        </button>
+                      ) : null}
+                      {prCommentEdit && row.type !== "review-summary" && row.mine && row.id != null && !editing ? (
                         <button
                           type="button"
                           className={styles.ghost}
                           data-pr-comment-edit=""
                           disabled={pending != null}
                           onClick={() => {
-                            setEditingComment(row.id!);
+                            setEditingComment(`${row.type}:${row.id}`);
                             setEditCommentBody(row.body);
                           }}
                         >
@@ -731,6 +786,7 @@ export function PrWorkspacePanel({
                         </button>
                       ) : null}
                     </div>
+                    {row.path ? <span className={styles.hint}>{row.path}{row.line != null ? `:${row.line}` : ""}{row.outdated ? " (outdated)" : ""}</span> : null}
                     {editing ? (
                       <div className={styles.commentForm} data-pr-comment-edit-form="">
                         <textarea
@@ -765,7 +821,7 @@ export function PrWorkspacePanel({
                     ) : (
                       <Markdown text={row.body} />
                     )}
-                    {prReaction && row.id != null ? (
+                    {prReaction && row.type === "issue" && row.id != null ? (
                       <div className={styles.reactionsRow} data-pr-reactions="">
                         {(row.reactions || [])
                           .filter((r) => r.count > 0)
