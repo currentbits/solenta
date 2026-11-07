@@ -438,10 +438,10 @@ function createCodexRun(ctx) {
         store.recordSpend(costDelta);
       }
       const billedIn = snapshot
-        ? Math.max(0, inDelta - prev.inputTokens)
+        ? Math.max(0, nextUsage.inputTokens - prev.inputTokens)
         : inDelta;
       const billedOut = snapshot
-        ? Math.max(0, outDelta - prev.outputTokens)
+        ? Math.max(0, nextUsage.outputTokens - prev.outputTokens)
         : outDelta;
       store.recordUsage({
         provider: threadProviderRef(thread),
