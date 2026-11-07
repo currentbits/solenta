@@ -8,6 +8,7 @@ const { validateMcpServers, mergeMcpSettingsPatch } = require("./mcp.js");
 const { validateProviderInstances, parseProviderModels } = require("./providerInstances.js");
 const { validateModelPrices } = require("./modelPrices.js");
 const { normalizePrivacyGateway } = require("./privacyGateway.js");
+const { mergeCliProxyUsage } = require("./providerUsageCliProxy.js");
 const {
   isHttpUrl,
   validateAgentProfiles,
@@ -123,6 +124,7 @@ class StoreSettingsMethods {
       maxConcurrentRuns: n.maxConcurrentRuns,
       agentProfiles: n.agentProfiles,
       providerInstances: n.providerInstances,
+      cliProxyUsage: n.cliProxyUsage,
       providerModels: n.providerModels,
       defaultOrchestratorProfileId: n.defaultOrchestratorProfileId,
       promptSnippets: n.promptSnippets,
@@ -286,6 +288,9 @@ class StoreSettingsMethods {
         this.data.settings.defaultOrchestratorProfileId,
         this.data.settings.agentProfiles,
       );
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "cliProxyUsage")) {
+      this.data.settings.cliProxyUsage = mergeCliProxyUsage(this.data.settings.cliProxyUsage, patch.cliProxyUsage);
     }
     if (Object.prototype.hasOwnProperty.call(patch, "providerInstances")) {
       this.data.settings.providerInstances = validateProviderInstances(

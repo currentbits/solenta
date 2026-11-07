@@ -8,6 +8,7 @@ const { normalizeMcpServers } = require("./mcp.js");
 const { normalizeProviderInstances, parseProviderModels } = require("./providerInstances.js");
 const { normalizeModelPrices } = require("./modelPrices.js");
 const { normalizePrivacyGateway } = require("./privacyGateway.js");
+const { normalizeCliProxyUsage } = require("./providerUsageCliProxy.js");
 const { parsePolicy } = require("./governance.js");
 const { normalizeAutoApprove } = require("./autoApprove.js");
 const { normalizeBudget } = require("./budgetCaps.js");
@@ -580,6 +581,7 @@ function normalizeSettings(raw) {
     maxConcurrentRuns: DEFAULT_MAX_CONCURRENT_RUNS,
     agentProfiles: [],
     providerInstances: [],
+    cliProxyUsage: normalizeCliProxyUsage(null),
     providerModels: {},
     defaultOrchestratorProfileId: null,
     promptSnippets: [],
@@ -668,6 +670,7 @@ function normalizeSettings(raw) {
   settings.providerInstances = normalizeProviderInstances(
     /** @type {{ providerInstances?: unknown }} */ (obj).providerInstances,
   );
+  settings.cliProxyUsage = normalizeCliProxyUsage(obj.cliProxyUsage);
   settings.providerModels = parseProviderModels(
     /** @type {{ providerModels?: unknown }} */ (obj).providerModels,
     false,

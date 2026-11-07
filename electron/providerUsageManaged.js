@@ -614,6 +614,17 @@ function fetchImpl(opts) {
   return globalThis.fetch;
 }
 
+function claudeUsageHeaders(token) {
+  return {
+    Authorization: `Bearer ${token}`,
+    Accept: "application/json",
+    "Content-Type": "application/json",
+    "anthropic-beta": CLAUDE_OAUTH_BETA,
+    "anthropic-version": CLAUDE_ANTHROPIC_VERSION,
+    "User-Agent": CLAUDE_UA,
+  };
+}
+
 /**
  * Claude subscription quota: 5-hour + weekly windows from
  * GET https://api.anthropic.com/api/oauth/usage (verified in the
@@ -649,14 +660,7 @@ async function readClaudeUsage(opts = {}) {
       pathname: CLAUDE_USAGE_PATH,
       timeoutMs,
       fetchFn: fetchImpl(opts),
-      headers: {
-        Authorization: `Bearer ${loaded.token}`,
-        Accept: "application/json",
-        "Content-Type": "application/json",
-        "anthropic-beta": CLAUDE_OAUTH_BETA,
-        "anthropic-version": CLAUDE_ANTHROPIC_VERSION,
-        "User-Agent": CLAUDE_UA,
-      },
+      headers: claudeUsageHeaders(loaded.token),
     });
     const windows = parseClaudeWindows(body);
     if (!windows.length) {
@@ -737,6 +741,9 @@ async function readKimiUsage(opts = {}) {
 }
 
 module.exports = {
+  CLAUDE_USAGE_URL,
+  claudeUsageHeaders,
+  parseClaudeWindows,
   readClaudeUsage,
   readKimiUsage,
 };

@@ -1,0 +1,224 @@
+"use strict";
+
+const { describe, it } = require("node:test");
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const { normalizeManagementUrl, normalizeCliProxyUsage, readCliProxyUsage } = require("../providerUsageCliProxy.js");
+const { fetchProviderLimits, pickAccountByQuota } = require("../providerUsage.js");
+const { knownProviderIds } = require("../providers.js");
+const { Store } = require("../store.js");
+const { createSecrets } = require("../secrets.js");
+const { redactSettings } = require("../mcp.js");
+const { instanceAuthProbes } = require("../services.js");
+
+const KEY = "fixture-management-secret";
+const NOW = 1_800_000_000_000;
+const CONFIG = { enabled: true, managementUrl: "http://localhost:8317/management.html#/quota", managementKey: KEY };
+// Management API's api-call envelope wraps the upstream OAuth payload as text.
+const USAGE = { five_hour: { utilization: 37, resets_at: "2027-01-15T10:00:00Z" }, seven_day: { utilization: 82.5, resets_at: "2027-01-20T10:00:00Z" }, seven_day_sonnet: null, extra_usage: { is_enabled: false } };
+const ACCOUNT = { id: "claude-user@example.test", auth_index: "a1b2c3d4", provider: "claude", name: "claude-user@example.test.json", label: "Work", status: "ready", disabled: false, unavailable: false };
+const json = (body, status = 200) => new Response(JSON.stringify(body), { status });
+const envelope = (body = USAGE, status = 200) => ({ status_code: status, header: { "Content-Type": ["application/json"] }, body: JSON.stringify(body) });
+const fixture = (files = [ACCOUNT], reply = envelope()) => async (url) => json(url.endsWith("/auth-files") ? { files } : reply);
+
+describe("CLIProxy usage URL", () => {
+  it("normalizes roots, dashboard routes, trailing slashes and management API URLs", () => {
+    for (const input of ["http://localhost:8317", "http://localhost:8317/", "http://localhost:8317/management.html#/quota", "http://localhost:8317/management.html?view=quota#auth", "http://localhost:8317/v0/management/"]) {
+      assert.equal(normalizeManagementUrl(input), "http://localhost:8317/v0/management");
+    }
+    assert.equal(normalizeManagementUrl("https://proxy.example.test/prefix/management.html#/quota"), "https://proxy.example.test/prefix/v0/management");
+    assert.equal(normalizeManagementUrl("http://[::1]:8317/management.html"), "http://[::1]:8317/v0/management");
+  });
+
+  it("rejects credentials, unsupported schemes and unencrypted remote keys", () => {
+    for (const input of ["invalid", "file:///tmp/management.html", "https://user:secret@example.test/", "http://proxy.example.test:8317", "http://localhost.evil.test"]) {
+      assert.throws(() => normalizeManagementUrl(input));
+    }
+    assert.equal(normalizeCliProxyUsage({ ...CONFIG, managementUrl: "invalid" }).enabled, false);
+  });
+});
+
+describe("CLIProxy Claude quotas", () => {
+  it("does nothing until explicitly enabled and does not request without a key", async () => {
+    const fetch = () => { throw new Error("unexpected network"); };
+    assert.deepEqual(await readCliProxyUsage(null, { fetch }), []);
+    assert.deepEqual(await readCliProxyUsage({ ...CONFIG, enabled: false }, { fetch }), []);
+    const [row] = await readCliProxyUsage({ ...CONFIG, managementKey: null }, { fetch });
+    assert.equal(row.status, "unavailable");
+    assert.deepEqual(row.windows, []);
+  });
+
+  it("reads session and weekly percentages with account-bound token substitution", async () => {
+    const requests = [];
+    const [row] = await readCliProxyUsage(CONFIG, { nowMs: () => NOW, fetch: async (url, init) => {
+      requests.push({ url, ...init });
+      return fixture()(url);
+    } });
+    assert.equal(row.status, "ok");
+    assert.equal(row.source, "cliproxy");
+    assert.equal(row.label, "Claude · CLIProxy · Work");
+    assert.match(row.provider, /^cliproxy:[a-f0-9]{16}:[a-f0-9]{16}$/);
+    assert.equal(row.fetchedAt, NOW);
+    assert.deepEqual(row.windows, [
+      { label: "5-hour", usedPercent: 37, resetsAt: Date.parse(USAGE.five_hour.resets_at), windowSeconds: 18000 },
+      { label: "weekly", usedPercent: 82.5, resetsAt: Date.parse(USAGE.seven_day.resets_at), windowSeconds: 604800 },
+    ]);
+    assert.equal(requests[0].url, "http://localhost:8317/v0/management/auth-files");
+    assert.equal(requests[1].url, "http://localhost:8317/v0/management/api-call");
+    assert.equal(requests[0].redirect, "error");
+    assert.equal(requests[1].headers.Authorization, `Bearer ${KEY}`);
+    const payload = JSON.parse(requests[1].body);
+    assert.equal(payload.auth_index, ACCOUNT.auth_index);
+    assert.equal(payload.method, "GET");
+    assert.equal(payload.url, "https://api.anthropic.com/api/oauth/usage");
+    assert.equal(payload.header.Authorization, "Bearer $TOKEN$");
+    assert.equal(payload.header["anthropic-beta"], "oauth-2025-04-20");
+    assert.ok(!JSON.stringify(row).includes(KEY));
+    assert.ok(!JSON.stringify(row).includes(ACCOUNT.auth_index));
+  });
+
+  it("isolates accounts and server identities, ignores other providers and duplicate IDs", async () => {
+    const calls = [];
+    const files = [ACCOUNT, { ...ACCOUNT }, { ...ACCOUNT, auth_index: "other", label: "Personal" }, { ...ACCOUNT, auth_index: "not-claude", provider: "codex" }];
+    const rows = await readCliProxyUsage(CONFIG, { fetch: async (url, init) => {
+      if (url.endsWith("/auth-files")) return json({ files });
+      const id = JSON.parse(init.body).auth_index;
+      calls.push(id);
+      return json(id === "other" ? envelope({}, 401) : envelope());
+    } });
+    assert.equal(rows.length, 2);
+    assert.notEqual(rows[0].provider, rows[1].provider);
+    assert.equal(rows[0].status, "ok");
+    assert.equal(rows[1].status, "unavailable");
+    assert.deepEqual(rows[1].windows, []);
+    assert.deepEqual(calls, [ACCOUNT.auth_index, "other"]);
+    const [otherServer] = await readCliProxyUsage({ ...CONFIG, managementUrl: "https://another.example.test" }, { fetch: fixture() });
+    assert.notEqual(otherServer.provider, rows[0].provider);
+  });
+
+  it("does not turn unavailable or invalid utilization into zero", async () => {
+    for (const body of [{}, { five_hour: { utilization: null } }, { five_hour: { utilization: -1 } }, { five_hour: { utilization: "NaN" }, seven_day: null }]) {
+      const [row] = await readCliProxyUsage(CONFIG, { fetch: fixture([ACCOUNT], envelope(body)) });
+      assert.equal(row.status, "unavailable");
+      assert.deepEqual(row.windows, []);
+      assert.equal(row.fetchedAt, null);
+    }
+    const [zero] = await readCliProxyUsage(CONFIG, { fetch: fixture([ACCOUNT], envelope({ five_hour: { utilization: 0 } })) });
+    assert.equal(zero.windows[0].usedPercent, 0, "an explicit zero remains valid");
+  });
+
+  it("shows empty, disabled and missing-index accounts without requesting their quotas", async () => {
+    const [empty] = await readCliProxyUsage(CONFIG, { fetch: fixture([]) });
+    assert.match(empty.message, /No Claude accounts/);
+    const rows = await readCliProxyUsage(CONFIG, { fetch: async (url) => {
+      assert.ok(url.endsWith("/auth-files"));
+      return json({ files: [{ ...ACCOUNT, disabled: true }, { ...ACCOUNT, id: "missing", name: "missing.json", auth_index: null }] });
+    } });
+    assert.equal(rows.length, 2);
+    assert.ok(rows.every((row) => row.status === "unavailable" && row.windows.length === 0));
+  });
+
+  it("maps management and upstream auth, missing endpoints and rate errors without leaking bodies", async () => {
+    for (const management of [true, false]) {
+      for (const status of [401, 403, 404, 429, 500]) {
+        const fetch = management ? async () => json({ error: KEY }, status) : fixture([ACCOUNT], envelope({ error: KEY }, status));
+        const [row] = await readCliProxyUsage(CONFIG, { fetch });
+        assert.equal(row.status, [401, 403, 404].includes(status) ? "unavailable" : "error");
+        assert.deepEqual(row.windows, []);
+        assert.equal(row.fetchedAt, null);
+        assert.ok(!JSON.stringify(row).includes(KEY));
+        if (status === 429) assert.match(row.message, /rate limited/);
+        if (status === 401) assert.match(row.message, management ? /management key rejected/ : /authorization expired/);
+      }
+    }
+  });
+
+  it("bounds stalled requests and handles malformed JSON, unexpected redirects and network errors", async () => {
+    for (const fetch of [
+      async () => new Response("bad json"),
+      async () => json({ files: null }),
+      async () => { throw new Error(`network ${KEY}`); },
+      async () => ({ status: 200, url: "https://elsewhere.example.test", text: async () => "{}" }),
+    ]) {
+      const [row] = await readCliProxyUsage(CONFIG, { fetch });
+      assert.equal(row.status, "error");
+      assert.ok(!JSON.stringify(row).includes(KEY));
+    }
+    const [timeout] = await readCliProxyUsage(CONFIG, { timeoutMs: 5, fetch: () => new Promise(() => {}) });
+    assert.match(timeout.message, /timed out/);
+  });
+
+  it("appends source rows alongside native accounts and keeps auto account selection native", async () => {
+    const native = (id) => ({ provider: id, status: "ok", windows: [{ label: "5-hour", usedPercent: 50, windowSeconds: 18000, resetsAt: NOW }], fetchedAt: NOW });
+    const fetchers = Object.fromEntries(knownProviderIds().map((id) => [id, async () => native(id)]));
+    const options = { fetchers, cliProxyUsage: CONFIG, cliProxyOptions: { fetch: fixture(), nowMs: () => NOW }, instances: [{ provider: "claude", ref: "claude:work", env: {} }] };
+    const rows = await fetchProviderLimits(options);
+    assert.deepEqual(rows.find((row) => row.provider === "claude"), native("claude"));
+    assert.equal(rows.find((row) => row.provider === "claude:work").status, "ok");
+    assert.equal(rows.filter((row) => row.source === "cliproxy").length, 1);
+    assert.equal(pickAccountByQuota(["claude", "claude:work"], rows).ref, "claude");
+    const only = await fetchProviderLimits({ ...options, only: "claude", cliProxyOptions: { fetch: () => { throw new Error("no proxy during account selection"); } } });
+    assert.ok(only.every((row) => !row.source));
+    assert.ok(!JSON.stringify(only).includes(KEY));
+  });
+});
+
+describe("CLIProxy settings credential boundary", () => {
+  it("persists encrypted, redacts IPC, preserves omitted keys and clears keys on destination changes", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "solenta-cliproxy-settings-"));
+    const file = path.join(dir, "store.json");
+    const secrets = createSecrets({ safeStorage: { isEncryptionAvailable: () => true, encryptString: (v) => Buffer.from(v), decryptString: (v) => v.toString() }, inElectron: true, log: () => {} });
+    const store = new Store(file, { secrets });
+    try {
+      store.setSettings({ cliProxyUsage: CONFIG });
+      store.saveNow();
+      const disk = JSON.parse(fs.readFileSync(file, "utf8"));
+      assert.match(disk.settings.cliProxyUsage.managementKey, /^enc:v1:/);
+      assert.ok(!JSON.stringify(disk).includes(KEY));
+      const reloaded = new Store(file, { secrets });
+      assert.equal(reloaded.getSettings().cliProxyUsage.managementKey, KEY);
+      const publicSettings = redactSettings(reloaded.getSettings());
+      assert.equal(publicSettings.cliProxyUsage.hasManagementKey, true);
+      assert.ok(!("managementKey" in publicSettings.cliProxyUsage));
+      const diagnostics = require("../diagnostics.js").redactSettings(reloaded.getSettings(), String);
+      assert.equal(diagnostics.cliProxyUsage.managementKey, "[redacted]");
+      assert.deepEqual(instanceAuthProbes(reloaded, dir), [], "usage source never becomes a CLI account or environment");
+      const handlers = require("../ipc-app.js");
+      const ipc = await handlers["settings:get"]({ store: reloaded });
+      assert.ok(!JSON.stringify(ipc).includes(KEY));
+      reloaded.setSettings({ cliProxyUsage: { ...ipc.cliProxyUsage, enabled: false } });
+      assert.equal(reloaded.getSettings().cliProxyUsage.managementKey, KEY);
+      reloaded.setSettings({ cliProxyUsage: { managementUrl: "https://other.example.test/management.html" } });
+      assert.equal(reloaded.getSettings().cliProxyUsage.managementKey, null);
+      reloaded.setSettings({ cliProxyUsage: { managementKey: "replacement" } });
+      reloaded.setSettings({ cliProxyUsage: { managementKey: null } });
+      assert.equal(reloaded.getSettings().cliProxyUsage.managementKey, null);
+      assert.throws(() => reloaded.setSettings({ cliProxyUsage: { enabled: "yes" } }));
+      assert.throws(() => reloaded.setSettings({ cliProxyUsage: { managementKey: "bad\r\nkey" } }));
+      reloaded.saveNow();
+    } finally { store.saveNow(); fs.rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it("wires the saved source through the quota IPC without offering it as a native account", async () => {
+    const usage = require("../providerUsage.js");
+    const original = usage.fetchProviderLimits;
+    const native = { provider: "claude", status: "unavailable", windows: [], fetchedAt: null };
+    const external = { ...native, provider: "cliproxy:server:work", source: "cliproxy" };
+    const menuRows = [];
+    const store = { getSettings: () => ({ cliProxyUsage: CONFIG, providerInstances: [] }) };
+    usage.fetchProviderLimits = async (opts) => {
+      assert.deepEqual(opts.cliProxyUsage, CONFIG);
+      assert.deepEqual(opts.instances, []);
+      return [native, external];
+    };
+    try {
+      const handler = require("../ipc-insights.js")["usage:providerLimits"];
+      const rows = await handler({ store, userDataPath: "/unused-fixture", usageMenu: { setUsage: (rows) => menuRows.push(...rows) } });
+      assert.deepEqual(rows, [native, external]);
+      assert.deepEqual(menuRows, [native]);
+      assert.ok(!JSON.stringify(rows).includes(KEY));
+    } finally { usage.fetchProviderLimits = original; }
+  });
+});

@@ -2070,12 +2070,23 @@ export interface ProviderUsageWindow {
 
 export type ProviderUsageStatus = "ok" | "unavailable" | "error";
 
+export interface CliProxyUsageSettings {
+  enabled: boolean;
+  managementUrl: string;
+  /** Omit to preserve; null clears. Never returned over renderer IPC. */
+  managementKey?: string | null;
+  hasManagementKey?: boolean;
+}
+
 /**
  * Account quotas for one provider CLI. Separate from the local byDay
  * ledger: this is what the vendor reports, or an honest unavailable/error.
  */
 export interface ProviderUsage {
   provider: string;
+  /** External source rows have their own identity and never select a native account. */
+  source?: "cliproxy";
+  label?: string;
   status: ProviderUsageStatus;
   windows: ProviderUsageWindow[];
   fetchedAt: number | null;
@@ -4341,6 +4352,8 @@ export interface AppSettings {
   agentProfiles: AgentProfile[];
   /** Named provider instances (#453). */
   providerInstances: ProviderInstance[];
+  /** Opt-in, read-only CLIProxy Claude quotas. The key is write-only in renderer IPC. */
+  cliProxyUsage?: CliProxyUsageSettings;
   /** Model favourites and custom ids per provider ref (#1714). */
   providerModels?: Record<string, ProviderModelPrefs>;
   /**
