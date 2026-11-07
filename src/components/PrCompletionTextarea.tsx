@@ -95,9 +95,10 @@ export function PrCompletionTextarea({ projectPath, repo, scope, lookup, value, 
       onKeyDown={event => {
         if (!visible) return;
         if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setToken(null); request.current++; }
+        else if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
         else if (event.key === "PageDown" && more) { event.preventDefault(); event.stopPropagation(); setItems([]); setPage(p => p + 1); }
         else if (["ArrowDown", "ArrowUp", "Enter", "Tab"].includes(event.key)) {
-          if (event.key === "Tab" && !items.length) return;
+          if (!items.length) return;
           event.preventDefault(); event.stopPropagation();
           if (event.key === "ArrowDown" || event.key === "ArrowUp") setSelected(index => items.length ? (index + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length : 0);
           else choose(selected);

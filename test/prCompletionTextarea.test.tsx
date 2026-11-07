@@ -116,3 +116,51 @@ it("drops rapid typing responses and supports arrow selection at a mid-token car
   assert.equal(input.value, "@abby ");
   assert.equal(prCompletionToken("@abby tail", 2, 2)?.end, 5);
 });
+
+it("keeps native editing keys available while suggestions are pending, empty or failed", async () => {
+  for (const state of ["pending", "empty", "error"] as const) {
+    let submitted = 0;
+    const lookup = async () => state === "pending" ? new Promise<any>(() => {})
+      : state === "empty" ? { ok: true as const, items: [], hasMore: false }
+      : { ok: false as const, reason: "Search denied" };
+    const m = await mount(<form onSubmit={e => { e.preventDefault(); submitted++; }}>
+      <PrCompletionTextarea value="@missing" onChange={() => {}} projectPath="/repo" scope={state} lookup={lookup} />
+      <button type="submit">Post</button>
+    </form>);
+    const input = m.query("textarea") as HTMLTextAreaElement;
+    await act(async () => { input.setSelectionRange(8, 8); input.focus(); });
+    await act(async () => { await new Promise(r => setTimeout(r, 300)); });
+    assert.ok(m.query('[role="listbox"]'));
+    assert.equal(m.query('[role="option"]'), null);
+    for (const key of ["Enter", "ArrowUp", "ArrowDown", "Tab"]) {
+      const event = new window.KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+      await act(async () => { input.dispatchEvent(event); });
+      assert.equal(event.defaultPrevented, false, `${state}: ${key} retains native editing intent`);
+    }
+    assert.equal(submitted, 0);
+    await m.press(input, "Escape");
+    assert.equal(m.query('[role="listbox"]'), null);
+    m.unmount();
+  }
+});
+
+it("preserves modified editing shortcuts even with selectable suggestions", async () => {
+  let submitted = 0;
+  const m = await mount(<form onSubmit={e => { e.preventDefault(); submitted++; }}>
+    <PrCompletionTextarea value="@bo" onChange={() => assert.fail("shortcut must not insert a completion")}
+      projectPath="/repo" scope="1" lookup={async () => ({ ok: true, items: [{ value: "@bob", label: "Bob" }], hasMore: false })} />
+  </form>);
+  const input = m.query("textarea") as HTMLTextAreaElement;
+  await act(async () => { input.setSelectionRange(3, 3); input.focus(); });
+  await act(async () => { await new Promise(r => setTimeout(r, 300)); });
+  assert.ok(m.query('[role="option"]'));
+  for (const modifier of ["shiftKey", "ctrlKey", "altKey", "metaKey"]) {
+    for (const key of ["Enter", "ArrowUp", "ArrowDown", "Tab", "PageDown"]) {
+      const event = new window.KeyboardEvent("keydown", { key, [modifier]: true, bubbles: true, cancelable: true });
+      await act(async () => { input.dispatchEvent(event); });
+      assert.equal(event.defaultPrevented, false, `${modifier}+${key} remains native`);
+    }
+  }
+  assert.equal(submitted, 0);
+  assert.equal(input.value, "@bo");
+});
