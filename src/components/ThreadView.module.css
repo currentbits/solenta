@@ -5398,3 +5398,11 @@ button.heroProject:hover {
   + :is(.settledRow:has(> .eventLine), .toolGroup) {
   margin-top: -18px;
 }
+
+.sessionBoundary {
+  border-block: 1px solid var(--border);
+  padding: 12px 0;
+  margin: 16px 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}

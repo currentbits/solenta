@@ -426,7 +426,7 @@ function buildHandoffPrefix(thread, getMessages, getThread) {
   // replayContext wins: a rewound fork must digest ITS OWN retained tail,
   // not walk handoffFrom again (and never a self-handoffFrom).
   const sourceId =
-    thread.replayContext === true ? thread.id : thread.handoffFrom;
+    thread.replayContext === true ? thread.id : thread.contextBoundaryId ? null : thread.handoffFrom;
   if (sourceId == null || sourceId === "") {
     return "";
   }
@@ -437,6 +437,11 @@ function buildHandoffPrefix(thread, getMessages, getThread) {
     return "";
   }
   if (!Array.isArray(msgs) || msgs.length === 0) return "";
+  const sourceThread = String(sourceId) === String(thread.id) ? thread : getThread ? getThread(String(sourceId)) : null;
+  if (sourceThread && sourceThread.contextBoundaryId) {
+    const at = msgs.findIndex((m) => m.id === sourceThread.contextBoundaryId);
+    msgs = at < 0 ? [] : msgs.slice(at + 1);
+  }
 
   if (
     !msgs.some(

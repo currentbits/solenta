@@ -114,6 +114,7 @@ function msg(over: Partial<ChatMessage> & Pick<ChatMessage, "role" | "text">): C
     fromThread: over.fromThread,
     attachments: over.attachments,
     thinking: over.thinking,
+    sessionBoundary: over.sessionBoundary,
     steer: over.steer,
     pdfText: over.pdfText,
     fromNotice: over.fromNotice,
@@ -632,6 +633,18 @@ describe("ThreadView message roles", () => {
       /data-slash-command/,
       "an unrecognized /foo must not be highlighted",
     );
+  });
+
+  it("renders a durable fresh-context divider while keeping the earlier transcript", () => {
+    const html = render({ detail: detail({ messages: [
+      msg({ id: "before", role: "assistant", text: "Earlier conversation", createdAt: 4 }),
+      msg({ id: "boundary", role: "event", sessionBoundary: true, text: "Fresh agent context", createdAt: 5 }),
+      msg({ id: "after", role: "user", text: "New conversation", createdAt: 6 }),
+    ] }) });
+    assert.match(html, /role="separator"/);
+    assert.match(html, /aria-label="Fresh agent context"/);
+    assert.match(html, /Earlier conversation/);
+    assert.match(html, /New conversation/);
   });
 
   it("renders event messages as event lines, not as cards or user bubbles", () => {

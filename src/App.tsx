@@ -259,6 +259,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     respondPermission,
     redirectPermission,
     restartAgentSession,
+    freshAgentContext,
     clearQuestion,
     answerSecret,
     setProvider,
@@ -1869,6 +1870,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       else if (id === "stop-all-threads") openStopAllConfirm();
       else if (id === "reopen-pane") {
         window.dispatchEvent(new Event(REOPEN_PANE_EVENT));
+      } else if (id === "fresh-agent-context") {
+        void freshAgentContext().catch(() => {});
       } else if (id === "restart-agent-session") {
         void restartAgentSession().catch(() => {});
       }
@@ -1889,6 +1892,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       toggleAgents,
       openStopAllConfirm,
       restartAgentSession,
+    freshAgentContext,
     ],
   );
 

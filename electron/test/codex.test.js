@@ -663,6 +663,32 @@ describe("runner codex provider", () => {
     assert.match(turnPrompt(rpc), /codex please/);
   });
 
+  it("fresh context starts a new app-server thread and resumes only its new identity (#1873)", async () => {
+    process.env.CODER_FAKE_CODEX_SCENARIO = "success";
+    const thread = store.getThreads()[0];
+    store.setMessages(thread.id, [{ id: "old-user", role: "user", text: "OLD PROVIDER HISTORY", createdAt: 1 },
+      { id: "old-agent", role: "assistant", text: "OLD AGENT ANSWER", createdAt: 2 }]);
+    store.updateThread(thread.id, { sessionId: "old-rollout", replayContext: true });
+    store.setUsage(thread.id, { model: null, inputTokens: 100, outputTokens: 20, costUsd: 4, turns: 2, contextTokens: 5000 });
+    runner.freshAgentContext({ threadId: thread.id });
+    await runner.startRun({ threadId: thread.id, prompt: "new request" });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+    const rpc = readRpc(rpcFile);
+    assert.ok(rpc.some(m => m.method === "thread/start"));
+    assert.ok(!rpc.some(m => m.method === "thread/resume"));
+    assert.doesNotMatch(turnPrompt(rpc), /OLD PROVIDER HISTORY|OLD AGENT ANSWER/);
+    assert.equal(store.getThread(thread.id).sessionId, "codex-sess-001");
+    assert.equal(store.getUsage(thread.id).inputTokens, 130);
+    assert.equal(store.getUsage(thread.id).outputTokens, 32);
+    assert.equal(store.getUsage(thread.id).costUsd, 4);
+    store.saveNow();
+    assert.equal(new Store(path.join(tmpDir, "store.json")).getThread(thread.id).sessionId, "codex-sess-001");
+    fs.unlinkSync(rpcFile);
+    await runner.startRun({ threadId: thread.id, prompt: "continue new request" });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+    assert.equal(readRpc(rpcFile).find(m => m.method === "thread/resume").params.threadId, "codex-sess-001");
+  });
+
   it("keeps the root sessionId when a v2 sub-agent emits thread/started", async () => {
     process.env.CODER_FAKE_CODEX_SCENARIO = "child-spawn";
     const thread = store.getThreads()[0];

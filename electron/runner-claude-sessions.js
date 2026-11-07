@@ -55,6 +55,8 @@ function createClaudeSessions(ctx) {
     const sess = claudeSessions.get(threadId);
     if (!sess) return;
     claudeSessions.delete(threadId);
+    // An idle child can emit queued frames during kill; it no longer owns this thread.
+    sess.dispatch = { onEvent() {}, onExit() {}, onError() {} };
     if (sess.idleTimer) clearTimeout(sess.idleTimer);
     try {
       if (sess.handle) sess.handle.kill();

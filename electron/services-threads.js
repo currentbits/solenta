@@ -803,13 +803,19 @@ function forkThread(store, input) {
 
   // Message-level fork (#158): resolve the cut before creating anything.
   let prefixMsgs = null;
+  let beforeContextBoundary = false;
   if (input.messageId != null) {
     const msgs = store.getMessages(source.id);
     const at = msgs.findIndex((m) => m && m.id === input.messageId);
     if (at < 0) {
       throw new Error(`Unknown message: ${input.messageId}`);
     }
-    prefixMsgs = msgs.slice(0, at + 1);
+    const boundaryAt = source.contextBoundaryId
+      ? msgs.findIndex((m) => m.id === source.contextBoundaryId) : -1;
+    beforeContextBoundary = Boolean(source.contextBoundaryId) && (boundaryAt < 0 || at < boundaryAt);
+    // Selecting an older visible message is deliberate retrieval. A cut in
+    // the current conversation must not silently copy the earlier session.
+    prefixMsgs = msgs.slice(boundaryAt >= 0 && at > boundaryAt ? boundaryAt + 1 : 0, at + 1);
   }
 
   const sourceTitle =
@@ -906,6 +912,7 @@ function forkThread(store, input) {
     // cannot --resume the source's session, so it replays instead.
     if (
       cut &&
+      !beforeContextBoundary &&
       !forkPatch.pendingWorktree &&
       source.sessionId &&
       source.provider === "claude" &&
@@ -1673,6 +1680,8 @@ async function rewindThread(store, input, opts) {
     artifacts: cloneRewindValue(store.getRunArtifacts(threadId)),
     sessionId: thread.sessionId != null ? thread.sessionId : null,
     replayContext: thread.replayContext === true,
+    contextBoundaryId: thread.contextBoundaryId || null,
+    freshContextPending: thread.freshContextPending === true,
     status: thread.status,
     lastError: thread.lastError != null ? thread.lastError : null,
     lastErrorKind: thread.lastErrorKind != null ? thread.lastErrorKind : null,
@@ -1681,10 +1690,16 @@ async function rewindThread(store, input, opts) {
     retainedCount: at,
   });
 
+  const boundaryAt = thread.contextBoundaryId
+    ? msgs.findIndex((m) => m.id === thread.contextBoundaryId) : -1;
+  const selectsEarlierContext = Boolean(thread.contextBoundaryId) && (boundaryAt < 0 || at <= boundaryAt);
   const droppedMessages = store.truncateFromMessage(threadId, messageId);
   const updated = store.updateThread(threadId, {
     sessionId: null,
     replayContext: true,
+    // An explicit edit of an older message selects that earlier prefix.
+    // Ordinary rewinds inside the current conversation keep the divider.
+    ...(selectsEarlierContext ? { contextBoundaryId: null, freshContextPending: false } : {}),
   });
 
   let restoredSha = null;

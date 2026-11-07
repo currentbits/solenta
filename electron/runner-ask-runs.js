@@ -94,6 +94,7 @@ function createAskRuns(ctx) {
         stalledAt: null,
         stoppedAt: null,
         quotaWaitUntil: null,
+        freshContextPending: false,
         quotaWaitResumed: input.fromQuotaWait === true,
         pendingWorktree: false,
         ...services.clearSettledOnActivity(thread),
@@ -122,7 +123,7 @@ function createAskRuns(ctx) {
       : null;
     const indexNote = services.codeIndexNoteFor(index);
     const matchNote = ask.formatMatchingFiles(index, prompt);
-    const digestNote = ask.formatThreadDigest(store.getMessages(threadId));
+    const digestNote = ask.formatThreadDigest(store.getContextMessages(threadId));
 
     void (async () => {
       let memoryNote = "";
@@ -274,7 +275,7 @@ function createAskRuns(ctx) {
         : null;
     const indexNote = services.codeIndexNoteFor(index);
     const matchNote = ask.formatMatchingFiles(index, card.question);
-    const digestNote = ask.formatThreadDigest(store.getMessages(threadId));
+    const digestNote = ask.formatThreadDigest(store.getContextMessages(threadId));
 
     void (async () => {
       let memoryNote = "";

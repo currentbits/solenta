@@ -398,7 +398,7 @@ function createOrchNotices(ctx) {
       return;
     }
     // Held after a restart until the user resumes the crew (#1426).
-    if (thread.heldNotices) return;
+    if (thread.heldNotices || thread.freshContextPending) return;
     const park = parkCodexFromNotice(thread);
     if (park) {
       if (park.wait) {
@@ -699,6 +699,7 @@ function createOrchNotices(ctx) {
     noteCodexRelease,
     codexSessionHeld,
     deliverNotice,
+    dropQueue,
     queueOrchNotice,
     flushOrchNotices,
     sweepCrew,

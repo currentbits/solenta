@@ -143,6 +143,7 @@ const BY_SCOPE = {
     "threads:rewind",
     "threads:respondPermission",
     "threads:restartAgentSession",
+    "threads:freshAgentContext",
     "threads:clearQuestion",
     "threads:setArchived",
     "threads:setSettled",

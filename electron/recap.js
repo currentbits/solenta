@@ -106,7 +106,8 @@ function buildRecapPrompt(extractive, lastReply) {
  */
 async function refreshRecap(store, threadId, opts = {}) {
   try {
-    const msgs = store.getMessages(threadId) || [];
+    const boundary = store.getThread(threadId)?.contextBoundaryId;
+    const msgs = store.getContextMessages(threadId) || [];
     const extractive = buildExtractiveRecap(msgs);
     if (!extractive) return null;
     const lastReply = [...msgs]
@@ -117,7 +118,7 @@ async function refreshRecap(store, threadId, opts = {}) {
       env: opts.env,
     });
     // A newer turn may have landed while fm ran; its own refresh wins.
-    if ((store.getMessages(threadId) || []).length !== msgs.length) return null;
+    if (store.getThread(threadId)?.contextBoundaryId !== boundary || (store.getContextMessages(threadId) || []).length !== msgs.length) return null;
     if (!store.getThread(threadId)) return null;
     const recap = { text: (fm && fm.trim()) || extractive, at: Date.now() };
     // No touch: a recap is not activity (would re-unread and re-sort).

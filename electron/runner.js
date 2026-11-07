@@ -1893,6 +1893,9 @@ function createRunner(opts) {
     } else if (!input.fromNotice && !isReplayTurn(input)) {
       autoTurns.set(threadId, 0);
     }
+    if (thread.freshContextPending && (input.fromNotice || input.fromInbound || isReplayTurn(input) || input.fromIdleCompact)) {
+      throw new Error("Fresh context is waiting for a user message");
+    }
     cancelQuotaWake(threadId);
 
     // Idle compaction (#1765) stamps idleCompactedAt to claim one idle
@@ -2243,6 +2246,7 @@ function createRunner(opts) {
         interruptedBy: null,
         ...(machineTurn || isReplayTurn(input) ? {} : { autoResumedAt: null }),
         quotaWaitUntil: null,
+        freshContextPending: false,
         quotaWaitResumed: input.fromQuotaWait === true,
         quotaFailoverPending: false,
         quotaFailoverTried: isReplayTurn(input)
@@ -2937,6 +2941,49 @@ function createRunner(opts) {
     return { restarted: true };
   }
 
+  /** Start a new provider conversation without settling or replacing the thread. */
+  function freshAgentContext(input) {
+    const threadId = input && input.threadId;
+    const thread = threadId ? store.getThread(threadId) : null;
+    if (!thread) throw new Error(`Unknown thread: ${threadId}`);
+    if (active.has(threadId) || restoringThreads.has(threadId) || thread.status === "working" ||
+        thread.pendingPlan || thread.pendingQuestion || getPendingPermission(threadId) || thread.pendingSecret ||
+        thread.awaitingInput || thread.runQueue || thread.queued) {
+      throw new Error("Finish or stop the run and resolve pending input and queued messages before starting fresh context");
+    }
+    if (thread.teleportedTo) throw new Error("Bring the thread back to this machine before starting fresh context");
+    cancelAutoResume(threadId);
+    cancelQuotaWake(threadId);
+    for (const card of thread.btw || []) cancelBtw({ threadId, id: card.id });
+    services.clearRewindRestore(store, threadId);
+    disposeClaudeSession(threadId);
+    memorySeen.delete(threadId);
+    autoTurns.set(threadId, 0);
+    dropOrchNotices(threadId);
+    lastWorkflowByThread.delete(threadId);
+    const contextBoundaryId = appendMessage(threadId, "event",
+      "Fresh agent context. Earlier messages remain visible but are not sent to the agent.");
+    store.updateMessage(threadId, contextBoundaryId, { sessionBoundary: true });
+    store.updateThread(threadId, {
+      contextBoundaryId, freshContextPending: true,
+      sessionId: null, sessionStartModel: null, sessionUsageBaseline: null, forkSessionAt: null,
+      replayContext: false, ejected: false, recap: null, nextPromptSuggestion: null,
+      interruptedAt: null, autoResumedAt: null, quotaWaitUntil: null,
+      quotaWaitResumed: false, quotaFailoverPending: false, quotaFailoverTried: [],
+      idleCompactedAt: null, status: "idle", runStartedAt: null,
+      lastError: null, lastErrorKind: null,
+    });
+    const usage = store.getUsage(threadId);
+    if (usage) {
+      const { contextTokens, contextWindow, contextCompaction, ...totals } = usage;
+      store.setUsage(threadId, { ...totals, model: null });
+    }
+    store.setWorkflowRun(threadId, null);
+    store.saveNow();
+    pushDetail(threadId);
+    pushThreadsChanged();
+  }
+
   function stopAll() {
     disposeWatchdogs();
     stopAllBtw();
@@ -3141,6 +3188,7 @@ function createRunner(opts) {
     deliverNotice,
     queueOrchNotice,
     flushOrchNotices,
+    dropQueue: dropOrchNotices,
     sweepCrew,
     sweepDoneWorkers,
     stopCrew,
@@ -3348,6 +3396,7 @@ function createRunner(opts) {
     disposeClaudeSession,
     retireClaudeSession,
     restartAgentSession,
+    freshAgentContext,
     deliverNotice,
     appendInbound,
     checkStalls,

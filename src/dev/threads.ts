@@ -487,6 +487,23 @@ export function createThreads(ctx: DevCtx): Pick<CoderApi, "threads"> {
         // Dev threads never spawn, so the value is simply dropped.
         patchThread(input.threadId, { pendingSecret: null });
       },
+      async freshAgentContext(input) {
+        const detail = details.get(input.threadId);
+        if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
+        if (detail.thread.status === "working" || detail.thread.pendingQuestion || detail.thread.pendingPlan || detail.thread.pendingSecret || detail.pendingPermission || detail.thread.awaitingInput || detail.thread.runQueue || detail.thread.queued) {
+          throw new Error("Finish the run and resolve pending input before starting fresh context");
+        }
+        const boundary = id("evt");
+        detail.messages.push({ id: boundary, role: "event", sessionBoundary: true,
+          text: "Fresh agent context. Earlier messages remain visible but are not sent to the agent.", createdAt: now() });
+        patchThread(input.threadId, { contextBoundaryId: boundary, freshContextPending: true,
+          sessionId: null, replayContext: false, recap: null });
+        if (detail.usage) {
+          const { contextTokens, contextWindow, contextCompaction, ...totals } = detail.usage;
+          detail.usage = { ...totals, model: null };
+        }
+        emitDetail(detail);
+      },
       async restartAgentSession(input) {
         const detail = details.get(input.threadId);
         if (!detail) throw new Error(`Thread not found: ${input.threadId}`);

@@ -193,6 +193,18 @@ export function useCoderThreadActions({
     }
   }, [api, selectedThreadId]);
 
+  const freshAgentContext = useCallback(async () => {
+    if (!selectedThreadId) return;
+    const threadId = selectedThreadId;
+    try {
+      await api.threads.freshAgentContext({ threadId });
+      setError(null);
+    } catch (err) {
+      setError({ scope: "run", message: errorMessage(err) });
+      throw err;
+    }
+  }, [api, selectedThreadId]);
+
   /**
    * Dismiss the persisted question card (issue #647). Answering it is an
    * ordinary send, which clears the card in the main process — only the
@@ -1261,6 +1273,7 @@ export function useCoderThreadActions({
     respondPermission,
     redirectPermission,
     restartAgentSession,
+    freshAgentContext,
     clearQuestion,
     answerSecret,
     setProvider,

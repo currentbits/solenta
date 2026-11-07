@@ -1155,6 +1155,9 @@ export interface ThreadInfo {
   model: string | null;
   /** Provider session id, persisted after the first turn so follow-ups resume context. */
   sessionId: string | null;
+  /** Last fresh-context divider; earlier visible history is excluded from provider context. */
+  contextBoundaryId?: string | null;
+  freshContextPending?: boolean;
   /**
    * One-shot context replay (issue #254). Set by `threads.rewind`, which
    * clears sessionId because a CLI session cannot be rewound: the next turn
@@ -1741,6 +1744,8 @@ export interface AttachmentInfo {
 export type CrossThreadInbound = "accept" | "queue-only" | "refuse";
 
 export interface ChatMessage {
+  /** Persistent divider marking a new provider conversation. */
+  sessionBoundary?: boolean;
   id: string;
   role: "user" | "assistant" | "event" | "tool";
   /** For role "tool" this is a one-line summary, e.g. "Bash: npm test". */
@@ -6292,6 +6297,8 @@ export interface CoderApi {
      * event message) arrives via thread:updated.
      */
     restartAgentSession(input: { threadId: string }): Promise<void>;
+    /** New provider conversation in this thread; retains transcript, worktree and historical spend. */
+    freshAgentContext(input: { threadId: string }): Promise<void>;
     /**
      * "Save plan to file" (#1501): write plan markdown to
      * docs/plans/<date>-<slug>.md in the thread's checkout. Never

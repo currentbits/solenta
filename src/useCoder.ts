@@ -397,6 +397,7 @@ export interface UseCoderResult {
    * while a run is active.
    */
   restartAgentSession: () => Promise<void>;
+  freshAgentContext: () => Promise<void>;
   /** Write plan markdown into the thread's checkout; resolves the path (#1501). */
   savePlan: (plan: string, threadId?: string) => Promise<string>;
   /** Dismiss the selected thread's persisted question card (issue #647). */
@@ -1900,6 +1901,7 @@ export function useCoder(): UseCoderResult {
     respondPermission,
     redirectPermission,
     restartAgentSession,
+    freshAgentContext,
     clearQuestion,
     answerSecret,
     setProvider,
@@ -2518,6 +2520,7 @@ export function useCoder(): UseCoderResult {
     respondPermission,
     redirectPermission,
     restartAgentSession,
+    freshAgentContext,
     clearQuestion,
     answerSecret,
     setProvider,

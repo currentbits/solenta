@@ -374,6 +374,7 @@ module.exports = {
   // ⌘K "Restart agent session" (#1762): kill the warm/idle provider process
   // so the next turn spawns fresh and reloads skills/plugins/MCP servers.
   // Pushes its own detail.
+  "threads:freshAgentContext": async (ctx, input) => ctx.runner.freshAgentContext(input),
   "threads:restartAgentSession": async (ctx, input) =>
     ctx.runner.restartAgentSession(input),
   "threads:setPermissionMode": async (ctx, input) => {
