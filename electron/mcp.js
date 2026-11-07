@@ -870,6 +870,8 @@ function redactSettings(settings) {
   if (settings.speech && typeof settings.speech === "object") {
     out.speech = {
       provider: settings.speech.provider,
+      localModel: settings.speech.localModel,
+      language: settings.speech.language,
       hasOpenaiKey: Boolean(settings.speech.openaiApiKey),
       hasElevenlabsKey: Boolean(settings.speech.elevenlabsApiKey),
     };

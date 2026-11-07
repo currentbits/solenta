@@ -12,6 +12,7 @@ const { normalizeCliProxyUsage } = require("./providerUsageCliProxy.js");
 const { parsePolicy } = require("./governance.js");
 const { normalizeAutoApprove } = require("./autoApprove.js");
 const { normalizeBudget } = require("./budgetCaps.js");
+const { localSpeechConfig } = require("./speech-config.js");
 
 /**
  * @param {unknown} u
@@ -922,7 +923,7 @@ const SPEECH_PROVIDERS = ["local", "openai", "elevenlabs"];
  * sealed at rest (secrets.js) and never sent to the renderer (mcp.js).
  *
  * @param {unknown} raw
- * @returns {{ provider: "local" | "openai" | "elevenlabs", openaiApiKey: string | null, elevenlabsApiKey: string | null }}
+ * @returns {{ provider: "local" | "openai" | "elevenlabs", openaiApiKey: string | null, elevenlabsApiKey: string | null, localModel: string, language: string }}
  */
 function normalizeSpeechSettings(raw) {
   const obj =
@@ -936,6 +937,7 @@ function normalizeSpeechSettings(raw) {
         ? obj.provider
         : "local"
     ),
+    ...localSpeechConfig(obj),
     openaiApiKey: key(obj.openaiApiKey),
     elevenlabsApiKey: key(obj.elevenlabsApiKey),
   };

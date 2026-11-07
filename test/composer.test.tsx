@@ -3477,7 +3477,7 @@ describe("Composer live dictation (#845)", () => {
   });
 
   it("shows a download control with accessible labels when the model is missing", async () => {
-    const fake = createFakeCoder();
+    const fake = createFakeCoder({ speechStatus: { state: "missing", runtimeReady: true, modelReady: false } });
     const { m } = await mountSpeechComposer(fake);
     const btn = mic(m);
     assert.ok(btn, "mic pill");
@@ -3487,7 +3487,7 @@ describe("Composer live dictation (#845)", () => {
   });
 
   it("first click while missing asks for confirmation and does not open the mic", async () => {
-    const fake = createFakeCoder();
+    const fake = createFakeCoder({ speechStatus: { state: "missing", runtimeReady: true, modelReady: false } });
     const media = installSpeechMedia();
     const { m } = await mountSpeechComposer(fake);
     await m.click(mic(m));
@@ -3501,8 +3501,55 @@ describe("Composer live dictation (#845)", () => {
     m.unmount();
   });
 
+  it("confirms the multilingual model with its exact size and pins consent to that model", async () => {
+    const fake = createFakeCoder({ speechStatus: {
+      state: "missing", runtimeReady: true, modelReady: false,
+      model: { id: "nemotron-3.5", label: "Nemotron 3.5 multilingual", bytes: 741548352 }, language: "nl-NL",
+    } });
+    const media = installSpeechMedia();
+    const { m } = await mountSpeechComposer(fake);
+    await m.click(mic(m));
+    const confirm = m.query("[data-speech-confirm]");
+    assert.match(confirm?.textContent ?? "", /Nemotron 3.5 multilingual/);
+    assert.match(confirm?.textContent ?? "", /741,548,352/);
+    assert.ok(!confirm?.textContent?.includes("699,872,960"));
+    await m.click(m.query('[data-speech-confirm] button[aria-label="Confirm download"]'));
+    assert.deepEqual(fake.only("speech.download").args, [{ modelId: "nemotron-3.5" }]);
+    assert.equal(media.getUserMediaCalls, 0);
+    m.unmount();
+  });
+
+  it("explains an unavailable local runtime without downloading or opening the microphone", async () => {
+    const fake = createFakeCoder({ speechStatus: { state: "missing", runtimeReady: false, modelReady: false } });
+    const media = installSpeechMedia();
+    const { m } = await mountSpeechComposer(fake);
+    assert.equal(mic(m)?.getAttribute("aria-label"), "Local dictation unavailable");
+    await m.click(mic(m));
+    assert.match(m.container.textContent ?? "", /unavailable on this platform/);
+    assert.equal(m.query("[data-speech-confirm]"), null);
+    assert.equal(fake.of("speech.download").length, 0);
+    assert.equal(media.getUserMediaCalls, 0);
+    m.unmount();
+  });
+
+  it("surfaces an incompatible language without offering an English download or opening the mic", async () => {
+    const fake = createFakeCoder({ speechStatus: {
+      state: "error", runtimeReady: true, modelReady: false,
+      localError: "Nemotron English supports English only. Choose Nemotron 3.5 multilingual for this language.",
+    } });
+    const media = installSpeechMedia();
+    const { m } = await mountSpeechComposer(fake);
+    await m.click(mic(m));
+    assert.equal(m.query("[data-speech-confirm]"), null);
+    assert.match(m.container.textContent ?? "", /English only/);
+    assert.equal(fake.of("speech.download").length, 0);
+    assert.equal(fake.of("speech.start").length, 0);
+    assert.equal(media.getUserMediaCalls, 0);
+    m.unmount();
+  });
+
   it("confirmation calls download and still does not open the mic", async () => {
-    const fake = createFakeCoder();
+    const fake = createFakeCoder({ speechStatus: { state: "missing", runtimeReady: true, modelReady: false } });
     const media = installSpeechMedia();
     const { m } = await mountSpeechComposer(fake);
     await m.click(mic(m));
@@ -3516,7 +3563,7 @@ describe("Composer live dictation (#845)", () => {
   });
 
   it("shows download progress from speech:changed", async () => {
-    const fake = createFakeCoder();
+    const fake = createFakeCoder({ speechStatus: { state: "missing", runtimeReady: true, modelReady: false } });
     installSpeechMedia();
     const { m } = await mountSpeechComposer(fake);
     await m.click(mic(m));

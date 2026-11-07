@@ -13,6 +13,7 @@ const http = require("node:http");
 const crypto = require("node:crypto");
 const { spawn: defaultSpawn } = require("node:child_process");
 const { WebSocket: DefaultWebSocket } = require("ws");
+const { models, localSpeechConfig, localSpeechError } = require("./speech-config.js");
 
 const MODEL_BYTES = 699872960;
 const MODEL_SHA256 =
@@ -397,13 +398,16 @@ function createSpeechManager(deps) {
           arch,
           resourcesPath: deps.resourcesPath || process.resourcesPath,
         });
-  const modelBytes =
-    typeof deps.modelBytes === "number" ? deps.modelBytes : MODEL_BYTES;
-  const modelSha256 = deps.modelSha256 || MODEL_SHA256;
-  const modelUrl = deps.modelUrl || MODEL_URL;
   const modelDir = path.join(userDataPath, "speech");
-  const modelPath = path.join(modelDir, MODEL_FILENAME);
-  const partialPath = `${modelPath}.partial`;
+  let selectedModel;
+  let localLanguage = "en-US";
+  let compatibilityError = "";
+  let modelBytes;
+  let modelSha256;
+  let modelUrl;
+  let modelPath;
+  let partialPath;
+  let starting = false;
   const onStatus = typeof deps.onStatus === "function" ? deps.onStatus : null;
   const doFetch = deps.fetch || globalThis.fetch;
   const spawn = deps.spawn || defaultSpawn;
@@ -451,13 +455,30 @@ function createSpeechManager(deps) {
     }
   }
 
+  function syncModel() {
+    // A recording/download keeps its original model and language even if
+    // another window saves settings while it is in flight.
+    if (starting || active || cloudActive || downloadJob) return;
+    const settings = getSpeechSettings();
+    const config = localSpeechConfig(settings);
+    compatibilityError = localSpeechError(settings);
+    localLanguage = config.language;
+    const spec = Object.hasOwn(models, config.localModel) ? models[config.localModel] : null;
+    selectedModel = spec ? { id: config.localModel, ...spec } : null;
+    modelBytes = deps.modelBytes ?? spec?.bytes;
+    modelSha256 = deps.modelSha256 ?? spec?.sha256;
+    modelUrl = deps.modelUrl ?? spec?.url;
+    modelPath = spec ? path.join(modelDir, spec.filename) : null;
+    partialPath = modelPath ? `${modelPath}.partial` : null;
+  }
+
   function runtimeIsReady() {
     return !!(runtimePath && device && fs.existsSync(runtimePath));
   }
 
   function modelIsReady() {
     try {
-      return fs.statSync(modelPath).size === modelBytes;
+      return !compatibilityError && !!modelPath && fs.statSync(modelPath).size === modelBytes;
     } catch {
       return false;
     }
@@ -468,17 +489,22 @@ function createSpeechManager(deps) {
     if ((state === "recording" || state === "stopping") && (active || cloudActive)) {
       return state;
     }
-    const usable = modelIsReady() || cloudConfig() != null;
+    const usable = (runtimeIsReady() && modelIsReady()) || cloudConfig() != null;
+    if (compatibilityError && !cloudConfig()) return "error";
     if (state === "error" && !usable) return "error";
     return usable ? "ready" : "missing";
   }
 
   function snapshot(extra) {
+    syncModel();
     state = deriveState();
     const out = {
       state,
       runtimeReady: runtimeIsReady(),
       modelReady: modelIsReady(),
+      ...(selectedModel ? { model: { id: selectedModel.id, label: selectedModel.label, bytes: modelBytes } } : {}),
+      language: localLanguage,
+      ...(compatibilityError ? { localError: compatibilityError } : {}),
     };
     if (state === "downloading" && downloadProgress) {
       out.download = {
@@ -495,7 +521,7 @@ function createSpeechManager(deps) {
       }
     }
     if (extra && typeof extra.error === "string") out.error = extra.error;
-    else if (state === "error" && lastError) out.error = lastError;
+    else if (state === "error" && (compatibilityError || lastError)) out.error = compatibilityError || lastError;
     if (active) out.sessionId = active.id;
     else if (cloudActive) out.sessionId = cloudActive.id;
     return out;
@@ -572,8 +598,8 @@ function createSpeechManager(deps) {
   function endRecording(extra) {
     recordingRequested = false;
     closeSocket();
-    clearStartWait(new Error("Speech session ended."));
     const err = extra && extra.error;
+    clearStartWait(new Error(err || "Speech session ended."));
     if (err) lastError = err;
     emit(extra || {});
     clearStopWait(err ? new Error(err) : undefined);
@@ -600,12 +626,18 @@ function createSpeechManager(deps) {
               session: {
                 sample_rate: SAMPLE_RATE,
                 automatic_punctuation: true,
+                ...(selectedModel?.id === "nemotron-3.5" ? { language: localLanguage } : {}),
               },
             }),
           );
         } catch (err) {
           clearStartWait(err instanceof Error ? err : new Error(String(err)));
         }
+        return;
+      }
+      if (msg.type === "error") {
+        // Runtime capability/language errors must reach the user immediately.
+        endRecording({ error: typeof msg.error?.message === "string" ? msg.error.message : "Local transcription failed." });
         return;
       }
       if (msg.type === "session.updated") {
@@ -619,13 +651,16 @@ function createSpeechManager(deps) {
       }
       if (msg.type === "conversation.item.input_audio_transcription.completed") {
         const text = typeof msg.transcript === "string" ? msg.transcript : "";
-        emit({ transcript: text });
-        if (!stopWait) return;
+        if (!stopWait) {
+          emit({ transcript: text });
+          return;
+        }
         recordingRequested = false;
         const pending = stopWait;
         stopWait = null;
         clearTimeout(pending.timer);
         closeSocket();
+        emit({ transcript: text });
         pending.resolve();
       }
     });
@@ -644,7 +679,8 @@ function createSpeechManager(deps) {
 
   async function ensureSidecar() {
     if (sidecar && sidecar.child && sidecar.child.exitCode == null) {
-      return sidecar;
+      if (sidecar.modelPath === modelPath) return sidecar;
+      killSidecar();
     }
     if (!runtimeIsReady()) {
       throw new Error("Speech runtime is not available.");
@@ -680,7 +716,7 @@ function createSpeechManager(deps) {
     // Adjacent ggml/MSVC DLLs load from the exe directory on Windows.
     if (platform === "win32") opts.cwd = path.dirname(runtimePath);
     const child = spawn(runtimePath, args, opts);
-    sidecar = { child, port, apiKey };
+    sidecar = { child, port, apiKey, modelPath };
     child.on("exit", () => {
       if (!sidecar || sidecar.child !== child) return;
       onSidecarDead();
@@ -740,7 +776,14 @@ function createSpeechManager(deps) {
     return sessionId;
   }
 
-  async function download() {
+  async function download(input) {
+    syncModel();
+    if (compatibilityError) throw new Error(compatibilityError);
+    if (input?.modelId !== undefined && input.modelId !== selectedModel.id) {
+      throw new Error("Speech model changed. Review the download again.");
+    }
+    if (!runtimeIsReady()) throw new Error("Local speech is unavailable on this platform or its bundled runtime is missing.");
+    if (starting || active || cloudActive) throw new Error("Finish dictation before downloading a speech model.");
     if (downloadJob) return downloadJob;
     if (modelIsReady()) {
       lastError = "";
@@ -836,12 +879,14 @@ function createSpeechManager(deps) {
       }
     })().finally(() => {
       downloadJob = null;
+      emit();
     });
     return downloadJob;
   }
 
   async function start() {
-    if (state === "recording" || state === "stopping" || active || cloudActive) {
+    syncModel();
+    if (starting || state === "recording" || state === "stopping" || active || cloudActive) {
       throw new Error("Speech session already active.");
     }
     const cloud = cloudConfig();
@@ -853,6 +898,7 @@ function createSpeechManager(deps) {
       emit();
       return { sessionId: cloudActive.id };
     }
+    if (compatibilityError) throw new Error(compatibilityError);
     if (state === "downloading") {
       throw new Error("Speech model is downloading.");
     }
@@ -863,6 +909,7 @@ function createSpeechManager(deps) {
       throw new Error("Speech runtime is not available.");
     }
     recordingRequested = true;
+    starting = true;
     lastError = "";
     try {
       await ensureSidecar();
@@ -876,6 +923,8 @@ function createSpeechManager(deps) {
       lastError = err && err.message ? String(err.message).split("\n", 1)[0] : "Speech failed to start.";
       emit({ error: lastError });
       throw err instanceof Error ? err : new Error(lastError);
+    } finally {
+      starting = false;
     }
   }
 
@@ -935,13 +984,15 @@ function createSpeechManager(deps) {
       if (cloudActive !== session) return; // cancelled meanwhile
       const why = err && err.message ? String(err.message) : "Cloud transcription failed.";
       cloudActive = null;
-      if (!modelIsReady() || !runtimeIsReady()) {
+      syncModel();
+      if (compatibilityError || !modelIsReady() || !runtimeIsReady()) {
         recordingRequested = false;
-        lastError = `${why} Install the local speech model to fall back.`;
+        lastError = compatibilityError ? `${why} ${compatibilityError}` : `${why} Install the local speech model to fall back.`;
         emit({ error: lastError });
         throw new Error(lastError);
       }
       fallbackNote = `${why} Used the local model instead.`;
+      starting = true;
       try {
         await ensureSidecar();
         const id = await openSession();
@@ -955,6 +1006,8 @@ function createSpeechManager(deps) {
         lastError = localErr && localErr.message ? String(localErr.message) : why;
         emit({ error: lastError });
         throw localErr instanceof Error ? localErr : new Error(lastError);
+      } finally {
+        starting = false;
       }
       return;
     }
@@ -1043,6 +1096,7 @@ function createSpeechManager(deps) {
     emit();
   }
 
+  syncModel();
   state = modelIsReady() ? "ready" : "missing";
 
   return {

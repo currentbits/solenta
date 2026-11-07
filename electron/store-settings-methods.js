@@ -9,6 +9,7 @@ const { validateProviderInstances, parseProviderModels } = require("./providerIn
 const { validateModelPrices } = require("./modelPrices.js");
 const { normalizePrivacyGateway } = require("./privacyGateway.js");
 const { mergeCliProxyUsage } = require("./providerUsageCliProxy.js");
+const { localSpeechError } = require("./speech-config.js");
 const {
   isHttpUrl,
   validateAgentProfiles,
@@ -614,6 +615,13 @@ class StoreSettingsMethods {
         if (k in v && v[k] !== null && typeof v[k] !== "string") {
           throw new Error(`speech.${k} must be a string or null`);
         }
+      }
+      for (const k of ["localModel", "language"]) {
+        if (k in v && (typeof v[k] !== "string" || !v[k])) throw new Error(`speech.${k} must be a non-empty string`);
+      }
+      if ("localModel" in v || "language" in v) {
+        const error = localSpeechError({ ...this.data.settings.speech, ...v });
+        if (error) throw new Error(error);
       }
       // Omitted keys keep the saved value: the renderer never sees them.
       this.data.settings.speech = normalizeSpeechSettings({

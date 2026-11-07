@@ -1925,6 +1925,33 @@ describe("SettingsModal voice input provider (#1725)", () => {
     m.unmount();
   });
 
+  it("chooses a compatible multilingual model for Dutch without downloading it", async () => {
+    const patches: Partial<AppSettings>[] = [];
+    const m = await mount(modal({ initialPane: "general", settings: base,
+      onSaveSettings: async (patch) => { patches.push(patch); return { ...base, ...patch }; },
+    }));
+    assert.equal((m.query("[data-speech-local-model]") as HTMLSelectElement).value, "nemotron-en");
+    assert.equal((m.query("[data-speech-language]") as HTMLSelectElement).value, "en-US");
+    await m.change(m.query("[data-speech-language]"), "nl-NL");
+    assert.deepEqual(patches, [{ speech: { language: "nl-NL", localModel: "nemotron-3.5" } }]);
+    m.unmount();
+  });
+
+  it("shows the exact multilingual size, excludes adaptation-only locales, and makes switching to English explicit", async () => {
+    const patches: Partial<AppSettings>[] = [];
+    const settings = { ...base, speech: { provider: "local" as const, localModel: "nemotron-3.5", language: "nl-NL" } };
+    const m = await mount(modal({ initialPane: "general", settings,
+      onSaveSettings: async (patch) => { patches.push(patch); return { ...settings, ...patch }; },
+    }));
+    assert.match(m.query("[data-speech-local-description]")?.textContent ?? "", /741,548,352/);
+    const language = m.query("[data-speech-language]") as HTMLSelectElement;
+    assert.equal(language.options.length, 33);
+    assert.ok(!Array.from(language.options).some((option) => option.value === "he-IL"));
+    await m.change(m.query("[data-speech-local-model]"), "nemotron-en");
+    assert.deepEqual(patches, [{ speech: { localModel: "nemotron-en", language: "en-US" } }]);
+    m.unmount();
+  });
+
   it("saves a write-only key and only ever shows whether one is set", async () => {
     const patches: Partial<AppSettings>[] = [];
     const m = await mount(

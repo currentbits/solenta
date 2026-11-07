@@ -5655,6 +5655,9 @@ export type SpeechProvider = "local" | "openai" | "elevenlabs";
 
 export interface SpeechSettings {
   provider: SpeechProvider;
+  /** Local model and locale; missing values preserve legacy English dictation. */
+  localModel?: string;
+  language?: string;
   /** Write-only; null clears it. */
   openaiApiKey?: string | null;
   elevenlabsApiKey?: string | null;
@@ -5666,6 +5669,11 @@ export interface SpeechStatus {
   state: SpeechState;
   runtimeReady: boolean;
   modelReady: boolean;
+  /** Authoritative selected local download, including its exact size. */
+  model?: { id: string; label: string; bytes: number };
+  language?: string;
+  /** Blocks local capture/download; cloud remains independently available. */
+  localError?: string;
   download?: { bytesReceived: number; bytesTotal: number };
   /** Incremental suffix. Concatenate; do not replace the provisional range. */
   delta?: string;
@@ -7974,7 +7982,7 @@ export interface CoderApi {
     /** Runtime/model availability and lifecycle. */
     status(): Promise<SpeechStatus>;
     /** User-approved model download; progress arrives on speech:changed. */
-    download(): Promise<void>;
+    download(input?: { modelId: string }): Promise<void>;
     /** One app-wide realtime session. Returns an opaque session id. */
     start(): Promise<{ sessionId: string }>;
     /**

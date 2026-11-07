@@ -1,3 +1,5 @@
+import speechCatalog from "../../speechModels";
+import { formatSpeechModelSize } from "../../speechDraft";
 import { useState, type RefObject } from "react";
 import type {
   AppSettings,
@@ -818,6 +820,8 @@ function VoiceInputSection({
 }) {
   const provider = settings?.speech?.provider ?? "local";
   const cloud = provider === "local" ? null : CLOUD_SPEECH[provider];
+  const localModel = settings?.speech?.localModel ?? "nemotron-en";
+  const language = settings?.speech?.language ?? "en-US";
   const [keyText, setKeyText] = useState("");
   // A partial patch: main keeps the omitted provider/keys.
   const save = (speech: Partial<SpeechSettings>) => {
@@ -852,9 +856,45 @@ function VoiceInputSection({
         <p className={styles.note}>
           {cloud
             ? `Each recording is sent to ${cloud.label} when you stop dictating. If that fails, the local model is used, when installed.`
-            : "Runs on this machine. The model downloads the first time you use the mic."}
+            : "Runs on this machine. The mic asks before downloading the selected model. Available on Apple Silicon Macs and Windows/Linux x64."}
         </p>
       </div>
+      {!cloud && (
+        <>
+          <div className={styles.field}>
+            <label className={styles.fieldLabel} htmlFor="speech-language">Dictation language</label>
+            <select id="speech-language" className={styles.input} data-speech-language=""
+              value={language} disabled={saving || settings == null}
+              onChange={(e) => {
+                const language = e.target.value;
+                void save({ language, localModel: !Object.hasOwn(speechCatalog.models, localModel) || (localModel === "nemotron-en" && !language.startsWith("en-")) ? "nemotron-3.5" : localModel });
+              }}>
+              {!Object.hasOwn(speechCatalog.languages, language) && <option value={language}>Unsupported language ({language})</option>}
+              {Object.entries(speechCatalog.languages).map(([code, label]) => <option key={code} value={code}>{label}</option>)}
+            </select>
+          </div>
+          <div className={styles.field}>
+            <label className={styles.fieldLabel} htmlFor="speech-local-model">Local speech model</label>
+            <select id="speech-local-model" className={styles.input} data-speech-local-model=""
+              value={localModel} disabled={saving || settings == null}
+              onChange={(e) => {
+                const localModel = e.target.value;
+                void save({ localModel, language: !Object.hasOwn(speechCatalog.languages, language) || (localModel === "nemotron-en" && !language.startsWith("en-")) ? "en-US" : language });
+              }}>
+              {!Object.hasOwn(speechCatalog.models, localModel) && <option value={localModel}>Unknown model ({localModel})</option>}
+              {Object.entries(speechCatalog.models).map(([id, model]) => <option key={id} value={id}>{model.label} ({Math.round(model.bytes / 1_000_000)} MB)</option>)}
+            </select>
+            <p className={styles.note} data-speech-local-description="">
+              {localModel === "nemotron-en"
+                ? `English only. Download ${formatSpeechModelSize(speechCatalog.models["nemotron-en"].bytes)}.`
+                : localModel === "nemotron-3.5"
+                  ? `32 supported language locales, with automatic detection. Download ${formatSpeechModelSize(speechCatalog.models["nemotron-3.5"].bytes)}. Accuracy varies by language. Languages requiring fine-tuning are excluded.`
+                  : "Choose a supported local speech model."}
+              {" "}Switching models keeps existing downloads. Local fallback uses this model and language.
+            </p>
+          </div>
+        </>
+      )}
       {cloud && (
         <div className={styles.field}>
           <label className={styles.fieldLabel} htmlFor="speech-api-key">

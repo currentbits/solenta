@@ -3924,7 +3924,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
             modelReady: false,
           },
         ),
-      download: () => rec("speech.download", [], undefined),
+      download: (input) => rec("speech.download", input ? [input] : [], undefined),
       start: () => rec("speech.start", [], { sessionId: "speech-session" }),
       write: (input: unknown) => rec("speech.write", [input], undefined),
       stop: (input: unknown) => rec("speech.stop", [input], undefined),
