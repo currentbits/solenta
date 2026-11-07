@@ -1110,6 +1110,7 @@ export function useCoder(): UseCoderResult {
   const settingsRef = useRef<AppSettings | null>(null);
   const settingsLoadGen = useRef(0);
   const settingsSaveGen = useRef(0);
+  const settingsAppliedSaveGen = useRef(0);
   const [stayAwake, setStayAwake] = useState<StayAwakeStatus | null>(null);
   const [sidebarHosts, setSidebarHosts] = useState<SidebarHostStatus[]>([]);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
@@ -2335,7 +2336,9 @@ export function useCoder(): UseCoderResult {
       const gen = ++settingsSaveGen.current;
       const next = await api.settings.set(patch);
       settingsLoadGen.current += 1;
-      if (gen === settingsSaveGen.current) {
+      // A newer failed attempt must not suppress this successful snapshot.
+      if (gen > settingsAppliedSaveGen.current) {
+        settingsAppliedSaveGen.current = gen;
         settingsRef.current = next;
         setSettingsState({ status: "ready", settings: next });
       }
@@ -2349,16 +2352,17 @@ export function useCoder(): UseCoderResult {
   const testWebhook = useCallback(() => api.settings.testWebhook(), [api]);
 
   // Mode change persists through settings; main re-evaluates the blocker and
-  // pushes stayAwake:changed. The local mode mirrors the returned settings so
+  // pushes stayAwake:changed. The local mode mirrors the accepted settings so
   // the control flips even where no push arrives (web, fakes).
   const setStayAwakeMode = useCallback(
     async (mode: StayAwakeMode) => {
       const next = await saveSettings({ stayAwake: mode });
+      const savedMode = (settingsRef.current ?? next).stayAwake;
       setStayAwake((prev) =>
         prev
-          ? { ...prev, mode: next.stayAwake }
+          ? { ...prev, mode: savedMode }
           : {
-              mode: next.stayAwake,
+              mode: savedMode,
               blocking: false,
               onBattery: false,
               anyWorking: false,

@@ -178,4 +178,67 @@ describe("settings load recovery", () => {
     assert.deepEqual(state().settings?.providerModels, saved.providerModels);
     m.unmount();
   });
+
+  for (const failureFirst of [false, true]) {
+    it(`keeps an older successful save when a newer save fails ${failureFirst ? "first" : "last"}`, async () => {
+      const fake = createFakeCoder({ settings: saved });
+      const { m, state } = await probe(fake);
+      const set = fake.api.settings.set;
+      const older = pendingSettings();
+      const newer = pendingSettings();
+      let persisted: AppSettings | undefined;
+      fake.api.settings.set = async (patch) => {
+        if (patch.dailyBudgetUsd !== 20) return newer.promise;
+        persisted = await set(patch);
+        return older.promise;
+      };
+      let olderSave: Promise<AppSettings> | undefined;
+      let newerFailure: Promise<void> | undefined;
+      await inAct(() => {
+        olderSave = state().saveSettings({ dailyBudgetUsd: 20 });
+        newerFailure = assert.rejects(state().saveSettings({ dailyBudgetUsd: 25 }), /save failed/);
+      });
+      const failNewer = async () => {
+        await inAct(() => newer.reject(new Error("save failed")));
+        await newerFailure;
+      };
+      if (failureFirst) await failNewer();
+      const next = persisted;
+      assert.ok(next);
+      await inAct(() => older.resolve(next));
+      await olderSave;
+      await m.flush();
+      assert.equal(state().settings?.dailyBudgetUsd, 20);
+      if (!failureFirst) await failNewer();
+      assert.equal(state().settings?.dailyBudgetUsd, 20);
+      assert.deepEqual(state().settings?.providerModels, saved.providerModels);
+      assert.equal(state().settingsError, null);
+      m.unmount();
+    });
+  }
+
+  it("keeps the stay-awake control on the newest successful snapshot after a late save reply", async () => {
+    const fake = createFakeCoder({ settings: saved });
+    const { m, state } = await probe(fake);
+    const set = fake.api.settings.set;
+    const older = pendingSettings();
+    let persisted: AppSettings | undefined;
+    fake.api.settings.set = async (patch) => {
+      const next = await set(patch);
+      if (patch.stayAwake !== "on") return next;
+      persisted = next;
+      return older.promise;
+    };
+    let olderSave: Promise<AppSettings> | undefined;
+    await inAct(() => { olderSave = state().setStayAwakeMode("on"); });
+    await inAct(() => state().setStayAwakeMode("off"));
+    const next = persisted;
+    assert.ok(next);
+    await inAct(() => older.resolve(next));
+    await olderSave;
+    await m.flush();
+    assert.equal(state().settings?.stayAwake, "off");
+    assert.equal(state().stayAwake?.mode, "off");
+    m.unmount();
+  });
 });
