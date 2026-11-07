@@ -14,6 +14,7 @@ const crypto = require("node:crypto");
 const { spawn: defaultSpawn } = require("node:child_process");
 const { WebSocket: DefaultWebSocket } = require("ws");
 const { models, localSpeechConfig, localSpeechError } = require("./speech-config.js");
+const { writeConfigAtomicSync } = require("./atomic-config.js");
 
 const { verifyModelFile, verifiedFileUnchanged, loadModelLocations } = require("./speech-model-location.js");
 
@@ -591,11 +592,7 @@ function createSpeechManager(deps) {
 
   function saveLocations() {
     fs.mkdirSync(modelDir, { recursive: true });
-    const temporary = `${locationsFile}.${crypto.randomUUID()}.tmp`;
-    try {
-      fs.writeFileSync(temporary, JSON.stringify(locations), { mode: 0o600, flag: "wx" });
-      fs.renameSync(temporary, locationsFile);
-    } finally { fs.rmSync(temporary, { force: true }); }
+    writeConfigAtomicSync(locationsFile, JSON.stringify(locations), { mode: 0o600 });
   }
 
   async function useModelFolder(input, folder) {

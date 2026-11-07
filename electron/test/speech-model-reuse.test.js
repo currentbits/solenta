@@ -71,7 +71,7 @@ it("rejects missing, nested, wrong-sized, corrupt, and directory candidates and 
   fs.writeFileSync(candidate, Buffer.alloc(DATA.length));
   await assert.rejects(speech.useModelFolder({ modelId: ID }, other), /SHA-256/);
   fs.rmSync(candidate); fs.mkdirSync(candidate);
-  await assert.rejects(speech.useModelFolder({ modelId: ID }, other), /regular file/);
+  await assert.rejects(speech.useModelFolder({ modelId: ID }, other), /regular file|not readable|Could not read/);
   await assert.rejects(speech.useModelFolder({ modelId: "nemotron-en" }, folder), /changed/);
   assert.equal(speech.status().modelLocation.filename, SPEC.filename);
   assert.deepEqual(fs.readFileSync(file), DATA);

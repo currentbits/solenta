@@ -91,6 +91,7 @@ const WIN32_FILES = [
   "electron/test/updater.test.js", // win32 portable stage + helper (#755)
   "electron/test/speech-packaging.test.js", // fixture tree; no archive download (#845)
   "electron/test/speech-multilingual.test.js", // protocol fixture; no native runtime or model download
+  "electron/test/speech-model-reuse.test.js", // read-only fixture models, no download or microphone
   "electron/test/workflow-crash-resume.test.js", // store load only; no spawn (#824)
   "electron/test/workflow-phase-retry.test.js",
   "electron/test/workflow-retry-agent.test.js",
