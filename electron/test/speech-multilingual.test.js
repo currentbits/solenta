@@ -187,3 +187,40 @@ it("does not fall back from a cloud error to an incompatible English model", asy
   assert.equal(speech.isRecordingRequested(), false);
   assert.ok(!pushes.some((s) => s.transcript));
 });
+
+it("pins the local fallback through cloud capture and upload, then adopts saved settings for the next recording", async (t) => {
+  let rejectUpload;
+  let uploadStarted;
+  const uploading = new Promise((resolve) => { uploadStarted = resolve; });
+  const { speech, settings, seed, dir, pushes } = setup(t, { fetch: async () => {
+    uploadStarted();
+    return new Promise((_resolve, reject) => { rejectUpload = reject; });
+  } });
+  settings({ provider: "openai", openaiApiKey: "test-key", ...MULTI });
+  seed("nemotron-3.5");
+  const session = await speech.start();
+  await speech.write({ ...session, pcm: Buffer.alloc(3200), seq: 0 });
+  settings({ provider: "local", localModel: "nemotron-en", language: "en-US" });
+  assert.equal(speech.status().model.id, "nemotron-3.5");
+  const stopped = speech.stop(session);
+  await uploading;
+  settings({ provider: "local", localModel: "nemotron-en", language: "en-GB" });
+  assert.equal(speech.status().language, "nl-NL");
+  rejectUpload(new Error("offline"));
+  await stopped;
+  const rows = fs.readFileSync(path.join(dir, "trace.jsonl"), "utf8").trim().split("\n").map(JSON.parse);
+  assert.equal(rows[0].args[rows[0].args.indexOf("--asr-model") + 1], path.join(dir, "speech", models["nemotron-3.5"].filename));
+  assert.equal(rows.find((r) => r.type === "session.update").session.language, "nl-NL");
+  assert.equal(pushes.find((s) => s.transcript)?.transcript, "Goedemorgen wereld. 日本語");
+  assert.equal(speech.isRecordingRequested(), false);
+  assert.equal(pushes.at(-1).model.id, "nemotron-en", "completion publishes the newly saved selection");
+  assert.equal(pushes.at(-1).language, "en-GB");
+  seed("nemotron-en");
+  const next = await speech.start();
+  assert.equal(speech.status().model.id, "nemotron-en");
+  assert.equal(speech.status().language, "en-GB");
+  await speech.cancel(next);
+  const starts = fs.readFileSync(path.join(dir, "trace.jsonl"), "utf8").trim().split("\n").map(JSON.parse).filter((r) => r.args);
+  assert.equal(starts.length, 2);
+  assert.equal(starts[1].args[starts[1].args.indexOf("--asr-model") + 1], path.join(dir, "speech", MODEL_FILENAME));
+});

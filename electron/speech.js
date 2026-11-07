@@ -983,17 +983,15 @@ function createSpeechManager(deps) {
     } catch (err) {
       if (cloudActive !== session) return; // cancelled meanwhile
       const why = err && err.message ? String(err.message) : "Cloud transcription failed.";
-      cloudActive = null;
-      syncModel();
-      if (compatibilityError || !modelIsReady() || !runtimeIsReady()) {
-        recordingRequested = false;
-        lastError = compatibilityError ? `${why} ${compatibilityError}` : `${why} Install the local speech model to fall back.`;
-        emit({ error: lastError });
-        throw new Error(lastError);
-      }
-      fallbackNote = `${why} Used the local model instead.`;
+      // Keep the capture's local choice pinned while cloudActive hands off to
+      // the local socket, including readiness checks before that socket exists.
       starting = true;
+      cloudActive = null;
       try {
+        if (compatibilityError || !modelIsReady() || !runtimeIsReady()) {
+          throw new Error(compatibilityError ? `${why} ${compatibilityError}` : `${why} Install the local speech model to fall back.`);
+        }
+        fallbackNote = `${why} Used the local model instead.`;
         await ensureSidecar();
         const id = await openSession();
         state = "recording";
@@ -1008,6 +1006,7 @@ function createSpeechManager(deps) {
         throw localErr instanceof Error ? localErr : new Error(lastError);
       } finally {
         starting = false;
+        emit();
       }
       return;
     }
