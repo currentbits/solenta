@@ -184,6 +184,40 @@ function parsePrNumber(value) {
  * @param {string} projectPath
  * @returns {Promise<{ ok: true, cwd: string } | { ok: false, reason: string }>}
  */
+async function gitlabWorkspaceRemote(projectPath, repo) {
+  const remote = await gitTryAsync(String(projectPath || ""), ["remote", "get-url", "origin"]);
+  const gl = remote.ok ? require("./gitlab.js").gitlabRemote(String(remote.stdout || "").trim()) : null;
+  if (gl && repo) gl.path = String(repo);
+  return gl;
+}
+
+async function viewGitlabWorkspace(projectPath, number, remote) {
+  const { glabApi } = require("./gitlab.js");
+  const result = await glabApi(projectPath, remote, "GET", `/merge_requests/${number}`);
+  if (!result.ok) return result;
+  const mr = result.data;
+  if (!mr || !mr.iid || !mr.web_url) return { ok: false, reason: "Invalid merge request response" };
+  const comments = [];
+  let commentsError;
+  // Keep transcript bounded, as with the GitHub workspace comment budget.
+  for (let page = 1; page <= 5; page++) {
+    const notes = await glabApi(projectPath, remote, "GET", `/merge_requests/${number}/notes?per_page=100&page=${page}&sort=asc&order_by=created_at`);
+    if (!notes.ok) { commentsError = notes.reason; break; }
+    const rows = Array.isArray(notes.data) ? notes.data : [];
+    for (const note of rows) {
+      if (!note.system) comments.push({ id: note.id, type: "issue", author: note.author?.username || "", body: note.body || "", createdAt: note.created_at || "", url: `${mr.web_url}#note_${note.id}` });
+    }
+    if (rows.length < 100) break;
+    if (page === 5) commentsError = "Showing the first 500 discussion notes. Open GitLab for the full conversation.";
+  }
+  return { ok: true, pr: {
+    forge: "gitlab", number: mr.iid, title: mr.title || "", body: mr.description || "", url: mr.web_url,
+    state: mr.state === "merged" ? "MERGED" : mr.state === "closed" ? "CLOSED" : "OPEN",
+    isDraft: Boolean(mr.draft || mr.work_in_progress), headRefName: mr.source_branch || "", baseRefName: mr.target_branch || "",
+    author: mr.author?.username || "", updatedAt: mr.updated_at, comments, ...(commentsError ? { commentsError } : {}),
+  } };
+}
+
 async function requireGitHubRepo(projectPath) {
   const cwd = String(projectPath || "");
   if (!cwd) return { ok: false, reason: "not a GitHub repo" };
@@ -576,6 +610,8 @@ async function loadPrComments(cwd, number, other, info) {
 async function viewPrDetail(projectPath, prNumber, opts) {
   const number = parsePrNumber(prNumber);
   if (number == null) return { ok: false, reason: "invalid PR number" };
+  const gl = await gitlabWorkspaceRemote(projectPath, opts && opts.repo);
+  if (gl) return viewGitlabWorkspace(projectPath, number, gl);
   const repo = await requireGitHubRepo(projectPath);
   if (!repo.ok) return repo;
   const other = parseRepoSlug(opts && opts.repo);
@@ -673,6 +709,14 @@ async function editPr(projectPath, input, opts) {
   const blocked = scanOutbound(outbound, "PR");
   if (blocked) return { ok: false, reason: blocked };
 
+  const gl = await gitlabWorkspaceRemote(projectPath, input && input.repo);
+  if (gl) {
+    const fields = {};
+    if (title != null) fields.title = title;
+    if (body != null) fields.description = body;
+    const edited = await require("./gitlab.js").glabApi(projectPath, gl, "PUT", `/merge_requests/${number}`, fields);
+    return edited.ok ? viewGitlabWorkspace(projectPath, number, gl) : edited;
+  }
   const repo = await requireGitHubRepo(projectPath);
   if (!repo.ok) return repo;
   const other = parseRepoSlug(input && input.repo);
@@ -715,6 +759,11 @@ async function commentPr(projectPath, input) {
   const blocked = scanOutbound(text, "PR comment");
   if (blocked) return { ok: false, reason: blocked };
 
+  const gl = await gitlabWorkspaceRemote(projectPath, input && input.repo);
+  if (gl) {
+    const posted = await require("./gitlab.js").glabApi(projectPath, gl, "POST", `/merge_requests/${number}/notes`, { body: text });
+    return posted.ok ? { ok: true } : posted;
+  }
   const repo = await requireGitHubRepo(projectPath);
   if (!repo.ok) return repo;
 

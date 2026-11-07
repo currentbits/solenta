@@ -17,6 +17,7 @@ import type {
 } from "../shared/ipc";
 import { Markdown, MarkdownBody, type MarkdownTask } from "./Markdown";
 import { toggleDescriptionTask } from "../descriptionTasks";
+import { PrCompletionTextarea } from "./PrCompletionTextarea";
 import { PrCodeTab } from "./PrCodeTab";
 import styles from "./PrWorkspacePanel.module.css";
 
@@ -491,6 +492,7 @@ export function PrWorkspacePanel({
           role="tab"
           className={styles.tab}
           data-pr-tab="code"
+          disabled={pr?.forge === "gitlab"}
           aria-selected={tab === "code"}
           onClick={() => setTab("code")}
         >
@@ -565,7 +567,7 @@ export function PrWorkspacePanel({
                 )}
               </div>
             ) : (
-              <textarea
+              <PrCompletionTextarea projectPath={projectPath} repo={activeRepo} scope={String(activePr)}
                 className={styles.textarea}
                 data-pr-edit-body=""
                 value={body}
@@ -597,7 +599,7 @@ export function PrWorkspacePanel({
           ) : null}
 
           <div className={styles.actions}>
-            {open && prUpdateBranch && pr.mergeStateStatus === "BEHIND" ? (
+            {open && pr.forge !== "gitlab" && prUpdateBranch && pr.mergeStateStatus === "BEHIND" ? (
               <button
                 type="button"
                 className={styles.ghost}
@@ -610,7 +612,7 @@ export function PrWorkspacePanel({
                 {pending === "updateBranch" ? "Updating…" : "Update branch"}
               </button>
             ) : null}
-            {open && pr.isDraft ? (
+            {open && pr.forge !== "gitlab" && pr.isDraft ? (
               <button
                 type="button"
                 className={styles.ghost}
@@ -625,7 +627,7 @@ export function PrWorkspacePanel({
                 {pending === "ready" ? "Updating…" : "Mark ready"}
               </button>
             ) : null}
-            {open && !pr.isDraft ? (
+            {open && pr.forge !== "gitlab" && !pr.isDraft ? (
               <button
                 type="button"
                 className={styles.ghost}
@@ -645,7 +647,7 @@ export function PrWorkspacePanel({
                 type="button"
                 className={styles.primary}
                 data-pr-merge=""
-                disabled={pending != null}
+                disabled={pending != null || pr.forge === "gitlab"}
                 onClick={() => setConfirm("merge")}
               >
                 Merge
@@ -656,7 +658,7 @@ export function PrWorkspacePanel({
                 type="button"
                 className={styles.danger}
                 data-pr-close=""
-                disabled={pending != null}
+                disabled={pending != null || pr.forge === "gitlab"}
                 onClick={() => setConfirm("close")}
               >
                 Close
@@ -835,7 +837,7 @@ export function PrWorkspacePanel({
                           Add to agent
                         </button>
                       ) : null}
-                      {prCommentEdit && row.type !== "review-summary" && row.mine && row.id != null && !editing ? (
+                      {pr.forge !== "gitlab" && prCommentEdit && row.type !== "review-summary" && row.mine && row.id != null && !editing ? (
                         <button
                           type="button"
                           className={styles.ghost}
@@ -853,7 +855,7 @@ export function PrWorkspacePanel({
                     {row.path ? <span className={styles.hint}>{row.path}{row.line != null ? `:${row.line}` : ""}{row.outdated ? " (outdated)" : ""}</span> : null}
                     {editing ? (
                       <div className={styles.commentForm} data-pr-comment-edit-form="">
-                        <textarea
+                        <PrCompletionTextarea projectPath={projectPath} repo={activeRepo} scope={String(activePr)}
                           className={styles.textarea}
                           data-pr-comment-edit-body=""
                           value={editCommentBody}
@@ -885,7 +887,7 @@ export function PrWorkspacePanel({
                     ) : (
                       <Markdown text={row.body} />
                     )}
-                    {prReaction && row.type === "issue" && row.id != null ? (
+                    {pr.forge !== "gitlab" && prReaction && row.type === "issue" && row.id != null ? (
                       <div className={styles.reactionsRow} data-pr-reactions="">
                         {(row.reactions || [])
                           .filter((r) => r.count > 0)
@@ -955,7 +957,7 @@ export function PrWorkspacePanel({
                   );
                 }}
               >
-                <textarea
+                <PrCompletionTextarea projectPath={projectPath} repo={activeRepo} scope={String(activePr)}
                   className={styles.textarea}
                   data-pr-comment=""
                   placeholder="Leave a comment"

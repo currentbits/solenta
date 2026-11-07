@@ -190,6 +190,7 @@ export function createGit(ctx: DevCtx): Pick<CoderApi, "git" | "mergeQueue"> {
       async prTemplate(_input: { projectPath: string }): Promise<PrTemplateResult> {
         return { ok: true, body: "", path: null, templates: [] };
       },
+      async prCompletions() { return { ok: true as const, items: [], hasMore: false }; },
       async prDetail(input: {
         projectPath: string;
         prNumber: number;

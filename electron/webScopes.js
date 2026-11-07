@@ -98,6 +98,7 @@ const BY_SCOPE = {
     "git:mergeOptions",
     "git:listPrs",
     "git:prTemplate",
+    "git:prCompletions",
     "git:prDetail",
     "git:prDiff",
     "git:prViewed",

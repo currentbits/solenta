@@ -325,6 +325,7 @@ module.exports = {
   "git:prTemplate": async (_ctx, input) => {
     return readPrTemplate(input && input.projectPath);
   },
+  "git:prCompletions": async (_ctx, input) => require("./prCompletions.js").prCompletions(input),
   "git:prDetail": async (_ctx, input) => {
     return viewPrDetail(input && input.projectPath, input && input.prNumber, {
       repo: input && input.repo,
