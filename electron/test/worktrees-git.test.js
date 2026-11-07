@@ -2,10 +2,39 @@
 
 const { describe, it, afterEach } = require("node:test");
 const assert = require("node:assert/strict");
-const { gitEnv, gitOutAsync, gitTryAsync, setExecFile } = require("../worktrees-git.js");
+const { gitEnv, gitOutAsync, gitOutForDiffAsync, gitTryAsync, setExecFile, resolveGitCommand } = require("../worktrees-git.js");
 
 describe("gitEnv (#1520 optional locks)", () => {
   afterEach(() => setExecFile(null));
+
+  it("reads Git diagnostics in English while preserving hooks' locale and explicit overrides", () => {
+    const env = gitEnv(["status"], { LANG: "de_DE.UTF-8", LC_CTYPE: "ja_JP.UTF-8" });
+    assert.equal(env.LANGUAGE, "C");
+    assert.equal(env.LANG, "de_DE.UTF-8");
+    assert.equal(env.LC_CTYPE, "ja_JP.UTF-8");
+    assert.equal(gitEnv(["status"], { LANGUAGE: "fr" }).LANGUAGE, "fr");
+  });
+
+  it("applies the diagnostic locale to actual local and SSH spawns", async () => {
+    const seen = [];
+    setExecFile((bin, args, opts, cb) => {
+      seen.push({ bin, args, env: opts.env });
+      cb(null, "", "");
+    });
+    await gitOutAsync("/tmp", ["status"]);
+    await gitTryAsync("/tmp", ["commit", "-m", "x"], { env: { LANGUAGE: "fr" } });
+    await gitOutForDiffAsync({ remoteHost: "dev@box", remotePath: "/srv/app" }, "/srv/app", ["status"]);
+    assert.equal(seen[0].env.LANGUAGE, "C");
+    assert.equal(seen[1].env.LANGUAGE, "fr");
+    assert.equal(seen[2].bin, "ssh");
+    assert.match(seen[2].args.at(-1), /'env' 'LANGUAGE=C' 'git' 'status'/);
+  });
+
+  it("sets the diagnostic locale inside WSL rather than only on wsl.exe", () => {
+    const cwd = "\\\\wsl$\\Ubuntu\\home\\me\\repo";
+    assert.deepEqual(resolveGitCommand(cwd, ["status"], "win32").args.slice(-4), ["env", "LANGUAGE=C", "git", "status"]);
+    assert.deepEqual(resolveGitCommand(cwd, ["status"], "win32", { LANGUAGE: "fr" }).args.slice(-4), ["env", "LANGUAGE=fr", "git", "status"]);
+  });
 
   it("sets GIT_OPTIONAL_LOCKS=0 on read-only subcommands only", () => {
     for (const args of [["status", "--porcelain"], ["diff"], ["log"], ["rev-parse", "HEAD"], ["-c", "x=y", "status"]]) {
