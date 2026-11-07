@@ -335,6 +335,7 @@ function createThread(store, input) {
     sessionId: null,
     permissionMode,
     reasoningEffort,
+    ultracode: defaults?.ultracode === true && require("./providers.js").modelSupportsUltracode(entry, model),
     webSearch: false,
     fast: false,
     worktreePath: null,
@@ -406,6 +407,7 @@ function recordLastUsedDefaults(store, threadId) {
     provider: threadProviderRef(thread),
     model: thread.model,
     reasoningEffort: thread.reasoningEffort,
+    ultracode: thread.ultracode === true,
     permissionMode: thread.permissionMode,
   });
   store.setProjects(
@@ -568,6 +570,7 @@ function applyAgentProfile(store, input) {
       ? profile.reasoningEffort
       : null,
   });
+  setUltracode(store, { threadId, ultracode: profile.ultracode === true });
   const mode = snapPermissionModeForThread(
     getProvider(live.provider),
     profile.permissionMode,
@@ -645,6 +648,17 @@ function setReasoningEffort(store, input) {
   const updated = store.updateThread(threadId, { reasoningEffort: level });
   store.save();
   return updated ? { ...updated } : { ...thread, reasoningEffort: level };
+}
+
+/** Set the session mode without changing the saved normal effort. */
+function setUltracode(store, input) {
+  const thread = store.getThread(input.threadId);
+  if (!thread) throw new Error(`Unknown thread: ${input.threadId}`);
+  const enabled = input.ultracode === true;
+  if (enabled && !require("./providers.js").modelSupportsUltracode(getProvider(thread.provider), thread.model)) throw new Error("Ultracode requires an xhigh-capable Claude model");
+  const updated = store.updateThread(thread.id, { ultracode: enabled });
+  store.save();
+  return { ...updated };
 }
 
 /**
@@ -817,6 +831,8 @@ function forkThread(store, input) {
     provider: nextProvider,
     ...(nextInstance ? { providerInstance: nextInstance } : {}),
     model: nextModel,
+    reasoningEffort: honouredEfforts(getProvider(nextProvider), nextModel).includes(source.reasoningEffort) ? source.reasoningEffort : null,
+    ultracode: source.ultracode === true && require("./providers.js").modelSupportsUltracode(getProvider(nextProvider), nextModel),
     permissionMode: source.permissionMode,
     handoffFrom: source.id,
     sessionId: null,
@@ -1216,7 +1232,7 @@ function setProvider(store, input) {
   const instanceChanging =
     ref != null && (ref.instance || null) !== (thread.providerInstance || null);
 
-  /** @type {{ provider?: string, providerInstance?: string | null, model?: string | null, sessionId?: null, replayContext?: boolean, reasoningEffort?: null, webSearch?: boolean, planModel?: null, planReasoningEffort?: null }} */
+  /** @type {{ provider?: string, providerInstance?: string | null, model?: string | null, sessionId?: null, replayContext?: boolean, ultracode?: boolean, reasoningEffort?: null, webSearch?: boolean, planModel?: null, planReasoningEffort?: null }} */
   const patch = {};
 
   if ((providerChanging || instanceChanging) && thread.status === "working") {
@@ -1301,6 +1317,8 @@ function setProvider(store, input) {
       patch.reasoningEffort = null;
     }
   }
+
+  if (!require("./providers.js").modelSupportsUltracode(getProvider(nextProvider), patch.model !== undefined ? patch.model : thread.model)) patch.ultracode = false;
 
   if (patch.sessionId === null) {
     // The new CLI (or re-pinned model) starts with no memory of this thread.
@@ -2193,6 +2211,7 @@ module.exports = {
   setWebSearch,
   setAgent,
   setFast,
+  setUltracode,
   forkThread,
   forkFromCheckpoint,
   forkWorkerThread,

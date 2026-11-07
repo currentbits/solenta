@@ -207,6 +207,8 @@ function composer(
     reasoningEffort?: ReasoningEffort | null;
     webSearch?: boolean;
     fast?: boolean;
+    ultracode?: boolean;
+    onSetUltracode?: (value: boolean) => void;
     sessionId?: string | null;
     workspaceStrip?: ReactNode;
     disabled?: boolean;
@@ -249,6 +251,8 @@ function composer(
       }
       webSearch={over.webSearch === true}
       fast={over.fast === true}
+      ultracode={over.ultracode === true}
+      onSetUltracode={over.onSetUltracode}
       providers={over.providers ?? PROVIDERS}
       onToggleModelFavorite={(providerId, modelId) => {
         harness.favoriteToggles.push({ providerId, modelId });
@@ -1922,7 +1926,7 @@ describe("Composer reasoning pill", () => {
     assert.ok(shown.query('button[aria-label^="Reasoning:"]'));
     const menu = await openEffort(shown);
     assert.ok(
-      Array.from(menu?.querySelectorAll("button") || []).some((b) =>
+      !Array.from(menu?.querySelectorAll("button") || []).some((b) =>
         (b.getAttribute("aria-label") || "").includes("Ultracode"),
       ),
     );
@@ -3905,5 +3909,34 @@ describe("Composer surrounds a selection with a bracket/quote/emphasis pair (#17
     await m.press(ta, "(");
     assert.equal(ta.value, "hello world", "vim owns the keystroke, not the surround feature");
     m.unmount();
+  });
+});
+
+describe("Composer Ultracode mode", () => {
+  it("shows requested xhigh separately, disables base effort, and restores base effort when off", async () => {
+    const h = makeHarness();
+    const claude: ProviderInfo = {
+      ...CLAUDE_WITH_INFO,
+      supportsUltracode: true,
+      efforts: ["low", "medium", "high", "xhigh", "max"],
+      models: ["claude-opus-5"],
+      modelInfo: [{ id: "claude-opus-5", label: "Opus", description: "", vendor: "Anthropic", efforts: ["low", "medium", "high", "xhigh", "max"] }],
+    };
+    const toggles: boolean[] = [];
+    const m = await mount(composer(h, { provider: "claude", model: "claude-opus-5", providers: [claude], reasoningEffort: "low", ultracode: true, onSetUltracode: (value) => { toggles.push(value); } }));
+    assert.ok(m.query('button[aria-label="Reasoning: Ultracode requested (xhigh)"]'));
+    await m.click(m.query('button[aria-label^="Model:"]'));
+    assert.equal((m.query('[data-effort-chip="low"]') as HTMLButtonElement).disabled, true);
+    assert.equal((m.query('[data-effort-chip="xhigh"]') as HTMLButtonElement).getAttribute("aria-pressed"), "true");
+    const toggle = m.query('[aria-label="Ultracode"] button');
+    assert.equal(toggle?.getAttribute("aria-pressed"), "true");
+    await m.click(toggle);
+    assert.deepEqual(toggles, [false]);
+    m.unmount();
+    const off = await mount(composer(h, { provider: "claude", model: "claude-opus-5", providers: [claude], reasoningEffort: "low", ultracode: false, onSetUltracode: () => {} }));
+    assert.ok(off.query('button[aria-label="Reasoning: Low"]'));
+    await off.click(off.query('button[aria-label^="Model:"]'));
+    assert.equal((off.query('[data-effort-chip="low"]') as HTMLButtonElement).disabled, false);
+    off.unmount();
   });
 });

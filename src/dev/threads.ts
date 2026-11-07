@@ -332,6 +332,9 @@ export function createThreads(ctx: DevCtx): Pick<CoderApi, "threads"> {
           // seeded-fresh fallback.
           ...(input.messageId ? { replayContext: true } : {}),
         });
+        const forkProvider = (await ctx.api().providers.list()).find((p) => p.id === created.provider);
+        created.reasoningEffort = source.reasoningEffort;
+        created.ultracode = source.ultracode === true && forkProvider?.id === "claude" && Boolean(forkProvider.modelInfo.find((m) => m.id === created.model)?.efforts?.includes("xhigh"));
         const registered = registerThread(created);
         if (input.messageId) {
           const at = sourceDetail.messages.findIndex(
@@ -453,6 +456,7 @@ export function createThreads(ctx: DevCtx): Pick<CoderApi, "threads"> {
           providerInstance: null,
           model: profile.model,
           reasoningEffort: profile.reasoningEffort,
+          ultracode: profile.ultracode === true,
           permissionMode: profile.permissionMode,
           autoApprove: profile.autoApprove ?? null,
           agentProfileId: profile.id,
@@ -1011,6 +1015,13 @@ export function createThreads(ctx: DevCtx): Pick<CoderApi, "threads"> {
           agentProfileId: null,
         });
       },
+      async setUltracode(input: { threadId: string; ultracode: boolean }) {
+        const thread = details.get(input.threadId)?.thread;
+        if (!thread) throw new Error(`Thread not found: ${input.threadId}`);
+        const provider = (await ctx.api().providers.list()).find((p) => p.id === thread.provider);
+        if (input.ultracode && !(provider?.id === "claude" && provider.modelInfo.find((m) => m.id === thread.model)?.efforts?.includes("xhigh"))) throw new Error("Ultracode requires an xhigh-capable Claude model");
+        return patchThread(input.threadId, { ultracode: input.ultracode === true, agentProfileId: null });
+      },
       async setFast(input: { threadId: string; fast: boolean }) {
         return patchThread(input.threadId, { fast: input.fast === true });
       },
@@ -1150,6 +1161,8 @@ export function createThreads(ctx: DevCtx): Pick<CoderApi, "threads"> {
           patch.model = input.model ? String(input.model).trim() : null;
         }
 
+        const nextProvider = (await ctx.api().providers.list()).find((p) => p.id === (patch.provider ?? thread.provider));
+        if (!(nextProvider?.id === "claude" && nextProvider.modelInfo.find((m) => m.id === (patch.model === undefined ? thread.model : patch.model))?.efforts?.includes("xhigh"))) patch.ultracode = false;
         const next: ThreadInfo = { ...thread, ...patch };
         detail.thread = next;
         details.set(input.threadId, detail);

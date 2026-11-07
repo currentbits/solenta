@@ -239,6 +239,7 @@ export interface ProjectThreadDefaults {
   /** Model id for `provider`; absent = provider default. */
   model?: string;
   reasoningEffort?: ReasoningEffort;
+  ultracode?: boolean;
   permissionMode?: PermissionMode;
   /**
    * When true, the defaults follow the last pick the user made on a new
@@ -1198,6 +1199,8 @@ export interface ThreadInfo {
    * lists `fast`; absent on older store rows.
    */
   fast?: boolean;
+  /** Session mode: xhigh effort plus dynamic workflows on supported Claude models. */
+  ultracode?: boolean;
   /**
    * Agent-facing browser access (issue #1797). Default true (absent on
    * older store rows reads as on). `false` turns off the Browser pane's
@@ -3431,7 +3434,7 @@ export type DiscussionDetailForMentionResult =
  *
  * These are the levels the installed CLIs actually accept, verified against
  * them rather than copied from a design: `claude --effort` takes low, medium,
- * high, xhigh, max, plus the session-only `ultracode` token; Codex coding
+ * high, xhigh, max. Ultracode is a separate session mode; Codex coding
  * clients add `ultra` (parallel subagents) above `max`; grok takes low,
  * medium, high, xhigh. A provider advertises its own subset through
  * ProviderInfo.efforts, and a model may narrow that further via
@@ -3665,6 +3668,8 @@ export interface ProviderInfo {
    * The composer hides the Agent picker when this is missing or false.
    */
   supportsAgents?: boolean;
+  /** Installed Claude CLI supports the session setting (2.1.219+). */
+  supportsUltracode?: boolean;
   /**
    * True when plan-mode turns can run on a separate plan model and the same
    * session resumes on the act model afterwards (#1716: claude, codex).
@@ -4554,6 +4559,7 @@ export interface AgentProfile {
   model: string | null;
   /** null = provider default (no --effort flag). */
   reasoningEffort: ReasoningEffort | null;
+  ultracode?: boolean;
   /** Plan-mode model (#1716); absent = plan on `model`. */
   planModel?: string | null;
   /** Plan-mode effort; absent/null keeps `reasoningEffort`. */
@@ -6738,6 +6744,7 @@ export interface CoderApi {
      * model of the thread's provider has a fast tier.
      */
     setFast(input: { threadId: string; fast: boolean }): Promise<ThreadInfo>;
+    setUltracode(input: { threadId: string; ultracode: boolean }): Promise<ThreadInfo>;
     /**
      * Plan-mode model + effort (#1716). Plan-mode turns run on it; leaving
      * plan mode resumes the same session on `model`. null clears both.

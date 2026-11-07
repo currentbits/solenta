@@ -512,7 +512,8 @@ function migrateThread(t) {
     permissionMode: t.permissionMode != null ? t.permissionMode : "default",
     // Older stores lack reasoningEffort; null (not undefined) so the picker is stable.
     reasoningEffort:
-      t.reasoningEffort !== undefined ? t.reasoningEffort : null,
+      t.reasoningEffort === "ultracode" ? (require("./providers.js").honouredEfforts(require("./providers.js").getProvider(t.provider), t.model).includes("xhigh") ? "xhigh" : null) : t.reasoningEffort !== undefined ? t.reasoningEffort : null,
+    ultracode: (t.ultracode === true || t.reasoningEffort === "ultracode") && require("./providers.js").modelSupportsUltracode(require("./providers.js").getProvider(t.provider), t.model),
     // Codex live web search (issue #174). Absent → off.
     webSearch: t.webSearch === true,
     // Fast tier (#1529). Absent → off.

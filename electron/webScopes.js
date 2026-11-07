@@ -187,6 +187,7 @@ const BY_SCOPE = {
     "threads:setReasoningEffort",
     "threads:setPlanModel",
     "threads:setFast",
+    "threads:setUltracode",
     "threads:setRoute",
     "threads:setWebSearch",
     "threads:setAgent",

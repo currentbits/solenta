@@ -76,7 +76,10 @@ function parseAgentProfile(item, strict) {
   if (model !== null && typeof model !== "string") {
     return fail("agentProfiles entry model must be a string or null");
   }
-  const effort = rec.reasoningEffort;
+  const legacy = rec.reasoningEffort === "ultracode";
+  const eligible = require("./providers.js").modelSupportsUltracode(getProvider(provider.split(":")[0]), model);
+  const effort = legacy ? (eligible ? "xhigh" : null) : rec.reasoningEffort;
+  if (strict && rec.ultracode === true && !eligible) return fail("Ultracode requires an xhigh-capable Claude model");
   if (effort !== null && !REASONING_EFFORTS.has(effort)) {
     return fail(
       "agentProfiles entry reasoningEffort must be one of low, medium, high, xhigh, max, ultra, ultracode, or null",
@@ -144,6 +147,7 @@ function parseAgentProfile(item, strict) {
     provider,
     model,
     reasoningEffort: /** @type {string | null} */ (effort),
+    ...((rec.ultracode === true || legacy) && eligible ? { ultracode: true } : {}),
     ...plan,
     permissionMode: /** @type {string} */ (permissionMode),
     ...(policy ? { policy } : {}),

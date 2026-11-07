@@ -101,7 +101,7 @@ function normalizeQuickActions(raw) {
  * null so the key can be deleted from the stored project.
  *
  * @param {unknown} raw
- * @returns {{ provider?: string, model?: string, reasoningEffort?: string, permissionMode?: string, lastUsed?: true } | null}
+ * @returns {{ provider?: string, model?: string, reasoningEffort?: string, ultracode?: boolean, permissionMode?: string, lastUsed?: true } | null}
  */
 function normalizeThreadDefaults(raw) {
   if (!raw || typeof raw !== "object") return null;
@@ -111,7 +111,7 @@ function normalizeThreadDefaults(raw) {
     typeof v === "string" && v.trim() && v.trim().length <= max
       ? v.trim()
       : "";
-  /** @type {{ provider?: string, model?: string, reasoningEffort?: string, permissionMode?: string, lastUsed?: true }} */
+  /** @type {{ provider?: string, model?: string, reasoningEffort?: string, ultracode?: boolean, permissionMode?: string, lastUsed?: true }} */
   const out = {};
   const r = /** @type {Record<string, unknown>} */ (raw);
   const provider = str(r.provider, 64);
@@ -122,6 +122,7 @@ function normalizeThreadDefaults(raw) {
   }
   const effort = str(r.reasoningEffort, 32);
   if (effort) out.reasoningEffort = effort;
+  if (r.ultracode === true) out.ultracode = true;
   if (typeof r.permissionMode === "string" && PERMISSION_MODES.has(r.permissionMode)) {
     out.permissionMode = r.permissionMode;
   }

@@ -738,6 +738,12 @@ module.exports = {
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
     return updated;
   },
+  "threads:setUltracode": async (ctx, input) => {
+    const updated = leaveProfile(ctx, input.threadId, services.setUltracode(ctx.store, input));
+    services.recordLastUsedDefaults(ctx.store, input.threadId);
+    ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+    return updated;
+  },
   "threads:setFast": async (ctx, input) => {
     const updated = services.setFast(ctx.store, input);
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));

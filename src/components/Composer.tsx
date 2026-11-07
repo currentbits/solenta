@@ -204,6 +204,7 @@ export interface ComposerProps {
   webSearch?: boolean;
   /** Fast / priority tier (#1529). Shown only on a model whose info lists `fast`. */
   fast?: boolean;
+  ultracode?: boolean;
   /** CLI custom agent (`--agent`, #172); null = CLI default. */
   agent?: string | null;
   /** Agents the provider CLI finds for this thread's checkout. */
@@ -233,6 +234,7 @@ export interface ComposerProps {
   onApplyAgentProfile: (profileId: string) => void | Promise<void>;
   onSetWebSearch?: (webSearch: boolean) => void | Promise<void>;
   onSetFast?: (fast: boolean) => void | Promise<void>;
+  onSetUltracode?: (ultracode: boolean) => void | Promise<void>;
   /** Plan-mode model (#1716); null = plan on `model`. */
   planModel?: string | null;
   /** Shown only for providers with `supportsPlanModel`. */
@@ -532,6 +534,7 @@ export const Composer = memo(function Composer({
   reasoningEffort,
   webSearch = false,
   fast = false,
+  ultracode = false,
   agent = null,
   agents = [],
   onSetAgent,
@@ -547,6 +550,7 @@ export const Composer = memo(function Composer({
   onApplyAgentProfile,
   onSetWebSearch,
   onSetFast,
+  onSetUltracode,
   route = null,
   onSetRoute,
   onSaveWorkflow,
@@ -1074,14 +1078,16 @@ export const Composer = memo(function Composer({
   // the highlighted picker row.
   const efforts = effortsForModel(currentProviderInfo, model);
   const reasoningVisible = showReasoningControl(efforts);
-  const effortUnavailable = currentProviderInfo?.available === false;
-  const effortLabel = effortDisplayLabel(reasoningEffort);
+  const ultracodeRequested = ultracode && currentProviderInfo?.id === "claude" && efforts.includes("xhigh");
+  const effortUnavailable = currentProviderInfo?.available === false || ultracodeRequested;
+  const effortLabel = ultracodeRequested ? "Ultracode requested (xhigh)" : effortDisplayLabel(reasoningEffort);
   const fastAvailable = Boolean(
     onSetFast &&
       currentProviderInfo?.available !== false &&
       currentProviderInfo?.modelInfo?.find((m) => m.id === model)?.fast,
   );
   const fastOn = fast && fastAvailable;
+  const ultracodeAvailable = Boolean(onSetUltracode && currentProviderInfo?.id === "claude" && (currentProviderInfo.supportsUltracode === true || ultracode) && currentProviderInfo.available !== false && currentProviderInfo.modelInfo?.find((m) => m.id === model)?.efforts?.includes("xhigh"));
   const honouredModes = providerPermissionModes(currentProviderInfo);
   const currentModeHonoured = permissionModeHonoured(
     permissionMode,
@@ -2122,7 +2128,7 @@ export const Composer = memo(function Composer({
     nextProviderId: string,
     nextModel: string | null,
   ) => {
-    if (reasoningEffort != null) return;
+    if (reasoningEffort != null || ultracodeRequested) return;
     const want = getLastReasoningEffort();
     if (want == null) return;
     const currentList = effortsForModel(currentProviderInfo, model);
@@ -3024,21 +3030,27 @@ export const Composer = memo(function Composer({
                         aria-label="Effort"
                         data-picker-effort=""
                       >
-                        <span className={styles.pickerEffortLabel}>Effort</span>
+                        <span className={styles.pickerEffortLabel}>{ultracode && ultracodeAvailable ? "Ultracode requested: xhigh" : "Effort"}</span>
                         {effortOptions(efforts).map((level) => (
                           <button
                             key={level ?? "auto"}
                             type="button"
                             className={styles.effortChip}
-                            aria-pressed={level === reasoningEffort}
+                            aria-pressed={level === (ultracode && ultracodeAvailable ? "xhigh" : reasoningEffort)}
                             data-effort-chip={level ?? "auto"}
-                            disabled={effortUnavailable}
+                            disabled={effortUnavailable || (ultracode && ultracodeAvailable)}
                             title={effortHint(level) ?? undefined}
                             onClick={() => void pickEffort(level)}
                           >
                             {effortDisplayLabel(level)}
                           </button>
                         ))}
+                      </div>
+                    ) : null}
+                    {ultracodeAvailable ? (
+                      <div className={styles.pickerEffort} role="group" aria-label="Ultracode">
+                        <span className={styles.pickerEffortLabel}>Workflow</span>
+                        <button type="button" className={styles.effortChip} aria-pressed={ultracode} disabled={locked} title="Requests xhigh effort with dynamic workflows; CLI support is verified at launch. Requires workflows enabled in Claude. Turning off restores your selected effort." onClick={() => void onSetUltracode?.(!ultracode)}>Ultracode</button>
                       </div>
                     ) : null}
                     {fastAvailable ? (

@@ -128,7 +128,6 @@ describe("reasoning effort: provider modelInfo + efforts", () => {
       "high",
       "xhigh",
       "max",
-      "ultracode",
     ]);
     assert.deepEqual(byId.codex.efforts, [
       "low",
@@ -152,7 +151,7 @@ describe("reasoning effort: provider modelInfo + efforts", () => {
     const haiku = byId.claude.modelInfo.find((m) => m.id === "claude-haiku-4-5");
     assert.deepEqual(haiku.efforts, []);
     const opus = byId.claude.modelInfo.find((m) => m.id === "claude-opus-5");
-    assert.ok(opus.efforts.includes("ultracode"));
+    assert.ok(!opus.efforts.includes("ultracode"));
     const grok45 = byId.grok.modelInfo.find((m) => m.id === "grok-4.5");
     assert.deepEqual(grok45.efforts, ["low", "medium", "high"]);
     const astra = byId.codex.modelInfo.find((m) => m.id === "gpt-6-astra");
@@ -177,7 +176,7 @@ describe("reasoning effort: provider modelInfo + efforts", () => {
     assert.deepEqual(honouredEfforts(claude, null), claude.efforts);
     assert.deepEqual(honouredEfforts(claude, "claude-haiku-4-5"), []);
     assert.ok(
-      honouredEfforts(claude, "claude-opus-5").includes("ultracode"),
+      !honouredEfforts(claude, "claude-opus-5").includes("ultracode"),
     );
     assert.deepEqual(
       honouredEfforts(claude, "custom-not-in-catalog"),
@@ -442,11 +441,14 @@ describe("reasoning effort: buildArgs per provider", () => {
     const opus = entry.buildArgs({
       permissionMode: "default",
       model: "claude-opus-5",
-      reasoningEffort: "ultracode",
+      reasoningEffort: "low",
+      ultracode: true,
+      cliSupportsUltracode: true,
     });
     const fi = opus.indexOf("--effort");
     assert.ok(fi >= 0, JSON.stringify(opus));
-    assert.equal(opus[fi + 1], "ultracode");
+    assert.equal(opus[fi + 1], "xhigh");
+    assert.equal(JSON.parse(opus[opus.indexOf("--settings") + 1]).ultracode, true);
 
     const haiku = entry.buildArgs({
       permissionMode: "default",
@@ -902,11 +904,8 @@ describe("reasoning effort: setReasoningEffort service", () => {
       provider: "claude",
       model: "claude-opus-5",
     });
-    services.setReasoningEffort(store, {
-      threadId: thread.id,
-      effort: "ultracode",
-    });
-    assert.equal(store.getThread(thread.id).reasoningEffort, "ultracode");
+    services.setUltracode(store, { threadId: thread.id, ultracode: true });
+    assert.equal(store.getThread(thread.id).ultracode, true);
     services.setProvider(store, {
       threadId: thread.id,
       provider: "claude",
@@ -1073,7 +1072,7 @@ describe("reasoning effort: IPC seam + runner wiring", () => {
     }
   });
 
-  it("runner passes thread.reasoningEffort into claude buildArgs (argv evidence)", async () => {
+  it("runner passes independent Ultracode into claude launch and restores effort on next launch", { skip: process.platform === "win32" }, async () => {
     // The claude-stream call site serves claude AND grok, and claude answers a
     // missing or unknown effort with a warning and its default. So this is the
     // path where losing the argument is invisible, and it had no coverage.
@@ -1084,6 +1083,7 @@ describe("reasoning effort: IPC seam + runner wiring", () => {
       `#!/usr/bin/env node
 "use strict";
 const fs = require("fs");
+if (process.argv.includes("--version")) { console.log("2.1.219 (Claude Code)"); process.exit(0); }
 if (process.env.CODER_FAKE_CLAUDE_ARGV_FILE) {
   fs.writeFileSync(
     process.env.CODER_FAKE_CLAUDE_ARGV_FILE,
@@ -1129,12 +1129,13 @@ emit({
         projectId: project.id,
         title: "Effort Run Claude",
       });
-      services.setProvider(store, { threadId: thread.id, provider: "claude" });
+      services.setProvider(store, { threadId: thread.id, provider: "claude", model: "claude-opus-5" });
       services.setReasoningEffort(store, {
         threadId: thread.id,
-        effort: "xhigh",
+        effort: "low",
       });
 
+      services.setUltracode(store, { threadId: thread.id, ultracode: true });
       const prompt = "PROMPT_RUNNER_EFFORT_CLAUDE_r30";
       await runner.startRun({ threadId: thread.id, prompt });
       await waitFor(() => store.getThread(thread.id).status === "done");
@@ -1148,6 +1149,14 @@ emit({
         "xhigh",
         `--effort must carry the level, got ${JSON.stringify(argv)}`,
       );
+      assert.equal(JSON.parse(argv[argv.indexOf("--settings") + 1]).ultracode, true);
+      assert.equal(store.getThread(thread.id).reasoningEffort, "low");
+      services.setUltracode(store, { threadId: thread.id, ultracode: false });
+      await runner.startRun({ threadId: thread.id, prompt: "mode off" });
+      await waitFor(() => store.getThread(thread.id).status === "done");
+      const offArgv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
+      assert.equal(offArgv[offArgv.indexOf("--effort") + 1], "low");
+      assert.ok(!offArgv.includes("--settings"));
       assert.ok(
         !argv.includes(prompt),
         `claude prompt travels over stdin, not argv: ${JSON.stringify(argv)}`,

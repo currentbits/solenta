@@ -438,6 +438,7 @@ export interface UseCoderResult {
     projectPath?: string | null;
   }) => Promise<CliAgentInfo[]>;
   setFast: (fast: boolean, threadId?: string) => Promise<void>;
+  setUltracode: (ultracode: boolean, threadId?: string) => Promise<void>;
   /** Plan-mode model (#1716); null = plan on the thread's model. */
   setPlanModel: (model: string | null, threadId?: string) => Promise<void>;
   /** Pending first-turn model route (#246); null = manual pick. */
@@ -1908,6 +1909,7 @@ export function useCoder(): UseCoderResult {
     setAgent,
     listAgents,
     setFast,
+    setUltracode,
     setPlanModel,
     setRoute,
     setArchived,
@@ -2525,6 +2527,7 @@ export function useCoder(): UseCoderResult {
     setAgent,
     listAgents,
     setFast,
+    setUltracode,
     setPlanModel,
     setRoute,
     setArchived,

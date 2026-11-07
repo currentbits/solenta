@@ -10,8 +10,8 @@ const { posixQuote } = require("./ssh.js");
  * Data-driven provider registry for agent CLIs.
  *
  * Effort support (verified against installed CLIs / contract correction):
- * - claude: `--effort <level>` low|medium|high|xhigh|max, plus session-only
- *   `ultracode` (2.1.203+: no unknown-value warning on 2.1.219). Unknown
+ * - claude: `--effort <level>` low|medium|high|xhigh|max. Ultracode is a
+ *   separate session setting, always running at xhigh (2.1.219). Unknown
  *   values are a silent warning + default, so our boundary must reject.
  *   Haiku 4.5 is not effort-capable (empty per-model list).
  * - grok: `--reasoning-effort` (alias `--effort`) errors on unknown; live CLI
@@ -132,7 +132,7 @@ function maybeEmitEffort(allowed, reasoningEffort, emit) {
   emit(level);
 }
 
-const CLAUDE_EFFORTS = ["low", "medium", "high", "xhigh", "max", "ultracode"];
+const CLAUDE_EFFORTS = ["low", "medium", "high", "xhigh", "max"];
 const CODEX_EFFORTS = ["low", "medium", "high", "xhigh", "max", "ultra"];
 /** Astra, Sol, Terra: full ladder including ultra (parallel subagents). */
 const CODEX_SOL_TERRA_EFFORTS = [
@@ -189,6 +189,44 @@ function codexModelAcceptsImages(modelId) {
     return info.inputModalities.includes("image");
   }
   return id !== "gpt-5.3-codex-spark";
+}
+
+const ultracodeVersionCache = new Map();
+/** Probe once per binary revision; unknown/older CLIs stay off. No agent session. */
+function cliSupportsUltracode(binary, env = process.env) {
+  try {
+    const resolved = defaultWhich(binary, env);
+    if (!resolved) return false;
+    const stat = fs.statSync(resolved);
+    const key = `${resolved}:${stat.mtimeMs}:${stat.size}`;
+    if (!ultracodeVersionCache.has(key)) {
+      const output = execFileSync(resolved, ["--version"], { encoding: "utf8", timeout: 2000, env, stdio: ["ignore", "pipe", "ignore"] });
+      const version = output.match(/(\d+\.\d+\.\d+)/)?.[1];
+      ultracodeVersionCache.set(key, Boolean(version && !catalogDivergence.versionBelow(version, "2.1.219")));
+    }
+    return ultracodeVersionCache.get(key);
+  } catch { return false; }
+}
+
+const remoteUltracodeVersionCache = new Map();
+/** Read-only version discovery through the same SSH/WSL wrapper as launches. */
+async function remoteCliSupportsUltracode(project, binary, envExtra) {
+  // Only PATH changes binary resolution; do not forward credentials for discovery.
+  const env = envExtra?.PATH ? { PATH: envExtra.PATH } : undefined;
+  const key = JSON.stringify([project.remoteHost, project.remotePath, project.path, binary, env]);
+  const hit = remoteUltracodeVersionCache.get(key);
+  if (hit && Date.now() - hit.at < 300000) return hit.value;
+  const command = require("./ssh.js").wrapCommand(project, binary, ["--version"], undefined, env);
+  const value = new Promise((resolve, reject) => execFile(command.bin, command.args, { encoding: "utf8", timeout: 5000 }, (err, stdout) => err ? reject(err) : resolve(stdout))).then((output) => {
+    const version = String(output).match(/(\d+\.\d+\.\d+)/)?.[1];
+    return Boolean(version && !catalogDivergence.versionBelow(version, "2.1.219"));
+  }).catch(() => false);
+  remoteUltracodeVersionCache.set(key, { at: Date.now(), value });
+  return value;
+}
+
+function modelSupportsUltracode(entry, modelId) {
+  return entry?.id === "claude" && Boolean((entry.modelInfo || []).find((m) => m.id === modelId)?.efforts?.includes("xhigh"));
 }
 
 /**
@@ -389,8 +427,8 @@ const PROVIDERS = [
         efforts: [],
       },
     ],
-    // claude --help lists low..max; 2.1.219 also accepts ultracode (no
-    // unknown-value warning). Haiku 4.5 is not effort-capable; Haiku 5.5 is.
+    // Normal effort levels; Ultracode is a separate session setting.
+    // Haiku 4.5 is not effort-capable; Haiku 5.5 is.
     efforts: CLAUDE_EFFORTS.slice(),
     supportsAgents: true,
     supportsPlanModel: true,
@@ -401,6 +439,8 @@ const PROVIDERS = [
       permissionMode,
       model,
       reasoningEffort,
+      ultracode,
+      cliSupportsUltracode: ultracodeCli = false,
       fast,
       agent,
       forkSessionAt,
@@ -452,7 +492,7 @@ const PROVIDERS = [
       // swallow them (variadic flags have bitten this project twice).
       maybeEmitEffort(
         honouredEfforts(getProvider("claude"), model),
-        reasoningEffort,
+        ultracode === true && ultracodeCli && modelSupportsUltracode(getProvider("claude"), model) ? "xhigh" : reasoningEffort,
         (level) => {
           args.push("--effort", level);
         },
@@ -464,6 +504,8 @@ const PROVIDERS = [
       }
       /** @type {Record<string, unknown>} */
       const settings = {};
+      // Claude 2.1.219 session settings schema: this mode always runs at xhigh.
+      if (ultracode === true && ultracodeCli && modelSupportsUltracode(getProvider("claude"), model)) settings.ultracode = true;
       // 2.1.283: init reports fast_mode_state; without this it is off with
       // sdk_opt_in_required. Account limits can still refuse (runner notes it).
       if (fast === true && modelSupportsFast(getProvider("claude"), model)) {
@@ -2124,6 +2166,7 @@ function listProviders(opts = {}) {
       supportsSearch: entry.supportsSearch === true,
       supportsSteer: entry.supportsSteer === true,
       supportsAgents: entry.supportsAgents === true,
+      ...(entry.id === "claude" ? { supportsUltracode: isBinAvailable(bin, whichFn, env) && cliSupportsUltracode(bin, env) } : {}),
       ...(entry.supportsPlanModel ? { supportsPlanModel: true } : {}),
       permissionModes: honouredPermissionModes(entry),
     };
@@ -2179,6 +2222,9 @@ module.exports = {
   listProviders,
   honouredEfforts,
   modelSupportsFast,
+  modelSupportsUltracode,
+  cliSupportsUltracode,
+  remoteCliSupportsUltracode,
   codexModelAcceptsImages,
   probeCatalogCli,
   catalogCliProbeStarted,
