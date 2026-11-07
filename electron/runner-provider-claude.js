@@ -1619,10 +1619,11 @@ function createClaudeRun(ctx) {
           keepAlive: true,
           envExtra: spawnEnv,
           // Summary ignores this override. Do not turn a known wrong estimate
-          // into the meter's denominator. Remote settings remain CLI-owned.
+          // into the meter's denominator. Explicit overlays cross SSH/WSL;
+          // the parent process environment does not.
           contextSummaryAllowed: !extraArgv.some((arg) => arg.includes("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE")) &&
-            (crossesBoundary(project) || !(spawnEnv?.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE ??
-              process.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE)),
+            !(spawnEnv?.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE ??
+              (!crossesBoundary(project) && process.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE)),
           onEvent: (ev) => sess.dispatch.onEvent(ev),
           onExit: (info) => {
             // Process death always retires the session, whatever turn (if
