@@ -504,6 +504,18 @@ function createClaudeRun(ctx) {
     // provider's overlay row. Joins the reuse key below too: changing it
     // mid-thread must respawn a warm interactive process.
     const extraArgv = threadExtraArgv(store.getSettings(), thread);
+    if (thread.ultracode === true && entryDef.id === "claude" && !require("./providers.js").modelSupportsUltracode(entryDef, thread.model)) {
+      throw new Error("Ultracode requires an xhigh-capable Claude model for this turn. Pick a supported model or turn Ultracode off.");
+    }
+    const versionEnv = thread.ultracode === true ? withProjectEnv(project, threadInstanceEnv(store.getSettings(), thread, { local: !crossesBoundary(project), userDataPath })) : undefined;
+    const ultracodeCli = thread.ultracode === true && entryDef.id === "claude"
+      ? (crossesBoundary(project)
+        ? await require("./providers.js").remoteCliSupportsUltracode(project, binary, versionEnv)
+        : require("./providers.js").cliSupportsUltracode(binary, { ...process.env, ...versionEnv }))
+      : false;
+    if (thread.ultracode === true && entryDef.id === "claude" && !ultracodeCli) {
+      throw new Error("Ultracode requires Claude Code 2.1.219 or newer. Could not verify support on this host. Update the CLI or turn Ultracode off.");
+    }
     const args = entryDef.buildArgs({
       prompt,
       sessionId: thread.sessionId || null,
@@ -513,6 +525,8 @@ function createClaudeRun(ctx) {
       webSearch: thread.webSearch === true,
       agent: thread.agent || null,
       fast: thread.fast === true,
+      ultracode: thread.ultracode === true,
+      cliSupportsUltracode: ultracodeCli,
       forkSessionAt: thread.forkSessionAt || null,
       addDirs: extraDirs,
       askWriteDirs,
@@ -1572,6 +1586,7 @@ function createClaudeRun(ctx) {
       reasoningEffort: thread.reasoningEffort || null,
       // --settings fastMode is argv: toggling Fast must respawn (#1529).
       fast: thread.fast === true,
+      ultracode: thread.ultracode === true,
       // --add-dir / ask rules are argv: a folder change or grant respawns.
       dirs: [extraDirs, askWriteDirs, askReads],
       // Extra launch arguments (#1780) are argv: an edit must respawn.

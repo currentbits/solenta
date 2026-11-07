@@ -191,6 +191,8 @@ export interface ProjectInfo {
    * setup (#396). Absent = reuse it when the lockfile matches (macOS).
    */
   setupCacheOff?: boolean;
+  /** Opt in to stop managed dev servers and quick actions when their thread settles. */
+  stopOnSettle?: boolean;
   /** Worktree branch prefix (#1506). Absent = "coder/". */
   branchPrefix?: string;
   /** Defaults for new threads in this project (#1501). Absent = global defaults. */
@@ -239,6 +241,7 @@ export interface ProjectThreadDefaults {
   /** Model id for `provider`; absent = provider default. */
   model?: string;
   reasoningEffort?: ReasoningEffort;
+  ultracode?: boolean;
   permissionMode?: PermissionMode;
   /**
    * When true, the defaults follow the last pick the user made on a new
@@ -249,6 +252,7 @@ export interface ProjectThreadDefaults {
 
 /** One named per-project shell command (issue #153). */
 export interface ProjectQuickAction {
+  stopOnSettle?: boolean;
   id: string;
   name: string;
   command: string;
@@ -272,6 +276,7 @@ export interface ProjectRepoConfig {
    * or its PR merging/closing. Also runnable as actionId "onSettle".
    */
   onSettleCommand?: string;
+  devServerStopOnSettle?: boolean;
   /**
    * Where setupCommand came from when not solenta.json: "solenta.local.json"
    * (#438) or the repo's env spec (#396), e.g. ".devcontainer/devcontainer.json".
@@ -566,6 +571,7 @@ export interface ProjectUpdateInput {
   waitForSetup?: boolean | null;
   /** #396. false / null clears it. */
   setupCacheOff?: boolean | null;
+  stopOnSettle?: boolean | null;
   /** #1506. Empty / null restores "coder/"; an invalid prefix rejects. */
   branchPrefix?: string | null;
   /** New-thread defaults (#1501). Replaces the whole object; null clears. */
@@ -1154,6 +1160,9 @@ export interface ThreadInfo {
   model: string | null;
   /** Provider session id, persisted after the first turn so follow-ups resume context. */
   sessionId: string | null;
+  /** Last fresh-context divider; earlier visible history is excluded from provider context. */
+  contextBoundaryId?: string | null;
+  freshContextPending?: boolean;
   /**
    * One-shot context replay (issue #254). Set by `threads.rewind`, which
    * clears sessionId because a CLI session cannot be rewound: the next turn
@@ -1198,6 +1207,8 @@ export interface ThreadInfo {
    * lists `fast`; absent on older store rows.
    */
   fast?: boolean;
+  /** Session mode: xhigh effort plus dynamic workflows on supported Claude models. */
+  ultracode?: boolean;
   /**
    * Agent-facing browser access (issue #1797). Default true (absent on
    * older store rows reads as on). `false` turns off the Browser pane's
@@ -1738,6 +1749,8 @@ export interface AttachmentInfo {
 export type CrossThreadInbound = "accept" | "queue-only" | "refuse";
 
 export interface ChatMessage {
+  /** Persistent divider marking a new provider conversation. */
+  sessionBoundary?: boolean;
   id: string;
   role: "user" | "assistant" | "event" | "tool";
   /** For role "tool" this is a one-line summary, e.g. "Bash: npm test". */
@@ -3431,7 +3444,7 @@ export type DiscussionDetailForMentionResult =
  *
  * These are the levels the installed CLIs actually accept, verified against
  * them rather than copied from a design: `claude --effort` takes low, medium,
- * high, xhigh, max, plus the session-only `ultracode` token; Codex coding
+ * high, xhigh, max. Ultracode is a separate session mode; Codex coding
  * clients add `ultra` (parallel subagents) above `max`; grok takes low,
  * medium, high, xhigh. A provider advertises its own subset through
  * ProviderInfo.efforts, and a model may narrow that further via
@@ -3665,6 +3678,8 @@ export interface ProviderInfo {
    * The composer hides the Agent picker when this is missing or false.
    */
   supportsAgents?: boolean;
+  /** Installed Claude CLI supports the session setting (2.1.219+). */
+  supportsUltracode?: boolean;
   /**
    * True when plan-mode turns can run on a separate plan model and the same
    * session resumes on the act model afterwards (#1716: claude, codex).
@@ -4554,6 +4569,7 @@ export interface AgentProfile {
   model: string | null;
   /** null = provider default (no --effort flag). */
   reasoningEffort: ReasoningEffort | null;
+  ultracode?: boolean;
   /** Plan-mode model (#1716); absent = plan on `model`. */
   planModel?: string | null;
   /** Plan-mode effort; absent/null keeps `reasoningEffort`. */
@@ -6286,6 +6302,8 @@ export interface CoderApi {
      * event message) arrives via thread:updated.
      */
     restartAgentSession(input: { threadId: string }): Promise<void>;
+    /** New provider conversation in this thread; retains transcript, worktree and historical spend. */
+    freshAgentContext(input: { threadId: string }): Promise<void>;
     /**
      * "Save plan to file" (#1501): write plan markdown to
      * docs/plans/<date>-<slug>.md in the thread's checkout. Never
@@ -6738,6 +6756,7 @@ export interface CoderApi {
      * model of the thread's provider has a fast tier.
      */
     setFast(input: { threadId: string; fast: boolean }): Promise<ThreadInfo>;
+    setUltracode(input: { threadId: string; ultracode: boolean }): Promise<ThreadInfo>;
     /**
      * Plan-mode model + effort (#1716). Plan-mode turns run on it; leaving
      * plan mode resumes the same session on `model`. null clears both.

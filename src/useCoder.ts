@@ -397,6 +397,7 @@ export interface UseCoderResult {
    * while a run is active.
    */
   restartAgentSession: () => Promise<void>;
+  freshAgentContext: () => Promise<void>;
   /** Write plan markdown into the thread's checkout; resolves the path (#1501). */
   savePlan: (plan: string, threadId?: string) => Promise<string>;
   /** Dismiss the selected thread's persisted question card (issue #647). */
@@ -438,6 +439,7 @@ export interface UseCoderResult {
     projectPath?: string | null;
   }) => Promise<CliAgentInfo[]>;
   setFast: (fast: boolean, threadId?: string) => Promise<void>;
+  setUltracode: (ultracode: boolean, threadId?: string) => Promise<void>;
   /** Plan-mode model (#1716); null = plan on the thread's model. */
   setPlanModel: (model: string | null, threadId?: string) => Promise<void>;
   /** Pending first-turn model route (#246); null = manual pick. */
@@ -1899,6 +1901,7 @@ export function useCoder(): UseCoderResult {
     respondPermission,
     redirectPermission,
     restartAgentSession,
+    freshAgentContext,
     clearQuestion,
     answerSecret,
     setProvider,
@@ -1908,6 +1911,7 @@ export function useCoder(): UseCoderResult {
     setAgent,
     listAgents,
     setFast,
+    setUltracode,
     setPlanModel,
     setRoute,
     setArchived,
@@ -2516,6 +2520,7 @@ export function useCoder(): UseCoderResult {
     respondPermission,
     redirectPermission,
     restartAgentSession,
+    freshAgentContext,
     clearQuestion,
     answerSecret,
     setProvider,
@@ -2525,6 +2530,7 @@ export function useCoder(): UseCoderResult {
     setAgent,
     listAgents,
     setFast,
+    setUltracode,
     setPlanModel,
     setRoute,
     setArchived,

@@ -2879,6 +2879,26 @@ describe("runner claude provider", () => {
     assert.equal(argv[resumeAt + 1], "sess-multi");
   });
 
+  it("Fresh agent context disposes the warm process and starts without resume (#1873)", async () => {
+    process.env.CODER_FAKE_CLAUDE_SCENARIO = "multi-turn";
+    const markerDir = path.join(tmpDir, "fresh-context-markers");
+    process.env.CODER_FAKE_CLAUDE_MARKER_DIR = markerDir;
+    const thread = store.getThreads()[0];
+    await runner.startRun({ threadId: thread.id, prompt: "old conversation" });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+    assert.equal(store.getThread(thread.id).sessionId, "sess-multi");
+    runner.freshAgentContext({ threadId: thread.id });
+    assert.equal(store.getThread(thread.id).sessionId, null);
+    const boundary = store.getThread(thread.id).contextBoundaryId;
+    await runner.startRun({ threadId: thread.id, prompt: "new conversation" });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+    assert.equal(fs.readFileSync(path.join(markerDir, "spawns"), "utf8").trim().split("\n").length, 2);
+    assert.ok(!JSON.parse(fs.readFileSync(argvFile, "utf8")).includes("--resume"));
+    assert.equal(store.getThread(thread.id).contextBoundaryId, boundary);
+    assert.ok(store.getMessages(thread.id).some(m => m.text === "old conversation"));
+    assert.ok(store.getContextMessages(thread.id).every(m => m.text !== "old conversation"));
+  });
+
   describe("background subagents pin their idle CLI (#1443)", () => {
     const keys = [
       "CODER_FAKE_CLAUDE_RELEASE_FILE",

@@ -490,6 +490,7 @@ interface ThreadViewProps {
   onApplyAgentProfile: (profileId: string, threadId?: string) => void | Promise<void>;
   onSetWebSearch?: (webSearch: boolean, threadId?: string) => void | Promise<void>;
   onSetFast?: (fast: boolean, threadId?: string) => void | Promise<void>;
+  onSetUltracode?: (ultracode: boolean, threadId?: string) => void | Promise<void>;
   onSetPlanModel?: (model: string | null, threadId?: string) => void | Promise<void>;
   onSetRoute?: (route: ModelRoute | null, threadId?: string) => void | Promise<void>;
   /** Run the thread as a CLI custom agent (#172); null = CLI default. */
@@ -966,6 +967,7 @@ export const ThreadView = memo(function ThreadView({
   onApplyAgentProfile,
   onSetWebSearch,
   onSetFast,
+  onSetUltracode,
   onSetPlanModel,
   onSetRoute,
   onSetAgent,
@@ -5877,6 +5879,7 @@ export const ThreadView = memo(function ThreadView({
         reasoningEffort={thread.reasoningEffort}
         webSearch={thread.webSearch === true}
         fast={thread.fast === true}
+        ultracode={thread.ultracode === true}
         route={thread.route ?? null}
         agent={thread.agent ?? null}
         agents={cliAgents}
@@ -5891,6 +5894,7 @@ export const ThreadView = memo(function ThreadView({
         onApplyAgentProfile={onApplyAgentProfile}
         onSetWebSearch={onSetWebSearch}
         onSetFast={onSetFast}
+        onSetUltracode={onSetUltracode}
         planModel={thread.planModel ?? null}
         onSetPlanModel={onSetPlanModel}
         onSetRoute={onSetRoute}

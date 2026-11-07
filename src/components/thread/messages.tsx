@@ -2020,6 +2020,10 @@ export const MessageBlock = memo(function MessageBlock({
     );
   }
 
+  if (message.sessionBoundary) {
+    return <section className={styles.sessionBoundary} role="separator" aria-label="Fresh agent context">{message.text}</section>;
+  }
+
   if (message.role === "event") {
     // Quiet one-line step (#1429). Only the subagent kickoff folds its
     // phase list behind Show; any other notice body (failures, "Not

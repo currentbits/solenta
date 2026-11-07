@@ -837,3 +837,24 @@ describe("project env (#188)", () => {
     m.unmount();
   });
 });
+
+
+describe("managed process stop-on-settle policy", () => {
+  it("preserves missing/inherited policy on unrelated Save and persists an explicit false", async () => {
+    for (const inherited of [undefined, true]) {
+      const calls: ProjectUpdateInput[] = [];
+      const p = project({ id: "stop-policy", ...(inherited ? { repoConfig: { trusted: true, devServerStopOnSettle: true } } : {}) });
+      const m = await mount(<EditProjectModal project={p} onClose={() => {}} onSubmit={async (input) => { calls.push(input); return input; }} />);
+      const toggle = m.query("[data-edit-project-stop-on-settle]") as HTMLInputElement;
+      assert.equal(toggle.checked, inherited === true);
+      await m.click(m.query("[data-edit-project-submit]")); await m.flush();
+      assert.equal(Object.hasOwn(calls[0]!, "stopOnSettle"), false);
+      if (inherited) {
+        await m.click(toggle);
+        await m.click(m.query("[data-edit-project-submit]")); await m.flush();
+        assert.equal(calls[1]!.stopOnSettle, false);
+      }
+      m.unmount();
+    }
+  });
+});

@@ -162,8 +162,9 @@ module.exports = {
         lane: n,
       });
     }
-    return devservers.start(threadId, startRoot, script, {
+    const state = devservers.start(threadId, startRoot, script, {
       project,
+      onExit: () => require("./projectCommands.js").stopManagedWatcherIfIdle(ctx.store),
       env: spawnEnvForDevServer({
         project,
         thread,
@@ -171,11 +172,15 @@ module.exports = {
         extra: spotlightOn ? spotlightEnv(portBase) : laneEnvExtra(thread),
       }),
     });
+    require("./projectCommands.js").watchManagedOnSettle(ctx.store);
+    return state;
   },
   "devserver:stop": async (ctx, input) => {
     const threadId = input && input.threadId;
     resolveDevServerRoot(ctx, threadId);
-    return devservers.stop(threadId);
+    const state = devservers.stop(threadId);
+    require("./projectCommands.js").stopManagedWatcherIfIdle(ctx.store);
+    return state;
   },
   "devserver:status": async (ctx, input) => {
     const threadId = input && input.threadId;

@@ -663,6 +663,82 @@ describe("runner codex provider", () => {
     assert.match(turnPrompt(rpc), /codex please/);
   });
 
+  it("fresh context starts a new app-server thread and resumes only its new identity (#1873)", async () => {
+    process.env.CODER_FAKE_CODEX_SCENARIO = "success";
+    const thread = store.getThreads()[0];
+    store.setMessages(thread.id, [{ id: "old-user", role: "user", text: "OLD PROVIDER HISTORY", createdAt: 1 },
+      { id: "old-agent", role: "assistant", text: "OLD AGENT ANSWER", createdAt: 2 }]);
+    store.updateThread(thread.id, { sessionId: "old-rollout", replayContext: true });
+    store.setUsage(thread.id, { model: null, inputTokens: 100, outputTokens: 20, costUsd: 4, turns: 2, contextTokens: 5000 });
+    runner.freshAgentContext({ threadId: thread.id });
+    await runner.startRun({ threadId: thread.id, prompt: "new request" });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+    const rpc = readRpc(rpcFile);
+    assert.ok(rpc.some(m => m.method === "thread/start"));
+    assert.ok(!rpc.some(m => m.method === "thread/resume"));
+    assert.doesNotMatch(turnPrompt(rpc), /OLD PROVIDER HISTORY|OLD AGENT ANSWER/);
+    assert.equal(store.getThread(thread.id).sessionId, "codex-sess-001");
+    assert.equal(store.getUsage(thread.id).inputTokens, 130);
+    assert.equal(store.getUsage(thread.id).outputTokens, 32);
+    assert.equal(store.getUsage(thread.id).costUsd, 4);
+    store.saveNow();
+    assert.equal(new Store(path.join(tmpDir, "store.json")).getThread(thread.id).sessionId, "codex-sess-001");
+    fs.unlinkSync(rpcFile);
+    await runner.startRun({ threadId: thread.id, prompt: "continue new request" });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+    assert.equal(readRpc(rpcFile).find(m => m.method === "thread/resume").params.threadId, "codex-sess-001");
+  });
+
+  it("bills cumulative snapshots after fresh context and resume against adjusted thread totals", async () => {
+    const thread = store.getThreads()[0];
+    store.setUsage(thread.id, { model: null, inputTokens: 100, outputTokens: 20, costUsd: 4, turns: 2 });
+    store.recordUsage({ provider: "codex", inputTokens: 100, outputTokens: 20, costUsd: 4, threadId: thread.id });
+    store.recordSpend(4);
+    let dispatch;
+    const makeRunner = () => createRunner({ store, core, pushFn() {},
+      runCodexFn(opts) { dispatch = opts; return { kill() {} }; },
+    });
+    runner.stopAll();
+    runner = makeRunner();
+    runner.freshAgentContext({ threadId: thread.id });
+    const snapshot = (inputTokens, outputTokens) => dispatch.onEvent({ type: "token_count",
+      info: { total_token_usage: { input_tokens: inputTokens, output_tokens: outputTokens } } });
+    const checkTokens = (inputTokens, outputTokens) => {
+      assert.equal(store.getUsage(thread.id).inputTokens, inputTokens);
+      assert.equal(store.getUsage(thread.id).outputTokens, outputTokens);
+      const daily = Object.values(store.data.usageByDay)[0].codex.unknown;
+      const perThread = Object.values(store.data.usageThreadsByDay)[0][thread.id];
+      assert.equal(daily.inputTokens, inputTokens);
+      assert.equal(daily.outputTokens, outputTokens);
+      assert.equal(perThread.inputTokens, inputTokens);
+      assert.equal(perThread.outputTokens, outputTokens);
+    };
+    await runner.startRun({ threadId: thread.id, prompt: "fresh request" });
+    assert.equal(dispatch.sessionId, null);
+    dispatch.onEvent({ type: "thread.started", thread_id: "new-ledger-session" });
+    snapshot(30, 3);
+    checkTokens(130, 23);
+    snapshot(60, 6);
+    checkTokens(160, 26);
+    dispatch.onEvent({ type: "result", usage: { input_tokens: 0, output_tokens: 0, cost_usd: 2 } });
+    dispatch.onExit({ code: 0, stderr: "" });
+    assert.equal(store.getUsage(thread.id).costUsd, 6);
+    store.saveNow();
+    runner.stopAll();
+    store = new Store(path.join(tmpDir, "store.json"));
+    runner = makeRunner();
+    await runner.startRun({ threadId: thread.id, prompt: "continue fresh request" });
+    assert.equal(dispatch.sessionId, "new-ledger-session");
+    snapshot(90, 9);
+    checkTokens(190, 29);
+    dispatch.onEvent({ type: "result", usage: { input_tokens: 0, output_tokens: 0, cost_usd: 1 } });
+    dispatch.onExit({ code: 0, stderr: "" });
+    assert.equal(store.getUsage(thread.id).costUsd, 7);
+    assert.equal(Object.values(store.data.usageByDay)[0].codex.unknown.costUsd, 7);
+    assert.equal(Object.values(store.data.usageThreadsByDay)[0][thread.id].costUsd, 7);
+    assert.equal(store.getSpendToday(), 7);
+  });
+
   it("keeps the root sessionId when a v2 sub-agent emits thread/started", async () => {
     process.env.CODER_FAKE_CODEX_SCENARIO = "child-spawn";
     const thread = store.getThreads()[0];
