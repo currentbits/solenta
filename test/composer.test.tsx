@@ -3914,16 +3914,19 @@ describe("Composer surrounds a selection with a bracket/quote/emphasis pair (#17
 
 describe("Composer Ultracode mode", () => {
   it("shows requested xhigh separately, disables base effort, and restores base effort when off", async () => {
+    for (const account of ["claude", "claude:work"]) {
     const h = makeHarness();
     const claude: ProviderInfo = {
       ...CLAUDE_WITH_INFO,
+      id: account,
+      ...(account !== "claude" ? { baseProvider: "claude" } : {}),
       supportsUltracode: true,
       efforts: ["low", "medium", "high", "xhigh", "max"],
       models: ["claude-opus-5"],
       modelInfo: [{ id: "claude-opus-5", label: "Opus", description: "", vendor: "Anthropic", efforts: ["low", "medium", "high", "xhigh", "max"] }],
     };
     const toggles: boolean[] = [];
-    const m = await mount(composer(h, { provider: "claude", model: "claude-opus-5", providers: [claude], reasoningEffort: "low", ultracode: true, onSetUltracode: (value) => { toggles.push(value); } }));
+    const m = await mount(composer(h, { provider: account, model: "claude-opus-5", providers: [claude], reasoningEffort: "low", ultracode: true, onSetUltracode: (value) => { toggles.push(value); } }));
     assert.ok(m.query('button[aria-label="Reasoning: Ultracode requested (xhigh)"]'));
     await m.click(m.query('button[aria-label^="Model:"]'));
     assert.equal((m.query('[data-effort-chip="low"]') as HTMLButtonElement).disabled, true);
@@ -3933,10 +3936,11 @@ describe("Composer Ultracode mode", () => {
     await m.click(toggle);
     assert.deepEqual(toggles, [false]);
     m.unmount();
-    const off = await mount(composer(h, { provider: "claude", model: "claude-opus-5", providers: [claude], reasoningEffort: "low", ultracode: false, onSetUltracode: () => {} }));
+    const off = await mount(composer(h, { provider: account, model: "claude-opus-5", providers: [claude], reasoningEffort: "low", ultracode: false, onSetUltracode: () => {} }));
     assert.ok(off.query('button[aria-label="Reasoning: Low"]'));
     await off.click(off.query('button[aria-label^="Model:"]'));
     assert.equal((off.query('[data-effort-chip="low"]') as HTMLButtonElement).disabled, false);
     off.unmount();
+    }
   });
 });

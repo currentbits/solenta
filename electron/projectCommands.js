@@ -121,8 +121,17 @@ function normalizeThreadDefaults(raw) {
     if (model) out.model = model;
   }
   const effort = str(r.reasoningEffort, 32);
-  if (effort) out.reasoningEffort = effort;
-  if (r.ultracode === true) out.ultracode = true;
+  if (effort === "ultracode") {
+    // Legacy project/last-used defaults stored the session mode as effort.
+    const { getProvider, modelSupportsUltracode } = require("./providers.js");
+    if (modelSupportsUltracode(getProvider(provider.split(":")[0]), out.model)) {
+      out.reasoningEffort = "xhigh";
+      out.ultracode = true;
+    }
+  } else {
+    if (effort) out.reasoningEffort = effort;
+    if (r.ultracode === true) out.ultracode = true;
+  }
   if (typeof r.permissionMode === "string" && PERMISSION_MODES.has(r.permissionMode)) {
     out.permissionMode = r.permissionMode;
   }

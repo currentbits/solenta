@@ -4397,3 +4397,31 @@ describe("SettingsModal agent profile auto-approve (#1721)", () => {
     m.unmount();
   });
 });
+
+describe("SettingsModal named Claude Ultracode profile", () => {
+  it("keeps the separate mode when an existing named-account profile is edited", async () => {
+    const provider: ProviderInfo = {
+      ...KIMI, id: "claude:work", baseProvider: "claude", name: "Claude work",
+      supportsUltracode: true,
+      models: ["claude-opus-5"],
+      modelInfo: [{ id: "claude-opus-5", label: "Opus", vendor: "Anthropic", description: "", efforts: ["low", "medium", "high", "xhigh", "max"] }],
+      efforts: ["low", "medium", "high", "xhigh", "max"],
+    };
+    const settings = {
+      dailyBudgetUsd: null, autoSettleAfterDays: 3,
+      agentProfiles: [{ id: "named", name: "Work", provider: "claude:work", model: "claude-opus-5", reasoningEffort: "low", ultracode: true, permissionMode: "default" }],
+    } as AppSettings;
+    const patches: Partial<AppSettings>[] = [];
+    const m = await mount(modal({ initialPane: "agents", providers: [provider], settings, onSaveSettings: async (patch) => { patches.push(patch); return { ...settings, ...patch }; } }));
+    await m.click(Array.from(m.queryAll("button")).find((b) => b.textContent?.trim() === "Edit")!);
+    const label = Array.from(m.queryAll("label")).find((el) => el.textContent?.includes("Ultracode"));
+    const mode = label?.querySelector('input[type="checkbox"]') as HTMLInputElement | undefined;
+    assert.ok(mode);
+    assert.equal(mode.checked, true);
+    await m.click(m.byText("Update"));
+    assert.equal(patches[0].agentProfiles?.[0]?.ultracode, true);
+    assert.equal(patches[0].agentProfiles?.[0]?.reasoningEffort, "low");
+    assert.equal(patches[0].agentProfiles?.[0]?.provider, "claude:work");
+    m.unmount();
+  });
+});

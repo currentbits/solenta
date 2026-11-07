@@ -1078,7 +1078,7 @@ export const Composer = memo(function Composer({
   // the highlighted picker row.
   const efforts = effortsForModel(currentProviderInfo, model);
   const reasoningVisible = showReasoningControl(efforts);
-  const ultracodeRequested = ultracode && currentProviderInfo?.id === "claude" && efforts.includes("xhigh");
+  const ultracodeRequested = ultracode && (currentProviderInfo?.baseProvider ?? currentProviderInfo?.id) === "claude" && efforts.includes("xhigh");
   const effortUnavailable = currentProviderInfo?.available === false || ultracodeRequested;
   const effortLabel = ultracodeRequested ? "Ultracode requested (xhigh)" : effortDisplayLabel(reasoningEffort);
   const fastAvailable = Boolean(
@@ -1087,7 +1087,7 @@ export const Composer = memo(function Composer({
       currentProviderInfo?.modelInfo?.find((m) => m.id === model)?.fast,
   );
   const fastOn = fast && fastAvailable;
-  const ultracodeAvailable = Boolean(onSetUltracode && currentProviderInfo?.id === "claude" && (currentProviderInfo.supportsUltracode === true || ultracode) && currentProviderInfo.available !== false && currentProviderInfo.modelInfo?.find((m) => m.id === model)?.efforts?.includes("xhigh"));
+  const ultracodeAvailable = Boolean(onSetUltracode && (currentProviderInfo?.baseProvider ?? currentProviderInfo?.id) === "claude" && (currentProviderInfo?.supportsUltracode === true || ultracode) && currentProviderInfo?.available !== false && currentProviderInfo?.modelInfo?.find((m) => m.id === model)?.efforts?.includes("xhigh"));
   const honouredModes = providerPermissionModes(currentProviderInfo);
   const currentModeHonoured = permissionModeHonoured(
     permissionMode,

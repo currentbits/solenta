@@ -221,7 +221,7 @@ export function AgentsPane({
       provider: draft.provider,
       model,
       reasoningEffort,
-      ultracode: draft.ultracode === true && selected?.id === "claude" && Boolean(selected.modelInfo.find((m) => m.id === model)?.efforts?.includes("xhigh")),
+      ultracode: draft.ultracode === true && (selected?.baseProvider ?? selected?.id) === "claude" && Boolean(selected?.modelInfo.find((m) => m.id === model)?.efforts?.includes("xhigh")),
       permissionMode: snapToHonouredPermissionMode(
         providerPermissionModes(selected),
         draft.permissionMode,
@@ -963,7 +963,7 @@ function ProfileForm({
           </select>
         </div>
       )}
-      {selected?.id === "claude" && selected.supportsUltracode === true && selected.modelInfo.find((m) => m.id === draft.model)?.efforts?.includes("xhigh") && (
+      {(selected?.baseProvider ?? selected?.id) === "claude" && selected?.supportsUltracode === true && selected?.modelInfo.find((m) => m.id === draft.model)?.efforts?.includes("xhigh") && (
         <label className={styles.field}><input type="checkbox" checked={draft.ultracode === true} disabled={saving} onChange={(e) => onChange({ ...draft, ultracode: e.target.checked })} /> Ultracode (xhigh effort plus dynamic workflows)</label>
       )}
       {selected?.supportsPlanModel && (
