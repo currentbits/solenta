@@ -260,6 +260,7 @@ describe("Store", () => {
       reasoningEffort: null,
       webSearch: false,
       fast: false,
+      ultracode: false,
       worktreePath: null,
       handoffFrom: null,
       feltEstimate: null,
