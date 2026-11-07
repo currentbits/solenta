@@ -227,6 +227,8 @@ async function probeOnce(probe, ctx) {
 /**
  * @typedef {{
  *   pid: number,
+ *   root?: string,
+ *   keepLog?: boolean,
  *   script: string,
  *   startedAt: number,
  *   url: string | null,
@@ -421,6 +423,7 @@ function killProcessGroup(pid, platform = process.platform) {
  *   env?: NodeJS.ProcessEnv,
  *   project?: { remoteHost?: string, remotePath?: string, path?: string } | null,
  *   probeIntervalMs?: number,
+ *   onExit?: () => void,
  * }} [opts]
  */
 function start(threadId, root, script, opts = {}) {
@@ -500,6 +503,7 @@ function start(threadId, root, script, opts = {}) {
   /** @type {DevServerRecord} */
   const rec = {
     pid,
+    root,
     script,
     startedAt: Date.now(),
     url: null,
@@ -526,6 +530,7 @@ function start(threadId, root, script, opts = {}) {
   child.on("exit", () => {
     const current = records.get(threadId);
     if (current === rec) markDead(rec);
+    if (opts.onExit) opts.onExit();
   });
   if (typeof child.unref === "function") child.unref();
 
@@ -553,10 +558,16 @@ function start(threadId, root, script, opts = {}) {
  *
  * @param {string} threadId
  */
-function stop(threadId) {
+function stop(threadId, opts = {}) {
   const rec = records.get(threadId);
   if (!rec) return { running: false };
-  if (rec.pid) killProcessGroup(rec.pid, rec.platform);
+  if (rec.pid && !rec.dead && isAlive(rec.pid)) killProcessGroup(rec.pid, rec.platform);
+  if (opts.preserveLog) {
+    if (!rec.dead) appendLog(rec, "\n[settle] stopped managed dev server\n");
+    markDead(rec);
+    rec.keepLog = true;
+    return toState(rec);
+  }
   records.delete(threadId);
   return { running: false };
 }
@@ -570,7 +581,7 @@ function status(threadId) {
   const rec = records.get(threadId);
   if (!rec) return { running: false };
   const state = toState(rec);
-  if (rec.dead && rec.deadAt && Date.now() - rec.deadAt > DEAD_TTL_MS) {
+  if (!rec.keepLog && rec.dead && rec.deadAt && Date.now() - rec.deadAt > DEAD_TTL_MS) {
     records.delete(threadId);
   }
   return state;
@@ -603,4 +614,5 @@ module.exports = {
   status,
   killAll,
   listLive,
+  rootFor: (threadId) => records.get(threadId)?.root,
 };

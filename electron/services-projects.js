@@ -495,6 +495,8 @@ function updateProject(store, projectId, patch) {
     delete next.waitForSetup;
   }
   // #396 setup cache opt-out; same false/null-deletes rule.
+  if (typeof input.stopOnSettle === "boolean") next.stopOnSettle = input.stopOnSettle;
+  else if (input.stopOnSettle === null) delete next.stopOnSettle;
   if (input.setupCacheOff === true) next.setupCacheOff = true;
   else if (input.setupCacheOff === false || input.setupCacheOff === null) {
     delete next.setupCacheOff;
@@ -543,6 +545,9 @@ function updateProject(store, projectId, patch) {
   projects[idx] = next;
   store.setProjects(projects);
   store.save();
+  if (Object.prototype.hasOwnProperty.call(input, "stopOnSettle") || Object.prototype.hasOwnProperty.call(input, "quickActions")) {
+    require("./projectCommands.js").watchManagedOnSettle(store);
+  }
   return presentProject(next);
 }
 

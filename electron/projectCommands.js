@@ -41,6 +41,8 @@ const SETUP_TIMEOUT_MS = 30 * 60_000;
 const inflight = new Map();
 /** Inflight promises that are a new worktree's setup, not a quick action. */
 const setupJobs = new WeakSet();
+// Only our managed quick actions, never provider tools or terminal shells.
+const runningActions = new Map();
 /** Thrown when a solenta.json command has not been approved (#1506). */
 const REPO_CONFIG_UNTRUSTED = "REPO_CONFIG_UNTRUSTED";
 const SUBMODULE_COMMAND = "git submodule update --init --recursive";
@@ -87,7 +89,7 @@ function normalizeQuickActions(raw) {
       id = randomUUID();
     }
     seen.add(id);
-    out.push({ id, name, command });
+    out.push({ id, name, command, ...(typeof row.stopOnSettle === "boolean" ? { stopOnSettle: row.stopOnSettle } : {}) });
     if (out.length >= QUICK_ACTION_MAX) break;
   }
   return out.length ? out : null;
@@ -288,6 +290,7 @@ function resolveCommand(project, actionId) {
     command,
     timeoutMs: VERIFY_TIMEOUT_MS,
     fromRepo: row.fromRepo,
+    stopOnSettle: row.stopOnSettle,
     ...trust,
   };
 }
@@ -393,6 +396,7 @@ function kickWorktreeSetup(opts) {
 function runOnSettle(opts) {
   try {
     const { store, threadId, broadcast } = opts;
+    stopManagedOnSettle(store, threadId);
     const thread = store.getThread(threadId);
     if (!thread || !thread.worktreePath || thread.onSettleAt != null) {
       return Promise.resolve(null);
@@ -424,6 +428,86 @@ function runOnSettle(opts) {
   } catch {
     return Promise.resolve(null);
   }
+}
+
+/** Settlement check for managed process owners, including inactivity. */
+function managedOwnerSettled(store, thread, now = Date.now()) {
+  if (!thread || thread.status === "working" || thread.status === "quota-wait") return false;
+  if (thread.archived) return true;
+  if (thread.pinnedAt != null && Number.isFinite(thread.pinnedAt)) return false;
+  if (thread.settledOverride === "settled") return true;
+  if (thread.settledOverride === "active") return false;
+  const settings = store.getSettings();
+  const links = require("./prLinks.js").normalizePrLinks(thread);
+  const states = links.length ? links.map((p) => p.state) : [thread.prState];
+  if (states.every((s) => s === "CLOSED" || (s === "MERGED" && settings.autoSettleOnMerge !== false))) return true;
+  if (states.includes("OPEN") || thread.prState === "OPEN") return false;
+  const days = settings.autoSettleAfterDays === undefined ? require("./store-normalize.js").DEFAULT_AUTO_SETTLE_AFTER_DAYS : settings.autoSettleAfterDays;
+  return days != null && Number.isFinite(days) && days >= 0 && Number.isFinite(thread.updatedAt) && thread.updatedAt < now - days * 86400000;
+}
+
+/** Shared checkout processes stay alive while another project thread needs them. */
+function canStopManaged(store, threadId, cwd) {
+  const thread = store.getThread(threadId);
+  const project = thread && store.getProject(thread.projectId);
+  if (!thread || !project) return false;
+  // The captured launch root survives merge cleanup clearing worktreePath.
+  if (project.path && path.resolve(cwd) !== path.resolve(project.path)) return true;
+  return !store.getThreads().some((other) => other.id !== threadId && other.projectId === thread.projectId && !managedOwnerSettled(store, other));
+}
+
+function stopManagedOnSettle(store, threadId) {
+  const thread = store.getThread(threadId);
+  const project = thread && store.getProject(thread.projectId);
+  if (!project) return;
+  const eff = effectiveCommands(project);
+  const action = runningActions.get(threadId);
+  if (action && !action.controller.signal.aborted && (typeof action.stopOnSettle === "boolean" ? action.stopOnSettle : project.stopOnSettle === true) && canStopManaged(store, threadId, action.cwd)) action.controller.abort();
+  const servers = require("./devservers.js");
+  const root = servers.rootFor(threadId);
+  const enabled = typeof project.stopOnSettle === "boolean" ? project.stopOnSettle : eff.trusted && eff.devServerStopOnSettle === true;
+  if (enabled && root && canStopManaged(store, threadId, root)) servers.stop(threadId, { preserveLog: true });
+}
+
+/** Scan only managed owners, so idle ticks never walk the whole transcript store. */
+const managedSettleTimers = new WeakMap();
+
+function optedInManagedOwners(store) {
+  const servers = require("./devservers.js");
+  const liveServers = new Set(servers.listLive());
+  const ids = new Set([...runningActions.keys(), ...liveServers]);
+  return [...ids].filter((id) => {
+    const thread = store.getThread(id);
+    const project = thread && store.getProject(thread.projectId);
+    if (!project) return false;
+    const action = runningActions.get(id);
+    const eff = effectiveCommands(project);
+    const actionEnabled = action && !action.controller.signal.aborted && (typeof action.stopOnSettle === "boolean" ? action.stopOnSettle : project.stopOnSettle === true);
+    const serverEnabled = liveServers.has(id) && (typeof project.stopOnSettle === "boolean" ? project.stopOnSettle : eff.trusted && eff.devServerStopOnSettle === true);
+    return actionEnabled || serverEnabled;
+  });
+}
+
+function stopManagedWatcherIfIdle(store) {
+  if (optedInManagedOwners(store).length) return;
+  clearInterval(managedSettleTimers.get(store));
+  managedSettleTimers.delete(store);
+}
+
+function watchManagedOnSettle(store) {
+  if (managedSettleTimers.has(store) || !optedInManagedOwners(store).length) return;
+  const timer = setInterval(() => sweepManagedOnSettle(store), 30_000);
+  timer.unref();
+  managedSettleTimers.set(store, timer);
+}
+
+function sweepManagedOnSettle(store) {
+  for (const id of optedInManagedOwners(store)) {
+    if (managedOwnerSettled(store, store.getThread(id))) stopManagedOnSettle(store, id);
+  }
+  const remaining = optedInManagedOwners(store).length;
+  if (!remaining) stopManagedWatcherIfIdle(store);
+  return remaining;
 }
 
 /** First one present in the worktree is the one compared (#396). */
@@ -613,6 +697,13 @@ async function runOne(store, args) {
       }
     : undefined;
 
+  const controller = new AbortController();
+  const managed = resolved.id !== SETUP_ID && resolved.id !== ON_SETTLE_ID && resolved.id !== SHELL_ID;
+  const owner = { controller, cwd, projectId: project && project.id, stopOnSettle: resolved.stopOnSettle };
+  if (managed) {
+    runningActions.set(threadId, owner);
+    watchManagedOnSettle(store);
+  }
   let ran;
   try {
     ran = await runFn({
@@ -620,6 +711,7 @@ async function runOne(store, args) {
       cwd,
       project,
       timeoutMs: resolved.timeoutMs,
+      signal: controller.signal,
       ...(env ? { env } : {}),
       ...(onOutput ? { onOutput } : {}),
     });
@@ -633,6 +725,8 @@ async function runOne(store, args) {
     };
   }
 
+  if (runningActions.get(threadId) === owner) runningActions.delete(threadId);
+  if (managed) stopManagedWatcherIfIdle(store);
   /** @type {import("../src/shared/ipc").CommandRunResult} */
   const result = {
     name: resolved.name,
@@ -641,7 +735,7 @@ async function runOne(store, args) {
     exitCode: ran && ran.exitCode != null ? ran.exitCode : null,
     timedOut: Boolean(ran && ran.timedOut),
     // Re-bounded here too: a swapped runner or a thrown error is not tailed.
-    log: ran && ran.log ? tailLog(String(ran.log)) : "",
+    log: tailLog(`${ran && ran.log ? String(ran.log) : ""}${controller.signal.aborted ? "\n[settle] stopped managed action" : ""}`),
     durationMs: ran && typeof ran.durationMs === "number" ? ran.durationMs : 0,
     at: Date.now(),
     cwd,
@@ -765,6 +859,12 @@ module.exports = {
   SUBMODULE_COMMAND,
   kickWorktreeSetup,
   runOnSettle,
+  stopManagedOnSettle,
+  sweepManagedOnSettle,
+  watchManagedOnSettle,
+  stopManagedWatcherIfIdle,
+  managedOwnerSettled,
+  canStopManaged,
   waitForCommand,
   pendingSetup,
   runCommand,

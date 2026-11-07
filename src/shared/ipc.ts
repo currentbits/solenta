@@ -191,6 +191,8 @@ export interface ProjectInfo {
    * setup (#396). Absent = reuse it when the lockfile matches (macOS).
    */
   setupCacheOff?: boolean;
+  /** Opt in to stop managed dev servers and quick actions when their thread settles. */
+  stopOnSettle?: boolean;
   /** Worktree branch prefix (#1506). Absent = "coder/". */
   branchPrefix?: string;
   /** Defaults for new threads in this project (#1501). Absent = global defaults. */
@@ -250,6 +252,7 @@ export interface ProjectThreadDefaults {
 
 /** One named per-project shell command (issue #153). */
 export interface ProjectQuickAction {
+  stopOnSettle?: boolean;
   id: string;
   name: string;
   command: string;
@@ -273,6 +276,7 @@ export interface ProjectRepoConfig {
    * or its PR merging/closing. Also runnable as actionId "onSettle".
    */
   onSettleCommand?: string;
+  devServerStopOnSettle?: boolean;
   /**
    * Where setupCommand came from when not solenta.json: "solenta.local.json"
    * (#438) or the repo's env spec (#396), e.g. ".devcontainer/devcontainer.json".
@@ -567,6 +571,7 @@ export interface ProjectUpdateInput {
   waitForSetup?: boolean | null;
   /** #396. false / null clears it. */
   setupCacheOff?: boolean | null;
+  stopOnSettle?: boolean | null;
   /** #1506. Empty / null restores "coder/"; an invalid prefix rejects. */
   branchPrefix?: string | null;
   /** New-thread defaults (#1501). Replaces the whole object; null clears. */
