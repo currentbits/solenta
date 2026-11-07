@@ -378,7 +378,13 @@ function normalizeAutomationInput(store, input, existing) {
   }
 
   const destination = require("./automation-destination.js").destinationFields(src, base);
-  if (destination.sessionMode !== "new-thread") require("./automation-destination.js").destinationThread(store, { ...destination, projectId, provider, model, tier }, null, true);
+  // A stale destination must never prevent pausing an automation. Inactive
+  // definitions can be repaired incrementally; enabling validates them again.
+  if ((!existing || enabled) && destination.sessionMode !== "new-thread") {
+    require("./automation-destination.js").destinationThread(
+      store, { ...destination, projectId, provider, model, tier }, null, true,
+    );
+  }
   return {
     ...destination,
     name,

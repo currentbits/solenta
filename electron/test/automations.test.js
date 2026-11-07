@@ -238,6 +238,20 @@ describe("automation CRUD + scheduler", () => {
     assert.equal(store.getThreads().length, 1);
   });
 
+  it("can disable and edit inactive automations after their destination becomes invalid", () => {
+    for (const patch of [{ archived: true }, { trashedAt: Date.now() }, { provider: "codex" }, { model: "different" }, { permissionMode: "bypassPermissions" }, null]) {
+      const t = services.createThread(store, { projectId: "p1", provider: "claude", model: null });
+      services.setProvider(store, { threadId: t.id, provider: "claude", model: null });
+      const a = services.addAutomation(store, { projectId: "p1", name: "Fixed", prompt: "go", provider: "claude", model: null, preset: "hourly", sessionMode: "continue", destinationThreadId: t.id });
+      if (patch) store.updateThread(t.id, patch);
+      else store.setThreads(store.getThreads().filter((row) => row.id !== t.id));
+      assert.equal(services.updateAutomation(store, { id: a.id, enabled: false }).enabled, false);
+      assert.equal(services.updateAutomation(store, { id: a.id, name: "Paused" }).name, "Paused");
+      assert.throws(() => services.updateAutomation(store, { id: a.id, enabled: true }), /destination/i);
+      assert.equal(store.getAutomation(a.id).enabled, false);
+    }
+  });
+
   it("scheduled busy destinations skip without pausing and remain editable", async () => {
     const t = services.createThread(store, { projectId: "p1", provider: "claude", model: null });
     services.setProvider(store, { threadId: t.id, provider: "claude", model: null });

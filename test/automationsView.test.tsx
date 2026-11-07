@@ -1022,6 +1022,26 @@ describe("AutomationsView", () => {
     m.unmount();
   });
 
+  it("Edit and Cancel replace incomplete fixed-destination drafts without validation", async () => {
+    const writes: unknown[] = [];
+    const m = await mount(<AutomationsView focusId="first"
+      automations={[auto({ id: "first", name: "First" }), auto({ id: "second", name: "Second" })]}
+      projects={[p1]} providers={providers} onCreate={(input) => { writes.push(input); }}
+      onUpdate={(input) => { writes.push(input); }} onRemove={() => {}} onRunNow={() => {}} />);
+    await m.change(m.query('[aria-label="Session mode"]'), "fresh");
+    await m.click(m.query('[data-automation-row="second"] [data-automation-edit]'));
+    assert.equal((m.query('[name="name"]') as HTMLInputElement).value, "Second");
+    assert.equal((m.query('[aria-label="Session mode"]') as HTMLSelectElement).value, "new-thread");
+    await m.change(m.query('[aria-label="Session mode"]'), "continue");
+    await m.click(m.query('[data-automation-cancel]'));
+    assert.equal(m.query('[data-automation-cancel]'), null);
+    assert.equal((m.query('[name="name"]') as HTMLInputElement).value, "");
+    assert.equal((m.query('[aria-label="Session mode"]') as HTMLSelectElement).value, "new-thread");
+    assert.equal(m.query('[data-form-error]'), null);
+    assert.deepEqual(writes, []);
+    m.unmount();
+  });
+
   it("Cancel discards edits and does not call onUpdate", async () => {
     const updates: unknown[] = [];
     const m = await mount(

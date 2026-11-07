@@ -300,7 +300,7 @@ export function createAutomations(ctx: DevCtx): Pick<CoderApi, "automations"> {
           throw new Error(`Unknown automation: ${input.id}`);
         }
         const fields = normalizeDevAutomation(input, ctx.projects, existing);
-        destination(fields);
+        if (fields.enabled) destination(fields);
         const scheduleChanged =
           fields.preset !== existing.preset ||
           fields.hour !== existing.hour ||

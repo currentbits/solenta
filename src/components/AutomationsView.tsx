@@ -1134,7 +1134,6 @@ export function AutomationsView({
               disabled={saving}
               onClick={() => {
                 if (savingRef.current) return;
-    if (sessionMode !== "new-thread" && !destinationThreadId) { setFormError("Choose a destination thread"); return; }
                 clearEdit();
               }}
             >
@@ -1367,7 +1366,6 @@ export function AutomationsView({
                     disabled={saving}
                     onClick={() => {
                       if (savingRef.current) return;
-    if (sessionMode !== "new-thread" && !destinationThreadId) { setFormError("Choose a destination thread"); return; }
                       fillFrom(auto);
                     }}
                   >

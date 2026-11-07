@@ -161,6 +161,39 @@ describe("provider switch keeps context (#1493)", () => {
     assert.equal(store.getUsage(thread.id).costUsd, 2);
   });
 
+  it("project-scoped fixed fires preserve per-run history and pending IDs across presentation and reload", async () => {
+    const thread = threadWithHistory();
+    process.env.CODER_AGENT_CMD = agentCmd(logFile);
+    const automation = services.addAutomation(store, { projectId: project.id, scope: "project", name: "Shared review", prompt: "review", provider: thread.provider, model: thread.model, preset: "hourly", sessionMode: "continue", destinationThreadId: thread.id });
+    const { runNow, listAutomationRuns, settleAutomationRuns } = require("../automations.js");
+    await runNow({ store, runner }, automation.id);
+    const presented = services.listAutomations(store).find((a) => a.id === automation.id);
+    assert.ok(presented.pendingRunId);
+    assert.equal(presented.runHistory.length, 1);
+    const first = listAutomationRuns(store, automation.id).runs[0];
+    assert.equal(first.threadId, thread.id);
+    assert.equal(first.runId, presented.pendingRunId);
+    assert.equal(first.pending, true);
+    store.saveNow();
+    const restored = new Store(path.join(tmpDir, "store.json"));
+    assert.equal(services.listAutomations(restored).find((a) => a.id === automation.id).pendingRunId, first.runId);
+    assert.equal(listAutomationRuns(restored, automation.id).runs[0].id, first.id);
+    await waitFor(() => !runner.isRunning(thread.id));
+    settleAutomationRuns({ store });
+    await runNow({ store, runner }, automation.id);
+    await waitFor(() => !runner.isRunning(thread.id));
+    settleAutomationRuns({ store });
+    const runs = listAutomationRuns(store, automation.id).runs;
+    assert.equal(runs.length, 2);
+    assert.notEqual(runs[0].id, runs[1].id);
+    assert.ok(runs.every((r) => !r.pending));
+    const definition = JSON.parse(fs.readFileSync(path.join(project.path, "solenta.json"), "utf8")).automations[0];
+    assert.equal(definition.runHistory, undefined);
+    assert.equal(definition.pendingRunId, undefined);
+    store.saveNow();
+    assert.deepEqual(listAutomationRuns(new Store(path.join(tmpDir, "store.json")), automation.id).runs, runs);
+  });
+
   it("fixed automation continuation preserves context while explicit fresh mode excludes old history", async () => {
     const thread = threadWithHistory();
     process.env.CODER_AGENT_CMD = agentCmd(logFile);
