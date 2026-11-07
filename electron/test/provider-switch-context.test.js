@@ -235,6 +235,21 @@ describe("provider switch keeps context (#1493)", () => {
     assert.equal(store.getUsage(thread.id), null);
   });
 
+  it("active warm-session disposal preserves the exit callback used to retry a deaf CLI", () => {
+    const { createClaudeSessions } = require("../runner-claude-sessions.js");
+    const thread = threadWithHistory();
+    const active = new Map([[thread.id, { runId: "retry-turn" }]]);
+    const sessions = createClaudeSessions({ active, store, finishRunningSubagents() {} });
+    let exited = false;
+    const session = { idleTimer: null, handle: { kill() {} }, dispatch: {
+      onEvent() {}, onExit() { exited = true; }, onError() {},
+    } };
+    sessions.claudeSessions.set(thread.id, session);
+    sessions.disposeClaudeSession(thread.id);
+    session.dispatch.onExit({});
+    assert.equal(exited, true, "active ACK-timeout retirement must reach the respawn callback");
+  });
+
   it("fresh context refuses pending questions and queued work without mutating history", () => {
     const thread = threadWithHistory();
     for (const patch of [{ pendingQuestion: { id: "question" } }, { queued: { prompt: "later" } }, { status: "working" }]) {

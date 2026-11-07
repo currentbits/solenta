@@ -56,7 +56,10 @@ function createClaudeSessions(ctx) {
     if (!sess) return;
     claudeSessions.delete(threadId);
     // An idle child can emit queued frames during kill; it no longer owns this thread.
-    sess.dispatch = { onEvent() {}, onExit() {}, onError() {} };
+    // Active disposal also drives deaf-reuse recovery: its onExit must respawn the turn.
+    if (!active.has(threadId)) {
+      sess.dispatch = { onEvent() {}, onExit() {}, onError() {} };
+    }
     if (sess.idleTimer) clearTimeout(sess.idleTimer);
     try {
       if (sess.handle) sess.handle.kill();
