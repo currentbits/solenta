@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { formatRelativeAge, middleTruncate } from "../format";
 import { normalizePrLinks } from "../prLinks";
 import { canSubmitComment, canSubmitPr } from "../prUi";
@@ -15,7 +15,9 @@ import type {
   ReactionContent,
   ThreadInfo,
 } from "../shared/ipc";
-import { Markdown } from "./Markdown";
+import { Markdown, MarkdownBody, type MarkdownTask } from "./Markdown";
+import { toggleDescriptionTask } from "../descriptionTasks";
+import { PrCompletionTextarea } from "./PrCompletionTextarea";
 import { PrCodeTab } from "./PrCodeTab";
 import styles from "./PrWorkspacePanel.module.css";
 
@@ -143,6 +145,7 @@ export function PrWorkspacePanel({
   const [pr, setPr] = useState<PrDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [checklistError, setChecklistError] = useState(false);
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [comment, setComment] = useState("");
@@ -178,6 +181,15 @@ export function PrWorkspacePanel({
   const [tab, setTab] = useState<"conversation" | "code">("conversation");
   const [activePr, setActivePr] = useState(prNumber);
   const [activeRepo, setActiveRepo] = useState<string | undefined>(undefined);
+  const identity = `${projectPath}\0${prNumber}\0${activeRepo || ""}\0${activePr}`;
+  const selection = useRef({ identity, generation: 0 });
+  if (selection.current.identity !== identity) selection.current = { identity, generation: selection.current.generation + 1 };
+  const generation = selection.current.generation;
+  const taskBusy = useRef<number | null>(null);
+  useEffect(() => { setPending(null); setChecklistError(false); }, [identity]);
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+
   const [stack, setStack] = useState<PrStackEntry[]>([]);
   const [stackBusy, setStackBusy] = useState<string | null>(null);
   const links = normalizePrLinks(matchedThread || { prNumber, prUrl: null, prState: null });
@@ -189,6 +201,7 @@ export function PrWorkspacePanel({
   }, [prNumber]);
 
   const load = useCallback(async (commentsOnly = false) => {
+    const requestedGeneration = generation;
     setLoading(true);
     try {
       const result = await prDetail({
@@ -196,6 +209,7 @@ export function PrWorkspacePanel({
         prNumber: activePr,
         ...(activeRepo ? { repo: activeRepo } : {}),
       });
+      if (!mounted.current || selection.current.generation !== requestedGeneration) return;
       if (!result.ok) {
         setError(result.reason);
         if (!commentsOnly) setPr(null);
@@ -217,13 +231,15 @@ export function PrWorkspacePanel({
         setBody(result.pr.body);
       }
       setError(null);
+      setChecklistError(false);
     } catch (err) {
+      if (!mounted.current || selection.current.generation !== requestedGeneration) return;
       setError(rejectReason(err, "Couldn't load this pull request"));
       if (!commentsOnly) setPr(null);
     } finally {
-      setLoading(false);
+      if (mounted.current && selection.current.generation === requestedGeneration) setLoading(false);
     }
-  }, [prDetail, projectPath, activePr, activeRepo]);
+  }, [prDetail, projectPath, activePr, activeRepo, generation]);
 
   useEffect(() => {
     void load();
@@ -394,6 +410,37 @@ export function PrWorkspacePanel({
   const dirty =
     pr != null && (title.trim() !== pr.title || body !== pr.body);
   const titleOk = canSubmitPr(title);
+  const toggleTask = async (task: MarkdownTask) => {
+    if (!pr || !open || dirty || pending || taskBusy.current === generation) return;
+    taskBusy.current = generation;
+    const requestedGeneration = generation;
+    setPending("checklist");
+    setChecklistError(false);
+    try {
+      const latest = await prDetail(prArgs);
+      if (!mounted.current || selection.current.generation !== requestedGeneration) return;
+      if (!latest.ok) throw new Error(latest.reason);
+      if (latest.pr.url !== pr.url || latest.pr.state !== "OPEN") throw new Error("This pull request changed. Reload and try again.");
+      const patched = toggleDescriptionTask(body, latest.pr.body, task);
+      // The forge CLI has no conditional description write. Fetching directly
+      // before writing narrows, but cannot eliminate, the remote write race.
+      const saved = await prEdit({ ...prArgs, body: patched });
+      if (!mounted.current || selection.current.generation !== requestedGeneration) return;
+      if (!saved.ok) throw new Error(saved.reason);
+      setPr(saved.pr);
+      setTitle(saved.pr.title);
+      setBody(saved.pr.body);
+      setError(null);
+    } catch (err) {
+      if (mounted.current && selection.current.generation === requestedGeneration) {
+        setError(rejectReason(err, "Couldn't update checklist"));
+        setChecklistError(true);
+      }
+    } finally {
+      if (taskBusy.current === requestedGeneration) taskBusy.current = null;
+      if (mounted.current && selection.current.generation === requestedGeneration) setPending(null);
+    }
+  };
 
   return (
     <aside className={styles.panel} data-pr-workspace="" data-pr-tab={tab}>
@@ -445,6 +492,7 @@ export function PrWorkspacePanel({
           role="tab"
           className={styles.tab}
           data-pr-tab="code"
+          disabled={pr?.forge === "gitlab"}
           aria-selected={tab === "code"}
           onClick={() => setTab("code")}
         >
@@ -513,13 +561,13 @@ export function PrWorkspacePanel({
             {preview ? (
               <div className={styles.preview}>
                 {body.trim() ? (
-                  <Markdown text={body} />
+                  <MarkdownBody text={body} onTaskToggle={toggleTask} tasksDisabled={!open || dirty || pending != null} />
                 ) : (
                   <p className={styles.hint}>Nothing to preview</p>
                 )}
               </div>
             ) : (
-              <textarea
+              <PrCompletionTextarea projectPath={projectPath} repo={activeRepo} scope={String(activePr)}
                 className={styles.textarea}
                 data-pr-edit-body=""
                 value={body}
@@ -551,7 +599,7 @@ export function PrWorkspacePanel({
           ) : null}
 
           <div className={styles.actions}>
-            {open && prUpdateBranch && pr.mergeStateStatus === "BEHIND" ? (
+            {open && pr.forge !== "gitlab" && prUpdateBranch && pr.mergeStateStatus === "BEHIND" ? (
               <button
                 type="button"
                 className={styles.ghost}
@@ -564,7 +612,7 @@ export function PrWorkspacePanel({
                 {pending === "updateBranch" ? "Updating…" : "Update branch"}
               </button>
             ) : null}
-            {open && pr.isDraft ? (
+            {open && pr.forge !== "gitlab" && pr.isDraft ? (
               <button
                 type="button"
                 className={styles.ghost}
@@ -579,7 +627,7 @@ export function PrWorkspacePanel({
                 {pending === "ready" ? "Updating…" : "Mark ready"}
               </button>
             ) : null}
-            {open && !pr.isDraft ? (
+            {open && pr.forge !== "gitlab" && !pr.isDraft ? (
               <button
                 type="button"
                 className={styles.ghost}
@@ -599,7 +647,7 @@ export function PrWorkspacePanel({
                 type="button"
                 className={styles.primary}
                 data-pr-merge=""
-                disabled={pending != null}
+                disabled={pending != null || pr.forge === "gitlab"}
                 onClick={() => setConfirm("merge")}
               >
                 Merge
@@ -610,7 +658,7 @@ export function PrWorkspacePanel({
                 type="button"
                 className={styles.danger}
                 data-pr-close=""
-                disabled={pending != null}
+                disabled={pending != null || pr.forge === "gitlab"}
                 onClick={() => setConfirm("close")}
               >
                 Close
@@ -713,6 +761,12 @@ export function PrWorkspacePanel({
             </div>
           ) : null}
 
+          {checklistError && error ? (
+            <button type="button" className={styles.ghost} data-pr-checklist-reload=""
+              disabled={dirty || pending != null || loading} onClick={() => void load()}>
+              Reload pull request
+            </button>
+          ) : null}
           {error ? (
             <p className={styles.error} data-pr-workspace-error="">
               {error}
@@ -783,7 +837,7 @@ export function PrWorkspacePanel({
                           Add to agent
                         </button>
                       ) : null}
-                      {prCommentEdit && row.type !== "review-summary" && row.mine && row.id != null && !editing ? (
+                      {pr.forge !== "gitlab" && prCommentEdit && row.type !== "review-summary" && row.mine && row.id != null && !editing ? (
                         <button
                           type="button"
                           className={styles.ghost}
@@ -801,7 +855,7 @@ export function PrWorkspacePanel({
                     {row.path ? <span className={styles.hint}>{row.path}{row.line != null ? `:${row.line}` : ""}{row.outdated ? " (outdated)" : ""}</span> : null}
                     {editing ? (
                       <div className={styles.commentForm} data-pr-comment-edit-form="">
-                        <textarea
+                        <PrCompletionTextarea projectPath={projectPath} repo={activeRepo} scope={String(activePr)}
                           className={styles.textarea}
                           data-pr-comment-edit-body=""
                           value={editCommentBody}
@@ -833,7 +887,7 @@ export function PrWorkspacePanel({
                     ) : (
                       <Markdown text={row.body} />
                     )}
-                    {prReaction && row.type === "issue" && row.id != null ? (
+                    {pr.forge !== "gitlab" && prReaction && row.type === "issue" && row.id != null ? (
                       <div className={styles.reactionsRow} data-pr-reactions="">
                         {(row.reactions || [])
                           .filter((r) => r.count > 0)
@@ -903,7 +957,7 @@ export function PrWorkspacePanel({
                   );
                 }}
               >
-                <textarea
+                <PrCompletionTextarea projectPath={projectPath} repo={activeRepo} scope={String(activePr)}
                   className={styles.textarea}
                   data-pr-comment=""
                   placeholder="Leave a comment"

@@ -80,6 +80,8 @@ const WIN32_FILES = [
   "electron/test/reasoning-effort.test.js",
   "electron/test/ultracode.test.js",
   "electron/test/stop-on-settle.test.js",
+  "electron/test/pr-completions.test.js",
+  "electron/test/pr-gitlab-workspace.test.js",
   "electron/test/rewind.test.js",
   "electron/test/session-record.test.js",
   "electron/test/secrets.test.js",

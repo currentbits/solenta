@@ -3261,6 +3261,7 @@ export interface PrComment {
 
 /** Full PR for the in-app workspace (issue #154). */
 export interface PrDetail {
+  forge?: "github" | "gitlab";
   number: number;
   title: string;
   body: string;
@@ -3929,6 +3930,8 @@ export type AutomationStage = "observe" | "draft" | "act";
 
 /** A scheduled agent run (Synara-style automation). */
 export interface AutomationInfo {
+  sessionMode?: "new-thread" | "continue" | "fresh";
+  destinationThreadId?: string | null;
   id: string;
   projectId: string;
   /** Private rows stay on this machine; project rows come from solenta.json. */
@@ -3971,6 +3974,8 @@ export interface AutomationInfo {
 }
 
 export interface AutomationWrite {
+  sessionMode?: "new-thread" | "continue" | "fresh";
+  destinationThreadId?: string | null;
   projectId: string;
   name: string;
   prompt: string;
@@ -4002,6 +4007,10 @@ export interface AutomationWrite {
  * typed `automationId` stamp on the thread, not the title.
  */
 export interface AutomationRunInfo {
+  /** Stable per-fire identity for fixed destinations. */
+  id?: string;
+  runId?: string | null;
+  pending?: boolean;
   threadId: string;
   /** Thread create time; the fire that minted this run. */
   startedAt: number;
@@ -7224,6 +7233,7 @@ export interface CoderApi {
      * Full PR (title, body, comments, draft) for the in-app workspace.
      * Failures stay in-band like listPrs.
      */
+    prCompletions(input: { projectPath: string; repo?: string; kind: "@" | "#" | "!"; query: string; page?: number }): Promise<{ ok: true; items: Array<{ value: string; label: string }>; hasMore: boolean } | { ok: false; reason: string }>;
     prDetail(input: {
       projectPath: string;
       prNumber: number;

@@ -1,4 +1,6 @@
 import {
+  cloneElement,
+  Children,
   createContext,
   Fragment,
   isValidElement,
@@ -16,6 +18,7 @@ import {
 import ReactMarkdown, {
   defaultUrlTransform,
   type Components,
+  type ExtraProps,
 } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { lazyNamed } from "../lazyNamed";
@@ -293,6 +296,35 @@ function useThrottledText(text: string, lastCost: { current: number }): string {
 
 const REMARK_PLUGINS = [remarkGfm];
 
+export interface MarkdownTask { start: number; end: number }
+const TaskContext = createContext<{ onToggle: (task: MarkdownTask) => void; disabled: boolean } | null>(null);
+
+function TaskListItem(props: { children?: ReactNode } & ExtraProps) {
+  const tasks = useContext(TaskContext);
+  const start = props.node?.position?.start.offset;
+  const end = props.node?.position?.end.offset;
+  type ChildProps = { children?: ReactNode; node?: { tagName?: string }; type?: string; disabled?: boolean; onChange?: () => void; "aria-label"?: string };
+  const ownChildren = Children.toArray(props.children).filter((child) =>
+    !isValidElement<ChildProps>(child) || !["ul", "ol"].includes(child.props.node?.tagName ?? String(child.type)));
+  const label = flattenText(ownChildren).trim() || "Checklist item";
+  function editable(children: ReactNode): ReactNode {
+    return Children.map(children, (child) => {
+      if (!isValidElement<ChildProps>(child)) return child;
+      if (child.props.type === "checkbox" && tasks && start != null && end != null) {
+        return cloneElement(child, { disabled: tasks.disabled, onChange: () => tasks.onToggle({ start, end }), "aria-label": `Toggle ${label}` });
+      }
+      // Loose task items wrap their own input in a paragraph. Nested lists
+      // have their own list-item source positions and must keep that mapping.
+      if ((child.props.node?.tagName ?? child.type) === "p") {
+        return cloneElement(child, { children: editable(child.props.children) });
+      }
+      return child;
+    });
+  }
+  const children = tasks ? editable(props.children) : props.children;
+  return <li>{linkifyNode(children)}</li>;
+}
+
 const COMPONENTS: Components = {
   pre: (props) => <CodeBlock>{props.children}</CodeBlock>,
   // Double-click takes the whole span: word selection stops at `-` and `/`,
@@ -308,7 +340,7 @@ const COMPONENTS: Components = {
     </code>
   ),
   p: (props) => <p>{linkifyNode(props.children)}</p>,
-  li: (props) => <li>{linkifyNode(props.children)}</li>,
+  li: TaskListItem,
   td: (props) => <td>{linkifyNode(props.children)}</td>,
   th: (props) => <th>{linkifyNode(props.children)}</th>,
   h1: (props) => <h1>{linkifyNode(props.children)}</h1>,
@@ -412,13 +444,18 @@ const MarkdownChunk = memo(function MarkdownChunk({
 export function MarkdownBody({
   text,
   streaming = false,
+  onTaskToggle,
+  tasksDisabled = false,
 }: {
   text: string;
   streaming?: boolean;
+  onTaskToggle?: (task: MarkdownTask) => void;
+  tasksDisabled?: boolean;
 }) {
   const chunks = streaming ? markdownChunks(text) : [text];
   const wrap = useWrapCodeBlocksEnabled();
   return (
+    <TaskContext.Provider value={onTaskToggle ? { onToggle: onTaskToggle, disabled: tasksDisabled } : null}>
     <div className={styles.md} data-wrap-code={wrap ? "" : undefined}>
       {chunks.map((chunk, i) => (
         <Fragment key={i}>
@@ -430,6 +467,7 @@ export function MarkdownBody({
         </Fragment>
       ))}
     </div>
+    </TaskContext.Provider>
   );
 }
 

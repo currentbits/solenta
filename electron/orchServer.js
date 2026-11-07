@@ -1440,6 +1440,8 @@ function createToolHandlers(deps) {
     }
     const created = addAutomation(store, {
       projectId: thread.projectId,
+      sessionMode: args && args.sessionMode,
+      destinationThreadId: args && args.destinationThreadId,
       name: args && args.name,
       prompt: args && args.prompt,
       provider: (args && args.provider) || thread.provider,
@@ -1460,6 +1462,8 @@ function createToolHandlers(deps) {
       ok: true,
       id: created.id,
       name: created.name,
+      sessionMode: created.sessionMode || "new-thread",
+      destinationThreadId: created.destinationThreadId || null,
       projectId: created.projectId,
       prompt: created.prompt,
       provider: created.provider,
@@ -2452,6 +2456,8 @@ function buildMcpServer(sdk, handlers, opts = {}) {
       inputSchema: {
         threadId: z.string().min(1),
         projectId: z.string().min(1),
+        sessionMode: z.enum(["new-thread", "continue", "fresh"]).optional(),
+        destinationThreadId: z.string().optional(),
         name: z.string().min(1),
         prompt: z.string().min(1),
         provider: z.string().min(1).optional(),
