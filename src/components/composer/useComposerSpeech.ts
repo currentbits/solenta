@@ -30,6 +30,7 @@ export type SpeechSnapshot = {
   threadId: string;
   draft: string;
   caret: number;
+  selectionEnd: number;
   prefix: string;
   suffix: string;
   accumulated: string;
@@ -91,7 +92,7 @@ export function useComposerSpeech({
   const captureRef = useRef<SpeechCapture | null>(null);
   const dictatingRef = useRef(false);
   const writeDraftFor = useCallback(
-    (tid: string, text: string, caret?: number) => {
+    (tid: string, text: string, caret?: number, selectionEnd = caret) => {
       draftsRef.current[tid] = text;
       scheduleDraftSave();
       if (liveThreadIdRef.current !== tid) return;
@@ -100,7 +101,7 @@ export function useComposerSpeech({
         el.value = text;
         if (caret != null) {
           el.focus();
-          el.setSelectionRange(caret, caret);
+          el.setSelectionRange(caret, selectionEnd ?? caret);
         }
       }
       syncHasPrompt(text);
@@ -120,7 +121,7 @@ export function useComposerSpeech({
     setDictating(false);
     setSpeechConfirm(false);
     capture?.close();
-    if (snap) writeDraftFor(snap.threadId, snap.draft, snap.caret);
+    if (snap) writeDraftFor(snap.threadId, snap.draft, snap.caret, snap.selectionEnd);
     const api = coderSpeech();
     if (snap?.sessionId && api) {
       try {
@@ -151,6 +152,7 @@ export function useComposerSpeech({
           suffix: snap.suffix,
           accumulated: snap.accumulated,
           delta: status.delta,
+          replaceSelection: snap.selectionEnd > snap.caret,
         });
         snap.accumulated = next.accumulated;
         writeDraftFor(snap.threadId, next.text, next.caret);
@@ -162,8 +164,9 @@ export function useComposerSpeech({
           original: snap.draft,
           originalCaret: snap.caret,
           transcript: status.transcript,
+          replaceSelection: snap.selectionEnd > snap.caret,
         });
-        writeDraftFor(snap.threadId, next.text, next.caret);
+        writeDraftFor(snap.threadId, next.text, next.caret, status.transcript ? next.caret : snap.selectionEnd);
         if (status.note) setLocalError(status.note);
         snapshotRef.current = null;
         dictatingRef.current = false;
@@ -203,12 +206,14 @@ export function useComposerSpeech({
     const el = textareaRef.current;
     const draft = readDraft();
     const caret = el?.selectionStart ?? draft.length;
+    const selectionEnd = el?.selectionEnd ?? caret;
     snapshotRef.current = {
       threadId,
       draft,
       caret,
+      selectionEnd,
       prefix: draft.slice(0, caret),
-      suffix: draft.slice(caret),
+      suffix: draft.slice(selectionEnd),
       accumulated: "",
       sessionId: "",
     };
@@ -246,7 +251,7 @@ export function useComposerSpeech({
       snapshotRef.current = null;
       dictatingRef.current = false;
       setDictating(false);
-      if (snap) writeDraftFor(snap.threadId, snap.draft, snap.caret);
+      if (snap) writeDraftFor(snap.threadId, snap.draft, snap.caret, snap.selectionEnd);
       setLocalError(speechCaptureError(err));
     }
   }, [disabled, readDraft, threadId, writeDraftFor]);

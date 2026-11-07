@@ -19,7 +19,7 @@ export interface PathRef {
 const URL_RE = /https?:\/\/\S+|file:\/\/\S+|mailto:\S+/gi;
 
 /** Token body: path characters, plus `:` so `C:\` and `:12` stay attached. */
-const PATH_CHAR = /[A-Za-z0-9_./\\@+~:-]/;
+const PATH_CHAR = /[A-Za-z0-9_./\\@+~:$()[\]…-]/;
 
 /** Ranges covered by a URL; shared with githubRefs.ts so a ref inside a link is never double-matched. */
 export function urlRanges(text: string): Array<{ start: number; end: number }> {
@@ -45,7 +45,35 @@ function isBoundary(text: string, i: number): boolean {
 }
 
 function stripTrailingDots(s: string): string {
+  const last = s.split(/[/\\]/).at(-1);
+  if (last && /^\.+$/.test(last)) return s;
   return s.replace(/\.+$/, "");
+}
+
+function trimPathToken(raw: string): { token: string; offset: number } {
+  let token = stripTrailingDots(raw);
+  let offset = 0;
+  for (const [open, close] of [["(", ")"], ["[", "]"]]) {
+    if (token.startsWith(open)) {
+      let depth = 0;
+      let end = -1;
+      for (let i = 0; i < token.length; i++) {
+        if (token[i] === open) depth++;
+        if (token[i] === close && --depth === 0) {
+          end = i;
+          break;
+        }
+      }
+      if (end === token.length - 1) {
+        token = token.slice(1, -1);
+        offset++;
+      }
+    }
+    const count = (char: string) => token.split(char).length - 1;
+    let excess = count(close) - count(open);
+    while (excess-- > 0 && token.endsWith(close)) token = token.slice(0, -1);
+  }
+  return { token, offset };
 }
 
 /**
@@ -57,7 +85,8 @@ export function splitLineSuffix(raw: string): {
   line?: number;
   col?: number;
 } {
-  const m = raw.match(/^(.*?):(\d+)(?::(\d+))?$/);
+  const m = raw.match(/^(.*?):(\d+)(?::(\d+))?$/) ??
+    raw.match(/^(.*?)\((\d+)(?:,\s*(\d+))?\)$/);
   if (!m) return { path: raw };
   // `C:` alone is a drive, not `file:12`.
   if (/^[A-Za-z]$/.test(m[1])) return { path: raw };
@@ -107,9 +136,23 @@ export function findPathRefs(text: string): PathRef[] {
     }
     let j = i + 1;
     while (j < text.length && PATH_CHAR.test(text[j]) && !inRange(blocked, j)) {
+      // Compiler positions are suffixes, unlike parentheses in route directories.
+      if (text[j] === "(" && fileExt(text.slice(i, j))) {
+        const position = text.slice(j).match(/^\(\d+(?:,\s*\d+)?\)/);
+        if (position) {
+          j += position[0].length;
+          break;
+        }
+      }
       j += 1;
     }
-    let token = stripTrailingDots(text.slice(i, j));
+    const trimmed = trimPathToken(text.slice(i, j));
+    const untrimmedPath = splitLineSuffix(trimmed.token).path;
+    if (untrimmedPath.split(/[/\\]/).some((part) => /^(?:\.{3,}|…+)$/.test(part))) {
+      i = j;
+      continue;
+    }
+    let token = stripTrailingDots(trimmed.token);
     // Trailing `:` that is not a line suffix (e.g. `path:` in JSON keys).
     if (token.endsWith(":") && !/:\d+$/.test(token)) {
       token = token.slice(0, -1);
@@ -122,13 +165,13 @@ export function findPathRefs(text: string): PathRef[] {
         path,
         line,
         col,
-        start: i,
-        end: i + raw.length,
+        start: i + trimmed.offset,
+        end: i + trimmed.offset + raw.length,
       });
-      i += raw.length;
+      i = j;
       continue;
     }
-    i += 1;
+    i = j;
   }
   return hits;
 }

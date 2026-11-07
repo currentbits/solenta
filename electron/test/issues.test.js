@@ -497,7 +497,7 @@ ${body}
     ssh.setExecFileSync((bin, args, opts) => {
       if (bin !== "ssh") return real(bin, args, opts);
       sshCalls += 1;
-      assert.match(args.at(-1), /cd '\/srv\/app' && 'git' 'remote' 'get-url' 'origin'/);
+      assert.match(args.at(-1), /cd '\/srv\/app' && 'env' 'LANGUAGE=C' 'git' 'remote' 'get-url' 'origin'/);
       return "git@github.com:acme/remote-app.git\n";
     });
     try {
