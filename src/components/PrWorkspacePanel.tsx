@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { formatRelativeAge, middleTruncate } from "../format";
 import { normalizePrLinks } from "../prLinks";
 import { canSubmitComment, canSubmitPr } from "../prUi";
@@ -15,7 +15,8 @@ import type {
   ReactionContent,
   ThreadInfo,
 } from "../shared/ipc";
-import { Markdown } from "./Markdown";
+import { Markdown, MarkdownBody, type MarkdownTask } from "./Markdown";
+import { toggleDescriptionTask } from "../descriptionTasks";
 import { PrCodeTab } from "./PrCodeTab";
 import styles from "./PrWorkspacePanel.module.css";
 
@@ -143,6 +144,7 @@ export function PrWorkspacePanel({
   const [pr, setPr] = useState<PrDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [checklistError, setChecklistError] = useState(false);
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [comment, setComment] = useState("");
@@ -178,6 +180,15 @@ export function PrWorkspacePanel({
   const [tab, setTab] = useState<"conversation" | "code">("conversation");
   const [activePr, setActivePr] = useState(prNumber);
   const [activeRepo, setActiveRepo] = useState<string | undefined>(undefined);
+  const identity = `${projectPath}\0${prNumber}\0${activeRepo || ""}\0${activePr}`;
+  const selection = useRef({ identity, generation: 0 });
+  if (selection.current.identity !== identity) selection.current = { identity, generation: selection.current.generation + 1 };
+  const generation = selection.current.generation;
+  const taskBusy = useRef<number | null>(null);
+  useEffect(() => { setPending(null); setChecklistError(false); }, [identity]);
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+
   const [stack, setStack] = useState<PrStackEntry[]>([]);
   const [stackBusy, setStackBusy] = useState<string | null>(null);
   const links = normalizePrLinks(matchedThread || { prNumber, prUrl: null, prState: null });
@@ -189,6 +200,7 @@ export function PrWorkspacePanel({
   }, [prNumber]);
 
   const load = useCallback(async (commentsOnly = false) => {
+    const requestedGeneration = generation;
     setLoading(true);
     try {
       const result = await prDetail({
@@ -196,6 +208,7 @@ export function PrWorkspacePanel({
         prNumber: activePr,
         ...(activeRepo ? { repo: activeRepo } : {}),
       });
+      if (!mounted.current || selection.current.generation !== requestedGeneration) return;
       if (!result.ok) {
         setError(result.reason);
         if (!commentsOnly) setPr(null);
@@ -217,13 +230,15 @@ export function PrWorkspacePanel({
         setBody(result.pr.body);
       }
       setError(null);
+      setChecklistError(false);
     } catch (err) {
+      if (!mounted.current || selection.current.generation !== requestedGeneration) return;
       setError(rejectReason(err, "Couldn't load this pull request"));
       if (!commentsOnly) setPr(null);
     } finally {
-      setLoading(false);
+      if (mounted.current && selection.current.generation === requestedGeneration) setLoading(false);
     }
-  }, [prDetail, projectPath, activePr, activeRepo]);
+  }, [prDetail, projectPath, activePr, activeRepo, generation]);
 
   useEffect(() => {
     void load();
@@ -394,6 +409,37 @@ export function PrWorkspacePanel({
   const dirty =
     pr != null && (title.trim() !== pr.title || body !== pr.body);
   const titleOk = canSubmitPr(title);
+  const toggleTask = async (task: MarkdownTask) => {
+    if (!pr || !open || dirty || pending || taskBusy.current === generation) return;
+    taskBusy.current = generation;
+    const requestedGeneration = generation;
+    setPending("checklist");
+    setChecklistError(false);
+    try {
+      const latest = await prDetail(prArgs);
+      if (!mounted.current || selection.current.generation !== requestedGeneration) return;
+      if (!latest.ok) throw new Error(latest.reason);
+      if (latest.pr.url !== pr.url || latest.pr.state !== "OPEN") throw new Error("This pull request changed. Reload and try again.");
+      const patched = toggleDescriptionTask(body, latest.pr.body, task);
+      // The forge CLI has no conditional description write. Fetching directly
+      // before writing narrows, but cannot eliminate, the remote write race.
+      const saved = await prEdit({ ...prArgs, body: patched });
+      if (!mounted.current || selection.current.generation !== requestedGeneration) return;
+      if (!saved.ok) throw new Error(saved.reason);
+      setPr(saved.pr);
+      setTitle(saved.pr.title);
+      setBody(saved.pr.body);
+      setError(null);
+    } catch (err) {
+      if (mounted.current && selection.current.generation === requestedGeneration) {
+        setError(rejectReason(err, "Couldn't update checklist"));
+        setChecklistError(true);
+      }
+    } finally {
+      if (taskBusy.current === requestedGeneration) taskBusy.current = null;
+      if (mounted.current && selection.current.generation === requestedGeneration) setPending(null);
+    }
+  };
 
   return (
     <aside className={styles.panel} data-pr-workspace="" data-pr-tab={tab}>
@@ -513,7 +559,7 @@ export function PrWorkspacePanel({
             {preview ? (
               <div className={styles.preview}>
                 {body.trim() ? (
-                  <Markdown text={body} />
+                  <MarkdownBody text={body} onTaskToggle={toggleTask} tasksDisabled={!open || dirty || pending != null} />
                 ) : (
                   <p className={styles.hint}>Nothing to preview</p>
                 )}
@@ -713,6 +759,12 @@ export function PrWorkspacePanel({
             </div>
           ) : null}
 
+          {checklistError && error ? (
+            <button type="button" className={styles.ghost} data-pr-checklist-reload=""
+              disabled={dirty || pending != null || loading} onClick={() => void load()}>
+              Reload pull request
+            </button>
+          ) : null}
           {error ? (
             <p className={styles.error} data-pr-workspace-error="">
               {error}
