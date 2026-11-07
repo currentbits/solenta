@@ -20,6 +20,7 @@ const args = [
 // Not here: execFile of a fake (gh, fm), signals, /bin/sh, hardcoded /tmp.
 const WIN32_FILES = [
   "electron/test/atomic-config.test.js", // staged config publication; POSIX-only checks skip
+  "electron/test/windowGeometry.test.js", // shared main and detached window bounds
   "electron/test/wsl.test.js", // the boundary contract itself
   "electron/test/worktree-wsl.test.js", // worktree placement across it
   "electron/test/doctor.test.js", // the win32 doctor probes

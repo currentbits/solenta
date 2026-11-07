@@ -3,10 +3,17 @@ import { createRoot } from "react-dom/client";
 import App from "../../src/App";
 import { createDevCoder } from "../../src/devCoder";
 import { saveBootSnapshot } from "../../src/bootSnapshot";
+import speechCatalog from "../../src/speechModels";
 import "../../src/index.css";
 
 const api = createDevCoder();
-await api.settings.set({ onboardingSeen: true, theme: "dark" });
+await api.settings.set({ onboardingSeen: true, theme: "dark", speech: { provider: "local", localModel: "nemotron-3.5", language: "nl-NL" } });
+const speechModel = speechCatalog.models["nemotron-3.5"];
+api.speech.status = async () => ({
+  state: "ready", runtimeReady: true, modelReady: true, language: "nl-NL",
+  model: { id: "nemotron-3.5", label: speechModel.label, bytes: speechModel.bytes },
+  modelLocation: { source: "external", filename: speechModel.filename },
+});
 const projects = await api.projects.list();
 const source = (await api.threads.list()).find((t) => t.id === "thread-2")!;
 const thread = { ...source, status: "idle" as const, title: "Review narrow window layout", awaitingInput: false };

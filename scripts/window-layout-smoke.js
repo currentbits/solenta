@@ -118,6 +118,12 @@ app.whenReady().then(async () => {
       await visible('[data-settings] [aria-label="Close"]');
       await visible('[data-settings-search]');
       await shot(`${name}-settings-general-end`);
+      // Exercise the combined folder-reuse controls and long model filename.
+      await evaluate(() => document.querySelector('[data-speech-choose-folder]').scrollIntoView({ block: "center" }));
+      await visible('[data-speech-choose-folder]');
+      await visible('[data-speech-reset-location]');
+      await visible('[data-settings] [aria-label="Close"]');
+      await shot(`${name}-settings-speech`);
       // Navigate to the last section through its actual scrollable nav.
       await evaluate(() => {
         const items = document.querySelectorAll("[data-settings-nav]");
