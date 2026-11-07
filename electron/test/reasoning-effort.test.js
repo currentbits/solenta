@@ -1072,7 +1072,7 @@ describe("reasoning effort: IPC seam + runner wiring", () => {
     }
   });
 
-  it("runner passes independent Ultracode into claude launch and restores effort on next launch", { skip: process.platform === "win32" }, async () => {
+  it("runner passes independent Ultracode into claude launch and restores effort on next launch", async () => {
     // The claude-stream call site serves claude AND grok, and claude answers a
     // missing or unknown effort with a warning and its default. So this is the
     // path where losing the argument is invisible, and it had no coverage.

@@ -6,6 +6,7 @@ const path = require('node:path');
 const { getProvider, modelSupportsUltracode, cliSupportsUltracode } = require('../providers');
 const { Store } = require('../store');
 const services = require('../services');
+const { writeFakeBin } = require('./support/fakeBin');
 
 describe('Ultracode independent session mode', () => {
   it('emits the native session setting at xhigh, retaining ordinary effort when off', () => {
@@ -28,14 +29,22 @@ describe('Ultracode independent session mode', () => {
     }
   });
 
-  it('gates actual binary versions without starting an agent', { skip: process.platform === 'win32' }, () => {
+  it('gates actual binary versions without starting an agent', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ultracode-version-'));
     try {
       for (const [version, expected] of [['2.1.218', false], ['2.1.219', true], ['2.2.0', true], ['unknown', false]]) {
-        const bin = path.join(dir, version);
-        fs.writeFileSync(bin, `#!/bin/sh\n[ "$1" = "--version" ] || exit 12\nprintf '%s\\n' '${version} (Claude Code)'\n`, { mode: 0o755 });
+        const bin = writeFakeBin(path.join(dir, version), `if (!process.argv.includes('--version')) process.exit(12); console.log('${version} (Claude Code)');`);
         assert.equal(cliSupportsUltracode(bin), expected, version);
       }
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it('probes Windows npm cmd shims in paths containing spaces', { skip: process.platform !== 'win32' }, () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ultracode cmd '));
+    try {
+      const bin = path.join(dir, 'claude.cmd');
+      fs.writeFileSync(bin, '@echo 2.1.219 (Claude Code)\r\n');
+      assert.equal(cliSupportsUltracode(bin), true);
     } finally { fs.rmSync(dir, { recursive: true, force: true }); }
   });
 

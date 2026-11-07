@@ -3,6 +3,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { execFile, execFileSync } = require("node:child_process");
+const spawn = require("cross-spawn");
 const catalogDivergence = require("./catalogDivergence.js");
 const { posixQuote } = require("./ssh.js");
 
@@ -200,8 +201,12 @@ function cliSupportsUltracode(binary, env = process.env) {
     const stat = fs.statSync(resolved);
     const key = `${resolved}:${stat.mtimeMs}:${stat.size}`;
     if (!ultracodeVersionCache.has(key)) {
-      const output = execFileSync(resolved, ["--version"], { encoding: "utf8", timeout: 2000, env, stdio: ["ignore", "pipe", "ignore"] });
-      const version = output.match(/(\d+\.\d+\.\d+)/)?.[1];
+      // Match agent launches: Windows npm installs expose claude.cmd and
+      // development fixtures may be shebang scripts, both need cross-spawn.
+      const result = spawn.sync(resolved, ["--version"], { encoding: "utf8", timeout: 2000, env, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] });
+      const version = !result.error && result.status === 0
+        ? String(result.stdout || "").match(/(\d+\.\d+\.\d+)/)?.[1]
+        : undefined;
       ultracodeVersionCache.set(key, Boolean(version && !catalogDivergence.versionBelow(version, "2.1.219")));
     }
     return ultracodeVersionCache.get(key);
