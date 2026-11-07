@@ -65,7 +65,8 @@ describe("PR comments as draft context", () => {
   it("adds any comment to an existing project draft through App, without sending or changing agent settings", async () => {
     const target = thread({ id: "target", title: "Retry draft", prNumber: 11, provider: "codex", model: "gpt-5.4", permissionMode: "plan", providerInstance: "account-1" });
     const other = thread({ id: "other", projectId: "p2", title: "Other project" });
-    const fake = createFakeCoder({ projects: [project(), project({ id: "p2", path: "/tmp/other" })], threads: [target, other], details: { target: detail({ thread: target }) } });
+    const archived = thread({ id: "archived", title: "Archived draft", archived: true });
+    const fake = createFakeCoder({ projects: [project(), project({ id: "p2", path: "/tmp/other" })], threads: [target, other, archived], details: { target: detail({ thread: target }) } });
     fake.api.git.listPrs = async (path) => ({ ok: true, prs: path === "/tmp/repo" ? [{ ...pr, additions: 0, deletions: 0, updatedAt: "2026-10-02T00:00:00Z" }] : [] });
     fake.api.git.prDetail = async () => ({ ok: true, pr });
     const shell = await mount(<div />);
@@ -83,6 +84,7 @@ describe("PR comments as draft context", () => {
         const picker = m.query('select[aria-label="Agent draft"]');
         assert.ok(picker instanceof window.HTMLSelectElement);
         assert.ok(!picker.textContent?.includes("Other project"));
+        assert.ok(!picker.textContent?.includes("Archived draft"));
         assert.equal(picker.value, "target");
         assert.equal(m.queryAll("[data-pr-comment-add-to-agent]").length, 3);
         await m.click(m.queryAll("[data-pr-comment-add-to-agent]")[i]);
@@ -94,6 +96,7 @@ describe("PR comments as draft context", () => {
       }
       assert.equal(getContextChips("target").length, 3);
       assert.equal(getContextChips("other").length, 0);
+      assert.equal(getContextChips("archived").length, 0);
       assert.equal(fake.of("runs.start").length, 0);
       assert.equal(fake.of("threads.create").length, 0);
       assert.deepEqual(fake.channels().filter((c) => c.startsWith("threads.set") || c === "settings.set"), settingsBefore);

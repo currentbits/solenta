@@ -188,7 +188,7 @@ export function PrWorkspacePanel({
     setTab("conversation");
   }, [prNumber]);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (commentsOnly = false) => {
     setLoading(true);
     try {
       const result = await prDetail({
@@ -198,16 +198,28 @@ export function PrWorkspacePanel({
       });
       if (!result.ok) {
         setError(result.reason);
-        setPr(null);
+        if (!commentsOnly) setPr(null);
         return;
       }
-      setPr(result.pr);
-      setTitle(result.pr.title);
-      setBody(result.pr.body);
+      setPr((previous) => {
+        const samePr = previous?.url === result.pr.url;
+        const comments = samePr && result.pr.commentsError
+          ? [...new Map([...previous.comments, ...result.pr.comments].map((row) => [
+              `${row.type}:${row.id ?? row.url ?? `${row.author}:${row.createdAt}:${row.body}`}`, row,
+            ])).values()].sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+          : result.pr.comments;
+        return commentsOnly && samePr
+          ? { ...previous, comments, commentsError: result.pr.commentsError }
+          : { ...result.pr, comments };
+      });
+      if (!commentsOnly) {
+        setTitle(result.pr.title);
+        setBody(result.pr.body);
+      }
       setError(null);
     } catch (err) {
       setError(rejectReason(err, "Couldn't load this pull request"));
-      setPr(null);
+      if (!commentsOnly) setPr(null);
     } finally {
       setLoading(false);
     }
@@ -727,7 +739,7 @@ export function PrWorkspacePanel({
             {pr.commentsError ? (
               <div className={styles.actions}>
                 <p className={styles.error} role="status">{pr.commentsError}</p>
-                <button type="button" className={styles.ghost} disabled={loading} onClick={() => void load()}>
+                <button type="button" className={styles.ghost} disabled={loading} onClick={() => void load(true)}>
                   Retry comments
                 </button>
               </div>

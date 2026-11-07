@@ -52,6 +52,16 @@ if (!statePath) {
   process.stderr.write("fake-gh: CODER_FAKE_GH_STATE not set\\n");
   process.exit(2);
 }
+// Comment sources run in parallel; serialize this fixture's shared JSON state.
+const lock = statePath + ".lock";
+for (;;) {
+  try { fs.mkdirSync(lock); break; }
+  catch (err) {
+    if (err.code !== "EEXIST") throw err;
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
+  }
+}
+process.on("exit", () => fs.rmdirSync(lock));
 function load() { return JSON.parse(fs.readFileSync(statePath, "utf8")); }
 function save(s) { fs.writeFileSync(statePath, JSON.stringify(s, null, 2), "utf8"); }
 function flagValue(name) {
@@ -755,6 +765,24 @@ describe("gh PR workspace actions", () => {
       const viewed = await viewPrDetail(repo, 12);
       assert.equal(viewed.ok, true);
       assert.equal(viewed.pr.comments[0].body, "available");
+      assert.match(viewed.pr.commentsError, /couldn't be loaded/);
+      assert.deepEqual(calls(), []);
+    });
+
+    it("keeps earlier pages when a later comment page fails", async () => {
+      const data = seed();
+      data.prs[0].inlineComments = Array.from({ length: 101 }, (_, i) => ({
+        id: 3000 + i, user: { login: "reviewer" }, body: `inline ${i}`,
+      }));
+      const api = fakeGithubApi(data);
+      setGithubApi({ ...api, fetchFn: (url, init) => url.includes("/pulls/12/comments?per_page=100&page=2")
+        ? Promise.resolve({ ok: false, status: 403, json: async () => ({ message: "forbidden" }) })
+        : api.fetchFn(url, init) });
+      git(repo, ["remote", "set-url", "origin", "https://ghe.corp.example/acme/demo.git"]);
+      const viewed = await viewPrDetail(repo, 12);
+      assert.equal(viewed.ok, true);
+      assert.equal(viewed.pr.comments.length, 100);
+      assert.equal(viewed.pr.comments[99].body, "inline 99");
       assert.match(viewed.pr.commentsError, /couldn't be loaded/);
       assert.deepEqual(calls(), []);
     });

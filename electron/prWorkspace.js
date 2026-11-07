@@ -494,13 +494,17 @@ async function viewRaw(cwd, prNumber, repo) {
 /** REST pages work over both the token API and gh, including comments beyond the first 100. */
 async function commentPages(cwd, endpoint, repo) {
   const rows = [];
-  for (let page = 1; ; page++) {
-    const result = await ghApiTryAsync(cwd, ["api", `${endpoint}?per_page=100&page=${page}`], ghOpts(repo));
-    if (!result.ok) throw new Error(ghReason(result, "Couldn't load PR comments"));
-    const batch = JSON.parse(result.stdout);
-    if (!Array.isArray(batch)) throw new Error("Invalid PR comment response");
-    rows.push(...batch);
-    if (batch.length < 100) return rows;
+  try {
+    for (let page = 1; ; page++) {
+      const result = await ghApiTryAsync(cwd, ["api", `${endpoint}?per_page=100&page=${page}`], ghOpts(repo));
+      if (!result.ok) throw new Error(ghReason(result, "Couldn't load PR comments"));
+      const batch = JSON.parse(result.stdout);
+      if (!Array.isArray(batch)) throw new Error("Invalid PR comment response");
+      rows.push(...batch);
+      if (batch.length < 100) return { rows, incomplete: false };
+    }
+  } catch {
+    return { rows, incomplete: true };
   }
 }
 
@@ -543,12 +547,18 @@ async function loadPrComments(cwd, number, other, info) {
   for (let i = 0; i < sources.length; i++) {
     const type = sources[i][0];
     const result = results[i];
-    if (result.status === "rejected") {
+    if (result.status === "rejected" || result.value.incomplete) {
       info.commentsError = "Some PR comments couldn't be loaded.";
-      if (type === "issue") comments.push(...info.comments);
-      continue;
+      if (result.status === "rejected") {
+        if (type === "issue") comments.push(...info.comments);
+        continue;
+      }
     }
-    for (const row of restPrComments(result.value, type, info.url)) {
+    const loaded = restPrComments(result.value.rows, type, info.url);
+    if (type === "issue" && result.value.incomplete) {
+      comments.push(...info.comments.filter((old) => !loaded.some((row) => row.id === old.id)));
+    }
+    for (const row of loaded) {
       // Keep viewer-specific edit/reaction metadata from the existing GraphQL fetch.
       const known = type === "issue" && info.comments.find((old) => old.id === row.id);
       comments.push({ ...(known || {}), ...row });
