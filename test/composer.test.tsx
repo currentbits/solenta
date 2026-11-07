@@ -3597,6 +3597,26 @@ describe("Composer live dictation (#845)", () => {
     m.unmount();
   });
 
+  it("dictation replaces the selected range and preserves it on an empty transcript", async () => {
+    const fake = createFakeCoder({ speechStatus: SPEECH_READY });
+    installSpeechMedia();
+    const { m } = await mountSpeechComposer(fake);
+    const ta = m.query("textarea") as HTMLTextAreaElement;
+    await m.type(ta, "someOLDthing");
+    ta.setSelectionRange(4, 7);
+    await m.click(mic(m));
+    await inAct(() => fake.emitSpeech({ ...SPEECH_READY, state: "recording", delta: "new" }));
+    assert.equal(ta.value, "somenewthing");
+    await inAct(() => fake.emitSpeech({ ...SPEECH_READY, transcript: "" }));
+    assert.equal(ta.value, "someOLDthing");
+    assert.equal(ta.selectionStart, 4);
+    assert.equal(ta.selectionEnd, 7);
+    await m.click(mic(m));
+    await inAct(() => fake.emitSpeech({ ...SPEECH_READY, transcript: "new" }));
+    assert.equal(ta.value, "somenewthing");
+    m.unmount();
+  });
+
   it("empty final transcript restores the original draft", async () => {
     const fake = createFakeCoder({ speechStatus: SPEECH_READY });
     installSpeechMedia();
