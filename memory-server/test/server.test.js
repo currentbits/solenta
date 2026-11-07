@@ -387,7 +387,7 @@ describe('standalone smoke via spawn', () => {
 })
 
 describe('EADDRINUSE port fallback', () => {
-  it('binds a different port and rewrites configFile', async () => {
+  it('binds a different port and atomically rewrites configFile', async (t) => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'coder-mem-eaddr-'))
     const cfgFile = path.join(dir, 'memory-server.json')
     const dbPath = path.join(dir, 'm.db')
@@ -398,6 +398,21 @@ describe('EADDRINUSE port fallback', () => {
     })
     const config = { port, token: TOKEN, dbPath }
     fs.writeFileSync(cfgFile, JSON.stringify(config, null, 2), { mode: 0o600 })
+    const previous = { ...config }
+    const renameSync = fs.renameSync
+    let published = false
+    t.mock.method(fs, 'renameSync', (from, to) => {
+      if (to === cfgFile) {
+        assert.deepEqual(JSON.parse(fs.readFileSync(cfgFile, 'utf8')), previous)
+        const staged = JSON.parse(fs.readFileSync(from, 'utf8'))
+        assert.notEqual(staged.port, port)
+        assert.equal(staged.token, TOKEN)
+        assert.equal(staged.dbPath, dbPath)
+        if (process.platform !== 'win32') assert.equal(fs.statSync(from).mode & 0o777, 0o600)
+        published = true
+      }
+      return renameSync(from, to)
+    })
     const memory = new Memory(':memory:')
     let server
     try {
@@ -409,6 +424,8 @@ describe('EADDRINUSE port fallback', () => {
       assert.equal(onDisk.port, addr.port)
       assert.equal(onDisk.token, TOKEN)
       assert.equal(onDisk.dbPath, dbPath)
+      assert.ok(published)
+      assert.deepEqual(fs.readdirSync(dir), ['memory-server.json'])
     } finally {
       if (server) {
         await new Promise((resolve, reject) => {
@@ -431,25 +448,31 @@ describe('EADDRINUSE port fallback', () => {
     })
     const config = { port: blocker.address().port, token: TOKEN, dbPath: ':memory:' }
     const originalPort = config.port
-    const cfgFile = path.join(os.tmpdir(), 'solenta-port-save-failure.json')
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'solenta-port-save-failure-'))
+    const cfgFile = path.join(dir, 'memory-server.json')
+    const previous = { ...config }
+    fs.writeFileSync(cfgFile, JSON.stringify(previous))
     const failure = Object.assign(new Error('config save failed'), { code: 'EACCES' })
     const memory = new Memory(':memory:')
     const createServer = http.createServer
-    const writeFileSync = fs.writeFileSync
+    const renameSync = fs.renameSync
     let listener
     t.mock.method(http, 'createServer', (...args) => (listener = createServer(...args)))
-    t.mock.method(fs, 'writeFileSync', (file, ...args) => {
-      if (file === cfgFile) throw failure
-      return writeFileSync(file, ...args)
+    t.mock.method(fs, 'renameSync', (from, to) => {
+      if (to === cfgFile) throw failure
+      return renameSync(from, to)
     })
     try {
       await assert.rejects(startServer(memory, config, '127.0.0.1', cfgFile), (err) => err === failure)
       assert.equal(listener.listening, false, 'rejected startup must release its listener')
       assert.equal(config.port, originalPort, 'failed save must not publish a new port')
+      assert.deepEqual(JSON.parse(fs.readFileSync(cfgFile, 'utf8')), previous)
+      assert.deepEqual(fs.readdirSync(dir), ['memory-server.json'])
     } finally {
       if (listener?.listening) await new Promise((resolve) => listener.close(resolve))
       await new Promise((resolve) => blocker.close(resolve))
       memory.close()
+      fs.rmSync(dir, { recursive: true, force: true })
     }
   })
 })

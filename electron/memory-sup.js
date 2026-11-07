@@ -1,6 +1,7 @@
 "use strict";
 
 const fs = require("node:fs");
+const { writeConfigAtomicSync } = require("./atomic-config.js");
 const path = require("node:path");
 const http = require("node:http");
 const crypto = require("node:crypto");
@@ -42,7 +43,7 @@ let ownedChild = null;
  * @param {string} data
  */
 function writeSecretFile(file, data) {
-  fs.writeFileSync(file, data, { mode: 0o600, encoding: "utf8" });
+  writeConfigAtomicSync(file, data, { mode: 0o600, encoding: "utf8" });
   chmodSecret(file);
 }
 
@@ -1342,7 +1343,7 @@ function restoreGrokConfigIfCorrupt(configPath, snapshot, log) {
   }
   try {
     if (snapshot.exists) {
-      fs.writeFileSync(configPath, snapshot.data || Buffer.alloc(0));
+      writeConfigAtomicSync(configPath, snapshot.data || Buffer.alloc(0), { mode: 0o600 });
       chmodSecret(configPath);
     } else {
       try {

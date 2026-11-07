@@ -1,5 +1,6 @@
 import crypto from 'node:crypto'
 import fs from 'node:fs'
+import { writeConfigAtomicSync } from './atomic-config.cjs'
 import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
@@ -82,7 +83,7 @@ export function loadOrCreateConfig(file = configPath()) {
     dbPath: path.join(defaultRoot(), 'memory.db'),
   }
   fs.mkdirSync(path.dirname(file), { recursive: true })
-  fs.writeFileSync(file, JSON.stringify(config, null, 2), { mode: 0o600 })
+  writeConfigAtomicSync(file, JSON.stringify(config, null, 2), { mode: 0o600 })
   try {
     fs.chmodSync(file, 0o600)
   } catch {
@@ -934,7 +935,7 @@ async function listenWithPortFallback(server, config, host, configFile) {
     const port = address && typeof address === 'object' ? address.port : null
     if (!port) throw new Error('port fallback did not bind')
     const next = { port, token: config.token, dbPath: config.dbPath }
-    fs.writeFileSync(configFile, JSON.stringify(next, null, 2), { mode: 0o600 })
+    writeConfigAtomicSync(configFile, JSON.stringify(next, null, 2), { mode: 0o600 })
     try {
       fs.chmodSync(configFile, 0o600)
     } catch {

@@ -14,6 +14,7 @@
 
 const crypto = require("node:crypto");
 const fs = require("node:fs");
+const { writeConfigAtomicSync } = require("./atomic-config.js");
 const path = require("node:path");
 const { posixQuote } = require("./ssh.js");
 const { copyGuardrailRuntime } = require("./guardrail-hook-core.js");
@@ -186,7 +187,7 @@ function writeOverlayConfigToml(dest, sourceHome, trustToml) {
   }
   if (body && !body.endsWith("\n")) body += "\n";
   if (body) body += "\n";
-  fs.writeFileSync(destCfg, body + String(trustToml || ""), "utf8");
+  writeConfigAtomicSync(destCfg, body + String(trustToml || ""), "utf8");
 }
 
 /**
@@ -282,7 +283,7 @@ function ensureHookTrustInConfigToml(configPath, trustToml, key) {
   if (body.includes(`[hooks.state.${tomlQuotedKey(key)}]`)) return;
   if (body && !body.endsWith("\n")) body += "\n";
   if (body) body += "\n";
-  fs.writeFileSync(configPath, body + trustToml, "utf8");
+  writeConfigAtomicSync(configPath, body + trustToml, "utf8");
 }
 
 /**
@@ -390,7 +391,7 @@ function overlayHooksJsonBody(command, timeoutSec = OVERLAY_HOOK_TIMEOUT_SEC) {
 }
 
 function writeOverlayHooksJson(dest, command, timeoutSec) {
-  fs.writeFileSync(
+  writeConfigAtomicSync(
     path.join(dest, "hooks.json"),
     overlayHooksJsonBody(command, timeoutSec),
     "utf8",

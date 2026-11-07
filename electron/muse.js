@@ -12,6 +12,7 @@
  */
 
 const fs = require("node:fs");
+const { writeConfigAtomicSync } = require("./atomic-config.js");
 const path = require("node:path");
 const { reclaimOverlayHomes } = require("./overlayHomes.js");
 const { runJsonLines } = require("./agent.js");
@@ -99,7 +100,7 @@ function materializeMuseHome(opts) {
   if (opts.hookCommand) {
     const hooksPath = path.join(dest, "solenta-hooks.json");
     settings.managed_hooks_path = hooksPath;
-    fs.writeFileSync(
+    writeConfigAtomicSync(
       hooksPath,
       injectMuseGuardrailHooks("", opts.hookCommand, 15),
     );
@@ -111,7 +112,7 @@ function materializeMuseHome(opts) {
       fs.copyFileSync(path.join(__dirname, name), path.join(dest, name));
     }
   }
-  fs.writeFileSync(
+  writeConfigAtomicSync(
     path.join(configDir, "settings.json"),
     JSON.stringify(settings, null, 2) + "\n",
     { mode: 0o600 },

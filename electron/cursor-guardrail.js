@@ -10,6 +10,7 @@
  */
 
 const fs = require("node:fs");
+const { writeConfigAtomicSync } = require("./atomic-config.js");
 const os = require("node:os");
 const path = require("node:path");
 const { copyGuardrailRuntime } = require("./guardrail-hook-core.js");
@@ -59,7 +60,7 @@ function materializeCursorGuardrailPlugin(destDir) {
   fs.mkdirSync(path.join(dest, ".cursor-plugin"), { recursive: true });
   fs.mkdirSync(path.join(dest, "hooks"), { recursive: true });
 
-  fs.writeFileSync(
+  writeConfigAtomicSync(
     path.join(dest, ".cursor-plugin", "plugin.json"),
     JSON.stringify(
       {
@@ -75,7 +76,7 @@ function materializeCursorGuardrailPlugin(destDir) {
   );
 
   const command = "node " + JSON.stringify(scriptPath);
-  fs.writeFileSync(
+  writeConfigAtomicSync(
     path.join(dest, "hooks", "hooks.json"),
     JSON.stringify(
       {

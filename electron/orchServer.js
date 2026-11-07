@@ -2,6 +2,7 @@
 
 const crypto = require("node:crypto");
 const fs = require("node:fs");
+const { writeConfigAtomicSync } = require("./atomic-config.js");
 const http = require("node:http");
 const path = require("node:path");
 const { createRequire } = require("node:module");
@@ -341,7 +342,7 @@ async function loadOrCreateConfig(file) {
     token: crypto.randomBytes(32).toString("hex"),
   };
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, JSON.stringify(config, null, 2), { mode: 0o600 });
+  writeConfigAtomicSync(file, JSON.stringify(config, null, 2), { mode: 0o600 });
   fs.chmodSync(file, 0o600);
   return config;
 }

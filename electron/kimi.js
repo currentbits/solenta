@@ -3,6 +3,7 @@
 const { runJsonLines, SIGKILL_AFTER_MS } = require("./agent.js");
 const { harvestToolResult } = require("./tool-images.js");
 const fs = require("node:fs");
+const { writeConfigAtomicSync } = require("./atomic-config.js");
 const path = require("node:path");
 const { reclaimOverlayHomes } = require("./overlayHomes.js");
 const { posixQuote } = require("./ssh.js");
@@ -105,12 +106,16 @@ function materializeKimiHome(opts) {
     }
     const cfgSrc = path.join(sourceHome, "config.toml");
     if (fs.existsSync(cfgSrc)) {
-      fs.copyFileSync(cfgSrc, path.join(dest, "config.toml"));
+      writeConfigAtomicSync(
+        path.join(dest, "config.toml"),
+        fs.readFileSync(cfgSrc),
+        { mode: fs.statSync(cfgSrc).mode & 0o777 },
+      );
     }
   }
 
   const mcpPath = path.join(dest, "mcp.json");
-  fs.writeFileSync(
+  writeConfigAtomicSync(
     mcpPath,
     JSON.stringify({ mcpServers: opts.mcpServers || {} }, null, 2) + "\n",
     { mode: 0o600, encoding: "utf8" },
@@ -133,7 +138,7 @@ function materializeKimiHome(opts) {
       last_opened_at: now,
     };
   }
-  fs.writeFileSync(
+  writeConfigAtomicSync(
     path.join(dest, "workspaces.json"),
     JSON.stringify(
       { version: 1, workspaces, deleted_workspace_ids: [] },
