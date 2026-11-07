@@ -69,7 +69,7 @@ function createAskRuns(ctx) {
       model: thread.model || null,
       parentRunId: input.parentRunId || null,
     });
-    if (!isReplayTurn(input)) {
+    if (!isReplayTurn(input) && input.skipUserAppend !== true) {
       appendMessage(threadId, "user", prompt, runId, null, attachments);
     }
 
@@ -83,6 +83,7 @@ function createAskRuns(ctx) {
       threadId,
       {
         status: "working",
+        ...(input.fromRunQueue ? { runQueue: null } : {}),
         title,
         runStartedAt: Date.now(),
         awaitingInput: false,

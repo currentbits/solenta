@@ -23,7 +23,7 @@ async function waitFor(predicate) {
 }
 
 describe("automation lifecycle through the real global run queue", () => {
-  let dir, store, runner, project, scheduler, previousEnv;
+  let dir, store, runner, project, scheduler, previousEnv, askCalls;
 
   beforeEach(async () => {
     previousEnv = { CODER_AGENT_CMD: process.env.CODER_AGENT_CMD, CODER_SIMULATE: process.env.CODER_SIMULATE };
@@ -52,7 +52,9 @@ describe("automation lifecycle through the real global run queue", () => {
     project = await services.addProject(store, repo);
     store.setSettings({ maxConcurrentRuns: 1 });
     const core = await import(pathToFileURL(path.join(__dirname, "../../core/dist/index.js")).href);
-    runner = createRunner({ store, core, pushFn() {} });
+    askCalls = [];
+    runner = createRunner({ store, core, pushFn() {}, searchMemory: async () => [],
+      askComplete: (input) => new Promise((resolve) => askCalls.push({ input, resolve })) });
   });
 
   afterEach(async () => {
@@ -262,6 +264,35 @@ describe("automation lifecycle through the real global run queue", () => {
     settleAutomationRuns({ store });
     assert.equal(store.getAutomation(auto.id).pendingRunThreadId, null);
     assert.equal(store.getAutomation(auto.id).consecutiveFailures, 0);
+  });
+
+  it("admits a queued fire switched to Ask mode once without duplicating its prompt", async () => {
+    const blocker = await blockSlot();
+    const auto = automation();
+    await runNow({ store, runner }, auto.id);
+    const id = store.getAutomation(auto.id).pendingRunThreadId;
+    assert.ok(store.getThread(id).runQueue);
+    services.startAsk(store, { threadId: id });
+
+    await finish(blocker, "blocker");
+    await waitFor(() => askCalls.length === 1);
+    assert.equal(store.getThread(id).status, "working");
+    assert.equal(store.getThread(id).runQueue, null);
+    assert.equal(store.getMessages(id).filter((m) => m.role === "user").length, 1);
+    settleAutomationRuns({ store });
+    assert.equal(store.getAutomation(auto.id).pendingRunThreadId, id);
+
+    askCalls[0].resolve({ text: "Answer <automation-memory>ask notes</automation-memory>", source: "fm" });
+    await waitFor(() => store.getThread(id).status === "done");
+    runner.admitQueuedRuns();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(askCalls.length, 1);
+    assert.equal(store.getThread(id).status, "done");
+    settleAutomationRuns({ store });
+    assert.equal(store.getAutomation(auto.id).pendingRunThreadId, null);
+    assert.equal(store.getAutomation(auto.id).memory, "ask notes");
+    assert.equal(store.getMessages(id).filter((m) => m.role === "user").length, 1);
+    assert.equal(fs.existsSync(path.join(dir, "fire.started")), false);
   });
 
   for (const mode of ["continue", "fresh"]) {
