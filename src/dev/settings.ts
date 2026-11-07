@@ -71,6 +71,8 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
   // Keys stay here; the snapshot only says whether each is set (#1725).
   let speech = {
     provider: "local" as NonNullable<AppSettings["speech"]>["provider"],
+    localModel: "nemotron-en",
+    language: "en-US",
     openaiApiKey: null as string | null,
     elevenlabsApiKey: null as string | null,
   };
@@ -211,6 +213,8 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           notifyEvents: { ...notifyEvents },
           speech: {
             provider: speech.provider,
+            localModel: speech.localModel,
+            language: speech.language,
             hasOpenaiKey: Boolean(speech.openaiApiKey),
             hasElevenlabsKey: Boolean(speech.elevenlabsApiKey),
           },
@@ -711,6 +715,8 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           notifyEvents: { ...notifyEvents },
           speech: {
             provider: speech.provider,
+            localModel: speech.localModel,
+            language: speech.language,
             hasOpenaiKey: Boolean(speech.openaiApiKey),
             hasElevenlabsKey: Boolean(speech.elevenlabsApiKey),
           },

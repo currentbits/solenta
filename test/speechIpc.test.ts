@@ -5,9 +5,19 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { createFakeCoder } from "./support/fakeCoder.ts";
+import { createDevCoder } from "../src/devCoder.ts";
 import type { SpeechStatus } from "../src/shared/ipc";
 
 describe("fakeCoder speech IPC", () => {
+  it("keeps the dev model and language selection across speech setting patches without exposing keys", async () => {
+    const api = createDevCoder();
+    const saved = await api.settings.set({ speech: { provider: "local", localModel: "nemotron-3.5", language: "nl-NL" } });
+    assert.equal(saved.speech?.localModel, "nemotron-3.5");
+    assert.equal(saved.speech?.language, "nl-NL");
+    await api.settings.set({ speech: { provider: "openai", openaiApiKey: "fixture-only" } });
+    const settings = await api.settings.get();
+    assert.deepEqual(settings.speech, { provider: "openai", localModel: "nemotron-3.5", language: "nl-NL", hasOpenaiKey: true, hasElevenlabsKey: false });
+  });
   it("subscribes to speech:changed and unsubscribes", () => {
     const fake = createFakeCoder();
     const seen: SpeechStatus[] = [];
