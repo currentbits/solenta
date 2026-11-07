@@ -23,7 +23,7 @@ async function evaluate(fn, ...args) {
   return win.webContents.executeJavaScript(`(${fn})(${args.map((a) => JSON.stringify(a)).join(",")})`);
 }
 async function until(fn, label) {
-  const end = Date.now() + 15000;
+  const end = Date.now() + 45000;
   while (Date.now() < end) {
     if (await evaluate(fn)) return;
     await delay();
@@ -62,12 +62,22 @@ async function key(key) {
 
 app.whenReady().then(async () => {
   const { createServer } = await import("vite");
-  server = await createServer({ root: path.resolve(__dirname, ".."), server: { host: "127.0.0.1", port: 0, strictPort: false }, logLevel: "error" });
+  server = await createServer({
+    root: path.resolve(__dirname, ".."),
+    // Worktrees share node_modules; their Vite optimizers must not share cache.
+    cacheDir: path.join(profile, "vite-cache"),
+    optimizeDeps: { entries: [path.resolve(__dirname, "../test/fixtures/window-layout.html")] },
+    server: { host: "127.0.0.1", port: 0, strictPort: false, hmr: false },
+    logLevel: "error",
+  });
   await server.listen();
   const port = server.httpServer.address().port;
   for (const detached of [false, true]) {
     const geometry = windowGeometry(detached ? "layout-thread" : null);
     win = new BrowserWindow({ ...geometry, show: false, titleBarStyle: "hiddenInset", webPreferences: { offscreen: true, partition: `layout-${detached}`, contextIsolation: true, sandbox: true } });
+    win.webContents.on("console-message", (event) => {
+      if (event.level === "error") console.error(`Renderer: ${event.message}`);
+    });
     // Test the native minimum as well as the renderer viewport. Keep launch
     // sizes unchanged; explicitly resize each real BrowserWindow to its floor.
     win.setSize(geometry.minWidth, geometry.minHeight);
