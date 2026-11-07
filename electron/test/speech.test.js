@@ -815,7 +815,7 @@ describe("speech API keys at rest and on the wire (#1725)", () => {
     assert.equal(reloaded.getSettings().speech.elevenlabsApiKey, "el-speech-unique");
 
     const pub = redactSettings(reloaded.getSettings());
-    assert.deepEqual(pub.speech, { provider: "openai", hasOpenaiKey: true, hasElevenlabsKey: true });
+    assert.deepEqual(pub.speech, { provider: "openai", localModel: "nemotron-en", language: "en-US", hasOpenaiKey: true, hasElevenlabsKey: true });
     assert.ok(!JSON.stringify(pub).includes("speech-unique"));
 
     // Switching provider without resending keys keeps them.

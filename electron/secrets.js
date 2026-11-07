@@ -119,6 +119,7 @@ function secretGroups(settings) {
     });
   }
   if (isPlainObject(settings.otel)) map("otel", settings.otel, "headers");
+  if (isPlainObject(settings.cliProxyUsage)) field("cliproxy", settings.cliProxyUsage, ["managementKey"], true);
   field("settings", settings, ["linearApiKey", "sentryAuthToken"], true);
   for (const r of rows(settings.githubHosts)) {
     field(`github:${r.host || "?"}`, r, ["token"], true);

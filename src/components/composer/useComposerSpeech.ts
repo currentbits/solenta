@@ -50,6 +50,8 @@ export function speechMicLabel(
     }
     return "Downloading speech model";
   }
+  if (status?.state === "error" && status.localError) return "Configure dictation language in Settings";
+  if (status && !status.runtimeReady && status.state !== "ready") return "Local dictation unavailable";
   if (!status || status.state === "missing") return "Download speech model";
   if (status.state === "error" && !status.modelReady) {
     return "Download speech model";
@@ -141,7 +143,7 @@ export function useComposerSpeech({
       }
       const snap = snapshotRef.current;
       if (!snap) return;
-      if (status.state === "error") {
+      if (status.error || status.state === "error") {
         void cancelDictationRef.current();
         if (status.error) setLocalError(status.error);
         return;
@@ -277,6 +279,14 @@ export function useComposerSpeech({
     }
     const state = speech?.state ?? "missing";
     if (state === "downloading") return;
+    if (speech?.localError && state !== "ready") {
+      setLocalError(speech.localError);
+      return;
+    }
+    if (!speech?.runtimeReady && state !== "ready") {
+      setLocalError("Local speech is unavailable on this platform or its bundled runtime is missing.");
+      return;
+    }
     if (state === "ready" || state === "recording") {
       void startDictation();
       return;
@@ -289,10 +299,10 @@ export function useComposerSpeech({
     const api = coderSpeech();
     if (!api) return;
     setSpeechConfirm(false);
-    void api.download().catch((err) => {
+    void api.download(speech?.model ? { modelId: speech.model.id } : undefined).catch((err) => {
       setLocalError(speechCaptureError(err));
     });
-  }, []);
+  }, [speech]);
   return {
     hasSpeech,
     speech,

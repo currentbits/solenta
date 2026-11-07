@@ -246,6 +246,7 @@ const BY_SCOPE = {
     "git:checkoutPr",
     "git:prEdit",
     "git:prComment",
+    "git:prRequestChanges",
     "git:prClose",
     "git:prReady",
     "git:prMergeAt",

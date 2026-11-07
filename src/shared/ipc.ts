@@ -2070,12 +2070,23 @@ export interface ProviderUsageWindow {
 
 export type ProviderUsageStatus = "ok" | "unavailable" | "error";
 
+export interface CliProxyUsageSettings {
+  enabled: boolean;
+  managementUrl: string;
+  /** Omit to preserve; null clears. Never returned over renderer IPC. */
+  managementKey?: string | null;
+  hasManagementKey?: boolean;
+}
+
 /**
  * Account quotas for one provider CLI. Separate from the local byDay
  * ledger: this is what the vendor reports, or an honest unavailable/error.
  */
 export interface ProviderUsage {
   provider: string;
+  /** External source rows have their own identity and never select a native account. */
+  source?: "cliproxy";
+  label?: string;
   status: ProviderUsageStatus;
   windows: ProviderUsageWindow[];
   fetchedAt: number | null;
@@ -3259,9 +3270,21 @@ export interface PrComment {
   reactions?: PrReaction[];
 }
 
+export interface GitlabReview {
+  reviewers: Array<{ id: string; login: string; state: "unreviewed" | "review_started" | "reviewed" | "approved" | "unapproved" | "requested_changes" | "unknown" }>;
+  viewerId?: string;
+  canRequestChanges: boolean;
+  reason?: string;
+}
+
+export type PrRequestChangesResult =
+  | { ok: true; review: GitlabReview }
+  | { ok: false; reason: string };
+
 /** Full PR for the in-app workspace (issue #154). */
 export interface PrDetail {
   forge?: "github" | "gitlab";
+  gitlabReview?: GitlabReview;
   number: number;
   title: string;
   body: string;
@@ -4341,6 +4364,8 @@ export interface AppSettings {
   agentProfiles: AgentProfile[];
   /** Named provider instances (#453). */
   providerInstances: ProviderInstance[];
+  /** Opt-in, read-only CLIProxy Claude quotas. The key is write-only in renderer IPC. */
+  cliProxyUsage?: CliProxyUsageSettings;
   /** Model favourites and custom ids per provider ref (#1714). */
   providerModels?: Record<string, ProviderModelPrefs>;
   /**
@@ -5630,6 +5655,9 @@ export type SpeechProvider = "local" | "openai" | "elevenlabs";
 
 export interface SpeechSettings {
   provider: SpeechProvider;
+  /** Local model and locale; missing values preserve legacy English dictation. */
+  localModel?: string;
+  language?: string;
   /** Write-only; null clears it. */
   openaiApiKey?: string | null;
   elevenlabsApiKey?: string | null;
@@ -5641,6 +5669,11 @@ export interface SpeechStatus {
   state: SpeechState;
   runtimeReady: boolean;
   modelReady: boolean;
+  /** Authoritative selected local download, including its exact size. */
+  model?: { id: string; label: string; bytes: number };
+  language?: string;
+  /** Blocks local capture/download; cloud remains independently available. */
+  localError?: string;
   download?: { bytesReceived: number; bytesTotal: number };
   /** Incremental suffix. Concatenate; do not replace the provisional range. */
   delta?: string;
@@ -7248,9 +7281,14 @@ export interface CoderApi {
       title?: string;
       body?: string;
     }): Promise<PrDetailResult>;
-    /**
-     * Post an issue comment on a PR via `gh pr comment`. Failures in-band.
-     */
+    /** Records a GitLab reviewer verdict after checking current host capability. */
+    prRequestChanges(input: {
+      projectPath: string;
+      prNumber: number;
+      repo?: string;
+      viewerId: string;
+    }): Promise<PrRequestChangesResult>;
+    /** Post a comment on a PR. Failures stay in-band. */
     prComment(input: {
       projectPath: string;
       prNumber: number;
@@ -7944,7 +7982,7 @@ export interface CoderApi {
     /** Runtime/model availability and lifecycle. */
     status(): Promise<SpeechStatus>;
     /** User-approved model download; progress arrives on speech:changed. */
-    download(): Promise<void>;
+    download(input?: { modelId: string }): Promise<void>;
     /** One app-wide realtime session. Returns an opaque session id. */
     start(): Promise<{ sessionId: string }>;
     /**

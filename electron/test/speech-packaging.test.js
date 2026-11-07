@@ -313,6 +313,7 @@ describe("packaging scripts", () => {
 
   it("package-app.sh copies Metal runtime into Contents/Resources before codesign", () => {
     assert.match(appSh, /bundle-speech-runtime\.js/);
+    assert.match(appSh, /cp electron\/speech-models\.json "\$APP_DIR\/electron\/speech-models\.json"/);
     assert.match(appSh, /macos-aarch64-metal/);
     assert.match(appSh, /--dest "\$APP_BUNDLE\/Contents\/Resources"/);
     assert.doesNotMatch(appSh, /--dest .*app\/runtime\/speech/);
@@ -331,6 +332,7 @@ describe("packaging scripts", () => {
 
   it("package-cross.sh copies CPU runtimes into resources/speech per OS", () => {
     assert.match(crossSh, /linux-x86_64-cpu/);
+    assert.match(crossSh, /cp electron\/speech-models\.json "\$PAYLOAD\/electron\/speech-models\.json"/);
     assert.match(crossSh, /windows-x86_64-cpu/);
     assert.match(crossSh, /--dest "\$TOP\/resources"/);
     assert.doesNotMatch(crossSh, /--dest .*app\/runtime\/speech/);
@@ -340,6 +342,7 @@ describe("packaging scripts", () => {
 
   it("verify-package.sh checks nested speech bin, license, and microphone plist", () => {
     assert.match(verifySh, /speech\/bin\/nemo-speech/);
+    assert.match(verifySh, /electron\/speech-models\.json/);
     assert.match(verifySh, /licenses\/nemo-speech\/LICENSE/);
     assert.match(verifySh, /NSMicrophoneUsageDescription/);
     assert.match(verifySh, /codesign --verify --deep --strict/);

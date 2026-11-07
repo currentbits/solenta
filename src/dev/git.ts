@@ -227,6 +227,9 @@ export function createGit(ctx: DevCtx): Pick<CoderApi, "git" | "mergeQueue"> {
           },
         };
       },
+      async prRequestChanges() {
+        return { ok: false as const, reason: "GitLab review submission is unavailable in browser demo mode" };
+      },
       async prComment(_input: {
         projectPath: string;
         prNumber: number;

@@ -726,6 +726,7 @@ export interface UseCoderResult {
     title?: string;
     body?: string;
   }) => Promise<PrDetailResult>;
+  prRequestChanges: CoderApi["git"]["prRequestChanges"];
   prComment: (input: {
     projectPath: string;
     prNumber: number;
@@ -2044,6 +2045,7 @@ export function useCoder(): UseCoderResult {
     prDetail,
     prEdit,
     prComment,
+    prRequestChanges,
     prClose,
     prReady,
     prMergeAt,
@@ -2614,6 +2616,7 @@ export function useCoder(): UseCoderResult {
     prDetail,
     prEdit,
     prComment,
+    prRequestChanges,
     prClose,
     prReady,
     prMergeAt,

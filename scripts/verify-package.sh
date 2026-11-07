@@ -98,6 +98,10 @@ fi
 # Speech runtime lives next to app/ under Contents/Resources, matching
 # process.resourcesPath/speech/bin/nemo-speech. codesign --verify --deep
 # below covers the nested Mach-O; this is the layout gate.
+if [[ ! -f "$APP_RES/electron/speech-models.json" ]]; then
+  echo "ERROR: packaged app missing electron/speech-models.json" >&2
+  exit 1
+fi
 SPEECH_BIN="$APP/Contents/Resources/speech/bin/nemo-speech"
 if [[ ! -x "$SPEECH_BIN" ]]; then
   echo "ERROR: packaged app missing speech/bin/nemo-speech" >&2

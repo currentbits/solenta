@@ -147,6 +147,7 @@ fi
 mkdir -p "$APP_DIR/electron"
 rsync -a --prune-empty-dirs --exclude='/test/' --include='*/' --include='*.js' --exclude='*' \
   electron/ "$APP_DIR/electron/"
+cp electron/speech-models.json "$APP_DIR/electron/speech-models.json"
 
 # Root node_modules is NOT copied into the bundle (only memory-server's is).
 # electron/webBridge.js `require("ws")`, the provider spawn path

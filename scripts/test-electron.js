@@ -27,6 +27,7 @@ const WIN32_FILES = [
   "electron/test/fake-bin.test.js", // shebang fake, argv preserved through cross-spawn
   "electron/test/provider-usage.test.js", // writeFakeBin + cross-spawn quota probe
   "electron/test/provider-usage-managed.test.js",
+  "electron/test/provider-usage-cliproxy.test.js",
   "electron/test/remoteConnections.test.js", // injected SSH spawn + loopback WebSocket
   "electron/test/proc.test.js", // agentSpawnOptions win32 attach (#480)
   "electron/test/rm-tree.test.js", // bounded cleanup of a child process cwd
@@ -82,11 +83,13 @@ const WIN32_FILES = [
   "electron/test/stop-on-settle.test.js",
   "electron/test/pr-completions.test.js",
   "electron/test/pr-gitlab-workspace.test.js",
+  "electron/test/pr-gitlab-review.test.js",
   "electron/test/rewind.test.js",
   "electron/test/session-record.test.js",
   "electron/test/secrets.test.js",
   "electron/test/updater.test.js", // win32 portable stage + helper (#755)
   "electron/test/speech-packaging.test.js", // fixture tree; no archive download (#845)
+  "electron/test/speech-multilingual.test.js", // protocol fixture; no native runtime or model download
   "electron/test/workflow-crash-resume.test.js", // store load only; no spawn (#824)
   "electron/test/workflow-phase-retry.test.js",
   "electron/test/workflow-retry-agent.test.js",

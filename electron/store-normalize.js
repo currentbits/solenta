@@ -8,9 +8,11 @@ const { normalizeMcpServers } = require("./mcp.js");
 const { normalizeProviderInstances, parseProviderModels } = require("./providerInstances.js");
 const { normalizeModelPrices } = require("./modelPrices.js");
 const { normalizePrivacyGateway } = require("./privacyGateway.js");
+const { normalizeCliProxyUsage } = require("./providerUsageCliProxy.js");
 const { parsePolicy } = require("./governance.js");
 const { normalizeAutoApprove } = require("./autoApprove.js");
 const { normalizeBudget } = require("./budgetCaps.js");
+const { localSpeechConfig } = require("./speech-config.js");
 
 /**
  * @param {unknown} u
@@ -580,6 +582,7 @@ function normalizeSettings(raw) {
     maxConcurrentRuns: DEFAULT_MAX_CONCURRENT_RUNS,
     agentProfiles: [],
     providerInstances: [],
+    cliProxyUsage: normalizeCliProxyUsage(null),
     providerModels: {},
     defaultOrchestratorProfileId: null,
     promptSnippets: [],
@@ -668,6 +671,7 @@ function normalizeSettings(raw) {
   settings.providerInstances = normalizeProviderInstances(
     /** @type {{ providerInstances?: unknown }} */ (obj).providerInstances,
   );
+  settings.cliProxyUsage = normalizeCliProxyUsage(obj.cliProxyUsage);
   settings.providerModels = parseProviderModels(
     /** @type {{ providerModels?: unknown }} */ (obj).providerModels,
     false,
@@ -919,7 +923,7 @@ const SPEECH_PROVIDERS = ["local", "openai", "elevenlabs"];
  * sealed at rest (secrets.js) and never sent to the renderer (mcp.js).
  *
  * @param {unknown} raw
- * @returns {{ provider: "local" | "openai" | "elevenlabs", openaiApiKey: string | null, elevenlabsApiKey: string | null }}
+ * @returns {{ provider: "local" | "openai" | "elevenlabs", openaiApiKey: string | null, elevenlabsApiKey: string | null, localModel: string, language: string }}
  */
 function normalizeSpeechSettings(raw) {
   const obj =
@@ -933,6 +937,7 @@ function normalizeSpeechSettings(raw) {
         ? obj.provider
         : "local"
     ),
+    ...localSpeechConfig(obj),
     openaiApiKey: key(obj.openaiApiKey),
     elevenlabsApiKey: key(obj.elevenlabsApiKey),
   };

@@ -64,14 +64,14 @@ export function SpeechControls({
           ? `${Math.round((100 * speech.download.bytesReceived) / speech.download.bytesTotal)}%`
           : null}
       </button>
-      {speechConfirm && (
+      {speechConfirm && !speech.localError && (
         <span
           className={styles.speechConfirm}
           data-speech-confirm=""
           role="group"
           aria-label="Download speech model"
         >
-          <span>Download {formatSpeechModelSize()}?</span>
+          <span>Download {speech.model?.label ?? "Nemotron English"} ({formatSpeechModelSize(speech.model?.bytes)})?</span>
           <button
             type="button"
             className={styles.pill}
