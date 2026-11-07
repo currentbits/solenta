@@ -250,6 +250,144 @@ process.exit(0);
     assert.equal(usage.contextWindow, undefined);
   });
 
+  it("Claude resolves compaction from the running account and refreshes a reused process", async () => {
+    const binary = writeScript(tmpDir, "fake-claude-context.js", `
+const emit = (ev) => process.stdout.write(JSON.stringify(ev) + "\\n");
+let turns = 0;
+require("node:readline").createInterface({ input: process.stdin }).on("line", (line) => {
+  const msg = JSON.parse(line);
+  if (msg.type === "user") {
+    if (!turns) emit({ type: "system", subtype: "init", model: "claude-opus-test", session_id: "sess-policy", claude_code_version: "2.1.318" });
+    turns++;
+    emit({ type: "assistant", message: { content: [{ type: "text", text: "ok" }] } });
+    emit({ type: "result", subtype: "success", result: "ok", session_id: "sess-policy",
+      usage: { input_tokens: 10, cache_read_input_tokens: 90000, cache_creation_input_tokens: 1000, output_tokens: 100 },
+      modelUsage: { "claude-opus-test": { contextWindow: 1000000 } } });
+  } else if (msg.request?.subtype === "get_context_usage") {
+    const settings = JSON.parse(process.argv[process.argv.lastIndexOf("--settings") + 1]);
+    emit({ type: "control_response", response: { subtype: "success", request_id: msg.request_id,
+      response: { maxTokens: Number(process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW),
+        autoCompactThreshold: settings.autoCompactWindow - 33000, isAutoCompactEnabled: turns === 1 } } });
+  }
+});
+`);
+    process.env.CODER_CLAUDE_BIN = binary;
+    store.setSettings({ providerInstances: [{ id: "work", name: "Work", provider: "claude", configDir: path.join(tmpDir, "account"),
+      env: { CLAUDE_CODE_AUTO_COMPACT_WINDOW: "150000" }, extraArgs: ["--settings", JSON.stringify({ autoCompactWindow: 150000 })] }] });
+    const thread = services.createThread(store, { projectId: store.getProjects()[0].id, title: "Policy" });
+    store.updateThread(thread.id, { providerInstance: "work" });
+    await runner.startRun({ threadId: thread.id, prompt: "go" });
+    await waitFor(() => store.getUsage(thread.id)?.contextCompaction);
+    const usage = store.getUsage(thread.id);
+    assert.deepEqual(usage.contextCompaction, { kind: "threshold", tokens: 117000, source: "reported" });
+    assert.equal(usage.contextWindow, 1000000);
+    assert.equal(usage.contextTokens, 91110);
+    assert.equal(usage.inputTokens, 10);
+    await runner.startRun({ threadId: thread.id, prompt: "again" });
+    await waitFor(() => store.getUsage(thread.id)?.contextCompaction?.kind === "disabled");
+    assert.equal(store.getUsage(thread.id).turns, 2);
+    assert.equal(store.getUsage(thread.id).contextWindow, 1000000);
+  });
+
+  it("uses an idle streamed policy over a delayed summary estimate", async () => {
+    process.env.CODER_CLAUDE_BIN = writeScript(tmpDir, "fake-claude-policy.js", `
+const emit = (ev) => process.stdout.write(JSON.stringify(ev) + "\\n");
+require("node:readline").createInterface({ input: process.stdin }).on("line", (line) => {
+  const msg = JSON.parse(line);
+  if (msg.type === "user") {
+    emit({ type: "system", subtype: "init", model: "claude-opus-test", session_id: "sess-stream-policy", claude_code_version: "2.1.318" });
+    emit({ type: "assistant", message: { content: [{ type: "text", text: "ok" }] } });
+    emit({ type: "result", subtype: "success", result: "ok", session_id: "sess-stream-policy",
+      usage: { input_tokens: 10, cache_read_input_tokens: 90000, cache_creation_input_tokens: 1000, output_tokens: 100 } });
+  } else if (msg.request?.subtype === "get_context_usage") {
+    emit({ type: "autocompact_state", value: { enabled: true, enforced: true, effective_window: 130000, threshold: 39000, source: "env" } });
+    emit({ type: "control_response", response: { subtype: "success", request_id: msg.request_id,
+      response: { maxTokens: 150000, autoCompactThreshold: 117000, isAutoCompactEnabled: true } } });
+  }
+});
+`);
+    const thread = services.createThread(store, { projectId: store.getProjects()[0].id, title: "Stream policy" });
+    await runner.startRun({ threadId: thread.id, prompt: "go" });
+    await waitFor(() => store.getUsage(thread.id)?.contextCompaction?.source === "enforced");
+    assert.deepEqual(store.getUsage(thread.id).contextCompaction,
+      { kind: "threshold", tokens: 39000, source: "enforced" });
+    assert.equal(store.getThread(thread.id).status, "done");
+  });
+
+  it("drops a previous turn's policy and ignores a late summary on process reuse", async () => {
+    const requests = path.join(tmpDir, "context-requests");
+    process.env.CODER_CLAUDE_BIN = writeScript(tmpDir, "fake-claude-late-policy.js", `
+const fs = require("node:fs");
+const emit = (ev) => process.stdout.write(JSON.stringify(ev) + "\\n");
+let turns = 0;
+let pending;
+require("node:readline").createInterface({ input: process.stdin }).on("line", (line) => {
+  const msg = JSON.parse(line);
+  if (msg.type === "user") {
+    turns++;
+    if (turns === 1) emit({ type: "system", subtype: "init", model: "claude-opus-test", session_id: "sess-late", claude_code_version: "2.1.318" });
+    if (pending) emit({ type: "control_response", response: { subtype: "success", request_id: pending,
+      response: { maxTokens: 150000, autoCompactThreshold: 117000, isAutoCompactEnabled: true } } });
+    emit({ type: "assistant", message: { content: [{ type: "text", text: "ok" }] } });
+    emit({ type: "result", subtype: "success", result: "ok", session_id: "sess-late",
+      usage: { input_tokens: 10, cache_read_input_tokens: 90000, cache_creation_input_tokens: 1000, output_tokens: 100 },
+      modelUsage: { "claude-opus-test": { contextWindow: 1000000 } } });
+  } else if (msg.request?.subtype === "get_context_usage") {
+    fs.appendFileSync(${JSON.stringify(requests)}, "request\\n");
+    if (turns === 1) pending = msg.request_id;
+    else emit({ type: "control_response", response: { subtype: "success", request_id: msg.request_id, response: {} } });
+  }
+});
+`);
+    const thread = services.createThread(store, { projectId: store.getProjects()[0].id, title: "Late policy" });
+    await runner.startRun({ threadId: thread.id, prompt: "go" });
+    await waitFor(() => fs.existsSync(requests));
+    // Simulate a persisted measurement, which must disappear on the next send.
+    store.setUsage(thread.id, { ...store.getUsage(thread.id),
+      contextCompaction: { kind: "threshold", tokens: 39000, source: "enforced" } });
+    await runner.startRun({ threadId: thread.id, prompt: "again" });
+    assert.equal(store.getUsage(thread.id).contextCompaction, undefined);
+    await waitFor(() => store.getUsage(thread.id)?.turns === 2 &&
+      fs.readFileSync(requests, "utf8").trim().split("\n").length === 2);
+    assert.equal(store.getUsage(thread.id).contextCompaction, undefined);
+    assert.equal(store.getUsage(thread.id).contextWindow, 1000000);
+  });
+
+  it("uses the model ceiling when a launched account has a known percentage override", async () => {
+    const requests = path.join(tmpDir, "unexpected-context-request");
+    const secondSend = path.join(tmpDir, "second-override-send");
+    process.env.CODER_CLAUDE_BIN = writeScript(tmpDir, "fake-claude-override.js", `
+const emit = (ev) => process.stdout.write(JSON.stringify(ev) + "\\n");
+let turns = 0;
+require("node:readline").createInterface({ input: process.stdin }).on("line", (line) => {
+  const msg = JSON.parse(line);
+  if (msg.type === "user") {
+    if (++turns === 2) require("node:fs").writeFileSync(${JSON.stringify(secondSend)}, "received");
+    emit({ type: "system", subtype: "init", model: "claude-opus-test", session_id: "sess-override", claude_code_version: "2.1.318" });
+    emit({ type: "assistant", message: { content: [{ type: "text", text: "ok" }] } });
+    emit({ type: "result", subtype: "success", result: "ok", session_id: "sess-override",
+      usage: { input_tokens: 10, cache_read_input_tokens: 90000, cache_creation_input_tokens: 1000, output_tokens: 100 },
+      modelUsage: { "claude-opus-test": { contextWindow: 1000000 } } });
+  } else if (msg.request?.subtype === "get_context_usage") {
+    require("node:fs").writeFileSync(${JSON.stringify(requests)}, "unexpected");
+  }
+});
+`);
+    store.setSettings({ providerInstances: [{ id: "work", name: "Work", provider: "claude",
+      env: { CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "30" } }] });
+    const thread = services.createThread(store, { projectId: store.getProjects()[0].id, title: "Override policy" });
+    store.updateThread(thread.id, { providerInstance: "work" });
+    await runner.startRun({ threadId: thread.id, prompt: "go" });
+    await waitFor(() => store.getUsage(thread.id)?.turns === 1);
+    await runner.startRun({ threadId: thread.id, prompt: "again" });
+    // stdin is ordered: an erroneous summary request would be handled before
+    // this second user message, so this negative assertion cannot race it.
+    await waitFor(() => fs.existsSync(secondSend) && store.getUsage(thread.id)?.turns === 2);
+    assert.equal(store.getUsage(thread.id).contextCompaction, undefined);
+    assert.equal(store.getUsage(thread.id).contextWindow, 1000000);
+    assert.equal(fs.existsSync(requests), false);
+  });
+
   it("codex token_count captures contextWindow and does not add cumulative totals", async () => {
     const eventsFile = path.join(tmpDir, "codex-events.jsonl");
     fs.writeFileSync(

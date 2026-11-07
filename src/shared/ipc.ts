@@ -1795,6 +1795,12 @@ export interface NotifyEvents {
   ciFailed: boolean;
 }
 
+/** Claude's running compaction policy; absent when the CLI cannot report it. */
+export type ContextCompaction =
+  | { kind: "threshold"; tokens: number; source: "enforced" | "reported" }
+  | { kind: "disabled" }
+  | { kind: "reactive" };
+
 /** Cumulative session usage across turns of a thread. */
 export interface SessionUsage {
   model: string | null;
@@ -1822,6 +1828,8 @@ export interface SessionUsage {
    * model change. Absent when unreported — the ring then uses modelInfo.
    */
   contextWindow?: number;
+  /** Separate from the model ceiling; reported thresholds are CLI estimates. */
+  contextCompaction?: ContextCompaction;
 }
 
 export interface FileChange {

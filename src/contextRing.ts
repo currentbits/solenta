@@ -1,4 +1,4 @@
-import type { ProviderInfo } from "./shared/ipc";
+import type { ContextCompaction, ProviderInfo } from "./shared/ipc";
 
 /**
  * Context-window fill ring (the "47.2%" from the reference UI). Pure so the
@@ -21,21 +21,56 @@ export interface ContextRingView {
   windowLabel: string;
   /** True when the fill is close enough that compaction is likely soon. */
   warn: boolean;
+  /** What the denominator measures, rather than silently relabeling a model ceiling. */
+  limitLabel: string;
+  modelWindowLabel: string | null;
+  compactionNote: string | null;
+  warnLabel: string;
 }
 
 export function contextRing(input: {
   used: number | null | undefined;
   window: number | null | undefined;
+  /** Only pass Claude policy for a Claude thread. */
+  compaction?: ContextCompaction;
+  claude?: boolean;
 }): ContextRingView | null {
-  const { used, window: win } = input;
+  const { used, window: modelWindow, compaction } = input;
+  const threshold =
+    compaction?.kind === "threshold" &&
+    (compaction.source === "enforced" || compaction.source === "reported") &&
+    Number.isSafeInteger(compaction.tokens) && compaction.tokens > 0 &&
+    (modelWindow == null || compaction.tokens <= modelWindow)
+      ? compaction
+      : null;
+  const win = threshold?.tokens ?? modelWindow;
   if (used == null || win == null) return null;
-  if (!(win > 0) || !(used > 0)) return null;
+  if (!Number.isFinite(win) || !Number.isFinite(used) || !(win > 0) || !(used > 0)) {
+    return null;
+  }
   const fraction = Math.min(1, used / win);
   return {
     fraction,
     percentLabel: `${Math.round(fraction * 100)}%`,
     windowLabel: formatWindowSize(win),
     warn: fraction >= CONTEXT_WARN_FRACTION,
+    limitLabel: threshold
+      ? threshold.source === "reported"
+        ? "Auto-compact estimate"
+        : "Auto-compact threshold"
+      : input.claude ? "Model context window" : "Context window",
+    modelWindowLabel: threshold && modelWindow != null && Number.isFinite(modelWindow)
+      ? formatWindowSize(modelWindow) : null,
+    compactionNote: threshold?.source === "reported"
+      ? "Estimated by Claude Code; percentage overrides may change the trigger."
+      : compaction?.kind === "disabled"
+        ? "Auto-compaction is off."
+        : compaction?.kind === "reactive"
+          ? "Auto-compaction follows a context-limit error."
+          : input.claude && !threshold ? "Auto-compact threshold unavailable." : null,
+    warnLabel: threshold?.source === "reported"
+      ? "Auto-compaction may be close"
+      : threshold ? "Auto-compaction is close" : "Context window is nearly full",
   };
 }
 

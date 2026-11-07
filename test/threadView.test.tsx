@@ -7442,6 +7442,39 @@ describe("routine worker activity", () => {
   });
 });
 
+describe("ThreadView Claude compaction meter", () => {
+  it("labels a reported compaction estimate separately from the model ceiling", async () => {
+    const m = await mount(view({ detail: detail({ usage: {
+      model: "claude-x", inputTokens: 10, outputTokens: 100, costUsd: 0, turns: 1,
+      contextTokens: 100_000, contextWindow: 1_000_000,
+      contextCompaction: { kind: "threshold", tokens: 117_000, source: "reported" },
+    } }) }));
+    const badge = m.query("[data-context-ring]");
+    assert.ok(badge);
+    assert.match(badge.getAttribute("aria-label") ?? "", /85% of 117k \(Auto-compact estimate\)/);
+    await inAct(() => badge.focus());
+    const popover = m.query("[data-context-popover]");
+    assert.match(popover?.textContent ?? "", /Model context window: 1M/);
+    assert.match(popover?.textContent ?? "", /percentage overrides may change the trigger/);
+    m.unmount();
+  });
+
+  it("does not imply compaction is near when Claude disabled it", async () => {
+    const m = await mount(view({ detail: detail({ usage: {
+      model: "claude-x", inputTokens: 10, outputTokens: 100, costUsd: 0, turns: 1,
+      contextTokens: 180_000, contextWindow: 200_000, contextCompaction: { kind: "disabled" },
+    } }) }));
+    const badge = m.query("[data-context-ring]");
+    assert.ok(badge);
+    await inAct(() => badge.focus());
+    const popover = m.query("[data-context-popover]");
+    assert.match(popover?.textContent ?? "", /Auto-compaction is off/);
+    assert.match(popover?.textContent ?? "", /Context window is nearly full/);
+    assert.doesNotMatch(popover?.textContent ?? "", /compaction is close/i);
+    m.unmount();
+  });
+});
+
 /** Issue #1755: opt-in 5h/weekly/context strip above the composer. */
 describe("ThreadView usage limits strip (#1755)", () => {
   function sessionUsage(over: Partial<SessionUsage> = {}): SessionUsage {

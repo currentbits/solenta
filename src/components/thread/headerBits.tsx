@@ -156,7 +156,7 @@ export function ContextRingBadge({
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
   }, [open, onOpenChange]);
-  const label = `Context ${ring.percentLabel} of ${ring.windowLabel}`;
+  const label = `Context ${ring.percentLabel} of ${ring.windowLabel} (${ring.limitLabel})`;
   return (
     <div
       className={styles.menuWrap}
@@ -206,6 +206,13 @@ export function ContextRingBadge({
             </span>
             <span>{ring.percentLabel}</span>
           </div>
+          <p className={styles.contextNote}>
+            {ring.limitLabel}
+            {ring.modelWindowLabel ? ` · Model context window: ${ring.modelWindowLabel}` : ""}
+          </p>
+          {ring.compactionNote && (
+            <p className={styles.contextNote}>{ring.compactionNote}</p>
+          )}
           <ul className={styles.contextSegList}>
             {segments.map((seg) => (
               <li key={seg.key} className={styles.contextSeg}>
@@ -223,7 +230,7 @@ export function ContextRingBadge({
           {(ring.warn || onCompact) && (
             <div className={styles.contextWarn}>
               {ring.warn && (
-                <p className={styles.contextWarnNote}>Compaction is close</p>
+                <p className={styles.contextWarnNote}>{ring.warnLabel}</p>
               )}
               {onCompact && (
                 <button
@@ -356,7 +363,7 @@ export function UsageLimitsStrip({
     ring && used != null
       ? {
           left: Math.round((1 - ring.fraction) * 100),
-          title: `${used.toLocaleString()} / ${ring.windowLabel} tokens`,
+          title: `${used.toLocaleString()} / ${ring.windowLabel} tokens (${ring.limitLabel})`,
         }
       : null;
 

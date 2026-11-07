@@ -57,6 +57,7 @@ const { saveToolImages, extractImages } = require("./tool-images.js");
 const { extractHtml } = require("./tool-html.js");
 const fs = require("node:fs");
 const { recordCompaction } = require("./compaction.js");
+const { claudeCompaction } = require("./claude-context.js");
 
 /**
  * One model's growth in a claude result's modelUsage since the last result
@@ -674,6 +675,9 @@ function createClaudeRun(ctx) {
     let sawAnyEvent = false;
     /** The dead-reuse respawn below fires at most once per turn. */
     let respawned = false;
+    // Turn-local: settings can reload between sends on the same process.
+    let contextCompaction = null;
+    let sawCompactionPolicy = false;
 
     function disarmAck() {
       const e = active.get(threadId);
@@ -687,6 +691,25 @@ function createClaudeRun(ctx) {
         sawAnyEvent = true;
         disarmAck();
         const type = ev && ev.type;
+        // Policy frames can arrive while idle on a kept-alive CLI. Only the
+        // current process may update this thread; never read local settings
+        // for a named account, SSH host or WSL process.
+        if (interactive && type === "autocompact_state") {
+          const sess = claudeSessions.get(threadId);
+          if (!sess || sess.handle !== handle) return;
+          sawCompactionPolicy = true;
+          contextCompaction = claudeCompaction(ev.value, true);
+          const usage = store.getUsage(threadId);
+          if (usage) {
+            const next = { ...usage };
+            delete next.contextCompaction;
+            if (contextCompaction) next.contextCompaction = contextCompaction;
+            store.setUsage(threadId, next);
+            store.save();
+            pushDetail(threadId, claudeState);
+          }
+          return;
+        }
 
         // --replay-user-messages echoes each stdin user line once the CLI
         // takes it up: at a tool boundary (before the result) or as its own
@@ -1241,6 +1264,9 @@ function createClaudeRun(ctx) {
                 .filter(Boolean)
               : null;
           if (handle && handle.modelSwitchedTo !== undefined) {
+            // A threshold from the plan model cannot size the act model.
+            contextCompaction = null;
+            sawCompactionPolicy = false;
             capturedModel = handle.modelSwitchedTo || capturedModel;
             delete handle.modelSwitchedTo;
           }
@@ -1264,7 +1290,26 @@ function createClaudeRun(ctx) {
             }),
             reportedModelUsageWindow(ev),
           );
+          if (interactive && contextCompaction) {
+            nextUsage.contextCompaction = contextCompaction;
+          }
           store.setUsage(threadId, nextUsage);
+          if (interactive && !sawCompactionPolicy) {
+            const queriedHandle = handle;
+            const turns = nextUsage.turns;
+            void handle.getContextUsage().then((value) => {
+              const sess = claudeSessions.get(threadId);
+              const usage = store.getUsage(threadId);
+              if (!sess || sess.handle !== queriedHandle || sess.dispatch.onEvent !== onEvent ||
+                  !usage || usage.turns !== turns || sawCompactionPolicy) return;
+              // A streamed policy arriving during the request always wins.
+              const compaction = claudeCompaction(value);
+              if (!compaction) return;
+              store.setUsage(threadId, { ...usage, contextCompaction: compaction });
+              store.save();
+              pushDetail(threadId, claudeState);
+            });
+          }
           if (costDelta > 0) {
             store.recordSpend(costDelta);
           }
@@ -1572,6 +1617,11 @@ function createClaudeRun(ctx) {
           interactive,
           keepAlive: true,
           envExtra: spawnEnv,
+          // Summary ignores this override. Do not turn a known wrong estimate
+          // into the meter's denominator. Remote settings remain CLI-owned.
+          contextSummaryAllowed: !extraArgv.some((arg) => arg.includes("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE")) &&
+            (crossesBoundary(project) || !(spawnEnv?.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE ??
+              process.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE)),
           onEvent: (ev) => sess.dispatch.onEvent(ev),
           onExit: (info) => {
             // Process death always retires the session, whatever turn (if
@@ -1651,6 +1701,14 @@ function createClaudeRun(ctx) {
     }
 
     entry.handle = handle;
+    if (interactive) {
+      const usage = store.getUsage(threadId);
+      if (usage?.contextCompaction) {
+        const next = { ...usage };
+        delete next.contextCompaction;
+        store.setUsage(threadId, next);
+      }
+    }
     store.save();
     pushDetail(threadId, claudeState);
 
