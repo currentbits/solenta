@@ -14,6 +14,7 @@ require("node:module").enableCompileCache?.();
 const { app, BrowserWindow, ipcMain, dialog, shell, Notification, nativeTheme, nativeImage, protocol, net, powerSaveBlocker, powerMonitor, session, Tray, Menu } = require("electron");
 const { overlayLabel, overlayDescription, overlayBitmap } = require("./taskbarOverlay.js");
 const { windowBackgroundColor, nativeThemeSource } = require("./theme.js");
+const { windowGeometry } = require("./windowGeometry.js");
 const { createStayAwake } = require("./caffeinate.js");
 const {
   createSpeechManager,
@@ -439,11 +440,7 @@ function createWindow(opts = {}) {
   const icon = windowIcon();
   const win = new BrowserWindow({
     ...(icon ? { icon } : {}),
-    // Detached: above the 900 CSS px narrow breakpoint so no drawers.
-    width: threadId ? 960 : 1440,
-    height: 900,
-    minWidth: threadId ? 920 : 1100,
-    minHeight: 700,
+    ...windowGeometry(threadId),
     backgroundColor,
     titleBarStyle: "hiddenInset",
     trafficLightPosition: { x: 16, y: 16 },

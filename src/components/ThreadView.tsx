@@ -4769,7 +4769,7 @@ export const ThreadView = memo(function ThreadView({
             <div
               className={styles.chatSlot}
               data-pane-chat=""
-              data-draft-hero={emptyMessages && !hasTimeline ? "" : undefined}
+              data-draft-hero={emptyMessages && !hasTimeline && !activeCard ? "" : undefined}
             >
       {showWorkerNav && (
         <div className={styles.handoffBanner} data-worker-nav="">
@@ -4960,7 +4960,7 @@ export const ThreadView = memo(function ThreadView({
           if (openClickedImage(e.target)) e.preventDefault();
         }}
       >
-        {emptyMessages && !hasTimeline && (
+        {emptyMessages && !hasTimeline && !activeCard && (
           <div className={styles.heroDraft} data-draft-hero-title="">
             {project?.scratch ? (
               <>
