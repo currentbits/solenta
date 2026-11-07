@@ -1788,6 +1788,10 @@ export const ThreadView = memo(function ThreadView({
     const used = detail.usage?.contextTokens ?? null;
     const view = contextRing({
       used,
+      claude: detail.thread.provider === "claude",
+      compaction: detail.thread.provider === "claude"
+        ? detail.usage?.contextCompaction
+        : undefined,
       window: threadContextWindow(
         detail.usage?.contextWindow,
         providers,

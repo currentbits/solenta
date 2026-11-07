@@ -47,6 +47,7 @@ const WIN32_FILES = [
   "electron/test/opencode-guardrail-hook.test.js",
   "electron/test/cursor.test.js",
   "electron/test/context-usage.test.js",
+  "electron/test/claude-context.test.js", // pure policy + writeFakeBin transport
   "electron/test/fork-handoff.test.js",
   "electron/test/grok.test.js",
   "electron/test/guardrails-runner.test.js",

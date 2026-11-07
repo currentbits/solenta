@@ -344,10 +344,6 @@ function parsePrComments(raw) {
     if (!row || typeof row !== "object") continue;
     const body = row.body != null ? String(row.body) : "";
     const url = row.url != null ? String(row.url) : "";
-    // ponytail: only top-level PR/issue comments are fetched today, so every
-    // row is "issue". Review (inline diff) comments would be "review"; the
-    // edit/reaction routing already branches on `type`, add the fetch when
-    // the Code tab needs inline comments too.
     const id = row.databaseId != null ? Number(row.databaseId) : commentIdFromUrl(url);
     const reactions = parseReactionGroups(row.reactionGroups);
     out.push({
@@ -495,6 +491,82 @@ async function viewRaw(cwd, prNumber, repo) {
   return last;
 }
 
+/** REST pages work over both the token API and gh, including comments beyond the first 100. */
+async function commentPages(cwd, endpoint, repo) {
+  const rows = [];
+  try {
+    for (let page = 1; ; page++) {
+      const result = await ghApiTryAsync(cwd, ["api", `${endpoint}?per_page=100&page=${page}`], ghOpts(repo));
+      if (!result.ok) throw new Error(ghReason(result, "Couldn't load PR comments"));
+      const batch = JSON.parse(result.stdout);
+      if (!Array.isArray(batch)) throw new Error("Invalid PR comment response");
+      rows.push(...batch);
+      if (batch.length < 100) return { rows, incomplete: false };
+    }
+  } catch {
+    return { rows, incomplete: true };
+  }
+}
+
+function restPrComments(rows, type, prUrl) {
+  return rows.filter((row) => row && typeof row === "object" && typeof row.body === "string" && row.body.trim()).map((row) => {
+    const id = parsePrNumber(row.id);
+    const anchor = type === "issue" ? "issuecomment-" : type === "review" ? "discussion_r" : "pullrequestreview-";
+    const line = parsePrNumber(row.line ?? row.original_line);
+    const startLine = parsePrNumber(row.start_line ?? row.original_start_line);
+    return {
+      ...(id ? { id } : {}),
+      type,
+      author: commentAuthor(row.user),
+      body: row.body,
+      createdAt: String(row.created_at || row.submitted_at || ""),
+      url: String(row.html_url || `${prUrl}#${anchor}${id || ""}`),
+      ...(typeof row.path === "string" ? { path: row.path } : {}),
+      ...(line ? { line } : {}),
+      ...(startLine ? { startLine } : {}),
+      ...(row.side === "LEFT" || row.side === "RIGHT" ? { side: row.side } : {}),
+      ...(row.line == null && row.original_line != null ? { outdated: true } : {}),
+      ...(typeof row.diff_hunk === "string" ? { diffHunk: row.diff_hunk } : {}),
+    };
+  });
+}
+
+async function loadPrComments(cwd, number, other, info) {
+  const slug = await commentRepoSlug(cwd, other);
+  if (!slug) {
+    info.commentsError = "Couldn't resolve the repository for PR comments";
+    return;
+  }
+  const sources = [
+    ["issue", `repos/${slug}/issues/${number}/comments`],
+    ["review-summary", `repos/${slug}/pulls/${number}/reviews`],
+    ["review", `repos/${slug}/pulls/${number}/comments`],
+  ];
+  const results = await Promise.allSettled(sources.map(([, endpoint]) => commentPages(cwd, endpoint, other)));
+  const comments = [];
+  for (let i = 0; i < sources.length; i++) {
+    const type = sources[i][0];
+    const result = results[i];
+    if (result.status === "rejected" || result.value.incomplete) {
+      info.commentsError = "Some PR comments couldn't be loaded.";
+      if (result.status === "rejected") {
+        if (type === "issue") comments.push(...info.comments);
+        continue;
+      }
+    }
+    const loaded = restPrComments(result.value.rows, type, info.url);
+    if (type === "issue" && result.value.incomplete) {
+      comments.push(...info.comments.filter((old) => !loaded.some((row) => row.id === old.id)));
+    }
+    for (const row of loaded) {
+      // Keep viewer-specific edit/reaction metadata from the existing GraphQL fetch.
+      const known = type === "issue" && info.comments.find((old) => old.id === row.id);
+      comments.push({ ...(known || {}), ...row });
+    }
+  }
+  info.comments = comments.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+}
+
 /**
  * Full PR (title, body, comments, draft) for the workspace panel.
  *
@@ -521,6 +593,7 @@ async function viewPrDetail(projectPath, prNumber, opts) {
       reason: err && err.message ? String(err.message) : "gh returned unparseable PR JSON",
     };
   }
+  await loadPrComments(repo.cwd, number, other, info);
   // Checks are best-effort: a hover card without CI data is still useful,
   // and an older gh / a PR with no checks must never turn this ok:false.
   try {
@@ -672,7 +745,7 @@ async function commentRepoSlug(cwd, other) {
 /**
  * Edit an issue comment or PR review comment in place (#1795 feature 2).
  * Routes to `/issues/comments/{id}` or `/pulls/comments/{id}` by `type`
- * (default "issue", the only kind the panel fetches today), over `gh api`
+ * (default "issue"), over `gh api`
  * (API-first, gh fallback, same as every other prWorkspace write). Same
  * outbound secret scan as commentPr.
  *

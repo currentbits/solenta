@@ -107,6 +107,7 @@ function flattenContent(content) {
  *   result. The process outlives the turn so harness background tasks survive
  *   settle and later turns reuse it via send() (issue #8).
  * @param {Record<string, string>} [opts.envExtra] - added to the inherited env
+ * @param {boolean} [opts.contextSummaryAllowed] - false when a known override is absent from CLI summaries
  * @param {(ev: object) => void} opts.onEvent - raw parsed NDJSON event
  * @param {(info: { code: number | null, stderr: string, gotResult: boolean }) => void} opts.onExit
  * @param {(err: Error) => void} [opts.onError]
@@ -123,6 +124,7 @@ function runClaude(opts) {
     interactive = false,
     keepAlive = false,
     envExtra,
+    contextSummaryAllowed = true,
     onEvent,
     onExit,
     onError,
@@ -152,6 +154,18 @@ function runClaude(opts) {
       })();
 
   let gotResult = false;
+  let summarySupported = false;
+  let contextRequest = null;
+  let contextRequestId = 0;
+
+  function finishContextRequest(value) {
+    if (!contextRequest) return;
+    const pending = contextRequest;
+    contextRequest = null;
+    clearTimeout(pending.timer);
+    pending.resolve(value);
+  }
+
   /** @type {ReturnType<typeof runJsonLines> | null} */
   let run = null;
 
@@ -170,6 +184,24 @@ function runClaude(opts) {
   }
 
   function handleEvent(obj) {
+    if (obj.type === "system" && obj.subtype === "init") {
+      // 2.1.219 ignores detail and makes token-count API calls. Only probe
+      // versions verified to implement the local summary request (2.1.318).
+      const version = /^(\d+)\.(\d+)\.(\d+)$/.exec(obj.claude_code_version || "");
+      summarySupported = Boolean(version && (
+        Number(version[1]) > 2 || (Number(version[1]) === 2 && (
+          Number(version[2]) > 1 || (Number(version[2]) === 1 && Number(version[3]) >= 318)
+        ))
+      ));
+    }
+    if (obj.type === "control_response" && contextRequest &&
+        obj.response?.request_id === contextRequest.id) {
+      const response = obj.response;
+      if (response.subtype !== "success") summarySupported = false;
+      finishContextRequest(response.subtype === "success" ? response.response : null);
+      return;
+    }
+
     if (obj.type === "result") {
       gotResult = true;
       // Interactive mode: the CLI waits for more stdin messages after a
@@ -190,6 +222,8 @@ function runClaude(opts) {
 
   /** Deliver one user turn on stdin; resets per-turn result tracking. */
   function sendUser(promptText) {
+    // A response for the previous turn cannot describe this turn's settings.
+    finishContextRequest(null);
     gotResult = false;
     return writeLine({
       type: "user",
@@ -208,8 +242,11 @@ function runClaude(opts) {
     onEvent: handleEvent,
     onExit:
       typeof onExit === "function"
-        ? ({ code, stderr }) => onExit({ code, stderr, gotResult })
-        : undefined,
+        ? ({ code, stderr }) => {
+            finishContextRequest(null);
+            onExit({ code, stderr, gotResult });
+          }
+        : () => finishContextRequest(null),
     onError,
   });
   const child = run.child;
@@ -220,6 +257,7 @@ function runClaude(opts) {
       respond: () => false,
       respondError: () => false,
       setModel: () => false,
+      getContextUsage: () => Promise.resolve(null),
       getStderr: () => "",
       child: null,
     };
@@ -273,13 +311,39 @@ function runClaude(opts) {
      * @param {string | null} model
      */
     setModel(model) {
+      finishContextRequest(null);
       return writeLine({
         type: "control_request",
         request_id: `set-model-${Date.now()}`,
         request: { subtype: "set_model", ...(model ? { model } : {}) },
       });
     },
-    kill: run.kill,
+    /** Ask the existing CLI for its local estimate without counting tokens. */
+    getContextUsage() {
+      if (!interactive || !keepAlive || !summarySupported || !contextSummaryAllowed) {
+        return Promise.resolve(null);
+      }
+      if (contextRequest) return contextRequest.promise;
+      const id = `solenta-context-${++contextRequestId}`;
+      const promise = new Promise((resolve) => {
+        const timer = setTimeout(() => {
+          summarySupported = false;
+          finishContextRequest(null);
+        }, 3000);
+        timer.unref?.();
+        contextRequest = { id, resolve, timer };
+      });
+      contextRequest.promise = promise;
+      if (!writeLine({ type: "control_request", request_id: id,
+        request: { subtype: "get_context_usage", detail: "summary" } })) {
+        finishContextRequest(null);
+      }
+      return promise;
+    },
+    kill() {
+      finishContextRequest(null);
+      run.kill();
+    },
     getStderr: run.getStderr,
   };
 }

@@ -189,3 +189,46 @@ describe("coldCompactTokens", () => {
     assert.equal(coldCompactTokens({ ...base, provider: "codex" }), null);
   });
 });
+
+// The numerator and model ceiling stay intact when Claude compacts earlier.
+describe("Claude compaction-aware ring", () => {
+  it("measures against the reported point and labels the model ceiling separately", () => {
+    const ring = contextRing({ used: 100_000, window: 1_000_000, claude: true,
+      compaction: { kind: "threshold", tokens: 117_000, source: "reported" } });
+    assert.ok(ring);
+    assert.equal(ring.percentLabel, "85%");
+    assert.equal(ring.windowLabel, "117k");
+    assert.equal(ring.modelWindowLabel, "1M");
+    assert.equal(ring.limitLabel, "Auto-compact estimate");
+    assert.match(ring.compactionNote ?? "", /percentage overrides/);
+    assert.equal(ring.warn, true);
+    assert.equal(ring.warnLabel, "Auto-compaction may be close");
+  });
+
+  it("uses an enforced threshold without claiming it is a model ceiling", () => {
+    const ring = contextRing({ used: 30_000, window: 200_000, claude: true,
+      compaction: { kind: "threshold", tokens: 39_000, source: "enforced" } });
+    assert.equal(ring?.percentLabel, "77%");
+    assert.equal(ring?.limitLabel, "Auto-compact threshold");
+    assert.equal(ring?.compactionNote, null);
+  });
+
+  it("keeps a labeled model ceiling when compaction is off, reactive or unavailable", () => {
+    for (const compaction of [undefined, { kind: "disabled" }, { kind: "reactive" }] satisfies
+      Array<import("../src/shared/ipc").ContextCompaction | undefined>) {
+      const ring = contextRing({ used: 180_000, window: 200_000, claude: true, compaction });
+      assert.equal(ring?.percentLabel, "90%");
+      assert.equal(ring?.limitLabel, "Model context window");
+      assert.equal(ring?.warnLabel, "Context window is nearly full");
+      assert.ok(ring?.compactionNote);
+    }
+  });
+
+  it("ignores invalid policy data and hides non-finite measurements", () => {
+    const ring = contextRing({ used: 100_000, window: 200_000, claude: true,
+      compaction: { kind: "threshold", tokens: 300_000, source: "reported" } });
+    assert.equal(ring?.percentLabel, "50%");
+    assert.equal(contextRing({ used: NaN, window: 200_000 }), null);
+    assert.equal(contextRing({ used: 10, window: Infinity }), null);
+  });
+});
