@@ -637,7 +637,7 @@ describe("SettingsModal late settings load (#930)", () => {
     m.unmount();
   });
 
-  it("omits untouched numeric fields when saving before settings have loaded", async () => {
+  it("blocks saving edited numeric fields before settings have loaded", async () => {
     const patches: Partial<AppSettings>[] = [];
     const m = await mount(
       modal({
@@ -652,26 +652,8 @@ describe("SettingsModal late settings load (#930)", () => {
     const input = m.query("#pr-diff-cap") as HTMLInputElement;
     await m.type(input, "500");
     await m.press(input, "Enter");
-    assert.equal(patches.length, 1);
-    assert.equal(patches[0].prDiffCapLines, 500);
-    assert.equal(
-      Object.prototype.hasOwnProperty.call(patches[0], "dailyBudgetUsd"),
-      false,
-      "unhydrated daily budget must not be sent as null",
-    );
-    assert.equal(
-      Object.prototype.hasOwnProperty.call(
-        patches[0],
-        "orchestrationBudgetUsd",
-      ),
-      false,
-      "unhydrated orchestration budget must not be sent as null",
-    );
-    assert.equal(
-      Object.prototype.hasOwnProperty.call(patches[0], "autoSettleAfterDays"),
-      false,
-      "unhydrated auto-settle must not be sent as null",
-    );
+    assert.equal(patches.length, 0, "no settings patch is safe without the saved snapshot");
+    assert.match(m.text(), /Retry loading settings before saving changes/);
     m.unmount();
   });
 

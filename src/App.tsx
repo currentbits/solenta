@@ -27,6 +27,7 @@ import {
 } from "./components/AgentsPanel";
 import { ClaimedLanesHeartbeat } from "./components/LaneHeartbeat";
 import type { SettingsPane } from "./components/SettingsModal";
+import { SettingsLoadNotice } from "./components/SettingsLoadNotice";
 import { ArchiveToast } from "./components/ArchiveToast";
 import { ResumeNotice } from "./components/ResumeNotice";
 import { StopAllConfirm } from "./components/StopAllConfirm";
@@ -418,6 +419,9 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     downloadUpdate,
     applyUpdate,
     settings,
+    settingsError,
+    settingsLoading,
+    retrySettings,
     saveSettings,
     stayAwake,
     setStayAwakeMode,
@@ -1708,6 +1712,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
    */
   const handleToggleModelFavorite = useCallback(
     (providerId: string, modelId: string) => {
+      if (settings == null) return;
       const all = settings?.providerModels ?? {};
       const pref = all[providerId] ?? { favorites: [], custom: [] };
       const favorites = pref.favorites.includes(modelId)
@@ -2148,6 +2153,9 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     <PrHoverFetchContext.Provider value={prDetail}>
     <div className={styles.shell}>
       <ConnectionBanner />
+      {settingsError && !settingsOpen && (
+        <SettingsLoadNotice error={settingsError} loading={settingsLoading} onRetry={retrySettings} />
+      )}
       <div
         className={styles.app}
         data-layout="app"
@@ -2301,7 +2309,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onDismissProjectError={clearError}
         onOpenSettings={openSettings}
         stayAwake={stayAwake}
-        onSetStayAwakeMode={(mode) => void setStayAwakeMode(mode)}
+        onSetStayAwakeMode={settings ? (mode) => void setStayAwakeMode(mode) : undefined}
         memoryEntries={appStatus?.memory.entries ?? null}
         spendTodayUsd={appStatus?.spendTodayUsd ?? null}
         dailyBudgetUsd={settings?.dailyBudgetUsd ?? null}
@@ -2604,7 +2612,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onClearQuestion={clearQuestion}
         onAnswerSecret={answerSecret}
         onSetProvider={setProvider}
-        onToggleModelFavorite={handleToggleModelFavorite}
+        onToggleModelFavorite={settings ? handleToggleModelFavorite : undefined}
         onSetReasoningEffort={setReasoningEffort}
         onApplyAgentProfile={applyAgentProfile}
         onSetWebSearch={setWebSearch}
@@ -2897,6 +2905,9 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
           onClose={closeSettings}
           initialPane={settingsPane}
           settings={settings}
+          settingsError={settingsError}
+          settingsLoading={settingsLoading}
+          onRetrySettings={retrySettings}
           providers={providers}
           onRefreshProviders={handleModelPickerOpen}
           onProviderSignIn={handleProviderSignIn}
