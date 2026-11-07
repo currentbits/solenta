@@ -1294,10 +1294,11 @@ function createClaudeRun(ctx) {
             nextUsage.contextCompaction = contextCompaction;
           }
           store.setUsage(threadId, nextUsage);
-          if (interactive && !sawCompactionPolicy) {
+          if (interactive && !sawCompactionPolicy && typeof handle.getContextUsage === "function") {
             const queriedHandle = handle;
             const turns = nextUsage.turns;
-            void handle.getContextUsage().then((value) => {
+            void (async () => {
+              const value = await queriedHandle.getContextUsage();
               const sess = claudeSessions.get(threadId);
               const usage = store.getUsage(threadId);
               if (!sess || sess.handle !== queriedHandle || sess.dispatch.onEvent !== onEvent ||
@@ -1308,7 +1309,7 @@ function createClaudeRun(ctx) {
               store.setUsage(threadId, { ...usage, contextCompaction: compaction });
               store.save();
               pushDetail(threadId, claudeState);
-            });
+            })().catch(() => {}); // Optional meter metadata must not fail a successful turn.
           }
           if (costDelta > 0) {
             store.recordSpend(costDelta);

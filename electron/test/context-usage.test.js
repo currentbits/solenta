@@ -7,7 +7,13 @@ const { pathToFileURL } = require("node:url");
 const { execFileSync } = require("node:child_process");
 const { Store } = require("../store.js");
 const services = require("../services.js");
+// Capture the real launch path, changing only the optional metadata method.
+const claude = require("../claude.js");
+const runClaude = claude.runClaude;
+let contextUsageOverride = null;
+claude.runClaude = (...args) => Object.assign(runClaude(...args), contextUsageOverride);
 const { createRunner } = require("../runner.js");
+claude.runClaude = runClaude;
 const { extractUsage } = require("../codex.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
 const { rmTree } = require("./support/rmTree.js");
@@ -141,6 +147,7 @@ describe("runner contextTokens accuracy (#317, #704)", () => {
   let prevKimiScenario;
 
   beforeEach(async () => {
+    contextUsageOverride = null;
     prevSimulate = process.env.CODER_SIMULATE;
     prevAgentCmd = process.env.CODER_AGENT_CMD;
     prevGrokMcpDisable = process.env.CODER_GROK_MCP_DISABLE;
@@ -248,6 +255,32 @@ process.exit(0);
     assert.equal(usage.outputTokens, 884);
     assert.equal(usage.contextTokens, 2 + 17028 + 20661 + 884);
     assert.equal(usage.contextWindow, undefined);
+  });
+
+  it("settles successful turns when optional context metadata is absent, throws or rejects", async () => {
+    process.env.CODER_CLAUDE_BIN = writeScript(tmpDir, "fake-claude-context-failure.js", `
+const emit = (ev) => process.stdout.write(JSON.stringify(ev) + "\\n");
+require("node:readline").createInterface({ input: process.stdin }).on("line", (line) => {
+  if (JSON.parse(line).type !== "user") return;
+  emit({ type: "assistant", message: { content: [{ type: "text", text: "ok" }] } });
+  emit({ type: "result", subtype: "success", result: "ok", session_id: "sess-context-failure",
+    usage: { input_tokens: 10, output_tokens: 100 }, total_cost_usd: 0.01 });
+});
+`);
+    for (const getContextUsage of [undefined,
+      () => { throw new Error("summary unavailable"); },
+      () => Promise.reject(new Error("summary unavailable"))]) {
+      contextUsageOverride = { getContextUsage };
+      const thread = services.createThread(store, { projectId: store.getProjects()[0].id, title: "Context unavailable" });
+      await runner.startRun({ threadId: thread.id, prompt: "go" });
+      await waitFor(() => store.getThread(thread.id).status === "done");
+      const usage = store.getUsage(thread.id);
+      assert.equal(usage.turns, 1);
+      assert.equal(usage.inputTokens, 10);
+      assert.equal(usage.outputTokens, 100);
+      assert.equal(usage.costUsd, 0.01);
+      assert.equal(usage.contextCompaction, undefined);
+    }
   });
 
   it("Claude resolves compaction from the running account and refreshes a reused process", async () => {
