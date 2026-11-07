@@ -8,7 +8,12 @@ async function prCompletions(input) {
   const cwd = String(input?.projectPath || '');
   const kind = input?.kind;
   if (!cwd || !['@', '#', '!'].includes(kind)) return { ok: false, reason: 'Invalid completion request' };
-  const query = String(input.query || '').slice(0, 100);
+  // Match the textarea token grammar at the trust boundary too. In particular,
+  // GitHub search qualifiers, spaces and quotes must never augment repo scope.
+  const query = input.query == null ? '' : input.query;
+  if (typeof query !== 'string' || !/^[\w.-]{0,100}$/.test(query)) {
+    return { ok: false, reason: 'Invalid completion query' };
+  }
   const page = Math.max(1, Math.min(10, Math.trunc(Number(input.page) || 1)));
   const remote = await gitTryAsync(cwd, ['remote', 'get-url', 'origin']);
   if (!remote.ok) return { ok: false, reason: 'Repository unavailable' };

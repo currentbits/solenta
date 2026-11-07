@@ -138,3 +138,28 @@ it('deduplicates an exact search hit and keeps exact lookup available when searc
     assert.equal(result.hasMore, false);
   }
 });
+
+it('rejects query qualifiers, whitespace, quoting and non-token Unicode before any repository or API call', async () => {
+  let calls = 0;
+  setExecFile(() => { calls++; throw new Error('must not reach network'); });
+  for (const query of ['repo:other/private secret', 'repo:other', 'hello world', 'hello\tworld', 'hello\nworld', '"secret"', "'secret'", 'bob@example.com', 'café', '用户', 'x'.repeat(101), { query: 'escape' }]) {
+    const result = await prCompletions({ projectPath: '/repo', kind: '#', query });
+    assert.equal(result.ok, false, String(query));
+    assert.equal(result.reason, 'Invalid completion query');
+  }
+  assert.equal(calls, 0);
+});
+
+it('accepts the same bounded ASCII token grammar as the textarea, including empty query', async () => {
+  const queries = [];
+  setExecFile((bin, args, opts, cb) => {
+    if (args[0] === 'remote') return cb(null, 'git@github.com:owner/private.git', '');
+    queries.push(args[1]);
+    cb(null, JSON.stringify({ items: [] }), '');
+  });
+  for (const query of ['', 'maintainer-name', 'feature.name', 'under_score', 'Release123', 'x'.repeat(100)]) {
+    assert.equal((await prCompletions({ projectPath: '/repo', kind: '#', query })).ok, true);
+  }
+  assert.equal(queries.length, 6);
+  for (const endpoint of queries) assert.ok(decodeURIComponent(endpoint).includes('q=repo:owner/private '));
+});
