@@ -15,8 +15,12 @@ export function CliProxyUsageEditor({ settings, disabled, onSave, setError }: {
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     setEnabled(settings?.enabled ?? false);
+  }, [settings?.enabled]);
+  useEffect(() => {
     setUrl(settings?.managementUrl ?? "");
-  }, [settings?.enabled, settings?.managementUrl]);
+    // A settings update from another window must not reuse this server's draft key.
+    setKey("");
+  }, [settings?.managementUrl]);
   const save = async (clear = false) => {
     setError(null);
     setSaved(false);

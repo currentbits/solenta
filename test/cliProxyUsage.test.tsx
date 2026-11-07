@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { useState } from "react";
 import { mount } from "./support/dom.ts";
 import { createFakeCoder } from "./support/fakeCoder.ts";
 import { CliProxyUsageEditor } from "../src/components/settings/CliProxyUsageEditor";
 import { ProvidersPane } from "../src/components/settings/ProvidersPane";
 import { ProviderQuota } from "../src/components/ProviderQuota";
-import type { AppSettings, ProviderUsage } from "../src/shared/ipc";
+import type { AppSettings, CliProxyUsageSettings, ProviderUsage } from "../src/shared/ipc";
 
 describe("CLIProxy usage setup", () => {
   it("is reachable in Providers and saves an opt-in connection with a masked key", async () => {
@@ -44,6 +45,43 @@ describe("CLIProxy usage setup", () => {
     await m.click(m.byText("Save CLIProxy usage"));
     assert.equal(errors.at(-1), "Use HTTPS for a remote CLIProxy server");
     assert.ok(!m.query('[role="status"]'));
+    m.unmount();
+  });
+
+  it("drops an unsaved key when another window changes the saved destination", async () => {
+    const patches: Partial<AppSettings>[] = [];
+    const editor = (managementUrl: string, enabled = true) => <CliProxyUsageEditor settings={{ enabled, managementUrl, hasManagementKey: false }} disabled={false} setError={() => {}} onSave={async (patch) => { patches.push(patch); }} />;
+    const m = await mount(editor("https://old.example.test/v0/management"));
+    await m.type(m.query('input[type="password"]'), "old-server-draft-key");
+    await m.rerender(editor("https://old.example.test/v0/management", false));
+    assert.equal((m.query('input[type="password"]') as HTMLInputElement).value, "old-server-draft-key", "an enable toggle keeps a draft for the same destination");
+    await m.rerender(editor("https://new.example.test/v0/management"));
+    assert.equal((m.query('input[type="url"]') as HTMLInputElement).value, "https://new.example.test/v0/management");
+    assert.equal((m.query('input[type="password"]') as HTMLInputElement).value, "");
+    await m.click(m.byText("Save CLIProxy usage"));
+    assert.deepEqual(patches, [{ cliProxyUsage: { enabled: true, managementUrl: "https://new.example.test/v0/management" } }]);
+    m.unmount();
+  });
+
+  it("saves a new key before adopting the backend's normalized destination", async () => {
+    const patches: Partial<AppSettings>[] = [];
+    function Setup() {
+      const [settings, setSettings] = useState<CliProxyUsageSettings>({ enabled: false, managementUrl: "", hasManagementKey: false });
+      return <CliProxyUsageEditor settings={settings} disabled={false} setError={() => {}} onSave={async (patch) => {
+        patches.push(patch);
+        setSettings({ enabled: true, managementUrl: "http://localhost:8317/v0/management", hasManagementKey: true });
+      }} />;
+    }
+    const m = await mount(<Setup />);
+    await m.click(m.query('input[type="checkbox"]'));
+    await m.type(m.query('input[type="url"]'), "http://localhost:8317/management.html#/quota");
+    await m.type(m.query('input[type="password"]'), "intended-server-key");
+    await m.click(m.byText("Save CLIProxy usage"));
+    assert.deepEqual(patches[0], { cliProxyUsage: { enabled: true, managementUrl: "http://localhost:8317/management.html#/quota", managementKey: "intended-server-key" } });
+    assert.equal((m.query('input[type="url"]') as HTMLInputElement).value, "http://localhost:8317/v0/management");
+    assert.equal((m.query('input[type="password"]') as HTMLInputElement).value, "");
+    await m.click(m.byText("Save CLIProxy usage"));
+    assert.ok(!Object.hasOwn(patches[1].cliProxyUsage!, "managementKey"));
     m.unmount();
   });
 
