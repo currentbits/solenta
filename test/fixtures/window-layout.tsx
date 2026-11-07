@@ -1,6 +1,5 @@
 // Real renderer, entirely in-memory API. No preload, providers or user store.
 import { createRoot } from "react-dom/client";
-import App from "../../src/App";
 import { createDevCoder } from "../../src/devCoder";
 import { saveBootSnapshot } from "../../src/bootSnapshot";
 import speechCatalog from "../../src/speechModels";
@@ -45,4 +44,6 @@ saveBootSnapshot({ projects, threads: [thread], selectedThreadId: thread.id });
     for (const cb of listeners) cb(structuredClone(detail));
   },
 };
+// Native desktop platform gates must see the bridge before App evaluates.
+const { default: App } = await import("../../src/App");
 createRoot(document.getElementById("root")!).render(<App />);

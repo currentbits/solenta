@@ -88,7 +88,17 @@
   display: none;
 }
 
+.narrowBar {
+  -webkit-app-region: drag;
+}
+
+/* hiddenInset controls occupy x16..72 even when the sidebar is a drawer. */
+.narrowBar[data-window-controls="mac"] {
+  padding-left: 84px;
+}
+
 .narrowBtn {
+  -webkit-app-region: no-drag;
   display: inline-flex;
   align-items: center;
   height: 28px;
@@ -103,6 +113,14 @@
   transition:
     background 0.12s ease,
     color 0.12s ease;
+}
+
+.narrowBtn[hidden] {
+  display: none;
+}
+
+.narrowBtn:last-child {
+  margin-left: auto;
 }
 
 .narrowBtn:hover {

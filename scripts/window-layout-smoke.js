@@ -80,6 +80,13 @@ app.whenReady().then(async () => {
       await visible("[data-composer-input]");
       await visible('[aria-label="Send"]');
       await visible('[data-drawer-open="agents"]');
+      assert.equal(await evaluate(() => getComputedStyle(document.querySelector('[data-drawer-open="sidebar"]')).display === "none"), detached, "detached window hides Threads");
+      if (process.platform === "darwin") {
+        assert.equal(await evaluate(() => {
+          const buttons = [...document.querySelectorAll('[data-narrow-chrome] button')].filter((el) => !el.hidden);
+          return buttons.every((el) => el.getBoundingClientRect().left >= 84);
+        }), true, "native traffic lights stay clear of toolbar controls");
+      }
       if (await evaluate(() => Boolean(document.querySelector('[data-hero-project]')))) {
         await evaluate(() => document.querySelector('[data-hero-project]').click());
         await evaluate(() => [...document.querySelectorAll('[role="menu"][aria-label="Project"] [role="menuitem"]')].at(-1).scrollIntoView({ block: "nearest" }));

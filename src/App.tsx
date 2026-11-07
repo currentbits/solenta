@@ -2178,7 +2178,11 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
               } as CSSProperties)
         }
       >
-        <div className={styles.narrowBar} data-narrow-chrome="">
+        <div
+          className={styles.narrowBar}
+          data-narrow-chrome=""
+          data-window-controls={SIDEBAR_RAIL_WIDTH === 84 ? "mac" : undefined}
+        >
           <button
             type="button"
             ref={threadsBtnRef}
