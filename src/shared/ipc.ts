@@ -5672,6 +5672,8 @@ export interface SpeechStatus {
   /** Authoritative selected local download, including its exact size. */
   model?: { id: string; label: string; bytes: number };
   language?: string;
+  /** External paths remain private to the main process. */
+  modelLocation?: { source: "internal" | "external"; filename?: string; verifying?: boolean };
   /** Blocks local capture/download; cloud remains independently available. */
   localError?: string;
   download?: { bytesReceived: number; bytesTotal: number };
@@ -7983,6 +7985,10 @@ export interface CoderApi {
     status(): Promise<SpeechStatus>;
     /** User-approved model download; progress arrives on speech:changed. */
     download(input?: { modelId: string }): Promise<void>;
+    /** Desktop picker; verify and reuse the exact catalog model read-only. */
+    chooseModelFolder(input: { modelId: string }): Promise<SpeechStatus | null>;
+    /** Forget the external reference; never delete the external model. */
+    resetModelLocation(input: { modelId: string }): Promise<SpeechStatus>;
     /** One app-wide realtime session. Returns an opaque session id. */
     start(): Promise<{ sessionId: string }>;
     /**

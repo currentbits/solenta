@@ -42,6 +42,7 @@ export function speechMicLabel(
   dictating: boolean,
 ): string {
   if (dictating) return "Stop dictation";
+  if (status?.modelLocation?.verifying && status.state !== "ready") return "Verifying speech model";
   if (status?.state === "downloading") {
     const d = status.download;
     if (d && d.bytesTotal > 0) {
@@ -50,7 +51,7 @@ export function speechMicLabel(
     }
     return "Downloading speech model";
   }
-  if (status?.state === "error" && status.localError) return "Configure dictation language in Settings";
+  if (status?.state === "error" && status.localError) return "Configure voice input in Settings";
   if (status && !status.runtimeReady && status.state !== "ready") return "Local dictation unavailable";
   if (!status || status.state === "missing") return "Download speech model";
   if (status.state === "error" && !status.modelReady) {
@@ -278,7 +279,7 @@ export function useComposerSpeech({
       return;
     }
     const state = speech?.state ?? "missing";
-    if (state === "downloading") return;
+    if (state === "downloading" || (speech?.modelLocation?.verifying && state !== "ready")) return;
     if (speech?.localError && state !== "ready") {
       setLocalError(speech.localError);
       return;

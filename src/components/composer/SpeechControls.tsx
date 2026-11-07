@@ -33,10 +33,10 @@ export function SpeechControls({
         disabled={
           disabled ||
           sending ||
-          speech.state === "downloading"
+          (speech.state === "downloading" || (speech.modelLocation?.verifying === true && speech.state !== "ready"))
         }
         aria-disabled={
-          disabled || sending || speech.state === "downloading"
+          disabled || sending || (speech.state === "downloading" || (speech.modelLocation?.verifying === true && speech.state !== "ready"))
             ? "true"
             : undefined
         }

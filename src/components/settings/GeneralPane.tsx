@@ -1,10 +1,12 @@
 import speechCatalog from "../../speechModels";
 import { formatSpeechModelSize } from "../../speechDraft";
-import { useState, type RefObject } from "react";
+import { useEffect, useState, type RefObject } from "react";
 import type {
   AppSettings,
   AppStatus,
   NotifyEvents,
+  CoderApi,
+  SpeechStatus,
   SpeechProvider,
   SpeechSettings,
   ProjectInfo,
@@ -823,6 +825,32 @@ function VoiceInputSection({
   const localModel = settings?.speech?.localModel ?? "nemotron-en";
   const language = settings?.speech?.language ?? "en-US";
   const [keyText, setKeyText] = useState("");
+  const speechApi = typeof window === "undefined" ? undefined : (window as unknown as { coder?: CoderApi }).coder;
+  const [modelStatus, setModelStatus] = useState<SpeechStatus | null>(null);
+  const [choosingFolder, setChoosingFolder] = useState(false);
+  useEffect(() => {
+    if (!speechApi?.speech?.chooseModelFolder) return;
+    let live = true;
+    const apply = (status: SpeechStatus) => { if (live) setModelStatus(status); };
+    const off = speechApi.on("speech:changed", apply);
+    void speechApi.speech.status().then(apply).catch(() => {});
+    return () => { live = false; off(); };
+  }, [speechApi, localModel]);
+  const location = modelStatus?.model?.id === localModel ? modelStatus.modelLocation : undefined;
+  const locationBusy = choosingFolder || location?.verifying === true;
+  const changeLocation = async (reset: boolean) => {
+    if (!speechApi) return;
+    setChoosingFolder(true);
+    setError(null);
+    try {
+      const status = reset
+        ? await speechApi.speech.resetModelLocation({ modelId: localModel })
+        : await speechApi.speech.chooseModelFolder({ modelId: localModel });
+      if (status) setModelStatus(status);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not verify the speech model folder.");
+    } finally { setChoosingFolder(false); }
+  };
   // A partial patch: main keeps the omitted provider/keys.
   const save = (speech: Partial<SpeechSettings>) => {
     setError(null);
@@ -864,7 +892,7 @@ function VoiceInputSection({
           <div className={styles.field}>
             <label className={styles.fieldLabel} htmlFor="speech-language">Dictation language</label>
             <select id="speech-language" className={styles.input} data-speech-language=""
-              value={language} disabled={saving || settings == null}
+              value={language} disabled={saving || locationBusy || settings == null}
               onChange={(e) => {
                 const language = e.target.value;
                 void save({ language, localModel: !Object.hasOwn(speechCatalog.models, localModel) || (localModel === "nemotron-en" && !language.startsWith("en-")) ? "nemotron-3.5" : localModel });
@@ -876,7 +904,7 @@ function VoiceInputSection({
           <div className={styles.field}>
             <label className={styles.fieldLabel} htmlFor="speech-local-model">Local speech model</label>
             <select id="speech-local-model" className={styles.input} data-speech-local-model=""
-              value={localModel} disabled={saving || settings == null}
+              value={localModel} disabled={saving || locationBusy || settings == null}
               onChange={(e) => {
                 const localModel = e.target.value;
                 void save({ localModel, language: !Object.hasOwn(speechCatalog.languages, language) || (localModel === "nemotron-en" && !language.startsWith("en-")) ? "en-US" : language });
@@ -893,6 +921,28 @@ function VoiceInputSection({
               {" "}Switching models keeps existing downloads. Local fallback uses this model and language.
             </p>
           </div>
+          {speechApi?.speech?.chooseModelFolder && (
+            <div className={styles.field} data-speech-model-location="">
+              <span className={styles.fieldLabel}>Model location</span>
+              <p className={styles.note}>
+                {location?.source === "external" ? `Using selected file: ${location.filename}` : "Using the default Solenta download location."}
+              </p>
+              <div className={styles.fieldRow}>
+                <button type="button" className={styles.btn} data-speech-choose-folder=""
+                  disabled={saving || locationBusy || settings == null || !Object.hasOwn(speechCatalog.models, localModel)}
+                  onClick={() => void changeLocation(false)}>
+                  {locationBusy ? "Verifying model…" : "Use model from folder…"}
+                </button>
+                {location?.source === "external" && <button type="button" className={styles.btn} data-speech-reset-location=""
+                  disabled={saving || locationBusy} onClick={() => void changeLocation(true)}>Use default location</button>}
+              </div>
+              <p className={styles.note}>
+                Choose the folder containing {speechCatalog.models[localModel as keyof typeof speechCatalog.models]?.filename ?? "the selected model"}.
+                {" "}Solenta verifies its size and SHA-256 and uses the file without copying or changing it. Folder and file symlinks are supported.
+              </p>
+              {modelStatus?.model?.id === localModel && modelStatus.localError && <p className={styles.note} role="status">{modelStatus.localError}</p>}
+            </div>
+          )}
         </>
       )}
       {cloud && (

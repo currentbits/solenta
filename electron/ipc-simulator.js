@@ -190,6 +190,19 @@ module.exports = {
     if (!ctx || !ctx.speech) return speechStatusMissing();
     return ctx.speech.status();
   },
+  "speech:chooseModelFolder": async (ctx, input) => {
+    if (ctx?.transport !== "desktop") throw new Error("Speech model folders require the desktop app.");
+    const speech = requireSpeech(ctx);
+    if (typeof input?.modelId !== "string") throw new Error("Choose a local speech model first.");
+    if (!ctx.dialog?.showOpenDialog) throw new Error("Folder selection is unavailable.");
+    const result = await ctx.dialog.showOpenDialog({ title: "Choose speech model folder", properties: ["openDirectory"] });
+    if (result.canceled || !result.filePaths?.[0]) return null;
+    return speech.useModelFolder({ modelId: input.modelId }, result.filePaths[0]);
+  },
+  "speech:resetModelLocation": async (ctx, input) => {
+    if (ctx?.transport !== "desktop") throw new Error("Speech model folders require the desktop app.");
+    return requireSpeech(ctx).resetModelLocation(input);
+  },
   "speech:download": async (ctx, input) => requireSpeech(ctx).download(input),
   "speech:start": async (ctx) => requireSpeech(ctx).start(),
   "speech:write": async (ctx, input) => requireSpeech(ctx).write(input),

@@ -468,6 +468,8 @@ const IPC_CHANNELS = Object.freeze([
   { ns: "vibeKanban", method: "export" },
   { ns: "speech", method: "status" },
   { ns: "speech", method: "download" },
+  { ns: "speech", method: "chooseModelFolder" },
+  { ns: "speech", method: "resetModelLocation" },
   { ns: "speech", method: "start" },
   { ns: "speech", method: "write" },
   { ns: "speech", method: "stop" },

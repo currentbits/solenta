@@ -556,6 +556,8 @@ function buildDevCoder(): CoderApi {
       async download() {
         throw new Error("Speech is not implemented yet.");
       },
+      async chooseModelFolder() { throw new Error("Speech model folders require the desktop app."); },
+      async resetModelLocation() { throw new Error("Speech model folders require the desktop app."); },
       async start() {
         throw new Error("Speech is not implemented yet.");
       },
