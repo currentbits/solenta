@@ -69,7 +69,7 @@ describe("CLIProxy usage setup", () => {
       const [settings, setSettings] = useState<CliProxyUsageSettings>({ enabled: false, managementUrl: "", hasManagementKey: false });
       return <CliProxyUsageEditor settings={settings} disabled={false} setError={() => {}} onSave={async (patch) => {
         patches.push(patch);
-        setSettings({ enabled: true, managementUrl: "http://localhost:8317/v0/management", hasManagementKey: true });
+        setSettings({ enabled: true, managementUrl: "http://localhost:8317/v8/management", hasManagementKey: true });
       }} />;
     }
     const m = await mount(<Setup />);
@@ -78,7 +78,7 @@ describe("CLIProxy usage setup", () => {
     await m.type(m.query('input[type="password"]'), "intended-server-key");
     await m.click(m.byText("Save CLIProxy usage"));
     assert.deepEqual(patches[0], { cliProxyUsage: { enabled: true, managementUrl: "http://localhost:8317/management.html#/quota", managementKey: "intended-server-key" } });
-    assert.equal((m.query('input[type="url"]') as HTMLInputElement).value, "http://localhost:8317/v0/management");
+    assert.equal((m.query('input[type="url"]') as HTMLInputElement).value, "http://localhost:8317/v8/management");
     assert.equal((m.query('input[type="password"]') as HTMLInputElement).value, "");
     await m.click(m.byText("Save CLIProxy usage"));
     assert.ok(!Object.hasOwn(patches[1].cliProxyUsage!, "managementKey"));

@@ -5,7 +5,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { normalizeManagementUrl, normalizeCliProxyUsage, readCliProxyUsage } = require("../providerUsageCliProxy.js");
+const { normalizeManagementUrl, normalizeCliProxyUsage, mergeCliProxyUsage, readCliProxyUsage } = require("../providerUsageCliProxy.js");
 const { fetchProviderLimits, pickAccountByQuota } = require("../providerUsage.js");
 const { knownProviderIds } = require("../providers.js");
 const { Store } = require("../store.js");
@@ -21,15 +21,17 @@ const USAGE = { five_hour: { utilization: 37, resets_at: "2027-01-15T10:00:00Z" 
 const ACCOUNT = { id: "claude-user@example.test", auth_index: "a1b2c3d4", provider: "claude", name: "claude-user@example.test.json", label: "Work", status: "ready", disabled: false, unavailable: false };
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status });
 const envelope = (body = USAGE, status = 200) => ({ status_code: status, header: { "Content-Type": ["application/json"] }, body: JSON.stringify(body) });
-const fixture = (files = [ACCOUNT], reply = envelope()) => async (url) => json(url.endsWith("/auth-files") ? { files } : reply);
+const fixture = (files = [ACCOUNT], reply = envelope()) => async (url) => json(/\/(?:auth-files|credentials)$/.test(url) ? { files } : reply);
 
 describe("CLIProxy usage URL", () => {
   it("normalizes roots, dashboard routes, trailing slashes and management API URLs", () => {
-    for (const input of ["http://localhost:8317", "http://localhost:8317/", "http://localhost:8317/management.html#/quota", "http://localhost:8317/management.html?view=quota#auth", "http://localhost:8317/v0/management/"]) {
-      assert.equal(normalizeManagementUrl(input), "http://localhost:8317/v0/management");
+    for (const input of ["http://localhost:8317", "http://localhost:8317/", "http://localhost:8317/management.html#/quota", "http://localhost:8317/management.html?view=quota#auth", "http://localhost:8317/v8/management/"]) {
+      assert.equal(normalizeManagementUrl(input), "http://localhost:8317/v8/management");
     }
-    assert.equal(normalizeManagementUrl("https://proxy.example.test/prefix/management.html#/quota"), "https://proxy.example.test/prefix/v0/management");
-    assert.equal(normalizeManagementUrl("http://[::1]:8317/management.html"), "http://[::1]:8317/v0/management");
+    assert.equal(normalizeManagementUrl("https://proxy.example.test/prefix/management.html#/quota"), "https://proxy.example.test/prefix/v8/management");
+    assert.equal(normalizeManagementUrl("http://[::1]:8317/management.html"), "http://[::1]:8317/v8/management");
+    assert.equal(normalizeManagementUrl("http://localhost:8317/v0/management/"), "http://localhost:8317/v0/management");
+    assert.equal(normalizeManagementUrl("https://proxy.example.test/prefix/v8/management/"), "https://proxy.example.test/prefix/v8/management");
   });
 
   it("rejects credentials, unsupported schemes and unencrypted remote keys", () => {
@@ -37,6 +39,15 @@ describe("CLIProxy usage URL", () => {
       assert.throws(() => normalizeManagementUrl(input));
     }
     assert.equal(normalizeCliProxyUsage({ ...CONFIG, managementUrl: "invalid" }).enabled, false);
+  });
+
+  it("preserves omitted keys across API versions and clears them across origins or prefixes", () => {
+    const current = normalizeCliProxyUsage(CONFIG);
+    const legacy = mergeCliProxyUsage(current, { managementUrl: "http://localhost:8317/v0/management" });
+    assert.equal(legacy.managementKey, KEY);
+    assert.equal(mergeCliProxyUsage(legacy, { managementUrl: CONFIG.managementUrl }).managementKey, KEY);
+    assert.equal(mergeCliProxyUsage(current, { managementUrl: "http://localhost:8317/another-prefix/management.html" }).managementKey, null);
+    assert.equal(mergeCliProxyUsage(current, { managementUrl: "https://other.example.test/management.html" }).managementKey, null);
   });
 });
 
@@ -65,8 +76,8 @@ describe("CLIProxy Claude quotas", () => {
       { label: "5-hour", usedPercent: 37, resetsAt: Date.parse(USAGE.five_hour.resets_at), windowSeconds: 18000 },
       { label: "weekly", usedPercent: 82.5, resetsAt: Date.parse(USAGE.seven_day.resets_at), windowSeconds: 604800 },
     ]);
-    assert.equal(requests[0].url, "http://localhost:8317/v0/management/auth-files");
-    assert.equal(requests[1].url, "http://localhost:8317/v0/management/api-call");
+    assert.equal(requests[0].url, "http://localhost:8317/v8/management/credentials");
+    assert.equal(requests[1].url, "http://localhost:8317/v8/management/requests/api-call");
     assert.equal(requests[0].redirect, "error");
     assert.equal(requests[1].headers.Authorization, `Bearer ${KEY}`);
     const payload = JSON.parse(requests[1].body);
@@ -83,7 +94,7 @@ describe("CLIProxy Claude quotas", () => {
     const calls = [];
     const files = [ACCOUNT, { ...ACCOUNT }, { ...ACCOUNT, auth_index: "other", label: "Personal" }, { ...ACCOUNT, auth_index: "not-claude", provider: "codex" }];
     const rows = await readCliProxyUsage(CONFIG, { fetch: async (url, init) => {
-      if (url.endsWith("/auth-files")) return json({ files });
+      if (/\/(?:auth-files|credentials)$/.test(url)) return json({ files });
       const id = JSON.parse(init.body).auth_index;
       calls.push(id);
       return json(id === "other" ? envelope({}, 401) : envelope());
@@ -96,6 +107,64 @@ describe("CLIProxy Claude quotas", () => {
     assert.deepEqual(calls, [ACCOUNT.auth_index, "other"]);
     const [otherServer] = await readCliProxyUsage({ ...CONFIG, managementUrl: "https://another.example.test" }, { fetch: fixture() });
     assert.notEqual(otherServer.provider, rows[0].provider);
+  });
+
+  it("honors an explicit legacy URL and keeps source/account IDs stable across API versions", async () => {
+    const requests = [];
+    const [legacy] = await readCliProxyUsage({ ...CONFIG, managementUrl: "http://localhost:8317/v0/management" }, { fetch: async (url) => {
+      requests.push(url);
+      return fixture()(url);
+    } });
+    assert.equal(legacy.status, "ok");
+    assert.deepEqual(requests, ["http://localhost:8317/v0/management/auth-files", "http://localhost:8317/v0/management/api-call"]);
+    const [modern] = await readCliProxyUsage(CONFIG, { fetch: fixture() });
+    assert.equal(legacy.provider, modern.provider);
+  });
+
+  it("falls back once to legacy only when the v8 credential endpoint is missing", async () => {
+    const requests = [];
+    const [fallback] = await readCliProxyUsage(CONFIG, { fetch: async (url, init) => {
+      requests.push(url);
+      assert.equal(init.headers.Authorization, `Bearer ${KEY}`);
+      return url.endsWith("/credentials") ? json({ error: "not found" }, 404) : fixture()(url);
+    } });
+    assert.equal(fallback.status, "ok");
+    assert.deepEqual(requests, [
+      "http://localhost:8317/v8/management/credentials",
+      "http://localhost:8317/v0/management/auth-files",
+      "http://localhost:8317/v0/management/api-call",
+    ]);
+    const [modern] = await readCliProxyUsage(CONFIG, { fetch: fixture() });
+    assert.equal(fallback.provider, modern.provider);
+  });
+
+  it("never falls back on rejected keys, rate errors, malformed listings or an explicit legacy failure", async () => {
+    for (const reply of [
+      () => json({ error: KEY }, 401), () => json({ error: KEY }, 403),
+      () => json({ error: KEY }, 429), () => json({ error: KEY }, 500),
+      () => json({ files: null }), () => new Response("malformed json"),
+    ]) {
+      const requests = [];
+      const [row] = await readCliProxyUsage(CONFIG, { fetch: async (url) => { requests.push(url); return reply(); } });
+      assert.notEqual(row.status, "ok");
+      assert.deepEqual(requests, ["http://localhost:8317/v8/management/credentials"]);
+      assert.ok(!JSON.stringify(row).includes(KEY));
+    }
+    const requests = [];
+    await readCliProxyUsage({ ...CONFIG, managementUrl: "http://localhost:8317/v0/management" }, { fetch: async (url) => { requests.push(url); return json({}, 404); } });
+    assert.deepEqual(requests, ["http://localhost:8317/v0/management/auth-files"]);
+  });
+
+  it("does not retry or fall back after a v8 account usage request fails", async () => {
+    for (const status of [401, 403, 404, 429]) {
+      const requests = [];
+      const [row] = await readCliProxyUsage(CONFIG, { fetch: async (url) => {
+        requests.push(url);
+        return url.endsWith("/credentials") ? json({ files: [ACCOUNT] }) : json({}, status);
+      } });
+      assert.notEqual(row.status, "ok");
+      assert.deepEqual(requests, ["http://localhost:8317/v8/management/credentials", "http://localhost:8317/v8/management/requests/api-call"]);
+    }
   });
 
   it("does not turn unavailable or invalid utilization into zero", async () => {
@@ -113,7 +182,7 @@ describe("CLIProxy Claude quotas", () => {
     const [empty] = await readCliProxyUsage(CONFIG, { fetch: fixture([]) });
     assert.match(empty.message, /No Claude accounts/);
     const rows = await readCliProxyUsage(CONFIG, { fetch: async (url) => {
-      assert.ok(url.endsWith("/auth-files"));
+      assert.ok(/\/(?:auth-files|credentials)$/.test(url));
       return json({ files: [{ ...ACCOUNT, disabled: true }, { ...ACCOUNT, id: "missing", name: "missing.json", auth_index: null }] });
     } });
     assert.equal(rows.length, 2);

@@ -6,7 +6,7 @@ const { CLAUDE_USAGE_URL, claudeUsageHeaders, parseClaudeWindows } = require("./
 const DEFAULTS = { enabled: false, managementUrl: "", managementKey: null };
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 
-/** Dashboard, server root and legacy management API URLs share one endpoint. */
+/** Prefer v8 for dashboard/root URLs, preserving explicit legacy API URLs. */
 function normalizeManagementUrl(raw) {
   if (typeof raw !== "string" || !raw.trim() || raw.length > 2048) {
     throw new Error("Enter a CLIProxy management URL");
@@ -19,11 +19,18 @@ function normalizeManagementUrl(raw) {
   if (url.protocol === "http:" && !["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)) {
     throw new Error("Use HTTPS for a remote CLIProxy server");
   }
-  const base = url.pathname.replace(/\/+$/, "").replace(/\/(?:management\.html|v0\/management)$/i, "");
-  url.pathname = `${base}/v0/management`;
+  const pathname = url.pathname.replace(/\/+$/, "");
+  const version = /\/v0\/management$/i.test(pathname) ? "v0" : "v8";
+  const base = pathname.replace(/\/(?:management\.html|v[08]\/management)$/i, "");
+  url.pathname = `${base}/${version}/management`;
   url.search = "";
   url.hash = "";
   return url.toString();
+}
+
+/** API versions share one server credential and stable source identity. */
+function managementDestination(url) {
+  return url.replace(/\/v[08]\/management$/, "");
 }
 
 /** Stored config is opt-in; corrupt settings never trigger a request. */
@@ -47,7 +54,7 @@ function normalizeCliProxyUsage(raw, strict = false) {
 function mergeCliProxyUsage(current, patch) {
   if (!patch || typeof patch !== "object" || Array.isArray(patch)) throw new Error("CLIProxy usage must be an object");
   const next = normalizeCliProxyUsage({ ...current, ...patch }, true);
-  if (next.managementUrl !== current.managementUrl && !Object.hasOwn(patch, "managementKey")) next.managementKey = null;
+  if (managementDestination(next.managementUrl) !== managementDestination(current.managementUrl) && !Object.hasOwn(patch, "managementKey")) next.managementKey = null;
   return next;
 }
 
@@ -57,6 +64,7 @@ function row(provider, label, status, message, windows = [], fetchedAt = null) {
 
 function statusError(status, management) {
   const err = new Error("usage request failed");
+  err.httpStatus = status;
   err.usageStatus = status === 401 || status === 403 || status === 404 ? "unavailable" : "error";
   err.usageMessage = status === 401 || status === 403
     ? management ? "CLIProxy management key rejected" : "CLIProxy account authorization expired"
@@ -99,18 +107,31 @@ function failedRow(provider, label, err) {
 }
 
 /**
- * Read-only auth-files + api-call, as documented by CLIProxyAPI. The proxy
+ * Read-only credential listing + api-call, as documented by CLIProxyAPI. The proxy
  * substitutes $TOKEN$ itself; Solenta never downloads account credentials.
- * https://github.com/router-for-me/CLIProxyAPIDocs/blob/main/docs/en/management/api.md
+ * https://github.com/router-for-me/CLIProxyAPIDocs/blob/main/docs/en/management/apiv8.md
  */
 async function readCliProxyUsage(raw, opts = {}) {
   const config = normalizeCliProxyUsage(raw);
   if (!config.enabled) return [];
-  const sourceId = `cliproxy:${createHash("sha256").update(config.managementUrl).digest("hex").slice(0, 16)}`;
+  const destination = managementDestination(config.managementUrl);
+  const sourceId = `cliproxy:${createHash("sha256").update(destination).digest("hex").slice(0, 16)}`;
   const sourceLabel = "Claude · CLIProxy";
   if (!config.managementKey) return [row(sourceId, sourceLabel, "unavailable", "Set a CLIProxy management key in Settings > Providers")];
   try {
-    const listed = await requestJson(`${config.managementUrl}/auth-files`, config.managementKey, null, opts);
+    let managementUrl = config.managementUrl;
+    let legacy = managementUrl.endsWith("/v0/management");
+    let listed;
+    try {
+      listed = await requestJson(`${managementUrl}/${legacy ? "auth-files" : "credentials"}`, config.managementKey, null, opts);
+    } catch (err) {
+      // Older servers lack v8. Never retry rejected keys or malformed responses:
+      // repeated auth failures can temporarily ban the client's IP.
+      if (legacy || err.httpStatus !== 404) throw err;
+      managementUrl = `${destination}/v0/management`;
+      legacy = true;
+      listed = await requestJson(`${managementUrl}/auth-files`, config.managementKey, null, opts);
+    }
     if (!listed || !Array.isArray(listed.files)) throw statusError(0, true);
     const accounts = listed.files.filter((file) => file && (file.provider || file.type) === "claude");
     if (!accounts.length) return [row(sourceId, sourceLabel, "unavailable", "No Claude accounts in CLIProxy")];
@@ -127,7 +148,7 @@ async function readCliProxyUsage(raw, opts = {}) {
         return row(provider, label, "unavailable", file.disabled ? "CLIProxy account disabled" : "CLIProxy account has no usage identifier");
       }
       try {
-        const result = await requestJson(`${config.managementUrl}/api-call`, config.managementKey, {
+        const result = await requestJson(`${managementUrl}/${legacy ? "api-call" : "requests/api-call"}`, config.managementKey, {
           auth_index: index, method: "GET", url: CLAUDE_USAGE_URL,
           header: claudeUsageHeaders("$TOKEN$"),
         }, opts);
