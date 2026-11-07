@@ -3621,6 +3621,8 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           } satisfies PrDetail,
         } as PrDetailResult);
       },
+      prRequestChanges: (input: unknown) =>
+        rec("git.prRequestChanges", [input], { ok: false, reason: "GitLab review unavailable" } as const),
       prComment: (input: unknown) =>
         rec("git.prComment", [input], {
           ok: true,

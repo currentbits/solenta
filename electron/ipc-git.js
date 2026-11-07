@@ -59,6 +59,7 @@ const {
   viewPrDetail,
   editPr,
   commentPr,
+  requestPrChanges,
   closePr,
   readyPr,
   updateBranchPr,
@@ -342,6 +343,13 @@ module.exports = {
       },
       { store: ctx.store, broadcast: ctx.broadcast },
     );
+  },
+  "git:prRequestChanges": async (_ctx, input) => {
+    return requestPrChanges(input && input.projectPath, {
+      prNumber: input && input.prNumber,
+      repo: input && input.repo,
+      viewerId: input && input.viewerId,
+    });
   },
   "git:prComment": async (_ctx, input) => {
     return commentPr(input && input.projectPath, {

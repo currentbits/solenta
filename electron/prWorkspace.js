@@ -191,12 +191,97 @@ async function gitlabWorkspaceRemote(projectPath, repo) {
   return gl;
 }
 
+const GITLAB_REVIEW_STATES = new Set(["unreviewed", "review_started", "reviewed", "approved", "unapproved", "requested_changes"]);
+
+/**
+ * Reviewer verdicts come from /reviewers, not mr.reviewers[].state (account
+ * state). Capability and permission checks are scoped to this MR and account.
+ * https://docs.gitlab.com/api/graphql/reference/objects/#mergerequest
+ */
+async function gitlabReview(projectPath, number, remote) {
+  const { glabApi, glabGraphql } = require("./gitlab.js");
+  const review = { reviewers: [], canRequestChanges: false };
+  const unavailable = (reason) => ({ review: { ...review, reason } });
+  for (let page = 1; page <= 5; page++) {
+    const result = await glabApi(projectPath, remote, "GET", `/merge_requests/${number}/reviewers?per_page=100&page=${page}`);
+    if (!result.ok) return unavailable(`Reviewer state unavailable: ${result.reason}`);
+    if (!Array.isArray(result.data)) return unavailable("Invalid GitLab reviewer response");
+    for (const row of result.data) {
+      if (!row.user?.id || !row.user?.username) return unavailable("Invalid GitLab reviewer response");
+      review.reviewers.push({ id: String(row.user.id), login: row.user.username, state: GITLAB_REVIEW_STATES.has(row.state) ? row.state : "unknown" });
+    }
+    if (result.data.length < 100) break;
+    if (page === 5) return unavailable("Reviewer list is incomplete. Open GitLab to review.");
+  }
+  // Missing schema fields must disable submission, never fall back to posting
+  // an unrecognized command as an ordinary comment on an older host.
+  const capability = await glabGraphql(projectPath, remote, `query {
+    currentUser { id username }
+    project(fullPath: ${JSON.stringify(remote.path)}) {
+      mergeRequest(iid: ${JSON.stringify(String(number))}) {
+        id state author { id }
+        availableQuickActions { name }
+        userPermissions { createNote updateMergeRequest }
+      }
+    }
+  }`);
+  if (!capability.ok) return unavailable(`Request changes unavailable on this GitLab host: ${capability.reason}`);
+  const user = capability.data.currentUser;
+  const mr = capability.data.project?.mergeRequest;
+  if (!/^gid:\/\/gitlab\/User\/\d+$/.test(user?.id || "") || !/^gid:\/\/gitlab\/MergeRequest\/\d+$/.test(mr?.id || "")) return unavailable("GitLab could not confirm this account's review permissions");
+  review.viewerId = user.id;
+  const viewer = review.reviewers.find((row) => `gid://gitlab/User/${row.id}` === user.id);
+  if (String(mr.state).toLowerCase() !== "opened") return unavailable("This merge request is no longer open");
+  if (mr.author?.id === user.id) return unavailable("You cannot request changes on your own merge request");
+  if (!viewer) return unavailable("This GitLab account must be assigned as a reviewer");
+  if (viewer.state === "requested_changes") return unavailable("You have already requested changes");
+  if (mr.userPermissions?.createNote !== true || mr.userPermissions?.updateMergeRequest !== true) return unavailable("This GitLab account does not have permission to request changes");
+  if (!Array.isArray(mr.availableQuickActions) || !mr.availableQuickActions.some((action) => action.name === "request_changes")) {
+    return unavailable("Request changes is not available for this account on this GitLab host");
+  }
+  return { review: { ...review, canRequestChanges: true }, mergeRequestId: mr.id };
+}
+
+async function requestPrChanges(projectPath, input) {
+  const number = parsePrNumber(input && input.prNumber);
+  if (number == null) return { ok: false, reason: "invalid PR number" };
+  const remote = await gitlabWorkspaceRemote(projectPath, input && input.repo);
+  if (!remote) return { ok: false, reason: "Request changes is only available here for GitLab merge requests" };
+  const current = await gitlabReview(projectPath, number, remote);
+  if (!current.review.canRequestChanges) return { ok: false, reason: current.review.reason };
+  if (!input.viewerId || current.review.viewerId !== input.viewerId) return { ok: false, reason: "The GitLab account changed. Reload before requesting changes." };
+  // Standalone request_changes does not publish unrelated pending review notes.
+  // GitLab source: lib/gitlab/quick_actions/merge_request_actions.rb.
+  // https://docs.gitlab.com/api/graphql/reference/mutations/#createnote
+  const posted = await require("./gitlab.js").glabGraphql(projectPath, remote, `mutation {
+    createNote(input: { noteableId: ${JSON.stringify(current.mergeRequestId)}, body: "/request_changes" }) {
+      errors
+      quickActionsStatus { commandNames commandsOnly errorMessages }
+    }
+  }`);
+  if (!posted.ok) return posted;
+  const payload = posted.data.createNote;
+  const status = payload?.quickActionsStatus;
+  const errors = [...(Array.isArray(payload?.errors) ? payload.errors : []), ...(Array.isArray(status?.errorMessages) ? status.errorMessages : [])];
+  if (errors.length) return { ok: false, reason: errors.join("; ") };
+  if (status?.commandsOnly !== true || !Array.isArray(status.commandNames) || !status.commandNames.includes("request_changes")) {
+    return { ok: false, reason: "GitLab did not confirm the request-changes action. Reload to check its state." };
+  }
+  const latest = await gitlabReview(projectPath, number, remote);
+  const viewer = latest.review.reviewers.find((row) => `gid://gitlab/User/${row.id}` === input.viewerId);
+  if (latest.review.viewerId !== input.viewerId || viewer?.state !== "requested_changes") {
+    return { ok: false, reason: "GitLab did not confirm your requested-changes verdict. Reload to check its state." };
+  }
+  return { ok: true, review: latest.review };
+}
+
 async function viewGitlabWorkspace(projectPath, number, remote) {
   const { glabApi } = require("./gitlab.js");
   const result = await glabApi(projectPath, remote, "GET", `/merge_requests/${number}`);
   if (!result.ok) return result;
   const mr = result.data;
   if (!mr || !mr.iid || !mr.web_url) return { ok: false, reason: "Invalid merge request response" };
+  const { review } = await gitlabReview(projectPath, number, remote);
   const comments = [];
   let commentsError;
   // Keep transcript bounded, as with the GitHub workspace comment budget.
@@ -214,7 +299,7 @@ async function viewGitlabWorkspace(projectPath, number, remote) {
     forge: "gitlab", number: mr.iid, title: mr.title || "", body: mr.description || "", url: mr.web_url,
     state: mr.state === "merged" ? "MERGED" : mr.state === "closed" ? "CLOSED" : "OPEN",
     isDraft: Boolean(mr.draft || mr.work_in_progress), headRefName: mr.source_branch || "", baseRefName: mr.target_branch || "",
-    author: mr.author?.username || "", updatedAt: mr.updated_at, comments, ...(commentsError ? { commentsError } : {}),
+    author: mr.author?.username || "", updatedAt: mr.updated_at, gitlabReview: review, comments, ...(commentsError ? { commentsError } : {}),
   } };
 }
 
@@ -1503,6 +1588,7 @@ module.exports = {
   viewPrDetail,
   editPr,
   commentPr,
+  requestPrChanges,
   closePr,
   readyPr,
   updateBranchPr,

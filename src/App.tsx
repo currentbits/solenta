@@ -353,6 +353,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     prDetail,
     prEdit,
     prComment,
+    prRequestChanges,
     prClose,
     prReady,
     prMergeAt,
@@ -2451,6 +2452,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
               prDetail={prDetail}
               prEdit={prEdit}
               prComment={prComment}
+              prRequestChanges={prRequestChanges}
               prClose={prClose}
               prReady={prReady}
               prMergeAt={prMergeAt}

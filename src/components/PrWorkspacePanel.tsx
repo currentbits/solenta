@@ -27,6 +27,12 @@ const MERGE_LABEL: Record<MergeMethod, string> = {
   rebase: "Rebase merge",
 };
 
+const REVIEW_LABEL = {
+  unreviewed: "Awaiting review", review_started: "Review in progress",
+  reviewed: "Reviewed", approved: "Approved", unapproved: "Approval removed",
+  requested_changes: "Changes requested", unknown: "Unknown review state",
+};
+
 /**
  * GitHub's 8 comment reactions (#1795 feature 3): the emoji shown in the "+"
  * picker and under each comment, the REST `content` the IPC call sends, and
@@ -63,6 +69,7 @@ export interface PrWorkspacePanelProps {
     title?: string;
     body?: string;
   }) => Promise<PrDetailResult>;
+  prRequestChanges?: CoderApi["git"]["prRequestChanges"];
   prComment: (input: {
     projectPath: string;
     prNumber: number;
@@ -124,6 +131,7 @@ export function PrWorkspacePanel({
   prDetail,
   prEdit,
   prComment,
+  prRequestChanges,
   prClose,
   prReady,
   prMergeAt,
@@ -185,6 +193,8 @@ export function PrWorkspacePanel({
   const selection = useRef({ identity, generation: 0 });
   if (selection.current.identity !== identity) selection.current = { identity, generation: selection.current.generation + 1 };
   const generation = selection.current.generation;
+  const [detailGeneration, setDetailGeneration] = useState<number | null>(null);
+  const reviewBusy = useRef<number | null>(null);
   const taskBusy = useRef<number | null>(null);
   useEffect(() => { setPending(null); setChecklistError(false); }, [identity]);
   const mounted = useRef(true);
@@ -215,6 +225,7 @@ export function PrWorkspacePanel({
         if (!commentsOnly) setPr(null);
         return;
       }
+      setDetailGeneration(requestedGeneration);
       setPr((previous) => {
         const samePr = previous?.url === result.pr.url;
         const comments = samePr && result.pr.commentsError
@@ -223,7 +234,7 @@ export function PrWorkspacePanel({
             ])).values()].sort((a, b) => a.createdAt.localeCompare(b.createdAt))
           : result.pr.comments;
         return commentsOnly && samePr
-          ? { ...previous, comments, commentsError: result.pr.commentsError }
+          ? { ...previous, comments, commentsError: result.pr.commentsError, gitlabReview: result.pr.gitlabReview }
           : { ...result.pr, comments };
       });
       if (!commentsOnly) {
@@ -297,6 +308,26 @@ export function PrWorkspacePanel({
   };
 
   const prArgs = { projectPath, prNumber: activePr, ...(activeRepo ? { repo: activeRepo } : {}) };
+
+  const requestChanges = async () => {
+    const review = pr?.gitlabReview;
+    if (!prRequestChanges || !review?.canRequestChanges || !review.viewerId || pending || loading || detailGeneration !== generation || reviewBusy.current === generation) return;
+    const requestedGeneration = generation;
+    reviewBusy.current = generation;
+    setPending("requestChanges");
+    try {
+      const result = await prRequestChanges({ ...prArgs, viewerId: review.viewerId });
+      if (!mounted.current || selection.current.generation !== requestedGeneration) return;
+      if (!result.ok) { setError(result.reason); return; }
+      setPr((previous) => previous ? { ...previous, gitlabReview: result.review } : previous);
+      setError(null);
+    } catch (err) {
+      if (mounted.current && selection.current.generation === requestedGeneration) setError(rejectReason(err, "Couldn't request changes"));
+    } finally {
+      if (reviewBusy.current === requestedGeneration) reviewBusy.current = null;
+      if (mounted.current && selection.current.generation === requestedGeneration) setPending(null);
+    }
+  };
 
   const saveCommentEdit = async (row: PrComment) => {
     if (!prCommentEdit || row.id == null || row.type === "review-summary" || pending) return;
@@ -533,6 +564,27 @@ export function PrWorkspacePanel({
               </span>
             ) : null}
           </div>
+
+          {pr.forge === "gitlab" ? (
+            <section className={styles.field} data-pr-review="" aria-label="Merge request review">
+              <span className={styles.label}>Reviewers</span>
+              {pr.gitlabReview?.reviewers.map((reviewer) => (
+                <p key={reviewer.id} data-pr-reviewer={reviewer.login}>
+                  @{reviewer.login}: {REVIEW_LABEL[reviewer.state]}
+                </p>
+              ))}
+              {!pr.gitlabReview?.reviewers.length ? <p className={styles.hint}>No reviewer state available</p> : null}
+              {open ? (
+                <button type="button" className={styles.ghost} data-pr-request-changes=""
+                  disabled={!prRequestChanges || !pr.gitlabReview?.canRequestChanges || pending != null || loading || detailGeneration !== generation}
+                  onClick={() => void requestChanges()}>
+                  {pending === "requestChanges" ? "Requesting changes…" : "Request changes"}
+                </button>
+              ) : null}
+              {pr.gitlabReview?.reason ? <p className={styles.hint}>{pr.gitlabReview.reason}</p> : null}
+              {!pr.gitlabReview ? <p className={styles.hint}>Review submission unavailable. Reload to check this GitLab host.</p> : null}
+            </section>
+          ) : null}
 
           <label className={styles.field}>
             <span className={styles.label}>Title</span>

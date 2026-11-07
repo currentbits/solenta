@@ -174,6 +174,11 @@ export function useCoderGitHub({
     [api],
   );
 
+  const prRequestChanges = useCallback(
+    (input: Parameters<CoderApi["git"]["prRequestChanges"]>[0]) => api.git.prRequestChanges(input),
+    [api],
+  );
+
   const prComment = useCallback(
     async (input: {
       projectPath: string;
@@ -333,6 +338,7 @@ export function useCoderGitHub({
     prDetail,
     prEdit,
     prComment,
+    prRequestChanges,
     prClose,
     prReady,
     prMergeAt,

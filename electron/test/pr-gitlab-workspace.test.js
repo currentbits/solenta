@@ -12,7 +12,7 @@ it('loads and edits GitLab descriptions and comments on the origin host/project'
   const mod = { exports: {} };
   vm.runInNewContext(fs.readFileSync(source, 'utf8'), { module: mod, require(name) {
     if (name === './worktrees.js') return { ...localRequire(name), gitTryAsync: async () => ({ ok: true, stdout: 'git@gitlab.example:team/private.git' }) };
-    if (name === './gitlab.js') return { ...localRequire(name), glabApi: async (cwd, remote, method, endpoint, fields) => {
+    if (name === './gitlab.js') return { ...localRequire(name), glabGraphql: async () => ({ ok: false, reason: 'field unavailable' }), glabApi: async (cwd, remote, method, endpoint, fields) => {
       calls.push({ cwd, remote, method, endpoint, fields });
       if (method === 'PUT') Object.assign(mr, fields);
       return { ok: true, data: endpoint.includes('/notes') ? [] : mr };

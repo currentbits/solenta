@@ -77,6 +77,7 @@ export interface PrListViewProps {
     title?: string;
     body?: string;
   }) => Promise<PrDetailResult>;
+  prRequestChanges?: CoderApi["git"]["prRequestChanges"];
   prComment?: (input: {
     projectPath: string;
     prNumber: number;
@@ -133,6 +134,7 @@ export function PrListView({
   prDetail,
   prEdit,
   prComment,
+  prRequestChanges,
   prClose,
   prReady,
   prMergeAt,
@@ -774,6 +776,7 @@ export function PrListView({
             prDetail={prDetail}
             prEdit={prEdit}
             prComment={prComment}
+            prRequestChanges={prRequestChanges}
             prClose={prClose}
             prReady={prReady}
             prMergeAt={prMergeAt}

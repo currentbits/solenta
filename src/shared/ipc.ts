@@ -3270,9 +3270,21 @@ export interface PrComment {
   reactions?: PrReaction[];
 }
 
+export interface GitlabReview {
+  reviewers: Array<{ id: string; login: string; state: "unreviewed" | "review_started" | "reviewed" | "approved" | "unapproved" | "requested_changes" | "unknown" }>;
+  viewerId?: string;
+  canRequestChanges: boolean;
+  reason?: string;
+}
+
+export type PrRequestChangesResult =
+  | { ok: true; review: GitlabReview }
+  | { ok: false; reason: string };
+
 /** Full PR for the in-app workspace (issue #154). */
 export interface PrDetail {
   forge?: "github" | "gitlab";
+  gitlabReview?: GitlabReview;
   number: number;
   title: string;
   body: string;
@@ -7261,9 +7273,14 @@ export interface CoderApi {
       title?: string;
       body?: string;
     }): Promise<PrDetailResult>;
-    /**
-     * Post an issue comment on a PR via `gh pr comment`. Failures in-band.
-     */
+    /** Records a GitLab reviewer verdict after checking current host capability. */
+    prRequestChanges(input: {
+      projectPath: string;
+      prNumber: number;
+      repo?: string;
+      viewerId: string;
+    }): Promise<PrRequestChangesResult>;
+    /** Post a comment on a PR. Failures stay in-band. */
     prComment(input: {
       projectPath: string;
       prNumber: number;
