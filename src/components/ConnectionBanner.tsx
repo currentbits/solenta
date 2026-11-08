@@ -37,6 +37,12 @@ export function ConnectionBanner() {
   }, [status.state]);
 
   if (!isWebMode()) return null;
+  if (status.state === "blocked") {
+    return <div className={styles.banner} role="alert" data-connection-banner="blocked">
+      <span>{status.error || "This computer could not be verified. Check its address and Solenta version."}</span>
+      <button type="button" onClick={() => window.location.reload()}>Check again</button>
+    </div>;
+  }
   if (status.state === "rejected") {
     return (
       <WebTokenGate reason="This device was signed out: the Solenta you were using no longer accepts its token. The device may have been revoked, or Solenta was set up again." />

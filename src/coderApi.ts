@@ -4,6 +4,8 @@ import { createWireCoder } from "./wireClient";
 import { devCoder } from "./devCoder";
 
 export const WEB_TOKEN_KEY = "coder.web.token";
+export const WEB_COMPUTER_KEY = "coder.web.computerId";
+export const WEB_LEGACY_KEY = "coder.web.allowLegacy";
 
 /** Mirrors WS_PATH in electron/webBridge.js; the server rejects upgrades elsewhere. */
 const WS_PATH = "/ws";
@@ -21,6 +23,10 @@ export function persistWebToken(
   storage: Storage = window.localStorage,
 ): void {
   storage.setItem(WEB_TOKEN_KEY, token);
+  // Entering a new token is explicit enrollment. Old route identity must not
+  // silently attach to that token; supplied connection metadata rebinds below.
+  storage.removeItem(WEB_COMPUTER_KEY);
+  storage.removeItem(WEB_LEGACY_KEY);
 }
 
 /** Seam so tests can observe reload without redefining window.location. */
@@ -36,18 +42,28 @@ export function resolveWebToken(
   hist: History = window.history,
 ): string | null {
   const params = new URLSearchParams(loc.search);
-  const fromQuery = params.get("token");
+  const fragment = new URLSearchParams(loc.hash.slice(1));
+  const fromQuery = fragment.get("token") || params.get("token");
   if (fromQuery) {
     persistWebToken(fromQuery, storage);
-    params.delete("token");
+    const computerId = fragment.get("computerId") || params.get("computerId");
+    if (computerId) storage.setItem(WEB_COMPUTER_KEY, computerId);
+    else if ((fragment.get("allowLegacy") || params.get("allowLegacy")) === "1") storage.setItem(WEB_LEGACY_KEY, "1");
+  }
+  const scrub = ["token", "computerId", "allowLegacy"];
+  const changed = scrub.some((key) => params.has(key) || fragment.has(key));
+  if (changed) {
+    for (const key of scrub) { params.delete(key); fragment.delete(key); }
     const qs = params.toString();
+    const hash = loc.hash && !scrub.some((key) => new URLSearchParams(loc.hash.slice(1)).has(key))
+      ? loc.hash : fragment.toString() ? `#${fragment}` : "";
     hist.replaceState(
       null,
       "",
-      `${loc.pathname}${qs ? `?${qs}` : ""}${loc.hash}`,
+      `${loc.pathname}${qs ? `?${qs}` : ""}${hash}`,
     );
-    return fromQuery;
   }
+  if (fromQuery) return fromQuery;
   return storage.getItem(WEB_TOKEN_KEY);
 }
 
@@ -82,6 +98,12 @@ export function resolveCoderApi(isDev: boolean = isDevBuild()): CoderApi {
     return createWireCoder({
       url: wsUrlFromLocation(window.location),
       token,
+      expectedComputerId: window.localStorage.getItem(WEB_COMPUTER_KEY) || undefined,
+      allowLegacy: window.localStorage.getItem(WEB_LEGACY_KEY) === "1",
+      onComputer: (computer) => {
+        window.localStorage.setItem(WEB_COMPUTER_KEY, computer.computerId);
+        window.localStorage.removeItem(WEB_LEGACY_KEY);
+      },
     });
   }
   // No Electron bridge and no web token. In a Vite DEV build that's the dev

@@ -14,6 +14,8 @@ import { mount } from "./support/dom.ts";
 import { WebTokenGate } from "../src/components/WebTokenGate";
 import {
   WEB_TOKEN_KEY,
+  WEB_COMPUTER_KEY,
+  WEB_LEGACY_KEY,
   needsWebTokenGate,
   persistWebToken,
   resolveCoderApi,
@@ -69,6 +71,33 @@ describe("wsUrlFromLocation", () => {
 });
 
 describe("resolveWebToken", () => {
+  it("accepts fragment credentials and persists identity before scrubbing bootstrap metadata", async () => {
+    await withDom();
+    window.history.replaceState(null, "", "/?x=1#token=fragment-secret&computerId=work&tab=thread");
+    assert.equal(resolveWebToken(), "fragment-secret");
+    assert.equal(window.localStorage.getItem(WEB_COMPUTER_KEY), "work");
+    assert.equal(window.location.search, "?x=1");
+    assert.equal(window.location.hash, "#tab=thread");
+    assert.equal(resolveWebToken(), "fragment-secret");
+    assert.equal(window.localStorage.getItem(WEB_COMPUTER_KEY), "work", "second gate/API read retains binding");
+  });
+
+  it("allows legacy compatibility only for explicit unbound enrollment", async () => {
+    await withDom();
+    window.history.replaceState(null, "", "/?token=old-token&allowLegacy=1#keep");
+    assert.equal(resolveWebToken(), "old-token");
+    assert.equal(window.localStorage.getItem(WEB_LEGACY_KEY), "1");
+    assert.equal(window.location.hash, "#keep");
+    persistWebToken("new-enrollment");
+    assert.equal(window.localStorage.getItem(WEB_LEGACY_KEY), null);
+    window.localStorage.setItem(WEB_COMPUTER_KEY, "existing");
+    window.history.replaceState(null, "", "/?computerId=attacker&allowLegacy=1");
+    resolveWebToken();
+    assert.equal(window.localStorage.getItem(WEB_COMPUTER_KEY), "existing");
+    assert.equal(window.localStorage.getItem(WEB_LEGACY_KEY), null);
+    assert.equal(window.location.search, "");
+  });
+
   it("scrubs ?token= from the URL and persists it to localStorage", async () => {
     await withDom();
     window.history.replaceState(null, "", "/?token=from-query&x=1");

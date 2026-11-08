@@ -14,7 +14,7 @@ import type {
   WireServerMessage,
 } from "../src/shared/wire.ts";
 import { createWireCoder } from "../src/wireClient.ts";
-import type { CoderApi, ThreadInfo } from "../src/shared/ipc.ts";
+import type { CoderApi, ThreadInfo, RemoteComputerDescriptor } from "../src/shared/ipc.ts";
 
 class FakeWebSocket {
   static instances: FakeWebSocket[] = [];
@@ -85,6 +85,135 @@ function authOk(ws: FakeWebSocket): void {
 
 afterEach(() => {
   FakeWebSocket.instances = [];
+});
+
+const computer = (computerId = "computer-a", protocol = { min: 1, max: 1 }): RemoteComputerDescriptor => ({
+  kind: "solenta", computerId, protocol, runtimeKind: "server",
+});
+const descriptorReply = (value = computer()) => new Response(JSON.stringify(value));
+const nextTurn = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+describe("verified computer connection", () => {
+  it("parks a server identity rejection without retrying or treating the token as revoked", async () => {
+    const { getWireStatus } = await import("../src/wireStatus.ts");
+    const retries: Array<() => void> = [];
+    const { api, ws } = connect({ setTimeout: (fn, ms) => { if (ms <= 30_000) retries.push(fn); return 0; } });
+    ws.readyState = FakeWebSocket.CLOSED;
+    ws.onclose?.({ code: 4409 });
+    assert.equal(getWireStatus().state, "blocked");
+    await assert.rejects(api.threads.list(), /identity|protocol/);
+    assert.equal(retries.length, 0);
+  });
+
+  it("checks public identity without credentials before auth and confirms it before flushing work", async () => {
+    let finish!: (response: Response) => void;
+    const api = createWireCoder({
+      url: "wss://work.example/ws?old=1", token: "secret", expectedComputerId: "computer-a",
+      WebSocket: FakeWebSocket as unknown as typeof WebSocket, setTimeout: () => 0,
+      fetch: async (url, options) => {
+        assert.equal(url, "https://work.example/.well-known/solenta");
+        assert.equal(options?.credentials, "omit");
+        assert.equal(options?.redirect, "error");
+        assert.equal(options?.headers, undefined);
+        return new Promise<Response>((resolve) => { finish = resolve; });
+      },
+    });
+    const ws = lastSocket();
+    ws.open();
+    const result = api.threads.list();
+    assert.deepEqual(ws.sent, []);
+    finish(descriptorReply());
+    await nextTurn();
+    assert.deepEqual(ws.sent, [{ kind: "auth", token: "secret", computerId: "computer-a", protocol: 1 }]);
+    ws.deliver({ kind: "auth-ok", computer: computer() });
+    const invoke = ws.sent.find((msg) => msg.kind === "invoke");
+    assert.ok(invoke && invoke.kind === "invoke");
+    ws.deliver({ kind: "reply", id: invoke.id, result: [] });
+    assert.deepEqual(await result, []);
+  });
+
+  it("sends no saved credential to a different computer or incompatible protocol", async () => {
+    for (const value of [computer("other"), computer("computer-a", { min: 2, max: 2 })]) {
+      const api = createWireCoder({
+        url: "wss://work.example/ws", token: "secret", expectedComputerId: "computer-a",
+        WebSocket: FakeWebSocket as unknown as typeof WebSocket, setTimeout: () => 0,
+        fetch: async () => descriptorReply(value),
+      });
+      const ws = lastSocket();
+      ws.open();
+      await nextTurn();
+      assert.deepEqual(ws.sent, []);
+      await assert.rejects(api.threads.list(), /different computer|incompatible/);
+    }
+  });
+
+  it("requires authenticated identity to match the preflight even on first enrollment", async () => {
+    let persisted = false;
+    const api = createWireCoder({
+      url: "wss://work.example/ws", token: "secret", allowLegacy: false,
+      WebSocket: FakeWebSocket as unknown as typeof WebSocket, setTimeout: () => 0,
+      fetch: async () => descriptorReply(), onComputer: () => { persisted = true; },
+    });
+    const ws = lastSocket();
+    ws.open();
+    await nextTurn();
+    ws.deliver({ kind: "auth-ok", computer: computer("different") });
+    await assert.rejects(api.projects.list(), /different computer/);
+    assert.equal(ws.sent.filter((msg) => msg.kind === "invoke").length, 0);
+    assert.equal(persisted, false);
+  });
+
+  it("pins authenticated identity and preflights it again before reconnect credentials", async () => {
+    const retries: Array<() => void> = [];
+    const saved: string[] = [];
+    const api = createWireCoder({
+      url: "ws://127.0.0.1:4620/ws", token: "secret",
+      WebSocket: FakeWebSocket as unknown as typeof WebSocket,
+      setTimeout: (fn, ms) => { if (ms <= 30_000) retries.push(fn); return 0; },
+      fetch: async () => descriptorReply(computer("replacement")),
+      onComputer: (value) => saved.push(value.computerId),
+    });
+    const first = lastSocket();
+    first.open();
+    first.deliver({ kind: "auth-ok", computer: computer() });
+    first.close();
+    retries.shift()!();
+    const second = lastSocket();
+    second.open();
+    await nextTurn();
+    assert.deepEqual(second.sent, []);
+    await assert.rejects(api.threads.list(), /different computer/);
+    assert.deepEqual(saved, ["computer-a"]);
+    assert.equal(retries.length, 0);
+  });
+
+  it("ignores an obsolete descriptor response after a successor connection starts", async () => {
+    let finish!: (response: Response) => void;
+    const retries: Array<() => void> = [];
+    let checks = 0;
+    const api = createWireCoder({
+      url: "wss://work.example/ws", token: "secret", expectedComputerId: "computer-a",
+      WebSocket: FakeWebSocket as unknown as typeof WebSocket,
+      setTimeout: (fn, ms) => { if (ms <= 30_000) retries.push(fn); return 0; },
+      fetch: async () => ++checks === 1
+        ? new Promise<Response>((resolve) => { finish = resolve; }) : descriptorReply(),
+    });
+    const first = lastSocket();
+    first.open();
+    first.close();
+    retries.shift()!();
+    const second = lastSocket();
+    second.open();
+    await nextTurn();
+    second.deliver({ kind: "auth-ok", computer: computer() });
+    finish(descriptorReply(computer("old-response")));
+    await nextTurn();
+    const pending = api.projects.list();
+    const invoke = second.sent.find((msg) => msg.kind === "invoke" && msg.channel === "projects:list");
+    assert.ok(invoke && invoke.kind === "invoke");
+    second.deliver({ kind: "reply", id: invoke.id, result: [] });
+    assert.deepEqual(await pending, []);
+  });
 });
 
 describe("createWireCoder auth-first", () => {
