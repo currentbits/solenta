@@ -75,7 +75,7 @@ describe("applyModelPrices", () => {
     assert.equal(day.codex["gpt-5"].costUsd, 1 + 0.1 + 1);
     assert.equal(day.claude["gpt-5"].costUsd, 0.5, "reported cost wins");
     assert.equal(day.kimi.other.costUsd, 0, "no price, stays unmetered");
-    assert.equal(out.threadsByDay["2026-10-09"].t1.costUsd, 10);
+    assert.equal(out.threadsByDay["2026-10-09"].t1.costUsd, 0, "legacy thread has no trustworthy model split to price");
     assert.equal(report.byDay["2026-10-09"].codex["gpt-5"].costUsd, 0, "ledger untouched");
   });
 

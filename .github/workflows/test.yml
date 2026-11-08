@@ -56,7 +56,9 @@ jobs:
           npm run build:site
           git diff --exit-code -- site
       - run: npm ci --prefix core
-      - run: npm ci --prefix memory-server
+      # ONNX Runtime 1.21.0 otherwise downloads CUDA on Linux x64 even without
+      # nvcc. These CPU-only tests keep the bundled CPU runtime and all suites.
+      - run: npm ci --prefix memory-server --onnxruntime-node-install-cuda=skip
       - run: npx vite build
       - name: Install Codex for the Linux git sandbox proof
         if: runner.os == 'Linux'
@@ -167,7 +169,9 @@ jobs:
           cache-dependency-path: "**/package-lock.json"
       - run: npm ci
       - run: npm ci --prefix core
-      - run: npm ci --prefix memory-server
+      # Headless boot uses CPU memory embeddings; no CUDA EP is exercised.
+      # Keep this local to CI, not production/server-bundle dependency installs.
+      - run: npm ci --prefix memory-server --onnxruntime-node-install-cuda=skip
       - run: npm run build --prefix core
       - run: npx vite build
       - name: Install Electron runtime libs
