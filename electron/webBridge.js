@@ -19,6 +19,7 @@
  */
 
 const crypto = require("node:crypto");
+const { isServerMaintenance, MAINTENANCE_MESSAGE } = require("./serverMaintenance.js");
 const { WebSocketServer, WebSocket } = require("ws");
 const { IPC_HANDLERS } = require("./ipc.js");
 const { PUSH_SCOPE, allows, argsAllowed, scopeForChannel } = require("./webScopes.js");
@@ -247,8 +248,8 @@ function attachWebBridge(httpServer, opts) {
       const channel = msg.channel;
       const args = Array.isArray(msg.args) ? msg.args : [];
       try {
-        if (process.env.SOLENTA_SERVER === "1" && (process.env.SOLENTA_SERVER_MAINTENANCE === "1" || (ctx.userDataPath && require("node:fs").existsSync(require("node:path").join(ctx.userDataPath, ".server-maintenance-request")))) && channel !== "app:status") {
-          throw new Error("The server is validating an update in maintenance mode. Retry after it restarts.");
+        if (isServerMaintenance(ctx) && channel !== "app:status") {
+          throw new Error(MAINTENANCE_MESSAGE);
         }
         if (typeof channel === "string" && channel.startsWith("simulator:")) {
           sendJson(ws, {

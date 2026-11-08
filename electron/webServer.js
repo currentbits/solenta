@@ -15,6 +15,7 @@
  */
 
 const http = require("node:http");
+const { isServerMaintenance, MAINTENANCE_MESSAGE } = require("./serverMaintenance.js");
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
@@ -522,13 +523,18 @@ async function serveRunArtifact(req, res, opts) {
 const ENROLLMENT_PATH = "/api/enroll";
 const ENROLLMENT_BODY_LIMIT = 4096;
 
-async function serveEnrollment(req, res, { url, limiter, redeemEnrollment }) {
+async function serveEnrollment(req, res, { url, limiter, redeemEnrollment, ctx }) {
   if (url.pathname !== ENROLLMENT_PATH) return false;
   const reply = (status, body) => {
     res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Content-Type-Options": "nosniff" });
     res.end(JSON.stringify(body));
   };
   if (req.method !== "POST") { reply(405, { error: "Use POST to exchange an enrollment link." }); return true; }
+  if (isServerMaintenance(ctx)) {
+    req.resume();
+    reply(503, { error: MAINTENANCE_MESSAGE });
+    return true;
+  }
   const remote = req.socket.remoteAddress || "unknown";
   if (limiter.blocked(remote)) { reply(429, { error: "Too many enrollment attempts. Try again later." }); return true; }
   if (typeof redeemEnrollment !== "function") { reply(503, { error: "Browser enrollment is unavailable on this host." }); return true; }
@@ -548,6 +554,9 @@ async function serveEnrollment(req, res, { url, limiter, redeemEnrollment }) {
     catch { throw new Error("Enrollment body is invalid."); }
     if (!input || Array.isArray(input) || typeof input !== "object" || Object.keys(input).some(key => !["grant", "scopes", "computerId"].includes(key))) throw new Error("Enrollment body is invalid.");
     if (input.computerId !== undefined && (typeof input.computerId !== "string" || input.computerId.length > 128)) throw new Error("Computer identity is invalid.");
+    // Maintenance may have started while the client was sending the body.
+    // Recheck at the mutation boundary so a trial cannot consume durable grants.
+    if (isServerMaintenance(ctx)) { reply(503, { error: MAINTENANCE_MESSAGE }); return true; }
     reply(200, await redeemEnrollment(input));
   } catch (err) {
     limiter.fail(remote);
@@ -592,7 +601,7 @@ function startWebServer(opts) {
       res.end(req.method === "HEAD" ? undefined : JSON.stringify(computer));
       return;
     }
-    if (await serveEnrollment(req, res, { url, limiter, redeemEnrollment: opts.redeemEnrollment })) return;
+    if (await serveEnrollment(req, res, { url, limiter, redeemEnrollment: opts.redeemEnrollment, ctx })) return;
     const handled = await serveRunArtifact(req, res, {
       authorize,
       limiter,

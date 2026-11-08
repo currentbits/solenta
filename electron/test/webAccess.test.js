@@ -467,7 +467,7 @@ describe("browser enrollment HTTP and session lifetime", () => {
     devices = createWebDevices(tmp, { sessionTtlMs: 300 });
     access = createWebAccess({ devices, getComputerId: () => "computer-test", defaultPort: 0,
       exec: async () => { throw new Error("not installed"); },
-      startServer: opts => startWebServer({ ...opts, ctx: {}, handlers: { "app:status": async () => ({ ready: true }), "web:createEnrollment": async () => { throw new Error("must not reach handler"); } } }) });
+      startServer: opts => startWebServer({ ...opts, ctx: { userDataPath: tmp }, handlers: { "app:status": async () => ({ ready: true }), "web:createEnrollment": async () => { throw new Error("must not reach handler"); } } }) });
     await access.start({});
     port = (await access.status()).port;
   });
@@ -517,6 +517,83 @@ describe("browser enrollment HTTP and session lifetime", () => {
     assert.equal(other.ws.readyState, WebSocket.OPEN);
     assert.equal(devices.authorize(session.token), null);
     other.ws.terminate();
+  });
+
+  it("maintenance refuses HTTP redemption without consuming the grant, then succeeds after release", async () => {
+    const previous = process.env.SOLENTA_SERVER;
+    const previousTrial = process.env.SOLENTA_SERVER_MAINTENANCE;
+    const marker = path.join(tmp, ".server-maintenance-request");
+    try {
+      process.env.SOLENTA_SERVER = "1";
+      delete process.env.SOLENTA_SERVER_MAINTENANCE;
+      const issued = access.createEnrollment({ name: "Waiting browser" });
+      fs.writeFileSync(marker, "update");
+      const blocked = await post(port, { grant: issued.grant });
+      assert.equal(blocked.status, 503);
+      assert.match((await blocked.json()).error, /maintenance mode/);
+      assert.equal(devices.list().length, 0);
+      fs.unlinkSync(marker);
+      const allowed = await post(port, { grant: issued.grant });
+      assert.equal(allowed.status, 200);
+      assert.ok(devices.authorize((await allowed.json()).token));
+    } finally {
+      if (previous === undefined) delete process.env.SOLENTA_SERVER; else process.env.SOLENTA_SERVER = previous;
+      if (previousTrial === undefined) delete process.env.SOLENTA_SERVER_MAINTENANCE; else process.env.SOLENTA_SERVER_MAINTENANCE = previousTrial;
+    }
+  });
+
+  it("rechecks maintenance after body upload before consuming a grant", async () => {
+    const previous = process.env.SOLENTA_SERVER;
+    const previousTrial = process.env.SOLENTA_SERVER_MAINTENANCE;
+    const marker = path.join(tmp, ".server-maintenance-request");
+    try {
+      process.env.SOLENTA_SERVER = "1";
+      delete process.env.SOLENTA_SERVER_MAINTENANCE;
+      const issued = access.createEnrollment({ name: "Uploading browser" });
+      const status = await new Promise((resolve, reject) => {
+        const req = http.request({ host: "127.0.0.1", port, path: "/api/enroll", method: "POST", headers: { "Content-Type": "application/json", Expect: "100-continue" } }, res => {
+          res.resume();
+          res.on("end", () => resolve(res.statusCode));
+        });
+        req.on("error", reject);
+        req.setTimeout(3000, () => req.destroy(new Error("Enrollment upload timed out")));
+        req.on("continue", () => {
+          // Node emitted 100 Continue and entered the request handler before
+          // this client callback. Raise maintenance while body reading awaits.
+          fs.writeFileSync(marker, "update during upload");
+          req.end(JSON.stringify({ grant: issued.grant }));
+        });
+        req.flushHeaders();
+      });
+      assert.equal(status, 503);
+      assert.equal(devices.list().length, 0);
+      fs.unlinkSync(marker);
+      assert.equal((await post(port, { grant: issued.grant })).status, 200);
+    } finally {
+      if (previous === undefined) delete process.env.SOLENTA_SERVER; else process.env.SOLENTA_SERVER = previous;
+      if (previousTrial === undefined) delete process.env.SOLENTA_SERVER_MAINTENANCE; else process.env.SOLENTA_SERVER_MAINTENANCE = previousTrial;
+    }
+  });
+
+  it("an explicit trial stays fenced even after its marker is removed", async () => {
+    const previous = process.env.SOLENTA_SERVER;
+    const previousTrial = process.env.SOLENTA_SERVER_MAINTENANCE;
+    const marker = path.join(tmp, ".server-maintenance-request");
+    try {
+      process.env.SOLENTA_SERVER = "1";
+      process.env.SOLENTA_SERVER_MAINTENANCE = "1";
+      const issued = access.createEnrollment({ name: "Trial browser" });
+      fs.writeFileSync(marker, "trial");
+      assert.equal((await post(port, { grant: issued.grant })).status, 503);
+      fs.unlinkSync(marker);
+      assert.equal((await post(port, { grant: issued.grant })).status, 503);
+      assert.equal(devices.list().length, 0);
+      delete process.env.SOLENTA_SERVER_MAINTENANCE;
+      assert.equal((await post(port, { grant: issued.grant })).status, 200);
+    } finally {
+      if (previous === undefined) delete process.env.SOLENTA_SERVER; else process.env.SOLENTA_SERVER = previous;
+      if (previousTrial === undefined) delete process.env.SOLENTA_SERVER_MAINTENANCE; else process.env.SOLENTA_SERVER_MAINTENANCE = previousTrial;
+    }
   });
 
   it("rate-limits enrollment guessing before accepting another credential", async () => {
