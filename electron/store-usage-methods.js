@@ -3,11 +3,11 @@
 const { localDayKey, coerceFiniteNumber, coerceUsageCell, unpricedUsage } = require("./store-util.js");
 
 /** Track only measurements not covered by a provider USD report (including zero). */
-function addUnpriced(prev, delta) {
-  const tokens = unpricedUsage(prev);
+function addUnpriced(prev, delta, force = false, legacyCovered = false) {
+  const tokens = unpricedUsage(legacyCovered && !prev.unpricedTokens ? { costUsd: 1 } : prev);
   // Homogeneous legacy-shaped cells need no extra storage. Materialize the
   // split when coverage changes, or zero USD must explicitly cover tokens.
-  if (!prev.unpricedTokens && delta.costReported !== true &&
+  if (!force && !prev.unpricedTokens && delta.costReported !== true &&
       ((!(prev.costUsd > 0) && !Object.keys(tokens).some(field => prev[field] > 0)) || (prev.costUsd > 0) === (delta.costUsd > 0))) return undefined;
   if (delta.costReported !== true && !(delta.costUsd > 0)) {
     for (const field of Object.keys(tokens)) tokens[field] += coerceFiniteNumber(delta[field]);
@@ -16,11 +16,13 @@ function addUnpriced(prev, delta) {
 }
 
 /** Keep original deltas separate from last-seen thread labels. */
-function threadAttribution(row, provider, model, delta) {
+function threadAttribution(row, provider, model, delta, legacyDayReported = false) {
   const byProviderModel = { ...(row && row.byProviderModel) };
   const models = { ...byProviderModel[provider] };
   const cell = coerceUsageCell(models[model]);
-  const unpricedTokens = addUnpriced(cell, delta);
+  const measuredUnreported = delta.turns !== undefined && !(delta.costUsd > 0) &&
+    [delta.inputTokens, delta.cachedInputTokens, delta.cacheWriteTokens, delta.outputTokens].some(value => value > 0);
+  const unpricedTokens = addUnpriced(cell, delta, measuredUnreported, legacyDayReported);
   for (const key of Object.keys(cell)) if (key !== "unpricedTokens") cell[key] += delta[key] || 0;
   if (unpricedTokens) cell.unpricedTokens = unpricedTokens;
   models[model] = cell;
@@ -121,9 +123,10 @@ class StoreUsageMethods {
       : (dayMap[provider] = {});
     const model = typeof input.model === "string" && input.model ? input.model : "unknown";
     const prev = coerceUsageCell(providerMap[model]);
+    const unpricedTokens = addUnpriced(prev, input);
     providerMap[model] = {
       ...prev,
-      ...(addUnpriced(prev, input) ? { unpricedTokens: addUnpriced(prev, input) } : {}),
+      ...(unpricedTokens ? { unpricedTokens } : {}),
       costUsd: prev.costUsd + costUsd,
       inputTokens: prev.inputTokens + inputTokens,
       cachedInputTokens: prev.cachedInputTokens + cachedInputTokens,
@@ -153,12 +156,14 @@ class StoreUsageMethods {
           ? this.data.usageThreadsByDay[day]
           : (this.data.usageThreadsByDay[day] = {});
       const prevThread = coerceUsageCell(threadsDay[threadId]);
+      const threadUnpricedTokens = addUnpriced(prevThread, input,
+        !(costUsd > 0) && (inputTokens + cachedInputTokens + cacheWriteTokens + outputTokens > 0), prev.costUsd > 0);
       threadsDay[threadId] = {
         ...prevThread,
         ...threadAttribution(threadsDay[threadId], provider, model, {
           costUsd, inputTokens, cachedInputTokens, cacheWriteTokens, outputTokens, turns, costReported: input.costReported,
-        }),
-        ...(addUnpriced(prevThread, input) ? { unpricedTokens: addUnpriced(prevThread, input) } : {}),
+        }, prev.costUsd > 0),
+        ...(threadUnpricedTokens ? { unpricedTokens: threadUnpricedTokens } : {}),
         costUsd: prevThread.costUsd + costUsd,
         inputTokens: prevThread.inputTokens + inputTokens,
         cachedInputTokens: prevThread.cachedInputTokens + cachedInputTokens,

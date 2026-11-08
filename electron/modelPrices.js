@@ -148,7 +148,7 @@ function applyModelPrices(report, prices) {
           // Old cells have no coverage split. Preserve the historical guard;
           // new cells price only their explicitly uncovered measurements.
           const daily = report.byDay[day] && report.byDay[day][provider] && report.byDay[day][provider][model];
-          const next = !bucket.unpricedTokens && daily && !daily.unpricedTokens && Number(daily.costUsd) > 0 ? bucket : priced(bucket, model);
+          const next = !bucket.unpricedTokens && daily && Number(daily.costUsd) > 0 ? bucket : priced(bucket, model);
           byProviderModel[provider][model] = next;
           costUsd += Number(next.costUsd) || 0;
         }

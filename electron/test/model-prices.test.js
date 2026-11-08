@@ -126,6 +126,27 @@ describe("modelPrices setting", () => {
     assert.equal(report.threadsByDay[day]["cost-only"].costUsd, 15);
   });
 
+  it("keeps legacy covered threads conservative after new daily coverage appears", () => {
+    const { localDayKey } = require("../store.js");
+    const day = localDayKey(new Date());
+    const old = { ...cell({ costUsd: 0, inputTokens: 1e6 }), provider: "claude", model: "same", byProviderModel: { claude: { same: cell({ inputTokens: 1e6 }) } } };
+    store.data.usageByDay = { [day]: { claude: { same: cell({ costUsd: 7, inputTokens: 1e6 }) } } };
+    store.data.usageThreadsByDay = { [day]: { old } };
+    const meta = { provider: "claude", model: "same" };
+    store.recordUsage({ ...meta, threadId: "zero", inputTokens: 10, costReported: true });
+    let report = applyModelPrices({ byDay: store.getUsageByDay(), threadsByDay: store.getUsageThreadsByDay() }, { same: { input: 10, output: 0 } });
+    assert.equal(report.byDay[day].claude.same.costUsd, 7);
+    assert.equal(report.threadsByDay[day].old.costUsd, 0);
+    store.recordUsage({ ...meta, threadId: "old", inputTokens: 1e6 });
+    store.recordUsage({ ...meta, threadId: "fresh", inputTokens: 1e6 });
+    store.saveNow();
+    const reloaded = new Store(path.join(tmpDir, "store.json"));
+    report = applyModelPrices({ byDay: reloaded.getUsageByDay(), threadsByDay: reloaded.getUsageThreadsByDay() }, { same: { input: 10, output: 0 } });
+    assert.equal(report.byDay[day].claude.same.costUsd, 27);
+    assert.equal(report.threadsByDay[day].old.costUsd, 10, "only the new legacy-thread delta is uncovered");
+    assert.equal(report.threadsByDay[day].fresh.costUsd, 10);
+  });
+
   it("counts one split turn across model, provider and thread totals and rejects invalid counts", () => {
     const meta = { provider: "claude", threadId: "split" };
     store.recordUsage({ ...meta, model: "root", inputTokens: 10 });
