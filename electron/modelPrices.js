@@ -8,6 +8,8 @@
  * figure such as Claude's total_cost_usd.
  */
 
+const { unpricedUsage } = require("./store-util.js");
+
 const FIELDS = ["input", "output", "cacheRead", "cacheWrite"];
 
 /**
@@ -95,17 +97,6 @@ function priceCell(cell, price) {
   );
 }
 
-/** @param {any} cell */
-function unmetered(cell) {
-  if (!cell || typeof cell !== "object" || Number(cell.costUsd) > 0) return false;
-  return (
-    Number(cell.inputTokens) > 0 ||
-    Number(cell.cachedInputTokens) > 0 ||
-    Number(cell.cacheWriteTokens) > 0 ||
-    Number(cell.outputTokens) > 0
-  );
-}
-
 /**
  * The usage report with unmetered cells priced. Returns new objects; the
  * store's ledger keeps the raw (cost 0) cells, so a price edit re-prices
@@ -118,8 +109,9 @@ function applyModelPrices(report, prices) {
   /** @param {any} cell @param {unknown} model */
   const priced = (cell, model) => {
     const price = typeof model === "string" ? prices[model] : undefined;
-    if (!price || !unmetered(cell)) return cell;
-    return { ...cell, costUsd: priceCell(cell, price) };
+    if (!price || !cell) return cell;
+    const estimate = priceCell(unpricedUsage(cell), price);
+    return estimate > 0 ? { ...cell, costUsd: (Number(cell.costUsd) || 0) + estimate } : cell;
   };
   /** @type {Record<string, Record<string, Record<string, any>>>} */
   const byDay = {};
@@ -153,11 +145,10 @@ function applyModelPrices(report, prices) {
       for (const [provider, models] of Object.entries(cell.byProviderModel)) {
         byProviderModel[provider] = {};
         for (const [model, bucket] of Object.entries(models || {})) {
-          // A daily model cell with reported USD is never estimated. Apply
-          // that same rule to its threads, including zero-cost threads, so
-          // their estimates cannot exceed the authoritative daily amount.
+          // Old cells have no coverage split. Preserve the historical guard;
+          // new cells price only their explicitly uncovered measurements.
           const daily = report.byDay[day] && report.byDay[day][provider] && report.byDay[day][provider][model];
-          const next = daily && Number(daily.costUsd) > 0 ? bucket : priced(bucket, model);
+          const next = !bucket.unpricedTokens && daily && Number(daily.costUsd) > 0 ? bucket : priced(bucket, model);
           byProviderModel[provider][model] = next;
           costUsd += Number(next.costUsd) || 0;
         }

@@ -52,6 +52,50 @@ describe("CLIProxy usage URL", () => {
 });
 
 describe("CLIProxy Claude quotas", () => {
+  it("retains monthly money on the matching proxy account for either response format", async () => {
+    for (const budget of [
+      { spend: { enabled: true, used: { amount_minor: 4631, currency: "USD", exponent: 2 }, limit: { amount_minor: 50000, currency: "USD", exponent: 2 } } },
+      { spend: { enabled: false } },
+      { extra_usage: { is_enabled: true, used_credits: 4631, monthly_limit: 50000 } },
+      { extra_usage: { is_enabled: false, used_credits: 4631, monthly_limit: 50000 } },
+    ]) {
+      const rows = await readCliProxyUsage(CONFIG, { nowMs: () => NOW, fetch: async (url, init) => {
+        if (url.endsWith("/credentials")) return json({ files: [ACCOUNT, { ...ACCOUNT, auth_index: "personal", label: "Personal" }] });
+        return json(envelope(JSON.parse(init.body).auth_index === ACCOUNT.auth_index ? { ...USAGE, ...budget } : USAGE));
+      } });
+      assert.equal(rows[0].label, "Claude · CLIProxy · Work");
+      assert.notEqual(rows[0].provider, rows[1].provider);
+      assert.equal(rows[0].status, "ok");
+      assert.equal(rows[0].fetchedAt, NOW);
+      assert.equal(rows[0].windows.length, 2);
+      const enabled = budget.spend?.enabled ?? budget.extra_usage.is_enabled;
+      assert.equal(rows[0].monthlySpend.enabled, enabled);
+      if (enabled) assert.ok(Math.abs(rows[0].monthlySpend.usedPercent - 9.262) < 1e-9);
+      else assert.equal(rows[0].monthlySpend.usedPercent, null);
+      assert.equal(rows[0].monthlySpend.used?.amountMinor ?? null, enabled ? 4631 : null);
+      assert.equal(rows[0].monthlySpend.resetsAt, null);
+      assert.equal(rows[1].monthlySpend.enabled, false);
+      assert.equal(rows[1].monthlySpend.used, null);
+      const [moneyOnly] = await readCliProxyUsage(CONFIG, { fetch: fixture([ACCOUNT], envelope(budget)) });
+      assert.equal(moneyOnly.status, "ok");
+      assert.deepEqual(moneyOnly.windows, []);
+    }
+  });
+
+  it("does not turn malformed or zero-limit proxy money into quota recovery or percentages", async () => {
+    for (const monthly_limit of [0, null, "bad"]) {
+      const [row] = await readCliProxyUsage(CONFIG, { fetch: fixture([ACCOUNT], envelope({
+        five_hour: { utilization: 36 },
+        extra_usage: { is_enabled: true, used_credits: 4631, monthly_limit, utilization: 99 },
+      })) });
+      assert.equal(row.monthlySpend.usedPercent, null);
+      assert.equal(row.monthlySpend.resetsAt, null);
+      assert.deepEqual(row.windows, [{ label: "5-hour", usedPercent: 36, resetsAt: null, windowSeconds: 18000 }]);
+      const picked = pickAccountByQuota(["claude"], [{ ...row, provider: "claude", monthlySpend: { ...row.monthlySpend, usedPercent: 100 } }]);
+      assert.equal(picked.ref, "claude");
+    }
+  });
+
   it("does nothing until explicitly enabled and does not request without a key", async () => {
     const fetch = () => { throw new Error("unexpected network"); };
     assert.deepEqual(await readCliProxyUsage(null, { fetch }), []);

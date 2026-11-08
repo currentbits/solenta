@@ -260,6 +260,22 @@ describe("UsageView", () => {
     m.unmount();
   });
 
+  it("renders provider-reported zero USD as $0.00 instead of unmetered", async () => {
+    const report: UsageReport = {
+      byDay: { [daysAgo(0)]: { claude: { zero: entry({ inputTokens: 10, turns: 1,
+        unpricedTokens: { inputTokens: 0, cachedInputTokens: 0, cacheWriteTokens: 0, outputTokens: 0 },
+      }) } } }, threadsByDay: {},
+    };
+    const m = await mount(<UsageView loadUsage={async () => report} />);
+    await m.flush();
+    const row = m.query('[data-usage-provider="claude"]');
+    assert.ok(row);
+    assert.ok(row.textContent?.includes("$0.00"));
+    assert.equal(row.getAttribute("data-usage-cost-unmetered"), null);
+    assert.ok(!m.query("[data-usage-totals]")?.textContent?.includes("unmetered"));
+    m.unmount();
+  });
+
   it("renders an unreported provider as usage not reported, never $0.00", async () => {
     const m = await mount(<UsageView loadUsage={async () => richReport()} />);
     await m.flush();

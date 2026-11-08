@@ -648,3 +648,55 @@ describe("usageCostByType", () => {
     });
   });
 });
+
+
+describe("reported zero cost coverage", () => {
+  it("keeps known-zero USD metered through provider/model filtering and aggregation", () => {
+    const covered = { inputTokens: 0, cachedInputTokens: 0, cacheWriteTokens: 0, outputTokens: 0 };
+    const zero = entry({ costUsd: 0, inputTokens: 10, turns: 1, unpricedTokens: covered });
+    const missing = entry({ costUsd: 0, inputTokens: 4, turns: 1 });
+    const report: UsageReport = { byDay: { "2026-08-17": { claude: { zero, missing } } }, threadsByDay: {} };
+    const filtered = filterUsageReport(report, "claude", { mode: "include", models: [{ provider: "claude", model: "zero" }] });
+    const summary = summarizeUsage(filtered, 7, TODAY);
+    assert.equal(summary.providers[0].costUnmetered, false);
+    assert.equal(summary.models[0].costUnmetered, false);
+    assert.equal(isCostUnmetered(summary.totals), false);
+    assert.equal(summary.totals.costUsd, 0);
+    assert.equal(isCostUnmetered(summarizeUsage(report, 7, TODAY).totals), true, "unreported tokens in a mixed aggregate stay unmetered");
+  });
+});
+
+
+it("drops excluded-model unpriced coverage when rebuilding filtered thread totals", () => {
+  const day = "2026-08-17";
+  const zero = entry({ inputTokens: 1, unpricedTokens: { inputTokens: 0, cachedInputTokens: 0, cacheWriteTokens: 0, outputTokens: 0 } });
+  const one = entry({ inputTokens: 2 });
+  const two = entry({ inputTokens: 3 });
+  const buckets = { zero, one, two };
+  const report: UsageReport = { byDay: { [day]: { claude: buckets } }, threadsByDay: { [day]: { mixed: thread({
+    inputTokens: 6, unpricedTokens: { inputTokens: 5, cachedInputTokens: 0, cacheWriteTokens: 0, outputTokens: 0 },
+    byProviderModel: { claude: buckets },
+  }) } } };
+  const filtered = filterUsageReport(report, "claude", { mode: "include", models: [{ provider: "claude", model: "one" }] });
+  const selected = filtered.threadsByDay[day].mixed;
+  assert.equal(selected.inputTokens, 2);
+  assert.equal(selected.unpricedTokens, undefined, "homogeneous selected data retains its own legacy inference");
+  const summary = summarizeUsage(filtered, 7, TODAY);
+  assert.equal(summary.threads[0].inputTokens, 2);
+  assert.equal(summary.threads[0].costUnmetered, true);
+});
+
+
+it("retains measured days when a model filter selects zero-turn split usage", () => {
+  const day = "2026-08-17";
+  const report: UsageReport = { byDay: { [day]: { claude: {
+    root: entry({ inputTokens: 10, turns: 1 }),
+    advisor: entry({ costUsd: 3, inputTokens: 100, outputTokens: 5, turns: 0 }),
+  } } }, threadsByDay: {} };
+  const filtered = filterUsageReport(report, "claude", { mode: "include", models: [{ provider: "claude", model: "advisor" }] });
+  const summary = summarizeUsage(filtered, 7, TODAY);
+  assert.equal(summary.totals.turns, 0);
+  assert.equal(summary.byDay.length, 1);
+  assert.equal(summary.byDay[0].costUsd, 3);
+  assert.equal(summary.byDay[0].inputTokens, 100);
+});
