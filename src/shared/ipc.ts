@@ -2041,6 +2041,10 @@ export interface UsageThreadEntry extends UsageEntry {
   title: string;
   provider: string;
   model: string;
+  /** Recorded provider -> model deltas, before thread/day aggregation. */
+  byProviderModel?: Record<string, Record<string, UsageEntry>>;
+  /** Pre-upgrade totals whose model split was never recorded. Never repriced. */
+  unattributed?: UsageEntry;
 }
 
 /** Local calendar day -> thread id -> entry. Same 90-day retention. */

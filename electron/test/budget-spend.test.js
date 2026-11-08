@@ -464,6 +464,10 @@ describe("spendByDay and settings", () => {
       title: "Renamed",
       provider: "claude",
       model: "sonnet",
+      byProviderModel: { claude: {
+        opus: { costUsd: 0.01, inputTokens: 100, cachedInputTokens: 50, cacheWriteTokens: 10, outputTokens: 20, turns: 1, wastedUsd: 0 },
+        sonnet: { costUsd: 0.02, inputTokens: 40, cachedInputTokens: 0, cacheWriteTokens: 0, outputTokens: 8, turns: 1, wastedUsd: 0 },
+      } },
     });
     assert.equal(day.t2.turns, 1);
     assert.equal(day.t2.provider, "kimi");
