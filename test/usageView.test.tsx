@@ -8,6 +8,7 @@ import * as React from "react";
 import { mount } from "./support/dom.ts";
 import { UsageView, type UsageReportControls } from "../src/components/UsageView";
 import type { UsageByDay, UsageEntry, UsageReport, UsageThreadEntry } from "../src/shared/ipc";
+import { usageModelKey } from "../src/usage";
 
 function localDayKey(d: Date): string {
   const y = d.getFullYear();
@@ -634,6 +635,106 @@ describe("UsageView", () => {
     assert.equal(m.query("[data-usage-stale]"), null, "success clears stale");
     assert.equal(m.query("[data-usage]")?.getAttribute("data-range"), "7");
     assert.equal(m.query("[data-usage]")?.getAttribute("data-metric"), "cost");
+    m.unmount();
+  });
+});
+
+describe("UsageView model picker", () => {
+  function modelReport(): UsageReport {
+    const standard = entry({ costUsd: 2, inputTokens: 1e6, turns: 1 });
+    const premium = entry({ costUsd: 10, inputTokens: 1e6, turns: 1, wastedUsd: 1 });
+    const unknown = entry({ turns: 1 });
+    const byProviderModel = { claude: { shared: standard, premium }, codex: { shared: standard, unknown } };
+    return {
+      byDay: {
+        [daysAgo(0)]: byProviderModel,
+        [daysAgo(20)]: { claude: { premium: entry({ costUsd: 20, inputTokens: 2e6, turns: 2 }) } },
+      },
+      threadsByDay: { [daysAgo(0)]: { mixed: thread({
+        title: "Mixed models", provider: "codex", model: "unknown",
+        costUsd: 14, inputTokens: 3e6, turns: 4, wastedUsd: 1, byProviderModel,
+      }) } },
+    };
+  }
+  const modelCheckbox = (m: Awaited<ReturnType<typeof mount>>, provider: string, model: string) =>
+    m.queryAll("[data-usage-model-filter]").find((el) => el.getAttribute("data-usage-model-filter") === usageModelKey({ provider, model }))!;
+
+  it("applies include/exclude to totals, charts, cost split and every breakdown", async () => {
+    const m = await mount(<UsageView loadUsage={async () => modelReport()}
+      modelPrices={{ shared: { input: 2, output: 0 }, premium: { input: 10, output: 0 } }} />);
+    await m.flush();
+    await m.click(m.query('summary[aria-label="Models"]'));
+    await m.click(modelCheckbox(m, "claude", "premium"));
+    assert.match(m.query("[data-usage-totals]")!.textContent!, /\$10\.00.*1 turns/);
+    assert.equal(m.query('[data-usage-provider="codex"]'), null);
+    assert.equal(m.query('[data-usage-series="codex"]'), null);
+    assert.match(m.query(`[data-usage-bar="${daysAgo(0)}"]`)!.getAttribute("aria-label")!, /claude \$10\.00/);
+    assert.equal(m.query('[data-usage-stat-cost="uncached"]')!.textContent, "$10.00");
+    assert.equal(m.query('[data-usage-model="claude/shared"]'), null);
+    assert.ok(m.query('[data-usage-model="claude/premium"]'));
+    for (const group of ["day", "project", "thread"]) {
+      await m.click(m.query(`[data-usage-group-btn="${group}"]`));
+      assert.match(m.query("[data-usage-breakdown] tbody")!.textContent!, /\$10\.00/);
+      assert.doesNotMatch(m.query("[data-usage-breakdown] tbody")!.textContent!, /\$14\.00/);
+    }
+    await m.change(m.query("[data-usage-model-mode]"), "exclude");
+    assert.match(m.query("[data-usage-totals]")!.textContent!, /\$4\.00.*3 turns/);
+    assert.equal(m.query('[data-usage-stat-cost="uncached"]')!.textContent, "$4.00");
+    assert.match(m.query('[data-usage-row="mixed"]')!.textContent!, /\$4\.00/);
+    await m.press(modelCheckbox(m, "claude", "premium"), "Escape");
+    assert.equal((m.query("details") as HTMLDetailsElement).open, false);
+    assert.equal(document.activeElement, m.query('summary[aria-label="Models"]'));
+    m.unmount();
+  });
+
+  it("keeps identical model labels distinct and combines provider/date filters", async () => {
+    const m = await mount(<UsageView loadUsage={async () => modelReport()} />);
+    await m.flush();
+    await m.click(modelCheckbox(m, "claude", "shared"));
+    assert.match(m.query("[data-usage-totals]")!.textContent!, /\$2\.00.*1 turns/);
+    assert.equal(m.query('[data-usage-provider="codex"]'), null);
+    await m.click(modelCheckbox(m, "codex", "shared"));
+    assert.match(m.query("[data-usage-totals]")!.textContent!, /\$4\.00.*2 turns/);
+    await m.change(m.query("[data-usage-provider-filter]"), "codex");
+    assert.match(m.query("[data-usage-totals]")!.textContent!, /\$2\.00.*1 turns/);
+    await m.change(m.query("[data-usage-provider-filter]"), "claude");
+    await m.click(m.byText("Clear"));
+    await m.click(modelCheckbox(m, "claude", "premium"));
+    await m.click(m.query('[data-usage-range="30"]'));
+    assert.match(m.query("[data-usage-totals]")!.textContent!, /\$30\.00.*3 turns/);
+    await m.click(m.query('[data-usage-range="7"]'));
+    assert.match(m.query("[data-usage-totals]")!.textContent!, /\$10\.00.*1 turns/);
+    m.unmount();
+  });
+
+  it("supports unknown models, empty matches and clearing filters", async () => {
+    const m = await mount(<UsageView loadUsage={async () => modelReport()} />);
+    await m.flush();
+    assert.match(modelCheckbox(m, "codex", "unknown").parentElement!.textContent!, /Unknown model/);
+    await m.click(modelCheckbox(m, "codex", "unknown"));
+    assert.match(m.query("[data-usage-totals]")!.textContent!, /usage not reported.*1 turns/);
+    await m.change(m.query("[data-usage-provider-filter]"), "claude");
+    assert.ok(m.query("[data-usage-empty]"));
+    assert.ok(modelCheckbox(m, "codex", "unknown"), "selection remains removable when provider has no match");
+    await m.click(m.byText("Clear"));
+    assert.match(m.query("[data-usage-totals]")!.textContent!, /\$12\.00/);
+    await m.change(m.query("[data-usage-model-mode]"), "exclude");
+    await m.click(modelCheckbox(m, "claude", "shared"));
+    await m.click(modelCheckbox(m, "claude", "premium"));
+    assert.ok(m.query("[data-usage-empty]"), "excluding every model can produce an empty report");
+    await m.click(m.byText("Clear"));
+    assert.ok(m.query("[data-usage-totals]"));
+    m.unmount();
+  });
+
+  it("explains missing historical thread attribution when filtering models", async () => {
+    const m = await mount(<UsageView loadUsage={async () => richReport()} />);
+    await m.flush();
+    await m.click(modelCheckbox(m, "claude", "sonnet"));
+    await m.click(m.query('[data-usage-group-btn="thread"]'));
+    assert.match(m.query("[data-usage-totals]")!.textContent!, /\$2\.50/);
+    assert.match(m.query("[data-usage-unattributed]")!.textContent!, /Older thread usage has no recorded model split/);
+    assert.equal(m.query('[data-usage-row="th-a"]'), null);
     m.unmount();
   });
 });
