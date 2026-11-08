@@ -665,3 +665,23 @@ describe("reported zero cost coverage", () => {
     assert.equal(isCostUnmetered(summarizeUsage(report, 7, TODAY).totals), true, "unreported tokens in a mixed aggregate stay unmetered");
   });
 });
+
+
+it("drops excluded-model unpriced coverage when rebuilding filtered thread totals", () => {
+  const day = "2026-08-17";
+  const zero = entry({ inputTokens: 1, unpricedTokens: { inputTokens: 0, cachedInputTokens: 0, cacheWriteTokens: 0, outputTokens: 0 } });
+  const one = entry({ inputTokens: 2 });
+  const two = entry({ inputTokens: 3 });
+  const buckets = { zero, one, two };
+  const report: UsageReport = { byDay: { [day]: { claude: buckets } }, threadsByDay: { [day]: { mixed: thread({
+    inputTokens: 6, unpricedTokens: { inputTokens: 5, cachedInputTokens: 0, cacheWriteTokens: 0, outputTokens: 0 },
+    byProviderModel: { claude: buckets },
+  }) } } };
+  const filtered = filterUsageReport(report, "claude", { mode: "include", models: [{ provider: "claude", model: "one" }] });
+  const selected = filtered.threadsByDay[day].mixed;
+  assert.equal(selected.inputTokens, 2);
+  assert.equal(selected.unpricedTokens, undefined, "homogeneous selected data retains its own legacy inference");
+  const summary = summarizeUsage(filtered, 7, TODAY);
+  assert.equal(summary.threads[0].inputTokens, 2);
+  assert.equal(summary.threads[0].costUnmetered, true);
+});

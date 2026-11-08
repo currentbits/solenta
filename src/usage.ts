@@ -321,7 +321,7 @@ export function filterUsageReport(
         for (const cell of Object.values(models)) addTo(totals, readEntry(cell)!);
       }
       const ids = Object.keys(buckets);
-      const { unattributed: _unattributed, ...labels } = entry;
+      const { unattributed: _unattributed, unpricedTokens: _unpricedTokens, ...labels } = entry;
       kept[id] = {
         ...labels,
         ...totals,
