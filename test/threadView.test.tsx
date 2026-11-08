@@ -25,6 +25,7 @@ import { ChangesPanel } from "../src/components/thread/ChangesPanel";
 // runner, then resolves outside act() and fails the next test's console check.
 import "../src/components/HtmlPage";
 import styles from "../src/components/ThreadView.module.css";
+import fileDiffStyles from "../src/components/FileDiffLayout.module.css";
 import { routineWorkerActivitySummary } from "../src/workerActivity";
 import { noticeRest, workerResults } from "../src/workerResult";
 import { TRANSCRIPT_WINDOW } from "../src/transcriptWindow";
@@ -4467,15 +4468,15 @@ describe("ThreadView Changes panel commit box (issue #555)", () => {
     });
     assert.ok(commitBtn, "Commit button must be in the Changes panel");
 
-    // The two-column split is what actually protects #555: the itinerary
-    // scrolls inside .changesFiles, and .commitBox is a flex-shrink: 0
-    // sibling of .changesSplit. jsdom has no layout, so clipping is
-    // invisible: assert the structure instead of a class nobody uses.
-    const split = panel.querySelector(`.${styles.changesSplit}`);
-    assert.ok(split, "file/diff split must render");
+    // The shared layout owns the scrolling columns. The commit box must
+    // remain outside that layout in both side-by-side and stacked modes.
+    // jsdom has no layout, so assert the actual component structure.
+    const split = panel.querySelector("[data-file-diff-layout]");
+    assert.ok(split, "shared file/diff layout must render");
+    assert.ok(split.classList.contains(fileDiffStyles.root));
     assert.ok(
       !split.contains(textarea),
-      "commit textarea must sit outside .changesSplit, not inside a scrolling column",
+      "commit textarea must sit outside the shared layout's scrolling columns",
     );
 
     const commitBox = textarea.closest(`.${styles.commitBox}`);
@@ -4483,16 +4484,21 @@ describe("ThreadView Changes panel commit box (issue #555)", () => {
     assert.equal(
       commitBox.parentElement,
       split.parentElement,
-      ".commitBox must be a sibling of .changesSplit so a tall itinerary cannot push it out of the pane",
+      ".commitBox must be a sibling of the shared layout so a tall itinerary cannot push it out of the pane",
     );
     assert.equal(
       split.nextElementSibling,
       commitBox,
-      ".commitBox must follow .changesSplit as the next sibling",
+      ".commitBox must follow the shared layout as the next sibling",
     );
 
     const filesCol = panel.querySelector(`.${styles.changesFiles}`);
     assert.ok(filesCol, "files column must render");
+    assert.ok(filesCol.classList.contains(fileDiffStyles.files));
+    assert.ok(
+      split.contains(filesCol),
+      "itinerary scroller must be in the shared layout",
+    );
     assert.ok(
       filesCol.contains(panel.querySelector("[data-review-hard-stop]")!),
       "tall itinerary must live inside the scrolling files column",
@@ -4505,7 +4511,14 @@ describe("ThreadView Changes panel commit box (issue #555)", () => {
       path.dirname(fileURLToPath(import.meta.url)),
       "../src/components/ThreadView.module.css",
     );
-    const css = fs.readFileSync(cssPath, "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+    const layoutCssPath = path.join(
+      path.dirname(cssPath),
+      "FileDiffLayout.module.css",
+    );
+    const css = [cssPath, layoutCssPath]
+      .map((p) => fs.readFileSync(p, "utf8"))
+      .join("\n")
+      .replace(/\/\*[\s\S]*?\*\//g, "");
     const overflowClasses = new Set<string>();
     const ruleRe = /\.([A-Za-z][\w-]*)\s*\{([^}]*)\}/g;
     let match: RegExpExecArray | null;
@@ -4536,18 +4549,24 @@ describe("ThreadView Changes panel commit box (issue #555)", () => {
       "../src/components/ThreadView.module.css",
     );
     const css = fs.readFileSync(cssPath, "utf8");
+    const layoutCss = fs
+      .readFileSync(
+        path.join(path.dirname(cssPath), "FileDiffLayout.module.css"),
+        "utf8",
+      )
+      .replace(/\/\*[\s\S]*?\*\//g, "");
     // Strip comments first so a commented-out rule cannot satisfy or
     // defeat an assertion. Slice each selector to its closing brace so
     // a match in some other rule does not count.
     const clean = css.replace(/\/\*[\s\S]*?\*\//g, "");
-    const ruleBody = (className: string): string => {
+    const ruleBody = (className: string, source = clean): string => {
       const re = new RegExp(`\\.${className}(?![\\w-])\\s*\\{`);
-      const match = re.exec(clean);
+      const match = re.exec(source);
       if (!match) return "";
       const brace = match.index + match[0].length - 1;
-      const end = clean.indexOf("}", brace);
+      const end = source.indexOf("}", brace);
       if (end < 0) return "";
-      return clean.slice(brace + 1, end);
+      return source.slice(brace + 1, end);
     };
 
     const commitBox = ruleBody("commitBox");
@@ -4579,21 +4598,23 @@ describe("ThreadView Changes panel commit box (issue #555)", () => {
       ".changesPane must be allowed to shrink inside the thread column",
     );
 
-    const changesSplit = ruleBody("changesSplit");
-    assert.ok(changesSplit, ".changesSplit rule must exist");
-    assert.match(
-      changesSplit,
-      /flex\s*:\s*1/,
-      ".changesSplit must take leftover height above the commit box",
-    );
-    assert.match(
-      changesSplit,
-      /min-height\s*:\s*0/,
-      ".changesSplit must be allowed to shrink inside the pane",
-    );
+    for (const className of ["root", "grid"]) {
+      const body = ruleBody(className, layoutCss);
+      assert.ok(body, `shared layout .${className} rule must exist`);
+      assert.match(
+        body,
+        /flex\s*:\s*1/,
+        `shared layout .${className} must take leftover height above the commit box`,
+      );
+      assert.match(
+        body,
+        /min-height\s*:\s*0/,
+        `shared layout .${className} must shrink inside the pane`,
+      );
+    }
 
-    // First .changesFiles match is the max-width: 720px override (border
-    // only). Collect every body so the scrolling rule still counts.
+    // Check the Changes columns too: their content must stay independently
+    // scrollable inside the shared grid instead of growing the outer pane.
     const allBodies = (className: string): string[] => {
       const bodies: string[] = [];
       const re = new RegExp(`\\.${className}(?![\\w-])\\s*\\{`, "g");
@@ -4637,31 +4658,44 @@ describe("ThreadView Changes panel commit box (issue #555)", () => {
       "dead .changesScroll wrapper must stay gone; the split columns scroll",
     );
 
-    const mediaStart = clean.search(/@media\s*\(\s*max-width\s*:\s*720px\s*\)/);
-    assert.ok(mediaStart >= 0, "narrow stacked-split media query must exist");
-    const mediaOpen = clean.indexOf("{", mediaStart);
-    let depth = 0;
-    let mediaEnd = mediaOpen;
-    for (let i = mediaOpen; i < clean.length; i++) {
-      if (clean[i] === "{") depth++;
-      else if (clean[i] === "}") {
-        depth--;
-        if (depth === 0) {
-          mediaEnd = i;
-          break;
+    for (const [name, query] of [
+      ["narrow window", /@media\s*\(\s*max-width\s*:\s*720px\s*\)/],
+      [
+        "narrow pane",
+        /@container\s+file-diff\s*\(\s*max-width\s*:\s*560px\s*\)/,
+      ],
+    ] as const) {
+      const start = layoutCss.search(query);
+      assert.ok(start >= 0, `${name} stacked-layout query must exist`);
+      const open = layoutCss.indexOf("{", start);
+      let depth = 0;
+      let end = open;
+      for (let i = open; i < layoutCss.length; i++) {
+        if (layoutCss[i] === "{") depth++;
+        else if (layoutCss[i] === "}") {
+          depth--;
+          if (depth === 0) {
+            end = i;
+            break;
+          }
         }
       }
+      const responsive = layoutCss.slice(open, end + 1);
+      assert.match(
+        responsive,
+        /grid-template-rows\s*:\s*minmax\(120px,\s*34%\)\s+minmax\(0,\s*1fr\)/,
+        `${name} must bound the files row and let the diff shrink`,
+      );
+      assert.doesNotMatch(
+        responsive,
+        /commitBox/,
+        `${name} must not move the commit box into the scrolling layout`,
+      );
     }
-    const media = clean.slice(mediaOpen, mediaEnd + 1);
     assert.match(
-      media,
-      /grid-template-rows/,
-      "narrow path must stack the split into rows, not grow the pane",
-    );
-    assert.doesNotMatch(
-      media,
-      /commitBox/,
-      "narrow path must not restyle .commitBox into the scrolling split",
+      layoutCss,
+      /\.grid\[data-stacked\]\s*\{[^}]*grid-template-rows\s*:\s*minmax\(120px,\s*34%\)\s+minmax\(0,\s*1fr\)/,
+      "measured stacked mode must keep the same bounded rows as the responsive CSS",
     );
   });
 });
