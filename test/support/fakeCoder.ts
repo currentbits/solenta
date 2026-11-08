@@ -4038,6 +4038,8 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         }),
     },
     web: {
+      enrollmentStatus: () => rec("web.enrollmentStatus", [], { computerId: "test-computer", devices: web.devices }),
+      createEnrollment: (input: { name: string; scopes?: WebDeviceInfo["scopes"] }) => rec("web.createEnrollment", [input], { grant: "g".repeat(43), name: input.name, scopes: input.scopes ?? ["read"], expiresAt: Date.now() + 300000, sessionTtlMs: 2592000000, computerId: "test-computer" }),
       status: () => rec("web.status", [], { ...web }),
       setEnabled: (input: { enabled: boolean; lan?: boolean }) => {
         web = {

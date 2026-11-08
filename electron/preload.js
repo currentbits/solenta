@@ -150,6 +150,8 @@ const IPC_CHANNELS = Object.freeze([
   { ns: "web", method: "status" },
   { ns: "web", method: "setEnabled" },
   { ns: "web", method: "addDevice" },
+  { ns: "web", method: "createEnrollment" },
+  { ns: "web", method: "enrollmentStatus" },
   { ns: "web", method: "revokeDevice" },
   { ns: "web", method: "setTailscale" },
   { ns: "skills", method: "list" },

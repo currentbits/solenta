@@ -21,13 +21,15 @@
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
-const { sanitizeScopes } = require("./webScopes.js");
+const { sanitizeScopes, narrowScopes } = require("./webScopes.js");
 
 const FILE_NAME = "web-access.json";
 const LEGACY_TOKEN_FILE = "web-token";
 const LEGACY_NAME = "SSH and command line";
 const NAME_MAX = 60;
 const MAX_DEVICES = 30;
+const ENROLLMENT_TTL_MS = 5 * 60 * 1000;
+const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 // lastSeenAt only needs minute precision; skip the disk write otherwise.
 const SEEN_WRITE_MS = 60 * 1000;
 
@@ -36,7 +38,7 @@ function hashToken(token) {
 }
 
 function emptyState() {
-  return { server: { enabled: false, lan: false }, devices: [] };
+  return { server: { enabled: false, lan: false }, devices: [], enrollments: [] };
 }
 
 function load(file) {
@@ -51,6 +53,7 @@ function load(file) {
   const rows = Array.isArray(parsed && parsed.devices) ? parsed.devices : [];
   return {
     server: { enabled: server.enabled === true, lan: server.lan === true },
+    enrollments: Array.isArray(parsed.enrollments) ? parsed.enrollments.filter(g => g && typeof g.tokenHash === "string") : [],
     devices: rows.filter(
       (d) => d && typeof d.id === "string" && typeof d.tokenHash === "string",
     ),
@@ -66,6 +69,7 @@ function toPublic(row) {
     lastSeenAt: Number.isFinite(row.lastSeenAt) ? row.lastSeenAt : null,
     legacy: row.legacy === true,
     scopes: rowScopes(row),
+    ...(row.expiresAt !== undefined ? { expiresAt: Number.isFinite(row.expiresAt) ? row.expiresAt : 0 } : {}),
   };
 }
 
@@ -82,16 +86,78 @@ function createWebDevices(userDataPath, opts = {}) {
   const now = opts.now || Date.now;
   const file = path.join(userDataPath, FILE_NAME);
   const legacyFile = path.join(userDataPath, LEGACY_TOKEN_FILE);
-  const state = load(file);
+  let state = load(file);
+  const lockFile = path.join(userDataPath, "web-access.lock");
+  const enrollmentTtl = opts.enrollmentTtlMs ?? ENROLLMENT_TTL_MS;
+  const sessionTtl = opts.sessionTtlMs ?? SESSION_TTL_MS;
 
-  function save() {
+  // One file transaction commits consumption and the new named device together.
+  // The exclusive lock also fences stale instances/processes. A crashed owner
+  // can be recovered; an uncertain/live owner fails closed rather than racing.
+  function update(change) {
     fs.mkdirSync(userDataPath, { recursive: true });
-    fs.writeFileSync(file, JSON.stringify(state, null, 2), { mode: 0o600 });
+    const ownerFile = `${lockFile}.${crypto.randomUUID()}`;
+    // Populate the owner before publishing its hard link. A crash can never
+    // leave an empty lock whose ownership cannot be established on restart.
+    fs.writeFileSync(ownerFile, String(process.pid), { flag: "wx", mode: 0o600 });
+    let locked = false;
     try {
-      fs.chmodSync(file, 0o600);
-    } catch {
-      // mode is best-effort on some filesystems
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          fs.linkSync(ownerFile, lockFile);
+          locked = true;
+          break;
+        } catch (err) {
+          if (!err || err.code !== "EEXIST") throw err;
+          let stale = false;
+          try {
+            const pid = Number(fs.readFileSync(lockFile, "utf8"));
+            if (Number.isInteger(pid) && pid > 0) {
+              try { process.kill(pid, 0); } catch (e) { stale = e.code === "ESRCH"; }
+            }
+          } catch { /* An uncertain owner is never stolen. */ }
+          if (!stale) throw new Error("Device access is being changed. Try again.");
+          try { fs.unlinkSync(lockFile); } catch { /* Another owner recovered it. */ }
+        }
+      }
+      if (!locked) throw new Error("Device access is being changed. Try again.");
+      const next = load(file);
+      const result = change(next);
+      save(next);
+      state = next;
+      return result;
+    } finally {
+      if (locked) fs.unlinkSync(lockFile);
+      fs.unlinkSync(ownerFile);
     }
+  }
+
+
+  function save(next) {
+    const temporary = `${file}.${crypto.randomUUID()}.tmp`;
+    let fd;
+    try {
+      fd = fs.openSync(temporary, "wx", 0o600);
+      fs.writeFileSync(fd, JSON.stringify(next, null, 2));
+      fs.fsyncSync(fd);
+      fs.closeSync(fd);
+      fd = undefined;
+      fs.renameSync(temporary, file);
+      try { const dir = fs.openSync(userDataPath, "r"); try { fs.fsyncSync(dir); } finally { fs.closeSync(dir); } } catch { /* Not supported on every filesystem. */ }
+    } finally {
+      if (fd !== undefined) fs.closeSync(fd);
+      try { fs.unlinkSync(temporary); } catch { /* Renamed successfully. */ }
+    }
+  }
+
+  function nameOf(input) {
+    const name = String((input && input.name) || "").trim();
+    if (!name) throw new Error("Name the device first.");
+    if (name.length > NAME_MAX) throw new Error(`Device names are at most ${NAME_MAX} characters.`);
+    return name;
+  }
+  function active(row) {
+    return row.expiresAt === undefined || (Number.isFinite(row.expiresAt) && row.expiresAt > now());
   }
 
   /** Adopt a single plaintext token as the Legacy device row. Idempotent. */
@@ -99,20 +165,16 @@ function createWebDevices(userDataPath, opts = {}) {
     const raw = String(token || "").trim();
     if (!raw) return null;
     const hash = hashToken(raw);
+    state = load(file);
     const existing = state.devices.find((d) => d.tokenHash === hash);
     if (existing) return toPublic(existing);
-    const row = {
-      id: crypto.randomUUID(),
-      name: LEGACY_NAME,
-      tokenHash: hash,
-      createdAt: now(),
-      lastSeenAt: null,
-      legacy: true,
-      scopes: ["full"],
-    };
-    state.devices.push(row);
-    save();
-    return toPublic(row);
+    return update(next => {
+      const held = next.devices.find(d => d.tokenHash === hash);
+      if (held) return toPublic(held);
+      const row = { id: crypto.randomUUID(), name: LEGACY_NAME, tokenHash: hash, createdAt: now(), lastSeenAt: null, legacy: true, scopes: ["full"] };
+      next.devices.push(row);
+      return toPublic(row);
+    });
   }
 
   try {
@@ -123,6 +185,7 @@ function createWebDevices(userDataPath, opts = {}) {
 
   return {
     list() {
+      state = load(file);
       return state.devices.map(toPublic);
     },
 
@@ -132,10 +195,11 @@ function createWebDevices(userDataPath, opts = {}) {
 
     /** @param {{ enabled?: boolean, lan?: boolean }} patch */
     setServer(patch) {
-      if (typeof patch.enabled === "boolean") state.server.enabled = patch.enabled;
-      if (typeof patch.lan === "boolean") state.server.lan = patch.lan;
-      save();
-      return { ...state.server };
+      return update(next => {
+        if (typeof patch.enabled === "boolean") next.server.enabled = patch.enabled;
+        if (typeof patch.lan === "boolean") next.server.lan = patch.lan;
+        return { ...next.server };
+      });
     },
 
     adoptLegacy,
@@ -145,40 +209,61 @@ function createWebDevices(userDataPath, opts = {}) {
      * @returns {{ device: ReturnType<typeof toPublic>, token: string }}
      */
     add(input) {
-      const name = String((input && input.name) || "").trim();
-      if (!name) throw new Error("Name the device first.");
-      if (name.length > NAME_MAX) {
-        throw new Error(`Device names are at most ${NAME_MAX} characters.`);
-      }
-      if (state.devices.length >= MAX_DEVICES) {
-        throw new Error(`At most ${MAX_DEVICES} devices. Revoke one first.`);
-      }
-      const token = crypto.randomBytes(32).toString("base64url");
-      const row = {
-        id: crypto.randomUUID(),
-        name,
-        tokenHash: hashToken(token),
-        createdAt: now(),
-        lastSeenAt: null,
-        scopes: sanitizeScopes(input && input.scopes),
-      };
-      state.devices.push(row);
-      save();
-      return { device: toPublic(row), token };
+      const name = nameOf(input);
+      return update(next => {
+        if (next.devices.length >= MAX_DEVICES) throw new Error(`At most ${MAX_DEVICES} devices. Revoke one first.`);
+        const token = crypto.randomBytes(32).toString("base64url");
+        const row = { id: crypto.randomUUID(), name, tokenHash: hashToken(token), createdAt: now(), lastSeenAt: null, scopes: sanitizeScopes(input && input.scopes) };
+        next.devices.push(row);
+        return { device: toPublic(row), token };
+      });
+    },
+
+    createEnrollment(input) {
+      const name = nameOf(input);
+      return update(next => {
+        next.enrollments = next.enrollments.filter(g => Number.isFinite(g.expiresAt) && g.expiresAt > now());
+        if (next.enrollments.length >= MAX_DEVICES) throw new Error("Too many pending enrollment links. Wait for one to expire.");
+        if (next.devices.length >= MAX_DEVICES) throw new Error(`At most ${MAX_DEVICES} devices. Revoke one first.`);
+        const grant = crypto.randomBytes(32).toString("base64url");
+        const expiresAt = now() + enrollmentTtl;
+        const scopes = sanitizeScopes(input && input.scopes);
+        next.enrollments.push({ id: crypto.randomUUID(), tokenHash: hashToken(grant), name, scopes, expiresAt });
+        return { grant, name, scopes, expiresAt, sessionTtlMs: sessionTtl };
+      });
+    },
+
+    redeemEnrollment(input) {
+      const grant = input && input.grant;
+      if (typeof grant !== "string" || grant.length < 32 || grant.length > 128) throw new Error("Enrollment link is invalid, expired or already used.");
+      return update(next => {
+        const presented = Buffer.from(hashToken(grant), "hex");
+        let found;
+        for (const row of next.enrollments) {
+          const stored = Buffer.from(row.tokenHash, "hex");
+          if (stored.length === presented.length && crypto.timingSafeEqual(stored, presented)) found = row;
+        }
+        if (!found || !Number.isFinite(found.expiresAt) || found.expiresAt <= now()) throw new Error("Enrollment link is invalid, expired or already used.");
+        const scopes = narrowScopes(rowScopes(found), input.scopes);
+        if (next.devices.length >= MAX_DEVICES) throw new Error(`At most ${MAX_DEVICES} devices. Revoke one first.`);
+        const token = crypto.randomBytes(32).toString("base64url");
+        const expiresAt = now() + sessionTtl;
+        const row = { id: crypto.randomUUID(), name: found.name, scopes, expiresAt, tokenHash: hashToken(token), createdAt: now(), lastSeenAt: null };
+        next.enrollments = next.enrollments.filter(g => g !== found);
+        next.devices.push(row);
+        return { token, device: toPublic(row), expiresAt };
+      });
     },
 
     /** Delete the row. Callers must also drop that device's live sockets. */
     revoke(id) {
-      const i = state.devices.findIndex((d) => d.id === id);
-      if (i < 0) throw new Error(`Unknown device: ${id}`);
-      const [row] = state.devices.splice(i, 1);
-      save();
+      const row = update(next => {
+        const i = next.devices.findIndex(d => d.id === id);
+        if (i < 0) throw new Error(`Unknown device: ${id}`);
+        return next.devices.splice(i, 1)[0];
+      });
       if (row.legacy) {
-        try {
-          fs.unlinkSync(legacyFile);
-        } catch {
-          // already gone
-        }
+        try { fs.unlinkSync(legacyFile); } catch { /* Already gone. */ }
       }
       return toPublic(row);
     },
@@ -192,6 +277,7 @@ function createWebDevices(userDataPath, opts = {}) {
      */
     authorize(token) {
       if (typeof token !== "string" || !token) return null;
+      state = load(file);
       const presented = Buffer.from(hashToken(token), "hex");
       let found = null;
       for (const row of state.devices) {
@@ -199,22 +285,23 @@ function createWebDevices(userDataPath, opts = {}) {
         if (stored.length !== presented.length) continue;
         if (crypto.timingSafeEqual(stored, presented) && !found) found = row;
       }
-      if (!found) return null;
+      if (!found || !active(found)) return null;
       const t = now();
       if (!found.lastSeenAt || t - found.lastSeenAt >= SEEN_WRITE_MS) {
-        found.lastSeenAt = t;
         try {
-          save();
+          update(next => { const row = next.devices.find(d => d.id === found.id); if (row) row.lastSeenAt = t; });
         } catch {
           // a persist miss must not reject a valid device
         }
       }
-      return { id: found.id, name: found.name, scopes: rowScopes(found) };
+      return { id: found.id, name: found.name, scopes: rowScopes(found), ...(found.expiresAt !== undefined ? { expiresAt: found.expiresAt } : {}) };
     },
   };
 }
 
 module.exports = {
+  ENROLLMENT_TTL_MS,
+  SESSION_TTL_MS,
   FILE_NAME,
   LEGACY_NAME,
   createWebDevices,

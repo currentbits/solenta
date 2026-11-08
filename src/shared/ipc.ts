@@ -5070,6 +5070,8 @@ export type WebDeviceScope =
   | "full";
 
 export interface WebDeviceInfo {
+  /** Browser enrollment sessions expire; legacy direct devices omit this. */
+  expiresAt?: number;
   id: string;
   name: string;
   createdAt: number;
@@ -5103,6 +5105,19 @@ export interface WebAccessStatus {
 }
 
 /** Returned once from addDevice. The token is stored only as a hash. */
+export interface WebEnrollmentCreated {
+  grant: string;
+  name: string;
+  scopes: WebDeviceScope[];
+  expiresAt: number;
+  sessionTtlMs: number;
+  computerId: string;
+}
+export interface WebEnrollmentStatus {
+  computerId: string | null;
+  devices: WebDeviceInfo[];
+}
+
 export interface WebDeviceCreated {
   device: WebDeviceInfo;
   token: string;
@@ -6040,10 +6055,14 @@ export interface CoderApi {
   };
   /**
    * Solenta Web (#1512 I2): the in-app server switch, per-device tokens and
-   * the optional Tailscale Serve helper. Desktop only; a web client gets an
-   * error. Revoking a device drops its open sockets at once.
+   * the optional Tailscale Serve helper. Server switches and reusable direct
+   * tokens are desktop-only. Full web owners may enroll or revoke sessions.
+   * Revocation and session expiry close live sockets at once.
    */
   web: {
+    /** Full-access owner operations; also available to a headless host's web UI. */
+    enrollmentStatus(): Promise<WebEnrollmentStatus>;
+    createEnrollment(input: { name: string; scopes?: WebDeviceScope[] }): Promise<WebEnrollmentCreated>;
     status(): Promise<WebAccessStatus>;
     setEnabled(input: { enabled: boolean; lan?: boolean }): Promise<WebAccessStatus>;
     /** Omitted scopes mean read only. */

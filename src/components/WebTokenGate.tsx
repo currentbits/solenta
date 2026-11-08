@@ -63,9 +63,10 @@ export function WebTokenGate({ reason }: { reason?: string } = {}) {
           ) : null}
           <p className={styles.note}>
             Open the pairing link or scan the QR code from the computer running
-            Solenta, or paste its token here. On that computer, Settings &gt;
-            Connections &gt; Add device makes a token for this device. If
-            Solenta was started from a terminal, the token is printed there.
+            Solenta, or paste an existing device token here. On that computer,
+            Settings &gt; Connections &gt; Browser access creates a one-time
+            browser link. If Solenta was started from a terminal, its legacy
+            token is printed there.
           </p>
           <div className={styles.field}>
             <label className={styles.fieldLabel} htmlFor="web-token-input">

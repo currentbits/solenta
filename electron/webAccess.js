@@ -239,6 +239,12 @@ function createWebAccess(deps) {
       host,
       port: opts.port ?? deps.defaultPort,
       authorize: (token) => devices.authorize(token),
+      redeemEnrollment: (input) => {
+        const computerId = deps.getComputerId?.();
+        if (!computerId) throw new Error("Computer identity is unavailable. Create a new enrollment link after updating the host.");
+        if (input.computerId && input.computerId !== computerId) throw new Error("This enrollment link belongs to another computer.");
+        return { ...devices.redeemEnrollment(input), computerId };
+      },
     });
     return server;
   }
@@ -374,6 +380,16 @@ function createWebAccess(deps) {
     /** @param {{ name: string }} input */
     async addDevice(input) {
       return devices.add(input);
+    },
+
+    enrollmentStatus() {
+      return { computerId: deps.getComputerId?.() || null, devices: devices.list() };
+    },
+
+    createEnrollment(input) {
+      const computerId = deps.getComputerId?.();
+      if (!computerId) throw new Error("Computer identity is unavailable. Update the host before creating an enrollment link.");
+      return { ...devices.createEnrollment(input), computerId };
     },
 
     /** Revoke, then drop that device's open sockets immediately. */

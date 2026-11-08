@@ -98,3 +98,81 @@ describe("webDevices", () => {
     assert.deepEqual(createWebDevices(tmp).server(), { enabled: true, lan: false });
   });
 });
+
+describe("one-time browser enrollment", () => {
+  let tmp;
+  beforeEach(() => { tmp = fs.mkdtempSync(path.join(os.tmpdir(), "solenta-enrollment-")); });
+  afterEach(() => fs.rmSync(tmp, { recursive: true, force: true }));
+
+  it("stores hashes, atomically exchanges once, and keeps consumption and session across restart", async () => {
+    const first = createWebDevices(tmp);
+    const second = createWebDevices(tmp);
+    const issued = first.createEnrollment({ name: "Phone", scopes: ["read", "steer"] });
+    assert.doesNotMatch(fs.readFileSync(path.join(tmp, FILE_NAME), "utf8"), new RegExp(issued.grant));
+    const results = await Promise.all(Array.from({ length: 8 }, (_, i) => Promise.resolve().then(() => (i % 2 ? first : second).redeemEnrollment({ grant: issued.grant })).then(value => ({ value }), error => ({ error }))));
+    const successes = results.filter(r => r.value);
+    assert.equal(successes.length, 1);
+    assert.equal(results.filter(r => r.error).length, 7);
+    const session = successes[0].value;
+    assert.deepEqual(session.device.scopes, ["read", "steer"]);
+    assert.ok(session.expiresAt > Date.now());
+    const restarted = createWebDevices(tmp);
+    assert.ok(restarted.authorize(session.token));
+    assert.throws(() => restarted.redeemEnrollment({ grant: issued.grant }), /already used/);
+    const stored = fs.readFileSync(path.join(tmp, FILE_NAME), "utf8");
+    assert.ok(!stored.includes(issued.grant) && !stored.includes(session.token));
+    assert.equal(restarted.list().length, 1);
+    assert.equal(restarted.list()[0].expiresAt, session.expiresAt);
+  });
+
+  it("refuses scope expansion without consuming the grant and honors implied terminal observe", () => {
+    const devices = createWebDevices(tmp);
+    const issued = devices.createEnrollment({ name: "Viewer", scopes: ["read", "terminal:type"] });
+    assert.throws(() => devices.redeemEnrollment({ grant: issued.grant, scopes: ["full"] }), /cannot grant/);
+    assert.throws(() => devices.redeemEnrollment({ grant: issued.grant, scopes: ["unknown"] }), /invalid/);
+    const session = devices.redeemEnrollment({ grant: issued.grant, scopes: ["read", "terminal:observe"] });
+    assert.deepEqual(session.device.scopes, ["read", "terminal:observe"]);
+  });
+
+  it("expires enrollment and session exactly at their deadlines while preserving direct tokens", () => {
+    let time = 1000;
+    const devices = createWebDevices(tmp, { now: () => time, enrollmentTtlMs: 100, sessionTtlMs: 500 });
+    const direct = devices.add({ name: "Direct computer", scopes: ["full"] });
+    const expired = devices.createEnrollment({ name: "Too late" });
+    time = expired.expiresAt;
+    assert.throws(() => devices.redeemEnrollment({ grant: expired.grant }), /expired/);
+    const issued = devices.createEnrollment({ name: "Browser" });
+    const session = devices.redeemEnrollment({ grant: issued.grant });
+    time = session.expiresAt - 1;
+    assert.ok(devices.authorize(session.token));
+    time += 1;
+    assert.equal(devices.authorize(session.token), null);
+    assert.ok(devices.authorize(direct.token));
+    devices.revoke(session.device.id);
+    assert.ok(devices.authorize(direct.token));
+  });
+
+  it("recovers a dead writer's lock without reviving a consumed grant", () => {
+    const devices = createWebDevices(tmp);
+    const issued = devices.createEnrollment({ name: "Browser" });
+    const session = devices.redeemEnrollment({ grant: issued.grant });
+    fs.writeFileSync(path.join(tmp, "web-access.lock"), "2147483647");
+    const restarted = createWebDevices(tmp);
+    assert.throws(() => restarted.redeemEnrollment({ grant: issued.grant }), /already used/);
+    assert.ok(restarted.authorize(session.token));
+  });
+});
+
+it("a failed durable session write does not consume the grant", () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "solenta-enrollment-failure-"));
+  const devices = createWebDevices(tmp);
+  const issued = devices.createEnrollment({ name: "Browser" });
+  const rename = fs.renameSync;
+  try {
+    fs.renameSync = () => { throw new Error("injected persist failure"); };
+    assert.throws(() => devices.redeemEnrollment({ grant: issued.grant }), /persist failure/);
+    fs.renameSync = rename;
+    assert.equal(createWebDevices(tmp).list().length, 0);
+    assert.ok(devices.redeemEnrollment({ grant: issued.grant }).token);
+  } finally { fs.renameSync = rename; fs.rmSync(tmp, { recursive: true, force: true }); }
+});

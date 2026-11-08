@@ -1260,6 +1260,7 @@ app.whenReady().then(async () => {
   const webStaticDir = path.join(__dirname, "../dist");
   webAccess = createWebAccess({
     devices: createWebDevices(userData),
+    getComputerId: () => require("./serverIdentity.js").loadOrCreateComputerId(userData),
     fileToken: () => loadOrCreateToken(userData),
     defaultPort: WEB_DEFAULT_PORT,
     startServer: (opts) =>

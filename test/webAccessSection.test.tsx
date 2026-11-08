@@ -162,3 +162,32 @@ describe("WebAccessSection", () => {
     assert.equal(pairingLink("https://x/", "a+b"), "https://x/#token=a%2Bb");
   });
 });
+
+describe("browser enrollment", () => {
+  afterEach(() => { unmountAll(); if (typeof window !== "undefined") delete (window as unknown as { coder?: unknown }).coder; });
+  it("offers a separate one-time browser link while preserving direct device links", async () => {
+    const fake = await install();
+    const m = await mount(<WebAccessSection active />);
+    await m.click(m.query("[data-web-enabled]"));
+    await m.type(m.query("[data-web-device-name]"), "Phone browser");
+    await m.click(m.query("[data-web-create-enrollment]"));
+    assert.deepEqual(fake.of("web.createEnrollment")[0]?.args, [{ name: "Phone browser", scopes: ["read", "steer"] }]);
+    const link = m.query("[data-web-enrollment-link]")?.textContent ?? "";
+    assert.match(link, /\/#pair=g+&computerId=test-computer$/);
+    assert.doesNotMatch(link, /\?token=|#token=/);
+    assert.match(m.text(), /once within five minutes/);
+    assert.ok(m.query("[data-web-add-device]"), "reusable direct enrollment remains separate");
+  });
+  it("full-access web owners use enrollment APIs without exposing server switches or direct-token mint", async () => {
+    const fake = await install();
+    const m = await mount(<WebAccessSection active browserOnly />);
+    assert.equal(fake.of("web.enrollmentStatus").length, 1);
+    assert.equal(fake.of("web.status").length, 0);
+    assert.equal(m.query("[data-web-enabled]"), null);
+    assert.equal(m.query("[data-web-add-device]"), null);
+    await m.type(m.query("[data-web-device-name]"), "Other browser");
+    await m.click(m.query("[data-web-create-enrollment]"));
+    assert.equal(fake.of("web.createEnrollment").length, 1);
+    assert.ok(m.query("[data-web-enrollment-link]"));
+  });
+});
