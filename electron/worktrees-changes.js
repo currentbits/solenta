@@ -174,6 +174,9 @@ async function diffOnce(store, thread, project, cwd, view) {
   // Committed scopes skip rename pairing so numstat, name-status and the
   // patch all key a file by the same path.
   const flags = [
+    // Porcelain paths are repository-relative, even from a subfolder.
+    // Do not let the user's diff.relative display setting change identities.
+    "--no-relative",
     ...(view.ignoreWhitespace ? ["-w"] : []),
     ...(scope === "uncommitted" ? [] : ["--no-renames"]),
   ];
@@ -191,7 +194,7 @@ async function diffOnce(store, thread, project, cwd, view) {
 
   if (view.path) {
     const rel = assertRelPathInCwd(path.resolve(String(cwd || "")), view.path);
-    const one = await gitDiff(["--", `:(literal)${rel}`], "");
+    const one = await gitDiff(["--", `:(top,literal)${rel}`], "");
     const cap = view.full ? FILE_PATCH_MAX : FILE_PATCH_CAP;
     return {
       files: [],
@@ -284,6 +287,7 @@ async function diffOnce(store, thread, project, cwd, view) {
   // UNTRACKED_COUNT_BYTES are read (#1520); the rest report 0, like binary
   // numstat. Still sync reads; go async with a budget if this shows in lag.
   let counted = 0;
+  let untrackedRoot;
   for (const entry of byPath.values()) {
     if (entry.status === "??") {
       if (project.remoteHost || counted >= UNTRACKED_COUNT_MAX) {
@@ -291,7 +295,14 @@ async function diffOnce(store, thread, project, cwd, view) {
       }
       counted++;
       try {
-        const file = path.join(cwd, entry.path);
+        // Status names are rooted at the repository, not the project's cwd.
+        // --show-cdup also works for WSL cwds without using a Linux root path
+        // as a Windows filesystem path. Resolve only when a file needs counting.
+        if (!untrackedRoot) {
+          const cdup = await gitOutForDiffAsync(project, cwd, ["rev-parse", "--show-cdup"]);
+          untrackedRoot = path.resolve(await fs.promises.realpath(cwd), cdup || ".");
+        }
+        const file = path.join(untrackedRoot, entry.path);
         if (fs.statSync(file).size > UNTRACKED_COUNT_BYTES) continue;
         const text = fs.readFileSync(file, "utf8");
         // "a\nb\n" splits into 3 parts with a trailing empty: count 2.
@@ -323,6 +334,7 @@ async function diffOnce(store, thread, project, cwd, view) {
       if (base) {
         const vsBase = await gitTryAsync(cwd, [
           "diff",
+          "--no-relative",
           "--name-only",
           `${base}...HEAD`,
         ]);
@@ -336,9 +348,10 @@ async function diffOnce(store, thread, project, cwd, view) {
         if (committedCi.length) {
           const vsPatch = await gitTryAsync(cwd, [
             "diff",
+            "--no-relative",
             `${base}...HEAD`,
             "--",
-            ...committedCi,
+            ...committedCi.map((file) => `:(top,literal)${file}`),
           ]);
           if (vsPatch.ok && vsPatch.stdout) {
             lintPatch = `${rawPatch}\n${vsPatch.stdout}`;
@@ -567,7 +580,7 @@ async function listChangedPathsAsync(cwd, base) {
   const name = String(base || "").trim();
   const ref = await resolveDiffBaseAsync(cwd, name);
   if (!ref) return { ok: false, paths: [], reason: `unknown revision '${name}'` };
-  const res = await gitTryAsync(cwd, ["diff", "--name-only", `${ref}...HEAD`]);
+  const res = await gitTryAsync(cwd, ["diff", "--no-relative", "--name-only", `${ref}...HEAD`]);
   if (!res.ok) {
     return {
       ok: false,
@@ -626,7 +639,7 @@ function listChangedPaths(cwd, opts) {
         reason: `unknown revision '${baseName}'`,
       };
     }
-    const committed = gitTry(cwd, ["diff", "--name-only", `${base}...HEAD`]);
+    const committed = gitTry(cwd, ["diff", "--no-relative", "--name-only", `${base}...HEAD`]);
     if (!committed.ok) {
       return {
         ok: false,
@@ -712,10 +725,10 @@ function ciWorkflowMergeReview(thread, target, files) {
     throw new Error("CI_WORKFLOW: Could not preview a clean merge. Resolve conflicts in the worker before requesting workflow sign-off.");
   }
   const tree = merged.stdout.split("\n")[0];
-  const changed = gitOut(target, ["diff", "--name-only", "--no-renames", "-z", destinationSha, tree], { raw: true });
+  const changed = gitOut(target, ["diff", "--no-relative", "--name-only", "--no-renames", "-z", destinationSha, tree], { raw: true });
   const workflowFiles = [...new Set([...files, ...ciWorkflowFiles(changed.split("\0"))])].sort();
-  const patch = gitOut(target, ["diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--binary",
-    destinationSha, tree, "--", ...workflowFiles.map((file) => `:(literal)${file}`)], { raw: true });
+  const patch = gitOut(target, ["diff", "--no-relative", "--no-ext-diff", "--no-textconv", "--no-renames", "--binary",
+    destinationSha, tree, "--", ...workflowFiles.map((file) => `:(top,literal)${file}`)], { raw: true });
   return {
     workerThreadId: thread.id, sourcePath: fs.realpathSync(thread.worktreePath),
     sourceBranch: thread.branch, sourceSha, destinationPath, destinationBranch,
