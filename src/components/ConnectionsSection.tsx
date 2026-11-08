@@ -58,10 +58,10 @@ export function ConnectionsSection({ onOpen, onForget, onInstall, onManage, onSi
     void pushSidebarHosts(onSidebarHosts, next);
   };
 
-  const manage = async (action: "status" | "install" | "start" | "logs") => {
+  const manage = async (action: "status" | "install" | "start" | "logs" | "recover") => {
     if (!onManage || busy) return;
     setBusy(true);
-    setProgress(({ status: "Checking computer over SSH…", install: "Preparing the server runtime and user service…", start: "Starting the managed server…", logs: "Reading recent server logs…" })[action]);
+    setProgress(({ status: "Checking computer over SSH…", install: "Preparing the server runtime and user service…", start: "Starting the managed server…", logs: "Reading recent server logs…", recover: "Recovering the interrupted server update…" })[action]);
     setError(null);
     try {
       const bound = hosts.find(item => item.id === selectedId)?.computerId;
@@ -311,10 +311,13 @@ export function ConnectionsSection({ onOpen, onForget, onInstall, onManage, onSi
       {serverStatus && serverStatus.host === host.trim() && mode === "ssh" && <div className={styles.fieldNote} data-connection-server-status="">
         <p>{serverStatus.host}: {serverStatus.info.mode === "external" ? "External runtime" : serverStatus.info.installed ? "Installed" : "Not installed"}, {serverStatus.info.running ? "running" : "stopped"}.{serverStatus.info.mode === "managed" ? ` Managed server${serverStatus.info.manager ? ` (${serverStatus.info.manager})` : ""}.` : ""}</p>
         <p>{serverStatus.info.sessionLimit}</p>
+        {serverStatus.info.cleanupWarning && <p role="status">{serverStatus.info.cleanupWarning}</p>}
+        {serverStatus.info.recoveryRequired && <p>An interrupted update needs recovery. Review recent logs before continuing. Recovery checks the selected runtime and preserves work accepted after a committed update.</p>}
         {externalRunning && <p>This server is externally managed. Connect to use it; manage its process on that computer.</p>}
         {serverStatus.info.linger != null && <p>Linux linger: {serverStatus.info.linger ? "enabled" : "disabled"}.</p>}
         {serverStatus.info.mode === "managed" && serverStatus.info.installed && <div className={styles.fieldRow}>
-          {!serverStatus.info.running && <button className={styles.btn} type="button" disabled={busy} onClick={() => void manage("start")}>Start server</button>}
+          {serverStatus.info.recoveryRequired ? <button className={styles.btn} type="button" disabled={busy} data-connection-recover="" onClick={() => void manage("recover")}>Recover interrupted update</button>
+            : !serverStatus.info.running && <button className={styles.btn} type="button" disabled={busy} onClick={() => void manage("start")}>Start server</button>}
           <button className={styles.btn} type="button" disabled={busy} onClick={() => void manage("logs")}>Recent logs</button>
         </div>}
         {serverStatus.info.logs && <pre>{serverStatus.info.logs}</pre>}
@@ -332,6 +335,7 @@ export function ConnectionsSection({ onOpen, onForget, onInstall, onManage, onSi
       {installed ? (
         <div className={styles.fieldNote} data-connection-installed="">
           <p>Installed Solenta {installed.tag} on {installed.host}.</p>
+          {installed.cleanupWarning && <p role="status">{installed.cleanupWarning}</p>}
           {installed.missingLibraries.length > 0 ? (
             <p data-connection-missing-libs="">
               It is missing libraries it needs ({installed.missingLibraries.join(", ")}).

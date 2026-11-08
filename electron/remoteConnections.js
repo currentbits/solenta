@@ -626,7 +626,7 @@ esac
 function serverLifecycleCommand(action, port, server, computerId = null, serviceMode = "managed") {
   if (!["managed", "external"].includes(serviceMode)) throw new Error("Invalid server preparation mode.");
   if (computerId && !/^[a-zA-Z0-9._:-]{1,128}$/.test(computerId)) throw new Error("Invalid expected computer identity.");
-  if (!["install", "status", "logs", "start", "stop", "restart", "update", "uninstall"].includes(action)) throw new Error("Unknown server lifecycle action.");
+  if (!["install", "status", "logs", "start", "stop", "restart", "update", "recover", "uninstall"].includes(action)) throw new Error("Unknown server lifecycle action.");
   return `sh -c '
 ${server ? provisionServerLines(port, server, false) : `base="$HOME/.solenta/server"; dir=""
 for candidate in "$base"/*; do [ -x "$candidate/bin/solenta-service" ] && dir="$candidate"; done`}

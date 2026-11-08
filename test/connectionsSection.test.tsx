@@ -294,3 +294,18 @@ it("offers explicit external preparation without claiming service supervision", 
   assert.equal(m.query("[data-connection-prepare]"), null, "preparation must not take over an external process");
   assert.doesNotMatch(m.text(), /Start server|Recent logs/);
 });
+
+it("offers recovery instead of starting a service with an interrupted update", async () => {
+  const actions: string[] = [];
+  const m = await mount(<ConnectionsSection onManage={async input => {
+    actions.push(input.action);
+    return { mode: "managed", manager: "systemd-user", installed: true, running: false, sessionLimit: "User service", recoveryRequired: input.action !== "recover" };
+  }} />);
+  await m.type(m.query("[data-connection-host]"), "builder");
+  await m.click(m.query("[data-connection-check]"));
+  assert.doesNotMatch(m.text(), /Start server/);
+  await m.click(m.query("[data-connection-recover]"));
+  assert.deepEqual(actions, ["status", "recover"]);
+  assert.equal(m.query("[data-connection-recover]"), null);
+  assert.match(m.text(), /Start server/);
+});

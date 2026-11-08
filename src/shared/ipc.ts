@@ -3725,13 +3725,15 @@ export interface RemoteServerStatus {
   sessionLimit: string;
   linger?: boolean;
   logs?: string;
+  recoveryRequired?: boolean;
+  cleanupWarning?: string;
 }
 export interface RemoteServerAction {
   host: string;
   serviceMode?: "managed" | "external";
   computerId?: string;
   remotePort?: number;
-  action: "install" | "status" | "logs" | "start" | "stop" | "restart" | "uninstall";
+  action: "install" | "status" | "logs" | "start" | "stop" | "restart" | "recover" | "uninstall";
 }
 
 export interface RemoteInstallResult {
@@ -3743,6 +3745,7 @@ export interface RemoteInstallResult {
   aptCommand: string | null;
   /** A desktop copy of Solenta there still runs the old files. */
   restartNeeded: boolean;
+  cleanupWarning?: string;
 }
 
 /** "ssh:prompt" push: ssh's own prompt text, relayed by askpass (#1818). */
