@@ -44,6 +44,15 @@ describe("Claude installed CLI model discovery (#1932)", () => {
     assert.throws(() => models.parseModels([], getProvider("claude")), /models list/);
   });
 
+  it("keeps settings optional for thread services while using the original account catalog", async () => {
+    const store = { getProject: () => ({ id: "p1", path: dir }) };
+    const thread = { provider: "claude", projectId: "p1" };
+    const base = getProvider("claude");
+    assert.equal(models.forThread(base, store, thread, opts), base);
+    await models.refresh(null, "claude", { ...opts, useDefault: false, runInitialize: async () => rows("original-account-model") });
+    assert.deepEqual(models.forThread(base, store, thread, opts).models, ["original-account-model"]);
+  });
+
   it("uses the selected default/named/isolated account and invalidates changed gateway or computer scope", async () => {
     const settings = { defaultAccounts: { claude: "work" }, providerInstances: [
       { id: "work", name: "work", provider: "claude", configDir: path.join(dir, "work"), env: { ANTHROPIC_BASE_URL: "https://work.invalid", ANTHROPIC_AUTH_TOKEN: "fake-work-token" } },

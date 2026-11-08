@@ -183,7 +183,8 @@ function fallbackNote(settings, ref, opts = {}) {
 function forThread(base, store, thread, opts = {}) {
   if (base?.id !== "claude") return base;
   if (projectFallback(store, thread, opts)) return base;
-  return cachedProvider(base, store.getSettings(), thread.providerInstance ? `claude:${thread.providerInstance}` : "claude", {
+  const settings = typeof store.getSettings === "function" ? store.getSettings() : null;
+  return cachedProvider(base, settings, thread.providerInstance ? `claude:${thread.providerInstance}` : "claude", {
     userDataPath: store.filePath ? path.dirname(store.filePath) : undefined, ...opts, useDefault: false,
   });
 }
