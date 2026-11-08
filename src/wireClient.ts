@@ -79,6 +79,7 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
   let blockedReason: string | null = null;
   let computerId = opts.expectedComputerId;
   let authenticatingComputerId: string | undefined;
+  let authSent = false;
 
   const inflight = new Map<number, Pending>();
   const queued: Pending[] = [];
@@ -199,6 +200,7 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
       return;
     }
     if (msg.kind === "auth-ok") {
+      if (!authSent) return;
       try {
         if (msg.computer) {
           const computer = computerDescriptor(msg.computer);
@@ -223,6 +225,7 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
       if (reconnecting) resyncThreads();
       return;
     }
+    if (!ready) return;
     if (msg.kind === "reply") {
       const p = inflight.get(msg.id);
       if (!p) return;
@@ -264,9 +267,11 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
     socket = ws;
     ready = false;
     authenticatingComputerId = undefined;
+    authSent = false;
     ws.onopen = () => {
       if (socket !== ws) return;
       if (!computerId && opts.allowLegacy !== false) {
+        authSent = true;
         send({ kind: "auth", token: opts.token });
         return;
       }
@@ -314,6 +319,7 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
   function block(reason: string): void {
     blockedReason = reason;
     ready = false;
+    authSent = false;
     rejectInflight(reason);
     rejectQueued(reason);
     setWireStatus({ state: "blocked", queuedSend: false, error: reason });
@@ -345,6 +351,7 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
       }
       // A public descriptor selects a route. Only auth-ok pins/persists it.
       authenticatingComputerId = computer.computerId;
+      authSent = true;
       send({ kind: "auth", token: opts.token, computerId: computer.computerId, protocol: 1 });
     } catch (error) {
       if (socket === ws) block(error instanceof Error ? error.message : String(error));

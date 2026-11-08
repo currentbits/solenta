@@ -94,6 +94,31 @@ const descriptorReply = (value = computer()) => new Response(JSON.stringify(valu
 const nextTurn = () => new Promise<void>((resolve) => setImmediate(resolve));
 
 describe("verified computer connection", () => {
+  it("ignores unsolicited authentication and data before identity preflight permits auth", async () => {
+    let finish!: (response: Response) => void;
+    let persisted = 0;
+    const api = createWireCoder({
+      url: "wss://work.example/ws", token: "secret", expectedComputerId: "computer-a",
+      WebSocket: FakeWebSocket as unknown as typeof WebSocket, setTimeout: () => 0,
+      fetch: async () => new Promise<Response>((resolve) => { finish = resolve; }),
+      onComputer: () => { persisted++; },
+    });
+    const ws = lastSocket();
+    ws.open();
+    const seen: unknown[] = [];
+    api.on("threads:changed", (payload) => seen.push(payload));
+    const pending = api.threads.list();
+    const rejected = assert.rejects(pending, /different computer/);
+    ws.deliver({ kind: "auth-ok", computer: computer() });
+    ws.deliver({ kind: "push", channel: "threads:changed", payload: [{ id: "injected" }] });
+    assert.deepEqual(ws.sent, [], "a forged acknowledgement must not flush queued invokes");
+    assert.equal(persisted, 0);
+    assert.deepEqual(seen, []);
+    finish(descriptorReply(computer("replacement")));
+    await rejected;
+    assert.deepEqual(ws.sent, []);
+  });
+
   it("parks a server identity rejection without retrying or treating the token as revoked", async () => {
     const { getWireStatus } = await import("../src/wireStatus.ts");
     const retries: Array<() => void> = [];
@@ -301,6 +326,7 @@ describe("createWireCoder errors", () => {
 describe("createWireCoder push", () => {
   it("dispatches contract push payloads and unsubscribe stops delivery", () => {
     const { api, ws } = connect();
+    authOk(ws);
     authOk(ws);
     const seen: ThreadInfo[][] = [];
     const off = api.on("threads:changed", (threads) => {
