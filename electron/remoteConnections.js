@@ -273,21 +273,23 @@ const SERVER_LOCK_EXIT = 7;
 const SERVER_TARGETS = ["darwin-arm64", "darwin-x64", "linux-x64", "linux-arm64"];
 const SERVER_MATCH = "/.solenta/server/[^ ]*/app/electron/server/index.js";
 
-// Nothing installed (#1829): set up this version's headless server, T3-style.
-// Side by side under ~/.solenta/server/<version>, checked against the sha256
+// Nothing installed: stage this release's Node server before preparing its owner.
+// Side by side under ~/.solenta/server/<tag>-<target>-<digest>, checked against the sha256
 // this computer passes in (so the download's transport does not matter),
 // one installer at a time per version. Data lives in ~/.solenta/data, apart
 // from a desktop Solenta's. No single quotes: this runs inside sh -c '...'.
 function provisionServerLines(p, server, launch = true) {
-  const v = String(server.version);
-  if (!/^[\w.+-]+$/.test(v)) throw new Error("Unexpected server version.");
+  const v = String(server.releaseTag || server.version);
+  if (!/^[\w.+-]{1,128}$/.test(v)) throw new Error("Unexpected server release tag.");
+  const shaArg = server.buildSha ? ` --build-sha ${String(server.buildSha)}` : "";
+  if (server.buildSha && !/^[0-9a-f]{7,64}(?:\+dirty)?$/.test(server.buildSha)) throw new Error("Unexpected server build SHA.");
   const arms = SERVER_TARGETS.filter((t) => server.byTarget[t]).map((t) => {
     const { url, sha256 } = server.byTarget[t];
     if (!/^https?:\/\/[\w./%:+-]+$/.test(url) || !/^[0-9a-f]{64}$/.test(sha256)) throw new Error("Unexpected server download.");
     return `    ${t}) url="${url}"; sum=${sha256} ;;`;
   });
   return `
-  base="$HOME/.solenta/server"; dir="$base/${v}"
+  base="$HOME/.solenta/server"
   case "$(uname -s)-$(uname -m)" in
     Darwin-arm64) t=darwin-arm64 ;; Darwin-x86_64) t=darwin-x64 ;;
     Linux-x86_64|Linux-amd64) t=linux-x64 ;; Linux-aarch64|Linux-arm64) t=linux-arm64 ;;
@@ -298,11 +300,12 @@ function provisionServerLines(p, server, launch = true) {
 ${arms.join("\n")}
   esac
   [ -n "$url" ] || exit ${NO_SERVER_BUILD_EXIT}
+  dir="$base/${v}-$t-$sum"
   if [ ! -f "$dir/.install-complete" ]; then
     mkdir -p "$base"
     i=0
-    until mkdir "$base/.lock-${v}" 2>/dev/null; do i=$((i+1)); [ "$i" -gt 600 ] && exit ${SERVER_LOCK_EXIT}; sleep 1; done
-    cleanupInstall() { rmdir "$base/.lock-${v}" 2>/dev/null || true; }; trap cleanupInstall EXIT
+    until mkdir "$base/.lock-${v}-$t-$sum" 2>/dev/null; do i=$((i+1)); [ "$i" -gt 600 ] && exit ${SERVER_LOCK_EXIT}; sleep 1; done
+    cleanupInstall() { rmdir "$base/.lock-${v}-$t-$sum" 2>/dev/null || true; }; trap cleanupInstall EXIT
     if [ ! -f "$dir/.install-complete" ]; then
       tmp="$base/.staging-$$"; rm -rf "$tmp"; mkdir -p "$tmp"
       if command -v curl >/dev/null 2>&1; then curl -fsSL -o "$tmp/s.tgz" "$url" || exit 12
@@ -312,12 +315,15 @@ ${arms.join("\n")}
       [ "$got" = "$sum" ] || { rm -rf "$tmp"; exit 14; }
       tar -xzf "$tmp/s.tgz" -C "$tmp" || { rm -rf "$tmp"; exit 15; }
       [ -x "$tmp/solenta-server/bin/solenta-server" ] && [ -x "$tmp/solenta-server/bin/solenta-service" ] || { rm -rf "$tmp"; exit 15; }
+      "$tmp/solenta-server/bin/solenta-service" verify --runtime "$tmp/solenta-server" --release-tag ${v}${shaArg} >/dev/null || { rm -rf "$tmp"; exit 17; }
       [ ! -e "$dir" ] || { rm -rf "$tmp"; echo "An incomplete runtime directory already exists; inspect it before retrying." >&2; exit 16; }
       mv "$tmp/solenta-server" "$dir"; rm -rf "$tmp"
-      echo ${v} > "$dir/.install-complete"
+      echo "${v}:$sum" > "$dir/.install-complete"
     fi
   fi
-  ${launch ? `"$dir/bin/solenta-service" prepare --runtime "$dir" --port ${p} --data-dir "$HOME/.solenta/data" >"${HEADLESS_LOG}" 2>&1 || { tail -n 40 "${HEADLESS_LOG}" >&2; exit ${DID_NOT_START_EXIT}; }` : ""}`;
+  [ "$(cat "$dir/.install-complete")" = "${v}:$sum" ] || exit 17
+  "$dir/bin/solenta-service" verify --runtime "$dir" --release-tag ${v}${shaArg} --archive-sha "$sum" >/dev/null || exit 17
+  ${launch ? `"$dir/bin/solenta-service" prepare --runtime "$dir" --port ${p} --data-dir "$HOME/.solenta/data" --release-tag ${v}${shaArg} --archive-sha "$sum" >"${HEADLESS_LOG}" 2>&1 || { tail -n 40 "${HEADLESS_LOG}" >&2; exit ${DID_NOT_START_EXIT}; }` : ""}`;
 }
 
 /**
@@ -407,7 +413,10 @@ async function serverDownloads(deps = {}) {
       version = m[1];
       byTarget[m[2]] = { url: String(a.browser_download_url), sha256: sha[1] };
     }
-    const found = version ? { version, byTarget } : null;
+    const pkg = deps.pkg || require("../package.json");
+    const found = version ? { version, releaseTag: String(release.tag_name || tag), byTarget,
+      ...(pkg.releaseTag === tag && pkg.buildSha ? { buildSha: String(pkg.buildSha) } : {}),
+    } : null;
     serverDownloadsByTag.set(tag, found);
     return found;
   } catch {
@@ -486,6 +495,7 @@ const INSTALL_EXITS = {
   14: "The download did not match the release checksum, so nothing was installed.",
   15: "The download could not be unpacked on the remote computer.",
   16: "An incomplete runtime directory already exists. Inspect it on the remote computer before retrying; no existing runtime was replaced.",
+  17: "The cached or staged Node runtime does not match the requested release identity. No existing runtime or data was replaced.",
 };
 function installHostCommand(url, sha256) {
   if (!/^https:\/\/[\w./%:-]+$/.test(url)) throw new Error("Unexpected release download URL.");
@@ -636,7 +646,7 @@ cat <<EOFSTATUS
 EOFSTATUS
 exit 0` : 'echo "No managed Node server is installed. Prepare its service explicitly; existing external servers must be stopped by their owner first." >&2; exit 1'}
 fi
-"$dir/bin/solenta-service" ${action === "install" && serviceMode === "external" ? "external-start" : action} --data-dir "$HOME/.solenta/data" --port ${port}${server ? ' --runtime "$dir"' : ''}${computerId ? ` --computer-id ${computerId}` : ""}
+"$dir/bin/solenta-service" ${action === "install" && serviceMode === "external" ? "external-start" : action} --data-dir "$HOME/.solenta/data" --port ${port}${server ? ` --runtime "$dir" --release-tag ${String(server.releaseTag || server.version)}${server.buildSha ? ` --build-sha ${server.buildSha}` : ""} --archive-sha "$sum"` : ''}${computerId ? ` --computer-id ${computerId}` : ""}
 '`;
 }
 async function manageRemoteServer(input, deps = {}) {

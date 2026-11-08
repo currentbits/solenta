@@ -7,7 +7,7 @@ const path = require("node:path");
 const { execFileSync, spawn } = require("node:child_process");
 const { acquireDataLock } = require("../server/dataLock.js");
 const { createLifecycle } = require("../server/lifecycle.js");
-const { ready, withOperationLock } = require("../server/service.js");
+const { ready, withOperationLock, verifyRuntime } = require("../server/service.js");
 const { manageRemoteServer, installRemoteSolenta, serverLifecycleCommand } = require("../remoteConnections.js");
 function fixture(t, platform = "linux", overrides = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "solenta-service-"));
@@ -242,4 +242,72 @@ it("independent lifecycle command processes cannot overlap their mutation window
   const second = launch("second");
   await Promise.all([first.finished, second.finished]);
   assert.deepEqual(fs.readFileSync(trace, "utf8").trim().split("\n"), ["first enter", "first leave", "second enter", "second leave"]);
+});
+
+it("same-version releases retain distinct tag and archive identities in staging", () => {
+  const make = (releaseTag, sha256) => ({ version: "1.0.0", releaseTag, byTarget: { "linux-x64": { url: "https://example.com/server.tgz", sha256 } } });
+  const first = serverLifecycleCommand("update", 4620, make("nightly-one", "a".repeat(64)));
+  const next = serverLifecycleCommand("update", 4620, make("nightly-two", "b".repeat(64)));
+  assert.match(first, /dir="\$base\/nightly-one-\$t-\$sum"/);
+  assert.match(next, /dir="\$base\/nightly-two-\$t-\$sum"/);
+  assert.match(first, /--release-tag nightly-one.*--archive-sha "\$sum"/);
+  assert.match(next, /--release-tag nightly-two.*--archive-sha "\$sum"/);
+  assert.match(first, /cat "\$dir\/\.install-complete".*nightly-one:\$sum/);
+  const sameTagNewAsset = serverLifecycleCommand("update", 4620, make("nightly-one", "c".repeat(64)));
+  assert.notEqual(first, sameTagNewAsset, "a changed asset digest selects a different immutable target directory");
+});
+it("independently requested release metadata rejects a stale same-version cached runtime", async (t) => {
+  const f = fixture(t);
+  const pkg = { version: "1.0.0", runtimeKind: "server", releaseTag: "nightly-old", buildSha: "abcdef0123456789" };
+  fs.writeFileSync(path.join(f.runtime, "app/package.json"), JSON.stringify(pkg));
+  fs.writeFileSync(path.join(f.runtime, "bin/solenta-server"), "#!/bin/sh\necho 1.0.0\n", { mode: 0o700 });
+  fs.writeFileSync(path.join(f.runtime, ".install-complete"), "nightly-old:" + "a".repeat(64));
+  assert.throws(() => verifyRuntime(f.runtime, { releaseTag: "nightly-new", archiveSha: "b".repeat(64) }), /releaseTag does not match/);
+  assert.throws(() => verifyRuntime(f.runtime, { releaseTag: "nightly-old", archiveSha: "b".repeat(64) }), /archive digest does not match/);
+  assert.throws(() => verifyRuntime(f.runtime, { releaseTag: "nightly-old", buildSha: "bbbbbbb" }), /buildSha does not match/);
+  const good = verifyRuntime(f.runtime, { releaseTag: "nightly-old", buildSha: "abcdef0", archiveSha: "a".repeat(64) });
+  assert.equal(good.releaseTag, "nightly-old");
+  await assert.rejects(ready(1, f.runtime, f.lc.paths.dataDir, { target: { releaseTag: "nightly-new" }, request: async () => assert.fail("wrong staged target must not become self-validating readiness") }), /releaseTag does not match/);
+});
+it("requested target identity is passed through verification, trial and normal readiness", async (t) => {
+  const seen = [];
+  const f = fixture(t, "linux", { verifyRuntime: async (_runtime, target) => { seen.push(["verify", target]); }, trial: async (_runtime, _port, _data, target) => { seen.push(["trial", target]); }, ready: async (_port, _runtime, target) => { seen.push(["ready", target]); } });
+  await f.lc.install(f.runtime);
+  seen.length = 0;
+  fs.mkdirSync(f.lc.paths.dataDir, { recursive: true });
+  const target = { releaseTag: "nightly-abc", archiveSha: "a".repeat(64) };
+  await f.lc.update(f.runtime, target);
+  assert.deepEqual(seen, [["verify", target], ["trial", target], ["ready", target]]);
+});
+it("checksum-pinned staging keeps same-version releases in separate immutable directories and rejects stale cached metadata", (t) => {
+  const f = fixture(t);
+  const fakeBin = path.join(f.home, "staging-tools"); fs.mkdirSync(fakeBin);
+  fs.writeFileSync(path.join(fakeBin, "uname"), '#!/bin/sh\ncase "$1" in -s) echo Linux ;; -m) echo x86_64 ;; esac\n', { mode: 0o700 });
+  fs.writeFileSync(path.join(fakeBin, "curl"), '#!/bin/sh\nwhile [ "$#" -gt 0 ]; do if [ "$1" = -o ]; then dest="$2"; shift 2; else shift; fi; done\ncp "$SOLENTA_FIXTURE_ARCHIVE" "$dest"\n', { mode: 0o700 });
+  const stage = path.join(f.home, "archive-stage"); const payload = path.join(stage, "solenta-server");
+  fs.mkdirSync(path.join(payload, "bin"), { recursive: true }); fs.mkdirSync(path.join(payload, "app"));
+  fs.writeFileSync(path.join(payload, "bin/solenta-server"), "#!/bin/sh\necho 1.0.0\n", { mode: 0o700 });
+  fs.writeFileSync(path.join(payload, "bin/solenta-service"), '#!/bin/sh\nexec "$SOLENTA_FIXTURE_NODE" "$SOLENTA_FIXTURE_SERVICE" "$@"\n', { mode: 0o700 });
+  function stageRelease(releaseTag) {
+    fs.writeFileSync(path.join(payload, "app/package.json"), JSON.stringify({ version: "1.0.0", runtimeKind: "server", buildSha: "abcdef0123456789", releaseTag }));
+    const archive = path.join(f.home, `${releaseTag}.tgz`);
+    execFileSync("tar", ["-czf", archive, "-C", stage, "solenta-server"]);
+    const sha256 = require("node:crypto").createHash("sha256").update(fs.readFileSync(archive)).digest("hex");
+    const server = { version: "1.0.0", releaseTag, byTarget: { "linux-x64": { url: "https://fixture.invalid/server.tgz", sha256 } } };
+    const command = serverLifecycleCommand("update", 4620, server);
+    const env = { ...process.env, HOME: f.home, PATH: `${fakeBin}:${process.env.PATH}`, SOLENTA_FIXTURE_ARCHIVE: archive, SOLENTA_FIXTURE_NODE: process.execPath, SOLENTA_FIXTURE_SERVICE: path.resolve(__dirname, "../server/service.js") };
+    // There is deliberately no installed service. Staging must complete and
+    // then refuse update, without calling any real native service command.
+    assert.throws(() => execFileSync("sh", ["-c", command], { env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }), /externally managed/);
+    const installed = path.join(f.home, ".solenta/server", `${releaseTag}-linux-x64-${sha256}`);
+    assert.equal(fs.readFileSync(path.join(installed, ".install-complete"), "utf8").trim(), `${releaseTag}:${sha256}`);
+    return { installed, command, env };
+  }
+  const old = stageRelease("nightly-one");
+  const next = stageRelease("nightly-two");
+  assert.notEqual(old.installed, next.installed);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(old.installed, "app/package.json"), "utf8")).releaseTag, "nightly-one");
+  fs.writeFileSync(path.join(next.installed, "app/package.json"), JSON.stringify({ version: "1.0.0", runtimeKind: "server", buildSha: "abcdef0123456789", releaseTag: "nightly-one" }));
+  try { execFileSync("sh", ["-c", next.command], { env: next.env, stdio: ["ignore", "pipe", "pipe"] }); assert.fail("cached wrong release must be refused"); }
+  catch (error) { assert.equal(error.status, 17); }
 });

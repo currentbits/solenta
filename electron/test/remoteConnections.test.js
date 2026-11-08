@@ -231,7 +231,7 @@ describe("remote Connections", () => {
     assert.equal(await readRemoteToken("me@box", 4620, { execFile: run(0, "tok\n"), updater: updater("test-1829") }), "tok");
     const inner = sent.slice(7, -1);
     assert.equal(inner.includes("'"), false, "no inner single quotes");
-    assert.match(inner, /dir="\$base\/nightly-1"/, "named by the release tag in the asset");
+    assert.match(inner, /dir="\$base\/test-1829-\$t-\$sum"/, "named by requested release tag, target and archive digest");
     assert.match(inner, /linux-x64\) url="https:\/\/github\.com\/x\/linux-x64\.tar\.gz"; sum=a{64} ;;/);
     assert.match(inner, /darwin-arm64\) url=/);
     assert.doesNotMatch(inner, /nodigest|app\.tar\.gz/, "unsigned or desktop assets are not offered");

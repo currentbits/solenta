@@ -60,7 +60,7 @@ function createLifecycle(options = {}, deps = {}) {
     if (manager === "launchd") run("launchctl", ["bootout", `${domain}/${label}`]);
     await (deps.waitStopped || waitStopped)(dataDir);
   }
-  async function install(runtime, port = 4620) {
+  async function install(runtime, port = 4620, target = {}) {
     const s = status();
     if (!s.available) throw new Error(s.sessionLimit + " The service manager is unavailable; run solenta-server explicitly for external management.");
     if (s.installed) {
@@ -81,7 +81,7 @@ function createLifecycle(options = {}, deps = {}) {
     try {
       if (manager === "systemd-user") { run("systemctl", ["--user", "daemon-reload"]); run("systemctl", ["--user", "enable", "--now", `${name}.service`]); }
       else run("launchctl", ["bootstrap", domain, unit]);
-      if (deps.ready) await deps.ready(port, runtime);
+      if (deps.ready) await deps.ready(port, runtime, target);
       return status();
     } catch (error) { throw new Error(`Service installation did not reach readiness: ${error.message}. Inspect status/logs before retrying.`); }
   }
@@ -115,12 +115,12 @@ function createLifecycle(options = {}, deps = {}) {
     try { fs.writeFileSync(fd, JSON.stringify(journal)); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
     fs.renameSync(tmp, pending);
   }
-  async function update(runtime) {
+  async function update(runtime, target = {}) {
     const old = owned();
     if (fs.existsSync(pending)) throw new Error("An interrupted update requires recovery first.");
     runtime = fs.realpathSync(runtime);
     if (!deps.verifyRuntime || !deps.trial || !deps.ready) throw new Error("Update verification is unavailable.");
-    await deps.verifyRuntime(runtime);
+    await deps.verifyRuntime(runtime, target);
     const backup = path.join(root, `.data-backup-${key}`);
     // A whole data-directory snapshot includes JSON envelope/shards, tokens,
     // settings, memory database/WAL and ancillary state. No external project
@@ -134,11 +134,11 @@ function createLifecycle(options = {}, deps = {}) {
       journal.phase = "snapshot"; writeJournal(journal);
       fs.cpSync(dataDir, backup, { recursive: true, dereference: false, filter: (src) => ![".server-lock", ".server-lock.guard"].includes(path.basename(src)) });
       journal.phase = "trial"; writeJournal(journal);
-      await deps.trial(runtime, old.port, dataDir);
+      await deps.trial(runtime, old.port, dataDir, target);
       point(runtime); save({ ...old, runtime });
       journal.phase = "activate"; writeJournal(journal);
       if (manager === "launchd") run("launchctl", ["bootstrap", domain, unit]); else start();
-      await deps.ready(old.port, runtime);
+      await deps.ready(old.port, runtime, target);
       fs.rmSync(maintenance, { force: true });
       fs.unlinkSync(pending);
       fs.rmSync(backup, { recursive: true, force: true });
