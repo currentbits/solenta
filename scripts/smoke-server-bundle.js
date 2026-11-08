@@ -14,6 +14,7 @@
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const assert = require("node:assert/strict");
 const { spawn, execFileSync } = require("node:child_process");
 const { invokeRemote } = require("../electron/remoteConnections.js");
 
@@ -58,6 +59,18 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const token = fs.readFileSync(path.join(tmp, "data", "web-token"), "utf8").trim();
     const tokens = { get: () => token, set() { return true; }, delete() {} };
     const call = (ch, args) => invokeRemote({ url: `http://127.0.0.1:${port}` }, ch, args, { tokens });
+
+    const descriptor = await fetch(`http://127.0.0.1:${port}/.well-known/solenta`, { redirect: "error" }).then(r => r.json());
+    const packaged = JSON.parse(fs.readFileSync(path.join(tmp, "solenta-server", "app", "package.json"), "utf8"));
+    assert.equal(descriptor.runtimeKind, "server");
+    assert.equal(descriptor.computerId, fs.readFileSync(path.join(tmp, "data", "computer-id"), "utf8").trim());
+    assert.equal(descriptor.buildSha, packaged.buildSha);
+    if (packaged.releaseTag) assert.equal(descriptor.releaseTag, packaged.releaseTag);
+    const status = await call("app:status", []);
+    assert.equal(status.computer.computerId, descriptor.computerId);
+    assert.equal(status.build.runtimeKind, "server");
+    assert.equal(status.build.buildSha, packaged.buildSha);
+    step("public and authenticated computer/build identity agree");
 
     const project = await call("projects:add", [repo]);
     const thread = await call("threads:create", [{ projectId: project.id, title: "smoke", worktree: true }]);

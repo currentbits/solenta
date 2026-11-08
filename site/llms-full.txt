@@ -457,7 +457,7 @@ Updates come from plain GitHub releases on two channels: **prod** follows the ne
 
 ## Phones and browsers
 
-Solenta Web serves the whole app to a browser, so you can check on runs from your phone or another device. It runs on the computer that has your projects and agents. Everything is set up in **Settings > Connections > Let other devices in**:
+Solenta Web serves the whole app to a browser, so you can check on runs from your phone or another device. It runs on the computer that has your projects and agents. Everything is set up in **Settings > Connections > Browser access**:
 
 1. Turn on **Serve Solenta Web**. It listens on `127.0.0.1:4620`, which only this computer can reach.
 2. To reach it from another device, either turn on **Allow devices on my network** (plain HTTP on your LAN) or, with Tailscale installed, press **Expose over Tailscale (HTTPS)** to reach it from anywhere on your tailnet.
@@ -465,7 +465,7 @@ Solenta Web serves the whole app to a browser, so you can check on runs from you
 
 Access is per device: **Read only**, **Steer threads** (the default) or **Full access**, plus grants for files, git, the terminal (watch or type), preview control and settings. Solenta checks every request against them on the host. Steer threads can approve the agent's tool requests. To change a device's access, revoke it and pair again. Revoking signs the device out at once and its browser asks for a new token.
 
-If the connection drops, the page says so and reconnects on its own. A message you send in the meantime waits and goes out once the connection is back.
+If the connection drops, the page says so and reconnects on its own. Wait for the connection before sending another request. If a connection drops while a change is being sent, check the resulting state before retrying.
 
 You can also start Solenta Web from a terminal. It prints the address, the token, a sign-in link and a QR code:
 
@@ -485,56 +485,38 @@ There are two ways to use a second computer, such as a workstation or a Linux se
 - **Connect to another computer** opens the whole Solenta on that computer in its own window. Its projects, threads, agents and worktrees stay there.
 - A **remote project** keeps one repo from that computer in this window. Git and the agent CLIs run there over SSH. It is described further down.
 
-### Connect to another computer
+### Add another computer
 
-1. On a Mac, install Solenta in `/Applications` there. On a Linux server you can skip this: Connect offers **Install Solenta on <host>**, which downloads this version into `~/solenta` over SSH and checks it against the release checksum (x86_64 only).
-2. Make sure `ssh user@host` works from a terminal on this computer without a password prompt, using an SSH key or agent, and that you have accepted the host key once.
-3. In **Settings > Connections > Connect to another computer**, enter the SSH host and press **Connect**. Leave Token blank.
+1. Enable SSH on a Mac or Linux host. Use its SSH alias or `user@host`. Solenta asks for a password or host trust when needed.
+2. Open **Settings > Connections**, enter the SSH host, then press **Check computer**. This checks the existing server without installing or starting it.
+3. For a new host, press **Prepare server**. This downloads the standalone server for the host's OS and architecture, verifies its release checksum and sets up the supported user service. It bundles Node; no Electron, display server or preinstalled Node is required.
+4. Press **Connect**. Leave Token blank to read it over SSH. Show in sidebar adds that computer's projects and threads to this window. Connect also opens its own window.
 
-Solenta checks the other computer over SSH. If Solenta is not running there it starts it: on a Mac through `open` (someone must be logged in to the desktop), and on Linux without a window. If it is open but Solenta Web is off, it turns Solenta Web on; a copy older than this release cannot be asked to, so Connect tells you to turn on **Serve Solenta Web** there yourself rather than start a second copy on the same data. It then reads the token over SSH, forwards the port through an SSH tunnel, and opens the window. The host key must match `known_hosts`, the tunnel reconnects if it drops, and a remembered token is encrypted with the system keychain.
+The computer owns its projects, files, worktrees, credentials, profiles and running work. In Settings, choose the computer under **Settings on** to edit its Providers and Agents. Other client settings remain on this computer. A remote-only provider or a profile with the same name elsewhere keeps its own configuration. An offline computer cannot fall back to local settings.
 
-After connecting, Connections shows which Solenta version the other computer runs and which agent CLIs it has and is signed in to. If a Linux host is older than this app, **Update Solenta on <host>** installs this version the same way; a copy running without a window is restarted on the next connect. If the install finds missing system libraries, it shows the `sudo apt install` line to run there. Agents sign in on the computer they run on: open Settings > Agents in the remote window and press Sign in.
+Install Git and the agent CLIs on the host. The standalone archive does not include them or npm. In the remote window, open **Settings > Providers** to install or sign in with the existing provider terminal. Installation commands are shown for review before running. Sign-in and API keys belong to the host; connecting never copies this computer's provider credentials there.
 
-### Linux servers without a display
+You can also choose **Address** and paste a paired device link from an already running Solenta Web desktop or standalone server. Use HTTPS through Tailscale or your own trusted network route. An address connection does not install or start the endpoint. Windows desktop hosts can use this route; managed Windows background servers are not supported.
 
-`--headless` runs Solenta without a window and implies `--serve-web`. It needs no X server or Wayland session, only the libraries Electron loads (on Ubuntu: `libnss3 libgtk-3-0t64
-libgbm1 libasound2t64`). Use `--no-sandbox` unless `chrome-sandbox` is owned by root with mode 4755.
+Connections shows the route, verified computer identity, runtime and known build, plus installed agents and their sign-in state. Unknown sign-in state means installed, not ready. Saved route tokens are encrypted using the system keychain. An older endpoint without computer identity needs explicit compatibility consent; a saved identity mismatch blocks the connection.
 
-```
-~/solenta/solenta --headless --no-sandbox
-```
+**Disconnect** removes this window's sidebar attachment and leaves remote work running. **Forget** removes the route and saved token; it does not uninstall or stop the server. Revoke a device on the host to remove that device's access. These are separate operations.
 
-Connect starts it this way for you, and the log goes to `~/.solenta-headless.log`. To keep it running after logout and across reboots, use a systemd user service:
+### Standalone servers and user services
 
-```
-# ~/.config/systemd/user/solenta.service
-[Unit]
-Description=Solenta (headless)
+The standalone archive supports Linux and macOS on x64 and ARM64. A managed Linux installation uses systemd user services. Check the reported linger state: surviving logout or reboot depends on the host's user-service configuration. macOS uses launchd in the logged-in user's session, so it requires that login session. If a service manager is unavailable, choose **External process** under Prepare as. This explicitly starts an unsupervised server without a restart guarantee after logout or reboot. Automatic SSH preparation also reports which mode it could use. Existing external servers remain externally managed; preparation does not take over an already owned process.
 
-[Service]
-ExecStart=%h/solenta/solenta --headless --no-sandbox
-Restart=on-failure
+**Check computer** reports whether the server is installed and running, its service manager and session limits. Managed servers expose Start and Recent logs here. Update uses the verified runtime: a Node server uses the server service updater, while a desktop runtime uses its own supported installer. Updates refuse to interrupt active work by default. A reconnect alone does not prove an update succeeded.
 
-[Install]
-WantedBy=default.target
-```
-
-```
-systemctl --user daemon-reload
-systemctl --user enable --now solenta
-sudo loginctl enable-linger "$USER"   # keep it running after you log out
-```
-
-The agent CLIs and their sign-ins live on the server. Install and log in to them there (`claude`, `codex login`, and so on) before you start threads.
+For manual administration, the server archive includes `bin/solenta-server` and `bin/solenta-service`. The service command separates install, status, logs, start, stop, restart, update and uninstall. Disconnecting a client never invokes these lifecycle actions.
 
 ### If Connect fails
 
-- **not in known_hosts yet**: run `ssh user@host` in a terminal once and accept the host key.
-- **SSH refused the login**: Connect cannot type a password. Add your key with `ssh-copy-id user@host` or load it into your SSH agent.
-- **Solenta is not installed**: on Linux, press **Install Solenta on <host>**. On a Mac, install it in `/Applications` there.
-- **Solenta did not start**: on a Mac, log in to the desktop once. On Linux, read `~/.solenta-headless.log` on the server. A missing library shows up there.
-- **Nothing is listening on port**: the other computer uses a different port. Set the same port in the form, or start it with `--serve-web=PORT`.
-- On Windows hosts, Solenta cannot be started or its token read over SSH. Start Solenta Web there and paste a device token from its Settings.
+- **SSH login or trust**: check `ssh user@host` and answer the password or trust prompt. Keep normal SSH host-key checking enabled.
+- **Server unavailable**: press Check computer, read Recent logs for a managed server, then Start server if it is stopped.
+- **Identity changed**: verify the target computer and route. A bound route cannot bypass a failed identity check by allowing legacy mode.
+- **Agent unavailable or signed out**: install and sign in on that computer through its Providers settings. A successful connection alone does not make an agent ready.
+- **Offline**: Retry reconnects the saved route. Local credentials and settings are never used as a substitute.
 
 ### Remote projects
 
