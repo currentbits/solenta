@@ -1801,7 +1801,21 @@ function createRunner(opts) {
     const existing = active.get(threadId);
     if (!existing || existing.runId !== runId) return null;
     Object.assign(existing, fields);
+    // Adapters can refine the provisional picker snapshot from their resolved
+    // launch arguments (for example version-gated Claude Ultracode effort).
+    if (fields.runConfiguration) {
+      const boundary = store.getMessages(threadId).find((m) =>
+        m.runId === runId && m.role === "event" && m.runConfiguration);
+      if (boundary) store.updateMessage(threadId, boundary.id, {
+        runConfiguration: fields.runConfiguration,
+        text: runConfigurationText(fields.runConfiguration),
+      });
+    }
     return existing;
+  }
+
+  function runConfigurationText(configuration) {
+    return `${configuration.provider} · ${configuration.model || "default model"} · ${configuration.reasoningEffort ? `${configuration.reasoningEffort} effort` : "default effort"}`;
   }
 
   function stampPreparingSteps(threadId, runId, steps) {
@@ -2621,7 +2635,7 @@ function createRunner(opts) {
       // A separate boundary also covers queued/replayed starts with no new
       // user row. Stage it immediately before dispatch and roll it back if
       // launch is refused, throws, or Stop cancels preparation.
-      const boundaryText = `${provider} · ${configuration.model || "default model"} · ${configuration.reasoningEffort ? `${configuration.reasoningEffort} effort` : "default effort"}`;
+      const boundaryText = runConfigurationText(configuration);
       const boundaryId = appendMessage(threadId, "event", boundaryText, runId,
         null, null, { runConfiguration: configuration });
       let accepted = false;

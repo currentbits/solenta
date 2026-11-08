@@ -618,6 +618,16 @@ function createClaudeRun(ctx) {
     if (abortIfCancelled(threadId, runId)) return { runId };
     const entry = claimPreparingRun(threadId, runId, {
       kind: "claude",
+      // Use the emitted effort after model/version gates. Ultracode can
+      // override the picker's stored effort; the same argv goes to spawn.
+      ...(entryDef.id === "claude" ? {
+        runConfiguration: {
+          provider: entryDef.id,
+          model: thread.model || null,
+          reasoningEffort: args.includes("--effort")
+            ? args[args.indexOf("--effort") + 1] : null,
+        },
+      } : {}),
       startingId,
       workingId,
       claudeState,
