@@ -6,7 +6,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { execFileSync } = require("node:child_process");
-const { diff, listChangedPaths, listChangedPathsAsync } = require("../worktrees-changes.js");
+const { diff, imageDiff, commit, revertFile, revertHunk, listChangedPaths, listChangedPathsAsync } = require("../worktrees-changes.js");
 const { turnDiff, runStats } = require("../worktrees-checkpoints.js");
 const { resetGitReadCaches } = require("../worktrees-git.js");
 
@@ -169,4 +169,140 @@ describe("repository-relative internal diffs (#1942)", () => {
     assert.equal(branch.files.find((f) => f.path === "sub/inside.txt").status, "D");
     assert.equal(branch.files.find((f) => f.path === "sub/renamed.txt").status, "A");
   });
+
+  function collidingChanges() {
+    write("sub/root.txt", "sibling before\n");
+    git("add", ".");
+    git("commit", "-m", "colliding names");
+    write("root.txt", "after\n");
+    write("sub/root.txt", "sibling after\n");
+  }
+
+  for (const cwdKind of ["subfolder", "symlink subfolder"]) {
+    const selectCwd = () => {
+      if (cwdKind === "symlink subfolder") {
+        const link = path.join(tmp, "linked-sub");
+        fs.symlinkSync(sub, link, "dir");
+        thread.worktreePath = project.path = link;
+      }
+    };
+    const options = { skip: cwdKind === "symlink subfolder" && process.platform === "win32" };
+
+    it(`commits the displayed file without its cwd-relative sibling from a ${cwdKind}`, options, async () => {
+      collidingChanges();
+      selectCwd();
+      const shown = await read({ path: "root.txt" });
+      assert.match(shown.patch, /diff --git a\/root.txt b\/root.txt/);
+      await read(); // Prime the default view's cwd-keyed cache before mutation.
+      commit({ store, threadId: thread.id, message: "selected root", paths: ["root.txt"] });
+      assert.equal(git("show", "HEAD:root.txt"), "after");
+      assert.equal(git("show", "HEAD:sub/root.txt"), "sibling before");
+      assert.equal(git("status", "--porcelain").trim(), "M sub/root.txt");
+      assert.deepEqual((await diff({ store, threadId: thread.id })).files.map((f) => f.path), ["sub/root.txt"]);
+    });
+
+    it(`reverts the displayed file without its cwd-relative sibling from a ${cwdKind}`, options, async () => {
+      collidingChanges();
+      selectCwd();
+      await read();
+      revertFile({ store, threadId: thread.id, path: "root.txt", status: "M" });
+      assert.equal(fs.readFileSync(path.join(repo, "root.txt"), "utf8"), "before\n");
+      assert.equal(fs.readFileSync(path.join(sub, "root.txt"), "utf8"), "sibling after\n");
+      assert.deepEqual((await diff({ store, threadId: thread.id })).files.map((f) => f.path), ["sub/root.txt"]);
+    });
+
+    it(`reverts the displayed hunk without its cwd-relative sibling from a ${cwdKind}`, options, async () => {
+      collidingChanges();
+      selectCwd();
+      const { patch } = await read({ path: "root.txt" });
+      await read();
+      revertHunk({ store, threadId: thread.id, path: "root.txt", patch });
+      assert.equal(fs.readFileSync(path.join(repo, "root.txt"), "utf8"), "before\n");
+      assert.equal(fs.readFileSync(path.join(sub, "root.txt"), "utf8"), "sibling after\n");
+      assert.deepEqual((await diff({ store, threadId: thread.id })).files.map((f) => f.path), ["sub/root.txt"]);
+    });
+
+    it(`partially commits the displayed file from a ${cwdKind} and preserves staged siblings`, options, async () => {
+      collidingChanges();
+      git("add", "sub/root.txt");
+      selectCwd();
+      const { patch } = await read({ path: "root.txt" });
+      commit({
+        store, threadId: thread.id, message: "root patch", paths: ["root.txt"],
+        patches: [{ path: "root.txt", patch }],
+      });
+      assert.equal(git("show", "HEAD:root.txt"), "after");
+      assert.equal(git("show", "HEAD:sub/root.txt"), "sibling before");
+      assert.equal(git("status", "--porcelain").trim(), "M  sub/root.txt");
+    });
+
+    it(`previews the displayed image from a ${cwdKind} without reading its cwd-relative sibling`, options, async () => {
+      const before = Buffer.from("GIF89a\x01\x00\x01\x00", "latin1");
+      const after = Buffer.from("GIF89a\x02\x00\x01\x00", "latin1");
+      write("icon.gif", before);
+      write("sub/icon.gif", before);
+      git("add", ".");
+      git("commit", "-m", "image names");
+      write("icon.gif", after);
+      selectCwd();
+      assert.ok((await read()).files.some((f) => f.path === "icon.gif"));
+      const result = await imageDiff({ store, threadId: thread.id, path: "icon.gif" });
+      assert.equal(result.before.dataUrl, `data:image/gif;base64,${before.toString("base64")}`);
+      assert.equal(result.after.dataUrl, `data:image/gif;base64,${after.toString("base64")}`);
+      assert.deepEqual(fs.readFileSync(path.join(sub, "icon.gif")), before);
+    });
+
+    for (const status of ["??", "A"]) {
+      it(`discards only the selected ${status === "A" ? "staged-new" : "untracked"} file from a ${cwdKind}`, options, () => {
+        write("new.txt", "root\n");
+        write("sub/new.txt", "sibling\n");
+        if (status === "A") git("add", ".");
+        selectCwd();
+        revertFile({ store, threadId: thread.id, path: "new.txt", status });
+        assert.equal(fs.existsSync(path.join(repo, "new.txt")), false);
+        assert.equal(fs.readFileSync(path.join(sub, "new.txt"), "utf8"), "sibling\n");
+      });
+    }
+  }
+
+  it("uses literal names when committing or reverting files containing pathspec syntax", () => {
+    thread.worktreePath = project.path = repo;
+    write("[a].txt", "before\n");
+    write("a.txt", "sibling before\n");
+    git("add", ".");
+    git("commit", "-m", "literal names");
+    write("[a].txt", "after\n");
+    write("a.txt", "sibling after\n");
+    commit({ store, threadId: thread.id, message: "literal file", paths: ["[a].txt"] });
+    assert.equal(git("show", "HEAD:[a].txt"), "after");
+    assert.equal(git("show", "HEAD:a.txt"), "sibling before");
+    write("[a].txt", "another change\n");
+    revertFile({ store, threadId: thread.id, path: "[a].txt", status: "M" });
+    assert.equal(fs.readFileSync(path.join(repo, "[a].txt"), "utf8"), "after\n");
+    assert.equal(fs.readFileSync(path.join(repo, "a.txt"), "utf8"), "sibling after\n");
+  });
+
+  for (const [selected, sibling] of [
+    ["[a].txt", "a.txt"],
+    ["star*.txt", "star-other.txt"],
+    ["question?.txt", "question1.txt"],
+    ["slash\\name.txt", "slashname.txt"],
+  ]) {
+    it(`restricts the selected ${selected} hunk to its literal file`, {
+      skip: process.platform === "win32" && /[?*\\]/.test(selected),
+    }, () => {
+      thread.worktreePath = project.path = repo;
+      write(selected, "before\n");
+      write(sibling, "sibling before\n");
+      git("add", ".");
+      git("commit", "-m", "literal names");
+      write(selected, "after\n");
+      write(sibling, "sibling after\n");
+      // Even a payload containing another file's patch stays inside the selection.
+      const patch = git("diff", "--no-relative", "HEAD");
+      revertHunk({ store, threadId: thread.id, path: selected, patch });
+      assert.equal(fs.readFileSync(path.join(repo, selected), "utf8"), "before\n");
+      assert.equal(fs.readFileSync(path.join(repo, sibling), "utf8"), "sibling after\n");
+    });
+  }
 });

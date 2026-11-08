@@ -500,7 +500,8 @@ async function fileImageSide(root, rel, label) {
 async function imageDiff(opts) {
   const { thread, project, cwd } = threadGitCwd(opts.store, opts.threadId);
   if (project.remoteHost) throw new Error("Image review is not available for remote projects");
-  const root = path.resolve(String(cwd || ""));
+  const cdup = await gitOutAsync(cwd, ["rev-parse", "--show-cdup"]);
+  const root = path.resolve(await fs.promises.realpath(cwd), cdup || ".");
   const rel = assertRelPathInCwd(root, String(opts.path || ""));
   const oldRel = opts.oldPath ? assertRelPathInCwd(root, String(opts.oldPath)) : rel;
   const scope = DIFF_SCOPES.has(String(opts.scope)) ? String(opts.scope) : "uncommitted";
@@ -754,6 +755,13 @@ function threadGitCwd(store, threadId) {
   return { thread, project, cwd: thread.worktreePath || project.path };
 }
 
+/** Repository-relative review paths must keep the same identity on writes. */
+function repositoryRoot(cwd) {
+  const cdup = gitOut(cwd, ["rev-parse", "--show-cdup"]);
+  // Keep host-visible WSL paths and resolve symlinks before climbing parents.
+  return path.resolve(fs.realpathSync(cwd), cdup || ".");
+}
+
 /**
  * Repo-relative path from the diff file list. Rejects empties, absolute
  * paths, leading-dash pathspecs (git flags even after `--`), and anything
@@ -809,7 +817,9 @@ function normalizeCommitPaths(cwd, paths) {
  * @param {string[] | null} paths
  */
 function stageForCommit(cwd, paths) {
-  const args = paths ? ["add", "-A", "--", ...paths] : ["add", "-A"];
+  const args = paths
+    ? ["add", "-A", "--", ...paths.map((p) => `:(top,literal)${p}`)]
+    : ["add", "-A"];
   const add = gitTry(cwd, args);
   if (!add.ok) {
     throw new Error(tailErr(add.stderr || add.combined, "git add failed"));
@@ -840,7 +850,8 @@ function commit(opts) {
     throw new Error("Commit message is empty");
   }
   assertNoOutboundSecrets(message, "commit message");
-  const { cwd } = threadGitCwd(store, threadId);
+  const { cwd: viewCwd } = threadGitCwd(store, threadId);
+  const cwd = repositoryRoot(viewCwd);
   const paths = normalizeCommitPaths(cwd, opts.paths);
   if (paths && paths.length === 0) {
     throw new Error("No files selected");
@@ -861,17 +872,19 @@ function commit(opts) {
   if (patches.size > 0) {
     commitPartial(cwd, message, /** @type {string[]} */ (paths), patches);
     invalidateGitReads(cwd);
+    invalidateGitReads(viewCwd);
     return { subject: message.split("\n")[0] };
   }
   stageForCommit(cwd, paths);
   const commitArgs = paths
-    ? ["commit", "-m", message, "--", ...paths]
+    ? ["commit", "-m", message, "--", ...paths.map((p) => `:(top,literal)${p}`)]
     : ["commit", "-m", message];
   const res = gitTry(cwd, commitArgs);
   if (!res.ok) {
     throw new Error(tailErr(res.stderr || res.combined, "git commit failed"));
   }
   invalidateGitReads(cwd);
+  invalidateGitReads(viewCwd);
   return { subject: message.split("\n")[0] };
 }
 
@@ -915,9 +928,11 @@ function applyPatch(cwd, flags, relPath, patch, env) {
   try {
     const file = path.join(dir, "hunk.patch");
     fs.writeFileSync(file, patch.endsWith("\n") ? patch : `${patch}\n`);
+    // git apply uses wildcard patterns, not pathspecs, for --include.
+    const literal = relPath.replace(/[\\*?\[\]]/g, "\\$&");
     const res = gitTry(
       cwd,
-      ["apply", ...flags, "--recount", `--include=${relPath}`, file],
+      ["apply", ...flags, "--recount", `--include=${literal}`, file],
       env ? { env } : undefined,
     );
     if (!res.ok) {
@@ -950,13 +965,15 @@ function commitPartial(cwd, message, paths, patches) {
   try {
     run(["read-tree", "HEAD"], "git read-tree failed");
     const whole = paths.filter((p) => !patches.has(p));
-    if (whole.length) run(["add", "-A", "--", ...whole], "git add failed");
+    if (whole.length) {
+      run(["add", "-A", "--", ...whole.map((p) => `:(top,literal)${p}`)], "git add failed");
+    }
     for (const [rel, text] of patches) applyPatch(cwd, ["--cached"], rel, text, env);
     run(["commit", "-m", message], "git commit failed");
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
-  gitTry(cwd, ["reset", "-q", "--", ...paths]);
+  gitTry(cwd, ["reset", "-q", "--", ...paths.map((p) => `:(top,literal)${p}`)]);
 }
 
 /**
@@ -972,12 +989,14 @@ function commitPartial(cwd, message, paths, patches) {
  */
 function revertHunk(opts) {
   const { store, threadId } = opts;
-  const { cwd } = threadGitCwd(store, threadId);
+  const { cwd: viewCwd } = threadGitCwd(store, threadId);
+  const cwd = repositoryRoot(viewCwd);
   const relPath = assertRelPathInCwd(cwd, String(opts.path || ""));
   const patch = String(opts.patch || "");
   if (!patch.trim()) throw new Error("Empty patch");
   applyPatch(cwd, ["-R"], relPath, patch);
   invalidateGitReads(cwd);
+  invalidateGitReads(viewCwd);
   return { path: relPath };
 }
 
@@ -996,20 +1015,23 @@ function revertHunk(opts) {
  */
 function revertFile(opts) {
   const { store, threadId, status } = opts;
-  const { cwd } = threadGitCwd(store, threadId);
+  const { cwd: viewCwd } = threadGitCwd(store, threadId);
+  const cwd = repositoryRoot(viewCwd);
   const relPath = assertRelPathInCwd(cwd, String(opts.path || ""));
   const full = path.resolve(cwd, relPath);
   if (status === "??") {
     fs.rmSync(full, { recursive: true, force: true });
     invalidateGitReads(cwd);
+    invalidateGitReads(viewCwd);
     return { path: relPath };
   }
   if (status === "A") {
-    const rm = gitTry(cwd, ["rm", "-f", "--", relPath]);
+    const rm = gitTry(cwd, ["rm", "-f", "--", `:(top,literal)${relPath}`]);
     if (!rm.ok) {
       throw new Error(tailErr(rm.stderr || rm.combined, "git rm failed"));
     }
     invalidateGitReads(cwd);
+    invalidateGitReads(viewCwd);
     return { path: relPath };
   }
   const res = gitTry(cwd, [
@@ -1017,12 +1039,13 @@ function revertFile(opts) {
     "--staged",
     "--worktree",
     "--",
-    relPath,
+    `:(top,literal)${relPath}`,
   ]);
   if (!res.ok) {
     throw new Error(tailErr(res.stderr || res.combined, "git restore failed"));
   }
   invalidateGitReads(cwd);
+  invalidateGitReads(viewCwd);
   return { path: relPath };
 }
 
