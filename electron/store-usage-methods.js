@@ -8,7 +8,7 @@ function addUnpriced(prev, delta) {
   // Homogeneous legacy-shaped cells need no extra storage. Materialize the
   // split when coverage changes, or zero USD must explicitly cover tokens.
   if (!prev.unpricedTokens && delta.costReported !== true &&
-      (!Object.keys(tokens).some(field => prev[field] > 0) || (prev.costUsd > 0) === (delta.costUsd > 0))) return undefined;
+      ((!(prev.costUsd > 0) && !Object.keys(tokens).some(field => prev[field] > 0)) || (prev.costUsd > 0) === (delta.costUsd > 0))) return undefined;
   if (delta.costReported !== true && !(delta.costUsd > 0)) {
     for (const field of Object.keys(tokens)) tokens[field] += coerceFiniteNumber(delta[field]);
   }

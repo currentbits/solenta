@@ -114,6 +114,18 @@ describe("modelPrices setting", () => {
     assert.equal(report.threadsByDay[day].mixed.costUsd, 33.9);
   });
 
+  it("keeps cost-only reported dollars separate from later uncovered tokens", () => {
+    const meta = { provider: "claude", model: "same", threadId: "cost-only" };
+    store.recordUsage({ ...meta, costUsd: 5 });
+    store.recordUsage({ ...meta, inputTokens: 1e6 });
+    store.saveNow();
+    const reloaded = new Store(path.join(tmpDir, "store.json"));
+    const report = applyModelPrices({ byDay: reloaded.getUsageByDay(), threadsByDay: reloaded.getUsageThreadsByDay() }, { same: { input: 10, output: 0 } });
+    const [day] = Object.keys(report.byDay);
+    assert.equal(report.byDay[day].claude.same.costUsd, 15);
+    assert.equal(report.threadsByDay[day]["cost-only"].costUsd, 15);
+  });
+
   it("counts one split turn across model, provider and thread totals and rejects invalid counts", () => {
     const meta = { provider: "claude", threadId: "split" };
     store.recordUsage({ ...meta, model: "root", inputTokens: 10 });
