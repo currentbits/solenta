@@ -300,7 +300,8 @@ describe("plan model on threads (#1716)", () => {
     assert.equal(store.getUsage(id).model, PLAN);
 
     services.setPermissionMode(store, { threadId: id, mode: "default" });
-    assert.ok(events(id).includes("Switched to Sonnet 5.5 for implementation"));
+    assert.ok(!events(id).includes("Switched to Sonnet 5.5 for implementation"),
+      "a mode picker change has not dispatched the implementation model yet");
 
     await runner.startRun({ threadId: id, prompt: "go" });
     await waitFor(() => store.getThread(id).status === "done" && store.getUsage(id)?.turns === 2);
@@ -310,6 +311,11 @@ describe("plan model on threads (#1716)", () => {
     assert.equal(flag(second, "--resume"), "sess-pm", "same session, no fork");
     assert.equal(flag(second, "--effort"), null, "act effort is the thread's (none)");
     assert.equal(store.getUsage(id).model, ACT);
+    assert.deepEqual(store.getMessages(id).filter((m) => m.role === "event" && m.runConfiguration)
+      .map((m) => m.runConfiguration), [
+        { provider: "claude", model: PLAN, reasoningEffort: "high" },
+        { provider: "claude", model: ACT, reasoningEffort: null },
+      ]);
     assert.equal(store.getThreads().length, 1, "no new thread");
   });
 
@@ -346,6 +352,11 @@ describe("plan model on threads (#1716)", () => {
     );
     assert.equal(store.getUsage(id).model, ACT);
     assert.equal(store.getThread(id).permissionMode, "default");
+    assert.deepEqual(store.getMessages(id).filter((m) => m.role === "event" && m.runConfiguration)
+      .map((m) => m.runConfiguration), [
+        { provider: "claude", model: PLAN, reasoningEffort: "high" },
+        { provider: "claude", model: ACT, reasoningEffort: "high" },
+      ], "a live set_model boundary preserves the effort that the process is actually using");
     const ev = events(id);
     assert.ok(ev.indexOf("Switched to Sonnet 5.5 for implementation") > ev.indexOf("Plan approved"));
   });

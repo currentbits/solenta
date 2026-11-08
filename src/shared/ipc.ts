@@ -1748,7 +1748,18 @@ export interface AttachmentInfo {
 /** Per-thread inbound policy for cross-thread messages (issue #551). */
 export type CrossThreadInbound = "accept" | "queue-only" | "refuse";
 
+/** Immutable dispatch settings for a run, or an explicit in-session model switch.
+ * Null model/effort means the provider default, whose exact value is unknown.
+ */
+export interface RunConfiguration {
+  provider: string;
+  model: string | null;
+  reasoningEffort: string | null;
+}
+
 export interface ChatMessage {
+  /** Dispatch/switch boundary on events; immutable attribution on assistant output. */
+  runConfiguration?: RunConfiguration;
   /** Persistent divider marking a new provider conversation. */
   sessionBoundary?: boolean;
   id: string;

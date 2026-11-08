@@ -99,6 +99,10 @@ import {
 } from "../contextRing";
 import { buildTimeline, type TimelineEntry } from "../timeline";
 import {
+  transcriptConfigurations,
+  runConfigurationLabel,
+} from "../runConfiguration";
+import {
   applyPrStep,
   initialPrSteps,
   newPrRequestId,
@@ -1418,6 +1422,11 @@ export const ThreadView = memo(function ThreadView({
       0,
     );
   }, [detail]);
+
+  const configurations = useMemo(
+    () => transcriptConfigurations(detail?.messages ?? []),
+    [detail?.messages],
+  );
 
   const timeline = useMemo(() => {
     if (!detail) return [];
@@ -5123,6 +5132,21 @@ export const ThreadView = memo(function ThreadView({
               entry.message.role === "event" &&
               retryEventId != null &&
               entry.message.id === retryEventId;
+            const configuration = configurations.byMessageId.get(entry.message.id);
+            const modelBoundary = configurations.boundaryByMessageId.get(entry.message.id);
+            if (entry.message.role === "event" && entry.message.runConfiguration) {
+              return modelBoundary ? (
+                <section
+                  key={entry.message.id}
+                  className={styles.sessionBoundary}
+                  data-message-id={entry.message.id}
+                  role="separator"
+                  aria-label="Model and effort"
+                >
+                  {runConfigurationLabel(modelBoundary)}
+                </section>
+              ) : null;
+            }
             const bar = barByMessageId.get(entry.message.id);
             const runHeader = headerByMessageId.get(entry.message.id);
             const runId = entry.message.runId;
@@ -5134,6 +5158,11 @@ export const ThreadView = memo(function ThreadView({
             if (focusHidden && !focusTurn) return null;
             return (
               <Fragment key={entry.message.id}>
+                {modelBoundary && (
+                  <section className={styles.sessionBoundary} role="separator" aria-label="Model and effort">
+                    {runConfigurationLabel(modelBoundary)}
+                  </section>
+                )}
                 {runHeader && (
                   <RunHeaderRow
                     header={runHeader}
@@ -5244,11 +5273,9 @@ export const ThreadView = memo(function ThreadView({
                           : undefined
                       }
                       onCancelConfirm={handleRewindCancel}
-                      metaAgent={detail?.thread.provider ?? null}
-                      metaModel={
-                        detail?.usage?.model ?? detail?.thread.model ?? null
-                      }
-                      metaEffort={detail?.thread.reasoningEffort ?? null}
+                      metaAgent={configuration?.provider ?? null}
+                      metaModel={configuration?.model ?? null}
+                      metaEffort={configuration?.reasoningEffort ?? null}
                       metaDuration={
                         entry.message.runId
                           ? (durationByRunId.get(entry.message.runId) ?? null)
