@@ -2271,6 +2271,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
           <ErrorBoundary pane="Sidebar">
             <Sidebar
         isThreadVisible={isThreadVisible}
+        visibilityKey={visibilityKey}
         appName="Solenta"
         recordingControl={<RecordingPrivacyControl privacy={privacy} knownTags={knownTags} onChange={updatePrivacy} />}
         onCollapseSidebar={narrow ? undefined : toggleSidebar}
@@ -2904,6 +2905,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         {paletteLoaded && (
         <CommandPalette
           isThreadVisible={isThreadVisible}
+          visibilityKey={visibilityKey}
           open={paletteOpen}
           mode={paletteMode}
           onClose={() => setPaletteOpen(false)}

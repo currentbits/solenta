@@ -47,6 +47,7 @@ export interface CommandPaletteProps {
   onModeChange: (mode: PaletteMode) => void;
   threads: ThreadInfo[];
   isThreadVisible?: (id: string) => boolean;
+  visibilityKey?: string;
   projects: ProjectInfo[];
   searchThreads: (input: ThreadSearchInput) => Promise<ThreadSearchResult>;
   searchMessages: (
@@ -141,6 +142,7 @@ export function CommandPalette({
   onModeChange,
   threads,
   isThreadVisible,
+  visibilityKey,
   projects,
   searchThreads,
   searchMessages,
@@ -215,7 +217,7 @@ export function CommandPalette({
       gen.current = false;
       window.clearTimeout(handle);
     };
-  }, [open, mode, actionsOnly, trimmed, searchThreads]);
+  }, [open, mode, actionsOnly, trimmed, searchThreads, visibilityKey]);
 
   // Separate debounce from the thread content-hits search above: both run
   // off the same query in "command" mode, and the backend already gives
@@ -244,7 +246,7 @@ export function CommandPalette({
       gen.current = false;
       window.clearTimeout(handle);
     };
-  }, [open, mode, actionsOnly, trimmed, searchMessages]);
+  }, [open, mode, actionsOnly, trimmed, searchMessages, visibilityKey]);
 
   useEffect(() => {
     if (!open || mode !== "files" || !canSearchWorkspace || !listFiles) {

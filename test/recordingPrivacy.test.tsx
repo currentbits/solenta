@@ -92,6 +92,41 @@ describe("recording privacy", () => {
     app.unmount();
   });
 
+  it("refreshes sidebar content search when recording ends without changing its query", async () => {
+    const { app, fake } = await boot(true);
+    fake.api.threads.search = async (input) => ({
+      threads: [secret, publicThread].filter((t) => !input.threadIds || input.threadIds.includes(t.id)),
+      truncated: false,
+    });
+    const input = app.query('input[placeholder="Search threads…"]') as HTMLInputElement;
+    await app.type(input, "needle");
+    await inAct(async () => { await new Promise((resolve) => setTimeout(resolve, 320)); });
+    assert.equal(app.query('button[aria-label="Select thread: Private customer title"]'), null);
+    await changeMode(app, false);
+    await inAct(async () => { await new Promise((resolve) => setTimeout(resolve, 320)); });
+    assert.equal(input.value, "needle");
+    assert.ok(app.query('button[aria-label^="Select thread: Private customer title"]'), "private content match returns for the unchanged query");
+    app.unmount();
+  });
+
+  it("refreshes palette message search when recording ends without clearing its query", async () => {
+    const { app, fake } = await boot(true);
+    fake.api.threads.searchMessages = async (input) => ({
+      hits: [secret, publicThread].filter((t) => !input.threadIds || input.threadIds.includes(t.id)).map((t) => ({ threadId: t.id, messageId: t.id, snippet: t.id === "secret" ? "RESTORED PRIVATE EXCERPT" : "Public excerpt", createdAt: Date.now() })),
+      truncated: false,
+    });
+    await inAct(async () => window.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true, bubbles: true })));
+    const input = app.query("[data-command-palette-dialog] input") as HTMLInputElement;
+    await app.type(input, "needle");
+    await inAct(async () => { await new Promise((resolve) => setTimeout(resolve, 220)); });
+    assert.doesNotMatch(app.text(), /RESTORED PRIVATE EXCERPT/);
+    await inAct(async () => window.dispatchEvent(new window.StorageEvent("storage", { key: RECORDING_PRIVACY_KEY, newValue: JSON.stringify({ ...enabled, enabled: false }) })));
+    await inAct(async () => { await new Promise((resolve) => setTimeout(resolve, 220)); });
+    assert.equal(input.value, "needle");
+    assert.match(app.query("[data-command-palette-dialog]")?.textContent ?? "", /RESTORED PRIVATE EXCERPT/);
+    app.unmount();
+  });
+
   it("configures hidden tags and persists them across mounts", async () => {
     const { app } = await boot();
     await app.click(app.byText("Recording mode"));

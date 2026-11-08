@@ -12,6 +12,7 @@ const MIN_SEARCH_LEN = 2;
 interface Fetched {
   query: string;
   scopeKey: string | null;
+  visibilityKey: string;
   truncated: boolean;
 }
 
@@ -26,10 +27,13 @@ export function useThreadSearch({
   query,
   scopeIds,
   searchThreads,
+  visibilityKey = "",
 }: {
   query: string;
   scopeIds: readonly string[] | null;
   searchThreads: (input: ThreadSearchInput) => Promise<ThreadSearchResult>;
+  /** Backend visibility can change even when local sidebar scope is unchanged. */
+  visibilityKey?: string;
 }) {
   const trimmedQuery = query.trim();
   const searching = trimmedQuery.length >= MIN_SEARCH_LEN;
@@ -69,6 +73,7 @@ export function useThreadSearch({
     if (
       f &&
       f.query === trimmedQuery &&
+      f.visibilityKey === visibilityKey &&
       (f.scopeKey === scopeKey || (f.scopeKey === null && !f.truncated))
     ) {
       searchGen.current += 1;
@@ -90,6 +95,7 @@ export function useThreadSearch({
             fetched.current = {
               query: trimmedQuery,
               scopeKey,
+              visibilityKey,
               truncated: res.truncated,
             };
             setSearchResults(res.threads);
@@ -109,7 +115,7 @@ export function useThreadSearch({
         });
     }, SEARCH_DEBOUNCE_MS);
     return () => window.clearTimeout(handle);
-  }, [trimmedQuery, searching, scopeKey, searchThreads]);
+  }, [trimmedQuery, searching, scopeKey, searchThreads, visibilityKey]);
 
   return {
     trimmedQuery,

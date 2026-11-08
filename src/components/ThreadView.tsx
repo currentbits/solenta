@@ -2895,8 +2895,9 @@ export const ThreadView = memo(function ThreadView({
     reviewUndoDialogRef,
   );
 
-  const { showEarlier, onBodyScroll, jumpToLatest, pillVisible, pillNew } =
+  const { setBodyRef, showEarlier, onBodyScroll, jumpToLatest, pillVisible, pillNew } =
     useStickToBottom({
+      bodyVisible: !presentationHidden,
       bodyRef,
       stickToBottom,
       forceStick,
@@ -4973,7 +4974,7 @@ export const ThreadView = memo(function ThreadView({
       <div
         className={styles.body}
         data-thread-body=""
-        ref={bodyRef}
+        ref={setBodyRef}
         onScroll={onBodyScroll}
         onClick={(e) => openClickedImage(e.target)}
         onContextMenu={(e) => onBodyContextMenu(e)}

@@ -167,6 +167,7 @@ export interface SidebarProps {
   /** Relaunch into the staged bundle (updateState "staged"). */
   onApplyUpdate?: () => void | Promise<void>;
   isThreadVisible?: (id: string) => boolean;
+  visibilityKey?: string;
   recordingControl?: ReactNode;
   searchPlaceholder: string;
   projectsHeader: string;
@@ -387,6 +388,7 @@ export const Sidebar = memo(function Sidebar({
   onDownloadUpdate,
   onApplyUpdate,
   isThreadVisible,
+  visibilityKey,
   recordingControl,
   searchPlaceholder,
   projects,
@@ -663,7 +665,7 @@ export const Sidebar = memo(function Sidebar({
     searchLoading,
     searchFailed,
     searchTruncated,
-  } = useThreadSearch({ query, scopeIds: searchScopeIds, searchThreads });
+  } = useThreadSearch({ query, scopeIds: searchScopeIds, searchThreads, visibilityKey });
 
   const displayThreads = useMemo(() => {
     const source =
