@@ -70,7 +70,26 @@
 .codeTab {
   display: flex;
   flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
   gap: 10px;
+}
+
+.codeFiles,
+.codeDiff {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 4px 8px;
+}
+
+.codeFiles > * {
+  flex-shrink: 0;
+}
+
+.panel[data-pr-tab="code"] .scroll {
+  overflow: hidden;
 }
 
 .codeToolbar {
