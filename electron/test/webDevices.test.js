@@ -176,3 +176,75 @@ it("a failed durable session write does not consume the grant", () => {
     assert.ok(devices.redeemEnrollment({ grant: issued.grant }).token);
   } finally { fs.renameSync = rename; fs.rmSync(tmp, { recursive: true, force: true }); }
 });
+
+describe("device lock recovery serialization", () => {
+  let tmp;
+  let devices;
+  let issued;
+  let lockFile;
+  let recoveryFile;
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), "solenta-enrollment-lock-race-"));
+    devices = createWebDevices(tmp);
+    issued = devices.createEnrollment({ name: "Browser" });
+    lockFile = path.join(tmp, "web-access.lock");
+    recoveryFile = `${lockFile}.recovery`;
+    fs.writeFileSync(lockFile, "2147483647");
+  });
+  afterEach(() => fs.rmSync(tmp, { recursive: true, force: true }));
+
+  it("re-reads ownership under its recovery guard and never removes a new live owner's lock", () => {
+    const link = fs.linkSync;
+    let raced = false;
+    let liveInode;
+    try {
+      fs.linkSync = (source, target, ...args) => {
+        if (target === recoveryFile && !raced) {
+          raced = true;
+          // Another contender recovered the original stale lock and acquired
+          // a live lock while this contender was waiting for recovery access.
+          fs.unlinkSync(lockFile);
+          fs.writeFileSync(lockFile, String(process.pid));
+          liveInode = fs.statSync(lockFile).ino;
+        }
+        return link(source, target, ...args);
+      };
+      assert.throws(() => devices.redeemEnrollment({ grant: issued.grant }), /being changed/);
+      assert.equal(raced, true);
+      assert.equal(fs.readFileSync(lockFile, "utf8"), String(process.pid));
+      assert.equal(fs.statSync(lockFile).ino, liveInode, "the new owner's inode must survive");
+      assert.equal(fs.existsSync(recoveryFile), false);
+      assert.equal(devices.list().length, 0, "a losing contender must not issue a session");
+    } finally { fs.linkSync = link; }
+    fs.unlinkSync(lockFile);
+    assert.ok(devices.redeemEnrollment({ grant: issued.grant }).token, "the losing attempt left the grant unspent");
+  });
+
+  it("does not steal another recovery guard, even if its ownership is uncertain", () => {
+    fs.writeFileSync(recoveryFile, "");
+    assert.throws(() => devices.redeemEnrollment({ grant: issued.grant }), /stop Solenta before removing web-access.lock.recovery/);
+    assert.equal(fs.readFileSync(lockFile, "utf8"), "2147483647");
+    assert.equal(fs.readFileSync(recoveryFile, "utf8"), "");
+    assert.equal(devices.list().length, 0);
+  });
+
+  it("serializes a second contender while the first inspects a stale lock", () => {
+    const second = createWebDevices(tmp);
+    const read = fs.readFileSync;
+    let contended = false;
+    try {
+      fs.readFileSync = (file, ...args) => {
+        if (file === lockFile && !contended) {
+          contended = true;
+          assert.ok(fs.existsSync(recoveryFile), "inspection requires exclusive recovery ownership");
+          assert.throws(() => second.redeemEnrollment({ grant: issued.grant }), /recovery is already in progress/);
+        }
+        return read(file, ...args);
+      };
+      assert.ok(devices.redeemEnrollment({ grant: issued.grant }).token);
+    } finally { fs.readFileSync = read; }
+    assert.equal(contended, true);
+    assert.equal(devices.list().length, 1);
+    assert.throws(() => second.redeemEnrollment({ grant: issued.grant }), /already used/);
+  });
+});

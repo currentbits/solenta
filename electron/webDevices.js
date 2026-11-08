@@ -102,13 +102,22 @@ function createWebDevices(userDataPath, opts = {}) {
     fs.writeFileSync(ownerFile, String(process.pid), { flag: "wx", mode: 0o600 });
     let locked = false;
     try {
-      for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        fs.linkSync(ownerFile, lockFile);
+        locked = true;
+      } catch (err) {
+        if (!err || err.code !== "EEXIST") throw err;
+        const recoveryFile = `${lockFile}.recovery`;
+        // Only one contender may inspect and remove a stale owner. In
+        // particular, never unlink based on an observation made before
+        // acquiring this guard: another process may have acquired the lock.
         try {
-          fs.linkSync(ownerFile, lockFile);
-          locked = true;
-          break;
-        } catch (err) {
-          if (!err || err.code !== "EEXIST") throw err;
+          fs.linkSync(ownerFile, recoveryFile);
+        } catch (recoveryError) {
+          if (!recoveryError || recoveryError.code !== "EEXIST") throw recoveryError;
+          throw new Error("Device access recovery is already in progress. Try again. If it persists, stop Solenta before removing web-access.lock.recovery from its data directory.");
+        }
+        try {
           let stale = false;
           try {
             const pid = Number(fs.readFileSync(lockFile, "utf8"));
@@ -117,10 +126,20 @@ function createWebDevices(userDataPath, opts = {}) {
             }
           } catch { /* An uncertain owner is never stolen. */ }
           if (!stale) throw new Error("Device access is being changed. Try again.");
-          try { fs.unlinkSync(lockFile); } catch { /* Another owner recovered it. */ }
+          fs.unlinkSync(lockFile);
+          // A normal contender may acquire the now-free lock, but it can
+          // never remove ours. Losing this race is a safe retry, not recovery.
+          try {
+            fs.linkSync(ownerFile, lockFile);
+            locked = true;
+          } catch (acquireError) {
+            if (!acquireError || acquireError.code !== "EEXIST") throw acquireError;
+            throw new Error("Device access is being changed. Try again.");
+          }
+        } finally {
+          fs.unlinkSync(recoveryFile);
         }
       }
-      if (!locked) throw new Error("Device access is being changed. Try again.");
       const next = load(file);
       const result = change(next);
       save(next);
