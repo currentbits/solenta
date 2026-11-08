@@ -41,14 +41,37 @@ function environmentHost() {
   return process.env.GITLAB_HOST || process.env.GITLAB_URI || process.env.GL_HOST || "";
 }
 
+/** Follow glab's legacy-first config search, including platform XDG defaults. */
+function glabConfigFile() {
+  if (process.env.GLAB_CONFIG_DIR) return path.join(process.env.GLAB_CONFIG_DIR, "config.yml");
+  const home = os.homedir();
+  const absolutePath = (value) => {
+    const expanded = String(value || "").replace(/^~(?=$|[/\\])/, () => home);
+    return path.isAbsolute(expanded) ? expanded : "";
+  };
+  const legacy = path.join(home, ".config");
+  const platformHome = process.platform === "darwin"
+    ? path.join(home, "Library", "Application Support")
+    : process.platform === "win32"
+      ? process.env.LOCALAPPDATA || path.join(home, "AppData", "Local") : legacy;
+  const platformDirs = process.platform === "darwin"
+    ? [path.join(home, "Library", "Preferences"), "/Library/Application Support", "/Library/Preferences", legacy]
+    : process.platform === "win32"
+      ? [process.env.ProgramData || "C:\\ProgramData", process.env.APPDATA || path.join(home, "AppData", "Roaming")]
+      : ["/etc/xdg"];
+  const configHome = absolutePath(process.env.XDG_CONFIG_HOME) || platformHome;
+  const configuredDirs = String(process.env.XDG_CONFIG_DIRS || "").split(path.delimiter).map(absolutePath).filter(Boolean);
+  const configDirs = configuredDirs.length ? configuredDirs : platformDirs;
+  const files = [legacy, configHome, ...configDirs].map((dir) => path.join(dir, "glab-cli", "config.yml"));
+  return files.find((file) => fs.existsSync(file)) || files[1];
+}
+
 /**
  * Read only host keys and api_protocol from glab's block-style config.yml.
  * Tokens stay with glab. Quoted scalars and host:port keys are accepted;
  * unsupported YAML shapes do not grant trust to an unconfigured hostname.
  */
 function configuredOrigins() {
-  const configHome = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config");
-  const dir = process.env.GLAB_CONFIG_DIR || path.join(configHome, "glab-cli");
   const scalar = (s) => s.trim().replace(/\s+#.*$/, "").replace(/^(["'])(.*)\1$/, "$2");
   const hosts = new Map();
   let defaultHost = "";
@@ -56,7 +79,7 @@ function configuredOrigins() {
     let inHosts = false;
     let host = "";
     let hostIndent = 0;
-    for (const line of fs.readFileSync(path.join(dir, "config.yml"), "utf8").split(/\r?\n/)) {
+    for (const line of fs.readFileSync(glabConfigFile(), "utf8").split(/\r?\n/)) {
       if (!line.trim() || /^\s*#/.test(line)) continue;
       if (/^\S/.test(line)) {
         inHosts = /^hosts:\s*(?:#.*)?$/.test(line);

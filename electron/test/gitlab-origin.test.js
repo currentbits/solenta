@@ -1,6 +1,6 @@
 "use strict";
 
-const { describe, it, beforeEach, afterEach } = require("node:test");
+const { describe, it, beforeEach, afterEach, mock } = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
@@ -18,6 +18,7 @@ const envKeys = [
   "GITLAB_URL", "GITLAB_API_HOST", "GLAB_API_PROTOCOL", "API_PROTOCOL", "GITLAB_REPO",
   "GITLAB_TOKEN", "GITLAB_ACCESS_TOKEN", "OAUTH_TOKEN", "CI_JOB_TOKEN", "GITLAB_CI",
   "JOB_TOKEN", "GLAB_IS_OAUTH2", "OAUTH2_REFRESH_TOKEN", "REFRESH_TOKEN",
+  "XDG_CONFIG_HOME", "XDG_CONFIG_DIRS",
 ];
 
 describe("GitLab origin routing with isolated config", () => {
@@ -32,6 +33,7 @@ describe("GitLab origin routing with isolated config", () => {
   });
 
   afterEach(() => {
+    mock.restoreAll();
     for (const key of envKeys) {
       if (previous[key] === undefined) delete process.env[key];
       else process.env[key] = previous[key];
@@ -42,6 +44,76 @@ describe("GitLab origin routing with isolated config", () => {
   function configure(text) {
     fs.writeFileSync(path.join(tmp, "config.yml"), text);
   }
+
+  function discoveryConfig(dir, host) {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "config.yml"), `hosts:\n    ${host}:\n        api_protocol: http\n`);
+  }
+
+  function discoveryHome() {
+    const home = path.join(tmp, "home");
+    mock.method(os, "homedir", () => home);
+    delete process.env.GLAB_CONFIG_DIR;
+    process.env.XDG_CONFIG_DIRS = path.join(tmp, "system");
+    return home;
+  }
+
+  it("discovers the macOS Application Support config", { skip: process.platform !== "darwin" }, () => {
+    const home = discoveryHome();
+    discoveryConfig(path.join(home, "Library", "Application Support", "glab-cli"), "code.example:8080");
+    assert.equal(gitlab.gitlabRemote("git@code.example:group/repo.git")?.origin, "http://code.example:8080");
+  });
+
+  it("falls back to the macOS Preferences config search path", { skip: process.platform !== "darwin" }, () => {
+    const home = discoveryHome();
+    process.env.XDG_CONFIG_DIRS = "relative-path-is-ignored";
+    discoveryConfig(path.join(home, "Library", "Preferences", "glab-cli"), "preferences.example:8080");
+    assert.equal(gitlab.gitlabRemote("git@preferences.example:group/repo.git")?.origin, "http://preferences.example:8080");
+  });
+
+  it("prefers the legacy config over XDG_CONFIG_HOME, just like glab", () => {
+    const home = discoveryHome();
+    process.env.XDG_CONFIG_HOME = path.join(tmp, "xdg");
+    discoveryConfig(path.join(home, ".config", "glab-cli"), "legacy.example:8080");
+    discoveryConfig(path.join(process.env.XDG_CONFIG_HOME, "glab-cli"), "xdg.example:8080");
+    assert.equal(gitlab.gitlabRemote("git@legacy.example:group/repo.git")?.origin, "http://legacy.example:8080");
+    assert.equal(gitlab.gitlabRemote("git@xdg.example:group/repo.git"), null);
+  });
+
+  it("uses XDG_CONFIG_HOME before system config directories", () => {
+    discoveryHome();
+    process.env.XDG_CONFIG_HOME = path.join(tmp, "xdg");
+    discoveryConfig(path.join(process.env.XDG_CONFIG_HOME, "glab-cli"), "xdg.example:8080");
+    discoveryConfig(path.join(process.env.XDG_CONFIG_DIRS, "glab-cli"), "system.example:8080");
+    assert.equal(gitlab.gitlabRemote("git@xdg.example:group/repo.git")?.origin, "http://xdg.example:8080");
+    assert.equal(gitlab.gitlabRemote("git@system.example:group/repo.git"), null);
+  });
+
+  it("expands a home-relative XDG_CONFIG_HOME as glab does", () => {
+    const home = discoveryHome();
+    process.env.XDG_CONFIG_HOME = "~/xdg-config";
+    discoveryConfig(path.join(home, "xdg-config", "glab-cli"), "xdg.example:8080");
+    assert.equal(gitlab.gitlabRemote("git@xdg.example:group/repo.git")?.origin, "http://xdg.example:8080");
+  });
+
+  it("searches XDG_CONFIG_DIRS in order when no user config exists", () => {
+    discoveryHome();
+    const missing = path.join(tmp, "missing");
+    const first = path.join(tmp, "first");
+    const second = path.join(tmp, "second");
+    process.env.XDG_CONFIG_DIRS = [missing, first, second].join(path.delimiter);
+    discoveryConfig(path.join(first, "glab-cli"), "first.example:8080");
+    discoveryConfig(path.join(second, "glab-cli"), "second.example:8080");
+    assert.equal(gitlab.gitlabRemote("git@first.example:group/repo.git")?.origin, "http://first.example:8080");
+    assert.equal(gitlab.gitlabRemote("git@second.example:group/repo.git"), null);
+  });
+
+  it("never falls through a missing GLAB_CONFIG_DIR override", () => {
+    const home = discoveryHome();
+    discoveryConfig(path.join(home, ".config", "glab-cli"), "legacy.example:8080");
+    process.env.GLAB_CONFIG_DIR = path.join(tmp, "missing-override");
+    assert.equal(gitlab.gitlabRemote("git@legacy.example:group/repo.git"), null);
+  });
 
   function fakeGlab() {
     const calls = path.join(tmp, "calls.jsonl");

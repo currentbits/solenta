@@ -103,9 +103,9 @@ it.
   remotes use the configured web origin, never the SSH port; set `GITLAB_HOST`
   to choose when several web ports share a hostname. Solenta reads glab's
   standard block-style `config.yml` host keys and `api_protocol` (including
-  `GLAB_CONFIG_DIR` / `XDG_CONFIG_HOME` overrides); YAML aliases and flow-style
-  host maps require the explicit environment setting. Credentials remain with
-  glab and are selected by the web host and port.
+  `GLAB_CONFIG_DIR`, legacy and platform config paths, and XDG search paths);
+  YAML aliases and flow-style host maps require the explicit environment setting.
+  Credentials remain with glab and are selected by the web host and port.
 - **Terminal and Browser panes** — a long-lived shell in the thread's worktree
   (`cd` and exports persist), and an embedded loopback-only browser on your dev
   server. Screenshot the page into the composer, or let the agent navigate,
