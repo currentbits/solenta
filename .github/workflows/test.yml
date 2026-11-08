@@ -49,7 +49,7 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: "**/package-lock.json"
-      - run: npm ci
+      - uses: ./.github/actions/npm-ci-electron
       - name: Check generated marketing site
         if: runner.os == 'Linux'
         run: |
@@ -129,7 +129,7 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: "**/package-lock.json"
-      - run: npm ci
+      - uses: ./.github/actions/npm-ci-electron
       - run: npm ci --prefix core
       - run: npm run build --prefix core
       - run: npx vite build
@@ -167,7 +167,7 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: "**/package-lock.json"
-      - run: npm ci
+      - uses: ./.github/actions/npm-ci-electron
       - run: npm ci --prefix core
       # Headless boot uses CPU memory embeddings; no CUDA EP is exercised.
       # Keep this local to CI, not production/server-bundle dependency installs.
