@@ -526,6 +526,9 @@ function startWebServer(opts) {
   // One limiter for both doors, so the artifact route is no side channel.
   const limiter = createAuthLimiter();
   const ctx = opts && opts.ctx;
+  const { computerDescriptor, DESCRIPTOR_PATH } = require("./serverIdentity.js");
+  const dataDir = opts.userDataPath || ctx?.userDataPath;
+  const computer = opts.computer || (dataDir ? computerDescriptor(dataDir, { runtimeKind: opts.runtimeKind }) : null);
   const staticDir = (opts && opts.staticDir) || null;
   const artifactStore = (opts && opts.artifactStore) || null;
   const createReadStream = (opts && opts.createReadStream) || fs.createReadStream;
@@ -539,6 +542,16 @@ function startWebServer(opts) {
     } catch {
       res.writeHead(400);
       res.end();
+      return;
+    }
+    if (url.pathname === DESCRIPTOR_PATH && computer) {
+      if (req.method !== "GET" && req.method !== "HEAD") {
+        res.writeHead(405, { Allow: "GET, HEAD" });
+        res.end();
+        return;
+      }
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" });
+      res.end(req.method === "HEAD" ? undefined : JSON.stringify(computer));
       return;
     }
     const handled = await serveRunArtifact(req, res, {
@@ -558,6 +571,7 @@ function startWebServer(opts) {
     ctx,
     handlers: opts.handlers,
     path: WS_PATH,
+    computer,
   });
 
   const listening = new Promise((resolve, reject) => {

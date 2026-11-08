@@ -80,6 +80,8 @@ export interface HostTag {
 
 /** One saved Connection shown in the sidebar (#1819). */
 export interface SidebarHostStatus {
+  /** Current transport route; the key above remains the computer owner. */
+  activeRouteKey?: string;
   computerId?: string;
   descriptor?: RemoteComputerDescriptor;
   /** Verified alternate routes, retaining their separate credentials. */
@@ -97,6 +99,7 @@ export interface SidebarHostStatus {
 
 /** A linked computer (#1832): address and name, never its token. */
 export interface PeerLink {
+  computerId?: string;
   key: string;
   url: string;
   label: string;
@@ -5896,7 +5899,7 @@ export interface CoderApi {
      * computer (Full access). Tokens are never returned.
      */
     listPeers(): Promise<PeerLink[]>;
-    linkPeer(input: { link: string; label?: string; token?: string }): Promise<PeerLink[]>;
+    linkPeer(input: { link: string; label?: string; token?: string; allowLegacy?: boolean }): Promise<PeerLink[]>;
     unlinkPeer(input: { key: string }): Promise<PeerLink[]>;
     setSidebarHosts(
       hosts: Array<{ host: string; remotePort: number; url?: string; label?: string; computerId?: string; allowLegacy?: boolean }>,

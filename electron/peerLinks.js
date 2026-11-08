@@ -40,7 +40,7 @@ function createPeerLinks({ userDataPath, hub, remote = require("./remoteConnecti
 
   /** Never hands tokens out. */
   function list() {
-    return load().map(({ url, label }) => ({ key: url, url, label }));
+    return load().map(({ url, label, computerId }) => ({ key: url, url, label, ...(computerId ? { computerId } : {}) }));
   }
 
   /**
@@ -53,12 +53,18 @@ function createPeerLinks({ userDataPath, hub, remote = require("./remoteConnecti
     if (!token) {
       throw new Error("Paste the device link (it carries the token), or the address plus a device token. On that computer: Settings → Connections → Let other devices in, add a device with Full access.");
     }
-    await remote.probeToken(parsed.url, token, {
+    const existing = load().find((r) => r.url === parsed.url);
+    if (existing?.computerId && parsed.computerId && existing.computerId !== parsed.computerId) {
+      throw new Error("Computer identity mismatch. Unlink this route before pairing another computer.");
+    }
+    const descriptor = await remote.probeToken(parsed.url, token, {
+      computerId: existing?.computerId || parsed.computerId,
+      allowLegacy: !existing?.computerId && input?.allowLegacy === true,
       timeoutMs: 10_000,
       unreachable: `Nothing answered at ${parsed.url}. On that computer turn on Serve Solenta Web, and Expose over Tailscale or Allow devices on my network.`,
     });
     const label = String((input && input.label) || "").trim() || parsed.hostname;
-    save([...load().filter((r) => r.url !== parsed.url), { url: parsed.url, label, token }]);
+    save([...load().filter((r) => r.url !== parsed.url), { url: parsed.url, label, token, ...(descriptor ? { computerId: descriptor.computerId } : { allowLegacy: input?.allowLegacy === true }) }]);
     return list();
   }
 

@@ -9,6 +9,25 @@ const { createPeerLinks } = require("../peerLinks.js");
 const { parseDirectUrl } = require("../remoteConnections.js");
 
 describe("linked computers (#1832)", () => {
+  it("pins verified peer identity across token rotation and fragment links", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "peers-id-"));
+    const probes = [];
+    const links = createPeerLinks({ userDataPath: dir, hub: { setPeers() {} }, remote: {
+      parseDirectUrl,
+      probeToken: async (url, token, opts) => { probes.push({ url, token, opts }); return { computerId: "computer-one" }; },
+    } });
+    try {
+      await links.link({ link: "https://box.ts.net/#token=secret&computerId=computer-one" });
+      assert.equal(probes[0].opts.computerId, "computer-one");
+      assert.equal(links.list()[0].computerId, "computer-one");
+      await links.link({ link: "https://box.ts.net/#token=rotated" });
+      assert.equal(probes[1].opts.computerId, "computer-one");
+      await assert.rejects(links.link({ link: "https://box.ts.net/#token=wrong&computerId=computer-two" }), /identity mismatch/);
+      assert.equal(probes.length, 2, "mismatched link never reaches the credential probe");
+      assert.equal(JSON.parse(fs.readFileSync(path.join(dir, "peers.json"), "utf8"))[0].token, "rotated");
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  });
+
   it("checks the token, keeps it in a private file, never hands it out, and feeds the hub", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "peers-"));
     const fed = [];

@@ -188,6 +188,11 @@ function attachWebBridge(httpServer, opts) {
           ws.close(CLOSE_RATE_LIMITED, "Too many failed attempts");
           return;
         }
+        if ((msg.computerId && msg.computerId !== opts.computer?.computerId) ||
+            (msg.protocol !== undefined && msg.protocol !== 1)) {
+          ws.close(4409, "Computer identity or protocol mismatch");
+          return;
+        }
         const device = authorize(msg.token);
         if (!device) {
           limiter.fail(remote);
@@ -197,7 +202,7 @@ function attachWebBridge(httpServer, opts) {
         isAuthed = true;
         scopes = device.scopes;
         authed.set(ws, device);
-        sendJson(ws, { kind: "auth-ok" });
+        sendJson(ws, { kind: "auth-ok", ...(opts.computer ? { computer: opts.computer } : {}) });
         return;
       }
 

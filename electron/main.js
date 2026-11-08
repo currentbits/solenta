@@ -1243,6 +1243,7 @@ app.whenReady().then(async () => {
     startServer: (opts) =>
       startWebServer({
         ...opts,
+        userDataPath: userData,
         staticDir: fs.existsSync(webStaticDir) ? webStaticDir : null,
         ctx: registered.ctx,
         artifactStore,

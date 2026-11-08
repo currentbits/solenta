@@ -15,7 +15,7 @@ async function waitFor(check, timeoutMs = 5_000) {
 }
 
 /** A stand-in remote Solenta Web host: auth + invoke + push. */
-async function fakeHost({ token = "tok", threads = [], projects = [] } = {}) {
+async function fakeHost({ token = "tok", threads = [], projects = [], computerId } = {}) {
   const server = http.createServer();
   const wss = new WebSocketServer({ server, path: "/ws" });
   const state = { threads, projects, calls: [], sockets: new Set() };
@@ -27,7 +27,7 @@ async function fakeHost({ token = "tok", threads = [], projects = [] } = {}) {
         if (msg.kind !== "auth" || msg.token !== token) return ws.close(4401);
         authed = true;
         state.sockets.add(ws);
-        ws.send(JSON.stringify({ kind: "auth-ok" }));
+        ws.send(JSON.stringify({ kind: "auth-ok", ...(computerId ? { computer: { kind: "solenta", computerId, protocol: { min: 1, max: 1 }, runtimeKind: "server" } } : {}) }));
         return;
       }
       state.calls.push({ channel: msg.channel, args: msg.args });
@@ -85,6 +85,83 @@ describe("hostHub", () => {
   afterEach(async () => {
     for (const fn of cleanup.reverse()) await fn();
     cleanup = [];
+  });
+
+  it("rejects unknown explicit owners with zero hosts and never calls local", async () => {
+    const { hub } = makeHub({});
+    cleanup.push(() => hub.close());
+    for (const channel of ["settings:get", "providers:list", "threads:list", "projects:list"]) {
+      await assert.rejects(hub.route(channel, [{ onHost: "missing" }], () => assert.fail("local fallback")), /no longer in the sidebar/);
+    }
+  });
+
+  it("groups authenticated alternate routes with one live socket and routes their aliases", async () => {
+    const remote = await fakeHost({ computerId: "computer-one", threads: [{ id: "same-thread", projectId: "rp" }], projects: [{ id: "rp" }] });
+    const { hub } = makeHub(remote);
+    cleanup.push(() => remote.close(), () => hub.close());
+    hub.setHosts([HOST, { host: "other-route", remotePort: 4620, label: "Alternate" }]);
+    await waitFor(() => hub.list().length === 1 && hub.mergeThreads([]).length === 1);
+    await waitFor(() => remote.state.sockets.size === 1);
+    assert.equal(hub.list()[0].computerId, "computer-one");
+    assert.equal(hub.list()[0].routes.length, 2);
+    const rows = await hub.route("projects:list", [{ onHost: "other-route:4620" }], () => assert.fail("local fallback"));
+    assert.equal(rows.length, 1);
+    assert.deepEqual(remote.state.calls.at(-1).args, [{}]);
+    const detail = await hub.route("threads:get", ["same-thread"], () => assert.fail("local fallback"));
+    assert.equal(detail.thread.host.computerId, "computer-one");
+  });
+
+  it("fails over through verified alternate routes without changing the computer owner", async () => {
+    const remote = await fakeHost({ computerId: "computer-one", threads: [{ id: "r1", projectId: "rp" }] });
+    let primaryFailed = false;
+    const attempts = [];
+    const { hub } = makeHub(remote, { openTunnel: async (input) => {
+      attempts.push(input);
+      if (input.host === HOST.host && primaryFailed) throw new Error("Network is unreachable");
+      return { child: { backPort: remote.port, kill() {} }, token: "tok" };
+    } });
+    cleanup.push(() => remote.close(), () => hub.close());
+    hub.setHosts([HOST, { host: "alternate", remotePort: 4620, token: "alternate-route-token" }]);
+    await waitFor(() => hub.list().length === 1 && remote.state.sockets.size === 1);
+    const owner = hub.list()[0].key;
+    const alternate = hub.list()[0].routes.find((r) => r.key !== owner).key;
+    primaryFailed = true;
+    remote.dropAll();
+    await waitFor(() => hub.list()[0].status === "online" && hub.list()[0].activeRouteKey === alternate);
+    assert.equal(hub.list()[0].key, owner);
+    assert.equal(hub.mergeThreads([]).length, 1);
+    assert.equal(attempts.at(-1).computerId, "computer-one");
+    const detail = await hub.route("threads:get", ["r1"], () => assert.fail("local fallback"));
+    assert.equal(detail.thread.host.key, owner);
+  });
+
+  it("sends global provider and settings calls only to the explicit online owner", async () => {
+    const remote = await fakeHost();
+    const { hub } = makeHub(remote, { setTimer: (fn, ms) => setTimeout(fn, ms) });
+    cleanup.push(() => remote.close(), () => hub.close());
+    hub.setHosts([HOST]);
+    await waitFor(() => hub.list()[0].status === "online");
+    for (const channel of ["providers:list", "settings:get"]) {
+      await hub.route(channel, [undefined, { onHost: "me@box:4620" }], () => assert.fail("local fallback"));
+      assert.equal(remote.state.calls.at(-1).channel, channel);
+      assert.deepEqual(remote.state.calls.at(-1).args, [null, {}]);
+    }
+    remote.dropAll();
+    await waitFor(() => hub.list()[0].status === "offline");
+    await assert.rejects(hub.route("providers:list", [undefined, { onHost: "me@box:4620" }], () => assert.fail("local fallback")), /offline/);
+  });
+
+  it("refuses ambiguous IDs from two computers instead of picking the first route", async () => {
+    const remote = await fakeHost({ computerId: "computer-one", threads: [{ id: "collision", projectId: "rp" }] });
+    const other = await fakeHost({ computerId: "computer-two", threads: [{ id: "collision", projectId: "rp" }] });
+    const { hub } = makeHub(remote, { openTunnel: async ({ host }) => ({ child: { backPort: host === HOST.host ? remote.port : other.port, kill() {} }, token: "tok" }) });
+    cleanup.push(() => remote.close(), () => other.close(), () => hub.close());
+    hub.setHosts([HOST, { host: "second", remotePort: 4620 }]);
+    await waitFor(() => hub.mergeThreads([]).length === 2);
+    await assert.rejects(hub.route("runs:start", [{ threadId: "collision" }], () => assert.fail("local fallback")), /more than one computer/);
+    const detail = await hub.route("threads:get", ["collision", { onHost: "second:4620" }], () => assert.fail("local fallback"));
+    assert.equal(detail.thread.host.computerId, "computer-two");
+    assert.equal(remote.state.calls.filter((c) => c.channel === "threads:get").length, 0);
   });
 
   it("merges a host's threads and projects, tagged, after local rows", async () => {
