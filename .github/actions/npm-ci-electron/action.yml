@@ -1,0 +1,39 @@
+name: Install dependencies with cached Electron
+description: Cache verified official Electron distributions separately from npm packages
+runs:
+  using: composite
+  steps:
+    - name: Identify locked Electron distribution
+      id: electron
+      shell: bash
+      run: |
+        node <<'NODE'
+        const fs = require('node:fs');
+        const lock = JSON.parse(fs.readFileSync('package-lock.json', 'utf8'));
+        const version = lock.packages['node_modules/electron'].version;
+        fs.appendFileSync(process.env.GITHUB_OUTPUT,
+          `key=electron-dist-v1-${process.platform}-${process.arch}-${version}\n`);
+        NODE
+    # Use the same absolute path for restore, install and save on every OS.
+    # HOME/LOCALAPPDATA/XDG_CACHE_HOME defaults differ between runner shells.
+    - name: Restore Electron distribution
+      id: cache
+      uses: actions/cache/restore@v4
+      with:
+        path: ${{ runner.temp }}/solenta-electron-cache
+        key: ${{ steps.electron.outputs.key }}
+    - name: Install dependencies
+      shell: bash
+      env:
+        # electron@35.7.5 install.js passes this directly to @electron/get.
+        # Keep its official URL and bundled checksum verification on cache hits
+        # as well as downloads. Cache archives only, never node_modules/dist.
+        electron_config_cache: ${{ runner.temp }}/solenta-electron-cache
+      run: npm ci
+    # Seed the cache even when a later suite fails. Failed installs never save.
+    - name: Save Electron distribution
+      if: steps.cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: ${{ runner.temp }}/solenta-electron-cache
+        key: ${{ steps.electron.outputs.key }}

@@ -16,6 +16,7 @@
 import type {
   AppSettings,
   RecentRepoGroup,
+  HistoryProject,
   AppStatus,
   AttachmentInfo,
   AutomationInfo,
@@ -264,6 +265,8 @@ export interface FakeOptions {
   projects?: ProjectInfo[];
   /** projects.discoverRecent result (#1501). */
   recentRepos?: RecentRepoGroup[];
+  /** projects.discoverHistory result (#1858). */
+  historyProjects?: HistoryProject[];
   spaces?: SpaceInfo[];
   threads?: ThreadInfo[];
   providers?: ProviderInfo[];
@@ -1847,6 +1850,8 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         rec("projects.cancelClone", [input], undefined),
       discoverRecent: () =>
         rec("projects.discoverRecent", [], opts.recentRepos ?? ([] as RecentRepoGroup[])),
+      discoverHistory: () =>
+        rec("projects.discoverHistory", [], opts.historyProjects ?? ([] as HistoryProject[])),
       ensureScratch: () => {
         let found = projects.find((p) => p.scratch === true);
         if (!found) {
