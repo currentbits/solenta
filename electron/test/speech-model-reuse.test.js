@@ -88,7 +88,7 @@ it("accepts intentional folder and model symlinks, pins the canonical target and
   }
   const alias = path.join(dir, "folder-alias"); fs.symlinkSync(folder, alias, "junction");
   await speech.useModelFolder({ modelId: ID }, alias);
-  assert.equal(JSON.parse(fs.readFileSync(path.join(dir, "app", "speech", "model-locations.json"), "utf8"))[ID], fs.realpathSync(actual));
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dir, "app", "speech", "model-locations.json"), "utf8"))[ID], await fs.promises.realpath(actual));
   fs.unlinkSync(file); fs.symlinkSync(path.join(dir, "missing"), file);
   await speech.download({ modelId: ID }); // Canonical target stays selected.
   await assert.rejects(speech.useModelFolder({ modelId: ID }, alias), /folder containing/);
@@ -126,7 +126,7 @@ it("reverifies persisted references, uses selected path in real subprocess argv,
   await restarted.write({ ...session, pcm: Buffer.alloc(3200), seq: 0 });
   await restarted.stop(session);
   const rows = fs.readFileSync(path.join(dir, "trace.jsonl"), "utf8").trim().split("\n").map(JSON.parse);
-  assert.equal(rows[0].args[rows[0].args.indexOf("--asr-model") + 1], fs.realpathSync(file));
+  assert.equal(rows[0].args[rows[0].args.indexOf("--asr-model") + 1], await fs.promises.realpath(file));
   assert.equal(restarted.status().model.id, "nemotron-en");
   assert.equal(restarted.status().modelLocation.source, "internal");
 });
@@ -174,7 +174,7 @@ it("pins the external fallback across a failed cloud upload and later settings c
   settings({ localModel: "nemotron-en", language: "en-US" });
   await speech.stop(session);
   const rows = fs.readFileSync(path.join(dir, "trace.jsonl"), "utf8").trim().split("\n").map(JSON.parse);
-  assert.equal(rows[0].args[rows[0].args.indexOf("--asr-model") + 1], fs.realpathSync(file));
+  assert.equal(rows[0].args[rows[0].args.indexOf("--asr-model") + 1], await fs.promises.realpath(file));
   assert.ok(pushes.some((s) => s.transcript && s.note));
   assert.equal(speech.status().modelLocation.source, "internal");
 });
