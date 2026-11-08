@@ -14,6 +14,12 @@ export function demoProviderLimits(now = Date.now()): ProviderUsage[] {
     {
       provider: "claude",
       status: "ok",
+      monthlySpend: {
+        period: "monthly", enabled: true,
+        used: { amountMinor: 4631, currency: "USD", exponent: 2, unit: "minor" },
+        limit: { amountMinor: 50000, currency: "USD", exponent: 2, unit: "minor" },
+        usedPercent: 9.262, resetsAt: null,
+      },
       windows: [
         {
           label: "5 hours",

@@ -2074,6 +2074,26 @@ export interface ProviderUsageWindow {
 
 export type ProviderUsageStatus = "ok" | "unavailable" | "error";
 
+/** Provider money, retained in the reported minor units rather than local spend. */
+export interface ProviderUsageMoney {
+  amountMinor: number;
+  currency: string;
+  exponent: number;
+  unit: "minor";
+}
+
+/** A monetary budget, separate from rolling request/token quota and recovery. */
+export interface ProviderUsageMonthlySpend {
+  period: "monthly";
+  enabled: boolean;
+  used: ProviderUsageMoney | null;
+  limit: ProviderUsageMoney | null;
+  /** Null when disabled, amounts are missing/incomparable, or the limit is zero. */
+  usedPercent: number | null;
+  /** Only a provider-reported reset; never inferred from the calendar. */
+  resetsAt: number | null;
+}
+
 export interface CliProxyUsageSettings {
   enabled: boolean;
   managementUrl: string;
@@ -2093,6 +2113,7 @@ export interface ProviderUsage {
   label?: string;
   status: ProviderUsageStatus;
   windows: ProviderUsageWindow[];
+  monthlySpend?: ProviderUsageMonthlySpend;
   fetchedAt: number | null;
   message?: string;
 }

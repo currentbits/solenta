@@ -66,6 +66,82 @@ const SAMPLE: ProviderUsage[] = [
 ];
 
 describe("ProviderQuota", () => {
+  it("clears the prior computer snapshot and ignores late replies when its loader changes", async () => {
+    const monthlySpend = { period: "monthly" as const, enabled: true,
+      used: { amountMinor: 4631, currency: "USD", exponent: 2, unit: "minor" as const },
+      limit: { amountMinor: 50000, currency: "USD", exponent: 2, unit: "minor" as const },
+      usedPercent: 9.262, resetsAt: null };
+    let calls = 0;
+    let oldReply: ((rows: ProviderUsage[]) => void) | null = null;
+    const oldLoader = () => ++calls === 1
+      ? Promise.resolve([quota({ monthlySpend })])
+      : new Promise<ProviderUsage[]>((resolve) => { oldReply = resolve; });
+    let newReply: ((rows: ProviderUsage[]) => void) | null = null;
+    const newLoader = () => new Promise<ProviderUsage[]>((resolve) => { newReply = resolve; });
+    const m = await mount(<ProviderQuota now={NOW} loadLimits={oldLoader} />);
+    await m.flush();
+    assert.match(m.text(), /USD\s46\.31/);
+    await m.click(m.query("[data-provider-quota-refresh]") as HTMLElement);
+    await m.rerender(<ProviderQuota now={NOW} loadLimits={newLoader} />);
+    assert.equal(m.query("[data-provider-quota-row]"), null);
+    oldReply?.([quota({ monthlySpend })]);
+    await m.flush();
+    assert.equal(m.query("[data-provider-monthly-spend]"), null);
+    newReply?.([quota({ monthlySpend: { ...monthlySpend, enabled: false, used: null, limit: null, usedPercent: null } })]);
+    await m.flush();
+    assert.match(m.text(), /Disabled/);
+    assert.doesNotMatch(m.text(), /USD/);
+    m.unmount();
+  });
+
+  it("shows account-bound monthly money beside quotas and retains it as stale after failed refresh", async () => {
+    let calls = 0;
+    const m = await mount(<ProviderQuota now={NOW} activeProvider="claude:work" loadLimits={async () => {
+      if (++calls > 1) throw new Error("quota refresh failed");
+      return [quota({ provider: "claude:work", label: "Claude Work", monthlySpend: {
+        period: "monthly", enabled: true,
+        used: { amountMinor: 4631, currency: "USD", exponent: 2, unit: "minor" },
+        limit: { amountMinor: 50000, currency: "USD", exponent: 2, unit: "minor" },
+        usedPercent: 9.262, resetsAt: null,
+      } }), quota({ provider: "claude", label: "Claude Personal" })];
+    }} />);
+    await m.flush();
+    const work = m.query('[data-provider-quota-row="claude:work"]');
+    assert.ok(work);
+    assert.equal(work.getAttribute("data-active"), "true");
+    assert.equal(work.querySelectorAll("[data-provider-quota-window]").length, 1);
+    const monthly = work.querySelector("[data-provider-monthly-spend]");
+    assert.ok(monthly);
+    assert.match(monthly.textContent ?? "", /Monthly extra usage/);
+    assert.match(monthly.textContent ?? "", /USD\s46\.31 of USD\s500\.00/);
+    assert.match(monthly.textContent ?? "", /9\.26% of budget used/);
+    assert.match(monthly.textContent ?? "", /Reset not reported/);
+    assert.equal(monthly.querySelector("[data-provider-quota-pace]"), null);
+    assert.equal(m.query('[data-provider-quota-row="claude"] [data-provider-monthly-spend]'), null);
+    await m.click(m.query("[data-provider-quota-refresh]") as HTMLElement);
+    assert.match(m.text(), /quota refresh failed/);
+    assert.match(m.text(), /Last reported · stale/);
+    assert.match(m.text(), /USD\s46\.31/);
+    assert.equal(work.getAttribute("data-stale"), "");
+    m.unmount();
+  });
+
+  it("shows disabled or incomplete monthly budgets without invented dollars or percentages", async () => {
+    const m = await mount(<ProviderQuota now={NOW} loadLimits={async () => [
+      quota({ provider: "claude", windows: [], monthlySpend: { period: "monthly", enabled: false, used: null, limit: null, usedPercent: null, resetsAt: null } }),
+      quota({ provider: "claude:work", windows: [], monthlySpend: { period: "monthly", enabled: true, used: null, limit: null, usedPercent: null, resetsAt: null } }),
+      quota({ provider: "claude:error", status: "error", windows: [], message: "request failed" }),
+    ]} />);
+    await m.flush();
+    assert.equal(m.queryAll("[data-provider-monthly-spend]").length, 2);
+    assert.match(m.text(), /Disabled/);
+    assert.match(m.text(), /Spend unavailable/);
+    assert.match(m.text(), /Reset not reported/);
+    assert.match(m.text(), /Could not load. request failed/);
+    assert.doesNotMatch(m.text(), /USD|\$|%/);
+    m.unmount();
+  });
+
   it("renders used percents and window labels, active provider first", async () => {
     const m = await mount(
       <ProviderQuota
