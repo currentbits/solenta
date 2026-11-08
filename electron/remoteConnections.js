@@ -6,6 +6,7 @@ const fs = require("node:fs");
 const net = require("node:net");
 const path = require("node:path");
 const { WebSocket } = require("ws");
+const { parseComputerDescriptor, confirmComputer, DESCRIPTOR_PATH } = require("./serverIdentity.js");
 const { PROMPT_TIMEOUT_MS } = require("./sshAskpass.js");
 
 const DEFAULT_REMOTE_PORT = 4620;
@@ -46,11 +47,27 @@ function createTokenStore(file, safeStorage) {
       write({ ...read(), [key]: safeStorage.encryptString(token).toString("base64") });
       return true;
     },
-    delete(key) {
+    computerId(key) {
+      const id = read().__computers?.[key];
+      return typeof id === "string" ? id : undefined;
+    },
+    bindComputer(key, computerId) {
+      const saved = read();
+      const prior = saved.__computers?.[key];
+      if (prior && prior !== computerId) throw new Error("Computer identity mismatch. Forget this route before pairing another computer.");
+      write({ ...saved, __computers: { ...saved.__computers, [key]: computerId } });
+    },
+    forget(key) {
       const tokens = read();
-      if (!(key in tokens)) return;
+      if (!(key in tokens) && !tokens.__computers?.[key]) return;
       delete tokens[key];
+      if (tokens.__computers) delete tokens.__computers[key];
       write(tokens);
+    },
+    delete(key) {
+      const saved = read();
+      delete saved[key];
+      write(saved);
     },
   };
 }
@@ -99,23 +116,31 @@ function parseDirectUrl(raw) {
   if (u.protocol === "http:" && !isPrivateHostname(u.hostname)) {
     throw new Error(`Plain http:// would send the token unencrypted to ${u.hostname}. Use an https:// address, such as the one Expose over Tailscale gives on that computer.`);
   }
+  const fragment = new URLSearchParams(u.hash.slice(1));
   return {
     url: u.origin,
     hostname: u.hostname.replace(/^\[|\]$/g, ""),
     port: Number(u.port) || (u.protocol === "https:" ? 443 : 80),
-    linkToken: (u.searchParams.get("token") || "").trim(),
+    linkToken: (fragment.get("token") || u.searchParams.get("token") || "").trim(),
+    computerId: fragment.get("computerId") || u.searchParams.get("computerId") || undefined,
   };
 }
 
 function validateConnection(input) {
+  if (input?.computerId !== undefined && (typeof input.computerId !== "string" || !/^[a-zA-Z0-9][a-zA-Z0-9._:-]{7,127}$/.test(input.computerId))) throw new Error("Invalid saved computer identity.");
+  const identity = { ...(input?.computerId ? { computerId: input.computerId } : {}), allowLegacy: input?.allowLegacy === true };
   const host = typeof input?.host === "string" ? input.host.trim() : "";
   const label = typeof input?.label === "string" ? input.label.trim() : "";
   const token = typeof input?.token === "string" ? input.token.trim() : "";
   if (typeof input?.url === "string" && input.url.trim()) {
     const direct = parseDirectUrl(input.url);
+    if (direct.computerId && !/^[a-zA-Z0-9][a-zA-Z0-9._:-]{7,127}$/.test(direct.computerId)) throw new Error("Invalid computer identity in the device link.");
+    if (direct.computerId && identity.computerId && direct.computerId !== identity.computerId) throw new Error("Computer identity mismatch. The device link belongs to another computer.");
+    if (direct.computerId) identity.computerId = direct.computerId;
     const typed = token || direct.linkToken;
     if (typed.length > 1024) throw new Error("Enter the device token from that computer.");
     return {
+      ...identity,
       key: direct.url,
       url: direct.url,
       host: direct.hostname,
@@ -138,6 +163,7 @@ function validateConnection(input) {
     throw new Error("Enter the Solenta Web token from the remote host.");
   }
   return {
+    ...identity,
     key: `${host}:${remotePort}`,
     url: null,
     host,
@@ -559,7 +585,7 @@ function wsUrlFor(target) {
 // After the token check: which Solenta and which agents the host has, for
 // the Connections row. One extra socket; null when the host is too old to
 // answer or slow, never an error. `target` is a loopback port or an origin.
-function inspectHost(target, token, timeoutMs = 8_000) {
+function inspectHost(target, token, timeoutMs = 8_000, descriptor = null) {
   return new Promise((resolve) => {
     const ws = new WebSocket(wsUrlFor(target));
     const replies = new Map();
@@ -578,6 +604,7 @@ function inspectHost(target, token, timeoutMs = 8_000) {
         return done(null);
       }
       if (msg.kind === "auth-ok") {
+        try { confirmComputer(descriptor, msg.computer, descriptor?.computerId); } catch { return done(null); }
         ws.send(JSON.stringify({ kind: "invoke", id: 1, channel: "app:status", args: [] }));
         ws.send(JSON.stringify({ kind: "invoke", id: 2, channel: "providers:list", args: [] }));
         return;
@@ -636,30 +663,62 @@ function freeLoopbackPort() {
 
 // Checks the token on a loopback port (the SSH forward) or a direct
 // origin. A direct host that never answers fails with `unreachable`.
-function probeToken(target, token, opts = {}) {
+// This unauthenticated request MUST finish before a saved token leaves the
+// process. No redirects: an endpoint cannot redirect credentials elsewhere.
+async function fetchComputerDescriptor(target, opts = {}) {
+  const origin = typeof target === "number" ? `http://127.0.0.1:${target}` : target;
+  const response = await (opts.fetch || fetch)(`${origin}${DESCRIPTOR_PATH}`, {
+    redirect: "manual", signal: AbortSignal.timeout(opts.timeoutMs ?? 5_000),
+    headers: { Accept: "application/json" },
+  });
+  if (response.status === 404 || response.status === 410) {
+    if (!opts.computerId && opts.allowLegacy) return null;
+    throw new Error("This computer does not publish a Solenta identity. Enable legacy compatibility for an unbound connection, or update it there.");
+  }
+  if (!response.ok) throw new Error(`The computer identity check failed (HTTP ${response.status}).`);
+  const body = await response.text();
+  // Old web hosts serve their SPA for unknown paths. Only an explicit
+  // compatibility attempt can use that behavior; JSON errors stay errors.
+  if (!opts.computerId && opts.allowLegacy && !/json/i.test(response.headers.get("content-type") || "") && !body.trim().startsWith("{")) return null;
+  if (body.length > 32_768) throw new Error("The remote computer identity response is too large.");
+  let value;
+  try { value = JSON.parse(body); } catch { throw new Error("The remote computer returned an invalid Solenta identity."); }
+  const descriptor = parseComputerDescriptor(value);
+  if (opts.computerId && descriptor.computerId !== opts.computerId) {
+    throw new Error("Computer identity mismatch. This address belongs to a different computer; no token was sent and the saved connection was preserved.");
+  }
+  return descriptor;
+}
+
+async function probeToken(target, token, opts = {}) {
   const unreachable = opts.unreachable || "SSH tunnel is not ready.";
+  let descriptor;
+  try { descriptor = await fetchComputerDescriptor(target, opts); }
+  catch (err) {
+    if (/fetch failed|timeout|aborted/i.test(err.message)) throw new Error(unreachable);
+    throw err;
+  }
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(wsUrlFor(target));
     let opened = false;
     let settled = false;
     const timer = setTimeout(() => done(new Error(unreachable)), opts.timeoutMs ?? 1_000);
-    const done = (err) => {
+    const done = (err, computer) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       ws.terminate();
-      err ? reject(err) : resolve();
+      err ? reject(err) : resolve(computer);
     };
     ws.once("open", () => {
       opened = true;
-      ws.send(JSON.stringify({ kind: "auth", token }));
+      ws.send(JSON.stringify({ kind: "auth", token, ...(descriptor ? { computerId: descriptor.computerId, protocol: 1 } : {}) }));
     });
     ws.once("message", (raw) => {
       try {
-        if (JSON.parse(String(raw)).kind === "auth-ok") return done();
-      } catch {
-        // A different service owns the forwarded port.
-      }
+        const msg = JSON.parse(String(raw));
+        if (msg.kind === "auth-ok") return done(null, confirmComputer(descriptor, msg.computer, opts.computerId));
+      } catch (err) { return done(err); }
       done(new Error(typeof target === "number"
         ? "The forwarded port is not a Solenta Web host."
         : `${target} is not a Solenta Web host.`));
@@ -671,11 +730,18 @@ function probeToken(target, token, opts = {}) {
   });
 }
 
+function bindExpectedComputer(conn, tokens) {
+  const stored = tokens.computerId?.(conn.key);
+  if (stored && conn.computerId && stored !== conn.computerId) throw new Error("Computer identity mismatch. The saved route was preserved.");
+  if (stored) conn.computerId = stored;
+  return conn;
+}
+
 // Never probe before ssh owns the forwarded port: until then another local
 // process could hold it and would receive the token. "Local forwarding
 // listening" is logged BEFORE bind(), so it proves nothing; with
 // ExitOnForwardFailure, ssh only enters the session once every bind worked.
-async function waitForHost(child, token) {
+async function waitForHost(child, token, opts = {}) {
   // An in-app password or host-key prompt may hold ssh before it is ready.
   const deadline = Date.now() + 15_000 + (child.interactive ? PROMPT_TIMEOUT_MS : 0);
   while (Date.now() < deadline) {
@@ -685,8 +751,7 @@ async function waitForHost(child, token) {
       continue;
     }
     try {
-      await probeToken(child.backPort, token);
-      return;
+      return await probeToken(child.backPort, token, opts);
     } catch (err) {
       if (!/SSH tunnel is not ready/.test(err.message)) throw err;
     }
@@ -736,7 +801,7 @@ function spawnTunnel(spawnFn, host, backPort, remotePort, onClose, deps = {}) {
 
 // The isolated desktop window for one host's Solenta Web. Links leaving
 // `origin` open in the browser. Destroyed again if the page will not load.
-async function createHostWindow({ origin, title, token, deps, onClosed }) {
+async function createHostWindow({ origin, title, token, computerId, allowLegacy, deps, onClosed }) {
   const { BrowserWindow, shell } = deps.electron || require("electron");
   const win = new BrowserWindow({
     width: 1440,
@@ -769,7 +834,7 @@ async function createHostWindow({ origin, title, token, deps, onClosed }) {
   win.on("closed", onClosed);
   // Web hosts accept a query token and scrub it after boot.
   try {
-    await win.loadURL(`${origin}/?token=${encodeURIComponent(token)}`);
+    await win.loadURL(`${origin}/#token=${encodeURIComponent(token)}${computerId ? `&computerId=${encodeURIComponent(computerId)}` : allowLegacy ? "&allowLegacy=1" : ""}`);
   } catch {
     if (!win.isDestroyed()) win.destroy();
     throw new Error("Unable to load the remote Solenta window.");
@@ -798,10 +863,11 @@ function savedTokenRejected(err, fromKeychain, tokens, key) {
 
 // After the window opened: keep (or drop) the proven token and report
 // which Solenta the host runs.
-async function connectedResult(conn, token, inspected, deps) {
+async function connectedResult(conn, token, inspected, deps, descriptor) {
   let tokenSaved = false;
   try {
     const tokens = tokenStoreFor(deps);
+    if (descriptor) tokens.bindComputer?.(conn.key, descriptor.computerId);
     if (conn.remember) tokenSaved = tokens.set(conn.key, token);
     else tokens.delete(conn.key);
   } catch {
@@ -817,6 +883,7 @@ async function connectedResult(conn, token, inspected, deps) {
     remotePort: conn.remotePort,
     ...(conn.url ? { url: conn.url } : {}),
     tokenSaved,
+    ...(descriptor ? { computerId: descriptor.computerId, descriptor } : { legacy: true }),
     remote,
     localVersion: mine,
   };
@@ -833,6 +900,7 @@ function unreachableText(url) {
 async function openDirectConnection(conn, deps) {
   const { url, key, label } = conn;
   const tokens = tokenStoreFor(deps);
+  bindExpectedComputer(conn, tokens);
   let token = conn.token;
   let fromKeychain = false;
   if (!token) {
@@ -848,12 +916,14 @@ async function openDirectConnection(conn, deps) {
   active.set(key, entry);
   entry.promise = (async () => {
     try {
-      await (deps.probeToken || probeToken)(url, token, { timeoutMs: DIRECT_PROBE_MS, unreachable: unreachableText(url) });
-      const inspected = (deps.inspectHost || inspectHost)(url, token).catch(() => null);
+      const descriptor = await (deps.probeToken || probeToken)(url, token, { ...conn, timeoutMs: DIRECT_PROBE_MS, unreachable: unreachableText(url) });
+      const inspected = (deps.inspectHost || inspectHost)(url, token, 8_000, descriptor).catch(() => null);
       const win = await createHostWindow({
         origin: url,
         title: `${label} · Solenta`,
         token,
+        computerId: descriptor?.computerId,
+        allowLegacy: conn.allowLegacy,
         deps,
         onClosed: () => {
           entry.closing = true;
@@ -862,7 +932,7 @@ async function openDirectConnection(conn, deps) {
       });
       entry.win = win;
       win.show();
-      return await connectedResult(conn, token, inspected, deps);
+      return await connectedResult(conn, token, inspected, deps, descriptor);
     } catch (err) {
       active.delete(key);
       if (entry.win && !entry.win.isDestroyed()) entry.win.destroy();
@@ -877,6 +947,7 @@ async function openRemoteConnection(input, deps = {}) {
   if (conn.url) return openDirectConnection(conn, deps);
   const { host, label, remotePort, token: typed, key } = conn;
   const tokens = tokenStoreFor(deps);
+  bindExpectedComputer(conn, tokens);
   // Typed, then the host's own token file over SSH (always current), then
   // the keychain copy for hosts whose token file cannot be read.
   // Always prepare the host, even with a typed token: it is what starts
@@ -949,7 +1020,7 @@ async function openRemoteConnection(input, deps = {}) {
       let child = null;
       try {
         child = await startTunnel();
-        await waitForHost(child, token);
+        await waitForHost(child, token, conn);
         entry.backPort = child.backPort;
         entry.reconnecting = false;
         if (!entry.win.isDestroyed()) entry.win.setTitle(title);
@@ -976,14 +1047,17 @@ async function openRemoteConnection(input, deps = {}) {
     try {
       const port = await startFront();
       const child = await startTunnel();
-      await waitForHost(child, token);
+      const descriptor = await waitForHost(child, token, conn);
+      if (descriptor) conn.computerId = descriptor.computerId;
       entry.backPort = child.backPort;
       // Runs while the window loads; only the Connections row waits for it.
-      const inspected = (deps.inspectHost || inspectHost)(port, token).catch(() => null);
+      const inspected = (deps.inspectHost || inspectHost)(port, token, 8_000, descriptor).catch(() => null);
       const win = await createHostWindow({
         origin: `http://127.0.0.1:${port}`,
         title,
         token,
+        computerId: descriptor?.computerId,
+        allowLegacy: conn.allowLegacy,
         deps,
         onClosed: () => {
           entry.closing = true;
@@ -993,7 +1067,7 @@ async function openRemoteConnection(input, deps = {}) {
       });
       entry.win = win;
       win.show();
-      return await connectedResult(conn, token, inspected, deps);
+      return await connectedResult(conn, token, inspected, deps, descriptor);
     } catch (err) {
       active.delete(key);
       if (entry.win && !entry.win.isDestroyed()) entry.win.destroy();
@@ -1016,7 +1090,8 @@ function closeEntry(entry) {
 }
 
 function forgetRemoteConnection(input, deps = {}) {
-  tokenStoreFor(deps).delete(validateConnection({ ...input, token: "" }).key);
+  const tokens = tokenStoreFor(deps);
+  (tokens.forget || tokens.delete).call(tokens, validateConnection({ ...input, token: "" }).key);
 }
 
 function closeRemoteConnections() {
@@ -1029,7 +1104,7 @@ function closeRemoteConnections() {
 
 // One invoke on the host's web API over a tunnel of its own, no window.
 // The reply can be large (Teleport back, #1702), hence the raised maxPayload.
-function wsInvoke(wsUrl, token, channel, args, timeoutMs) {
+function wsInvoke(wsUrl, token, channel, args, timeoutMs, descriptor) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(wsUrl, { maxPayload: 128 * 1024 * 1024 });
     let settled = false;
@@ -1050,6 +1125,7 @@ function wsInvoke(wsUrl, token, channel, args, timeoutMs) {
         return done(new Error("The remote Solenta host sent an unreadable reply."));
       }
       if (msg.kind === "auth-ok") {
+        try { confirmComputer(descriptor, msg.computer, descriptor?.computerId); } catch (err) { return done(err); }
         ws.send(JSON.stringify({ kind: "invoke", id: 1, channel, args }));
         return;
       }
@@ -1069,9 +1145,9 @@ function wsInvoke(wsUrl, token, channel, args, timeoutMs) {
  * host prep as Connect: the host's token file over SSH, then the keychain.
  */
 async function invokeRemote(input, channel, args, deps = {}) {
-  const { child, token, wsUrl } = await openHostTunnel(input, deps);
+  const { child, token, wsUrl, descriptor } = await openHostTunnel(input, deps);
   try {
-    return await wsInvoke(wsUrl, token, channel, args, deps.timeoutMs ?? 10 * 60_000);
+    return await wsInvoke(wsUrl, token, channel, args, deps.timeoutMs ?? 10 * 60_000, descriptor);
   } finally {
     child.kill();
   }
@@ -1083,7 +1159,8 @@ async function invokeRemote(input, channel, args, deps = {}) {
  * The caller owns `child` and kills it when done.
  */
 async function openHostTunnel(input, deps = {}, onClose) {
-  const conn = validateConnection({ host: input && input.host, remotePort: input && input.remotePort, url: input && input.url, label: input && input.label, token: "" });
+  const conn = validateConnection({ ...input, token: "" });
+  bindExpectedComputer(conn, tokenStoreFor(deps));
   if (conn.url) {
     // Direct route: no tunnel to own, so `child` only satisfies the shape.
     // A linked computer (#1832) carries its own token: no keychain on a server.
@@ -1091,8 +1168,9 @@ async function openHostTunnel(input, deps = {}, onClose) {
     if (!token) {
       throw new Error(`No web token found for ${conn.label}. Connect to it once from Settings > Connections with its device token.`);
     }
-    await (deps.probeToken || probeToken)(conn.url, token, { timeoutMs: DIRECT_PROBE_MS, unreachable: unreachableText(conn.url) });
-    return { child: { backPort: null, kill() {} }, token, wsUrl: wsUrlFor(conn.url) };
+    const descriptor = await (deps.probeToken || probeToken)(conn.url, token, { ...conn, timeoutMs: DIRECT_PROBE_MS, unreachable: unreachableText(conn.url) });
+    if (descriptor) tokenStoreFor(deps).bindComputer?.(conn.key, descriptor.computerId);
+    return { child: { backPort: null, kill() {} }, token, wsUrl: wsUrlFor(conn.url), descriptor };
   }
   const { host, remotePort } = conn;
   const token = (await readRemoteToken(host, remotePort, deps)) || tokenStoreFor(deps).get(`${host}:${remotePort}`);
@@ -1100,13 +1178,15 @@ async function openHostTunnel(input, deps = {}, onClose) {
     throw new Error(`No web token found on ${host}. Connect to it once from Settings > Connections.`);
   }
   const child = spawnTunnel(deps.spawn || spawn, host, await freeLoopbackPort(), remotePort, onClose, deps);
+  let descriptor;
   try {
-    await waitForHost(child, token);
+    descriptor = await waitForHost(child, token, conn);
+    if (descriptor) tokenStoreFor(deps).bindComputer?.(conn.key, descriptor.computerId);
   } catch (err) {
     child.kill();
     throw err;
   }
-  return { child, token, wsUrl: wsUrlFor(child.backPort) };
+  return { child, token, wsUrl: wsUrlFor(child.backPort), descriptor };
 }
 
 module.exports = {
@@ -1123,6 +1203,7 @@ module.exports = {
   inspectHost,
   compareVersions,
   probeToken,
+  fetchComputerDescriptor,
   parseDirectUrl,
   createTokenStore,
   openRemoteConnection,

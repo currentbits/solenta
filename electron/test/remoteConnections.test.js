@@ -26,6 +26,7 @@ const {
   closeRemoteConnections,
   invokeRemote,
 } = require("../remoteConnections.js");
+const COMPUTER = { kind: "solenta", computerId: "test-computer-one", protocol: { min: 1, max: 1 }, runtimeKind: "server" };
 const { classifySshPrompt, createSshPrompts, startAskpassServer } = require("../sshAskpass.js");
 
 async function waitFor(check, timeoutMs = 5_000) {
@@ -53,6 +54,11 @@ describe("remote Connections", () => {
       { key: "https://mini.tail1234.ts.net", url: "https://mini.tail1234.ts.net", host: "mini.tail1234.ts.net", remotePort: 443, token: "abc", label: "mini.tail1234.ts.net" },
     );
     assert.equal(validateConnection({ url: "https://box.example.com/?token=abc", token: "typed" }).token, "typed");
+    const fragment = validateConnection({ url: "https://mini.ts.net/#token=fragment-secret&computerId=test-computer-one" });
+    assert.equal(fragment.token, "fragment-secret");
+    assert.equal(fragment.computerId, "test-computer-one");
+    assert.equal(fragment.url, "https://mini.ts.net");
+    assert.throws(() => validateConnection({ url: "https://mini.ts.net/#token=secret&computerId=test-computer-two", computerId: "test-computer-one" }), /identity mismatch/);
     for (const ok of ["http://192.168.1.20:4620", "http://10.0.0.5:4620", "http://100.101.2.3:4620", "http://mini:4620", "http://mini.local:4620", "http://[fd7a:115c::1]:4620"]) {
       assert.equal(validateConnection({ url: ok }).url, new URL(ok).origin, ok);
     }
@@ -452,11 +458,14 @@ describe("remote Connections", () => {
         stderr: new EventEmitter(),
         kill() { killed.push(localPort); },
       });
-      const wss = new WebSocketServer({ port: localPort, host: "127.0.0.1" });
+      const server = http.createServer((req, res) => { if (req.url !== "/.well-known/solenta") return res.end("Solenta"); res.setHeader("Content-Type", "application/json"); res.end(JSON.stringify(COMPUTER)); });
+      const wss = new WebSocketServer({ server });
+      wss.on("close", () => server.close());
+      server.listen(localPort, "127.0.0.1");
       servers.push(wss);
       wss.on("connection", (ws) => ws.on("message", (raw) => {
         const msg = JSON.parse(String(raw));
-        if (msg.kind === "auth") return ws.send(JSON.stringify(msg.token === "tok" ? { kind: "auth-ok" } : { kind: "x" }));
+        if (msg.kind === "auth") return ws.send(JSON.stringify(msg.token === "tok" ? { kind: "auth-ok", computer: COMPUTER } : { kind: "x" }));
         // A push arriving first must not be mistaken for the reply.
         ws.send(JSON.stringify({ kind: "push", channel: "threads:changed", payload: [] }));
         if (msg.channel === "threads:teleportIn") {
@@ -464,7 +473,7 @@ describe("remote Connections", () => {
         }
         ws.send(JSON.stringify({ kind: "reply", id: msg.id, error: `No handler registered for '${msg.channel}'` }));
       }));
-      wss.once("listening", () => child.stderr.emit("data", "debug1: Entering interactive session.\n"));
+      server.once("listening", () => child.stderr.emit("data", "debug1: Entering interactive session.\n"));
       return child;
     };
     const deps = {
@@ -537,10 +546,10 @@ describe("remote Connections", () => {
         server?.close();
         tunnel.emit("close", 0);
       };
-      server = http.createServer((_req, res) => res.end("Solenta"));
+      server = http.createServer((req, res) => { if (req.url !== "/.well-known/solenta") return res.end("Solenta"); res.setHeader("Content-Type", "application/json"); res.end(JSON.stringify(COMPUTER)); });
       const wss = new WebSocketServer({ server, path: "/ws" });
       wss.on("connection", (ws) => ws.on("message", (raw) => {
-        if (JSON.parse(String(raw)).token === token) ws.send('{"kind":"auth-ok"}');
+        if (JSON.parse(String(raw)).token === token) ws.send(JSON.stringify({ kind: "auth-ok", computer: COMPUTER }));
         else ws.close();
       }));
       // Real ssh -v prints this only after every forward is bound.
@@ -597,12 +606,14 @@ describe("remote Connections", () => {
         host: "user@work",
         remotePort: 4620,
         tokenSaved: true,
+        computerId: COMPUTER.computerId,
+        descriptor: COMPUTER,
         remote: { version: "0.25.0", platform: "linux", agents: [], outdated: true },
         localVersion: "0.26.0",
       });
       assert.equal(saved.get("user@work:4620"), token);
       assert.equal(window.shown, true);
-      assert.match(window.url, /\/\?token=remote-secret$/);
+      assert.match(window.url, /\/#token=remote-secret&computerId=test-computer-one$/);
       assert.equal(window.options.webPreferences.nodeIntegration, false);
       assert.equal(window.options.webPreferences.sandbox, true);
       assert.equal(window.options.webPreferences.preload, undefined);
@@ -631,7 +642,7 @@ describe("remote Connections", () => {
 
       // A blank token reuses the saved one.
       await openRemoteConnection({ host: "user@work", token: "" }, deps);
-      assert.match(window.url, /\/\?token=remote-secret$/);
+      assert.match(window.url, /\/#token=remote-secret&computerId=test-computer-one$/);
       window.close();
       await assert.rejects(
         openRemoteConnection({ host: "nobody@work", token: "" }, deps),
@@ -642,7 +653,7 @@ describe("remote Connections", () => {
       remoteFile = token;
       saved.clear();
       await openRemoteConnection({ host: "fresh@work", token: "" }, deps);
-      assert.match(window.url, /\/\?token=remote-secret$/);
+      assert.match(window.url, /\/#token=remote-secret&computerId=test-computer-one$/);
       assert.equal(saved.get("fresh@work:4620"), token);
       window.close();
       remoteFile = "";

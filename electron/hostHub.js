@@ -16,6 +16,7 @@
  */
 
 const { WebSocket } = require("ws");
+const { confirmComputer } = require("./serverIdentity.js");
 
 // Reconnect backoff; the last delay repeats while the host stays saved.
 const RETRY_DELAYS_MS = [1_000, 2_000, 5_000, 10_000, 30_000];
@@ -27,7 +28,7 @@ const RELAYED_PUSHES = new Set(["terminal:data", "pr:progress", "clone:progress"
 // Direct routes (#1824) have no ssh keepalive: ping, and drop a socket
 // that misses a pong so a sleeping network shows offline and reconnects.
 const HEARTBEAT_MS = 30_000;
-const NO_RETRY = /refused the login|host key|rejected this computer's token|rejected this token|No web token found|not installed on|Plain http|must start with|Enter an address/i;
+const NO_RETRY = /identity|incompatible|legacy compatibility|invalid Solenta|refused the login|host key|rejected this computer's token|rejected this token|No web token found|not installed on|Plain http|must start with|Enter an address/i;
 // Arg fields that name the thread or project a call acts on.
 const ID_FIELDS = ["threadId", "projectId", "id", "parentThreadId", "sourceThreadId"];
 
@@ -79,9 +80,19 @@ function createHostHub(deps) {
   const clearTimer = deps.clearTimer || clearTimeout;
   /** @type {Map<string, any>} */
   const hosts = new Map();
+  let closing = false;
+  const localThreadIds = new Set();
+  const localProjectIds = new Set();
+  function primary(entry) {
+    return (entry.following && hosts.get(entry.following)) || entry;
+  }
+  function representatives() {
+    return [...hosts.values()].filter((entry) => primary(entry) === entry);
+  }
 
   function tagFor(entry) {
-    return { key: entry.key, label: entry.label, status: entry.status };
+    const owner = primary(entry);
+    return { key: owner.key, label: owner.label, status: owner.status, ...(owner.descriptor ? { computerId: owner.descriptor.computerId } : {}) };
   }
 
   // Tagged rows are cached per source object so an unchanged remote row
@@ -212,6 +223,9 @@ function createHostHub(deps) {
       entry.parked = true;
       return;
     }
+    // Rotate only previously authenticated routes for this computer. The
+    // entry remains the stable owner of IDs, calls and retry scheduling.
+    entry.routeCursor = (entry.routeCursor || 0) + 1;
     const delay = RETRY_DELAYS_MS[Math.min(entry.attempt, RETRY_DELAYS_MS.length - 1)];
     entry.attempt += 1;
     entry.retry = setTimer(() => {
@@ -221,17 +235,22 @@ function createHostHub(deps) {
   }
 
   async function connect(entry) {
-    if (entry.removed || entry.ws) return;
+    if (entry.removed || entry.ws || entry.following || entry.connecting) return;
+    entry.connecting = true;
     if (entry.status !== "online") setStatus(entry, "connecting", entry.error);
+    const routes = [entry, ...[...hosts.values()].filter((r) => r.following === entry.key && r.descriptor?.computerId === entry.descriptor?.computerId)];
+    const route = routes[(entry.routeCursor || 0) % routes.length];
     let opened;
     try {
-      opened = await deps.openTunnel({ host: entry.host, remotePort: entry.remotePort, url: entry.url, label: entry.label, ...(entry.token ? { token: entry.token } : {}) }, () => {
+      opened = await deps.openTunnel({ host: route.host, remotePort: route.remotePort, url: route.url, label: entry.label, computerId: entry.computerId, allowLegacy: route.allowLegacy, ...(route.token ? { token: route.token } : {}) }, () => {
         if (entry.child === opened?.child) dropSocket(entry, "SSH connection ended.");
       });
     } catch (err) {
+      entry.connecting = false;
       dropSocket(entry, err && err.message ? err.message : String(err));
       return;
     }
+    entry.connecting = false;
     if (entry.removed) {
       opened.child.kill();
       return;
@@ -239,7 +258,7 @@ function createHostHub(deps) {
     entry.child = opened.child;
     const ws = new WS(opened.wsUrl || `ws://127.0.0.1:${opened.child.backPort}/ws`, { maxPayload: 128 * 1024 * 1024 });
     entry.ws = ws;
-    if (entry.url && typeof ws.ping === "function") {
+    if (route.url && typeof ws.ping === "function") {
       let alive = true;
       ws.on("pong", () => { alive = true; });
       const beat = () => {
@@ -254,15 +273,43 @@ function createHostHub(deps) {
       };
       entry.beat = setTimer(beat, HEARTBEAT_MS);
     }
-    ws.on("open", () => ws.send(JSON.stringify({ kind: "auth", token: opened.token })));
+    ws.on("open", () => { if (entry.ws === ws) ws.send(JSON.stringify({ kind: "auth", token: opened.token, ...(opened.descriptor ? { computerId: opened.descriptor.computerId, protocol: 1 } : {}) })); });
+    let authenticated = false;
     ws.on("message", (raw) => {
+      if (entry.ws !== ws) return;
       let msg;
       try {
         msg = JSON.parse(String(raw));
       } catch {
         return;
       }
+      if (msg.kind !== "auth-ok" && !authenticated) { dropSocket(entry, "Computer identity was not confirmed before remote data arrived."); return; }
       if (msg.kind === "auth-ok") {
+        if (authenticated) return;
+        let descriptor;
+        try { descriptor = confirmComputer(opened.descriptor, msg.computer, entry.computerId); }
+        catch (err) { dropSocket(entry, err.message); return; }
+        authenticated = true;
+        if (descriptor) {
+          entry.computerId = descriptor.computerId;
+          entry.descriptor = descriptor;
+          const owner = representatives().find((other) => other !== entry && other.descriptor?.computerId === descriptor.computerId);
+          if (owner) {
+            // Keep this verified route and its own token, with one live
+            // socket/reconnect owner for the computer's shared data.
+            entry.following = owner.key;
+            if (!entry.peer) owner.peer = false;
+            entry.ws = null;
+            if (entry.beat) clearTimer(entry.beat);
+            entry.beat = null;
+            ws.terminate();
+            entry.child?.kill();
+            entry.child = null;
+            retag(owner);
+            return;
+          }
+        }
+        entry.activeRouteKey = route.key;
         entry.attempt = 0;
         setStatus(entry, "online");
         void Promise.all([
@@ -287,7 +334,7 @@ function createHostHub(deps) {
     });
     ws.on("close", (code) => {
       if (entry.ws !== ws) return;
-      dropSocket(entry, code === 4401 ? `${entry.label} rejected this computer's token. Connect again from Settings → Connections.` : "Connection closed.");
+      dropSocket(entry, code === 4409 ? "Computer identity or protocol mismatch. Verify this connection before reconnecting." : code === 4401 ? `${entry.label} rejected this computer's token. Connect again from Settings → Connections.` : "Connection closed.");
     });
     ws.on("error", () => {
       // close follows
@@ -295,10 +342,13 @@ function createHostHub(deps) {
   }
 
   function remove(entry) {
+    const followers = [...hosts.values()].filter((e) => e.following === entry.key && (sidebarInput.some((h) => hostKey(h) === e.key) || peerInput.some((h) => hostKey(h) === e.key)));
+    for (const follower of followers) follower.following = null;
     entry.removed = true;
     if (entry.retry) clearTimer(entry.retry);
     dropSocket(entry);
     hosts.delete(entry.key);
+    if (!closing && followers.length) void connect(followers[0]);
   }
 
   // Two sources share one socket per computer: the sidebar's Connections
@@ -355,12 +405,20 @@ function createHostHub(deps) {
       const label = (typeof h.label === "string" && h.label.trim()) || h.host;
       const held = hosts.get(key);
       const peer = h.peer === true;
+      if (held && h.computerId && held.computerId && h.computerId !== held.computerId) {
+        // A saved address cannot be reassigned while calls still own its rows.
+        dropSocket(held, "Computer identity mismatch. Forget this route before pairing another computer.");
+        held.parked = true;
+        continue;
+      }
       if (held && (held.peer !== peer || held.token !== h.token)) {
         held.peer = peer;
         held.token = h.token;
         retag(held);
       }
-      if (held && held.parked) {
+      if (held && held.status === "offline" && !held.following) {
+        if (held.retry) clearTimer(held.retry);
+        held.retry = null;
         // Saved again after a refusal: try once more.
         held.parked = false;
         held.attempt = 0;
@@ -374,6 +432,7 @@ function createHostHub(deps) {
         continue;
       }
       const entry = {
+        computerId: h.computerId, allowLegacy: h.allowLegacy === true, descriptor: null, following: null,
         key, host: h.host, remotePort: h.remotePort, url: h.url, label, beat: null, peer, token: h.token,
         status: "connecting", error: null, tag: null,
         ws: null, child: null, pending: new Map(), nextId: 0, attempt: 0, retry: null, removed: false,
@@ -394,36 +453,44 @@ function createHostHub(deps) {
 
   /** The window's hosts; `{ peers: true }` adds linked computers. */
   function list(opts = {}) {
-    return [...hosts.values()].filter((e) => opts.peers || !e.peer).map((e) => ({
+    return representatives().filter((e) => opts.peers || !e.peer || [...hosts.values()].some((r) => r.following === e.key && !r.peer)).map((e) => ({
       ...(e.peer ? { peer: true } : {}),
       key: e.key, host: e.host, remotePort: e.remotePort, ...(e.url ? { url: e.url } : {}),
+      ...(e.descriptor ? { computerId: e.descriptor.computerId, descriptor: e.descriptor } : {}),
+      routes: [...hosts.values()].filter((r) => primary(r) === e).map((r) => ({ key: r.key, host: r.host, remotePort: r.remotePort, ...(r.url ? { url: r.url } : {}) })),
+      activeRouteKey: e.activeRouteKey,
       label: e.label, status: e.status, error: e.error,
     }));
   }
 
   /** @param {unknown[]} args */
   function ownerOf(args) {
-    if (hosts.size === 0) return null;
     // Calls that create something on a host (add/clone a project, browse
     // its folders) name it explicitly with `onHost: key`.
     for (const arg of args.slice(0, 2)) {
-      if (arg && typeof arg === "object" && typeof arg.onHost === "string" && arg.onHost) {
+      if (arg && typeof arg === "object" && typeof arg.onHost === "string") {
         const entry = hosts.get(arg.onHost);
-        if (entry) return entry;
+        if (entry) return primary(entry);
         throw new Error("That computer is no longer in the sidebar.");
       }
     }
+    const found = new Set();
+    let localFound = false;
     for (const arg of args.slice(0, 2)) {
       const ids = typeof arg === "string"
         ? [arg]
         : arg && typeof arg === "object" ? ID_FIELDS.map((k) => arg[k]).filter((v) => typeof v === "string") : [];
       for (const id of ids) {
-        for (const entry of hosts.values()) {
-          if (entry.threadIds.has(id) || entry.projectIds.has(id)) return entry;
+        if (localThreadIds.has(id) || localProjectIds.has(id)) localFound = true;
+        for (const entry of representatives()) {
+          if (entry.threadIds.has(id) || entry.projectIds.has(id)) found.add(entry);
         }
       }
     }
-    return null;
+    if (found.size > 1 || (found.size && localFound)) {
+      throw new Error("This ID exists on more than one computer. Select its owning computer explicitly.");
+    }
+    return found.values().next().value || null;
   }
 
   // Thread- and project-shaped results get the host tag so the renderer can
@@ -449,14 +516,18 @@ function createHostHub(deps) {
   function mergeThreads(local) {
     if (hosts.size === 0) return local;
     const out = Array.isArray(local) ? local.slice() : [];
-    for (const entry of hosts.values()) if (!entry.peer) out.push(...entry.taggedThreads);
+    localThreadIds.clear();
+    for (const row of out) localThreadIds.add(row.id);
+    for (const entry of representatives()) if (!entry.peer || [...hosts.values()].some((r) => r.following === entry.key && !r.peer)) out.push(...entry.taggedThreads);
     return out;
   }
 
   function mergeProjects(local) {
     if (hosts.size === 0) return local;
     const out = Array.isArray(local) ? local.slice() : [];
-    for (const entry of hosts.values()) if (!entry.peer) out.push(...entry.taggedProjects);
+    localProjectIds.clear();
+    for (const row of out) localProjectIds.add(row.id);
+    for (const entry of representatives()) if (!entry.peer || [...hosts.values()].some((r) => r.following === entry.key && !r.peer)) out.push(...entry.taggedProjects);
     return out;
   }
 
@@ -468,14 +539,27 @@ function createHostHub(deps) {
    * @param {() => Promise<unknown>} local
    */
   function route(channel, args, local) {
-    if (hosts.size === 0) return null;
+    if (hosts.size === 0) {
+      try { ownerOf(args); } catch (err) { return Promise.reject(err); }
+      return null;
+    }
+    let entry;
+    try { entry = ownerOf(args); } catch (err) { return Promise.reject(err); }
+    if (entry) {
+      const sent = args.map((arg) => {
+        if (!arg || typeof arg !== "object" || !("onHost" in arg)) return arg;
+        const { onHost: _drop, ...rest } = arg;
+        return rest;
+      });
+      return send(entry, channel, sent, INVOKE_TIMEOUT_MS).then((result) => tagResult(entry, channel, result));
+    }
     if (channel === "threads:list") return local().then(mergeThreads);
     if (channel === "projects:list") {
       return local().then(async (rows) => {
         // Projects have no push, and the renderer refetches them on every
         // threads:changed: refresh each online host here, at most every 2 s.
         const now = Date.now();
-        await Promise.all([...hosts.values()].map((entry) => {
+        await Promise.all(representatives().map((entry) => {
           if (entry.status !== "online" || now - (entry.projectsAt || 0) < 2_000) return null;
           entry.projectsAt = now;
           return send(entry, "projects:list", [], LIST_TIMEOUT_MS).then((p) => setProjects(entry, p), () => {});
@@ -483,37 +567,28 @@ function createHostHub(deps) {
         return mergeProjects(rows);
       });
     }
-    let entry;
-    try {
-      entry = ownerOf(args);
-    } catch (err) {
-      return Promise.reject(err);
-    }
-    if (!entry) return null;
-    const sent = args.map((arg) => {
-      if (!arg || typeof arg !== "object" || !("onHost" in arg)) return arg;
-      const { onHost: _drop, ...rest } = arg;
-      return rest;
-    });
-    return send(entry, channel, sent, INVOKE_TIMEOUT_MS).then((result) => tagResult(entry, channel, result));
+    return null;
   }
 
   /** Call one host by key, e.g. to start a worker there (#1821). */
   function invoke(key, channel, args) {
     const entry = hosts.get(key);
     if (!entry) return Promise.reject(new Error("That computer is no longer in the sidebar."));
-    return send(entry, channel, args, INVOKE_TIMEOUT_MS).then((result) => tagResult(entry, channel, result));
+    return send(primary(entry), channel, args, INVOKE_TIMEOUT_MS).then((result) => tagResult(entry, channel, result));
   }
 
   function projectsOf(key) {
-    return hosts.get(key)?.projects || [];
+    const entry = hosts.get(key);
+    return entry ? primary(entry).projects : [];
   }
 
   function threadsOf(key) {
-    return hosts.get(key)?.threads || [];
+    const entry = hosts.get(key);
+    return entry ? primary(entry).threads : [];
   }
 
   function close() {
+    closing = true;
     for (const entry of [...hosts.values()]) remove(entry);
   }
 

@@ -35,7 +35,12 @@ function channelsFor(ctx, input) {
 
 module.exports = {
   "app:status": async (ctx) => {
-    return services.appStatus(ctx.store);
+    const status = await services.appStatus(ctx.store);
+    if (!ctx.userDataPath) return status;
+    const computer = require("./serverIdentity.js").computerDescriptor(ctx.userDataPath);
+    return { ...status, computer, ...(computer.runtimeKind === "server" ? { serverActivity: { active: ctx.store.getThreads().filter((t) => t.status === "working" || t.pendingPermission || t.pendingQuestion).length + require("./terminal.js").listLive().length } } : {}), build: { ...status.build, runtimeKind: computer.runtimeKind,
+      ...(computer.releaseTag ? { releaseTag: computer.releaseTag } : {}),
+      ...(computer.buildSha ? { buildSha: computer.buildSha } : {}) } };
   },
   "app:checkUpdate": async (ctx) => {
     return updater.checkUpdate({
