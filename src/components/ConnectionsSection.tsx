@@ -346,11 +346,16 @@ export function ConnectionsSection({ onOpen, onForget, onInstall, onManage, onSi
             {remote.host} runs Solenta {remote.info.version}
             {remote.info.outdated && remote.localVersion ? `, older than ${remote.localVersion} on this computer.` : "."}
           </p>
-          {remote.info.outdated ? (
-            mode === "ssh" && onInstall && (
-              (remote.descriptor?.runtimeKind === "server" && serverStatus?.host === remote.host && serverStatus.info.mode === "managed") ||
-              (remote.descriptor?.runtimeKind === "desktop" && remote.info.platform === "linux")
-            ) ? (
+          {mode === "ssh" && onInstall && remote.descriptor?.runtimeKind === "server" &&
+            serverStatus?.host === remote.host && serverStatus.info.mode === "managed" ? (
+            <>
+              <button type="button" data-connection-update="" className={styles.btn} disabled={installing} onClick={() => void install(remote.host)}>
+                {installing ? "Updating…" : "Install matching server release"}
+              </button>
+              <p>Uses this app&apos;s published release. Nightly builds can differ even when their version numbers match. Active work must finish before installation.</p>
+            </>
+          ) : remote.info.outdated ? (
+            mode === "ssh" && onInstall && remote.descriptor?.runtimeKind === "desktop" && remote.info.platform === "linux" ? (
               <button type="button" data-connection-update="" className={styles.btn} disabled={installing} onClick={() => void install(remote.host)}>
                 {installing ? "Updating…" : `Update Solenta on ${remote.host}`}
               </button>

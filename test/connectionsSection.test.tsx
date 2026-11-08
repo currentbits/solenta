@@ -261,6 +261,22 @@ it("allows identity-free compatibility only after an explicit choice", async () 
   assert.equal(saved[0].legacy, true);
 });
 
+it("offers managed server release installation when nightly package versions match", async () => {
+  const installs: unknown[] = [];
+  const descriptor = { kind: "solenta" as const, computerId: "nightly-host", runtimeKind: "server" as const, protocol: { min: 1, max: 1 }, version: "0.29.0", buildSha: "older-build" };
+  const m = await mount(<ConnectionsSection
+    onOpen={async input => ({ host: input.host, remotePort: 4620, tokenSaved: true, descriptor, computerId: descriptor.computerId,
+      localVersion: "0.29.0", remote: { version: "0.29.0", platform: "linux", outdated: false, agents: [] } })}
+    onManage={async () => ({ mode: "managed", manager: "systemd-user", installed: true, running: true, sessionLimit: "User service" })}
+    onInstall={async input => { installs.push(input); return { tag: "nightly-new", missingLibraries: [], aptCommand: null, restartNeeded: false }; }}
+  />);
+  await m.type(m.query("[data-connection-host]"), "builder");
+  await m.click(m.query("[data-connection-open]"));
+  assert.match(m.query("[data-connection-update]")?.textContent || "", /Install matching server release/);
+  await m.click(m.query("[data-connection-update]"));
+  assert.deepEqual(installs, [{ host: "builder", computerId: "nightly-host" }]);
+});
+
 it("offers explicit external preparation without claiming service supervision", async () => {
   const prepared: unknown[] = [];
   const m = await mount(<ConnectionsSection onManage={async input => {
