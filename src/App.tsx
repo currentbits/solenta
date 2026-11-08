@@ -889,7 +889,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     // with the prompt pre-filled in the composer, never sent — a link must
     // not be able to start a run by itself. Reuses the same restoreDraft
     // path as a discarded queued follow-up (#364/#1212).
-    const offNewDraft = api.on("thread:newDraft", (payload) => {
+    const offNewDraft = isWebMode() ? () => {} : api.on("thread:newDraft", (payload) => {
       const prompt = payload?.prompt;
       if (typeof prompt !== "string" || !prompt) return;
       setView("thread");
