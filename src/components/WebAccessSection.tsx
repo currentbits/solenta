@@ -82,7 +82,7 @@ export function pairingBases(status: WebAccessStatus): string[] {
 }
 
 export function pairingLink(base: string, token: string): string {
-  return `${base.replace(/\/+$/, "")}/?token=${encodeURIComponent(token)}`;
+  return `${base.replace(/\/+$/, "")}/#token=${encodeURIComponent(token)}`;
 }
 
 /** Rendered locally from the link; nothing leaves the machine. */

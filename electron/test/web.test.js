@@ -239,7 +239,7 @@ describe("parseServeWebArgs", () => {
     const out = serveBanner({ token: "t0k", urls: [{ kind: "local", url: "http://127.0.0.1:4620" }] });
     assert.match(out, /^solenta-web: token t0k\n/, "first line stays machine-readable");
     assert.match(out, /Address {2}http:\/\/127\.0\.0\.1:4620 {2}\(this machine only\)/);
-    assert.match(out, /Link {5}http:\/\/127\.0\.0\.1:4620\/\?token=t0k/);
+    assert.match(out, /Link {5}http:\/\/127\.0\.0\.1:4620\/#token=t0k/);
     assert.match(out, /--serve-host 0\.0\.0\.0/);
     assert.doesNotMatch(out, /Scan/);
   });
@@ -250,11 +250,11 @@ describe("parseServeWebArgs", () => {
       token: "a b",
       urls: [{ kind: "local", url: "http://127.0.0.1:4620" }, { kind: "lan", url: "http://192.168.1.20:4620" }],
     });
-    assert.match(out, /Link {5}http:\/\/192\.168\.1\.20:4620\/\?token=a%20b/);
+    assert.match(out, /Link {5}http:\/\/192\.168\.1\.20:4620\/#token=a%20b/);
     assert.match(out, /Scan to open it on a phone:\n[\u2580\u2584\u2588 ]+\n/);
     assert.ok(out.includes(HOST_FLAG_HELP));
     const tailnet = serveBanner({ token: "x", urls: [], tailnetUrl: "https://mac.tail1.ts.net" });
-    assert.match(tailnet, /Link {5}https:\/\/mac\.tail1\.ts\.net\/\?token=x/);
+    assert.match(tailnet, /Link {5}https:\/\/mac\.tail1\.ts\.net\/#token=x/);
   });
 
   it("HOST_FLAG_HELP names no TLS and LAN as an informed choice", () => {
@@ -913,4 +913,3 @@ describe("web bridge denies simulator invoke and push", () => {
     }
   });
 });
-

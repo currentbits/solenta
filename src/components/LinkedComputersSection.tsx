@@ -73,7 +73,7 @@ export function LinkedComputersSection({ active }: { active: boolean }) {
       ) : null}
       <label className={styles.field}>
         <span>Device link</span>
-        <input className={styles.input} data-linked-link="" value={link} onChange={(e) => setLink(e.target.value)} placeholder="https://mac.tailnet.ts.net/?token=…" autoComplete="off" spellCheck={false} />
+        <input className={styles.input} data-linked-link="" value={link} onChange={(e) => setLink(e.target.value)} placeholder="https://mac.tailnet.ts.net/#token=…" autoComplete="off" spellCheck={false} />
       </label>
       <label className={styles.field}>
         <span>Name</span>

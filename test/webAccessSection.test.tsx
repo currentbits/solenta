@@ -59,7 +59,7 @@ describe("WebAccessSection", () => {
     for (let i = 0; i < 5 && !m.query("[data-web-qr]"); i++) await m.flush();
 
     const link = m.query("[data-web-pair-link]")?.textContent ?? "";
-    assert.equal(link, `http://127.0.0.1:4620/?token=${"t".repeat(43)}`);
+    assert.equal(link, `http://127.0.0.1:4620/#token=${"t".repeat(43)}`);
     const qr = m.query("[data-web-qr]") as HTMLImageElement | null;
     assert.ok(qr, "QR rendered");
     assert.match(qr.getAttribute("src") ?? "", /^data:image\/svg\+xml/, "no network image");
@@ -159,6 +159,6 @@ describe("WebAccessSection", () => {
       "http://192.168.1.20:4620",
       "http://127.0.0.1:4620",
     ]);
-    assert.equal(pairingLink("https://x/", "a+b"), "https://x/?token=a%2Bb");
+    assert.equal(pairingLink("https://x/", "a+b"), "https://x/#token=a%2Bb");
   });
 });

@@ -210,7 +210,7 @@ function serveBanner(opts) {
     ...urls.filter((u) => u.kind !== "local"),
   ];
   const best = reachable[0] || urls[0];
-  const link = best ? `${best.url}/?token=${encodeURIComponent(token)}` : "";
+  const link = best ? `${best.url}/#token=${encodeURIComponent(token)}` : "";
   const lines = [`solenta-web: token ${token}`, "", "Solenta Web is ready."];
   for (const u of [...reachable, ...urls.filter((x) => x.kind === "local")]) {
     const note = u.kind === "local" ? "this machine only" : u.kind === "tailnet" ? "your tailnet, HTTPS" : "your network, plain HTTP";
