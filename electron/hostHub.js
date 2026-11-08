@@ -86,6 +86,9 @@ function createHostHub(deps) {
   function primary(entry) {
     return (entry.following && hosts.get(entry.following)) || entry;
   }
+  function shownInSidebar(entry) {
+    return [...hosts.values()].some((route) => primary(route) === entry && !route.peer);
+  }
   function representatives() {
     return [...hosts.values()].filter((entry) => primary(entry) === entry);
   }
@@ -175,7 +178,7 @@ function createHostHub(deps) {
       return;
     }
     // A linked computer (#1832) feeds delegation, not the window.
-    if (entry.peer && channel !== "crew:call" && channel !== "boot:ready") return;
+    if (!shownInSidebar(entry) && channel !== "crew:call" && channel !== "boot:ready") return;
     if (channel === "thread:updated") {
       if (!payload || !payload.thread) return;
       deps.pushWindows(channel, { ...payload, thread: { ...payload.thread, host: entry.tag } });
@@ -298,7 +301,6 @@ function createHostHub(deps) {
             // Keep this verified route and its own token, with one live
             // socket/reconnect owner for the computer's shared data.
             entry.following = owner.key;
-            if (!entry.peer) owner.peer = false;
             entry.ws = null;
             if (entry.beat) clearTimer(entry.beat);
             entry.beat = null;
@@ -414,7 +416,11 @@ function createHostHub(deps) {
       if (held && (held.peer !== peer || held.token !== h.token)) {
         held.peer = peer;
         held.token = h.token;
-        retag(held);
+        retag(primary(held));
+      }
+      if (held) {
+        held.allowLegacy = h.allowLegacy === true;
+        if (!held.computerId && h.computerId) held.computerId = h.computerId;
       }
       if (held && held.status === "offline" && !held.following) {
         if (held.retry) clearTimer(held.retry);
@@ -453,8 +459,8 @@ function createHostHub(deps) {
 
   /** The window's hosts; `{ peers: true }` adds linked computers. */
   function list(opts = {}) {
-    return representatives().filter((e) => opts.peers || !e.peer || [...hosts.values()].some((r) => r.following === e.key && !r.peer)).map((e) => ({
-      ...(e.peer ? { peer: true } : {}),
+    return representatives().filter((e) => opts.peers || shownInSidebar(e)).map((e) => ({
+      ...(!shownInSidebar(e) ? { peer: true } : {}),
       key: e.key, host: e.host, remotePort: e.remotePort, ...(e.url ? { url: e.url } : {}),
       ...(e.descriptor ? { computerId: e.descriptor.computerId, descriptor: e.descriptor } : {}),
       routes: [...hosts.values()].filter((r) => primary(r) === e).map((r) => ({ key: r.key, host: r.host, remotePort: r.remotePort, ...(r.url ? { url: r.url } : {}) })),
@@ -518,7 +524,7 @@ function createHostHub(deps) {
     const out = Array.isArray(local) ? local.slice() : [];
     localThreadIds.clear();
     for (const row of out) localThreadIds.add(row.id);
-    for (const entry of representatives()) if (!entry.peer || [...hosts.values()].some((r) => r.following === entry.key && !r.peer)) out.push(...entry.taggedThreads);
+    for (const entry of representatives()) if (shownInSidebar(entry)) out.push(...entry.taggedThreads);
     return out;
   }
 
@@ -527,7 +533,7 @@ function createHostHub(deps) {
     const out = Array.isArray(local) ? local.slice() : [];
     localProjectIds.clear();
     for (const row of out) localProjectIds.add(row.id);
-    for (const entry of representatives()) if (!entry.peer || [...hosts.values()].some((r) => r.following === entry.key && !r.peer)) out.push(...entry.taggedProjects);
+    for (const entry of representatives()) if (shownInSidebar(entry)) out.push(...entry.taggedProjects);
     return out;
   }
 

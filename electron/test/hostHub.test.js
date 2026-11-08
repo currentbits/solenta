@@ -111,6 +111,51 @@ describe("hostHub", () => {
     assert.equal(detail.thread.host.computerId, "computer-one");
   });
 
+  it("uses newly explicit legacy compatibility when retrying a saved route", async () => {
+    const remote = await fakeHost({ threads: [{ id: "legacy-thread", projectId: "rp" }] });
+    const attempts = [];
+    const { hub } = makeHub(remote, { openTunnel: async (input) => {
+      attempts.push(input);
+      if (!input.allowLegacy) throw new Error("Enable legacy compatibility for this unbound computer.");
+      return { child: { backPort: remote.port, kill() {} }, token: "tok" };
+    } });
+    cleanup.push(() => remote.close(), () => hub.close());
+    hub.setHosts([HOST]);
+    await waitFor(() => hub.list()[0].status === "offline");
+    hub.setHosts([{ ...HOST, allowLegacy: true }]);
+    await waitFor(() => hub.mergeThreads([]).length === 1);
+    assert.deepEqual(attempts.map((a) => a.allowLegacy), [false, true]);
+    assert.equal(hub.list()[0].status, "online");
+  });
+
+  it("keeps sidebar pushes on a peer-owned route after reapplying inputs, and hides them after removal", async () => {
+    const remote = await fakeHost({ computerId: "computer-one", threads: [{ id: "r1", projectId: "rp" }] });
+    const { hub, pushes } = makeHub(remote);
+    cleanup.push(() => remote.close(), () => hub.close());
+    const peer = { url: "https://peer.ts.net", token: "tok", label: "Linked" };
+    hub.setPeers([peer]);
+    await waitFor(() => hub.list({ peers: true })[0]?.status === "online");
+    hub.setHosts([HOST]);
+    await waitFor(() => hub.list().length === 1 && hub.list()[0].routes.length === 2);
+    hub.setPeers([peer]);
+    hub.setHosts([HOST]);
+    const before = pushes.length;
+    remote.push("thread:updated", { thread: { id: "r1", projectId: "rp", title: "latest" }, messages: [] });
+    remote.push("terminal:data", { threadId: "r1", data: "fresh tail" });
+    await waitFor(() => pushes.slice(before).some((p) => p.channel === "thread:updated") && pushes.slice(before).some((p) => p.channel === "terminal:data"));
+    assert.equal(hub.list()[0].peer, undefined);
+    assert.equal(hub.mergeThreads([]).length, 1);
+    hub.setHosts([]);
+    assert.equal(hub.list().length, 0);
+    assert.equal(hub.list({ peers: true })[0].peer, true);
+    assert.equal(hub.mergeThreads([]).length, 0);
+    const removed = pushes.length;
+    remote.push("thread:updated", { thread: { id: "r1", projectId: "rp" } });
+    remote.push("terminal:data", { threadId: "r1", data: "private peer tail" });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.equal(pushes.slice(removed).some((p) => ["thread:updated", "terminal:data"].includes(p.channel)), false);
+  });
+
   it("fails over through verified alternate routes without changing the computer owner", async () => {
     const remote = await fakeHost({ computerId: "computer-one", threads: [{ id: "r1", projectId: "rp" }] });
     let primaryFailed = false;
