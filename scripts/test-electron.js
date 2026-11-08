@@ -21,6 +21,7 @@ const args = [
 const WIN32_FILES = [
   "electron/test/wsl.test.js", // the boundary contract itself
   "electron/test/worktree-wsl.test.js", // worktree placement across it
+  "electron/test/diff-relative.test.js", // real git paths; symlink case skips win32
   "electron/test/doctor.test.js", // the win32 doctor probes
   "electron/test/sandbox.test.js", // sandbox resolution (platform injected)
   "electron/test/which-platform.test.js", // defaultWhich + cross-spawn source
