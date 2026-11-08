@@ -37,6 +37,27 @@ interface SavedDraft {
   chips?: ContextChip[];
 }
 
+/** Capture every composer field before replacing a draft's thread. */
+export function captureComposerDraft(threadId: string): SavedDraft {
+  return {
+    text: keptDrafts[threadId] ?? "",
+    attachments: keptAttachments[threadId]?.slice() ?? [],
+    pasteCards: keptPasteCards[threadId]?.slice() ?? [],
+    sent: sentHistory[threadId]?.slice() ?? [],
+    comments: keptReviewComments[threadId]?.slice() ?? [],
+    chips: keptContextChips[threadId]?.slice() ?? [],
+  };
+}
+
+export function restoreComposerDraft(threadId: string, draft: SavedDraft): void {
+  setDraftText(threadId, draft.text ?? "");
+  keptAttachments[threadId] = draft.attachments?.slice() ?? [];
+  keptPasteCards[threadId] = draft.pasteCards?.slice() ?? [];
+  sentHistory[threadId] = draft.sent?.slice() ?? [];
+  setReviewComments(threadId, () => draft.comments?.slice() ?? []);
+  setContextChips(threadId, () => draft.chips?.slice() ?? []);
+}
+
 function clearRecord<T>(store: Record<string, T>): void {
   for (const key of Object.keys(store)) delete store[key];
 }
