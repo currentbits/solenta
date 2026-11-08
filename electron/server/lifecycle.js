@@ -165,9 +165,9 @@ function createLifecycle(options = {}, deps = {}) {
       // Failed trial data is retained for diagnosis. It may contain secrets.
     }
     point(journal.old.runtime); save(journal.old);
-    fs.rmSync(maintenance, { force: true });
     if (manager === "launchd") run("launchctl", ["bootstrap", domain, unit]); else start();
     await deps.ready(journal.old.port, journal.old.runtime);
+    fs.rmSync(maintenance, { force: true });
     fs.rmSync(pending, { force: true });
     fs.rmSync(journal.backup, { recursive: true, force: true });
     return status();
