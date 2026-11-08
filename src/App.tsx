@@ -1,3 +1,5 @@
+import { useRecordingPrivacy } from "./app/useRecordingPrivacy";
+import { RecordingPrivacyBanner, RecordingPrivacyControl } from "./components/RecordingPrivacyControl";
 import {
   useCallback,
   useEffect,
@@ -211,6 +213,8 @@ function useOpenedOnce(open: boolean): boolean {
 }
 
 export default function App({ rendererSha: rendererShaOverride }: AppProps = {}) {
+  const rawCoder = useCoder();
+  const { coder, privacy, updatePrivacy, knownTags, visibilityKey, isThreadVisible, hiddenSelection } = useRecordingPrivacy(rawCoder);
   const {
     api,
     projects,
@@ -484,7 +488,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     listAutomationRuns,
     refreshAutomations,
     sidebarHosts,
-  } = useCoder();
+  } = coder;
 
   useEffect(() => {
     if (!settings?.theme) return;
@@ -891,11 +895,11 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   const detachedThread = detachedId
     ? threads.find((t) => t.id === detachedId)
     : undefined;
-  const detachedTitle = detachedId ? detachedWindowTitle(detachedThread) : null;
+  const detachedTitle = detachedId ? (hiddenSelection ? "Solenta · Recording mode" : detachedWindowTitle(detachedThread)) : null;
   useEffect(() => {
     if (detachedTitle) document.title = detachedTitle;
   }, [detachedTitle]);
-  const detachedGone = Boolean(detachedId) && !loading && !detachedThread;
+  const detachedGone = Boolean(detachedId) && !loading && !rawCoder.threads.some((t) => t.id === detachedId);
   useEffect(() => {
     if (detachedGone) window.close();
   }, [detachedGone]);
@@ -1840,8 +1844,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
 
   /** At least one thread with a live run (⌘K action + sidebar control visibility). */
   const workingCount = useMemo(
-    () => threads.reduce((n, t) => (t.status === "working" ? n + 1 : n), 0),
-    [threads],
+    () => rawCoder.threads.reduce((n, t) => (t.status === "working" ? n + 1 : n), 0),
+    [rawCoder.threads],
   );
   const openStopAllConfirm = useCallback(() => setStopAllConfirmOpen(true), []);
   /** PALETTE_ACTIONS plus "Stop all running threads" while any thread works. */
@@ -2110,7 +2114,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
             onDismiss={dismissChipError}
           />
         )}
-        {backgroundToast && (
+        {backgroundToast && threads.some((t) => t.id === backgroundToast.id) && (
           <ArchiveToast
             docked
             key={`background-${backgroundToast.id}`}
@@ -2140,6 +2144,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     dismissDistillError,
     chipError,
     backgroundToast,
+    threads,
     openBackgroundThread,
     dismissBackgroundToast,
     dismissChipError,
@@ -2159,6 +2164,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     <PrHoverFetchContext.Provider value={prDetail}>
     <div className={styles.shell}>
       <ConnectionBanner />
+      {privacy.enabled && <RecordingPrivacyBanner onEnd={() => updatePrivacy({ ...privacy, enabled: false })} />}
       {settingsError && !settingsOpen && (
         <SettingsLoadNotice error={settingsError} loading={settingsLoading} onRetry={retrySettings} />
       )}
@@ -2264,7 +2270,9 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
           >
           <ErrorBoundary pane="Sidebar">
             <Sidebar
+        isThreadVisible={isThreadVisible}
         appName="Solenta"
+        recordingControl={<RecordingPrivacyControl privacy={privacy} knownTags={knownTags} onChange={updatePrivacy} />}
         onCollapseSidebar={narrow ? undefined : toggleSidebar}
         appVersion={appStatus?.build.version ?? null}
         channel={appStatus?.build.channel ?? null}
@@ -2386,6 +2394,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
           <Suspense fallback={null}>
           {view === "activity" ? (
             <ActivityView
+              key={visibilityKey}
               projects={projects}
               projectScope={activityProjectId}
               listActivity={listActivity}
@@ -2397,6 +2406,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
             />
           ) : view === "usage" ? (
             <UsageView
+              key={visibilityKey}
               loadUsage={listUsageByDay}
               loadProviderLimits={
                 quotaDemo
@@ -2414,9 +2424,10 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
               onReportControlsChange={setUsageControls}
             />
           ) : view === "fleet" ? (
-            <FleetView loadEvidence={loadFleetEvidence} />
+            <FleetView key={visibilityKey} loadEvidence={loadFleetEvidence} />
           ) : view === "insights" ? (
             <InsightsView
+              key={visibilityKey}
               loadFailureModes={loadFailureModes}
               onSelectThread={handleSelectThread}
               existingThreadIds={liveThreadIds}
@@ -2425,6 +2436,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
             />
           ) : view === "approvals" ? (
             <ApprovalsView
+              key={visibilityKey}
               projects={projects}
               threads={threads}
               loadApprovals={api.threads.pendingApprovals}
@@ -2433,6 +2445,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
             />
           ) : view === "digest" ? (
             <DigestView
+              key={visibilityKey}
               projects={projects}
               loadDigest={listDigest}
               markSeen={markDigestSeen}
@@ -2468,6 +2481,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
               projects={projects}
               providers={providers}
               draft={repeatDraft}
+              draftHidden={Boolean(privacy.enabled && repeatDraft && !threads.some((t) => t.id === repeatDraft.threadId))}
               focusId={focusAutomationId}
               loadRuns={listAutomationRuns}
               onSelectThread={handleSelectThread}
@@ -2533,7 +2547,9 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         quotaDemo={quotaDemo}
         returnToView={returnTo?.view ?? null}
         onReturnToView={returnTo ? handleReturnToView : undefined}
-        detail={visibleDetail}
+        detail={hiddenSelection ? rawCoder.detail : visibleDetail}
+        presentationHidden={hiddenSelection}
+        presentationKey={visibilityKey}
         detailError={selectedThreadId ? detailError : null}
         onRetryDetail={retryDetail}
         onLoadOlderMessages={loadOlderMessages}
@@ -2596,14 +2612,14 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
             : undefined
         }
         queuedPrompt={
-          selectedThreadId ? (queued[selectedThreadId]?.prompt ?? null) : null
+          rawCoder.selectedThreadId ? (queued[rawCoder.selectedThreadId]?.prompt ?? null) : null
         }
         queuedItems={
-          selectedThreadId ? queued[selectedThreadId]?.items : undefined
+          rawCoder.selectedThreadId ? queued[rawCoder.selectedThreadId]?.items : undefined
         }
-        queuedFiles={selectedThreadId ? queued[selectedThreadId] : null}
+        queuedFiles={rawCoder.selectedThreadId ? queued[rawCoder.selectedThreadId] : null}
         queuedError={
-          selectedThreadId ? (queued[selectedThreadId]?.error ?? null) : null
+          rawCoder.selectedThreadId ? (queued[rawCoder.selectedThreadId]?.error ?? null) : null
         }
         onCancelQueued={handleCancelQueued}
         onRetryQueued={handleRetryQueued}
@@ -2803,6 +2819,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
           ) : (
           <ErrorBoundary pane="Agents panel">
             <AgentsPanel
+        presentationKey={visibilityKey}
         onCollapse={narrow ? undefined : collapseAgents}
         workflow={visibleDetail?.workflow ?? null}
         thread={visibleDetail?.thread ?? null}
@@ -2886,6 +2903,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         <Suspense fallback={null}>
         {paletteLoaded && (
         <CommandPalette
+          isThreadVisible={isThreadVisible}
           open={paletteOpen}
           mode={paletteMode}
           onClose={() => setPaletteOpen(false)}

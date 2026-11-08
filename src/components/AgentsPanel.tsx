@@ -177,6 +177,7 @@ interface AgentsPanelProps {
   /** Stop on the selected thread, which also leaves the run queue. */
   onLeaveRunQueue?: () => void | Promise<void>;
   /** threads:summaries passthrough powering the team view. */
+  presentationKey?: string;
   listThreadSummaries?: (input?: ThreadSummariesInput) => Promise<ThreadSummaryInfo[]>;
   /** Shared crew task list (issue #277). Read-only; absent = no fetch. */
   listCrewTasks?: (
@@ -1623,6 +1624,7 @@ export function MergeQueueCard({
 }
 
 export function GitTab({
+  presentationKey,
   thread,
   project,
   onViewChanges,
@@ -1701,6 +1703,7 @@ export function GitTab({
     command: string | null,
   ) => Promise<void>;
   runVerify?: (threadId: string) => Promise<VerifyResult>;
+  presentationKey?: string;
 }) {
   const [checkpoints, setCheckpoints] = useState<CheckpointInfo[]>([]);
   const [checkpointsLoading, setCheckpointsLoading] = useState(false);
@@ -1909,6 +1912,7 @@ export function GitTab({
     !restorePreview ||
     !recycleWedgedLanes ? null : (
       <MergeQueueCard
+        key={presentationKey}
         threadId={threadId}
         projectId={project.id}
         claimLane={claimLane}
@@ -3077,6 +3081,7 @@ export function AgentsContent({
  * reason — the array's identity churns, the key only moves on a real change.
  */
 export const AgentsPanel = memo(function AgentsPanel({
+  presentationKey,
   workflow,
   thread,
   usage,
@@ -3250,6 +3255,7 @@ export const AgentsPanel = memo(function AgentsPanel({
       >
       {tab === "agents" ? (
         <AgentsContent
+          key={presentationKey}
           workflow={workflow}
           thread={thread}
           usage={usage}
@@ -3270,6 +3276,7 @@ export const AgentsPanel = memo(function AgentsPanel({
         />
       ) : tab === "git" ? (
         <GitTab
+          presentationKey={presentationKey}
           thread={thread}
           project={project}
           onViewChanges={onViewChanges}

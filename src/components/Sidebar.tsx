@@ -166,6 +166,8 @@ export interface SidebarProps {
   onDownloadUpdate?: () => void | Promise<void>;
   /** Relaunch into the staged bundle (updateState "staged"). */
   onApplyUpdate?: () => void | Promise<void>;
+  isThreadVisible?: (id: string) => boolean;
+  recordingControl?: ReactNode;
   searchPlaceholder: string;
   projectsHeader: string;
   projects: ProjectInfo[];
@@ -384,6 +386,8 @@ export const Sidebar = memo(function Sidebar({
   updatePublishedAt,
   onDownloadUpdate,
   onApplyUpdate,
+  isThreadVisible,
+  recordingControl,
   searchPlaceholder,
   projects,
   threads,
@@ -666,7 +670,9 @@ export const Sidebar = memo(function Sidebar({
       searching
         ? searchResults == null
           ? []
-          : searchResults.map((t) => liveById.get(t.id) ?? t)
+          : searchResults
+              .filter((t) => isThreadVisible?.(t.id) !== false)
+              .map((t) => liveById.get(t.id) ?? t)
         : threads;
     const filtered = filterThreads(source, threadFilter, {
       waits: waitStates,
@@ -676,6 +682,7 @@ export const Sidebar = memo(function Sidebar({
   }, [
     searching,
     searchResults,
+    isThreadVisible,
     threads,
     liveById,
     threadFilter,
@@ -1645,6 +1652,7 @@ export const Sidebar = memo(function Sidebar({
         </div>
       </header>
 
+      {recordingControl}
       <div className={styles.searchRow}>
         <span className={styles.searchField}>
           <span className={styles.searchIcon} aria-hidden>

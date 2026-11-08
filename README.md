@@ -416,3 +416,16 @@ Solenta's design and some of its feature ideas are inspired by
 used; everything here is original work under the [MIT license](LICENSE).
 
 [issues]: https://github.com/currentbits/solenta/issues
+
+### Recording mode
+
+Open **Recording mode** in the sidebar, choose tags to hide, then start the
+mode before recording or sharing your screen. Tagged threads disappear from
+thread lists, navigation, search, and previews. An open hidden thread is masked;
+ending the mode restores it unless you selected another thread. Agents keep
+working and no thread data is changed.
+
+This is presentation privacy, not access control. Content copied into another
+thread, project, file, or system notification can still be visible. Preferences
+apply to the current connection; detached windows sharing that connection follow
+the same mode. Remote connection windows need their own setting.

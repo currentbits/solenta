@@ -880,6 +880,10 @@ interface ThreadViewProps {
    * (issue #393). Resolved in App so this pane is not passed the full list.
    */
   comparePeers?: ComparePeer[];
+  /** Keep thread-local drafts while hiding the selected transcript. */
+  presentationHidden?: boolean;
+  /** Invalidate cached sibling previews when recording visibility changes. */
+  presentationKey?: string;
   /** Load a sibling transcript without marking it visited. */
   onPeekThread?: (id: string) => Promise<ThreadDetail>;
   /** Fired when the composer model picker opens (provider list refresh). */
@@ -1104,12 +1108,16 @@ export const ThreadView = memo(function ThreadView({
   onReturnToView,
   comparePeers = EMPTY_COMPARE_PEERS,
   onPeekThread,
+  presentationHidden = false,
+  presentationKey = "",
   onModelPickerOpen,
   onProviderSignIn,
   loadProviderLimits,
   quotaDemo = false,
 }: ThreadViewProps) {
   useEffect(preloadPanesWhenIdle, []);
+  const presentationHiddenRef = useRef(presentationHidden);
+  presentationHiddenRef.current = presentationHidden;
   const bodyRef = useRef<HTMLDivElement>(null);
   const dropHostRef = useRef<HTMLElement>(null);
   const [fileDrag, setFileDrag] = useState(false);
@@ -2970,6 +2978,16 @@ export const ThreadView = memo(function ThreadView({
     imageContextMenu(e, img.src);
   };
 
+  if (presentationHidden) {
+    return (
+      <main className={styles.main} data-recording-hidden="">
+        <div className={styles.empty}>
+          <p className={styles.emptyTitle}>This thread is hidden in recording mode.</p>
+        </div>
+      </main>
+    );
+  }
+
   if (!hasProjects) {
     return (
       <main className={styles.main}>
@@ -4620,7 +4638,11 @@ export const ThreadView = memo(function ThreadView({
               setNotesDraft(e.target.value);
               if (notesError) setNotesError(null);
             }}
-            onBlur={() => closeNotes(true)}
+            onBlur={(event) => {
+              if (!presentationHiddenRef.current && event.currentTarget.isConnected) {
+                closeNotes(true);
+              }
+            }}
             onKeyDown={(e) => {
               if (e.key === "Escape") {
                 e.preventDefault();
@@ -4940,7 +4962,7 @@ export const ThreadView = memo(function ThreadView({
 
       {detail && (
         <DivergenceCard
-          key={detail.thread.id}
+          key={`${detail.thread.id}:${presentationKey}`}
           detail={detail}
           peers={comparePeers}
           providers={providers}
@@ -5865,6 +5887,7 @@ export const ThreadView = memo(function ThreadView({
         />
       ) : null}
       <Composer
+        focusOnOpen={!notesOpen && editingQueued == null}
         threadId={thread.id}
         permissionMode={thread.permissionMode}
         teach={thread.teach ?? null}
