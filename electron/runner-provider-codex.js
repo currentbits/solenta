@@ -406,7 +406,7 @@ function createCodexRun(ctx) {
         turns: 0,
       };
       const reconciled = require("./codex-usage.js").reconcileCodexUsage(usageInfo, prev.codexUsage, {
-        sessionId: capturedSessionId, resuming: Boolean(resumeId), previous: prev, baseline: usageBaseline,
+        sessionId: capturedSessionId, resuming: Boolean(resumeId),
       });
       const contextInfo = usageInfo;
       const firstUsage = !sawTerminalUsage;

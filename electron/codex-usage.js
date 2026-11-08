@@ -10,20 +10,19 @@ const nonnegative = (n) => Math.max(0, Number(n) || 0);
 function reconcileCodexUsage(info, previousCursor, options) {
   const total = info.totalUsage;
   if (!total) return { delta: info, cursor: previousCursor };
-  const { sessionId, resuming, previous, baseline } = options;
+  const { sessionId, resuming } = options;
   let cursor = previousCursor?.sessionId === sessionId ? previousCursor : null;
   if (!cursor) {
     // On first adoption of an existing/imported session only its last request
     // is measured here. Its older transcript is outside the application ledger.
-    const prior = !resuming ? { inputTokens: 0, outputTokens: 0 } : !info.snapshot
-      ? { inputTokens: Math.max(0, total.inputTokens - info.inputTokens),
-          outputTokens: Math.max(0, total.outputTokens - info.outputTokens) }
-      : { inputTokens: Math.max(0, previous.inputTokens - (baseline?.inputTokens || 0)),
-          outputTokens: Math.max(0, previous.outputTokens - (baseline?.outputTokens || 0)) };
+    if (resuming && info.snapshot) return { delta: null,
+      cursor: { sessionId, total: { ...total }, inconsistent: true } };
+    const prior = !resuming ? { inputTokens: 0, outputTokens: 0 }
+      : { inputTokens: Math.max(0, total.inputTokens - info.inputTokens),
+          outputTokens: Math.max(0, total.outputTokens - info.outputTokens) };
     for (const key of ["cachedInputTokens", "reasoningTokens"]) {
       if (!resuming) continue;
       if (!info.snapshot && total[key] != null && info[key] != null) prior[key] = Math.max(0, total[key] - info[key]);
-      else if (previous[key] != null) prior[key] = previous[key];
     }
     cursor = { sessionId, total: prior };
   }

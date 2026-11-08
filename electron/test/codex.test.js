@@ -871,6 +871,33 @@ describe("runner codex provider", () => {
     assert.equal(perThread.inputTokens, 300);
   });
 
+  it("adopts an imported session's first total-only notification without billing its old history", async () => {
+    const { notificationToJsonl } = require("../codex-appserver.js");
+    const thread = store.getThreads()[0];
+    store.updateThread(thread.id, { sessionId: "imported-session" });
+    let dispatch;
+    runner.stopAll();
+    runner = createRunner({ store, core, pushFn() {},
+      runCodexFn(opts) { dispatch = opts; return { kill() {} }; },
+    });
+    await runner.startRun({ threadId: thread.id, prompt: "continue imported history" });
+    assert.equal(dispatch.sessionId, "imported-session");
+    const update = (total, last) => dispatch.onEvent(notificationToJsonl({
+      method: "thread/tokenUsage/updated", params: { threadId: "imported-session",
+        tokenUsage: { total: { inputTokens: total, outputTokens: total / 10 },
+          ...(last ? { last: { inputTokens: last, outputTokens: last / 10 } } : {}) } },
+    }));
+    update(1000);
+    assert.equal(store.getUsage(thread.id).inputTokens, 0, "old cumulative history is not new measured work");
+    assert.equal(store.getUsage(thread.id).accounting.status, "partial");
+    assert.equal(Object.values(store.data.usageByDay).length, 0);
+    update(1100, 100);
+    assert.equal(store.getUsage(thread.id).inputTokens, 100);
+    assert.equal(store.getUsage(thread.id).outputTokens, 10);
+    assert.equal(Object.values(store.data.usageThreadsByDay)[0][thread.id].inputTokens, 100);
+    dispatch.onExit({ code: 0, stderr: "" });
+  });
+
   it("keeps the root sessionId when a v2 sub-agent emits thread/started", async () => {
     process.env.CODER_FAKE_CODEX_SCENARIO = "child-spawn";
     const thread = store.getThreads()[0];
