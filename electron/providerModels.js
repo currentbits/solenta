@@ -14,6 +14,7 @@ const {
   parseProviderRef,
   findInstance,
   OPENAI_COMPAT_KEY_ENV,
+  defaultAccountFor,
 } = require("./providerInstances.js");
 
 const TIMEOUT_MS = 10_000;
@@ -40,7 +41,7 @@ const ENDPOINTS = {
  */
 function modelsRequest(settings, ref) {
   const { provider, instance } = parseProviderRef(ref);
-  const inst = findInstance(settings, provider, instance || provider);
+  const inst = findInstance(settings, provider, instance || defaultAccountFor(settings, provider) || provider);
   const env = (inst && inst.env) || {};
   const oc = inst && inst.openaiCompatible;
   if (oc) {
@@ -100,8 +101,15 @@ function parseModels(body) {
  * @returns {Promise<import('../src/shared/ipc').FetchedModel[]>}
  */
 async function fetchProviderModels(settings, ref, opts = {}) {
+  let discoveryError;
+  if (parseProviderRef(ref).provider === "claude" && (!opts.fetch || opts.runInitialize)) {
+    try {
+      const models = await require("./claudeModels.js").refresh(settings, ref, { ...opts, force: true });
+      if (models) return models.modelInfo.map(({ id, label, contextTokens }) => ({ id, label, ...(contextTokens ? { contextTokens } : {}) }));
+    } catch (err) { discoveryError = err; }
+  }
   const req = modelsRequest(settings, ref);
-  if ("error" in req) throw new Error(req.error);
+  if ("error" in req) throw discoveryError || new Error(req.error);
   const fetchImpl = opts.fetch || fetch;
   // A plain ref'd timer, not AbortSignal.timeout: that one is unref'd.
   const ctl = new AbortController();

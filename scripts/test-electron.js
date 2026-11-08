@@ -33,6 +33,7 @@ const WIN32_FILES = [
   "electron/test/proc.test.js", // agentSpawnOptions win32 attach (#480)
   "electron/test/rm-tree.test.js", // bounded cleanup of a child process cwd
   "electron/test/claude-spawn.test.js", // .cmd + runClaude/runCodex parse (#480)
+  "electron/test/claude-models.test.js", // pure catalog/cache + cross-spawn initialize-only fixtures (#1932)
   "electron/test/budget-spend.test.js",
   "electron/test/codex.test.js",
   "electron/test/codex-appserver.test.js",

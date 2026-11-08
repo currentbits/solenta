@@ -7,8 +7,9 @@
  */
 import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
-import { mount } from "./support/dom.ts";
+import { mount, inAct } from "./support/dom.ts";
 import { createFakeCoder, installFakeCoder, detail, project, thread, type FakeCoder } from "./support/fakeCoder.ts";
+import type { ProviderInfo } from "../src/shared/ipc";
 import App from "../src/App";
 import {
   captureComposerDraft, flushDraftSave, keptAttachments, keptPasteCards,
@@ -116,6 +117,43 @@ describe("new thread: pick the computer it runs on (#1835)", () => {
     } finally {
       m.unmount();
     }
+  });
+
+  it("uses the destination's Claude catalog after moving, ignoring a late source catalog", async () => {
+    const fake = createFakeCoder(fixture());
+    const catalog = (model: string): ProviderInfo[] => [{
+      id: "claude", name: "Claude Code", available: true, supportsResume: true,
+      models: [model], efforts: ["high"],
+      modelInfo: [{ id: model, label: model, description: "", vendor: "Anthropic", efforts: ["high"] }],
+    }];
+    const requests: string[] = [];
+    let finishSource!: (rows: ProviderInfo[]) => void;
+    fake.api.providers.list = async (input) => {
+      if (input?.threadId) requests.push(input.threadId);
+      if (input?.threadId === "t-draft") {
+        return new Promise((resolve) => { finishSource = resolve; });
+      }
+      return catalog(input?.threadId === "t-new" ? "destination-claude" : "settings-claude");
+    };
+    const create = fake.api.threads.create;
+    fake.api.threads.create = async (input) => {
+      const created = await create(input);
+      // The owning backend supplies the destination project and account.
+      Object.assign(created, { projectId: "rp", host: BOX, providerInstance: "box-account" });
+      return created;
+    };
+    const m = await boot(fake);
+    try {
+      await pickBox(m);
+      assert.ok(requests.includes("t-new"), "the recreated thread requests its owning backend's catalog");
+      await inAct(() => finishSource(catalog("source-claude")));
+      await m.click(m.query('button[aria-label^="Model:"]') as HTMLElement);
+      await m.flush();
+      const picker = m.query('[role="dialog"][aria-label="Model picker"]');
+      assert.ok(picker);
+      assert.match(picker.textContent ?? "", /destination-claude/);
+      assert.doesNotMatch(picker.textContent ?? "", /source-claude|settings-claude/);
+    } finally { m.unmount(); }
   });
 
   it("preserves the complete rich draft before purging the source", async () => {

@@ -3728,6 +3728,8 @@ export interface ProviderInfo {
    * provider publishes no suggestions. Validation does not consult this list.
    */
   modelInfo: ModelInfo[];
+  /** Alias -> canonical model id, without duplicate picker suggestions. */
+  modelAliases?: Record<string, string>;
   /**
    * Effort levels this provider actually honours, lowest to highest. Empty
    * when the CLI has no such flag, and the picker then hides the control
@@ -3865,7 +3867,7 @@ export interface ProviderModelPrefs {
   custom: string[];
 }
 
-/** One row of a live models-endpoint listing (#1714). */
+/** One row of a live endpoint or installed CLI models listing. */
 export interface FetchedModel {
   id: string;
   label: string;
@@ -6035,11 +6037,11 @@ export interface CoderApi {
     discardImport(input: { previewId: string }): Promise<void>;
   };
   providers: {
-    list(): Promise<ProviderInfo[]>;
+    /** A thread on a sidebar computer routes discovery to that backend. Omitted = this computer. */
+    list(input?: { threadId?: string }): Promise<ProviderInfo[]>;
     /**
-     * List models live from the provider's API (#1714), with the key and
-     * base URL saved for that provider ref. Throws a readable message on a
-     * missing key, a timeout or an HTTP error.
+     * List models through the installed Claude CLI, or the provider's API
+     * with its saved key and base URL. Never sends a generation prompt.
      */
     fetchModels(input: { provider: string }): Promise<FetchedModel[]>;
     /**

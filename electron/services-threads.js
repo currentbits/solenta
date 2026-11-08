@@ -16,6 +16,7 @@ const {
   planActSwitchNote,
 } = require("./providers.js");
 const providerAuth = require("./providerAuth.js");
+const claudeModels = require("./claudeModels.js");
 const {
   parseProviderRef,
   providerRef,
@@ -267,7 +268,7 @@ function createThread(store, input) {
     providerRefId,
     !(input.projectDefaults === false || input.automationId || input.memoryConsolidate),
   );
-  const entry = getProvider(provider);
+  const entry = claudeModels.forThread(getProvider(provider), store, { provider, providerInstance, projectId: input.projectId });
   let model;
   if (
     defaults &&
@@ -517,7 +518,7 @@ function setPlanModel(store, input) {
   const { threadId } = input;
   const thread = store.getThread(threadId);
   if (!thread) throw new Error(`Unknown thread: ${threadId}`);
-  const entry = getProvider(thread.provider);
+  const entry = claudeModels.forThread(getProvider(thread.provider), store, thread);
   /** @type {{ planModel: string | null, planReasoningEffort: string | null }} */
   const patch = { planModel: null, planReasoningEffort: null };
   if (input.model != null) {
@@ -635,7 +636,7 @@ function setReasoningEffort(store, input) {
   }
 
   const level = String(effort);
-  const entry = getProvider(thread.provider);
+  const entry = claudeModels.forThread(getProvider(thread.provider), store, thread);
   const allowed = honouredEfforts(entry, thread.model);
   if (!allowed.includes(level)) {
     const providerName =
@@ -655,7 +656,7 @@ function setUltracode(store, input) {
   const thread = store.getThread(input.threadId);
   if (!thread) throw new Error(`Unknown thread: ${input.threadId}`);
   const enabled = input.ultracode === true;
-  if (enabled && !require("./providers.js").modelSupportsUltracode(getProvider(thread.provider), thread.model)) throw new Error("Ultracode requires an xhigh-capable Claude model");
+  if (enabled && !require("./providers.js").modelSupportsUltracode(claudeModels.forThread(getProvider(thread.provider), store, thread), thread.model)) throw new Error("Ultracode requires an xhigh-capable Claude model");
   const updated = store.updateThread(thread.id, { ultracode: enabled });
   store.save();
   return { ...updated };
@@ -677,7 +678,7 @@ function setFast(store, input) {
     throw new Error(`Unknown thread: ${threadId}`);
   }
   if (enabled) {
-    const entry = getProvider(thread.provider);
+    const entry = claudeModels.forThread(getProvider(thread.provider), store, thread);
     if (!entry || !(entry.modelInfo || []).some((m) => m.fast)) {
       const providerName =
         (entry && entry.name) || thread.provider || "provider";
@@ -788,7 +789,7 @@ function forkThread(store, input) {
     providerProvided && String(nextProvider) !== String(source.provider);
 
   let nextModel = source.model;
-  const nextEntry = getProvider(nextProvider);
+  const nextEntry = claudeModels.forThread(getProvider(nextProvider), store, { ...source, provider: nextProvider, providerInstance: nextInstance });
   if (providerChanging) {
     // Same rule as setProvider: do not carry the old provider's model across
     // unless this call supplies one valid for the NEW provider.
@@ -1261,7 +1262,7 @@ function setProvider(store, input) {
     }
   }
 
-  const nextEntry = getProvider(nextProvider);
+  const nextEntry = claudeModels.forThread(getProvider(nextProvider), store, { ...thread, ...patch, provider: nextProvider });
 
   if (providerChanging) {
     // Do not carry the old provider's model into the new provider's argv.
@@ -1325,7 +1326,7 @@ function setProvider(store, input) {
     }
   }
 
-  if (!require("./providers.js").modelSupportsUltracode(getProvider(nextProvider), patch.model !== undefined ? patch.model : thread.model)) patch.ultracode = false;
+  if (!require("./providers.js").modelSupportsUltracode(nextEntry, patch.model !== undefined ? patch.model : thread.model)) patch.ultracode = false;
 
   if (patch.sessionId === null) {
     // The new CLI (or re-pinned model) starts with no memory of this thread.
@@ -1361,6 +1362,11 @@ async function listProvidersForApi(store, opts) {
   const base = listProviders(opts);
   const settings =
     store && typeof store.getSettings === "function" ? store.getSettings() : null;
+  const contextThread = opts?.threadId && store?.getThread(opts.threadId);
+  // Existing base-Claude threads stay on the CLI's original account even
+  // after a named default is configured. Match forThread/launch capabilities.
+  const originalClaudeAccount = contextThread?.provider === "claude" && !contextThread.providerInstance;
+  const settingsIdentity = JSON.stringify([settings?.providerInstances, settings?.defaultAccounts, settings?.defaultProvider, settings?.providerModels]);
   // Base overlays (#1714) are the base row's own env, never a picker row.
   const instances = ((settings && settings.providerInstances) || []).filter(
     (inst) => !isBaseOverlay(inst),
@@ -1373,7 +1379,7 @@ async function listProvidersForApi(store, opts) {
     .filter((inst) => inst.provider === "generic")
     .map((inst) => genericProviderInfo(inst));
   for (const p of base) {
-    const acct = defaultAccountFor(settings, p.id);
+    const acct = originalClaudeAccount && p.id === "claude" ? null : defaultAccountFor(settings, p.id);
     const acctInst = acct ? findInstance(settings, p.id, acct) : null;
     list.push(acctInst ? { ...p, defaultAccount: acctInst.name } : p);
     for (const inst of instances) {
@@ -1393,12 +1399,31 @@ async function listProvidersForApi(store, opts) {
   }
   list.push(...generic);
   const prefs = (settings && settings.providerModels) || {};
+  const discoveryOpts = { userDataPath: store?.filePath ? require("node:path").dirname(store.filePath) : undefined, ...opts, ...(originalClaudeAccount ? { useDefault: false } : {}) };
+  const projectFallback = contextThread && claudeModels.projectFallback(store, contextThread, discoveryOpts);
+  const wasStarted = new Map(list.filter((p) => (p.baseProvider || p.id) === "claude").map((p) => [p.id, claudeModels.started(settings, p.id, discoveryOpts)]));
   for (const p of list) {
+    if ((p.baseProvider || p.id) === "claude" && p.available && !projectFallback) {
+      const probing = claudeModels.refresh(settings, p.id, discoveryOpts).catch(() => null);
+      // First list stays cheap. Opening the picker again waits for discovery.
+      if (already || wasStarted.get(p.id)) await probing;
+      const live = claudeModels.cachedProvider(p, settings, p.id, discoveryOpts);
+      Object.assign(p, live);
+      if (live !== p) delete p.catalogNote;
+      const note = claudeModels.fallbackNote(settings, p.id, discoveryOpts);
+      if (note) p.catalogNote = note;
+    } else if ((p.baseProvider || p.id) === "claude" && projectFallback) {
+      p.catalogNote = "This project's configuration uses the catalog. You can enter a custom model ID.";
+    }
     if (prefs[p.id]) applyModelPrefs(p, prefs[p.id]);
     const auth = providerAuth.get(p.id);
     if (auth && p.available) p.auth = auth;
     const account = p.auth === "signedIn" ? providerAuth.account(p.id) : undefined;
     if (account) p.account = account;
+  }
+  const currentSettings = store?.getSettings();
+  if (currentSettings && JSON.stringify([currentSettings.providerInstances, currentSettings.defaultAccounts, currentSettings.defaultProvider, currentSettings.providerModels]) !== settingsIdentity) {
+    return listProvidersForApi(store, opts);
   }
   return list;
 }
@@ -1441,12 +1466,13 @@ function applyModelPrefs(p, pref) {
   // Instance rows spread their base, so the arrays are shared: copy first.
   p.models = [...p.models];
   p.modelInfo = [...p.modelInfo];
+  const resolved = (id) => p.modelAliases?.[id] || id;
   for (const id of pref.custom) {
-    if (p.models.includes(id)) continue;
+    if (p.models.includes(resolved(id))) continue;
     p.models.push(id);
     p.modelInfo.push({ id, label: id, description: "Custom model", vendor: "" });
   }
-  const fav = new Set(pref.favorites);
+  const fav = new Set(pref.favorites.map(resolved));
   if (fav.size === 0) return;
   // Marked here (not just sorted) so the composer picker can pull these
   // into its own cross-provider "Favorites" group (#1802).

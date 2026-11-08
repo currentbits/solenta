@@ -302,7 +302,7 @@ module.exports = {
     const { channels, name } = channelsFor(ctx, input);
     return channels.disconnect(name);
   },
-  "providers:list": async (ctx) => {
+  "providers:list": async (ctx, input) => {
     // First launch: `which` each CLI only once the login-shell PATH is in (#1475).
     const pathWait = whenPathReady({ ifUncached: true });
     if (pathWait) await pathWait;
@@ -313,13 +313,13 @@ module.exports = {
       instances: services.instanceAuthProbes(ctx.store, ctx.userDataPath),
     });
     if (!first) await probing;
-    return services.listProvidersForApi(ctx.store);
+    return services.listProvidersForApi(ctx.store, { userDataPath: ctx.userDataPath, ...(input?.threadId ? { threadId: input.threadId } : {}) });
   },
   // Live model list (#1714): the key is read from the saved instance env
   // here, never sent by the renderer.
   "providers:fetchModels": async (ctx, input) => {
     const { fetchProviderModels } = require("./providerModels.js");
-    return fetchProviderModels(ctx.store.getSettings(), String((input && input.provider) || ""));
+    return fetchProviderModels(ctx.store.getSettings(), String((input && input.provider) || ""), { userDataPath: ctx.userDataPath });
   },
   // Ollama / LM Studio probe (#1717): loopback by default, a LAN host when given.
   "providers:detectLocal": async (_ctx, input) => {

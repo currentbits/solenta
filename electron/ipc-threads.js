@@ -688,11 +688,17 @@ module.exports = {
   "threads:setProvider": async (ctx, input) => {
     // A manual pick beats a pending Auto route (#246).
     services.setRoute(ctx.store, { threadId: input.threadId, route: null });
+    const thread = ctx.store.getThread(input.threadId);
+    // This contextual row describes an existing original-Claude account.
+    // Changing its model (including Custom) must keep the account/session.
+    const originalClaudeModelPick = input.provider === "claude" &&
+      thread?.provider === "claude" && !thread.providerInstance &&
+      Object.prototype.hasOwnProperty.call(input, "model");
     const updated = leaveProfile(
       ctx,
       input.threadId,
-      // The picker's bare row is labelled with the default account (#1859).
-      services.setProvider(ctx.store, { ...input, useDefaultAccount: true }),
+      // Other bare-provider switches use the labelled default account (#1859).
+      services.setProvider(ctx.store, { ...input, useDefaultAccount: !originalClaudeModelPick }),
     );
     services.recordLastUsedDefaults(ctx.store, input.threadId);
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));

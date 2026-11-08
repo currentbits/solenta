@@ -36,6 +36,7 @@ async function fakeHost({ token = "tok", threads = [], projects = [] } = {}) {
       else if (msg.channel === "projects:list") result = state.projects;
       else if (msg.channel === "threads:get") result = { thread: state.threads.find((t) => t.id === msg.args[0]), messages: [] };
       else if (msg.channel === "threads:create") result = { id: "r-new", projectId: msg.args[0].projectId, title: "new" };
+      else if (msg.channel === "providers:list") result = [{ id: "claude", models: ["remote-only"] }];
       else if (msg.channel === "boom") return ws.send(JSON.stringify({ kind: "reply", id: msg.id, error: "remote failed" }));
       ws.send(JSON.stringify({ kind: "reply", id: msg.id, result }));
     });
@@ -122,6 +123,18 @@ describe("hostHub", () => {
     assert.ok(hub.ownerOf([{ threadId: "r-new" }]), "a created thread routes before the next list push");
     await assert.rejects(hub.route("boom", [{ threadId: "r1" }], async () => null), /remote failed/);
     assert.deepEqual(remote.state.calls.at(-3), { channel: "threads:get", args: ["r1"] });
+  });
+
+  it("routes model discovery by thread to the owning computer while unscoped Settings stays local", async () => {
+    const remote = await fakeHost({ threads: [{ id: "r-models", projectId: "rp" }] });
+    const { hub } = makeHub(remote);
+    cleanup.push(() => remote.close(), () => hub.close());
+    hub.setHosts([HOST]);
+    await waitFor(() => hub.mergeThreads(LOCAL).length === 2);
+    assert.equal(hub.route("providers:list", [], () => assert.fail("routing only")), null);
+    const result = await hub.route("providers:list", [{ threadId: "r-models" }], () => assert.fail("must discover remotely"));
+    assert.deepEqual(result, [{ id: "claude", models: ["remote-only"] }]);
+    assert.deepEqual(remote.state.calls.at(-1), { channel: "providers:list", args: [{ threadId: "r-models" }] });
   });
 
   it("runs onHost calls on that host, without the routing key, and tags new projects", async () => {

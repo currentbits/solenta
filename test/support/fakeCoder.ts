@@ -1670,7 +1670,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       },
     },
     providers: {
-      list: () => rec("providers.list", [], providers),
+      list: (input?: { threadId?: string }) => rec("providers.list", input ? [input] : [], providers),
       fetchModels: (input: { provider: string }) =>
         rec("providers.fetchModels", [input], opts.fetchedModels ?? []),
       detectLocal: (input?: { ollamaUrl?: string | null; lmstudioUrl?: string | null }) =>

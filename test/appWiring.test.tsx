@@ -57,12 +57,12 @@ async function openAppDestination(
 
 describe("App boot wiring", () => {
   it("loads projects, threads, providers and workflows on boot", async () => {
-    const fake = createFakeCoder();
+    const selected = thread({ id: "boot-thread" });
+    const fake = createFakeCoder({ threads: [selected] });
     const m = await boot(fake);
     for (const channel of [
       "projects.list",
       "threads.list",
-      "providers.list",
       "workflows.list",
     ]) {
       assert.equal(
@@ -71,6 +71,18 @@ describe("App boot wiring", () => {
         `${channel} must be called exactly once on boot`,
       );
     }
+    assert.deepEqual(
+      fake.of("providers.list").map((call) => call.args),
+      [[], [{ threadId: selected.id }]],
+      "one local Settings boot list plus one selected-thread configuration list",
+    );
+    m.unmount();
+  });
+
+  it("keeps provider boot discovery unscoped when no thread is selected", async () => {
+    const fake = createFakeCoder({ threads: [] });
+    const m = await boot(fake);
+    assert.deepEqual(fake.of("providers.list").map((call) => call.args), [[]]);
     m.unmount();
   });
 
