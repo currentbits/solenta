@@ -405,54 +405,75 @@ function createCodexRun(ctx) {
         costUsd: 0,
         turns: 0,
       };
+      const reconciled = require("./codex-usage.js").reconcileCodexUsage(usageInfo, prev.codexUsage, {
+        sessionId: capturedSessionId, resuming: Boolean(resumeId), previous: prev, baseline: usageBaseline,
+      });
+      const contextInfo = usageInfo;
+      const firstUsage = !sawTerminalUsage;
+      usageInfo = reconciled.delta;
+      sawTerminalUsage = true;
+      const accounting = reconciled.cursor?.inconsistent ? { status: "partial",
+        unavailableFields: ["inputTokens", "cachedInputTokens", "outputTokens", "reasoningTokens"], sources: [] } : prev.accounting;
+      if (!usageInfo) {
+        store.setUsage(threadId, { ...prev, codexUsage: reconciled.cursor, ...(accounting ? { accounting } : {}) });
+        return;
+      }
       const costDelta = Number(usageInfo.costUsd) || 0;
       const inDelta = Number(usageInfo.inputTokens) || 0;
       const outDelta = Number(usageInfo.outputTokens) || 0;
-      // token_count.total_token_usage is session-cumulative. Replacing
-      // rather than adding is what stops the ring from double-counting (#317).
-      const snapshot = Boolean(usageInfo.snapshot);
-      if (snapshot) {
-        runUsage.tokensIn = inDelta;
-        runUsage.tokensOut = outDelta;
-        runUsage.costUsd += costDelta;
-      } else {
-        runUsage.tokensIn += inDelta;
-        runUsage.tokensOut += outDelta;
-        runUsage.costUsd += costDelta;
-      }
+      const cachedDelta = Math.min(inDelta, Number(usageInfo.cachedInputTokens) || 0);
+      runUsage.tokensIn += inDelta;
+      runUsage.tokensOut += outDelta;
+      runUsage.costUsd += costDelta;
+      const measured = inDelta > 0 || outDelta > 0 || costDelta > 0;
       const nextUsage = {
-        model: usageInfo.model || prev.model || thread.model || null,
-        inputTokens: snapshot ? (usageBaseline?.inputTokens || 0) + inDelta : prev.inputTokens + inDelta,
-        outputTokens: snapshot ? (usageBaseline?.outputTokens || 0) + outDelta : prev.outputTokens + outDelta,
+        ...prev,
+        model: usageInfo.model || thread.model || null,
+        inputTokens: prev.inputTokens + inDelta,
+        outputTokens: prev.outputTokens + outDelta,
         costUsd: prev.costUsd + costDelta,
-        turns: snapshot && prev.turns > 0 ? prev.turns : prev.turns + 1,
+        turns: prev.turns + (measured || firstUsage ? 1 : 0),
+        ...(reconciled.cursor ? { codexUsage: reconciled.cursor } : {}),
+        ...(accounting ? { accounting } : {}),
       };
+      if (usageInfo.cachedInputTokens != null) nextUsage.cachedInputTokens = (prev.cachedInputTokens || 0) + cachedDelta;
+      if (usageInfo.reasoningTokens != null) nextUsage.reasoningTokens = (prev.reasoningTokens || 0) + usageInfo.reasoningTokens;
       assignContextUsage(
         nextUsage,
         prev,
-        usageInfo.contextTokens,
-        usageInfo.contextWindow,
+        contextInfo.contextTokens,
+        contextInfo.contextWindow,
       );
       store.setUsage(threadId, nextUsage);
       if (costDelta > 0) {
         store.recordSpend(costDelta);
       }
-      const billedIn = snapshot
-        ? Math.max(0, nextUsage.inputTokens - prev.inputTokens)
-        : inDelta;
-      const billedOut = snapshot
-        ? Math.max(0, nextUsage.outputTokens - prev.outputTokens)
-        : outDelta;
-      store.recordUsage({
+      if (!measured && prev.turns > 0) return;
+      // A cumulative catch-up can include requests never observed here. Their
+      // model/tier/time cannot be borrowed from this request. Retain the known
+      // last request's model and put only the recovered remainder under unknown.
+      const knownIn = contextInfo.totalUsage && contextInfo.snapshot ? 0 : Math.min(inDelta, contextInfo.inputTokens);
+      const knownOut = contextInfo.totalUsage && contextInfo.snapshot ? 0 : Math.min(outDelta, contextInfo.outputTokens);
+      const knownCache = Math.min(cachedDelta, knownIn,
+        contextInfo.cachedInputTokens ?? (knownIn === inDelta ? cachedDelta : 0));
+      const row = {
         provider: threadProviderRef(thread),
-        model: usageInfo.model || prev.model || thread.model || null,
-        costUsd: costDelta,
-        inputTokens: billedIn,
-        outputTokens: billedOut,
         threadId,
         projectId: thread.projectId,
         projectName: store.getProject(thread.projectId)?.name,
         title: thread.title,
+      };
+      const hasKnown = knownIn > 0 || knownOut > 0 || costDelta > 0;
+      if (hasKnown || !measured) store.recordUsage({ ...row,
+        model: usageInfo.model || thread.model || null,
+        costUsd: costDelta,
+        ...(usageInfo.costReported ? { costReported: true } : {}),
+        inputTokens: knownIn - knownCache, cachedInputTokens: knownCache, outputTokens: knownOut,
+      });
+      if (knownIn < inDelta || knownOut < outDelta) store.recordUsage({ ...row,
+        model: null, turns: 0,
+        inputTokens: inDelta - knownIn - (cachedDelta - knownCache),
+        cachedInputTokens: cachedDelta - knownCache, outputTokens: outDelta - knownOut,
       });
       sawTerminalUsage = true;
     }
