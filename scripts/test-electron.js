@@ -49,6 +49,7 @@ const WIN32_FILES = [
   "electron/test/cursor.test.js",
   "electron/test/context-usage.test.js",
   "electron/test/claude-context.test.js", // pure policy + writeFakeBin transport
+  "electron/test/claude-usage.test.js", // pure partial/model accounting reconciliation
   "electron/test/fork-handoff.test.js",
   "electron/test/grok.test.js",
   "electron/test/guardrails-runner.test.js",

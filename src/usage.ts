@@ -32,6 +32,7 @@ export function usageModelKey({ provider, model }: UsageModelSelection): string 
 export type UsageBreakdownKind = "model" | "day" | "project" | "thread";
 
 export interface UsageTotals {
+  unpricedTokens?: UsageEntry["unpricedTokens"];
   costUsd: number;
   /** Uncached input, billable at the full rate. */
   inputTokens: number;
@@ -102,7 +103,7 @@ export interface UsageSummary {
 }
 
 /** Tokens the model actually saw, including cache reads/writes. */
-export function processedTokens(row: UsageTotals): number {
+export function processedTokens(row: Pick<UsageTotals, "inputTokens" | "cachedInputTokens" | "cacheWriteTokens" | "outputTokens">): number {
   return (
     row.inputTokens +
     row.cachedInputTokens +
@@ -124,7 +125,8 @@ export function isUnreported(row: UsageTotals): boolean {
 
 /** Token counts exist, but the provider never emitted a USD cost (Cursor). */
 export function isCostUnmetered(row: UsageTotals): boolean {
-  return !isUnreported(row) && row.costUsd === 0 && processedTokens(row) > 0;
+  const measured = row.unpricedTokens ?? row;
+  return !isUnreported(row) && row.costUsd === 0 && processedTokens(measured) > 0;
 }
 
 function localDayKey(d: Date): string {
@@ -160,6 +162,14 @@ function cloneTotals(row: UsageTotals): UsageTotals {
 }
 
 function addTo(target: UsageTotals, entry: UsageEntry): void {
+  if (target.unpricedTokens || entry.unpricedTokens) {
+    const fields = ["inputTokens", "cachedInputTokens", "cacheWriteTokens", "outputTokens"] as const;
+    const before: Partial<NonNullable<UsageEntry["unpricedTokens"]>> = target.unpricedTokens ?? (target.costUsd > 0 ? {} : target);
+    const added: Partial<NonNullable<UsageEntry["unpricedTokens"]>> = entry.unpricedTokens ?? (entry.costUsd > 0 ? {} : entry);
+    target.unpricedTokens = Object.fromEntries(fields.map(field => [field,
+      finiteNumber(before[field]) + finiteNumber(added[field]),
+    ])) as NonNullable<UsageEntry["unpricedTokens"]>;
+  }
   target.costUsd += entry.costUsd;
   target.inputTokens += entry.inputTokens;
   target.cachedInputTokens += entry.cachedInputTokens;
@@ -172,7 +182,14 @@ function addTo(target: UsageTotals, entry: UsageEntry): void {
 function readEntry(raw: unknown): UsageEntry | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
   const rec = raw as Record<string, unknown>;
+  const unpriced = asRecord(rec.unpricedTokens);
   return {
+    ...(unpriced ? { unpricedTokens: {
+      inputTokens: finiteNumber(unpriced.inputTokens),
+      cachedInputTokens: finiteNumber(unpriced.cachedInputTokens),
+      cacheWriteTokens: finiteNumber(unpriced.cacheWriteTokens),
+      outputTokens: finiteNumber(unpriced.outputTokens),
+    } } : {}),
     costUsd: finiteNumber(rec.costUsd),
     inputTokens: finiteNumber(rec.inputTokens),
     cachedInputTokens: finiteNumber(rec.cachedInputTokens),
@@ -304,7 +321,7 @@ export function filterUsageReport(
         for (const cell of Object.values(models)) addTo(totals, readEntry(cell)!);
       }
       const ids = Object.keys(buckets);
-      const { unattributed: _unattributed, ...labels } = entry;
+      const { unattributed: _unattributed, unpricedTokens: _unpricedTokens, ...labels } = entry;
       kept[id] = {
         ...labels,
         ...totals,
@@ -410,7 +427,7 @@ export function summarizeUsage(
     );
 
   const byDay: UsageBreakdownRow[] = days
-    .filter((d) => d.turns > 0)
+    .filter((d) => d.turns > 0 || d.costUsd > 0 || d.wastedUsd > 0 || processedTokens(d) > 0)
     .map((d) => ({
       key: d.day,
       label: d.day,

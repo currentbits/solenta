@@ -213,11 +213,14 @@ function isUnloadedV2SubagentResumeError(err) {
 
 function breakdownToJsonl(b) {
   if (!b || typeof b !== "object") return null;
-  return {
+  const out = {
     input_tokens: Number(b.inputTokens) || 0,
     output_tokens: Number(b.outputTokens) || 0,
     total_tokens: Number(b.totalTokens) || 0,
   };
+  if (b.cachedInputTokens != null) out.cached_input_tokens = b.cachedInputTokens;
+  if (b.reasoningOutputTokens != null) out.reasoning_output_tokens = b.reasoningOutputTokens;
+  return out;
 }
 
 /**
@@ -279,6 +282,8 @@ function notificationToJsonl(msg) {
     const window = Number(tu.modelContextWindow);
     return {
       type: "token_count",
+      threadId: p.threadId,
+      turnId: p.turnId,
       info: {
         last_token_usage: last,
         total_token_usage: total,

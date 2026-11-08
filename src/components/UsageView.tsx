@@ -5,6 +5,7 @@ import {
   USAGE_RANGES,
   filterUsageReport,
   processedTokens,
+  isCostUnmetered,
   summarizeUsage,
   usageCostByType,
   usageModelKey,
@@ -309,8 +310,7 @@ export function UsageView({
     summary.providers.length > 0 && summary.providers.every((p) => p.unreported);
   const costUnmeteredTotal =
     metric === "cost" &&
-    summary.totals.costUsd === 0 &&
-    processedTokens(summary.totals) > 0;
+    isCostUnmetered(summary.totals);
   const totalLabel = allUnreported
     ? "usage not reported"
     : costUnmeteredTotal

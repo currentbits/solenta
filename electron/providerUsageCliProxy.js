@@ -1,7 +1,7 @@
 "use strict";
 
 const { createHash } = require("node:crypto");
-const { CLAUDE_USAGE_URL, claudeUsageHeaders, parseClaudeWindows } = require("./providerUsageManaged.js");
+const { CLAUDE_USAGE_URL, claudeUsageHeaders, parseClaudeWindows, parseClaudeMonthlySpend } = require("./providerUsageManaged.js");
 
 const DEFAULTS = { enabled: false, managementUrl: "", managementKey: null };
 const MAX_RESPONSE_BYTES = 1024 * 1024;
@@ -58,8 +58,8 @@ function mergeCliProxyUsage(current, patch) {
   return next;
 }
 
-function row(provider, label, status, message, windows = [], fetchedAt = null) {
-  return { provider, label, source: "cliproxy", status, windows, fetchedAt, ...(message ? { message } : {}) };
+function row(provider, label, status, message, windows = [], fetchedAt = null, monthlySpend = null) {
+  return { provider, label, source: "cliproxy", status, windows, fetchedAt, ...(message ? { message } : {}), ...(monthlySpend ? { monthlySpend } : {}) };
 }
 
 function statusError(status, management) {
@@ -155,7 +155,8 @@ async function readCliProxyUsage(raw, opts = {}) {
         if (!Number.isInteger(result?.status_code) || result.status_code < 200 || result.status_code >= 300) throw statusError(result?.status_code, false);
         const body = typeof result.body === "string" ? JSON.parse(result.body) : result.body;
         const windows = parseClaudeWindows(body);
-        return windows.length ? row(provider, label, "ok", null, windows, opts.nowMs ? opts.nowMs() : Date.now()) : row(provider, label, "unavailable", "CLIProxy usage unavailable");
+        const monthlySpend = parseClaudeMonthlySpend(body);
+        return windows.length || monthlySpend ? row(provider, label, "ok", null, windows, opts.nowMs ? opts.nowMs() : Date.now(), monthlySpend) : row(provider, label, "unavailable", "CLIProxy usage unavailable");
       } catch (err) { return failedRow(provider, label, err); }
     }));
     const rows = results.filter(Boolean);

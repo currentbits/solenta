@@ -50,6 +50,7 @@ function envelope(fields) {
     fetchedAt: fields.fetchedAt == null ? null : fields.fetchedAt,
   };
   if (fields.message) out.message = fields.message;
+  if (fields.monthlySpend) out.monthlySpend = fields.monthlySpend;
   return out;
 }
 
@@ -509,6 +510,44 @@ function parseClaudeWindows(body) {
   return windows;
 }
 
+function moneyMinor(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const amountMinor = toNumber(raw.amount_minor);
+  const exponent = raw.exponent;
+  const currency = raw.currency;
+  if (amountMinor === null || amountMinor < 0 ||
+      !Number.isInteger(exponent) || exponent < 0 || exponent > 6 ||
+      typeof currency !== "string" || !/^[A-Z]{3}$/.test(currency)) return null;
+  return { amountMinor, currency, exponent, unit: "minor" };
+}
+
+/** Monetary allowances never become rolling quota windows or retry deadlines. */
+function parseClaudeMonthlySpend(body) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return null;
+  const spend = body.spend;
+  const extra = body.extra_usage;
+  const modern = spend && typeof spend.enabled === "boolean";
+  const raw = modern ? spend : extra;
+  const enabled = modern ? spend.enabled : extra?.is_enabled;
+  if (typeof enabled !== "boolean") return null;
+  // extra_usage credits are reported in USD cents; spend carries its own units.
+  const used = enabled ? moneyMinor(modern ? raw.used : {
+    amount_minor: raw.used_credits, currency: "USD", exponent: 2,
+  }) : null;
+  const limit = enabled ? moneyMinor(modern ? raw.limit : {
+    amount_minor: raw.monthly_limit, currency: "USD", exponent: 2,
+  }) : null;
+  const comparable = used && limit && used.currency === limit.currency && used.exponent === limit.exponent;
+  return {
+    period: "monthly",
+    enabled,
+    used,
+    limit,
+    usedPercent: comparable ? percentFromCounts(used.amountMinor, limit.amountMinor) : null,
+    resetsAt: enabled ? parseResetMs(raw.resets_at ?? raw.resetsAt) : null,
+  };
+}
+
 function timeUnit(raw) {
   switch (raw) {
     case "TIME_UNIT_MINUTE":
@@ -663,7 +702,8 @@ async function readClaudeUsage(opts = {}) {
       headers: claudeUsageHeaders(loaded.token),
     });
     const windows = parseClaudeWindows(body);
-    if (!windows.length) {
+    const monthlySpend = parseClaudeMonthlySpend(body);
+    if (!windows.length && !monthlySpend) {
       return envelope({
         provider,
         status: "unavailable",
@@ -674,6 +714,7 @@ async function readClaudeUsage(opts = {}) {
       provider,
       status: "ok",
       windows,
+      monthlySpend,
       fetchedAt: now,
     });
   } catch (err) {
@@ -744,6 +785,7 @@ module.exports = {
   CLAUDE_USAGE_URL,
   claudeUsageHeaders,
   parseClaudeWindows,
+  parseClaudeMonthlySpend,
   readClaudeUsage,
   readKimiUsage,
 };

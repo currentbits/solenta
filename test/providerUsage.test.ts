@@ -10,6 +10,7 @@ import {
   evenPacePercent,
   formatResetAt,
   formatUsedPercent,
+  formatUsageMoney,
   usedBarWidth,
   isQuotaStale,
   QUOTA_STALE_MS,
@@ -70,6 +71,16 @@ describe("formatUsedPercent", () => {
     assert.equal(formatUsedPercent(-1), "unavailable");
     assert.equal(formatUsedPercent(Number.NaN), "unavailable");
     assert.equal(formatUsedPercent(Number.POSITIVE_INFINITY), "unavailable");
+  });
+});
+
+describe("formatUsageMoney", () => {
+  it("uses the reported currency and minor-unit exponent", () => {
+    assert.match(formatUsageMoney({ amountMinor: 4631, currency: "USD", exponent: 2, unit: "minor" }) ?? "", /USD\s46\.31/);
+    assert.match(formatUsageMoney({ amountMinor: 4631, currency: "JPY", exponent: 0, unit: "minor" }) ?? "", /JPY\s4,631/);
+    assert.match(formatUsageMoney({ amountMinor: 4631, currency: "KWD", exponent: 3, unit: "minor" }) ?? "", /KWD\s4\.631/);
+    assert.equal(formatUsageMoney(null), null);
+    assert.equal(formatUsageMoney({ amountMinor: Infinity, currency: "USD", exponent: 2, unit: "minor" }), null);
   });
 });
 

@@ -1,5 +1,5 @@
 import { formatElapsed, formatRelativeAge } from "./format.ts";
-import type { ProviderUsage, ProviderUsageWindow } from "./shared/ipc.ts";
+import type { ProviderUsage, ProviderUsageWindow, ProviderUsageMoney } from "./shared/ipc.ts";
 
 export type { ProviderUsage, ProviderUsageWindow } from "./shared/ipc.ts";
 
@@ -38,6 +38,16 @@ export function displayWindowLabel(win: ProviderUsageWindow): string {
 export function formatUsedPercent(usedPercent: number): string {
   if (!Number.isFinite(usedPercent) || usedPercent < 0) return "unavailable";
   return `${Math.round(usedPercent)}% used`;
+}
+
+export function formatUsageMoney(money: ProviderUsageMoney | null): string | null {
+  if (!money || money.unit !== "minor" || !Number.isFinite(money.amountMinor) || money.amountMinor < 0 ||
+      !Number.isInteger(money.exponent) || money.exponent < 0 || money.exponent > 6 ||
+      !/^[A-Z]{3}$/.test(money.currency)) return null;
+  return new Intl.NumberFormat("en-US", {
+    style: "currency", currency: money.currency, currencyDisplay: "code",
+    minimumFractionDigits: money.exponent, maximumFractionDigits: money.exponent,
+  }).format(money.amountMinor / 10 ** money.exponent);
 }
 
 /** Fill width only. Text may exceed 100 when the provider reports overage. */
@@ -135,4 +145,3 @@ export function sortProviderUsage(
     return a.provider.localeCompare(b.provider);
   });
 }
-

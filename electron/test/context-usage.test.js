@@ -96,7 +96,7 @@ describe("codex extractUsage token_count", () => {
     });
     assert.equal(u.inputTokens, 100);
     assert.equal(u.outputTokens, 10);
-    assert.equal(u.contextTokens, 110);
+    assert.equal(u.contextTokens, undefined, "session spend is not context occupancy");
     assert.equal(u.contextWindow, 200000);
     assert.equal(u.snapshot, true);
   });
