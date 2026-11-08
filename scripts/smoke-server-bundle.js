@@ -71,6 +71,15 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     assert.equal(status.build.runtimeKind, "server");
     assert.equal(status.build.buildSha, packaged.buildSha);
     step("public and authenticated computer/build identity agree");
+    // isBuildMismatch compares app:status build.sha with the renderer's baked
+    // __BUILD_SHA__ exactly; a short/full mismatch boots every browser into
+    // "Reload required".
+    const assets = path.join(tmp, "solenta-server", "app", "dist", "assets");
+    assert.ok(
+      fs.readdirSync(assets).some((f) => f.endsWith(".js") && fs.readFileSync(path.join(assets, f), "utf8").includes(JSON.stringify(status.build.sha))),
+      `renderer bundle is stamped with server build ${status.build.sha}`,
+    );
+    step("renderer build stamp matches the server");
 
     const project = await call("projects:add", [repo]);
     const thread = await call("threads:create", [{ projectId: project.id, title: "smoke", worktree: true }]);
