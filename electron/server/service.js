@@ -149,6 +149,7 @@ async function main(argv) {
   // Read-only status/log requests never install a service or take a lock.
   if (action === "status" || action === "logs") return lifecycle.action(action);
   return withOperationLock(lifecycle.paths.stateFile, async () => {
+    if (action === "prepare" && lifecycle.status().installed) return lifecycle.prepare(options.runtime, port, target);
     if (action === "external-start" || (action === "prepare" && !lifecycle.status().available)) {
       if (lifecycle.status().installed || fs.existsSync(path.join(dataDir, ".server-lock"))) throw new Error("This data directory already has an owner. Attach to it or stop its existing service/process before preparing another.");
       const runtime = options.runtime || path.resolve(__dirname, "../../..");
@@ -168,7 +169,7 @@ async function main(argv) {
     if (action === "install" || action === "prepare") {
       const runtime = options.runtime || path.resolve(__dirname, "../../..");
       if (options.releaseTag) verifyRuntime(runtime, target);
-      return await lifecycle.install(runtime, port, target);
+      return await (action === "prepare" ? lifecycle.prepare(runtime, port, target) : lifecycle.install(runtime, port, target));
     }
     if (action === "update") { if (!options.runtime) throw new Error("--runtime is required for update."); return await lifecycle.update(options.runtime, target); }
     if (action === "recover") return await lifecycle.recover();

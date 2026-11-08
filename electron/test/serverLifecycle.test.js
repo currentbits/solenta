@@ -311,3 +311,78 @@ it("checksum-pinned staging keeps same-version releases in separate immutable di
   try { execFileSync("sh", ["-c", next.command], { env: next.env, stdio: ["ignore", "pipe", "pipe"] }); assert.fail("cached wrong release must be refused"); }
   catch (error) { assert.equal(error.status, 17); }
 });
+function candidateRuntime(f) {
+  const candidate = path.join(f.home, "candidate");
+  fs.cpSync(f.runtime, candidate, { recursive: true });
+  fs.writeFileSync(path.join(candidate, "app/package.json"), JSON.stringify({ version: "1.0.0", runtimeKind: "server", buildSha: "bbbbbbb", releaseTag: "nightly-new" }));
+  return fs.realpathSync(candidate);
+}
+it("prepare starts the existing owner using its saved runtime and port without implicit update", async (t) => {
+  const readyCalls = [];
+  const f = fixture(t, "linux", { ready: async (port, runtime, target) => readyCalls.push({ port, runtime, target }) });
+  await f.lc.install(f.runtime, 5600);
+  await f.lc.action("stop");
+  const old = f.lc.state();
+  const unit = fs.readFileSync(f.lc.paths.unit, "utf8");
+  const candidate = candidateRuntime(f);
+  const result = await f.lc.prepare(candidate, 4620, { releaseTag: "nightly-new" });
+  assert.equal(result.running, true);
+  assert.deepEqual(f.lc.state(), old);
+  assert.equal(fs.realpathSync(f.lc.paths.current), fs.realpathSync(f.runtime));
+  assert.equal(fs.readFileSync(f.lc.paths.unit, "utf8"), unit);
+  assert.deepEqual(readyCalls.at(-1), { port: 5600, runtime: old.runtime, target: undefined });
+  await assert.rejects(f.lc.install(candidate, 4620), /different managed runtime/);
+});
+it("backup cleanup failure after activation warns without rolling back a live updated runtime", async (t) => {
+  const f = fixture(t, "linux", { trial: async (_runtime, _port, data) => fs.writeFileSync(path.join(data, "schema"), "new"), removeBackup: async () => { throw new Error("cleanup permission denied"); } });
+  await f.lc.install(f.runtime);
+  fs.mkdirSync(f.lc.paths.dataDir, { recursive: true }); fs.writeFileSync(path.join(f.lc.paths.dataDir, "schema"), "old");
+  const candidate = candidateRuntime(f);
+  const result = await f.lc.update(candidate);
+  assert.equal(result.updated, true); assert.match(result.cleanupWarning, /cleanup permission denied/);
+  assert.equal(f.lc.state().runtime, candidate); assert.equal(fs.realpathSync(f.lc.paths.current), candidate);
+  assert.equal(fs.readFileSync(path.join(f.lc.paths.dataDir, "schema"), "utf8"), "new");
+  assert.equal(fs.existsSync(path.join(f.lc.paths.dataDir, ".server-maintenance-request")), false);
+  assert.equal(f.calls.filter(([, a]) => a.includes("stop")).length, 1, "post-commit cleanup cannot stop the live updated process");
+});
+it("a retained post-commit journal finalizes without discarding newer user work or requiring idle", async (t) => {
+  let failCleanup = true; let committed = false;
+  const f = fixture(t, "linux", {
+    inspectWork: async () => { assert.equal(committed, false, "committed recovery cannot require idle or stop work"); return { active: 0 }; },
+    removeJournal: async (file) => { if (failCleanup) throw new Error("journal busy"); fs.rmSync(file, { force: true }); },
+  });
+  await f.lc.install(f.runtime);
+  fs.mkdirSync(f.lc.paths.dataDir, { recursive: true });
+  const candidate = candidateRuntime(f);
+  const result = await f.lc.update(candidate);
+  assert.match(result.cleanupWarning, /journal busy/);
+  assert.equal((await f.lc.action("status")).recoveryRequired, true);
+  fs.writeFileSync(path.join(f.lc.paths.dataDir, "user-work"), "created after activation");
+  committed = true; failCleanup = false;
+  const recovered = await f.lc.recover();
+  assert.equal(recovered.running, true);
+  assert.equal(f.lc.state().runtime, candidate);
+  assert.equal(fs.readFileSync(path.join(f.lc.paths.dataDir, "user-work"), "utf8"), "created after activation");
+  assert.equal(f.calls.filter(([, a]) => a.includes("stop")).length, 1);
+  assert.equal((await f.lc.action("status")).recoveryRequired, false);
+});
+it("failed pre-commit restoration stays gated and can finish recovery without activating early", async (t) => {
+  let failReady = false;
+  const f = fixture(t, "linux", { ready: async () => {
+    if (failReady) {
+      assert.equal(fs.existsSync(path.join(f.lc.paths.dataDir, ".server-maintenance-request")), true);
+      throw new Error("ready unavailable");
+    }
+  } });
+  await f.lc.install(f.runtime);
+  fs.mkdirSync(f.lc.paths.dataDir, { recursive: true }); fs.writeFileSync(path.join(f.lc.paths.dataDir, "schema"), "original");
+  const candidate = candidateRuntime(f); failReady = true;
+  await assert.rejects(f.lc.update(candidate), /Recovery is incomplete/);
+  assert.equal(fs.existsSync(path.join(f.lc.paths.dataDir, ".server-maintenance-request")), true);
+  assert.equal((await f.lc.action("status")).recoveryRequired, true);
+  assert.equal(fs.readFileSync(path.join(f.lc.paths.dataDir, "schema"), "utf8"), "original");
+  failReady = false;
+  await f.lc.recover();
+  assert.equal(fs.existsSync(path.join(f.lc.paths.dataDir, ".server-maintenance-request")), false);
+  assert.equal((await f.lc.action("status")).recoveryRequired, false);
+});

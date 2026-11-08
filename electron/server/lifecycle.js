@@ -89,6 +89,7 @@ function createLifecycle(options = {}, deps = {}) {
     if (action === "status") return { ...status(), recoveryRequired: fs.existsSync(pending) };
     if (action === "logs") { const s = status(); return { ...s, logs: manager === "systemd-user" ? run("journalctl", ["--user", "-u", `${name}.service`, "-n", "80", "--no-pager"]) : fs.existsSync(log) ? fs.readFileSync(log, "utf8").slice(-32768) : "No service log yet." }; }
     owned();
+    if (fs.existsSync(pending)) throw new Error("An outstanding update requires recovery before another lifecycle action.");
     if (action === "start") {
       if (fs.existsSync(pending)) throw new Error("An interrupted update requires recovery; use solenta-service recover.");
       fs.rmSync(maintenance, { force: true }); if (manager === "launchd" && !attempt("launchctl", ["print", `${domain}/${label}`]).ok) run("launchctl", ["bootstrap", domain, unit]); else start(); if (deps.ready) await deps.ready(state().port, state().runtime); }
@@ -127,8 +128,10 @@ function createLifecycle(options = {}, deps = {}) {
     // files or provider-home configuration is part of this rollback boundary.
     if (fs.existsSync(backup)) throw new Error("An earlier data backup exists; inspect it before updating.");
     await (deps.checkBackupSpace || checkBackupSpace)(dataDir, root);
-    const journal = { old, backup, runtime, dataDir, phase: "quiescing" };
+    const journal = { old, backup, runtime, dataDir, target, phase: "quiescing" };
     writeJournal(journal, true);
+    let activated = false;
+    let committedStatus;
     try {
       await stop();
       journal.phase = "snapshot"; writeJournal(journal);
@@ -139,12 +142,17 @@ function createLifecycle(options = {}, deps = {}) {
       journal.phase = "activate"; writeJournal(journal);
       if (manager === "launchd") run("launchctl", ["bootstrap", domain, unit]); else start();
       await deps.ready(old.port, runtime, target);
-      fs.rmSync(maintenance, { force: true });
-      fs.unlinkSync(pending);
-      fs.rmSync(backup, { recursive: true, force: true });
       const metadata = JSON.parse(fs.readFileSync(path.join(runtime, "app/package.json"), "utf8"));
-      return { ...status(), updated: true, releaseTag: metadata.releaseTag, buildSha: metadata.buildSha };
+      committedStatus = { ...status(), updated: true, releaseTag: metadata.releaseTag, buildSha: metadata.buildSha };
+      journal.phase = "commit-ready"; writeJournal(journal);
+      // Removing the marker is the activation commit. A journal left after
+      // this point is finalized by recovery; it can never restore stale data
+      // underneath work that the released process has since accepted.
+      fs.rmSync(maintenance, { force: true });
+      activated = true;
+      return await finishCleanup(committedStatus, backup);
     } catch (error) {
+      if (activated) return { ...committedStatus, cleanupWarning: `The updated runtime is ready; post-activation cleanup failed: ${error.message}` };
       if (error.safeNoStop) { fs.rmSync(pending, { force: true }); throw error; }
       try { await recover(journal); }
       catch (restoreError) { throw new Error(`Update failed: ${error.message}. Recovery is incomplete: ${restoreError.message}. Service remains blocked; run recover after inspecting logs.`); }
@@ -153,8 +161,27 @@ function createLifecycle(options = {}, deps = {}) {
   }
   async function recover(journal) {
     if (!journal) journal = JSON.parse(fs.readFileSync(pending, "utf8"));
-    // Never replace state under a live writer, even during recovery.
-    if (status().running || fs.existsSync(path.join(dataDir, ".server-lock"))) await ensureIdle();
+    const released = !fs.existsSync(maintenance);
+    const finalizing = (journal.phase === "commit-ready" && released) || journal.phase === "rollback-ready";
+    if (finalizing) {
+      const runtime = journal.phase === "commit-ready" ? journal.runtime : journal.old.runtime;
+      const saved = owned();
+      if (fs.realpathSync(saved.runtime) !== fs.realpathSync(runtime) || fs.realpathSync(current) !== fs.realpathSync(runtime)) throw new Error("The runtime no longer matches the recovery journal. Inspect it before continuing.");
+      if (!status().running) {
+        if (manager === "launchd") run("launchctl", ["bootstrap", domain, unit]); else start();
+      }
+      await deps.ready(saved.port, runtime, journal.phase === "commit-ready" ? journal.target : undefined);
+      const finalStatus = status();
+      fs.rmSync(maintenance, { force: true });
+      return finishCleanup(finalStatus, journal.backup);
+    }
+    // Never replace state under a live writer, even during recovery. A
+    // journal may have been written before stop created its marker.
+    const hadMarker = fs.existsSync(maintenance);
+    fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(maintenance, "Server recovery in progress.\n", { mode: 0o600 });
+    try { if (status().running || fs.existsSync(path.join(dataDir, ".server-lock"))) await ensureIdle(); }
+    catch (error) { if (!hadMarker) fs.rmSync(maintenance, { force: true }); throw error; }
     if (manager === "systemd-user") run("systemctl", ["--user", "stop", `${name}.service`]);
     else attempt("launchctl", ["bootout", `${domain}/${label}`]);
     await (deps.waitStopped || waitStopped)(dataDir);
@@ -165,15 +192,32 @@ function createLifecycle(options = {}, deps = {}) {
       // Failed trial data is retained for diagnosis. It may contain secrets.
     }
     point(journal.old.runtime); save(journal.old);
+    journal.phase = "rollback-ready"; writeJournal(journal);
     if (manager === "launchd") run("launchctl", ["bootstrap", domain, unit]); else start();
     await deps.ready(journal.old.port, journal.old.runtime);
+    const restoredStatus = status();
     fs.rmSync(maintenance, { force: true });
-    fs.rmSync(pending, { force: true });
-    fs.rmSync(journal.backup, { recursive: true, force: true });
-    return status();
+    return finishCleanup(restoredStatus, journal.backup);
+  }
+  async function finishCleanup(result, backup) {
+    const warnings = [];
+    try {
+      if (deps.removeJournal) await deps.removeJournal(pending);
+      else fs.rmSync(pending, { force: true });
+    } catch (error) { warnings.push(`update journal: ${error.message}`); }
+    try {
+      if (deps.removeBackup) await deps.removeBackup(backup);
+      else fs.rmSync(backup, { recursive: true, force: true });
+    } catch (error) { warnings.push(`old data snapshot: ${error.message}`); }
+    return warnings.length ? { ...result, cleanupWarning: `The runtime is ready. Cleanup needs attention (${warnings.join("; ")}).` } : result;
+  }
+  async function prepare(runtime, port = 4620, target = {}) {
+    // Connect may stage a newer helper, but starting an existing owner is not
+    // permission to replace its runtime or change its saved listener config.
+    return status().installed ? action("start") : install(runtime, port, target);
   }
   async function actionStart() { return action("start"); }
-  return { status, action, install, update, recover, paths: { root, dataDir, current, stateFile, unit }, state, save, stop };
+  return { status, action, install, prepare, update, recover, paths: { root, dataDir, current, stateFile, unit }, state, save, stop };
 }
 async function waitStopped(dataDir) {
   for (let i = 0; i < 600; i++) {
