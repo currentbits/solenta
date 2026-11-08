@@ -423,9 +423,11 @@ export function SettingsModal({
   useModalFocus(open, dialogRef);
 
   useEffect(() => {
-    if (!open || !isSettingsPane(initialPane)) return;
+    if (!open) return;
+    if (computer?.remote) { setPane(initialPane === "agents" ? "agents" : "providers"); return; }
+    if (!isSettingsPane(initialPane)) return;
     setPane(initialPane);
-  }, [open, initialPane]);
+  }, [open, initialPane, computer?.remote]);
 
   // "Find a setting" jump: once the target pane has rendered, scroll to the
   // setting's own control and flash its row (same device as the sidebar's

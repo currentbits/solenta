@@ -4452,3 +4452,20 @@ describe("SettingsModal named Claude Ultracode profile", () => {
     m.unmount();
   });
 });
+
+describe("SettingsModal owning computer", () => {
+  it("keeps remote agent settings separate from local client panes", async () => {
+    const m = await mount(<SettingsModal open initialPane="connections" onClose={() => {}}
+      computer={{ label: "Build machine", remote: true, onChange: () => {} }}
+      settings={{ agentProfiles: [], providerInstances: [] } as AppSettings}
+      providers={[]} status={null}
+      providerApi={{ providers: { detectLocal: async () => [] } } as never}
+      onSaveSettings={async patch => patch as AppSettings} />);
+    assert.match(m.text(), /Credentials, models and profiles belong to Build machine/);
+    assert.ok(m.query('[data-settings-nav="providers"]'));
+    assert.ok(m.query('[data-settings-nav="agents"]'));
+    assert.equal(m.query('[data-settings-nav="connections"]'), null);
+    assert.equal(m.query('[data-connections]'), null);
+    assert.equal(m.query('[data-settings-nav="general"]'), null);
+  });
+});

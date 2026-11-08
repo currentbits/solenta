@@ -3725,6 +3725,8 @@ export interface RemoteServerStatus {
 }
 export interface RemoteServerAction {
   host: string;
+  serviceMode?: "managed" | "external";
+  computerId?: string;
   remotePort?: number;
   action: "install" | "status" | "logs" | "start" | "stop" | "restart" | "uninstall";
 }
@@ -5881,7 +5883,7 @@ export interface CoderApi {
      * Install or update this build's Linux tarball in ~/solenta on an SSH
      * host, checked against the release's sha256. Linux x86_64 only.
      */
-    installRemoteSolenta(input: { host: string }): Promise<RemoteInstallResult>;
+    installRemoteSolenta(input: { host: string; remotePort?: number; computerId?: string }): Promise<RemoteInstallResult>;
     manageRemoteServer(input: RemoteServerAction): Promise<RemoteServerStatus>;
     /**
      * Show these saved Connections' projects and threads in this window

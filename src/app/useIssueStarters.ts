@@ -7,6 +7,7 @@ import type { ThreadStartMode } from "../components/PlanboardView";
 export function useIssueStarters({
   settings,
   providers,
+  loadAgentCatalog,
   importCliSession,
   fetchIssue,
   createThread,
@@ -19,6 +20,7 @@ export function useIssueStarters({
 }: {
   settings: UseCoderResult["settings"];
   providers: UseCoderResult["providers"];
+  loadAgentCatalog?: (projectId: string) => Promise<{ settings: UseCoderResult["settings"]; providers: UseCoderResult["providers"] }>;
   importCliSession: UseCoderResult["importCliSession"];
   fetchIssue: UseCoderResult["fetchIssue"];
   createThread: UseCoderResult["createThread"];
@@ -89,13 +91,16 @@ export function useIssueStarters({
         return { ok: false as const, reason: "Could not create thread" };
       }
       if (input.agentProfileId) {
-        const profile = (settings?.agentProfiles ?? []).find(
+        let catalog = { settings, providers };
+        try { if (loadAgentCatalog) catalog = await loadAgentCatalog(input.projectId); }
+        catch (err) { return { ok: false as const, reason: err instanceof Error ? err.message : String(err) }; }
+        const profile = (catalog.settings?.agentProfiles ?? []).find(
           (p) => p.id === input.agentProfileId,
         );
         if (!profile) {
           return { ok: false as const, reason: "Unknown agent profile" };
         }
-        const info = providers.find((p) => p.id === profile.provider);
+        const info = catalog.providers.find((p) => p.id === profile.provider);
         if (!info || info.available === false) {
           return {
             ok: false as const,
@@ -154,6 +159,7 @@ export function useIssueStarters({
       createThread,
       startRun,
       setIssuePlanStatus,
+      loadAgentCatalog,
       settings?.agentProfiles,
       providers,
       applyAgentProfile,

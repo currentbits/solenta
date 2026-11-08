@@ -11,6 +11,7 @@ import {
   type CSSProperties,
   type WheelEvent as ReactWheelEvent,
 } from "react";
+import { computerApi, liveComputerHost, useComputerContext } from "./coder/computerContext";
 import { useCoder } from "./useCoder";
 import { addPrCommentToDraft } from "./prCommentContext";
 import type { PrListViewProps } from "./components/PrListView";
@@ -440,6 +441,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     setStayAwakeMode,
     testWebhook,
     refreshProviders,
+    refreshLocalProviders,
     projectById,
     searchMemory,
     recentMemory,
@@ -565,6 +567,9 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     typeof window !== "undefined" &&
     !(window as unknown as { coder?: unknown }).coder;
   const [planboardProjectId, setPlanboardProjectId] = useState<string | null>(null);
+  const planboardOwner = projects.find(p => p.id === planboardProjectId) ?? projects[0];
+  const planboardComputer = useComputerContext(api, view === "planboard" ? liveComputerHost(planboardOwner?.host, sidebarHosts) : undefined, settings, localProviders);
+  const settingsComputer = view === "planboard" ? planboardComputer : computer;
   const [kanbanProjectId, setKanbanProjectId] = useState<string | null>(null);
   const [activityProjectId, setActivityProjectId] = useState<string | null>(null);
   const [usageControls, setUsageControls] = useState<UsageReportControls>({
@@ -1901,8 +1906,14 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     handleCreateThreadFromIssue,
     handleCheckoutPr,
   } = useIssueStarters({
-    settings,
+    settings: agentSettings,
     providers,
+    loadAgentCatalog: async (projectId) => {
+      const owner = projects.find(p => p.id === projectId);
+      const hostApi = computerApi(api, owner?.host?.key);
+      const [settings, providers] = await Promise.all([hostApi.settings.get(), hostApi.providers.list()]);
+      return { settings, providers };
+    },
     importCliSession,
     fetchIssue,
     createThread,
@@ -2090,6 +2101,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
 
   const editProject =
     projects.find((p) => p.id === editProjectId) ?? null;
+  const editProjectComputer = useComputerContext(api, liveComputerHost(editProject?.host, sidebarHosts), settings, localProviders);
 
   // Vite replaces __BUILD_SHA__; node tests leave it undeclared.
   const rendererSha =
@@ -2267,6 +2279,9 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     <PrHoverFetchContext.Provider value={prDetail}>
     <div className={styles.shell}>
       <ConnectionBanner />
+      {computer.key && computer.error && !settingsOpen && <SettingsLoadNotice
+        error={`${computer.label}: ${computer.error}`} loading={computer.loading}
+        onRetry={async () => computer.refresh()} />}
       {settingsError && !settingsOpen && (
         <SettingsLoadNotice error={settingsError} loading={settingsLoading} onRetry={retrySettings} />
       )}
@@ -2408,7 +2423,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onOpenApprovals={openApprovals}
         onCreateThread={handleCreateThread}
         listBaseBranches={listBaseBranches}
-        defaultWorktree={settings?.defaultWorktree ?? false}
+        defaultWorktree={agentSettings?.defaultWorktree ?? false}
         revealThreadId={revealThreadId}
         onRevealHandled={clearReveal}
         scopeRequest={scopeRequest}
@@ -2599,6 +2614,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
             <PlanboardView
               projects={projects}
               initialProjectId={planboardProjectId}
+              onProjectScopeChange={setPlanboardProjectId}
+              agentCatalogProjectId={planboardOwner?.id}
               listIssues={listIssues}
               listPrs={listPrs}
               threads={threads}
@@ -2608,11 +2625,11 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
               // Stay on the board after a start (#207): the card moves to In
               // progress here, and the new thread is in the sidebar anyway.
               onStartTask={handleCreateThreadFromIssue}
-              agentProfiles={agentSettings?.agentProfiles ?? EMPTY_AGENT_PROFILES}
+              agentProfiles={planboardComputer.settings?.agentProfiles ?? EMPTY_AGENT_PROFILES}
               defaultOrchestratorProfileId={
-                agentSettings?.defaultOrchestratorProfileId ?? null
+                planboardComputer.settings?.defaultOrchestratorProfileId ?? null
               }
-              providers={providers}
+              providers={planboardComputer.providers}
             />
           ) : view === "kanban" ? (
             <KanbanView
@@ -2778,7 +2795,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onStopAsk={handleStopAsk}
         onDismissBtw={handleDismissBtw}
         onPromoteBtw={handlePromoteBtw}
-        defaultWorktree={settings?.defaultWorktree ?? false}
+        defaultWorktree={agentSettings?.defaultWorktree ?? false}
         onDeleteThread={handleDeleteThread}
         changesOpen={changesOpen}
         changesNonce={changesNonce}
@@ -3019,30 +3036,33 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         <Suspense fallback={null}>
         {settingsLoaded && (
         <SettingsModal
-          key={editRemoteSettings ? computer.key : "local"}
+          key={editRemoteSettings ? settingsComputer.key : "local"}
           open={settingsOpen}
           onClose={closeSettings}
-          computer={computer.key ? {
-            label: computer.label, remote: editRemoteSettings,
+          computer={settingsComputer.key ? {
+            label: settingsComputer.label, remote: editRemoteSettings,
             onChange: setEditRemoteSettings,
           } : undefined}
-          providerApi={editRemoteSettings && computer.key ? computer.api : api}
+          providerApi={editRemoteSettings && settingsComputer.key ? settingsComputer.api : api}
           initialPane={settingsPane}
-          settings={editRemoteSettings && computer.key ? computer.settings : settings}
-          settingsError={editRemoteSettings && computer.key ? computer.error : settingsError}
-          settingsLoading={editRemoteSettings && computer.key ? computer.loading : settingsLoading}
-          onRetrySettings={editRemoteSettings && computer.key ? async () => computer.refresh() : retrySettings}
-          providers={editRemoteSettings && computer.key ? computer.providers : localProviders}
-          onRefreshProviders={editRemoteSettings && computer.key ? computer.refresh : handleModelPickerOpen}
-          onProviderSignIn={editRemoteSettings && computer.key
-            ? (providerId, opts) => handleProviderSignIn(providerId, opts)
+          settings={editRemoteSettings && settingsComputer.key ? settingsComputer.settings : settings}
+          settingsError={editRemoteSettings && settingsComputer.key ? settingsComputer.error : settingsError}
+          settingsLoading={editRemoteSettings && settingsComputer.key ? settingsComputer.loading : settingsLoading}
+          onRetrySettings={editRemoteSettings && settingsComputer.key ? async () => settingsComputer.refresh() : retrySettings}
+          providers={editRemoteSettings && settingsComputer.key ? settingsComputer.providers : localProviders}
+          onRefreshProviders={editRemoteSettings && settingsComputer.key ? settingsComputer.refresh : () => void refreshLocalProviders()}
+          onProviderSignIn={editRemoteSettings && settingsComputer.key
+            ? async (providerId, opts) => {
+                if (!signInThreadId || computer.key !== settingsComputer.key) throw new Error(`Open a thread on ${settingsComputer.label}, or use its own window, to install or sign in there.`);
+                await handleProviderSignIn(providerId, opts);
+              }
             : (providerId, opts) => handleProviderSignIn(providerId, { ...opts, shell: true })}
           status={appStatus}
           update={updateStatus}
           onCheckUpdate={checkUpdate}
           onDownloadUpdate={downloadUpdate}
           onApplyUpdate={applyUpdate}
-          onSaveSettings={editRemoteSettings && computer.key ? computer.save : saveSettings}
+          onSaveSettings={editRemoteSettings && settingsComputer.key ? settingsComputer.save : saveSettings}
           onTestWebhook={testWebhook}
           onShowOnboarding={showOnboarding}
           onOpenConnection={(input) => api.app.openRemoteConnection(input)}
@@ -3164,11 +3184,11 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
             project={editProject}
             onClose={() => setEditProjectId(null)}
             onSubmit={submitEditProject}
-            providers={providers}
-            globalProvider={settings?.defaultProvider ?? null}
-            globalDefaultWorktree={settings?.defaultWorktree ?? false}
-            globalDefaultMergeMethod={settings?.defaultMergeMethod ?? null}
-            agentProfiles={agentSettings?.agentProfiles ?? EMPTY_AGENT_PROFILES}
+            providers={editProjectComputer.providers}
+            globalProvider={editProjectComputer.settings?.defaultProvider ?? null}
+            globalDefaultWorktree={editProjectComputer.settings?.defaultWorktree ?? false}
+            globalDefaultMergeMethod={editProjectComputer.settings?.defaultMergeMethod ?? null}
+            agentProfiles={editProjectComputer.settings?.agentProfiles ?? EMPTY_AGENT_PROFILES}
             onMoveConfigToRepo={() =>
               api.projects.moveConfigToRepo({ projectId: editProject.id })
             }

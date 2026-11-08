@@ -1,3 +1,4 @@
+import { computerApi } from "./computerContext";
 import { useCallback } from "react";
 import type { Dispatch, RefObject, SetStateAction } from "react";
 import type {
@@ -67,16 +68,21 @@ export function useCoderRuns({
       // Ask (issue #392) wins over both: a Q&A thread must never grow a
       // worktree or fork a worker, even when those defaults are on.
       const project = projects.find((p) => p.id === pid);
+      let ownerSettings = settings;
+      if (project?.host) {
+        try { ownerSettings = await computerApi(api, project.host.key).settings.get(); }
+        catch (err) { setError({ scope: "run", message: errorMessage(err) }); return null; }
+      }
       const local = !project?.remoteHost;
       const ask = opts?.ask === true;
       const orchestrate =
         !ask &&
-        (opts?.orchestrate ?? (settings?.defaultOrchestrate === true && local));
+        (opts?.orchestrate ?? (ownerSettings?.defaultOrchestrate === true && local));
       const worktree =
         !ask &&
         !orchestrate &&
         (opts?.worktree ??
-          (resolveDefaultWorktree(project, settings?.defaultWorktree === true) &&
+          (resolveDefaultWorktree(project, ownerSettings?.defaultWorktree === true) &&
             local));
       // Inherit provider+model from the currently selected thread when present.
       const inheritFrom = selectedRef.current
@@ -104,6 +110,7 @@ export function useCoderRuns({
       if (
         opts?.inheritProvider !== false &&
         inheritFrom &&
+        inheritFrom.host?.key === project?.host?.key &&
         !project?.threadDefaults?.provider
       ) {
         const needsProvider = inheritFrom.provider !== t.provider;

@@ -123,7 +123,7 @@ import type {
   ThreadSearchMessagesInput,
   ThreadSearchMessagesResult,
 } from "./shared/ipc";
-import { useComputerContext } from "./coder/computerContext";
+import { liveComputerHost, useComputerContext } from "./coder/computerContext";
 import { resolveCoderApi } from "./coderApi";
 import { isWebMode } from "./shared/wire";
 import { pushSidebarHosts } from "./remoteHosts";
@@ -960,6 +960,7 @@ export interface UseCoderResult {
    * Pass `{ throwOnError: true }` to surface a list failure (onboarding
    * Recheck); the previous list is still kept.
    */
+  refreshLocalProviders: () => Promise<void>;
   refreshProviders: (options?: { throwOnError?: boolean }) => Promise<void>;
   projectById: Map<string, ProjectInfo>;
   /** Thin memory passthroughs; callers hold list/search state locally. */
@@ -1834,7 +1835,8 @@ export function useCoder(): UseCoderResult {
 
   const computerHost = threads.find(t => t.id === selectedThreadId)?.host
     ?? projects.find(p => p.id === selectedProjectId)?.host;
-  const computer = useComputerContext(api, computerHost, settings, providers);
+  const currentComputerHost = liveComputerHost(computerHost, sidebarHosts);
+  const computer = useComputerContext(api, currentComputerHost, settings, providers);
 
   const selectThread = useCallback((id: string | null) => {
     setSelectedThreadId(id);
@@ -1863,7 +1865,7 @@ export function useCoder(): UseCoderResult {
   } = useCoderRuns({
     api,
     projects,
-    settings: computer.settings,
+    settings,
     selectedProjectId,
     selectedThreadId,
     setSelectedThreadId,
@@ -2112,6 +2114,10 @@ export function useCoder(): UseCoderResult {
     },
     [api, applyThreadUpdate],
   );
+
+  const refreshLocalProviders = useCallback(async () => {
+    try { setProviders(await api.providers.list()); } catch { /* Existing local snapshot remains usable. */ }
+  }, [api]);
 
   const refreshProviders = useCallback(
     async (options?: { throwOnError?: boolean }) => {
@@ -2706,6 +2712,7 @@ export function useCoder(): UseCoderResult {
     downloadUpdate,
     applyUpdate,
     refreshProviders,
+    refreshLocalProviders,
     projectById,
     searchMemory,
     recentMemory,

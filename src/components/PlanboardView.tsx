@@ -38,6 +38,8 @@ export interface PlanboardViewProps {
   projects: ProjectInfo[];
   /** Seed the project selector. Sidebar scope passes this on open (#597). */
   initialProjectId?: string | null;
+  onProjectScopeChange?: (projectId: string) => void;
+  agentCatalogProjectId?: string | null;
   listIssues: (projectPath: string) => Promise<ListIssuesResult>;
   /**
    * Open PRs for the selected project (review-load meter, issue #402).
@@ -84,6 +86,8 @@ export function PlanboardView({
   onSelectThread,
   onStartTask,
   initialProjectId,
+  onProjectScopeChange,
+  agentCatalogProjectId,
   restore = null,
   onRestoreApplied,
   agentProfiles,
@@ -131,6 +135,10 @@ export function PlanboardView({
   const project =
     projects.find((p) => p.id === projectId) ?? projects[0] ?? null;
   projectRef.current = project;
+  useEffect(() => {
+    if (project) onProjectScopeChange?.(project.id);
+    setAgentProfileId("");
+  }, [project?.id, onProjectScopeChange]);
 
   const load = useCallback(async () => {
     if (!project) return;
@@ -174,8 +182,8 @@ export function PlanboardView({
   }, [load]);
 
   const orchAgentRows = useMemo(
-    () => buildProfileRows(agentProfiles ?? [], providers ?? []),
-    [agentProfiles, providers],
+    () => buildProfileRows(agentCatalogProjectId !== undefined && agentCatalogProjectId !== project?.id ? [] : agentProfiles ?? [], providers ?? []),
+    [agentProfiles, providers, agentCatalogProjectId, project?.id],
   );
   const defaultOrchRow = orchAgentRows.find(
     (r) => r.id === (defaultOrchestratorProfileId ?? ""),

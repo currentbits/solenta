@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { AppSettings, CoderApi, HostTag, ProviderInfo } from "../shared/ipc";
+import type { AppSettings, CoderApi, HostTag, ProviderInfo, SidebarHostStatus } from "../shared/ipc";
 
 /** Global discovery has no project/thread ID, so carry ownership through the
  * existing authenticated host router. Never expose an arbitrary invoke API. */
@@ -11,12 +11,19 @@ export function computerApi(api: CoderApi, hostKey?: string): CoderApi {
     if (!methods) continue;
     next[namespace] = Object.fromEntries(Object.entries(methods).map(([name, method]) => [name,
       typeof method === "function" ? (...args: unknown[]) => {
-        const first = args[0];
-        return method(first, { ...(args[1] as object ?? {}), onHost: hostKey });
+        if (args.length === 0 || args[0] === undefined) return method({ onHost: hostKey });
+        return method(args[0], { ...(args[1] as object ?? {}), onHost: hostKey });
       } : method,
     ])) as never;
   }
   return next;
+}
+
+export function liveComputerHost(host: HostTag | undefined, hosts: SidebarHostStatus[]): HostTag | undefined {
+  if (!host) return undefined;
+  const live = hosts.find(h => h.key === host.key || h.routes?.some(route => route.key === host.key)
+    || (host.computerId && host.computerId === h.computerId));
+  return live ? { ...host, status: live.status } : host;
 }
 
 type Snapshot = { key: string; settings: AppSettings; providers: ProviderInfo[] };
@@ -28,6 +35,8 @@ export function useComputerContext(api: CoderApi, host: HostTag | undefined,
   const [failure, setFailure] = useState<{ key: string; message: string } | null>(null);
   const [nonce, setNonce] = useState(0);
   const generation = useRef(0);
+  const saveGeneration = useRef(0);
+  const appliedSave = useRef(0);
   const currentKey = useRef(key);
   currentKey.current = key;
   useEffect(() => {
@@ -48,8 +57,14 @@ export function useComputerContext(api: CoderApi, host: HostTag | undefined,
   const refresh = useCallback(() => setNonce(n => n + 1), []);
   const save = useCallback(async (patch: Partial<AppSettings>) => {
     if (!key || !remote) throw new Error("Computer settings are unavailable. Reconnect and retry.");
+    generation.current += 1;
+    const save = ++saveGeneration.current;
     const next = await scopedApi.settings.set(patch);
-    if (currentKey.current === key) setSnapshot(prev => prev?.key === key ? { ...prev, settings: next } : prev);
+    if (currentKey.current === key && save > appliedSave.current) {
+      generation.current += 1;
+      appliedSave.current = save;
+      setSnapshot(prev => prev?.key === key ? { ...prev, settings: next } : prev);
+    }
     return next;
   }, [key, remote, scopedApi]);
   return {
