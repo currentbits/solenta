@@ -19,6 +19,26 @@ const modelName = x => typeof x === "string" && x && x !== "<synthetic>" ? x : n
 function createClaudeUsage() {
   const records = new Map();
   const current = new Map();
+  function mergeUsage(row, usage, key, parent) {
+    if (!usage || typeof usage !== "object") return;
+    // A later sparse snapshot cannot erase a previously measured field.
+    for (const [field, wire] of Object.entries(FIELDS)) {
+      const value = number(usage[wire]);
+      if (value !== undefined) row[field] = Math.max(row[field] || 0, value);
+    }
+    if (!Array.isArray(usage.iterations)) return;
+    usage.iterations.forEach((iteration, index) => {
+      if (!iteration || iteration.type !== "advisor_message") return;
+      const advisorKey = `${key}:advisor:${index}`;
+      const advisor = records.get(advisorKey) || { kind: "advisor", parentToolUseId: parent, model: modelName(iteration.model) };
+      if (!advisor.model) advisor.model = modelName(iteration.model);
+      for (const [field, wire] of Object.entries(FIELDS)) {
+        const value = number(iteration[wire]);
+        if (value !== undefined) advisor[field] = Math.max(advisor[field] || 0, value);
+      }
+      records.set(advisorKey, advisor);
+    });
+  }
   function observe(ev, partial) {
     const message = partial?.type === "message_start" ? partial.message : ev.type === "assistant" ? ev.message : null;
     const parent = typeof ev.parent_tool_use_id === "string" ? ev.parent_tool_use_id : null;
@@ -30,32 +50,11 @@ function createClaudeUsage() {
       const row = old || { kind: parent ? "child" : "root", parentToolUseId: parent, model: modelName(message.model) };
       if (!row.model) row.model = modelName(message.model);
       records.set(key, row);
-      // A later sparse snapshot cannot erase a previously measured field.
-      const usage = message.usage;
-      if (usage && typeof usage === "object") {
-        for (const [field, wire] of Object.entries(FIELDS)) {
-          const value = number(usage[wire]);
-          if (value !== undefined) row[field] = Math.max(row[field] || 0, value);
-        }
-        records.set(key, row);
-        if (Array.isArray(usage.iterations)) usage.iterations.forEach((iteration, index) => {
-          if (!iteration || iteration.type !== "advisor_message") return;
-          const advisorKey = `${key}:advisor:${index}`;
-          const advisor = records.get(advisorKey) || { kind: "advisor", parentToolUseId: parent, model: modelName(iteration.model) };
-          if (!advisor.model) advisor.model = modelName(iteration.model);
-          for (const [field, wire] of Object.entries(FIELDS)) {
-            const value = number(iteration[wire]);
-            if (value !== undefined) advisor[field] = Math.max(advisor[field] || 0, value);
-          }
-          records.set(advisorKey, advisor);
-        });
-      }
+      mergeUsage(row, message.usage, key, parent);
     } else if (partial?.type === "message_delta") {
-      const row = records.get(current.get(parent));
-      if (row) for (const [field, wire] of Object.entries(FIELDS)) {
-        const value = number(partial.usage?.[wire]);
-        if (value !== undefined) row[field] = Math.max(row[field] || 0, value);
-      }
+      key = current.get(parent);
+      const row = records.get(key);
+      if (row) mergeUsage(row, partial.usage, key, parent);
     }
   }
 
