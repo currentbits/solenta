@@ -111,11 +111,14 @@ describe("new thread: pick the computer it runs on (#1835)", () => {
     }
   });
 
-  it("masks a private draft's machine controls and restores its rich draft and picker", async () => {
+  it("keeps a private rich draft masked while browsing CLI history and restores its picker", async () => {
     const fx = fixture();
     fx.threads[0] = { ...fx.threads[0]!, tags: ["private"] };
     fx.details["t-draft"] = detail({ thread: fx.threads[0], messages: [] });
-    const fake = createFakeCoder(fx);
+    const fake = createFakeCoder({ ...fx, historyProjects: [{
+      path: "/history/repo", name: "History repo", lastActiveAt: NOW,
+      providers: ["codex"], sessions: 1, recentSessions: [],
+    }] });
     const saved = richDraft();
     const m = await boot(fake);
     try {
@@ -129,6 +132,16 @@ describe("new thread: pick the computer it runs on (#1835)", () => {
       assert.equal(m.query("[data-workspace-machine]"), null);
       assert.equal(m.query("[data-workspace-machine-label]"), null);
       assert.equal(m.query("textarea"), null);
+      await m.click(m.query("[data-scope-trigger]"));
+      await m.click(m.query("[data-new-project]"));
+      await m.click(m.query("[data-add-project-mode-history]"));
+      assert.ok(m.query('[data-history-project="/history/repo"]'));
+      assert.ok(m.query("[data-recording-hidden]"), "history modal leaves the transcript masked");
+      assert.equal(m.query("[data-workspace-machine]"), null);
+      assert.equal(m.query("textarea"), null);
+      await m.click(m.query('[data-add-project-path-dialog] button[aria-label="Close"]'));
+      assert.equal(fake.of("projects.discoverHistory").length, 1);
+      assert.equal(fake.of("projects.add").length, 0);
       assert.deepEqual(captureComposerDraft("t-draft"), saved);
       assert.equal(fake.calls.some((c) => ["threads.create", "threads.delete", "threads.purge"].includes(c.channel)), false);
       await toggle(false);
