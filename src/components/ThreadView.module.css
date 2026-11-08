@@ -1416,30 +1416,10 @@ a.btn {
   font-size: 12.5px;
 }
 
-.changesSplit {
-  flex: 1;
-  min-height: 0;
-  display: grid;
-  grid-template-columns: minmax(180px, 240px) minmax(0, 1fr);
-}
-
-@media (max-width: 720px) {
-  .changesSplit {
-    grid-template-columns: 1fr;
-    grid-template-rows: minmax(120px, 34%) minmax(0, 1fr);
-  }
-
-  .changesFiles {
-    border-right: none;
-    border-bottom: 1px solid var(--border-soft);
-  }
-}
-
 .changesFiles {
   min-height: 0;
   overflow-y: auto;
   padding: 10px 12px 14px;
-  border-right: 1px solid var(--border-soft);
   display: flex;
   flex-direction: column;
   gap: 10px;
