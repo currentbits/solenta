@@ -77,7 +77,7 @@ describe("recorded usage model attribution", () => {
     assert.equal(priced.threadsByDay[day].legacy.unattributed.costUsd, 0);
   });
 
-  it("keeps reported daily cost authoritative when another thread with the same model is unmetered", () => {
+  it("estimates only uncovered tokens when another thread with the same model reports cost", () => {
     const now = new Date();
     const day = localDayKey(now);
     store.recordUsage({ threadId: "reported", provider: "codex", model: "same", inputTokens: 1e6, costUsd: 7 }, now);
@@ -85,8 +85,8 @@ describe("recorded usage model attribution", () => {
     const report = applyModelPrices({ byDay: store.getUsageByDay(), threadsByDay: store.getUsageThreadsByDay() }, {
       same: { input: 10, output: 0 },
     });
-    assert.equal(report.byDay[day].codex.same.costUsd, 7);
+    assert.equal(report.byDay[day].codex.same.costUsd, 17);
     assert.equal(report.threadsByDay[day].reported.costUsd, 7);
-    assert.equal(report.threadsByDay[day].unmetered.costUsd, 0);
+    assert.equal(report.threadsByDay[day].unmetered.costUsd, 10);
   });
 });

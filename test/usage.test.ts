@@ -648,3 +648,20 @@ describe("usageCostByType", () => {
     });
   });
 });
+
+
+describe("reported zero cost coverage", () => {
+  it("keeps known-zero USD metered through provider/model filtering and aggregation", () => {
+    const covered = { inputTokens: 0, cachedInputTokens: 0, cacheWriteTokens: 0, outputTokens: 0 };
+    const zero = entry({ costUsd: 0, inputTokens: 10, turns: 1, unpricedTokens: covered });
+    const missing = entry({ costUsd: 0, inputTokens: 4, turns: 1 });
+    const report: UsageReport = { byDay: { "2026-08-17": { claude: { zero, missing } } }, threadsByDay: {} };
+    const filtered = filterUsageReport(report, "claude", { mode: "include", models: [{ provider: "claude", model: "zero" }] });
+    const summary = summarizeUsage(filtered, 7, TODAY);
+    assert.equal(summary.providers[0].costUnmetered, false);
+    assert.equal(summary.models[0].costUnmetered, false);
+    assert.equal(isCostUnmetered(summary.totals), false);
+    assert.equal(summary.totals.costUsd, 0);
+    assert.equal(isCostUnmetered(summarizeUsage(report, 7, TODAY).totals), true, "unreported tokens in a mixed aggregate stay unmetered");
+  });
+});
