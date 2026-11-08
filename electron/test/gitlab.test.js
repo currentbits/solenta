@@ -17,23 +17,41 @@ const { isForgeRemote } = require("../worktrees.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
 const { rmTree } = require("./support/rmTree.js");
 
+let configDir;
+const configKeys = ["GLAB_CONFIG_DIR", "GITLAB_HOST", "GITLAB_URI", "GL_HOST", "GLAB_API_PROTOCOL", "API_PROTOCOL", "GITLAB_TOKEN", "GITLAB_ACCESS_TOKEN", "OAUTH_TOKEN"];
+const previousConfig = Object.fromEntries(configKeys.map((key) => [key, process.env[key]]));
+before(() => {
+  for (const key of configKeys) delete process.env[key];
+  configDir = fs.mkdtempSync(path.join(os.tmpdir(), "solenta-gitlab-config-"));
+  process.env.GLAB_CONFIG_DIR = configDir;
+});
+after(() => {
+  for (const key of configKeys) {
+    if (previousConfig[key] === undefined) delete process.env[key];
+    else process.env[key] = previousConfig[key];
+  }
+  return rmTree(configDir);
+});
+
 describe("gitlabRemote", () => {
   it("parses gitlab.com and self-hosted remotes, including subgroups", () => {
     assert.deepEqual(gitlab.gitlabRemote("git@gitlab.com:acme/sub/demo.git"), {
       host: "gitlab.com",
+      origin: "https://gitlab.com",
       path: "acme/sub/demo",
     });
     assert.deepEqual(gitlab.gitlabRemote("https://gitlab.com/acme/demo.git"), {
       host: "gitlab.com",
+      origin: "https://gitlab.com",
       path: "acme/demo",
     });
     assert.deepEqual(
       gitlab.gitlabRemote("ssh://git@gitlab.acme.dev:2222/team/demo.git"),
-      { host: "gitlab.acme.dev", path: "team/demo" },
+      { host: "gitlab.acme.dev", origin: "https://gitlab.acme.dev", path: "team/demo" },
     );
     assert.deepEqual(
       gitlab.gitlabRemote("https://oauth2:tok@GitLab.example.com/a/b"),
-      { host: "gitlab.example.com", path: "a/b" },
+      { host: "gitlab.example.com", origin: "https://gitlab.example.com", path: "a/b" },
     );
   });
 
@@ -83,7 +101,7 @@ describe("parseIssueRef with GitLab URLs", () => {
   it("parses /-/issues/ URLs with subgroups", () => {
     assert.deepEqual(
       issues.parseIssueRef("https://gitlab.com/acme/sub/demo/-/issues/12#note_1"),
-      { number: 12, owner: "acme/sub", repo: "demo" },
+      { number: 12, owner: "acme/sub", repo: "demo", origin: "https://gitlab.com" },
     );
   });
 });

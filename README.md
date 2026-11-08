@@ -97,6 +97,15 @@ it.
   a click on a diff line number leaves an inline comment that goes back to the
   agent as a follow-up prompt. PRs can be reviewed in the app (viewed marks,
   stacked-PR merge), and GitLab merge requests work alongside GitHub PRs.
+  Self-hosted GitLab keeps the remote's HTTP(S) scheme and web port. For a
+  neutral hostname, configure it explicitly with `GITLAB_HOST` (an origin such
+  as `http://code.example:8080`) or in glab's `hosts` configuration. SSH/scp
+  remotes use the configured web origin, never the SSH port; set `GITLAB_HOST`
+  to choose when several web ports share a hostname. Solenta reads glab's
+  standard block-style `config.yml` host keys and `api_protocol` (including
+  `GLAB_CONFIG_DIR` / `XDG_CONFIG_HOME` overrides); YAML aliases and flow-style
+  host maps require the explicit environment setting. Credentials remain with
+  glab and are selected by the web host and port.
 - **Terminal and Browser panes** — a long-lived shell in the thread's worktree
   (`cd` and exports persist), and an embedded loopback-only browser on your dev
   server. Screenshot the page into the composer, or let the agent navigate,

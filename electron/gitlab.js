@@ -14,35 +14,149 @@ const {
   tailErr,
   normalizeCheckBucket,
 } = require("./worktrees.js");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const { URL } = require("node:url");
 
 /** Tests set CODER_GLAB_BIN to a fake; production uses PATH. */
 function glabBin() {
   return process.env.CODER_GLAB_BIN || "glab";
 }
 
+/** A configured web authority, never a URL containing a token or project path. */
+function webOrigin(value, protocol = "https") {
+  try {
+    const s = String(value || "").trim();
+    if (!s || /[\s?#]/.test(s)) return null;
+    const u = new URL(s.includes("://") ? s : `${protocol}://${s}`);
+    return /^https?:$/.test(u.protocol) && !u.username && !u.password && u.pathname === "/"
+      ? u : null;
+  } catch {
+    return null;
+  }
+}
+
+function environmentHost() {
+  return process.env.GITLAB_HOST || process.env.GITLAB_URI || process.env.GL_HOST || "";
+}
+
 /**
- * Host + project path from a GitLab origin URL, or null.
- * ponytail: "GitLab" means gitlab.com or a host whose name contains "gitlab";
- * self-hosted on a neutral name (git.acme.dev) needs a host allowlist setting.
+ * Read only host keys and api_protocol from glab's block-style config.yml.
+ * Tokens stay with glab. Quoted scalars and host:port keys are accepted;
+ * unsupported YAML shapes do not grant trust to an unconfigured hostname.
+ */
+function configuredOrigins() {
+  const configHome = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config");
+  const dir = process.env.GLAB_CONFIG_DIR || path.join(configHome, "glab-cli");
+  const scalar = (s) => s.trim().replace(/\s+#.*$/, "").replace(/^(["'])(.*)\1$/, "$2");
+  const hosts = new Map();
+  let defaultHost = "";
+  try {
+    let inHosts = false;
+    let host = "";
+    let hostIndent = 0;
+    for (const line of fs.readFileSync(path.join(dir, "config.yml"), "utf8").split(/\r?\n/)) {
+      if (!line.trim() || /^\s*#/.test(line)) continue;
+      if (/^\S/.test(line)) {
+        inHosts = /^hosts:\s*(?:#.*)?$/.test(line);
+        host = "";
+        const m = line.match(/^host:\s+(.+)$/);
+        if (m) defaultHost = scalar(m[1]);
+        continue;
+      }
+      if (!inHosts) continue;
+      const entry = line.match(/^(\s+)(.+):\s*(?:#.*)?$/);
+      if (entry && (!host || entry[1].length <= hostIndent)) {
+        host = scalar(entry[2]);
+        hostIndent = entry[1].length;
+        hosts.set(host, "https");
+      } else {
+        const m = line.match(/^\s+api_protocol:\s+(.+)$/);
+        if (host && m && /^(http|https)$/.test(scalar(m[1]))) hosts.set(host, scalar(m[1]));
+      }
+    }
+  } catch {
+    // No readable config: only public/named GitLab hosts and an explicit env host.
+  }
+  if (defaultHost && !hosts.has(defaultHost)) hosts.set(defaultHost, "https");
+  const origins = [...hosts].map(([host, protocol]) => webOrigin(host, protocol)).filter(Boolean);
+  const envHost = webOrigin(environmentHost());
+  const configured = envHost && origins.find((o) => o.host === envHost.host);
+  const protocol = process.env.GLAB_API_PROTOCOL || process.env.API_PROTOCOL || configured?.protocol.slice(0, -1) || "https";
+  const env = webOrigin(environmentHost(), protocol);
+  return { origins, env, defaultOrigin: webOrigin(defaultHost) };
+}
+
+/**
+ * Web origin, account authority (including web port), and project path.
+ * Neutral names require glab host configuration. SSH transport ports are
+ * unrelated to web ports; choose a unique configured web origin or HTTPS.
  * @param {string} url
- * @returns {{ host: string, path: string } | null}
+ * @returns {{ host: string, origin: string, path: string } | null}
  */
 function gitlabRemote(url) {
-  const s = String(url || "").trim().replace(/\/+$/, "").replace(/\.git$/i, "");
-  const m =
-    s.match(/^[^@/\s]+@([^:/\s]+):(?!\d+\/)(.+)$/) || // git@host:group/repo
-    s.match(/^(?:ssh|https?):\/\/(?:[^@/\s]+@)?([^:/\s]+)(?::\d+)?\/(.+)$/i);
-  if (!m || !/gitlab/i.test(m[1])) return null;
-  const projectPath = m[2].replace(/^\/+/, "");
-  if (!projectPath.includes("/")) return null;
-  return { host: m[1].toLowerCase(), path: projectPath };
+  const s = String(url || "").trim();
+  if (!s || /[\s?#\\]/.test(s)) return null;
+  let u;
+  let projectPath;
+  let ssh;
+  try {
+    const scp = !s.includes("://") && s.match(/^(?:[^@/:]+@)?([^:/]{2,}):(?!\d+\/)(.+)$/);
+    u = new URL(scp ? `ssh://${scp[1]}/${scp[2]}` : s);
+    if (!/^(https?|ssh):$/.test(u.protocol)) return null;
+    ssh = u.protocol === "ssh:";
+    // Inspect the raw path before URL can normalize away '..' segments.
+    const rawPath = scp ? scp[2] : s.replace(/^[^:]+:\/\/[^/]+\//, "");
+    if (rawPath.split("/").some((p) => [".", ".."].includes(decodeURIComponent(p)))) return null;
+    projectPath = u.pathname.replace(/^\/+|\/+$/g, "").replace(/\.git$/i, "");
+  } catch {
+    return null;
+  }
+  if (projectPath.split("/").filter(Boolean).length < 2) return null;
+  const hostname = u.hostname.toLowerCase();
+  const { origins, env } = configuredOrigins();
+  let candidates;
+  if (ssh) {
+    candidates = env && env.hostname === hostname ? [env] : origins.filter((o) => o.hostname === hostname);
+  } else {
+    candidates = [...origins, env].filter((o) => o && o.host === u.host);
+  }
+  if (!/gitlab/i.test(hostname) && candidates.length === 0) return null;
+  let origin;
+  if (ssh) {
+    const unique = [...new Set(candidates.map((o) => o.origin))];
+    if (unique.length > 1) return null;
+    origin = unique[0] || `https://${hostname}`;
+  } else {
+    origin = u.origin;
+  }
+  return { host: new URL(origin).host, origin, path: projectPath };
+}
+
+/** Child-only overrides: a target change must not rebind a global token. */
+function glabEnvironment(origin) {
+  const selected = environmentHost() ? webOrigin(environmentHost()) : configuredOrigins().defaultOrigin;
+  const tokenHost = selected ? selected.host : environmentHost() ? "" : "gitlab.com";
+  const env = {
+    GITLAB_HOST: origin.host,
+    GITLAB_URI: undefined, GL_HOST: undefined, GITLAB_URL: undefined, GITLAB_REPO: undefined,
+    GITLAB_API_HOST: origin.host,
+    GLAB_API_PROTOCOL: origin.protocol.slice(0, -1), API_PROTOCOL: undefined,
+    GITLAB_CI: undefined, CI_JOB_TOKEN: undefined,
+    GLAB_NO_PROMPT: "1",
+  };
+  if (tokenHost !== origin.host) {
+    for (const key of ["GITLAB_TOKEN", "GITLAB_ACCESS_TOKEN", "OAUTH_TOKEN"]) env[key] = undefined;
+  }
+  return env;
 }
 
 /**
  * One `glab api` call. Resolves `{ ok: true, data }` or `{ ok: false, reason }`
  * where reason is "glab missing" | "auth" | "not found" | glab's tail.
  * @param {string} cwd
- * @param {{ host: string, path: string }} remote
+ * @param {{ host: string, origin?: string, path: string }} remote
  * @param {string} method
  * @param {string} endpoint relative to projects/:id, e.g. "/issues/3"
  * @param {Record<string, string | number | boolean>} [fields] body fields (non-GET)
@@ -54,6 +168,8 @@ async function glabApi(cwd, remote, method, endpoint, fields, timeout) {
 
 /** Host-scoped API calls use the same glab account as project-scoped calls. */
 async function glabHostApi(cwd, remote, method, endpoint, fields, timeout) {
+  const origin = webOrigin(remote.origin || remote.host);
+  if (!origin || origin.host !== remote.host) return { ok: false, reason: "invalid GitLab origin" };
   const args = [
     "api",
     "--hostname",
@@ -69,6 +185,7 @@ async function glabHostApi(cwd, remote, method, endpoint, fields, timeout) {
   const res = await ghTryAsync(cwd, args, {
     bin: glabBin(),
     timeout: timeout || GH_TIMEOUT_MS,
+    env: glabEnvironment(origin),
   });
   if (!res.ok) {
     const text = res.stderr || res.combined || res.stdout || "";
@@ -314,20 +431,29 @@ function issueFail(res) {
   return { ok: false, reason: res.reason === "not found" ? "issue not found" : res.reason };
 }
 
-/** GitLab issue URL → { number, owner, repo } (owner may hold subgroups). */
+/** GitLab issue URL with its web origin (owner may hold subgroups). */
 function parseGitlabIssueUrl(s) {
   const m = String(s || "").trim().match(
     /^https?:\/\/[^/\s]+\/(.+)\/([^/#?\s]+)\/-\/issues\/(\d+)(?:[/?#].*)?$/i,
   );
   if (!m) return null;
   const number = Number(m[3]);
-  return number > 0 ? { number, owner: m[1], repo: m[2] } : null;
+  try {
+    const u = new URL(String(s).trim());
+    if (u.username || u.password || !Number.isSafeInteger(number)) return null;
+    return number > 0 ? { number, owner: m[1], repo: m[2], origin: u.origin } : null;
+  } catch {
+    return null;
+  }
 }
 
 async function fetchIssue(cwd, remote, parsed) {
+  if (parsed.origin && parsed.origin !== (remote.origin || `https://${remote.host}`)) {
+    return { ok: false, reason: "issue origin does not match the project's GitLab origin" };
+  }
   const target =
     parsed.owner && parsed.repo
-      ? { host: remote.host, path: `${parsed.owner}/${parsed.repo}` }
+      ? { ...remote, path: `${parsed.owner}/${parsed.repo}` }
       : remote;
   const res = await glabApi(cwd, target, "GET", `/issues/${parsed.number}`);
   if (!res.ok) return issueFail(res);
@@ -410,7 +536,7 @@ async function addNote(cwd, remote, number, body) {
   if (!res.ok) return issueFail(res);
   return {
     ok: true,
-    url: `https://${remote.host}/${remote.path}/-/issues/${number}#note_${res.data && res.data.id}`,
+    url: `${remote.origin || `https://${remote.host}`}/${remote.path}/-/issues/${number}#note_${res.data && res.data.id}`,
   };
 }
 
