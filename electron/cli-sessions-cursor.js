@@ -234,6 +234,7 @@ function absorbCursorSessionTurns(store, thread, home) {
 
 module.exports = {
   resolveCursorHome,
+  walkCursorSessions,
   parseCursorJsonl,
   listCursorSessions,
   importCursorSession,

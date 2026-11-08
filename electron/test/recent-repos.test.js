@@ -67,6 +67,8 @@ describe("discoverRecentRepos (#1501)", () => {
       grok: path.join(root, "grok"),
       kimi: path.join(root, "kimi"),
       opencode: path.join(root, "opencode"),
+      cursor: path.join(root, "cursor"),
+      muse: path.join(root, "muse"),
     };
     // Claude: cwd on a later jsonl line.
     session(
@@ -144,7 +146,7 @@ describe("discoverRecentRepos (#1501)", () => {
   it("returns nothing when no CLI has sessions", async () => {
     const empty = path.join(root, "empty");
     const groups = await discoverRecentRepos({
-      homes: { claude: empty, codex: empty, grok: empty, kimi: empty, opencode: empty },
+      homes: { claude: empty, codex: empty, grok: empty, kimi: empty, opencode: empty, cursor: empty, muse: empty },
       tmpRoots: [],
     });
     assert.deepEqual(groups, []);

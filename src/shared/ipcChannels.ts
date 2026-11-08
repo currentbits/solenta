@@ -137,6 +137,7 @@ export const IPC_CHANNELS = [
   { ns: "projects", method: "list" },
   { ns: "projects", method: "add" },
   { ns: "projects", method: "discoverRecent" },
+  { ns: "projects", method: "discoverHistory" },
   { ns: "projects", method: "create" },
   { ns: "projects", method: "clone" },
   { ns: "projects", method: "cancelClone" },
