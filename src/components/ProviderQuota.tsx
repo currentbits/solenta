@@ -8,7 +8,7 @@ import {
 import { providerDisplayName } from "../format";
 import { ProviderMark } from "./ProviderMark";
 import { providerColor } from "../providerColors";
-import type { ProviderInfo } from "../shared/ipc";
+import type { ProviderInfo, ProviderUsageMonthlySpend } from "../shared/ipc";
 import {
   QUOTA_CLOCK_MS,
   displayWindowLabel,
@@ -16,6 +16,7 @@ import {
   formatFetchedAt,
   formatResetAt,
   formatUsedPercent,
+  formatUsageMoney,
   usedBarWidth,
   isQuotaStale,
   isResetExpired,
@@ -98,11 +99,15 @@ export function ProviderQuota({
   }, []);
 
   useEffect(() => {
+    // A new loader can target another computer. Do not carry its predecessor's
+    // account balances across that identity boundary, even while loading.
+    setRows(null);
+    setRefreshFailed(false);
     void refresh();
     return () => {
       gen.current += 1;
     };
-  }, [refresh]);
+  }, [refresh, loadLimits]);
 
   const sorted = rows ? sortProviderUsage(rows, activeProvider) : [];
   const empty =
@@ -278,12 +283,46 @@ function QuotaRow({
               </li>
             );
           })}
+          {row.monthlySpend ? (
+            <MonthlySpend spend={row.monthlySpend} now={now} />
+          ) : null}
         </ul>
       )}
       {fetchedLine ? (
         <p className={styles.fetched}>{fetchedLine}</p>
       ) : null}
     </section>
+  );
+}
+
+function MonthlySpend({ spend, now }: { spend: ProviderUsageMonthlySpend; now: number }) {
+  const used = spend.enabled ? formatUsageMoney(spend.used) : null;
+  const limit = spend.enabled ? formatUsageMoney(spend.limit) : null;
+  const pct = spend.enabled && spend.usedPercent != null && Number.isFinite(spend.usedPercent) && spend.usedPercent >= 0
+    ? spend.usedPercent : null;
+  const reset = formatResetAt(spend.resetsAt, now);
+  let amount = "Disabled";
+  if (spend.enabled) {
+    if (used && limit) amount = `${used} of ${limit}`;
+    else if (used) amount = `${used} spent · budget unavailable`;
+    else if (limit) amount = `Spend unavailable · ${limit} budget`;
+    else amount = "Spend unavailable";
+  }
+  return (
+    <li className={styles.monthlySpend} data-provider-monthly-spend="" data-enabled={spend.enabled}>
+      <div className={styles.monthlyHead}>
+        <span className={styles.windowLabel}>Monthly extra usage</span>
+        <span className={styles.monthlyAmount}>
+          {amount}
+        </span>
+      </div>
+      {spend.enabled ? (
+        <span className={styles.monthlyNote}>
+          {pct != null ? `${Number(pct.toFixed(2))}% of budget used · ` : ""}
+          {reset ? `${reset}${isResetExpired(spend.resetsAt, now) ? "; refresh to check" : ""}` : "Reset not reported"}
+        </span>
+      ) : null}
+    </li>
   );
 }
 

@@ -2,8 +2,8 @@
 
 /**
  * Provider-reported account quotas. Separate from the local byDay ledger:
- * this never infers percentages from spend, and a missing window is omitted
- * rather than 0%.
+ * quota percentages never come from local spend, and a missing window is
+ * omitted rather than 0%. Explicit monthly money budgets remain separate.
  *
  * Sources (read-only, no LLM turn):
  * - Codex: `codex app-server --listen stdio://` JSON-RPC

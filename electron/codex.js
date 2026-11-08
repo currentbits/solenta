@@ -599,6 +599,18 @@ function codexPromptTokens(usage) {
   return input + output > 0 ? input + output : undefined;
 }
 
+/** Codex cache/reasoning counts are subsets of input/output, not extra tokens. */
+function usageSubsets(usage) {
+  const out = {};
+  for (const [key, raw] of [
+    ["cachedInputTokens", usage?.cached_input_tokens ?? usage?.cachedInputTokens],
+    ["reasoningTokens", usage?.reasoning_output_tokens ?? usage?.reasoningOutputTokens],
+  ]) {
+    if (raw != null && Number.isFinite(Number(raw)) && Number(raw) >= 0) out[key] = Number(raw);
+  }
+  return out;
+}
+
 /**
  * Extract token usage from completion / token_count events.
  * token_count.last_token_usage is the per-request delta; total_token_usage
@@ -626,8 +638,15 @@ function extractUsage(ev) {
     const outputTokens = Number(src?.output_tokens) || 0;
     const window = Number(info.model_context_window);
     /** @type {{ inputTokens: number, outputTokens: number, model: string | null, contextTokens?: number, contextWindow?: number, snapshot?: boolean }} */
-    const counted = { inputTokens, outputTokens, model: null };
-    const ctx = codexPromptTokens(src);
+    const counted = { inputTokens, outputTokens, model: null, ...usageSubsets(src) };
+    if (total) counted.totalUsage = {
+      inputTokens: Number(total.input_tokens) || 0,
+      outputTokens: Number(total.output_tokens) || 0,
+      ...usageSubsets(total),
+    };
+    if (typeof ev.turnId === "string" && ev.turnId) counted.turnId = ev.turnId;
+    // A session total is spend, not the prompt currently occupying the window.
+    const ctx = codexPromptTokens(last);
     if (ctx != null) counted.contextTokens = ctx;
     if (Number.isFinite(window) && window > 0) counted.contextWindow = window;
     // No last_token_usage: totals are a snapshot, not a delta.
@@ -700,9 +719,10 @@ function extractUsage(ev) {
   const costUsd = costRaw != null ? Number(costRaw) || 0 : 0;
 
   /** @type {{ inputTokens: number, outputTokens: number, model: string | null, costUsd?: number, contextTokens?: number }} */
-  const out = { inputTokens, outputTokens, model };
+  const out = { inputTokens, outputTokens, model, ...usageSubsets(usage) };
   if (costRaw != null) {
     out.costUsd = costUsd;
+    out.costReported = true;
   }
   // exec --json turn.completed: input already includes cached_input_tokens.
   const ctx = codexPromptTokens(usage);
