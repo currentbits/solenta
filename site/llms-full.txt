@@ -461,7 +461,9 @@ Solenta Web serves the whole app to a browser, so you can check on runs from you
 
 1. Turn on **Serve Solenta Web**. It listens on `127.0.0.1:4620`, which only this computer can reach.
 2. To reach it from another device, either turn on **Allow devices on my network** (plain HTTP on your LAN) or, with Tailscale installed, press **Expose over Tailscale (HTTPS)** to reach it from anywhere on your tailnet.
-3. Under **Devices**, name the device, pick its access and press **Add device**. Scan the QR code with the device's camera or open the link on it. The token is shown once and the browser remembers it.
+3. Under **Devices**, name the device, pick its access and press **Create browser link**. Open the link or scan its QR code within five minutes. It enrolls one browser and creates a session that expires after 30 days.
+
+**Add device** creates a reusable direct link for another Solenta computer or linked agents. Existing device tokens keep their current lifetime. Browser links check the computer's identity before exchanging the one-time credential; their secrets stay out of request URLs. A full-access browser can create enrollment links and revoke devices from the same Browser access page.
 
 Access is per device: **Read only**, **Steer threads** (the default) or **Full access**, plus grants for files, git, the terminal (watch or type), preview control and settings. Solenta checks every request against them on the host. Steer threads can approve the agent's tool requests. To change a device's access, revoke it and pair again. Revoking signs the device out at once and its browser asks for a new token.
 

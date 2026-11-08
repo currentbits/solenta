@@ -103,10 +103,18 @@
           Tailscale installed, press <strong>Expose over Tailscale
           (HTTPS)</strong> to reach it from anywhere on your tailnet.</li>
         <li>Under <strong>Devices</strong>, name the device, pick its access
-          and press <strong>Add device</strong>. Scan the QR code with the
-          device's camera or open the link on it. The token is shown once and
-          the browser remembers it.</li>
+          and press <strong>Create browser link</strong>. Open the link or scan
+          its QR code within five minutes. It enrolls one browser and creates a
+          session that expires after 30 days.</li>
       </ol>
+<p>
+        <strong>Add device</strong> creates a reusable direct link for another
+        Solenta computer or linked agents. Existing device tokens keep their
+        current lifetime. Browser links check the computer's identity before
+        exchanging the one-time credential; their secrets stay out of request URLs.
+        A full-access browser can create enrollment links and revoke devices
+        from the same Browser access page.
+      </p>
 <p>
         Access is per device: <strong>Read only</strong>, <strong>Steer
         threads</strong> (the default) or <strong>Full access</strong>, plus

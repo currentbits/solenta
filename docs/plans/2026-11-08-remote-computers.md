@@ -1,6 +1,6 @@
 # Remote computers rebuild
 
-Tracker: #1968. Implementation units: #1969 identity/routes, #1970 lifecycle/update, #1971 setup/host settings.
+Tracker: #1968. Implementation units: #1969 identity/routes, #1970 lifecycle/update, #1971 setup/host settings, #1972 browser enrollment.
 
 ## Ownership contract
 
@@ -19,6 +19,7 @@ Existing backend/store/runner/shared IPC handlers remain the execution authority
 - Lifecycle status and capabilities are factual. Linux systemd-user/linger and macOS launchd login-session behavior are separate adapters. No Windows background-server promise without native distribution/lifecycle evidence.
 - Node runtime updates never invoke the Electron desktop installer. Stage and verify immutable versions; stop/quiesce before state migration; validate ready build identity; retain old executable/state on failure. Refuse active-work interruption by default. A reconnect alone is not successful-update evidence.
 - One reconnect owner per computer, with bounded/jittered retry and stale-generation fencing. Data freshness is separate from socket state. Reauth/host-online resyncs selected thread and mounted terminal tail/exit, including an outage containing the final event. Never automatically replay a mutating request with an ambiguous reply. Any future retry contract requires persisted operation IDs/receipts.
+- Browser enrollment uses hashed, five-minute single-use grants, exchanged atomically for scoped thirty-day named-device sessions. Check computer identity before exchanging the credential, remove link fragments before app initialization, and close expired/revoked sockets. Reusable direct links and existing legacy tokens retain their separate lifetime.
 
 ## User journey
 
