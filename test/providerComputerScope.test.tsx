@@ -8,6 +8,35 @@ import type { ProviderInfo } from "../src/shared/ipc";
 const catalog = (model: string): ProviderInfo[] => [{ id: "claude", name: "Claude Code", available: true, supportsResume: true, models: [model], modelInfo: [{ id: model, label: model, description: "", vendor: "Anthropic", efforts: ["high"] }], efforts: ["high"] }];
 
 describe("provider computer scope (#1932)", () => {
+  it("keeps a late local thread catalog separate from the local Settings boot list and refresh", async () => {
+    const shell = await mount(<div />);
+    const local = thread({ id: "local-scoped" });
+    const fake = createFakeCoder({ threads: [local] });
+    const requests: Array<{ threadId?: string } | undefined> = [];
+    let finishThread!: (rows: ProviderInfo[]) => void;
+    let localReads = 0;
+    fake.api.providers.list = async (input) => {
+      requests.push(input);
+      if (!input?.threadId) return catalog(++localReads === 1 ? "settings-boot" : "settings-refresh");
+      return new Promise((resolve) => { finishThread = resolve; });
+    };
+    installFakeCoder(fake);
+    shell.unmount();
+    let current!: UseCoderResult;
+    function Probe() { current = useCoder(); return null; }
+    const m = await mount(<Probe />);
+    await m.flush();
+    assert.deepEqual(requests, [undefined, { threadId: local.id }]);
+    assert.deepEqual(current.providers[0]?.models, ["settings-boot"]);
+    assert.deepEqual(current.threadProviders, [], "thread-specific catalog does not borrow local Settings metadata");
+    await inAct(() => current.refreshProviders());
+    assert.deepEqual(current.providers[0]?.models, ["settings-refresh"]);
+    await inAct(() => finishThread(catalog("project-catalog")));
+    assert.deepEqual(current.threadProviders[0]?.models, ["project-catalog"]);
+    assert.deepEqual(current.providers[0]?.models, ["settings-refresh"], "late thread reply cannot overwrite local Settings");
+    m.unmount();
+  });
+
   it("routes the selected remote thread, rejects late account replies, and keeps Settings on local providers", async () => {
     const shell = await mount(<div />);
     const local = thread({ id: "local" });
