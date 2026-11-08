@@ -1177,17 +1177,21 @@ function createRunner(opts) {
   }
 
   /** Start queued turns oldest-first while slots are free. */
+  const admittingQueuedRuns = new Set();
   function admitQueuedRuns() {
     for (const t of runQueueOrder()) {
       if (!runSlotsFree()) return;
-      if (active.has(t.id)) continue;
+      if (active.has(t.id) || admittingQueuedRuns.has(t.id)) continue;
       const { input } = t.runQueue;
-      store.updateThread(t.id, { runQueue: null });
+      // Keep the queue marker through startRun's settlement and preflight;
+      // an admitted automation is still unfinished until it becomes working.
+      admittingQueuedRuns.add(t.id);
       // startRun is synchronous up to claiming its `active` slot, so the
       // next iteration already sees this one counted.
       startRun({ ...input, threadId: t.id, fromRunQueue: true }).catch(
         (err) => {
           store.updateThread(t.id, {
+            runQueue: null,
             status: "failed",
             lastError: shortError(String((err && err.message) || err)),
           });
@@ -1195,7 +1199,7 @@ function createRunner(opts) {
           pushDetail(t.id);
           pushThreadsChanged();
         },
-      );
+      ).finally(() => admittingQueuedRuns.delete(t.id));
     }
   }
 
@@ -2282,6 +2286,7 @@ function createRunner(opts) {
       threadId,
       {
         status: "working",
+        ...(input.fromRunQueue ? { runQueue: null } : {}),
         title,
         awaitingInput: keepQuestion != null || keepPlan != null || keepApproval != null ||
           ciWorkflowSignOffs.get(threadId)?.approved === false,
