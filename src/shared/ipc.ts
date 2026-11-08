@@ -58,7 +58,20 @@ export type FilePreview =
  * The other Solenta host a project or thread lives on (#1819). Absent on
  * this machine's own rows. Calls naming such a row run on that host.
  */
+/** Public identity of one data directory; contains no credentials or paths. */
+export interface RemoteComputerDescriptor {
+  kind: "solenta";
+  computerId: string;
+  protocol: { min: number; max: number };
+  runtimeKind: "server" | "desktop";
+  version?: string;
+  releaseTag?: string;
+  buildSha?: string;
+  capabilities?: string[];
+}
+
 export interface HostTag {
+  computerId?: string;
   /** host:remotePort of the saved Connection, or its address (#1824). */
   key: string;
   label: string;
@@ -67,6 +80,10 @@ export interface HostTag {
 
 /** One saved Connection shown in the sidebar (#1819). */
 export interface SidebarHostStatus {
+  computerId?: string;
+  descriptor?: RemoteComputerDescriptor;
+  /** Verified alternate routes, retaining their separate credentials. */
+  routes?: Array<{ key: string; host: string; remotePort: number; url?: string }>;
   key: string;
   host: string;
   remotePort: number;
@@ -3660,6 +3677,8 @@ export type RemoteAgentInfo = Pick<ProviderInfo, "id" | "name" | "available" | "
 
 /** What Connect learned about the other computer; null when it did not answer. */
 export interface RemoteHostInfo {
+  computerId?: string;
+  runtimeKind?: "server" | "desktop";
   version: string;
   platform: string;
   /** Older than this app. */
@@ -3672,6 +3691,8 @@ export type TeleportPayload = { version: number } & Record<string, unknown>;
 
 /** A saved Remote Connection a thread can teleport to (#1702). */
 export interface TeleportTarget {
+  computerId?: string;
+  allowLegacy?: boolean;
   host: string;
   remotePort: number;
   /** Direct route (#1824): reach the host at this origin instead of over SSH. */
@@ -3680,6 +3701,10 @@ export interface TeleportTarget {
 }
 
 export interface RemoteConnectionResult {
+  computerId?: string;
+  descriptor?: RemoteComputerDescriptor;
+  /** Explicit compatibility connection to an older host without identity. */
+  legacy?: true;
   host: string;
   remotePort: number;
   /** The normalized origin, for a direct route (#1824). */
@@ -5433,6 +5458,8 @@ export interface CliSlashCommand {
 }
 
 export interface AppStatus {
+  computer?: RemoteComputerDescriptor;
+  serverActivity?: { active: number };
   /** Aggregated cost of all runs that finished today (local time). */
   spendTodayUsd: number;
   memory: {
@@ -5456,6 +5483,9 @@ export interface AppStatus {
     /** Update channel stamped at package time; null in a dev tree. */
     channel: "prod" | "nightly" | null;
     platform?: string;
+    runtimeKind?: "server" | "desktop";
+    releaseTag?: string;
+    buildSha?: string;
   };
 }
 
@@ -5813,6 +5843,9 @@ export interface CoderApi {
      * over SSH, or directly at `url` with a device token (#1824).
      */
     openRemoteConnection(input: {
+      computerId?: string;
+      /** Unbound older hosts only. Never bypasses a saved identity mismatch. */
+      allowLegacy?: boolean;
       host: string;
       /**
        * Solenta Web address (https://, or http:// on a private network or
@@ -5848,7 +5881,7 @@ export interface CoderApi {
     linkPeer(input: { link: string; label?: string; token?: string }): Promise<PeerLink[]>;
     unlinkPeer(input: { key: string }): Promise<PeerLink[]>;
     setSidebarHosts(
-      hosts: Array<{ host: string; remotePort: number; url?: string; label?: string }>,
+      hosts: Array<{ host: string; remotePort: number; url?: string; label?: string; computerId?: string; allowLegacy?: boolean }>,
     ): Promise<SidebarHostStatus[]>;
     /** Answer an "ssh:prompt" push; null cancels. Desktop only (#1818). */
     answerSshPrompt(input: { id: string; answer: string | null }): Promise<void>;
