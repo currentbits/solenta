@@ -1,3 +1,6 @@
+import { captureComposerDraft, restoreComposerDraft } from "./composerSession";
+import { threadProjectMoveBlockReason } from "./threadActionMenu";
+import type { MachineOption } from "./components/WorkspaceStrip";
 import {
   useCallback,
   useEffect,
@@ -209,6 +212,11 @@ function useOpenedOnce(open: boolean): boolean {
   if (open && !opened) setOpened(true);
   return opened || open;
 }
+
+
+/** This computer in the machine picker (#1835). */
+const HERE_LABEL =
+  typeof navigator !== "undefined" && /Mac/.test(navigator.platform || "") ? "This Mac" : "This computer";
 
 export default function App({ rendererSha: rendererShaOverride }: AppProps = {}) {
   const {
@@ -1101,12 +1109,79 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     [setTags],
   );
 
+  // A ref, not a dep: the sidebar cards hold this handler, and projects get a
+  // new identity on every threads:changed (#617).
+  const projectsForMoveRef = useRef(projects);
+  projectsForMoveRef.current = projects;
+
+  /**
+   * Run a draft on another machine (#1835), T3-style: the draft is recreated
+   * in that machine's copy of the repo, with its complete composer draft,
+   * and the old draft is dropped. Threads never move once they have run.
+   */
+  const moveDraftToMachine = useCallback(
+    async (threadId: string, projectId: string) => {
+      // Sidebar moves also reach this path, including threads that have run
+      // without a worktree or CLI session. Check their actual history first.
+      const source = await api.threads.peek(threadId, { limit: 1 });
+      const draft = source.thread;
+      if (
+        threadProjectMoveBlockReason(draft) || draft.status !== "idle" || draft.sessionId ||
+        source.messages.length || source.totalMessageCount || source.hasOlderMessages ||
+        source.usage || source.workLog.length
+      ) {
+        throw new Error("Only an unstarted draft can move to another computer.");
+      }
+      const saved = captureComposerDraft(threadId);
+      const created = await createThread(draft.title || "New Thread", projectId, {
+        worktree: Boolean(draft.pendingWorktree),
+        baseBranch: draft.baseBranch ?? null,
+      });
+      if (!created) throw new Error("Could not start the thread on that computer.");
+      restoreComposerDraft(created.id, saved);
+      let deleted = false;
+      try {
+        await api.threads.delete({ threadId });
+        deleted = true;
+        if (!await purgeThread(threadId)) throw new Error("Could not remove the original draft.");
+        restoreComposerDraft(threadId, {});
+      } catch (err) {
+        // Keep both copies if restoring the source fails. Never discard the
+        // only remaining copy of a rich draft during rollback.
+        const restored = !deleted || await restoreThread(threadId);
+        if (restored) {
+          restoreComposerDraft(threadId, saved);
+          try {
+            await api.threads.delete({ threadId: created.id });
+            if (await purgeThread(created.id)) restoreComposerDraft(created.id, {});
+          } catch { /* The source is safe; a duplicate may remain. */ }
+          handleSelectThread(threadId);
+        }
+        throw err;
+      }
+    },
+    [api, createThread, purgeThread, restoreThread, handleSelectThread],
+  );
+
+  const moveDraftToMachineRef = useRef(moveDraftToMachine);
+  moveDraftToMachineRef.current = moveDraftToMachine;
+
   const handleSetThreadProject = useCallback(
     (threadId: string, projectId: string) => {
+      const draft = threadsRef.current.find((t) => t.id === threadId);
+      const target = projectsForMoveRef.current.find((p) => p.id === projectId);
+      // Another computer's project: the draft is recreated there.
+      if (draft && target && (draft.host?.key ?? null) !== (target.host?.key ?? null)) {
+        void moveDraftToMachineRef.current(threadId, projectId).catch((err) =>
+          setChipError(err instanceof Error ? err.message : String(err)),
+        );
+        return;
+      }
       void setThreadProject(threadId, projectId);
     },
     [setThreadProject],
   );
+
 
   const startWithoutProject = useCallback(
     async (threadId: string) => {
@@ -1795,6 +1870,31 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     providers,
     projects,
   });
+
+  /** Machines the open draft can run on: this one and connected computers with the same repo. */
+  const draftMachines = useMemo(() => {
+    const cur = visibleDetail?.thread;
+    if (!cur) return [];
+    const here = projects.find((p) => p.id === cur.projectId);
+    const slug = here?.slug?.toLowerCase();
+    if (!here || !slug || here.scratch || here.remoteHost) return [];
+    const seen = new Set<string>();
+    const out: MachineOption[] = [];
+    for (const p of projects) {
+      if (p.scratch || p.remoteHost || p.slug?.toLowerCase() !== slug) continue;
+      const machine = p.host?.key ?? "";
+      if (seen.has(machine) && p.id !== cur.projectId) continue;
+      seen.add(machine);
+      const status = p.host ? sidebarHosts.find((h) => h.key === p.host!.key)?.status ?? p.host.status : "online";
+      out.push({
+        projectId: p.id,
+        label: p.host?.label ?? HERE_LABEL,
+        current: p.id === cur.projectId,
+        online: status === "online",
+      });
+    }
+    return out.sort((a, b) => Number(b.label === HERE_LABEL) - Number(a.label === HERE_LABEL));
+  }, [visibleDetail?.thread, projects, sidebarHosts]);
 
   const {
     handleImportCliSession,
@@ -2559,6 +2659,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         listBaseBranches={listBaseBranches}
         onSetBaseBranch={setBaseBranch}
         onSetPendingWorktree={setPendingWorktree}
+        draftMachines={draftMachines}
+        onMoveDraftToMachine={moveDraftToMachine}
         previousWorktree={previousWorktree}
         heroProjects={projects}
         onMoveDraftToProject={handleSetThreadProject}
