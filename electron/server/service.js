@@ -8,6 +8,7 @@ const { WebSocket } = require("ws");
 const http = require("node:http");
 const { parseComputerDescriptor, confirmComputer, DESCRIPTOR_PATH } = require("../serverIdentity.js");
 const { createLifecycle } = require("./lifecycle.js");
+const { processAlive } = require("./dataLock.js");
 async function publicDescriptor(port, expectedComputerId, timeout) {
   return new Promise((resolve, reject) => {
     const req = http.get({ host: "127.0.0.1", port, path: DESCRIPTOR_PATH, timeout }, (response) => {
@@ -107,7 +108,7 @@ async function ready(port, runtime, dataDir, { timeout = 60000, request = reques
   throw new Error(`Server did not reach verified readiness: ${last?.message || "no response"}`);
 }
 async function trial(runtime, port, dataDir, target = {}) {
-  const child = spawn(path.join(runtime, "bin/solenta-server"), ["--port", String(port), "--host", "127.0.0.1", "--data-dir", dataDir, "--maintenance"], { stdio: ["ignore", "ignore", "pipe"], detached: true });
+  const child = spawn(path.join(runtime, "bin/solenta-server"), ["--port", String(port), "--host", "127.0.0.1", "--data-dir", dataDir, "--maintenance"], { stdio: ["ignore", "ignore", "pipe", "ipc"], detached: true });
   let log = "";
   child.stderr.on("data", (b) => { log = (log + b).slice(-32768); });
   const exit = new Promise((resolve) => { child.once("exit", resolve); child.once("error", resolve); });
@@ -179,17 +180,32 @@ async function main(argv) {
 async function withOperationLock(stateFile, task, { timeout = 60000, poll = 200 } = {}) {
   fs.mkdirSync(path.dirname(stateFile), { recursive: true, mode: 0o700 });
   const operation = `${stateFile}.operation`;
+  const guard = `${operation}.guard`;
   const deadline = Date.now() + timeout;
   const nonce = require("node:crypto").randomUUID();
-  for (;;) {
-    try { fs.mkdirSync(operation, { mode: 0o700 }); break; }
-    catch (e) {
-      if (e.code !== "EEXIST") throw e;
-      if (Date.now() >= deadline) throw new Error("Another lifecycle operation is in progress. Inspect the operation lock after a crashed updater before removing it.");
-      await new Promise((r) => setTimeout(r, poll));
-    }
+  function acquire() {
+    try { fs.mkdirSync(guard, { mode: 0o700 }); }
+    catch (error) { if (error.code === "EEXIST") return false; throw error; }
+    try {
+      if (fs.existsSync(operation)) {
+        let owner;
+        try { owner = JSON.parse(fs.readFileSync(path.join(operation, "owner.json"), "utf8")); } catch { return false; }
+        if (!Number.isInteger(owner.pid) || owner.pid <= 0 || processAlive(owner.pid)) return false;
+        // The guard serializes stale-owner inspection and rename, so a second
+        // contender cannot remove a newly acquired operation after this one.
+        const stale = `${operation}.stale-${nonce}`;
+        fs.renameSync(operation, stale);
+        fs.rmSync(stale, { recursive: true });
+      }
+      fs.mkdirSync(operation, { mode: 0o700 });
+      fs.writeFileSync(path.join(operation, "owner.json"), JSON.stringify({ pid: process.pid, nonce }), { flag: "wx", mode: 0o600 });
+      return true;
+    } finally { fs.rmdirSync(guard); }
   }
-  fs.writeFileSync(path.join(operation, "owner.json"), JSON.stringify({ pid: process.pid, nonce }), { mode: 0o600 });
+  while (!acquire()) {
+    if (Date.now() >= deadline) throw new Error("Another lifecycle operation is in progress. Inspect an incomplete operation lock or guard after a crash before removing it.");
+    await new Promise((r) => setTimeout(r, poll));
+  }
   try { return await task(); }
   finally {
     if (JSON.parse(fs.readFileSync(path.join(operation, "owner.json"), "utf8")).nonce === nonce) {

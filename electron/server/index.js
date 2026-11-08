@@ -82,3 +82,11 @@ Module._load = function (request, ...rest) {
 
 process.argv = [process.argv[0], path.join(appRoot, "electron", "main.js"), "--headless", `--serve-web=${opts.port}`, `--serve-host=${opts.host}`];
 require("../main.js");
+// A maintenance trial belongs to its updater, not the native service. Losing
+// that exact parent must release the trial's writer before recovery can restore
+// state. IPC closes on updater death without guessing or signalling another PID.
+if (opts.maintenance && typeof process.send === "function") {
+  const stopOrphanTrial = () => process.kill(process.pid, "SIGTERM");
+  process.once("disconnect", stopOrphanTrial);
+  if (!process.connected) stopOrphanTrial();
+}

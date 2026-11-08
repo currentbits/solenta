@@ -46,6 +46,13 @@ function createLifecycle(options = {}, deps = {}) {
     const work = await deps.inspectWork();
     if (!work || work.active !== 0) throw new Error("This computer has active runs or terminals, or activity could not be checked. Finish them before stopping or updating.");
   }
+  function mayHaveLiveWriter() {
+    if (!fs.existsSync(path.join(dataDir, ".server-lock"))) return false;
+    try {
+      const owner = JSON.parse(fs.readFileSync(path.join(dataDir, ".server-lock/owner.json"), "utf8"));
+      return !Number.isInteger(owner.pid) || owner.pid <= 0 || processAlive(owner.pid);
+    } catch { return true; } // An incomplete/unreadable owner is not proof of death.
+  }
   const maintenance = path.join(dataDir, ".server-maintenance-request");
   const pending = path.join(root, `update-${key}.json`);
   const start = () => { owned(); if (manager === "systemd-user") run("systemctl", ["--user", "start", `${name}.service`]); else run("launchctl", ["kickstart", `${domain}/${label}`]); };
@@ -53,12 +60,14 @@ function createLifecycle(options = {}, deps = {}) {
     owned();
     fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 });
     fs.writeFileSync(maintenance, "Server lifecycle operation in progress.\n", { mode: 0o600 });
-    try { if (status().running || fs.existsSync(path.join(dataDir, ".server-lock"))) await ensureIdle(); }
+    try { if (status().running || mayHaveLiveWriter()) await ensureIdle(); }
     catch (error) { fs.rmSync(maintenance, { force: true }); error.safeNoStop = true; throw error; }
-    if (manager === "systemd-user") run("systemctl", ["--user", "stop", `${name}.service`]); else run("launchctl", ["kill", "SIGTERM", `${domain}/${label}`]);
+    if (manager === "systemd-user") run("systemctl", ["--user", "stop", `${name}.service`]);
     // systemd waits for termination; launchd KeepAlive would immediately respawn,
     // so unload the job. start() bootstraps it again when absent.
-    if (manager === "launchd") run("launchctl", ["bootout", `${domain}/${label}`]);
+    if (manager === "launchd" && attempt("launchctl", ["print", `${domain}/${label}`]).ok) {
+      run("launchctl", ["bootout", `${domain}/${label}`]);
+    }
     await (deps.waitStopped || waitStopped)(dataDir);
   }
   async function install(runtime, port = 4620, target = {}) {
@@ -182,7 +191,7 @@ function createLifecycle(options = {}, deps = {}) {
     const hadMarker = fs.existsSync(maintenance);
     fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 });
     fs.writeFileSync(maintenance, "Server recovery in progress.\n", { mode: 0o600 });
-    try { if (status().running || fs.existsSync(path.join(dataDir, ".server-lock"))) await ensureIdle(); }
+    try { if (status().running || mayHaveLiveWriter()) await ensureIdle(); }
     catch (error) { if (!hadMarker) fs.rmSync(maintenance, { force: true }); throw error; }
     if (manager === "systemd-user") run("systemctl", ["--user", "stop", `${name}.service`]);
     else attempt("launchctl", ["bootout", `${domain}/${label}`]);

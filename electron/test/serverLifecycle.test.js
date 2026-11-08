@@ -72,6 +72,68 @@ it("launchd uses a GUI login domain, honest session limits, bootout stop and boo
   assert.ok(f.calls.some(([cmd, args]) => cmd === "launchctl" && args[0] === "bootout"));
   assert.ok(f.calls.filter(([, args]) => args[0] === "bootstrap").length >= 2);
 });
+it("a stopped launchd service can restart and update without killing an absent job", async (t) => {
+  let loaded = false;
+  const f = fixture(t, "darwin", { run: (cmd, args) => {
+    if (args[0] === "print") {
+      if (args[1] === "gui/501") return "domain";
+      if (!loaded) throw new Error("service not found");
+      return "pid = 77\n";
+    }
+    if (args[0] === "kill" && !loaded) throw new Error("service not found");
+    if (args[0] === "bootstrap") loaded = true;
+    if (args[0] === "bootout") loaded = false;
+    return "";
+  } });
+  await f.lc.install(f.runtime);
+  await f.lc.action("stop");
+  await f.lc.action("restart");
+  assert.equal(loaded, true);
+  await f.lc.action("stop");
+  assert.equal((await f.lc.update(f.runtime)).updated, true);
+});
+it("a loaded launchd job with no running process can be stopped", async (t) => {
+  let loaded = false;
+  const f = fixture(t, "darwin", { run: (cmd, args) => {
+    if (args[0] === "print") {
+      if (args[1] === "gui/501") return "domain";
+      if (!loaded) throw new Error("service not found");
+      return "state = not running\n";
+    }
+    if (args[0] === "kill") throw new Error("No such process");
+    if (args[0] === "bootstrap") loaded = true;
+    if (args[0] === "bootout") loaded = false;
+    return "";
+  } });
+  await f.lc.install(f.runtime);
+  await f.lc.action("stop");
+  assert.equal(loaded, false);
+});
+it("recovery restores a failed trial after its data-lock owner died", async (t) => {
+  const f = fixture(t);
+  await f.lc.install(f.runtime);
+  fs.mkdirSync(f.lc.paths.dataDir, { recursive: true });
+  fs.writeFileSync(path.join(f.lc.paths.dataDir, "schema"), "original");
+  const key = path.basename(f.lc.paths.stateFile).slice("service-".length, -".json".length);
+  const backup = path.join(f.lc.paths.root, `.data-backup-${key}`);
+  fs.cpSync(f.lc.paths.dataDir, backup, { recursive: true });
+  fs.writeFileSync(path.join(f.lc.paths.dataDir, "schema"), "candidate migration");
+  fs.writeFileSync(path.join(f.lc.paths.root, `update-${key}.json`), JSON.stringify({ old: f.lc.state(), backup, runtime: f.runtime, dataDir: f.lc.paths.dataDir, target: {}, phase: "trial" }));
+  // Model the process/service being gone after a host restart during a trial.
+  // Reopen the same persisted owner with an inactive native manager.
+  const recovery = createLifecycle({ home: f.home }, {
+    platform: "linux", uid: 501, run: (cmd, args) => {
+      if (args.includes("is-active")) throw new Error("inactive");
+      return "";
+    }, ready: async () => {}, waitStopped: async () => {},
+    inspectWork: async () => assert.fail("dead owner has no live status endpoint"),
+  });
+  fs.mkdirSync(path.join(f.lc.paths.dataDir, ".server-lock"));
+  fs.writeFileSync(path.join(f.lc.paths.dataDir, ".server-lock/owner.json"), JSON.stringify({ pid: 99999999 }));
+  await recovery.recover();
+  assert.equal(fs.readFileSync(path.join(f.lc.paths.dataDir, "schema"), "utf8"), "original");
+  assert.equal((await recovery.action("status")).recoveryRequired, false);
+});
 it("unavailable user manager refuses installation and does not create a service", async (t) => {
   const f = fixture(t, "linux", { run: () => { throw new Error("No user bus"); } });
   await assert.rejects(f.lc.install(f.runtime), /unavailable/);
@@ -182,6 +244,25 @@ it("lifecycle commands serialize their complete operation and preserve another o
   fs.mkdirSync(`${f.lc.paths.stateFile}.operation`);
   await assert.rejects(withOperationLock(f.lc.paths.stateFile, () => assert.fail("must not enter a held operation"), { timeout: 10, poll: 5 }), /Another lifecycle operation/);
   assert.equal(fs.existsSync(`${f.lc.paths.stateFile}.operation`), true);
+});
+it("concurrent recovery contenders reclaim only a proven dead operation owner", async (t) => {
+  const f = fixture(t);
+  fs.mkdirSync(path.dirname(f.lc.paths.stateFile), { recursive: true });
+  const operation = `${f.lc.paths.stateFile}.operation`;
+  fs.mkdirSync(operation);
+  fs.writeFileSync(path.join(operation, "owner.json"), JSON.stringify({ pid: 99999999, nonce: "dead-updater" }));
+  let active = 0;
+  let completed = 0;
+  const task = () => withOperationLock(f.lc.paths.stateFile, async () => {
+    assert.equal(active++, 0, "only one recovery enters at a time");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    active--; completed++;
+  }, { timeout: 500, poll: 5 });
+  await Promise.all([task(), task()]);
+  assert.equal(completed, 2);
+  fs.mkdirSync(operation);
+  fs.writeFileSync(path.join(operation, "owner.json"), JSON.stringify({ pid: process.pid, nonce: "live-updater" }));
+  await assert.rejects(withOperationLock(f.lc.paths.stateFile, () => assert.fail("live lock reclaimed"), { timeout: 10, poll: 5 }), /Another lifecycle operation/);
 });
 it("an existing backup refuses an update before stopping a healthy service", async (t) => {
   const f = fixture(t);

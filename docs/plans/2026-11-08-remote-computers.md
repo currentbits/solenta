@@ -36,3 +36,16 @@ Add computer -> SSH or existing address -> check prerequisites/runtime -> prepar
 ## Managed public access boundary
 
 Account discovery plus a managed outbound tunnel requires actual identity, broker/DNS/connector infrastructure and deployment configuration. Keep the connection model extensible for that route without building fake login/tunnel success states or claiming a deployed service. Existing direct HTTPS/Tailscale and SSH must stand on their own. A trusted authorization broker is not zero-trust/end-to-end encryption by default.
+
+## Delivery verification
+
+`scripts/smoke-server-bundle.js` checks the packaged server, authenticated computer/build identity, renderer build stamp, a run in a real worktree and a native PTY. `scripts/smoke-server-lifecycle.js` exercises the archive's real systemd-user or launchd adapter with isolated provider configuration and server data:
+
+- Install, repeat preparation without replacing its owner, and reject a second data-directory writer.
+- Restart after a backend crash without an attached client.
+- Refuse updates while a terminal is active; restart and update an already stopped service.
+- Activate a requested same-version release while preserving identity and credentials.
+- Kill the updater during maintenance, require its IPC-bound trial to exit, and recover the partial data migration through the dead operation lock.
+- Restore the previous runtime and data after a failed trial; stop, start and uninstall while preserving data.
+
+The server-bundle workflow builds and runs both checks on native Apple Silicon, Intel Mac, Linux x64 and Linux ARM runners. Linux CI explicitly prepares a user manager with linger. These tests do not reboot a host or simulate GUI login/logout. The macOS service remains limited to the user's GUI login session; Linux operation before login still depends on the host's real linger policy. Managed cloud account discovery/tunnels and a Windows server distribution remain outside this rebuild.

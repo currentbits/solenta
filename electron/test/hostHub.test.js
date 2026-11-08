@@ -289,6 +289,9 @@ describe("hostHub", () => {
     cleanup.push(() => remote.close(), () => hub.close());
     hub.setHosts([HOST]);
     await waitFor(() => hub.list()[0].status === "online");
+    // Authentication precedes the initial list replies. Establish ownership
+    // before dropping the connection whose cached rows this test exercises.
+    await waitFor(() => hub.mergeThreads([]).some((row) => row.id === "r1"));
     remote.dropAll();
     await waitFor(() => hub.list()[0].status !== "online");
     // Still owned by Box while it is down: refused, never run locally.

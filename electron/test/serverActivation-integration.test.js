@@ -7,7 +7,7 @@ const path = require("node:path");
 const { spawn } = require("node:child_process");
 const { WebSocket } = require("ws");
 const { requestStatus } = require("../server/service.js");
-async function boot(t, maintenance) {
+async function boot(t, maintenance, ipc = false) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "solenta-activation-"));
   const data = path.join(home, "data"); fs.mkdirSync(data);
   const marker = path.join(data, ".server-maintenance-request"); fs.writeFileSync(marker, "pending update");
@@ -16,7 +16,7 @@ async function boot(t, maintenance) {
   fs.writeFileSync(providerFile, originalProvider);
   fs.writeFileSync(path.join(data, "coder-store.json"), JSON.stringify({ settings: {}, projects: [], threads: [{ id: "activation-thread", projectId: "missing-project", status: "idle", createdAt: Date.now(), updatedAt: Date.now(), teleportedTo: { pending: true, host: "fixture" } }], messagesByThread: {}, workLogByThread: {} }));
   const child = spawn(process.execPath, [path.resolve(__dirname, "../server/index.js"), "--port", "0", "--data-dir", data, ...(maintenance ? ["--maintenance"] : [])], {
-    env: { ...process.env, HOME: home, USERPROFILE: home, CODER_SIMULATE: "1", SOLENTA_SKIP_USERDATA_MIGRATION: "1" }, stdio: ["ignore", "pipe", "pipe"], detached: true,
+    env: { ...process.env, HOME: home, USERPROFILE: home, CODER_SIMULATE: "1", SOLENTA_SKIP_USERDATA_MIGRATION: "1" }, stdio: ["ignore", "pipe", "pipe", ...(ipc ? ["ipc"] : [])], detached: true,
   });
   let log = ""; child.stdout.on("data", (b) => { log += b; }); child.stderr.on("data", (b) => { log += b; });
   const exited = new Promise((resolve) => child.once("exit", resolve));
@@ -76,4 +76,15 @@ it("maintenance trial never activates after marker removal or mutates provider c
   try { process.kill(-f.child.pid, "SIGTERM"); } catch { /* exited */ }
   await f.exited;
   assert.equal(fs.readFileSync(f.providerFile, "utf8"), f.originalProvider, "unstarted supervisor cannot revoke MCP configuration at shutdown");
+});
+it("a maintenance trial releases its writer when its updater IPC disconnects", { skip: process.platform === "win32" }, async (t) => {
+  const f = await boot(t, true, true);
+  await requestStatus(f.port, f.data);
+  f.child.disconnect();
+  let timer;
+  try {
+    await Promise.race([f.exited, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("orphan trial did not stop")), 10000); })]);
+  } finally { clearTimeout(timer); }
+  assert.equal(fs.existsSync(path.join(f.data, ".server-lock")), false);
+  assert.equal(fs.readFileSync(f.providerFile, "utf8"), f.originalProvider);
 });
