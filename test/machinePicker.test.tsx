@@ -10,6 +10,7 @@ import { afterEach, describe, it } from "node:test";
 import { mount } from "./support/dom.ts";
 import { createFakeCoder, installFakeCoder, detail, project, thread, type FakeCoder } from "./support/fakeCoder.ts";
 import App from "../src/App";
+import type { CoderApi } from "../src/shared/ipc";
 import {
   captureComposerDraft, flushDraftSave, keptAttachments, keptPasteCards,
   resetComposerSession, serializeDrafts, setContextChips, setDraftText,
@@ -116,6 +117,36 @@ describe("new thread: pick the computer it runs on (#1835)", () => {
     } finally {
       m.unmount();
     }
+  });
+
+  it("renders worker approvals beside a started remote thread's computer label", async () => {
+    const fx = fixture();
+    const worker = thread({ id: "remote-worker", title: "Remote worker", projectId: "rp", host: BOX, orchWorker: true, handoffFrom: "r-run", status: "working" });
+    fx.threads.push(worker);
+    const fake = createFakeCoder(fx);
+    const responses: Parameters<CoderApi["threads"]["respondPermission"]>[0][] = [];
+    fake.api.threads.respondPermission = async (input) => { responses.push(input); };
+    fake.api.threads.pendingApprovals = async (input) => input?.threadId === worker.id ? [{
+      threadId: worker.id, projectId: worker.projectId, threadTitle: worker.title,
+      requestId: "worker-request", toolName: "Bash", summary: "Run tests", input: "{}", command: "npm test", provider: "claude", since: NOW,
+    }] : [];
+    const m = await boot(fake);
+    try {
+      await select(m, "Remote worker");
+      await m.click(m.query('[data-task-source="r-run"]') as HTMLElement);
+      await m.flush();
+      assert.match(m.query("[data-workspace-machine-label]")?.textContent || "", /Box ·/);
+      assert.equal(m.query("[data-workspace-machine]"), null);
+      const approval = m.query('[data-worker-request="worker-request"]');
+      assert.ok(approval, "child approval appears in remote parent transcript");
+      await m.click([...approval.querySelectorAll("button")].find((el) => el.textContent?.trim() === "Accept")!);
+      assert.equal(responses.length, 1);
+      assert.equal(responses[0].threadId, worker.id);
+      assert.equal(responses[0].requestId, "worker-request");
+      assert.equal(responses[0].onHost, BOX.key);
+      assert.equal(m.query('[data-worker-request="worker-request"]'), null);
+      assert.match(m.query("[data-workspace-machine-label]")?.textContent || "", /Box ·/);
+    } finally { m.unmount(); }
   });
 
   it("preserves the complete rich draft before purging the source", async () => {
