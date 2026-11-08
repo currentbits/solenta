@@ -2,6 +2,20 @@
 
 const { localDayKey, coerceFiniteNumber, coerceUsageCell } = require("./store-util.js");
 
+/** Keep original deltas separate from last-seen thread labels. */
+function threadAttribution(row, provider, model, delta) {
+  const byProviderModel = { ...(row && row.byProviderModel) };
+  const models = { ...byProviderModel[provider] };
+  const cell = coerceUsageCell(models[model]);
+  for (const key of Object.keys(cell)) cell[key] += delta[key] || 0;
+  models[model] = cell;
+  byProviderModel[provider] = models;
+  // Old thread totals have no trustworthy split. Keep them without guessing
+  // from the last-seen model, including when the next turn changes provider.
+  const unattributed = row && (row.unattributed || (!row.byProviderModel && coerceUsageCell(row)));
+  return { byProviderModel, ...(unattributed ? { unattributed } : {}) };
+}
+
 /** Store usage/spend ledger methods; store.js copies them onto Store.prototype. */
 class StoreUsageMethods {
   /**
@@ -64,7 +78,8 @@ class StoreUsageMethods {
    * all; dropping those turns hid the provider (#556). Simulate is ignored
    * so fixture runs do not pollute the ledger.
    * When threadId is a non-empty string, the same numbers accumulate into
-   * usageThreadsByDay; project/title/provider/model are last-seen labels.
+   * usageThreadsByDay, with original provider/model buckets retained.
+   * Project/title/provider/model remain last-seen display labels.
    * @param {{ provider?: unknown, model?: unknown, costUsd?: unknown, inputTokens?: unknown, cachedInputTokens?: unknown, cacheWriteTokens?: unknown, outputTokens?: unknown, threadId?: unknown, projectId?: unknown, projectName?: unknown, title?: unknown }} input
    * @param {Date} [now] - injectable clock for tests
    */
@@ -87,7 +102,7 @@ class StoreUsageMethods {
     const providerMap = dayMap[provider] && typeof dayMap[provider] === "object"
       ? dayMap[provider]
       : (dayMap[provider] = {});
-    const model = (input && input.model) || "unknown";
+    const model = typeof input.model === "string" && input.model ? input.model : "unknown";
     const prev = coerceUsageCell(providerMap[model]);
     providerMap[model] = {
       ...prev,
@@ -122,6 +137,9 @@ class StoreUsageMethods {
       const prevThread = coerceUsageCell(threadsDay[threadId]);
       threadsDay[threadId] = {
         ...prevThread,
+        ...threadAttribution(threadsDay[threadId], provider, model, {
+          costUsd, inputTokens, cachedInputTokens, cacheWriteTokens, outputTokens, turns: 1,
+        }),
         costUsd: prevThread.costUsd + costUsd,
         inputTokens: prevThread.inputTokens + inputTokens,
         cachedInputTokens: prevThread.cachedInputTokens + cachedInputTokens,
@@ -160,7 +178,7 @@ class StoreUsageMethods {
     const providerMap = dayMap[provider] && typeof dayMap[provider] === "object"
       ? dayMap[provider]
       : (dayMap[provider] = {});
-    const model = (input && input.model) || "unknown";
+    const model = typeof input.model === "string" && input.model ? input.model : "unknown";
     const prev = coerceUsageCell(providerMap[model]);
     providerMap[model] = {
       ...prev,
@@ -192,6 +210,7 @@ class StoreUsageMethods {
         (typeof fromInput === "string" ? fromInput : "");
       threadsDay[threadId] = {
         ...prevThread,
+        ...threadAttribution(prevRow, provider, model, { wastedUsd: costUsd }),
         wastedUsd: prevThread.wastedUsd + costUsd,
         projectId: label(prevRow && prevRow.projectId, input.projectId),
         projectName: label(prevRow && prevRow.projectName, input.projectName),

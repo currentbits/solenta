@@ -141,9 +141,28 @@ function applyModelPrices(report, prices) {
   for (const [day, threads] of Object.entries(report.threadsByDay || {})) {
     /** @type {Record<string, any>} */
     const dayOut = {};
-    // ponytail: a thread cell is priced by its last-seen model.
     for (const [id, cell] of Object.entries(threads || {})) {
-      dayOut[id] = priced(cell, cell && cell.model);
+      // Legacy totals cannot be split by model. Never price those tokens at
+      // a last-seen model's rate; only price deltas recorded with attribution.
+      if (!cell || !cell.byProviderModel) {
+        dayOut[id] = cell;
+        continue;
+      }
+      const byProviderModel = {};
+      let costUsd = Number(cell.unattributed && cell.unattributed.costUsd) || 0;
+      for (const [provider, models] of Object.entries(cell.byProviderModel)) {
+        byProviderModel[provider] = {};
+        for (const [model, bucket] of Object.entries(models || {})) {
+          // A daily model cell with reported USD is never estimated. Apply
+          // that same rule to its threads, including zero-cost threads, so
+          // their estimates cannot exceed the authoritative daily amount.
+          const daily = report.byDay[day] && report.byDay[day][provider] && report.byDay[day][provider][model];
+          const next = daily && Number(daily.costUsd) > 0 ? bucket : priced(bucket, model);
+          byProviderModel[provider][model] = next;
+          costUsd += Number(next.costUsd) || 0;
+        }
+      }
+      dayOut[id] = { ...cell, byProviderModel, costUsd };
     }
     threadsByDay[day] = dayOut;
   }

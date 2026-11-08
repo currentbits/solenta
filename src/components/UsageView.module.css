@@ -95,6 +95,74 @@
   box-shadow: var(--focus-ring);
 }
 
+.modelFilter {
+  position: relative;
+}
+
+.modelFilterSummary {
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--card);
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.modelFilterSummary:focus-visible,
+.modelFilterOption input:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.modelFilterPanel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 3;
+  width: min(340px, calc(100vw - 48px));
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  box-shadow: 0 4px 16px #0002;
+}
+
+.modelFilterActions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.modelFilterHint {
+  margin: 8px 0;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.modelFilterOptions {
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.modelFilterOption {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 2px;
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.modelFilterProvider {
+  margin-left: auto;
+  color: var(--text-dim);
+}
+
 .refresh {
   display: inline-flex;
   align-items: center;

@@ -11,6 +11,7 @@ import type {
   UsageThreadEntry,
 } from "../src/shared/ipc.ts";
 import {
+  filterUsageReport,
   isCostUnmetered,
   isUnreported,
   processedTokens,
@@ -476,6 +477,86 @@ describe("summarizeUsage", () => {
     assert.equal(isCostUnmetered(entry({ turns: 1, inputTokens: 10 })), true);
     assert.equal(isCostUnmetered(entry({ turns: 1 })), false);
     assert.equal(isCostUnmetered(entry({ turns: 1, costUsd: 0.02, inputTokens: 10 })), false);
+  });
+});
+
+describe("model usage filtering", () => {
+  const day = "2026-08-17";
+  const a = entry({ costUsd: 1, inputTokens: 100, turns: 1, wastedUsd: 0.5 });
+  const b = entry({ costUsd: 3, inputTokens: 300, turns: 2 });
+  const c = entry({ costUsd: 5, inputTokens: 500, turns: 1 });
+  const unknown = entry({ turns: 1 });
+  const buckets = { claude: { shared: a, other: b }, codex: { shared: c, unknown } };
+  const data = report(
+    { [day]: buckets, "2026-08-01": { claude: { shared: c } } },
+    { [day]: { mixed: thread({ costUsd: 9, inputTokens: 900, turns: 5, wastedUsd: 0.5,
+      provider: "codex", model: "unknown", byProviderModel: buckets }) } },
+  );
+
+  it("includes original model/provider pairs before every rollup, without mutating the report", () => {
+    const original = structuredClone(data);
+    const filtered = filterUsageReport(data, null, {
+      mode: "include", models: [{ provider: "claude", model: "shared" }],
+    });
+    const summary = summarizeUsage(filtered, 7, TODAY);
+    assert.equal(summary.totals.costUsd, 1);
+    assert.equal(summary.totals.wastedUsd, 0.5);
+    assert.equal(processedTokens(summary.totals), 100);
+    assert.equal(summary.models.length, 1);
+    for (const row of [summary.providers[0], summary.models[0], summary.projects[0], summary.threads[0], summary.byDay[0], summary.days[6]]) {
+      assert.equal(row.costUsd, 1);
+      assert.equal(row.turns, 1);
+    }
+    assert.equal(summary.threads[0].detail, "nebula · claude");
+    assert.deepEqual(data, original);
+    // The filtered report is also the single reusable input for export callers.
+    assert.deepEqual(Object.keys(filtered.byDay[day]), ["claude"]);
+    assert.equal(summarizeUsage(filtered, 30, TODAY).totals.costUsd, 6);
+  });
+
+  it("combines include/exclude selections with provider and date filters", () => {
+    const models = [{ provider: "claude", model: "shared" }, { provider: "codex", model: "shared" }];
+    assert.equal(summarizeUsage(filterUsageReport(data, null, { mode: "include", models }), 7, TODAY).totals.costUsd, 6);
+    const summary = summarizeUsage(filterUsageReport(data, "claude", { mode: "exclude", models }), 7, TODAY);
+    assert.equal(summary.totals.costUsd, 3);
+    assert.equal(summary.threads[0].costUsd, 3);
+    assert.equal(summary.models[0].model, "other");
+    const unknownOnly = summarizeUsage(filterUsageReport(data, null, {
+      mode: "include", models: [{ provider: "codex", model: "unknown" }],
+    }), 7, TODAY);
+    assert.equal(unknownOnly.totals.turns, 1);
+    assert.equal(unknownOnly.providers[0].unreported, true);
+    assert.equal(unknownOnly.threads[0].turns, 1);
+  });
+
+  it("handles no matches, excluding all models and clearing the selection", () => {
+    const all = Object.entries(buckets).flatMap(([provider, models]) => Object.keys(models).map((model) => ({ provider, model })));
+    for (const filter of [
+      { mode: "exclude" as const, models: all },
+      { mode: "include" as const, models: [{ provider: "missing", model: "missing" }] },
+    ]) {
+      const summary = summarizeUsage(filterUsageReport(data, null, filter), 7, TODAY);
+      assert.equal(summary.totals.costUsd, 0);
+      assert.equal(summary.totals.turns, 0);
+      assert.equal(summary.days.length, 7);
+      assert.deepEqual(summary.models, []);
+      assert.deepEqual(summary.threads, []);
+    }
+    assert.equal(filterUsageReport(data, null, { mode: "include", models: [] }), data);
+  });
+
+  it("keeps legacy totals honest when their model split was not recorded", () => {
+    const legacy = report({ [day]: buckets }, { [day]: { old: thread({ costUsd: 99 }),
+      upgraded: thread({ costUsd: 100, byProviderModel: { claude: { shared: a } }, unattributed: entry({ costUsd: 99 }) }),
+    } });
+    assert.equal(summarizeUsage(legacy, 7, TODAY).hasUnattributedThreadUsage, true);
+    const summary = summarizeUsage(filterUsageReport(legacy, null, {
+      mode: "include", models: [{ provider: "claude", model: "shared" }],
+    }), 7, TODAY);
+    assert.equal(summary.totals.costUsd, 1);
+    assert.equal(summary.threads.length, 1);
+    assert.equal(summary.threads[0].key, "upgraded");
+    assert.equal(summary.threads[0].costUsd, 1);
   });
 });
 
