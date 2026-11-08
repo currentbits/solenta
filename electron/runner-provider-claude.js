@@ -59,30 +59,7 @@ const fs = require("node:fs");
 const { recordCompaction } = require("./compaction.js");
 const { claudeCompaction } = require("./claude-context.js");
 
-/**
- * One model's growth in a claude result's modelUsage since the last result
- * of the same process (#1716), as a recordUsage row, or null when it did
- * not grow.
- * @param {string} model
- * @param {any} row
- * @param {any} prevRow
- */
-function modelUsageDelta(model, row, prevRow) {
-  if (!row || typeof row !== "object") return null;
-  const grew = (k) =>
-    Math.max(0, (Number(row[k]) || 0) - (Number(prevRow && prevRow[k]) || 0));
-  const out = {
-    model,
-    costUsd: grew("costUSD"),
-    inputTokens: grew("inputTokens"),
-    cachedInputTokens: grew("cacheReadInputTokens"),
-    cacheWriteTokens: grew("cacheCreationInputTokens"),
-    outputTokens: grew("outputTokens"),
-  };
-  return out.costUsd > 0 || out.inputTokens > 0 || out.outputTokens > 0
-    ? out
-    : null;
-}
+const { createClaudeUsage } = require("./claude-usage.js");
 
 /**
  * @param {object} ctx - createRunner context (see runner-watchdogs.js header)
@@ -193,6 +170,7 @@ function createClaudeRun(ctx) {
     let heldPhantom = null;
     /** Run-local usage for memory footers (not cumulative store totals). */
     const runUsage = { tokensIn: 0, tokensOut: 0, costUsd: 0 };
+    const usageMeasurements = createClaudeUsage();
 
     function discardHeldPhantom() {
       heldPhantom = null;
@@ -623,6 +601,7 @@ function createClaudeRun(ctx) {
       claudeState,
       runUsage,
       discardHeldPhantom,
+      flushUsage: () => recordMeasuredUsage(null),
       /**
        * Permission prompts awaiting a user decision, oldest first. Each is
        * { id, toolName, summary, input (pretty), rawInput (original object),
@@ -659,6 +638,7 @@ function createClaudeRun(ctx) {
       sawResult = true;
       discardHeldPhantom();
       if (!guard()) return;
+      recordMeasuredUsage(null);
       completeWorkLogStep(threadId, startingId);
       completeWorkLogStep(threadId, workingId);
       if (ev && typeof ev.session_id === "string" && ev.session_id) {
@@ -683,6 +663,37 @@ function createClaudeRun(ctx) {
 
     /** Assigned below (reused or freshly spawned) before any event fires. */
     let handle;
+    function recordMeasuredUsage(ev) {
+      const batch = usageMeasurements.finish(ev, handle, capturedModel);
+      if (!batch) return null;
+      const prev = store.getUsage(threadId) || { model: null, inputTokens: 0, outputTokens: 0, costUsd: 0, turns: 0 };
+      runUsage.tokensIn += batch.inputTokens;
+      runUsage.tokensOut += batch.outputTokens;
+      runUsage.costUsd += batch.costUsd;
+      const nextUsage = {
+        ...prev,
+        model: capturedModel || prev.model || null,
+        inputTokens: prev.inputTokens + batch.inputTokens,
+        outputTokens: prev.outputTokens + batch.outputTokens,
+        costUsd: prev.costUsd + batch.costUsd,
+        turns: prev.turns + 1,
+        accounting: batch.accounting,
+      };
+      for (const field of ["cachedInputTokens", "cacheWriteTokens", "reasoningTokens"]) {
+        if (!batch.accounting.unavailableFields.includes(field) || batch[field] > 0 || prev[field] !== undefined) {
+          nextUsage[field] = (prev[field] || 0) + batch[field];
+        }
+      }
+      store.setUsage(threadId, nextUsage);
+      if (batch.costUsd > 0) store.recordSpend(batch.costUsd);
+      for (const [index, row] of batch.rows.entries()) store.recordUsage({
+        provider: threadProviderRef(thread), ...row, threadId, turns: index === 0 ? 1 : 0,
+        projectId: thread.projectId,
+        projectName: store.getProject(thread.projectId)?.name, title: thread.title,
+      });
+      return { prev, nextUsage };
+    }
+
     /** This turn was delivered to a kept-alive CLI instead of a new spawn. */
     let reused = false;
     /** Any event at all reached this turn (the CLI is really taking it). */
@@ -759,6 +770,7 @@ function createClaudeRun(ctx) {
         }
 
         const partial = unwrapStreamEvent(ev);
+        usageMeasurements.observe(ev, partial);
         if (partial && applyPartial(partial)) return;
 
         if (type === "control_request") {
@@ -1237,46 +1249,7 @@ function createClaudeRun(ctx) {
             store.updateThread(threadId, { sessionId: capturedSessionId });
           }
 
-          // Accumulate usage
-          const prev = store.getUsage(threadId) || {
-            model: null,
-            inputTokens: 0,
-            outputTokens: 0,
-            costUsd: 0,
-            turns: 0,
-          };
           const usage = ev.usage || {};
-          const turnIn = Number(usage.input_tokens) || 0;
-          const turnOut = Number(usage.output_tokens) || 0;
-          // total_cost_usd is the process's running total, and a warm process
-          // serves many turns (#1435): bill only the growth since its last
-          // result. A fresh handle starts at 0, so one-shot runs bill the total.
-          const totalCost = Number(ev.total_cost_usd) || 0;
-          const prevTotalCost = (handle && handle.lastTotalCostUsd) || 0;
-          const costDelta = Math.max(0, totalCost - prevTotalCost);
-          if (handle) handle.lastTotalCostUsd = Math.max(prevTotalCost, totalCost);
-          runUsage.tokensIn += turnIn;
-          runUsage.tokensOut += turnOut;
-          runUsage.costUsd += costDelta;
-          const inputTokens = prev.inputTokens + turnIn;
-          const outputTokens = prev.outputTokens + turnOut;
-          const costUsd = prev.costUsd + costDelta;
-          // modelUsage is the process's per-model running total, like
-          // total_cost_usd. A plan approved mid-turn switched models
-          // (set_model, #1716): bill each model its own growth, then the
-          // act model owns the rest of this process.
-          const mu =
-            ev.modelUsage && typeof ev.modelUsage === "object"
-              ? ev.modelUsage
-              : null;
-          const prevMu = (handle && handle.lastModelUsage) || {};
-          if (handle && mu) handle.lastModelUsage = mu;
-          const splitRows =
-            handle && handle.modelSwitchedTo !== undefined && mu
-              ? Object.entries(mu)
-                .map(([id, row]) => modelUsageDelta(id, row, prevMu[id]))
-                .filter(Boolean)
-              : null;
           if (handle && handle.modelSwitchedTo !== undefined) {
             // A threshold from the plan model cannot size the act model.
             contextCompaction = null;
@@ -1284,15 +1257,7 @@ function createClaudeRun(ctx) {
             capturedModel = handle.modelSwitchedTo || capturedModel;
             delete handle.modelSwitchedTo;
           }
-          const model =
-            capturedModel || prev.model || null;
-          const nextUsage = {
-            model,
-            inputTokens,
-            outputTokens,
-            costUsd,
-            turns: prev.turns + 1,
-          };
+          const { prev, nextUsage } = recordMeasuredUsage(ev);
           // inputTokens stay billable (no cache). contextTokens is the full
           // prompt, or stays unset for Claude when cache fields are omitted
           // (#317). Grok is allowed to sum without those keys (#704).
@@ -1325,35 +1290,6 @@ function createClaudeRun(ctx) {
               pushDetail(threadId, claudeState);
             })().catch(() => {}); // Optional meter metadata must not fail a successful turn.
           }
-          if (costDelta > 0) {
-            store.recordSpend(costDelta);
-          }
-          const usageRows =
-            splitRows && splitRows.length > 0
-              ? splitRows
-              : [
-                {
-                  model,
-                  costUsd: costDelta,
-                  inputTokens: turnIn,
-                  cachedInputTokens:
-                    Number(usage.cache_read_input_tokens) || 0,
-                  cacheWriteTokens:
-                    Number(usage.cache_creation_input_tokens) || 0,
-                  outputTokens: turnOut,
-                },
-              ];
-          for (const row of usageRows) {
-            store.recordUsage({
-              provider: threadProviderRef(thread),
-              ...row,
-              threadId,
-              projectId: thread.projectId,
-              projectName: store.getProject(thread.projectId)?.name,
-              title: thread.title,
-            });
-          }
-
           const ok = ev.subtype === "success";
           // Assistant text from stream, or fall back to result field
           // (skip when result merely repeats the last streamed bubble).
@@ -1483,6 +1419,7 @@ function createClaudeRun(ctx) {
           return;
         }
 
+        recordMeasuredUsage(null);
         clearRun(threadId);
 
         // If WE finalized on a result event, close the work-log and stop.
@@ -1526,6 +1463,7 @@ function createClaudeRun(ctx) {
         if (!e || e.stopping || e.runId !== runId) return;
         if (e.kind !== "claude") return;
 
+        recordMeasuredUsage(null);
         clearRun(threadId);
         completeWorkLogStep(threadId, e.startingId);
         completeWorkLogStep(threadId, e.workingId);
