@@ -11,6 +11,7 @@ import type {
   ProjectCodeMap,
   ProjectInfo,
   RecentRepoGroup,
+  HistoryProject,
   SpaceInfo,
 } from "../shared/ipc";
 import type { DevCtx } from "./context.ts";
@@ -262,6 +263,19 @@ export function createProjects(ctx: DevCtx): Pick<CoderApi, "projects" | "spaces
         return all
           .map((g) => ({ ...g, repos: g.repos.filter((r) => !added.has(r.path)) }))
           .filter((g) => g.repos.length > 0);
+      },
+      async discoverHistory(): Promise<HistoryProject[]> {
+        const day = 86_400_000;
+        const now = Date.now();
+        const all: HistoryProject[] = [
+          { path: "/Users/demo/code/storefront", name: "storefront", lastActiveAt: now - 2 * 3_600_000, providers: ["claude", "codex"], sessions: 41, recentSessions: [{ provider: "claude", sessionId: "dev-claude-1" }] },
+          { path: "/Users/demo/code/billing-api", name: "billing-api", lastActiveAt: now - day, providers: ["codex"], sessions: 12, recentSessions: [] },
+          { path: "/Users/demo/notes-site", name: "notes-site", lastActiveAt: now - 3 * day, providers: ["grok", "cursor"], sessions: 7, recentSessions: [] },
+          { path: "/Users/demo/code/infra", name: "infra", lastActiveAt: now - 25 * day, providers: ["claude", "opencode", "kimi"], sessions: 3, recentSessions: [] },
+          { path: "/Users/demo/Desktop/tax-2026", name: "tax-2026", lastActiveAt: now - 70 * day, providers: ["muse"], sessions: 1, recentSessions: [] },
+        ];
+        const added = new Set(ctx.projects.map((p) => p.path));
+        return all.filter((r) => !added.has(r.path));
       },
       async ensureScratch() {
         const found = ctx.projects.find((p) => p.scratch === true);

@@ -15,6 +15,7 @@ on:
       - "package-lock.json"
       - "scripts/package-server.sh"
       - "scripts/smoke-server-bundle.js"
+      - ".github/actions/npm-ci-electron/**"
       - ".github/workflows/server-bundle.yml"
   workflow_dispatch:
 
@@ -37,7 +38,7 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: "**/package-lock.json"
-      - run: npm ci
+      - uses: ./.github/actions/npm-ci-electron
       - run: npm ci --prefix core
       - run: npm ci --prefix memory-server
       - run: bash scripts/package-server.sh ${{ matrix.target }}
