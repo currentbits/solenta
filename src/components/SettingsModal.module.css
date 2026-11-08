@@ -84,6 +84,39 @@
   color: var(--text-muted);
 }
 
+.connectionTabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+  border-bottom: 1px solid var(--border-soft);
+  margin-bottom: 20px;
+}
+
+.connectionTab {
+  padding: 8px 0 10px;
+  color: var(--text-muted);
+  border-bottom: 2px solid transparent;
+  font-size: 13px;
+}
+
+.connectionTab[aria-selected="true"] {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+
+.connectionTab:focus-visible, .connectionAdvanced > summary:focus-visible, .connectionGuide > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.computerSection { gap: 16px; }
+.computerSection > p { margin: 0; }
+.connectionGuide { color: var(--text-muted); font-size: 12px; }
+.connectionGuide > summary, .connectionAdvanced > summary { cursor: pointer; }
+.connectionGuide ol { margin-bottom: 0; }
+.connectionAdvanced { border-top: 1px solid var(--border-soft); border-bottom: 1px solid var(--border-soft); padding: 12px 0; font-size: 12px; color: var(--text-muted); }
+.connectionAdvanced[open] > :not(summary) { margin-top: 16px; }
+
 .field {
   display: flex;
   flex-direction: column;

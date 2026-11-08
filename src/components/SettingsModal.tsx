@@ -121,7 +121,7 @@ const PANE_META: Record<
   },
   connections: {
     label: "Connections",
-    hint: "Use this Solenta from your phone or a browser, or open the Solenta running on another computer.",
+    hint: "Work on another computer, open this one in a browser, or link agents between computers.",
     keywords: "remote ssh host server tunnel workstation web token phone device qr pair tailscale https lan network browser",
   },
   integrations: {
@@ -319,6 +319,7 @@ export function SettingsModal({
     return persistSettings(patch);
   };
   const [pane, setPane] = useState<SettingsPane>("general");
+  const [connectionPane, setConnectionPane] = useState<"computers" | "browser" | "agents">(() => isWebMode() ? "browser" : "computers");
   const [navQuery, setNavQuery] = useState("");
   /** Selector of a "Find a setting" pick, scrolled to and flashed once its pane renders. */
   const [highlightTarget, setHighlightTarget] = useState<string | null>(null);
@@ -963,20 +964,37 @@ export function SettingsModal({
           </>
           )}
 
-          {pane === "connections" && isWebMode() && (
-            <LinkedComputersSection active={open && pane === "connections"} />
-          )}
-          {pane === "connections" && !isWebMode() && (
+          {pane === "connections" && (
           <>
-          <WebAccessSection active={open && pane === "connections"} />
-          <p className={styles.sectionLabel}>Connect to another computer</p>
-          <ConnectionsSection onManage={onManageRemoteServer} onOpen={onOpenConnection} onForget={onForgetConnection} onInstall={onInstallSolenta} onSidebarHosts={onSidebarHosts} sidebarHosts={sidebarHosts} />
-          <LinkedComputersSection active={open && pane === "connections"} />
-          <p className={styles.note} data-connections-remote-project-hint="">
-            Only need one repo from a server, in this window? Add it as a
-            project with a Remote host instead (Add project, then Remote
-            host). Its git and agents run there over SSH.
-          </p>
+          <div className={styles.connectionTabs} role="tablist" aria-label="Connection settings">
+            {(!isWebMode() ? ["computers", "browser", "agents"] as const : ["browser", "agents"] as const).map(tab =>
+              <button key={tab} type="button" role="tab" id={`connection-tab-${tab}`} aria-selected={connectionPane === tab}
+                aria-controls={`connection-panel-${tab}`} tabIndex={connectionPane === tab ? 0 : -1}
+                className={styles.connectionTab} onClick={() => setConnectionPane(tab)}
+                onKeyDown={event => {
+                  if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+                  event.preventDefault();
+                  const tabs = Array.from(event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]') || []);
+                  const current = tabs.indexOf(event.currentTarget);
+                  const next = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 :
+                    (current + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+                  tabs[next]?.click(); tabs[next]?.focus();
+                }}>
+                {{ computers: "Computers", browser: "Browser access", agents: "Agent links" }[tab]}
+              </button>)}
+          </div>
+          {!isWebMode() && <div role="tabpanel" id="connection-panel-computers" aria-labelledby="connection-tab-computers" hidden={connectionPane !== "computers"}>
+            <ConnectionsSection onManage={onManageRemoteServer} onOpen={onOpenConnection} onForget={onForgetConnection} onInstall={onInstallSolenta} onSidebarHosts={onSidebarHosts} sidebarHosts={sidebarHosts} />
+            <p className={styles.note} data-connections-remote-project-hint="">
+              For a single SSH repository, you can also use Add project &gt; Remote host.
+            </p>
+          </div>}
+          <div role="tabpanel" id="connection-panel-browser" aria-labelledby="connection-tab-browser" hidden={connectionPane !== "browser"}>
+            <WebAccessSection active={open && connectionPane === "browser"} />
+          </div>
+          <div role="tabpanel" id="connection-panel-agents" aria-labelledby="connection-tab-agents" hidden={connectionPane !== "agents"}>
+            <LinkedComputersSection active={open && connectionPane === "agents"} />
+          </div>
           </>
           )}
 

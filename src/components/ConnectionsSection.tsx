@@ -155,17 +155,17 @@ export function ConnectionsSection({ onOpen, onForget, onInstall, onManage, onSi
   const notInstalled = error != null && /Solenta is not installed on/.test(error);
 
   return (
-    <section className={styles.section} data-connections="">
+    <section className={`${styles.section} ${styles.computerSection}`} data-connections="">
       <p className={styles.fieldNote}>
-        Add a computer to work with its agents and projects from this window.
-        That computer owns its credentials, settings, files and running work.
-        Disconnecting this window leaves its work running. Connect also opens its own window.
+        Use another computer&apos;s agents and projects here. Your credentials and work stay on that computer,
+        and keep running when you disconnect.
       </p>
+      <details className={styles.connectionGuide}><summary>How setup works</summary>
       {mode === "address" ? (
         <ol className={`${styles.fieldNote} ${styles.connectionSteps}`} data-connection-steps="address">
           <li>
-            On that computer, open Settings &gt; Connections &gt; Let other
-            devices in and turn on Serve Solenta Web. Then press Expose over
+            On that computer, open Settings &gt; Connections &gt; Browser access
+            and turn on Serve Solenta Web. Then press Expose over
             Tailscale (HTTPS), or turn on Allow devices on my network.
           </li>
           <li>Under Devices there, add a device with Full access and copy its link.</li>
@@ -181,6 +181,7 @@ export function ConnectionsSection({ onOpen, onForget, onInstall, onManage, onSi
         <li>Connect, then choose that computer in Settings to configure its providers and profiles. Install Git and agent CLIs there, and sign in there before running work.</li>
       </ol>
       )}
+      </details>
       {groupSavedComputers(hosts).map(computer => <div key={computer.key} data-connection-computer={computer.key}>
         {computer.computerId && <>
           <p className={styles.fieldNote}>{computer.label}{computer.routes[0]?.descriptor && <> · {computer.routes[0].descriptor.runtimeKind}{computer.routes[0].descriptor.version ? ` ${computer.routes[0].descriptor.version}` : ""}</>}</p>
@@ -239,10 +240,6 @@ export function ConnectionsSection({ onOpen, onForget, onInstall, onManage, onSi
         );
       })}</div>)}
       <label className={styles.field}>
-        <span className={styles.fieldLabel}>Name</span>
-        <input disabled={busy || installing} className={styles.input} data-connection-label="" value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Workstation" />
-      </label>
-      <label className={styles.field}>
         <span className={styles.fieldLabel}>Connect over</span>
         <select disabled={busy || installing} className={styles.input} data-connection-mode="" value={mode} onChange={(e) => {
           setMode(e.target.value === "address" ? "address" : "ssh");
@@ -260,10 +257,6 @@ export function ConnectionsSection({ onOpen, onForget, onInstall, onManage, onSi
             <span className={styles.fieldLabel}>Address</span>
             <input disabled={busy || installing} className={styles.input} data-connection-url="" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://mini.tailnet.ts.net, or the device link" autoComplete="off" spellCheck={false} />
           </label>
-          <label className={styles.field}>
-            <span className={styles.fieldLabel}>Device token</span>
-            <input disabled={busy || installing} className={styles.input} data-connection-token="" type="password" value={token} onChange={(e) => setToken(e.target.value)} autoComplete="off" spellCheck={false} placeholder="Blank if the link has it, or one is saved" />
-          </label>
         </>
       ) : (
         <>
@@ -271,16 +264,22 @@ export function ConnectionsSection({ onOpen, onForget, onInstall, onManage, onSi
             <span className={styles.fieldLabel}>SSH host</span>
             <input disabled={busy || installing} className={styles.input} data-connection-host="" value={host} onChange={(e) => { setHost(e.target.value); setRemote(null); setServerStatus(null); }} placeholder="user@host or SSH alias" autoComplete="off" />
           </label>
-          <label className={styles.field}>
-            <span className={styles.fieldLabel}>Solenta Web port on host</span>
-            <input disabled={busy || installing} className={styles.input} data-connection-port="" type="number" min="1" max="65535" value={remotePort} onChange={(e) => { setRemotePort(e.target.value); setRemote(null); setServerStatus(null); }} />
-          </label>
-          <label className={styles.field}>
-            <span className={styles.fieldLabel}>Token (optional)</span>
-            <input disabled={busy || installing} className={styles.input} data-connection-token="" type="password" value={token} onChange={(e) => setToken(e.target.value)} autoComplete="off" spellCheck={false} placeholder="Leave blank to read it over SSH" />
-          </label>
         </>
       )}
+      <details className={styles.connectionAdvanced}>
+      <summary>Name and advanced options</summary>
+      <label className={styles.field}>
+        <span className={styles.fieldLabel}>Name (optional)</span>
+        <input disabled={busy || installing} className={styles.input} data-connection-label="" value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Workstation" />
+      </label>
+      {mode === "ssh" && <label className={styles.field}>
+        <span className={styles.fieldLabel}>Solenta port</span>
+        <input disabled={busy || installing} className={styles.input} data-connection-port="" type="number" min="1" max="65535" value={remotePort} onChange={(e) => { setRemotePort(e.target.value); setRemote(null); setServerStatus(null); }} />
+      </label>}
+      <label className={styles.field}>
+        <span className={styles.fieldLabel}>Device token (optional)</span>
+        <input disabled={busy || installing} className={styles.input} data-connection-token="" type="password" value={token} onChange={(e) => setToken(e.target.value)} autoComplete="off" spellCheck={false} placeholder={mode === "ssh" ? "Read securely over SSH" : "From the device link, or one already saved"} />
+      </label>
       <label className={styles.fieldRow}>
         <input type="checkbox" data-connection-remember="" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
         <span>Remember token on this computer (encrypted with the system keychain)</span>
@@ -305,9 +304,9 @@ export function ConnectionsSection({ onOpen, onForget, onInstall, onManage, onSi
           : "Linux uses systemd user services; survival after logout depends on linger. macOS launchd requires a logged-in user session."}</span>
       </label>}
       {mode === "ssh" && onManage && <div className={styles.fieldRow}>
-        <button type="button" className={styles.btn} data-connection-check="" disabled={busy || !host.trim()} onClick={() => void manage("status")}>Check computer</button>
         {!(serverStatus?.host === host.trim() && serverStatus.info.installed && serverStatus.info.mode === "external") && <button type="button" className={styles.btn} data-connection-prepare="" disabled={busy || !host.trim()} onClick={() => void manage("install")}>{serviceMode === "external" ? "Prepare external process" : "Prepare server"}</button>}
       </div>}
+      </details>
       {serverStatus && serverStatus.host === host.trim() && mode === "ssh" && <div className={styles.fieldNote} data-connection-server-status="">
         <p>{serverStatus.host}: {serverStatus.info.installed ? "Installed" : "Not installed"}, {serverStatus.info.running ? "running" : "stopped"}. {serverStatus.info.mode} server{serverStatus.info.manager ? ` (${serverStatus.info.manager})` : ""}.</p>
         <p>{serverStatus.info.sessionLimit}</p>
@@ -375,10 +374,11 @@ export function ConnectionsSection({ onOpen, onForget, onInstall, onManage, onSi
         </div>
       ) : null}
       <div className={styles.fieldRow}>
+        {mode === "ssh" && onManage && <button type="button" className={styles.btn} data-connection-check="" disabled={busy || installing || !host.trim()} onClick={() => void manage("status")}>Check computer</button>}
         <button type="button" data-connection-open="" className={`${styles.btn} ${styles.btnPrimary}`} disabled={!onOpen || busy || !(mode === "address" ? url : host).trim()} onClick={() => void connect()}>
           {busy ? "Working…" : "Connect"}
         </button>
-        <button type="button" disabled={busy || installing} className={styles.btn} onClick={() => {
+        {selectedId && <button type="button" disabled={busy || installing} className={styles.btn} onClick={() => {
           setSelectedId(null);
           setLabel("");
           setHost("");
@@ -388,7 +388,11 @@ export function ConnectionsSection({ onOpen, onForget, onInstall, onManage, onSi
           setRemember(true);
           setInSidebar(true);
           setError(null);
-        }}>Add computer</button>
+          setRemote(null);
+          setServerStatus(null);
+          setAllowLegacy(false);
+          setServiceMode("managed");
+        }}>Add another computer</button>}
       </div>
     </section>
   );

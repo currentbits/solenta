@@ -52,7 +52,7 @@ export function LinkedComputersSection({ active }: { active: boolean }) {
       <p className={styles.fieldNote}>
         Agents running on this Solenta can start workers on a linked computer
         and are woken when they finish. On that computer: Settings → Connections →
-        Let other devices in, add a device with Full access, and paste its link here.
+        Browser access, add a device with Full access, and paste its link here.
       </p>
       {peers.length ? (
         <ul className={styles.connectionSteps} data-linked-list="">

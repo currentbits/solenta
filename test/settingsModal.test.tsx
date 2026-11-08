@@ -4454,6 +4454,27 @@ describe("SettingsModal named Claude Ultracode profile", () => {
 });
 
 describe("SettingsModal owning computer", () => {
+  it("separates computer setup from browser access and agent links, with keyboard tabs", async () => {
+    const shell = await mount(<div />);
+    installFakeCoder(createFakeCoder());
+    shell.unmount();
+    try {
+      const m = await mount(modal({ initialPane: "connections" }));
+      assert.equal((m.query("#connection-panel-computers") as HTMLElement).hidden, false);
+      assert.equal((m.query("#connection-panel-browser") as HTMLElement).hidden, true);
+      const host = m.query("[data-connection-host]") as HTMLInputElement;
+      await m.type(host, "builder");
+      const browser = m.query("#connection-tab-browser") as HTMLButtonElement;
+      await m.click(browser);
+      assert.equal((m.query("#connection-panel-computers") as HTMLElement).hidden, true);
+      assert.equal((m.query("#connection-panel-browser") as HTMLElement).hidden, false);
+      await inAct(() => browser.dispatchEvent(new window.KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true })));
+      assert.equal(m.query("#connection-tab-agents")?.getAttribute("aria-selected"), "true");
+      await m.click(m.query("#connection-tab-computers"));
+      assert.equal((m.query("[data-connection-host]") as HTMLInputElement).value, "builder", "tab switching preserves setup draft");
+    } finally { delete (window as unknown as { coder?: unknown }).coder; }
+  });
+
   it("keeps remote agent settings separate from local client panes", async () => {
     const m = await mount(<SettingsModal open initialPane="connections" onClose={() => {}}
       computer={{ label: "Build machine", remote: true, onChange: () => {} }}
