@@ -17,7 +17,7 @@ const PNG_B64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
 
 function git(cwd, args) {
-  execFileSync("git", args, { cwd, stdio: "ignore" });
+  execFileSync("git", args, { cwd, stdio: ["ignore", "pipe", "pipe"], encoding: "utf8" });
 }
 
 async function loadCore() {
