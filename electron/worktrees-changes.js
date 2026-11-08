@@ -174,6 +174,9 @@ async function diffOnce(store, thread, project, cwd, view) {
   // Committed scopes skip rename pairing so numstat, name-status and the
   // patch all key a file by the same path.
   const flags = [
+    // Porcelain paths are repository-relative, even from a subfolder.
+    // Do not let the user's diff.relative display setting change identities.
+    "--no-relative",
     ...(view.ignoreWhitespace ? ["-w"] : []),
     ...(scope === "uncommitted" ? [] : ["--no-renames"]),
   ];
@@ -191,7 +194,7 @@ async function diffOnce(store, thread, project, cwd, view) {
 
   if (view.path) {
     const rel = assertRelPathInCwd(path.resolve(String(cwd || "")), view.path);
-    const one = await gitDiff(["--", `:(literal)${rel}`], "");
+    const one = await gitDiff(["--", `:(top,literal)${rel}`], "");
     const cap = view.full ? FILE_PATCH_MAX : FILE_PATCH_CAP;
     return {
       files: [],
@@ -284,6 +287,7 @@ async function diffOnce(store, thread, project, cwd, view) {
   // UNTRACKED_COUNT_BYTES are read (#1520); the rest report 0, like binary
   // numstat. Still sync reads; go async with a budget if this shows in lag.
   let counted = 0;
+  let untrackedRoot;
   for (const entry of byPath.values()) {
     if (entry.status === "??") {
       if (project.remoteHost || counted >= UNTRACKED_COUNT_MAX) {
@@ -291,7 +295,14 @@ async function diffOnce(store, thread, project, cwd, view) {
       }
       counted++;
       try {
-        const file = path.join(cwd, entry.path);
+        // Status names are rooted at the repository, not the project's cwd.
+        // --show-cdup also works for WSL cwds without using a Linux root path
+        // as a Windows filesystem path. Resolve only when a file needs counting.
+        if (!untrackedRoot) {
+          const cdup = await gitOutForDiffAsync(project, cwd, ["rev-parse", "--show-cdup"]);
+          untrackedRoot = path.resolve(await fs.promises.realpath(cwd), cdup || ".");
+        }
+        const file = path.join(untrackedRoot, entry.path);
         if (fs.statSync(file).size > UNTRACKED_COUNT_BYTES) continue;
         const text = fs.readFileSync(file, "utf8");
         // "a\nb\n" splits into 3 parts with a trailing empty: count 2.
@@ -323,6 +334,7 @@ async function diffOnce(store, thread, project, cwd, view) {
       if (base) {
         const vsBase = await gitTryAsync(cwd, [
           "diff",
+          "--no-relative",
           "--name-only",
           `${base}...HEAD`,
         ]);
@@ -336,9 +348,10 @@ async function diffOnce(store, thread, project, cwd, view) {
         if (committedCi.length) {
           const vsPatch = await gitTryAsync(cwd, [
             "diff",
+            "--no-relative",
             `${base}...HEAD`,
             "--",
-            ...committedCi,
+            ...committedCi.map((file) => `:(top,literal)${file}`),
           ]);
           if (vsPatch.ok && vsPatch.stdout) {
             lintPatch = `${rawPatch}\n${vsPatch.stdout}`;
@@ -487,7 +500,8 @@ async function fileImageSide(root, rel, label) {
 async function imageDiff(opts) {
   const { thread, project, cwd } = threadGitCwd(opts.store, opts.threadId);
   if (project.remoteHost) throw new Error("Image review is not available for remote projects");
-  const root = path.resolve(String(cwd || ""));
+  const cdup = await gitOutAsync(cwd, ["rev-parse", "--show-cdup"]);
+  const root = path.resolve(await fs.promises.realpath(cwd), cdup || ".");
   const rel = assertRelPathInCwd(root, String(opts.path || ""));
   const oldRel = opts.oldPath ? assertRelPathInCwd(root, String(opts.oldPath)) : rel;
   const scope = DIFF_SCOPES.has(String(opts.scope)) ? String(opts.scope) : "uncommitted";
@@ -567,7 +581,7 @@ async function listChangedPathsAsync(cwd, base) {
   const name = String(base || "").trim();
   const ref = await resolveDiffBaseAsync(cwd, name);
   if (!ref) return { ok: false, paths: [], reason: `unknown revision '${name}'` };
-  const res = await gitTryAsync(cwd, ["diff", "--name-only", `${ref}...HEAD`]);
+  const res = await gitTryAsync(cwd, ["diff", "--no-relative", "--name-only", `${ref}...HEAD`]);
   if (!res.ok) {
     return {
       ok: false,
@@ -626,7 +640,7 @@ function listChangedPaths(cwd, opts) {
         reason: `unknown revision '${baseName}'`,
       };
     }
-    const committed = gitTry(cwd, ["diff", "--name-only", `${base}...HEAD`]);
+    const committed = gitTry(cwd, ["diff", "--no-relative", "--name-only", `${base}...HEAD`]);
     if (!committed.ok) {
       return {
         ok: false,
@@ -712,10 +726,10 @@ function ciWorkflowMergeReview(thread, target, files) {
     throw new Error("CI_WORKFLOW: Could not preview a clean merge. Resolve conflicts in the worker before requesting workflow sign-off.");
   }
   const tree = merged.stdout.split("\n")[0];
-  const changed = gitOut(target, ["diff", "--name-only", "--no-renames", "-z", destinationSha, tree], { raw: true });
+  const changed = gitOut(target, ["diff", "--no-relative", "--name-only", "--no-renames", "-z", destinationSha, tree], { raw: true });
   const workflowFiles = [...new Set([...files, ...ciWorkflowFiles(changed.split("\0"))])].sort();
-  const patch = gitOut(target, ["diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--binary",
-    destinationSha, tree, "--", ...workflowFiles.map((file) => `:(literal)${file}`)], { raw: true });
+  const patch = gitOut(target, ["diff", "--no-relative", "--no-ext-diff", "--no-textconv", "--no-renames", "--binary",
+    destinationSha, tree, "--", ...workflowFiles.map((file) => `:(top,literal)${file}`)], { raw: true });
   return {
     workerThreadId: thread.id, sourcePath: fs.realpathSync(thread.worktreePath),
     sourceBranch: thread.branch, sourceSha, destinationPath, destinationBranch,
@@ -739,6 +753,13 @@ function threadGitCwd(store, threadId) {
     throw new Error(`Unknown project for thread: ${threadId}`);
   }
   return { thread, project, cwd: thread.worktreePath || project.path };
+}
+
+/** Repository-relative review paths must keep the same identity on writes. */
+function repositoryRoot(cwd) {
+  const cdup = gitOut(cwd, ["rev-parse", "--show-cdup"]);
+  // Keep host-visible WSL paths and resolve symlinks before climbing parents.
+  return path.resolve(fs.realpathSync(cwd), cdup || ".");
 }
 
 /**
@@ -796,7 +817,9 @@ function normalizeCommitPaths(cwd, paths) {
  * @param {string[] | null} paths
  */
 function stageForCommit(cwd, paths) {
-  const args = paths ? ["add", "-A", "--", ...paths] : ["add", "-A"];
+  const args = paths
+    ? ["add", "-A", "--", ...paths.map((p) => `:(top,literal)${p}`)]
+    : ["add", "-A"];
   const add = gitTry(cwd, args);
   if (!add.ok) {
     throw new Error(tailErr(add.stderr || add.combined, "git add failed"));
@@ -827,7 +850,8 @@ function commit(opts) {
     throw new Error("Commit message is empty");
   }
   assertNoOutboundSecrets(message, "commit message");
-  const { cwd } = threadGitCwd(store, threadId);
+  const { cwd: viewCwd } = threadGitCwd(store, threadId);
+  const cwd = repositoryRoot(viewCwd);
   const paths = normalizeCommitPaths(cwd, opts.paths);
   if (paths && paths.length === 0) {
     throw new Error("No files selected");
@@ -848,17 +872,19 @@ function commit(opts) {
   if (patches.size > 0) {
     commitPartial(cwd, message, /** @type {string[]} */ (paths), patches);
     invalidateGitReads(cwd);
+    invalidateGitReads(viewCwd);
     return { subject: message.split("\n")[0] };
   }
   stageForCommit(cwd, paths);
   const commitArgs = paths
-    ? ["commit", "-m", message, "--", ...paths]
+    ? ["commit", "-m", message, "--", ...paths.map((p) => `:(top,literal)${p}`)]
     : ["commit", "-m", message];
   const res = gitTry(cwd, commitArgs);
   if (!res.ok) {
     throw new Error(tailErr(res.stderr || res.combined, "git commit failed"));
   }
   invalidateGitReads(cwd);
+  invalidateGitReads(viewCwd);
   return { subject: message.split("\n")[0] };
 }
 
@@ -902,9 +928,11 @@ function applyPatch(cwd, flags, relPath, patch, env) {
   try {
     const file = path.join(dir, "hunk.patch");
     fs.writeFileSync(file, patch.endsWith("\n") ? patch : `${patch}\n`);
+    // git apply uses wildcard patterns, not pathspecs, for --include.
+    const literal = relPath.replace(/[\\*?\[\]]/g, "\\$&");
     const res = gitTry(
       cwd,
-      ["apply", ...flags, "--recount", `--include=${relPath}`, file],
+      ["apply", ...flags, "--recount", `--include=${literal}`, file],
       env ? { env } : undefined,
     );
     if (!res.ok) {
@@ -937,13 +965,15 @@ function commitPartial(cwd, message, paths, patches) {
   try {
     run(["read-tree", "HEAD"], "git read-tree failed");
     const whole = paths.filter((p) => !patches.has(p));
-    if (whole.length) run(["add", "-A", "--", ...whole], "git add failed");
+    if (whole.length) {
+      run(["add", "-A", "--", ...whole.map((p) => `:(top,literal)${p}`)], "git add failed");
+    }
     for (const [rel, text] of patches) applyPatch(cwd, ["--cached"], rel, text, env);
     run(["commit", "-m", message], "git commit failed");
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
-  gitTry(cwd, ["reset", "-q", "--", ...paths]);
+  gitTry(cwd, ["reset", "-q", "--", ...paths.map((p) => `:(top,literal)${p}`)]);
 }
 
 /**
@@ -959,12 +989,14 @@ function commitPartial(cwd, message, paths, patches) {
  */
 function revertHunk(opts) {
   const { store, threadId } = opts;
-  const { cwd } = threadGitCwd(store, threadId);
+  const { cwd: viewCwd } = threadGitCwd(store, threadId);
+  const cwd = repositoryRoot(viewCwd);
   const relPath = assertRelPathInCwd(cwd, String(opts.path || ""));
   const patch = String(opts.patch || "");
   if (!patch.trim()) throw new Error("Empty patch");
   applyPatch(cwd, ["-R"], relPath, patch);
   invalidateGitReads(cwd);
+  invalidateGitReads(viewCwd);
   return { path: relPath };
 }
 
@@ -983,20 +1015,23 @@ function revertHunk(opts) {
  */
 function revertFile(opts) {
   const { store, threadId, status } = opts;
-  const { cwd } = threadGitCwd(store, threadId);
+  const { cwd: viewCwd } = threadGitCwd(store, threadId);
+  const cwd = repositoryRoot(viewCwd);
   const relPath = assertRelPathInCwd(cwd, String(opts.path || ""));
   const full = path.resolve(cwd, relPath);
   if (status === "??") {
     fs.rmSync(full, { recursive: true, force: true });
     invalidateGitReads(cwd);
+    invalidateGitReads(viewCwd);
     return { path: relPath };
   }
   if (status === "A") {
-    const rm = gitTry(cwd, ["rm", "-f", "--", relPath]);
+    const rm = gitTry(cwd, ["rm", "-f", "--", `:(top,literal)${relPath}`]);
     if (!rm.ok) {
       throw new Error(tailErr(rm.stderr || rm.combined, "git rm failed"));
     }
     invalidateGitReads(cwd);
+    invalidateGitReads(viewCwd);
     return { path: relPath };
   }
   const res = gitTry(cwd, [
@@ -1004,12 +1039,13 @@ function revertFile(opts) {
     "--staged",
     "--worktree",
     "--",
-    relPath,
+    `:(top,literal)${relPath}`,
   ]);
   if (!res.ok) {
     throw new Error(tailErr(res.stderr || res.combined, "git restore failed"));
   }
   invalidateGitReads(cwd);
+  invalidateGitReads(viewCwd);
   return { path: relPath };
 }
 

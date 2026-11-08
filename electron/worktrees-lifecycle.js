@@ -472,7 +472,7 @@ function mergeWorktree(opts) {
       stageForCommit(wtPath, paths);
       const commitMsg = `coder: session changes for ${thread.title}`;
       const commitArgs = paths
-        ? ["commit", "-m", commitMsg, "--", ...paths]
+        ? ["commit", "-m", commitMsg, "--", ...paths.map((p) => `:(top,literal)${p}`)]
         : ["commit", "-m", commitMsg];
       const committed = gitTry(wtPath, commitArgs);
       if (!committed.ok) {
