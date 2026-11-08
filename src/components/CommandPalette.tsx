@@ -46,6 +46,8 @@ export interface CommandPaletteProps {
   onClose: () => void;
   onModeChange: (mode: PaletteMode) => void;
   threads: ThreadInfo[];
+  isThreadVisible?: (id: string) => boolean;
+  visibilityKey?: string;
   projects: ProjectInfo[];
   searchThreads: (input: ThreadSearchInput) => Promise<ThreadSearchResult>;
   searchMessages: (
@@ -139,6 +141,8 @@ export function CommandPalette({
   onClose,
   onModeChange,
   threads,
+  isThreadVisible,
+  visibilityKey,
   projects,
   searchThreads,
   searchMessages,
@@ -213,7 +217,7 @@ export function CommandPalette({
       gen.current = false;
       window.clearTimeout(handle);
     };
-  }, [open, mode, actionsOnly, trimmed, searchThreads]);
+  }, [open, mode, actionsOnly, trimmed, searchThreads, visibilityKey]);
 
   // Separate debounce from the thread content-hits search above: both run
   // off the same query in "command" mode, and the backend already gives
@@ -242,7 +246,7 @@ export function CommandPalette({
       gen.current = false;
       window.clearTimeout(handle);
     };
-  }, [open, mode, actionsOnly, trimmed, searchMessages]);
+  }, [open, mode, actionsOnly, trimmed, searchMessages, visibilityKey]);
 
   useEffect(() => {
     if (!open || mode !== "files" || !canSearchWorkspace || !listFiles) {
@@ -301,6 +305,7 @@ export function CommandPalette({
 
   const items = useMemo((): PaletteItem[] => {
     if (mode === "files") {
+      if (!canSearchWorkspace) return [];
       return files.map((path) => ({
         id: `file:${path}`,
         kind: "file" as const,
@@ -311,6 +316,7 @@ export function CommandPalette({
       }));
     }
     if (mode === "content") {
+      if (!canSearchWorkspace) return [];
       return grepHits.map((hit, i) => ({
         id: `content:${i}:${hit.path}:${hit.line}`,
         kind: "content" as const,
@@ -348,7 +354,7 @@ export function CommandPalette({
     const byId = new Map(threads.map((t) => [t.id, t]));
     const seen = new Set<string>();
     const addThread = (thread: ThreadInfo, fromContent: boolean) => {
-      if (seen.has(thread.id)) return;
+      if (seen.has(thread.id) || isThreadVisible?.(thread.id) === false) return;
       seen.add(thread.id);
       const status = threadStatus(thread);
       seeds.push({
@@ -397,6 +403,7 @@ export function CommandPalette({
     // rankPaletteItems' scoreMatch (it would just drop them) and are
     // merged in after, sorted into KIND_ORDER's "message" slot.
     const messageItems: PaletteItem[] = messageHits
+      .filter((hit) => isThreadVisible?.(hit.threadId) !== false)
       .slice(0, MESSAGE_RESULT_CAP)
       .map((hit) => {
         const hitThread = byId.get(hit.threadId);
@@ -423,6 +430,8 @@ export function CommandPalette({
     actions,
     projects,
     threads,
+    isThreadVisible,
+    canSearchWorkspace,
     contentHits,
     messageHits,
     actionsOnly,

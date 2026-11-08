@@ -178,6 +178,8 @@ import { dialogOpen } from "../app/useAppShortcuts";
 import styles from "./Composer.module.css";
 
 export interface ComposerProps {
+  /** Preserve another open editor when the composer remounts. */
+  focusOnOpen?: boolean;
   /** Selected thread id; used for per-thread last-used template. */
   threadId: string;
   /** Sticky permission mode for this thread. */
@@ -523,6 +525,7 @@ const rowEnterStyle = (index: number): CSSProperties =>
   ({ "--i": String(Math.min(index, 10)) }) as CSSProperties;
 
 export const Composer = memo(function Composer({
+  focusOnOpen = true,
   threadId,
   permissionMode,
   teach = null,
@@ -989,7 +992,7 @@ export const Composer = memo(function Composer({
    */
   const focusedThread = useRef<string | null>(null);
   useEffect(() => {
-    if (disabled || sending) return;
+    if (disabled || sending || !focusOnOpen) return;
     if (focusedThread.current === threadId) return;
     const el = textareaRef.current;
     if (!el) return;
@@ -997,7 +1000,7 @@ export const Composer = memo(function Composer({
     el.focus();
     // Land at the end so a restored draft continues where it left off.
     el.setSelectionRange(el.value.length, el.value.length);
-  }, [threadId, disabled, sending]);
+  }, [threadId, disabled, sending, focusOnOpen]);
 
   // Dead ids (deleted templates) fall through like no stored selection.
   const storedTemplateId = templateByThread[threadId];

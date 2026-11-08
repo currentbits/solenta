@@ -40,6 +40,7 @@ export interface AutomationsViewProps {
   providers: ProviderInfo[];
   /** Prefill the create form (issue #285 "repeat this"). */
   draft?: RepeatDraft | null;
+  draftHidden?: boolean;
   /** Typed retained-run query; viewing history starts no run. */
   loadRuns?: (id: string) => Promise<AutomationRunsResult>;
   onSelectThread?: (id: string) => void;
@@ -287,6 +288,7 @@ export function AutomationsView({
   projects,
   providers,
   draft,
+  draftHidden = false,
   loadRuns,
   onSelectThread,
   liveThreads,
@@ -644,6 +646,14 @@ export function AutomationsView({
       setSaving(false);
     }
   };
+
+  if (draftHidden) {
+    return (
+      <main className={styles.main} data-recording-hidden="">
+        <p>This scheduling draft is hidden in recording mode.</p>
+      </main>
+    );
+  }
 
   return (
     <main className={styles.main} data-automations="">

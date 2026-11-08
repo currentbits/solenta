@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -23,6 +24,7 @@ const STICK_BOTTOM_PX = 80;
  * them on thread switch and pin jumps.
  */
 export function useStickToBottom({
+  bodyVisible = true,
   bodyRef,
   stickToBottom,
   forceStick,
@@ -33,6 +35,8 @@ export function useStickToBottom({
   revealTargetId,
   setWindowStart,
 }: {
+  /** Recording privacy removes the body without changing the selected thread. */
+  bodyVisible?: boolean;
   bodyRef: RefObject<HTMLDivElement | null>;
   stickToBottom: RefObject<boolean>;
   forceStick: RefObject<boolean>;
@@ -44,6 +48,27 @@ export function useStickToBottom({
   setWindowStart: Dispatch<SetStateAction<number>>;
 }) {
   const pinning = useRef(false);
+  const bodyVisibleRef = useRef(bodyVisible);
+  bodyVisibleRef.current = bodyVisible;
+  const savedScroll = useRef<{
+    threadId: string;
+    top: number;
+    following: boolean;
+  } | null>(null);
+  // React detaches refs before removing the node. Capture here: once the
+  // body has no layout box, reading its scrollTop would lose the position.
+  const setBodyRef = useCallback((el: HTMLDivElement | null) => {
+    const previous = bodyRef.current;
+    const threadId = detail?.thread.id;
+    if (!el && previous && threadId && !bodyVisibleRef.current) {
+      savedScroll.current = {
+        threadId,
+        top: previous.scrollTop,
+        following: stickToBottom.current,
+      };
+    }
+    bodyRef.current = el;
+  }, [bodyRef, detail?.thread.id, stickToBottom]);
   const prevLayoutThreadId = useRef<string | null>(null);
   const seenThread = useRef(false);
   const prevPermReq = useRef<string | null>(null);
@@ -151,6 +176,7 @@ export function useStickToBottom({
    * them once the browser has laid out anyway.
    */
   useLayoutEffect(() => {
+    if (!bodyVisible) return;
     const id = detail?.thread.id ?? null;
     const opened = id !== prevLayoutThreadId.current;
     if (opened) {
@@ -182,10 +208,11 @@ export function useStickToBottom({
     if (opened) {
       setPillVisible(false);
       setHasNew(false);
-    } else if (el && !stickToBottom.current) {
+    } else if (el && !stickToBottom.current && !savedScroll.current) {
       updatePill(el, true);
     }
   }, [
+    bodyVisible,
     timeline,
     isWorking,
     detail?.messages,
@@ -193,6 +220,24 @@ export function useStickToBottom({
     detail?.pendingPermission,
     detail?.thread.id,
   ]);
+
+  // Hiding a transcript removes its DOM but preserves the selected thread
+  // and its editors. Restore its scroll state on the replacement body even
+  // when an idle transcript has no new messages to trigger the normal pin.
+  useLayoutEffect(() => {
+    const el = bodyRef.current;
+    const threadId = detail?.thread.id;
+    if (!bodyVisible || !el || !threadId) return;
+    const saved = savedScroll.current;
+    savedScroll.current = null;
+    if (saved?.threadId === threadId) {
+      stickToBottom.current = saved.following;
+      forceStick.current = saved.following;
+      if (saved.following) pinIfStuck();
+      else el.scrollTop = saved.top;
+      updatePill(el, false);
+    }
+  }, [bodyVisible, detail?.thread.id]);
 
   useLayoutEffect(() => {
     if (!revealTargetId) return;
@@ -230,7 +275,7 @@ export function useStickToBottom({
       ro.observe(child);
     }
     return () => ro.disconnect();
-  }, [timeline, start, detail?.pendingPermission, isWorking]);
+  }, [timeline, start, detail?.pendingPermission, isWorking, bodyVisible]);
 
   const onBodyScroll = () => {
     const el = bodyRef.current;
@@ -249,5 +294,5 @@ export function useStickToBottom({
     stickToBottom.current = distance <= STICK_BOTTOM_PX;
     updatePill(el, false);
   };
-  return { showEarlier, onBodyScroll, jumpToLatest, pillVisible, pillNew: hasNew };
+  return { setBodyRef, showEarlier, onBodyScroll, jumpToLatest, pillVisible, pillNew: hasNew };
 }

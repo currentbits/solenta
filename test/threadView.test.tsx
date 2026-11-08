@@ -228,6 +228,7 @@ const defaultOnRevertFile = async (path: string) => ({ path });
 const defaultOnSuggestCommitMessage = async () => ({ message: "feat: x" });
 
 function view(props: {
+  presentationHidden?: boolean;
   detail?: ThreadDetail | null;
   detailError?: string | null;
   onRetryDetail?: () => void;
@@ -301,6 +302,7 @@ function view(props: {
 }) {
   return (
     <ThreadView
+      presentationHidden={props.presentationHidden}
       detail={props.detail === undefined ? detail() : props.detail}
       detailError={props.detailError}
       onRetryDetail={props.onRetryDetail}
@@ -3393,6 +3395,45 @@ describe("ThreadView stick-to-bottom on content resize (issue #408)", () => {
         }),
       ],
     });
+
+  for (const following of [true, false]) {
+    it(`restores ${following ? "bottom following" : "a reader's position"} after recording mode replaces the scroll body`, async () => {
+      const open = sizedDetail();
+      const m = await mount(view({ detail: open }));
+      const firstBody = m.query("[data-thread-body]") as HTMLElement;
+      const layout = { clientHeight: 400, scrollHeight: 1000, scrollTop: following ? 600 : 80 };
+      const proto = HTMLElement.prototype;
+      const saved = ["clientHeight", "scrollHeight", "scrollTop"].map((key) => [key, Object.getOwnPropertyDescriptor(proto, key)] as const);
+      fakeScrollMetrics(proto, layout);
+      // Detached elements no longer have a CSS layout box. Reading their
+      // scrollTop after DOM removal returns zero in a real browser.
+      Object.defineProperty(proto, "scrollTop", {
+        configurable: true,
+        get(this: HTMLElement) { return this.isConnected ? layout.scrollTop : 0; },
+        set(value: number) { layout.scrollTop = value; },
+      });
+      try {
+        await inAct(async () => firstBody.dispatchEvent(new Event("scroll")));
+        await m.rerender(view({ detail: open, presentationHidden: true }));
+        assert.equal(m.query("[data-thread-body]"), null);
+        layout.scrollTop = 0;
+        await m.rerender(view({ detail: open, presentationHidden: false }));
+        const restored = m.query("[data-thread-body]") as HTMLElement;
+        assert.notEqual(restored, firstBody);
+        assert.equal(layout.scrollTop, following ? 1000 : 80, "unchanged completed transcript restores before paint");
+        assert.ok(fakeObservers.some((observer) => observer.targets.has(restored)), "new body is observed after reveal");
+        layout.scrollHeight = 1800;
+        await inAct(async () => fireObservedResizes());
+        assert.equal(layout.scrollTop, following ? 1800 : 80, "follow behavior survives later content growth");
+      } finally {
+        m.unmount();
+        for (const [key, descriptor] of saved) {
+          if (descriptor) Object.defineProperty(proto, key, descriptor);
+          else delete (proto as unknown as Record<string, unknown>)[key];
+        }
+      }
+    });
+  }
 
   it("re-pins to the bottom when content grows while the user is stuck", async () => {
     const m = await mount(view({ detail: sizedDetail() }));

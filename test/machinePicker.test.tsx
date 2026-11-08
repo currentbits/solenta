@@ -7,7 +7,8 @@
  */
 import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
-import { mount } from "./support/dom.ts";
+import { mount, inAct } from "./support/dom.ts";
+import { RECORDING_PRIVACY_KEY } from "../src/recordingPrivacy";
 import { createFakeCoder, installFakeCoder, detail, project, thread, type FakeCoder } from "./support/fakeCoder.ts";
 import App from "../src/App";
 import {
@@ -21,7 +22,10 @@ const NOW = Date.now();
 const BOX = { key: "me@box:4620", label: "Box", status: "online" as const };
 const FAR = { key: "me@far:4620", label: "Far", status: "offline" as const };
 
-afterEach(resetComposerSession);
+afterEach(() => {
+  resetComposerSession();
+  if (typeof window !== "undefined") window.localStorage.removeItem(RECORDING_PRIVACY_KEY);
+});
 
 function richDraft() {
   setDraftText("t-draft", "fix this [pasted context]");
@@ -105,6 +109,48 @@ describe("new thread: pick the computer it runs on (#1835)", () => {
     } finally {
       m.unmount();
     }
+  });
+
+  it("keeps a private rich draft masked while browsing CLI history and restores its picker", async () => {
+    const fx = fixture();
+    fx.threads[0] = { ...fx.threads[0]!, tags: ["private"] };
+    fx.details["t-draft"] = detail({ thread: fx.threads[0], messages: [] });
+    const fake = createFakeCoder({ ...fx, historyProjects: [{
+      path: "/history/repo", name: "History repo", lastActiveAt: NOW,
+      providers: ["codex"], sessions: 1, recentSessions: [],
+    }] });
+    const saved = richDraft();
+    const m = await boot(fake);
+    try {
+      await select(m, "Draft");
+      assert.ok(m.query("[data-workspace-machine]"));
+      const toggle = async (enabled: boolean) => inAct(async () => window.dispatchEvent(new window.StorageEvent("storage", {
+        key: RECORDING_PRIVACY_KEY, newValue: JSON.stringify({ enabled, hiddenTags: ["private"] }),
+      })));
+      await toggle(true);
+      assert.ok(m.query("[data-recording-hidden]"));
+      assert.equal(m.query("[data-workspace-machine]"), null);
+      assert.equal(m.query("[data-workspace-machine-label]"), null);
+      assert.equal(m.query("textarea"), null);
+      await m.click(m.query("[data-scope-trigger]"));
+      await m.click(m.query("[data-new-project]"));
+      await m.click(m.query("[data-add-project-mode-history]"));
+      assert.ok(m.query('[data-history-project="/history/repo"]'));
+      assert.ok(m.query("[data-recording-hidden]"), "history modal leaves the transcript masked");
+      assert.equal(m.query("[data-workspace-machine]"), null);
+      assert.equal(m.query("textarea"), null);
+      await m.click(m.query('[data-add-project-path-dialog] button[aria-label="Close"]'));
+      assert.equal(fake.of("projects.discoverHistory").length, 1);
+      assert.equal(fake.of("projects.add").length, 0);
+      assert.deepEqual(captureComposerDraft("t-draft"), saved);
+      assert.equal(fake.calls.some((c) => ["threads.create", "threads.delete", "threads.purge"].includes(c.channel)), false);
+      await toggle(false);
+      assert.ok(m.query("[data-workspace-machine]"));
+      assert.equal((m.query("textarea") as HTMLTextAreaElement).value, saved.text);
+      await pickBox(m);
+      assert.deepEqual(captureComposerDraft("t-new"), saved);
+      assert.ok(fake.calls.some((c) => c.channel === "threads.create"));
+    } finally { m.unmount(); }
   });
 
   it("names the computer a started thread runs on", async () => {
