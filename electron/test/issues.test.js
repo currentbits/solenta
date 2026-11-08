@@ -21,6 +21,7 @@ const {
   completeIssue,
   commentIssue,
   createIssue,
+  setTransientBackoffMs,
 } = require("../issues.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
 const { rmTree } = require("./support/rmTree.js");
@@ -496,7 +497,7 @@ ${body}
     ssh.setExecFileSync((bin, args, opts) => {
       if (bin !== "ssh") return real(bin, args, opts);
       sshCalls += 1;
-      assert.match(args.at(-1), /cd '\/srv\/app' && 'git' 'remote' 'get-url' 'origin'/);
+      assert.match(args.at(-1), /cd '\/srv\/app' && 'env' 'LANGUAGE=C' 'git' 'remote' 'get-url' 'origin'/);
       return "git@github.com:acme/remote-app.git\n";
     });
     try {
@@ -553,6 +554,79 @@ process.stderr.write("To get started with GitHub CLI, please run: gh auth login\
 process.exit(1);
 `);
     assert.deepEqual(await setPlanStatus(repo, 5, "doing"), { ok: false, reason: "auth" });
+  });
+
+  it("creates a missing plan label on a fresh repo, then adds it (#1843)", async () => {
+    writeFakeGh(`
+const created = prev.some((c) => c[0] === "label");
+if (args[1] === "edit" && !created) {
+  process.stderr.write("failed to update ...: 'plan:doing' not found\\n");
+  process.exit(1);
+}
+process.exit(0);
+`);
+    assert.deepEqual(await setPlanStatus(repo, 5, "doing"), { ok: true });
+    const seen = calls();
+    assert.deepEqual(seen.slice(2), [
+      ["label", "create", "plan:doing"],
+      ["issue", "edit", "5", "--add-label", "plan:doing"],
+    ]);
+    assert.ok(!seen.some((c) => c[0] === "label" && c[2] !== "plan:doing"), "only the target plan label is created");
+  });
+
+  it("does not create a label when the issue itself is missing", async () => {
+    writeFakeGh(`
+process.stderr.write("GraphQL: Could not resolve to an issue or pull request with the number of 5.\\n");
+process.exit(1);
+`);
+    assert.deepEqual(await setPlanStatus(repo, 5, "doing"), { ok: false, reason: "issue not found" });
+    assert.ok(!calls().some((c) => c[0] === "label"));
+  });
+
+  it("retries once on GitHub's transient GraphQL error (#1843)", async () => {
+    setTransientBackoffMs(1);
+    writeFakeGh(`
+if (prev.length === 1) {
+  process.stderr.write("GraphQL: Something went wrong while executing your query. This may be the result of a timeout.\\n");
+  process.exit(1);
+}
+process.exit(0);
+`);
+    try {
+      assert.deepEqual(await setPlanStatus(repo, 5, "doing"), { ok: true });
+    } finally {
+      setTransientBackoffMs(1000);
+    }
+    assert.equal(calls().length, 2);
+    assert.deepEqual(calls()[0], calls()[1]);
+  });
+
+  it("treats a still-failing transient write as success when the label is already on the issue", async () => {
+    setTransientBackoffMs(1);
+    writeFakeGh(`
+if (args[1] === "view") {
+  process.stdout.write(JSON.stringify({ labels: [{ name: "plan:doing" }] }));
+  process.exit(0);
+}
+process.stderr.write("GraphQL: Something went wrong while executing your query.\\n");
+process.exit(1);
+`);
+    try {
+      assert.deepEqual(await setPlanStatus(repo, 5, "doing"), { ok: true });
+    } finally {
+      setTransientBackoffMs(1000);
+    }
+    assert.deepEqual(calls().map((c) => c[1]), ["edit", "edit", "view"]);
+  });
+
+  it("does not retry other errors", async () => {
+    writeFakeGh(`
+process.stderr.write("HTTP 500: boom\\n");
+process.exit(1);
+`);
+    const res = await setPlanStatus(repo, 5, "doing");
+    assert.equal(res.ok, false);
+    assert.equal(calls().length, 1);
   });
 
   it("rejects a bad status or number without spawning gh", async () => {
@@ -1064,6 +1138,10 @@ describe("issues over the GitHub API (#1534)", () => {
       return reply(200, { errors: [{ message: "unhandled" }] });
     }
     const p = new URL(url).pathname;
+    if (init.method === "POST" && p === "/repos/acme/demo/labels") {
+      repoLabels[body.name] = `L_${body.name}`;
+      return reply(201, { name: body.name });
+    }
     if (init.method === "POST" && p === "/repos/acme/demo/issues") {
       return reply(201, { html_url: "https://github.com/acme/demo/issues/77" });
     }
@@ -1140,6 +1218,24 @@ process.stdout.write("https://github.com/acme/demo/issues/5#issuecomment-gh\\n")
       assert.deepEqual(ghCalls(), []);
     } finally {
       repoLabels["plan:todo"] = "L1";
+    }
+  });
+
+  it("creates a plan label a fresh repo lacks over REST, never an issue (#1843)", async () => {
+    const saved = { ...repoLabels };
+    for (const k of Object.keys(repoLabels)) delete repoLabels[k];
+    issue.labels = [];
+    try {
+      assert.deepEqual(await setPlanStatus(repo, 5, "doing"), { ok: true });
+      const posts = calls.filter((c) => c.method === "POST" && !c.url.endsWith("/graphql"));
+      assert.deepEqual(posts.map((c) => [new URL(c.url).pathname, c.body]), [
+        ["/repos/acme/demo/labels", { name: "plan:doing" }],
+      ]);
+      assert.deepEqual(issue.labels, ["plan:doing"]);
+      assert.deepEqual(ghCalls(), []);
+    } finally {
+      for (const k of Object.keys(repoLabels)) delete repoLabels[k];
+      Object.assign(repoLabels, saved);
     }
   });
 

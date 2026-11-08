@@ -49,7 +49,7 @@ const {
   resolveProjectRef,
 } = require("./deepLinks.js");
 const { guestWebviewPolicy, attachGuestPolicy, setAudioPush } = require("./preview.js");
-const { createTray, shouldHideOnClose } = require("./tray.js");
+const { createTray, createUsageMenu, shouldHideOnClose } = require("./tray.js");
 const {
   createMemorySupervisor,
   getMemoryStatus,
@@ -79,6 +79,7 @@ const {
 const {
   parseServeWebArgs,
   needsVirtualDisplay,
+  relaunchHeadless,
   startWebServer,
   loadOrCreateToken,
   serveBanner,
@@ -158,13 +159,16 @@ startLoopLag();
 
 const serveOpts = parseServeWebArgs(process.argv);
 // Linux --headless with no display would abort in GTK init: rerun this same
-// command under xvfb-run. spawnSync blocks this process's main thread, so its
-// own GTK init never runs; it just exits with the child's status.
+// command with --ozone-platform=headless, or under xvfb-run if that fails
+// fast. spawnSync blocks this process's main thread, so its own GTK init
+// never runs; it just exits with the child's status.
 // The plain-Node server (#1829) has no GTK to init.
 if (process.versions.electron && needsVirtualDisplay(serveOpts)) {
-  const r = require("node:child_process").spawnSync(
-    "xvfb-run", ["-a", process.execPath, ...process.argv.slice(1)], { stdio: "inherit" },
-  );
+  const r = relaunchHeadless({
+    spawnSync: require("node:child_process").spawnSync,
+    execPath: process.execPath,
+    args: process.argv.slice(1),
+  });
   if (r.error) {
     console.error("Solenta --headless needs a display on Linux. Install xvfb (it provides xvfb-run; apt install xvfb), or set DISPLAY, then start Solenta again.");
   }
@@ -259,6 +263,10 @@ let runner = null;
 /** Windows/Linux close-to-tray (#1807); null on macOS or when disabled at boot. */
 /** @type {ReturnType<typeof createTray> | null} */
 let trayController = null;
+
+/** "Show usage in the menu bar" (#1859); never created headless. */
+/** @type {ReturnType<typeof createUsageMenu> | null} */
+let usageMenu = null;
 
 /** @type {ReturnType<typeof installShutdown> | null} */
 let shutdown = null;
@@ -1082,12 +1090,54 @@ app.whenReady().then(async () => {
     onChange: (state) => broadcast("stayAwake:changed", state),
   });
 
+  // Usage in the menu bar (#1859): its own macOS menu bar item, or extra
+  // rows in the tray below. Off until the setting is on; usage arrives with
+  // each usage:providerLimits answer, live run windows, a refetch when the
+  // menu opens on stale data, and one 15-minute timer while on.
+  if (!serveOpts.headless) {
+    usageMenu = createUsageMenu({
+      platform: process.platform,
+      headless: false,
+      Tray,
+      Menu,
+      // Template: macOS tints it for light/dark; the @2x rep loads by name.
+      // Windows/Linux reuse the close-to-tray icon instead.
+      icon: process.platform === "darwin" ? (() => {
+        const img = nativeImage.createFromPath(path.join(__dirname, "../assets/trayTemplate.png"));
+        img.setTemplateImage(true);
+        return img;
+      })() : null,
+      getSettings: () => store.getSettings(),
+      // settings.defaultAccounts: new threads and terminals of that CLI use
+      // it; running threads and the default provider keep theirs.
+      saveSettings: (patch) => require("./services.js").setSettings(store, patch),
+      fetchUsage: () =>
+        require("./providerUsage.js").fetchProviderLimits({
+          instances: require("./services.js").instanceAuthProbes(store, userData),
+        }),
+      providerName: (id) => {
+        const entry = require("./providers.js").getProvider(id);
+        return entry ? entry.name : id;
+      },
+      accountOf: (ref) => require("./providerAuth.js").account(ref),
+      onShow: () => focusMainWindow(),
+      onQuit: () => app.quit(),
+      onChange: () => {
+        if (trayController) trayController.refresh();
+      },
+    });
+    const menu = usageMenu;
+    require("./providerUsage.js").onLiveUsage((ref, windows) => menu.setLive(ref, windows));
+  }
+
   // Windows/Linux close-to-tray (#1807). Created unconditionally on these
   // platforms so toggling the setting on later takes effect without a
   // restart; macOS is unaffected (it already stays in the dock). The
   // running count reads `runner` lazily, so it is correct once assigned
-  // below even though the tray is created first.
-  if (process.platform === "win32" || process.platform === "linux") {
+  // below even though the tray is created first. Never headless: there is
+  // no window to hide, and on Linux the tray's GTK status icon aborts the
+  // process with no display (#1845).
+  if (!serveOpts.headless && (process.platform === "win32" || process.platform === "linux")) {
     const icon = windowIcon();
     if (icon) {
       trayController = createTray({
@@ -1095,12 +1145,20 @@ app.whenReady().then(async () => {
         Menu,
         iconPath: icon,
         getRunningCount: () => (runner ? runner.listActiveThreadIds().length : 0),
+        // Right-click builds the menu: the moment to refetch stale usage.
+        getUsageItems: () => {
+          if (!usageMenu) return null;
+          usageMenu.refreshIfStale();
+          return usageMenu.items();
+        },
         onShow: () => focusMainWindow(),
         // Always the real quit path: before-quit still confirms active work.
         onQuit: () => app.quit(),
       });
     }
   }
+  // After the tray exists, so the Windows/Linux rows land in it.
+  if (usageMenu) usageMenu.sync();
 
   runner = createRunner({
     store,
@@ -1226,6 +1284,7 @@ app.whenReady().then(async () => {
     runner,
     broadcast,
     stayAwake,
+    usageMenu,
     speech,
     worktreeBase: path.join(userData, "worktrees"),
     userDataPath: userData,

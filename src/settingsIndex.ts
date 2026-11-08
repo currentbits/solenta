@@ -278,6 +278,12 @@ export const SETTINGS_INDEX: SettingsIndexEntry[] = [
   // Providers
   {
     pane: "providers",
+    label: "CLIProxy usage",
+    selector: "[data-cliproxy-usage-settings]",
+    help: "Claude session and weekly quotas through a CLIProxy management URL and key.",
+  },
+  {
+    pane: "providers",
     label: "Search providers",
     selector: "[data-provider-search]",
     help: "Find a provider by name to sign in, add a key, or configure it.",

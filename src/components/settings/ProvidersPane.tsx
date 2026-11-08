@@ -16,6 +16,7 @@ import { accountLine, addChatGptAccount } from "../../providerAccounts";
 import base from "../SettingsModal.module.css";
 import styles from "./ProvidersPane.module.css";
 import type { SettingsModalProps } from "../SettingsModal";
+import { CliProxyUsageEditor } from "./CliProxyUsageEditor";
 
 /**
  * Settings › Providers (#1714), after Cline Desktop's provider settings: a
@@ -301,25 +302,28 @@ export function ProvidersPane({
   }
 
   return (
-    <ProviderList
-      providers={listRows(providers)}
-      instances={instances}
-      local={local}
-      onOpen={(id) => {
-        setError(null);
-        setView({ kind: "detail", id });
-      }}
-      onOpenLocal={(id) => {
-        setError(null);
-        setView({ kind: "local", id });
-      }}
-      onAdd={() => {
-        setError(null);
-        setView({ kind: "add" });
-      }}
-      addDisabled={settings == null}
-      secretsUnencrypted={settings?.secretStorage?.encryption === "unavailable"}
-    />
+    <>
+      <ProviderList
+        providers={listRows(providers)}
+        instances={instances}
+        local={local}
+        onOpen={(id) => {
+          setError(null);
+          setView({ kind: "detail", id });
+        }}
+        onOpenLocal={(id) => {
+          setError(null);
+          setView({ kind: "local", id });
+        }}
+        onAdd={() => {
+          setError(null);
+          setView({ kind: "add" });
+        }}
+        addDisabled={settings == null}
+        secretsUnencrypted={settings?.secretStorage?.encryption === "unavailable"}
+      />
+      <CliProxyUsageEditor settings={settings?.cliProxyUsage} disabled={saving || settings == null} onSave={onSaveSettings} setError={setError} />
+    </>
   );
 }
 

@@ -139,6 +139,23 @@ function fakeGithubApi(seed = {}) {
       });
     }
 
+    const commentList = pathname.match(/\/repos\/[^/]+\/[^/]+\/(issues|pulls)\/(\d+)\/(comments|reviews)$/);
+    if (commentList && init.method === "GET") {
+      const [, family, number, kind] = commentList;
+      const pr = byNumber(number);
+      if (!pr) return reply(404, { message: "Not Found" });
+      const rows = family === "issues" ? (pr.comments || []).map((c) => ({
+        id: c.databaseId,
+        body: c.body,
+        user: authorOf(c),
+        created_at: c.createdAt,
+        html_url: c.url || `${pr.url}#issuecomment-${c.databaseId}`,
+      })) : kind === "reviews" ? pr.reviews || [] : pr.inlineComments || [];
+      const size = Number(u.searchParams.get("per_page")) || 100;
+      const page = Number(u.searchParams.get("page")) || 1;
+      return reply(200, rows.slice((page - 1) * size, page * size));
+    }
+
     // Comment-scoped endpoints (#1795 features 2/3): not nested under a PR
     // number, gh's REST comment/reaction ids are global to the repo.
     const reactionMatch = pathname.match(

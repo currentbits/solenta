@@ -1,0 +1,23 @@
+<h3 id="memory-recall">Recall and review</h3>
+<p>Inclusion modes control when an entry is injected. Always includes it in bootstrap context. Glob matches files, auto uses the prompt's overlap with the entry title, and manual includes an entry when the prompt names its shortened memory ID. Conditional entries remain searchable.</p>
+<p>Stored facts can become stale. Checking a file citation does not prove that every remembered statement is still correct. Review recalled context and the resulting diff, and use a verify command for the project's checks.</p>
+
+<h3 id="memory-privacy">Local storage and model requests</h3>
+<p>The shared memory database stays local. Your chosen agent CLI still sends its prompts to its provider, as it would when you ran that CLI yourself. Recalled entries included in a prompt follow that provider's normal request path. Local storage does not mean that a model request contains no project context.</p>
+
+<h3 id="memory-external-client">Connect a local MCP client</h3>
+<p>The memory server and the coder-threads task server are separate MCP endpoints. The pairings described under <a href="#integrations">External MCP pairing</a> launch and track tasks. Do not use those pairing tokens as memory-server credentials.</p>
+<p>For a local client that supports Streamable HTTP MCP and custom request headers, use the connection fields below. Solenta must be running with a healthy memory server. Read its current port and bearer token from <code>memory-server.json</code> in Solenta's application data directory. Do not post the token in a prompt or put it on a command line.</p>
+<table class="doc-table"><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
+<tr><td>Transport</td><td>Streamable HTTP</td></tr>
+<tr><td>URL</td><td><code>http://127.0.0.1:&lt;port&gt;/mcp</code>, using the port in the memory-server configuration</td></tr>
+<tr><td>Request header</td><td><code>Authorization: Bearer &lt;token&gt;</code>, using that configuration's memory-server token</td></tr>
+</tbody></table>
+<p>Client configuration field names differ. Keep the endpoint on localhost and use the client's private configuration or secret storage for the bearer token. The memory server's endpoint is not the public task-pairing URL. Read tools such as <code>memory_bootstrap</code> and <code>memory_search</code> use the project scope supplied by the client.</p>
+
+<h3 id="memory-questions">Questions about shared memory</h3>
+<div class="faq-list">
+<details data-faq><summary>Is memory shared across agent providers?</summary><p>Solenta injects its local memory server into agent sessions when it is healthy. Entries one thread stores can be recalled by a later thread.</p></details>
+<details data-faq><summary>Can I inspect what agents remember?</summary><p>Yes. The Memory tab lets you search, read and store entries, browse older memories and inspect their citations. Save as memory drafts an entry for review before storing it.</p></details>
+<details data-faq><summary>Does local memory mean my model provider receives no project context?</summary><p>No. Your chosen CLI sends prompts to its provider. Solenta keeps the memory database local, while recalled entries included in a prompt follow that prompt.</p></details>
+</div>

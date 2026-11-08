@@ -85,6 +85,9 @@ function envPairs(env) {
  */
 function boundaryArgv(bin, argv, env) {
   const rest = Array.isArray(argv) ? argv : [];
+  // Local process.env does not cross this boundary. Keep Git diagnostics
+  // stable on the host/distro too, without changing hooks' other locales.
+  if (/^git(?:\.exe)?$/i.test(basenameBin(bin))) env = { LANGUAGE: "C", ...env };
   // Local settings files cannot cross SSH/WSL. Snapshot the opt-out for this run,
   // including providers that still need their overlay for MCP/session isolation.
   if (!require("./guardrails.js").guardrailsEnabled()) {

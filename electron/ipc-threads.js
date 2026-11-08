@@ -374,6 +374,7 @@ module.exports = {
   // ⌘K "Restart agent session" (#1762): kill the warm/idle provider process
   // so the next turn spawns fresh and reloads skills/plugins/MCP servers.
   // Pushes its own detail.
+  "threads:freshAgentContext": async (ctx, input) => ctx.runner.freshAgentContext(input),
   "threads:restartAgentSession": async (ctx, input) =>
     ctx.runner.restartAgentSession(input),
   "threads:setPermissionMode": async (ctx, input) => {
@@ -690,7 +691,8 @@ module.exports = {
     const updated = leaveProfile(
       ctx,
       input.threadId,
-      services.setProvider(ctx.store, input),
+      // The picker's bare row is labelled with the default account (#1859).
+      services.setProvider(ctx.store, { ...input, useDefaultAccount: true }),
     );
     services.recordLastUsedDefaults(ctx.store, input.threadId);
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
@@ -734,6 +736,12 @@ module.exports = {
   },
   "threads:setRoute": async (ctx, input) => {
     const updated = services.setRoute(ctx.store, input);
+    ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+    return updated;
+  },
+  "threads:setUltracode": async (ctx, input) => {
+    const updated = leaveProfile(ctx, input.threadId, services.setUltracode(ctx.store, input));
+    services.recordLastUsedDefaults(ctx.store, input.threadId);
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
     return updated;
   },

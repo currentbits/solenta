@@ -1,0 +1,21 @@
+.notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font-size: 13px;
+}
+
+.detail {
+  margin: 4px 0 0;
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+
+.notice button {
+  flex-shrink: 0;
+}

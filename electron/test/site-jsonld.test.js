@@ -25,6 +25,15 @@ test("homepage JSON-LD parses and describes a free SoftwareApplication", () => {
   assert.equal(app.description, document.querySelector('meta[name="description"]').content);
 });
 
+test("SoftwareApplication tracks the newest documented release", () => {
+  const changelog = fs.readFileSync(path.join(__dirname, "..", "..", "site", "changelog.html"), "utf8");
+  const newest = new JSDOM(changelog).window.document.querySelector("h2").textContent.match(/^[\d.]+/)[0];
+  const app = byType("SoftwareApplication");
+  assert.equal(app.softwareVersion, newest, "update the homepage JSON-LD when adding a release");
+  assert.equal(app.isAccessibleForFree, true);
+  assert.equal(app.releaseNotes, "https://solenta.app/changelog.html");
+});
+
 test("FAQPage JSON-LD mirrors the visible #faq entries", () => {
   const visible = [...document.querySelectorAll("#faq details")].map((d) => [
     d.querySelector("summary").textContent.trim(),

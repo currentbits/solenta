@@ -22,6 +22,16 @@
   font-display: swap;
 }
 @font-face {
+  /* Calculated from the bundled Geist with fontkit 2.0.4, using Next.js's
+     weighted Latin average and Arial metrics. See docs/seo-audit-2026-11-02.md. */
+  font-family: "Geist Fallback";
+  src: local("Arial");
+  size-adjust: 107.19%;
+  ascent-override: 85.83%;
+  descent-override: 20.52%;
+  line-gap-override: 9.33%;
+}
+@font-face {
   font-family: "Geist Mono";
   src: url("fonts/GeistMono-Variable.woff2") format("woff2");
   font-weight: 100 900;
@@ -55,7 +65,7 @@
   --radius-ctl: 9px;
   --max: 1200px;
   --ease: cubic-bezier(0.16, 1, 0.3, 1);
-  --font-sans: "Geist", -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-sans: "Geist", "Geist Fallback", system-ui, sans-serif;
   --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, monospace;
 }
 
@@ -85,7 +95,8 @@ a:focus-visible, .btn:focus-visible, summary:focus-visible {
   outline-offset: 3px;
   border-radius: 4px;
 }
-img { max-width: 100%; display: block; }
+img { max-width: 100%; height: auto; display: block; }
+picture { display: block; }
 code, pre, .mono { font-family: var(--font-mono); }
 
 ::-webkit-scrollbar { width: 10px; height: 10px; }
@@ -605,6 +616,7 @@ section#agents { padding: clamp(56px, 7vw, 88px) 0; }
 }
 .cell p { margin: 0; color: var(--muted); font-size: 14.5px; line-height: 1.65; }
 .cell p code { color: var(--ink); font-size: 0.9em; }
+.feature-docs { display: inline-block; margin-bottom: 10px; font-size: 13px; text-decoration: underline; text-underline-offset: 3px; }
 .cell .cell-img {
   margin: 20px -26px -26px;
   border-top: 1px solid var(--border);
@@ -917,7 +929,7 @@ footer {
   align-items: center;
   gap: 24px;
   flex-wrap: wrap;
-  color: var(--dim);
+  color: var(--muted);
   font-size: 13.5px;
 }
 .footer-inner a { color: var(--muted); transition: color 0.2s; }
@@ -941,6 +953,8 @@ footer {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  max-height: calc(100vh - 112px);
+  overflow-y: auto;
 }
 .docs-nav a {
   color: var(--muted);
@@ -952,7 +966,7 @@ footer {
 }
 .docs-nav a:hover { color: var(--ink); text-decoration: none; background: rgba(25, 25, 24, 0.05); }
 .docs-nav a.active { color: var(--ink); border-left-color: var(--accent); background: rgba(25, 25, 24, 0.05); }
-.docs-content { max-width: 760px; }
+.docs-content { max-width: 760px; min-width: 0; width: 100%; }
 .docs-content h1 {
   font-size: clamp(30px, 3.4vw, 40px);
   letter-spacing: -0.03em;
@@ -976,6 +990,13 @@ footer {
 .docs-content strong { color: var(--ink); font-weight: 620; }
 .docs-content a { text-decoration: underline; text-underline-offset: 3px; text-decoration-color: color-mix(in oklch, var(--accent) 80%, var(--ink)); text-decoration-thickness: 2px; }
 .docs-content a:hover { text-decoration-color: var(--ink); }
+.topic-neighbors { display: flex; gap: 18px; justify-content: space-between; border-top: 1px solid var(--border); margin-top: 48px; padding-top: 20px; }
+.docs-content [data-doc-overview] section { padding: 0; margin: 0 0 36px; }
+.docs-content [data-doc-overview] h2 { margin-top: 24px; }
+.docs-content [data-doc-section] { padding: 0; }
+.docs-content .doc-table td { overflow-wrap: anywhere; }
+.table-scroll { overflow-x: auto; margin-bottom: 24px; }
+.table-scroll .doc-table { min-width: 580px; }
 .docs-content code {
   background: rgba(25, 25, 24, 0.06);
   border: 1px solid var(--border);
@@ -1002,7 +1023,7 @@ footer {
 }
 .doc-table th {
   text-align: left;
-  color: var(--dim);
+  color: var(--muted);
   font-weight: 560;
   font-size: 12.5px;
   padding: 8px 12px 8px 0;
@@ -1098,10 +1119,13 @@ html.js .reveal.in {
   .docs-nav {
     position: static;
     flex-direction: row;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     gap: 4px;
+    max-height: none;
+    overflow-x: auto;
+    padding-bottom: 8px;
   }
-  .docs-nav a { border-left: none; border: 1px solid var(--border); }
+  .docs-nav a { flex-shrink: 0; border-left: none; border: 1px solid var(--border); }
   .nav-links { gap: 16px; }
 }
 

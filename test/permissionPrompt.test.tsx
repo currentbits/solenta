@@ -151,7 +151,9 @@ describe("PermissionPrompt (#509)", () => {
     assert.ok(ta, "command textarea");
     assert.equal(ta.value, "rm -rf dist && npm build");
     assert.ok(view.byText("Accept"));
-    assert.match(view.query("[data-permission-always]")?.textContent ?? "", /Always allow rm:\*/);
+    const always = view.query("[data-permission-always]");
+    assert.match(always?.textContent ?? "", /Always allow rm:\* in this thread/);
+    assert.match(always?.getAttribute("title") ?? "", /Remember rm:\* for this thread/);
     assert.ok(view.byText("Deny"));
     assert.equal(view.query("[data-edited]"), null);
   });

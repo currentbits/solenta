@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://solenta.app/solenta.schema.json",
   "title": "Solenta project config",
-  "description": "solenta.json (committed, shared) and solenta.local.json (gitignored, this checkout only). solenta.local.json may only hold setup, quickActions and onSettle. See https://solenta.app/docs#project-config",
+  "description": "solenta.json (committed, shared) and solenta.local.json (gitignored, this checkout only). solenta.local.json may only hold setup, quickActions, onSettle and devServer. See https://solenta.app/docs#project-config",
   "type": "object",
   "additionalProperties": false,
   "properties": {
@@ -28,6 +28,7 @@
           },
           "name": { "type": "string", "minLength": 1, "maxLength": 32 },
           "command": { "type": "string", "minLength": 1, "maxLength": 500 },
+          "stopOnSettle": { "type": "boolean", "default": false, "description": "Opt in to stop this managed action when its thread settles." },
           "hidden": {
             "description": "solenta.local.json only: hide the solenta.json entry with this id or name.",
             "const": true
@@ -44,6 +45,7 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "stopOnSettle": { "type": "boolean", "default": false, "description": "Opt in to stop managed dev servers when their thread settles." },
         "ready": {
           "description": "Readiness probe: exactly one of tcp, http, exec.",
           "type": "object",
@@ -70,6 +72,8 @@
         "additionalProperties": false,
         "required": ["id", "name", "prompt", "provider", "preset"],
         "properties": {
+          "sessionMode": { "enum": ["new-thread", "continue", "fresh"] },
+          "destinationThreadId": { "type": ["string", "null"] },
           "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,47}$" },
           "name": { "type": "string", "minLength": 1 },
           "prompt": { "type": "string", "minLength": 1, "maxLength": 4000 },

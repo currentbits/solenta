@@ -9,8 +9,20 @@ const { createRequire } = require("node:module");
 const { registerMcpServer, unregisterMcpServer } = require("./memory-sup.js");
 const pairing = require("./pairing.js");
 const oauth = require("./mcpOauth.js");
-const { startWithPoolFailover, poolFromStore } = require("./subagentPool.js");
+const {
+  startWithPoolFailover,
+  poolFromStore,
+  resolveSubagentPool,
+} = require("./subagentPool.js");
 const { resolveBin, isBinAvailable } = require("./providers.js");
+const {
+  parseProviderRef,
+  providerRef,
+  threadProviderRef,
+  accountRefsByProvider,
+  supportsAutoAccount,
+  defaultAccountFor,
+} = require("./providerInstances.js");
 const {
   forkWorkerThread,
   dirtySnapshotWarning,
@@ -31,10 +43,10 @@ const {
   setQueued,
   renameThread,
   listThreads,
-  planboardNoteFor,
   refreshWorkerSnapshot,
   linkPullRequest,
   addAutomation,
+  instanceAuthProbes,
 } = require("./services.js");
 const { stop: stopDevServer } = require("./devservers.js");
 const prTools = require("./prTools.js");
@@ -160,8 +172,8 @@ const INSTRUCTIONS =
   "not through sandboxed gh, and there is no repo argument: writes stay on " +
   "this thread's origin. issue_comment posts a comment without changing " +
   "labels or closing the issue. issue_label adds non-plan labels (triage: " +
-  "type, priority, duplicate, needs-info). The tools are omitted when the origin is " +
-  "not GitHub. " +
+  "type, priority, duplicate, needs-info). Without a forge origin they return " +
+  "an error saying to add one. " +
   "When the user describes a workflow to run later, call automation_create " +
   "with a name, prompt, provider, and either a schedule or a GitHub trigger " +
   "(preset hourly/daily/weekly plus hour 0-23 for daily/weekly; cron " +
@@ -172,7 +184,7 @@ const INSTRUCTIONS =
   "missing, ask_user. Do not invent a trigger or schedule they did not ask for. " +
   "link_pull_request attaches a GitHub PR to this thread (including a PR " +
   "in another repo via repo=owner/name). The first link becomes the " +
-  "thread's primary PR. " +
+  "thread's primary PR; pass primary=true to make a replacement PR primary. " +
   "pr_view, pr_update, pr_comment, pr_merge, ci_logs and ci_rerun work on " +
   "this thread's linked PR through Solenta's GitHub API client; use them " +
   "instead of gh.";
@@ -355,6 +367,8 @@ async function loadOrCreateConfig(file) {
 function createToolHandlers(deps) {
   const { store, runner, forkThread, getProvider, broadcast, userDataPath } =
     deps;
+  const fetchProviderLimits =
+    deps.fetchProviderLimits || require("./providerUsage.js").fetchProviderLimits;
   const getIosSimulator =
     typeof deps.getIosSimulator === "function" ? deps.getIosSimulator : null;
   const log = typeof deps.log === "function" ? deps.log : undefined;
@@ -506,6 +520,47 @@ function createToolHandlers(deps) {
       .concat(far);
   }
 
+  /**
+   * thread_fork provider (#1857): a base id, `<id>:<instance>` naming an
+   * account that exists, or `<id>:auto` for the one with the most quota left.
+   * @param {string} raw
+   * @returns {Promise<{ ref: string, note: string | null }>}
+   */
+  async function resolveForkProvider(raw) {
+    const { provider, instance } = parseProviderRef(raw);
+    if (!getProvider(provider)) {
+      throw new Error(`Unknown provider: ${raw}`);
+    }
+    const settings = typeof store.getSettings === "function" ? store.getSettings() : null;
+    // A bare provider follows the per-CLI default account (#1859), so a
+    // worker lands where a new thread of that CLI would.
+    const fallback = defaultAccountFor(settings, provider);
+    if (!instance) return { ref: providerRef(provider, fallback), note: null };
+    const refs = accountRefsByProvider(settings).get(provider) || [];
+    const auto = supportsAutoAccount(provider) && refs.length > 0;
+    if (instance === "auto" && auto) {
+      const { pickAccountByQuota } = require("./providerUsage.js");
+      const rows = await fetchProviderLimits({
+        only: provider,
+        // The base overlay probe (ref === provider) stays: it is the env the
+        // default account actually runs with.
+        instances: instanceAuthProbes(store, userDataPath).filter(
+          (p) => p.provider === provider,
+        ),
+      });
+      // The effective default account goes first: it wins when no usage is known.
+      const candidates = [provider, ...refs];
+      const first = providerRef(provider, fallback);
+      return pickAccountByQuota([first, ...candidates.filter((r) => r !== first)], rows);
+    }
+    const ref = providerRef(provider, instance);
+    if (!refs.includes(ref)) {
+      const valid = [provider, ...refs, ...(auto ? [`${provider}:auto`] : [])];
+      throw new Error(`Unknown account: ${raw}. Valid ${provider} refs: ${valid.join(", ")}`);
+    }
+    return { ref, note: null };
+  }
+
   async function thread_fork(args) {
     const source = store.getThread(args.threadId);
     if (!source) {
@@ -527,11 +582,21 @@ function createToolHandlers(deps) {
     }
     /** @type {{ threadId: string, provider?: string, pool?: string, worktree?: boolean, title?: string, prompt?: string }} */
     const input = { threadId: args.threadId, prompt: args.prompt };
+    /** @type {{ ref: string, note: string | null } | null} */
+    let picked = null;
     if (args.provider != null) {
-      if (!getProvider(String(args.provider))) {
-        throw new Error(`Unknown provider: ${args.provider}`);
+      // Same precedence forkWorkerThread applies: a pinned pool or an
+      // explicit alias ignores provider, so do not validate or pick for it.
+      const poolWins =
+        resolveSubagentPool(poolFromStore(store), {
+          pool: args.pool,
+          provider: String(args.provider),
+        })?.fromPool === true;
+      if (poolWins) input.provider = String(args.provider);
+      else {
+        picked = await resolveForkProvider(String(args.provider));
+        input.provider = picked.ref;
       }
-      input.provider = String(args.provider);
     }
     if (args.pool != null) input.pool = String(args.pool);
     if (args.worktree === false) input.worktree = false;
@@ -539,6 +604,15 @@ function createToolHandlers(deps) {
     // orchWorker + lazy worktree live in services.forkWorkerThread, shared
     // with the runner's pendingFork dispatch.
     let fork = forkWorkerThread(store, input, forkThread);
+    // A pinned pool ignores provider, so only say what actually ran.
+    if (picked && picked.note && threadProviderRef(fork) === picked.ref) {
+      store.appendMessage(fork.id, {
+        id: crypto.randomUUID(),
+        role: "event",
+        text: picked.note,
+        createdAt: Date.now(),
+      });
+    }
     const warning = dirtySnapshotWarning(fork);
     try {
       // #246: a declared tier routes the worker's first turn through the
@@ -553,7 +627,7 @@ function createToolHandlers(deps) {
         startRun: (runInput) => runner.startRun(runInput),
         setProvider,
         isAvailable: (id) => {
-          const entry = getProvider(id);
+          const entry = getProvider(parseProviderRef(id).provider);
           if (!entry) return false;
           return isBinAvailable(resolveBin(entry));
         },
@@ -769,11 +843,57 @@ function createToolHandlers(deps) {
     return { intoPath, destinationPath, destinationBranch };
   }
 
+  /**
+   * The branch a worker still holds after its worktree folder vanished
+   * (#1848). The missing-dir recovery and GC clear worktreePath AND branch,
+   * keeping the ref name in retainedBranch (#1404), so no worktreePath does
+   * not mean the worker ran in the checkout. Null when it never had a
+   * branch; throws when the ref is gone too, rather than claim the work
+   * already landed.
+   */
+  function lostWorktreeBranch(worker) {
+    const branch = worker.branch || worker.retainedBranch;
+    if (!branch) return null;
+    const project = projectOf(worker);
+    const { gitTry } = require("./worktrees.js");
+    const ref = project && gitTry(project.path, [
+      "show-ref", "--verify", "--quiet", `refs/heads/${branch}`,
+    ]);
+    if (!ref || !ref.ok) {
+      throw new Error(
+        `Worker ${worker.id}'s worktree and its branch ${branch} are both ` +
+          `missing. Nothing was merged, and its changes are NOT in your ` +
+          `checkout. Recover the commits (git reflog) and recreate the branch ` +
+          `(git branch ${branch} <commit>), then merge again.`,
+      );
+    }
+    return branch;
+  }
+
+  /** Re-add the worker's worktree on its surviving branch (no setup script). */
+  function restoreLostWorktree(worker, branch) {
+    const { ensureWorktreePresent, resolveWorktreeDir } = require("./worktrees.js");
+    const project = projectOf(worker);
+    // ponytail: default worktree base, not settings.worktreeRoot; the dir
+    // only lives until the merge/PR cleanup or the worker's next turn.
+    const base = path.join(userDataPath || require("node:os").tmpdir(), "worktrees");
+    const { dir } = resolveWorktreeDir(project, base, worker.id);
+    ensureWorktreePresent(project.path, dir, branch);
+    store.updateThread(worker.id, {
+      worktreePath: dir,
+      branch,
+      retainedBranch: null,
+      pendingWorktree: false,
+    });
+    store.save();
+  }
+
   async function thread_merge(args) {
     const far = remoteWorker(args.workerThreadId, args.projectId);
     if (far) return mergeRemoteWorker(args, far);
     const { self, worker } = requireLandableWorker(args);
-    if (!worker.worktreePath) {
+    const lost = worker.worktreePath ? null : lostWorktreeBranch(worker);
+    if (!worker.worktreePath && !lost) {
       return {
         merged: false,
         reason:
@@ -793,8 +913,16 @@ function createToolHandlers(deps) {
       );
     }
     const { intoPath, destinationPath, destinationBranch } = approvedDestination(self, args);
+    if (lost === destinationBranch) {
+      return {
+        merged: false,
+        branch: lost,
+        reason: `The worker's branch ${lost} is the destination branch itself; nothing to merge.`,
+      };
+    }
+    if (lost) restoreLostWorktree(worker, lost);
     const { mergeWorktree } = require("./worktrees.js");
-    const branch = worker.branch ?? null;
+    const branch = lost || worker.branch || null;
     mergeWorktree({
       store,
       threadId: worker.id,
@@ -951,7 +1079,8 @@ function createToolHandlers(deps) {
       return { ...pr, host: far.w.hostLabel };
     }
     const { self, worker } = requireLandableWorker(args);
-    if (!worker.worktreePath) {
+    const lost = worker.worktreePath ? null : lostWorktreeBranch(worker);
+    if (!worker.worktreePath && !lost) {
       throw new Error(
         `Worker ${worker.id} ran in the project checkout without a worktree, so ` +
           `it has no branch of its own to propose. Its changes are already in ` +
@@ -959,6 +1088,7 @@ function createToolHandlers(deps) {
       );
     }
     assertUserApproved(self, args, "Opening a pull request");
+    if (lost) restoreLostWorktree(worker, lost);
     const { createPr } = require("./worktrees.js");
     const pr = await createPr({
       store,
@@ -1310,6 +1440,8 @@ function createToolHandlers(deps) {
     }
     const created = addAutomation(store, {
       projectId: thread.projectId,
+      sessionMode: args && args.sessionMode,
+      destinationThreadId: args && args.destinationThreadId,
       name: args && args.name,
       prompt: args && args.prompt,
       provider: (args && args.provider) || thread.provider,
@@ -1330,6 +1462,8 @@ function createToolHandlers(deps) {
       ok: true,
       id: created.id,
       name: created.name,
+      sessionMode: created.sessionMode || "new-thread",
+      destinationThreadId: created.destinationThreadId || null,
       projectId: created.projectId,
       prompt: created.prompt,
       provider: created.provider,
@@ -1578,53 +1712,69 @@ function createToolHandlers(deps) {
     return project && project.path ? project : "";
   }
 
+  /**
+   * The issue_* tools are listed for every bound project, since agent CLIs
+   * cache tools/list and an origin added mid-thread must still work (#1843).
+   * Say how to get an origin instead of the bare "not a GitHub repo".
+   */
+  function planboardResult(res) {
+    return res && res.ok === false && res.reason === "not a GitHub repo"
+      ? {
+          ok: false,
+          reason:
+            "this project has no GitHub/GitLab origin yet; add one with " +
+            "`git remote add origin <url>` in the project checkout, then retry",
+        }
+      : res;
+  }
+
   async function issue_create(args) {
     const thread = requireOwnThread(args);
     const { createIssue } = require("./issues.js");
-    return createIssue(issueTargetOf(thread), {
+    return planboardResult(await createIssue(issueTargetOf(thread), {
       title: args && args.title,
       body: args && args.body,
-    });
+    }));
   }
 
   async function issue_set_plan(args) {
     const thread = requireOwnThread(args);
     const { setPlanStatus } = require("./issues.js");
-    return setPlanStatus(
+    return planboardResult(await setPlanStatus(
       issueTargetOf(thread),
       args && args.number,
       args && args.status,
-    );
+    ));
   }
 
   async function issue_complete(args) {
     const thread = requireOwnThread(args);
     const { completeIssue } = require("./issues.js");
-    return completeIssue(issueTargetOf(thread), args && args.number, {
+    return planboardResult(await completeIssue(issueTargetOf(thread), args && args.number, {
       comment: args && args.comment,
-    });
+    }));
   }
 
   async function issue_comment(args) {
     const thread = requireOwnThread(args);
     const { commentIssue } = require("./issues.js");
-    return commentIssue(
+    return planboardResult(await commentIssue(
       issueTargetOf(thread),
       args && args.number,
       args && args.body,
-    );
+    ));
   }
 
   async function issue_label(args) {
     const thread = requireOwnThread(args);
     const { labelIssue } = require("./issues.js");
-    return labelIssue(issueTargetOf(thread), args && args.number, args && args.labels);
+    return planboardResult(await labelIssue(issueTargetOf(thread), args && args.number, args && args.labels));
   }
 
   async function issue_list(args) {
     const thread = requireOwnThread(args);
     const { listIssuePage } = require("./issues.js");
-    return listIssuePage(issueTargetOf(thread), args);
+    return planboardResult(await listIssuePage(issueTargetOf(thread), args));
   }
 
   async function link_pull_request(args) {
@@ -1634,6 +1784,7 @@ function createToolHandlers(deps) {
       number: args.number,
       repo: args.repo,
       url: args.url,
+      primary: args.primary,
     });
   }
 
@@ -1866,7 +2017,7 @@ function createToolHandlers(deps) {
  * @param {{ McpServer: unknown, z: unknown }} sdk
  * @param {ReturnType<typeof createToolHandlers>} handlers
  * @param {{ planboard?: boolean, github?: boolean, bugReports?: boolean, browser?: boolean }} [opts] - planboard:
- *   GitHub-origin sessions only (#849); github: PR/CI tools on GitHub
+ *   every project-bound session (#849, #1843); github: PR/CI tools on GitHub
  *   origins only (#1749); bugReports: false hides solenta_bug_report (#1703);
  *   browser: false hides preview when the bound thread's browserAccess is
  *   off (#1797) — the handler also gates every action, so this only saves
@@ -1911,6 +2062,10 @@ function buildMcpServer(sdk, handlers, opts = {}) {
         "pass worktree:false to run it in the project checkout instead. SSH remote projects " +
         "cannot host worker worktrees: a default fork there is refused, and worktree:false " +
         "runs the worker in the shared remote checkout alongside any other worker. " +
+        "provider is a provider id (claude) or a named account ref (claude:team) from the " +
+        "[Worker accounts] list in your prompt; <provider>:auto (claude:auto) picks that " +
+        "provider's account with the most 5-hour and weekly quota left, skipping any at 95% " +
+        "or more. An unknown account is rejected with the valid refs. " +
         "Optionally pass pool (an alias from the worker pool listed in your prompt) instead of " +
         "provider. Omit both to use the pool default. When the pool is pinned (force), pool and " +
         "provider are ignored. Optionally pass tier (fast, balanced, strong, or auto to classify " +
@@ -2152,10 +2307,12 @@ function buildMcpServer(sdk, handlers, opts = {}) {
                     description: z.string().optional(),
                   }),
                 )
-                .min(2),
+                .min(2)
+                .describe("2-4 options per question; at least 2 are required"),
             }),
           )
-          .min(1),
+          .min(1)
+          .describe("At least 1 question (up to 8 are shown)"),
       },
     },
     async (args) => json(await handlers.ask_user(args)),
@@ -2180,7 +2337,7 @@ function buildMcpServer(sdk, handlers, opts = {}) {
         projectId: z.string().min(1),
         target: z.enum(["diff", "file", "terminal"]),
         path: z.string().min(1).optional(),
-        line: z.number().int().min(1).optional(),
+        line: z.number().int().min(1).optional().describe("1-based line, integer >= 1"),
         reason: z.string().optional(),
       },
     },
@@ -2299,12 +2456,14 @@ function buildMcpServer(sdk, handlers, opts = {}) {
       inputSchema: {
         threadId: z.string().min(1),
         projectId: z.string().min(1),
+        sessionMode: z.enum(["new-thread", "continue", "fresh"]).optional(),
+        destinationThreadId: z.string().optional(),
         name: z.string().min(1),
         prompt: z.string().min(1),
         provider: z.string().min(1).optional(),
         model: z.string().optional(),
         preset: z.enum(["hourly", "daily", "weekly", "cron", "once"]).optional(),
-        hour: z.number().int().min(0).max(23).optional(),
+        hour: z.number().int().min(0).max(23).optional().describe("Integer 0-23, local time"),
         cron: z.string().min(1).optional(),
         /** Preset "once": a future local-time instant, e.g. "2026-11-01T15:00". */
         runAt: z.string().min(1).optional(),
@@ -2391,7 +2550,8 @@ function buildMcpServer(sdk, handlers, opts = {}) {
               needs: z.array(z.string().min(1)).optional(),
             }),
           )
-          .min(1),
+          .min(1)
+          .describe("At least 1 task"),
       },
     },
     async (args) => json(await handlers.task_add(args)),
@@ -2558,14 +2718,15 @@ function buildMcpServer(sdk, handlers, opts = {}) {
       description:
         "Link a GitHub pull request to this thread, including a PR in " +
         "another repo. The first linked PR becomes the thread's primary " +
-        "PR number. projectId is YOUR OWN project id; the thread must " +
-        "belong to it.",
+        "PR number; primary=true makes this PR the primary one instead. " +
+        "projectId is YOUR OWN project id; the thread must belong to it.",
       inputSchema: {
         threadId: z.string().min(1),
         projectId: z.string().min(1),
         number: z.number().int().positive(),
         repo: z.string().min(1).optional(),
         url: z.string().min(1).optional(),
+        primary: z.boolean().optional(),
       },
     },
     async (args) => json(await handlers.link_pull_request(args)),
@@ -2674,7 +2835,7 @@ function buildMcpServer(sdk, handlers, opts = {}) {
           threadId: z.string().min(1),
           projectId: z.string().min(1),
           state: z.enum(["open", "closed", "all"]).optional(),
-          limit: z.number().int().min(1).max(100).optional(),
+          limit: z.number().int().min(1).max(100).optional().describe("Integer 1-100 (default 50)"),
           cursor: z.string().max(1024).optional(),
           number: z.number().int().positive().optional(),
         },
@@ -2763,7 +2924,7 @@ function buildMcpServer(sdk, handlers, opts = {}) {
           threadId: z.string().min(1),
           projectId: z.string().min(1),
           number: z.number().int().positive(),
-          labels: z.array(z.string().min(1)).min(1),
+          labels: z.array(z.string().min(1)).min(1).describe("At least 1 label"),
         },
       },
       async (args) => json(await handlers.issue_label(args)),
@@ -2947,9 +3108,7 @@ function createOrchServer(opts) {
               : null;
           const boundThread = boundThreadId ? store.getThread(boundThreadId) : null;
           mcp = buildMcpServer(sdk, handlers, {
-            planboard: Boolean(
-              boundProject && planboardNoteFor(boundProject),
-            ),
+            planboard: Boolean(boundProject),
             bugReports: bugReportsEnabled(store),
             github: Boolean(boundProject && isGitHubProject(boundProject)),
             browser: !boundThread || boundThread.browserAccess !== false,

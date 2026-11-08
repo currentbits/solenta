@@ -122,6 +122,14 @@ function createCodexRun(ctx) {
       thread,
       store.getUsage(threadId),
     );
+    // token_count snapshots are provider-session totals. Preserve earlier
+    // sessions' thread totals when a fresh-context boundary starts a new one.
+    let usageBaseline = thread.sessionUsageBaseline || null;
+    if (thread.contextBoundaryId && !resumeId) {
+      const usage = store.getUsage(threadId);
+      usageBaseline = { inputTokens: usage?.inputTokens || 0, outputTokens: usage?.outputTokens || 0 };
+      store.updateThread(threadId, { sessionUsageBaseline: usageBaseline });
+    }
     const startedFresh = Boolean(thread.sessionId) && !resumeId;
     /** @type {string | null} */
     let capturedSessionId = resumeId;
@@ -205,6 +213,7 @@ function createCodexRun(ctx) {
           codexWrapEnv = {
             CODEX_HOME: dest,
             SOLENTA_WORKTREE: project.remotePath || localCwd,
+            SOLENTA_PERMISSION_MODE: thread.permissionMode || "default",
           };
         }
       } catch {
@@ -237,6 +246,7 @@ function createCodexRun(ctx) {
         args.push("-c", "features.hooks=true");
         codexMcpEnv.CODEX_HOME = dest;
         codexMcpEnv.SOLENTA_WORKTREE = localCwd;
+        codexMcpEnv.SOLENTA_PERMISSION_MODE = thread.permissionMode || "default";
       } catch {
         // Overlay is best-effort; a failed isolate must not block the turn.
       }
@@ -259,6 +269,7 @@ function createCodexRun(ctx) {
         if (nativeHooks) codexMcpEnv.SOLENTA_USER_HOOKS = nativeHooks.file;
         args.push("-c", "features.hooks=true");
         codexMcpEnv.SOLENTA_WORKTREE = localCwd;
+        codexMcpEnv.SOLENTA_PERMISSION_MODE = thread.permissionMode || "default";
       } catch {
         // Hook materialize is best-effort; a failed isolate must not block the turn.
       }
@@ -411,8 +422,8 @@ function createCodexRun(ctx) {
       }
       const nextUsage = {
         model: usageInfo.model || prev.model || thread.model || null,
-        inputTokens: snapshot ? inDelta : prev.inputTokens + inDelta,
-        outputTokens: snapshot ? outDelta : prev.outputTokens + outDelta,
+        inputTokens: snapshot ? (usageBaseline?.inputTokens || 0) + inDelta : prev.inputTokens + inDelta,
+        outputTokens: snapshot ? (usageBaseline?.outputTokens || 0) + outDelta : prev.outputTokens + outDelta,
         costUsd: prev.costUsd + costDelta,
         turns: snapshot && prev.turns > 0 ? prev.turns : prev.turns + 1,
       };
@@ -427,10 +438,10 @@ function createCodexRun(ctx) {
         store.recordSpend(costDelta);
       }
       const billedIn = snapshot
-        ? Math.max(0, inDelta - prev.inputTokens)
+        ? Math.max(0, nextUsage.inputTokens - prev.inputTokens)
         : inDelta;
       const billedOut = snapshot
-        ? Math.max(0, outDelta - prev.outputTokens)
+        ? Math.max(0, nextUsage.outputTokens - prev.outputTokens)
         : outDelta;
       store.recordUsage({
         provider: threadProviderRef(thread),
@@ -469,6 +480,10 @@ function createCodexRun(ctx) {
       onEvent: (ev) => {
         if (!guard()) return;
 
+        if (ev.type === "account.rate_limits") {
+          require("./providerUsage.js").reportLiveUsage(threadProviderRef(thread), ev.windows);
+          return;
+        }
         if (ev.type === "goal.updated") {
           if (services.applyNativeGoal(store, threadId, ev.goal)) {
             store.save();
@@ -611,6 +626,7 @@ function createCodexRun(ctx) {
               "Bash",
               { command: cmd.command },
               thread.worktreePath || project.path,
+              thread.permissionMode === "bypassPermissions",
             );
             if (notice) appendMessage(threadId, "event", notice, runId);
             // Post-tool text starts a fresh message below the tool call.

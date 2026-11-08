@@ -182,6 +182,8 @@ function createMuseRun(ctx) {
     } else {
       museEnv = { SOLENTA_WORKTREE: localCwd };
     }
+    // The PreToolUse hook lets ask rules run on Full access (#1853).
+    museEnv.SOLENTA_PERMISSION_MODE = thread.permissionMode || "default";
 
     const spawn = resolveSpawn(project, binary, args, localCwd, museEnv, threadId);
 
@@ -321,6 +323,7 @@ function createMuseRun(ctx) {
           tool.name,
           tool.input,
           thread.worktreePath || project.path,
+          thread.permissionMode === "bypassPermissions",
         );
         if (notice) appendMessage(threadId, "event", notice, runId);
         assistantMsgId = null;

@@ -154,6 +154,16 @@ function discoverAgentConfigFiles(root) {
     push(path.join(root, name));
   }
 
+  let cursorRules = [];
+  try {
+    cursorRules = fs.readdirSync(path.join(root, ".cursor", "rules")).sort();
+  } catch {
+    cursorRules = [];
+  }
+  for (const name of cursorRules) {
+    if (/\.mdc?$/.test(name)) push(path.join(root, ".cursor", "rules", name));
+  }
+
   const packagesDir = path.join(root, "packages");
   let ents = [];
   try {
@@ -823,13 +833,14 @@ function renderGeneratedMarkdown(input) {
  * @param {string} root
  * @param {string} rel
  */
-function assertWriteableRel(root, rel) {
+function assertWriteableRel(root, rel, allowed) {
   const normalized = String(rel || "").trim().replace(/\\/g, "/");
   if (!normalized || normalized.includes("..")) {
     throw new Error("Invalid agent-config path");
   }
   const base = path.posix.basename(normalized);
-  if (!WRITEABLE_BASENAMES.has(base)) {
+  // Fusion (#1856) passes the discovered instruction files as the allow list.
+  if (allowed ? !allowed.has(normalized) : !WRITEABLE_BASENAMES.has(base)) {
     throw new Error(`Refusing to write ${normalized}`);
   }
   const abs = path.resolve(root, normalized.split("/").join(path.sep));
@@ -861,7 +872,7 @@ function defaultWriteTargets(existing) {
  * @param {Array<{ path: string, content: string }>} files
  * @returns {string[]}
  */
-function writeAgentConfigFiles(root, files) {
+function writeAgentConfigFiles(root, files, allowed) {
   if (!root) throw new Error("Project path is required");
   let st;
   try {
@@ -873,7 +884,7 @@ function writeAgentConfigFiles(root, files) {
 
   const written = [];
   for (const file of files || []) {
-    const { rel, abs } = assertWriteableRel(root, file.path);
+    const { rel, abs } = assertWriteableRel(root, file.path, allowed);
     fs.mkdirSync(path.dirname(abs), { recursive: true });
     fs.writeFileSync(abs, String(file.content ?? ""), "utf8");
     written.push(rel);

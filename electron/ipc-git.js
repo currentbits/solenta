@@ -59,6 +59,7 @@ const {
   viewPrDetail,
   editPr,
   commentPr,
+  requestPrChanges,
   closePr,
   readyPr,
   updateBranchPr,
@@ -325,6 +326,7 @@ module.exports = {
   "git:prTemplate": async (_ctx, input) => {
     return readPrTemplate(input && input.projectPath);
   },
+  "git:prCompletions": async (_ctx, input) => require("./prCompletions.js").prCompletions(input),
   "git:prDetail": async (_ctx, input) => {
     return viewPrDetail(input && input.projectPath, input && input.prNumber, {
       repo: input && input.repo,
@@ -341,6 +343,13 @@ module.exports = {
       },
       { store: ctx.store, broadcast: ctx.broadcast },
     );
+  },
+  "git:prRequestChanges": async (_ctx, input) => {
+    return requestPrChanges(input && input.projectPath, {
+      prNumber: input && input.prNumber,
+      repo: input && input.repo,
+      viewerId: input && input.viewerId,
+    });
   },
   "git:prComment": async (_ctx, input) => {
     return commentPr(input && input.projectPath, {

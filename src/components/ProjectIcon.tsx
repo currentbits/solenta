@@ -70,8 +70,9 @@ export function ProjectIcon({
       style={{
         width: size,
         height: size,
-        fontSize: Math.max(7, Math.round(size * 0.5)),
-        background: projectAvatarColor(seed || name || ""),
+        fontSize: Math.max(7, Math.round(size * 0.56)),
+        // The tile tints itself from this hue (ProjectIcon.module.css).
+        ["--avatar" as string]: projectAvatarColor(seed || name || ""),
       }}
     >
       {initials}

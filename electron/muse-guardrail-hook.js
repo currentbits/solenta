@@ -6,7 +6,8 @@
  * Managed hooks file at settings.managed_hooks_path. Live Muse 1.0.2
  * (1.0.2-R2040.1) stdout: JSON `{ hookSpecificOutput.permissionDecision }`.
  * deny needs permissionDecisionReason; allow needs updatedInput. Legacy
- * `decision: block` is rejected. Ask is deny: no Solenta prompt channel.
+ * `decision: block` is rejected. Ask is deny: no Solenta prompt channel,
+ * except on a Full access thread (#1853).
  * Fail-open on crash. Whether deny still fires under `--disable-approval`
  * is unproven; live canary is later.
  *
@@ -17,7 +18,7 @@
 
 const path = require("node:path");
 const {
-  decideGuardrail,
+  hookGuardrailDecision,
   runStdinHook,
 } = require("./guardrail-hook-core.js");
 
@@ -66,7 +67,7 @@ function decideMuseGuardrail(payload) {
   const input = payloadInput(p);
   const worktreePath =
     p.cwd || p.workspaceRoot || process.env.SOLENTA_WORKTREE || null;
-  const out = decideGuardrail(
+  const out = hookGuardrailDecision(
     { toolName, tool_name: toolName, toolInput: input, tool_input: input },
     worktreePath,
   );

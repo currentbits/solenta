@@ -9,6 +9,7 @@ const { randomUUID } = require("node:crypto");
 const { expandUserPath } = require("./fsBrowse.js");
 const { runWindowsDoctor } = require("./doctor.js");
 const configDoctor = require("./configDoctor.js");
+const configFusion = require("./configFusion.js");
 const {
   normalizeSetupCommand,
   normalizeQuickActions,
@@ -494,6 +495,8 @@ function updateProject(store, projectId, patch) {
     delete next.waitForSetup;
   }
   // #396 setup cache opt-out; same false/null-deletes rule.
+  if (typeof input.stopOnSettle === "boolean") next.stopOnSettle = input.stopOnSettle;
+  else if (input.stopOnSettle === null) delete next.stopOnSettle;
   if (input.setupCacheOff === true) next.setupCacheOff = true;
   else if (input.setupCacheOff === false || input.setupCacheOff === null) {
     delete next.setupCacheOff;
@@ -542,6 +545,9 @@ function updateProject(store, projectId, patch) {
   projects[idx] = next;
   store.setProjects(projects);
   store.save();
+  if (Object.prototype.hasOwnProperty.call(input, "stopOnSettle") || Object.prototype.hasOwnProperty.call(input, "quickActions")) {
+    require("./projectCommands.js").watchManagedOnSettle(store);
+  }
   return presentProject(next);
 }
 
@@ -897,6 +903,26 @@ async function writeAgentConfig(store, input, deps) {
   return { projectId: preview.projectId, written };
 }
 
+/**
+ * Instruction-file Fusion plan (#1856): files, facts, conflicts, diffs, status.
+ * @param {import('./store').Store} store
+ * @param {{ projectId: string, picks?: Record<string, string>, importInClaude?: boolean }} input
+ */
+function fusionPlan(store, input) {
+  const { project, root } = requireLocalProject(store, input);
+  return { projectId: project.id, ...configFusion.previewFusion(root, input) };
+}
+
+/**
+ * Write the fusion block into the ticked files only.
+ * @param {import('./store').Store} store
+ * @param {{ projectId: string, paths: string[], picks?: Record<string, string>, importInClaude?: boolean }} input
+ */
+function fusionSync(store, input) {
+  const { project, root } = requireLocalProject(store, input);
+  return { projectId: project.id, ...configFusion.syncFusion(root, input) };
+}
+
 module.exports = {
   slugFromRemoteUrl,
   normalizePathKey,
@@ -916,4 +942,6 @@ module.exports = {
   lintAgentConfig,
   previewAgentConfig,
   writeAgentConfig,
+  fusionPlan,
+  fusionSync,
 };

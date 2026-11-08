@@ -2084,6 +2084,16 @@ class Store {
     return list || [];
   }
 
+  /** Visible history stays intact; provider digests only see the current session. */
+  getContextMessages(threadId) {
+    const messages = this.getMessages(threadId);
+    const boundary = this.getThread(threadId)?.contextBoundaryId;
+    if (!boundary) return messages;
+    const at = messages.findIndex((message) => message.id === boundary);
+    // Missing boundary (e.g. an old rewind) must never expose earlier history.
+    return at < 0 ? [] : messages.slice(at + 1);
+  }
+
   /**
    * A page of a thread's messages, newest-first page ending at `before`
    * (exclusive) or at the end of the transcript (issue #1786). Hydration
@@ -2351,6 +2361,8 @@ class Store {
     this.updateThread(threadId, {
       sessionId: snap.sessionId != null ? snap.sessionId : null,
       replayContext: snap.replayContext === true,
+      contextBoundaryId: snap.contextBoundaryId || null,
+      freshContextPending: snap.freshContextPending === true,
       ...(snap.status != null ? { status: snap.status } : {}),
       lastError: snap.lastError != null ? snap.lastError : null,
       lastErrorKind: snap.lastErrorKind != null ? snap.lastErrorKind : null,

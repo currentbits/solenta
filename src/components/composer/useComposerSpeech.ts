@@ -30,6 +30,7 @@ export type SpeechSnapshot = {
   threadId: string;
   draft: string;
   caret: number;
+  selectionEnd: number;
   prefix: string;
   suffix: string;
   accumulated: string;
@@ -49,6 +50,8 @@ export function speechMicLabel(
     }
     return "Downloading speech model";
   }
+  if (status?.state === "error" && status.localError) return "Configure dictation language in Settings";
+  if (status && !status.runtimeReady && status.state !== "ready") return "Local dictation unavailable";
   if (!status || status.state === "missing") return "Download speech model";
   if (status.state === "error" && !status.modelReady) {
     return "Download speech model";
@@ -91,7 +94,7 @@ export function useComposerSpeech({
   const captureRef = useRef<SpeechCapture | null>(null);
   const dictatingRef = useRef(false);
   const writeDraftFor = useCallback(
-    (tid: string, text: string, caret?: number) => {
+    (tid: string, text: string, caret?: number, selectionEnd = caret) => {
       draftsRef.current[tid] = text;
       scheduleDraftSave();
       if (liveThreadIdRef.current !== tid) return;
@@ -100,7 +103,7 @@ export function useComposerSpeech({
         el.value = text;
         if (caret != null) {
           el.focus();
-          el.setSelectionRange(caret, caret);
+          el.setSelectionRange(caret, selectionEnd ?? caret);
         }
       }
       syncHasPrompt(text);
@@ -120,7 +123,7 @@ export function useComposerSpeech({
     setDictating(false);
     setSpeechConfirm(false);
     capture?.close();
-    if (snap) writeDraftFor(snap.threadId, snap.draft, snap.caret);
+    if (snap) writeDraftFor(snap.threadId, snap.draft, snap.caret, snap.selectionEnd);
     const api = coderSpeech();
     if (snap?.sessionId && api) {
       try {
@@ -140,7 +143,7 @@ export function useComposerSpeech({
       }
       const snap = snapshotRef.current;
       if (!snap) return;
-      if (status.state === "error") {
+      if (status.error || status.state === "error") {
         void cancelDictationRef.current();
         if (status.error) setLocalError(status.error);
         return;
@@ -151,6 +154,7 @@ export function useComposerSpeech({
           suffix: snap.suffix,
           accumulated: snap.accumulated,
           delta: status.delta,
+          replaceSelection: snap.selectionEnd > snap.caret,
         });
         snap.accumulated = next.accumulated;
         writeDraftFor(snap.threadId, next.text, next.caret);
@@ -162,8 +166,9 @@ export function useComposerSpeech({
           original: snap.draft,
           originalCaret: snap.caret,
           transcript: status.transcript,
+          replaceSelection: snap.selectionEnd > snap.caret,
         });
-        writeDraftFor(snap.threadId, next.text, next.caret);
+        writeDraftFor(snap.threadId, next.text, next.caret, status.transcript ? next.caret : snap.selectionEnd);
         if (status.note) setLocalError(status.note);
         snapshotRef.current = null;
         dictatingRef.current = false;
@@ -203,12 +208,14 @@ export function useComposerSpeech({
     const el = textareaRef.current;
     const draft = readDraft();
     const caret = el?.selectionStart ?? draft.length;
+    const selectionEnd = el?.selectionEnd ?? caret;
     snapshotRef.current = {
       threadId,
       draft,
       caret,
+      selectionEnd,
       prefix: draft.slice(0, caret),
-      suffix: draft.slice(caret),
+      suffix: draft.slice(selectionEnd),
       accumulated: "",
       sessionId: "",
     };
@@ -246,7 +253,7 @@ export function useComposerSpeech({
       snapshotRef.current = null;
       dictatingRef.current = false;
       setDictating(false);
-      if (snap) writeDraftFor(snap.threadId, snap.draft, snap.caret);
+      if (snap) writeDraftFor(snap.threadId, snap.draft, snap.caret, snap.selectionEnd);
       setLocalError(speechCaptureError(err));
     }
   }, [disabled, readDraft, threadId, writeDraftFor]);
@@ -272,6 +279,14 @@ export function useComposerSpeech({
     }
     const state = speech?.state ?? "missing";
     if (state === "downloading") return;
+    if (speech?.localError && state !== "ready") {
+      setLocalError(speech.localError);
+      return;
+    }
+    if (!speech?.runtimeReady && state !== "ready") {
+      setLocalError("Local speech is unavailable on this platform or its bundled runtime is missing.");
+      return;
+    }
     if (state === "ready" || state === "recording") {
       void startDictation();
       return;
@@ -284,10 +299,10 @@ export function useComposerSpeech({
     const api = coderSpeech();
     if (!api) return;
     setSpeechConfirm(false);
-    void api.download().catch((err) => {
+    void api.download(speech?.model ? { modelId: speech.model.id } : undefined).catch((err) => {
       setLocalError(speechCaptureError(err));
     });
-  }, []);
+  }, [speech]);
   return {
     hasSpeech,
     speech,

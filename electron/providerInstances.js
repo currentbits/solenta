@@ -400,6 +400,26 @@ function findInstance(settings, provider, id) {
 }
 
 /**
+ * Effective default account of `provider` (#1859): the instance id new
+ * threads, terminals and the menu bar use when none was picked. Precedence:
+ * an instance pinned in settings.defaultProvider (`claude:work`) when it
+ * names this provider, then settings.defaultAccounts[provider], then null =
+ * the CLI's own login (also when the saved instance was removed).
+ * @param {{ defaultProvider?: unknown, defaultAccounts?: unknown, providerInstances?: unknown } | null | undefined} settings
+ * @param {string} provider
+ * @returns {string | null}
+ */
+function defaultAccountFor(settings, provider) {
+  const pinned = parseProviderRef(settings && settings.defaultProvider);
+  if (pinned.provider === provider && pinned.instance && findInstance(settings, provider, pinned.instance)) {
+    return pinned.instance;
+  }
+  const map = settings && settings.defaultAccounts;
+  const id = map && typeof map === "object" ? /** @type {Record<string, unknown>} */ (map)[provider] : null;
+  return typeof id === "string" && findInstance(settings, provider, id) ? id : null;
+}
+
+/**
  * Computed home for an isolated-home instance (#1808): exclusive, under
  * Solenta's own userData, never shared with the real CLI home.
  * @param {string} userDataPath
@@ -499,6 +519,37 @@ function threadExtraArgv(settings, thread) {
 }
 
 /**
+ * Named-account refs a lead can pass as thread_fork provider (#1857), by
+ * base provider in settings order: claude → ["claude:work", "claude:team"].
+ * Base overlays are the default account itself, never a ref of their own.
+ * @param {{ providerInstances?: unknown } | null | undefined} settings
+ * @returns {Map<string, string[]>}
+ */
+function accountRefsByProvider(settings) {
+  const list = Array.isArray(settings && settings.providerInstances)
+    ? settings.providerInstances
+    : [];
+  /** @type {Map<string, string[]>} */
+  const out = new Map();
+  for (const inst of list) {
+    if (!inst || !inst.id || !inst.provider || isBaseOverlay(inst)) continue;
+    const refs = out.get(inst.provider) || [];
+    refs.push(providerRef(inst.provider, inst.id));
+    out.set(inst.provider, refs);
+  }
+  return out;
+}
+
+/**
+ * Providers whose instances are separate subscriptions with their own quota,
+ * so `<provider>:auto` (#1857) can choose between them.
+ * @param {string} provider
+ */
+function supportsAutoAccount(provider) {
+  return Object.prototype.hasOwnProperty.call(CONFIG_DIR_ENV, provider);
+}
+
+/**
  * Display name: "Claude (work)".
  * @param {string} baseName
  * @param {ProviderInstance} inst
@@ -591,9 +642,12 @@ module.exports = {
   normalizeProviderInstances,
   validateProviderInstances,
   findInstance,
+  defaultAccountFor,
   instanceEnv,
   isolatedHomeDir,
   threadInstanceEnv,
   threadExtraArgv,
+  accountRefsByProvider,
+  supportsAutoAccount,
   instanceDisplayName,
 };

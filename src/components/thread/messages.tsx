@@ -727,6 +727,7 @@ type StepIconKind =
   | "search"
   | "agents"
   | "thinking"
+  | "done"
   | "tool";
 
 function stepIconForTools(names: string[]): StepIconKind {
@@ -769,6 +770,12 @@ const STEP_ICON_PATHS: Record<StepIconKind, ReactNode> = {
   ),
   thinking: (
     <path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1" />
+  ),
+  done: (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="m8.5 12.5 2.5 2.5 4.5-5" />
+    </>
   ),
   tool: (
     <path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.4-.6-.6-2.4z" />
@@ -2013,6 +2020,10 @@ export const MessageBlock = memo(function MessageBlock({
     );
   }
 
+  if (message.sessionBoundary) {
+    return <section className={styles.sessionBoundary} role="separator" aria-label="Fresh agent context">{message.text}</section>;
+  }
+
   if (message.role === "event") {
     // Quiet one-line step (#1429). Only the subagent kickoff folds its
     // phase list behind Show; any other notice body (failures, "Not
@@ -2020,6 +2031,7 @@ export const MessageBlock = memo(function MessageBlock({
     const [eventHead, ...eventRest] = message.text.split(/\r?\n/);
     const eventBody = eventRest.join("\n").trim();
     const kickoff = /^kicked off \d+ subagent/i.test(eventHead ?? "");
+    const finished = /^run complete\b/i.test(eventHead ?? "");
     return (
       <section
         className={`${styles.eventLine}${entered ? ` ${styles.streamIn}` : ""}`}
@@ -2027,7 +2039,7 @@ export const MessageBlock = memo(function MessageBlock({
       >
         <div className={styles.eventRow}>
           <StepLine
-            icon={kickoff ? "agents" : "tool"}
+            icon={kickoff ? "agents" : finished ? "done" : "tool"}
             open={eventOpen}
             onToggle={
               kickoff && eventBody ? () => setEventOpen((v) => !v) : undefined
@@ -2422,6 +2434,23 @@ export function RunHeaderRow({
       title={`${collapsed ? "Show this run" : "Hide this run"} · ${timeTitle}`}
       onClick={onToggle}
     >
+      {/* Same hanging glyph column as the step rows: a clock, with the
+          disclosure chevron trailing the label. */}
+      <svg
+        className={styles.runHeaderIcon}
+        width="16"
+        height="16"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+      >
+        <circle cx="12" cy="12" r="8.5" />
+        <path d="M12 7.5V12l3 2" />
+      </svg>
+      <span className={styles.runHeaderLabel}>{header.label}</span>
       <span className={styles.chevron} data-open={!collapsed}>
         <svg
           width="9"
@@ -2437,7 +2466,6 @@ export function RunHeaderRow({
           <path d="M3.5 2 6.5 5 3.5 8" />
         </svg>
       </span>
-      <span className={styles.runHeaderLabel}>{header.label}</span>
     </button>
   );
 }

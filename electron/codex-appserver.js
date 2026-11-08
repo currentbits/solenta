@@ -316,6 +316,11 @@ function notificationToJsonl(msg) {
   if (method === "error") {
     return { type: "error", error: p };
   }
+  // Account quota pushed mid-run (#1859); same shape as account/rateLimits/read.
+  if (method === "account/rateLimits/updated") {
+    const windows = require("./providerUsage.js").normalizeCodexRateLimits(p);
+    return windows.length ? { type: "account.rate_limits", windows } : null;
+  }
   return null;
 }
 

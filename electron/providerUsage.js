@@ -628,15 +628,26 @@ const DEFAULT_FETCHERS = {
  * @returns {Promise<object[]>}
  */
 async function fetchProviderLimits(opts = {}) {
-  const ids = knownProviderIds();
+  // `only` (#1857): skip the other base providers; callers pass only the
+  // instances they want.
+  const ids = knownProviderIds().filter((id) => !opts.only || id === opts.only);
+  const env = opts.env || process.env;
+  const probes = opts.instances || [];
   const rows = await Promise.all(
     ids.map(async (id) => {
       const fn =
         (opts.fetchers && opts.fetchers[id]) ||
         DEFAULT_FETCHERS[id] ||
         unsupportedFetcher(id);
+      // A probe whose ref is the base id is the default account's own env
+      // (base overlay, #1714): fetch the base row under it, not twice.
+      const overlay = probes.find((inst) => inst.ref === id);
       try {
-        const row = await fn({ ...opts, providerId: id });
+        const row = await fn({
+          ...opts,
+          providerId: id,
+          ...(overlay ? { env: { ...env, ...overlay.env } } : {}),
+        });
         if (row && typeof row === "object" && row.provider) return row;
         return errorUsage(id, MSG_FAILED);
       } catch {
@@ -646,9 +657,8 @@ async function fetchProviderLimits(opts = {}) {
   );
   // Named instances (#453): the base fetcher under the instance's env (its
   // config dir holds a different login), reported under the instance ref.
-  const env = opts.env || process.env;
   const instanceRows = await Promise.all(
-    (opts.instances || []).map(async (inst) => {
+    probes.filter((inst) => !ids.includes(inst.ref)).map(async (inst) => {
       const fn =
         (opts.fetchers && opts.fetchers[inst.provider]) ||
         DEFAULT_FETCHERS[inst.provider];
@@ -668,10 +678,116 @@ async function fetchProviderLimits(opts = {}) {
       }
     }),
   );
-  return [...rows, ...instanceRows];
+  // External quota sources never participate in native account auto-selection.
+  const proxyRows = !opts.only && opts.cliProxyUsage
+    ? await require("./providerUsageCliProxy.js").readCliProxyUsage(opts.cliProxyUsage, opts.cliProxyOptions)
+    : [];
+  return [...rows, ...instanceRows, ...proxyRows];
+}
+
+/**
+ * Live windows from runs (#1859): Claude's `rate_limit_event` and Codex's
+ * `account/rateLimits/updated` arrive mid-turn. Listeners (the menu bar)
+ * get `(ref, windows)` for the thread's account ref.
+ * @type {Set<(ref: string, windows: object[]) => void>}
+ */
+const liveListeners = new Set();
+
+/** @param {(ref: string, windows: object[]) => void} fn @returns {() => void} unsubscribe */
+function onLiveUsage(fn) {
+  liveListeners.add(fn);
+  return () => liveListeners.delete(fn);
+}
+
+/** @param {string} ref @param {object[]} windows */
+function reportLiveUsage(ref, windows) {
+  if (!ref || !Array.isArray(windows) || !windows.length) return;
+  for (const fn of liveListeners) {
+    try {
+      fn(ref, windows);
+    } catch {
+      // A listener bug never breaks a run.
+    }
+  }
+}
+
+const CLAUDE_LIMIT_TYPES = { five_hour: ["5-hour", FIVE_HOUR_SECONDS], seven_day: ["weekly", WEEK_SECONDS] };
+
+/**
+ * Claude stream-json `rate_limit_event.rate_limit_info`. `utilization` is a
+ * 0-1 fraction (claude 2.1.x keeps its own alert thresholds, 0.75/0.9, in
+ * the same field) and is often absent below them; then nothing is known.
+ * @param {unknown} info
+ * @returns {object[]}
+ */
+function claudeRateLimitWindows(info) {
+  if (!info || typeof info !== "object") return [];
+  const i = /** @type {Record<string, unknown>} */ (info);
+  const kind = CLAUDE_LIMIT_TYPES[/** @type {keyof typeof CLAUDE_LIMIT_TYPES} */ (String(i.rateLimitType))];
+  const u = asNumber(i.utilization);
+  if (!kind || u == null) return [];
+  const win = makeWindow(u * 100, i.resetsAt, kind[1], kind[0]);
+  return win ? [win] : [];
+}
+
+/** An account at or above this in its 5-hour or weekly window is skipped. */
+const PICK_SKIP_PERCENT = 95;
+
+/**
+ * `<provider>:auto` (#1857): the account with the lowest max(5-hour %,
+ * weekly %), ties to the soonest reset of that window. Accounts at
+ * PICK_SKIP_PERCENT or more are skipped. With no usage known for any
+ * candidate the default account (refs[0]) wins.
+ *
+ * ponytail: only the unprefixed "5-hour"/"weekly" windows count, so
+ * Claude's per-model weekly windows and Codex's per-model pools are ignored.
+ *
+ * @param {string[]} refs - candidates, the default account first
+ * @param {object[]} rows - fetchProviderLimits rows
+ * @returns {{ ref: string, note: string }}
+ */
+function pickAccountByQuota(refs, rows) {
+  /** @type {{ ref: string, top: { label: string, usedPercent: number, resetsAt: number | null } }[]} */
+  const open = [];
+  const unknown = [];
+  const full = [];
+  for (const ref of refs) {
+    const row = (rows || []).find((r) => r && r.provider === ref && r.status === "ok");
+    const wins = row
+      ? row.windows.filter((w) => w && (w.label === "5-hour" || w.label === "weekly"))
+      : [];
+    if (wins.length === 0) {
+      unknown.push(ref);
+      continue;
+    }
+    const top = wins.reduce((a, b) => (b.usedPercent > a.usedPercent ? b : a));
+    if (top.usedPercent >= PICK_SKIP_PERCENT) full.push(ref);
+    else open.push({ ref, top });
+  }
+  const resetOf = (/** @type {{ resetsAt: number | null }} */ w) =>
+    w.resetsAt == null ? Infinity : w.resetsAt;
+  open.sort(
+    (a, b) =>
+      a.top.usedPercent - b.top.usedPercent || resetOf(a.top) - resetOf(b.top) || 0,
+  );
+  if (open.length > 0) {
+    const { ref, top } = open[0];
+    return { ref, note: `Picked ${ref}, ${Math.round(top.usedPercent)}% of ${top.label} used` };
+  }
+  if (unknown.length > 0) {
+    const ref = unknown.includes(refs[0]) ? refs[0] : unknown[0];
+    return { ref, note: `Picked ${ref}, no usage known for ${unknown.join(", ")}` };
+  }
+  throw new Error(
+    `Every account is at least ${PICK_SKIP_PERCENT}% used (${full.join(", ")}). ` +
+      "Pass one of them explicitly to run anyway, or wait for a reset.",
+  );
 }
 
 module.exports = {
+  onLiveUsage,
+  reportLiveUsage,
+  claudeRateLimitWindows,
   TIMEOUT_MS,
   FIVE_HOUR_SECONDS,
   WEEK_SECONDS,
@@ -680,6 +796,8 @@ module.exports = {
   MSG_TIMEOUT,
   MSG_FAILED,
   fetchProviderLimits,
+  pickAccountByQuota,
+  PICK_SKIP_PERCENT,
   fetchClaude,
   fetchCodex,
   fetchGrok,

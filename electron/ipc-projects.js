@@ -132,6 +132,12 @@ module.exports = {
       memory: ctx.memory,
     });
   },
+  "projects:fusionPlan": async (ctx, input) => {
+    return services.fusionPlan(ctx.store, input || {});
+  },
+  "projects:fusionSync": async (ctx, input) => {
+    return services.fusionSync(ctx.store, input || {});
+  },
   "projects:moveConfigToRepo": async (ctx, input) => {
     return require("./configMigrate.js").moveConfigToRepo(ctx.store, input || {}, {
       worktreeBase: ctx.worktreeBase,

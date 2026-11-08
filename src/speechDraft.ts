@@ -8,16 +8,35 @@ export function formatSpeechModelSize(
   return `~${mb} MB / ${bytes.toLocaleString("en-US")} bytes`;
 }
 
+const WORD = /[\p{L}\p{M}\p{N}]/u;
+const UNSPACED = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}]/u;
+
+function speechBoundary(left: string, right: string): string {
+  const end = Array.from(left.slice(-2)).at(-1) ?? "";
+  const start = Array.from(right.slice(0, 2))[0] ?? "";
+  return WORD.test(end) && WORD.test(start) &&
+    !UNSPACED.test(end) && !UNSPACED.test(start) ? " " : "";
+}
+
+function insertSpeech(prefix: string, transcript: string, suffix: string, replaceSelection = false) {
+  const before = replaceSelection ? "" : speechBoundary(prefix, transcript);
+  const after = replaceSelection ? "" : speechBoundary(transcript, suffix);
+  return {
+    text: prefix + before + transcript + after + suffix,
+    caret: prefix.length + before.length + transcript.length,
+  };
+}
+
 /** Concatenate an incremental suffix onto the one provisional range. */
 export function applySpeechDelta(input: {
   prefix: string;
   suffix: string;
   accumulated: string;
   delta: string;
+  replaceSelection?: boolean;
 }): { text: string; accumulated: string; caret: number } {
   const accumulated = input.accumulated + input.delta;
-  const text = input.prefix + accumulated + input.suffix;
-  return { text, accumulated, caret: input.prefix.length + accumulated.length };
+  return { ...insertSpeech(input.prefix, accumulated, input.suffix, input.replaceSelection), accumulated };
 }
 
 /** Replace the whole provisional range. Empty final restores the snapshot. */
@@ -27,10 +46,10 @@ export function applySpeechTranscript(input: {
   original: string;
   originalCaret: number;
   transcript: string;
+  replaceSelection?: boolean;
 }): { text: string; caret: number } {
   if (!input.transcript) {
     return { text: input.original, caret: input.originalCaret };
   }
-  const text = input.prefix + input.transcript + input.suffix;
-  return { text, caret: input.prefix.length + input.transcript.length };
+  return insertSpeech(input.prefix, input.transcript, input.suffix, input.replaceSelection);
 }

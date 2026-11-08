@@ -8,9 +8,11 @@ const { normalizeMcpServers } = require("./mcp.js");
 const { normalizeProviderInstances, parseProviderModels } = require("./providerInstances.js");
 const { normalizeModelPrices } = require("./modelPrices.js");
 const { normalizePrivacyGateway } = require("./privacyGateway.js");
+const { normalizeCliProxyUsage } = require("./providerUsageCliProxy.js");
 const { parsePolicy } = require("./governance.js");
 const { normalizeAutoApprove } = require("./autoApprove.js");
 const { normalizeBudget } = require("./budgetCaps.js");
+const { localSpeechConfig } = require("./speech-config.js");
 
 /**
  * @param {unknown} u
@@ -76,7 +78,10 @@ function parseAgentProfile(item, strict) {
   if (model !== null && typeof model !== "string") {
     return fail("agentProfiles entry model must be a string or null");
   }
-  const effort = rec.reasoningEffort;
+  const legacy = rec.reasoningEffort === "ultracode";
+  const eligible = require("./providers.js").modelSupportsUltracode(getProvider(provider.split(":")[0]), model);
+  const effort = legacy ? (eligible ? "xhigh" : null) : rec.reasoningEffort;
+  if (strict && rec.ultracode === true && !eligible) return fail("Ultracode requires an xhigh-capable Claude model");
   if (effort !== null && !REASONING_EFFORTS.has(effort)) {
     return fail(
       "agentProfiles entry reasoningEffort must be one of low, medium, high, xhigh, max, ultra, ultracode, or null",
@@ -144,6 +149,7 @@ function parseAgentProfile(item, strict) {
     provider,
     model,
     reasoningEffort: /** @type {string | null} */ (effort),
+    ...((rec.ultracode === true || legacy) && eligible ? { ultracode: true } : {}),
     ...plan,
     permissionMode: /** @type {string} */ (permissionMode),
     ...(policy ? { policy } : {}),
@@ -288,6 +294,23 @@ function normalizeDefaultProvider(raw) {
   if (typeof raw !== "string") return null;
   const id = raw.trim();
   return id || null;
+}
+
+/**
+ * Settings.defaultAccounts (#1859): provider id -> instance id. Junk keys
+ * and non-string ids are dropped; an id whose instance is gone is kept here
+ * and ignored at use (defaultAccountFor), so re-adding it restores it.
+ * @param {unknown} raw
+ * @returns {Record<string, string>}
+ */
+function normalizeDefaultAccounts(raw) {
+  /** @type {Record<string, string>} */
+  const out = {};
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return out;
+  for (const [k, v] of Object.entries(raw)) {
+    if (/^[a-z0-9-]{1,40}$/.test(k) && typeof v === "string" && v.trim()) out[k] = v.trim();
+  }
+  return out;
 }
 
 /**
@@ -460,6 +483,12 @@ function validateQuotaFailover(raw) {
  * closeToTray: default off; only an explicit true opts into hiding behind
  * a tray icon on window close instead of quitting (Windows/Linux, #1807).
  *
+ * menuBarUsage: default off; only an explicit true shows subscription
+ * usage and the account picker in the menu bar / tray (#1859).
+ *
+ * defaultAccounts: per-CLI default account (#1859), `{ claude: "work" }`.
+ * Only string instance ids survive; absent = the CLI's own login.
+ *
  * resumeInterruptedRuns: shipped opt-in (#1512 I3), then defaulted on
  * (#1788) for anyone who never chose. normalizeSettings cannot tell an
  * unset value from an explicit `false` once a store round-trips through
@@ -537,6 +566,8 @@ function normalizeSettings(raw) {
     confirmQuitWithActiveWork: true,
     pinchZoomWindow: true,
     closeToTray: false,
+    menuBarUsage: false,
+    defaultAccounts: {},
     resumeInterruptedRuns: true,
     resumeInterruptedRunsSet: false,
     combineQueuedFollowUps: true,
@@ -551,6 +582,7 @@ function normalizeSettings(raw) {
     maxConcurrentRuns: DEFAULT_MAX_CONCURRENT_RUNS,
     agentProfiles: [],
     providerInstances: [],
+    cliProxyUsage: normalizeCliProxyUsage(null),
     providerModels: {},
     defaultOrchestratorProfileId: null,
     promptSnippets: [],
@@ -639,6 +671,7 @@ function normalizeSettings(raw) {
   settings.providerInstances = normalizeProviderInstances(
     /** @type {{ providerInstances?: unknown }} */ (obj).providerInstances,
   );
+  settings.cliProxyUsage = normalizeCliProxyUsage(obj.cliProxyUsage);
   settings.providerModels = parseProviderModels(
     /** @type {{ providerModels?: unknown }} */ (obj).providerModels,
     false,
@@ -732,6 +765,12 @@ function normalizeSettings(raw) {
   // everywhere so a synced store round-trips cleanly across platforms.
   settings.closeToTray =
     /** @type {{ closeToTray?: unknown }} */ (obj).closeToTray === true;
+  // menuBarUsage (#1859): default off; only an explicit true opts in.
+  settings.menuBarUsage =
+    /** @type {{ menuBarUsage?: unknown }} */ (obj).menuBarUsage === true;
+  settings.defaultAccounts = normalizeDefaultAccounts(
+    /** @type {{ defaultAccounts?: unknown }} */ (obj).defaultAccounts,
+  );
   // #1788: `resumeInterruptedRunsSet` only ever becomes true via setSettings
   // (store-settings-methods.js), the moment a human actually patches this
   // key. Absent -> never touched -> default true, whatever a prior save
@@ -884,7 +923,7 @@ const SPEECH_PROVIDERS = ["local", "openai", "elevenlabs"];
  * sealed at rest (secrets.js) and never sent to the renderer (mcp.js).
  *
  * @param {unknown} raw
- * @returns {{ provider: "local" | "openai" | "elevenlabs", openaiApiKey: string | null, elevenlabsApiKey: string | null }}
+ * @returns {{ provider: "local" | "openai" | "elevenlabs", openaiApiKey: string | null, elevenlabsApiKey: string | null, localModel: string, language: string }}
  */
 function normalizeSpeechSettings(raw) {
   const obj =
@@ -898,6 +937,7 @@ function normalizeSpeechSettings(raw) {
         ? obj.provider
         : "local"
     ),
+    ...localSpeechConfig(obj),
     openaiApiKey: key(obj.openaiApiKey),
     elevenlabsApiKey: key(obj.elevenlabsApiKey),
   };
@@ -1050,6 +1090,7 @@ module.exports = {
   parsePromptSnippets,
   DEFAULT_AUTO_SETTLE_AFTER_DAYS,
   normalizeDefaultProvider,
+  normalizeDefaultAccounts,
   normalizeDefaultModel,
   normalizeGitTextModel,
   validateGitTextModel,

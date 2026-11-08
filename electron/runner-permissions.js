@@ -34,6 +34,8 @@ const {
   resolveEditedCommand,
   ruleLabel,
   sessionAllowRule,
+  rulePrefixes,
+  coveredByPrefixes,
 } = require("./permissionCommand.js");
 const { normalizeQuestions } = require("./questions.js");
 const threadSecrets = require("./threadSecrets.js");
@@ -270,27 +272,37 @@ function createPermissions(ctx) {
   }
 
   /**
-   * Always allow on a command also remembers that exact command on the
-   * thread. The CLI's session rule alone is not enough: it dies with the
-   * process (idle reap, restart, a settings respawn), and the CLI re-asks
-   * some commands whatever the rule says (a `cd … && git …` compound, writes
-   * outside the project). ponytail: exact text only; the CLI rule covers
-   * variants while its process lives.
+   * Always allow on a command also remembers it on the thread: the exact
+   * text, plus the prefixes (`git push`) of the session rules it sent the
+   * CLI (#1854). The CLI's session rule alone is not enough: it dies with
+   * the process (idle reap, restart, a settings respawn), and the CLI
+   * re-asks some commands whatever the rule says (a `cd … && git …`
+   * compound, writes outside the project).
    * @param {string} threadId
    * @param {string} toolName
    * @param {string} command
+   * @param {{ toolName: string, ruleContent?: string }[]} [rules]
    */
-  function rememberAlwaysAllow(threadId, toolName, command) {
+  function rememberAlwaysAllow(threadId, toolName, command, rules) {
+    const t = store.getThread(threadId);
     const key = commandKey(toolName, command);
-    const keys = store.getThread(threadId)?.alwaysAllowKeys;
+    const keys = t?.alwaysAllowKeys;
     const prev = Array.isArray(keys) ? keys.filter((k) => k !== key) : [];
+    const added = rulePrefixes(toolName, rules || []).map((prefix) => ({ toolName, prefix }));
+    const same = (a, b) => a.toolName === b.toolName && a.prefix === b.prefix;
+    const old = Array.isArray(t?.alwaysAllowRules) ? t.alwaysAllowRules : [];
     store.updateThread(threadId, {
       alwaysAllowKeys: [...prev, key].slice(-ALWAYS_ALLOW_CAP),
+      alwaysAllowRules: [
+        ...old.filter((r) => !added.some((a) => same(a, r))),
+        ...added,
+      ].slice(-ALWAYS_ALLOW_CAP),
     });
   }
 
   /**
-   * Whether this ask is a command the user already always-allowed here.
+   * Whether this ask is a command the user already always-allowed here:
+   * the exact text, or every simple command in it under a remembered prefix.
    * @param {string} threadId
    * @param {string} toolName
    * @param {unknown} rawInput
@@ -298,8 +310,14 @@ function createPermissions(ctx) {
   function isAlwaysAllowed(threadId, toolName, rawInput) {
     const command = extractCommand(rawInput);
     if (!command || !command.trim()) return false;
-    const keys = store.getThread(threadId)?.alwaysAllowKeys;
-    return Array.isArray(keys) && keys.includes(commandKey(toolName, command));
+    const t = store.getThread(threadId);
+    const keys = t?.alwaysAllowKeys;
+    if (Array.isArray(keys) && keys.includes(commandKey(toolName, command))) return true;
+    const rules = Array.isArray(t?.alwaysAllowRules) ? t.alwaysAllowRules : [];
+    return coveredByPrefixes(
+      command,
+      rules.filter((r) => r && r.toolName === toolName && typeof r.prefix === "string").map((r) => r.prefix),
+    );
   }
 
   /**
@@ -431,7 +449,11 @@ function createPermissions(ctx) {
       return true;
     }
 
-    if (!pending.inputRequest && takeRestartGrant(threadId, pending.toolName, pending.rawInput)) {
+    // #1854: Full access (read live) accepts the shell, edit and sandbox
+    // asks a guardrail did not deny; MCP asks and questions still prompt.
+    const fullAccess = live && live.permissionMode === "bypassPermissions" &&
+      ["command", "fileChange", "approval"].includes(classified.action);
+    if (fullAccess || (!pending.inputRequest && takeRestartGrant(threadId, pending.toolName, pending.rawInput))) {
       replyCodexJsonRpc(e, id, approvalResponse(pending.method,
         mapSolentaDecision("allow", pending.availableDecisions), pending.grant));
       return true;
@@ -804,7 +826,7 @@ function createPermissions(ctx) {
         const labels = rule.rules.map((r) => ruleLabel(pending.toolName, r));
         ruleNote = ` (rule: ${truncate(labels.join(", "), 200)})`;
         if (resolved.field && resolved.next) {
-          rememberAlwaysAllow(threadId, pending.toolName, resolved.next);
+          rememberAlwaysAllow(threadId, pending.toolName, resolved.next, rule.rules);
         }
       }
     } else {

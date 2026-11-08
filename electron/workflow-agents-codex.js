@@ -123,6 +123,7 @@ function spawnAgentCodex(opts) {
       ]);
       envExtra.CODEX_HOME = dest;
       envExtra.SOLENTA_WORKTREE = cwd;
+      envExtra.SOLENTA_PERMISSION_MODE = permissionMode || "default";
     } catch {
       // best-effort
     }
@@ -138,9 +139,11 @@ function spawnAgentCodex(opts) {
         wrapEnv = {
           CODEX_HOME: dest,
           SOLENTA_WORKTREE: (project && project.remotePath) || cwd,
+          SOLENTA_PERMISSION_MODE: permissionMode || "default",
         };
         envExtra.CODEX_HOME = dest;
         envExtra.SOLENTA_WORKTREE = wrapEnv.SOLENTA_WORKTREE;
+        envExtra.SOLENTA_PERMISSION_MODE = wrapEnv.SOLENTA_PERMISSION_MODE;
       }
     } catch {
       // Deploy miss must not kill the phase; stream notice remains.
@@ -191,7 +194,12 @@ function spawnAgentCodex(opts) {
       }
       const cmd = extractCommandItem(ev);
       if (cmd && cmd.phase === "started") {
-        notePhaseGuardrail(opts, "Bash", { command: cmd.command });
+        notePhaseGuardrail(
+          opts,
+          "Bash",
+          { command: cmd.command },
+          permissionMode === "bypassPermissions",
+        );
       }
     },
     onExit: ({ code, stderr }) => {

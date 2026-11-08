@@ -191,6 +191,8 @@ export interface ProjectInfo {
    * setup (#396). Absent = reuse it when the lockfile matches (macOS).
    */
   setupCacheOff?: boolean;
+  /** Opt in to stop managed dev servers and quick actions when their thread settles. */
+  stopOnSettle?: boolean;
   /** Worktree branch prefix (#1506). Absent = "coder/". */
   branchPrefix?: string;
   /** Defaults for new threads in this project (#1501). Absent = global defaults. */
@@ -239,6 +241,7 @@ export interface ProjectThreadDefaults {
   /** Model id for `provider`; absent = provider default. */
   model?: string;
   reasoningEffort?: ReasoningEffort;
+  ultracode?: boolean;
   permissionMode?: PermissionMode;
   /**
    * When true, the defaults follow the last pick the user made on a new
@@ -249,6 +252,7 @@ export interface ProjectThreadDefaults {
 
 /** One named per-project shell command (issue #153). */
 export interface ProjectQuickAction {
+  stopOnSettle?: boolean;
   id: string;
   name: string;
   command: string;
@@ -272,6 +276,7 @@ export interface ProjectRepoConfig {
    * or its PR merging/closing. Also runnable as actionId "onSettle".
    */
   onSettleCommand?: string;
+  devServerStopOnSettle?: boolean;
   /**
    * Where setupCommand came from when not solenta.json: "solenta.local.json"
    * (#438) or the repo's env spec (#396), e.g. ".devcontainer/devcontainer.json".
@@ -385,6 +390,83 @@ export interface AgentConfigWriteResult {
   written: string[];
 }
 
+/** Instruction-file Fusion (#1856). */
+export type FusionFileKind =
+  | "agents"
+  | "claude"
+  | "gemini"
+  | "cursor"
+  | "copilot"
+  | "windsurf";
+
+export type FusionFactKey =
+  | "packageManager"
+  | "install"
+  | "test"
+  | "build"
+  | "lint"
+  | "format";
+
+export interface FusionSource {
+  path: string;
+  /** 1-based. */
+  line: number;
+}
+
+export interface FusionOption {
+  value: string;
+  sources: FusionSource[];
+}
+
+export interface FusionConflict {
+  /** Fact key, or `line:<hash>` for near-duplicate lines. */
+  id: string;
+  key: FusionFactKey | "line";
+  label: string;
+  options: FusionOption[];
+  /** Effective pick: the caller's, else the last sync's, else most-cited. */
+  pick: string;
+}
+
+export interface FusionStatus {
+  synced: boolean;
+  /** Newest mtime of a synced file; null when not synced. */
+  syncedAt: number | null;
+  /** Files whose blocks say different things (CLAUDE.md's @AGENTS.md counts as AGENTS.md's). */
+  disagree?: string[];
+}
+
+export interface FusionPlan {
+  projectId: string;
+  files: Array<{
+    path: string;
+    kind: FusionFileKind;
+    kindLabel: string;
+    hasBlock: boolean;
+  }>;
+  /** `fused` is the value written to the block: commands under the picked package manager. */
+  agreed: Array<{ key: FusionFactKey; label: string; fused: string } & FusionOption>;
+  conflicts: FusionConflict[];
+  /** One unified diff per file; empty when nothing would change. */
+  diffs: Array<{ path: string; diff: string; changed: boolean }>;
+  status: FusionStatus;
+}
+
+export interface FusionInput {
+  projectId: string;
+  picks?: Record<string, string>;
+  /** CLAUDE.md gets `@AGENTS.md` instead of a copy when AGENTS.md is synced. */
+  importInClaude?: boolean;
+  /** Ticked files. The preview uses them for the CLAUDE.md import decision. */
+  paths?: string[];
+}
+
+export interface FusionSyncResult {
+  projectId: string;
+  written: string[];
+  status: FusionStatus;
+}
+
 /** Optional remotes for projects.add. Empty/absent = local project. */
 export interface AddProjectOptions {
   remoteHost?: string;
@@ -489,6 +571,7 @@ export interface ProjectUpdateInput {
   waitForSetup?: boolean | null;
   /** #396. false / null clears it. */
   setupCacheOff?: boolean | null;
+  stopOnSettle?: boolean | null;
   /** #1506. Empty / null restores "coder/"; an invalid prefix rejects. */
   branchPrefix?: string | null;
   /** New-thread defaults (#1501). Replaces the whole object; null clears. */
@@ -1077,6 +1160,9 @@ export interface ThreadInfo {
   model: string | null;
   /** Provider session id, persisted after the first turn so follow-ups resume context. */
   sessionId: string | null;
+  /** Last fresh-context divider; earlier visible history is excluded from provider context. */
+  contextBoundaryId?: string | null;
+  freshContextPending?: boolean;
   /**
    * One-shot context replay (issue #254). Set by `threads.rewind`, which
    * clears sessionId because a CLI session cannot be rewound: the next turn
@@ -1121,6 +1207,8 @@ export interface ThreadInfo {
    * lists `fast`; absent on older store rows.
    */
   fast?: boolean;
+  /** Session mode: xhigh effort plus dynamic workflows on supported Claude models. */
+  ultracode?: boolean;
   /**
    * Agent-facing browser access (issue #1797). Default true (absent on
    * older store rows reads as on). `false` turns off the Browser pane's
@@ -1572,6 +1660,8 @@ export interface ThreadSummaryInfo {
   id: string;
   title: string;
   provider: string;
+  /** Named account of `provider` (#453); absent on the default account. */
+  providerInstance?: string | null;
   status: ThreadStatus;
   handoffFrom: string | null;
   /**
@@ -1659,6 +1749,8 @@ export interface AttachmentInfo {
 export type CrossThreadInbound = "accept" | "queue-only" | "refuse";
 
 export interface ChatMessage {
+  /** Persistent divider marking a new provider conversation. */
+  sessionBoundary?: boolean;
   id: string;
   role: "user" | "assistant" | "event" | "tool";
   /** For role "tool" this is a one-line summary, e.g. "Bash: npm test". */
@@ -1716,6 +1808,12 @@ export interface NotifyEvents {
   ciFailed: boolean;
 }
 
+/** Claude's running compaction policy; absent when the CLI cannot report it. */
+export type ContextCompaction =
+  | { kind: "threshold"; tokens: number; source: "enforced" | "reported" }
+  | { kind: "disabled" }
+  | { kind: "reactive" };
+
 /** Cumulative session usage across turns of a thread. */
 export interface SessionUsage {
   model: string | null;
@@ -1743,6 +1841,8 @@ export interface SessionUsage {
    * model change. Absent when unreported — the ring then uses modelInfo.
    */
   contextWindow?: number;
+  /** Separate from the model ceiling; reported thresholds are CLI estimates. */
+  contextCompaction?: ContextCompaction;
 }
 
 export interface FileChange {
@@ -1970,12 +2070,23 @@ export interface ProviderUsageWindow {
 
 export type ProviderUsageStatus = "ok" | "unavailable" | "error";
 
+export interface CliProxyUsageSettings {
+  enabled: boolean;
+  managementUrl: string;
+  /** Omit to preserve; null clears. Never returned over renderer IPC. */
+  managementKey?: string | null;
+  hasManagementKey?: boolean;
+}
+
 /**
  * Account quotas for one provider CLI. Separate from the local byDay
  * ledger: this is what the vendor reports, or an honest unavailable/error.
  */
 export interface ProviderUsage {
   provider: string;
+  /** External source rows have their own identity and never select a native account. */
+  source?: "cliproxy";
+  label?: string;
   status: ProviderUsageStatus;
   windows: ProviderUsageWindow[];
   fetchedAt: number | null;
@@ -3138,16 +3249,18 @@ export interface PrReaction {
   viewerHasReacted: boolean;
 }
 
-/** One issue-comment on a PR from `gh pr view --json comments`. */
+/** An ordinary comment, submitted review, or inline discussion comment on a PR. */
 export interface PrComment {
   /** REST comment id (resolved from `databaseId` or the comment URL), for Edit/React. */
   id?: number;
-  /**
-   * Which REST family owns this comment's id: `/issues/comments/{id}` vs
-   * `/pulls/comments/{id}`. Always "issue" today: only top-level PR/issue
-   * comments are fetched, never inline review comments.
-   */
-  type: "issue" | "review";
+  /** Submitted review bodies have a different REST family from inline comments. */
+  type: "issue" | "review" | "review-summary";
+  path?: string;
+  line?: number;
+  startLine?: number;
+  side?: "LEFT" | "RIGHT";
+  outdated?: boolean;
+  diffHunk?: string;
   author: string;
   body: string;
   createdAt: string;
@@ -3157,8 +3270,21 @@ export interface PrComment {
   reactions?: PrReaction[];
 }
 
+export interface GitlabReview {
+  reviewers: Array<{ id: string; login: string; state: "unreviewed" | "review_started" | "reviewed" | "approved" | "unapproved" | "requested_changes" | "unknown" }>;
+  viewerId?: string;
+  canRequestChanges: boolean;
+  reason?: string;
+}
+
+export type PrRequestChangesResult =
+  | { ok: true; review: GitlabReview }
+  | { ok: false; reason: string };
+
 /** Full PR for the in-app workspace (issue #154). */
 export interface PrDetail {
+  forge?: "github" | "gitlab";
+  gitlabReview?: GitlabReview;
   number: number;
   title: string;
   body: string;
@@ -3187,6 +3313,8 @@ export interface PrDetail {
   /** CI bucket counts, for the PR hover card (#1771). Absent when gh has none to report. */
   checks?: { passing: number; failing: number; pending: number };
   comments: PrComment[];
+  /** Some comment sources failed; available comments remain usable. */
+  commentsError?: string;
 }
 
 export type PrDetailResult =
@@ -3340,7 +3468,7 @@ export type DiscussionDetailForMentionResult =
  *
  * These are the levels the installed CLIs actually accept, verified against
  * them rather than copied from a design: `claude --effort` takes low, medium,
- * high, xhigh, max, plus the session-only `ultracode` token; Codex coding
+ * high, xhigh, max. Ultracode is a separate session mode; Codex coding
  * clients add `ultra` (parallel subagents) above `max`; grok takes low,
  * medium, high, xhigh. A provider advertises its own subset through
  * ProviderInfo.efforts, and a model may narrow that further via
@@ -3574,6 +3702,8 @@ export interface ProviderInfo {
    * The composer hides the Agent picker when this is missing or false.
    */
   supportsAgents?: boolean;
+  /** Installed Claude CLI supports the session setting (2.1.219+). */
+  supportsUltracode?: boolean;
   /**
    * True when plan-mode turns can run on a separate plan model and the same
    * session resumes on the act model afterwards (#1716: claude, codex).
@@ -3615,6 +3745,8 @@ export interface ProviderInfo {
    */
   baseProvider?: string;
   instanceId?: string;
+  /** Base rows (#1859): name of the default account new threads of this CLI use. */
+  defaultAccount?: string;
   /**
    * A custom CLI row (#458): raw stdout transcript, no work-log cards,
    * usage, resume or sign-in state. The UI labels it so.
@@ -3821,6 +3953,8 @@ export type AutomationStage = "observe" | "draft" | "act";
 
 /** A scheduled agent run (Synara-style automation). */
 export interface AutomationInfo {
+  sessionMode?: "new-thread" | "continue" | "fresh";
+  destinationThreadId?: string | null;
   id: string;
   projectId: string;
   /** Private rows stay on this machine; project rows come from solenta.json. */
@@ -3863,6 +3997,8 @@ export interface AutomationInfo {
 }
 
 export interface AutomationWrite {
+  sessionMode?: "new-thread" | "continue" | "fresh";
+  destinationThreadId?: string | null;
   projectId: string;
   name: string;
   prompt: string;
@@ -3894,6 +4030,10 @@ export interface AutomationWrite {
  * typed `automationId` stamp on the thread, not the title.
  */
 export interface AutomationRunInfo {
+  /** Stable per-fire identity for fixed destinations. */
+  id?: string;
+  runId?: string | null;
+  pending?: boolean;
   threadId: string;
   /** Thread create time; the fire that minted this run. */
   startedAt: number;
@@ -4132,6 +4272,18 @@ export interface AppSettings {
    */
   closeToTray: boolean;
   /**
+   * Subscription usage and the account picker in the menu bar (#1859): its
+   * own menu bar item on macOS, extra rows in the close-to-tray menu on
+   * Windows/Linux. Picking an account sets defaultProvider. Default off.
+   */
+  menuBarUsage: boolean;
+  /**
+   * Per-CLI default account (#1859): provider id -> instance id, e.g.
+   * `{ claude: "work" }`. New threads on a bare provider and new terminals
+   * use it; absent = the CLI's own login. Set from the menu bar.
+   */
+  defaultAccounts: Record<string, string>;
+  /**
    * After a restart, give each thread whose run was interrupted one
    * automatic follow-up turn (issue #1512 I3). Default off.
    */
@@ -4212,6 +4364,8 @@ export interface AppSettings {
   agentProfiles: AgentProfile[];
   /** Named provider instances (#453). */
   providerInstances: ProviderInstance[];
+  /** Opt-in, read-only CLIProxy Claude quotas. The key is write-only in renderer IPC. */
+  cliProxyUsage?: CliProxyUsageSettings;
   /** Model favourites and custom ids per provider ref (#1714). */
   providerModels?: Record<string, ProviderModelPrefs>;
   /**
@@ -4449,6 +4603,7 @@ export interface AgentProfile {
   model: string | null;
   /** null = provider default (no --effort flag). */
   reasoningEffort: ReasoningEffort | null;
+  ultracode?: boolean;
   /** Plan-mode model (#1716); absent = plan on `model`. */
   planModel?: string | null;
   /** Plan-mode effort; absent/null keeps `reasoningEffort`. */
@@ -5500,6 +5655,9 @@ export type SpeechProvider = "local" | "openai" | "elevenlabs";
 
 export interface SpeechSettings {
   provider: SpeechProvider;
+  /** Local model and locale; missing values preserve legacy English dictation. */
+  localModel?: string;
+  language?: string;
   /** Write-only; null clears it. */
   openaiApiKey?: string | null;
   elevenlabsApiKey?: string | null;
@@ -5511,6 +5669,11 @@ export interface SpeechStatus {
   state: SpeechState;
   runtimeReady: boolean;
   modelReady: boolean;
+  /** Authoritative selected local download, including its exact size. */
+  model?: { id: string; label: string; bytes: number };
+  language?: string;
+  /** Blocks local capture/download; cloud remains independently available. */
+  localError?: string;
   download?: { bytesReceived: number; bytesTotal: number };
   /** Incremental suffix. Concatenate; do not replace the provisional range. */
   delta?: string;
@@ -5944,6 +6107,10 @@ export interface CoderApi {
       projectId: string;
       targets?: string[];
     }): Promise<AgentConfigWriteResult>;
+    /** Instruction-file Fusion plan: conflicts, picks and per-file diffs (#1856). */
+    fusionPlan(input: FusionInput): Promise<FusionPlan>;
+    /** Write the fusion block into the ticked files only. */
+    fusionSync(input: FusionInput & { paths: string[] }): Promise<FusionSyncResult>;
     /**
      * #438: open a PR (from a new worktree thread) that moves the stored
      * setup command and quick actions into solenta.json.
@@ -6177,6 +6344,8 @@ export interface CoderApi {
      * event message) arrives via thread:updated.
      */
     restartAgentSession(input: { threadId: string }): Promise<void>;
+    /** New provider conversation in this thread; retains transcript, worktree and historical spend. */
+    freshAgentContext(input: { threadId: string }): Promise<void>;
     /**
      * "Save plan to file" (#1501): write plan markdown to
      * docs/plans/<date>-<slug>.md in the thread's checkout. Never
@@ -6348,13 +6517,15 @@ export interface CoderApi {
     setPrWatch(input: { threadId: string; enabled: boolean }): Promise<ThreadInfo>;
     /**
      * Link a pull request to this thread (#1527), including PRs in
-     * another repo. First link becomes `prNumber`. Never bumps updatedAt.
+     * another repo. First link (or `primary: true`) becomes `prNumber`.
+     * Never bumps updatedAt.
      */
     linkPullRequest(input: {
       threadId: string;
       number: number;
       repo?: string;
       url?: string;
+      primary?: boolean;
     }): Promise<ThreadInfo>;
     /**
      * Set or clear the per-thread scratch pad. Trims, caps at
@@ -6627,6 +6798,7 @@ export interface CoderApi {
      * model of the thread's provider has a fast tier.
      */
     setFast(input: { threadId: string; fast: boolean }): Promise<ThreadInfo>;
+    setUltracode(input: { threadId: string; ultracode: boolean }): Promise<ThreadInfo>;
     /**
      * Plan-mode model + effort (#1716). Plan-mode turns run on it; leaving
      * plan mode resumes the same session on `model`. null clears both.
@@ -7094,6 +7266,7 @@ export interface CoderApi {
      * Full PR (title, body, comments, draft) for the in-app workspace.
      * Failures stay in-band like listPrs.
      */
+    prCompletions(input: { projectPath: string; repo?: string; kind: "@" | "#" | "!"; query: string; page?: number }): Promise<{ ok: true; items: Array<{ value: string; label: string }>; hasMore: boolean } | { ok: false; reason: string }>;
     prDetail(input: {
       projectPath: string;
       prNumber: number;
@@ -7108,9 +7281,14 @@ export interface CoderApi {
       title?: string;
       body?: string;
     }): Promise<PrDetailResult>;
-    /**
-     * Post an issue comment on a PR via `gh pr comment`. Failures in-band.
-     */
+    /** Records a GitLab reviewer verdict after checking current host capability. */
+    prRequestChanges(input: {
+      projectPath: string;
+      prNumber: number;
+      repo?: string;
+      viewerId: string;
+    }): Promise<PrRequestChangesResult>;
+    /** Post a comment on a PR. Failures stay in-band. */
     prComment(input: {
       projectPath: string;
       prNumber: number;
@@ -7804,7 +7982,7 @@ export interface CoderApi {
     /** Runtime/model availability and lifecycle. */
     status(): Promise<SpeechStatus>;
     /** User-approved model download; progress arrives on speech:changed. */
-    download(): Promise<void>;
+    download(input?: { modelId: string }): Promise<void>;
     /** One app-wide realtime session. Returns an opaque session id. */
     start(): Promise<{ sessionId: string }>;
     /**

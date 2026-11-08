@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { formatRelativeAge, middleTruncate } from "../format";
 import { normalizePrLinks } from "../prLinks";
 import { canSubmitComment, canSubmitPr } from "../prUi";
@@ -15,7 +15,9 @@ import type {
   ReactionContent,
   ThreadInfo,
 } from "../shared/ipc";
-import { Markdown } from "./Markdown";
+import { Markdown, MarkdownBody, type MarkdownTask } from "./Markdown";
+import { toggleDescriptionTask } from "../descriptionTasks";
+import { PrCompletionTextarea } from "./PrCompletionTextarea";
 import { PrCodeTab } from "./PrCodeTab";
 import styles from "./PrWorkspacePanel.module.css";
 
@@ -23,6 +25,12 @@ const MERGE_LABEL: Record<MergeMethod, string> = {
   squash: "Squash merge",
   merge: "Merge commit",
   rebase: "Rebase merge",
+};
+
+const REVIEW_LABEL = {
+  unreviewed: "Awaiting review", review_started: "Review in progress",
+  reviewed: "Reviewed", approved: "Approved", unapproved: "Approval removed",
+  requested_changes: "Changes requested", unknown: "Unknown review state",
 };
 
 /**
@@ -61,6 +69,7 @@ export interface PrWorkspacePanelProps {
     title?: string;
     body?: string;
   }) => Promise<PrDetailResult>;
+  prRequestChanges?: CoderApi["git"]["prRequestChanges"];
   prComment: (input: {
     projectPath: string;
     prNumber: number;
@@ -109,6 +118,8 @@ export interface PrWorkspacePanelProps {
     remove?: boolean;
     reactionId?: number;
   }) => Promise<PrReactionResult>;
+  agentThreads?: ThreadInfo[];
+  onAddToAgent?: (input: { threadId: string | null; pr: PrDetail; comment: PrComment }) => Promise<void>;
   onSelectThread: (id: string) => void;
   onClose: () => void;
 }
@@ -120,24 +131,35 @@ export function PrWorkspacePanel({
   prDetail,
   prEdit,
   prComment,
+  prRequestChanges,
   prClose,
   prReady,
   prMergeAt,
   prUpdateBranch,
   prCommentEdit,
   prReaction,
+  agentThreads = [],
+  onAddToAgent,
   onSelectThread,
   onClose,
 }: PrWorkspacePanelProps) {
+  const matchedAgentId = agentThreads.some((thread) => thread.id === matchedThread?.id)
+    ? matchedThread?.id ?? ""
+    : "";
+  const [agentThreadId, setAgentThreadId] = useState(matchedAgentId);
+  useEffect(() => {
+    setAgentThreadId(matchedAgentId);
+  }, [projectPath, prNumber, matchedAgentId]);
   const [pr, setPr] = useState<PrDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [checklistError, setChecklistError] = useState(false);
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [comment, setComment] = useState("");
   const [preview, setPreview] = useState(false);
   const [pending, setPending] = useState<string | null>(null);
-  const [editingComment, setEditingComment] = useState<number | null>(null);
+  const [editingComment, setEditingComment] = useState<string | null>(null);
   const [editCommentBody, setEditCommentBody] = useState("");
   const [reactionPickerFor, setReactionPickerFor] = useState<number | null>(null);
   // Reaction id cached per comment+content from a same-session add, so a
@@ -167,6 +189,17 @@ export function PrWorkspacePanel({
   const [tab, setTab] = useState<"conversation" | "code">("conversation");
   const [activePr, setActivePr] = useState(prNumber);
   const [activeRepo, setActiveRepo] = useState<string | undefined>(undefined);
+  const identity = `${projectPath}\0${prNumber}\0${activeRepo || ""}\0${activePr}`;
+  const selection = useRef({ identity, generation: 0 });
+  if (selection.current.identity !== identity) selection.current = { identity, generation: selection.current.generation + 1 };
+  const generation = selection.current.generation;
+  const [detailGeneration, setDetailGeneration] = useState<number | null>(null);
+  const reviewBusy = useRef<number | null>(null);
+  const taskBusy = useRef<number | null>(null);
+  useEffect(() => { setPending(null); setChecklistError(false); }, [identity]);
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+
   const [stack, setStack] = useState<PrStackEntry[]>([]);
   const [stackBusy, setStackBusy] = useState<string | null>(null);
   const links = normalizePrLinks(matchedThread || { prNumber, prUrl: null, prState: null });
@@ -177,7 +210,8 @@ export function PrWorkspacePanel({
     setTab("conversation");
   }, [prNumber]);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (commentsOnly = false) => {
+    const requestedGeneration = generation;
     setLoading(true);
     try {
       const result = await prDetail({
@@ -185,22 +219,38 @@ export function PrWorkspacePanel({
         prNumber: activePr,
         ...(activeRepo ? { repo: activeRepo } : {}),
       });
+      if (!mounted.current || selection.current.generation !== requestedGeneration) return;
       if (!result.ok) {
         setError(result.reason);
-        setPr(null);
+        if (!commentsOnly) setPr(null);
         return;
       }
-      setPr(result.pr);
-      setTitle(result.pr.title);
-      setBody(result.pr.body);
+      setDetailGeneration(requestedGeneration);
+      setPr((previous) => {
+        const samePr = previous?.url === result.pr.url;
+        const comments = samePr && result.pr.commentsError
+          ? [...new Map([...previous.comments, ...result.pr.comments].map((row) => [
+              `${row.type}:${row.id ?? row.url ?? `${row.author}:${row.createdAt}:${row.body}`}`, row,
+            ])).values()].sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+          : result.pr.comments;
+        return commentsOnly && samePr
+          ? { ...previous, comments, commentsError: result.pr.commentsError, gitlabReview: result.pr.gitlabReview }
+          : { ...result.pr, comments };
+      });
+      if (!commentsOnly) {
+        setTitle(result.pr.title);
+        setBody(result.pr.body);
+      }
       setError(null);
+      setChecklistError(false);
     } catch (err) {
+      if (!mounted.current || selection.current.generation !== requestedGeneration) return;
       setError(rejectReason(err, "Couldn't load this pull request"));
-      setPr(null);
+      if (!commentsOnly) setPr(null);
     } finally {
-      setLoading(false);
+      if (mounted.current && selection.current.generation === requestedGeneration) setLoading(false);
     }
-  }, [prDetail, projectPath, activePr, activeRepo]);
+  }, [prDetail, projectPath, activePr, activeRepo, generation]);
 
   useEffect(() => {
     void load();
@@ -259,8 +309,28 @@ export function PrWorkspacePanel({
 
   const prArgs = { projectPath, prNumber: activePr, ...(activeRepo ? { repo: activeRepo } : {}) };
 
+  const requestChanges = async () => {
+    const review = pr?.gitlabReview;
+    if (!prRequestChanges || !review?.canRequestChanges || !review.viewerId || pending || loading || detailGeneration !== generation || reviewBusy.current === generation) return;
+    const requestedGeneration = generation;
+    reviewBusy.current = generation;
+    setPending("requestChanges");
+    try {
+      const result = await prRequestChanges({ ...prArgs, viewerId: review.viewerId });
+      if (!mounted.current || selection.current.generation !== requestedGeneration) return;
+      if (!result.ok) { setError(result.reason); return; }
+      setPr((previous) => previous ? { ...previous, gitlabReview: result.review } : previous);
+      setError(null);
+    } catch (err) {
+      if (mounted.current && selection.current.generation === requestedGeneration) setError(rejectReason(err, "Couldn't request changes"));
+    } finally {
+      if (reviewBusy.current === requestedGeneration) reviewBusy.current = null;
+      if (mounted.current && selection.current.generation === requestedGeneration) setPending(null);
+    }
+  };
+
   const saveCommentEdit = async (row: PrComment) => {
-    if (!prCommentEdit || row.id == null || pending) return;
+    if (!prCommentEdit || row.id == null || row.type === "review-summary" || pending) return;
     setPending("editComment");
     try {
       const result = await prCommentEdit({
@@ -309,7 +379,7 @@ export function PrWorkspacePanel({
     }
     setPr({
       ...pr,
-      comments: pr.comments.map((c) => (c.id === rowId ? { ...c, reactions: list } : c)),
+      comments: pr.comments.map((c) => (c.type === row.type && c.id === rowId ? { ...c, reactions: list } : c)),
     });
     setReactionPickerFor(null);
     try {
@@ -371,6 +441,37 @@ export function PrWorkspacePanel({
   const dirty =
     pr != null && (title.trim() !== pr.title || body !== pr.body);
   const titleOk = canSubmitPr(title);
+  const toggleTask = async (task: MarkdownTask) => {
+    if (!pr || !open || dirty || pending || taskBusy.current === generation) return;
+    taskBusy.current = generation;
+    const requestedGeneration = generation;
+    setPending("checklist");
+    setChecklistError(false);
+    try {
+      const latest = await prDetail(prArgs);
+      if (!mounted.current || selection.current.generation !== requestedGeneration) return;
+      if (!latest.ok) throw new Error(latest.reason);
+      if (latest.pr.url !== pr.url || latest.pr.state !== "OPEN") throw new Error("This pull request changed. Reload and try again.");
+      const patched = toggleDescriptionTask(body, latest.pr.body, task);
+      // The forge CLI has no conditional description write. Fetching directly
+      // before writing narrows, but cannot eliminate, the remote write race.
+      const saved = await prEdit({ ...prArgs, body: patched });
+      if (!mounted.current || selection.current.generation !== requestedGeneration) return;
+      if (!saved.ok) throw new Error(saved.reason);
+      setPr(saved.pr);
+      setTitle(saved.pr.title);
+      setBody(saved.pr.body);
+      setError(null);
+    } catch (err) {
+      if (mounted.current && selection.current.generation === requestedGeneration) {
+        setError(rejectReason(err, "Couldn't update checklist"));
+        setChecklistError(true);
+      }
+    } finally {
+      if (taskBusy.current === requestedGeneration) taskBusy.current = null;
+      if (mounted.current && selection.current.generation === requestedGeneration) setPending(null);
+    }
+  };
 
   return (
     <aside className={styles.panel} data-pr-workspace="" data-pr-tab={tab}>
@@ -422,6 +523,7 @@ export function PrWorkspacePanel({
           role="tab"
           className={styles.tab}
           data-pr-tab="code"
+          disabled={pr?.forge === "gitlab"}
           aria-selected={tab === "code"}
           onClick={() => setTab("code")}
         >
@@ -463,6 +565,27 @@ export function PrWorkspacePanel({
             ) : null}
           </div>
 
+          {pr.forge === "gitlab" ? (
+            <section className={styles.field} data-pr-review="" aria-label="Merge request review">
+              <span className={styles.label}>Reviewers</span>
+              {pr.gitlabReview?.reviewers.map((reviewer) => (
+                <p key={reviewer.id} data-pr-reviewer={reviewer.login}>
+                  @{reviewer.login}: {REVIEW_LABEL[reviewer.state]}
+                </p>
+              ))}
+              {!pr.gitlabReview?.reviewers.length ? <p className={styles.hint}>No reviewer state available</p> : null}
+              {open ? (
+                <button type="button" className={styles.ghost} data-pr-request-changes=""
+                  disabled={!prRequestChanges || !pr.gitlabReview?.canRequestChanges || pending != null || loading || detailGeneration !== generation}
+                  onClick={() => void requestChanges()}>
+                  {pending === "requestChanges" ? "Requesting changes…" : "Request changes"}
+                </button>
+              ) : null}
+              {pr.gitlabReview?.reason ? <p className={styles.hint}>{pr.gitlabReview.reason}</p> : null}
+              {!pr.gitlabReview ? <p className={styles.hint}>Review submission unavailable. Reload to check this GitLab host.</p> : null}
+            </section>
+          ) : null}
+
           <label className={styles.field}>
             <span className={styles.label}>Title</span>
             <input
@@ -490,13 +613,13 @@ export function PrWorkspacePanel({
             {preview ? (
               <div className={styles.preview}>
                 {body.trim() ? (
-                  <Markdown text={body} />
+                  <MarkdownBody text={body} onTaskToggle={toggleTask} tasksDisabled={!open || dirty || pending != null} />
                 ) : (
                   <p className={styles.hint}>Nothing to preview</p>
                 )}
               </div>
             ) : (
-              <textarea
+              <PrCompletionTextarea projectPath={projectPath} repo={activeRepo} scope={String(activePr)}
                 className={styles.textarea}
                 data-pr-edit-body=""
                 value={body}
@@ -528,7 +651,7 @@ export function PrWorkspacePanel({
           ) : null}
 
           <div className={styles.actions}>
-            {open && prUpdateBranch && pr.mergeStateStatus === "BEHIND" ? (
+            {open && pr.forge !== "gitlab" && prUpdateBranch && pr.mergeStateStatus === "BEHIND" ? (
               <button
                 type="button"
                 className={styles.ghost}
@@ -541,7 +664,7 @@ export function PrWorkspacePanel({
                 {pending === "updateBranch" ? "Updating…" : "Update branch"}
               </button>
             ) : null}
-            {open && pr.isDraft ? (
+            {open && pr.forge !== "gitlab" && pr.isDraft ? (
               <button
                 type="button"
                 className={styles.ghost}
@@ -556,7 +679,7 @@ export function PrWorkspacePanel({
                 {pending === "ready" ? "Updating…" : "Mark ready"}
               </button>
             ) : null}
-            {open && !pr.isDraft ? (
+            {open && pr.forge !== "gitlab" && !pr.isDraft ? (
               <button
                 type="button"
                 className={styles.ghost}
@@ -576,7 +699,7 @@ export function PrWorkspacePanel({
                 type="button"
                 className={styles.primary}
                 data-pr-merge=""
-                disabled={pending != null}
+                disabled={pending != null || pr.forge === "gitlab"}
                 onClick={() => setConfirm("merge")}
               >
                 Merge
@@ -587,7 +710,7 @@ export function PrWorkspacePanel({
                 type="button"
                 className={styles.danger}
                 data-pr-close=""
-                disabled={pending != null}
+                disabled={pending != null || pr.forge === "gitlab"}
                 onClick={() => setConfirm("close")}
               >
                 Close
@@ -690,6 +813,12 @@ export function PrWorkspacePanel({
             </div>
           ) : null}
 
+          {checklistError && error ? (
+            <button type="button" className={styles.ghost} data-pr-checklist-reload=""
+              disabled={dirty || pending != null || loading} onClick={() => void load()}>
+              Reload pull request
+            </button>
+          ) : null}
           {error ? (
             <p className={styles.error} data-pr-workspace-error="">
               {error}
@@ -698,14 +827,37 @@ export function PrWorkspacePanel({
 
           <section className={styles.comments}>
             <h3 className={styles.subhead}>Discussion</h3>
+            {onAddToAgent ? (
+              <label className={styles.codePicker}>
+                Add comments to
+                <select
+                  aria-label="Agent draft"
+                  value={agentThreadId}
+                  onChange={(event) => setAgentThreadId(event.target.value)}
+                >
+                  <option value="">New thread</option>
+                  {agentThreads.map((thread) => (
+                    <option key={thread.id} value={thread.id}>{thread.title}</option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+            {pr.commentsError ? (
+              <div className={styles.actions}>
+                <p className={styles.error} role="status">{pr.commentsError}</p>
+                <button type="button" className={styles.ghost} disabled={loading} onClick={() => void load(true)}>
+                  Retry comments
+                </button>
+              </div>
+            ) : null}
             {pr.comments.length === 0 ? (
               <p className={styles.hint}>No comments yet</p>
             ) : (
               pr.comments.map((row, index) => {
-                const editing = row.id != null && editingComment === row.id;
+                const editing = row.id != null && editingComment === `${row.type}:${row.id}`;
                 return (
                   <article
-                    key={row.id ?? row.url ?? `${row.author}-${index}`}
+                    key={`${row.type}:${row.id ?? row.url ?? `${row.author}-${index}`}`}
                     className={styles.comment}
                     data-pr-comment-item=""
                   >
@@ -716,14 +868,35 @@ export function PrWorkspacePanel({
                           {formatRelativeAge(Date.parse(row.createdAt) || 0, now)}
                         </span>
                       ) : null}
-                      {prCommentEdit && row.mine && row.id != null && !editing ? (
+                      {onAddToAgent ? (
+                        <button
+                          type="button"
+                          className={styles.ghost}
+                          data-pr-comment-add-to-agent=""
+                          disabled={pending != null}
+                          onClick={async () => {
+                            if (pending) return;
+                            setPending("addToAgent");
+                            try {
+                              await onAddToAgent({ threadId: agentThreadId || null, pr, comment: row });
+                            } catch (err) {
+                              setError(rejectReason(err, "Couldn't add this comment to the draft"));
+                            } finally {
+                              setPending(null);
+                            }
+                          }}
+                        >
+                          Add to agent
+                        </button>
+                      ) : null}
+                      {pr.forge !== "gitlab" && prCommentEdit && row.type !== "review-summary" && row.mine && row.id != null && !editing ? (
                         <button
                           type="button"
                           className={styles.ghost}
                           data-pr-comment-edit=""
                           disabled={pending != null}
                           onClick={() => {
-                            setEditingComment(row.id!);
+                            setEditingComment(`${row.type}:${row.id}`);
                             setEditCommentBody(row.body);
                           }}
                         >
@@ -731,9 +904,10 @@ export function PrWorkspacePanel({
                         </button>
                       ) : null}
                     </div>
+                    {row.path ? <span className={styles.hint}>{row.path}{row.line != null ? `:${row.line}` : ""}{row.outdated ? " (outdated)" : ""}</span> : null}
                     {editing ? (
                       <div className={styles.commentForm} data-pr-comment-edit-form="">
-                        <textarea
+                        <PrCompletionTextarea projectPath={projectPath} repo={activeRepo} scope={String(activePr)}
                           className={styles.textarea}
                           data-pr-comment-edit-body=""
                           value={editCommentBody}
@@ -765,7 +939,7 @@ export function PrWorkspacePanel({
                     ) : (
                       <Markdown text={row.body} />
                     )}
-                    {prReaction && row.id != null ? (
+                    {pr.forge !== "gitlab" && prReaction && row.type === "issue" && row.id != null ? (
                       <div className={styles.reactionsRow} data-pr-reactions="">
                         {(row.reactions || [])
                           .filter((r) => r.count > 0)
@@ -835,7 +1009,7 @@ export function PrWorkspacePanel({
                   );
                 }}
               >
-                <textarea
+                <PrCompletionTextarea projectPath={projectPath} repo={activeRepo} scope={String(activePr)}
                   className={styles.textarea}
                   data-pr-comment=""
                   placeholder="Leave a comment"

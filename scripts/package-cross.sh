@@ -128,6 +128,7 @@ EOF
 mkdir -p "$PAYLOAD/electron"
 rsync -a --prune-empty-dirs --exclude='/test/' --include='*/' --include='*.js' --exclude='*' \
   electron/ "$PAYLOAD/electron/"
+cp electron/speech-models.json "$PAYLOAD/electron/speech-models.json"
 
 # Same explicit root deps as package-app.sh (ws + cross-spawn + yauzl trees,
 # node-pty wrapper). The per-target node-pty binary package is added below.

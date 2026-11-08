@@ -169,11 +169,6 @@ const SHELL_DENY = [
     "force-push destroys remote history",
   ],
   [
-    /\bsudo\b/i,
-    "shell.sudo",
-    "privilege escalation is never part of a code task",
-  ],
-  [
     /\bhistory\s+-c\b|\bshred\b|\brm\s+-rf\s+[^\s]*\.git\b/i,
     "shell.covertracks",
     "erasing history or the repo itself",
@@ -181,24 +176,229 @@ const SHELL_DENY = [
 ];
 
 /** Commands that reach the network; legitimate often enough to ask, not deny. */
-const SHELL_EGRESS =
-  /\b(curl|wget|nc|ncat|netcat|scp|sftp|rsync|ssh|telnet)\b|\bnpm\s+publish\b|\bgh\s+(release|gist)\b/i;
+const EGRESS_CMDS = new Set([
+  "curl", "wget", "nc", "ncat", "netcat", "scp", "sftp", "rsync", "ssh", "telnet",
+]);
 
 const LOCAL_HOST =
   /(localhost|127\.0\.0\.1|\[::1\]|0\.0\.0\.0|host\.docker\.internal)/i;
 
-/** `rm -rf` targets, as written on the command line. */
-function rmTargets(command) {
+const SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh"]);
+/** Prefixes that run a later word as the real command. */
+const WRAPPERS = new Set([
+  "sudo", "doas", "env", "time", "nohup", "exec", "command", "builtin",
+  "nice", "timeout", "xargs", "!",
+]);
+/** A heredoc on this line is piped into a shell, so its body is code. */
+const SHELL_LINE = /(^|[\s|;&(/])(ba|z|da|k)?sh(?=[\s;|&)]|$)/;
+
+const base = (w) => w.slice(w.lastIndexOf("/") + 1);
+
+/**
+ * The $(...) and `...` command substitutions in an expanding text such as
+ * an unquoted heredoc body (#1855 review).
+ * @param {string} text
+ * @returns {string[]}
+ */
+function substitutions(text) {
   const out = [];
-  const re = /\brm\s+(?:-[\w-]+\s+)*-[\w-]*[rR][\w-]*[fF]?[\w-]*\s+([^\n;&|]+)/g;
-  let m;
-  while ((m = re.exec(command))) {
-    for (const tok of m[1].split(/\s+/)) {
-      const t = tok.replace(/^["']|["']$/g, "");
-      if (t && !t.startsWith("-")) out.push(t);
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === "\\") {
+      i++;
+    } else if (text[i] === "$" && text[i + 1] === "(") {
+      let depth = 1;
+      let j = i + 2;
+      for (; j < text.length && depth; j++) {
+        if (text[j] === "(") depth++;
+        else if (text[j] === ")") depth--;
+      }
+      out.push(text.slice(i + 2, depth ? j : j - 1));
+      i = j - 1;
+    } else if (text[i] === "`") {
+      const end = text.indexOf("`", i + 1);
+      out.push(text.slice(i + 1, end < 0 ? text.length : end));
+      i = end < 0 ? text.length : end;
     }
   }
   return out;
+}
+
+/**
+ * Split a shell command into simple commands (word lists, quotes removed)
+ * so policy can tell what runs from text that merely mentions it (#1840).
+ * Heredoc bodies are data unless the line feeds a shell. A quoted string
+ * stays one word; only `sh -c` / `eval` bodies and "$(...)" are parsed as
+ * code.
+ * @param {string} cmd
+ * @returns {string[][]}
+ */
+function simpleCommands(cmd, depth = 0) {
+  /** @type {string[][]} */
+  const out = [];
+  /** @type {{ delim: string, keep: boolean }[]} */
+  const heredocs = [];
+  /** @type {string[]} */
+  let seg = [];
+  /** @type {string | null} */
+  let word = null;
+  // `sh <<< 'cmd'`: the here-string word is a script for the shell.
+  let hereShell = false;
+  const endWord = () => {
+    if (word === null) return;
+    seg.push(word);
+    if (hereShell) nested(word);
+    hereShell = false;
+    word = null;
+  };
+  const endSeg = () => {
+    endWord();
+    if (seg.length) out.push(seg);
+    seg = [];
+  };
+  const nested = (s) => {
+    if (depth < 4) out.push(...simpleCommands(s, depth + 1));
+  };
+  const add = (ch) => {
+    word = (word ?? "") + ch;
+  };
+  let i = 0;
+  while (i < cmd.length) {
+    const c = cmd[i];
+    if (c === "\n") {
+      endSeg();
+      i++;
+      for (const h of heredocs.splice(0)) {
+        let body = "";
+        while (i < cmd.length) {
+          const nl = cmd.indexOf("\n", i);
+          const end = nl < 0 ? cmd.length : nl;
+          const line = cmd.slice(i, end);
+          i = end + 1;
+          if (line.trim() === h.delim) break;
+          body += `${line}\n`;
+        }
+        if (h.keep) nested(body);
+        // An unquoted delimiter (<<EOF) still expands $(...) and `...` in
+        // the body, so those run even when the body itself is data.
+        else if (!h.quoted) for (const sub of substitutions(body)) nested(sub);
+      }
+    } else if (c === " " || c === "\t") {
+      endWord();
+      i++;
+    } else if (c === "#" && word === null) {
+      while (i < cmd.length && cmd[i] !== "\n") i++;
+    } else if (c === "\\") {
+      if (cmd[i + 1] !== "\n") add(cmd[i + 1] ?? "");
+      i += 2;
+    } else if (c === "'") {
+      const end = cmd.indexOf("'", i + 1);
+      add(cmd.slice(i + 1, end < 0 ? cmd.length : end));
+      i = end < 0 ? cmd.length : end + 1;
+    } else if (c === '"') {
+      let s = "";
+      i++;
+      while (i < cmd.length && cmd[i] !== '"') {
+        if (cmd[i] === "\\" && i + 1 < cmd.length) i++;
+        s += cmd[i++];
+      }
+      i++;
+      add(s);
+      if (s.includes("$(") || s.includes("`")) nested(s);
+    } else if (c === "$" && cmd[i + 1] === "(") {
+      endSeg();
+      i += 2;
+    } else if (";&|()`".includes(c)) {
+      endSeg();
+      i++;
+    } else if (cmd.startsWith("<<<", i)) {
+      endWord();
+      i += 3;
+      hereShell = seg.length > 0 && SHELLS.has(commandChain(seg).names.at(-1));
+    } else if (c === "<" && cmd[i + 1] === "<") {
+      endWord();
+      i += 2;
+      if (cmd[i] === "-") i++;
+      while (cmd[i] === " " || cmd[i] === "\t") i++;
+      let delim = "";
+      let quoted = false;
+      while (i < cmd.length && !/[\s;&|()<>]/.test(cmd[i])) {
+        if (!`'"\\`.includes(cmd[i])) delim += cmd[i];
+        else quoted = true;
+        i++;
+      }
+      const ls = cmd.lastIndexOf("\n", i - 1) + 1;
+      const le = cmd.indexOf("\n", i);
+      const line = cmd.slice(ls, le < 0 ? cmd.length : le);
+      if (delim) heredocs.push({ delim, quoted, keep: SHELL_LINE.test(line) });
+    } else if (c === "<" || c === ">") {
+      endWord();
+      i++;
+    } else {
+      add(c);
+      i++;
+    }
+  }
+  endSeg();
+  for (const s of out.slice()) {
+    const { names, args } = commandChain(s);
+    const name = names[names.length - 1];
+    // eval runs text it builds, so any of its words may be the command:
+    // `eval "$(echo curl x)"` runs curl. Every suffix is a candidate.
+    if (name === "eval" && depth < 4) {
+      for (const n of simpleCommands(args.join(" "), depth + 1)) {
+        for (let k = 0; k < n.length; k++) out.push(n.slice(k));
+      }
+    }
+    if (!SHELLS.has(name)) continue;
+    const at = args.findIndex((a) => /^-[a-zA-Z]*c[a-zA-Z]*$/.test(a));
+    if (at >= 0 && args[at + 1]) nested(args[at + 1]);
+  }
+  return out;
+}
+
+/**
+ * The commands a simple command runs: wrappers (sudo, env, xargs, ...) then
+ * the real one, plus the real one's arguments.
+ * ponytail: wrapper flags are skipped by shape (-x, digits), so `sudo -u bob
+ * cmd` names `bob`; fine while every wrapper chain with sudo is a deny anyway.
+ * @param {string[]} seg
+ */
+function commandChain(seg) {
+  /** @type {string[]} */
+  const names = [];
+  for (let i = 0; i < seg.length; i++) {
+    const w = seg[i];
+    if (/^[A-Za-z_]\w*=/.test(w)) continue;
+    if (names.length && (w.startsWith("-") || /^\d/.test(w))) continue;
+    names.push(base(w));
+    if (!WRAPPERS.has(base(w))) return { names, args: seg.slice(i + 1) };
+  }
+  return { names, args: [] };
+}
+
+/** `rm -r` targets, as written on the command line. */
+function rmTargets(segs) {
+  const out = [];
+  for (const seg of segs) {
+    const { names, args } = commandChain(seg);
+    if (names[names.length - 1] !== "rm") continue;
+    if (!args.some((a) => /^-[\w-]*[rR]/.test(a))) continue;
+    for (const a of args) if (a && !a.startsWith("-")) out.push(a);
+  }
+  return out;
+}
+
+/**
+ * Words that name a file. A multi-word string (prose, a script body) only
+ * offers its rooted pieces (`.env`, `~/x`, `/x`); a bare word with no path
+ * shape counts only if it is a private-key name or a real file, so the word
+ * `credentials` or a field like `self.after.key` is not a path (#1840).
+ */
+function pathLike(tok, word, resolved) {
+  if (/^[./~]/.test(tok)) return true;
+  if (/\s/.test(word)) return false;
+  return tok.includes("/") || /^id_(rsa|dsa|ecdsa|ed25519)$/.test(tok) ||
+    fs.existsSync(resolved);
 }
 
 /**
@@ -213,8 +413,19 @@ function classifyCommand(command, worktreePath) {
     if (re.test(cmd)) return { decision: "deny", rule, reason };
   }
 
+  const segs = simpleCommands(cmd);
+  const chains = segs.map(commandChain);
+
+  if (chains.some((c) => c.names.some((n) => n === "sudo" || n === "doas"))) {
+    return {
+      decision: "deny",
+      rule: "shell.sudo",
+      reason: "privilege escalation is never part of a code task",
+    };
+  }
+
   // rm -rf outside the worktree. Bare `/`, `~` and `$HOME` are always out.
-  for (const target of rmTargets(cmd)) {
+  for (const target of rmTargets(segs)) {
     if (/^(\/|~\/?|\$HOME\/?|\*)$/.test(target)) {
       return {
         decision: "deny",
@@ -233,19 +444,30 @@ function classifyCommand(command, worktreePath) {
   }
 
   // Secret file named anywhere in the command (cat .env, scp id_rsa, ...).
-  for (const tok of cmd.split(/[\s;|&()<>"']+/)) {
-    if (!tok || tok.startsWith("-")) continue;
-    const hit = matchSecret(resolveTarget(tok, worktreePath));
-    if (hit) {
-      return {
-        decision: "deny",
-        rule: hit[0],
-        reason: `command touches ${tok} (${hit[1]})`,
-      };
+  for (const word of segs.flat()) {
+    for (const tok of word.split(/[\s;|&()<>"']+/)) {
+      if (!tok || tok.startsWith("-")) continue;
+      // Keep a trailing slash: `s/a/b.key/` is a sed script, not b.key.
+      const resolved =
+        resolveTarget(tok, worktreePath) + (tok.endsWith("/") ? "/" : "");
+      const hit = matchSecret(resolved);
+      if (hit && pathLike(tok, word, resolved)) {
+        return {
+          decision: "deny",
+          rule: hit[0],
+          reason: `command touches ${tok} (${hit[1]})`,
+        };
+      }
     }
   }
 
-  if (SHELL_EGRESS.test(cmd) && !LOCAL_HOST.test(cmd)) {
+  const egress = chains.some(({ names, args }) => {
+    const n = names[names.length - 1];
+    return EGRESS_CMDS.has(n) ||
+      (n === "npm" && args[0] === "publish") ||
+      (n === "gh" && (args[0] === "release" || args[0] === "gist"));
+  });
+  if (egress && !LOCAL_HOST.test(cmd)) {
     return {
       decision: "ask",
       rule: "shell.egress",
@@ -527,6 +749,8 @@ module.exports = {
   setGuardrailsEnabled,
   classifyTool,
   classifyCommand,
+  simpleCommands,
+  commandChain,
   scanInjection,
   scanSecrets,
   SECRET_RULES,

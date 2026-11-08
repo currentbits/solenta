@@ -202,6 +202,111 @@ describe("automation CRUD + scheduler", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
+  it("persists fixed destinations, continues identity, and starts fresh only when configured", async () => {
+    const target = services.createThread(store, { projectId: "p1", provider: "claude", model: null });
+    services.setProvider(store, { threadId: target.id, provider: "claude", model: null });
+    store.updateThread(target.id, { sessionId: "existing", budget: { turns: 2 } });
+    const created = services.addAutomation(store, { projectId: "p1", name: "Fixed", prompt: "go", provider: "claude", model: null, preset: "hourly", sessionMode: "continue", destinationThreadId: target.id, budget: { turns: 10 } });
+    let starts = 0, resets = 0;
+    const runner = { startRun: async ({ threadId }) => { assert.equal(threadId, target.id); starts++; return { runId: `run-${starts}` }; }, startAutomationRun: async (input) => { if (store.getAutomation(input.automationId).sessionMode === "fresh") resets++; return runner.startRun(input); } };
+    await runNow({ store, runner }, created.id);
+    assert.equal(store.getThread(target.id).sessionId, "existing");
+    assert.equal(store.getThread(target.id).automationId, null);
+    assert.equal(store.getThread(target.id).budget.turns, 2);
+    assert.equal(resets, 0);
+    services.updateAutomation(store, { id: created.id, sessionMode: "fresh" });
+    await runNow({ store, runner }, created.id);
+    assert.equal(resets, 1);
+    assert.equal(starts, 2);
+    assert.equal(listAutomationRuns(store, created.id).runs.length, 2);
+    store.saveNow();
+    const restored = new Store(path.join(tmpDir, "store.json"));
+    assert.equal(restored.getAutomation(created.id).destinationThreadId, target.id);
+    assert.equal(restored.getAutomation(created.id).sessionMode, "fresh");
+  });
+
+  it("rejects missing, cross-project, busy and elevated destinations without creating another thread", async () => {
+    const t = services.createThread(store, { projectId: "p1", provider: "claude", model: null });
+    services.setProvider(store, { threadId: t.id, provider: "claude", model: null });
+    const input = { projectId: "p1", name: "Fixed", prompt: "go", provider: "claude", model: null, preset: "hourly", sessionMode: "continue", destinationThreadId: t.id };
+    assert.throws(() => services.addAutomation(store, { ...input, destinationThreadId: "missing" }), /must exist/);
+    const a = services.addAutomation(store, input);
+    for (const patch of [{ status: "working" }, { status: "idle", pendingQuestion: {} }, { pendingQuestion: null, queued: "user draft" }, { queued: null, permissionMode: "bypassPermissions" }, { permissionMode: "default", alwaysAllowKeys: ["grant"] }, { alwaysAllowKeys: [], archived: true }]) {
+      store.updateThread(t.id, patch);
+      await assert.rejects(runNow({ store, runner: { startRun: () => assert.fail("must not start") } }, a.id), /destination/);
+    }
+    assert.equal(store.getThreads().length, 1);
+  });
+
+  it("can disable and edit inactive automations after their destination becomes invalid", () => {
+    for (const patch of [{ archived: true }, { trashedAt: Date.now() }, { provider: "codex" }, { model: "different" }, { permissionMode: "bypassPermissions" }, null]) {
+      const t = services.createThread(store, { projectId: "p1", provider: "claude", model: null });
+      services.setProvider(store, { threadId: t.id, provider: "claude", model: null });
+      const a = services.addAutomation(store, { projectId: "p1", name: "Fixed", prompt: "go", provider: "claude", model: null, preset: "hourly", sessionMode: "continue", destinationThreadId: t.id });
+      if (patch) store.updateThread(t.id, patch);
+      else store.setThreads(store.getThreads().filter((row) => row.id !== t.id));
+      assert.equal(services.updateAutomation(store, { id: a.id, enabled: false }).enabled, false);
+      assert.equal(services.updateAutomation(store, { id: a.id, name: "Paused" }).name, "Paused");
+      assert.throws(() => services.updateAutomation(store, { id: a.id, enabled: true }), /destination/i);
+      assert.equal(store.getAutomation(a.id).enabled, false);
+    }
+  });
+
+  it("scheduled busy destinations skip without pausing and remain editable", async () => {
+    const t = services.createThread(store, { projectId: "p1", provider: "claude", model: null });
+    services.setProvider(store, { threadId: t.id, provider: "claude", model: null });
+    const a = services.addAutomation(store, { projectId: "p1", name: "Fixed", prompt: "go", provider: "claude", preset: "hourly", sessionMode: "continue", destinationThreadId: t.id });
+    store.updateThread(t.id, { status: "working", queued: "user input" });
+    services.updateAutomation(store, { id: a.id, name: "Renamed" });
+    const scheduler = startScheduler({ store, runner: { startRun: () => assert.fail("must skip") }, intervalMs: 3600000 });
+    try {
+      for (let i = 0; i < 4; i++) {
+        store.setAutomations(store.getAutomations().map((row) => ({ ...row, nextRunAt: 0 })));
+        await scheduler.tick();
+      }
+      const updated = store.getAutomation(a.id);
+      assert.equal(updated.enabled, true);
+      assert.equal(updated.consecutiveFailures, 0);
+      assert.match(updated.lastError, /skipped/);
+      assert.equal(store.getThread(t.id).queued, "user input");
+    } finally { scheduler.stop(); }
+  });
+
+  it("mode changes retain legacy, fixed, and later new-thread run history independently", async () => {
+    const t = services.createThread(store, { projectId: "p1", provider: "claude", model: null });
+    services.setProvider(store, { threadId: t.id, provider: "claude", model: null });
+    const a = services.addAutomation(store, { projectId: "p1", name: "Modes", prompt: "go", provider: "claude", preset: "hourly" });
+    let n = 0;
+    const start = async () => ({ runId: `run-${++n}` });
+    const runner = { startRun: start, startAutomationRun: start };
+    await runNow({ store, runner }, a.id);
+    services.updateAutomation(store, { id: a.id, sessionMode: "continue", destinationThreadId: t.id });
+    await runNow({ store, runner }, a.id);
+    const fixed = store.getAutomation(a.id).runHistory[0];
+    services.updateAutomation(store, { id: a.id, sessionMode: "new-thread" });
+    await runNow({ store, runner }, a.id);
+    const latest = store.getAutomation(a.id).pendingRunThreadId;
+    store.updateThread(latest, { status: "failed" });
+    require("../automations.js").settleAutomationRuns({ store });
+    const runs = listAutomationRuns(store, a.id).runs;
+    assert.equal(runs.length, 3);
+    assert.equal(runs.find((r) => r.id === fixed.id).status, "idle");
+    assert.equal(runs.find((r) => r.threadId === latest).status, "failed");
+    assert.equal(new Set(runs.map((r) => r.id || r.threadId)).size, 3);
+  });
+
+  it("serializes concurrent manual fires at a fixed destination", async () => {
+    const t = services.createThread(store, { projectId: "p1", provider: "claude", model: null });
+    services.setProvider(store, { threadId: t.id, provider: "claude", model: null });
+    const a = services.addAutomation(store, { projectId: "p1", name: "Fixed", prompt: "go", provider: "claude", preset: "hourly", sessionMode: "continue", destinationThreadId: t.id });
+    let release;
+    const runner = { startAutomationRun: () => new Promise((r) => { release = r; }) };
+    const first = runNow({ store, runner }, a.id);
+    await assert.rejects(runNow({ store, runner }, a.id), /already starting/);
+    release({ runId: "one" });
+    await first;
+  });
+
   it("add/list/update/remove persist", () => {
     const created = services.addAutomation(store, {
       projectId: "p1",

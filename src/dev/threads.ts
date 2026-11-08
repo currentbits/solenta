@@ -96,6 +96,7 @@ export function createThreads(ctx: DevCtx): Pick<CoderApi, "threads"> {
             id: t.id,
             title: t.title,
             provider: t.provider,
+            ...(t.providerInstance ? { providerInstance: t.providerInstance } : {}),
             status: t.status,
             handoffFrom: t.handoffFrom ?? null,
             orchWorker: t.orchWorker === true,
@@ -331,6 +332,9 @@ export function createThreads(ctx: DevCtx): Pick<CoderApi, "threads"> {
           // seeded-fresh fallback.
           ...(input.messageId ? { replayContext: true } : {}),
         });
+        const forkProvider = (await ctx.api().providers.list()).find((p) => p.id === created.provider);
+        created.reasoningEffort = source.reasoningEffort;
+        created.ultracode = source.ultracode === true && forkProvider?.id === "claude" && Boolean(forkProvider.modelInfo.find((m) => m.id === created.model)?.efforts?.includes("xhigh"));
         const registered = registerThread(created);
         if (input.messageId) {
           const at = sourceDetail.messages.findIndex(
@@ -452,6 +456,7 @@ export function createThreads(ctx: DevCtx): Pick<CoderApi, "threads"> {
           providerInstance: null,
           model: profile.model,
           reasoningEffort: profile.reasoningEffort,
+          ultracode: profile.ultracode === true,
           permissionMode: profile.permissionMode,
           autoApprove: profile.autoApprove ?? null,
           agentProfileId: profile.id,
@@ -481,6 +486,23 @@ export function createThreads(ctx: DevCtx): Pick<CoderApi, "threads"> {
       async answerSecret(input) {
         // Dev threads never spawn, so the value is simply dropped.
         patchThread(input.threadId, { pendingSecret: null });
+      },
+      async freshAgentContext(input) {
+        const detail = details.get(input.threadId);
+        if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
+        if (detail.thread.status === "working" || detail.thread.pendingQuestion || detail.thread.pendingPlan || detail.thread.pendingSecret || detail.pendingPermission || detail.thread.awaitingInput || detail.thread.runQueue || detail.thread.queued) {
+          throw new Error("Finish the run and resolve pending input before starting fresh context");
+        }
+        const boundary = id("evt");
+        detail.messages.push({ id: boundary, role: "event", sessionBoundary: true,
+          text: "Fresh agent context. Earlier messages remain visible but are not sent to the agent.", createdAt: now() });
+        patchThread(input.threadId, { contextBoundaryId: boundary, freshContextPending: true,
+          sessionId: null, replayContext: false, recap: null });
+        if (detail.usage) {
+          const { contextTokens, contextWindow, contextCompaction, ...totals } = detail.usage;
+          detail.usage = { ...totals, model: null };
+        }
+        emitDetail(detail);
       },
       async restartAgentSession(input) {
         const detail = details.get(input.threadId);
@@ -1010,6 +1032,13 @@ export function createThreads(ctx: DevCtx): Pick<CoderApi, "threads"> {
           agentProfileId: null,
         });
       },
+      async setUltracode(input: { threadId: string; ultracode: boolean }) {
+        const thread = details.get(input.threadId)?.thread;
+        if (!thread) throw new Error(`Thread not found: ${input.threadId}`);
+        const provider = (await ctx.api().providers.list()).find((p) => p.id === thread.provider);
+        if (input.ultracode && !(provider?.id === "claude" && provider.modelInfo.find((m) => m.id === thread.model)?.efforts?.includes("xhigh"))) throw new Error("Ultracode requires an xhigh-capable Claude model");
+        return patchThread(input.threadId, { ultracode: input.ultracode === true, agentProfileId: null });
+      },
       async setFast(input: { threadId: string; fast: boolean }) {
         return patchThread(input.threadId, { fast: input.fast === true });
       },
@@ -1149,6 +1178,8 @@ export function createThreads(ctx: DevCtx): Pick<CoderApi, "threads"> {
           patch.model = input.model ? String(input.model).trim() : null;
         }
 
+        const nextProvider = (await ctx.api().providers.list()).find((p) => p.id === (patch.provider ?? thread.provider));
+        if (!(nextProvider?.id === "claude" && nextProvider.modelInfo.find((m) => m.id === (patch.model === undefined ? thread.model : patch.model))?.efforts?.includes("xhigh"))) patch.ultracode = false;
         const next: ThreadInfo = { ...thread, ...patch };
         detail.thread = next;
         details.set(input.threadId, detail);

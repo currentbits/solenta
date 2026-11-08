@@ -3,15 +3,15 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Solenta Changelog</title>
-  <meta name="description" content="What's new in Solenta: every notable change since the first release." />
+  <title>Solenta changelog: release notes and new features</title>
+  <meta name="description" content="Every Solenta release with its date: new providers, planboard, worktree, memory and workflow features, fixes and breaking changes." />
   <link rel="canonical" href="https://solenta.app/changelog.html" />
   <link rel="image_src" href="https://solenta.app/assets/card.png?v=4" />
   <meta property="og:type" content="website" />
   <meta property="og:site_name" content="Solenta" />
   <meta property="og:url" content="https://solenta.app/changelog.html" />
   <meta property="og:title" content="Solenta Changelog" />
-  <meta property="og:description" content="What's new in Solenta: every notable change since the first release." />
+  <meta property="og:description" content="Every Solenta release with its date: new providers, planboard, worktree, memory and workflow features, fixes and breaking changes." />
   <meta property="og:image" content="https://solenta.app/assets/card.png?v=4" />
   <meta property="og:image:secure_url" content="https://solenta.app/assets/card.png?v=4" />
   <meta property="og:image:type" content="image/png" />
@@ -21,25 +21,28 @@
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:site" content="@currentbitsNET" />
   <meta name="twitter:title" content="Solenta Changelog" />
-  <meta name="twitter:description" content="What's new in Solenta: every notable change since the first release." />
+  <meta name="twitter:description" content="Every Solenta release with its date: new providers, planboard, worktree, memory and workflow features, fixes and breaking changes." />
   <meta name="twitter:image" content="https://solenta.app/assets/card.png?v=4" />
   <meta name="twitter:image:alt" content="Solenta. Every coding agent. One window." />
   <meta name="theme-color" content="#f5f5f2" />
   <link rel="icon" href="assets/icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="apple-touch-icon.png" />
   <script>document.documentElement.classList.add("js");</script>
-  <link rel="stylesheet" href="style.css?v=11" />
+  <link rel="preload" href="fonts/Geist-Variable.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="stylesheet" href="style.css?v=13" />
   <!-- First-party stats: no cookies, no personal data, so no consent banner.
        stats.js beacons pageviews and data-event clicks to stats.solenta.app. -->
   <script src="stats.js" defer></script>
   <!-- Meterbird analytics, cookieless until the visitor allows it in the
        consent.js banner; replay only after "Allow". -->
   <script src="consent.js" defer></script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage","name":"Solenta changelog","url":"https://solenta.app/changelog.html","dateModified":"2026-11-05","about":{"@type":"SoftwareApplication","name":"Solenta","url":"https://solenta.app/","softwareVersion":"0.29.0","datePublished":"2026-11-05"},"publisher":{"@id":"https://solenta.app/#org"},"breadcrumb":{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Solenta","item":"https://solenta.app/"},{"@type":"ListItem","position":2,"name":"Changelog","item":"https://solenta.app/changelog.html"}]}}</script>
 </head>
 <body>
 
 <nav class="nav">
   <div class="nav-inner">
-    <a class="brand" href="index.html">
+    <a class="brand" href="./">
       <img src="assets/icon.svg" alt="" />
       Solenta
     </a>
@@ -48,7 +51,7 @@
       <a href="changelog.html" class="active">Changelog</a>
       <a href="https://github.com/currentbits/solenta/discussions">Discussions</a>
       <a href="https://github.com/currentbits/solenta">GitHub</a>
-      <a class="nav-cta" href="index.html#install">
+      <a class="nav-cta" href="./#install">
         Download
       </a>
     </div>
@@ -62,6 +65,36 @@
       <p class="lede">
         Every notable change to Solenta, newest first.
       </p>
+
+      <h2 id="v0-29-0">0.29.0 <small>2026-11-05</small></h2>
+      <h3>Added</h3>
+      <ul>
+        <li><strong>Your other computers in one window.</strong> Turn on Show in sidebar for a saved connection and that computer's projects and threads appear next to yours, tagged with its name. A thread you start in one of its projects runs there, and Add project can create or clone a project on that computer.</li>
+        <li><strong>Connect by address.</strong> Paste the device link from the other computer's Let other devices in, and Solenta connects straight to it, with no SSH. The token goes to the keychain.</li>
+        <li><strong><a href="docs/ssh">Headless server</a> with nothing installed.</strong> Connect over SSH to a Mac or Linux computer that has no Solenta, and it downloads a checksum-checked server for that machine and starts it. Linux <code>--headless</code> runs without a display.</li>
+        <li><strong>Linked computers.</strong> Link another Solenta, desktop or headless, from Settings › Connections or with <code>solenta-server --link</code>, so agents running anywhere can hand work to it.</li>
+        <li><strong><a href="docs/orchestration">Workers on other computers</a>.</strong> A lead can fork a worker onto another computer, in that computer's copy of the repo. You can steer, stop, open a PR for and merge it like a local worker, it shares the crew task list and messages, and the lead wakes when it finishes.</li>
+        <li><strong>See remote work from where it started.</strong> A lead lists its workers on other computers with their status, each opening the live thread, and a teleported thread links to its copy.</li>
+        <li><strong>Teleport any thread.</strong> Teleport works for every provider, clones the project on the other computer if it is missing, brings queued prompts along, and can stop a running thread first. SSH password and host-key prompts show up in the app.</li>
+        <li><strong><a href="docs/spend">Usage</a> in the menu bar.</strong> An opt-in menu bar item shows each account's 5-hour and weekly usage. Pick an account there to make it the default for each CLI's new threads and terminals.</li>
+        <li><strong>Send workers to an account.</strong> A lead can send a worker to a named account, or to whichever account has the most quota left. Crew rows and fleet stats show each worker's account.</li>
+        <li><strong><a href="docs/memory">Fusion</a>.</strong> Settings › Memory › Fusion finds where AGENTS.md, CLAUDE.md and .cursorrules disagree, and syncs one agreed block into each file. Text outside the block is never changed.</li>
+      </ul>
+      <h3>Changed</h3>
+      <ul>
+        <li><strong>Calmer interface.</strong> Warmer neutrals, a clear text hierarchy, four corner radii instead of twenty, mono type only for code and paths, and quieter header, composer and settings chrome.</li>
+        <li><strong>Two-line thread cards.</strong> The title and status share the first line, and project, branch, PR and provider share the second, so more threads fit.</li>
+        <li><strong>Icons in ⌘K.</strong> Every palette row starts with its own icon, and the palette and settings blur the app behind them.</li>
+        <li><strong><a href="docs/guardrails">Full access</a> on every agent.</strong> Full access now auto-answers guardrail asks on Claude and Codex approvals too. Your own ask and deny rules still apply.</li>
+        <li><strong>Always allow covers the command.</strong> It remembers the command, such as <code>git push</code>, instead of its exact text, so the same command stops asking in that thread.</li>
+      </ul>
+      <h3>Fixed</h3>
+      <ul>
+        <li><strong>Fewer guardrail false alarms.</strong> Commands are judged by what actually runs, not words in quoted text or heredocs.</li>
+        <li><strong>PR links and Planboard.</strong> Linked PR URLs resolve to the right repo, and Planboard creates its own <code>plan:*</code> labels and retries a flaky GitHub error.</li>
+        <li><strong>Codex images.</strong> Images Codex views or generates show up in the thread, and local file links in replies open.</li>
+        <li><strong>Crew merges.</strong> A worker whose worktree vanished can still be merged.</li>
+      </ul>
 
       <h2 id="v0-28-0">0.28.0 <small>2026-10-31</small></h2>
       <h3>Added</h3>
@@ -80,7 +113,7 @@
         <li><strong>Richer PRs.</strong> Hover a PR anywhere for its checks, review state and size. The PR panel updates a behind branch, edits comments in place and adds reactions, the PR list takes <code>author:</code>, <code>label:</code> and <code>is:</code> filters and floats review requests to the top, and PR creation shows each step as it runs.</li>
         <li><strong>Git defaults.</strong> A default merge method app-wide or per project, branches deleted after merge or close, a model of your choice for commit messages and PR text, and your own instructions for both.</li>
         <li><strong>More @-mentions.</strong> <code>@url</code>, <code>@terminal</code>, <code>@problems</code>, <code>@git-changes</code>, commits, GitHub issues and discussions. Drag files from the Files pane to mention them.</li>
-        <li><strong>Automations.</strong> Custom cron schedules with the next fire times shown, and one-time runs at a set date.</li>
+        <li><strong><a href="docs/automations">Automations</a>.</strong> Custom cron schedules with the next fire times shown, and one-time runs at a set date.</li>
         <li><strong>Cost and limits.</strong> The thread header shows its running cost split by model, an opt-in strip shows 5-hour, weekly and context limits with an even-pace marker, and the Usage page splits cost by token type.</li>
         <li><strong>Diffs.</strong> A folder tree view with per-file copy path, +/- totals, start-collapsed files, and the Changes panel remembers your place per thread.</li>
         <li><strong>Getting around.</strong> Back and forward buttons with trackpad swipe, next and previous turn shortcuts, a Jump to latest pill, Stop all, Duplicate thread, inline rename, Export as Markdown, and shortcuts for pin, settle, reasoning effort and fast mode.</li>
@@ -121,7 +154,7 @@
         <li><strong>Thrash recovery.</strong> An agent that fails the same fix three times is stopped, rolled back to the last green checkpoint and handed to another provider.</li>
         <li><strong>Commit &amp; PR in one click.</strong> The Git panel commits, pushes and opens the PR, and the sidebar colours each PR badge by state. Repos with no origin get Publish to GitHub, GitLab, Bitbucket or Azure DevOps.</li>
         <li><strong>Bitbucket and Azure DevOps PRs.</strong> Open, track and merge pull requests there too.</li>
-        <li><strong>Worktrees set themselves up.</strong> Setup and env come from the repo's devcontainer.json or copilot-setup-steps.yml, and on macOS a matching lockfile clones the main checkout's node_modules instead of installing from zero.</li>
+        <li><strong><a href="docs/worktrees">Worktrees</a> set themselves up.</strong> Setup and env come from the repo's devcontainer.json or copilot-setup-steps.yml, and on macOS a matching lockfile clones the main checkout's node_modules instead of installing from zero.</li>
         <li><strong>Project config files.</strong> A gitignored <code>solenta.local.json</code> overrides <code>solenta.json</code>, both are schema-checked, and one button moves app-only commands into <code>solenta.json</code> through a PR.</li>
         <li><strong>Dev server readiness.</strong> <code>devServer.ready</code> in <code>solenta.json</code> declares a tcp, http or command probe, and the Browser pane waits for it.</li>
         <li><strong>Composer.</strong> <code>!</code> runs a shell command in the worktree without a model turn, <code>/copy</code> copies the last reply, <code>/jump</code> and a prompt rail navigate long threads, queued follow-ups go out as one turn, and attached screenshots can be pinned, drawn on and cropped.</li>
@@ -157,7 +190,7 @@
         <li><strong>Search with filters.</strong> Thread search applies the sidebar's status, provider, project and tag filters before it caps results, so older matching threads no longer get pushed out.</li>
         <li><strong>Queued messages stick.</strong> A failed queue write keeps your composer draft, a fresh turn that fails its preflight keeps the queue, and a reconnect no longer merges separate queued writes.</li>
         <li><strong>Solenta Web reconnects.</strong> The open transcript is refetched after a reconnect, so nothing from the gap goes missing.</li>
-        <li><strong>Weekly automations.</strong> They stay on their weekday after catch-up runs, Run now and hour edits.</li>
+        <li><strong>Weekly <a href="docs/automations">automations</a>.</strong> They stay on their weekday after catch-up runs, Run now and hour edits.</li>
         <li><strong>Plan cards.</strong> A plan you hid stays hidden when you switch threads or relaunch.</li>
         <li><strong>Kimi.</strong> Skills now reach kimi-cli, and Ask mode and commit or PR message fallbacks run kimi without tools.</li>
         <li><strong>Pasted images.</strong> An image that can't be attached shows an error that says why and what to do.</li>
@@ -174,7 +207,7 @@
         <li><strong>Automations react to events.</strong> Fire on a GitHub PR being opened, merged or labelled, a review, a push, a finished CI run or a new issue (with a triage template), or on a new or moved Linear issue or a new Sentry issue. Describe one in chat and the agent creates it.</li>
         <li><strong>Automations you can trust.</strong> Each automation keeps its own memory and pauses after three failures in a row. Project automations can be shared in solenta.json, and each machine opts in before they fire.</li>
         <li><strong>Multi-repo tasks.</strong> Group threads across repos into one task. Each agent sees its siblings, their status and their PRs, and still only writes to its own repo.</li>
-        <li><strong>GitLab.</strong> Merge requests (list, check out, create, merge), CI badges, the planboard and issue ingestion work on gitlab.com and self-hosted GitLab.</li>
+        <li><strong><a href="docs/views">GitLab</a>.</strong> Merge requests (list, check out, create, merge), CI badges, the planboard and issue ingestion work on gitlab.com and self-hosted GitLab.</li>
         <li><strong>GitHub without the gh CLI.</strong> Solenta talks to the GitHub API with a token from Settings or your existing gh login, refreshes PRs with one query per repo, and works with GitHub Enterprise hosts.</li>
         <li><strong>Composer chips.</strong> @ lists threads, PRs and skills next to files, and each becomes a chip that expands when you send. Cite (⌘⇧C) adds quote chips, prompt snippets live in Settings › Agents, and an attached screen recording reaches the agent as labelled frames.</li>
         <li><strong>Auto review.</strong> A new permission mode between Accept edits and Full access: the CLI's own reviewer approves routine actions and anything else still asks you. Claude and Codex.</li>
@@ -185,7 +218,7 @@
         <li><strong>Secrets.</strong> An agent can ask for a secret through a masked card. The value only goes into the run's environment and is redacted from the transcript, the work log and memory.</li>
         <li><strong>Worktrees.</strong> Choose where worktrees live, new threads start instantly from a pre-warmed pool, .worktreeinclude copies gitignored files like .env, and per-project environment variables reach runs, terminals and dev servers.</li>
         <li><strong>Workflows and planboard.</strong> A WORKFLOW.md in the repo versions the workflow with the branch, and a crashed multi-phase run resumes from the phase it stopped in. Planboard cards can wait on other cards.</li>
-        <li><strong>Memory.</strong> Entries can load always, by file glob, by topic, or only when mentioned. Save a finished thread as a memory after reviewing it. Repos with the same folder name get separate memory.</li>
+        <li><strong><a href="docs/memory">Memory</a>.</strong> Entries can load always, by file glob, by topic, or only when mentioned. Save a finished thread as a memory after reviewing it. Repos with the same folder name get separate memory.</li>
         <li><strong>Solenta Web and MCP.</strong> Paired devices get a scope (read only, steer or full, plus file, git and terminal grants). Hosted agents such as claude.ai can reach Solenta's MCP over an opt-in Tailscale Funnel with OAuth.</li>
         <li><strong>Also.</strong> The current Claude lineup, a Usage filter by provider, custom model prices, stripping agent co-authors from squash merges, an Open revert PR button, the agent's live thought on the working row, MCP prompts from Claude's tools, a Compact first offer on large idle Claude threads, Stop on worker rows, and AppSnap attaching the window's text next to the screenshot on macOS.</li>
       </ul>
@@ -204,7 +237,7 @@
       <h2 id="v0-24-0">0.24.0 <small>2026-10-06</small></h2>
       <h3>Added</h3>
       <ul>
-        <li><strong>Real terminal.</strong> The Terminal pane runs a real shell, so prompts, Ctrl-C and full-screen tools like vim and htop work. Up to four splits per thread, and scrollback survives a restart.</li>
+        <li><strong><a href="docs/panes">Real terminal</a>.</strong> The Terminal pane runs a real shell, so prompts, Ctrl-C and full-screen tools like vim and htop work. Up to four splits per thread, and scrollback survives a restart.</li>
         <li><strong>Files pane.</strong> Browse the thread's checkout, preview code with syntax colour, markdown rendered and images inline, and send a selected line range to the agent.</li>
         <li><strong>Review the whole branch.</strong> Changes shows Uncommitted, Whole branch or This turn, so work the agent already committed stays reviewable. Diffs have syntax colour, split, wrap and ignore whitespace, and large diffs load per file instead of being cut off.</li>
         <li><strong>Review comments go out together.</strong> A comment on a diff line becomes a chip in the composer, and all of them are sent as one prompt. Shift-click to comment on a range.</li>
@@ -238,7 +271,7 @@
       <ul>
         <li><strong>A calmer app.</strong> The whole interface was redesigned. A default thread view went from about 35 always-visible controls to about 15. Warm ink dark theme and paper light theme, Geist and Geist Mono, and one marker-yellow accent.</li>
         <li><strong>One reading column.</strong> Transcript and composer share one centred column. Tool calls and subagent launches are quiet one-line steps, and message actions show on hover.</li>
-        <li><strong>Inbox.</strong> Threads that need you stay up top. Quiet runs fold into a Working shelf beside Snoozed and Settled. Planboard, Review, and Insights are footer icons, and ⌘B folds the sidebar to a rail.</li>
+        <li><strong><a href="docs/views">Inbox</a>.</strong> Threads that need you stay up top. Quiet runs fold into a Working shelf beside Snoozed and Settled. Planboard, Review, and Insights are footer icons, and ⌘B folds the sidebar to a rail.</li>
         <li><strong>New thread hero.</strong> A new thread opens on "What should we build in ‹project›?" with the composer under it. Start without a project to use the built-in Scratch space.</li>
         <li><strong>Workspace choice.</strong> A draft picks Local checkout, New worktree, or Previous worktree, plus the base branch, in a tab under the composer. The choice locks after the first message.</li>
         <li><strong>Model picker.</strong> A provider rail with favourites, search across every provider, and the effort row in one place. Model and effort read as one pill.</li>
@@ -265,7 +298,7 @@
         <li><strong>Composer options.</strong> Workflow and Best of N now live together in one Options dialog in the composer.</li>
         <li><strong>Inspector remembers.</strong> Inspector tabs open to a sensible default for what you are looking at and remember what you picked per project and thread, even after collapsing the panel. Tabs work from the keyboard.</li>
         <li><strong>Codex input forms.</strong> When an MCP tool or Codex itself asks for input, you get a form card instead of an error. Secret fields are masked and never land in the transcript.</li>
-        <li><strong>Memory consolidation status.</strong> The Memory tab shows when consolidation last ran, on which model, and the error if it failed.</li>
+        <li><strong><a href="docs/memory">Memory</a> consolidation status.</strong> The Memory tab shows when consolidation last ran, on which model, and the error if it failed.</li>
         <li><strong>Recovered worktrees.</strong> Uncommitted work left in the worktree of a deleted thread is saved to a recovered/ branch in its repo, then the folder is removed.</li>
       </ul>
       <h3>Fixed</h3>
@@ -286,7 +319,7 @@
       <h2 id="v0-21-1">0.21.1 <small>2026-09-23</small></h2>
       <h3>Fixed</h3>
       <ul>
-        <li><strong>Grok sign-out loop.</strong> After Grok rejects a refresh token, Solenta no longer re-links the same credentials on the next turn. Sign in again with grok login and the overlay picks up the new login.</li>
+        <li><strong><a href="docs/threads">Grok</a> sign-out loop.</strong> After Grok rejects a refresh token, Solenta no longer re-links the same credentials on the next turn. Sign in again with grok login and the overlay picks up the new login.</li>
         <li><strong>Grok session wipe.</strong> Each overlay now owns its own sessions directory instead of sharing ~/.grok/sessions, so Grok's stale-session cleanup cannot delete your real sessions through the overlay.</li>
         <li><strong>Grok auth lock.</strong> Overlay runs share the real grok home's auth lock file, so a Solenta turn and the Grok TUI cannot refresh the same login at once and knock each other out.</li>
       </ul>
@@ -300,7 +333,7 @@
       </ul>
       <h3>Fixed</h3>
       <ul>
-        <li><strong>Remote Grok guardrails.</strong> SSH and WSL runs now deploy their guardrail hooks on the remote machine, including workflow runs. Remote overlays keep host credentials and local MCP addresses out of the remote configuration, preserve sessions and are cleaned up with the thread.</li>
+        <li><strong>Remote Grok <a href="docs/guardrails">guardrails</a>.</strong> SSH and WSL runs now deploy their guardrail hooks on the remote machine, including workflow runs. Remote overlays keep host credentials and local MCP addresses out of the remote configuration, preserve sessions and are cleaned up with the thread.</li>
       </ul>
 
       <h2 id="v0-20-0">0.20.0 <small>2026-09-11</small></h2>
@@ -320,7 +353,7 @@
         <li><strong>Import from other tools.</strong> Preview and selectively copy skills, slash commands, MCP servers, memories and instruction files from Claude Code, Codex and Cursor. Local commands and plugin code have separate trust controls.</li>
         <li><strong>Plugin slash commands.</strong> Enabled Codex and Cursor plugin commands appear in the composer without a manual import, including namespaced commands. Disabled and unlisted cache plugins stay out.</li>
         <li><strong>Searchable skill library.</strong> Search installed skills by name or description and filter by provider and source. Installed skills come first, with catalog, import and MCP tools on secondary views.</li>
-        <li><strong>Memory browsing.</strong> Browse older memories beyond the first 20, filter by type, and inspect source and citation details. Config doctor and maintenance tools sit behind the memory list.</li>
+        <li><strong><a href="docs/memory">Memory</a> browsing.</strong> Browse older memories beyond the first 20, filter by type, and inspect source and citation details. Config doctor and maintenance tools sit behind the memory list.</li>
         <li><strong>Saved sidebar views.</strong> Save named combinations of project, search, status, provider and tag filters. Rename or update them as your triage changes; views continue matching newly created threads.</li>
         <li><strong>Recently deleted.</strong> Deleting a thread now offers Undo and a seven-day restore window. Restore it from Recently deleted or permanently delete it there.</li>
         <li><strong>Move threads between projects.</strong> Move an idle thread from its menu. Threads with a worktree, an active run or a pending worker binding cannot be moved; old repository bindings are cleared.</li>
@@ -401,7 +434,7 @@
       <h3>Added</h3>
       <ul>
         <li><strong>Live dictation.</strong> A mic in the composer transcribes locally with NeMo-Speech.cpp, so you can speak a prompt instead of typing it.</li>
-        <li><strong>Muse Code.</strong> First-class provider, same shape as Cursor and Kimi: isolated overlay, resume, workflows, and SSH.</li>
+        <li><strong><a href="docs/threads">Muse Code</a>.</strong> First-class provider, same shape as Cursor and Kimi: isolated overlay, resume, workflows, and SSH.</li>
         <li><strong>Composer vim.</strong> Optional Insert and Normal chip, with the matching motions on the keyboard sheet.</li>
         <li><strong>Sidebar filters and tags.</strong> Filter by status, provider, or tag, and group or edit tags from the list.</li>
         <li><strong>Guardrails that stop.</strong> Deny-tier tools are blocked even when the CLI is in always-approve, including Grok, Cursor, Codex, and OpenCode.</li>
@@ -796,7 +829,7 @@
 
 <footer>
   <div class="wrap footer-inner">
-    <a class="brand" href="index.html">
+    <a class="brand" href="./">
       <img src="assets/icon.svg" alt="" width="18" height="18" />
       Solenta
     </a>
@@ -804,6 +837,9 @@
     <span class="spacer"></span>
     <a href="docs.html">Docs</a>
     <a href="changelog.html">Changelog</a>
+    <a href="compare/solenta-vs-conductor">vs Conductor</a>
+    <a href="compare/solenta-vs-claude-squad">vs Claude Squad</a>
+    <a href="alternatives/conductor">Conductor alternatives</a>
     <a href="https://github.com/currentbits/solenta/discussions">Discussions</a>
     <a href="https://github.com/currentbits/solenta">GitHub</a>
     <a href="https://github.com/currentbits/solenta/releases">Releases</a>

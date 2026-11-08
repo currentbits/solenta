@@ -38,9 +38,10 @@ const PATCH_TRUNCATE = 100_000;
  * @param {string} cwd
  * @param {string[]} args
  * @param {NodeJS.Platform} [platform]
+ * @param {NodeJS.ProcessEnv} [env]
  * @returns {{ bin: string, args: string[], cwd?: string }}
  */
-function resolveGitCommand(cwd, args, platform = process.platform) {
+function resolveGitCommand(cwd, args, platform = process.platform, env) {
   const argv = Array.isArray(args) ? args : [];
   const side = pathSide(cwd, platform);
   if (side.side !== "wsl") {
@@ -50,7 +51,7 @@ function resolveGitCommand(cwd, args, platform = process.platform) {
     const s = pathSide(typeof a === "string" ? a : "", platform);
     return s.side === "wsl" ? s.linuxPath : a;
   });
-  const cmd = buildWslCommand(side.distro, side.linuxPath, ["git", ...linuxArgs]);
+  const cmd = buildWslCommand(side.distro, side.linuxPath, ["env", `LANGUAGE=${env?.LANGUAGE ?? "C"}`, "git", ...linuxArgs]);
   return { bin: cmd.bin, args: cmd.args };
 }
 
@@ -159,14 +160,15 @@ function gitSubcommand(args) {
  * The one env for every local git spawn. Read-only subcommands get
  * GIT_OPTIONAL_LOCKS=0 (#1520); win32 gets core.longpaths=true appended
  * after any GIT_CONFIG_COUNT entries already set (#1523).
- * ponytail: not forwarded across ssh/WSL wraps; those gits run elsewhere.
+ * LANGUAGE=C keeps diagnostic classifiers independent of the desktop locale.
+ * Other locale settings still reach hooks. SSH/WSL set LANGUAGE on the far side.
  * @param {string[]} args
  * @param {NodeJS.ProcessEnv} [extra]
  * @param {NodeJS.Platform} [platform]
  * @returns {NodeJS.ProcessEnv}
  */
 function gitEnv(args, extra, platform = process.platform) {
-  const env = { ...process.env, ...(extra || {}) };
+  const env = { ...process.env, LANGUAGE: "C", ...(extra || {}) };
   if (READ_ONLY_GIT.has(gitSubcommand(args))) env.GIT_OPTIONAL_LOCKS = "0";
   if (platform === "win32") {
     const n = parseInt(String(env.GIT_CONFIG_COUNT || ""), 10);
@@ -283,7 +285,7 @@ function gitTry(cwd, args, opts) {
     if (opts && opts.timeout != null) {
       execOpts.timeout = opts.timeout;
     }
-    const cmd = resolveGitCommand(cwd, args);
+    const cmd = resolveGitCommand(cwd, args, process.platform, opts && opts.env);
     if (cmd.cwd) execOpts.cwd = cmd.cwd;
     else delete execOpts.cwd;
     // execCommand defaults the timeout when the caller did not set one.
@@ -436,7 +438,7 @@ function gitTryAsync(cwd, args, opts) {
   const timeout =
     opts && opts.timeout != null ? opts.timeout : CHECKPOINT_GIT_TIMEOUT_MS;
   const env = gitEnv(args, { ...(opts && opts.env), GIT_TERMINAL_PROMPT: "0" });
-  const cmd = resolveGitCommand(cwd, args);
+  const cmd = resolveGitCommand(cwd, args, process.platform, opts && opts.env);
   /** @type {import("node:child_process").ExecFileOptionsWithStringEncoding} */
   const execOpts = {
     encoding: "utf8",

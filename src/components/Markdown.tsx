@@ -1,4 +1,6 @@
 import {
+  cloneElement,
+  Children,
   createContext,
   Fragment,
   isValidElement,
@@ -16,6 +18,7 @@ import {
 import ReactMarkdown, {
   defaultUrlTransform,
   type Components,
+  type ExtraProps,
 } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { lazyNamed } from "../lazyNamed";
@@ -30,6 +33,7 @@ import {
   GithubMark,
   isGithubUrl,
   linkifyNode,
+  PathAnchor,
   PathLinkContext,
   ThreadLinkContext,
   useResolvedMap,
@@ -53,12 +57,13 @@ function markdownUrlTransform(url: string): string {
 }
 
 /**
- * Relative / file / absolute image srcs are workspace or Grok session files,
- * not URLs on the renderer origin. Remote http(s)/data/solenta-media stay.
+ * Relative / file / absolute image srcs and link hrefs are workspace or Grok
+ * session files, not URLs on the renderer origin. Remote
+ * http(s)/data/solenta-media and in-page #anchors stay.
  */
-function localPathFromImgSrc(src: string): string | null {
+function localPathFromUrl(src: string): string | null {
   const s = src.trim();
-  if (!s) return null;
+  if (!s || s.startsWith("#") || s.startsWith("//")) return null;
   if (/^https?:\/\//i.test(s)) return null;
   if (s.startsWith("data:") || s.startsWith("solenta-media:")) return null;
   if (s.startsWith("file:")) {
@@ -69,14 +74,19 @@ function localPathFromImgSrc(src: string): string | null {
     }
   }
   if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(s)) return null;
-  return s;
+  // micromark percent-encodes `<path with spaces.png>`.
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return s;
+  }
 }
 
 const NO_PATHS: string[] = [];
 
 function MarkdownImage({ src, alt }: { src?: string; alt?: string }) {
   const api = useContext(PathLinkContext);
-  const local = src ? localPathFromImgSrc(src) : null;
+  const local = src ? localPathFromUrl(src) : null;
   const sessionAbs = local ? api?.sessionImages?.[local] : undefined;
   const absDirect = local && isAbsolutePath(local) ? local : null;
   const rel = local && !absDirect && !sessionAbs ? local : "";
@@ -113,6 +123,44 @@ function MarkdownImage({ src, alt }: { src?: string; alt?: string }) {
       title={alt || undefined}
       tabIndex={0}
     />
+  );
+}
+
+/**
+ * `[mockup](/abs/design/01.png)` names a workspace file: a target=_blank
+ * anchor to it opened nothing (#1844), so it opens like a path link instead.
+ */
+function MarkdownLink({ href, children }: { href?: string; children?: ReactNode }) {
+  const api = useContext(PathLinkContext);
+  const links = useContext(ThreadLinkContext);
+  const local = href ? localPathFromUrl(href) : null;
+  const paths = useMemo(() => (local ? [local] : NO_PATHS), [local]);
+  const abs = useResolvedMap(paths)[local ?? ""];
+  if (!local) {
+    const github = isGithubUrl(href);
+    const anchor = (
+      <a href={href} target="_blank" rel="noreferrer">
+        {github ? <GithubMark className={styles.githubMark} /> : null}
+        {children}
+      </a>
+    );
+    const ref = github ? prRefFromGithubUrl(href) : null;
+    if (!ref) return anchor;
+    return (
+      <PrHoverTarget projectPath={links?.projectPath} repo={ref.repo} number={ref.number}>
+        {anchor}
+      </PrHoverTarget>
+    );
+  }
+  if (!api || !abs) return <>{children}</>;
+  return (
+    <PathAnchor
+      hit={{ raw: local, path: local, start: 0, end: 0 }}
+      abs={abs}
+      openPath={api.openPath}
+    >
+      {children}
+    </PathAnchor>
   );
 }
 
@@ -248,6 +296,35 @@ function useThrottledText(text: string, lastCost: { current: number }): string {
 
 const REMARK_PLUGINS = [remarkGfm];
 
+export interface MarkdownTask { start: number; end: number }
+const TaskContext = createContext<{ onToggle: (task: MarkdownTask) => void; disabled: boolean } | null>(null);
+
+function TaskListItem(props: { children?: ReactNode } & ExtraProps) {
+  const tasks = useContext(TaskContext);
+  const start = props.node?.position?.start.offset;
+  const end = props.node?.position?.end.offset;
+  type ChildProps = { children?: ReactNode; node?: { tagName?: string }; type?: string; disabled?: boolean; onChange?: () => void; "aria-label"?: string };
+  const ownChildren = Children.toArray(props.children).filter((child) =>
+    !isValidElement<ChildProps>(child) || !["ul", "ol"].includes(child.props.node?.tagName ?? String(child.type)));
+  const label = flattenText(ownChildren).trim() || "Checklist item";
+  function editable(children: ReactNode): ReactNode {
+    return Children.map(children, (child) => {
+      if (!isValidElement<ChildProps>(child)) return child;
+      if (child.props.type === "checkbox" && tasks && start != null && end != null) {
+        return cloneElement(child, { disabled: tasks.disabled, onChange: () => tasks.onToggle({ start, end }), "aria-label": `Toggle ${label}` });
+      }
+      // Loose task items wrap their own input in a paragraph. Nested lists
+      // have their own list-item source positions and must keep that mapping.
+      if ((child.props.node?.tagName ?? child.type) === "p") {
+        return cloneElement(child, { children: editable(child.props.children) });
+      }
+      return child;
+    });
+  }
+  const children = tasks ? editable(props.children) : props.children;
+  return <li>{linkifyNode(children)}</li>;
+}
+
 const COMPONENTS: Components = {
   pre: (props) => <CodeBlock>{props.children}</CodeBlock>,
   // Double-click takes the whole span: word selection stops at `-` and `/`,
@@ -263,7 +340,7 @@ const COMPONENTS: Components = {
     </code>
   ),
   p: (props) => <p>{linkifyNode(props.children)}</p>,
-  li: (props) => <li>{linkifyNode(props.children)}</li>,
+  li: TaskListItem,
   td: (props) => <td>{linkifyNode(props.children)}</td>,
   th: (props) => <th>{linkifyNode(props.children)}</th>,
   h1: (props) => <h1>{linkifyNode(props.children)}</h1>,
@@ -271,23 +348,7 @@ const COMPONENTS: Components = {
   h3: (props) => <h3>{linkifyNode(props.children)}</h3>,
   h4: (props) => <h4>{linkifyNode(props.children)}</h4>,
   blockquote: (props) => <blockquote>{linkifyNode(props.children)}</blockquote>,
-  a: (props) => {
-    const links = useContext(ThreadLinkContext);
-    const github = isGithubUrl(props.href);
-    const anchor = (
-      <a href={props.href} target="_blank" rel="noreferrer">
-        {github ? <GithubMark className={styles.githubMark} /> : null}
-        {props.children}
-      </a>
-    );
-    const ref = github ? prRefFromGithubUrl(props.href) : null;
-    if (!ref) return anchor;
-    return (
-      <PrHoverTarget projectPath={links?.projectPath} repo={ref.repo} number={ref.number}>
-        {anchor}
-      </PrHoverTarget>
-    );
-  },
+  a: (props) => <MarkdownLink href={props.href}>{props.children}</MarkdownLink>,
   img: (props) => <MarkdownImage src={props.src} alt={props.alt} />,
 };
 
@@ -383,13 +444,18 @@ const MarkdownChunk = memo(function MarkdownChunk({
 export function MarkdownBody({
   text,
   streaming = false,
+  onTaskToggle,
+  tasksDisabled = false,
 }: {
   text: string;
   streaming?: boolean;
+  onTaskToggle?: (task: MarkdownTask) => void;
+  tasksDisabled?: boolean;
 }) {
   const chunks = streaming ? markdownChunks(text) : [text];
   const wrap = useWrapCodeBlocksEnabled();
   return (
+    <TaskContext.Provider value={onTaskToggle ? { onToggle: onTaskToggle, disabled: tasksDisabled } : null}>
     <div className={styles.md} data-wrap-code={wrap ? "" : undefined}>
       {chunks.map((chunk, i) => (
         <Fragment key={i}>
@@ -401,6 +467,7 @@ export function MarkdownBody({
         </Fragment>
       ))}
     </div>
+    </TaskContext.Provider>
   );
 }
 

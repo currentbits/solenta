@@ -299,6 +299,7 @@ function migrateProject(p) {
   // #1506: strictly boolean; a bad prefix falls back to the default.
   if (next.waitForSetup === true) next.waitForSetup = true;
   else delete next.waitForSetup;
+  if (typeof next.stopOnSettle !== "boolean") delete next.stopOnSettle;
   if (next.setupCacheOff !== true) delete next.setupCacheOff;
   if (typeof next.branchPrefix !== "string" || branchPrefixError(next.branchPrefix)) {
     delete next.branchPrefix;
@@ -512,7 +513,8 @@ function migrateThread(t) {
     permissionMode: t.permissionMode != null ? t.permissionMode : "default",
     // Older stores lack reasoningEffort; null (not undefined) so the picker is stable.
     reasoningEffort:
-      t.reasoningEffort !== undefined ? t.reasoningEffort : null,
+      t.reasoningEffort === "ultracode" ? (require("./providers.js").honouredEfforts(require("./providers.js").getProvider(t.provider), t.model).includes("xhigh") ? "xhigh" : null) : t.reasoningEffort !== undefined ? t.reasoningEffort : null,
+    ultracode: (t.ultracode === true || t.reasoningEffort === "ultracode") && require("./providers.js").modelSupportsUltracode(require("./providers.js").getProvider(t.provider), t.model),
     // Codex live web search (issue #174). Absent → off.
     webSearch: t.webSearch === true,
     // Fast tier (#1529). Absent → off.

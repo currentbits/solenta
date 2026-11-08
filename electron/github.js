@@ -568,6 +568,13 @@ async function ghIssue(remote, args, opts) {
   }
   const issuePath = `/repos/${target.owner}/${target.repo}/issues`;
 
+  // `gh label create NAME`; without this branch it fell into issue create below.
+  if (args[0] === "label") {
+    if (sub !== "create" || !args[2]) throw new Unsupported(`ghIssue: unsupported argv ${args.join(" ")}`);
+    await rest({ ...req, method: "POST", path: `/repos/${target.owner}/${target.repo}/labels`, body: { name: args[2] } });
+    return "";
+  }
+
   if (sub === "view" && number != null) {
     const fields = "number title body url state updatedAt createdAt labels(first: 100) { nodes { name } }";
     const { data } = await graphql({

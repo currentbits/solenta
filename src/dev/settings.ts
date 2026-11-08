@@ -92,6 +92,8 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
   let confirmQuitWithActiveWork = true;
   let pinchZoomWindow = true;
   let closeToTray = false;
+  let menuBarUsage = false;
+  let defaultAccounts: Record<string, string> = {};
   // #1788: default on for anyone who never chose, same as the electron store.
   let resumeInterruptedRuns = true;
   let combineQueuedFollowUps = true;
@@ -123,6 +125,8 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
   /** Saved agent profiles (Settings tab), in-memory. */
   let agentProfiles: AgentProfile[] = [];
   let providerInstances: ProviderInstance[] = [];
+  let cliProxyUsage: NonNullable<AppSettings["cliProxyUsage"]> = { enabled: false, managementUrl: "", managementKey: null };
+  const publicCliProxyUsage = () => ({ enabled: cliProxyUsage.enabled, managementUrl: cliProxyUsage.managementUrl, hasManagementKey: Boolean(cliProxyUsage.managementKey) });
   let providerModels: Record<string, ProviderModelPrefs> = {};
   /** Planboard Orchestrator: Default (#725). */
   let defaultOrchestratorProfileId: string | null = null;
@@ -222,6 +226,8 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           confirmQuitWithActiveWork,
           pinchZoomWindow,
           closeToTray,
+          menuBarUsage,
+          defaultAccounts,
           resumeInterruptedRuns,
           combineQueuedFollowUps,
           agentBugReports,
@@ -234,6 +240,7 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           gitTextModel,
           agentProfiles: agentProfiles.map((p) => ({ ...p })),
           providerInstances: providerInstances.map((p) => ({ ...p, env: { ...p.env } })),
+          cliProxyUsage: publicCliProxyUsage(),
           providerModels: structuredClone(providerModels),
           defaultOrchestratorProfileId,
           promptSnippets: promptSnippets.map((sn) => ({ ...sn })),
@@ -476,6 +483,19 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           }
           closeToTray = patch.closeToTray;
         }
+        if (Object.prototype.hasOwnProperty.call(patch, "menuBarUsage")) {
+          if (typeof patch.menuBarUsage !== "boolean") {
+            throw new Error("menuBarUsage must be a boolean");
+          }
+          menuBarUsage = patch.menuBarUsage;
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, "defaultAccounts")) {
+          const v = patch.defaultAccounts;
+          if (!v || typeof v !== "object" || Array.isArray(v)) {
+            throw new Error("defaultAccounts must be an object");
+          }
+          defaultAccounts = { ...v };
+        }
         if (Object.prototype.hasOwnProperty.call(patch, "worktreeRoot")) {
           const v = typeof patch.worktreeRoot === "string" ? patch.worktreeRoot.trim() : "";
           if (v && !v.startsWith("/")) {
@@ -556,6 +576,11 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           ) {
             defaultOrchestratorProfileId = null;
           }
+        }
+        if (patch.cliProxyUsage) {
+          const next = { ...cliProxyUsage, ...patch.cliProxyUsage };
+          if (next.managementUrl !== cliProxyUsage.managementUrl && !("managementKey" in patch.cliProxyUsage)) next.managementKey = null;
+          cliProxyUsage = next;
         }
         if (patch.providerModels) providerModels = structuredClone(patch.providerModels);
         if (Object.prototype.hasOwnProperty.call(patch, "providerInstances")) {
@@ -701,6 +726,8 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           confirmQuitWithActiveWork,
           pinchZoomWindow,
           closeToTray,
+          menuBarUsage,
+          defaultAccounts,
           resumeInterruptedRuns,
           combineQueuedFollowUps,
           agentBugReports,
@@ -713,6 +740,7 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           gitTextModel,
           agentProfiles: agentProfiles.map((p) => ({ ...p })),
           providerInstances: providerInstances.map((p) => ({ ...p, env: { ...p.env } })),
+          cliProxyUsage: publicCliProxyUsage(),
           providerModels: structuredClone(providerModels),
           defaultOrchestratorProfileId,
           promptSnippets: promptSnippets.map((sn) => ({ ...sn })),

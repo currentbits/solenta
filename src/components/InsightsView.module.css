@@ -134,10 +134,11 @@
 
 .provider {
   flex-shrink: 0;
-  font-family: var(--mono);
+  font-family: var(--font);
   font-size: 11px;
   font-weight: 550;
   color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
 }
 
 .rowMeta {

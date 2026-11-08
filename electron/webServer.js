@@ -101,13 +101,31 @@ function parseServeWebArgs(argv) {
 /**
  * --headless on Linux with no X or Wayland display: Electron's GTK init
  * aborts (SIGTRAP, "Can't create a GtkStyleContext without a display
- * connection") after main.js has started. --ozone-platform=headless does not
- * avoid it on every host; a virtual display from xvfb-run does.
+ * connection") after main.js has started, so main.js relaunches itself
+ * (relaunchHeadless). The relaunched child carries --ozone-platform=headless
+ * or a DISPLAY from xvfb-run, so it never relaunches again.
  *
  * @param {{ headless: boolean }} opts
  */
-function needsVirtualDisplay(opts, platform = process.platform, env = process.env) {
-  return Boolean(opts.headless) && platform === "linux" && !env.DISPLAY && !env.WAYLAND_DISPLAY;
+function needsVirtualDisplay(opts, platform = process.platform, env = process.env, argv = process.argv) {
+  return Boolean(opts.headless) && platform === "linux" && !env.DISPLAY && !env.WAYLAND_DISPLAY
+    && !argv.includes("--ozone-platform=headless");
+}
+
+/**
+ * Rerun this command on Chromium's display-less ozone backend; CI boots and
+ * serves that on Linux x64 and arm64 with no display (#1849). A child that
+ * fails within 5 s is retried under xvfb-run, the virtual display that was
+ * the only path before. A failure after 5 s is the server's own exit.
+ *
+ * @param {{ spawnSync: Function, execPath: string, args: string[], now?: () => number, log?: (msg: string) => void }} opts
+ */
+function relaunchHeadless({ spawnSync, execPath, args, now = Date.now, log = console.error }) {
+  const started = now();
+  const r = spawnSync(execPath, [...args, "--ozone-platform=headless"], { stdio: "inherit" });
+  if (r.status === 0 || now() - started >= 5000) return r;
+  log("Solenta --headless: the display-less backend failed to start; retrying under xvfb-run.");
+  return spawnSync("xvfb-run", ["-a", execPath, ...args], { stdio: "inherit" });
 }
 
 /**
@@ -583,6 +601,7 @@ module.exports = {
   HOST_FLAG_HELP,
   parseServeWebArgs,
   needsVirtualDisplay,
+  relaunchHeadless,
   loadOrCreateToken,
   terminalQr,
   serveBanner,

@@ -37,7 +37,7 @@ const { copyGuardrailRuntime } = require("./guardrail-hook-core.js");
 const { claudeSettingsHooks } = require("./user-hooks.js");
 const threadSecrets = require("./threadSecrets.js");
 const { classifyTool } = require("./guardrails.js");
-const { evaluate, threadPolicy } = require("./governance.js");
+const { evaluate, fullAccessAllows, threadPolicy } = require("./governance.js");
 const { appendAudit } = require("./governanceAudit.js");
 const { suggestedAllowRules } = require("./permissionCommand.js");
 const {
@@ -57,6 +57,7 @@ const { saveToolImages, extractImages } = require("./tool-images.js");
 const { extractHtml } = require("./tool-html.js");
 const fs = require("node:fs");
 const { recordCompaction } = require("./compaction.js");
+const { claudeCompaction } = require("./claude-context.js");
 
 /**
  * One model's growth in a claude result's modelUsage since the last result
@@ -318,6 +319,7 @@ function createClaudeRun(ctx) {
           toolName,
           input: inputObj,
           worktreePath: thread.worktreePath || project.path,
+          permissionMode: thread.permissionMode,
         });
         if (notice) {
           grokGuardrailNoticed.add(toolId);
@@ -502,6 +504,18 @@ function createClaudeRun(ctx) {
     // provider's overlay row. Joins the reuse key below too: changing it
     // mid-thread must respawn a warm interactive process.
     const extraArgv = threadExtraArgv(store.getSettings(), thread);
+    if (thread.ultracode === true && entryDef.id === "claude" && !require("./providers.js").modelSupportsUltracode(entryDef, thread.model)) {
+      throw new Error("Ultracode requires an xhigh-capable Claude model for this turn. Pick a supported model or turn Ultracode off.");
+    }
+    const versionEnv = thread.ultracode === true ? withProjectEnv(project, threadInstanceEnv(store.getSettings(), thread, { local: !crossesBoundary(project), userDataPath })) : undefined;
+    const ultracodeCli = thread.ultracode === true && entryDef.id === "claude"
+      ? (crossesBoundary(project)
+        ? await require("./providers.js").remoteCliSupportsUltracode(project, binary, versionEnv)
+        : require("./providers.js").cliSupportsUltracode(binary, { ...process.env, ...versionEnv }))
+      : false;
+    if (thread.ultracode === true && entryDef.id === "claude" && !ultracodeCli) {
+      throw new Error("Ultracode requires Claude Code 2.1.219 or newer. Could not verify support on this host. Update the CLI or turn Ultracode off.");
+    }
     const args = entryDef.buildArgs({
       prompt,
       sessionId: thread.sessionId || null,
@@ -511,6 +525,8 @@ function createClaudeRun(ctx) {
       webSearch: thread.webSearch === true,
       agent: thread.agent || null,
       fast: thread.fast === true,
+      ultracode: thread.ultracode === true,
+      cliSupportsUltracode: ultracodeCli,
       forkSessionAt: thread.forkSessionAt || null,
       addDirs: extraDirs,
       askWriteDirs,
@@ -566,6 +582,8 @@ function createClaudeRun(ctx) {
             GROK_HOME: dest,
             GROK_CLAUDE_MCPS_ENABLED: "false",
             GROK_CURSOR_MCPS_ENABLED: "false",
+            // The overlay hook lets ask rules run on Full access (#1853).
+            SOLENTA_PERMISSION_MODE: thread.permissionMode || "default",
           };
         } catch (err) {
           completeWorkLogStep(threadId, startingId);
@@ -671,6 +689,9 @@ function createClaudeRun(ctx) {
     let sawAnyEvent = false;
     /** The dead-reuse respawn below fires at most once per turn. */
     let respawned = false;
+    // Turn-local: settings can reload between sends on the same process.
+    let contextCompaction = null;
+    let sawCompactionPolicy = false;
 
     function disarmAck() {
       const e = active.get(threadId);
@@ -684,6 +705,25 @@ function createClaudeRun(ctx) {
         sawAnyEvent = true;
         disarmAck();
         const type = ev && ev.type;
+        // Policy frames can arrive while idle on a kept-alive CLI. Only the
+        // current process may update this thread; never read local settings
+        // for a named account, SSH host or WSL process.
+        if (interactive && type === "autocompact_state") {
+          const sess = claudeSessions.get(threadId);
+          if (!sess || sess.handle !== handle) return;
+          sawCompactionPolicy = true;
+          contextCompaction = claudeCompaction(ev.value, true);
+          const usage = store.getUsage(threadId);
+          if (usage) {
+            const next = { ...usage };
+            delete next.contextCompaction;
+            if (contextCompaction) next.contextCompaction = contextCompaction;
+            store.setUsage(threadId, next);
+            store.save();
+            pushDetail(threadId, claudeState);
+          }
+          return;
+        }
 
         // --replay-user-messages echoes each stdin user line once the CLI
         // takes it up: at a tool boundary (before the result) or as its own
@@ -774,7 +814,7 @@ function createClaudeRun(ctx) {
               sessionAllows: e.sessionAllows,
               mcpRules: gov.mcpRules,
             });
-            const auditRow = (decision, executed) =>
+            const auditRow = (decision, executed, reason = ev.reason) =>
               appendAudit({
                 threadId,
                 profileId: gov.profileId,
@@ -786,7 +826,7 @@ function createClaudeRun(ctx) {
                 decision,
                 layer: ev.layer,
                 rule: ev.rule,
-                reason: ev.reason,
+                reason,
               });
 
             if (ev.decision === "deny") {
@@ -837,6 +877,19 @@ function createClaudeRun(ctx) {
             const governed =
               Boolean(gov.policy && gov.policy.rules.length) ||
               ev.layer.startsWith("mcp.");
+            // #1854: Full access, read live so a mid-run switch applies to
+            // the next call, answers the asks no rule spelled out.
+            const fullAccess =
+              (live || thread).permissionMode === "bypassPermissions" &&
+              fullAccessAllows(ev);
+            if (fullAccess) {
+              handle.respond(requestId, {
+                behavior: "allow",
+                updatedInput: rawInput,
+              });
+              auditRow("allow", ev.declared, "full access");
+              return;
+            }
             if (
               ev.decision === "allow" ||
               takeRestartGrant(threadId, toolName, rawInput) ||
@@ -962,6 +1015,14 @@ function createClaudeRun(ctx) {
             );
           }
           return;
+        }
+
+        // Live quota for the menu bar (#1859), under this thread's account.
+        if (type === "rate_limit_event") {
+          require("./providerUsage.js").reportLiveUsage(
+            threadProviderRef(thread),
+            require("./providerUsage.js").claudeRateLimitWindows(ev.rate_limit_info),
+          );
         }
 
         if (type === "system" && ev.subtype === "init") {
@@ -1217,6 +1278,9 @@ function createClaudeRun(ctx) {
                 .filter(Boolean)
               : null;
           if (handle && handle.modelSwitchedTo !== undefined) {
+            // A threshold from the plan model cannot size the act model.
+            contextCompaction = null;
+            sawCompactionPolicy = false;
             capturedModel = handle.modelSwitchedTo || capturedModel;
             delete handle.modelSwitchedTo;
           }
@@ -1240,7 +1304,27 @@ function createClaudeRun(ctx) {
             }),
             reportedModelUsageWindow(ev),
           );
+          if (interactive && contextCompaction) {
+            nextUsage.contextCompaction = contextCompaction;
+          }
           store.setUsage(threadId, nextUsage);
+          if (interactive && !sawCompactionPolicy && typeof handle.getContextUsage === "function") {
+            const queriedHandle = handle;
+            const turns = nextUsage.turns;
+            void (async () => {
+              const value = await queriedHandle.getContextUsage();
+              const sess = claudeSessions.get(threadId);
+              const usage = store.getUsage(threadId);
+              if (!sess || sess.handle !== queriedHandle || sess.dispatch.onEvent !== onEvent ||
+                  !usage || usage.turns !== turns || sawCompactionPolicy) return;
+              // A streamed policy arriving during the request always wins.
+              const compaction = claudeCompaction(value);
+              if (!compaction) return;
+              store.setUsage(threadId, { ...usage, contextCompaction: compaction });
+              store.save();
+              pushDetail(threadId, claudeState);
+            })().catch(() => {}); // Optional meter metadata must not fail a successful turn.
+          }
           if (costDelta > 0) {
             store.recordSpend(costDelta);
           }
@@ -1502,6 +1586,7 @@ function createClaudeRun(ctx) {
       reasoningEffort: thread.reasoningEffort || null,
       // --settings fastMode is argv: toggling Fast must respawn (#1529).
       fast: thread.fast === true,
+      ultracode: thread.ultracode === true,
       // --add-dir / ask rules are argv: a folder change or grant respawns.
       dirs: [extraDirs, askWriteDirs, askReads],
       // Extra launch arguments (#1780) are argv: an edit must respawn.
@@ -1548,6 +1633,12 @@ function createClaudeRun(ctx) {
           interactive,
           keepAlive: true,
           envExtra: spawnEnv,
+          // Summary ignores this override. Do not turn a known wrong estimate
+          // into the meter's denominator. Explicit overlays cross SSH/WSL;
+          // the parent process environment does not.
+          contextSummaryAllowed: !extraArgv.some((arg) => arg.includes("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE")) &&
+            !(spawnEnv?.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE ??
+              (!crossesBoundary(project) && process.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE)),
           onEvent: (ev) => sess.dispatch.onEvent(ev),
           onExit: (info) => {
             // Process death always retires the session, whatever turn (if
@@ -1627,6 +1718,14 @@ function createClaudeRun(ctx) {
     }
 
     entry.handle = handle;
+    if (interactive) {
+      const usage = store.getUsage(threadId);
+      if (usage?.contextCompaction) {
+        const next = { ...usage };
+        delete next.contextCompaction;
+        store.setUsage(threadId, next);
+      }
+    }
     store.save();
     pushDetail(threadId, claudeState);
 

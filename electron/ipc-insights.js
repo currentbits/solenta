@@ -27,9 +27,13 @@ module.exports = {
   },
   "usage:providerLimits": async (ctx) => {
     const { fetchProviderLimits } = require("./providerUsage.js");
-    return fetchProviderLimits({
+    const rows = await fetchProviderLimits({
+      cliProxyUsage: ctx.store.getSettings().cliProxyUsage,
       instances: require("./services.js").instanceAuthProbes(ctx.store, ctx.userDataPath),
     });
+    // The menu bar (#1859) shows whatever the Usage view last fetched.
+    if (ctx.usageMenu) ctx.usageMenu.setUsage(rows.filter((row) => row.source !== "cliproxy"));
+    return rows;
   },
   "insights:failureModes": async (ctx) => {
     const { clusterFailureModes } = require("./failuremodes.js");

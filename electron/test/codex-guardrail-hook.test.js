@@ -20,11 +20,13 @@ const {
   hookTrustKey,
   hookTrustTomlBlock,
 } = require("../codex-guardrail.js");
+const { guardrailNotice } = require("../guardrail-hook-core.js");
 
-function runHook(scriptPath, payload) {
+function runHook(scriptPath, payload, env = {}) {
   return spawnSync(process.execPath, [scriptPath], {
     input: JSON.stringify(payload),
     encoding: "utf8",
+    env: { ...process.env, ...env },
   });
 }
 
@@ -271,10 +273,39 @@ describe("codex guardrail hook (stdin)", () => {
     const r = runHook(scriptPath, bashPayload("curl https://api.example.com/v1"));
     assert.equal(r.status, 2);
     assert.match(r.stderr, /shell\.egress/);
+    // #1841: say retrying will not help and which setting allows it.
+    assert.match(r.stderr, /retrying, even with escalated sandbox permissions/);
+    assert.match(r.stderr, /Full access/);
+  });
+
+  it("lets ask-tier rules run on a Full access thread, deny rules still block (#1841)", () => {
+    const full = { SOLENTA_PERMISSION_MODE: "bypassPermissions" };
+    const ask = runHook(scriptPath, bashPayload("curl https://api.example.com/v1"), full);
+    assert.equal(ask.status, 0, ask.stderr);
+    const deny = runHook(scriptPath, bashPayload("sudo rm /etc/hosts"), full);
+    assert.equal(deny.status, 2);
+    assert.match(deny.stderr, /shell\.sudo/);
+    assert.doesNotMatch(deny.stderr, /Full access/);
+    const other = runHook(scriptPath, bashPayload("curl https://api.example.com/v1"), {
+      SOLENTA_PERMISSION_MODE: "acceptEdits",
+    });
+    assert.equal(other.status, 2);
   });
 
   it("exits 0 for ordinary npm test", () => {
     const r = runHook(scriptPath, bashPayload("npm test"));
     assert.equal(r.status, 0);
+  });
+});
+
+describe("guardrailNotice allowAsk (#1841)", () => {
+  it("drops the blocked notice for ask verdicts the hook let run", () => {
+    const curl = { command: "curl https://api.example.com/v1" };
+    assert.match(guardrailNotice("Bash", curl, "/tmp/wt"), /shell\.egress/);
+    assert.equal(guardrailNotice("Bash", curl, "/tmp/wt", true), null);
+    assert.match(
+      guardrailNotice("Bash", { command: "sudo id" }, "/tmp/wt", true),
+      /shell\.sudo/,
+    );
   });
 });

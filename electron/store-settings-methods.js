@@ -8,6 +8,8 @@ const { validateMcpServers, mergeMcpSettingsPatch } = require("./mcp.js");
 const { validateProviderInstances, parseProviderModels } = require("./providerInstances.js");
 const { validateModelPrices } = require("./modelPrices.js");
 const { normalizePrivacyGateway } = require("./privacyGateway.js");
+const { mergeCliProxyUsage } = require("./providerUsageCliProxy.js");
+const { localSpeechError } = require("./speech-config.js");
 const {
   isHttpUrl,
   validateAgentProfiles,
@@ -15,6 +17,7 @@ const {
   parsePromptSnippets,
   DEFAULT_AUTO_SETTLE_AFTER_DAYS,
   normalizeDefaultProvider,
+  normalizeDefaultAccounts,
   normalizeDefaultModel,
   validateGitTextModel,
   validateQuotaFailover,
@@ -107,6 +110,8 @@ class StoreSettingsMethods {
       confirmQuitWithActiveWork: n.confirmQuitWithActiveWork,
       pinchZoomWindow: n.pinchZoomWindow,
       closeToTray: n.closeToTray,
+      menuBarUsage: n.menuBarUsage,
+      defaultAccounts: n.defaultAccounts,
       resumeInterruptedRuns: n.resumeInterruptedRuns,
       combineQueuedFollowUps: n.combineQueuedFollowUps,
       agentBugReports: n.agentBugReports,
@@ -120,6 +125,7 @@ class StoreSettingsMethods {
       maxConcurrentRuns: n.maxConcurrentRuns,
       agentProfiles: n.agentProfiles,
       providerInstances: n.providerInstances,
+      cliProxyUsage: n.cliProxyUsage,
       providerModels: n.providerModels,
       defaultOrchestratorProfileId: n.defaultOrchestratorProfileId,
       promptSnippets: n.promptSnippets,
@@ -283,6 +289,9 @@ class StoreSettingsMethods {
         this.data.settings.defaultOrchestratorProfileId,
         this.data.settings.agentProfiles,
       );
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "cliProxyUsage")) {
+      this.data.settings.cliProxyUsage = mergeCliProxyUsage(this.data.settings.cliProxyUsage, patch.cliProxyUsage);
     }
     if (Object.prototype.hasOwnProperty.call(patch, "providerInstances")) {
       this.data.settings.providerInstances = validateProviderInstances(
@@ -476,6 +485,20 @@ class StoreSettingsMethods {
       }
       this.data.settings.closeToTray = v;
     }
+    if (Object.prototype.hasOwnProperty.call(patch, "menuBarUsage")) {
+      const v = patch.menuBarUsage;
+      if (typeof v !== "boolean") {
+        throw new Error("menuBarUsage must be a boolean");
+      }
+      this.data.settings.menuBarUsage = v;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "defaultAccounts")) {
+      const v = patch.defaultAccounts;
+      if (!v || typeof v !== "object" || Array.isArray(v)) {
+        throw new Error("defaultAccounts must be an object");
+      }
+      this.data.settings.defaultAccounts = normalizeDefaultAccounts(v);
+    }
     if (Object.prototype.hasOwnProperty.call(patch, "worktreeRoot")) {
       this.data.settings.worktreeRoot = validateWorktreeRoot(patch.worktreeRoot);
     }
@@ -592,6 +615,13 @@ class StoreSettingsMethods {
         if (k in v && v[k] !== null && typeof v[k] !== "string") {
           throw new Error(`speech.${k} must be a string or null`);
         }
+      }
+      for (const k of ["localModel", "language"]) {
+        if (k in v && (typeof v[k] !== "string" || !v[k])) throw new Error(`speech.${k} must be a non-empty string`);
+      }
+      if ("localModel" in v || "language" in v) {
+        const error = localSpeechError({ ...this.data.settings.speech, ...v });
+        if (error) throw new Error(error);
       }
       // Omitted keys keep the saved value: the renderer never sees them.
       this.data.settings.speech = normalizeSpeechSettings({

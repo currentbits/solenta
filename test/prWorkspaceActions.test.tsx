@@ -197,3 +197,79 @@ describe("PrWorkspacePanel reactions (#1795 feature 3)", () => {
     m.unmount();
   });
 });
+
+
+describe("PrWorkspacePanel comment context", () => {
+  it("retries partial comment loading and keeps review-summary ids separate from editable comments", async () => {
+    let loads = 0;
+    const pr: PrDetail = {
+      ...basePr,
+      commentsError: "Some PR comments couldn't be loaded.",
+      comments: [
+        { id: 1, type: "issue", author: "me", body: "ordinary", createdAt: "", mine: true },
+        { id: 1, type: "review-summary", author: "reviewer", body: "summary", createdAt: "" },
+      ],
+    };
+    const m = await mount(
+      <PrWorkspacePanel
+        projectPath="/tmp/ledger"
+        prNumber={11}
+        matchedThread={null}
+        {...noop}
+        prDetail={async () => {
+          loads++;
+          return ok(loads > 1 ? { ...pr, commentsError: undefined } : pr);
+        }}
+        prCommentEdit={async () => ok(pr)}
+        onSelectThread={() => {}}
+        onClose={() => {}}
+      />,
+    );
+    await m.click(m.query("[data-pr-comment-edit]"));
+    assert.equal(m.queryAll("[data-pr-comment-edit-form]").length, 1);
+    assert.match(m.queryAll("[data-pr-comment-item]")[1].textContent || "", /summary/);
+    await m.click(m.byText("Retry comments"));
+    await m.flush();
+    assert.equal(loads, 2);
+    assert.equal(m.byText("Retry comments"), null);
+    m.unmount();
+  });
+
+  it("preserves edits and available comments across partial or failed retries", async () => {
+    let loads = 0;
+    const pr: PrDetail = {
+      ...basePr,
+      commentsError: "Some PR comments couldn't be loaded.",
+      comments: [{ id: 1, type: "review", author: "reviewer", body: "available inline", createdAt: "" }],
+    };
+    const m = await mount(
+      <PrWorkspacePanel
+        projectPath="/tmp/ledger"
+        prNumber={11}
+        matchedThread={null}
+        {...noop}
+        prDetail={async () => {
+          loads++;
+          if (loads === 3) throw new Error("Offline");
+          return ok(loads === 1 ? pr : {
+            ...pr,
+            comments: [{ id: 2, type: "issue", author: "reviewer", body: "new ordinary", createdAt: "" }],
+          });
+        }}
+        onSelectThread={() => {}}
+        onClose={() => {}}
+      />,
+    );
+    await m.type(m.query("[data-pr-edit-title]"), "Unsaved title");
+    await m.type(m.query("[data-pr-edit-body]"), "Unsaved description");
+    for (let retry = 0; retry < 2; retry++) {
+      await m.click(m.byText("Retry comments"));
+      await m.flush();
+      assert.equal(m.queryAll("[data-pr-comment-item]").length, 2);
+      assert.equal((m.query("[data-pr-edit-title]") as HTMLInputElement).value, "Unsaved title");
+      assert.equal((m.query("[data-pr-edit-body]") as HTMLTextAreaElement).value, "Unsaved description");
+    }
+    assert.match(m.query("[data-pr-workspace-error]").textContent || "", /Offline/);
+    m.unmount();
+  });
+});

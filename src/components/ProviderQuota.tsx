@@ -127,7 +127,7 @@ export function ProviderQuota({
     hint = error;
     hintStatus = "error";
   } else if (!hint) {
-    hint = "Account limits reported by each CLI.";
+    hint = "Account limits reported by connected providers.";
   }
 
   return (
@@ -165,7 +165,7 @@ export function ProviderQuota({
               key={row.provider}
               row={row}
               active={row.provider === activeProvider}
-              label={providerDisplayName(row.provider, providers)}
+              label={row.label ?? providerDisplayName(row.provider, providers)}
               now={clock}
               refreshFailed={refreshFailed}
             />
@@ -203,12 +203,13 @@ function QuotaRow({
       className={styles.row}
       data-provider-quota-row={row.provider}
       data-status={row.status}
+      data-source={row.source}
       data-active={active ? "true" : undefined}
       data-stale={stale ? "" : undefined}
     >
       <div className={styles.rowHead}>
         <ProviderMark
-          providerId={row.provider}
+          providerId={row.source === "cliproxy" ? "claude" : row.provider}
           size={13}
           decorative
           className={styles.mark}
@@ -250,7 +251,7 @@ function QuotaRow({
                     style={
                       {
                         width: `${width}%`,
-                        "--quota-fill": providerColor(row.provider),
+                        "--quota-fill": providerColor(row.source === "cliproxy" ? "claude" : row.provider),
                       } as CSSProperties
                     }
                     data-warn={width >= 80 && width < 95 ? "" : undefined}

@@ -78,7 +78,7 @@ describe("worktrees.diff remoteHost", () => {
     assert.ok(calls[0].args.includes("BatchMode=yes"));
     assert.ok(
       calls.some((c) =>
-        /cd '\/srv\/app' && 'git' 'status'/.test(c.args[c.args.length - 1]),
+        /cd '\/srv\/app' && 'env' 'LANGUAGE=C' 'git' 'status'/.test(c.args[c.args.length - 1]),
       ),
     );
     assert.equal(result.files.length, 1);

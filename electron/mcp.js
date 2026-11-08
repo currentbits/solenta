@@ -858,10 +858,20 @@ function redactSettings(settings) {
       hasToken: Boolean(r.token),
     }));
   }
+  // CLIProxy management keys stay in main, separate from agent environments.
+  if (settings.cliProxyUsage && typeof settings.cliProxyUsage === "object") {
+    out.cliProxyUsage = {
+      enabled: settings.cliProxyUsage.enabled,
+      managementUrl: settings.cliProxyUsage.managementUrl,
+      hasManagementKey: Boolean(settings.cliProxyUsage.managementKey),
+    };
+  }
   // Speech API keys (#1725): same rule, only whether each one is set.
   if (settings.speech && typeof settings.speech === "object") {
     out.speech = {
       provider: settings.speech.provider,
+      localModel: settings.speech.localModel,
+      language: settings.speech.language,
       hasOpenaiKey: Boolean(settings.speech.openaiApiKey),
       hasElevenlabsKey: Boolean(settings.speech.elevenlabsApiKey),
     };

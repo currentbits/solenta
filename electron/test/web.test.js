@@ -202,6 +202,36 @@ describe("parseServeWebArgs", () => {
     assert.equal(needsVirtualDisplay(h, "linux", { WAYLAND_DISPLAY: "wayland-0" }), false);
     assert.equal(needsVirtualDisplay(h, "darwin", {}), false);
     assert.equal(needsVirtualDisplay({ headless: false }, "linux", {}), false);
+    assert.equal(needsVirtualDisplay(h, "linux", {}, ["solenta", "--headless", "--ozone-platform=headless"]), false, "ozone child must not relaunch again");
+  });
+
+  it("relaunchHeadless: ozone first, xvfb-run only when it fails within 5 s", () => {
+    const { relaunchHeadless } = require("../webServer.js");
+    const run = (results, elapsed) => {
+      const calls = [];
+      let t = 0;
+      const r = relaunchHeadless({
+        spawnSync: (cmd, args) => {
+          calls.push([cmd, ...args]);
+          t += elapsed;
+          return results.shift();
+        },
+        execPath: "/opt/solenta/solenta",
+        args: ["--headless", "--no-sandbox"],
+        now: () => t,
+        log: () => {},
+      });
+      return { r, calls };
+    };
+    const ok = run([{ status: 0 }], 100);
+    assert.deepEqual(ok.calls, [["/opt/solenta/solenta", "--headless", "--no-sandbox", "--ozone-platform=headless"]]);
+    assert.equal(ok.r.status, 0);
+    const crash = run([{ status: null, signal: "SIGTRAP" }, { status: 0 }], 1000);
+    assert.deepEqual(crash.calls[1], ["xvfb-run", "-a", "/opt/solenta/solenta", "--headless", "--no-sandbox"]);
+    assert.equal(crash.r.status, 0);
+    const late = run([{ status: 1 }], 60_000);
+    assert.equal(late.calls.length, 1, "a server that ran and then exited is not retried");
+    assert.equal(late.r.status, 1);
   });
 
   it("serveBanner: loopback gets no QR and a pointer to the LAN flag", () => {
@@ -557,6 +587,9 @@ describe("one map, two transports + packaging", () => {
     const main = fs.readFileSync(path.join(__dirname, "../main.js"), "utf8");
     assert.match(main, /if \(serveOpts\.headless\) app\.disableHardwareAcceleration\(\);/);
     assert.match(main, /createWindow: serveOpts\.headless \? \(\) => \{\} : createWindow/);
+    // #1845: the tray's GTK status icon aborts a display-less Linux host.
+    assert.match(main, /if \(!serveOpts\.headless && \(process\.platform === "win32" \|\| process\.platform === "linux"\)\) \{\s*const icon = windowIcon\(\);\s*if \(icon\) \{\s*trayController = createTray/);
+    assert.equal((main.match(/createTray\(/g) || []).length, 1, "no other tray creation path");
     // macOS takes the lock too, or a terminal --serve-web opens a second store
     // writer; only --serve-web launches exit there (prod and nightly co-run).
     assert.match(main, /const gotLock = app\.requestSingleInstanceLock\(\);/);

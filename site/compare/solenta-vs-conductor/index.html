@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <base href="../../" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Solenta vs Conductor: parallel coding agents compared</title>
+  <meta name="description" content="Compare Solenta and Conductor on agent support, worktrees, shared memory, issue workflows and pricing, with links to each product's own docs." />
+  <link rel="canonical" href="https://solenta.app/compare/solenta-vs-conductor" />
+  <link rel="image_src" href="https://solenta.app/assets/card.png?v=4" />
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="Solenta" />
+  <meta property="og:url" content="https://solenta.app/compare/solenta-vs-conductor" />
+  <meta property="og:title" content="Solenta vs Conductor: parallel coding agents compared" />
+  <meta property="og:description" content="Compare Solenta and Conductor on agent support, worktrees, shared memory, issue workflows and pricing, with links to each product's own docs." />
+  <meta property="og:image" content="https://solenta.app/assets/card.png?v=4" />
+  <meta property="og:image:secure_url" content="https://solenta.app/assets/card.png?v=4" />
+  <meta property="og:image:type" content="image/png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="Solenta. Your agents remember." />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:site" content="@currentbitsNET" />
+  <meta name="twitter:title" content="Solenta vs Conductor: parallel coding agents compared" />
+  <meta name="twitter:description" content="Compare Solenta and Conductor on agent support, worktrees, shared memory, issue workflows and pricing, with links to each product's own docs." />
+  <meta name="twitter:image" content="https://solenta.app/assets/card.png?v=4" />
+  <meta name="twitter:image:alt" content="Solenta. Your agents remember." />
+  <meta name="theme-color" content="#f5f5f2" />
+  <link rel="icon" href="assets/icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="apple-touch-icon.png" />
+  <script>document.documentElement.classList.add("js");</script>
+  <link rel="preload" href="fonts/Geist-Variable.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="stylesheet" href="style.css?v=13" />
+  <!-- First-party stats: no cookies, no personal data, so no consent banner.
+       stats.js beacons pageviews and data-event clicks to stats.solenta.app. -->
+  <script src="stats.js" defer></script>
+  <!-- Meterbird analytics, cookieless until the visitor allows it in the
+       consent.js banner; replay only after "Allow". -->
+  <script src="consent.js" defer></script>
+
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage","name":"Solenta vs Conductor: parallel coding agents compared","description":"Compare Solenta and Conductor on agent support, worktrees, shared memory, issue workflows and pricing, with links to each product's own docs.","url":"https://solenta.app/compare/solenta-vs-conductor","dateModified":"2026-11-02","publisher":{"@id":"https://solenta.app/#org"}}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Solenta","item":"https://solenta.app/"},{"@type":"ListItem","position":2,"name":"Compare","item":"https://solenta.app/#compare"},{"@type":"ListItem","position":3,"name":"Solenta vs Conductor: parallel coding agents compared","item":"https://solenta.app/compare/solenta-vs-conductor"}]}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"FAQPage","mainEntity":[{"@type":"Question","name":"Can both apps run agents in separate Git worktrees?","acceptedAnswer":{"@type":"Answer","text":"Yes. Solenta documents worktree threads, and Conductor documents separate worktrees and branches for local workspaces. Worktrees isolate working files; they do not guarantee conflict-free merges."}},{"@type":"Question","name":"Is Conductor only a Mac app?","acceptedAnswer":{"@type":"Answer","text":"Its desktop installation docs describe macOS. Its product page also advertises iOS, cloud workspaces and API access, so describing the entire product as Mac-only would omit those options."}},{"@type":"Question","name":"Does this comparison prove Conductor lacks shared memory or spend caps?","acceptedAnswer":{"@type":"Answer","text":"No. Those behaviors were not assessed here. The linked sources and the comparison's scope do not establish that either feature is absent."}}]}</script>
+
+</head>
+<body>
+<nav class="nav">
+  <div class="nav-inner">
+    <a class="brand" href="./">
+      <img src="assets/icon.svg" alt="" />
+      Solenta
+    </a>
+    <div class="nav-links">
+      <a href="docs.html" class="active">Docs</a>
+      <a href="changelog.html">Changelog</a>
+      <a href="https://github.com/currentbits/solenta/discussions">Discussions</a>
+      <a href="https://github.com/currentbits/solenta">GitHub</a>
+      <a class="nav-cta" href="./#install">
+        Download
+      </a>
+    </div>
+  </div>
+</nav>
+
+<div class="wrap"><div class="docs-layout"><main class="docs-content"><h1>Solenta vs Conductor</h1>
+<p>Choose Solenta if you want a free, MIT-licensed desktop app for parallel agent CLIs, shared local memory and a planboard on GitHub or GitLab issues. Choose Conductor if you want its documented local Mac workspaces, cloud workspaces and mobile access.</p>
+<p>Facts checked on <strong>2 November 2026</strong> against the primary sources linked below. This compares documented workflows, rather than benchmark results. A feature marked “not assessed” needs a hands-on check before it should decide your choice.</p>
+<h2>Documented differences</h2>
+<div class="table-scroll"><table class="doc-table"><thead><tr><th>Area</th><th>Solenta</th><th>Conductor</th></tr></thead><tbody><tr><td>Platforms</td><td>Desktop releases for macOS, Windows and Linux. <a href="./#install">Downloads</a></td><td>The desktop app is available for macOS. Conductor also advertises iOS, cloud workspaces and API access. <a href="https://www.conductor.build/docs/installation">Install</a>, <a href="https://www.conductor.build/">product</a></td></tr><tr><td>Agents</td><td>Claude Code, Codex, Cursor, Kimi, Grok, OpenCode and Muse Code, using installed CLIs. <a href="docs/threads">Threads</a></td><td>Claude Code, Codex, Cursor and OpenCode. <a href="https://www.conductor.build/docs/reference/harnesses">Agent overview</a></td></tr><tr><td>Isolation</td><td>A thread can have its own Git worktree and branch. <a href="docs/worktrees">Worktrees</a></td><td>Local workspaces have separate Git worktrees and branches. <a href="https://www.conductor.build/docs/concepts/workspaces-and-branches">Workspaces</a></td></tr><tr><td>Shared memory</td><td>Local SQLite, full-text and vector search, exposed over token-gated MCP. <a href="docs/memory">Memory</a></td><td>Persistent cross-provider memory was not assessed in this comparison. Workspace context alone does not establish equivalence. <a href="https://www.conductor.build/docs/concepts/workspaces-and-branches">Workspaces</a></td></tr><tr><td>Issues</td><td>A planboard backed by the project's GitHub or GitLab issues. <a href="docs/views">Views</a></td><td>The documented issue workflow starts from GitHub and Linear issues. This does not establish an equivalent board. <a href="https://www.conductor.build/docs/guides/issue-to-pr">Issue to PR</a></td></tr><tr><td>Verification</td><td>A configured verify command must exit 0 for a thread to settle green. <a href="docs/guardrails">Verification</a></td><td>Actions run tests; Checks gathers CI, reviews and todos. Docs describe merge being blocked or discouraged by unresolved work. Exact enforcement was not tested here. <a href="https://www.conductor.build/docs/concepts/testing">Testing</a>, <a href="https://www.conductor.build/docs/reference/checks">Checks</a></td></tr><tr><td>Spend caps</td><td>A daily budget blocks new runs after the cap is reached. <a href="docs/spend">Spend</a></td><td>Hard spend-cap behavior was not assessed in this comparison. <a href="https://www.conductor.build/docs/reference/harnesses">Agent accounts</a>, <a href="https://www.conductor.build/pricing">pricing</a></td></tr><tr><td>License</td><td>MIT. <a href="https://github.com/currentbits/solenta/blob/main/LICENSE">License</a></td><td>Conductor's terms describe its platform as proprietary and grant a client-software license. <a href="https://www.conductor.build/terms">Terms</a></td></tr><tr><td>Price</td><td>Free app; bring your own agent subscriptions or API keys. <a href="./#faq">FAQ</a></td><td>Listed local Free tier: $0. Pro: $50/month. Teams: $60/user/month. Agent subscriptions or keys are separate. <a href="https://www.conductor.build/pricing">Pricing</a>, <a href="https://www.conductor.build/docs/reference/harnesses">agent accounts</a></td></tr></tbody></table></div>
+<p>“Not assessed” means this comparison does not establish whether the feature is present or absent. Prices and supported agents can change; check the linked product pages before choosing a plan.</p>
+<h2>Choose Solenta if</h2>
+<ul>
+<li>You want its documented shared memory to carry stored project decisions between agent sessions.</li>
+<li>You want a desktop workflow for GitHub or GitLab issues, worktree threads and a configured verification command.</li>
+<li>You want to inspect and change the app under the MIT license.</li>
+</ul>
+<h2>Choose Conductor if</h2>
+<ul>
+<li>Its documented cloud workspaces, mobile app or API fit how you want to access your work.</li>
+<li>You use its supported agent harnesses and want its workspace and Checks workflow.</li>
+<li>You want the documented GitHub or Linear issue-to-PR workflow.</li>
+</ul>
+<h2>Bring existing CLI sessions into Solenta</h2>
+<p>Add your repository as a Solenta project. Open the caret beside <strong>New thread</strong>, select the provider's import action, and choose the sessions to import. Re-importing appends new turns without duplicating the thread. This imports supported provider CLI sessions; it does not import Conductor's workspace database. See <a href="docs/cli-sessions">import, eject and reclaim</a>.</p>
+<p>Try a small task in a new worktree, set the project's verify command, and review the diff before merging. Existing branches remain ordinary Git branches.</p>
+<h2>Questions</h2><div class="faq-list"><details data-faq=""><summary>Can both apps run agents in separate Git worktrees?</summary><p>Yes. Solenta documents worktree threads, and Conductor documents separate worktrees and branches for local workspaces. Worktrees isolate working files; they do not guarantee conflict-free merges.</p></details><details data-faq=""><summary>Is Conductor only a Mac app?</summary><p>Its desktop installation docs describe macOS. Its product page also advertises iOS, cloud workspaces and API access, so describing the entire product as Mac-only would omit those options.</p></details><details data-faq=""><summary>Does this comparison prove Conductor lacks shared memory or spend caps?</summary><p>No. Those behaviors were not assessed here. The linked sources and the comparison's scope do not establish that either feature is absent.</p></details></div>
+
+
+
+
+
+
+<h2>More comparisons</h2>
+<ul>
+<li><a href="compare/solenta-vs-claude-squad">Solenta vs Claude Squad</a></li>
+<li><a href="alternatives/conductor">Conductor alternatives</a></li>
+<li><a href="guides/run-coding-agents-in-parallel">Run AI coding agents in parallel</a></li>
+</ul></main></div></div>
+<footer>
+  <div class="wrap footer-inner">
+    <a class="brand" href="./">
+      <img src="assets/icon.svg" alt="" width="18" height="18" />
+      Solenta
+    </a>
+    <span>Free and open source under MIT.</span>
+    <span class="spacer"></span>
+    <a href="docs.html">Docs</a>
+    <a href="changelog.html">Changelog</a>
+    <a href="compare/solenta-vs-conductor">vs Conductor</a>
+    <a href="compare/solenta-vs-claude-squad">vs Claude Squad</a>
+    <a href="alternatives/conductor">Conductor alternatives</a>
+    <a href="https://github.com/currentbits/solenta/discussions">Discussions</a>
+    <a href="https://github.com/currentbits/solenta">GitHub</a>
+    <a href="https://github.com/currentbits/solenta/releases">Releases</a>
+    <a href="https://x.com/currentbitsNET">@currentbitsNET</a>
+    <a href="https://verifieddr.com/website/solenta-app" target="_blank"><img src="https://verifieddr.com/badge/solenta-app.svg?style=minimal" alt="Verified DR - Verified Domain Rating for solenta.app" width="200" height="24" /></a>
+    <a href="https://nicklaunches.com/products/solenta/?utm_source=solenta.app&utm_medium=badge&utm_campaign=featured" target="_blank" rel="noopener"><img src="https://nicklaunches.com/badges/featured.png" alt="Solenta on Nick Launches" width="244" height="56" /></a>
+  </div>
+</footer>
+
+<script src="main.js?v=5"></script>
+</body>
+</html>

@@ -49,6 +49,7 @@ function setArchived(store, input, opts) {
   });
   store.save();
   if (Boolean(archived)) {
+    require("./projectCommands.js").stopManagedOnSettle(store, threadId);
     void scheduleImagePruneFromStore(store);
     void scheduleSimulatorRelease(opts, "releaseThread", { threadId });
   }

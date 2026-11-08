@@ -67,6 +67,46 @@ function deferred() {
 }
 
 describe("AutomationsView", () => {
+  it("submits an explicit fresh destination selected by title", async () => {
+    const writes: AutomationWrite[] = [];
+    const m = await mount(<AutomationsView automations={[]} projects={[p1]} providers={providers}
+      liveThreads={[{ id: "fixed", status: "idle", projectId: "p1", title: "Daily review", provider: "claude", model: null, permissionMode: "default" }]}
+      onCreate={(input) => { writes.push(input); }} onUpdate={() => {}} onRemove={() => {}} onRunNow={() => {}} />);
+    await m.type(m.query('[name="name"]'), "Review");
+    await m.type(m.query('[name="prompt"]'), "Review the changes");
+    await m.change(m.query('[aria-label="Session mode"]'), "fresh");
+    const picker = m.query('[aria-label="Destination thread"]');
+    assert.ok(picker?.textContent?.includes("Daily review"));
+    await m.change(picker, "fixed");
+    await m.click(m.query('[data-automation-create] button[type="submit"]'));
+    assert.equal(writes.length, 1);
+    assert.equal(writes[0].sessionMode, "fresh");
+    assert.equal(writes[0].destinationThreadId, "fixed");
+    m.unmount();
+  });
+
+  it("shows fixed destination titles and keeps repeated-run historical outcomes", async () => {
+    const m = await mount(<AutomationsView
+      focusId="a1" automations={[auto({ id: "a1", sessionMode: "fresh", destinationThreadId: "fixed" })]}
+      projects={[p1]} providers={providers}
+      liveThreads={[{ id: "fixed", status: "working", projectId: "p1", title: "Daily review", provider: "claude", model: null, permissionMode: "default" }]}
+      loadRuns={async () => runs({ runs: [
+        { id: "fire2", runId: "r2", threadId: "fixed", startedAt: Date.now(), status: "working", pending: true },
+        { id: "fire1", runId: "r1", threadId: "fixed", startedAt: Date.now() - 60000, status: "failed", pending: false },
+      ] })}
+      onCreate={() => {}} onUpdate={() => {}} onRemove={() => {}} onRunNow={() => {}} />);
+    await m.flush();
+    await m.click(m.query("[data-automation-runs-toggle]"));
+    assert.ok(m.text().includes("Failed"));
+    assert.ok(m.text().includes("Working"));
+    const mode = m.query('[aria-label="Session mode"]');
+    assert.ok(mode);
+    const destination = m.query('[aria-label="Destination thread"]');
+    assert.ok(destination);
+    assert.ok(destination.textContent?.includes("Daily review"));
+    m.unmount();
+  });
+
   it("prefills the create form from a RepeatDraft", async () => {
     const m = await mount(
       <AutomationsView
@@ -979,6 +1019,26 @@ describe("AutomationsView", () => {
     assert.ok(name && submit);
     assert.equal(name.value, "", "form returns to create after save");
     assert.equal(submit.textContent, "Add automation");
+    m.unmount();
+  });
+
+  it("Edit and Cancel replace incomplete fixed-destination drafts without validation", async () => {
+    const writes: unknown[] = [];
+    const m = await mount(<AutomationsView focusId="first"
+      automations={[auto({ id: "first", name: "First" }), auto({ id: "second", name: "Second" })]}
+      projects={[p1]} providers={providers} onCreate={(input) => { writes.push(input); }}
+      onUpdate={(input) => { writes.push(input); }} onRemove={() => {}} onRunNow={() => {}} />);
+    await m.change(m.query('[aria-label="Session mode"]'), "fresh");
+    await m.click(m.query('[data-automation-row="second"] [data-automation-edit]'));
+    assert.equal((m.query('[name="name"]') as HTMLInputElement).value, "Second");
+    assert.equal((m.query('[aria-label="Session mode"]') as HTMLSelectElement).value, "new-thread");
+    await m.change(m.query('[aria-label="Session mode"]'), "continue");
+    await m.click(m.query('[data-automation-cancel]'));
+    assert.equal(m.query('[data-automation-cancel]'), null);
+    assert.equal((m.query('[name="name"]') as HTMLInputElement).value, "");
+    assert.equal((m.query('[aria-label="Session mode"]') as HTMLSelectElement).value, "new-thread");
+    assert.equal(m.query('[data-form-error]'), null);
+    assert.deepEqual(writes, []);
     m.unmount();
   });
 

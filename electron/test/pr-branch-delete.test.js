@@ -38,9 +38,6 @@ const fs = require("fs");
 const statePath = process.env.CODER_FAKE_GH_STATE;
 const args = process.argv.slice(2);
 const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
-state.calls = state.calls || [];
-state.calls.push(args.slice());
-fs.writeFileSync(statePath, JSON.stringify(state, null, 2));
 
 function findPr(key) {
   return (state.prs || []).find(
@@ -121,7 +118,7 @@ describe("maybeDeleteHeadBranch over gh (#1763)", () => {
     statePath = path.join(tmp, "gh-state.json");
     fs.writeFileSync(
       statePath,
-      JSON.stringify({ prs: [{ number: 12, branch: "feat", state: "MERGED" }], calls: [] }),
+      JSON.stringify({ prs: [{ number: 12, branch: "feat", state: "MERGED" }] }),
     );
     prevGh = process.env.CODER_GH_BIN;
     prevState = process.env.CODER_FAKE_GH_STATE;
@@ -226,7 +223,7 @@ describe("closePr / mergePrAt delete the branch (#1763)", () => {
     statePath = path.join(tmp, "gh-state.json");
     fs.writeFileSync(
       statePath,
-      JSON.stringify({ prs: [{ number: 12, branch: "feat", state: "OPEN" }], calls: [] }),
+      JSON.stringify({ prs: [{ number: 12, branch: "feat", state: "OPEN" }] }),
     );
     prevGh = process.env.CODER_GH_BIN;
     prevState = process.env.CODER_FAKE_GH_STATE;

@@ -21,6 +21,7 @@ const {
   providerRef,
   threadProviderRef,
   findInstance,
+  defaultAccountFor,
   instanceEnv,
   instanceDisplayName,
   isBaseOverlay,
@@ -91,6 +92,21 @@ function isKnownProviderRef(ref, settings) {
   if (provider === "generic") return Boolean(findInstance(settings, provider, instance));
   if (!isKnownProviderId(provider)) return false;
   return !instance || Boolean(findInstance(settings, provider, instance));
+}
+
+/**
+ * Provider ref -> `{ provider, instance }` for storing on a thread (#1859).
+ * An explicit instance always wins; a bare provider takes its effective
+ * default account (defaultAccountFor) when `useDefault`, else stays on the
+ * CLI's own login. createThread and setProvider both resolve through here,
+ * so the account a picker row is labelled with is the one stored.
+ * @param {any} settings
+ * @param {unknown} ref
+ * @param {boolean} useDefault
+ */
+function resolveAccountRef(settings, ref, useDefault) {
+  const { provider, instance } = parseProviderRef(ref);
+  return { provider, instance: instance || (useDefault ? defaultAccountFor(settings, provider) : null) };
 }
 
 /**
@@ -244,7 +260,13 @@ function createThread(store, input) {
     settings,
     defaults && defaults.provider,
   );
-  const { provider, instance: providerInstance } = parseProviderRef(providerRefId);
+  // Per-CLI default account (#1859) for a bare provider. Forks, automations
+  // and memory passes keep their own, under the same skips as project defaults.
+  const { provider, instance: providerInstance } = resolveAccountRef(
+    settings,
+    providerRefId,
+    !(input.projectDefaults === false || input.automationId || input.memoryConsolidate),
+  );
   const entry = getProvider(provider);
   let model;
   if (
@@ -313,6 +335,7 @@ function createThread(store, input) {
     sessionId: null,
     permissionMode,
     reasoningEffort,
+    ultracode: defaults?.ultracode === true && require("./providers.js").modelSupportsUltracode(entry, model),
     webSearch: false,
     fast: false,
     worktreePath: null,
@@ -384,6 +407,7 @@ function recordLastUsedDefaults(store, threadId) {
     provider: threadProviderRef(thread),
     model: thread.model,
     reasoningEffort: thread.reasoningEffort,
+    ultracode: thread.ultracode === true,
     permissionMode: thread.permissionMode,
   });
   store.setProjects(
@@ -546,6 +570,7 @@ function applyAgentProfile(store, input) {
       ? profile.reasoningEffort
       : null,
   });
+  setUltracode(store, { threadId, ultracode: profile.ultracode === true });
   const mode = snapPermissionModeForThread(
     getProvider(live.provider),
     profile.permissionMode,
@@ -623,6 +648,17 @@ function setReasoningEffort(store, input) {
   const updated = store.updateThread(threadId, { reasoningEffort: level });
   store.save();
   return updated ? { ...updated } : { ...thread, reasoningEffort: level };
+}
+
+/** Set the session mode without changing the saved normal effort. */
+function setUltracode(store, input) {
+  const thread = store.getThread(input.threadId);
+  if (!thread) throw new Error(`Unknown thread: ${input.threadId}`);
+  const enabled = input.ultracode === true;
+  if (enabled && !require("./providers.js").modelSupportsUltracode(getProvider(thread.provider), thread.model)) throw new Error("Ultracode requires an xhigh-capable Claude model");
+  const updated = store.updateThread(thread.id, { ultracode: enabled });
+  store.save();
+  return { ...updated };
 }
 
 /**
@@ -767,13 +803,19 @@ function forkThread(store, input) {
 
   // Message-level fork (#158): resolve the cut before creating anything.
   let prefixMsgs = null;
+  let beforeContextBoundary = false;
   if (input.messageId != null) {
     const msgs = store.getMessages(source.id);
     const at = msgs.findIndex((m) => m && m.id === input.messageId);
     if (at < 0) {
       throw new Error(`Unknown message: ${input.messageId}`);
     }
-    prefixMsgs = msgs.slice(0, at + 1);
+    const boundaryAt = source.contextBoundaryId
+      ? msgs.findIndex((m) => m.id === source.contextBoundaryId) : -1;
+    beforeContextBoundary = Boolean(source.contextBoundaryId) && (boundaryAt < 0 || at < boundaryAt);
+    // Selecting an older visible message is deliberate retrieval. A cut in
+    // the current conversation must not silently copy the earlier session.
+    prefixMsgs = msgs.slice(boundaryAt >= 0 && at > boundaryAt ? boundaryAt + 1 : 0, at + 1);
   }
 
   const sourceTitle =
@@ -795,6 +837,8 @@ function forkThread(store, input) {
     provider: nextProvider,
     ...(nextInstance ? { providerInstance: nextInstance } : {}),
     model: nextModel,
+    reasoningEffort: honouredEfforts(getProvider(nextProvider), nextModel).includes(source.reasoningEffort) ? source.reasoningEffort : null,
+    ultracode: source.ultracode === true && require("./providers.js").modelSupportsUltracode(getProvider(nextProvider), nextModel),
     permissionMode: source.permissionMode,
     handoffFrom: source.id,
     sessionId: null,
@@ -868,6 +912,7 @@ function forkThread(store, input) {
     // cannot --resume the source's session, so it replays instead.
     if (
       cut &&
+      !beforeContextBoundary &&
       !forkPatch.pendingWorktree &&
       source.sessionId &&
       source.provider === "claude" &&
@@ -1161,8 +1206,18 @@ function setProvider(store, input) {
     return decorateThread(store, thread);
   }
 
-  // input.provider is a ref: "claude" or "claude:<instanceId>" (#453).
-  const ref = providerProvided ? parseProviderRef(input.provider) : null;
+  // input.provider is a ref: "claude" or "claude:<instanceId>" (#453). A
+  // bare ref from the user's picker (useDefaultAccount) takes the default
+  // account its row is labelled with (#1859); internal callers (failover,
+  // profiles, routing) keep the exact ref, and automation/memory threads
+  // never pick one up.
+  const ref = providerProvided
+    ? resolveAccountRef(
+        store.getSettings(),
+        input.provider,
+        input.useDefaultAccount === true && !thread.automationId && !thread.memoryConsolidate,
+      )
+    : null;
   if (ref) {
     const generic = ref.provider === "generic";
     if (!generic && !isKnownProviderId(ref.provider)) {
@@ -1184,7 +1239,7 @@ function setProvider(store, input) {
   const instanceChanging =
     ref != null && (ref.instance || null) !== (thread.providerInstance || null);
 
-  /** @type {{ provider?: string, providerInstance?: string | null, model?: string | null, sessionId?: null, replayContext?: boolean, reasoningEffort?: null, webSearch?: boolean, planModel?: null, planReasoningEffort?: null }} */
+  /** @type {{ provider?: string, providerInstance?: string | null, model?: string | null, sessionId?: null, replayContext?: boolean, ultracode?: boolean, reasoningEffort?: null, webSearch?: boolean, planModel?: null, planReasoningEffort?: null }} */
   const patch = {};
 
   if ((providerChanging || instanceChanging) && thread.status === "working") {
@@ -1270,6 +1325,8 @@ function setProvider(store, input) {
     }
   }
 
+  if (!require("./providers.js").modelSupportsUltracode(getProvider(nextProvider), patch.model !== undefined ? patch.model : thread.model)) patch.ultracode = false;
+
   if (patch.sessionId === null) {
     // The new CLI (or re-pinned model) starts with no memory of this thread.
     // Replay its own retained tail on the next send, same as a rewind (#254),
@@ -1316,7 +1373,9 @@ async function listProvidersForApi(store, opts) {
     .filter((inst) => inst.provider === "generic")
     .map((inst) => genericProviderInfo(inst));
   for (const p of base) {
-    list.push(p);
+    const acct = defaultAccountFor(settings, p.id);
+    const acctInst = acct ? findInstance(settings, p.id, acct) : null;
+    list.push(acctInst ? { ...p, defaultAccount: acctInst.name } : p);
     for (const inst of instances) {
       if (inst.provider !== p.id) continue;
       if (inst.openaiCompatible) {
@@ -1621,6 +1680,8 @@ async function rewindThread(store, input, opts) {
     artifacts: cloneRewindValue(store.getRunArtifacts(threadId)),
     sessionId: thread.sessionId != null ? thread.sessionId : null,
     replayContext: thread.replayContext === true,
+    contextBoundaryId: thread.contextBoundaryId || null,
+    freshContextPending: thread.freshContextPending === true,
     status: thread.status,
     lastError: thread.lastError != null ? thread.lastError : null,
     lastErrorKind: thread.lastErrorKind != null ? thread.lastErrorKind : null,
@@ -1629,10 +1690,16 @@ async function rewindThread(store, input, opts) {
     retainedCount: at,
   });
 
+  const boundaryAt = thread.contextBoundaryId
+    ? msgs.findIndex((m) => m.id === thread.contextBoundaryId) : -1;
+  const selectsEarlierContext = Boolean(thread.contextBoundaryId) && (boundaryAt < 0 || at <= boundaryAt);
   const droppedMessages = store.truncateFromMessage(threadId, messageId);
   const updated = store.updateThread(threadId, {
     sessionId: null,
     replayContext: true,
+    // An explicit edit of an older message selects that earlier prefix.
+    // Ordinary rewinds inside the current conversation keep the divider.
+    ...(selectsEarlierContext ? { contextBoundaryId: null, freshContextPending: false } : {}),
   });
 
   let restoredSha = null;
@@ -2006,6 +2073,7 @@ function threadSummaries(store, input) {
         id: t.id,
         title: t.title,
         provider: t.provider,
+        ...(t.providerInstance ? { providerInstance: t.providerInstance } : {}),
         status: t.status,
         handoffFrom: t.handoffFrom ?? null,
         orchWorker: t.orchWorker === true,
@@ -2158,6 +2226,7 @@ module.exports = {
   setWebSearch,
   setAgent,
   setFast,
+  setUltracode,
   forkThread,
   forkFromCheckpoint,
   forkWorkerThread,

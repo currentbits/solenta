@@ -46,6 +46,13 @@ describe("threads summaries", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
+  it("carries a worker's named account so the crew row can show it (#1857)", () => {
+    store.setThreads([makeThread({ id: "w", providerInstance: "team" })]);
+    const [row] = services.threadSummaries(store);
+    assert.equal(row.provider, "claude");
+    assert.equal(row.providerInstance, "team");
+  });
+
   it("returns one row per thread with role fields and null lastActivity", () => {
     store.setThreads([
       makeThread({ id: "orch", title: "Plan", provider: "claude" }),
@@ -81,6 +88,7 @@ describe("threads summaries", () => {
       lastActivity: null,
     });
     const orch = rows.find((r) => r.id === "orch");
+    assert.equal("providerInstance" in orch, false);
     assert.equal(orch.runStartedAt, null);
     assert.equal(orch.awaitingInput, false);
     assert.equal(orch.stalledAt, null);

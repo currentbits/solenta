@@ -1384,7 +1384,7 @@ describe("services", () => {
       assert.ok(calls[0].args.includes("dev@box"));
       assert.ok(calls[0].args.includes("BatchMode=yes"));
       assert.ok(calls[0].args.includes("ConnectTimeout=10"));
-      const prefix = `cd '/srv/it'\\''s app' && ${enabled ? "" : "'env' 'CODER_GUARDRAILS=off' "}'git'`;
+      const prefix = `cd '/srv/it'\\''s app' && 'env' 'LANGUAGE=C' ${enabled ? "" : "'CODER_GUARDRAILS=off' "}'git'`;
       assert.deepEqual(
         calls.map((c) => c.args.at(-1)),
         [

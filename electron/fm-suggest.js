@@ -96,7 +96,8 @@ async function maybeSuggestNextPrompt(store, threadId, opts = {}) {
     }
     if (inFlight.has(threadId)) return null;
 
-    const msgs = store.getMessages(threadId) || [];
+    const boundary = store.getThread(threadId)?.contextBoundaryId;
+    const msgs = store.getContextMessages(threadId) || [];
     const lastUser = [...msgs]
       .reverse()
       .find((m) => m && m.role === "user" && String(m.text || "").trim());
@@ -116,7 +117,7 @@ async function maybeSuggestNextPrompt(store, threadId, opts = {}) {
       const suggestion = sanitizeSuggestion(raw);
       // A newer turn may have landed while fm ran; its own suggestion (or
       // the turn-start clear) wins over this now-stale one.
-      if ((store.getMessages(threadId) || []).length !== msgs.length) {
+      if (store.getThread(threadId)?.contextBoundaryId !== boundary || (store.getContextMessages(threadId) || []).length !== msgs.length) {
         return null;
       }
       if (!store.getThread(threadId)) return null;

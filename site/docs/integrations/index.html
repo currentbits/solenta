@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <base href="../../" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>External MCP pairing | Solenta docs</title>
+  <meta name="description" content="Pair an external MCP client with Solenta's loopback task server. Choose project scope, capabilities and expiry, then revoke the pairing when needed." />
+  <link rel="canonical" href="https://solenta.app/docs/integrations" />
+  <link rel="image_src" href="https://solenta.app/assets/card.png?v=4" />
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="Solenta" />
+  <meta property="og:url" content="https://solenta.app/docs/integrations" />
+  <meta property="og:title" content="External MCP pairing | Solenta docs" />
+  <meta property="og:description" content="Pair an external MCP client with Solenta's loopback task server. Choose project scope, capabilities and expiry, then revoke the pairing when needed." />
+  <meta property="og:image" content="https://solenta.app/assets/card.png?v=4" />
+  <meta property="og:image:secure_url" content="https://solenta.app/assets/card.png?v=4" />
+  <meta property="og:image:type" content="image/png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="Solenta. Your agents remember." />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:site" content="@currentbitsNET" />
+  <meta name="twitter:title" content="External MCP pairing | Solenta docs" />
+  <meta name="twitter:description" content="Pair an external MCP client with Solenta's loopback task server. Choose project scope, capabilities and expiry, then revoke the pairing when needed." />
+  <meta name="twitter:image" content="https://solenta.app/assets/card.png?v=4" />
+  <meta name="twitter:image:alt" content="Solenta. Your agents remember." />
+  <meta name="theme-color" content="#f5f5f2" />
+  <link rel="icon" href="assets/icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="apple-touch-icon.png" />
+  <script>document.documentElement.classList.add("js");</script>
+  <link rel="preload" href="fonts/Geist-Variable.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="stylesheet" href="style.css?v=13" />
+  <!-- First-party stats: no cookies, no personal data, so no consent banner.
+       stats.js beacons pageviews and data-event clicks to stats.solenta.app. -->
+  <script src="stats.js" defer></script>
+  <!-- Meterbird analytics, cookieless until the visitor allows it in the
+       consent.js banner; replay only after "Allow". -->
+  <script src="consent.js" defer></script>
+
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"TechArticle","headline":"External MCP pairing","description":"Pair an external MCP client with Solenta's loopback task server. Choose project scope, capabilities and expiry, then revoke the pairing when needed.","url":"https://solenta.app/docs/integrations","image":"https://solenta.app/assets/card.png?v=4","dateModified":"2026-11-02","author":{"@id":"https://solenta.app/#org"},"publisher":{"@id":"https://solenta.app/#org"},"about":{"@type":"SoftwareApplication","name":"Solenta","url":"https://solenta.app/"}}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Solenta","item":"https://solenta.app/"},{"@type":"ListItem","position":2,"name":"Docs","item":"https://solenta.app/docs.html"},{"@type":"ListItem","position":3,"name":"External MCP pairing","item":"https://solenta.app/docs/integrations"}]}</script>
+
+</head>
+<body>
+<nav class="nav">
+  <div class="nav-inner">
+    <a class="brand" href="./">
+      <img src="assets/icon.svg" alt="" />
+      Solenta
+    </a>
+    <div class="nav-links">
+      <a href="docs.html" class="active">Docs</a>
+      <a href="changelog.html">Changelog</a>
+      <a href="https://github.com/currentbits/solenta/discussions">Discussions</a>
+      <a href="https://github.com/currentbits/solenta">GitHub</a>
+      <a class="nav-cta" href="./#install">
+        Download
+      </a>
+    </div>
+  </div>
+</nav>
+
+<div class="wrap"><div class="docs-layout"><nav class="docs-nav" aria-label="Docs topics"><a href="docs/getting-started">Getting started</a>
+<a href="docs/memory">Shared memory</a>
+<a href="docs/views">Inbox, Planboard, Review</a>
+<a href="docs/threads">Threads and providers</a>
+<a href="docs/cli-sessions">Import, eject and reclaim</a>
+<a href="docs/codex">Codex sessions</a>
+<a href="docs/palette">Command palette</a>
+<a href="docs/worktrees">Worktrees and pull requests</a>
+<a href="docs/workflows">Build workflows</a>
+<a href="docs/orchestration">Orchestration</a>
+<a href="docs/guardrails">Guardrails and verification</a>
+<a href="docs/spec">Spec mode</a>
+<a href="docs/teach">Teach mode</a>
+<a href="docs/ask">Ask mode</a>
+<a href="docs/review">Review itinerary</a>
+<a href="docs/skills">Skills</a>
+<a href="docs/automations">Automations</a>
+<a href="docs/dev-servers">Dev servers</a>
+<a href="docs/project-config">Project config files</a>
+<a href="docs/panes">Terminal and Browser panes</a>
+<a href="docs/spend">Spend guardrails</a>
+<a href="docs/analytics">Usage and fleet analytics</a>
+<a class="active" aria-current="page" href="docs/integrations">External MCP pairing</a>
+<a href="docs/updates">Notifications and updates</a>
+<a href="docs/web-mode">Phones and browsers</a>
+<a href="docs/ssh">Other computers and SSH</a>
+<a href="docs/windows">Windows</a>
+<a href="docs/performance">Performance and memory use</a>
+<a href="docs/architecture">Architecture</a></nav><main class="docs-content"><p><a href="docs.html">All docs</a></p><h1>External MCP pairing</h1><p class="lede">Settings, Integrations mints a pairing so a client outside Solenta (Claude Desktop, Claude Code, or any MCP client on this machine) can launch and track tasks through the loopback coder-threads server. Solenta has to stay running.</p><section data-doc-section="integrations" data-doc-title="External MCP pairing"><div data-doc-content><p>
+        Settings, <strong>Integrations</strong> mints a pairing so a client
+        outside Solenta (Claude Desktop, Claude Code, or any MCP client on
+        this machine) can launch and track tasks through the loopback
+        coder-threads server. Solenta has to stay running. The raw token is
+        shown once at mint; disk stores only a sha256 hash, mode
+        <code>0600</code>.
+      </p>
+<p>
+        Each pairing has a name, an optional expiry (7, 30, 90 days, or
+        none), and an optional project scope. Default capabilities are
+        <strong>read</strong> and <strong>launch</strong>. You can also
+        grant <strong>steer</strong> or <strong>read all tasks</strong>.
+        New work starts in a managed git worktree and, by default, waits
+        for you to approve it in the app. Revoke a pairing any time. Do
+        not put the token on a command line.
+      </p>
+<p>
+        Hosted agents (ChatGPT, claude.ai) cannot reach loopback. If
+        Tailscale is installed and logged in, <strong>Expose /mcp on the
+        public internet</strong> under <strong>Public URL (Tailscale
+        Funnel)</strong> publishes the MCP endpoint over HTTPS on port 8443,
+        and <strong>Copy public URL</strong> gives you the address. It is
+        off by default. A caller on that URL must sign in with OAuth or
+        present a pairing token; the in-app session token is not accepted
+        there.
+      </p></div></section><nav class="topic-neighbors" aria-label="Adjacent topics"><a href="docs/analytics">Usage and fleet analytics</a> <span aria-hidden="true">·</span> <a href="docs/updates">Notifications and updates</a></nav></main></div></div>
+<footer>
+  <div class="wrap footer-inner">
+    <a class="brand" href="./">
+      <img src="assets/icon.svg" alt="" width="18" height="18" />
+      Solenta
+    </a>
+    <span>Free and open source under MIT.</span>
+    <span class="spacer"></span>
+    <a href="docs.html">Docs</a>
+    <a href="changelog.html">Changelog</a>
+    <a href="compare/solenta-vs-conductor">vs Conductor</a>
+    <a href="compare/solenta-vs-claude-squad">vs Claude Squad</a>
+    <a href="alternatives/conductor">Conductor alternatives</a>
+    <a href="https://github.com/currentbits/solenta/discussions">Discussions</a>
+    <a href="https://github.com/currentbits/solenta">GitHub</a>
+    <a href="https://github.com/currentbits/solenta/releases">Releases</a>
+    <a href="https://x.com/currentbitsNET">@currentbitsNET</a>
+    <a href="https://verifieddr.com/website/solenta-app" target="_blank"><img src="https://verifieddr.com/badge/solenta-app.svg?style=minimal" alt="Verified DR - Verified Domain Rating for solenta.app" width="200" height="24" /></a>
+    <a href="https://nicklaunches.com/products/solenta/?utm_source=solenta.app&utm_medium=badge&utm_campaign=featured" target="_blank" rel="noopener"><img src="https://nicklaunches.com/badges/featured.png" alt="Solenta on Nick Launches" width="244" height="56" /></a>
+  </div>
+</footer>
+
+<script src="main.js?v=5"></script>
+</body>
+</html>

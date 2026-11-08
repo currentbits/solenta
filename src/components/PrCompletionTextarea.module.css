@@ -1,0 +1,14 @@
+.root { position: relative; }
+.menu {
+  margin-top: 4px;
+  max-height: 240px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--text);
+  font-size: 12px;
+}
+.option { padding: 6px 8px; cursor: pointer; }
+.option[aria-selected="true"] { background: var(--border); }
+.status { padding: 6px 8px; }

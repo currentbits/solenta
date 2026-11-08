@@ -207,7 +207,8 @@ describe("setSettings agentProfiles validation", () => {
     const next = services.setSettings(store, { agentProfiles: list });
     assert.equal(next.agentProfiles[0].reasoningEffort, "ultra");
     assert.equal(next.agentProfiles[1].reasoningEffort, "ultra");
-    assert.equal(next.agentProfiles[2].reasoningEffort, "ultracode");
+    assert.equal(next.agentProfiles[2].reasoningEffort, "xhigh");
+    assert.equal(next.agentProfiles[2].ultracode, true);
     assert.throws(
       () =>
         services.setSettings(store, {

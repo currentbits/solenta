@@ -450,6 +450,37 @@ describe("SettingsModal delete branch on merge/close (#1763)", () => {
   });
 });
 
+describe("SettingsModal menu bar usage (#1859)", () => {
+  it("off by default, saves on toggle, names the menu bar on macOS", async () => {
+    const patches: Partial<AppSettings>[] = [];
+    const m = await mount(
+      modal({
+        initialPane: "spending",
+        status: status({ build: { platform: "darwin" } }),
+        onSaveSettings: async (patch) => {
+          patches.push(patch);
+          return { dailyBudgetUsd: 5, autoSettleAfterDays: 3, menuBarUsage: patch.menuBarUsage ?? false };
+        },
+      }),
+    );
+    const box = m.query("[data-menu-bar-usage]") as HTMLInputElement;
+    assert.ok(box, "menu bar usage checkbox");
+    assert.equal(box.checked, false, "off by default");
+    assert.ok(m.text().includes("Show usage in the menu bar"));
+    await m.click(box);
+    assert.deepEqual(patches, [{ menuBarUsage: true }]);
+    m.unmount();
+  });
+
+  it("says tray off macOS", async () => {
+    const m = await mount(
+      modal({ initialPane: "spending", status: status({ build: { platform: "win32" } }) }),
+    );
+    assert.ok(m.text().includes("Show usage in the tray"));
+    m.unmount();
+  });
+});
+
 describe("SettingsModal default merge method (#1781)", () => {
   it("prefills from settings and saves the picked method", async () => {
     const patches: Partial<AppSettings>[] = [];
@@ -606,7 +637,7 @@ describe("SettingsModal late settings load (#930)", () => {
     m.unmount();
   });
 
-  it("omits untouched numeric fields when saving before settings have loaded", async () => {
+  it("blocks saving edited numeric fields before settings have loaded", async () => {
     const patches: Partial<AppSettings>[] = [];
     const m = await mount(
       modal({
@@ -621,26 +652,8 @@ describe("SettingsModal late settings load (#930)", () => {
     const input = m.query("#pr-diff-cap") as HTMLInputElement;
     await m.type(input, "500");
     await m.press(input, "Enter");
-    assert.equal(patches.length, 1);
-    assert.equal(patches[0].prDiffCapLines, 500);
-    assert.equal(
-      Object.prototype.hasOwnProperty.call(patches[0], "dailyBudgetUsd"),
-      false,
-      "unhydrated daily budget must not be sent as null",
-    );
-    assert.equal(
-      Object.prototype.hasOwnProperty.call(
-        patches[0],
-        "orchestrationBudgetUsd",
-      ),
-      false,
-      "unhydrated orchestration budget must not be sent as null",
-    );
-    assert.equal(
-      Object.prototype.hasOwnProperty.call(patches[0], "autoSettleAfterDays"),
-      false,
-      "unhydrated auto-settle must not be sent as null",
-    );
+    assert.equal(patches.length, 0, "no settings patch is safe without the saved snapshot");
+    assert.match(m.text(), /Retry loading settings before saving changes/);
     m.unmount();
   });
 
@@ -1909,6 +1922,33 @@ describe("SettingsModal voice input provider (#1725)", () => {
     assert.equal(m.query("[data-speech-api-key]"), null);
     await m.change(select, "openai");
     assert.deepEqual(patches, [{ speech: { provider: "openai" } }]);
+    m.unmount();
+  });
+
+  it("chooses a compatible multilingual model for Dutch without downloading it", async () => {
+    const patches: Partial<AppSettings>[] = [];
+    const m = await mount(modal({ initialPane: "general", settings: base,
+      onSaveSettings: async (patch) => { patches.push(patch); return { ...base, ...patch }; },
+    }));
+    assert.equal((m.query("[data-speech-local-model]") as HTMLSelectElement).value, "nemotron-en");
+    assert.equal((m.query("[data-speech-language]") as HTMLSelectElement).value, "en-US");
+    await m.change(m.query("[data-speech-language]"), "nl-NL");
+    assert.deepEqual(patches, [{ speech: { language: "nl-NL", localModel: "nemotron-3.5" } }]);
+    m.unmount();
+  });
+
+  it("shows the exact multilingual size, excludes adaptation-only locales, and makes switching to English explicit", async () => {
+    const patches: Partial<AppSettings>[] = [];
+    const settings = { ...base, speech: { provider: "local" as const, localModel: "nemotron-3.5", language: "nl-NL" } };
+    const m = await mount(modal({ initialPane: "general", settings,
+      onSaveSettings: async (patch) => { patches.push(patch); return { ...settings, ...patch }; },
+    }));
+    assert.match(m.query("[data-speech-local-description]")?.textContent ?? "", /741,548,352/);
+    const language = m.query("[data-speech-language]") as HTMLSelectElement;
+    assert.equal(language.options.length, 33);
+    assert.ok(!Array.from(language.options).some((option) => option.value === "he-IL"));
+    await m.change(m.query("[data-speech-local-model]"), "nemotron-en");
+    assert.deepEqual(patches, [{ speech: { localModel: "nemotron-en", language: "en-US" } }]);
     m.unmount();
   });
 
@@ -4381,6 +4421,34 @@ describe("SettingsModal agent profile auto-approve (#1721)", () => {
     await m.click(edit!);
     await m.click(m.byText("Update"));
     assert.equal("autoApprove" in patches[0].agentProfiles![0]!, false);
+    m.unmount();
+  });
+});
+
+describe("SettingsModal named Claude Ultracode profile", () => {
+  it("keeps the separate mode when an existing named-account profile is edited", async () => {
+    const provider: ProviderInfo = {
+      ...KIMI, id: "claude:work", baseProvider: "claude", name: "Claude work",
+      supportsUltracode: true,
+      models: ["claude-opus-5"],
+      modelInfo: [{ id: "claude-opus-5", label: "Opus", vendor: "Anthropic", description: "", efforts: ["low", "medium", "high", "xhigh", "max"] }],
+      efforts: ["low", "medium", "high", "xhigh", "max"],
+    };
+    const settings = {
+      dailyBudgetUsd: null, autoSettleAfterDays: 3,
+      agentProfiles: [{ id: "named", name: "Work", provider: "claude:work", model: "claude-opus-5", reasoningEffort: "low", ultracode: true, permissionMode: "default" }],
+    } as AppSettings;
+    const patches: Partial<AppSettings>[] = [];
+    const m = await mount(modal({ initialPane: "agents", providers: [provider], settings, onSaveSettings: async (patch) => { patches.push(patch); return { ...settings, ...patch }; } }));
+    await m.click(Array.from(m.queryAll("button")).find((b) => b.textContent?.trim() === "Edit")!);
+    const label = Array.from(m.queryAll("label")).find((el) => el.textContent?.includes("Ultracode"));
+    const mode = label?.querySelector('input[type="checkbox"]') as HTMLInputElement | undefined;
+    assert.ok(mode);
+    assert.equal(mode.checked, true);
+    await m.click(m.byText("Update"));
+    assert.equal(patches[0].agentProfiles?.[0]?.ultracode, true);
+    assert.equal(patches[0].agentProfiles?.[0]?.reasoningEffort, "low");
+    assert.equal(patches[0].agentProfiles?.[0]?.provider, "claude:work");
     m.unmount();
   });
 });

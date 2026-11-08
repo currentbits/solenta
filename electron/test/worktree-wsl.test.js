@@ -100,6 +100,8 @@ describe("resolveGitCommand", () => {
       "--cd",
       "/home/me/repo",
       "--",
+      "env",
+      "LANGUAGE=C",
       "git",
       "status",
     ]);
@@ -117,6 +119,8 @@ describe("resolveGitCommand", () => {
       "--cd",
       "/home/me/repo",
       "--",
+      "env",
+      "LANGUAGE=C",
       "git",
       "worktree",
       "remove",

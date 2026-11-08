@@ -16,6 +16,7 @@ const {
   explainSshFailure,
   createTokenStore,
   readRemoteToken,
+  headlessLogTail,
   prepareHostCommand,
   installHostCommand,
   installRemoteSolenta,
@@ -262,7 +263,8 @@ describe("remote Connections", () => {
     // Already running with web off: hand off, and only to a build that knows how.
     assert.match(cmd, /grep -q -- --handoff-only "\$res\/electron\/main\.js" 2>\/dev\/null \|\| exit 5/);
     assert.match(cmd, /open -n -g -a "\$app" --args --serve-web=4700 --handoff-only/);
-    assert.match(cmd, /nohup "\$exe" --headless --serve-web=4700 --handoff-only --no-sandbox/);
+    assert.match(cmd, /nohup "\$exe" --headless --serve-web=4700 --handoff-only --no-sandbox >>/,
+      "a hand-off appends, so the crash it raced stays in the log");
     assert.ok(
       cmd.indexOf("--handoff-only\" ") < cmd.indexOf("--args --headless"),
       "the running-app check comes before any cold start",
@@ -292,6 +294,35 @@ describe("remote Connections", () => {
       readRemoteToken("me@box", 4620, { execFile: run(5) }),
       /open on me@box with web access off[\s\S]*Serve Solenta Web/,
     );
+  });
+
+  it("keeps the web token out of a did-not-start error and shows the crash line (#1845)", async () => {
+    const token = "Zk3_q-9xLmN0pQrS7tUvWxYz012345678901234567";
+    const log = [
+      `solenta-web: listening on http://127.0.0.1:4620`,
+      `solenta-web: token ${token}`,
+      "",
+      "Solenta Web is ready.",
+      `  Token    ${token}`,
+      `  Link     http://box:4620/?token=${token}`,
+      "\u2588\u2580\u2584 \u2588\u2588\u2580",
+      "Authorization: Bearer " + token,
+      "(solenta:4242): Gtk-ERROR **: 10:00:00.000: Can't create a GtkStyleContext without a display connection",
+      "Trace/breakpoint trap (core dumped)",
+      `solenta-web: token ${token}`,
+      "Solenta is already running; turned on Solenta Web there.",
+    ].join("\n");
+    const run = (cmdName, args, opts, cb) => cb(Object.assign(new Error("exit"), { code: 4 }), "", log);
+    const err = await readRemoteToken("me@box", 4620, { execFile: run }).catch((e) => e);
+    assert.match(err.message, /Solenta did not start on me@box/);
+    assert.equal(err.message.includes(token), false, "token redacted");
+    assert.match(err.message, /Gtk-ERROR \*\*: .*without a display connection/);
+    assert.match(err.message, /Trace\/breakpoint trap/);
+    assert.equal(err.message.includes("already running"), false, "the crash, not the hand-off line");
+
+    // No error line: the redacted tail, without QR rows.
+    const quiet = headlessLogTail(`solenta-web: token ${token}\n  Link     http://x/?token=${token}&a=1\n\u2588\u2588\n`);
+    assert.equal(quiet, "solenta-web: token [redacted]\n  Link     http://x/?token=[redacted]&a=1");
   });
 
   it("installs this build's Linux release over SSH, checksum-pinned, and reports missing libraries", async () => {

@@ -11,6 +11,8 @@ import {
   type WheelEvent as ReactWheelEvent,
 } from "react";
 import { useCoder } from "./useCoder";
+import { addPrCommentToDraft } from "./prCommentContext";
+import type { PrListViewProps } from "./components/PrListView";
 import { isDevBuild } from "./coderApi";
 import { demoProviderLimits } from "./providerUsageDemo";
 import { ErrorBoundary } from "./components/ErrorBoundary";
@@ -27,6 +29,7 @@ import {
 } from "./components/AgentsPanel";
 import { ClaimedLanesHeartbeat } from "./components/LaneHeartbeat";
 import type { SettingsPane } from "./components/SettingsModal";
+import { SettingsLoadNotice } from "./components/SettingsLoadNotice";
 import { ArchiveToast } from "./components/ArchiveToast";
 import { ResumeNotice } from "./components/ResumeNotice";
 import { StopAllConfirm } from "./components/StopAllConfirm";
@@ -263,6 +266,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     respondPermission,
     redirectPermission,
     restartAgentSession,
+    freshAgentContext,
     clearQuestion,
     answerSecret,
     setProvider,
@@ -270,6 +274,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     applyAgentProfile,
     setWebSearch,
     setFast,
+    setUltracode,
     setPlanModel,
     setRoute,
     setAgent,
@@ -355,6 +360,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     prDetail,
     prEdit,
     prComment,
+    prRequestChanges,
     prClose,
     prReady,
     prMergeAt,
@@ -423,6 +429,9 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     downloadUpdate,
     applyUpdate,
     settings,
+    settingsError,
+    settingsLoading,
+    retrySettings,
     saveSettings,
     stayAwake,
     setStayAwakeMode,
@@ -441,6 +450,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     lintAgentConfig,
     previewAgentConfig,
     writeAgentConfig,
+    fusionPlan,
+    fusionSync,
     listMcpServers,
     saveMcpServer,
     removeMcpServer,
@@ -918,6 +929,17 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     },
     [createThread],
   );
+
+  const handleAddPrCommentToAgent: NonNullable<PrListViewProps["onAddPrCommentToAgent"]> = async (projectId, input) => {
+    if (!projects.some((project) => project.id === projectId)) throw new Error("Project is no longer available");
+    const thread = input.threadId
+      ? threadsRef.current.find((item) => item.id === input.threadId && item.projectId === projectId && !item.archived)
+      : await createThread("New Thread", projectId, { select: false, inheritProvider: false });
+    if (!thread) throw new Error("Agent thread is no longer available");
+    addPrCommentToDraft(thread.id, input.pr, input.comment);
+    handleSelectThread(thread.id);
+    setRevealThreadId(thread.id);
+  };
 
   const handleCreateThreadPlain = useCallback(() => {
     void createThread("New Thread");
@@ -1745,6 +1767,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
    */
   const handleToggleModelFavorite = useCallback(
     (providerId: string, modelId: string) => {
+      if (settings == null) return;
       const all = settings?.providerModels ?? {};
       const pref = all[providerId] ?? { favorites: [], custom: [] };
       const favorites = pref.favorites.includes(modelId)
@@ -1925,6 +1948,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       else if (id === "stop-all-threads") openStopAllConfirm();
       else if (id === "reopen-pane") {
         window.dispatchEvent(new Event(REOPEN_PANE_EVENT));
+      } else if (id === "fresh-agent-context") {
+        void freshAgentContext().catch(() => {});
       } else if (id === "restart-agent-session") {
         void restartAgentSession().catch(() => {});
       }
@@ -1945,6 +1970,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       toggleAgents,
       openStopAllConfirm,
       restartAgentSession,
+    freshAgentContext,
     ],
   );
 
@@ -2210,6 +2236,9 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     <PrHoverFetchContext.Provider value={prDetail}>
     <div className={styles.shell}>
       <ConnectionBanner />
+      {settingsError && !settingsOpen && (
+        <SettingsLoadNotice error={settingsError} loading={settingsLoading} onRetry={retrySettings} />
+      )}
       <div
         className={styles.app}
         data-layout="app"
@@ -2363,7 +2392,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onDismissProjectError={clearError}
         onOpenSettings={openSettings}
         stayAwake={stayAwake}
-        onSetStayAwakeMode={(mode) => void setStayAwakeMode(mode)}
+        onSetStayAwakeMode={settings ? (mode) => void setStayAwakeMode(mode) : undefined}
         memoryEntries={appStatus?.memory.entries ?? null}
         spendTodayUsd={appStatus?.spendTodayUsd ?? null}
         dailyBudgetUsd={settings?.dailyBudgetUsd ?? null}
@@ -2496,9 +2525,11 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
               listPrs={listPrs}
               onSelectThread={handleSelectThread}
               onCheckoutPr={handleCheckoutPr}
+              onAddPrCommentToAgent={handleAddPrCommentToAgent}
               prDetail={prDetail}
               prEdit={prEdit}
               prComment={prComment}
+              prRequestChanges={prRequestChanges}
               prClose={prClose}
               prReady={prReady}
               prMergeAt={prMergeAt}
@@ -2667,11 +2698,12 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onClearQuestion={clearQuestion}
         onAnswerSecret={answerSecret}
         onSetProvider={setProvider}
-        onToggleModelFavorite={handleToggleModelFavorite}
+        onToggleModelFavorite={settings ? handleToggleModelFavorite : undefined}
         onSetReasoningEffort={setReasoningEffort}
         onApplyAgentProfile={applyAgentProfile}
         onSetWebSearch={setWebSearch}
         onSetFast={setFast}
+        onSetUltracode={setUltracode}
         onSetPlanModel={setPlanModel}
         onSetRoute={setRoute}
         onSetAgent={setAgent}
@@ -2960,6 +2992,9 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
           onClose={closeSettings}
           initialPane={settingsPane}
           settings={settings}
+          settingsError={settingsError}
+          settingsLoading={settingsLoading}
+          onRetrySettings={retrySettings}
           providers={providers}
           onRefreshProviders={handleModelPickerOpen}
           onProviderSignIn={handleProviderSignIn}
@@ -2984,6 +3019,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
             lintAgentConfig,
             previewAgentConfig,
             writeAgentConfig,
+            fusionPlan,
+            fusionSync,
           }}
           skills={{
             listMcpServers,

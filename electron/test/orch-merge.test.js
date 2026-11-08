@@ -504,6 +504,82 @@ describe("thread_merge", () => {
     // #1402: a no-worktree worker may not have asked for worktree:false.
     assert.doesNotMatch(res.reason, /worktree:false/);
   });
+
+  /** The worker's folder is deleted and the recovery path clears it (#1848). */
+  function loseWorktree(t) {
+    fs.rmSync(t.worktreePath, { recursive: true, force: true });
+    const { clearMissingWorktree } = require("../worktrees.js");
+    clearMissingWorktree({ store, threadId: worker.id });
+    const after = store.getThread(worker.id);
+    assert.equal(after.worktreePath, null);
+    assert.equal(after.branch, null);
+    assert.equal(after.retainedBranch, t.branch);
+  }
+
+  it("merges a worker whose worktree vanished but whose branch survived (#1848)", async () => {
+    const t = workOn(worker, "worker.txt", "worker\n");
+    store.updateThread(worker.id, { status: "done" });
+    loseWorktree(t);
+
+    const res = await handlers.thread_merge({
+      threadId: lead.id,
+      projectId: project.id,
+      workerThreadId: worker.id,
+      approved: true,
+      expectedPath: project.path,
+      expectedBranch: "main",
+    });
+    assert.equal(res.merged, true);
+    assert.equal(res.branch, t.branch);
+    assert.equal(fs.readFileSync(path.join(project.path, "worker.txt"), "utf8"), "worker\n");
+    assert.match(git(project.path, ["log", "-1", "--format=%s"]), new RegExp(`Merge worktree ${t.branch}`));
+    // Same cleanup as a normal merge: branch deleted, fields cleared.
+    assert.equal(git(project.path, ["branch", "--list", t.branch]), "");
+    const after = store.getThread(worker.id);
+    assert.equal(after.worktreePath, null);
+    assert.equal(after.branch, null);
+    assert.equal(after.retainedBranch ?? null, null);
+  });
+
+  it("still asks the user before restoring a vanished worker", async () => {
+    const t = workOn(worker, "worker.txt", "worker\n");
+    store.updateThread(worker.id, { status: "done" });
+    loseWorktree(t);
+
+    await assert.rejects(
+      () => handlers.thread_merge({
+        threadId: lead.id, projectId: project.id, workerThreadId: worker.id,
+      }),
+      /the user's decision/,
+    );
+    assert.ok(!fs.existsSync(t.worktreePath));
+    assert.equal(store.getThread(worker.id).retainedBranch, t.branch);
+  });
+
+  it("errors when the worktree and the branch are both gone (#1848)", async () => {
+    const t = workOn(worker, "worker.txt", "worker\n");
+    store.updateThread(worker.id, { status: "done" });
+    loseWorktree(t);
+    git(project.path, ["worktree", "prune"]);
+    git(project.path, ["branch", "-D", t.branch]);
+
+    await assert.rejects(
+      () => handlers.thread_merge({
+        threadId: lead.id, projectId: project.id, workerThreadId: worker.id,
+        approved: true, expectedPath: project.path, expectedBranch: "main",
+      }),
+      (err) => /worktree and its branch .* are both missing/.test(err.message) &&
+        /Nothing was merged/.test(err.message) &&
+        !/already there/.test(err.message),
+    );
+    await assert.rejects(
+      () => handlers.thread_pr({
+        threadId: lead.id, projectId: project.id, workerThreadId: worker.id,
+        title: "Worker work", approved: true,
+      }),
+      /both missing/,
+    );
+  });
 });
 
 describe("git:mergeWorktree / git:removeWorktree refuse a running thread (#1430 R7)", () => {

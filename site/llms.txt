@@ -8,10 +8,49 @@ Solenta is not a coding agent itself and does not bundle one: it finds the CLIs 
 
 ## Docs
 
-- [Full docs as Markdown](https://solenta.app/llms-full.txt): every section of the docs page in one file
-- [How Solenta works](https://solenta.app/docs.html): the docs page itself
+- [Full docs as Markdown](https://solenta.app/llms-full.txt): every docs topic in its original order, in one file
+- [How Solenta works](https://solenta.app/docs.html): overview of all docs topics
 - [Architecture](https://github.com/currentbits/solenta/blob/main/docs/ARCHITECTURE.md): Electron main, renderer, provider adapters, memory server
 - [README](https://github.com/currentbits/solenta/blob/main/README.md): install, supported agents, building from source
+
+## Docs topics
+
+- [Getting started](https://solenta.app/docs/getting-started)
+- [Shared memory](https://solenta.app/docs/memory)
+- [Inbox, Planboard, Review](https://solenta.app/docs/views)
+- [Threads and providers](https://solenta.app/docs/threads)
+- [Import, eject and reclaim](https://solenta.app/docs/cli-sessions)
+- [Codex sessions](https://solenta.app/docs/codex)
+- [Command palette](https://solenta.app/docs/palette)
+- [Worktrees and pull requests](https://solenta.app/docs/worktrees)
+- [Build workflows](https://solenta.app/docs/workflows)
+- [Orchestration](https://solenta.app/docs/orchestration)
+- [Guardrails and verification](https://solenta.app/docs/guardrails)
+- [Spec mode](https://solenta.app/docs/spec)
+- [Teach mode](https://solenta.app/docs/teach)
+- [Ask mode](https://solenta.app/docs/ask)
+- [Review itinerary](https://solenta.app/docs/review)
+- [Skills](https://solenta.app/docs/skills)
+- [Automations](https://solenta.app/docs/automations)
+- [Dev servers](https://solenta.app/docs/dev-servers)
+- [Project config files](https://solenta.app/docs/project-config)
+- [Terminal and Browser panes](https://solenta.app/docs/panes)
+- [Spend guardrails](https://solenta.app/docs/spend)
+- [Usage and fleet analytics](https://solenta.app/docs/analytics)
+- [External MCP pairing](https://solenta.app/docs/integrations)
+- [Notifications and updates](https://solenta.app/docs/updates)
+- [Phones and browsers](https://solenta.app/docs/web-mode)
+- [Other computers and SSH](https://solenta.app/docs/ssh)
+- [Windows](https://solenta.app/docs/windows)
+- [Performance and memory use](https://solenta.app/docs/performance)
+- [Architecture](https://solenta.app/docs/architecture)
+
+## Guides and comparisons
+
+- [Run AI coding agents in parallel](https://solenta.app/guides/run-coding-agents-in-parallel)
+- [Solenta vs Conductor](https://solenta.app/compare/solenta-vs-conductor)
+- [Solenta vs Claude Squad](https://solenta.app/compare/solenta-vs-claude-squad)
+- [Conductor alternatives](https://solenta.app/alternatives/conductor)
 
 ## Install
 
