@@ -344,7 +344,7 @@ function isLocalProject(project) {
  * @returns {object[]}
  */
 function mergeAutomations(store, nowMs) {
-  const { nextFire, MAX_THREADS_PER_AUTOMATION } = require("./automations.js");
+  const { nextFire } = require("./automations.js");
   const privates = (store.getAutomations() || []).filter(
     (a) => a && a.scope !== "project",
   );
@@ -369,9 +369,10 @@ function mergeAutomations(store, nowMs) {
             lastError: overlay.lastError,
             consecutiveFailures: overlay.consecutiveFailures,
             pendingRunThreadId: overlay.pendingRunThreadId,
+            ...(Array.isArray(overlay.pendingRuns) ? { pendingRuns: overlay.pendingRuns } : {}),
             ...(overlay.pendingRunId !== undefined ? { pendingRunId: overlay.pendingRunId } : {}),
             ...(Array.isArray(overlay.runHistory)
-              ? { runHistory: overlay.runHistory.slice(0, MAX_THREADS_PER_AUTOMATION) }
+              ? { runHistory: overlay.runHistory }
               : {}),
             nextRunAt: overlay.nextRunAt,
             stage: overlay.stage,
