@@ -128,6 +128,8 @@ export function EditProjectModal({
   const [iconDirty, setIconDirty] = useState(false);
   const [setupCommand, setSetupCommand] = useState(project.setupCommand ?? "");
   const [waitForSetup, setWaitForSetup] = useState(project.waitForSetup === true);
+  const [stopOnSettleOverride, setStopOnSettle] = useState<boolean | undefined>(project.stopOnSettle);
+  const stopOnSettle = stopOnSettleOverride ?? (project.repoConfig?.trusted && project.repoConfig?.devServerStopOnSettle === true);
   const [setupCache, setSetupCache] = useState(project.setupCacheOff !== true);
   const [branchPrefix, setBranchPrefix] = useState(project.branchPrefix ?? "");
   const repo = project.repoConfig;
@@ -245,12 +247,14 @@ export function EditProjectModal({
         setupCommand: setupCommand.trim() || null,
         waitForSetup,
         setupCacheOff: !setupCache,
+        ...(stopOnSettleOverride !== undefined ? { stopOnSettle: stopOnSettleOverride } : {}),
         branchPrefix: branchPrefix.trim() || null,
         quickActions: quickActions
           .map((a) => ({
             id: a.id,
             name: a.name.trim(),
             command: a.command.trim(),
+            ...(typeof a.stopOnSettle === "boolean" ? { stopOnSettle: a.stopOnSettle } : {}),
           }))
           .filter((a) => a.name && a.command),
         env,
@@ -888,6 +892,14 @@ export function EditProjectModal({
             </p>
           </div>
           <div className={styles.field}>
+            <label className={styles.fieldRow}>
+              <input type="checkbox" data-edit-project-stop-on-settle="" checked={Boolean(stopOnSettle)} disabled={pending}
+                onChange={(e) => setStopOnSettle(e.target.checked)} />
+              <span>Stop managed servers and actions when a thread settles</span>
+            </label>
+            <p className={styles.note}>Off by default. Stops only processes started by Solenta. Shared checkout processes stay running while another project thread is active. Output stays available.</p>
+          </div>
+          <div className={styles.field}>
             <span className={styles.fieldLabel} id="edit-project-actions-label">
               Quick actions
             </span>
@@ -939,6 +951,11 @@ export function EditProjectModal({
                     spellCheck={false}
                     disabled={pending}
                   />
+                  <label>
+                    <input type="checkbox" checked={action.stopOnSettle ?? Boolean(stopOnSettle)} disabled={pending}
+                      onChange={(e) => setQuickActions((rows) => rows.map((row, i) => i === index ? { ...row, stopOnSettle: e.target.checked } : row))} />
+                    Stop on settle
+                  </label>
                   <button
                     type="button"
                     className={styles.btn}

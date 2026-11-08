@@ -75,6 +75,7 @@ const {
   setWebSearch,
   setAgent,
   setFast,
+  setUltracode,
   setRoute,
   forkThread,
   forkFromCheckpoint,
@@ -239,6 +240,7 @@ module.exports = {
   setWebSearch,
   setAgent,
   setFast,
+  setUltracode,
   setRoute,
   setProvider,
   // normalizeModelForProvider / isKnownProviderId / truncateThreadTitle stay

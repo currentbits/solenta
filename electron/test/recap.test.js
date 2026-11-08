@@ -97,6 +97,17 @@ describe("thread recap", () => {
     assert.equal(store.getThread(thread.id).recap, undefined);
   });
 
+  it("drops a recap computed before a fresh-context boundary", async () => {
+    const recap = await refreshRecap(store, thread.id, { fmRun: async () => {
+      store.appendMessage(thread.id, { id: "fresh-boundary", role: "event", text: "Fresh context", createdAt: 99 });
+      store.updateThread(thread.id, { contextBoundaryId: "fresh-boundary", recap: null });
+      return "STALE RECAP";
+    } });
+    assert.equal(recap, null);
+    assert.equal(store.getThread(thread.id).recap, null);
+    assert.deepEqual(store.getContextMessages(thread.id), []);
+  });
+
   it("threads.get shows the recap only after an idle gap", async () => {
     await refreshRecap(store, thread.id, { fmRun: noFm });
     store.updateThread(thread.id, { lastVisitedAt: Date.now() - 60_000 });

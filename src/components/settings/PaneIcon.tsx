@@ -17,8 +17,10 @@ export function PaneIcon({ id }: { id: SettingsPane }) {
     >
       {id === "general" ? (
         <>
-          <circle cx="12" cy="12" r="3" />
-          <path d="M12 2v3M12 19v3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1 7 17M17 7l2.1-2.1" />
+          <path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1" />
+          <circle cx="15" cy="6" r="2" />
+          <circle cx="9" cy="12" r="2" />
+          <circle cx="17" cy="18" r="2" />
         </>
       ) : id === "keyboard" ? (
         <>
@@ -61,15 +63,15 @@ export function PaneIcon({ id }: { id: SettingsPane }) {
         </>
       ) : id === "integrations" ? (
         <>
-          <rect x="3" y="3" width="7" height="7" rx="1.5" />
-          <rect x="14" y="14" width="7" height="7" rx="1.5" />
-          <path d="M10 6.5h4a3.5 3.5 0 0 1 3.5 3.5v4M14 17.5h-4A3.5 3.5 0 0 1 6.5 14v-4" />
+          <rect x="3" y="3" width="8" height="8" rx="1.5" />
+          <rect x="13" y="3" width="8" height="8" rx="1.5" />
+          <rect x="3" y="13" width="8" height="8" rx="1.5" />
+          <path d="M17 14v6M14 17h6" />
         </>
       ) : id === "connections" ? (
         <>
-          <rect x="3" y="5" width="8" height="6" rx="1" />
-          <rect x="13" y="13" width="8" height="6" rx="1" />
-          <path d="M11 8h3a3 3 0 0 1 3 3v2" />
+          <path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1" />
+          <path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" />
         </>
       ) : id === "skills" ? (
         <>
@@ -78,12 +80,7 @@ export function PaneIcon({ id }: { id: SettingsPane }) {
           <path d="M12 16v5" />
         </>
       ) : (
-        <>
-          <path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1" />
-          <circle cx="15" cy="6" r="2" />
-          <circle cx="9" cy="12" r="2" />
-          <circle cx="17" cy="18" r="2" />
-        </>
+        <path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.4-.6-.6-2.4z" />
       )}
     </svg>
   );

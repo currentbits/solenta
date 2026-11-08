@@ -58,7 +58,7 @@ describe("strict keys and schema", () => {
     assert.deepEqual(Object.keys(schema.properties).sort(), [...REPO_KEYS].sort());
     assert.deepEqual(
       Object.keys(schema.properties.quickActions.items.properties).sort(),
-      ["command", "hidden", "id", "name"],
+      ["command", "hidden", "id", "name", "stopOnSettle"],
     );
   });
 });

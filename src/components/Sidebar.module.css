@@ -14,10 +14,13 @@
   -webkit-app-region: drag;
 }
 
+/* Same 44px bar as the thread header, so the brand row and the thread
+   title share one centre line across the window. */
 .header {
   display: flex;
   align-items: center;
-  padding: 4px 12px 8px 16px;
+  min-height: 44px;
+  padding: 0 12px 0 16px;
   flex-shrink: 0;
 }
 
@@ -44,9 +47,9 @@
 
 .brandVersion {
   font-size: 11px;
-  font-weight: 500;
+  font-weight: 400;
   font-variant-numeric: tabular-nums;
-  color: var(--text-muted);
+  color: var(--text-dim);
   letter-spacing: -0.01em;
   flex-shrink: 0;
 }
@@ -504,7 +507,7 @@
 /*
  * The list scrolls but is still a flex COLUMN, so its rows are flex items and
  * shrink to fit the viewport unless told not to — a 4-line card (wait row)
- * squashed to its 64px min-height and its text spilled over the next card.
+ * squashed to its 48px min-height and its text spilled over the next card.
  */
 .list > *,
 .shelf > * {
@@ -517,11 +520,12 @@
   flex-direction: column;
   width: 100%;
   /* min-height is a floor: .list is a scrolling flex column, so without
-     flex-shrink:0 a card taller than 64px (wait row, subagent rows) gets
-     squashed back to 64px and its last line paints over the next card. */
+     flex-shrink:0 a card taller than 48px (wait row, subagent rows) gets
+     squashed back to 48px and its last line paints over the next card.
+     Two lines: title + status, then project · branch · PR. */
   flex-shrink: 0;
-  min-height: 64px;
-  padding: 7px 10px;
+  min-height: 48px;
+  padding: 8px 10px;
   border-radius: var(--radius-sm);
   border: 1px solid transparent;
   background: transparent;
@@ -662,10 +666,7 @@
   color: var(--text);
 }
 
-/* Paper needs a firmer fill for the open row to register. */
-:global(:root[data-theme="light"]) .card[data-active="true"] {
-  background: var(--overlay-strong);
-}
+
 
 .card[data-archived="true"] {
   opacity: 0.55;
@@ -727,9 +728,16 @@
   min-width: 0;
 }
 
+.cardSlug::after {
+  content: "·";
+  margin-left: 6px;
+}
+
 .cardSlug {
   font-size: 11px;
-  color: var(--text-muted);
+  color: var(--text-dim);
+  /* The branch absorbs truncation; the project name stays whole. */
+  flex-shrink: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -975,9 +983,8 @@
 .cardTitle {
   font-size: 13px;
   line-height: 1.35;
-  /* Unselected titles sit a step down in weight and ink; the open thread
-     gets full ink at 500. */
-  font-weight: 400;
+  /* Unselected titles sit a step down in ink; the open thread gets full ink. */
+  font-weight: 500;
   color: color-mix(in srgb, var(--text) 60%, var(--text-muted));
   white-space: nowrap;
   overflow: hidden;
@@ -1087,7 +1094,7 @@
 
 /* F2 (#1429): branches and PR numbers in Geist Mono. */
 .cardBranch {
-  font: 11.5px var(--font);
+  font: 11px var(--font);
   color: var(--text-dim);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1153,7 +1160,13 @@
   margin-left: auto;
   flex-shrink: 0;
   color: var(--text-dim);
-  opacity: 0.6;
+  opacity: 0.5;
+  transition: opacity 0.12s ease;
+}
+
+/* The provider mark is reference detail: shown on the open or hovered row. */
+.card:not([data-active="true"]):not(:hover) .cardProvider {
+  opacity: 0;
 }
 
 .waitRow,
@@ -1220,8 +1233,7 @@
 
 /* Pinned threads end with a gap, not a rule. */
 .pinnedDivider {
-  height: 1px;
-  margin: 6px 10px;
+  display: none;
 }
 
 .shelf {
@@ -1268,10 +1280,29 @@
 }
 
 /* F7 mono micro-labels (#1429): "WORKING · 1" then a hairline. */
+/* Labels for the pinned and recent groups: the same voice as the shelf
+   headers below, so every group in the list is named. */
+/* Same box as a shelf header (28px, 11px inset) so every group header in
+   the list sits on one rhythm. */
+.groupLabel {
+  display: flex;
+  align-items: center;
+  height: 28px;
+  margin-top: 8px;
+  padding: 0 8px 0 11px;
+  font: 500 11px var(--font);
+  letter-spacing: 0.03em;
+  color: var(--text-dim);
+}
+
+.groupLabel:first-child {
+  margin-top: 0;
+}
+
 .shelfLabelSnoozed,
 .shelfLabelSettled {
-  font: 500 12px var(--font);
-  letter-spacing: 0.01em;
+  font: 500 11px var(--font);
+  letter-spacing: 0.03em;
   color: var(--text-dim);
   flex-shrink: 0;
   font-variant-numeric: tabular-nums;
@@ -1294,15 +1325,9 @@
   transition: transform 0.15s ease;
 }
 
+/* The chevron always shows, so a collapsed shelf reads as collapsed. */
 .shelfToggle .shelfChevron {
   color: var(--text-dim);
-  opacity: 0;
-  transition: opacity 0.12s ease;
-}
-
-.shelfToggle:hover .shelfChevron,
-.shelfToggle:focus-visible .shelfChevron {
-  opacity: 1;
 }
 
 .shelfToggle[aria-expanded="true"] .shelfChevron,
@@ -1867,7 +1892,7 @@
 .shelves {
   display: flex;
   flex-direction: column;
-  margin-top: 12px;
+  margin-top: 6px;
 }
 
 /* Calm sidebar (#1409): one search row — filter toggle, project scope and
@@ -2037,4 +2062,16 @@
 .headerNav [data-sidebar-collapse] {
   width: 26px;
   height: 26px;
+}
+
+/* Inside the named Pinned group the pin glyph repeats the label. */
+.groupLabel[data-group-label="pinned"] ~ * .pinFlag {
+  display: none;
+}
+
+/* Calm states (queued, watching) show the glyph only, so the title keeps
+   its width; the word stays in the DOM and the tooltip. */
+.cardLine2 .statusLabel:is([data-tone="queued"], [data-tone="watching"]) {
+  font-size: 0;
+  gap: 0;
 }

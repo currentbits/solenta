@@ -190,7 +190,7 @@ module.exports = {
     if (!ctx || !ctx.speech) return speechStatusMissing();
     return ctx.speech.status();
   },
-  "speech:download": async (ctx) => requireSpeech(ctx).download(),
+  "speech:download": async (ctx, input) => requireSpeech(ctx).download(input),
   "speech:start": async (ctx) => requireSpeech(ctx).start(),
   "speech:write": async (ctx, input) => requireSpeech(ctx).write(input),
   "speech:stop": async (ctx, input) => requireSpeech(ctx).stop(input),

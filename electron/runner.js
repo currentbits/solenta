@@ -1175,17 +1175,21 @@ function createRunner(opts) {
   }
 
   /** Start queued turns oldest-first while slots are free. */
+  const admittingQueuedRuns = new Set();
   function admitQueuedRuns() {
     for (const t of runQueueOrder()) {
       if (!runSlotsFree()) return;
-      if (active.has(t.id)) continue;
+      if (active.has(t.id) || admittingQueuedRuns.has(t.id)) continue;
       const { input } = t.runQueue;
-      store.updateThread(t.id, { runQueue: null });
+      // Keep the queue marker through startRun's settlement and preflight;
+      // an admitted automation is still unfinished until it becomes working.
+      admittingQueuedRuns.add(t.id);
       // startRun is synchronous up to claiming its `active` slot, so the
       // next iteration already sees this one counted.
       startRun({ ...input, threadId: t.id, fromRunQueue: true }).catch(
         (err) => {
           store.updateThread(t.id, {
+            runQueue: null,
             status: "failed",
             lastError: shortError(String((err && err.message) || err)),
           });
@@ -1193,7 +1197,7 @@ function createRunner(opts) {
           pushDetail(t.id);
           pushThreadsChanged();
         },
-      );
+      ).finally(() => admittingQueuedRuns.delete(t.id));
     }
   }
 
@@ -1798,7 +1802,14 @@ function createRunner(opts) {
    * appended) any throw — budget, missing CLI, worktree setup — puts that
    * queue back in front of whatever was queued since.
    */
+  const automationStart = Symbol("configured automation start");
+  function startAutomationRun(input) {
+    return startRun({ threadId: input.threadId, prompt: input.prompt, [automationStart]: input.automationId });
+  }
+
   async function startRun(input) {
+    // Capture completed fixed-destination automation outcomes before a manual turn changes the row.
+    if (require("./automations.js").settleAutomationRuns({ store })) store.save();
     const fold = { taken: null };
     try {
       return await startRunFolded(input, fold);
@@ -1836,7 +1847,7 @@ function createRunner(opts) {
     // queued as the next prompt. fromNotice is skipped so a worker
     // quoting `/btw` cannot open a card on itself. fromInbound is skipped
     // so a cross-thread body that happens to start with `/btw` is data.
-    if (!input.fromNotice && !input.fromInbound) {
+    if (!input[automationStart] && !input.fromNotice && !input.fromInbound) {
       const question = btw.parseBtwCommand(prompt);
       if (question) {
         const thread = await startBtw({ threadId, question });
@@ -1855,9 +1866,17 @@ function createRunner(opts) {
       );
     }
 
-    const thread = store.getThread(threadId);
+    let thread = store.getThread(threadId);
     if (!thread) {
       throw new Error(`Unknown thread: ${threadId}`);
+    }
+    const configuredAutomationId = input[automationStart];
+    const automation = configuredAutomationId
+      ? require("./automations-file.js").mergeAutomations(store, Date.now()).find((a) => a.id === configuredAutomationId)
+      : null;
+    if (configuredAutomationId) {
+      if (!automation || automation.destinationThreadId !== threadId || !automation.sessionMode || automation.sessionMode === "new-thread") throw new Error("Automation destination configuration changed before launch");
+      require("./automation-destination.js").destinationThread(store, automation, { isRunning, getPendingPermission });
     }
     if (services.isTrashed(thread)) {
       throw new Error("Cannot start a run on a deleted thread");
@@ -1893,6 +1912,9 @@ function createRunner(opts) {
     } else if (!input.fromNotice && !isReplayTurn(input)) {
       autoTurns.set(threadId, 0);
     }
+    if (thread.freshContextPending && (input.fromNotice || input.fromInbound || isReplayTurn(input) || input.fromIdleCompact)) {
+      throw new Error("Fresh context is waiting for a user message");
+    }
     cancelQuotaWake(threadId);
 
     // Idle compaction (#1765) stamps idleCompactedAt to claim one idle
@@ -1927,6 +1949,7 @@ function createRunner(opts) {
     // otherwise fan out again — and the cheap `/` test keeps the provider
     // probe (`which`) off the ordinary send path.
     if (
+      !input[automationStart] &&
       !input.fromNotice &&
       !input.fromInbound &&
       String(prompt).trimStart().startsWith("/")
@@ -2125,6 +2148,7 @@ function createRunner(opts) {
         (store.getSettings().maxConcurrentRuns != null &&
           (!runSlotsFree() || runQueueOrder().length > 0)))
     ) {
+      if (automation) throw Object.assign(new Error("Automation destination is waiting for a run slot; run skipped"), { code: "AUTOMATION_DESTINATION_BUSY" });
       fold.taken = null;
       return enqueueRun(threadId, input, prompt, attachments);
     }
@@ -2149,6 +2173,13 @@ function createRunner(opts) {
           fromQuotaFailover: input.fromQuotaFailover,
         });
       }
+    }
+
+    // Only explicitly configured fixed fresh-session fires may reset context,
+    // after all admission and preflight gates have accepted the run.
+    if (automation?.sessionMode === "fresh") {
+      freshAgentContext({ threadId });
+      thread = store.getThread(threadId);
     }
 
     // Prefix is CLI-only and must see the retained tail BEFORE this turn's
@@ -2224,6 +2255,7 @@ function createRunner(opts) {
       threadId,
       {
         status: "working",
+        ...(input.fromRunQueue ? { runQueue: null } : {}),
         title,
         awaitingInput: keepQuestion != null || keepPlan != null || keepApproval != null ||
           ciWorkflowSignOffs.get(threadId)?.approved === false,
@@ -2243,6 +2275,7 @@ function createRunner(opts) {
         interruptedBy: null,
         ...(machineTurn || isReplayTurn(input) ? {} : { autoResumedAt: null }),
         quotaWaitUntil: null,
+        freshContextPending: false,
         quotaWaitResumed: input.fromQuotaWait === true,
         quotaFailoverPending: false,
         quotaFailoverTried: isReplayTurn(input)
@@ -2937,6 +2970,49 @@ function createRunner(opts) {
     return { restarted: true };
   }
 
+  /** Start a new provider conversation without settling or replacing the thread. */
+  function freshAgentContext(input) {
+    const threadId = input && input.threadId;
+    const thread = threadId ? store.getThread(threadId) : null;
+    if (!thread) throw new Error(`Unknown thread: ${threadId}`);
+    if (active.has(threadId) || restoringThreads.has(threadId) || thread.status === "working" ||
+        thread.pendingPlan || thread.pendingQuestion || getPendingPermission(threadId) || thread.pendingSecret ||
+        thread.awaitingInput || thread.runQueue || thread.queued) {
+      throw new Error("Finish or stop the run and resolve pending input and queued messages before starting fresh context");
+    }
+    if (thread.teleportedTo) throw new Error("Bring the thread back to this machine before starting fresh context");
+    cancelAutoResume(threadId);
+    cancelQuotaWake(threadId);
+    for (const card of thread.btw || []) cancelBtw({ threadId, id: card.id });
+    services.clearRewindRestore(store, threadId);
+    disposeClaudeSession(threadId);
+    memorySeen.delete(threadId);
+    autoTurns.set(threadId, 0);
+    dropOrchNotices(threadId);
+    lastWorkflowByThread.delete(threadId);
+    const contextBoundaryId = appendMessage(threadId, "event",
+      "Fresh agent context. Earlier messages remain visible but are not sent to the agent.");
+    store.updateMessage(threadId, contextBoundaryId, { sessionBoundary: true });
+    store.updateThread(threadId, {
+      contextBoundaryId, freshContextPending: true,
+      sessionId: null, sessionStartModel: null, sessionUsageBaseline: null, forkSessionAt: null,
+      replayContext: false, ejected: false, recap: null, nextPromptSuggestion: null,
+      interruptedAt: null, autoResumedAt: null, quotaWaitUntil: null,
+      quotaWaitResumed: false, quotaFailoverPending: false, quotaFailoverTried: [],
+      idleCompactedAt: null, status: "idle", runStartedAt: null,
+      lastError: null, lastErrorKind: null,
+    });
+    const usage = store.getUsage(threadId);
+    if (usage) {
+      const { contextTokens, contextWindow, contextCompaction, ...totals } = usage;
+      store.setUsage(threadId, { ...totals, model: null });
+    }
+    store.setWorkflowRun(threadId, null);
+    store.saveNow();
+    pushDetail(threadId);
+    pushThreadsChanged();
+  }
+
   function stopAll() {
     disposeWatchdogs();
     stopAllBtw();
@@ -3141,6 +3217,7 @@ function createRunner(opts) {
     deliverNotice,
     queueOrchNotice,
     flushOrchNotices,
+    dropQueue: dropOrchNotices,
     sweepCrew,
     sweepDoneWorkers,
     stopCrew,
@@ -3309,6 +3386,7 @@ function createRunner(opts) {
   queueMicrotask(admitQueuedRuns);
 
   return {
+    startAutomationRun,
     startRun,
     steerRun,
     startBtw,
@@ -3348,6 +3426,7 @@ function createRunner(opts) {
     disposeClaudeSession,
     retireClaudeSession,
     restartAgentSession,
+    freshAgentContext,
     deliverNotice,
     appendInbound,
     checkStalls,

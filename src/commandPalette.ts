@@ -240,6 +240,11 @@ export const PALETTE_ACTIONS: readonly PaletteAction[] = [
     keywords: "restore undo close terminal git",
   },
   {
+    id: "fresh-agent-context",
+    title: "Start fresh agent context",
+    keywords: "new conversation reset context keep transcript worktree",
+  },
+  {
     id: "restart-agent-session",
     title: "Restart agent session",
     keywords: "reload skills plugins mcp servers reconnect",

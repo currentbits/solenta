@@ -194,6 +194,11 @@ export interface CoderError {
   message: string;
 }
 
+type SettingsState =
+  | { status: "loading"; message: string | null }
+  | { status: "error"; message: string }
+  | { status: "ready"; settings: AppSettings };
+
 export interface UseCoderResult {
   api: CoderApi;
   projects: ProjectInfo[];
@@ -392,6 +397,7 @@ export interface UseCoderResult {
    * while a run is active.
    */
   restartAgentSession: () => Promise<void>;
+  freshAgentContext: () => Promise<void>;
   /** Write plan markdown into the thread's checkout; resolves the path (#1501). */
   savePlan: (plan: string, threadId?: string) => Promise<string>;
   /** Dismiss the selected thread's persisted question card (issue #647). */
@@ -433,6 +439,7 @@ export interface UseCoderResult {
     projectPath?: string | null;
   }) => Promise<CliAgentInfo[]>;
   setFast: (fast: boolean, threadId?: string) => Promise<void>;
+  setUltracode: (ultracode: boolean, threadId?: string) => Promise<void>;
   /** Plan-mode model (#1716); null = plan on the thread's model. */
   setPlanModel: (model: string | null, threadId?: string) => Promise<void>;
   /** Pending first-turn model route (#246); null = manual pick. */
@@ -719,6 +726,7 @@ export interface UseCoderResult {
     title?: string;
     body?: string;
   }) => Promise<PrDetailResult>;
+  prRequestChanges: CoderApi["git"]["prRequestChanges"];
   prComment: (input: {
     projectPath: string;
     prNumber: number;
@@ -920,6 +928,9 @@ export interface UseCoderResult {
   appStatus: AppStatus | null;
   /** Persisted app settings (daily budget). */
   settings: AppSettings | null;
+  settingsError: string | null;
+  settingsLoading: boolean;
+  retrySettings: () => Promise<void>;
   /** Patch settings; updates local state from the returned value. */
   saveSettings: (patch: Partial<AppSettings>) => Promise<AppSettings>;
   /** Derived stay-awake state from main (issue #364); null until loaded. */
@@ -1093,7 +1104,16 @@ export function useCoder(): UseCoderResult {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<CoderError | null>(null);
   const [appStatus, setAppStatus] = useState<AppStatus | null>(null);
-  const [settings, setSettings] = useState<AppSettings | null>(null);
+  const [settingsState, setSettingsState] = useState<SettingsState>({
+    status: "loading", message: null,
+  });
+  const settings = settingsState.status === "ready" ? settingsState.settings : null;
+  const settingsError = settingsState.status === "ready" ? null : settingsState.message;
+  const settingsLoading = settingsState.status === "loading";
+  const settingsRef = useRef<AppSettings | null>(null);
+  const settingsLoadGen = useRef(0);
+  const settingsSaveGen = useRef(0);
+  const settingsAppliedSaveGen = useRef(0);
   const [stayAwake, setStayAwake] = useState<StayAwakeStatus | null>(null);
   const [sidebarHosts, setSidebarHosts] = useState<SidebarHostStatus[]>([]);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
@@ -1469,6 +1489,25 @@ export function useCoder(): UseCoderResult {
     };
   }, [api]);
 
+  const retrySettings = useCallback(async () => {
+    const gen = ++settingsLoadGen.current;
+    setSettingsState((prev) => prev.status === "ready"
+      ? prev
+      : { status: "loading", message: prev.message });
+    try {
+      const next = await api.settings.get();
+      if (gen !== settingsLoadGen.current) return;
+      settingsRef.current = next;
+      setSettingsState({ status: "ready", settings: next });
+    } catch (err) {
+      if (gen !== settingsLoadGen.current) return;
+      // Keep a previously loaded snapshot when a reconnect refresh fails.
+      if (settingsRef.current != null) return;
+      const message = errorMessage(err).replace(/\s+/g, " ").trim().slice(0, 300);
+      setSettingsState({ status: "error", message: message || "Settings could not be read." });
+    }
+  }, [api]);
+
   // Initial load + subscriptions
   useEffect(() => {
     let cancelled = false;
@@ -1508,22 +1547,23 @@ export function useCoder(): UseCoderResult {
     };
 
     const loadBootLists = () => {
+      // Settings settle independently, even when another boot list rejects.
+      void retrySettings();
       return (async () => {
         try {
-          // status/settings are best-effort: missing IPC handlers (merge before
+          // Status is best-effort: missing IPC handlers (merge before
           // backend) must not blank the whole boot (no catch on this IIFE).
           // projects/threads/providers/workflows may also reject when the
           // window beat registerIpc (#618); boot:ready retries.
-          const [p, loaded, prov, wfs, autos, status, sett] = await Promise.all([
+          const [p, loaded, prov, wfs, autos, status] = await Promise.all([
             api.projects.list(),
             fetchThreads(),
             api.providers.list(),
             api.workflows.list(),
             api.automations.list().catch(() => [] as AutomationInfo[]),
             api.app.status().catch(() => null),
-            api.settings.get().catch(() => null),
           ]);
-          // Best-effort like status/settings: a stale backend without the
+          // Best-effort like status: a stale backend without the
           // stayAwake channel must not blank the boot.
           const awake = await api.stayAwake
             .status()
@@ -1534,7 +1574,6 @@ export function useCoder(): UseCoderResult {
           setWorkflows(wfs);
           setAutomations(autos);
           if (status != null) setAppStatus(status);
-          if (sett != null) setSettings(sett);
           if (awake != null) setStayAwake(awake);
           const { list } = loaded;
           for (const t of list) {
@@ -1687,6 +1726,7 @@ export function useCoder(): UseCoderResult {
 
     return () => {
       cancelled = true;
+      settingsLoadGen.current += 1;
       unsubChanged?.();
       unsubUpdated?.();
       unsubBoot?.();
@@ -1695,7 +1735,7 @@ export function useCoder(): UseCoderResult {
       unsubAudio?.();
       window.clearInterval(statusHandle);
     };
-  }, [api, applyThreads, refreshStatus, reloadDetail, refreshTrashed]);
+  }, [api, applyThreads, refreshStatus, reloadDetail, refreshTrashed, retrySettings]);
 
   // Saved Connections shown in the sidebar (#1819): main keeps their links
   // open; hand it the saved set at boot (again on boot:ready, #618).
@@ -1862,6 +1902,7 @@ export function useCoder(): UseCoderResult {
     respondPermission,
     redirectPermission,
     restartAgentSession,
+    freshAgentContext,
     clearQuestion,
     answerSecret,
     setProvider,
@@ -1871,6 +1912,7 @@ export function useCoder(): UseCoderResult {
     setAgent,
     listAgents,
     setFast,
+    setUltracode,
     setPlanModel,
     setRoute,
     setArchived,
@@ -2003,6 +2045,7 @@ export function useCoder(): UseCoderResult {
     prDetail,
     prEdit,
     prComment,
+    prRequestChanges,
     prClose,
     prReady,
     prMergeAt,
@@ -2291,8 +2334,20 @@ export function useCoder(): UseCoderResult {
 
   const saveSettings = useCallback(
     async (patch: Partial<AppSettings>) => {
+      if (settingsRef.current == null) {
+        throw new Error("Settings are unavailable. Retry loading settings before saving changes.");
+      }
+      // Invalidate reads begun before this write and before its reply.
+      settingsLoadGen.current += 1;
+      const gen = ++settingsSaveGen.current;
       const next = await api.settings.set(patch);
-      setSettings(next);
+      settingsLoadGen.current += 1;
+      // A newer failed attempt must not suppress this successful snapshot.
+      if (gen > settingsAppliedSaveGen.current) {
+        settingsAppliedSaveGen.current = gen;
+        settingsRef.current = next;
+        setSettingsState({ status: "ready", settings: next });
+      }
       // Budget changes may affect how the meter is rendered.
       await refreshStatus();
       return next;
@@ -2303,16 +2358,17 @@ export function useCoder(): UseCoderResult {
   const testWebhook = useCallback(() => api.settings.testWebhook(), [api]);
 
   // Mode change persists through settings; main re-evaluates the blocker and
-  // pushes stayAwake:changed. The local mode mirrors the returned settings so
+  // pushes stayAwake:changed. The local mode mirrors the accepted settings so
   // the control flips even where no push arrives (web, fakes).
   const setStayAwakeMode = useCallback(
     async (mode: StayAwakeMode) => {
       const next = await saveSettings({ stayAwake: mode });
+      const savedMode = (settingsRef.current ?? next).stayAwake;
       setStayAwake((prev) =>
         prev
-          ? { ...prev, mode: next.stayAwake }
+          ? { ...prev, mode: savedMode }
           : {
-              mode: next.stayAwake,
+              mode: savedMode,
               blocking: false,
               onBattery: false,
               anyWorking: false,
@@ -2466,6 +2522,7 @@ export function useCoder(): UseCoderResult {
     respondPermission,
     redirectPermission,
     restartAgentSession,
+    freshAgentContext,
     clearQuestion,
     answerSecret,
     setProvider,
@@ -2475,6 +2532,7 @@ export function useCoder(): UseCoderResult {
     setAgent,
     listAgents,
     setFast,
+    setUltracode,
     setPlanModel,
     setRoute,
     setArchived,
@@ -2558,6 +2616,7 @@ export function useCoder(): UseCoderResult {
     prDetail,
     prEdit,
     prComment,
+    prRequestChanges,
     prClose,
     prReady,
     prMergeAt,
@@ -2623,6 +2682,9 @@ export function useCoder(): UseCoderResult {
     runShell,
     appStatus,
     settings,
+    settingsError,
+    settingsLoading,
+    retrySettings,
     saveSettings,
     stayAwake,
     sidebarHosts,

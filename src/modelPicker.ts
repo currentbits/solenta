@@ -433,14 +433,14 @@ export function effortsForModel(
 ): ReasoningEffort[] {
   if (!provider) return [];
   const providerEfforts = Array.isArray(provider.efforts)
-    ? provider.efforts.slice()
+    ? provider.efforts.filter((level) => level !== "ultracode")
     : [];
   if (modelId == null || modelId === "") return providerEfforts;
   const infos = provider.modelInfo;
   const hit = Array.isArray(infos)
     ? infos.find((m) => m.id === modelId)
     : undefined;
-  if (hit && Array.isArray(hit.efforts)) return hit.efforts.slice();
+  if (hit && Array.isArray(hit.efforts)) return hit.efforts.filter((level) => level !== "ultracode");
   return providerEfforts;
 }
 
@@ -697,7 +697,7 @@ export function profileSummary(
       ? "Default"
       : (info?.modelInfo.find((m) => m.id === profile.model)?.label ??
         profile.model);
-  const effort = effortDisplayLabel(profile.reasoningEffort);
+  const effort = profile.ultracode ? "Ultracode (xhigh)" : effortDisplayLabel(profile.reasoningEffort);
   const permission =
     PERMISSION_MODE_LABELS[profile.permissionMode] ?? profile.permissionMode;
   const ruleCount = profile.policy?.rules.length ?? 0;

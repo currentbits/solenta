@@ -1,0 +1,53 @@
+{
+  "models": {
+    "nemotron-en": {
+      "label": "Nemotron English",
+      "filename": "nemotron-speech-streaming-en-0.6b.q8_0.gguf",
+      "bytes": 699872960,
+      "sha256": "d9a01898d2a611c8764e23a1c2f45e70bbd5a425dc4de93692ac951dd603812d",
+      "url": "https://huggingface.co/nvidia/nemotron-speech-streaming-en-0.6b/resolve/main/nemotron-speech-streaming-en-0.6b.q8_0.gguf"
+    },
+    "nemotron-3.5": {
+      "label": "Nemotron 3.5 multilingual",
+      "filename": "nemotron-3.5-asr-streaming-0.6b.q8_0.gguf",
+      "bytes": 741548352,
+      "sha256": "a5c435f294eea8f88ce68dd27b8c3bfea7f777cb2fbba04fcd30eaa555f429ae",
+      "url": "https://huggingface.co/nvidia/nemotron-3.5-asr-streaming-0.6b/resolve/1c8deaecc64b91f034d73e08dd8b64625eb3395d/nemotron-3.5-asr-streaming-0.6b.q8_0.gguf"
+    }
+  },
+  "languages": {
+    "auto": "Detect automatically",
+    "en-US": "English (US)",
+    "en-GB": "English (UK)",
+    "es-US": "Spanish (US)",
+    "es-ES": "Spanish (Spain)",
+    "fr-FR": "French (France)",
+    "fr-CA": "French (Canada)",
+    "it-IT": "Italian",
+    "pt-BR": "Portuguese (Brazil)",
+    "pt-PT": "Portuguese (Portugal)",
+    "nl-NL": "Dutch",
+    "de-DE": "German",
+    "tr-TR": "Turkish",
+    "ru-RU": "Russian",
+    "ar-AR": "Arabic",
+    "hi-IN": "Hindi",
+    "ja-JP": "Japanese",
+    "ko-KR": "Korean",
+    "vi-VN": "Vietnamese",
+    "uk-UA": "Ukrainian",
+    "pl-PL": "Polish",
+    "sv-SE": "Swedish",
+    "cs-CZ": "Czech",
+    "nb-NO": "Norwegian Bokmål",
+    "da-DK": "Danish",
+    "bg-BG": "Bulgarian",
+    "fi-FI": "Finnish",
+    "hr-HR": "Croatian",
+    "sk-SK": "Slovak",
+    "zh-CN": "Mandarin Chinese",
+    "hu-HU": "Hungarian",
+    "ro-RO": "Romanian",
+    "et-EE": "Estonian"
+  }
+}

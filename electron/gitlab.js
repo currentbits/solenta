@@ -49,13 +49,18 @@ function gitlabRemote(url) {
  * @param {number} [timeout]
  */
 async function glabApi(cwd, remote, method, endpoint, fields, timeout) {
+  return glabHostApi(cwd, remote, method, `projects/${encodeURIComponent(remote.path)}${endpoint}`, fields, timeout);
+}
+
+/** Host-scoped API calls use the same glab account as project-scoped calls. */
+async function glabHostApi(cwd, remote, method, endpoint, fields, timeout) {
   const args = [
     "api",
     "--hostname",
     remote.host,
     "-X",
     method,
-    `projects/${encodeURIComponent(remote.path)}${endpoint}`,
+    endpoint,
   ];
   for (const [k, v] of Object.entries(fields || {})) {
     // -F types booleans/numbers; -f keeps titles like "123" as strings.
@@ -80,6 +85,17 @@ async function glabApi(cwd, remote, method, endpoint, fields, timeout) {
   } catch {
     return { ok: false, reason: "glab returned unparseable JSON" };
   }
+}
+
+async function glabGraphql(cwd, remote, query) {
+  const result = await glabHostApi(cwd, remote, "POST", "graphql", { query });
+  if (!result.ok) return result;
+  const errors = result.data && result.data.errors;
+  if (Array.isArray(errors) && errors.length) {
+    return { ok: false, reason: errors.map((error) => String(error.message || "GitLab GraphQL error")).join("; ") };
+  }
+  if (!result.data || !result.data.data) return { ok: false, reason: "Invalid GitLab GraphQL response" };
+  return { ok: true, data: result.data.data };
 }
 
 /** Throw a gh-style Error from a failed glabApi result. */
@@ -438,6 +454,7 @@ module.exports = {
   glabBin,
   gitlabRemote,
   glabApi,
+  glabGraphql,
   prListItemFromMr,
   prCheckoutViewFromMr,
   listMrs,

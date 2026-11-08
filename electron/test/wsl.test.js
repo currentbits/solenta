@@ -105,7 +105,7 @@ describe("wrapCommand on this platform", () => {
       "status",
     ]);
     assert.equal(out.bin, "ssh");
-    assert.equal(out.args[out.args.length - 1], "cd '/srv/app' && 'git' 'status'");
+    assert.equal(out.args[out.args.length - 1], "cd '/srv/app' && 'env' 'LANGUAGE=C' 'git' 'status'");
   });
 
   it("wraps a WSL-side project when platform is injected", () => {

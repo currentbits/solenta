@@ -21,6 +21,7 @@ import { useModalFocus } from "../useModalFocus";
 import type { MemoryProjectToolsApi } from "./MemoryTab";
 import { SkillsManager, type SkillsManagerProps } from "./SkillsTab";
 import styles from "./SettingsModal.module.css";
+import { SettingsLoadNotice } from "./SettingsLoadNotice";
 import { IntegrationsSection } from "./IntegrationsSection";
 import { ChannelsSection } from "./settings/ChannelsSection";
 import { ConnectionsSection } from "./ConnectionsSection";
@@ -149,6 +150,9 @@ export interface SettingsModalProps {
   initialPane?: SettingsPane | null;
   /** Current settings (budget + auto-settle window). */
   settings: AppSettings | null;
+  settingsError?: string | null;
+  settingsLoading?: boolean;
+  onRetrySettings?: () => Promise<void>;
   /** Provider catalogue for the profiles form. Unavailable CLIs stay listed. */
   providers?: ProviderInfo[];
   /** Re-list providers (re-probes sign-in) when Settings › Providers or Agents opens. */
@@ -273,6 +277,9 @@ export function SettingsModal({
   onClose,
   initialPane = null,
   settings,
+  settingsError = null,
+  settingsLoading = settings == null && !settingsError,
+  onRetrySettings,
   providers = [],
   onRefreshProviders,
   onProviderSignIn,
@@ -281,7 +288,7 @@ export function SettingsModal({
   onCheckUpdate,
   onDownloadUpdate,
   onApplyUpdate,
-  onSaveSettings,
+  onSaveSettings: persistSettings,
   onTestWebhook,
   projects,
   onGcScan,
@@ -299,6 +306,12 @@ export function SettingsModal({
   projectTools,
   skills,
 }: SettingsModalProps) {
+  const onSaveSettings: SettingsModalProps["onSaveSettings"] = (patch) => {
+    if (settings == null) {
+      return Promise.reject(new Error("Settings are unavailable. Retry loading settings before saving changes."));
+    }
+    return persistSettings(patch);
+  };
   const [pane, setPane] = useState<SettingsPane>("general");
   const [navQuery, setNavQuery] = useState("");
   /** Selector of a "Find a setting" pick, scrolled to and flashed once its pane renders. */
@@ -789,6 +802,9 @@ export function SettingsModal({
           </nav>
 
           <div className={styles.content}>
+            {settings == null && (
+              <SettingsLoadNotice error={settingsError} loading={settingsLoading} onRetry={onRetrySettings} />
+            )}
             <div className={styles.paneHead}>
               <h3 className={styles.paneTitle}>{paneMeta.label}</h3>
               <p className={styles.paneHint}>{paneMeta.hint}</p>

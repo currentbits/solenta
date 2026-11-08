@@ -122,6 +122,14 @@ function createCodexRun(ctx) {
       thread,
       store.getUsage(threadId),
     );
+    // token_count snapshots are provider-session totals. Preserve earlier
+    // sessions' thread totals when a fresh-context boundary starts a new one.
+    let usageBaseline = thread.sessionUsageBaseline || null;
+    if (thread.contextBoundaryId && !resumeId) {
+      const usage = store.getUsage(threadId);
+      usageBaseline = { inputTokens: usage?.inputTokens || 0, outputTokens: usage?.outputTokens || 0 };
+      store.updateThread(threadId, { sessionUsageBaseline: usageBaseline });
+    }
     const startedFresh = Boolean(thread.sessionId) && !resumeId;
     /** @type {string | null} */
     let capturedSessionId = resumeId;
@@ -414,8 +422,8 @@ function createCodexRun(ctx) {
       }
       const nextUsage = {
         model: usageInfo.model || prev.model || thread.model || null,
-        inputTokens: snapshot ? inDelta : prev.inputTokens + inDelta,
-        outputTokens: snapshot ? outDelta : prev.outputTokens + outDelta,
+        inputTokens: snapshot ? (usageBaseline?.inputTokens || 0) + inDelta : prev.inputTokens + inDelta,
+        outputTokens: snapshot ? (usageBaseline?.outputTokens || 0) + outDelta : prev.outputTokens + outDelta,
         costUsd: prev.costUsd + costDelta,
         turns: snapshot && prev.turns > 0 ? prev.turns : prev.turns + 1,
       };
@@ -430,10 +438,10 @@ function createCodexRun(ctx) {
         store.recordSpend(costDelta);
       }
       const billedIn = snapshot
-        ? Math.max(0, inDelta - prev.inputTokens)
+        ? Math.max(0, nextUsage.inputTokens - prev.inputTokens)
         : inDelta;
       const billedOut = snapshot
-        ? Math.max(0, outDelta - prev.outputTokens)
+        ? Math.max(0, nextUsage.outputTokens - prev.outputTokens)
         : outDelta;
       store.recordUsage({
         provider: threadProviderRef(thread),

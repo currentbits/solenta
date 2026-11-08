@@ -105,7 +105,7 @@ describe("wrapCommand", () => {
     assert.equal(cmd.bin, "ssh");
     assert.ok(cmd.args.includes("dev@box"));
     assert.ok(cmd.args.includes("BatchMode=yes"));
-    assert.equal(cmd.args[cmd.args.length - 1], "cd '/srv/app' && 'git' 'diff' 'HEAD'");
+    assert.equal(cmd.args[cmd.args.length - 1], "cd '/srv/app' && 'env' 'LANGUAGE=C' 'git' 'diff' 'HEAD'");
   });
 
   it("uses basename of an absolute local binary on the remote", () => {

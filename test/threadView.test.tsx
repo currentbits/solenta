@@ -114,6 +114,7 @@ function msg(over: Partial<ChatMessage> & Pick<ChatMessage, "role" | "text">): C
     fromThread: over.fromThread,
     attachments: over.attachments,
     thinking: over.thinking,
+    sessionBoundary: over.sessionBoundary,
     steer: over.steer,
     pdfText: over.pdfText,
     fromNotice: over.fromNotice,
@@ -632,6 +633,18 @@ describe("ThreadView message roles", () => {
       /data-slash-command/,
       "an unrecognized /foo must not be highlighted",
     );
+  });
+
+  it("renders a durable fresh-context divider while keeping the earlier transcript", () => {
+    const html = render({ detail: detail({ messages: [
+      msg({ id: "before", role: "assistant", text: "Earlier conversation", createdAt: 4 }),
+      msg({ id: "boundary", role: "event", sessionBoundary: true, text: "Fresh agent context", createdAt: 5 }),
+      msg({ id: "after", role: "user", text: "New conversation", createdAt: 6 }),
+    ] }) });
+    assert.match(html, /role="separator"/);
+    assert.match(html, /aria-label="Fresh agent context"/);
+    assert.match(html, /Earlier conversation/);
+    assert.match(html, /New conversation/);
   });
 
   it("renders event messages as event lines, not as cards or user bubbles", () => {
@@ -7439,6 +7452,39 @@ describe("routine worker activity", () => {
     ]);
     // Lines outside the fence (here a second worker) stay visible.
     assert.equal(noticeRest(text), workerDoneLine("w-8", "plain", "no block"));
+  });
+});
+
+describe("ThreadView Claude compaction meter", () => {
+  it("labels a reported compaction estimate separately from the model ceiling", async () => {
+    const m = await mount(view({ detail: detail({ usage: {
+      model: "claude-x", inputTokens: 10, outputTokens: 100, costUsd: 0, turns: 1,
+      contextTokens: 100_000, contextWindow: 1_000_000,
+      contextCompaction: { kind: "threshold", tokens: 117_000, source: "reported" },
+    } }) }));
+    const badge = m.query("[data-context-ring]");
+    assert.ok(badge);
+    assert.match(badge.getAttribute("aria-label") ?? "", /85% of 117k \(Auto-compact estimate\)/);
+    await inAct(() => badge.focus());
+    const popover = m.query("[data-context-popover]");
+    assert.match(popover?.textContent ?? "", /Model context window: 1M/);
+    assert.match(popover?.textContent ?? "", /percentage overrides may change the trigger/);
+    m.unmount();
+  });
+
+  it("does not imply compaction is near when Claude disabled it", async () => {
+    const m = await mount(view({ detail: detail({ usage: {
+      model: "claude-x", inputTokens: 10, outputTokens: 100, costUsd: 0, turns: 1,
+      contextTokens: 180_000, contextWindow: 200_000, contextCompaction: { kind: "disabled" },
+    } }) }));
+    const badge = m.query("[data-context-ring]");
+    assert.ok(badge);
+    await inAct(() => badge.focus());
+    const popover = m.query("[data-context-popover]");
+    assert.match(popover?.textContent ?? "", /Auto-compaction is off/);
+    assert.match(popover?.textContent ?? "", /Context window is nearly full/);
+    assert.doesNotMatch(popover?.textContent ?? "", /compaction is close/i);
+    m.unmount();
   });
 });
 

@@ -190,6 +190,7 @@ export function createGit(ctx: DevCtx): Pick<CoderApi, "git" | "mergeQueue"> {
       async prTemplate(_input: { projectPath: string }): Promise<PrTemplateResult> {
         return { ok: true, body: "", path: null, templates: [] };
       },
+      async prCompletions() { return { ok: true as const, items: [], hasMore: false }; },
       async prDetail(input: {
         projectPath: string;
         prNumber: number;
@@ -225,6 +226,9 @@ export function createGit(ctx: DevCtx): Pick<CoderApi, "git" | "mergeQueue"> {
             body: input.body ?? viewed.pr.body,
           },
         };
+      },
+      async prRequestChanges() {
+        return { ok: false as const, reason: "GitLab review submission is unavailable in browser demo mode" };
       },
       async prComment(_input: {
         projectPath: string;

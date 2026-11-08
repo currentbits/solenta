@@ -31,8 +31,14 @@
   align-items: flex-start;
   justify-content: center;
   height: 100%;
-  padding-top: 13px;
-  background: var(--panel);
+  /* Toggle centred on the 44px header line; the header's bottom rule
+     continues across the rail at the same height. */
+  padding-top: 7px;
+  background:
+    linear-gradient(var(--border-soft), var(--border-soft)) 0 43px / 100% 1px
+      no-repeat,
+    var(--bg);
+  /* Collapsed, the rail sits on the canvas fill behind a hairline seam. */
   border-left: 1px solid var(--border-soft);
 }
 

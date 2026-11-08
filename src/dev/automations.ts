@@ -1,6 +1,7 @@
 /** Scheduled automations for the browser-dev fixture. */
 import type {
   AutomationInfo,
+  AutomationRunInfo,
   AutomationRunsResult,
   AutomationScope,
   AutomationWrite,
@@ -142,7 +143,14 @@ export function normalizeDevAutomation(
   const graduate = Object.prototype.hasOwnProperty.call(input, "graduate")
     ? input.graduate !== false
     : existing?.graduate !== false;
+  const sessionMode = input.sessionMode ?? existing?.sessionMode ?? "new-thread";
+  if (!["new-thread", "continue", "fresh"].includes(sessionMode)) throw new Error("Invalid automation session mode");
+  const destinationThreadId = sessionMode === "new-thread" ? null : (input.destinationThreadId ?? existing?.destinationThreadId ?? "").trim();
+  if (sessionMode !== "new-thread" && !destinationThreadId) throw new Error("Destination thread is required");
   return {
+    sessionMode, destinationThreadId,
+    tier: input.tier === undefined ? existing?.tier : input.tier,
+    budget: input.budget === undefined ? existing?.budget : input.budget,
     name,
     projectId,
     scope,
@@ -165,6 +173,16 @@ export function createAutomations(ctx: DevCtx): Pick<CoderApi, "automations"> {
   let automationsList: AutomationInfo[] = [];
   const automationIdByThread = new Map<string, string>();
   const trustByProject: Record<string, string> = {};
+  const firing = new Set<string>();
+  const fixedRuns = new Map<string, AutomationRunInfo[]>();
+  function destination(a: Pick<AutomationInfo, "sessionMode" | "destinationThreadId" | "projectId" | "provider" | "model" | "tier">, runtime = false) {
+    if (!a.sessionMode || a.sessionMode === "new-thread") return null;
+    const t = ctx.threads.find((t) => t.id === a.destinationThreadId);
+    if (!t || t.projectId !== a.projectId || t.archived || t.teleportedTo || t.provider !== a.provider || (t.model || null) !== (a.model || null) || t.permissionMode !== "default" || t.providerInstance || t.agentProfileId || t.autoApprove || t.route || a.tier) throw new Error("Automation destination must be an available thread in its project with matching provider/model, default permissions, no account override, grants, or routing");
+    const detail = ctx.details.get(t.id);
+    if (runtime && (t.status === "working" || t.status === "quota-wait" || t.quotaWaitUntil || t.queued || t.runQueue || t.pendingQuestion || t.pendingPlan || t.awaitingInput || detail?.pendingPermission || t.pendingSecret || t.btw?.length || (t.freshContextPending && a.sessionMode !== "fresh"))) throw new Error("Automation destination has unfinished work or pending input; run skipped");
+    return t;
+  }
 
   function sharedRows(projectId: string) {
     return automationsList.filter(
@@ -236,6 +254,7 @@ export function createAutomations(ctx: DevCtx): Pick<CoderApi, "automations"> {
       },
       async add(input: AutomationWrite) {
         const fields = normalizeDevAutomation(input, ctx.projects, null);
+        destination(fields);
         const project = ctx.projects.find((p) => p.id === fields.projectId);
         if (!project) throw new Error(`Unknown project: ${fields.projectId}`);
         let createdId = id("auto");
@@ -281,6 +300,7 @@ export function createAutomations(ctx: DevCtx): Pick<CoderApi, "automations"> {
           throw new Error(`Unknown automation: ${input.id}`);
         }
         const fields = normalizeDevAutomation(input, ctx.projects, existing);
+        if (fields.enabled) destination(fields);
         const scheduleChanged =
           fields.preset !== existing.preset ||
           fields.hour !== existing.hour ||
@@ -337,6 +357,9 @@ export function createAutomations(ctx: DevCtx): Pick<CoderApi, "automations"> {
             if (project) persistTrust(project, input.hash);
           }
         }
+        const key = existing.sessionMode && existing.sessionMode !== "new-thread" ? `thread:${existing.destinationThreadId}` : existing.id;
+        if (firing.has(key)) throw new Error("Automation destination is already starting a run");
+        firing.add(key);
         const firedAt = now();
         const nextRunAt = nextAutomationFire(
           existing.preset,
@@ -345,20 +368,25 @@ export function createAutomations(ctx: DevCtx): Pick<CoderApi, "automations"> {
           existing.cron,
         );
         try {
-          const thread = await ctx.api().threads.create({
+          const target = destination(existing, true);
+          const prior = (fixedRuns.get(existing.id) || []).map((r) => r.pending ? { ...r, pending: false, status: ctx.threads.find((t) => t.id === r.threadId)?.status || r.status } : r);
+          const thread = target || await ctx.api().threads.create({
             projectId: existing.projectId,
             title: existing.name,
           });
-          automationIdByThread.set(thread.id, existing.id);
-          await ctx.api().threads.setProvider({
+          if (!target) automationIdByThread.set(thread.id, existing.id);
+          if (!target) await ctx.api().threads.setProvider({
             threadId: thread.id,
             provider: existing.provider,
             model: existing.model,
           });
-          await ctx.api().runs.start({
+          ctx.assertUnderBudget();
+          if (target && existing.sessionMode === "fresh") await ctx.api().threads.freshAgentContext({ threadId: target.id });
+          const launch = await ctx.api().runs.start({
             threadId: thread.id,
             prompt: existing.prompt,
           });
+          if (target) fixedRuns.set(existing.id, [{ id: id("fire"), runId: launch.runId, threadId: target.id, startedAt: firedAt, status: "working" as const, pending: true }, ...prior].slice(0, 20));
           const updated: AutomationInfo = {
             ...existing,
             lastRunAt: firedAt,
@@ -380,13 +408,15 @@ export function createAutomations(ctx: DevCtx): Pick<CoderApi, "automations"> {
             a.id === existing.id ? updated : a,
           );
           throw err;
-        }
+        } finally { firing.delete(key); }
       },
       async listRuns(input: { id: string }): Promise<AutomationRunsResult> {
         const existing = automationsList.find((a) => a.id === input.id);
         if (!existing) {
           throw new Error(`Unknown automation: ${input.id}`);
         }
+        const fixed = fixedRuns.get(existing.id);
+        if (fixed) return { automationId: existing.id, runs: fixed, retentionLimitReached: fixed.length >= 20 };
         const indexed = ctx.threads
           .map((t, i) => ({ t, i }))
           .filter(({ t }) => automationIdByThread.get(t.id) === existing.id);

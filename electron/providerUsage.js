@@ -678,7 +678,11 @@ async function fetchProviderLimits(opts = {}) {
       }
     }),
   );
-  return [...rows, ...instanceRows];
+  // External quota sources never participate in native account auto-selection.
+  const proxyRows = !opts.only && opts.cliProxyUsage
+    ? await require("./providerUsageCliProxy.js").readCliProxyUsage(opts.cliProxyUsage, opts.cliProxyOptions)
+    : [];
+  return [...rows, ...instanceRows, ...proxyRows];
 }
 
 /**

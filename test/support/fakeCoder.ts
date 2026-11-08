@@ -3626,6 +3626,8 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           } satisfies PrDetail,
         } as PrDetailResult);
       },
+      prRequestChanges: (input: unknown) =>
+        rec("git.prRequestChanges", [input], { ok: false, reason: "GitLab review unavailable" } as const),
       prComment: (input: unknown) =>
         rec("git.prComment", [input], {
           ok: true,
@@ -3927,7 +3929,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
             modelReady: false,
           },
         ),
-      download: () => rec("speech.download", [], undefined),
+      download: (input) => rec("speech.download", input ? [input] : [], undefined),
       start: () => rec("speech.start", [], { sessionId: "speech-session" }),
       write: (input: unknown) => rec("speech.write", [input], undefined),
       stop: (input: unknown) => rec("speech.stop", [input], undefined),

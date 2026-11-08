@@ -184,6 +184,125 @@ function parsePrNumber(value) {
  * @param {string} projectPath
  * @returns {Promise<{ ok: true, cwd: string } | { ok: false, reason: string }>}
  */
+async function gitlabWorkspaceRemote(projectPath, repo) {
+  const remote = await gitTryAsync(String(projectPath || ""), ["remote", "get-url", "origin"]);
+  const gl = remote.ok ? require("./gitlab.js").gitlabRemote(String(remote.stdout || "").trim()) : null;
+  if (gl && repo) gl.path = String(repo);
+  return gl;
+}
+
+const GITLAB_REVIEW_STATES = new Set(["unreviewed", "review_started", "reviewed", "approved", "unapproved", "requested_changes"]);
+
+/**
+ * Reviewer verdicts come from /reviewers, not mr.reviewers[].state (account
+ * state). Capability and permission checks are scoped to this MR and account.
+ * https://docs.gitlab.com/api/graphql/reference/objects/#mergerequest
+ */
+async function gitlabReview(projectPath, number, remote) {
+  const { glabApi, glabGraphql } = require("./gitlab.js");
+  const review = { reviewers: [], canRequestChanges: false };
+  const unavailable = (reason) => ({ review: { ...review, reason } });
+  for (let page = 1; page <= 5; page++) {
+    const result = await glabApi(projectPath, remote, "GET", `/merge_requests/${number}/reviewers?per_page=100&page=${page}`);
+    if (!result.ok) return unavailable(`Reviewer state unavailable: ${result.reason}`);
+    if (!Array.isArray(result.data)) return unavailable("Invalid GitLab reviewer response");
+    for (const row of result.data) {
+      if (!row.user?.id || !row.user?.username) return unavailable("Invalid GitLab reviewer response");
+      review.reviewers.push({ id: String(row.user.id), login: row.user.username, state: GITLAB_REVIEW_STATES.has(row.state) ? row.state : "unknown" });
+    }
+    if (result.data.length < 100) break;
+    if (page === 5) return unavailable("Reviewer list is incomplete. Open GitLab to review.");
+  }
+  // Missing schema fields must disable submission, never fall back to posting
+  // an unrecognized command as an ordinary comment on an older host.
+  const capability = await glabGraphql(projectPath, remote, `query {
+    currentUser { id username }
+    project(fullPath: ${JSON.stringify(remote.path)}) {
+      mergeRequest(iid: ${JSON.stringify(String(number))}) {
+        id state author { id }
+        availableQuickActions { name }
+        userPermissions { createNote updateMergeRequest }
+      }
+    }
+  }`);
+  if (!capability.ok) return unavailable(`Request changes unavailable on this GitLab host: ${capability.reason}`);
+  const user = capability.data.currentUser;
+  const mr = capability.data.project?.mergeRequest;
+  if (!/^gid:\/\/gitlab\/User\/\d+$/.test(user?.id || "") || !/^gid:\/\/gitlab\/MergeRequest\/\d+$/.test(mr?.id || "")) return unavailable("GitLab could not confirm this account's review permissions");
+  review.viewerId = user.id;
+  const viewer = review.reviewers.find((row) => `gid://gitlab/User/${row.id}` === user.id);
+  if (String(mr.state).toLowerCase() !== "opened") return unavailable("This merge request is no longer open");
+  if (mr.author?.id === user.id) return unavailable("You cannot request changes on your own merge request");
+  if (!viewer) return unavailable("This GitLab account must be assigned as a reviewer");
+  if (viewer.state === "requested_changes") return unavailable("You have already requested changes");
+  if (mr.userPermissions?.createNote !== true || mr.userPermissions?.updateMergeRequest !== true) return unavailable("This GitLab account does not have permission to request changes");
+  if (!Array.isArray(mr.availableQuickActions) || !mr.availableQuickActions.some((action) => action.name === "request_changes")) {
+    return unavailable("Request changes is not available for this account on this GitLab host");
+  }
+  return { review: { ...review, canRequestChanges: true }, mergeRequestId: mr.id };
+}
+
+async function requestPrChanges(projectPath, input) {
+  const number = parsePrNumber(input && input.prNumber);
+  if (number == null) return { ok: false, reason: "invalid PR number" };
+  const remote = await gitlabWorkspaceRemote(projectPath, input && input.repo);
+  if (!remote) return { ok: false, reason: "Request changes is only available here for GitLab merge requests" };
+  const current = await gitlabReview(projectPath, number, remote);
+  if (!current.review.canRequestChanges) return { ok: false, reason: current.review.reason };
+  if (!input.viewerId || current.review.viewerId !== input.viewerId) return { ok: false, reason: "The GitLab account changed. Reload before requesting changes." };
+  // Standalone request_changes does not publish unrelated pending review notes.
+  // GitLab source: lib/gitlab/quick_actions/merge_request_actions.rb.
+  // https://docs.gitlab.com/api/graphql/reference/mutations/#createnote
+  const posted = await require("./gitlab.js").glabGraphql(projectPath, remote, `mutation {
+    createNote(input: { noteableId: ${JSON.stringify(current.mergeRequestId)}, body: "/request_changes" }) {
+      errors
+      quickActionsStatus { commandNames commandsOnly errorMessages }
+    }
+  }`);
+  if (!posted.ok) return posted;
+  const payload = posted.data.createNote;
+  const status = payload?.quickActionsStatus;
+  const errors = [...(Array.isArray(payload?.errors) ? payload.errors : []), ...(Array.isArray(status?.errorMessages) ? status.errorMessages : [])];
+  if (errors.length) return { ok: false, reason: errors.join("; ") };
+  if (status?.commandsOnly !== true || !Array.isArray(status.commandNames) || !status.commandNames.includes("request_changes")) {
+    return { ok: false, reason: "GitLab did not confirm the request-changes action. Reload to check its state." };
+  }
+  const latest = await gitlabReview(projectPath, number, remote);
+  const viewer = latest.review.reviewers.find((row) => `gid://gitlab/User/${row.id}` === input.viewerId);
+  if (latest.review.viewerId !== input.viewerId || viewer?.state !== "requested_changes") {
+    return { ok: false, reason: "GitLab did not confirm your requested-changes verdict. Reload to check its state." };
+  }
+  return { ok: true, review: latest.review };
+}
+
+async function viewGitlabWorkspace(projectPath, number, remote) {
+  const { glabApi } = require("./gitlab.js");
+  const result = await glabApi(projectPath, remote, "GET", `/merge_requests/${number}`);
+  if (!result.ok) return result;
+  const mr = result.data;
+  if (!mr || !mr.iid || !mr.web_url) return { ok: false, reason: "Invalid merge request response" };
+  const { review } = await gitlabReview(projectPath, number, remote);
+  const comments = [];
+  let commentsError;
+  // Keep transcript bounded, as with the GitHub workspace comment budget.
+  for (let page = 1; page <= 5; page++) {
+    const notes = await glabApi(projectPath, remote, "GET", `/merge_requests/${number}/notes?per_page=100&page=${page}&sort=asc&order_by=created_at`);
+    if (!notes.ok) { commentsError = notes.reason; break; }
+    const rows = Array.isArray(notes.data) ? notes.data : [];
+    for (const note of rows) {
+      if (!note.system) comments.push({ id: note.id, type: "issue", author: note.author?.username || "", body: note.body || "", createdAt: note.created_at || "", url: `${mr.web_url}#note_${note.id}` });
+    }
+    if (rows.length < 100) break;
+    if (page === 5) commentsError = "Showing the first 500 discussion notes. Open GitLab for the full conversation.";
+  }
+  return { ok: true, pr: {
+    forge: "gitlab", number: mr.iid, title: mr.title || "", body: mr.description || "", url: mr.web_url,
+    state: mr.state === "merged" ? "MERGED" : mr.state === "closed" ? "CLOSED" : "OPEN",
+    isDraft: Boolean(mr.draft || mr.work_in_progress), headRefName: mr.source_branch || "", baseRefName: mr.target_branch || "",
+    author: mr.author?.username || "", updatedAt: mr.updated_at, gitlabReview: review, comments, ...(commentsError ? { commentsError } : {}),
+  } };
+}
+
 async function requireGitHubRepo(projectPath) {
   const cwd = String(projectPath || "");
   if (!cwd) return { ok: false, reason: "not a GitHub repo" };
@@ -344,10 +463,6 @@ function parsePrComments(raw) {
     if (!row || typeof row !== "object") continue;
     const body = row.body != null ? String(row.body) : "";
     const url = row.url != null ? String(row.url) : "";
-    // ponytail: only top-level PR/issue comments are fetched today, so every
-    // row is "issue". Review (inline diff) comments would be "review"; the
-    // edit/reaction routing already branches on `type`, add the fetch when
-    // the Code tab needs inline comments too.
     const id = row.databaseId != null ? Number(row.databaseId) : commentIdFromUrl(url);
     const reactions = parseReactionGroups(row.reactionGroups);
     out.push({
@@ -495,6 +610,82 @@ async function viewRaw(cwd, prNumber, repo) {
   return last;
 }
 
+/** REST pages work over both the token API and gh, including comments beyond the first 100. */
+async function commentPages(cwd, endpoint, repo) {
+  const rows = [];
+  try {
+    for (let page = 1; ; page++) {
+      const result = await ghApiTryAsync(cwd, ["api", `${endpoint}?per_page=100&page=${page}`], ghOpts(repo));
+      if (!result.ok) throw new Error(ghReason(result, "Couldn't load PR comments"));
+      const batch = JSON.parse(result.stdout);
+      if (!Array.isArray(batch)) throw new Error("Invalid PR comment response");
+      rows.push(...batch);
+      if (batch.length < 100) return { rows, incomplete: false };
+    }
+  } catch {
+    return { rows, incomplete: true };
+  }
+}
+
+function restPrComments(rows, type, prUrl) {
+  return rows.filter((row) => row && typeof row === "object" && typeof row.body === "string" && row.body.trim()).map((row) => {
+    const id = parsePrNumber(row.id);
+    const anchor = type === "issue" ? "issuecomment-" : type === "review" ? "discussion_r" : "pullrequestreview-";
+    const line = parsePrNumber(row.line ?? row.original_line);
+    const startLine = parsePrNumber(row.start_line ?? row.original_start_line);
+    return {
+      ...(id ? { id } : {}),
+      type,
+      author: commentAuthor(row.user),
+      body: row.body,
+      createdAt: String(row.created_at || row.submitted_at || ""),
+      url: String(row.html_url || `${prUrl}#${anchor}${id || ""}`),
+      ...(typeof row.path === "string" ? { path: row.path } : {}),
+      ...(line ? { line } : {}),
+      ...(startLine ? { startLine } : {}),
+      ...(row.side === "LEFT" || row.side === "RIGHT" ? { side: row.side } : {}),
+      ...(row.line == null && row.original_line != null ? { outdated: true } : {}),
+      ...(typeof row.diff_hunk === "string" ? { diffHunk: row.diff_hunk } : {}),
+    };
+  });
+}
+
+async function loadPrComments(cwd, number, other, info) {
+  const slug = await commentRepoSlug(cwd, other);
+  if (!slug) {
+    info.commentsError = "Couldn't resolve the repository for PR comments";
+    return;
+  }
+  const sources = [
+    ["issue", `repos/${slug}/issues/${number}/comments`],
+    ["review-summary", `repos/${slug}/pulls/${number}/reviews`],
+    ["review", `repos/${slug}/pulls/${number}/comments`],
+  ];
+  const results = await Promise.allSettled(sources.map(([, endpoint]) => commentPages(cwd, endpoint, other)));
+  const comments = [];
+  for (let i = 0; i < sources.length; i++) {
+    const type = sources[i][0];
+    const result = results[i];
+    if (result.status === "rejected" || result.value.incomplete) {
+      info.commentsError = "Some PR comments couldn't be loaded.";
+      if (result.status === "rejected") {
+        if (type === "issue") comments.push(...info.comments);
+        continue;
+      }
+    }
+    const loaded = restPrComments(result.value.rows, type, info.url);
+    if (type === "issue" && result.value.incomplete) {
+      comments.push(...info.comments.filter((old) => !loaded.some((row) => row.id === old.id)));
+    }
+    for (const row of loaded) {
+      // Keep viewer-specific edit/reaction metadata from the existing GraphQL fetch.
+      const known = type === "issue" && info.comments.find((old) => old.id === row.id);
+      comments.push({ ...(known || {}), ...row });
+    }
+  }
+  info.comments = comments.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+}
+
 /**
  * Full PR (title, body, comments, draft) for the workspace panel.
  *
@@ -504,6 +695,8 @@ async function viewRaw(cwd, prNumber, repo) {
 async function viewPrDetail(projectPath, prNumber, opts) {
   const number = parsePrNumber(prNumber);
   if (number == null) return { ok: false, reason: "invalid PR number" };
+  const gl = await gitlabWorkspaceRemote(projectPath, opts && opts.repo);
+  if (gl) return viewGitlabWorkspace(projectPath, number, gl);
   const repo = await requireGitHubRepo(projectPath);
   if (!repo.ok) return repo;
   const other = parseRepoSlug(opts && opts.repo);
@@ -521,6 +714,7 @@ async function viewPrDetail(projectPath, prNumber, opts) {
       reason: err && err.message ? String(err.message) : "gh returned unparseable PR JSON",
     };
   }
+  await loadPrComments(repo.cwd, number, other, info);
   // Checks are best-effort: a hover card without CI data is still useful,
   // and an older gh / a PR with no checks must never turn this ok:false.
   try {
@@ -600,6 +794,14 @@ async function editPr(projectPath, input, opts) {
   const blocked = scanOutbound(outbound, "PR");
   if (blocked) return { ok: false, reason: blocked };
 
+  const gl = await gitlabWorkspaceRemote(projectPath, input && input.repo);
+  if (gl) {
+    const fields = {};
+    if (title != null) fields.title = title;
+    if (body != null) fields.description = body;
+    const edited = await require("./gitlab.js").glabApi(projectPath, gl, "PUT", `/merge_requests/${number}`, fields);
+    return edited.ok ? viewGitlabWorkspace(projectPath, number, gl) : edited;
+  }
   const repo = await requireGitHubRepo(projectPath);
   if (!repo.ok) return repo;
   const other = parseRepoSlug(input && input.repo);
@@ -642,6 +844,11 @@ async function commentPr(projectPath, input) {
   const blocked = scanOutbound(text, "PR comment");
   if (blocked) return { ok: false, reason: blocked };
 
+  const gl = await gitlabWorkspaceRemote(projectPath, input && input.repo);
+  if (gl) {
+    const posted = await require("./gitlab.js").glabApi(projectPath, gl, "POST", `/merge_requests/${number}/notes`, { body: text });
+    return posted.ok ? { ok: true } : posted;
+  }
   const repo = await requireGitHubRepo(projectPath);
   if (!repo.ok) return repo;
 
@@ -672,7 +879,7 @@ async function commentRepoSlug(cwd, other) {
 /**
  * Edit an issue comment or PR review comment in place (#1795 feature 2).
  * Routes to `/issues/comments/{id}` or `/pulls/comments/{id}` by `type`
- * (default "issue", the only kind the panel fetches today), over `gh api`
+ * (default "issue"), over `gh api`
  * (API-first, gh fallback, same as every other prWorkspace write). Same
  * outbound secret scan as commentPr.
  *
@@ -1381,6 +1588,7 @@ module.exports = {
   viewPrDetail,
   editPr,
   commentPr,
+  requestPrChanges,
   closePr,
   readyPr,
   updateBranchPr,

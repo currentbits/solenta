@@ -193,6 +193,18 @@ export function useCoderThreadActions({
     }
   }, [api, selectedThreadId]);
 
+  const freshAgentContext = useCallback(async () => {
+    if (!selectedThreadId) return;
+    const threadId = selectedThreadId;
+    try {
+      await api.threads.freshAgentContext({ threadId });
+      setError(null);
+    } catch (err) {
+      setError({ scope: "run", message: errorMessage(err) });
+      throw err;
+    }
+  }, [api, selectedThreadId]);
+
   /**
    * Dismiss the persisted question card (issue #647). Answering it is an
    * ordinary send, which clears the card in the main process — only the
@@ -376,6 +388,34 @@ export function useCoderThreadActions({
         const thread = await api.threads.setFast({
           threadId,
           fast,
+        });
+        applyThreads(
+          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
+        );
+        if (selectedRef.current === threadId) {
+          setDetail((prev) =>
+            prev && prev.thread.id === thread.id
+              ? { ...prev, thread }
+              : prev,
+          );
+        }
+        setError(null);
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+        throw err;
+      }
+    },
+    [api, selectedThreadId, applyThreads],
+  );
+
+  const setUltracode = useCallback(
+    async (ultracode: boolean, threadIdArg?: string) => {
+      const threadId = threadIdArg ?? selectedThreadId;
+      if (!threadId) return;
+      try {
+        const thread = await api.threads.setUltracode({
+          threadId,
+          ultracode,
         });
         applyThreads(
           threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
@@ -1233,6 +1273,7 @@ export function useCoderThreadActions({
     respondPermission,
     redirectPermission,
     restartAgentSession,
+    freshAgentContext,
     clearQuestion,
     answerSecret,
     setProvider,
@@ -1242,6 +1283,7 @@ export function useCoderThreadActions({
     setAgent,
     listAgents,
     setFast,
+    setUltracode,
     setPlanModel,
     setRoute,
     setArchived,

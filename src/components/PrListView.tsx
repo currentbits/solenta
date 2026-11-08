@@ -37,7 +37,7 @@ import type {
   SourceControlDiscovery,
   ThreadInfo,
 } from "../shared/ipc";
-import { PrWorkspacePanel } from "./PrWorkspacePanel";
+import { PrWorkspacePanel, type PrWorkspacePanelProps } from "./PrWorkspacePanel";
 import styles from "./PrListView.module.css";
 
 const TRIAGE_DEPTH_LABEL: Record<TriageDepth, string> = {
@@ -64,6 +64,7 @@ export interface PrListViewProps {
     projectId: string;
     prNumber: number;
   }) => Promise<CheckoutPrResult>;
+  onAddPrCommentToAgent?: (projectId: string, input: Parameters<NonNullable<PrWorkspacePanelProps["onAddToAgent"]>>[0]) => Promise<void>;
   /** Optional forge probe (#608). When omitted, the view discovers itself. */
   github?: { ready: boolean; hint: string | null } | null;
   prDetail?: (input: {
@@ -76,6 +77,7 @@ export interface PrListViewProps {
     title?: string;
     body?: string;
   }) => Promise<PrDetailResult>;
+  prRequestChanges?: CoderApi["git"]["prRequestChanges"];
   prComment?: (input: {
     projectPath: string;
     prNumber: number;
@@ -125,12 +127,14 @@ export function PrListView({
   listPrs,
   onSelectThread,
   onCheckoutPr,
+  onAddPrCommentToAgent,
   github: githubProp,
   restore = null,
   onRestoreApplied,
   prDetail,
   prEdit,
   prComment,
+  prRequestChanges,
   prClose,
   prReady,
   prMergeAt,
@@ -763,12 +767,16 @@ export function PrListView({
         prReady &&
         prMergeAt ? (
           <PrWorkspacePanel
+            key={`${selectedProject.id}:${selected.prNumber}`}
             projectPath={selectedProject.path}
             prNumber={selected.prNumber}
             matchedThread={selectedMatch}
+            agentThreads={threads.filter((thread) => thread.projectId === selectedProject.id && !thread.archived)}
+            onAddToAgent={onAddPrCommentToAgent ? (input) => onAddPrCommentToAgent(selectedProject.id, input) : undefined}
             prDetail={prDetail}
             prEdit={prEdit}
             prComment={prComment}
+            prRequestChanges={prRequestChanges}
             prClose={prClose}
             prReady={prReady}
             prMergeAt={prMergeAt}

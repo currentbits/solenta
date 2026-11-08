@@ -363,6 +363,8 @@ Automations run a prompt on a schedule: hourly, daily at an hour, or weekly. Eac
 
 A finished thread can be **repeated** rather than retyped: put its prompt on a schedule as a new automation, or distill the run into a [Build workflow](https://solenta.app/docs/workflows) when the shape of it is worth keeping.
 
+**Session mode** defaults to a new thread for every run. Choose **Continue a fixed thread** to keep its provider conversation, or **Fixed thread, fresh agent context** to start each run with clean agent context while keeping visible history, workspace and accumulated usage. Select a destination in the same project with the same provider and model, default permissions, and no account override, additional grants or routing. Busy destinations and unresolved input are skipped without pausing the automation. Automation budgets can tighten a fixed thread's limits and count its existing lifetime spend, tokens and turns; fresh context does not reset these counters. Project definitions persist `sessionMode` (`new-thread`, `continue` or `fresh`) and `destinationThreadId`. A destination missing on another machine fails visibly rather than creating a thread.
+
 Use **Edit** to change an automation in place. Its recent runs link to the corresponding transcripts, including live and quota-wait runs. Changing a name, prompt or model keeps the schedule's identity; changing the schedule recalculates its next run. History retention removes completed old runs, preserving unfinished work.
 
 You can also describe an automation in a thread. The agent creates it and a card links to it with **Open in Automations**.

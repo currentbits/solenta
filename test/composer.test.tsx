@@ -207,6 +207,8 @@ function composer(
     reasoningEffort?: ReasoningEffort | null;
     webSearch?: boolean;
     fast?: boolean;
+    ultracode?: boolean;
+    onSetUltracode?: (value: boolean) => void;
     sessionId?: string | null;
     workspaceStrip?: ReactNode;
     disabled?: boolean;
@@ -249,6 +251,8 @@ function composer(
       }
       webSearch={over.webSearch === true}
       fast={over.fast === true}
+      ultracode={over.ultracode === true}
+      onSetUltracode={over.onSetUltracode}
       providers={over.providers ?? PROVIDERS}
       onToggleModelFavorite={(providerId, modelId) => {
         harness.favoriteToggles.push({ providerId, modelId });
@@ -1922,7 +1926,7 @@ describe("Composer reasoning pill", () => {
     assert.ok(shown.query('button[aria-label^="Reasoning:"]'));
     const menu = await openEffort(shown);
     assert.ok(
-      Array.from(menu?.querySelectorAll("button") || []).some((b) =>
+      !Array.from(menu?.querySelectorAll("button") || []).some((b) =>
         (b.getAttribute("aria-label") || "").includes("Ultracode"),
       ),
     );
@@ -3473,7 +3477,7 @@ describe("Composer live dictation (#845)", () => {
   });
 
   it("shows a download control with accessible labels when the model is missing", async () => {
-    const fake = createFakeCoder();
+    const fake = createFakeCoder({ speechStatus: { state: "missing", runtimeReady: true, modelReady: false } });
     const { m } = await mountSpeechComposer(fake);
     const btn = mic(m);
     assert.ok(btn, "mic pill");
@@ -3483,7 +3487,7 @@ describe("Composer live dictation (#845)", () => {
   });
 
   it("first click while missing asks for confirmation and does not open the mic", async () => {
-    const fake = createFakeCoder();
+    const fake = createFakeCoder({ speechStatus: { state: "missing", runtimeReady: true, modelReady: false } });
     const media = installSpeechMedia();
     const { m } = await mountSpeechComposer(fake);
     await m.click(mic(m));
@@ -3497,8 +3501,55 @@ describe("Composer live dictation (#845)", () => {
     m.unmount();
   });
 
+  it("confirms the multilingual model with its exact size and pins consent to that model", async () => {
+    const fake = createFakeCoder({ speechStatus: {
+      state: "missing", runtimeReady: true, modelReady: false,
+      model: { id: "nemotron-3.5", label: "Nemotron 3.5 multilingual", bytes: 741548352 }, language: "nl-NL",
+    } });
+    const media = installSpeechMedia();
+    const { m } = await mountSpeechComposer(fake);
+    await m.click(mic(m));
+    const confirm = m.query("[data-speech-confirm]");
+    assert.match(confirm?.textContent ?? "", /Nemotron 3.5 multilingual/);
+    assert.match(confirm?.textContent ?? "", /741,548,352/);
+    assert.ok(!confirm?.textContent?.includes("699,872,960"));
+    await m.click(m.query('[data-speech-confirm] button[aria-label="Confirm download"]'));
+    assert.deepEqual(fake.only("speech.download").args, [{ modelId: "nemotron-3.5" }]);
+    assert.equal(media.getUserMediaCalls, 0);
+    m.unmount();
+  });
+
+  it("explains an unavailable local runtime without downloading or opening the microphone", async () => {
+    const fake = createFakeCoder({ speechStatus: { state: "missing", runtimeReady: false, modelReady: false } });
+    const media = installSpeechMedia();
+    const { m } = await mountSpeechComposer(fake);
+    assert.equal(mic(m)?.getAttribute("aria-label"), "Local dictation unavailable");
+    await m.click(mic(m));
+    assert.match(m.container.textContent ?? "", /unavailable on this platform/);
+    assert.equal(m.query("[data-speech-confirm]"), null);
+    assert.equal(fake.of("speech.download").length, 0);
+    assert.equal(media.getUserMediaCalls, 0);
+    m.unmount();
+  });
+
+  it("surfaces an incompatible language without offering an English download or opening the mic", async () => {
+    const fake = createFakeCoder({ speechStatus: {
+      state: "error", runtimeReady: true, modelReady: false,
+      localError: "Nemotron English supports English only. Choose Nemotron 3.5 multilingual for this language.",
+    } });
+    const media = installSpeechMedia();
+    const { m } = await mountSpeechComposer(fake);
+    await m.click(mic(m));
+    assert.equal(m.query("[data-speech-confirm]"), null);
+    assert.match(m.container.textContent ?? "", /English only/);
+    assert.equal(fake.of("speech.download").length, 0);
+    assert.equal(fake.of("speech.start").length, 0);
+    assert.equal(media.getUserMediaCalls, 0);
+    m.unmount();
+  });
+
   it("confirmation calls download and still does not open the mic", async () => {
-    const fake = createFakeCoder();
+    const fake = createFakeCoder({ speechStatus: { state: "missing", runtimeReady: true, modelReady: false } });
     const media = installSpeechMedia();
     const { m } = await mountSpeechComposer(fake);
     await m.click(mic(m));
@@ -3512,7 +3563,7 @@ describe("Composer live dictation (#845)", () => {
   });
 
   it("shows download progress from speech:changed", async () => {
-    const fake = createFakeCoder();
+    const fake = createFakeCoder({ speechStatus: { state: "missing", runtimeReady: true, modelReady: false } });
     installSpeechMedia();
     const { m } = await mountSpeechComposer(fake);
     await m.click(mic(m));
@@ -3594,6 +3645,26 @@ describe("Composer live dictation (#845)", () => {
       });
     });
     assert.equal(ta.value, "Hello Quick brown fox");
+    m.unmount();
+  });
+
+  it("dictation replaces the selected range and preserves it on an empty transcript", async () => {
+    const fake = createFakeCoder({ speechStatus: SPEECH_READY });
+    installSpeechMedia();
+    const { m } = await mountSpeechComposer(fake);
+    const ta = m.query("textarea") as HTMLTextAreaElement;
+    await m.type(ta, "someOLDthing");
+    ta.setSelectionRange(4, 7);
+    await m.click(mic(m));
+    await inAct(() => fake.emitSpeech({ ...SPEECH_READY, state: "recording", delta: "new" }));
+    assert.equal(ta.value, "somenewthing");
+    await inAct(() => fake.emitSpeech({ ...SPEECH_READY, transcript: "" }));
+    assert.equal(ta.value, "someOLDthing");
+    assert.equal(ta.selectionStart, 4);
+    assert.equal(ta.selectionEnd, 7);
+    await m.click(mic(m));
+    await inAct(() => fake.emitSpeech({ ...SPEECH_READY, transcript: "new" }));
+    assert.equal(ta.value, "somenewthing");
     m.unmount();
   });
 
@@ -3885,5 +3956,38 @@ describe("Composer surrounds a selection with a bracket/quote/emphasis pair (#17
     await m.press(ta, "(");
     assert.equal(ta.value, "hello world", "vim owns the keystroke, not the surround feature");
     m.unmount();
+  });
+});
+
+describe("Composer Ultracode mode", () => {
+  it("shows requested xhigh separately, disables base effort, and restores base effort when off", async () => {
+    for (const account of ["claude", "claude:work"]) {
+    const h = makeHarness();
+    const claude: ProviderInfo = {
+      ...CLAUDE_WITH_INFO,
+      id: account,
+      ...(account !== "claude" ? { baseProvider: "claude" } : {}),
+      supportsUltracode: true,
+      efforts: ["low", "medium", "high", "xhigh", "max"],
+      models: ["claude-opus-5"],
+      modelInfo: [{ id: "claude-opus-5", label: "Opus", description: "", vendor: "Anthropic", efforts: ["low", "medium", "high", "xhigh", "max"] }],
+    };
+    const toggles: boolean[] = [];
+    const m = await mount(composer(h, { provider: account, model: "claude-opus-5", providers: [claude], reasoningEffort: "low", ultracode: true, onSetUltracode: (value) => { toggles.push(value); } }));
+    assert.ok(m.query('button[aria-label="Reasoning: Ultracode requested (xhigh)"]'));
+    await m.click(m.query('button[aria-label^="Model:"]'));
+    assert.equal((m.query('[data-effort-chip="low"]') as HTMLButtonElement).disabled, true);
+    assert.equal((m.query('[data-effort-chip="xhigh"]') as HTMLButtonElement).getAttribute("aria-pressed"), "true");
+    const toggle = m.query('[aria-label="Ultracode"] button');
+    assert.equal(toggle?.getAttribute("aria-pressed"), "true");
+    await m.click(toggle);
+    assert.deepEqual(toggles, [false]);
+    m.unmount();
+    const off = await mount(composer(h, { provider: account, model: "claude-opus-5", providers: [claude], reasoningEffort: "low", ultracode: false, onSetUltracode: () => {} }));
+    assert.ok(off.query('button[aria-label="Reasoning: Low"]'));
+    await off.click(off.query('button[aria-label^="Model:"]'));
+    assert.equal((off.query('[data-effort-chip="low"]') as HTMLButtonElement).disabled, false);
+    off.unmount();
+    }
   });
 });

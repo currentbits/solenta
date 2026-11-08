@@ -130,6 +130,227 @@ describe("provider switch keeps context (#1493)", () => {
     return store.getThread(thread.id);
   }
 
+  it("fresh automation preflight failures retain the human session and context", async () => {
+    const thread = threadWithHistory();
+    const automation = services.addAutomation(store, { projectId: project.id, name: "Fresh", prompt: "go", provider: thread.provider, model: thread.model, preset: "hourly", sessionMode: "fresh", destinationThreadId: thread.id });
+    const { runNow } = require("../automations.js");
+    process.env.CODER_AGENT_CMD = agentCmd(logFile);
+    const before = store.getMessages(thread.id).slice();
+    store.updateThread(thread.id, { budget: { usd: 1 } });
+    store.setUsage(thread.id, { costUsd: 2, inputTokens: 5, turns: 1 });
+    await assert.rejects(runNow({ store, runner }, automation.id), /Thread budget reached/);
+    store.updateThread(thread.id, { budget: null });
+    store.setSettings({ dailyBudgetUsd: 1 });
+    const spendToday = store.getSpendToday;
+    store.getSpendToday = () => 2;
+    await assert.rejects(runNow({ store, runner }, automation.id), /Daily budget reached/);
+    store.getSpendToday = spendToday;
+    store.setSettings({ dailyBudgetUsd: null });
+    delete process.env.CODER_AGENT_CMD;
+    const binEnv = getProvider(thread.provider).binEnv;
+    const priorBin = process.env[binEnv];
+    process.env[binEnv] = path.join(tmpDir, "missing-provider");
+    try {
+      await assert.rejects(runNow({ store, runner }, automation.id), /Provider binary not found/);
+    } finally {
+      if (priorBin === undefined) delete process.env[binEnv]; else process.env[binEnv] = priorBin;
+    }
+    assert.equal(store.getThread(thread.id).sessionId, "sess-claude");
+    assert.equal(store.getThread(thread.id).contextBoundaryId, undefined);
+    assert.deepEqual(store.getMessages(thread.id), before);
+    assert.equal(store.getUsage(thread.id).costUsd, 2);
+  });
+
+  it("project-scoped fixed fires preserve per-run history and pending IDs across presentation and reload", async () => {
+    const thread = threadWithHistory();
+    process.env.CODER_AGENT_CMD = agentCmd(logFile);
+    const automation = services.addAutomation(store, { projectId: project.id, scope: "project", name: "Shared review", prompt: "review", provider: thread.provider, model: thread.model, preset: "hourly", sessionMode: "continue", destinationThreadId: thread.id });
+    const { runNow, listAutomationRuns, settleAutomationRuns } = require("../automations.js");
+    await runNow({ store, runner }, automation.id);
+    const presented = services.listAutomations(store).find((a) => a.id === automation.id);
+    assert.ok(presented.pendingRunId);
+    assert.equal(presented.runHistory.length, 1);
+    const first = listAutomationRuns(store, automation.id).runs[0];
+    assert.equal(first.threadId, thread.id);
+    assert.equal(first.runId, presented.pendingRunId);
+    assert.equal(first.pending, true);
+    store.saveNow();
+    const restored = new Store(path.join(tmpDir, "store.json"));
+    assert.equal(services.listAutomations(restored).find((a) => a.id === automation.id).pendingRunId, first.runId);
+    assert.equal(listAutomationRuns(restored, automation.id).runs[0].id, first.id);
+    await waitFor(() => !runner.isRunning(thread.id));
+    settleAutomationRuns({ store });
+    await runNow({ store, runner }, automation.id);
+    await waitFor(() => !runner.isRunning(thread.id));
+    settleAutomationRuns({ store });
+    const runs = listAutomationRuns(store, automation.id).runs;
+    assert.equal(runs.length, 2);
+    assert.notEqual(runs[0].id, runs[1].id);
+    assert.ok(runs.every((r) => !r.pending));
+    const definition = JSON.parse(fs.readFileSync(path.join(project.path, "solenta.json"), "utf8")).automations[0];
+    assert.equal(definition.runHistory, undefined);
+    assert.equal(definition.pendingRunId, undefined);
+    store.saveNow();
+    assert.deepEqual(listAutomationRuns(new Store(path.join(tmpDir, "store.json")), automation.id).runs, runs);
+  });
+
+  it("fixed automation continuation preserves context while explicit fresh mode excludes old history", async () => {
+    const thread = threadWithHistory();
+    process.env.CODER_AGENT_CMD = agentCmd(logFile);
+    const automation = services.addAutomation(store, {
+      projectId: project.id, name: "Review", prompt: "AUTOMATION REQUEST", provider: thread.provider,
+      model: thread.model, preset: "hourly", sessionMode: "continue", destinationThreadId: thread.id,
+    });
+    const { runNow, settleAutomationRuns, listAutomationRuns } = require("../automations.js");
+    await runNow({ store, runner }, automation.id);
+    await waitFor(() => !runner.isRunning(thread.id));
+    assert.equal(store.getThread(thread.id).contextBoundaryId, undefined);
+    assert.equal(store.getThread(thread.id).sessionId, "sess-claude");
+    settleAutomationRuns({ store });
+    services.updateAutomation(store, { id: automation.id, sessionMode: "fresh" });
+    await runNow({ store, runner }, automation.id);
+    await waitFor(() => !runner.isRunning(thread.id));
+    settleAutomationRuns({ store });
+    assert.ok(store.getThread(thread.id).contextBoundaryId);
+    assert.equal(store.getThread(thread.id).freshContextPending, false);
+    assert.ok(store.getMessages(thread.id).some((m) => m.text === "PARSER HALF DONE"));
+    assert.ok(!store.getContextMessages(thread.id).some((m) => m.text === "PARSER HALF DONE"));
+    assert.equal(store.getThreads().length, 1);
+    assert.equal(listAutomationRuns(store, automation.id).runs.length, 2);
+    assert.notEqual(listAutomationRuns(store, automation.id).runs[0].id, listAutomationRuns(store, automation.id).runs[1].id);
+  });
+
+  it("fresh context retains visible history and identity across reload without old handoff", async () => {
+    const thread = threadWithHistory();
+    store.updateThread(thread.id, { handoffFrom: "old-source", replayContext: true,
+      forkSessionAt: "old-cut", interruptedAt: Date.now(), quotaFailoverPending: true,
+      recap: { text: "OLD RECAP", at: 1 } });
+    store.setUsage(thread.id, { model: "old", inputTokens: 100, outputTokens: 20,
+      costUsd: 3, turns: 2, contextTokens: 9000, contextWindow: 10000, contextCompaction: {} });
+    const before = store.getMessages(thread.id).slice();
+    runner.freshAgentContext({ threadId: thread.id });
+    const fresh = store.getThread(thread.id);
+    assert.equal(fresh.sessionId, null);
+    for (const field of ["projectId", "provider", "providerInstance", "model", "permissionMode", "reasoningEffort", "worktreePath", "branch", "settledOverride"]) {
+      assert.deepEqual(fresh[field], thread[field], `${field} is preserved`);
+    }
+    assert.equal(fresh.forkSessionAt, null);
+    assert.equal(fresh.replayContext, false);
+    assert.equal(fresh.interruptedAt, null);
+    assert.equal(fresh.quotaFailoverPending, false);
+    assert.equal(fresh.handoffFrom, "old-source", "orchestration provenance survives");
+    assert.deepEqual(store.getMessages(thread.id).slice(0, before.length), before);
+    assert.deepEqual(store.getContextMessages(thread.id), []);
+    assert.deepEqual(store.getUsage(thread.id), { model: null, inputTokens: 100, outputTokens: 20, costUsd: 3, turns: 2 });
+    const reloaded = new Store(path.join(tmpDir, "store.json"));
+    assert.equal(reloaded.getThread(thread.id).contextBoundaryId, fresh.contextBoundaryId);
+    assert.equal(reloaded.getMessages(thread.id).at(-1).sessionBoundary, true);
+    assert.deepEqual(reloaded.getContextMessages(thread.id), []);
+    await assert.rejects(runner.startRun({ threadId: thread.id, prompt: "old automatic continuation", fromNotice: true }), /waiting for a user/);
+    process.env.CODER_AGENT_CMD = agentCmd(logFile);
+    await runner.startRun({ threadId: thread.id, prompt: "new task" });
+    await waitFor(() => !runner.isRunning(thread.id));
+    assert.doesNotMatch(readPrompts(logFile)[0], /PARSER HALF DONE|refactor the parser|OLD RECAP|Hand-off context/);
+    assert.equal(store.getThread(thread.id).freshContextPending, false);
+    services.setProvider(store, { threadId: thread.id, provider: "grok" });
+    store.updateThread(thread.id, { replayContext: true });
+    const prefix = services.buildHandoffPrefix(store.getThread(thread.id), id => store.getMessages(id), id => store.getThread(id));
+    assert.match(prefix, /new task/);
+    assert.doesNotMatch(prefix, /PARSER HALF DONE|refactor the parser|OLD RECAP/);
+    const fork = services.forkThread(store, { threadId: thread.id, messageId: store.getContextMessages(thread.id).find(m => m.role === "assistant").id });
+    assert.doesNotMatch(JSON.stringify(store.getMessages(fork.id)), /PARSER HALF DONE|refactor the parser/);
+    const earlierFork = services.forkThread(store, { threadId: thread.id, messageId: "a1" });
+    assert.match(JSON.stringify(store.getMessages(earlierFork.id)), /PARSER HALF DONE/);
+    assert.equal(earlierFork.sessionId, null, "an explicit older cut cannot resume the new session");
+  });
+
+  it("explicit rewind can select earlier context and undo restores the fresh boundary", async () => {
+    const thread = threadWithHistory();
+    runner.freshAgentContext({ threadId: thread.id });
+    const boundary = store.getThread(thread.id).contextBoundaryId;
+    store.appendMessage(thread.id, { id: "new-user", role: "user", text: "NEW REQUEST", createdAt: Date.now() });
+    await services.rewindThread(store, { threadId: thread.id, messageId: "new-user", prompt: "edited" });
+    assert.equal(store.getThread(thread.id).contextBoundaryId, boundary);
+    assert.doesNotMatch(services.buildHandoffPrefix(store.getThread(thread.id), id => store.getMessages(id)), /PARSER HALF DONE/);
+    await services.rewindThread(store, { threadId: thread.id, undo: true });
+    await services.rewindThread(store, { threadId: thread.id, messageId: "u1", prompt: "older edit" });
+    assert.equal(store.getThread(thread.id).contextBoundaryId, null);
+    assert.equal(store.getThread(thread.id).freshContextPending, false);
+    assert.equal(store.getThread(thread.id).sessionId, null);
+    await services.rewindThread(store, { threadId: thread.id, undo: true });
+    assert.equal(store.getThread(thread.id).contextBoundaryId, boundary);
+    assert.equal(store.getThread(thread.id).freshContextPending, true);
+    assert.deepEqual(store.getContextMessages(thread.id).map(m => m.id), ["new-user"]);
+    store.saveNow();
+    assert.equal(new Store(path.join(tmpDir, "store.json")).getThread(thread.id).contextBoundaryId, boundary);
+  });
+
+  it("Ask retrieval keeps project memory but excludes earlier transcript from the prompt", async () => {
+    const thread = threadWithHistory();
+    store.updateThread(thread.id, { ask: true });
+    runner.stopAll();
+    let outbound;
+    runner = createRunner({ store, core: await loadCore(), pushFn() {},
+      askComplete: async ({ prompt }) => { outbound = prompt; return { text: "fresh answer", source: "print" }; },
+      searchMemory: async () => [{ title: "Project rule", body: "PROJECT MEMORY RETAINED", type: "convention" }],
+    });
+    runner.freshAgentContext({ threadId: thread.id });
+    await runner.startRun({ threadId: thread.id, prompt: "new question" });
+    await waitFor(() => !runner.isRunning(thread.id));
+    assert.match(outbound, /new question/);
+    assert.match(outbound, /PROJECT MEMORY RETAINED/);
+    assert.doesNotMatch(outbound, /PARSER HALF DONE|refactor the parser/);
+    assert.equal(store.getThread(thread.id).freshContextPending, false);
+  });
+
+  it("disposed warm Claude callbacks cannot reattach session identity or usage", () => {
+    const { createClaudeSessions } = require("../runner-claude-sessions.js");
+    const thread = threadWithHistory();
+    const sessions = createClaudeSessions({ active: new Map(), store, finishRunningSubagents() {} });
+    let killed = false;
+    const session = { idleTimer: null, handle: { kill() { killed = true; } }, dispatch: {
+      onEvent() { store.updateThread(thread.id, { sessionId: "stale-session" }); },
+      onExit() { store.setUsage(thread.id, { contextTokens: 999 }); },
+      onError() { throw new Error("stale callback"); },
+    } };
+    sessions.claudeSessions.set(thread.id, session);
+    const lateEvent = () => session.dispatch.onEvent({});
+    sessions.disposeClaudeSession(thread.id);
+    store.updateThread(thread.id, { sessionId: null });
+    lateEvent();
+    session.dispatch.onExit({});
+    session.dispatch.onError(new Error("old process"));
+    assert.equal(killed, true);
+    assert.equal(store.getThread(thread.id).sessionId, null);
+    assert.equal(store.getUsage(thread.id), null);
+  });
+
+  it("active warm-session disposal preserves the exit callback used to retry a deaf CLI", () => {
+    const { createClaudeSessions } = require("../runner-claude-sessions.js");
+    const thread = threadWithHistory();
+    const active = new Map([[thread.id, { runId: "retry-turn" }]]);
+    const sessions = createClaudeSessions({ active, store, finishRunningSubagents() {} });
+    let exited = false;
+    const session = { idleTimer: null, handle: { kill() {} }, dispatch: {
+      onEvent() {}, onExit() { exited = true; }, onError() {},
+    } };
+    sessions.claudeSessions.set(thread.id, session);
+    sessions.disposeClaudeSession(thread.id);
+    session.dispatch.onExit({});
+    assert.equal(exited, true, "active ACK-timeout retirement must reach the respawn callback");
+  });
+
+  it("fresh context refuses pending questions and queued work without mutating history", () => {
+    const thread = threadWithHistory();
+    for (const patch of [{ pendingQuestion: { id: "question" } }, { queued: { prompt: "later" } }, { status: "working" }]) {
+      store.updateThread(thread.id, patch);
+      assert.throws(() => runner.freshAgentContext({ threadId: thread.id }), /Finish or stop/);
+      assert.equal(store.getThread(thread.id).sessionId, "sess-claude");
+      assert.equal(store.getMessages(thread.id).length, 2);
+      store.updateThread(thread.id, { pendingQuestion: null, queued: null, status: "idle" });
+    }
+  });
+
   it("manual switch: next run's prompt carries the thread's own tail", async () => {
     const thread = threadWithHistory();
     const switched = services.setProvider(store, {

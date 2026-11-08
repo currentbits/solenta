@@ -48,7 +48,7 @@ const REPO_ACTION_ID_PREFIX = "repo:";
  */
 const REPO_KEYS = new Set(["$schema", "setup", "quickActions", "onSettle", "automations", "devServer", "iconPath"]);
 /** solenta.local.json only overrides commands. */
-const LOCAL_KEYS = new Set(["$schema", "setup", "quickActions", "onSettle"]);
+const LOCAL_KEYS = new Set(["$schema", "setup", "quickActions", "onSettle", "devServer"]);
 
 /** @type {Map<string, { key: string, json?: unknown, error?: string }>} */
 const cache = new Map();
@@ -58,7 +58,8 @@ const cache = new Map();
  *   setup?: string,
  *   setupSource?: string,
  *   onSettle?: string,
- *   quickActions?: Array<{ id: string, name: string, command: string, source?: string }>,
+ *   devServerStopOnSettle?: boolean,
+ *   quickActions?: Array<{ id: string, name: string, command: string, stopOnSettle?: boolean, source?: string }>,
  *   sources?: string[],
  *   env?: Record<string, string>,
  *   hash?: string,
@@ -67,7 +68,7 @@ const cache = new Map();
  */
 
 /**
- * @typedef {{ key: string, id?: string, name: string, command: string, hidden?: boolean, source?: string }} ActionRow
+ * @typedef {{ key: string, id?: string, name: string, command: string, stopOnSettle?: boolean, hidden?: boolean, source?: string }} ActionRow
  */
 
 /**
@@ -94,12 +95,18 @@ function parseLayer(data, file) {
   const local = file === LOCAL_CONFIG_FILE;
   const bad = unknownKey(d, local ? LOCAL_KEYS : REPO_KEYS);
   if (bad) return { error: `${file}: unknown key "${bad}"` };
-  if (!local && d.devServer && typeof d.devServer === "object" && !Array.isArray(d.devServer)) {
-    const devBad = unknownKey(/** @type {Record<string, unknown>} */ (d.devServer), new Set(["ready"]));
+  if (d.devServer && typeof d.devServer === "object" && !Array.isArray(d.devServer)) {
+    const devBad = unknownKey(/** @type {Record<string, unknown>} */ (d.devServer), new Set(local ? ["stopOnSettle"] : ["ready", "stopOnSettle"]));
     if (devBad) return { error: `${file}: unknown key "devServer.${devBad}"` };
   }
   /** @type {{ setup?: string, onSettle?: unknown, quickActions?: ActionRow[] }} */
   const out = {};
+  if (d.devServer !== undefined) {
+    if (!d.devServer || typeof d.devServer !== "object" || Array.isArray(d.devServer)) return { error: `${file}: devServer must be an object` };
+    const value = d.devServer.stopOnSettle;
+    if (value !== undefined && typeof value !== "boolean") return { error: `${file}: devServer.stopOnSettle must be boolean` };
+    if (typeof value === "boolean") out.devServerStopOnSettle = value;
+  }
   if (d.setup !== undefined) {
     const setup = normalizeCommand(d.setup);
     if (!setup) {
@@ -114,7 +121,7 @@ function parseLayer(data, file) {
     if (d.quickActions.length > QUICK_ACTION_MAX) {
       return { error: `${file}: at most ${QUICK_ACTION_MAX} quickActions` };
     }
-    const rowKeys = new Set(local ? ["id", "name", "command", "hidden"] : ["id", "name", "command"]);
+    const rowKeys = new Set(local ? ["id", "name", "command", "hidden", "stopOnSettle"] : ["id", "name", "command", "stopOnSettle"]);
     /** @type {ActionRow[]} */
     const rows = [];
     for (const [i, row] of d.quickActions.entries()) {
@@ -140,7 +147,8 @@ function parseLayer(data, file) {
       if (!command) {
         return { error: `${at}.command must be a non-empty command string` };
       }
-      rows.push({ key: id || name, ...(id ? { id } : {}), name, command });
+      if (r.stopOnSettle !== undefined && typeof r.stopOnSettle !== "boolean") return { error: `${at}.stopOnSettle must be boolean` };
+      rows.push({ key: id || name, ...(id ? { id } : {}), name, command, ...(typeof r.stopOnSettle === "boolean" ? { stopOnSettle: r.stopOnSettle } : {}) });
     }
     const keys = rows.map((r) => r.key);
     const dup = keys.find((k, i) => keys.indexOf(k) !== i);
@@ -199,6 +207,7 @@ function parseRepoConfig(data, localData) {
       id: `${REPO_ACTION_ID_PREFIX}${r.id || i}`,
       name: r.name,
       command: r.command,
+      ...(typeof r.stopOnSettle === "boolean" ? { stopOnSettle: r.stopOnSettle } : {}),
       ...(r.source ? { source: r.source } : {}),
     }));
   }
@@ -214,7 +223,9 @@ function parseRepoConfig(data, localData) {
     }
     out.onSettle = onSettle;
   }
-  if (!out.setup && !out.quickActions && !out.onSettle) return null;
+  const devStop = local.devServerStopOnSettle ?? shared.devServerStopOnSettle;
+  if (typeof devStop === "boolean") out.devServerStopOnSettle = devStop;
+  if (!out.setup && !out.quickActions && !out.onSettle && devStop === undefined) return null;
   out.hash = commandsHash(out);
   return out;
 }
@@ -228,7 +239,8 @@ function parseRepoConfig(data, localData) {
 function commandsHash(cfg) {
   const canonical = JSON.stringify({
     setup: cfg.setup || null,
-    quickActions: (cfg.quickActions || []).map((a) => [a.name, a.command]),
+    quickActions: (cfg.quickActions || []).map((a) => [a.name, a.command, ...(typeof a.stopOnSettle === "boolean" ? [a.stopOnSettle] : [])]),
+    ...(typeof cfg.devServerStopOnSettle === "boolean" ? { devServerStopOnSettle: cfg.devServerStopOnSettle } : {}),
     ...(cfg.onSettle ? { onSettle: cfg.onSettle } : {}),
     ...(cfg.env ? { env: cfg.env } : {}),
   });
@@ -376,6 +388,7 @@ function effectiveCommands(project) {
       : ok && ok.quickActions
         ? ok.quickActions.map((a) => ({ ...a, fromRepo: true }))
         : [],
+    devServerStopOnSettle: ok && ok.devServerStopOnSettle,
     onSettle: ok && ok.onSettle ? { command: ok.onSettle, fromRepo: true } : null,
     env: ok && ok.env ? ok.env : null,
     hash: ok ? ok.hash || null : null,
@@ -392,6 +405,7 @@ function presentRepoConfig(project) {
   if (!cfg) return null;
   if (cfg.error) return { error: cfg.error, trusted: false };
   return {
+    ...(typeof cfg.devServerStopOnSettle === "boolean" ? { devServerStopOnSettle: cfg.devServerStopOnSettle } : {}),
     ...(cfg.setup ? { setupCommand: cfg.setup } : {}),
     ...(cfg.setupSource ? { setupSource: cfg.setupSource } : {}),
     ...(cfg.quickActions ? { quickActions: cfg.quickActions } : {}),

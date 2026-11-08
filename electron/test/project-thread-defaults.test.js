@@ -15,7 +15,7 @@ const { Store } = require("../store");
 const services = require("../services");
 const { normalizeThreadDefaults } = require("../projectCommands.js");
 
-const BIN_ENVS = ["CODER_GROK_BIN", "CODER_KIMI_BIN"];
+const BIN_ENVS = ["CODER_GROK_BIN", "CODER_KIMI_BIN", "CODER_CLAUDE_BIN", "CODER_CODEX_BIN"];
 
 describe("project thread defaults (#1501)", () => {
   let tmpDir;
@@ -79,6 +79,39 @@ describe("project thread defaults (#1501)", () => {
     });
     const cleared = setDefaults(null);
     assert.equal(cleared.threadDefaults, undefined);
+  });
+
+  it("migrates legacy project and last-used Ultracode defaults before creating threads", () => {
+    install("CODER_CLAUDE_BIN");
+    install("CODER_CODEX_BIN");
+    for (const lastUsed of [false, true]) {
+      for (const [provider, model, enabled] of [
+        ["claude", "claude-opus-5", true],
+        ["claude", "claude-haiku-4-5", false],
+        ["codex", "gpt-6-astra", false],
+      ]) {
+        // Bypass the setter to reproduce a persisted pre-migration store.
+        store.setProjects(store.getProjects().map((p) => p.id === project.id ? {
+          ...p,
+          threadDefaults: { provider, model, reasoningEffort: "ultracode", ...(lastUsed ? { lastUsed: true } : {}) },
+        } : p));
+        store.saveNow();
+        const reloaded = new Store(path.join(tmpDir, "store.json"));
+        const defaults = reloaded.getProject(project.id).threadDefaults;
+        assert.equal(defaults.ultracode === true, enabled);
+        assert.equal(defaults.reasoningEffort, enabled ? "xhigh" : undefined);
+        assert.equal(defaults.lastUsed === true, lastUsed);
+        const thread = services.createThread(reloaded, { projectId: project.id, title: "Migrated defaults" });
+        assert.equal(thread.ultracode, enabled);
+        assert.equal(thread.reasoningEffort, enabled ? "xhigh" : null);
+        if (enabled) {
+          services.setUltracode(reloaded, { threadId: thread.id, ultracode: false });
+          assert.equal(reloaded.getThread(thread.id).reasoningEffort, "xhigh");
+        }
+        reloaded.saveNow();
+        assert.equal(new Store(path.join(tmpDir, "store.json")).getThread(thread.id).ultracode, false);
+      }
+    }
   });
 
   it("applies all four fields to a new thread", () => {
