@@ -66,13 +66,13 @@ describe("repoInfoFromRemote", () => {
     });
   });
 
-  it("takes the last two segments for nested groups", () => {
+  it("keeps the full GitLab group path in links and the last two segments as owner/repo", () => {
     assert.deepEqual(
       repoInfoFromRemote("https://gitlab.com/group/sub/repo.git"),
       {
         owner: "sub",
         repo: "repo",
-        webUrl: "https://gitlab.com/sub/repo",
+        webUrl: "https://gitlab.com/group/sub/repo",
       },
     );
   });
