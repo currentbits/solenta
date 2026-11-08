@@ -367,14 +367,27 @@ function realKey(p) {
 // process go through discoverHistoryProjectsAsync, which runs it in a worker.
 function discoverHistoryProjects(opts = {}) {
   const homeDir = opts.homeDir || os.homedir();
+  let realHome = homeDir;
+  try {
+    realHome = fs.realpathSync(homeDir);
+  } catch {
+    // Missing injected home: keep the caller's boundary.
+  }
   const isTmp = tmpCheck(opts.tmpRoots);
   const skip = new Set([...(opts.existingPaths || []), homeDir].map(realKey));
   const worktreeRoots = (opts.worktreeRoots || []).filter(Boolean).map(realKey);
   /** @type {Map<string, HistoryProject & { recent: (RecentSession & { ms: number })[] }>} */
   const projects = new Map();
   for (const [cwd, info] of collectSessionDirs(opts.homes || {}, { perSource: Infinity })) {
-    if (isTmp(cwd) || !fs.existsSync(cwd)) continue;
-    const root = projectRootOf(cwd, homeDir);
+    let realCwd;
+    try {
+      realCwd = fs.realpathSync(cwd);
+      if (!fs.statSync(realCwd).isDirectory()) continue;
+    } catch {
+      continue;
+    }
+    if (isTmp(cwd) || isTmp(realCwd)) continue;
+    const root = projectRootOf(realCwd, realHome);
     if (!root || isTmp(root)) continue;
     const key = realKey(root);
     if (!key || skip.has(key)) continue;

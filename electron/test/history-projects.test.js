@@ -149,6 +149,26 @@ describe("discoverHistoryProjects (#1858)", () => {
     assert.deepEqual(rows, []);
   });
 
+  it("maps a symlink to a repository subdirectory back to its project", () => {
+    const base = path.join(root, "linked-subdir");
+    const linked = path.join(base, "source-link");
+    const claudeHome = path.join(base, ".claude");
+    fs.mkdirSync(base);
+    fs.symlinkSync(path.join(dirs.app, "src"), linked);
+    session(
+      path.join(claudeHome, "projects", "-linked", "linked001.jsonl"),
+      JSON.stringify({ type: "user", cwd: linked }) + "\n",
+      1,
+    );
+    const opts = {
+      homes: { ...homes, claude: claudeHome, codex: path.join(base, ".codex"), cursor: path.join(base, ".cursor") },
+      homeDir: home,
+      tmpRoots: [],
+    };
+    assert.deepEqual(discoverHistoryProjects(opts).map((r) => r.path), [dirs.app]);
+    assert.deepEqual(discoverHistoryProjects({ ...opts, existingPaths: [dirs.app] }), []);
+  });
+
   it("scans off the main thread: the event loop keeps ticking while it runs", async () => {
     // Enough history that a sync scan would hold the loop for a while.
     const big = path.join(root, "big");
