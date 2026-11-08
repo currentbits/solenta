@@ -582,6 +582,12 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     null,
   );
   const [workflowsOpen, setWorkflowsOpen] = useState(false);
+  const workflowSelection = useRef({ threadId: selectedThreadId, computer: computer.key });
+  workflowSelection.current = { threadId: selectedThreadId, computer: computer.key };
+  useEffect(() => {
+    setWorkflowsOpen(false);
+    setWorkflowDraft(null);
+  }, [computer.key]);
   const [distillError, setDistillError] = useState<string | null>(null);
   const [memoryDraft, setMemoryDraft] = useState<DistilledMemory | null>(null);
   const clearMemoryDraft = useCallback(() => setMemoryDraft(null), []);
@@ -1260,9 +1266,11 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     if (!selectedThreadId) return;
     void (async () => {
       try {
+        const owner = workflowSelection.current;
         const distilled = await api.runs.distill({
           threadId: selectedThreadId,
         });
+        if (workflowSelection.current.threadId !== owner.threadId || workflowSelection.current.computer !== owner.computer) return;
         setDistillError(null);
         setWorkflowDraft(distilled);
         setWorkflowsOpen(true);
@@ -2999,6 +3007,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
           )}
         </div>
         <WorkflowsModal
+          key={computer.key || "local"}
           open={workflowsOpen}
           onClose={closeWorkflows}
           workflows={workflows}

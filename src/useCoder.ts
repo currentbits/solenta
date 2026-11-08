@@ -123,7 +123,7 @@ import type {
   ThreadSearchMessagesInput,
   ThreadSearchMessagesResult,
 } from "./shared/ipc";
-import { liveComputerHost, useComputerContext } from "./coder/computerContext";
+import { liveComputerHost, useComputerContext, useComputerWorkflows } from "./coder/computerContext";
 import { resolveCoderApi } from "./coderApi";
 import { isWebMode } from "./shared/wire";
 import { pushSidebarHosts } from "./remoteHosts";
@@ -1837,6 +1837,7 @@ export function useCoder(): UseCoderResult {
     ?? projects.find(p => p.id === selectedProjectId)?.host;
   const currentComputerHost = liveComputerHost(computerHost, sidebarHosts);
   const computer = useComputerContext(api, currentComputerHost, settings, providers);
+  const workflowComputer = useComputerWorkflows(api, currentComputerHost, workflows, workflowListError);
 
   const selectThread = useCallback((id: string | null) => {
     setSelectedThreadId(id);
@@ -1892,6 +1893,7 @@ export function useCoder(): UseCoderResult {
     exportWorkflowToRepo,
   } = useCoderWorkflows({
     api,
+    workflowComputer,
     selectedThreadId,
     setWorkflows,
     setWorkflowListError,
@@ -2488,8 +2490,8 @@ export function useCoder(): UseCoderResult {
     providers: computer.providers,
     localProviders: providers,
     computer,
-    workflows,
-    workflowListError,
+    workflows: workflowComputer.workflows,
+    workflowListError: workflowComputer.error,
     automations,
     selectedThreadId,
     selectThread,
