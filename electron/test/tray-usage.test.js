@@ -491,6 +491,24 @@ describe("switching an existing thread's provider (#1859)", () => {
     assert.equal(store.getThread(t.id).providerInstance, "personal");
   });
 
+  it("model and custom picks on an original-Claude contextual row keep its account and session", async () => {
+    const t = services.createThread(store, { projectId: project.id, title: "original", provider: "claude", projectDefaults: false });
+    store.updateThread(t.id, { sessionId: "original-session" });
+    for (const model of ["claude-sonnet-4-6", "custom-gateway-model", null]) {
+      const next = await IPC_HANDLERS["threads:setProvider"](ctx(), { threadId: t.id, provider: "claude", model });
+      assert.equal(next.providerInstance ?? null, null, "model pick never adopts the named default");
+      assert.equal(next.sessionId, "original-session");
+      assert.equal(next.model, model);
+    }
+    // The user can still deliberately select a named account.
+    await IPC_HANDLERS["threads:setProvider"](ctx(), { threadId: t.id, provider: "claude:personal", model: "claude-sonnet-4-6" });
+    assert.equal(store.getThread(t.id).providerInstance, "personal");
+    assert.equal(store.getThread(t.id).sessionId, null);
+    // From a named account, the bare row still means the configured default.
+    await IPC_HANDLERS["threads:setProvider"](ctx(), { threadId: t.id, provider: "claude", model: "claude-sonnet-4-6" });
+    assert.equal(store.getThread(t.id).providerInstance, "team");
+  });
+
   it("internal callers and automation threads keep the exact ref", () => {
     const t = services.createThread(store, { projectId: project.id, title: "c", provider: "claude:personal" });
     services.setProvider(store, { threadId: t.id, provider: "claude" });
