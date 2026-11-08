@@ -1240,16 +1240,20 @@ async function invokeRemote(input, channel, args, deps = {}) {
  */
 async function openHostTunnel(input, deps = {}, onClose) {
   const conn = validateConnection({ ...input, token: "" });
-  bindExpectedComputer(conn, tokenStoreFor(deps));
+  // Peer links own their token and verified identity in peers.json. A sidebar
+  // route has a separate credential lifetime; unlinking a peer must not leave
+  // an invisible binding in that store or erase a user's saved route.
+  const peer = input?.peer === true && Boolean(conn.url);
+  if (!peer) bindExpectedComputer(conn, tokenStoreFor(deps));
   if (conn.url) {
     // Direct route: no tunnel to own, so `child` only satisfies the shape.
     // A linked computer (#1832) carries its own token: no keychain on a server.
-    const token = (input && typeof input.token === "string" && input.token) || tokenStoreFor(deps).get(conn.key);
+    const token = (input && typeof input.token === "string" && input.token) || (!peer && tokenStoreFor(deps).get(conn.key));
     if (!token) {
       throw new Error(`No web token found for ${conn.label}. Connect to it once from Settings > Connections with its device token.`);
     }
     const descriptor = await (deps.probeToken || probeToken)(conn.url, token, { ...conn, timeoutMs: DIRECT_PROBE_MS, unreachable: unreachableText(conn.url) });
-    if (descriptor) tokenStoreFor(deps).bindComputer?.(conn.key, descriptor.computerId);
+    if (descriptor && !peer) tokenStoreFor(deps).bindComputer?.(conn.key, descriptor.computerId);
     return { child: { backPort: null, kill() {} }, token, wsUrl: wsUrlFor(conn.url), descriptor };
   }
   const { host, remotePort } = conn;

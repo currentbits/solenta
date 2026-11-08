@@ -3711,7 +3711,7 @@ describe("main.js run-artifact cleanup wiring (#248)", () => {
     assert.match(main, /artifactCleanupTimer/);
     assert.match(main, /artifactStore[\s\S]*?\.cleanup\(\)/);
     const bootCleanup = main.slice(
-      main.indexOf("const artifactCleanupTimer"),
+      main.indexOf("artifactCleanupTimer = setTimeout"),
       main.indexOf("artifactCleanupTimer.unref()"),
     );
     const cleanupCalls = (bootCleanup.match(/\.cleanup\(\)/g) || []).length;

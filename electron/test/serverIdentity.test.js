@@ -114,4 +114,21 @@ describe("computer identity", () => {
       assert.equal(tokens.computerId(first.url), undefined);
     } finally { await first.close(); fs.rmSync(dir, { recursive: true, force: true }); }
   });
+
+  it("keeps relinked peer credentials independent of a separately saved sidebar route", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "solenta-peer-token-"));
+    const safeStorage = { isEncryptionAvailable: () => true, encryptString: s => Buffer.from(s), decryptString: b => b.toString() };
+    const tokens = createTokenStore(path.join(dir, "routes"), safeStorage);
+    const remote = await host(descriptor("computer-two"));
+    try {
+      tokens.set(remote.url, "sidebar-token");
+      tokens.bindComputer(remote.url, "computer-one");
+      const opened = await openHostTunnel({ url: remote.url, peer: true, token: "peer-token", computerId: "computer-two" }, { tokens });
+      assert.equal(opened.descriptor.computerId, "computer-two");
+      assert.equal(opened.token, "peer-token");
+      assert.equal(tokens.computerId(remote.url), "computer-one");
+      assert.equal(tokens.get(remote.url), "sidebar-token");
+      await assert.rejects(openHostTunnel({ url: remote.url }, { tokens }), /identity mismatch/);
+    } finally { await remote.close(); fs.rmSync(dir, { recursive: true, force: true }); }
+  });
 });

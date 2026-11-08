@@ -245,7 +245,7 @@ function createHostHub(deps) {
     const route = routes[(entry.routeCursor || 0) % routes.length];
     let opened;
     try {
-      opened = await deps.openTunnel({ host: route.host, remotePort: route.remotePort, url: route.url, label: entry.label, computerId: entry.computerId, allowLegacy: route.allowLegacy, ...(route.token ? { token: route.token } : {}) }, () => {
+      opened = await deps.openTunnel({ host: route.host, remotePort: route.remotePort, url: route.url, label: entry.label, computerId: entry.computerId, allowLegacy: route.allowLegacy, ...(route.peer ? { peer: true } : {}), ...(route.token ? { token: route.token } : {}) }, () => {
         if (entry.child === opened?.child) dropSocket(entry, "SSH connection ended.");
       });
     } catch (err) {
