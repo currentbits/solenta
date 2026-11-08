@@ -5134,19 +5134,10 @@ export const ThreadView = memo(function ThreadView({
               entry.message.id === retryEventId;
             const configuration = configurations.byMessageId.get(entry.message.id);
             const modelBoundary = configurations.boundaryByMessageId.get(entry.message.id);
-            if (entry.message.role === "event" && entry.message.runConfiguration) {
-              return modelBoundary ? (
-                <section
-                  key={entry.message.id}
-                  className={styles.sessionBoundary}
-                  data-message-id={entry.message.id}
-                  role="separator"
-                  aria-label="Model and effort"
-                >
-                  {runConfigurationLabel(modelBoundary)}
-                </section>
-              ) : null;
-            }
+            // A queued/replayed run can start at this event. Even when its
+            // divider deduplicates, it still needs the shared run-header path.
+            const isConfigurationEvent =
+              entry.message.role === "event" && Boolean(entry.message.runConfiguration);
             const bar = barByMessageId.get(entry.message.id);
             const runHeader = headerByMessageId.get(entry.message.id);
             const runId = entry.message.runId;
@@ -5159,7 +5150,12 @@ export const ThreadView = memo(function ThreadView({
             return (
               <Fragment key={entry.message.id}>
                 {modelBoundary && (
-                  <section className={styles.sessionBoundary} role="separator" aria-label="Model and effort">
+                  <section
+                    className={styles.sessionBoundary}
+                    data-message-id={isConfigurationEvent ? entry.message.id : undefined}
+                    role="separator"
+                    aria-label="Model and effort"
+                  >
                     {runConfigurationLabel(modelBoundary)}
                   </section>
                 )}
@@ -5188,7 +5184,7 @@ export const ThreadView = memo(function ThreadView({
                     }
                   />
                 )}
-                {!runCollapsed && !focusHidden && (
+                {!runCollapsed && !focusHidden && !isConfigurationEvent && (
                   <>
                     <div
                       data-message-id={entry.message.id}
