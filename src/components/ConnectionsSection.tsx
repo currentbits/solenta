@@ -153,6 +153,7 @@ export function ConnectionsSection({ onOpen, onForget, onInstall, onManage, onSi
     }
   };
   const notInstalled = error != null && /Solenta is not installed on/.test(error);
+  const externalRunning = serverStatus?.host === host.trim() && serverStatus.info.mode === "external" && serverStatus.info.running;
 
   return (
     <section className={`${styles.section} ${styles.computerSection}`} data-connections="">
@@ -304,13 +305,13 @@ export function ConnectionsSection({ onOpen, onForget, onInstall, onManage, onSi
           : "Linux uses systemd user services; survival after logout depends on linger. macOS launchd requires a logged-in user session."}</span>
       </label>}
       {mode === "ssh" && onManage && <div className={styles.fieldRow}>
-        {!(serverStatus?.host === host.trim() && serverStatus.info.installed && serverStatus.info.mode === "external") && <button type="button" className={styles.btn} data-connection-prepare="" disabled={busy || !host.trim()} onClick={() => void manage("install")}>{serviceMode === "external" ? "Prepare external process" : "Prepare server"}</button>}
+        {!externalRunning && <button type="button" className={styles.btn} data-connection-prepare="" disabled={busy || !host.trim()} onClick={() => void manage("install")}>{serviceMode === "external" ? "Prepare external process" : "Prepare server"}</button>}
       </div>}
       </details>
       {serverStatus && serverStatus.host === host.trim() && mode === "ssh" && <div className={styles.fieldNote} data-connection-server-status="">
-        <p>{serverStatus.host}: {serverStatus.info.installed ? "Installed" : "Not installed"}, {serverStatus.info.running ? "running" : "stopped"}. {serverStatus.info.mode} server{serverStatus.info.manager ? ` (${serverStatus.info.manager})` : ""}.</p>
+        <p>{serverStatus.host}: {serverStatus.info.mode === "external" ? "External runtime" : serverStatus.info.installed ? "Installed" : "Not installed"}, {serverStatus.info.running ? "running" : "stopped"}.{serverStatus.info.mode === "managed" ? ` Managed server${serverStatus.info.manager ? ` (${serverStatus.info.manager})` : ""}.` : ""}</p>
         <p>{serverStatus.info.sessionLimit}</p>
-        {serverStatus.info.mode === "external" && serverStatus.info.installed && <p>This server is externally managed. Connect to use it; manage its process on that computer.</p>}
+        {externalRunning && <p>This server is externally managed. Connect to use it; manage its process on that computer.</p>}
         {serverStatus.info.linger != null && <p>Linux linger: {serverStatus.info.linger ? "enabled" : "disabled"}.</p>}
         {serverStatus.info.mode === "managed" && serverStatus.info.installed && <div className={styles.fieldRow}>
           {!serverStatus.info.running && <button className={styles.btn} type="button" disabled={busy} onClick={() => void manage("start")}>Start server</button>}

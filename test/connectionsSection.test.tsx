@@ -281,7 +281,7 @@ it("offers explicit external preparation without claiming service supervision", 
   const prepared: unknown[] = [];
   const m = await mount(<ConnectionsSection onManage={async input => {
     prepared.push(input);
-    return { mode: "external", manager: null, installed: true, running: true, sessionLimit: "Unsupervised; no restart guarantee." };
+    return { mode: "external", manager: null, installed: false, running: true, sessionLimit: "Unsupervised; no restart guarantee." };
   }} />);
   await m.type(m.query("[data-connection-host]"), "headless-mac");
   await m.change(m.query("[data-connection-service-mode]"), "external");
@@ -289,6 +289,8 @@ it("offers explicit external preparation without claiming service supervision", 
   await m.click(m.query("[data-connection-prepare]"));
   assert.deepEqual(prepared, [{ host: "headless-mac", remotePort: 4620, serviceMode: "external", action: "install" }]);
   assert.match(m.text(), /externally managed/);
+  assert.match(m.text(), /External runtime, running/);
+  assert.doesNotMatch(m.text(), /Not installed, running/);
   assert.equal(m.query("[data-connection-prepare]"), null, "preparation must not take over an external process");
   assert.doesNotMatch(m.text(), /Start server|Recent logs/);
 });
