@@ -20,6 +20,8 @@ const {
   prepareHostCommand,
   installHostCommand,
   installRemoteSolenta,
+  manageRemoteServer,
+  serverLifecycleCommand,
   inspectHost,
   compareVersions,
   openRemoteConnection,
@@ -234,7 +236,7 @@ describe("remote Connections", () => {
     assert.match(inner, /darwin-arm64\) url=/);
     assert.doesNotMatch(inner, /nodigest|app\.tar\.gz/, "unsigned or desktop assets are not offered");
     assert.match(inner, /\[ "\$got" = "\$sum" \] \|\| \{ rm -rf "\$tmp"; exit 14; \}/);
-    assert.match(inner, /nohup "\$dir\/bin\/solenta-server" --port 4620 --data-dir "\$HOME\/.solenta\/data"/);
+    assert.match(inner, /"\$dir\/bin\/solenta-service" prepare --runtime "\$dir" --port 4620/);
     assert.ok(inner.indexOf("exit 3") === -1, "nothing installed no longer stops the connect");
     // The generated script parses as POSIX sh (checked, never run).
     execFileSync("sh", ["-n"], { input: inner });
@@ -290,7 +292,7 @@ describe("remote Connections", () => {
     );
     await assert.rejects(
       readRemoteToken("me@box", 4620, { execFile: run(4, "", "libnss3.so: cannot open\n") }),
-      /Solenta did not start on me@box[\s\S]*libnss3/,
+      /Solenta did not reach readiness on me@box[\s\S]*libnss3/,
     );
     await assert.rejects(
       readRemoteToken("me@box", 4620, { execFile: run(4, "", "solenta-web: token s3cret\n  Token    s3cret\n  Link     http://x/?token=s3cret\nGtk-ERROR\n") }),
@@ -320,7 +322,7 @@ describe("remote Connections", () => {
     ].join("\n");
     const run = (cmdName, args, opts, cb) => cb(Object.assign(new Error("exit"), { code: 4 }), "", log);
     const err = await readRemoteToken("me@box", 4620, { execFile: run }).catch((e) => e);
-    assert.match(err.message, /Solenta did not start on me@box/);
+    assert.match(err.message, /Solenta did not reach readiness on me@box/);
     assert.equal(err.message.includes(token), false, "token redacted");
     assert.match(err.message, /Gtk-ERROR \*\*: .*without a display connection/);
     assert.match(err.message, /Trace\/breakpoint trap/);
@@ -352,6 +354,7 @@ describe("remote Connections", () => {
     };
     const result = await installRemoteSolenta({ host: "me@server" }, {
       updater,
+      remoteDescriptor: async () => ({ runtimeKind: "desktop" }),
       execFile: ok("missing libnss3.so\nmissing libgbm.so.1\nmissing libweird.so.9\nrestart\ninstalled\n"),
     });
     assert.deepEqual(fetched, ["v0.26.0"]);
@@ -365,15 +368,15 @@ describe("remote Connections", () => {
     });
 
     const fail = (code) => (cmd, args, opts, cb) => cb(Object.assign(new Error("x"), { code }), "", "");
-    await assert.rejects(installRemoteSolenta({ host: "me@mac" }, { updater, execFile: fail(10) }), /Linux only[\s\S]*solenta\.app/);
-    await assert.rejects(installRemoteSolenta({ host: "me@pi" }, { updater, execFile: fail(11) }), /x86_64 only/);
-    await assert.rejects(installRemoteSolenta({ host: "me@server" }, { updater, execFile: fail(14) }), /did not match the release checksum/);
+    await assert.rejects(installRemoteSolenta({ host: "me@mac" }, { updater, remoteDescriptor: async () => ({ runtimeKind: "desktop" }), execFile: fail(10) }), /Linux only[\s\S]*solenta\.app/);
+    await assert.rejects(installRemoteSolenta({ host: "me@pi" }, { updater, remoteDescriptor: async () => ({ runtimeKind: "desktop" }), execFile: fail(11) }), /x86_64 only/);
+    await assert.rejects(installRemoteSolenta({ host: "me@server" }, { updater, remoteDescriptor: async () => ({ runtimeKind: "desktop" }), execFile: fail(14) }), /did not match the release checksum/);
     await assert.rejects(
-      installRemoteSolenta({ host: "-oProxyCommand=x" }, { updater, execFile: ok("installed\n") }),
+      installRemoteSolenta({ host: "-oProxyCommand=x" }, { updater, remoteDescriptor: async () => ({ runtimeKind: "desktop" }), execFile: ok("installed\n") }),
       /SSH host/,
     );
     const unsigned = { ...updater, fetchTag: async () => ({ tag_name: "v0.26.0", assets: [{ name: "Solenta-v0.26.0-linux-x64.tar.gz", browser_download_url: url }] }) };
-    await assert.rejects(installRemoteSolenta({ host: "me@server" }, { updater: unsigned, execFile: ok("installed\n") }), /no checksum/);
+    await assert.rejects(installRemoteSolenta({ host: "me@server" }, { updater: unsigned, remoteDescriptor: async () => ({ runtimeKind: "desktop" }), execFile: ok("installed\n") }), /no checksum/);
   });
 
   it("the install script only interpolates a plain https URL and a hex digest", () => {

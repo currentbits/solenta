@@ -1808,6 +1808,9 @@ function createRunner(opts) {
   }
 
   async function startRun(input) {
+    if (process.env.SOLENTA_SERVER === "1" && (process.env.SOLENTA_SERVER_MAINTENANCE === "1" || (userDataPath && fs.existsSync(path.join(userDataPath, ".server-maintenance-request"))))) {
+      throw new Error("The server is stopping or updating. Retry after it restarts.");
+    }
     // Capture completed fixed-destination automation outcomes before a manual turn changes the row.
     if (require("./automations.js").settleAutomationRuns({ store })) store.save();
     const fold = { taken: null };

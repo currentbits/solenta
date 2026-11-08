@@ -278,7 +278,7 @@ const SERVER_MATCH = "/.solenta/server/[^ ]*/app/electron/server/index.js";
 // this computer passes in (so the download's transport does not matter),
 // one installer at a time per version. Data lives in ~/.solenta/data, apart
 // from a desktop Solenta's. No single quotes: this runs inside sh -c '...'.
-function provisionServerLines(p, server) {
+function provisionServerLines(p, server, launch = true) {
   const v = String(server.version);
   if (!/^[\w.+-]+$/.test(v)) throw new Error("Unexpected server version.");
   const arms = SERVER_TARGETS.filter((t) => server.byTarget[t]).map((t) => {
@@ -302,7 +302,7 @@ ${arms.join("\n")}
     mkdir -p "$base"
     i=0
     until mkdir "$base/.lock-${v}" 2>/dev/null; do i=$((i+1)); [ "$i" -gt 600 ] && exit ${SERVER_LOCK_EXIT}; sleep 1; done
-    trap "rm -rf \"$base/.lock-${v}\"" EXIT
+    cleanupInstall() { rmdir "$base/.lock-${v}" 2>/dev/null || true; }; trap cleanupInstall EXIT
     if [ ! -f "$dir/.install-complete" ]; then
       tmp="$base/.staging-$$"; rm -rf "$tmp"; mkdir -p "$tmp"
       if command -v curl >/dev/null 2>&1; then curl -fsSL -o "$tmp/s.tgz" "$url" || exit 12
@@ -311,12 +311,13 @@ ${arms.join("\n")}
       got="$( (sha256sum "$tmp/s.tgz" 2>/dev/null || shasum -a 256 "$tmp/s.tgz") | cut -d" " -f1)"
       [ "$got" = "$sum" ] || { rm -rf "$tmp"; exit 14; }
       tar -xzf "$tmp/s.tgz" -C "$tmp" || { rm -rf "$tmp"; exit 15; }
-      rm -rf "$dir"; mv "$tmp/solenta-server" "$dir"; rm -rf "$tmp"
+      [ -x "$tmp/solenta-server/bin/solenta-server" ] && [ -x "$tmp/solenta-server/bin/solenta-service" ] || { rm -rf "$tmp"; exit 15; }
+      [ ! -e "$dir" ] || { rm -rf "$tmp"; echo "An incomplete runtime directory already exists; inspect it before retrying." >&2; exit 16; }
+      mv "$tmp/solenta-server" "$dir"; rm -rf "$tmp"
       echo ${v} > "$dir/.install-complete"
     fi
   fi
-  mkdir -p "$HOME/.solenta/data"
-  nohup "$dir/bin/solenta-server" --port ${p} --data-dir "$HOME/.solenta/data" >"${HEADLESS_LOG}" 2>&1 </dev/null &`;
+  ${launch ? `"$dir/bin/solenta-service" prepare --runtime "$dir" --port ${p} --data-dir "$HOME/.solenta/data" >"${HEADLESS_LOG}" 2>&1 || { tail -n 40 "${HEADLESS_LOG}" >&2; exit ${DID_NOT_START_EXIT}; }` : ""}`;
 }
 
 /**
@@ -452,7 +453,7 @@ async function readRemoteToken(host, remotePort = DEFAULT_REMOTE_PORT, deps = {}
       }
       if (err && err.code === DID_NOT_START_EXIT) {
         const tail = headlessLogTail(stderr);
-        return reject(new Error(`Solenta did not start on ${host}. On a Mac someone must be logged in to the desktop; on Linux see ~/.solenta-headless.log there. If Solenta was already open there, restart it and connect again.${tail ? `\n${tail}` : ""}`));
+        return reject(new Error(`Solenta did not reach readiness on ${host}. A managed Node server needs an available Linux user service manager or a logged-in macOS GUI session. Inspect ~/.solenta-headless.log there; an externally managed server can instead be started explicitly with solenta-server.${tail ? `\n${tail}` : ""}`));
       }
       if (err && err.code === NO_SERVER_BUILD_EXIT) {
         return reject(new Error(`There is no Solenta server build for ${host}'s system. Builds exist for macOS and Linux on Intel and ARM; install Solenta there yourself.`));
@@ -484,6 +485,7 @@ const INSTALL_EXITS = {
   13: "The remote computer has neither curl nor wget to download Solenta with.",
   14: "The download did not match the release checksum, so nothing was installed.",
   15: "The download could not be unpacked on the remote computer.",
+  16: "An incomplete runtime directory already exists. Inspect it on the remote computer before retrying; no existing runtime was replaced.",
 };
 function installHostCommand(url, sha256) {
   if (!/^https:\/\/[\w./%:-]+$/.test(url)) throw new Error("Unexpected release download URL.");
@@ -546,6 +548,18 @@ async function linuxReleaseAsset(deps = {}) {
 }
 
 async function installRemoteSolenta(input, deps = {}) {
+  const conn = validateConnection({ host: input && input.host, remotePort: input && input.remotePort, token: "" });
+  const description = await remoteDescriptor(conn, deps);
+  if (input.computerId && description.computerId !== input.computerId) throw new Error("The computer identity changed or could not be verified. Update refused.");
+  if (description.runtimeKind === "server") {
+    const result = await manageRemoteServer({ ...input, action: "update" }, deps);
+    return { ...result, tag: result.releaseTag || "", missingLibraries: [], aptCommand: null, restartNeeded: false };
+  }
+  if (description.runtimeKind !== "desktop") throw new Error("The running computer's runtime could not be verified. Check its status before updating.");
+  return installRemoteDesktop(input, deps);
+}
+
+async function installRemoteDesktop(input, deps = {}) {
   const { host } = validateConnection({ host: input && input.host, token: "" });
   const asset = await linuxReleaseAsset(deps);
   const env = sshEnv(host, deps);
@@ -573,6 +587,72 @@ async function installRemoteSolenta(input, deps = {}) {
     aptCommand: packages.length ? `sudo apt install ${packages.join(" ")}` : null,
     restartNeeded: lines.includes("restart"),
   };
+}
+
+
+// Lifecycle commands use the existing SSH trust/askpass boundary. Inspecting
+// status never prepares a server, unlike the explicit install action.
+function remoteExec(conn, command, deps = {}) {
+  const env = sshEnv(conn.host, deps);
+  return new Promise((resolve, reject) => (deps.execFile || execFile)("ssh", ["-T", ...sshAuthOptions(!!env), "-o", "ConnectTimeout=10", conn.host, command], { timeout: 15 * 60_000, maxBuffer: 256 * 1024, ...(env ? { env } : {}) }, (error, out, stderr) => {
+    if (!error) return resolve(String(out));
+    reject(new Error(error.code === 255 ? sshFailure(conn.host, String(stderr || ""), error.code, deps) : headlessLogTail(stderr) || `Server operation failed (exit ${error.code}).`));
+  }));
+}
+async function remoteDescriptor(conn, deps) {
+  if (deps.remoteDescriptor) return deps.remoteDescriptor(conn);
+  const out = await remoteExec(conn, `sh -c '
+descriptor="$(curl -fsS -m 5 "http://127.0.0.1:${conn.remotePort}/.well-known/solenta" 2>/dev/null || true)"
+case "$descriptor" in
+  \{*) printf "%s\\n" "$descriptor" ;;
+  *) if pgrep -f "${SERVER_MATCH}" >/dev/null 2>&1; then echo server;
+     elif pgrep -x solenta >/dev/null 2>&1 || pgrep -x solenta-nightly >/dev/null 2>&1 || ps -axo comm= | grep -E "/Contents/MacOS/Solenta( Nightly)?$" >/dev/null 2>&1; then echo desktop;
+     else echo unknown; fi ;;
+esac
+'`, deps);
+  if (["server", "desktop"].includes(out.trim())) return { runtimeKind: out.trim() };
+  try { const d = JSON.parse(out); return d && d.kind === "solenta" ? d : {}; } catch { return {}; }
+}
+function serverLifecycleCommand(action, port, server, computerId = null, serviceMode = "managed") {
+  if (!["managed", "external"].includes(serviceMode)) throw new Error("Invalid server preparation mode.");
+  if (computerId && !/^[a-zA-Z0-9._:-]{1,128}$/.test(computerId)) throw new Error("Invalid expected computer identity.");
+  if (!["install", "status", "logs", "start", "stop", "restart", "update", "uninstall"].includes(action)) throw new Error("Unknown server lifecycle action.");
+  return `sh -c '
+${server ? provisionServerLines(port, server, false) : `base="$HOME/.solenta/server"; dir=""
+for candidate in "$base"/*; do [ -x "$candidate/bin/solenta-service" ] && dir="$candidate"; done`}
+if [ -z "$dir" ] || [ ! -x "$dir/bin/solenta-service" ]; then
+  ${["status", "logs"].includes(action) ? `available=false; manager=null; linger=""
+case "$(uname -s)" in
+  Linux) manager="\\"systemd-user\\""; systemctl --user show-environment >/dev/null 2>&1 && available=true
+    lingerValue="$(loginctl show-user "$(id -u)" --property=Linger --value 2>/dev/null || true)"
+    case "$lingerValue" in yes) linger=",\\"linger\\":true" ;; no) linger=",\\"linger\\":false" ;; esac
+    sessionLimit="Linux user manager availability was checked. Before-login and after-logout operation requires administrator-enabled linger." ;;
+  Darwin) manager="\\"launchd\\""; launchctl print "gui/$(id -u)" >/dev/null 2>&1 && available=true
+    sessionLimit="macOS launchd requires a GUI login session. It does not run before login and stops at logout." ;;
+  *) sessionLimit="No supported user service manager on this platform." ;;
+esac
+cat <<EOFSTATUS
+{"mode":"external","manager":$manager,"installed":false,"available":$available,"running":false,"sessionLimit":"$sessionLimit"$linger}
+EOFSTATUS
+exit 0` : 'echo "No managed Node server is installed. Prepare its service explicitly; existing external servers must be stopped by their owner first." >&2; exit 1'}
+fi
+"$dir/bin/solenta-service" ${action === "install" && serviceMode === "external" ? "external-start" : action} --data-dir "$HOME/.solenta/data" --port ${port}${server ? ' --runtime "$dir"' : ''}${computerId ? ` --computer-id ${computerId}` : ""}
+'`;
+}
+async function manageRemoteServer(input, deps = {}) {
+  const conn = validateConnection({ host: input && input.host, remotePort: input && input.remotePort, token: "" });
+  const action = String(input && input.action || "status");
+  const server = ["install", "update"].includes(action) ? await serverDownloads(deps) : null;
+  if (["install", "update"].includes(action) && !server) throw new Error("This build has no checksum-pinned published server release. Install a release build or manage the server explicitly on that computer.");
+  const raw = await remoteExec(conn, serverLifecycleCommand(action, conn.remotePort, server, input.computerId, input.serviceMode || "managed"), deps);
+  let result;
+  try { result = JSON.parse(raw.trim()); } catch { throw new Error("The server lifecycle command did not return verified status. Inspect its service logs."); }
+  if (!["managed", "external"].includes(result.mode)) throw new Error("Invalid server lifecycle status.");
+  if (typeof result.logs === "string") result.logs = result.logs
+    .replace(/(token[=:\s]+)[^\s&"']+/gi, "$1[redacted]")
+    .replace(/(Bearer\s+)\S+/gi, "$1[redacted]")
+    .split("\n").filter((line) => !/[\u2580\u2584\u2588]/.test(line)).slice(-80).join("\n");
+  return result;
 }
 
 // ws:// for a forwarded loopback port, ws(s):// for a direct address.
@@ -1200,6 +1280,8 @@ module.exports = {
   prepareHostCommand,
   installHostCommand,
   installRemoteSolenta,
+  manageRemoteServer,
+  serverLifecycleCommand,
   inspectHost,
   compareVersions,
   probeToken,

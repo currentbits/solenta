@@ -29,6 +29,7 @@ function parseArgs(argv) {
     else if (flag === "--data-dir") out.dataDir = path.resolve(value());
     else if (flag === "--link") out.link = value();
     else if (flag === "--link-label") out.linkLabel = value();
+    else if (flag === "--maintenance") out.maintenance = true;
     else if (flag === "--version") out.version = true;
     else if (flag === "--help") out.help = true;
     else throw new Error(`Unknown option ${argv[i]}. Try --help.`);
@@ -56,10 +57,19 @@ if (opts.help) {
   process.exit(0);
 }
 
-fs.mkdirSync(opts.dataDir, { recursive: true, mode: 0o700 });
+let releaseLock;
+try {
+  releaseLock = require("./dataLock.js").acquireDataLock(opts.dataDir);
+} catch (error) {
+  console.error(error.message);
+  process.exit(78);
+}
+process.once("exit", () => releaseLock());
 // No keychain here: settings secrets stay in the 0600 store, like dev builds.
 process.env.SOLENTA_ENABLE_SAFE_STORAGE = "0";
 process.env.SOLENTA_SERVER = "1";
+if (opts.maintenance) process.env.SOLENTA_SERVER_MAINTENANCE = "1";
+else delete process.env.SOLENTA_SERVER_MAINTENANCE;
 if (opts.link) process.env.SOLENTA_LINK = opts.link;
 if (opts.linkLabel) process.env.SOLENTA_LINK_LABEL = opts.linkLabel;
 

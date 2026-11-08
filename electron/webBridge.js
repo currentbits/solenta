@@ -222,6 +222,9 @@ function attachWebBridge(httpServer, opts) {
       const channel = msg.channel;
       const args = Array.isArray(msg.args) ? msg.args : [];
       try {
+        if (process.env.SOLENTA_SERVER === "1" && (process.env.SOLENTA_SERVER_MAINTENANCE === "1" || (ctx.userDataPath && require("node:fs").existsSync(require("node:path").join(ctx.userDataPath, ".server-maintenance-request")))) && channel !== "app:status") {
+          throw new Error("The server is validating an update in maintenance mode. Retry after it restarts.");
+        }
         if (typeof channel === "string" && channel.startsWith("simulator:")) {
           sendJson(ws, {
             kind: "reply",

@@ -5,6 +5,7 @@
 // bundle's default_app.asar. We ship app code as a plain directory, so asar
 // support buys nothing — turn it off for the whole main process.
 process.noAsar = true;
+const serverMaintenance = process.env.SOLENTA_SERVER === "1" && process.env.SOLENTA_SERVER_MAINTENANCE === "1";
 
 // V8 code cache for every module required below (#418): ~10-15% off the
 // main-process require graph on warm launches. Keyed by file content and
@@ -110,6 +111,7 @@ const {
   openRemoteConnection,
   forgetRemoteConnection,
   installRemoteSolenta,
+  manageRemoteServer,
   invokeRemote,
   openHostTunnel,
   closeRemoteConnections,
@@ -965,6 +967,7 @@ app.whenReady().then(async () => {
     // Kicks the async login-shell PATH capture now that the window has
     // painted; the supervisor probes kimi/cursor CLIs, so it waits for it.
     startMemory: async () => {
+      if (serverMaintenance) return;
       await refreshLoginPath();
       return memorySupervisor ? memorySupervisor.start() : undefined;
     },
@@ -1018,6 +1021,7 @@ app.whenReady().then(async () => {
     userDataPath: userData,
   });
 
+  if (!serverMaintenance) {
   // Same userDataPath as the artifact store: recovery only touches recording
   // temp files inside that store's own staging root, and a mismatch would make
   // it quarantine legitimate journals. Safe to construct off macOS and without
@@ -1071,6 +1075,8 @@ app.whenReady().then(async () => {
       "ios-simulator-stream: unavailable this session:",
       err && err.message ? err.message : err,
     );
+  }
+
   }
 
   const lastStatus = new Map();
@@ -1230,8 +1236,10 @@ app.whenReady().then(async () => {
   // Polled, not pushed: opening a thread clears its unread by stamping the
   // store with no broadcast, and a snooze expires on the clock.
   // ponytail: O(threads) every 2s; hook store writes if it ever shows in a profile.
-  syncAttentionBadge(store);
-  setInterval(() => syncAttentionBadge(store), 2000);
+  if (!serverMaintenance) {
+    syncAttentionBadge(store);
+    setInterval(() => syncAttentionBadge(store), 2000);
+  }
 
   // ctx is read when the server starts, after registerIpc below returns.
   let registered = null;
@@ -1262,8 +1270,8 @@ app.whenReady().then(async () => {
   // Linked computers (#1832): this Solenta's agents fork onto them, desktop
   // or headless. SOLENTA_LINK (solenta-server --link) links one at boot.
   peerLinks = require("./peerLinks.js").createPeerLinks({ userDataPath: userData, hub: hostHub });
-  peerLinks.start();
-  if (process.env.SOLENTA_LINK) {
+  if (!serverMaintenance) peerLinks.start();
+  if (!serverMaintenance && process.env.SOLENTA_LINK) {
     peerLinks.link({ link: process.env.SOLENTA_LINK, label: process.env.SOLENTA_LINK_LABEL || "" }).then(
       (rows) => console.warn(`linked computers: ${rows.map((r) => r.label).join(", ")}`),
       (err) => console.warn(`linked computers: ${err && err.message ? err.message : err}`),
@@ -1305,6 +1313,7 @@ app.whenReady().then(async () => {
     openRemoteConnection,
     forgetRemoteConnection,
     installRemoteSolenta,
+    manageRemoteServer,
     invokeRemote,
     hostHub,
     answerSshPrompt: (id, answer) => sshPrompts.answer(id, answer),
@@ -1313,6 +1322,7 @@ app.whenReady().then(async () => {
   ipcMain.handle("window:detachThread", (_event, threadId) => openThreadWindow(threadId));
   // Recently deleted expiry (#940): reclaim after restart even if the
   // renderer has not listed threads yet.
+  if (!serverMaintenance) {
   const { expireTrashedThreads } = require("./services.js");
   expireTrashedThreads(store, {
     cleanupRunArtifacts: () =>
@@ -1321,10 +1331,11 @@ app.whenReady().then(async () => {
   });
   // No Teleport send survives a restart (#1702): unlock a half-sent thread.
   require("./teleport.js").clearPendingTeleports(store);
+  }
   // Renderer may already have mounted against empty state; this is the
   // signal that invoke channels will answer (#618).
   broadcast("boot:ready");
-  openDeepLink(pendingDeepLink);
+  if (!serverMaintenance) openDeepLink(pendingDeepLink);
   pendingDeepLink = null;
 
   // Opt-in resume after restart (issue #1512 I3): only after first paint
@@ -1341,7 +1352,7 @@ app.whenReady().then(async () => {
             ),
         ),
     );
-    if (runner) await runner.resumeInterruptedRuns();
+    if (runner && !serverMaintenance) await runner.resumeInterruptedRuns();
   })().catch((err) =>
     console.warn(
       "solenta: resume after restart failed:",
@@ -1397,7 +1408,7 @@ app.whenReady().then(async () => {
       },
     },
   });
-  prStateRefresher.start();
+  if (!serverMaintenance) prStateRefresher.start();
 
   // Opt-in idle-thread compaction (#1765): off unless the user turns it on
   // in Settings. Same unref'd-interval shape as the PR refresher above.
@@ -1406,8 +1417,9 @@ app.whenReady().then(async () => {
     runner,
     broadcast,
   });
-  idleCompactScheduler.start();
+  if (!serverMaintenance) idleCompactScheduler.start();
 
+  if (!serverMaintenance) {
   // Anonymous daily usage ping (installs, OS, agents) for the team's stats.
   if (app.isPackaged) {
     require("./telemetry.js").startTelemetry({
@@ -1577,6 +1589,7 @@ app.whenReady().then(async () => {
     }).catch(() => {});
   void refreshMcpOauth();
   mcpOauthRefreshTimer = setInterval(refreshMcpOauth, 60_000);
+  }
 });
 
 shutdown = installShutdown({
