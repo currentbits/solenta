@@ -356,8 +356,8 @@ module.exports = {
       limit: input && input.limit,
     }),
   // Approval inbox (#291): every pending prompt across threads.
-  "threads:pendingApprovals": async (ctx) =>
-    ctx.runner.listPendingApprovals ? ctx.runner.listPendingApprovals() : [],
+  "threads:pendingApprovals": async (ctx, input) =>
+    ctx.runner.listPendingApprovals ? ctx.runner.listPendingApprovals(input) : [],
   "threads:respondPermission": async (ctx, input) => {
     // runner.respondPermission pushes the updated detail itself.
     ctx.runner.respondPermission(input);

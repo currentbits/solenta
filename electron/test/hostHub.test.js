@@ -138,6 +138,19 @@ describe("hostHub", () => {
     await assert.rejects(hub.route("fs:browse", [{ path: "~", onHost: "gone:1" }], async () => null), /no longer in the sidebar/);
   });
 
+  it("routes scoped worker approvals to the named computer and strips its routing key", async () => {
+    const remote = await fakeHost({ threads: [{ id: "worker", projectId: "rp" }] });
+    const { hub } = makeHub(remote);
+    cleanup.push(() => remote.close(), () => hub.close());
+    hub.setHosts([HOST]);
+    await waitFor(() => hub.list()[0].status === "online");
+    await hub.route("threads:pendingApprovals", [{ threadId: "worker", onHost: "me@box:4620" }], () => assert.fail("ran locally"));
+    assert.deepEqual(remote.state.calls.at(-1), { channel: "threads:pendingApprovals", args: [{ threadId: "worker" }] });
+    await hub.route("threads:respondPermission", [{ threadId: "worker", requestId: "request", decision: "deny", onHost: "me@box:4620" }], () => assert.fail("ran locally"));
+    assert.deepEqual(remote.state.calls.at(-1), { channel: "threads:respondPermission", args: [{ threadId: "worker", requestId: "request", decision: "deny" }] });
+    await assert.rejects(hub.route("threads:respondPermission", [{ threadId: "worker", requestId: "request", decision: "allow", onHost: "removed:1" }], async () => null), /no longer in the sidebar/);
+  });
+
   it("applies the host's row-patch pushes and refetches on a gap", async () => {
     const remote = await fakeHost({ threads: [{ id: "r1", projectId: "rp", title: "a" }] });
     const { hub, pushes } = makeHub(remote);
