@@ -101,3 +101,37 @@ it("keeps sparse starts and resolves a model only when a later message actually 
   assert.equal(batch.rows[0].model, "confirmed");
   assert.ok(batch.accounting.unavailableFields.includes("reasoningTokens"));
 });
+
+// Anthropic's advisor docs specify flat iteration counters and updated
+// usage.iterations in message_delta, before a final assistant snapshot:
+// https://platform.claude.com/docs/en/agents-and-tools/tool-use/advisor-tool#usage-and-billing
+it("retains a docs-shaped advisor usage delta when interruption precedes the final assistant frame", () => {
+  const tracker = createClaudeUsage();
+  tracker.observe({}, { type: "message_start", message: { id: "stream-advisor", model: "executor", usage: { input_tokens: 10, output_tokens: 0 } } });
+  const partial = { type: "message_delta", usage: { output_tokens: 5, iterations: [
+    { type: "message", input_tokens: 10, output_tokens: 5 },
+    { type: "advisor_message", model: "advisor", input_tokens: 4, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, output_tokens: 2 },
+  ] } };
+  tracker.observe({}, partial);
+  tracker.observe({}, partial);
+  const batch = tracker.finish(null, {}, "executor");
+  assert.equal(batch.accounting.status, "partial");
+  assert.equal(batch.inputTokens, 14);
+  assert.equal(batch.outputTokens, 7);
+  assert.equal(batch.rows.find(row => row.model === "advisor").inputTokens, 4);
+  assert.equal(batch.accounting.sources.find(row => row.kind === "advisor").model, "advisor");
+});
+
+it("deduplicates advisor counters shared by stream deltas and the final assistant snapshot", () => {
+  const tracker = createClaudeUsage();
+  const usage = { input_tokens: 10, output_tokens: 5, iterations: [
+    { type: "advisor_message", model: "advisor", input_tokens: 4, output_tokens: 2 },
+  ] };
+  tracker.observe({}, { type: "message_start", message: { id: "with-final", model: "executor", usage: { input_tokens: 10, output_tokens: 0 } } });
+  tracker.observe({}, { type: "message_delta", usage });
+  tracker.observe(assistant("with-final", "executor", usage));
+  const batch = tracker.finish(result({ input_tokens: 10, output_tokens: 5 }, 0.03), {}, "executor");
+  assert.equal(batch.inputTokens, 14, "executor top-level counters exclude advisor tokens");
+  assert.equal(batch.outputTokens, 7);
+  assert.equal(batch.rows.length, 3, "two measured models and unattributed reported dollars");
+});
