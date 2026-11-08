@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, it } from "node:test";
 import { inAct, mount, unmountAll } from "./support/dom.ts";
-import { computerApi, useComputerContext } from "../src/coder/computerContext";
+import { computerApi, liveComputerHost, useComputerContext } from "../src/coder/computerContext";
 import type { AppSettings, CoderApi, HostTag, ProviderInfo } from "../src/shared/ipc";
 
 afterEach(unmountAll);
@@ -76,4 +76,9 @@ it("passes ownership as the first object for zero-argument catalogs, preserving 
   await scoped.mcp.list();
   await scoped.harness.detectSources();
   assert.deepEqual(inputs, [{ onHost: "work" }, { onHost: "work" }, { onHost: "work" }]);
+});
+
+it("resolves live status through a verified computer's alternate route", () => {
+  const remote = { ...host("alternate"), computerId: "same-computer" };
+  assert.equal(liveComputerHost(remote, [{ key: "primary", computerId: "same-computer", host: "primary", remotePort: 4620, label: "Work", status: "offline", error: "Disconnected", routes: [{ key: "alternate", host: "alias", remotePort: 4620 }] }])?.status, "offline");
 });

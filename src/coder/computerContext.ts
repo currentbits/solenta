@@ -56,7 +56,7 @@ export function useComputerContext(api: CoderApi, host: HostTag | undefined,
   const remote = snapshot?.key === key ? snapshot : null;
   const refresh = useCallback(() => setNonce(n => n + 1), []);
   const save = useCallback(async (patch: Partial<AppSettings>) => {
-    if (!key || !remote) throw new Error("Computer settings are unavailable. Reconnect and retry.");
+    if (!key || !remote || currentKey.current !== key) throw new Error("Computer settings are unavailable. Reconnect and retry.");
     generation.current += 1;
     const save = ++saveGeneration.current;
     const next = await scopedApi.settings.set(patch);
