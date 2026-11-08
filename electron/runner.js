@@ -2875,6 +2875,7 @@ function createRunner(opts) {
       lastWorkflowByThread.get(threadId) ||
       null;
 
+    entry.flushUsage?.();
     entry.stopping = true;
     // Read before the kill: cancelCodexServerRequests empties the list.
     const hadPending = Boolean(entry.pendingPermissions?.length);
@@ -3084,6 +3085,7 @@ function createRunner(opts) {
     for (const threadId of [...active.keys()]) {
       const entry = active.get(threadId);
       const runId = entry && entry.runId ? entry.runId : null;
+      entry?.flushUsage?.();
       if (entry) entry.stopping = true;
       if (entry && entry.kind === "workflow") {
         workflowEngine.stopWorkflowEntry(entry);

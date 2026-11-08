@@ -98,6 +98,68 @@ describe("modelPrices setting", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
+  it("prices only uncovered measurements in mixed reported, known-zero and unreported cells after reload", () => {
+    const meta = { provider: "claude", model: "same", threadId: "mixed" };
+    store.recordUsage({ ...meta, costUsd: 0, costReported: true, inputTokens: 1e6, cachedInputTokens: 2e6, outputTokens: 1e6 });
+    store.recordUsage({ ...meta, costUsd: 0.5, inputTokens: 2e6, cachedInputTokens: 3e6, outputTokens: 2e6 });
+    store.recordUsage({ ...meta, inputTokens: 3e6, cachedInputTokens: 4e6, outputTokens: 3e6 });
+    store.saveNow();
+    const reloaded = new Store(path.join(tmpDir, "store.json"));
+    const raw = { byDay: reloaded.getUsageByDay(), threadsByDay: reloaded.getUsageThreadsByDay() };
+    const report = applyModelPrices(raw, { same: { input: 1, output: 10, cacheRead: 0.1 } });
+    const [day] = Object.keys(report.byDay);
+    assert.deepEqual(raw.byDay[day].claude.same.unpricedTokens, { inputTokens: 3e6, cachedInputTokens: 4e6, cacheWriteTokens: 0, outputTokens: 3e6 });
+    assert.equal(raw.byDay[day].claude.same.costUsd, 0.5);
+    assert.equal(report.byDay[day].claude.same.costUsd, 33.9);
+    assert.equal(report.threadsByDay[day].mixed.costUsd, 33.9);
+  });
+
+  it("keeps cost-only reported dollars separate from later uncovered tokens", () => {
+    const meta = { provider: "claude", model: "same", threadId: "cost-only" };
+    store.recordUsage({ ...meta, costUsd: 5 });
+    store.recordUsage({ ...meta, inputTokens: 1e6 });
+    store.saveNow();
+    const reloaded = new Store(path.join(tmpDir, "store.json"));
+    const report = applyModelPrices({ byDay: reloaded.getUsageByDay(), threadsByDay: reloaded.getUsageThreadsByDay() }, { same: { input: 10, output: 0 } });
+    const [day] = Object.keys(report.byDay);
+    assert.equal(report.byDay[day].claude.same.costUsd, 15);
+    assert.equal(report.threadsByDay[day]["cost-only"].costUsd, 15);
+  });
+
+  it("keeps legacy covered threads conservative after new daily coverage appears", () => {
+    const { localDayKey } = require("../store.js");
+    const day = localDayKey(new Date());
+    const old = { ...cell({ costUsd: 0, inputTokens: 1e6 }), provider: "claude", model: "same", byProviderModel: { claude: { same: cell({ inputTokens: 1e6 }) } } };
+    store.data.usageByDay = { [day]: { claude: { same: cell({ costUsd: 7, inputTokens: 1e6 }) } } };
+    store.data.usageThreadsByDay = { [day]: { old } };
+    const meta = { provider: "claude", model: "same" };
+    store.recordUsage({ ...meta, threadId: "zero", inputTokens: 10, costReported: true });
+    let report = applyModelPrices({ byDay: store.getUsageByDay(), threadsByDay: store.getUsageThreadsByDay() }, { same: { input: 10, output: 0 } });
+    assert.equal(report.byDay[day].claude.same.costUsd, 7);
+    assert.equal(report.threadsByDay[day].old.costUsd, 0);
+    store.recordUsage({ ...meta, threadId: "old", inputTokens: 1e6 });
+    store.recordUsage({ ...meta, threadId: "fresh", inputTokens: 1e6 });
+    store.saveNow();
+    const reloaded = new Store(path.join(tmpDir, "store.json"));
+    report = applyModelPrices({ byDay: reloaded.getUsageByDay(), threadsByDay: reloaded.getUsageThreadsByDay() }, { same: { input: 10, output: 0 } });
+    assert.equal(report.byDay[day].claude.same.costUsd, 27);
+    assert.equal(report.threadsByDay[day].old.costUsd, 10, "only the new legacy-thread delta is uncovered");
+    assert.equal(report.threadsByDay[day].fresh.costUsd, 10);
+  });
+
+  it("counts one split turn across model, provider and thread totals and rejects invalid counts", () => {
+    const meta = { provider: "claude", threadId: "split" };
+    store.recordUsage({ ...meta, model: "root", inputTokens: 10 });
+    store.recordUsage({ ...meta, model: "advisor", inputTokens: 4, turns: 0 });
+    const [day] = Object.keys(store.getUsageByDay());
+    assert.equal(Object.values(store.getUsageByDay()[day].claude).reduce((sum, row) => sum + row.turns, 0), 1);
+    assert.equal(store.getUsageThreadsByDay()[day].split.turns, 1);
+    assert.equal(store.getUsageThreadsByDay()[day].split.byProviderModel.claude.advisor.turns, 0);
+    for (const turns of [-1, 0.5, NaN, Infinity, "1", null]) {
+      assert.throws(() => store.recordUsage({ ...meta, model: "root", turns }), /non-negative integer/);
+    }
+  });
+
   it("round-trips, replaces the whole map, and rejects bad input", async () => {
     store.setSettings({ modelPrices: { a: { input: 1, output: 2 }, b: { input: 3, output: 4 } } });
     assert.deepEqual(Object.keys(store.getSettings().modelPrices), ["a", "b"]);

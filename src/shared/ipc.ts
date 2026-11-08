@@ -1825,8 +1825,30 @@ export type ContextCompaction =
   | { kind: "disabled" }
   | { kind: "reactive" };
 
+/** Observed Claude message measurements, separate from process result totals. */
+export interface ClaudeUsageSource {
+  kind: "root" | "child" | "advisor";
+  parentToolUseId: string | null;
+  model: string | null;
+  inputTokens?: number;
+  cachedInputTokens?: number;
+  cacheWriteTokens?: number;
+  outputTokens?: number;
+  reasoningTokens?: number;
+}
+
 /** Cumulative session usage across turns of a thread. */
 export interface SessionUsage {
+  /** Measured subsets; absent when the provider never reported them. */
+  cachedInputTokens?: number;
+  cacheWriteTokens?: number;
+  reasoningTokens?: number;
+  /** Last accounting batch. Missing fields are unavailable, not zero. */
+  accounting?: {
+    status: "partial" | "complete";
+    unavailableFields: Array<"inputTokens" | "cachedInputTokens" | "cacheWriteTokens" | "outputTokens" | "reasoningTokens" | "costUsd">;
+    sources: ClaudeUsageSource[];
+  };
   model: string | null;
   inputTokens: number;
   outputTokens: number;
@@ -2009,19 +2031,15 @@ export interface ActivityItem {
  * cache counters at 0, which is why an all-zero row is "unreported", not free.
  */
 export interface UsageEntry {
+  /** Only these tokens may receive a fallback estimate. Reported USD covers the rest. */
+  unpricedTokens?: {
+    inputTokens: number;
+    cachedInputTokens: number;
+    cacheWriteTokens: number;
+    outputTokens: number;
+  };
   costUsd: number;
-  /**
-   * Uncached input, billable at the full rate.
-   *
-   * Caveat for codex: its `input_tokens` ALREADY includes
-   * `cached_input_tokens` (electron/codex.js:372, and the test "does not add
-   * cached_input_tokens on turn.completed"), and it reports cumulative
-   * totals, so deriving a per-turn cached delta needs a snapshot the store
-   * does not keep. Codex therefore records its whole input here with
-   * cachedInputTokens 0. Processed totals stay correct; codex's cache split
-   * reads as "none reported" rather than a real zero. Fixing that is its own
-   * change, not this one.
-   */
+  /** Uncached input, billable at the full rate; cached subsets are separate. */
   inputTokens: number;
   /** cache_read_input_tokens; 0 when the provider does not report it. */
   cachedInputTokens: number;
@@ -2085,6 +2103,26 @@ export interface ProviderUsageWindow {
 
 export type ProviderUsageStatus = "ok" | "unavailable" | "error";
 
+/** Provider money, retained in the reported minor units rather than local spend. */
+export interface ProviderUsageMoney {
+  amountMinor: number;
+  currency: string;
+  exponent: number;
+  unit: "minor";
+}
+
+/** A monetary budget, separate from rolling request/token quota and recovery. */
+export interface ProviderUsageMonthlySpend {
+  period: "monthly";
+  enabled: boolean;
+  used: ProviderUsageMoney | null;
+  limit: ProviderUsageMoney | null;
+  /** Null when disabled, amounts are missing/incomparable, or the limit is zero. */
+  usedPercent: number | null;
+  /** Only a provider-reported reset; never inferred from the calendar. */
+  resetsAt: number | null;
+}
+
 export interface CliProxyUsageSettings {
   enabled: boolean;
   managementUrl: string;
@@ -2104,6 +2142,7 @@ export interface ProviderUsage {
   label?: string;
   status: ProviderUsageStatus;
   windows: ProviderUsageWindow[];
+  monthlySpend?: ProviderUsageMonthlySpend;
   fetchedAt: number | null;
   message?: string;
 }
