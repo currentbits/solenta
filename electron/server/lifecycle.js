@@ -6,6 +6,7 @@ const path = require("node:path");
 const os = require("node:os");
 const crypto = require("node:crypto");
 const { execFileSync } = require("node:child_process");
+const { waitDataQuiescent } = require("./dataQuiescence.js");
 const { processAlive } = require("./dataLock.js");
 const quoteUnit = (s) => `"${String(s).replace(/[%\\"\n\r]/g, (c) => c === "%" ? "%%" : c === "\n" || c === "\r" ? "" : `\\${c}`)}"`;
 const xml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" }[c]));
@@ -134,6 +135,7 @@ function createLifecycle(options = {}, deps = {}) {
     let committedStatus;
     try {
       await stop();
+      await (deps.waitDataQuiescent || waitDataQuiescent)(dataDir);
       journal.phase = "snapshot"; writeJournal(journal);
       fs.cpSync(dataDir, backup, { recursive: true, dereference: false, filter: (src) => ![".server-lock", ".server-lock.guard"].includes(path.basename(src)) });
       journal.phase = "trial"; writeJournal(journal);
@@ -186,6 +188,7 @@ function createLifecycle(options = {}, deps = {}) {
     else attempt("launchctl", ["bootout", `${domain}/${label}`]);
     await (deps.waitStopped || waitStopped)(dataDir);
     if (!["snapshot", "quiescing"].includes(journal.phase)) {
+      await (deps.waitDataQuiescent || waitDataQuiescent)(dataDir);
       const failed = `${dataDir}.failed-update-${Date.now()}`;
       fs.renameSync(dataDir, failed);
       fs.cpSync(journal.backup, dataDir, { recursive: true, dereference: false });

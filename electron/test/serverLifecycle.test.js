@@ -386,3 +386,29 @@ it("failed pre-commit restoration stays gated and can finish recovery without ac
   assert.equal(fs.existsSync(path.join(f.lc.paths.dataDir, ".server-maintenance-request")), false);
   assert.equal((await f.lc.action("status")).recoveryRequired, false);
 });
+it("a persistent memory writer refuses update before snapshot or trial and restarts the old runtime", async (t) => {
+  let trial = false;
+  const f = fixture(t, "linux", { waitDataQuiescent: async () => { throw new Error("memory writer still serving"); }, trial: async () => { trial = true; } });
+  await f.lc.install(f.runtime);
+  fs.mkdirSync(f.lc.paths.dataDir, { recursive: true }); fs.writeFileSync(path.join(f.lc.paths.dataDir, "memory.db"), "live database");
+  const candidate = candidateRuntime(f);
+  await assert.rejects(f.lc.update(candidate), /Previous runtime and data directory were restored/);
+  assert.equal(trial, false);
+  assert.equal(fs.readFileSync(path.join(f.lc.paths.dataDir, "memory.db"), "utf8"), "live database");
+  assert.equal(f.lc.state().runtime, fs.realpathSync(f.runtime)); assert.equal(f.lc.status().running, true);
+  assert.equal(fs.readdirSync(f.lc.paths.root).some((name) => name.startsWith(".data-backup-")), false);
+});
+it("restoration refuses to replace database files until the failed runtime's writer exits", async (t) => {
+  let waits = 0;
+  const f = fixture(t, "linux", {
+    waitDataQuiescent: async () => { if (++waits === 2) throw new Error("memory writer still serving"); },
+    trial: async (_runtime, _port, data) => { fs.writeFileSync(path.join(data, "memory.db"), "candidate database"); throw new Error("bad candidate"); },
+  });
+  await f.lc.install(f.runtime);
+  fs.mkdirSync(f.lc.paths.dataDir, { recursive: true }); fs.writeFileSync(path.join(f.lc.paths.dataDir, "memory.db"), "old database");
+  await assert.rejects(f.lc.update(candidateRuntime(f)), /Recovery is incomplete/);
+  assert.equal(fs.readFileSync(path.join(f.lc.paths.dataDir, "memory.db"), "utf8"), "candidate database", "live files were not renamed or overwritten");
+  assert.equal(fs.existsSync(path.join(f.lc.paths.dataDir, ".server-maintenance-request")), true);
+  await f.lc.recover();
+  assert.equal(fs.readFileSync(path.join(f.lc.paths.dataDir, "memory.db"), "utf8"), "old database");
+});
