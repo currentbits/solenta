@@ -3960,6 +3960,18 @@ describe("Composer surrounds a selection with a bracket/quote/emphasis pair (#17
 });
 
 describe("Composer Ultracode mode", () => {
+  it("keeps effort, Fast and Ultracode available for a persisted CLI alias", async () => {
+    const h = makeHarness();
+    const claude: ProviderInfo = { ...CLAUDE_WITH_INFO, supportsUltracode: true, modelAliases: { sonnet: "gateway-model" }, models: ["gateway-model"], modelInfo: [{ id: "gateway-model", label: "Gateway", description: "", vendor: "", efforts: ["high", "xhigh"], fast: true }] };
+    const m = await mount(composer(h, { model: "sonnet", providers: [claude], reasoningEffort: null, onSetUltracode: () => {} }));
+    await m.click(m.query('button[aria-label^="Model:"]'));
+    assert.ok(m.query('[data-effort-chip="high"]'));
+    assert.equal(m.query('[data-effort-chip="max"]'), null);
+    assert.ok(m.query('[data-picker-fast] button'));
+    assert.ok(m.query('[aria-label="Ultracode"] button'));
+    assert.equal(h.efforts.length, 0, "opening the picker preserves Default effort");
+    m.unmount();
+  });
   it("shows requested xhigh separately, disables base effort, and restores base effort when off", async () => {
     for (const account of ["claude", "claude:work"]) {
     const h = makeHarness();

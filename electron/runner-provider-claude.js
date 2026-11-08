@@ -126,8 +126,13 @@ function createClaudeRun(ctx) {
    */
   async function startClaudeRun(threadId, prompt, runId, providerEntry) {
     if (abortIfCancelled(threadId, runId)) return { runId };
-    const entryDef = providerEntry || getProvider("claude");
     const stored = store.getThread(threadId);
+    const baseEntry = providerEntry || getProvider("claude");
+    const storedProject = store.getProject(stored.projectId);
+    // Cross-boundary launches use that computer's capabilities, never a
+    // catalog discovered through the local machine's account/configuration.
+    const entryDef = storedProject && !crossesBoundary(storedProject)
+      ? require("./claudeModels.js").forThread(baseEntry, store, stored, { userDataPath }) : baseEntry;
     // Plan-mode turns run on thread.planModel (#1716). Everything below reads
     // the turn's model from here: argv, the reuse key, usage fallback.
     const thread = { ...stored, ...turnModelFor(entryDef, stored) };
@@ -511,6 +516,7 @@ function createClaudeRun(ctx) {
       askReads,
       userHooks: userHookSettings,
       extraArgs: extraArgv,
+      modelCapabilities: entryDef,
     });
     // Claude runs interactively: prompt over stdin, permission prompts via
     // the control protocol. Other claude-stream providers (e.g. grok) keep
@@ -1054,7 +1060,7 @@ function createClaudeRun(ctx) {
           if (
             thread.fast === true &&
             ev.fast_mode_state === "off" &&
-            modelSupportsFast(getProvider("claude"), thread.model) &&
+            modelSupportsFast(entryDef, thread.model) &&
             !fastRefusedNoted.has(threadId)
           ) {
             fastRefusedNoted.add(threadId);
@@ -1091,7 +1097,7 @@ function createClaudeRun(ctx) {
         // assistant carrying error "model_not_found". When our catalog lists
         // that id, the likely fix is a newer CLI, so say that.
         if (type === "assistant" && ev.error === "model_not_found") {
-          const info = (getProvider("claude").modelInfo || []).find(
+          const info = (entryDef.modelInfo || []).find(
             (m) => m.id === thread.model,
           );
           if (info) {

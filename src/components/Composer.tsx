@@ -49,6 +49,7 @@ import {
   effortDisplayLabel,
   effortHint,
   effortsForModel,
+  modelInfoFor,
   favouriteKey,
   supportsImagesForModel,
   effortOptions,
@@ -1084,10 +1085,10 @@ export const Composer = memo(function Composer({
   const fastAvailable = Boolean(
     onSetFast &&
       currentProviderInfo?.available !== false &&
-      currentProviderInfo?.modelInfo?.find((m) => m.id === model)?.fast,
+      modelInfoFor(currentProviderInfo, model)?.fast,
   );
   const fastOn = fast && fastAvailable;
-  const ultracodeAvailable = Boolean(onSetUltracode && (currentProviderInfo?.baseProvider ?? currentProviderInfo?.id) === "claude" && (currentProviderInfo?.supportsUltracode === true || ultracode) && currentProviderInfo?.available !== false && currentProviderInfo?.modelInfo?.find((m) => m.id === model)?.efforts?.includes("xhigh"));
+  const ultracodeAvailable = Boolean(onSetUltracode && (currentProviderInfo?.baseProvider ?? currentProviderInfo?.id) === "claude" && (currentProviderInfo?.supportsUltracode === true || ultracode) && currentProviderInfo?.available !== false && modelInfoFor(currentProviderInfo, model)?.efforts?.includes("xhigh"));
   const honouredModes = providerPermissionModes(currentProviderInfo);
   const currentModeHonoured = permissionModeHonoured(
     permissionMode,

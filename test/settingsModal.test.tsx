@@ -3809,7 +3809,7 @@ describe("SettingsModal Providers › API keys and models (#1714)", () => {
     assert.deepEqual(m.queryAll("[data-model-row]").map((r) => r.getAttribute("data-model-row")), ["sonnet"]);
   });
 
-  it("models: Refresh without a key explains, with a key lists live", async () => {
+  it("models: installed Claude refreshes without an API key, and saved-key refresh still works", async () => {
     const fake = createFakeCoder({ fetchedModels: [{ id: "claude-live", label: "Live", contextTokens: 200000 }] });
     const shell = await mount(<div />);
     installFakeCoder(fake);
@@ -3817,7 +3817,9 @@ describe("SettingsModal Providers › API keys and models (#1714)", () => {
     const m = await mount(modal({ initialPane: "providers", providers: [CLAUDE], settings: { providerInstances: [] } as Partial<AppSettings> as AppSettings }));
     await m.click(m.query('[data-provider-row="claude"]'));
     await m.click(m.query("[data-models-refresh]"));
-    assert.match(m.query("[data-models-error]")?.textContent ?? "", /Add an API key/);
+    await m.flush();
+    assert.ok(m.query('[data-model-row="claude-live"]'), "CLI-only Claude login can refresh models");
+    assert.equal(m.query("[data-models-error]"), null);
     unmountAll();
 
     const overlay = { id: "claude", name: "Claude Code", provider: "claude", configDir: null, env: { ANTHROPIC_API_KEY: "k" } };
@@ -3829,9 +3831,33 @@ describe("SettingsModal Providers › API keys and models (#1714)", () => {
     assert.equal(m2.query('[data-model-row="opus"]'), null, "live replaces the catalog");
     assert.deepEqual(
       fake.calls.filter((c) => c.channel === "providers.fetchModels").map((c) => c.args[0]),
-      [{ provider: "claude" }],
-      "the renderer names the provider; main reads the key",
+      [{ provider: "claude" }, { provider: "claude" }],
+      "the renderer names the account; main owns its authentication",
     );
+  });
+
+  it("models: changing the same account's configuration clears live overrides and ignores its pending old reply", async () => {
+    const fake = createFakeCoder({ fetchedModels: [{ id: "old-gateway-model", label: "Old" }] });
+    const shell = await mount(<div />);
+    installFakeCoder(fake);
+    shell.unmount();
+    const settings = { providerInstances: [] } as Partial<AppSettings> as AppSettings;
+    const m = await mount(modal({ initialPane: "providers", providers: [CLAUDE], settings }));
+    await m.click(m.query('[data-provider-row="claude"]'));
+    await m.click(m.query("[data-models-refresh]"));
+    assert.ok(m.query('[data-model-row="old-gateway-model"]'));
+    let finishOld!: (rows: Array<{ id: string; label: string }>) => void;
+    fake.api.providers.fetchModels = () => new Promise((resolve) => { finishOld = resolve; });
+    await m.click(m.query("[data-models-refresh]"));
+    const changed = { ...settings, providerInstances: [{ id: "claude", name: "Claude Code", provider: "claude", configDir: null, env: { ANTHROPIC_BASE_URL: "https://new.invalid" } }] };
+    await m.rerender(modal({ initialPane: "providers", providers: [CLAUDE], settings: changed }));
+    assert.equal(m.query('[data-model-row="old-gateway-model"]'), null, "already displayed old configuration is cleared");
+    await inAct(() => finishOld([{ id: "stale-reply", label: "Stale" }]));
+    assert.equal(m.query('[data-model-row="stale-reply"]'), null);
+    fake.api.providers.fetchModels = async () => [{ id: "new-gateway-model", label: "New" }];
+    await m.click(m.query("[data-models-refresh]"));
+    assert.ok(m.query('[data-model-row="new-gateway-model"]'));
+    m.unmount();
   });
 
   it("models: saved favourites sort first", async () => {

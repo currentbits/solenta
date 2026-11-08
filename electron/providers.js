@@ -78,6 +78,7 @@ const { posixQuote } = require("./ssh.js");
  *   Codex: app-server thread/resume + turn/start take `model` per turn.
  * @property {string[]} models
  * @property {ModelInfo[]} modelInfo
+ * @property {Record<string, string>} [modelAliases] - installed Claude alias resolution
  * @property {Array<"low"|"medium"|"high"|"xhigh"|"max"|"ultra"|"ultracode">} efforts
  * @property {"env"} [effortVia] - efforts applied outside argv (kimi:
  *   kimiEffortEnv in kimi.js); absent means buildArgs emits the flag
@@ -100,6 +101,7 @@ const { posixQuote } = require("./ssh.js");
  *   permissionMode?: string,
  *   model?: string | null,
  *   reasoningEffort?: string | null,
+ *   modelCapabilities?: ProviderEntry,
  *   agent?: string | null,
  *   webSearch?: boolean,
  *   fast?: boolean,
@@ -166,7 +168,8 @@ function honouredEfforts(entry, modelId) {
     ? entry.efforts.slice()
     : [];
   if (!entry || modelId == null || modelId === "") return providerEfforts;
-  const info = (entry.modelInfo || []).find((m) => m.id === modelId);
+  const resolved = entry.modelAliases?.[modelId] || modelId;
+  const info = (entry.modelInfo || []).find((m) => m.id === resolved);
   if (info && Array.isArray(info.efforts)) return info.efforts.slice();
   return providerEfforts;
 }
@@ -231,7 +234,8 @@ async function remoteCliSupportsUltracode(project, binary, envExtra) {
 }
 
 function modelSupportsUltracode(entry, modelId) {
-  return entry?.id === "claude" && Boolean((entry.modelInfo || []).find((m) => m.id === modelId)?.efforts?.includes("xhigh"));
+  const resolved = entry?.modelAliases?.[modelId] || modelId;
+  return entry?.id === "claude" && Boolean((entry.modelInfo || []).find((m) => m.id === resolved)?.efforts?.includes("xhigh"));
 }
 
 /**
@@ -249,7 +253,8 @@ function modelSupportsFast(entry, modelId, opts) {
     const live = catalogDivergence.codexLiveFastIds(opts);
     if (live) return live.has(String(modelId));
   }
-  const info = (entry.modelInfo || []).find((m) => m.id === modelId);
+  const resolved = entry.modelAliases?.[modelId] || modelId;
+  const info = (entry.modelInfo || []).find((m) => m.id === resolved);
   return Boolean(info && info.fast);
 }
 
@@ -454,6 +459,7 @@ const PROVIDERS = [
       askReads,
       userHooks,
       extraArgs,
+      modelCapabilities,
     }) {
       // NO trailing prompt: the runner delivers it on stdin (stream-json
       // input), which is what lets the CLI route permission prompts to us
@@ -496,8 +502,8 @@ const PROVIDERS = [
       // Takes exactly one value; kept away from other values so it cannot
       // swallow them (variadic flags have bitten this project twice).
       maybeEmitEffort(
-        honouredEfforts(getProvider("claude"), model),
-        ultracode === true && ultracodeCli && modelSupportsUltracode(getProvider("claude"), model) ? "xhigh" : reasoningEffort,
+        honouredEfforts(modelCapabilities || getProvider("claude"), model),
+        ultracode === true && ultracodeCli && modelSupportsUltracode(modelCapabilities || getProvider("claude"), model) ? "xhigh" : reasoningEffort,
         (level) => {
           args.push("--effort", level);
         },
@@ -510,10 +516,10 @@ const PROVIDERS = [
       /** @type {Record<string, unknown>} */
       const settings = {};
       // Claude 2.1.219 session settings schema: this mode always runs at xhigh.
-      if (ultracode === true && ultracodeCli && modelSupportsUltracode(getProvider("claude"), model)) settings.ultracode = true;
+      if (ultracode === true && ultracodeCli && modelSupportsUltracode(modelCapabilities || getProvider("claude"), model)) settings.ultracode = true;
       // 2.1.283: init reports fast_mode_state; without this it is off with
       // sdk_opt_in_required. Account limits can still refuse (runner notes it).
-      if (fast === true && modelSupportsFast(getProvider("claude"), model)) {
+      if (fast === true && modelSupportsFast(modelCapabilities || getProvider("claude"), model)) {
         settings.fastMode = true;
       }
       // Ungranted folders: an ask rule routes every edit there to the

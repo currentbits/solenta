@@ -216,6 +216,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     projects,
     threads,
     providers,
+    threadProviders,
     workflows,
     selectedThreadId,
     selectThread,
@@ -1374,6 +1375,9 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   }, []);
 
   const handleModelPickerOpen = useCallback(() => {
+    void refreshProviders({ threadId: selectedThreadId });
+  }, [refreshProviders, selectedThreadId]);
+  const handleLocalProvidersRefresh = useCallback(() => {
     void refreshProviders();
   }, [refreshProviders]);
 
@@ -2540,7 +2544,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onEnsureFullHistory={ensureFullHistory}
         revealMessageId={revealMessageId}
         project={project}
-        providers={providers}
+        providers={threadProviders}
         agentProfiles={settings?.agentProfiles ?? EMPTY_AGENT_PROFILES}
         workflows={workflows}
         hasProjects={projects.length > 0}
@@ -2808,7 +2812,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         thread={visibleDetail?.thread ?? null}
         onRetryAgent={retryWorkflowAgent}
         usage={visibleDetail?.usage ?? null}
-        providers={providers}
+        providers={threadProviders}
         project={project}
         rosterKey={panelRosterKey}
         runQueueIds={runQueueIds}
@@ -2917,7 +2921,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
           settingsLoading={settingsLoading}
           onRetrySettings={retrySettings}
           providers={providers}
-          onRefreshProviders={handleModelPickerOpen}
+          onRefreshProviders={handleLocalProvidersRefresh}
           onProviderSignIn={handleProviderSignIn}
           status={appStatus}
           update={updateStatus}

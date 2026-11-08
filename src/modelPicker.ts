@@ -268,10 +268,7 @@ export function modelTriggerLabel(
 ): string {
   if (provider?.bestEffort) return provider.name;
   if (model == null || model === "") return "Default";
-  const infos = provider?.modelInfo;
-  const hit = Array.isArray(infos)
-    ? infos.find((m) => m.id === model)
-    : undefined;
+  const hit = modelInfoFor(provider, model);
   return hit ? hit.label : model;
 }
 
@@ -417,7 +414,7 @@ export function supportsImagesForModel(
   const hit =
     modelId == null || modelId === ""
       ? (infos.find((m) => m.recommended) ?? infos[0])
-      : infos.find((m) => m.id === modelId);
+      : modelInfoFor(provider, modelId);
   if (!hit || !Array.isArray(hit.inputModalities)) return true;
   return hit.inputModalities.includes("image");
 }
@@ -436,12 +433,16 @@ export function effortsForModel(
     ? provider.efforts.filter((level) => level !== "ultracode")
     : [];
   if (modelId == null || modelId === "") return providerEfforts;
-  const infos = provider.modelInfo;
-  const hit = Array.isArray(infos)
-    ? infos.find((m) => m.id === modelId)
-    : undefined;
+  const hit = modelInfoFor(provider, modelId);
   if (hit && Array.isArray(hit.efforts)) return hit.efforts.filter((level) => level !== "ultracode");
   return providerEfforts;
+}
+
+/** Stored CLI aliases use the canonical model's metadata without extra rows. */
+export function modelInfoFor(provider: ProviderInfo | undefined | null, modelId: string | null | undefined): ModelInfo | undefined {
+  if (!provider || !modelId) return undefined;
+  const id = provider.modelAliases?.[modelId] || modelId;
+  return provider.modelInfo?.find((model) => model.id === id);
 }
 
 /**

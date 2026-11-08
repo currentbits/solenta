@@ -18,6 +18,7 @@ import {
   effortDisplayLabel,
   effortHint,
   effortsForModel,
+  modelInfoFor,
   supportsImagesForModel,
   effortOptions,
   firstSelectableIndex,
@@ -30,6 +31,18 @@ import {
   showReasoningControl,
   stepHighlightIndex,
 } from "../src/modelPicker";
+
+describe("installed Claude model aliases (#1932)", () => {
+  it("uses canonical metadata for persisted aliases without adding duplicate suggestions", () => {
+    const p = provider({ models: ["gateway-model"], modelAliases: { sonnet: "gateway-model" }, modelInfo: [{ id: "gateway-model", label: "Gateway", description: "", vendor: "", efforts: ["high", "xhigh"], fast: true }] });
+    assert.deepEqual(effortsForModel(p, "sonnet"), ["high", "xhigh"]);
+    assert.equal(modelInfoFor(p, "sonnet")?.fast, true);
+    assert.equal(modelTriggerLabel("sonnet", p), "Gateway");
+    assert.deepEqual(buildModelRows(p).filter((row) => row.id === "gateway-model").map((row) => row.id), ["gateway-model"]);
+    assert.equal(buildModelRows(p).some((row) => row.id === "sonnet"), false);
+    assert.equal(effortOptions(effortsForModel(p, "sonnet"))[0], null, "Default remains explicit");
+  });
+});
 
 function provider(over: Partial<ProviderInfo> = {}): ProviderInfo {
   return {

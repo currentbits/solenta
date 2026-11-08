@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { BEST_EFFORT_NOTE } from "../../modelPicker";
 import { resolveCoderApi } from "../../coderApi";
 import type {
@@ -292,6 +292,7 @@ export function ProvidersPane({
         setError={setError}
         persistInstances={persistInstances}
         persistModels={(pref) => persistModels(selected.id, pref)}
+        onRefreshProviders={onRefreshProviders}
         onSignIn={onProviderSignIn ? signIn : undefined}
         onBack={() => {
           setError(null);
@@ -672,6 +673,7 @@ function ProviderDetail({
   setError,
   persistInstances,
   persistModels,
+  onRefreshProviders,
   onSignIn,
   onBack,
 }: {
@@ -682,6 +684,7 @@ function ProviderDetail({
   setError: (error: string | null) => void;
   persistInstances: (next: ProviderInstance[]) => Promise<boolean>;
   persistModels: (pref: ProviderModelPrefs) => Promise<void>;
+  onRefreshProviders?: () => void;
   onSignIn?: (id: string, opts?: Parameters<SignIn>[1]) => Promise<void>;
   onBack: () => void;
 }) {
@@ -690,6 +693,7 @@ function ProviderDetail({
   const fields = fieldsFor(p, inst);
   const keyed = hasKey(p, inst);
   const configured = isConfigured(p, inst);
+  const modelConfiguration = useMemo(() => ({}), [instances, p.defaultAccount]);
   const [keyOpen, setKeyOpen] = useState(keyed);
   const [pending, setPending] = useState(false);
   const [instanceDraft, setInstanceDraft] = useState<InstanceDraft | null>(null);
@@ -891,9 +895,11 @@ function ProviderDetail({
         <ModelsPanel
           provider={p}
           prefs={prefs}
-          canFetch={inst?.openaiCompatible != null || keyed}
+          canFetch={inst?.openaiCompatible != null || keyed || (baseId(p) === "claude" && p.available)}
           saving={saving}
           persistModels={persistModels}
+          onRefreshed={onRefreshProviders}
+          configuration={modelConfiguration}
         />
       )}
     </section>
@@ -1102,14 +1108,21 @@ function ModelsPanel({
   canFetch,
   saving,
   persistModels,
+  onRefreshed,
+  configuration,
 }: {
   provider: ProviderInfo;
   prefs: ProviderModelPrefs;
   canFetch: boolean;
   saving: boolean;
   persistModels: (pref: ProviderModelPrefs) => Promise<void>;
+  onRefreshed?: () => void;
+  configuration: object;
 }) {
-  const [live, setLive] = useState<FetchedModel[] | null>(null);
+  const [fetched, setFetched] = useState<{ configuration: object; models: FetchedModel[] } | null>(null);
+  const currentConfiguration = useRef(configuration);
+  currentConfiguration.current = configuration;
+  const live = fetched?.configuration === configuration ? fetched.models : null;
   const [loading, setLoading] = useState(false);
   const [error, setFetchError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
@@ -1143,21 +1156,26 @@ function ModelsPanel({
   const refresh = async () => {
     setFetchError(null);
     if (!canFetch) {
-      setLive(null);
+      setFetched(null);
       setFetchError("Add an API key to list models live. Showing the catalog.");
       return;
     }
     const api = resolveApi();
     if (!api) return;
     setLoading(true);
+    const requestedConfiguration = configuration;
     try {
-      setLive(await api.providers.fetchModels({ provider: p.id }));
+      const models = await api.providers.fetchModels({ provider: p.id });
+      if (currentConfiguration.current !== requestedConfiguration) return;
+      setFetched({ configuration: requestedConfiguration, models });
+      onRefreshed?.();
     } catch (err) {
-      setFetchError(errorText(err, "Could not list models"));
+      if (currentConfiguration.current === requestedConfiguration) setFetchError(errorText(err, "Could not list models"));
     } finally {
-      setLoading(false);
+      if (currentConfiguration.current === requestedConfiguration) setLoading(false);
     }
   };
+  useEffect(() => { setLoading(false); setFetchError(null); }, [configuration]);
 
   const toggleFav = (id: string) =>
     void persistModels({
@@ -1183,7 +1201,7 @@ function ModelsPanel({
           className={styles.iconBtn}
           data-models-refresh=""
           aria-label="Refresh models"
-          title={canFetch ? "List models from the provider's API" : "Needs an API key"}
+          title={canFetch ? "List available models" : "Needs an API key"}
           disabled={loading}
           onClick={() => void refresh()}
         >
@@ -1191,7 +1209,7 @@ function ModelsPanel({
             <path d="M21 12a9 9 0 1 1-2.6-6.4M21 4v5h-5" />
           </svg>
         </button>
-        <span className={styles.modelsSource}>{live ? "Live from the API" : "Catalog"}</span>
+        <span className={styles.modelsSource}>{live ? "Live models" : "Catalog"}</span>
         <span className={styles.spacer} />
         <button
           type="button"

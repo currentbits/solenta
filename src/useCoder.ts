@@ -205,6 +205,8 @@ export interface UseCoderResult {
   threads: ThreadInfo[];
   /** Provider registry loaded once at startup. */
   providers: ProviderInfo[];
+  /** Selected thread's computer/configuration; empty while its first catalog loads. */
+  threadProviders: ProviderInfo[];
   /** Workflow templates loaded at startup; refreshed after save/remove. */
   workflows: WorkflowTemplateInfo[];
   /** Scheduled automations; refreshed after add/update/remove/runNow. */
@@ -957,7 +959,7 @@ export interface UseCoderResult {
    * Pass `{ throwOnError: true }` to surface a list failure (onboarding
    * Recheck); the previous list is still kept.
    */
-  refreshProviders: (options?: { throwOnError?: boolean }) => Promise<void>;
+  refreshProviders: (options?: { throwOnError?: boolean; threadId?: string | null }) => Promise<void>;
   projectById: Map<string, ProjectInfo>;
   /** Thin memory passthroughs; callers hold list/search state locally. */
   searchMemory: (input: {
@@ -1087,6 +1089,8 @@ export function useCoder(): UseCoderResult {
   );
   const [trashedThreads, setTrashedThreads] = useState<TrashedThreadInfo[]>([]);
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
+  const [threadProviderCatalog, setThreadProviderCatalog] = useState<{ scope: string; rows: ProviderInfo[] } | null>(null);
+  const providerRefreshGen = useRef({ local: 0, thread: 0 });
   const [workflows, setWorkflows] = useState<WorkflowTemplateInfo[]>([]);
   const [workflowListError, setWorkflowListError] = useState<string | null>(
     null,
@@ -1098,6 +1102,13 @@ export function useCoder(): UseCoderResult {
     () => detachedId ?? bootSnapshot?.selectedThreadId ?? null,
   );
   const [detail, setDetail] = useState<ThreadDetail | null>(null);
+  const providerThread = threads.find((t) => t.id === selectedThreadId);
+  const providerScope = JSON.stringify([providerThread?.host?.key, providerThread?.projectId, providerThread?.provider, providerThread?.providerInstance]);
+  const providerScopeRef = useRef(providerScope);
+  providerScopeRef.current = providerScope;
+  const threadProviders = providerThread
+    ? threadProviderCatalog?.scope === providerScope ? threadProviderCatalog.rows : []
+    : providers;
   /** Last threads.get failure for the selected thread; retry bumps the nonce. */
   const [detailError, setDetailError] = useState<string | null>(null);
   const [detailRetryNonce, setDetailRetryNonce] = useState(0);
@@ -2107,9 +2118,18 @@ export function useCoder(): UseCoderResult {
   );
 
   const refreshProviders = useCallback(
-    async (options?: { throwOnError?: boolean }) => {
+    async (options?: { throwOnError?: boolean; threadId?: string | null }) => {
+      const target = options?.threadId ? threadsRef.current.find((t) => t.id === options.threadId) : null;
+      const destination = target ? "thread" : "local";
+      const request = ++providerRefreshGen.current[destination];
+      const scope = JSON.stringify([target?.host?.key, target?.projectId, target?.provider, target?.providerInstance]);
+      const beforeSettings = settingsRef.current;
       try {
-        setProviders(await api.providers.list());
+        const rows = await api.providers.list(target ? { threadId: target.id } : undefined);
+        if (request !== providerRefreshGen.current[destination] || settingsRef.current !== beforeSettings) return;
+        if (target) {
+          if (providerScopeRef.current === scope) setThreadProviderCatalog({ scope, rows });
+        } else setProviders(rows);
       } catch (err) {
         // Best-effort staleness fix; keep the boot list on failure.
         if (options?.throwOnError) throw err;
@@ -2117,6 +2137,10 @@ export function useCoder(): UseCoderResult {
     },
     [api],
   );
+
+  useEffect(() => {
+    if (providerThread) void refreshProviders({ threadId: providerThread.id });
+  }, [providerScope, settings, refreshProviders]);
 
   const listCheckpoints = useCallback(
     async (threadId: string) => {
@@ -2472,6 +2496,7 @@ export function useCoder(): UseCoderResult {
     projects,
     threads,
     providers,
+    threadProviders,
     workflows,
     workflowListError,
     automations,
