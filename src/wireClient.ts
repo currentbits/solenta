@@ -41,6 +41,7 @@ type Pending = {
 };
 
 const TRANSPORT_ERROR = "WebSocket disconnected";
+const UNCONFIRMED_SEND = "Connection lost before confirmation. Your message may have reached the computer. Check the thread before sending it again.";
 const QUEUE_FULL_ERROR = "Offline queue full, request dropped";
 const MAX_BACKOFF_MS = 30_000;
 const MIN_BACKOFF_MS = 1_000;
@@ -128,7 +129,8 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
 
   function rejectInflight(message: string): void {
     const err = new Error(message);
-    for (const p of inflight.values()) p.reject(err);
+    for (const p of inflight.values()) p.reject(message === TRANSPORT_ERROR && SEND_CHANNELS.has(p.channel)
+      ? new Error(UNCONFIRMED_SEND) : err);
     inflight.clear();
   }
 

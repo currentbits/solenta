@@ -350,4 +350,23 @@ describe("wireClient × webBridge over a real socket", () => {
       message.text === "finish while my laptop is away").length, 1);
     assert.ok(detail.messages.some((message) => message.role === "assistant"));
   });
+
+  it("lost run-start acknowledgement explains uncertainty and does not replay accepted work", async () => {
+    const api = makeClient();
+    const thread = services.listThreads(store)[0];
+    const start = runner.startRun;
+    runner.startRun = async (input) => {
+      const result = await start(input);
+      for (const socket of server.bridge.wss.clients) socket.terminate();
+      return result;
+    };
+    try {
+      await assert.rejects(api.runs.start({ threadId: thread.id, prompt: "accepted before reply loss" }), /may have reached.*Check the thread/);
+      await waitFor(() => store.getThread(thread.id).status === "done");
+      const returning = makeClient();
+      const detail = await returning.threads.get(thread.id);
+      assert.equal(detail.messages.filter((message) => message.role === "user" && message.text === "accepted before reply loss").length, 1);
+      assert.equal(detail.thread.status, "done");
+    } finally { runner.startRun = start; }
+  });
 });
