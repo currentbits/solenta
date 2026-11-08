@@ -119,17 +119,24 @@ describe("new thread: pick the computer it runs on (#1835)", () => {
     }
   });
 
-  it("renders worker approvals beside a started remote thread's computer label", async () => {
+  it("keeps remote parent worker approval routing while browsing CLI history", async () => {
     const fx = fixture();
     const worker = thread({ id: "remote-worker", title: "Remote worker", projectId: "rp", host: BOX, orchWorker: true, handoffFrom: "r-run", status: "working" });
     fx.threads.push(worker);
-    const fake = createFakeCoder(fx);
+    const fake = createFakeCoder({ ...fx, historyProjects: [{
+      path: "/history/repo", name: "History repo", lastActiveAt: NOW,
+      providers: ["codex"], sessions: 1, recentSessions: [],
+    }] });
+    const scopes: Parameters<CoderApi["threads"]["pendingApprovals"]>[0][] = [];
     const responses: Parameters<CoderApi["threads"]["respondPermission"]>[0][] = [];
     fake.api.threads.respondPermission = async (input) => { responses.push(input); };
-    fake.api.threads.pendingApprovals = async (input) => input?.threadId === worker.id ? [{
-      threadId: worker.id, projectId: worker.projectId, threadTitle: worker.title,
-      requestId: "worker-request", toolName: "Bash", summary: "Run tests", input: "{}", command: "npm test", provider: "claude", since: NOW,
-    }] : [];
+    fake.api.threads.pendingApprovals = async (input) => {
+      scopes.push(input);
+      return input?.threadId === worker.id ? [{
+        threadId: worker.id, projectId: worker.projectId, threadTitle: worker.title,
+        requestId: "worker-request", toolName: "Bash", summary: "Run tests", input: "{}", command: "npm test", provider: "claude", since: NOW,
+      }] : [];
+    };
     const m = await boot(fake);
     try {
       await select(m, "Remote worker");
@@ -137,8 +144,16 @@ describe("new thread: pick the computer it runs on (#1835)", () => {
       await m.flush();
       assert.match(m.query("[data-workspace-machine-label]")?.textContent || "", /Box ·/);
       assert.equal(m.query("[data-workspace-machine]"), null);
+      await m.click(m.query("[data-scope-trigger]"));
+      await m.click(m.query("[data-new-project]"));
+      await m.click(m.query("[data-add-project-mode-history]"));
+      assert.ok(m.query('[data-history-project="/history/repo"]'));
+      await m.click(m.query('[data-add-project-path-dialog] button[aria-label="Close"]'));
+      assert.equal(fake.of("projects.discoverHistory").length, 1);
+      assert.equal(fake.of("projects.add").length, 0);
+      assert.ok(scopes.some((scope) => scope?.threadId === worker.id && scope.onHost === BOX.key));
       const approval = m.query('[data-worker-request="worker-request"]');
-      assert.ok(approval, "child approval appears in remote parent transcript");
+      assert.ok(approval, "child approval stays in remote parent transcript after browsing history");
       await m.click([...approval.querySelectorAll("button")].find((el) => el.textContent?.trim() === "Accept")!);
       assert.equal(responses.length, 1);
       assert.equal(responses[0].threadId, worker.id);
