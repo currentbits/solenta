@@ -1,3 +1,5 @@
+import type { RemoteComputerDescriptor } from "./ipc";
+
 /**
  * Wire protocol for Solenta Web (Tier 3): the SAME CoderApi channel map that
  * preload.js exposes over Electron IPC, carried over one WebSocket.
@@ -29,12 +31,12 @@
 
 /** Client → server. */
 export type WireClientMessage =
-  | { kind: "auth"; token: string }
+  | { kind: "auth"; token: string; computerId?: string; protocol?: number }
   | { kind: "invoke"; id: number; channel: string; args: unknown[] };
 
 /** Server → client. */
 export type WireServerMessage =
-  | { kind: "auth-ok" }
+  | { kind: "auth-ok"; computer?: RemoteComputerDescriptor }
   | { kind: "reply"; id: number; result?: unknown; error?: string }
   | { kind: "push"; channel: string; payload: unknown };
 
