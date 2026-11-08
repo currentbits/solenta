@@ -4,7 +4,7 @@
  * Round 51: Solenta Web server (webBridge + webServer).
  *
  * Auth table, invoke vs real services, error-string parity, push fan-out,
- * static serve, token 0600, no-flag port probe.
+ * static serve, token 0600, no-flag import listener guard.
  */
 
 const { describe, it, beforeEach, afterEach } = require("node:test");
@@ -14,7 +14,7 @@ const os = require("node:os");
 const path = require("node:path");
 const http = require("node:http");
 const net = require("node:net");
-const { execFileSync } = require("node:child_process");
+const { execFileSync, spawnSync } = require("node:child_process");
 const Module = require("node:module");
 const { WebSocket } = require("ws");
 
@@ -474,26 +474,73 @@ describe("auth table + invoke + push (real socket)", () => {
   });
 });
 
-describe("no-flag → no listeners (port probe)", () => {
-  it("requiring the modules does not bind the default port", async () => {
-    const args = parseServeWebArgs(process.argv);
-    assert.equal(args.enabled, false, "this test process has no --serve-web");
-    assert.equal(DEFAULT_PORT, 4620);
-
-    await new Promise((resolve, reject) => {
-      const s = net.createServer();
-      s.once("error", (err) => {
-        reject(
-          new Error(
-            `default port ${DEFAULT_PORT} is already bound (no-flag must leave it free): ${err.message}`,
-          ),
-        );
-      });
-      s.listen(DEFAULT_PORT, "127.0.0.1", () => {
-        s.close(() => resolve());
-      });
-    });
+describe("no-flag → no listeners (isolated imports)", () => {
+  let tmp;
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), "solenta-no-listener-"));
   });
+  afterEach(() => fs.rmSync(tmp, { recursive: true, force: true }));
+
+  function probeImports(targets) {
+    const env = Object.fromEntries(Object.entries(process.env).filter(
+      ([key]) => !key.startsWith("CODER_") && key !== "NODE_OPTIONS",
+    ));
+    // Never let an imported dependency find the user's real settings.
+    Object.assign(env, {
+      HOME: tmp, USERPROFILE: tmp, APPDATA: tmp, LOCALAPPDATA: tmp,
+      XDG_CONFIG_HOME: tmp, XDG_DATA_HOME: tmp, XDG_CACHE_HOME: tmp,
+      CODER_GROK_MCP_DISABLE: "1", CODER_CURSOR_MCP_DISABLE: "1",
+      CODER_KIMI_MCP_PATH: path.join(tmp, "kimi-mcp.json"),
+    });
+    const result = spawnSync(process.execPath, [
+      path.join(__dirname, "support/no-listener-imports.cjs"), ...targets,
+    ], { encoding: "utf8", env, timeout: 10_000 });
+    assert.ifError(result.error);
+    assert.equal(result.signal, null, result.stderr);
+    return result;
+  }
+
+  it("requiring fresh web modules does not start listeners without --serve-web", () => {
+    const result = probeImports([
+      path.join(__dirname, "../webServer.js"),
+      path.join(__dirname, "../webBridge.js"),
+    ]);
+    assert.equal(result.status, 0, result.stderr);
+  });
+
+  it("ignores a foreign process occupying the default port", async () => {
+    // This parent is foreign to the import child. If a real app already owns
+    // the port, leave it alone; otherwise hold it for the duration of the probe.
+    const foreign = net.createServer();
+    try {
+      await new Promise((resolve, reject) => {
+        foreign.once("error", (err) => err.code === "EADDRINUSE" ? resolve() : reject(err));
+        foreign.listen(DEFAULT_PORT, DEFAULT_HOST, resolve);
+      });
+      const result = probeImports([
+        path.join(__dirname, "../webServer.js"),
+        path.join(__dirname, "../webBridge.js"),
+      ]);
+      assert.equal(result.status, 0, result.stderr);
+    } finally {
+      if (foreign.listening) await new Promise((resolve) => foreign.close(resolve));
+    }
+  });
+
+  for (const [name, source] of [
+    ["TCP", 'require("node:net").createServer().listen(0, "127.0.0.1");'],
+    ["HTTP", 'require("node:http").createServer().listen(0, "127.0.0.1");'],
+    ["deferred", 'setImmediate(() => require("node:net").createServer().listen(0));'],
+    ["caught", 'try { require("node:net").createServer().listen(4620); } catch {}'],
+  ]) {
+    it(`rejects a ${name} listener started by an imported module`, () => {
+      const target = path.join(tmp, "starts-listener.cjs");
+      fs.writeFileSync(target, source);
+      const result = probeImports([target]);
+      assert.equal(result.status, 1, result.stderr);
+      assert.match(result.stderr, /Unexpected listener creation/);
+    });
+  }
 });
 
 describe("one map, two transports + packaging", () => {
