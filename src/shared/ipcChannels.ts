@@ -57,6 +57,7 @@ export const IPC_CHANNELS = [
   { ns: "app", method: "openRemoteConnection" },
   { ns: "app", method: "forgetRemoteConnection" },
   { ns: "app", method: "installRemoteSolenta" },
+  { ns: "app", method: "manageRemoteServer" },
   { ns: "app", method: "setSidebarHosts" },
   { ns: "app", method: "answerSshPrompt" },
   { ns: "memory", method: "search" },

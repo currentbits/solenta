@@ -3714,6 +3714,21 @@ export interface RemoteConnectionResult {
   localVersion?: string;
 }
 
+export interface RemoteServerStatus {
+  mode: "managed" | "external";
+  manager: "systemd-user" | "launchd" | null;
+  installed: boolean;
+  running: boolean;
+  sessionLimit: string;
+  linger?: boolean;
+  logs?: string;
+}
+export interface RemoteServerAction {
+  host: string;
+  remotePort?: number;
+  action: "install" | "status" | "logs" | "start" | "stop" | "restart" | "uninstall";
+}
+
 export interface RemoteInstallResult {
   /** Release tag that was installed. */
   tag: string;
@@ -5867,6 +5882,7 @@ export interface CoderApi {
      * host, checked against the release's sha256. Linux x86_64 only.
      */
     installRemoteSolenta(input: { host: string }): Promise<RemoteInstallResult>;
+    manageRemoteServer(input: RemoteServerAction): Promise<RemoteServerStatus>;
     /**
      * Show these saved Connections' projects and threads in this window
      * (#1819). Replaces the previous set; resolves each host's state. Desktop only.

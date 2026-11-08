@@ -123,6 +123,7 @@ import type {
   ThreadSearchMessagesInput,
   ThreadSearchMessagesResult,
 } from "./shared/ipc";
+import { useComputerContext } from "./coder/computerContext";
 import { resolveCoderApi } from "./coderApi";
 import { isWebMode } from "./shared/wire";
 import { pushSidebarHosts } from "./remoteHosts";
@@ -205,6 +206,8 @@ export interface UseCoderResult {
   threads: ThreadInfo[];
   /** Provider registry loaded once at startup. */
   providers: ProviderInfo[];
+  computer: ReturnType<typeof useComputerContext>;
+  localProviders: ProviderInfo[];
   /** Workflow templates loaded at startup; refreshed after save/remove. */
   workflows: WorkflowTemplateInfo[];
   /** Scheduled automations; refreshed after add/update/remove/runNow. */
@@ -1829,6 +1832,10 @@ export function useCoder(): UseCoderResult {
     return projects[0]?.id ?? null;
   }, [selectedThreadId, threads, projects]);
 
+  const computerHost = threads.find(t => t.id === selectedThreadId)?.host
+    ?? projects.find(p => p.id === selectedProjectId)?.host;
+  const computer = useComputerContext(api, computerHost, settings, providers);
+
   const selectThread = useCallback((id: string | null) => {
     setSelectedThreadId(id);
   }, []);
@@ -1856,7 +1863,7 @@ export function useCoder(): UseCoderResult {
   } = useCoderRuns({
     api,
     projects,
-    settings,
+    settings: computer.settings,
     selectedProjectId,
     selectedThreadId,
     setSelectedThreadId,
@@ -2109,13 +2116,14 @@ export function useCoder(): UseCoderResult {
   const refreshProviders = useCallback(
     async (options?: { throwOnError?: boolean }) => {
       try {
+        if (computer.key) { computer.refresh(); return; }
         setProviders(await api.providers.list());
       } catch (err) {
         // Best-effort staleness fix; keep the boot list on failure.
         if (options?.throwOnError) throw err;
       }
     },
-    [api],
+    [api, computer.key, computer.refresh],
   );
 
   const listCheckpoints = useCallback(
@@ -2471,7 +2479,9 @@ export function useCoder(): UseCoderResult {
     api,
     projects,
     threads,
-    providers,
+    providers: computer.providers,
+    localProviders: providers,
+    computer,
     workflows,
     workflowListError,
     automations,

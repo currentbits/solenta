@@ -224,6 +224,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     projects,
     threads,
     providers,
+    computer,
+    localProviders,
     workflows,
     selectedThreadId,
     selectThread,
@@ -502,6 +504,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   const [changesOpen, setChangesOpen] = useState(false);
   const [changesNonce, setChangesNonce] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [editRemoteSettings, setEditRemoteSettings] = useState(false);
+  const agentSettings = computer.settings;
   const [settingsPane, setSettingsPane] = useState<SettingsPane | null>(null);
   // Bumped on every Settings close so the Skills tab (mounted behind the
   // modal the whole time) reloads instead of showing what it had before an
@@ -1790,17 +1794,17 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
    */
   const handleToggleModelFavorite = useCallback(
     (providerId: string, modelId: string) => {
-      if (settings == null) return;
-      const all = settings?.providerModels ?? {};
+      if (agentSettings == null) return;
+      const all = agentSettings?.providerModels ?? {};
       const pref = all[providerId] ?? { favorites: [], custom: [] };
       const favorites = pref.favorites.includes(modelId)
         ? pref.favorites.filter((f) => f !== modelId)
         : [...pref.favorites, modelId];
       const next = { ...all, [providerId]: { ...pref, favorites } };
       if (favorites.length === 0 && pref.custom.length === 0) delete next[providerId];
-      void saveSettings({ providerModels: next });
+      void (computer.key ? computer.save : saveSettings)({ providerModels: next });
     },
-    [settings, saveSettings],
+    [agentSettings, computer.key, computer.save, saveSettings],
   );
   const closeSignInShell = useCallback(() => {
     setSignInShell(null);
@@ -2509,7 +2513,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
               }
               quotaDemo={quotaDemo}
               providers={providers}
-              modelPrices={settings?.modelPrices}
+              modelPrices={agentSettings?.modelPrices}
               onSelectThread={handleSelectThread}
               existingThreadIds={
                 loading ? undefined : threads.map((t) => t.id)
@@ -2604,9 +2608,9 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
               // Stay on the board after a start (#207): the card moves to In
               // progress here, and the new thread is in the sidebar anyway.
               onStartTask={handleCreateThreadFromIssue}
-              agentProfiles={settings?.agentProfiles ?? EMPTY_AGENT_PROFILES}
+              agentProfiles={agentSettings?.agentProfiles ?? EMPTY_AGENT_PROFILES}
               defaultOrchestratorProfileId={
-                settings?.defaultOrchestratorProfileId ?? null
+                agentSettings?.defaultOrchestratorProfileId ?? null
               }
               providers={providers}
             />
@@ -2645,7 +2649,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         revealMessageId={revealMessageId}
         project={project}
         providers={providers}
-        agentProfiles={settings?.agentProfiles ?? EMPTY_AGENT_PROFILES}
+        agentProfiles={agentSettings?.agentProfiles ?? EMPTY_AGENT_PROFILES}
         workflows={workflows}
         hasProjects={projects.length > 0}
         onAddProject={handleAddProject}
@@ -2799,7 +2803,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onRevertHunk={revertHunk}
         onSuggestCommitMessage={suggestCommitMessage}
         onListFiles={listFiles}
-        promptSnippets={settings?.promptSnippets}
+        promptSnippets={agentSettings?.promptSnippets}
         mentionThreads={threads.map((t) => ({ id: t.id, title: t.title }))}
         onPickDirectory={pickDirectory}
         onListSnapWindows={listSnapWindows}
@@ -3015,26 +3019,35 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         <Suspense fallback={null}>
         {settingsLoaded && (
         <SettingsModal
+          key={editRemoteSettings ? computer.key : "local"}
           open={settingsOpen}
           onClose={closeSettings}
+          computer={computer.key ? {
+            label: computer.label, remote: editRemoteSettings,
+            onChange: setEditRemoteSettings,
+          } : undefined}
+          providerApi={editRemoteSettings && computer.key ? computer.api : api}
           initialPane={settingsPane}
-          settings={settings}
-          settingsError={settingsError}
-          settingsLoading={settingsLoading}
-          onRetrySettings={retrySettings}
-          providers={providers}
-          onRefreshProviders={handleModelPickerOpen}
-          onProviderSignIn={handleProviderSignIn}
+          settings={editRemoteSettings && computer.key ? computer.settings : settings}
+          settingsError={editRemoteSettings && computer.key ? computer.error : settingsError}
+          settingsLoading={editRemoteSettings && computer.key ? computer.loading : settingsLoading}
+          onRetrySettings={editRemoteSettings && computer.key ? async () => computer.refresh() : retrySettings}
+          providers={editRemoteSettings && computer.key ? computer.providers : localProviders}
+          onRefreshProviders={editRemoteSettings && computer.key ? computer.refresh : handleModelPickerOpen}
+          onProviderSignIn={editRemoteSettings && computer.key
+            ? (providerId, opts) => handleProviderSignIn(providerId, opts)
+            : (providerId, opts) => handleProviderSignIn(providerId, { ...opts, shell: true })}
           status={appStatus}
           update={updateStatus}
           onCheckUpdate={checkUpdate}
           onDownloadUpdate={downloadUpdate}
           onApplyUpdate={applyUpdate}
-          onSaveSettings={(patch) => saveSettings(patch)}
+          onSaveSettings={editRemoteSettings && computer.key ? computer.save : saveSettings}
           onTestWebhook={testWebhook}
           onShowOnboarding={showOnboarding}
           onOpenConnection={(input) => api.app.openRemoteConnection(input)}
           onForgetConnection={(input) => api.app.forgetRemoteConnection(input)}
+          onManageRemoteServer={(input) => api.app.manageRemoteServer(input)}
           onInstallSolenta={(input) => api.app.installRemoteSolenta(input)}
           onSidebarHosts={(hosts) => api.app.setSidebarHosts(hosts)}
           sidebarHosts={sidebarHosts}
@@ -3155,7 +3168,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
             globalProvider={settings?.defaultProvider ?? null}
             globalDefaultWorktree={settings?.defaultWorktree ?? false}
             globalDefaultMergeMethod={settings?.defaultMergeMethod ?? null}
-            agentProfiles={settings?.agentProfiles ?? EMPTY_AGENT_PROFILES}
+            agentProfiles={agentSettings?.agentProfiles ?? EMPTY_AGENT_PROFILES}
             onMoveConfigToRepo={() =>
               api.projects.moveConfigToRepo({ projectId: editProject.id })
             }

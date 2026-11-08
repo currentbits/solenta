@@ -137,6 +137,12 @@ module.exports = {
     if (!ctx.peerLinks) throw new Error("Linked computers are not available here.");
     return ctx.peerLinks.unlink(input);
   },
+  "app:manageRemoteServer": async (ctx, input) => {
+    if (ctx.transport !== "desktop" || !ctx.manageRemoteServer) {
+      throw new Error("Remote server management requires the desktop app.");
+    }
+    return ctx.manageRemoteServer(input);
+  },
   "app:installRemoteSolenta": async (ctx, input) => {
     if (ctx.transport !== "desktop" || !ctx.installRemoteSolenta) {
       throw new Error("Remote Connections require the desktop app.");

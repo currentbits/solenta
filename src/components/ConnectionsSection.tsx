@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { CoderApi, RemoteAgentInfo, RemoteHostInfo, RemoteInstallResult, SidebarHostStatus } from "../shared/ipc";
+import type { CoderApi, RemoteAgentInfo, RemoteHostInfo, RemoteInstallResult, RemoteServerStatus, SidebarHostStatus } from "../shared/ipc";
 import { accountLine } from "../providerAccounts";
 import { hostKeyOf, loadHosts, pushSidebarHosts, STORAGE_KEY, type SavedHost } from "../remoteHosts";
 import styles from "./SettingsModal.module.css";
@@ -11,7 +11,7 @@ type SetSidebarHosts = CoderApi["app"]["setSidebarHosts"];
 
 const STATUS_TEXT: Record<SidebarHostStatus["status"], string> = {
   connecting: "connecting…",
-  online: "in sidebar",
+  online: "connected",
   offline: "offline",
 };
 
@@ -21,8 +21,9 @@ function agentState(a: RemoteAgentInfo): string {
   if (a.auth === "signedIn") return accountLine(a) ?? "Ready";
   return "Installed";
 }
-export function ConnectionsSection({ onOpen, onForget, onInstall, onSidebarHosts, sidebarHosts = [] }: {
+export function ConnectionsSection({ onOpen, onForget, onInstall, onManage, onSidebarHosts, sidebarHosts = [] }: {
   onOpen?: OpenConnection;
+  onManage?: CoderApi["app"]["manageRemoteServer"];
   onForget?: ForgetConnection;
   onInstall?: InstallSolenta;
   onSidebarHosts?: SetSidebarHosts;
@@ -40,6 +41,8 @@ export function ConnectionsSection({ onOpen, onForget, onInstall, onSidebarHosts
   const [token, setToken] = useState("");
   const [remember, setRemember] = useState(true);
   const [inSidebar, setInSidebar] = useState(true);
+  const [serverStatus, setServerStatus] = useState<{ host: string; info: RemoteServerStatus } | null>(null);
+  const [allowLegacy, setAllowLegacy] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // What the last Connect learned about the other computer.
@@ -53,15 +56,29 @@ export function ConnectionsSection({ onOpen, onForget, onInstall, onSidebarHosts
     void pushSidebarHosts(onSidebarHosts, next);
   };
 
+  const manage = async (action: "status" | "install" | "start" | "logs") => {
+    if (!onManage || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const info = await onManage({ host: host.trim(), remotePort: Number(remotePort), action });
+      setServerStatus({ host: host.trim(), info });
+    } catch (err) { setError(err instanceof Error ? err.message : String(err)); }
+    finally { setBusy(false); }
+  };
+
   const connect = async () => {
     if (!onOpen || busy) return;
     setBusy(true);
     setError(null);
     setRemote(null);
     try {
+      const saved = hosts.find(h => h.id === selectedId) as (SavedHost & { computerId?: string }) | undefined;
+      const identity = { ...(saved?.computerId ? { computerId: saved.computerId } : {}), ...(allowLegacy ? { allowLegacy: true } : {}) };
       const result = await onOpen(mode === "address"
-        ? { host: "", url: url.trim(), label: label.trim(), token: token.trim(), remember }
+        ? { ...identity, host: "", url: url.trim(), label: label.trim(), token: token.trim(), remember }
         : {
+          ...identity,
           host: host.trim(),
           label: label.trim() || host.trim(),
           remotePort: Number(remotePort),
@@ -76,6 +93,8 @@ export function ConnectionsSection({ onOpen, onForget, onInstall, onSidebarHosts
         ...(result.url ? { url: result.url } : {}),
         tokenSaved: result.tokenSaved,
         inSidebar,
+        ...((result as typeof result & { computerId?: string }).computerId ? { computerId: (result as typeof result & { computerId?: string }).computerId } : {}),
+        ...((result as typeof result & { descriptor?: unknown }).descriptor ? { descriptor: (result as typeof result & { descriptor?: unknown }).descriptor } : {}),
       };
       saveHosts([profile, ...hosts.filter((item) => item.id !== profile.id)].slice(0, 30));
       setSelectedId(profile.id);
@@ -120,10 +139,9 @@ export function ConnectionsSection({ onOpen, onForget, onInstall, onSidebarHosts
   return (
     <section className={styles.section} data-connections="">
       <p className={styles.fieldNote}>
-        Work on another computer&apos;s Solenta from here. With Show in
-        sidebar on, its projects and threads appear in this window, and a
-        thread you start in one of its projects runs on that computer, even
-        with this one asleep. Connect also opens it in its own window.
+        Add a computer to work with its agents and projects from this window.
+        That computer owns its credentials, settings, files and running work.
+        Disconnecting this window leaves its work running. Connect also opens its own window.
       </p>
       {mode === "address" ? (
         <ol className={`${styles.fieldNote} ${styles.connectionSteps}`} data-connection-steps="address">
@@ -135,22 +153,14 @@ export function ConnectionsSection({ onOpen, onForget, onInstall, onSidebarHosts
           <li>Under Devices there, add a device with Full access and copy its link.</li>
           <li>
             Paste the link as the Address here and press Connect. That computer
-            has to keep Solenta open; nothing starts it from here.
+            must already run Solenta Web or the standalone server. An address connection does not install or start it.
           </li>
         </ol>
       ) : (
       <ol className={`${styles.fieldNote} ${styles.connectionSteps}`} data-connection-steps="">
-        <li>Install Solenta on that computer: the Mac app, or the Linux tarball in ~/solenta.</li>
-        <li>
-          Turn on SSH there: Remote Login on a Mac, sshd on Linux. Solenta asks
-          for a password, or to trust a computer it has not seen before, right
-          here.
-        </li>
-        <li>
-          Enter the SSH host and press Connect. Solenta starts there if it is
-          not running (without a window on a Linux server) and its token is
-          read over SSH, so leave Token blank.
-        </li>
+        <li>Enable SSH on the other computer: Remote Login on a Mac, or sshd on Linux.</li>
+        <li>Enter its SSH host or alias and check the computer. Prepare server installs the standalone Node runtime on supported Mac and Linux hosts; it needs no desktop app.</li>
+        <li>Connect, then choose that computer in Settings to configure its providers and profiles. Install Git and agent CLIs there, and sign in there before running work.</li>
       </ol>
       )}
       {hosts.map((item) => {
@@ -181,7 +191,12 @@ export function ConnectionsSection({ onOpen, onForget, onInstall, onSidebarHosts
             setRemember(true);
             setInSidebar(item.inSidebar === true);
             setError(null);
+            setRemote(null);
+            setServerStatus(null);
+            setAllowLegacy(false);
           }}>Use</button>
+          {item.inSidebar && <button type="button" className={styles.btn} onClick={() => saveHosts(hosts.map(other => other.id === item.id ? { ...other, inSidebar: false } : other))}>Disconnect</button>}
+          {item.inSidebar && live?.status === "offline" && <button type="button" className={styles.btn} onClick={() => void pushSidebarHosts(onSidebarHosts, hosts)}>Retry</button>}
           <button type="button" className={styles.btn} aria-label={`Forget ${item.label}`} onClick={() => {
             void (async () => {
               try {
@@ -245,18 +260,37 @@ export function ConnectionsSection({ onOpen, onForget, onInstall, onSidebarHosts
         <input type="checkbox" data-connection-in-sidebar="" checked={inSidebar} onChange={(e) => setInSidebar(e.target.checked)} />
         <span>Show its projects and threads in this window&apos;s sidebar</span>
       </label>
+      <p className={styles.fieldNote}>Saved tokens stay encrypted on this computer. Forget removes the saved route and token; it does not stop or uninstall the remote server.</p>
+      <label className={styles.fieldRow}>
+        <input type="checkbox" data-connection-legacy="" checked={allowLegacy} onChange={e => setAllowLegacy(e.target.checked)} />
+        <span>Allow an older server without computer identity (only for an unbound route I trust)</span>
+      </label>
+      {mode === "ssh" && onManage && <div className={styles.fieldRow}>
+        <button type="button" className={styles.btn} data-connection-check="" disabled={busy || !host.trim()} onClick={() => void manage("status")}>Check computer</button>
+        <button type="button" className={styles.btn} data-connection-prepare="" disabled={busy || !host.trim()} onClick={() => void manage("install")}>Prepare server</button>
+      </div>}
+      {serverStatus && serverStatus.host === host.trim() && mode === "ssh" && <div className={styles.fieldNote} data-connection-server-status="">
+        <p>{serverStatus.host}: {serverStatus.info.installed ? "Installed" : "Not installed"}, {serverStatus.info.running ? "running" : "stopped"}. {serverStatus.info.mode} server{serverStatus.info.manager ? ` (${serverStatus.info.manager})` : ""}.</p>
+        <p>{serverStatus.info.sessionLimit}</p>
+        {serverStatus.info.linger != null && <p>Linux linger: {serverStatus.info.linger ? "enabled" : "disabled"}.</p>}
+        {serverStatus.info.mode === "managed" && serverStatus.info.installed && <div className={styles.fieldRow}>
+          {!serverStatus.info.running && <button className={styles.btn} type="button" disabled={busy} onClick={() => void manage("start")}>Start server</button>}
+          <button className={styles.btn} type="button" disabled={busy} onClick={() => void manage("logs")}>Recent logs</button>
+        </div>}
+        {serverStatus.info.logs && <pre>{serverStatus.info.logs}</pre>}
+      </div>}
       {error && <p className={styles.fieldError} role="alert">{error}</p>}
       {notInstalled && onInstall ? (
         <div className={styles.fieldRow}>
           <button type="button" data-connection-install="" className={styles.btn} disabled={installing} onClick={() => void install(host.trim())}>
             {installing ? "Installing…" : `Install Solenta on ${host.trim()}`}
           </button>
-          <span className={styles.fieldNote}>Linux: downloads this version into ~/solenta there, checked against the release checksum.</span>
+          <span className={styles.fieldNote}>Checks the runtime and installs the matching release, verified against its checksum.</span>
         </div>
       ) : null}
       {installed ? (
         <div className={styles.fieldNote} data-connection-installed="">
-          <p>Installed Solenta {installed.tag} in ~/solenta on {installed.host}.</p>
+          <p>Installed Solenta {installed.tag} on {installed.host}.</p>
           {installed.missingLibraries.length > 0 ? (
             <p data-connection-missing-libs="">
               It is missing libraries it needs ({installed.missingLibraries.join(", ")}).
@@ -281,6 +315,7 @@ export function ConnectionsSection({ onOpen, onForget, onInstall, onSidebarHosts
               <p>Update it on that computer from Settings there.</p>
             )
           ) : null}
+          <p>Route: {mode === "address" ? url : `SSH ${remote.host}:${remotePort}`}. Credentials and settings belong to this computer.</p>
           <p>Agents on {remote.host}:</p>
           <ul className={styles.connectionSteps} data-connection-agents="">
             {remote.info.agents.map((a) => (
@@ -290,7 +325,7 @@ export function ConnectionsSection({ onOpen, onForget, onInstall, onSidebarHosts
             ))}
           </ul>
           {remote.info.agents.some((a) => a.available && a.auth === "signedOut") ? (
-            <p>To sign in, open Settings &gt; Agents in its window. The sign-in runs on that computer.</p>
+            <p>To install or sign in, open Settings &gt; Providers in its window. The sign-in runs on that computer.</p>
           ) : null}
         </div>
       ) : null}
@@ -308,7 +343,7 @@ export function ConnectionsSection({ onOpen, onForget, onInstall, onSidebarHosts
           setRemember(true);
           setInSidebar(true);
           setError(null);
-        }}>New host</button>
+        }}>Add computer</button>
       </div>
     </section>
   );
