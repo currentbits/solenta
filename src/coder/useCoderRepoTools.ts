@@ -8,6 +8,7 @@ import type {
   ProjectInfo,
 } from "../shared/ipc";
 import type { TerminalApi } from "../components/TerminalPane";
+import { subscribeConnectionRecovery } from "../connectionRecovery";
 
 /** Git sync, dev servers, merge lanes and the terminal bridge. */
 export function useCoderRepoTools({
@@ -159,6 +160,7 @@ export function useCoderRepoTools({
     () => ({
       ...api.terminal,
       onData: (cb) => api.on("terminal:data", cb),
+      onReconnect: (cb) => subscribeConnectionRecovery(api, cb),
     }),
     [api],
   );

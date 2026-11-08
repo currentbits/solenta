@@ -381,6 +381,31 @@ describe("createWireCoder offline queue", () => {
 });
 
 describe("createWireCoder reconnect", () => {
+  it("ignores late frames and close events from a superseded socket", async () => {
+    const retries: Array<() => void> = [];
+    const { api, ws: old } = connect({
+      setTimeout: (fn, ms) => { if (ms <= 30_000) retries.push(fn); return 0; },
+    });
+    authOk(old);
+    const pushes: unknown[] = [];
+    api.on("threads:changed", (rows) => pushes.push(rows));
+    old.close();
+    retries.shift()!();
+    const current = lastSocket();
+    current.open();
+    authOk(current);
+    const pending = api.threads.get("new-thread");
+    old.deliver({ kind: "push", channel: "threads:changed", payload: [{ id: "stale" }] });
+    old.deliver({ kind: "auth-ok" });
+    old.close();
+    assert.deepEqual(pushes, []);
+    const request = current.sent.find((msg) => msg.kind === "invoke" && msg.channel === "threads:get");
+    assert.ok(request && request.kind === "invoke");
+    current.deliver({ kind: "reply", id: request.id, result: { thread: { id: "new-thread" } } });
+    assert.deepEqual(await pending, { thread: { id: "new-thread" } });
+    assert.equal(retries.length, 0, "a stale close cannot schedule a competing reconnect");
+  });
+
   it("backs off, re-auths, re-invokes threads:list, and synthesizes threads:changed", async () => {
     const delays: number[] = [];
     const queued: Array<() => void> = [];

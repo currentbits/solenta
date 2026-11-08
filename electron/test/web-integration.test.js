@@ -334,4 +334,20 @@ describe("wireClient × webBridge over a real socket", () => {
     const again = await api.threads.list();
     assert.deepEqual(again, services.listThreads(store));
   });
+
+  it("a disconnected client leaves its host-owned run executing and reconnects to one result", async () => {
+    const api = makeClient();
+    const thread = services.listThreads(store)[0];
+    const { runId } = await api.runs.start({ threadId: thread.id, prompt: "finish while my laptop is away" });
+    assert.ok(runId);
+    for (const socket of server.bridge.wss.clients) socket.close();
+    await waitFor(() => store.getThread(thread.id).status === "done");
+    const returning = makeClient();
+    const detail = await returning.threads.get(thread.id);
+    assert.equal(detail.thread.status, "done");
+    assert.equal(detail.thread.id, thread.id);
+    assert.equal(detail.messages.filter((message) => message.role === "user" &&
+      message.text === "finish while my laptop is away").length, 1);
+    assert.ok(detail.messages.some((message) => message.role === "assistant"));
+  });
 });

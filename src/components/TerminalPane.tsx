@@ -12,6 +12,8 @@ const FIX_TAIL_CHARS = 16_000;
 
 export type TerminalApi = CoderApi["terminal"] & {
   onData: (cb: (push: TerminalDataPush) => void) => () => void;
+  /** Restored transport: re-read output and exit state, even with no new push. */
+  onReconnect?: (cb: () => void) => () => void;
 };
 
 /** The slice of xterm.js the pane drives. Tests pass a fake (jsdom has no layout). */
@@ -200,6 +202,8 @@ function TerminalView({
     // Absolute offset into the session's output; -1 until open() lands.
     let cursor = -1;
     let reading = false;
+    let readAgain = false;
+    let pushRevision = 0;
     const subs: { dispose(): void }[] = [];
     setSession(null);
     setFailed(false);
@@ -212,7 +216,7 @@ function TerminalView({
         term.write(s.text);
       } else if (s.cursor > cursor) {
         term.write(s.text.slice(Math.max(0, s.text.length - (s.cursor - cursor))));
-      } else {
+      } else if (s.cursor < cursor) {
         return;
       }
       cursor = s.cursor;
@@ -223,19 +227,36 @@ function TerminalView({
     // A push past our cursor means one was missed (e.g. while open() was in
     // flight); the main process still has it, so re-read from the cursor.
     const resync = () => {
-      if (reading) return;
+      if (!live) return;
+      if (reading || cursor < 0 || !term) { readAgain = true; return; }
       reading = true;
+      readAgain = false;
+      const since = cursor;
+      const revision = pushRevision;
       void api
-        .read({ threadId, termId, since: cursor })
-        .then(apply)
+        .read({ threadId, termId, since })
+        .then((s) => {
+          if (!live) return;
+          // A reply captured before a newer push must not rewind the screen.
+          if ((s.reset && cursor !== since && s.cursor < cursor) ||
+            (pushRevision !== revision && s.cursor <= cursor)) { readAgain = true; return; }
+          apply(s);
+        })
         .catch(() => {})
         .finally(() => {
           reading = false;
+          if (live && readAgain) resync();
         });
     };
+    const offReconnect = api.onReconnect?.(() => {
+      resync();
+      if (term) safeFit(term);
+    });
 
     const offPush = api.onData((p) => {
-      if (!live || p.threadId !== threadId || p.termId !== termId || cursor < 0) return;
+      if (!live || p.threadId !== threadId || p.termId !== termId) return;
+      pushRevision++;
+      if (cursor < 0) { readAgain = true; return; }
       setRunning(p.running);
       if (p.cursor <= cursor || !term) return;
       if (p.from > cursor) return resync();
@@ -275,6 +296,7 @@ function TerminalView({
         );
         return api.open({ threadId, termId, cols: t.cols, rows: t.rows }).then((s) => {
           apply({ ...s, reset: true });
+          if (readAgain) resync();
           if (live) t.focus();
         });
       })
@@ -299,6 +321,7 @@ function TerminalView({
     return () => {
       live = false;
       offPush();
+      offReconnect?.();
       ro?.disconnect();
       themeWatch.disconnect();
       cancelAnimationFrame(frame);

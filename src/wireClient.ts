@@ -225,9 +225,11 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
     socket = ws;
     ready = false;
     ws.onopen = () => {
+      if (socket !== ws) return;
       send({ kind: "auth", token: opts.token });
     };
     ws.onmessage = (ev: MessageEvent) => {
+      if (socket !== ws) return;
       const data = typeof ev.data === "string" ? ev.data : String(ev.data);
       handleMessage(data);
     };
@@ -236,7 +238,9 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
     // listener — same close path either way, so swallow here.
     ws.onerror = () => {};
     ws.onclose = (ev?: CloseEvent) => {
+      if (socket !== ws) return;
       ready = false;
+      resyncId = null;
       rejectInflight(TRANSPORT_ERROR);
       const code = ev && typeof ev.code === "number" ? ev.code : 0;
       // A wrong or revoked token will not heal by retrying: stop, and let
@@ -285,4 +289,3 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
     on: on as CoderApi["on"],
   };
 }
-
