@@ -59,7 +59,7 @@ async function runStats(opts) {
       const from = i === 0 ? `${cp.sha}^` : oldestFirst[i - 1].sha;
       const diff = await gitTryAsync(
         cwd,
-        ["diff", "--shortstat", from, cp.sha],
+        ["diff", "--no-relative", "--shortstat", from, cp.sha],
         { raw: true },
       );
       if (!diff.ok) continue;
@@ -156,17 +156,17 @@ async function turnDiff(opts) {
 
     const nameStatus = await gitTryAsync(
       cwd,
-      ["diff", "--name-status", from, to, "--"],
+      ["diff", "--no-relative", "--name-status", from, to, "--"],
       { raw: true },
     );
     const numstat = await gitTryAsync(
       cwd,
-      ["diff", "--numstat", from, to, "--"],
+      ["diff", "--no-relative", "--numstat", from, to, "--"],
       { raw: true },
     );
     const patchResult = await gitTryAsync(
       cwd,
-      ["diff", from, to, "--"],
+      ["diff", "--no-relative", from, to, "--"],
       { raw: true },
     );
 
