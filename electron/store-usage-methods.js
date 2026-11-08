@@ -1,6 +1,37 @@
 "use strict";
 
-const { localDayKey, coerceFiniteNumber, coerceUsageCell } = require("./store-util.js");
+const { localDayKey, coerceFiniteNumber, coerceUsageCell, unpricedUsage } = require("./store-util.js");
+
+/** Track only measurements not covered by a provider USD report (including zero). */
+function addUnpriced(prev, delta, force = false, legacyCovered = false) {
+  const tokens = unpricedUsage(legacyCovered && !prev.unpricedTokens ? { costUsd: 1 } : prev);
+  // Homogeneous legacy-shaped cells need no extra storage. Materialize the
+  // split when coverage changes, or zero USD must explicitly cover tokens.
+  if (!force && !prev.unpricedTokens && delta.costReported !== true &&
+      ((!(prev.costUsd > 0) && !Object.keys(tokens).some(field => prev[field] > 0)) || (prev.costUsd > 0) === (delta.costUsd > 0))) return undefined;
+  if (delta.costReported !== true && !(delta.costUsd > 0)) {
+    for (const field of Object.keys(tokens)) tokens[field] += coerceFiniteNumber(delta[field]);
+  }
+  return tokens;
+}
+
+/** Keep original deltas separate from last-seen thread labels. */
+function threadAttribution(row, provider, model, delta, legacyDayReported = false) {
+  const byProviderModel = { ...(row && row.byProviderModel) };
+  const models = { ...byProviderModel[provider] };
+  const cell = coerceUsageCell(models[model]);
+  const measuredUnreported = delta.turns !== undefined && !(delta.costUsd > 0) &&
+    [delta.inputTokens, delta.cachedInputTokens, delta.cacheWriteTokens, delta.outputTokens].some(value => value > 0);
+  const unpricedTokens = addUnpriced(cell, delta, measuredUnreported, legacyDayReported);
+  for (const key of Object.keys(cell)) if (key !== "unpricedTokens") cell[key] += delta[key] || 0;
+  if (unpricedTokens) cell.unpricedTokens = unpricedTokens;
+  models[model] = cell;
+  byProviderModel[provider] = models;
+  // Old thread totals have no trustworthy split. Keep them without guessing
+  // from the last-seen model, including when the next turn changes provider.
+  const unattributed = row && (row.unattributed || (!row.byProviderModel && coerceUsageCell(row)));
+  return { byProviderModel, ...(unattributed ? { unattributed } : {}) };
+}
 
 /** Store usage/spend ledger methods; store.js copies them onto Store.prototype. */
 class StoreUsageMethods {
@@ -64,8 +95,9 @@ class StoreUsageMethods {
    * all; dropping those turns hid the provider (#556). Simulate is ignored
    * so fixture runs do not pollute the ledger.
    * When threadId is a non-empty string, the same numbers accumulate into
-   * usageThreadsByDay; project/title/provider/model are last-seen labels.
-   * @param {{ provider?: unknown, model?: unknown, costUsd?: unknown, inputTokens?: unknown, cachedInputTokens?: unknown, cacheWriteTokens?: unknown, outputTokens?: unknown, threadId?: unknown, projectId?: unknown, projectName?: unknown, title?: unknown }} input
+   * usageThreadsByDay, with original provider/model buckets retained.
+   * Project/title/provider/model remain last-seen display labels.
+   * @param {{ provider?: unknown, model?: unknown, costUsd?: unknown, costReported?: boolean, turns?: number, inputTokens?: unknown, cachedInputTokens?: unknown, cacheWriteTokens?: unknown, outputTokens?: unknown, threadId?: unknown, projectId?: unknown, projectName?: unknown, title?: unknown }} input
    * @param {Date} [now] - injectable clock for tests
    */
   recordUsage(input, now = new Date()) {
@@ -77,6 +109,8 @@ class StoreUsageMethods {
     const cachedInputTokens = coerceFiniteNumber(input && input.cachedInputTokens);
     const cacheWriteTokens = coerceFiniteNumber(input && input.cacheWriteTokens);
     const outputTokens = coerceFiniteNumber(input && input.outputTokens);
+    const turns = input?.turns === undefined ? 1 : input.turns;
+    if (!Number.isSafeInteger(turns) || turns < 0) throw new Error("Usage turns must be a non-negative integer");
     if (!this.data.usageByDay || typeof this.data.usageByDay !== "object") {
       this.data.usageByDay = {};
     }
@@ -87,16 +121,18 @@ class StoreUsageMethods {
     const providerMap = dayMap[provider] && typeof dayMap[provider] === "object"
       ? dayMap[provider]
       : (dayMap[provider] = {});
-    const model = (input && input.model) || "unknown";
+    const model = typeof input.model === "string" && input.model ? input.model : "unknown";
     const prev = coerceUsageCell(providerMap[model]);
+    const unpricedTokens = addUnpriced(prev, input);
     providerMap[model] = {
       ...prev,
+      ...(unpricedTokens ? { unpricedTokens } : {}),
       costUsd: prev.costUsd + costUsd,
       inputTokens: prev.inputTokens + inputTokens,
       cachedInputTokens: prev.cachedInputTokens + cachedInputTokens,
       cacheWriteTokens: prev.cacheWriteTokens + cacheWriteTokens,
       outputTokens: prev.outputTokens + outputTokens,
-      turns: prev.turns + 1,
+      turns: prev.turns + turns,
     };
 
     const threadId =
@@ -120,14 +156,20 @@ class StoreUsageMethods {
           ? this.data.usageThreadsByDay[day]
           : (this.data.usageThreadsByDay[day] = {});
       const prevThread = coerceUsageCell(threadsDay[threadId]);
+      const threadUnpricedTokens = addUnpriced(prevThread, input,
+        !(costUsd > 0) && (inputTokens + cachedInputTokens + cacheWriteTokens + outputTokens > 0), prev.costUsd > 0);
       threadsDay[threadId] = {
         ...prevThread,
+        ...threadAttribution(threadsDay[threadId], provider, model, {
+          costUsd, inputTokens, cachedInputTokens, cacheWriteTokens, outputTokens, turns, costReported: input.costReported,
+        }, prev.costUsd > 0),
+        ...(threadUnpricedTokens ? { unpricedTokens: threadUnpricedTokens } : {}),
         costUsd: prevThread.costUsd + costUsd,
         inputTokens: prevThread.inputTokens + inputTokens,
         cachedInputTokens: prevThread.cachedInputTokens + cachedInputTokens,
         cacheWriteTokens: prevThread.cacheWriteTokens + cacheWriteTokens,
         outputTokens: prevThread.outputTokens + outputTokens,
-        turns: prevThread.turns + 1,
+        turns: prevThread.turns + turns,
         projectId: typeof input.projectId === "string" ? input.projectId : "",
         projectName: typeof input.projectName === "string" ? input.projectName : "",
         title: typeof input.title === "string" ? input.title : "",
@@ -160,7 +202,7 @@ class StoreUsageMethods {
     const providerMap = dayMap[provider] && typeof dayMap[provider] === "object"
       ? dayMap[provider]
       : (dayMap[provider] = {});
-    const model = (input && input.model) || "unknown";
+    const model = typeof input.model === "string" && input.model ? input.model : "unknown";
     const prev = coerceUsageCell(providerMap[model]);
     providerMap[model] = {
       ...prev,
@@ -192,6 +234,7 @@ class StoreUsageMethods {
         (typeof fromInput === "string" ? fromInput : "");
       threadsDay[threadId] = {
         ...prevThread,
+        ...threadAttribution(prevRow, provider, model, { wastedUsd: costUsd }),
         wastedUsd: prevThread.wastedUsd + costUsd,
         projectId: label(prevRow && prevRow.projectId, input.projectId),
         projectName: label(prevRow && prevRow.projectName, input.projectName),

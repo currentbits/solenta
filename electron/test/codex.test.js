@@ -739,6 +739,165 @@ describe("runner codex provider", () => {
     assert.equal(store.getSpendToday(), 7);
   });
 
+  it("reconciles live cumulative totals, duplicate updates and replay after restart", async () => {
+    const { notificationToJsonl } = require("../codex-appserver.js");
+    const thread = store.getThreads()[0];
+    let dispatch;
+    const makeRunner = () => createRunner({ store, core, pushFn() {},
+      runCodexFn(opts) { dispatch = opts; return { kill() {} }; },
+    });
+    runner.stopAll();
+    runner = makeRunner();
+    const update = (turnId, total, last) => dispatch.onEvent(notificationToJsonl({
+      method: "thread/tokenUsage/updated", params: { threadId: "usage-session", turnId,
+        tokenUsage: { total: { inputTokens: total, outputTokens: total / 10 },
+          last: { inputTokens: last, outputTokens: last / 10 }, modelContextWindow: 1000 } },
+    }));
+    await runner.startRun({ threadId: thread.id, prompt: "first" });
+    dispatch.onEvent({ type: "thread.started", thread_id: "usage-session" });
+    update("turn-1", 100, 100);
+    update("turn-1", 100, 100);
+    assert.equal(store.getUsage(thread.id).inputTokens, 100, "duplicate snapshot is not another request");
+    // A missing notification is recovered by the next cumulative total.
+    update("turn-2", 300, 100);
+    assert.equal(store.getUsage(thread.id).inputTokens, 300);
+    assert.equal(store.getUsage(thread.id).contextTokens, 110, "context uses last request, not total spend");
+    dispatch.onExit({ code: 1, stderr: "interrupted" });
+    store.saveNow();
+    runner.stopAll();
+    store = new Store(path.join(tmpDir, "store.json"));
+    runner = makeRunner();
+    await runner.startRun({ threadId: thread.id, prompt: "resume" });
+    update("turn-1", 100, 100);
+    update("turn-3", 400, 100);
+    assert.equal(store.getUsage(thread.id).inputTokens, 400, "replay cannot rewind the persisted baseline");
+    assert.equal(store.getUsage(thread.id).accounting.status, "partial", "backwards totals retain explicit uncertainty");
+    assert.equal(Object.values(store.data.usageThreadsByDay)[0][thread.id].inputTokens, 400);
+    dispatch.onExit({ code: 0, stderr: "" });
+    store.saveNow();
+    assert.equal(new Store(path.join(tmpDir, "store.json")).getUsage(thread.id).accounting.status, "partial");
+  });
+
+  it("records Codex cache reads once at their own price and keeps reasoning inside output", async () => {
+    const { notificationToJsonl } = require("../codex-appserver.js");
+    const { priceCell } = require("../modelPrices.js");
+    const thread = store.getThreads()[0];
+    let dispatch;
+    runner.stopAll();
+    runner = createRunner({ store, core, pushFn() {},
+      runCodexFn(opts) { dispatch = opts; return { kill() {} }; },
+    });
+    await runner.startRun({ threadId: thread.id, prompt: "cached" });
+    dispatch.onEvent({ type: "thread.started", thread_id: "cache-session" });
+    const notify = (inputTokens, cachedInputTokens, outputTokens, reasoningOutputTokens) => dispatch.onEvent(notificationToJsonl({
+      method: "thread/tokenUsage/updated", params: { threadId: "cache-session", turnId: "turn-cache",
+        tokenUsage: { total: { inputTokens, cachedInputTokens, outputTokens, reasoningOutputTokens },
+          last: { inputTokens: 100, cachedInputTokens: 80, outputTokens: 10, reasoningOutputTokens: 4 } } },
+    }));
+    notify(100, 80, 10, 4);
+    notify(200, 160, 20, 8);
+    notify(200, 160, 20, 8);
+    const session = store.getUsage(thread.id);
+    assert.equal(session.inputTokens, 200);
+    assert.equal(session.cachedInputTokens, 160);
+    assert.equal(session.outputTokens, 20);
+    assert.equal(session.reasoningTokens, 8);
+    assert.equal(session.contextTokens, 110);
+    const cell = Object.values(store.data.usageByDay)[0].codex.unknown;
+    assert.equal(cell.inputTokens, 40);
+    assert.equal(cell.cachedInputTokens, 160);
+    assert.equal(cell.outputTokens, 20);
+    assert.equal(priceCell(cell, { input: 10, cacheRead: 1, output: 20 }), 0.00096);
+    dispatch.onExit({ code: 0, stderr: "" });
+    store.saveNow();
+    const restored = new Store(path.join(tmpDir, "store.json")).getUsage(thread.id);
+    assert.equal(restored.reasoningTokens, 8);
+    assert.equal(restored.codexUsage.total.cachedInputTokens, 160);
+  });
+
+  it("attributes resumed usage to this run's model instead of the previous run's model", async () => {
+    const thread = store.getThreads()[0];
+    let dispatch;
+    runner.stopAll();
+    runner = createRunner({ store, core, pushFn() {},
+      runCodexFn(opts) { dispatch = opts; return { kill() {} }; },
+    });
+    const emit = (total) => dispatch.onEvent({ type: "token_count", info: {
+      total_token_usage: { input_tokens: total, output_tokens: total / 10 },
+      last_token_usage: { input_tokens: 100, output_tokens: 10 },
+    } });
+    store.updateThread(thread.id, { model: "model-a" });
+    await runner.startRun({ threadId: thread.id, prompt: "model a" });
+    dispatch.onEvent({ type: "thread.started", thread_id: "model-session" });
+    emit(100);
+    dispatch.onExit({ code: 0, stderr: "" });
+    store.updateThread(thread.id, { model: "model-b" });
+    await runner.startRun({ threadId: thread.id, prompt: "model b" });
+    emit(200);
+    dispatch.onExit({ code: 0, stderr: "" });
+    const models = Object.values(store.data.usageByDay)[0].codex;
+    assert.equal(models["model-a"].inputTokens, 100);
+    assert.equal(models["model-b"].inputTokens, 100);
+    assert.equal(store.getUsage(thread.id).model, "model-b");
+  });
+
+  it("keeps a recovered cumulative gap unattributed without inventing an additional request", async () => {
+    const thread = store.getThreads()[0];
+    let dispatch;
+    runner.stopAll();
+    runner = createRunner({ store, core, pushFn() {},
+      runCodexFn(opts) { dispatch = opts; return { kill() {} }; },
+    });
+    store.updateThread(thread.id, { model: "model-a" });
+    await runner.startRun({ threadId: thread.id, prompt: "model a" });
+    dispatch.onEvent({ type: "thread.started", thread_id: "gap-session" });
+    const emit = (total) => dispatch.onEvent({ type: "token_count", info: {
+      total_token_usage: { input_tokens: total, output_tokens: total / 10 },
+      last_token_usage: { input_tokens: 100, output_tokens: 10 },
+    } });
+    emit(100);
+    dispatch.onExit({ code: 1, stderr: "interrupt before next usage notification" });
+    store.updateThread(thread.id, { model: "model-b" });
+    await runner.startRun({ threadId: thread.id, prompt: "model b" });
+    emit(300);
+    dispatch.onExit({ code: 0, stderr: "" });
+    const models = Object.values(store.data.usageByDay)[0].codex;
+    assert.equal(models["model-a"].inputTokens, 100);
+    assert.equal(models["model-b"].inputTokens, 100);
+    assert.equal(models.unknown.inputTokens, 100);
+    assert.equal(models.unknown.turns, 0);
+    const perThread = Object.values(store.data.usageThreadsByDay)[0][thread.id];
+    assert.equal(perThread.turns, 2);
+    assert.equal(perThread.inputTokens, 300);
+  });
+
+  it("adopts an imported session's first total-only notification without billing its old history", async () => {
+    const { notificationToJsonl } = require("../codex-appserver.js");
+    const thread = store.getThreads()[0];
+    store.updateThread(thread.id, { sessionId: "imported-session" });
+    let dispatch;
+    runner.stopAll();
+    runner = createRunner({ store, core, pushFn() {},
+      runCodexFn(opts) { dispatch = opts; return { kill() {} }; },
+    });
+    await runner.startRun({ threadId: thread.id, prompt: "continue imported history" });
+    assert.equal(dispatch.sessionId, "imported-session");
+    const update = (total, last) => dispatch.onEvent(notificationToJsonl({
+      method: "thread/tokenUsage/updated", params: { threadId: "imported-session",
+        tokenUsage: { total: { inputTokens: total, outputTokens: total / 10 },
+          ...(last ? { last: { inputTokens: last, outputTokens: last / 10 } } : {}) } },
+    }));
+    update(1000);
+    assert.equal(store.getUsage(thread.id).inputTokens, 0, "old cumulative history is not new measured work");
+    assert.equal(store.getUsage(thread.id).accounting.status, "partial");
+    assert.equal(Object.values(store.data.usageByDay).length, 0);
+    update(1100, 100);
+    assert.equal(store.getUsage(thread.id).inputTokens, 100);
+    assert.equal(store.getUsage(thread.id).outputTokens, 10);
+    assert.equal(Object.values(store.data.usageThreadsByDay)[0][thread.id].inputTokens, 100);
+    dispatch.onExit({ code: 0, stderr: "" });
+  });
+
   it("keeps the root sessionId when a v2 sub-agent emits thread/started", async () => {
     process.env.CODER_FAKE_CODEX_SCENARIO = "child-spawn";
     const thread = store.getThreads()[0];

@@ -6,6 +6,7 @@ const crypto = require("node:crypto");
 const {
   readClaudeUsage,
   readKimiUsage,
+  parseClaudeMonthlySpend,
 } = require("../providerUsageManaged.js");
 
 function hashedClaudeService(dir) {
@@ -113,6 +114,83 @@ function leaked(result, ...secrets) {
 }
 
 describe("readClaudeUsage", () => {
+  it("retains both monthly money formats independently of rolling quotas", async () => {
+    for (const budget of [
+      { spend: { enabled: true, used: { amount_minor: 4631, currency: "USD", exponent: 2 }, limit: { amount_minor: 50000, currency: "USD", exponent: 2 } } },
+      { extra_usage: { is_enabled: true, used_credits: 4631, monthly_limit: 50000, utilization: 9 } },
+    ]) {
+      const result = await readClaudeUsage(claudeOpts({ body: {
+        ...budget, five_hour: { utilization: 36, resets_at: CLAUDE_RESET_ISO },
+      } }));
+      assert.equal(result.status, "ok");
+      assert.equal(result.fetchedAt, NOW);
+      assert.equal(result.windows.length, 1);
+      assert.equal(result.windows[0].usedPercent, 36);
+      const { usedPercent, ...monthlySpend } = result.monthlySpend;
+      assert.ok(Math.abs(usedPercent - 9.262) < 1e-9);
+      assert.deepEqual(monthlySpend, {
+        period: "monthly", enabled: true,
+        used: { amountMinor: 4631, currency: "USD", exponent: 2, unit: "minor" },
+        limit: { amountMinor: 50000, currency: "USD", exponent: 2, unit: "minor" },
+        resetsAt: null,
+      });
+      const moneyOnly = await readClaudeUsage(claudeOpts({ body: budget }));
+      assert.equal(moneyOnly.status, "ok");
+      assert.deepEqual(moneyOnly.windows, []);
+    }
+  });
+
+  it("keeps disabled state without treating old amounts or utilization as current spend", async () => {
+    for (const budget of [
+      { spend: { enabled: false, used: { amount_minor: 4631, currency: "USD", exponent: 2 }, limit: { amount_minor: 50000, currency: "USD", exponent: 2 } } },
+      { extra_usage: { is_enabled: false, used_credits: 4631, monthly_limit: 50000, utilization: 9 } },
+    ]) {
+      const result = await readClaudeUsage(claudeOpts({ body: budget }));
+      assert.deepEqual(result.monthlySpend, { period: "monthly", enabled: false, used: null, limit: null, usedPercent: null, resetsAt: null });
+    }
+  });
+
+  it("retains currency/exponent and explicit reset, without assuming all money is USD cents", () => {
+    const spend = parseClaudeMonthlySpend({ spend: { enabled: true,
+      used: { amount_minor: 4631, currency: "JPY", exponent: 0 },
+      limit: { amount_minor: 50000, currency: "JPY", exponent: 0 },
+      resets_at: WEEK_RESET_ISO,
+    } });
+    assert.equal(spend.used.currency, "JPY");
+    assert.equal(spend.used.exponent, 0);
+    assert.ok(Math.abs(spend.usedPercent - 9.262) < 1e-9);
+    assert.equal(spend.resetsAt, WEEK_RESET_MS);
+  });
+
+  it("does not invent money, percentages or resets from malformed and zero-limit budgets", () => {
+    const money = { amount_minor: 4631, currency: "USD", exponent: 2 };
+    for (const patch of [
+      { amount_minor: null }, { amount_minor: NaN }, { amount_minor: Infinity },
+      { amount_minor: -1 }, { amount_minor: {} }, { currency: "" },
+      { exponent: null }, { exponent: -1 }, { exponent: 1.5 }, { exponent: 99 },
+    ]) {
+      const spend = parseClaudeMonthlySpend({ spend: { enabled: true, used: { ...money, ...patch }, limit: money } });
+      assert.equal(spend.used, null);
+      assert.equal(spend.usedPercent, null);
+      assert.equal(spend.resetsAt, null);
+    }
+    for (const raw of [null, NaN, Infinity, -1, {}, "bad"]) {
+      const spend = parseClaudeMonthlySpend({ extra_usage: { is_enabled: true, used_credits: raw, monthly_limit: 50000, utilization: 80 } });
+      assert.equal(spend.used, null);
+      assert.equal(spend.usedPercent, null);
+    }
+    for (const limit of [0, null, Infinity, -1]) {
+      const spend = parseClaudeMonthlySpend({ extra_usage: { is_enabled: true, used_credits: 4631, monthly_limit: limit } });
+      assert.equal(spend.usedPercent, null);
+    }
+    for (const limit of [{ ...money, currency: "EUR" }, { ...money, exponent: 3 }]) {
+      assert.equal(parseClaudeMonthlySpend({ spend: { enabled: true, used: money, limit } }).usedPercent, null);
+    }
+    for (const body of [{}, null, [], { extra_usage: { is_enabled: "true" } }, { spend: { used: money, limit: money } }]) {
+      assert.equal(parseClaudeMonthlySpend(body), null);
+    }
+  });
+
   it("maps five_hour and seven_day utilization to 5-hour and weekly windows", async () => {
     const result = await readClaudeUsage(claudeOpts());
     assert.equal(result.provider, "claude");

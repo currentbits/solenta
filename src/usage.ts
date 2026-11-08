@@ -14,9 +14,25 @@ export type UsageRange = 7 | 30 | 90;
 
 export const USAGE_RANGES: UsageRange[] = [7, 30, 90];
 
+export interface UsageModelSelection {
+  provider: string;
+  model: string;
+}
+
+export interface UsageModelFilter {
+  mode: "include" | "exclude";
+  models: readonly UsageModelSelection[];
+}
+
+/** Pair identity keeps the same model label under two providers independent. */
+export function usageModelKey({ provider, model }: UsageModelSelection): string {
+  return JSON.stringify([provider, model || "unknown"]);
+}
+
 export type UsageBreakdownKind = "model" | "day" | "project" | "thread";
 
 export interface UsageTotals {
+  unpricedTokens?: UsageEntry["unpricedTokens"];
   costUsd: number;
   /** Uncached input, billable at the full rate. */
   inputTokens: number;
@@ -83,10 +99,11 @@ export interface UsageSummary {
   byDay: UsageBreakdownRow[];
   projects: UsageBreakdownRow[];
   threads: UsageBreakdownRow[];
+  hasUnattributedThreadUsage: boolean;
 }
 
 /** Tokens the model actually saw, including cache reads/writes. */
-export function processedTokens(row: UsageTotals): number {
+export function processedTokens(row: Pick<UsageTotals, "inputTokens" | "cachedInputTokens" | "cacheWriteTokens" | "outputTokens">): number {
   return (
     row.inputTokens +
     row.cachedInputTokens +
@@ -108,7 +125,8 @@ export function isUnreported(row: UsageTotals): boolean {
 
 /** Token counts exist, but the provider never emitted a USD cost (Cursor). */
 export function isCostUnmetered(row: UsageTotals): boolean {
-  return !isUnreported(row) && row.costUsd === 0 && processedTokens(row) > 0;
+  const measured = row.unpricedTokens ?? row;
+  return !isUnreported(row) && row.costUsd === 0 && processedTokens(measured) > 0;
 }
 
 function localDayKey(d: Date): string {
@@ -144,6 +162,14 @@ function cloneTotals(row: UsageTotals): UsageTotals {
 }
 
 function addTo(target: UsageTotals, entry: UsageEntry): void {
+  if (target.unpricedTokens || entry.unpricedTokens) {
+    const fields = ["inputTokens", "cachedInputTokens", "cacheWriteTokens", "outputTokens"] as const;
+    const before: Partial<NonNullable<UsageEntry["unpricedTokens"]>> = target.unpricedTokens ?? (target.costUsd > 0 ? {} : target);
+    const added: Partial<NonNullable<UsageEntry["unpricedTokens"]>> = entry.unpricedTokens ?? (entry.costUsd > 0 ? {} : entry);
+    target.unpricedTokens = Object.fromEntries(fields.map(field => [field,
+      finiteNumber(before[field]) + finiteNumber(added[field]),
+    ])) as NonNullable<UsageEntry["unpricedTokens"]>;
+  }
   target.costUsd += entry.costUsd;
   target.inputTokens += entry.inputTokens;
   target.cachedInputTokens += entry.cachedInputTokens;
@@ -156,7 +182,14 @@ function addTo(target: UsageTotals, entry: UsageEntry): void {
 function readEntry(raw: unknown): UsageEntry | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
   const rec = raw as Record<string, unknown>;
+  const unpriced = asRecord(rec.unpricedTokens);
   return {
+    ...(unpriced ? { unpricedTokens: {
+      inputTokens: finiteNumber(unpriced.inputTokens),
+      cachedInputTokens: finiteNumber(unpriced.cachedInputTokens),
+      cacheWriteTokens: finiteNumber(unpriced.cacheWriteTokens),
+      outputTokens: finiteNumber(unpriced.outputTokens),
+    } } : {}),
     costUsd: finiteNumber(rec.costUsd),
     inputTokens: finiteNumber(rec.inputTokens),
     cachedInputTokens: finiteNumber(rec.cachedInputTokens),
@@ -183,6 +216,10 @@ function readThreadEntry(raw: unknown): UsageThreadEntry | null {
     title: typeof rec.title === "string" ? rec.title : "",
     provider: typeof rec.provider === "string" ? rec.provider : "",
     model: typeof rec.model === "string" ? rec.model : "",
+    ...(asRecord(rec.byProviderModel)
+      ? { byProviderModel: rec.byProviderModel as UsageThreadEntry["byProviderModel"] }
+      : {}),
+    ...(readEntry(rec.unattributed) ? { unattributed: readEntry(rec.unattributed)! } : {}),
   };
 }
 
@@ -234,28 +271,65 @@ function unwrapReport(raw: unknown): {
 }
 
 /**
- * The report narrowed to one provider (#1531). Thread rows match on the
- * thread's recorded provider, so a thread that switched providers mid-day
- * counts under its last one.
+ * Filter recorded provider/model cells before aggregation. An empty model
+ * selection means all models. Legacy thread rows cannot be split by model;
+ * model filters omit that detail, while the daily ledger remains authoritative.
  */
 export function filterUsageReport(
   report: UsageReport,
   provider: string | null,
+  modelFilter?: UsageModelFilter | null,
 ): UsageReport {
-  if (!provider) return report;
+  const selected = new Set(modelFilter?.models.map(usageModelKey));
+  const filtersModels = selected.size > 0;
+  if (!provider && !filtersModels) return report;
+  const matches = (id: string, model: string) => {
+    if (provider && provider !== id) return false;
+    if (!filtersModels) return true;
+    const found = selected.has(usageModelKey({ provider: id, model }));
+    return modelFilter?.mode === "include" ? found : !found;
+  };
+  const filterBuckets = (raw: unknown): UsageByDay[string] => {
+    const kept: UsageByDay[string] = {};
+    for (const [id, models] of Object.entries(asRecord(raw) ?? {})) {
+      const cells = Object.entries(asRecord(models) ?? {}).filter(
+        ([model, cell]) => readEntry(cell) && matches(id, model),
+      );
+      if (cells.length) kept[id] = Object.fromEntries(cells) as Record<string, UsageEntry>;
+    }
+    return kept;
+  };
   const byDay: UsageByDay = {};
   for (const [day, providers] of Object.entries(report.byDay)) {
-    const models = asRecord(providers)?.[provider];
-    if (models) byDay[day] = { [provider]: models } as UsageByDay[string];
+    const kept = filterBuckets(providers);
+    if (Object.keys(kept).length) byDay[day] = kept;
   }
   const threadsByDay: UsageThreadsByDay = {};
   for (const [day, threads] of Object.entries(report.threadsByDay)) {
-    const kept = Object.entries(asRecord(threads) ?? {}).filter(
-      ([, entry]) => asRecord(entry)?.provider === provider,
-    );
-    if (kept.length > 0) {
-      threadsByDay[day] = Object.fromEntries(kept) as UsageThreadsByDay[string];
+    const kept: UsageThreadsByDay[string] = {};
+    for (const [id, raw] of Object.entries(asRecord(threads) ?? {})) {
+      const entry = readThreadEntry(raw);
+      if (!entry) continue;
+      if (!entry.byProviderModel) {
+        if (!filtersModels && entry.provider === provider) kept[id] = entry;
+        continue;
+      }
+      const buckets = filterBuckets(entry.byProviderModel);
+      if (!Object.keys(buckets).length) continue;
+      const totals = emptyTotals();
+      for (const models of Object.values(buckets)) {
+        for (const cell of Object.values(models)) addTo(totals, readEntry(cell)!);
+      }
+      const ids = Object.keys(buckets);
+      const { unattributed: _unattributed, unpricedTokens: _unpricedTokens, ...labels } = entry;
+      kept[id] = {
+        ...labels,
+        ...totals,
+        provider: ids.join(", "),
+        byProviderModel: buckets,
+      };
     }
+    if (Object.keys(kept).length) threadsByDay[day] = kept;
   }
   return { byDay, threadsByDay };
 }
@@ -309,7 +383,7 @@ export function summarizeUsage(
           }
           addTo(dayProvider, entry);
 
-          const modelKey = `${provider}\0${model}`;
+          const modelKey = usageModelKey({ provider, model });
           let modelTotal = modelMap.get(modelKey);
           if (!modelTotal) {
             modelTotal = {
@@ -353,7 +427,7 @@ export function summarizeUsage(
     );
 
   const byDay: UsageBreakdownRow[] = days
-    .filter((d) => d.turns > 0)
+    .filter((d) => d.turns > 0 || d.costUsd > 0 || d.wastedUsd > 0 || processedTokens(d) > 0)
     .map((d) => ({
       key: d.day,
       label: d.day,
@@ -370,6 +444,7 @@ export function summarizeUsage(
     string,
     UsageTotals & { label: string; detail: string }
   >();
+  let hasUnattributedThreadUsage = false;
 
   for (let i = range - 1; i >= 0; i--) {
     const day = localDayKey(addLocalDays(today, -i));
@@ -379,6 +454,7 @@ export function summarizeUsage(
       if (!threadId) continue;
       const entry = readThreadEntry(raw);
       if (!entry) continue;
+      if (!entry.byProviderModel || entry.unattributed) hasUnattributedThreadUsage = true;
 
       const projectKey = entry.projectId || entry.projectName || "(unknown)";
       const projectLabel = entry.projectName || entry.projectId || "Unknown project";
@@ -423,7 +499,7 @@ export function summarizeUsage(
     }))
     .sort((a, b) => compareTotals(a, b) || a.label.localeCompare(b.label));
 
-  return { days, totals, providers, models, byDay, projects, threads };
+  return { days, totals, providers, models, byDay, projects, threads, hasUnattributedThreadUsage };
 }
 
 export interface UsageCostByType {

@@ -90,6 +90,9 @@ export function createUsage(ctx: DevCtx): Pick<CoderApi, "activity" | "governanc
         ): UsageThreadEntry => ({
           ...cell(costUsd, inputTokens, outputTokens, turns, extra),
           ...meta,
+          byProviderModel: {
+            [meta.provider]: { [meta.model]: cell(costUsd, inputTokens, outputTokens, turns, extra) },
+          },
         });
         const nebula = {
           projectId: "proj-1",

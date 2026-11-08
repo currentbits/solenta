@@ -116,8 +116,8 @@ function coerceFiniteNumber(n) {
 /**
  * One usage cell. cachedInputTokens/cacheWriteTokens/wastedUsd are absent on
  * rows written before #556 and read back as 0.
- * @typedef {{ costUsd: number, inputTokens: number, cachedInputTokens: number, cacheWriteTokens: number, outputTokens: number, turns: number, wastedUsd: number }} UsageCell
- * @typedef {UsageCell & { projectId: string, projectName: string, title: string, provider: string, model: string }} UsageThreadCell
+ * @typedef {{ unpricedTokens?: {inputTokens: number, cachedInputTokens: number, cacheWriteTokens: number, outputTokens: number}, costUsd: number, inputTokens: number, cachedInputTokens: number, cacheWriteTokens: number, outputTokens: number, turns: number, wastedUsd: number }} UsageCell
+ * @typedef {UsageCell & { projectId: string, projectName: string, title: string, provider: string, model: string, byProviderModel?: Record<string, Record<string, UsageCell>>, unattributed?: UsageCell }} UsageThreadCell
  */
 
 /** @returns {UsageCell} */
@@ -133,6 +133,15 @@ function emptyUsageCell() {
   };
 }
 
+const USAGE_TOKEN_FIELDS = ["inputTokens", "cachedInputTokens", "cacheWriteTokens", "outputTokens"];
+
+/** Tokens eligible for fallback pricing. Legacy positive USD stays authoritative. */
+function unpricedUsage(cell) {
+  const source = cell?.unpricedTokens && typeof cell.unpricedTokens === "object"
+    ? cell.unpricedTokens : Number(cell?.costUsd) > 0 ? {} : cell;
+  return Object.fromEntries(USAGE_TOKEN_FIELDS.map(field => [field, coerceFiniteNumber(source?.[field])]));
+}
+
 /**
  * Coerce a stored cell, defaulting fields older rows never wrote.
  * @param {unknown} entry
@@ -141,6 +150,7 @@ function emptyUsageCell() {
 function coerceUsageCell(entry) {
   const row = /** @type {Record<string, unknown>} */ (entry || {});
   return {
+    ...(row.unpricedTokens && typeof row.unpricedTokens === "object" ? { unpricedTokens: unpricedUsage(row) } : {}),
     costUsd: coerceFiniteNumber(row.costUsd),
     inputTokens: coerceFiniteNumber(row.inputTokens),
     cachedInputTokens: coerceFiniteNumber(row.cachedInputTokens),
@@ -225,6 +235,21 @@ function normalizeUsageThreadsByDay(raw, now = new Date()) {
         provider: typeof row.provider === "string" ? row.provider : "",
         model: typeof row.model === "string" ? row.model : "unknown",
       };
+      if (row.byProviderModel && typeof row.byProviderModel === "object" && !Array.isArray(row.byProviderModel)) {
+        const buckets = {};
+        for (const [provider, models] of Object.entries(row.byProviderModel)) {
+          if (!models || typeof models !== "object" || Array.isArray(models)) continue;
+          buckets[provider] = {};
+          for (const [model, cell] of Object.entries(models)) {
+            if (!cell || typeof cell !== "object" || Array.isArray(cell)) continue;
+            buckets[provider][model] = coerceUsageCell(cell);
+          }
+        }
+        dayMap[threadId].byProviderModel = buckets;
+      }
+      if (row.unattributed && typeof row.unattributed === "object" && !Array.isArray(row.unattributed)) {
+        dayMap[threadId].unattributed = coerceUsageCell(row.unattributed);
+      }
     }
     if (Object.keys(dayMap).length > 0) map[day] = dayMap;
   }
@@ -295,6 +320,7 @@ module.exports = {
   coerceFiniteNumber,
   emptyUsageCell,
   coerceUsageCell,
+  unpricedUsage,
   normalizeUsageByDay,
   normalizeUsageThreadsByDay,
   encodeThreadFileId,

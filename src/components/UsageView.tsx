@@ -5,13 +5,16 @@ import {
   USAGE_RANGES,
   filterUsageReport,
   processedTokens,
+  isCostUnmetered,
   summarizeUsage,
   usageCostByType,
+  usageModelKey,
   type UsageBreakdownKind,
   type UsageBreakdownRow,
   type UsageProviderTotal,
   type UsageRange,
   type UsageTotals,
+  type UsageModelFilter,
 } from "../usage";
 import type { ProviderLimitsLoader } from "../providerUsage";
 import { ProviderMark } from "./ProviderMark";
@@ -142,6 +145,7 @@ export function UsageView({
   const [limitsOpen, setLimitsOpen] = useState(false);
   // ponytail: provider filter is session-only like the Limits tab.
   const [providerFilter, setProviderFilter] = useState<string | null>(null);
+  const [modelFilter, setModelFilter] = useState<UsageModelFilter>({ mode: "include", models: [] });
   const [now, setNow] = useState(() => Date.now());
   const loadGen = useRef(0);
 
@@ -217,28 +221,42 @@ export function UsageView({
     () => summarizeUsage(report, range, new Date(now)),
     [report, range, now],
   );
+  const filteredReport = useMemo(
+    () => filterUsageReport(report, providerFilter, modelFilter),
+    [report, providerFilter, modelFilter],
+  );
   const summary = useMemo(
-    () =>
-      providerFilter
-        ? summarizeUsage(filterUsageReport(report, providerFilter), range, new Date(now))
-        : fullSummary,
-    [fullSummary, report, providerFilter, range, now],
+    () => summarizeUsage(filteredReport, range, new Date(now)),
+    [filteredReport, range, now],
   );
   const costByType = useMemo(
     () =>
       usageCostByType(
-        providerFilter ? filterUsageReport(report, providerFilter) : report,
+        filteredReport,
         range,
         new Date(now),
         modelPrices,
       ),
-    [report, providerFilter, range, now, modelPrices],
+    [filteredReport, range, now, modelPrices],
   );
   const providerOptions = useMemo(() => {
     const ids = fullSummary.providers.map((p) => p.provider);
     if (providerFilter && !ids.includes(providerFilter)) ids.push(providerFilter);
     return ids.sort((a, b) => a.localeCompare(b));
   }, [fullSummary.providers, providerFilter]);
+  const modelOptions = useMemo(() => {
+    const options = new Map(
+      fullSummary.models
+        .filter((row) => !providerFilter || row.provider === providerFilter)
+        .map((row) => [usageModelKey(row), { provider: row.provider, model: row.model }]),
+    );
+    // Keep selections visible and removable across provider/range changes.
+    for (const selected of modelFilter.models) options.set(usageModelKey(selected), selected);
+    return [...options.values()].sort(
+      (a, b) => a.provider.localeCompare(b.provider) || a.model.localeCompare(b.model),
+    );
+  }, [fullSummary.models, providerFilter, modelFilter.models]);
+  const selectedModels = new Set(modelFilter.models.map(usageModelKey));
   const rangeEmpty = summary.providers.length === 0;
   const showLoading = loading && !hasLastSuccess && !error;
   const initialError = Boolean(error && !hasLastSuccess);
@@ -292,8 +310,7 @@ export function UsageView({
     summary.providers.length > 0 && summary.providers.every((p) => p.unreported);
   const costUnmeteredTotal =
     metric === "cost" &&
-    summary.totals.costUsd === 0 &&
-    processedTokens(summary.totals) > 0;
+    isCostUnmetered(summary.totals);
   const totalLabel = allUnreported
     ? "usage not reported"
     : costUnmeteredTotal
@@ -380,6 +397,58 @@ export function UsageView({
                   ))}
                 </select>
               ) : null}
+              {modelOptions.length > 0 ? (
+                <details className={styles.modelFilter} onKeyDown={(event) => {
+                  if (event.key === "Escape") {
+                    event.currentTarget.open = false;
+                    event.currentTarget.querySelector("summary")?.focus();
+                  }
+                }}>
+                  <summary className={styles.modelFilterSummary} aria-label="Models">
+                    {selectedModels.size === 0
+                      ? "All models"
+                      : `${modelFilter.mode === "include" ? "Include" : "Exclude"} ${selectedModels.size} model${selectedModels.size === 1 ? "" : "s"}`}
+                  </summary>
+                  <div className={styles.modelFilterPanel}>
+                    <div className={styles.modelFilterActions}>
+                      <select
+                        className={styles.providerSelect}
+                        aria-label="Model filter mode"
+                        data-usage-model-mode=""
+                        value={modelFilter.mode}
+                        onChange={(e) => setModelFilter((prev) => ({ ...prev, mode: e.target.value as UsageModelFilter["mode"] }))}
+                      >
+                        <option value="include">Include selected</option>
+                        <option value="exclude">Exclude selected</option>
+                      </select>
+                      <button type="button" className={styles.segBtn} disabled={!selectedModels.size}
+                        onClick={() => setModelFilter((prev) => ({ ...prev, models: [] }))}>
+                        Clear
+                      </button>
+                    </div>
+                    <p className={styles.modelFilterHint}>No selection shows all models.</p>
+                    <div className={styles.modelFilterOptions} role="group" aria-label="Models to filter">
+                      {modelOptions.map((option) => {
+                        const key = usageModelKey(option);
+                        return (
+                          <label key={key} className={styles.modelFilterOption}>
+                            <input type="checkbox" checked={selectedModels.has(key)}
+                              data-usage-model-filter={key}
+                              onChange={() => setModelFilter((prev) => ({
+                                ...prev,
+                                models: selectedModels.has(key)
+                                  ? prev.models.filter((item) => usageModelKey(item) !== key)
+                                  : [...prev.models, option],
+                              }))} />
+                            <span>{option.model === "unknown" ? "Unknown model" : option.model}</span>
+                            <span className={styles.modelFilterProvider}>{providerDisplayName(option.provider, providers)}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </details>
+              ) : null}
               <div className={styles.segment} role="group" aria-label="Range">
                 {USAGE_RANGES.map((item) => (
                   <button
@@ -456,9 +525,13 @@ export function UsageView({
           ) : null}
           {rangeEmpty ? (
             <div className={styles.empty} data-usage-empty="">
-              <p className={styles.emptyTitle}>No usage in this range</p>
+              <p className={styles.emptyTitle}>
+                {selectedModels.size > 0 || providerFilter ? "No usage matches these filters" : "No usage in this range"}
+              </p>
               <p className={styles.emptyHint}>
-                Token and cost totals from runs will show up here.
+                {selectedModels.size > 0 || providerFilter
+                  ? "Clear a filter or choose a different range."
+                  : "Token and cost totals from runs will show up here."}
               </p>
             </div>
           ) : (
@@ -646,6 +719,12 @@ export function UsageView({
                 ))}
               </div>
             </div>
+            {(group === "project" || group === "thread") && fullSummary.hasUnattributedThreadUsage ? (
+              <p className={styles.modelFilterHint} data-usage-unattributed="">
+                Older thread usage has no recorded model split. It receives no model price estimate
+                and is omitted from model-filtered breakdowns. Totals and charts use the daily model ledger.
+              </p>
+            ) : null}
             <table className={styles.table}>
               <thead>
                 <tr>
