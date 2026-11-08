@@ -195,6 +195,37 @@ describe("wireClient × webBridge over a real socket", () => {
     assert.equal(listed[0].title, "alpha");
   });
 
+  it("Node server run-start honors maintenance without breaking ordinary starts", async () => {
+    const previous = process.env.SOLENTA_SERVER;
+    const previousMaintenance = process.env.SOLENTA_SERVER_MAINTENANCE;
+    process.env.SOLENTA_SERVER = "1";
+    delete process.env.SOLENTA_SERVER_MAINTENANCE;
+    const thread = services.listThreads(store)[0];
+    const marker = path.join(tmp, ".server-maintenance-request");
+    try {
+      fs.writeFileSync(marker, "updating");
+      await assert.rejects(runner.startRun({ threadId: thread.id, prompt: "blocked" }), /stopping or updating/);
+      fs.unlinkSync(marker);
+      await runner.startRun({ threadId: thread.id, prompt: "allowed" });
+      await waitFor(() => store.getThread(thread.id)?.status === "done");
+      assert.equal(store.getMessages(thread.id).filter(row => row.role === "user").length, 1);
+    } finally {
+      if (previous === undefined) delete process.env.SOLENTA_SERVER; else process.env.SOLENTA_SERVER = previous;
+      if (previousMaintenance === undefined) delete process.env.SOLENTA_SERVER_MAINTENANCE; else process.env.SOLENTA_SERVER_MAINTENANCE = previousMaintenance;
+    }
+  });
+
+  it("relays host stay-awake status without throwing during browser subscription", async () => {
+    const api = makeClient();
+    const updates = [];
+    api.on("stayAwake:changed", status => updates.push(status));
+    await api.threads.list();
+    const status = { enabled: false, active: false };
+    server.broadcast("stayAwake:changed", status);
+    await waitFor(() => updates.length === 1);
+    assert.deepEqual(updates[0], status);
+  });
+
   it("projects.list, threads.get, and a throwing channel keep error-string parity", async () => {
     const api = makeClient();
     const projects = await api.projects.list();

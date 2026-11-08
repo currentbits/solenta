@@ -47,6 +47,7 @@ export const WIRE_PUSH_CHANNELS = [
   "thread:select",
   "project:select",
   "boot:ready",
+  "stayAwake:changed",
   // Terminal output (#1493). Web clients already run commands through
   // terminal:write; without this push the pane would never see output.
   "terminal:data",
