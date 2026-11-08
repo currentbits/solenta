@@ -147,7 +147,10 @@ function glabEnvironment(origin) {
     GLAB_NO_PROMPT: "1",
   };
   if (tokenHost !== origin.host) {
-    for (const key of ["GITLAB_TOKEN", "GITLAB_ACCESS_TOKEN", "OAUTH_TOKEN"]) env[key] = undefined;
+    for (const key of [
+      "GITLAB_TOKEN", "GITLAB_ACCESS_TOKEN", "OAUTH_TOKEN", "JOB_TOKEN",
+      "GLAB_IS_OAUTH2", "OAUTH2_REFRESH_TOKEN", "REFRESH_TOKEN",
+    ]) env[key] = undefined;
   }
   return env;
 }

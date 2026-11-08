@@ -17,6 +17,7 @@ const envKeys = [
   "GLAB_CONFIG_DIR", "CODER_GLAB_BIN", "GITLAB_HOST", "GITLAB_URI", "GL_HOST",
   "GITLAB_URL", "GITLAB_API_HOST", "GLAB_API_PROTOCOL", "API_PROTOCOL", "GITLAB_REPO",
   "GITLAB_TOKEN", "GITLAB_ACCESS_TOKEN", "OAUTH_TOKEN", "CI_JOB_TOKEN", "GITLAB_CI",
+  "JOB_TOKEN", "GLAB_IS_OAUTH2", "OAUTH2_REFRESH_TOKEN", "REFRESH_TOKEN",
 ];
 
 describe("GitLab origin routing with isolated config", () => {
@@ -174,6 +175,10 @@ else console.log('[]');
     process.env.GITLAB_TOKEN = "fixture-token";
     process.env.GITLAB_ACCESS_TOKEN = "fixture-access";
     process.env.OAUTH_TOKEN = "fixture-oauth";
+    process.env.JOB_TOKEN = "fixture-direct-job";
+    process.env.GLAB_IS_OAUTH2 = "true";
+    process.env.OAUTH2_REFRESH_TOKEN = "fixture-refresh";
+    process.env.REFRESH_TOKEN = "fixture-legacy-refresh";
     process.env.CI_JOB_TOKEN = "fixture-job";
     process.env.GITLAB_CI = "true";
     const selected = gitlab.gitlabRemote("https://gitlab.example:8443/a/b.git");
@@ -182,8 +187,12 @@ else console.log('[]');
       await gitlab.glabApi(tmp, gitlab.gitlabRemote(input), "GET", "/issues");
     }
     assert.equal(calls()[0].env.GITLAB_TOKEN, "fixture-token");
+    assert.equal(calls()[0].env.JOB_TOKEN, "fixture-direct-job");
+    assert.equal(calls()[0].env.GLAB_IS_OAUTH2, "true");
+    assert.equal(calls()[0].env.OAUTH2_REFRESH_TOKEN, "fixture-refresh");
+    assert.equal(calls()[0].env.REFRESH_TOKEN, "fixture-legacy-refresh");
     for (const call of calls().slice(1)) {
-      for (const key of ["GITLAB_TOKEN", "GITLAB_ACCESS_TOKEN", "OAUTH_TOKEN", "CI_JOB_TOKEN", "GITLAB_CI"]) assert.equal(call.env[key], "", key);
+      for (const key of ["GITLAB_TOKEN", "GITLAB_ACCESS_TOKEN", "OAUTH_TOKEN", "CI_JOB_TOKEN", "GITLAB_CI", "JOB_TOKEN", "GLAB_IS_OAUTH2", "OAUTH2_REFRESH_TOKEN", "REFRESH_TOKEN"]) assert.equal(call.env[key], "", key);
     }
     assert.equal(process.env.GITLAB_TOKEN, "fixture-token");
   });
