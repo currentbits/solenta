@@ -133,15 +133,25 @@ async function gitFetch(cwd) {
 }
 
 /**
- * owner/repo plus an https web URL from a git remote URL, or null.
+ * owner/repo plus a web URL from a git remote URL, or null.
  * Handles scp-style ssh (git@host:owner/repo), ssh:// and http(s) URLs.
  * For nested groups (gitlab group/sub/repo) the last two segments win,
- * matching slugFromRemoteUrl.
+ * matching slugFromRemoteUrl. GitLab links retain the full group path and
+ * configured web origin.
  *
  * @param {string} url
  * @returns {{ owner: string, repo: string, webUrl: string } | null}
  */
 function repoInfoFromRemote(url) {
+  const gitlab = require("./gitlab.js").gitlabRemote(url);
+  if (gitlab) {
+    const parts = gitlab.path.split("/");
+    return {
+      owner: parts[parts.length - 2],
+      repo: parts[parts.length - 1],
+      webUrl: `${gitlab.origin}/${gitlab.path}`,
+    };
+  }
   const cleaned = String(url || "")
     .trim()
     .replace(/\.git$/i, "")
