@@ -1362,6 +1362,10 @@ async function listProvidersForApi(store, opts) {
   const base = listProviders(opts);
   const settings =
     store && typeof store.getSettings === "function" ? store.getSettings() : null;
+  const contextThread = opts?.threadId && store?.getThread(opts.threadId);
+  // Existing base-Claude threads stay on the CLI's original account even
+  // after a named default is configured. Match forThread/launch capabilities.
+  const originalClaudeAccount = contextThread?.provider === "claude" && !contextThread.providerInstance;
   const settingsIdentity = JSON.stringify([settings?.providerInstances, settings?.defaultAccounts, settings?.defaultProvider, settings?.providerModels]);
   // Base overlays (#1714) are the base row's own env, never a picker row.
   const instances = ((settings && settings.providerInstances) || []).filter(
@@ -1375,7 +1379,7 @@ async function listProvidersForApi(store, opts) {
     .filter((inst) => inst.provider === "generic")
     .map((inst) => genericProviderInfo(inst));
   for (const p of base) {
-    const acct = defaultAccountFor(settings, p.id);
+    const acct = originalClaudeAccount && p.id === "claude" ? null : defaultAccountFor(settings, p.id);
     const acctInst = acct ? findInstance(settings, p.id, acct) : null;
     list.push(acctInst ? { ...p, defaultAccount: acctInst.name } : p);
     for (const inst of instances) {
@@ -1395,8 +1399,7 @@ async function listProvidersForApi(store, opts) {
   }
   list.push(...generic);
   const prefs = (settings && settings.providerModels) || {};
-  const discoveryOpts = { userDataPath: store?.filePath ? require("node:path").dirname(store.filePath) : undefined, ...opts };
-  const contextThread = opts?.threadId && store?.getThread(opts.threadId);
+  const discoveryOpts = { userDataPath: store?.filePath ? require("node:path").dirname(store.filePath) : undefined, ...opts, ...(originalClaudeAccount ? { useDefault: false } : {}) };
   const projectFallback = contextThread && claudeModels.projectFallback(store, contextThread, discoveryOpts);
   const wasStarted = new Map(list.filter((p) => (p.baseProvider || p.id) === "claude").map((p) => [p.id, claudeModels.started(settings, p.id, discoveryOpts)]));
   for (const p of list) {

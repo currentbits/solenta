@@ -1103,7 +1103,7 @@ export function useCoder(): UseCoderResult {
   );
   const [detail, setDetail] = useState<ThreadDetail | null>(null);
   const providerThread = threads.find((t) => t.id === selectedThreadId);
-  const providerScope = JSON.stringify([providerThread?.host?.key, providerThread?.projectId, providerThread?.provider, providerThread?.providerInstance]);
+  const providerScope = JSON.stringify([providerThread?.id, providerThread?.worktreePath, providerThread?.host?.key, providerThread?.projectId, providerThread?.provider, providerThread?.providerInstance]);
   const providerScopeRef = useRef(providerScope);
   providerScopeRef.current = providerScope;
   const threadProviders = providerThread
@@ -2122,7 +2122,7 @@ export function useCoder(): UseCoderResult {
       const target = options?.threadId ? threadsRef.current.find((t) => t.id === options.threadId) : null;
       const destination = target ? "thread" : "local";
       const request = ++providerRefreshGen.current[destination];
-      const scope = JSON.stringify([target?.host?.key, target?.projectId, target?.provider, target?.providerInstance]);
+      const scope = JSON.stringify([target?.id, target?.worktreePath, target?.host?.key, target?.projectId, target?.provider, target?.providerInstance]);
       const beforeSettings = settingsRef.current;
       try {
         const rows = await api.providers.list(target ? { threadId: target.id } : undefined);

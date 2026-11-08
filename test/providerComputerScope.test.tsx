@@ -8,6 +8,42 @@ import type { ProviderInfo } from "../src/shared/ipc";
 const catalog = (model: string): ProviderInfo[] => [{ id: "claude", name: "Claude Code", available: true, supportsResume: true, models: [model], modelInfo: [{ id: model, label: model, description: "", vendor: "Anthropic", efforts: ["high"] }], efforts: ["high"] }];
 
 describe("provider computer scope (#1932)", () => {
+  it("refreshes between worktrees in one project and rejects the previous worktree's late capabilities", async () => {
+    const shell = await mount(<div />);
+    const a = thread({ id: "worktree-a", worktreePath: "/repo/worktrees/a" });
+    const b = thread({ id: "worktree-b", worktreePath: "/repo/worktrees/b" });
+    const fake = createFakeCoder({ threads: [a, b] });
+    const requests: string[] = [];
+    const pending = new Map<string, (rows: ProviderInfo[]) => void>();
+    fake.api.providers.list = async (input) => {
+      if (!input?.threadId) return catalog("settings-model");
+      requests.push(input.threadId);
+      return new Promise((resolve) => pending.set(input.threadId, resolve));
+    };
+    installFakeCoder(fake);
+    shell.unmount();
+    let current!: UseCoderResult;
+    function Probe() { current = useCoder(); return null; }
+    const m = await mount(<Probe />);
+    try {
+      await m.flush();
+      assert.deepEqual(requests, [a.id]);
+      await inAct(() => current.selectThread(b.id));
+      await m.flush();
+      assert.deepEqual(requests, [a.id, b.id], "same project/account still discovers each worktree's context");
+      await inAct(() => pending.get(a.id)!(catalog("a-discovered")));
+      assert.deepEqual(current.threadProviders, [], "late capabilities cannot cross worktrees");
+      await inAct(() => pending.get(b.id)!(catalog("b-project-fallback")));
+      assert.deepEqual(current.threadProviders[0]?.models, ["b-project-fallback"]);
+      await inAct(() => fake.emitThreads([a, { ...b, worktreePath: "/repo/worktrees/recreated-b" }]));
+      await m.flush();
+      assert.deepEqual(requests, [a.id, b.id, b.id], "a recreated worktree refreshes even for the same thread");
+      assert.deepEqual(current.threadProviders, [], "old worktree metadata is hidden during refresh");
+      await inAct(() => pending.get(b.id)!(catalog("recreated-b")));
+      assert.deepEqual(current.threadProviders[0]?.models, ["recreated-b"]);
+    } finally { m.unmount(); }
+  });
+
   it("keeps a late local thread catalog separate from the local Settings boot list and refresh", async () => {
     const shell = await mount(<div />);
     const local = thread({ id: "local-scoped" });

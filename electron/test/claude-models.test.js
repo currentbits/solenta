@@ -108,6 +108,47 @@ describe("Claude installed CLI model discovery (#1932)", () => {
     assert.deepEqual(models.cachedProvider(getProvider("claude"), {}, "claude", opts).models, ["model-3"]);
   });
 
+  it("keeps an existing base-Claude thread on its original account when a named default is configured", async () => {
+    const settings = {
+      defaultAccounts: { claude: "work" },
+      providerInstances: [{ id: "work", name: "work", provider: "claude", configDir: path.join(dir, "work"), env: {} }],
+    };
+    const thread = { id: "existing", projectId: "p", provider: "claude", providerInstance: null, model: "original-model" };
+    const store = {
+      filePath: path.join(dir, "store.json"), getSettings: () => settings,
+      getThread: () => thread, getProject: () => ({ id: "p", path: dir }),
+    };
+    const runInitialize = async (target) => target.env.CLAUDE_CONFIG_DIR === path.join(dir, "work")
+      ? rows("named-model", ["max"]).map((row) => ({ ...row, supportsFastMode: false }))
+      : rows("original-model", ["high"]);
+    const context = { ...opts, runInitialize };
+    // Prime Settings first, just as app boot can discover the named default.
+    await models.refresh(settings, "claude", context);
+    const settingsList = await services.listProvidersForApi(store, context);
+    assert.deepEqual(settingsList.find((p) => p.id === "claude").models, ["named-model"]);
+    assert.equal(settingsList.find((p) => p.id === "claude").defaultAccount, "work");
+    const scopedOpts = { ...context, threadId: thread.id };
+    await services.listProvidersForApi(store, scopedOpts);
+    const scoped = await services.listProvidersForApi(store, scopedOpts);
+    const original = scoped.find((p) => p.id === "claude");
+    const named = scoped.find((p) => p.id === "claude:work");
+    assert.deepEqual(original.models, ["original-model"]);
+    assert.equal(original.defaultAccount, undefined, "existing original account is not labelled as the named default");
+    assert.deepEqual(named.models, ["named-model"], "explicit named rows keep their own capabilities");
+    const launched = models.forThread(getProvider("claude"), store, thread, opts);
+    assert.deepEqual(original.modelInfo, launched.modelInfo, "picker matches service validation and launch");
+    assert.deepEqual(original.modelInfo[0].efforts, ["high"]);
+    assert.equal(original.modelInfo[0].fast, true);
+    assert.equal(named.modelInfo[0].fast, false);
+    const args = launched.buildArgs({ prompt: "fixture", model: thread.model, reasoningEffort: "high", fast: true, modelCapabilities: launched });
+    assert.equal(args[args.indexOf("--effort") + 1], "high");
+    assert.ok(args.some((arg) => arg.includes('"fastMode":true')));
+    assert.equal(thread.providerInstance, null, "discovery never migrates the existing thread's account");
+    const afterSettings = await services.listProvidersForApi(store, context);
+    assert.deepEqual(afterSettings.find((p) => p.id === "claude").models, ["named-model"]);
+    assert.equal(afterSettings.find((p) => p.id === "claude").defaultAccount, "work");
+  });
+
   it("restarts an in-flight list after account credentials/gateway configuration change", async () => {
     const store = new Store(path.join(dir, "store.json"));
     const account = (gateway) => [{ id: "work", provider: "claude", name: "work", configDir: path.join(dir, "work"), env: { ANTHROPIC_BASE_URL: gateway } }];
