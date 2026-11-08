@@ -427,7 +427,7 @@ export function summarizeUsage(
     );
 
   const byDay: UsageBreakdownRow[] = days
-    .filter((d) => d.turns > 0)
+    .filter((d) => d.turns > 0 || d.costUsd > 0 || d.wastedUsd > 0 || processedTokens(d) > 0)
     .map((d) => ({
       key: d.day,
       label: d.day,

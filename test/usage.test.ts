@@ -685,3 +685,18 @@ it("drops excluded-model unpriced coverage when rebuilding filtered thread total
   assert.equal(summary.threads[0].inputTokens, 2);
   assert.equal(summary.threads[0].costUnmetered, true);
 });
+
+
+it("retains measured days when a model filter selects zero-turn split usage", () => {
+  const day = "2026-08-17";
+  const report: UsageReport = { byDay: { [day]: { claude: {
+    root: entry({ inputTokens: 10, turns: 1 }),
+    advisor: entry({ costUsd: 3, inputTokens: 100, outputTokens: 5, turns: 0 }),
+  } } }, threadsByDay: {} };
+  const filtered = filterUsageReport(report, "claude", { mode: "include", models: [{ provider: "claude", model: "advisor" }] });
+  const summary = summarizeUsage(filtered, 7, TODAY);
+  assert.equal(summary.totals.turns, 0);
+  assert.equal(summary.byDay.length, 1);
+  assert.equal(summary.byDay[0].costUsd, 3);
+  assert.equal(summary.byDay[0].inputTokens, 100);
+});
