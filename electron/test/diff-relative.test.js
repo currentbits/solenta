@@ -43,6 +43,9 @@ describe("repository-relative internal diffs (#1942)", () => {
     git("init", "-b", "main");
     git("config", "user.email", "fixture@example.invalid");
     git("config", "user.name", "Diff fixture");
+    // These fixtures assert path identity with LF text, independent of host Git defaults.
+    git("config", "core.autocrlf", "false");
+    git("config", "core.eol", "lf");
     git("config", "diff.relative", "false");
     write("root.txt", "before\n");
     write("sub/inside.txt", "before\n");
