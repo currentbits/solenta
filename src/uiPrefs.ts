@@ -399,6 +399,55 @@ export const useDiffHideTests = diffHideTests.use;
 const diffTreeView = makeFlagPref("coder.diffTreeView", false);
 export const setDiffTreeView = diffTreeView.set;
 export const useDiffTreeView = diffTreeView.use;
+
+/** Shared Changes / PR file-column preference. A narrow pane never overwrites it. */
+export const DIFF_FILE_WIDTH_KEY = "coder.diffFileWidth";
+export const DIFF_FILE_WIDTH_DEFAULT = 240;
+export const DIFF_FILE_WIDTH_MIN = 180;
+export const DIFF_FILE_WIDTH_MAX = 480;
+let diffFileWidth: number | null = null;
+const diffFileWidthListeners = new Set<() => void>();
+
+export function getDiffFileWidth(): number {
+  if (diffFileWidth != null) return diffFileWidth;
+  try {
+    const raw = window.localStorage.getItem(DIFF_FILE_WIDTH_KEY);
+    const width = Number(raw);
+    if (
+      raw && /^\d+$/.test(raw) && Number.isInteger(width) &&
+      width >= DIFF_FILE_WIDTH_MIN && width <= DIFF_FILE_WIDTH_MAX
+    ) {
+      diffFileWidth = width;
+      return width;
+    }
+  } catch {
+    // Unavailable storage: use the default.
+  }
+  return (diffFileWidth = DIFF_FILE_WIDTH_DEFAULT);
+}
+
+export function setDiffFileWidth(width: number): void {
+  diffFileWidth = Number.isFinite(width)
+    ? Math.min(DIFF_FILE_WIDTH_MAX, Math.max(DIFF_FILE_WIDTH_MIN, Math.round(width)))
+    : DIFF_FILE_WIDTH_DEFAULT;
+  try {
+    window.localStorage.setItem(DIFF_FILE_WIDTH_KEY, String(diffFileWidth));
+  } catch {
+    // Unavailable storage: keep the in-memory preference.
+  }
+  for (const listener of diffFileWidthListeners) listener();
+}
+
+export function useDiffFileWidth(): number {
+  return useSyncExternalStore(
+    (listener) => {
+      diffFileWidthListeners.add(listener);
+      return () => diffFileWidthListeners.delete(listener);
+    },
+    getDiffFileWidth,
+    () => DIFF_FILE_WIDTH_DEFAULT,
+  );
+}
 /**
  * Each file's diff body starts collapsed (issue #1787), one setting shared
  * by the Git pane, the PR Code tab and turn diffs. Off by default: today's

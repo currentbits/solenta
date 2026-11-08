@@ -65,6 +65,7 @@ import {
   type FileTreeDir,
   type FileTreeNode,
 } from "../../fileTree";
+import { FileDiffLayout } from "../FileDiffLayout";
 import { blastRadiusTitle, isCiWorkflowPath } from "../../blastRadius";
 import { middleTruncate } from "../../format";
 import type { PrSteps } from "../../prProgress";
@@ -1589,8 +1590,12 @@ export const ChangesPanel = memo(function ChangesPanel({
 
       {diff && !empty && itinerary && (
         <>
-          <div className={styles.changesSplit}>
-            <div className={styles.changesFiles} ref={fileListRef}>
+          <FileDiffLayout
+            fileClassName={styles.changesFiles}
+            diffClassName={styles.changesDiff}
+            fileRef={fileListRef}
+            diffRef={diffBodyRef}
+            files={<>
               {editable ? (
               <div className={styles.stageBar}>
                 <button
@@ -1676,8 +1681,8 @@ export const ChangesPanel = memo(function ChangesPanel({
                   ) : null,
                 )
               )}
-            </div>
-            <div className={styles.changesDiff} ref={diffBodyRef}>
+            </>}
+          >
               {imageFile ? null : (
               <div className={styles.diffToolbar} role="group" aria-label="Diff view">
                 <button
@@ -1811,8 +1816,7 @@ export const ChangesPanel = memo(function ChangesPanel({
               ) : diff.truncated ? (
                 <p className={styles.truncatedNote}>Diff truncated</p>
               ) : null}
-            </div>
-          </div>
+          </FileDiffLayout>
           {editable ? (
           <div className={styles.commitBox}>
             <textarea

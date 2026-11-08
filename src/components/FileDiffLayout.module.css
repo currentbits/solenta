@@ -1,0 +1,67 @@
+.root {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  container: file-diff / inline-size;
+}
+
+.grid {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, var(--diff-file-width, 240px)) 6px minmax(0, 1fr);
+}
+
+.files,
+.diff {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+
+.separator {
+  cursor: col-resize;
+  touch-action: none;
+  background: linear-gradient(var(--border-soft), var(--border-soft)) center / 1px 100% no-repeat;
+}
+
+.separator:hover,
+.separator:focus-visible {
+  background: var(--blue-soft);
+  outline: 1px solid var(--blue-border);
+  outline-offset: -1px;
+}
+
+.grid[data-stacked] {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(120px, 34%) minmax(0, 1fr);
+}
+
+.grid[data-stacked] > .separator {
+  display: none;
+}
+
+.grid[data-stacked] > .files {
+  border-bottom: 1px solid var(--border-soft);
+}
+
+/* Keep the initial paint narrow before ResizeObserver has measured the pane. */
+@container file-diff (max-width: 560px) {
+  .grid {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(120px, 34%) minmax(0, 1fr);
+  }
+  .separator { display: none; }
+  .files { border-bottom: 1px solid var(--border-soft); }
+}
+
+@media (max-width: 720px) {
+  .grid {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(120px, 34%) minmax(0, 1fr);
+  }
+  .separator { display: none; }
+  .files { border-bottom: 1px solid var(--border-soft); }
+}

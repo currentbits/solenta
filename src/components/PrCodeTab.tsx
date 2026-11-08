@@ -33,6 +33,7 @@ import {
 import type { DiffViewMode } from "../turnDiff";
 import diffStyles from "./TurnDiffPanel.module.css";
 import styles from "./PrWorkspacePanel.module.css";
+import { FileDiffLayout } from "./FileDiffLayout";
 
 type FilePatchState = {
   patch: string;
@@ -472,6 +473,10 @@ export function PrCodeTab({
       {loading && !result ? <p className={styles.hint}>Loading diff…</p> : null}
       {empty ? <p className={styles.hint}>No textual diff</p> : null}
 
+      <FileDiffLayout
+        fileClassName={styles.codeFiles}
+        diffClassName={styles.codeDiff}
+        files={<>
       <TreeListToggle />
       {treeView ? (
         <TreeCollapseAllButton
@@ -502,6 +507,8 @@ export function PrCodeTab({
         )
       ) : null}
 
+        </>}
+      >
       {selected ? (
         <div className={styles.viewedRow}>
           <button
@@ -556,6 +563,7 @@ export function PrCodeTab({
           })}
         </div>
       ) : null}
+      </FileDiffLayout>
     </div>
   );
 }
