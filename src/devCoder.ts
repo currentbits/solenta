@@ -451,6 +451,13 @@ function buildDevCoder(): CoderApi {
         throw new Error("Remote server management requires the desktop app.");
       },
       async answerSshPrompt(): Promise<void> {},
+      async cloudStatus() { return { account: { configured: false, signedIn: false }, host: null }; },
+      async cloudLogin(): Promise<never> { throw new Error("Cloud sign-in requires the desktop app."); },
+      async cloudLogout() { return { revocationPending: false }; },
+      async cloudComputers() { return []; },
+      async cloudLink(): Promise<never> { throw new Error("Cloud hosting requires a configured Solenta runtime."); },
+      async cloudUnlink(): Promise<never> { throw new Error("Cloud access is not configured."); },
+      async cloudConnect(): Promise<never> { throw new Error("Cloud connections require the desktop app."); },
       async feedback(input: {
         text: string;
         threadId?: string;

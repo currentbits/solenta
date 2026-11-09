@@ -8,7 +8,7 @@ const path = require("node:path");
 const http = require("node:http");
 const { Worker } = require("node:worker_threads");
 const { WebSocketServer } = require("ws");
-const { loadOrCreateComputerId, computerDescriptor } = require("../serverIdentity.js");
+const { loadOrCreateComputerId, computerDescriptor, parseComputerDescriptor } = require("../serverIdentity.js");
 const { probeToken, createTokenStore, openHostTunnel } = require("../remoteConnections.js");
 
 const descriptor = (id = "computer-one") => ({ kind: "solenta", computerId: id, protocol: { min: 1, max: 1 }, runtimeKind: "server" });
@@ -55,8 +55,11 @@ describe("computer identity", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "solenta-id-"));
     try {
       const d = computerDescriptor(dir, { pkg: { version: "1.2.3", token: "private", path: dir }, runtimeKind: "server" });
-      assert.deepEqual(Object.keys(d).sort(), ["capabilities", "computerId", "kind", "protocol", "runtimeKind", "version"]);
+      assert.deepEqual(Object.keys(d).sort(), ["arch", "capabilities", "computerId", "kind", "platform", "protocol", "runtimeKind", "version"]);
       assert.equal(d.runtimeKind, "server");
+      assert.equal(d.platform, process.platform);
+      assert.equal(d.arch, process.arch);
+      assert.equal(parseComputerDescriptor(d).platform, process.platform);
       assert.equal(JSON.stringify(d).includes(dir), false);
     } finally { fs.rmSync(dir, { recursive: true, force: true }); }
   });

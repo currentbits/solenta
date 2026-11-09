@@ -21,7 +21,7 @@
 const crypto = require("node:crypto");
 const { isServerMaintenance, MAINTENANCE_MESSAGE } = require("./serverMaintenance.js");
 const { WebSocketServer, WebSocket } = require("ws");
-const { PUSH_SCOPE, allows, argsAllowed, scopeForChannel } = require("./webScopes.js");
+const { PUSH_SCOPE, allows, argsAllowed, scopeForChannel, narrowScopes } = require("./webScopes.js");
 
 const WS_PATH = "/ws";
 
@@ -159,6 +159,7 @@ function attachWebBridge(httpServer, opts) {
     let credential = null;
     let expiryTimer;
     function expireAt(expiresAt) {
+      clearTimeout(expiryTimer);
       if (!Number.isFinite(expiresAt)) return;
       const remaining = expiresAt - now();
       if (remaining <= 0) {
@@ -219,7 +220,7 @@ function attachWebBridge(httpServer, opts) {
         scopes = device.scopes;
         authed.set(ws, device);
         expireAt(device.expiresAt);
-        sendJson(ws, { kind: "auth-ok", ...(opts.computer ? { computer: opts.computer } : {}) });
+        sendJson(ws, { kind: "auth-ok", deviceId: device.id, ...(opts.computer ? { computer: opts.computer } : {}) });
         return;
       }
 
@@ -234,8 +235,19 @@ function attachWebBridge(httpServer, opts) {
         return;
       }
 
+      if (msg?.kind === "auth-update") {
+        const prior = authed.get(ws), next = typeof msg.token === "string" ? authorize(msg.token) : null;
+        try {
+          if (!prior || !next || prior.id !== next.id || !opts.computer || msg.computerId !== opts.computer.computerId) throw new Error();
+          narrowScopes(prior.scopes, next.scopes);
+        } catch { limiter.fail(remote); ws.close(CLOSE_TOKEN_REJECTED, "Device credential replacement rejected"); return; }
+        credential = msg.token; scopes = next.scopes; authed.set(ws, next); expireAt(next.expiresAt);
+        sendJson(ws, { kind: "auth-updated", deviceId: next.id, computer: opts.computer });
+        return;
+      }
+
       if (!msg || msg.kind !== "invoke") return;
-      const current = credential && authorize(credential);
+      const current = credential && (opts.reauthorize ? opts.reauthorize(credential, authed.get(ws)) : authorize(credential));
       if (!current) {
         isAuthed = false;
         authed.delete(ws);

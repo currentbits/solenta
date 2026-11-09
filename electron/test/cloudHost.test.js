@@ -28,13 +28,13 @@ async function fixture(t) {
   const descriptor = { kind: "solenta", computerId, protocol: { min: 1, max: 1 }, runtimeKind: "server" };
   const devices = createWebDevices(dir), disconnected = [], actions = [];
   const credentials = createCredentials({ file: path.join(dir, "host.json"), allowPlaintext: true });
-  let linked = true, offline = false, active = true, registration;
+  let linked = true, offline = false, active = true, cleanupPending = false, registration;
   const connector = { async start(input) { assert.equal(actions.at(-1), "reconciled"); assert.equal(input.token, "connector-secret"); actions.push("connector"); }, async close() { actions.push("stopped"); }, status: () => ({ state: "running" }) };
   const account = { status: () => ({ signedIn: true, accountId: "user_test" }), async registerHost(input, key) {
     assert.equal(input.port, 4621);
     registration = { computerId, accountId: "user_test", publicKey: key.publicJwk, linkId: randomUUID(), generation: 1, origin: "https://c-test.hosts.example.com", connectorToken: "connector-secret", brokerKey: brokerKey.publicJwk };
     return registration;
-  }, async deregister() { if (offline) throw new Error("Broker offline"); linked = false; return { revoked: true }; } };
+  }, async deregister() { if (offline) throw new Error("Broker offline"); linked = false; return { revoked: true, cleanupPending }; } };
   const fetchBroker = async (url, options) => {
     assert.equal(options.redirect, "error");
     if (offline) throw new Error("Broker offline");
@@ -66,7 +66,7 @@ async function fixture(t) {
     assert.equal(result.status, 200);
     return { result: result.body, exchange: body };
   }
-  return { host, devices, credentials, request, brokerKey, clientKey, claims, enroll, actions, disconnected, make, setLinked: value => { linked = value; }, setOffline: value => { offline = value; }, setActive: value => { active = value; }, descriptor };
+  return { host, devices, credentials, request, brokerKey, clientKey, claims, enroll, actions, disconnected, make, setLinked: value => { linked = value; }, setOffline: value => { offline = value; }, setActive: value => { active = value; }, setCleanupPending: value => { cleanupPending = value; }, descriptor };
 }
 
 test("host links its exact port, reconciles before starting the connector and signs a one-use exchange", async t => {
@@ -249,4 +249,19 @@ test("the real wire bridge permits local CLI administration only with its legacy
   assert.equal(result.host.computerId, computerId);
   fs.writeFileSync(path.join(dir, "web-token"), ordinary.token);
   await assert.rejects(invokeLocal(server.port, dir, "cloud:admin", [{ action: "status" }]), /local server credential/);
+});
+
+
+test("unlink reports broker cleanup still pending after access was revoked", async t => {
+  const f = await fixture(t);
+  await f.host.link();
+  f.setCleanupPending(true);
+  const result = await f.host.unlink();
+  assert.equal(result.revocationPending, false);
+  assert.equal(result.cleanupPending, true);
+  assert.equal(f.host.status().enabled, false);
+  assert.equal(f.host.status().cleanupPending, true);
+  f.setCleanupPending(false);
+  await f.host.unlink();
+  assert.equal(f.host.status().cleanupPending, false);
 });

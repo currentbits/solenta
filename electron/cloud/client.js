@@ -130,6 +130,7 @@ function createCloudClient({ config, credentials, fetch = globalThis.fetch, open
     catch (error) { return { configured: Boolean(broker), brokerOrigin: broker, signedIn: false, error: error.message, storage: credentials.storage() }; }
   }
   async function acceptLogin(auth, epoch = generation) {
+    credentials.read();
     if (!broker || typeof auth?.accessToken !== "string" || !auth.accessToken || auth.accessToken.length > 16384 ||
         typeof auth.refreshToken !== "string" || !auth.refreshToken || auth.refreshToken.length > 16384 ||
         !Number.isSafeInteger(auth.expiresAt) || auth.expiresAt <= Date.now() || auth.expiresAt > Date.now() + 7 * 86400_000) throw new Error("Invalid cloud credentials.");
@@ -157,7 +158,10 @@ function createCloudClient({ config, credentials, fetch = globalThis.fetch, open
       return loginFlight;
     },
     async logout() {
-      const saved = credentials.read(); reset(); credentials.clear(); notify({ type: "account", signedIn: false });
+      let saved, unreadable = false;
+      try { saved = credentials.read(); } catch { unreadable = true; }
+      reset(); credentials.clear(); notify({ type: "account", signedIn: false });
+      if (unreadable) return { revocationPending: true };
       if (!saved?.oauth) return { revocationPending: false };
       if (saved.origin !== broker) return { revocationPending: true };
       try { await (await provider()).revoke(saved.oauth); return { revocationPending: false }; }

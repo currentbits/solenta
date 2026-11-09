@@ -64,6 +64,8 @@ export interface RemoteComputerDescriptor {
   computerId: string;
   protocol: { min: number; max: number };
   runtimeKind: "server" | "desktop";
+  platform?: string;
+  arch?: string;
   version?: string;
   releaseTag?: string;
   buildSha?: string;
@@ -3694,6 +3696,7 @@ export type TeleportPayload = { version: number } & Record<string, unknown>;
 
 /** A saved Remote Connection a thread can teleport to (#1702). */
 export interface TeleportTarget {
+  cloud?: CloudRouteRef;
   computerId?: string;
   allowLegacy?: boolean;
   host: string;
@@ -3703,7 +3706,50 @@ export interface TeleportTarget {
   label: string;
 }
 
+export interface CloudRouteRef {
+  accountId: string;
+  computerId: string;
+  scopes?: WebDeviceScope[];
+}
+export interface CloudAccountStatus {
+  configured: boolean;
+  signedIn: boolean;
+  brokerOrigin?: string | null;
+  accountId?: string;
+  storage?: "encrypted" | "plaintext" | "session";
+  error?: string;
+}
+export interface CloudHostStatus {
+  cleanupPending?: boolean;
+  configured: boolean;
+  supported: boolean;
+  enabled: boolean;
+  computerId: string;
+  accountId?: string;
+  origin?: string;
+  state: "unlinked" | "offline" | "stopped" | "starting" | "running" | "retrying" | "failed";
+  revocationPending: boolean;
+  error?: string;
+}
+export interface CloudStatus {
+  account: CloudAccountStatus;
+  host: CloudHostStatus | null;
+  error?: string;
+}
+export interface CloudComputer {
+  computerId: string;
+  label: string;
+  status: "pending" | "connecting" | "online" | "offline" | "setup-error";
+  lastSeen: number | null;
+  descriptor?: RemoteComputerDescriptor | null;
+}
+export interface CloudUnlinkResult {
+  revocationPending?: boolean;
+  hostRevocationPending?: boolean;
+  cleanupPending?: boolean;
+}
 export interface RemoteConnectionResult {
+  cloud?: CloudRouteRef;
   computerId?: string;
   descriptor?: RemoteComputerDescriptor;
   /** Explicit compatibility connection to an older host without identity. */
@@ -5881,6 +5927,7 @@ export interface CoderApi {
      * over SSH, or directly at `url` with a device token (#1824).
      */
     openRemoteConnection(input: {
+      cloud?: CloudRouteRef;
       computerId?: string;
       /** Unbound older hosts only. Never bypasses a saved identity mismatch. */
       allowLegacy?: boolean;
@@ -5920,10 +5967,18 @@ export interface CoderApi {
     linkPeer(input: { link: string; label?: string; token?: string; allowLegacy?: boolean }): Promise<PeerLink[]>;
     unlinkPeer(input: { key: string }): Promise<PeerLink[]>;
     setSidebarHosts(
-      hosts: Array<{ host: string; remotePort: number; url?: string; label?: string; computerId?: string; allowLegacy?: boolean }>,
+      hosts: Array<{ host: string; remotePort: number; url?: string; label?: string; computerId?: string; allowLegacy?: boolean; cloud?: CloudRouteRef }>,
     ): Promise<SidebarHostStatus[]>;
     /** Answer an "ssh:prompt" push; null cancels. Desktop only (#1818). */
     answerSshPrompt(input: { id: string; answer: string | null }): Promise<void>;
+    cloudStatus(): Promise<CloudStatus>;
+    cloudLogin(): Promise<CloudAccountStatus>;
+    /** Sign out here; linked hosts and their running work remain. */
+    cloudLogout(): Promise<{ revocationPending: boolean }>;
+    cloudComputers(): Promise<CloudComputer[]>;
+    cloudLink(): Promise<CloudHostStatus>;
+    cloudUnlink(input: { computerId: string }): Promise<CloudUnlinkResult>;
+    cloudConnect(input: { computerId: string; label?: string; scopes?: WebDeviceScope[] }): Promise<RemoteConnectionResult>;
   };
   /**
    * Proxied to the local shared-memory server by the main process (the

@@ -20,6 +20,11 @@ function withSecretStorage(ctx, settings) {
 const providerAuth = require("./providerAuth.js");
 
 const { appVersion } = feedback;
+function cloud(ctx) {
+  if (ctx.transport !== "desktop") throw new Error("Cloud connections require the desktop app.");
+  if (!ctx.cloud) throw new Error(ctx.cloudError || "Cloud connections are not configured.");
+  return ctx.cloud;
+}
 
 /** IPC_HANDLERS rows for app:*, memory:*, settings:*, stayAwake:*, providers:*, sourceControl:*; ipc.js spreads them in. */
 /**
@@ -34,6 +39,31 @@ function channelsFor(ctx, input) {
 }
 
 module.exports = {
+  "app:cloudStatus": async ctx => {
+    if (ctx.transport !== "desktop") throw new Error("Cloud connections require the desktop app.");
+    return ctx.cloud ? ctx.cloud.status() : { account: { configured: false, signedIn: false }, host: null, ...(ctx.cloudError ? { error: ctx.cloudError } : {}) };
+  },
+  "app:cloudLogin": async ctx => cloud(ctx).client.login(),
+  "app:cloudLogout": async ctx => cloud(ctx).client.logout(),
+  "app:cloudComputers": async ctx => (await cloud(ctx).client.computers()).map(row => ({
+    computerId: row.computerId, label: row.label, status: row.status, lastSeen: row.lastSeen, descriptor: row.descriptor ?? null,
+  })),
+  "app:cloudLink": async ctx => cloud(ctx).link(),
+  "app:cloudUnlink": async (ctx, input) => {
+    const services = cloud(ctx);
+    if (typeof input?.computerId !== "string") throw new Error("Choose a cloud computer to unlink.");
+    return input.computerId === services.host.status().computerId ? services.host.unlink() : services.client.deregister(input.computerId);
+  },
+  "app:cloudConnect": async (ctx, input) => {
+    const services = cloud(ctx), status = services.client.status();
+    if (!status.signedIn) throw new Error("Sign in to Solenta Cloud.");
+    if (input?.computerId === services.host.status().computerId) throw new Error("This computer is already open in this window.");
+    const scopes = input?.scopes ?? ["full"];
+    const { SCOPES } = require("./webScopes.js");
+    if (!Array.isArray(scopes) || !scopes.length || scopes.length > SCOPES.length || scopes.some(scope => !SCOPES.includes(scope))) throw new Error("Choose valid cloud access scopes.");
+    return ctx.openRemoteConnection({ host: "", token: "", label: typeof input.label === "string" ? input.label : "Cloud computer", computerId: input.computerId,
+      cloud: { accountId: status.accountId, computerId: input.computerId, scopes } });
+  },
   "app:status": async (ctx) => {
     const status = await services.appStatus(ctx.store);
     if (!ctx.userDataPath) return status;

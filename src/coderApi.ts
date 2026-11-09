@@ -1,6 +1,6 @@
 import type { CoderApi } from "./shared/ipc";
 import { isWebMode } from "./shared/wire";
-import { createWireCoder } from "./wireClient";
+import { createWireCoder, type WireCredentials } from "./wireClient";
 import { devCoder } from "./devCoder";
 
 export const WEB_TOKEN_KEY = "coder.web.token";
@@ -9,6 +9,11 @@ export const WEB_LEGACY_KEY = "coder.web.allowLegacy";
 
 /** Mirrors WS_PATH in electron/webBridge.js; the server rejects upgrades elsewhere. */
 const WS_PATH = "/ws";
+type CloudSessionBridge = {
+  getCredentials: () => Promise<WireCredentials>;
+  subscribeCredentials: (listener: (value: WireCredentials | null) => void) => () => void;
+};
+const cloudSessionBridge = () => (window as unknown as { solentaCloudSession?: CloudSessionBridge }).solentaCloudSession;
 
 export function wsUrlFromLocation(loc: {
   protocol: string;
@@ -86,13 +91,16 @@ export function needsWebTokenGate(isDev: boolean = isDevBuild()): boolean {
   // prompting for a token dev has no way to produce. Without this the gate
   // intercepts every browser dev session. isDevBuild() is false in the
   // production web bundle, so a real deploy still gates.
-  if (isDev) return false;
+  if (isDev || cloudSessionBridge()) return false;
   return isWebMode() && !resolveWebToken();
 }
 
 export function resolveCoderApi(isDev: boolean = isDevBuild()): CoderApi {
   const w = window as unknown as { coder?: CoderApi };
   if (w.coder) return w.coder;
+  const cloud = cloudSessionBridge();
+  if (cloud) return createWireCoder({ url: wsUrlFromLocation(window.location), token: "", allowLegacy: false,
+    getCredentials: () => cloud.getCredentials(), subscribeCredentials: listener => cloud.subscribeCredentials(listener) });
   const token = resolveWebToken();
   if (token) {
     return createWireCoder({

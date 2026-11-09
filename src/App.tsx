@@ -3075,6 +3075,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
           onTestWebhook={testWebhook}
           onShowOnboarding={showOnboarding}
           onOpenConnection={(input) => api.app.openRemoteConnection(input)}
+          cloudApi={api.app}
           onForgetConnection={(input) => api.app.forgetRemoteConnection(input)}
           onManageRemoteServer={(input) => api.app.manageRemoteServer(input)}
           onInstallSolenta={(input) => api.app.installRemoteSolenta(input)}

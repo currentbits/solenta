@@ -398,7 +398,7 @@ export const ThreadCard = memo(function ThreadCard({
     if (menuBusy.current || renaming || editingTags) return;
     const presets = resolveSnoozePresets(Date.now());
     const teleportTargets = onTeleport
-      ? loadHosts().map((h) => ({ host: h.host, remotePort: h.remotePort, label: h.label, ...(h.url ? { url: h.url } : {}) }))
+      ? loadHosts().map((h) => ({ host: h.host, remotePort: h.remotePort, label: h.label, ...(h.cloud ? { cloud: h.cloud } : {}), ...(h.computerId ? { computerId: h.computerId } : {}), ...(h.url ? { url: h.url } : {}) }))
       : undefined;
     const items = buildThreadActionMenuItems({
       thread,

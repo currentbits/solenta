@@ -191,6 +191,8 @@ module.exports = {
     const target = {
       host: String(input.host || ""),
       remotePort: input.remotePort,
+      ...(typeof input.computerId === "string" ? { computerId: input.computerId } : {}),
+      ...(input.cloud ? { cloud: input.cloud } : {}),
       // A direct route (#1824) is reached by address, no SSH.
       ...(typeof input.url === "string" && input.url ? { url: input.url } : {}),
       label: String(input.label || input.host || ""),

@@ -32,11 +32,13 @@ import type { RemoteComputerDescriptor } from "./ipc";
 /** Client → server. */
 export type WireClientMessage =
   | { kind: "auth"; token: string; computerId?: string; protocol?: number }
+  | { kind: "auth-update"; token: string; computerId: string }
   | { kind: "invoke"; id: number; channel: string; args: unknown[] };
 
 /** Server → client. */
 export type WireServerMessage =
-  | { kind: "auth-ok"; computer?: RemoteComputerDescriptor }
+  | { kind: "auth-ok"; computer?: RemoteComputerDescriptor; deviceId?: string }
+  | { kind: "auth-updated"; computer: RemoteComputerDescriptor; deviceId: string }
   | { kind: "reply"; id: number; result?: unknown; error?: string }
   | { kind: "push"; channel: string; payload: unknown };
 

@@ -28,7 +28,7 @@ const RELAYED_PUSHES = new Set(["terminal:data", "pr:progress", "clone:progress"
 // Direct routes (#1824) have no ssh keepalive: ping, and drop a socket
 // that misses a pong so a sleeping network shows offline and reconnects.
 const HEARTBEAT_MS = 30_000;
-const NO_RETRY = /identity|incompatible|legacy compatibility|invalid Solenta|refused the login|host key|rejected this computer's token|rejected this token|No web token found|not installed on|Plain http|must start with|Enter an address/i;
+const NO_RETRY = /identity|incompatible|legacy compatibility|invalid Solenta|refused the login|host key|rejected this computer's token|rejected this token|cloud session ended|No web token found|not installed on|Plain http|must start with|Enter an address/i;
 // Arg fields that name the thread or project a call acts on.
 const ID_FIELDS = ["threadId", "projectId", "id", "parentThreadId", "sourceThreadId"];
 
@@ -55,7 +55,7 @@ function applyListPush(prev, push, heldSeq) {
 
 // A direct route is keyed by its origin, an SSH host by host:port.
 function hostKey(h) {
-  return h.url || `${h.host}:${h.remotePort}`;
+  return h.cloud ? `cloud:${h.cloud.accountId}:${h.cloud.computerId}` : h.url || `${h.host}:${h.remotePort}`;
 }
 
 /**
@@ -223,6 +223,7 @@ function createHostHub(deps) {
     }
     entry.child?.kill();
     entry.child = null;
+    entry.cancelCredentials?.(); entry.cancelCredentials = null;
     for (const p of entry.pending.values()) {
       clearTimer(p.timer);
       p.reject(new Error(`${entry.label} disconnected.`));
@@ -261,7 +262,7 @@ function createHostHub(deps) {
     entry.attemptedRouteKey = route.key;
     let opened;
     try {
-      opened = await deps.openTunnel({ host: route.host, remotePort: route.remotePort, url: route.url, label: entry.label, computerId: entry.computerId, allowLegacy: route.allowLegacy, ...(route.peer ? { peer: true } : {}), ...(route.token ? { token: route.token } : {}) }, () => {
+      opened = await deps.openTunnel({ host: route.host, remotePort: route.remotePort, url: route.url, label: entry.label, computerId: entry.computerId, allowLegacy: route.allowLegacy, ...(route.cloud ? { cloud: route.cloud } : {}), ...(route.peer ? { peer: true } : {}), ...(route.token ? { token: route.token } : {}) }, () => {
         if (entry.child === opened?.child) dropSocket(entry, "SSH connection ended.");
       });
     } catch (err) {
@@ -278,7 +279,7 @@ function createHostHub(deps) {
     entry.child = opened.child;
     const ws = new WS(opened.wsUrl || `ws://127.0.0.1:${opened.child.backPort}/ws`, { maxPayload: 128 * 1024 * 1024 });
     entry.ws = ws;
-    if (route.url && typeof ws.ping === "function") {
+    if ((route.url || route.cloud) && typeof ws.ping === "function") {
       let alive = true;
       ws.on("pong", () => { alive = true; });
       const beat = () => {
@@ -295,6 +296,12 @@ function createHostHub(deps) {
     }
     ws.on("open", () => { if (entry.ws === ws) ws.send(JSON.stringify({ kind: "auth", token: opened.token, ...(opened.descriptor ? { computerId: opened.descriptor.computerId, protocol: 1 } : {}) })); });
     let authenticated = false;
+    entry.cancelCredentials = opened.subscribeCredentials?.(value => {
+      if (entry.ws !== ws) return;
+      if (!value || value.computerId !== opened.descriptor?.computerId) { dropSocket(entry, "The cloud session ended. Sign in to reconnect."); return; }
+      opened.token = value.token;
+      if (authenticated && ws.readyState === WS.OPEN) ws.send(JSON.stringify({ kind: "auth-update", token: value.token, computerId: value.computerId }));
+    });
     ws.on("message", (raw) => {
       if (entry.ws !== ws) return;
       let msg;
@@ -324,6 +331,7 @@ function createHostHub(deps) {
             ws.terminate();
             entry.child?.kill();
             entry.child = null;
+            entry.cancelCredentials?.(); entry.cancelCredentials = null;
             owner.refusedRoutes.delete(entry.key);
             retag(owner);
             // Persisted workers can name this route even when another route
@@ -416,6 +424,12 @@ function createHostHub(deps) {
     const want = new Map();
     for (const h of [...peerInput, ...sidebarInput]) {
       if (!h) continue;
+      if (h.cloud) {
+        const ref = h.cloud;
+        if (typeof ref.accountId !== "string" || typeof ref.computerId !== "string" || (h.computerId && h.computerId !== ref.computerId) || (deps.canUseCloudRoute && !deps.canUseCloudRoute(ref))) continue;
+        want.set(hostKey(h), { ...h, host: h.host || ref.computerId, computerId: ref.computerId, remotePort: 443, url: null });
+        continue;
+      }
       if (typeof h.url === "string" && h.url) {
         let origin;
         try {
@@ -474,7 +488,7 @@ function createHostHub(deps) {
       const entry = {
         refusedRoutes: new Set(),
         computerId: h.computerId, allowLegacy: h.allowLegacy === true, descriptor: null, following: null,
-        key, host: h.host, remotePort: h.remotePort, url: h.url, label, beat: null, peer, token: h.token,
+        key, host: h.host, remotePort: h.remotePort, url: h.url, cloud: h.cloud, label, beat: null, peer, token: h.token,
         status: "connecting", error: null, tag: null,
         ws: null, child: null, pending: new Map(), nextId: 0, attempt: 0, retry: null, removed: false,
         threads: [], threadIds: new Set(), threadCache: new Map(), taggedThreads: [], listSeq: null,
@@ -633,7 +647,7 @@ function createHostHub(deps) {
     for (const entry of [...hosts.values()]) remove(entry);
   }
 
-  return { setHosts, setPeers, list, route, ownerOf, mergeThreads, mergeProjects, invoke, projectsOf, threadsOf, sameComputer, close };
+  return { setHosts, setPeers, list, route, ownerOf, mergeThreads, mergeProjects, invoke, projectsOf, threadsOf, sameComputer, refreshCloudRoutes: apply, close };
 }
 
 module.exports = { createHostHub, applyListPush, RELAYED_PUSHES };

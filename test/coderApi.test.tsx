@@ -54,7 +54,21 @@ afterEach(() => {
   if (typeof window !== "undefined") {
     window.localStorage?.clear();
     wipeCoder();
+    delete (window as unknown as { solentaCloudSession?: unknown }).solentaCloudSession;
   }
+});
+
+it("cloud remote windows use their narrow preload without asking for or persisting a browser token", async () => {
+  await withDom();
+  (window as unknown as { solentaCloudSession: unknown }).solentaCloudSession = {
+    getCredentials: async () => ({ token: "cloud-host-token", computerId: "host", deviceId: "device" }),
+    subscribeCredentials: () => () => {},
+  };
+  (globalThis as unknown as { WebSocket: typeof WebSocket }).WebSocket = CountingWebSocket as unknown as typeof WebSocket;
+  assert.equal(needsWebTokenGate(false), false);
+  assert.equal(typeof resolveCoderApi(false).threads.list, "function");
+  assert.equal(CountingWebSocket.constructions, 1);
+  assert.equal(window.localStorage.getItem(WEB_TOKEN_KEY), null);
 });
 
 describe("wsUrlFromLocation", () => {

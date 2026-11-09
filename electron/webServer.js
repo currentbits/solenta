@@ -616,6 +616,7 @@ function startWebServer(opts) {
 
   const bridge = attachWebBridge(server, {
     authorize,
+    reauthorize: opts.reauthorize,
     limiter,
     ctx,
     handlers: opts.handlers,

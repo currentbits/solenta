@@ -325,6 +325,7 @@ let memoryConsolidateScheduler = null;
 let webAccess = null;
 let cloudServices = null;
 let cloudError = null;
+const remoteDeps = () => ({ cloudClient: cloudServices?.client, cloudWindows: cloudServices?.windows });
 
 /** Opt-in Tailscale Funnel for /mcp (#1541). */
 /** @type {ReturnType<typeof createMcpFunnel> | null} */
@@ -614,7 +615,8 @@ let crewRelay = null;
 let peerLinks = null;
 // Remote Solenta hosts shown in this window's sidebar (#1819).
 const hostHub = createHostHub({
-  openTunnel: (input, onClose) => openHostTunnel(input, {}, onClose),
+  openTunnel: (input, onClose) => openHostTunnel(input, remoteDeps(), onClose),
+  canUseCloudRoute: ref => cloudServices?.client.status().signedIn && cloudServices.client.status().accountId === ref.accountId && cloudServices.host.status().computerId !== ref.computerId,
   pushWindows,
   onHostThreads: (key, rows) => remoteWorkers?.onHostThreads(key, rows),
   onCrewCall: (key, call) => (remoteWorkers ? remoteWorkers.onCrewCall(key, call) : null),
@@ -1280,9 +1282,10 @@ app.whenReady().then(async () => {
     log: (msg) => console.warn(msg),
   });
   try {
-    cloudServices = require("./cloud/index.js").createCloudServices({ dataDir: userData, devices: webDevices, webAccess, safeStorage,
+    cloudServices = require("./cloud/index.js").createCloudServices({ dataDir: userData, devices: webDevices, webAccess, safeStorage, ipcMain,
       isActive: () => serverActivation?.state() === "active",
       descriptor: require("./serverIdentity.js").computerDescriptor(userData), openExternal: url => shell.openExternal(url) });
+    cloudServices.client.subscribe(event => { if (event.type === "account") hostHub.refreshCloudRoutes(); });
   } catch (error) { cloudError = error.message; console.warn("Cloud connections are unavailable. Check their configuration and secure storage."); }
 
   channels = require("./channels/index.js").createChannels({
@@ -1339,11 +1342,11 @@ app.whenReady().then(async () => {
     getOrchStatus: () =>
       orchServer ? orchServer.getStatus() : { running: false, port: null },
     getMcpFunnel: () => mcpFunnel,
-    openRemoteConnection,
+    openRemoteConnection: input => openRemoteConnection(input, remoteDeps()),
     forgetRemoteConnection,
     installRemoteSolenta,
     manageRemoteServer,
-    invokeRemote,
+    invokeRemote: (input, channel, args) => invokeRemote(input, channel, args, remoteDeps()),
     hostHub,
     answerSshPrompt: (id, answer) => sshPrompts.answer(id, answer),
   });

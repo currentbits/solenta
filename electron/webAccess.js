@@ -239,6 +239,7 @@ function createWebAccess(deps) {
       host,
       port: opts.port ?? deps.defaultPort,
       authorize: (token) => devices.authorize(token),
+      reauthorize: (token, prior) => devices.authorize(token) || devices.authorizeEstablished(prior),
       redeemEnrollment: (input) => {
         const computerId = deps.getComputerId?.();
         if (!computerId) throw new Error("Computer identity is unavailable. Create a new enrollment link after updating the host.");

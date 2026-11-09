@@ -372,6 +372,15 @@ function createWebDevices(userDataPath, opts = {}) {
       }
       return { id: found.id, name: found.name, scopes: rowScopes(found), ...(found.legacy ? { legacy: true } : {}), ...(found.expiresAt !== undefined ? { expiresAt: found.expiresAt } : {}) };
     },
+    authorizeEstablished(prior) {
+      // Established sockets retain their original lease while a replacement token is in transit.
+      if (!prior || typeof prior.id !== "string" || !active(prior)) return null;
+      const found = load(file).devices.find(row => row.id === prior.id);
+      if (!found || !active(found)) return null;
+      try { narrowScopes(prior.scopes, rowScopes(found)); } catch { return null; }
+      const expiresAt = Number.isFinite(prior.expiresAt) ? Math.min(prior.expiresAt, found.expiresAt ?? Infinity) : found.expiresAt;
+      return { id: found.id, name: found.name, scopes: rowScopes(found), ...(found.legacy ? { legacy: true } : {}), ...(expiresAt !== undefined ? { expiresAt } : {}) };
+    },
   };
 }
 

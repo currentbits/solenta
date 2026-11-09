@@ -39,6 +39,8 @@ function computerDescriptor(dataDir, opts = {}) {
     computerId: loadOrCreateComputerId(dataDir),
     protocol: { min: WIRE_PROTOCOL, max: WIRE_PROTOCOL },
     runtimeKind: opts.runtimeKind || (process.env.SOLENTA_SERVER === "1" ? "server" : "desktop"),
+    platform: process.platform,
+    arch: process.arch,
     capabilities: ["wire", "computer-identity"],
   };
   for (const field of ["version", "releaseTag", "buildSha"]) {
@@ -59,7 +61,7 @@ function parseComputerDescriptor(value) {
     throw new Error("The remote computer uses an incompatible Solenta wire protocol. Update Solenta before connecting.");
   }
   const out = { kind: "solenta", computerId: value.computerId, protocol: { min: value.protocol.min, max: value.protocol.max }, runtimeKind: value.runtimeKind };
-  for (const field of ["version", "releaseTag", "buildSha"]) {
+  for (const field of ["version", "releaseTag", "buildSha", "platform", "arch"]) {
     if (typeof value[field] === "string" && value[field].length <= 200) out[field] = value[field];
   }
   if (Array.isArray(value.capabilities)) out.capabilities = value.capabilities.filter((v) => typeof v === "string" && v.length <= 100).slice(0, 100);

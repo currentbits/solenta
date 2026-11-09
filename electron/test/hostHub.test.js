@@ -18,7 +18,7 @@ async function waitFor(check, timeoutMs = 5_000) {
 async function fakeHost({ token = "tok", threads = [], projects = [], computerId } = {}) {
   const server = http.createServer();
   const wss = new WebSocketServer({ server, path: "/ws" });
-  const state = { threads, projects, calls: [], sockets: new Set() };
+  const state = { threads, projects, calls: [], credentials: [], sockets: new Set() };
   wss.on("connection", (ws) => {
     let authed = false;
     ws.on("message", (raw) => {
@@ -28,6 +28,11 @@ async function fakeHost({ token = "tok", threads = [], projects = [], computerId
         authed = true;
         state.sockets.add(ws);
         ws.send(JSON.stringify({ kind: "auth-ok", ...(computerId ? { computer: { kind: "solenta", computerId, protocol: { min: 1, max: 1 }, runtimeKind: "server" } } : {}) }));
+        return;
+      }
+      if (msg.kind === "auth-update") {
+        state.credentials.push(msg.token);
+        ws.send(JSON.stringify({ kind: "auth-updated", computer: { kind: "solenta", computerId, protocol: { min: 1, max: 1 }, runtimeKind: "server" } }));
         return;
       }
       state.calls.push({ channel: msg.channel, args: msg.args });
@@ -479,4 +484,33 @@ describe("applyListPush", () => {
     assert.equal(applyListPush([a], { seq: 3, base: 1, upserts: [], removedIds: [] }, 2), null);
     assert.equal(applyListPush([a], { seq: 3, base: 2, upserts: [{ id: "new" }], removedIds: [] }, 2), null);
   });
+});
+
+
+it("cloud sidebar routes rotate credentials in place and disappear on account sign-out", async () => {
+  const remote = await fakeHost({ computerId: "computer-one", threads: [{ id: "cloud-thread", projectId: "rp" }] });
+  let accountId = "user_test", listener, unsubscribed = 0, opens = 0;
+  const { hub } = makeHub(remote, { canUseCloudRoute: ref => ref.accountId === accountId,
+    openTunnel: async input => {
+      opens++;
+      assert.equal(input.cloud.accountId, "user_test");
+      return { child: { backPort: remote.port, kill() {} }, token: "tok",
+        descriptor: { kind: "solenta", computerId: "computer-one", protocol: { min: 1, max: 1 }, runtimeKind: "server" },
+        subscribeCredentials: fn => { listener = fn; return () => { unsubscribed++; }; } };
+    } });
+  try {
+    hub.setHosts([{ ...HOST, cloud: { accountId: "other_user", computerId: "computer-other" } },
+      { ...HOST, computerId: "computer-one", cloud: { accountId: "user_test", computerId: "computer-one" } }]);
+    await waitFor(() => hub.mergeThreads([]).length === 1);
+    assert.equal(hub.list()[0].key, "cloud:user_test:computer-one");
+    listener({ token: "rotated", computerId: "computer-one", deviceId: "device-one" });
+    await waitFor(() => remote.state.credentials.length === 1);
+    assert.equal(remote.state.credentials[0], "rotated");
+    assert.equal(opens, 1);
+    assert.equal((await hub.invoke(hub.list()[0].key, "threads:get", ["cloud-thread"])).thread.id, "cloud-thread");
+    accountId = null; hub.refreshCloudRoutes();
+    assert.deepEqual(hub.list(), []);
+    assert.equal(hub.mergeThreads([]).length, 0);
+    assert.equal(unsubscribed, 1);
+  } finally { hub.close(); await remote.close(); }
 });

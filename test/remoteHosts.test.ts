@@ -38,3 +38,20 @@ describe("remote computer catalog", () => {
     ]);
   });
 });
+
+
+it("loads only valid cloud references and forwards their pinned account and scopes", async () => {
+  const before = Object.getOwnPropertyDescriptor(globalThis, "window");
+  const cloud = { accountId: "user_test", computerId: "computer-one", scopes: ["read"] as const };
+  const saved = { ...route, computerId: cloud.computerId, cloud: { ...cloud, scopes: [...cloud.scopes] } };
+  try {
+    const rows = [saved, ...[null, {}, { ...cloud, accountId: "" }, { ...cloud, computerId: "other-computer" }, { ...cloud, scopes: ["admin"] }].map(cloud => ({ ...saved, cloud }))];
+    Object.defineProperty(globalThis, "window", { configurable: true, value: { localStorage: { getItem: () => JSON.stringify(rows) } } });
+    assert.deepEqual(loadHosts(), [saved]);
+    let received: unknown;
+    await pushSidebarHosts((async input => { received = input; return []; }) as CoderApi["app"]["setSidebarHosts"], loadHosts());
+    assert.deepEqual(received, [{ host: route.host, remotePort: route.remotePort, label: route.label, computerId: cloud.computerId, cloud: saved.cloud }]);
+  } finally {
+    if (before) Object.defineProperty(globalThis, "window", before); else Reflect.deleteProperty(globalThis, "window");
+  }
+});

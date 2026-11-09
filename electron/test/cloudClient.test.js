@@ -249,3 +249,18 @@ test("scheduled renewal notifies owners; an outage preserves the current session
   await expired;
   assert.equal(f.devices.authorize(second.token), null);
 });
+
+
+test("explicit logout clears locked credentials; sign-in never overwrites them before that choice", async t => {
+  const target = file(t);
+  fs.writeFileSync(target, "invalid", { mode: 0o600 });
+  const credentials = createCredentials({ file: target, safeStorage: encrypted });
+  const client = createCloudClient({ config: { origin: "https://connect.example.com" }, credentials,
+    fetch: async () => Response.json({ accountId: "user_test", computers: [] }) });
+  t.after(client.close);
+  await assert.rejects(client.acceptLogin({ accessToken: "new", refreshToken: "new", expiresAt: Date.now() + 3600_000 }), /locked|invalid/);
+  assert.equal(fs.readFileSync(target, "utf8"), "invalid");
+  assert.equal((await client.logout()).revocationPending, true);
+  assert.equal(fs.existsSync(target), false);
+  assert.equal(client.status().signedIn, false);
+});

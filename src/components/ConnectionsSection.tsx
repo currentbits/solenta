@@ -3,6 +3,7 @@ import type { CoderApi, RemoteAgentInfo, RemoteHostInfo, RemoteComputerDescripto
 import { accountLine } from "../providerAccounts";
 import { groupSavedComputers, hostKeyOf, loadHosts, pushSidebarHosts, STORAGE_KEY, type SavedHost } from "../remoteHosts";
 import styles from "./SettingsModal.module.css";
+import { CloudConnections, type CloudConnectionsApi } from "./CloudConnections";
 
 type OpenConnection = CoderApi["app"]["openRemoteConnection"];
 type ForgetConnection = CoderApi["app"]["forgetRemoteConnection"];
@@ -21,7 +22,8 @@ function agentState(a: RemoteAgentInfo): string {
   if (a.auth === "signedIn") return accountLine(a) ?? "Ready";
   return "Installed";
 }
-export function ConnectionsSection({ onOpen, onForget, onInstall, onManage, onSidebarHosts, sidebarHosts = [] }: {
+export function ConnectionsSection({ onOpen, onForget, onInstall, onManage, onSidebarHosts, sidebarHosts = [], cloudApi }: {
+  cloudApi?: CloudConnectionsApi;
   onOpen?: OpenConnection;
   onManage?: CoderApi["app"]["manageRemoteServer"];
   onForget?: ForgetConnection;
@@ -161,6 +163,7 @@ export function ConnectionsSection({ onOpen, onForget, onInstall, onManage, onSi
         Use another computer&apos;s agents and projects here. Your credentials and work stay on that computer,
         and keep running when you disconnect.
       </p>
+      {cloudApi && <CloudConnections api={cloudApi} hosts={hosts} onHosts={saveHosts} />}
       <details className={styles.connectionGuide}><summary>How setup works</summary>
       {mode === "address" ? (
         <ol className={`${styles.fieldNote} ${styles.connectionSteps}`} data-connection-steps="address">
@@ -183,7 +186,7 @@ export function ConnectionsSection({ onOpen, onForget, onInstall, onManage, onSi
       </ol>
       )}
       </details>
-      {groupSavedComputers(hosts).map(computer => <div key={computer.key} data-connection-computer={computer.key}>
+      {groupSavedComputers(hosts.filter(host => !host.cloud)).map(computer => <div key={computer.key} data-connection-computer={computer.key}>
         {computer.computerId && <>
           <p className={styles.fieldNote}>{computer.label}{computer.routes[0]?.descriptor && <> · {computer.routes[0].descriptor.runtimeKind}{computer.routes[0].descriptor.version ? ` ${computer.routes[0].descriptor.version}` : ""}</>}</p>
           <details className={styles.fieldNote}><summary>Connection details</summary>

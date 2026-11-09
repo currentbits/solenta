@@ -891,7 +891,7 @@ function spawnTunnel(spawnFn, host, backPort, remotePort, onClose, deps = {}) {
 
 // The isolated desktop window for one host's Solenta Web. Links leaving
 // `origin` open in the browser. Destroyed again if the page will not load.
-async function createHostWindow({ origin, title, token, computerId, allowLegacy, deps, onClosed }) {
+async function createHostWindow({ origin, title, token, computerId, allowLegacy, cloudSession, deps, onClosed }) {
   const { BrowserWindow, shell } = deps.electron || require("electron");
   const win = new BrowserWindow({
     width: 1440,
@@ -904,6 +904,7 @@ async function createHostWindow({ origin, title, token, computerId, allowLegacy,
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      ...(cloudSession ? { preload: path.join(__dirname, "cloud/windowPreload.js") } : {}),
       partition: `solenta-remote-${crypto.randomUUID()}`,
     },
   });
@@ -922,9 +923,13 @@ async function createHostWindow({ origin, title, token, computerId, allowLegacy,
   // Keep the window title ours; the remote page would overwrite it.
   win.on("page-title-updated", (event) => event.preventDefault());
   win.on("closed", onClosed);
+  if (cloudSession) {
+    if (!deps.cloudWindows) { win.destroy(); throw new Error("Cloud windows require the desktop app."); }
+    deps.cloudWindows.track(win, deps.cloudClient, cloudSession);
+  }
   // Web hosts accept a query token and scrub it after boot.
   try {
-    await win.loadURL(`${origin}/#token=${encodeURIComponent(token)}${computerId ? `&computerId=${encodeURIComponent(computerId)}` : allowLegacy ? "&allowLegacy=1" : ""}`);
+    await win.loadURL(cloudSession ? `${origin}/` : `${origin}/#token=${encodeURIComponent(token)}${computerId ? `&computerId=${encodeURIComponent(computerId)}` : allowLegacy ? "&allowLegacy=1" : ""}`);
   } catch {
     if (!win.isDestroyed()) win.destroy();
     throw new Error("Unable to load the remote Solenta window.");
@@ -973,6 +978,7 @@ async function connectedResult(conn, token, inspected, deps, descriptor) {
     remotePort: conn.remotePort,
     ...(conn.url ? { url: conn.url } : {}),
     tokenSaved,
+    ...(conn.cloud ? { cloud: conn.cloud } : {}),
     ...(descriptor ? { computerId: descriptor.computerId, descriptor } : { legacy: true }),
     remote,
     localVersion: mine,
@@ -1014,6 +1020,7 @@ async function openDirectConnection(conn, deps) {
         token,
         computerId: descriptor?.computerId,
         allowLegacy: conn.allowLegacy,
+        cloudSession: conn.cloudSession,
         deps,
         onClosed: () => {
           entry.closing = true;
@@ -1033,6 +1040,12 @@ async function openDirectConnection(conn, deps) {
 }
 
 async function openRemoteConnection(input, deps = {}) {
+  if (input?.cloud) {
+    const session = await cloudSession(input, deps);
+    const conn = validateConnection({ url: session.origin, token: session.token, label: input.label, computerId: session.computerId, remember: false });
+    conn.key = cloudKey(session.cloud); conn.cloud = session.cloud; conn.cloudSession = session;
+    return openDirectConnection(conn, { ...deps, tokens: cloudTokens });
+  }
   const conn = validateConnection(input);
   if (conn.url) return openDirectConnection(conn, deps);
   const { host, label, remotePort, token: typed, key } = conn;
@@ -1194,19 +1207,25 @@ function closeRemoteConnections() {
 
 // One invoke on the host's web API over a tunnel of its own, no window.
 // The reply can be large (Teleport back, #1702), hence the raised maxPayload.
-function wsInvoke(wsUrl, token, channel, args, timeoutMs, descriptor) {
+function wsInvoke(wsUrl, token, channel, args, timeoutMs, descriptor, subscribeCredentials, WS = WebSocket) {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(wsUrl, { maxPayload: 128 * 1024 * 1024 });
-    let settled = false;
+    const ws = new WS(wsUrl, { maxPayload: 128 * 1024 * 1024 });
+    let settled = false, unsubscribe, authenticated = false, currentToken = token;
     const done = (err, value) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      unsubscribe?.();
       ws.terminate();
       err ? reject(err) : resolve(value);
     };
     const timer = setTimeout(() => done(new Error("The remote Solenta host did not answer in time.")), timeoutMs);
-    ws.once("open", () => ws.send(JSON.stringify({ kind: "auth", token })));
+    unsubscribe = subscribeCredentials?.(value => {
+      if (!value || value.computerId !== descriptor?.computerId) { done(new Error("The cloud session ended. Sign in to reconnect.")); return; }
+      currentToken = value.token;
+      if (authenticated && ws.readyState === WS.OPEN) ws.send(JSON.stringify({ kind: "auth-update", token: value.token, computerId: value.computerId }));
+    });
+    ws.once("open", () => ws.send(JSON.stringify({ kind: "auth", token: currentToken })));
     ws.on("message", (raw) => {
       let msg;
       try {
@@ -1216,6 +1235,7 @@ function wsInvoke(wsUrl, token, channel, args, timeoutMs, descriptor) {
       }
       if (msg.kind === "auth-ok") {
         try { confirmComputer(descriptor, msg.computer, descriptor?.computerId); } catch (err) { return done(err); }
+        authenticated = true;
         ws.send(JSON.stringify({ kind: "invoke", id: 1, channel, args }));
         return;
       }
@@ -1235,9 +1255,9 @@ function wsInvoke(wsUrl, token, channel, args, timeoutMs, descriptor) {
  * host prep as Connect: the host's token file over SSH, then the keychain.
  */
 async function invokeRemote(input, channel, args, deps = {}) {
-  const { child, token, wsUrl, descriptor } = await openHostTunnel(input, deps);
+  const { child, token, wsUrl, descriptor, subscribeCredentials } = await openHostTunnel(input, deps);
   try {
-    return await wsInvoke(wsUrl, token, channel, args, deps.timeoutMs ?? 10 * 60_000, descriptor);
+    return await wsInvoke(wsUrl, token, channel, args, deps.timeoutMs ?? 10 * 60_000, descriptor, subscribeCredentials, deps.WebSocketImpl);
   } finally {
     child.kill();
   }
@@ -1249,6 +1269,19 @@ async function invokeRemote(input, channel, args, deps = {}) {
  * The caller owns `child` and kills it when done.
  */
 async function openHostTunnel(input, deps = {}, onClose) {
+  if (input?.cloud) {
+    const session = await cloudSession(input, deps);
+    const descriptor = await (deps.probeToken || probeToken)(session.origin, session.token, { computerId: session.computerId, allowLegacy: false, timeoutMs: DIRECT_PROBE_MS });
+    return { child: { backPort: null, kill() {} }, token: session.token, wsUrl: wsUrlFor(session.origin), descriptor,
+      subscribeCredentials: listener => deps.cloudClient.subscribe(event => {
+        if (event.type === "account" || (["expired", "unlinked"].includes(event.type) && event.computerId === session.computerId)) { listener(null); return; }
+        if (event.type !== "session" || event.computerId !== session.computerId) return;
+        const next = event.session;
+        listener(next.accountId === session.accountId && next.origin === session.origin && next.deviceId === session.deviceId
+          ? { token: next.token, computerId: next.computerId, deviceId: next.deviceId } : null);
+      }),
+    };
+  }
   const conn = validateConnection({ ...input, token: "" });
   // Peer links own their token and verified identity in peers.json. A sidebar
   // route has a separate credential lifetime; unlinking a peer must not leave
@@ -1281,6 +1314,19 @@ async function openHostTunnel(input, deps = {}, onClose) {
     throw err;
   }
   return { child, token, wsUrl: wsUrlFor(child.backPort), descriptor };
+}
+
+const cloudTokens = { get: () => "", set: () => false, delete() {}, bindComputer() {} };
+function cloudKey(ref) { return `cloud:${ref.accountId}:${ref.computerId}`; }
+async function cloudSession(input, deps) {
+  const ref = input.cloud, status = deps.cloudClient?.status();
+  if (!ref || typeof ref.accountId !== "string" || typeof ref.computerId !== "string" || !status?.signedIn || status.accountId !== ref.accountId) throw new Error("Sign in to this cloud route's account before connecting.");
+  if (input.computerId && input.computerId !== ref.computerId) throw new Error("Cloud computer identity mismatch.");
+  const session = await deps.cloudClient.session(ref.computerId, { scopes: ref.scopes });
+  if (session.accountId !== ref.accountId || session.computerId !== ref.computerId || parseComputerDescriptor(session.computer).computerId !== ref.computerId) throw new Error("Cloud computer identity mismatch.");
+  const endpoint = new URL(session.origin);
+  if (endpoint.protocol !== "https:" || endpoint.origin !== session.origin || endpoint.username || endpoint.password) throw new Error("Invalid cloud computer origin.");
+  return { ...session, cloud: { accountId: ref.accountId, computerId: ref.computerId, scopes: session.scopes } };
 }
 
 module.exports = {

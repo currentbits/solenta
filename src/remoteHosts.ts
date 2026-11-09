@@ -3,11 +3,12 @@
  * Also the Teleport targets in the thread menu (#1702).
  */
 
-import type { CoderApi, SidebarHostStatus, RemoteComputerDescriptor } from "./shared/ipc";
+import type { CoderApi, SidebarHostStatus, RemoteComputerDescriptor, CloudRouteRef } from "./shared/ipc";
 
 export type SavedHost = {
   id: string;
   computerId?: string;
+  cloud?: CloudRouteRef;
   descriptor?: RemoteComputerDescriptor;
   legacy?: true;
   label: string;
@@ -35,7 +36,12 @@ export function loadHosts(): SavedHost[] {
       Number.isInteger(item.remotePort) && item.remotePort > 0 &&
       item.remotePort <= 65535 &&
       (item.url === undefined || typeof item.url === "string") &&
-      (item.computerId === undefined || typeof item.computerId === "string"),
+      (item.computerId === undefined || typeof item.computerId === "string") &&
+      (item.cloud === undefined || (item.cloud && typeof item.cloud.accountId === "string" && /^[a-zA-Z0-9_-]{1,128}$/.test(item.cloud.accountId) &&
+        typeof item.cloud.computerId === "string" && item.cloud.computerId === item.computerId &&
+        /^[a-zA-Z0-9][a-zA-Z0-9._:-]{7,127}$/.test(item.cloud.computerId) &&
+        (item.cloud.scopes === undefined || (Array.isArray(item.cloud.scopes) && item.cloud.scopes.length > 0 &&
+          item.cloud.scopes.every((scope: unknown) => typeof scope === "string" && ["full", "read", "steer", "files", "git", "terminal:observe", "terminal:type", "preview", "settings"].includes(scope)))))),
     ).slice(0, 30);
   } catch {
     return [];
@@ -46,8 +52,8 @@ export function loadHosts(): SavedHost[] {
  * The hub's key for a saved host, also what its row shows: the address of
  * a direct route, else host:port.
  */
-export function hostKeyOf(h: Pick<SavedHost, "host" | "remotePort" | "url">): string {
-  return h.url || `${h.host}:${h.remotePort}`;
+export function hostKeyOf(h: Pick<SavedHost, "host" | "remotePort" | "url" | "cloud">): string {
+  return h.cloud ? `cloud:${h.cloud.accountId}:${h.cloud.computerId}` : h.url || `${h.host}:${h.remotePort}`;
 }
 
 /**
@@ -61,7 +67,7 @@ export function pushSidebarHosts(
   if (typeof setSidebarHosts !== "function") return Promise.resolve([]);
   const shown = hosts
     .filter((h) => h.inSidebar)
-    .map(({ host, remotePort, url, label, computerId, legacy }) => ({ host, remotePort, label, ...(url ? { url } : {}), ...(computerId ? { computerId } : {}), ...(legacy ? { allowLegacy: true } : {}) }));
+    .map(({ host, remotePort, url, label, computerId, legacy, cloud }) => ({ host, remotePort, label, ...(cloud ? { cloud } : {}), ...(url ? { url } : {}), ...(computerId ? { computerId } : {}), ...(legacy ? { allowLegacy: true } : {}) }));
   return setSidebarHosts(shown).catch(() => []);
 }
 

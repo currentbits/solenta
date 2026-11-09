@@ -75,7 +75,7 @@ function createCloudHost({ dataDir, devices, descriptor, port, credentials, conf
     return { configured: Boolean(config.origin), enabled: Boolean(state?.link?.enabled), computerId: descriptor.computerId,
       supported: connector.status().supported !== false,
       accountId: state?.link?.accountId, origin: state?.link?.origin, state: state?.link?.enabled ? (reconciled ? connector.status().state : "offline") : "unlinked",
-      revocationPending: state?.link?.revocationPending === true, ...(error ? { error } : {}) };
+      revocationPending: state?.link?.revocationPending === true, cleanupPending: state?.link?.cleanupPending === true, ...(error ? { error } : {}) };
   }
   return {
     status,
@@ -115,9 +115,9 @@ function createCloudHost({ dataDir, devices, descriptor, port, credentials, conf
       state.link.revocationPending = true;
       await disable();
       try {
-        await account.deregister(descriptor.computerId);
-        state.link.revocationPending = false; delete state.link.connectorToken; save();
-        return { revocationPending: false };
+        const result = await account.deregister(descriptor.computerId);
+        state.link.revocationPending = false; state.link.cleanupPending = result.cleanupPending === true; delete state.link.connectorToken; save();
+        return { revocationPending: false, cleanupPending: result.cleanupPending === true, hostRevocationPending: result.hostRevocationPending === true };
       } catch { return { revocationPending: true }; }
     }); },
     start() { return exclusive(async () => {
