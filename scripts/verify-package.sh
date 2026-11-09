@@ -203,13 +203,17 @@ ELECTRON_PID=""
 # nothing and leaks the server onto a temp db we then rm -rf (issue #99).
 # `set -m` at launch gives the job its own pgid == ELECTRON_PID; the plain-pid
 # kill is the fallback if that ever stops holding.
-cleanup() {
+stop_probe() {
   if [[ -n "${ELECTRON_PID}" ]]; then
     kill -TERM -"$ELECTRON_PID" 2>/dev/null || kill -TERM "$ELECTRON_PID" 2>/dev/null || true
     sleep 1
     kill -9 -"$ELECTRON_PID" 2>/dev/null || kill -9 "$ELECTRON_PID" 2>/dev/null || true
     wait "$ELECTRON_PID" 2>/dev/null || true
+    ELECTRON_PID=""
   fi
+}
+cleanup() {
+  stop_probe
   rm -rf "$TMP_USERDATA"
 }
 trap cleanup EXIT
@@ -418,5 +422,11 @@ AFTER_COUNT="$(node -e 'process.stdout.write(String(JSON.parse(process.argv[1]).
 echo "  AFTER_COUNT=$AFTER_COUNT (was BEFORE_COUNT=$BEFORE_COUNT)"
 echo "  /health vectors.count increased (embed path live)"
 echo "  health body (post-seed): $LAST_BODY"
+
+# Model loading must leave the signed bundle intact. Check after the process
+# tree exits so a successful boot cannot hide a runtime write into Resources.
+stop_probe
+echo "verify: signature after boot and embedding"
+verify_macos_gatekeeper "$APP"
 
 echo "verify: OK"

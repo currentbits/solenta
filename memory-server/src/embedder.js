@@ -1,4 +1,6 @@
 /** Pluggable text embedding: fake (tests) + transformers.js (production). */
+import os from 'node:os'
+import path from 'node:path'
 
 export const EMBED_MAX_CHARS = 1200
 export const DEFAULT_FAKE_DIM = 8
@@ -92,9 +94,13 @@ export function fakeEmbedder(dim = DEFAULT_FAKE_DIM) {
  * Real MiniLM embedder via @huggingface/transformers. Lazy single-load.
  * Concurrent callers share one load promise; a load failure clears the cache so
  * the next call retries. embed() failures return null (never throw).
+ * @param {{ cacheDir?: string, loadTransformers?: () => Promise<any> }} [options]
  * @returns {{ model: string, dim: number, embed: (text: string) => Promise<Float32Array|null> }}
  */
-export function createRealEmbedder() {
+export function createRealEmbedder({
+  cacheDir = path.join(os.homedir(), '.cache', 'solenta', 'models'),
+  loadTransformers = () => import('@huggingface/transformers'),
+} = {}) {
   /** @type {Promise<any>|null} */
   let pipePromise = null
 
@@ -102,10 +108,13 @@ export function createRealEmbedder() {
     if (pipePromise) return pipePromise
     // Assign before awaiting so concurrent callers share one load.
     pipePromise = (async () => {
-      const t = await import('@huggingface/transformers')
+      const t = await loadTransformers()
       return t.pipeline('feature-extraction', REAL_MODEL_ID, {
         device: 'cpu',
         dtype: 'q8',
+        // Transformers defaults to its own package directory. Downloads there
+        // modify a signed app bundle and make macOS refuse to open it.
+        cache_dir: cacheDir,
       })
     })()
     // Load failure must not disable semantic recall forever.
