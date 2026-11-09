@@ -34,6 +34,7 @@
     "cross-spawn": "^7.0.6",
     "dompurify": "^3.4.16",
     "highlight.js": "^11.12.0",
+    "jose": "6.2.16",
     "mermaid": "^12.1.0",
     "pdfjs-dist": "6.4.299",
     "qrcode-generator": "2.0.4",
@@ -41,10 +42,10 @@
     "react-dom": "^19.1.0",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
-    "ws": "8.21.3",
-    "yauzl": "^3.4.0",
+    "remark-parse": "^11.0.0",
     "unified": "^11.0.5",
-    "remark-parse": "^11.0.0"
+    "ws": "8.21.3",
+    "yauzl": "^3.4.0"
   },
   "devDependencies": {
     "@types/react": "^19.1.2",

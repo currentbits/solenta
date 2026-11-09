@@ -38,7 +38,7 @@ function hashToken(token) {
 }
 
 function emptyState() {
-  return { server: { enabled: false, lan: false }, devices: [], enrollments: [] };
+  return { server: { enabled: false, lan: false }, devices: [], enrollments: [], cloudNonces: [] };
 }
 
 function load(file) {
@@ -54,6 +54,7 @@ function load(file) {
   return {
     server: { enabled: server.enabled === true, lan: server.lan === true },
     enrollments: Array.isArray(parsed.enrollments) ? parsed.enrollments.filter(g => g && typeof g.tokenHash === "string") : [],
+    cloudNonces: Array.isArray(parsed.cloudNonces) ? parsed.cloudNonces.filter(g => g && typeof g.hash === "string") : [],
     devices: rows.filter(
       (d) => d && typeof d.id === "string" && typeof d.tokenHash === "string",
     ),
@@ -75,6 +76,19 @@ function toPublic(row) {
 
 function rowScopes(row) {
   return Array.isArray(row.scopes) ? sanitizeScopes(row.scopes) : ["full"];
+}
+
+function cloudBinding(value) {
+  if (!value || !["accountId", "linkId"].every(key => typeof value[key] === "string" && /^[A-Za-z0-9._:-]{1,128}$/.test(value[key])) ||
+      !Number.isSafeInteger(value.generation) || value.generation < 1 || !/^[A-Za-z0-9_-]{43}$/.test(value.jkt)) {
+    throw new Error("Invalid cloud device binding.");
+  }
+  const { accountId, linkId, generation, jkt } = value;
+  return { accountId, linkId, generation, jkt };
+}
+
+function sameCloud(left, right) {
+  return left && right && ["accountId", "linkId", "generation", "jkt"].every(key => left[key] === right[key]);
 }
 
 /**
@@ -179,6 +193,34 @@ function createWebDevices(userDataPath, opts = {}) {
     return row.expiresAt === undefined || (Number.isFinite(row.expiresAt) && row.expiresAt > now());
   }
 
+  function redeem(input, cloud) {
+    const grant = input && input.grant;
+    if (typeof grant !== "string" || grant.length < 32 || grant.length > 128) throw new Error("Enrollment link is invalid, expired or already used.");
+    return update(next => {
+      const presented = Buffer.from(hashToken(grant), "hex");
+      let found;
+      for (const row of next.enrollments) {
+        const stored = Buffer.from(row.tokenHash, "hex");
+        if (stored.length === presented.length && crypto.timingSafeEqual(stored, presented)) found = row;
+      }
+      if (!found || !Number.isFinite(found.expiresAt) || found.expiresAt <= now()) throw new Error("Enrollment link is invalid, expired or already used.");
+      if (found.cloud && !cloud) throw new Error("Cloud enrollment requires its client proof.");
+      if (cloud && !sameCloud(found.cloud, cloud)) throw new Error("Cloud enrollment binding does not match.");
+      const previous = found.deviceId ? next.devices.find(row => row.id === found.deviceId) : null;
+      if (found.deviceId && (!previous || !sameCloud(previous.cloud, cloud))) throw new Error("Cloud device binding does not match.");
+      if (previous && previous.tokenHash !== found.previousTokenHash) throw new Error("Cloud session changed during renewal. Try again.");
+      const scopes = narrowScopes(previous ? narrowScopes(rowScopes(previous), rowScopes(found)) : rowScopes(found), input.scopes);
+      if (!previous && next.devices.length >= MAX_DEVICES) throw new Error(`At most ${MAX_DEVICES} devices. Revoke one first.`);
+      const token = crypto.randomBytes(32).toString("base64url");
+      const expiresAt = now() + (cloud ? 10 * 60_000 : sessionTtl);
+      const row = { id: previous?.id || crypto.randomUUID(), name: previous?.name || found.name, scopes, expiresAt, tokenHash: hashToken(token), createdAt: previous?.createdAt ?? now(), lastSeenAt: previous?.lastSeenAt ?? null, ...(cloud ? { cloud } : {}) };
+      next.enrollments = next.enrollments.filter(g => g !== found);
+      if (previous) next.devices[next.devices.indexOf(previous)] = row;
+      else next.devices.push(row);
+      return { token, device: toPublic(row), expiresAt };
+    });
+  }
+
   /** Adopt a single plaintext token as the Legacy device row. Idempotent. */
   function adoptLegacy(token) {
     const raw = String(token || "").trim();
@@ -252,25 +294,40 @@ function createWebDevices(userDataPath, opts = {}) {
       });
     },
 
-    redeemEnrollment(input) {
-      const grant = input && input.grant;
-      if (typeof grant !== "string" || grant.length < 32 || grant.length > 128) throw new Error("Enrollment link is invalid, expired or already used.");
+    createCloudEnrollment(input) {
+      const name = nameOf(input);
+      const cloud = cloudBinding(input.cloud);
+      if (typeof input.nonce !== "string" || !/^[A-Za-z0-9_-]{16,128}$/.test(input.nonce)) throw new Error("Invalid cloud request nonce.");
       return update(next => {
-        const presented = Buffer.from(hashToken(grant), "hex");
-        let found;
-        for (const row of next.enrollments) {
-          const stored = Buffer.from(row.tokenHash, "hex");
-          if (stored.length === presented.length && crypto.timingSafeEqual(stored, presented)) found = row;
-        }
-        if (!found || !Number.isFinite(found.expiresAt) || found.expiresAt <= now()) throw new Error("Enrollment link is invalid, expired or already used.");
-        const scopes = narrowScopes(rowScopes(found), input.scopes);
-        if (next.devices.length >= MAX_DEVICES) throw new Error(`At most ${MAX_DEVICES} devices. Revoke one first.`);
-        const token = crypto.randomBytes(32).toString("base64url");
-        const expiresAt = now() + sessionTtl;
-        const row = { id: crypto.randomUUID(), name: found.name, scopes, expiresAt, tokenHash: hashToken(token), createdAt: now(), lastSeenAt: null };
-        next.enrollments = next.enrollments.filter(g => g !== found);
-        next.devices.push(row);
-        return { token, device: toPublic(row), expiresAt };
+        next.enrollments = next.enrollments.filter(row => row.expiresAt > now());
+        next.cloudNonces = next.cloudNonces.filter(row => row.expiresAt > now());
+        const hash = hashToken(input.nonce);
+        if (next.cloudNonces.some(row => row.hash === hash)) throw new Error("Cloud request nonce was already used.");
+        if (next.cloudNonces.length >= 1000 || next.enrollments.length >= MAX_DEVICES) throw new Error("Too many pending cloud requests. Try again later.");
+        const previous = input.deviceId ? next.devices.find(row => row.id === input.deviceId) : null;
+        if (input.deviceId && (!previous || !sameCloud(previous.cloud, cloud))) throw new Error("Cloud device binding does not match.");
+        if (!previous && next.devices.length >= MAX_DEVICES) throw new Error(`At most ${MAX_DEVICES} devices. Revoke one first.`);
+        const grant = crypto.randomBytes(32).toString("base64url");
+        const expiresAt = now() + Math.min(enrollmentTtl, 60_000);
+        const scopes = previous ? narrowScopes(rowScopes(previous), input.scopes) : sanitizeScopes(input.scopes);
+        next.enrollments.push({ id: crypto.randomUUID(), tokenHash: hashToken(grant), name, scopes, expiresAt, cloud, ...(previous ? { deviceId: previous.id, previousTokenHash: previous.tokenHash } : {}) });
+        next.cloudNonces.push({ hash, expiresAt: now() + 60_000, linkId: cloud.linkId });
+        return { grant, name, scopes, expiresAt, sessionTtlMs: 10 * 60_000 };
+      });
+    },
+
+    redeemEnrollment(input) { return redeem(input); },
+
+    // Only the host's verified proof exchange may call this entry point.
+    redeemCloudEnrollment(input) { return redeem(input, cloudBinding(input.cloud)); },
+
+    revokeCloud(linkId) {
+      return update(next => {
+        const ids = next.devices.filter(row => row.cloud?.linkId === linkId).map(row => row.id);
+        next.devices = next.devices.filter(row => row.cloud?.linkId !== linkId);
+        next.enrollments = next.enrollments.filter(row => row.cloud?.linkId !== linkId);
+        next.cloudNonces = next.cloudNonces.filter(row => row.linkId !== linkId);
+        return ids;
       });
     },
 
