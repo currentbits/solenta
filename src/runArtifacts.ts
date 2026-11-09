@@ -9,6 +9,9 @@ export function runArtifactMediaUrl(
   if (!isWebMode()) {
     return `solenta-media://artifact/${encodeURIComponent(artifactId)}`;
   }
+  if ((window as unknown as { solentaCloudSession?: unknown }).solentaCloudSession) {
+    return `/api/run-artifacts/${encodeURIComponent(threadId)}/${encodeURIComponent(artifactId)}`;
+  }
   const token = resolveWebToken() ?? "";
   return `/api/run-artifacts/${encodeURIComponent(threadId)}/${encodeURIComponent(artifactId)}?token=${encodeURIComponent(token)}`;
 }

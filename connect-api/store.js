@@ -29,7 +29,7 @@ function createStore(pool) {
         CREATE INDEX IF NOT EXISTS cloud_computers_owner ON cloud_computers(owner_id)`);
     },
     async list(accountId) {
-      const { rows } = await pool.query("SELECT data FROM cloud_computers WHERE owner_id=$1 AND data->>'revoked'='false' ORDER BY computer_id", [accountId]);
+      const { rows } = await pool.query("SELECT data FROM cloud_computers WHERE owner_id=$1 AND (data->>'revoked'='false' OR data ? 'cleanupPending' OR data->>'hostRevocationPending'='true') ORDER BY computer_id", [accountId]);
       return rows.map(row => row.data);
     },
     async getHost(computerId) {

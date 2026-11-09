@@ -285,3 +285,18 @@ test("remote revoke fences devices before acknowledging, then drains its own tun
   await wait(1200);
   assert.equal(f.actions.filter(action => action === "stopped").length, stops + 1);
 });
+
+
+test("a failed connector accepts an explicit retry with the same token after connectivity returns", async () => {
+  const timers = []; let offline = true, installs = 0, launches = 0;
+  const connector = createConnector({ cacheDir: "/unused", install: async () => { installs++; if (offline) throw new Error("Offline"); return "/verified/connector"; },
+    spawn: () => { launches++; const child = new EventEmitter(); child.kill = () => {}; return child; },
+    setTimeout: fn => { timers.push(fn); return {}; }, clearTimeout() {} });
+  const input = { token: "same-credential", beforeStart: async () => {} };
+  await connector.start(input);
+  while (timers.length) { await timers.shift()(); await new Promise(resolve => setImmediate(resolve)); }
+  assert.equal(connector.status().state, "failed"); assert.equal(installs, 5);
+  offline = false; await connector.start(input);
+  assert.equal(launches, 1); assert.equal(connector.status().state, "running");
+  await connector.close();
+});

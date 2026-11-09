@@ -6,7 +6,7 @@ import styles from "./SettingsModal.module.css";
 export type CloudConnectionsApi = Pick<CoderApi["app"], "cloudStatus" | "cloudLogin" | "cloudLogout" | "cloudComputers" | "cloudConnect" | "cloudLink" | "cloudUnlink">;
 type Access = "full" | "read" | "steer" | "saved";
 const scopesFor: Record<Exclude<Access, "saved">, WebDeviceScope[]> = { full: ["full"], read: ["read"], steer: ["read", "steer"] };
-const states: Record<CloudComputer["status"], string> = { pending: "Setting up", connecting: "Connecting", online: "Online", offline: "Offline", "setup-error": "Setup needs attention" };
+const states: Record<CloudComputer["status"], string> = { pending: "Setting up", connecting: "Connecting", online: "Online", offline: "Offline", "setup-error": "Setup needs attention", revoked: "Unlinked; cleanup pending" };
 function savedAccess(scopes?: WebDeviceScope[]): Access {
   if (!scopes) return "full";
   return (Object.keys(scopesFor) as Exclude<Access, "saved">[]).find(key => JSON.stringify(scopesFor[key]) === JSON.stringify(scopes)) ?? "saved";
@@ -89,14 +89,14 @@ export function CloudConnections({ api, hosts, onHosts }: { api: CloudConnection
                 <option value="full">Full access</option><option value="steer">Steer threads</option><option value="read">Read only</option>{choice === "saved" && <option value="saved">Saved permissions</option>}
               </select></label>
             <div className={styles.fieldRow}>
-              <button className={styles.btnPrimary} type="button" data-cloud-connect={computer.computerId} disabled={busy} onClick={() => void run(async () => {
+              <button className={styles.btnPrimary} type="button" data-cloud-connect={computer.computerId} disabled={busy || computer.status === "revoked"} onClick={() => void run(async () => {
                 const result = await api.cloudConnect({ computerId: computer.computerId, label: computer.label, scopes });
                 if (!result.cloud || result.computerId !== computer.computerId || result.cloud.computerId !== computer.computerId || result.cloud.accountId !== status.account.accountId) throw new Error("Cloud computer identity was not confirmed.");
                 const profile: SavedHost = { id: `cloud:${result.cloud.accountId}:${computer.computerId}`, host: result.host, remotePort: result.remotePort, label: computer.label,
                   computerId: result.computerId, descriptor: result.descriptor, cloud: { accountId: result.cloud.accountId, computerId: result.cloud.computerId, scopes: result.cloud.scopes }, tokenSaved: false, inSidebar: saved?.inSidebar ?? true };
                 onHosts([...hosts.filter(row => row.id !== profile.id), profile]);
               })}>Connect</button>
-              <button className={styles.btn} type="button" data-cloud-unlink={computer.computerId} disabled={busy} onClick={() => void run(() => unlink(computer.computerId))}>Unlink computer</button>
+              <button className={styles.btn} type="button" data-cloud-unlink={computer.computerId} disabled={busy} onClick={() => void run(() => unlink(computer.computerId))}>{computer.status === "revoked" ? "Retry cleanup" : "Unlink computer"}</button>
               {saved && <><label className={styles.fieldRow}><input type="checkbox" checked={saved.inSidebar === true} onChange={event => onHosts(hosts.map(row => row.id === saved.id ? { ...row, inSidebar: event.target.checked } : row))} />Show in sidebar</label>
                 <button className={styles.btn} type="button" onClick={() => onHosts(hosts.filter(row => row.id !== saved.id))}>Forget saved route</button></>}
             </div>

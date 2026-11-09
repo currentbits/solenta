@@ -13,7 +13,7 @@ function createCloudHost({ dataDir, devices, descriptor, port, credentials, conf
   if (!dataDir) throw new Error("Cloud hosting requires its runtime's data directory.");
   const disabledFile = path.join(dataDir, "cloud-disabled");
   let state = credentials.read(), reconciled = false, connectorStarted = false, closed = false, timer, error;
-  if (state?.link && fs.existsSync(disabledFile)) { state.link.enabled = false; state.link.revocationPending = true; }
+  if (state?.link && fs.existsSync(disabledFile)) { if (state.link.enabled) state.link.revocationPending = true; state.link.enabled = false; }
   let operation = Promise.resolve();
   const limiter = createAuthLimiter();
   const exclusive = work => { const result = operation.then(work, work); operation = result.catch(() => {}); return result; };
@@ -40,17 +40,23 @@ function createCloudHost({ dataDir, devices, descriptor, port, credentials, conf
     if (stopConnector) await connector.close();
   }
   async function reconcile(probe = false) {
-    if (closed || !isActive() || !config.origin || !state?.link?.enabled) return false;
+    if (closed || !isActive() || !config.origin || !state?.link) return false;
     if (state.link.brokerOrigin !== config.origin) throw new Error("Restore this computer's original broker configuration before unlinking or relinking.");
-    const link = state.link, nonce = randomUUID();
-    const claims = { computerId: descriptor.computerId, accountId: link.accountId, linkId: link.linkId, generation: link.generation, nonce, probe };
+    const link = state.link, nonce = randomUUID(), wasEnabled = link.enabled;
+    const claims = { computerId: descriptor.computerId, accountId: link.accountId, linkId: link.linkId, generation: link.generation, nonce, probe: wasEnabled && probe, disabled: !wasEnabled };
     const response = await fetchJSON(fetch, `${config.origin}/v1/computers/${encodeURIComponent(descriptor.computerId)}/heartbeat`, {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ proof: await signProof(state.privateJwk, claims, "heartbeat", config.origin) }),
     });
     const verified = await verifyProof(response.proof, link.brokerKey, { purpose: "heartbeat-response", audience: descriptor.computerId });
     if (closed || state.link !== link) return false;
     if (verified.computerId !== descriptor.computerId || verified.linkId !== link.linkId || verified.generation !== link.generation || verified.nonce !== nonce || typeof verified.linked !== "boolean") throw new Error("Cloud link reconciliation failed its identity check.");
-    if (!verified.linked) { await disable(); error = "This computer was unlinked from its cloud account."; return false; }
+    if (!verified.linked) {
+      await disable();
+      if (wasEnabled) await reconcile(false);
+      else { state.link.revocationPending = false; save(); }
+      error = "This computer was unlinked from its cloud account."; return false;
+    }
+    if (!wasEnabled) return false;
     reconciled = true; error = undefined;
     return true;
   }
@@ -60,7 +66,7 @@ function createCloudHost({ dataDir, devices, descriptor, port, credentials, conf
     timer = setTimeout(() => {
       void exclusive(async () => {
         try {
-          if (await reconcile(connectorStarted) && !connectorStarted) await startConnector();
+          if (await reconcile(connectorStarted && connector.status().state === "running") && (!connectorStarted || connector.status().state === "failed")) await startConnector();
         } catch { error = "Cloud account is unreachable. Existing sessions retain their original expiry."; }
         schedule();
       });
@@ -122,7 +128,7 @@ function createCloudHost({ dataDir, devices, descriptor, port, credentials, conf
       } catch { return { revocationPending: true }; }
     }); },
     start() { return exclusive(async () => {
-      if (closed || !config.origin || !state?.link?.enabled) return status();
+      if (closed || !config.origin || !state?.link) return status();
       try { if (await reconcile(false)) await startConnector(); }
       catch { error = "Cloud link cannot be verified. Its connector stays stopped until verification succeeds."; }
       schedule(); return status();

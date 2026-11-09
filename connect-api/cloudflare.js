@@ -59,7 +59,10 @@ function createCloudflare({ token, accountId, zoneId, domain, fetch = globalThis
       }
       if (tunnelId) {
         if (!UUID.test(tunnelId)) throw new Error("Invalid Cloudflare tunnel identity.");
-        await api(`${base}/${tunnelId}`, "DELETE");
+        for (let attempt = 0; ; attempt++) {
+          try { await api(`${base}/${tunnelId}`, "DELETE"); break; }
+          catch (error) { if (attempt === 2) throw error; await new Promise(resolve => setTimeout(resolve, 1000)); }
+        }
       }
     },
   };

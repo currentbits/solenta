@@ -47,6 +47,7 @@ module.exports = {
   "app:cloudLogout": async ctx => cloud(ctx).client.logout(),
   "app:cloudComputers": async ctx => (await cloud(ctx).client.computers()).map(row => ({
     computerId: row.computerId, label: row.label, status: row.status, lastSeen: row.lastSeen, descriptor: row.descriptor ?? null,
+    cleanupPending: row.cleanupPending === true, hostRevocationPending: row.hostRevocationPending === true,
   })),
   "app:cloudLink": async ctx => cloud(ctx).link(),
   "app:cloudUnlink": async (ctx, input) => {

@@ -37,7 +37,16 @@ persistent secure storage so a pinned signing identity survives restart.
 Linking gives devices authorized on your account access to this computer's
 agents, terminals and files as its OS user. Agent credentials, repositories,
 threads and running work stay on the execution computer. Host sessions expire
-after ten minutes. Renewal keeps the same device and access scopes.
+after ten minutes. Renewal keeps the same device and access scopes. Expired
+cloud devices are reclaimed without removing direct device registrations.
+
+Desktop cloud windows receive host sessions through a narrow main-process
+bridge. Artifact images, videos and downloads use a Secure, HttpOnly,
+SameSite=Strict host-only cookie restricted to the artifact path in that
+window's temporary browser partition. It is rotated before credential updates
+and removed when the window closes. Tokens never enter artifact URLs or
+localStorage. Signing out closes receiving cloud windows; it does not unlink a
+computer that is hosting cloud access.
 
 The connector is checksum-pinned and cached outside the application bundle.
 It runs under the server or desktop runtime and exits when its owning app goes
@@ -48,7 +57,10 @@ Unlink stops the connector and revokes this link's cloud sessions, while keeping
 work, signing identity and direct-device access. A separate disabled marker
 prevents restart from restoring cloud access even when secure credential
 storage is unavailable. Broker or provider cleanup may remain pending while
-offline; retry unlink after connectivity returns. The headless `logout` command
+offline; retry unlink after connectivity returns. Revoked computers with
+pending cleanup remain visible with a retry action. Provider deletion retries
+while the host drains its revocation response; an offline host confirms its
+disabled state over a signed outbound heartbeat when it returns. The headless `logout` command
 also unlinks this host before clearing its local account login.
 
 Cloud linking does not install a service manager. An externally managed server

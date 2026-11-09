@@ -299,6 +299,7 @@ function createWebDevices(userDataPath, opts = {}) {
       const cloud = cloudBinding(input.cloud);
       if (typeof input.nonce !== "string" || !/^[A-Za-z0-9_-]{16,128}$/.test(input.nonce)) throw new Error("Invalid cloud request nonce.");
       return update(next => {
+        next.devices = next.devices.filter(row => !row.cloud || active(row) || row.id === input.deviceId);
         next.enrollments = next.enrollments.filter(row => row.expiresAt > now());
         next.cloudNonces = next.cloudNonces.filter(row => row.expiresAt > now());
         const hash = hashToken(input.nonce);

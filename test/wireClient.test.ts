@@ -712,3 +712,44 @@ describe("connection status (#1660)", () => {
     assert.equal(FakeWebSocket.instances.length, before + 1);
   });
 });
+
+
+it("flushes a newer cloud credential received between auth and auth-ok before queued calls", async () => {
+  let update: (value: { token: string; computerId: string; deviceId: string }) => void = () => {};
+  const computer = { kind: "solenta" as const, computerId: "computer-one", protocol: { min: 1, max: 1 }, runtimeKind: "server" as const };
+  const api = createWireCoder({ url: "wss://host.example.com/ws", token: "old", expectedComputerId: computer.computerId,
+    WebSocket: FakeWebSocket as unknown as typeof WebSocket, fetch: async () => Response.json(computer),
+    getCredentials: async () => ({ token: "old", computerId: computer.computerId, deviceId: "device-one" }),
+    subscribeCredentials: listener => { update = listener; return () => {}; } });
+  const ws = lastSocket(); ws.open();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(ws.sent[0].kind, "auth");
+  update({ token: "new", computerId: computer.computerId, deviceId: "device-one" });
+  const pending = api.threads.list();
+  ws.deliver({ kind: "auth-ok", computer, deviceId: "device-one" });
+  assert.deepEqual(ws.sent.map(message => message.kind), ["auth", "auth-update", "invoke"]);
+  const invoke = ws.sent.at(-1)! as Extract<WireClientMessage, { kind: "invoke" }>;
+  ws.deliver({ kind: "reply", id: invoke.id, result: [] }); await pending;
+});
+
+
+it("retries initial authentication with a token that rotated before the old one was rejected", async () => {
+  let current = "old", update: (value: { token: string; computerId: string; deviceId: string }) => void = () => {};
+  const timers: Array<() => void> = [];
+  const computer = { kind: "solenta" as const, computerId: "computer-one", protocol: { min: 1, max: 1 }, runtimeKind: "server" as const };
+  const api = createWireCoder({ url: "wss://host.example.com/ws", token: "", expectedComputerId: computer.computerId,
+    WebSocket: FakeWebSocket as unknown as typeof WebSocket, fetch: async () => Response.json(computer),
+    getCredentials: async () => ({ token: current, computerId: computer.computerId, deviceId: "device-one" }),
+    subscribeCredentials: listener => { update = listener; return () => {}; }, setTimeout: fn => { timers.push(fn); return {}; } });
+  const first = lastSocket(); first.open(); await new Promise(resolve => setImmediate(resolve));
+  current = "new"; update({ token: current, computerId: computer.computerId, deviceId: "device-one" });
+  first.readyState = FakeWebSocket.CLOSED; first.onclose?.({ code: 4401 });
+  assert.equal(timers.length, 1); timers.shift()!();
+  const next = lastSocket(); assert.notEqual(next, first); next.open();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal((next.sent[0] as { token: string }).token, "new");
+  next.deliver({ kind: "auth-ok", computer, deviceId: "device-one" });
+  const pending = api.threads.list();
+  const invoke = next.sent.at(-1)! as Extract<WireClientMessage, { kind: "invoke" }>;
+  next.deliver({ kind: "reply", id: invoke.id, result: [] }); await pending;
+});

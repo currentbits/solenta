@@ -186,6 +186,9 @@ test("revocation precedes cleanup, survives failure and fences a later re-link",
   const revoked = await f.request("DELETE", `/v1/computers/${f.row.computerId}`);
   assert.equal(revoked.status, 200);
   assert.equal(revoked.body.cleanupPending, true);
+  const pending = (await f.request("GET", "/v1/computers")).body.computers.find(row => row.computerId === f.row.computerId);
+  assert.equal(pending?.status, "revoked");
+  assert.equal(pending?.cleanupPending, true);
   assert.equal((await f.request("POST", `/v1/computers/${f.row.computerId}/connect`, { publicKey: clientKey.publicJwk })).status, 404);
   assert.equal((await f.register()).status, 409, "a captured registration cannot resurrect a revoked link");
   assert.equal((await f.register(f.account, { ...f.row, nonce: previousNonce })).status, 409);
@@ -253,4 +256,28 @@ test("Cloudflare retry reconciles its tunnel after DNS failure; origin is always
   assert.ok(row.allocation.dnsId);
   await assert.rejects(api.prepare({ ...row, port: "https://attacker.example" }), /port/i);
   assert.equal(requests.some(([url]) => !url.startsWith("https://api.cloudflare.com/client/v4/")), false);
+});
+
+
+test("Cloudflare cleanup retries a fenced tunnel while its connector drains", async () => {
+  let attempts = 0;
+  const provider = createCloudflare({ token: "fixture", accountId: "a".repeat(32), zoneId: "b".repeat(32), domain: "hosts.example.com", fetch: async (_url, options) => {
+    assert.equal(options.method, "DELETE"); attempts++;
+    return Response.json(attempts < 3 ? { success: false, errors: [{ code: 1000 }] } : { success: true, result: {} });
+  } });
+  await provider.remove({ allocation: { tunnelId: randomUUID() } });
+  assert.equal(attempts, 3);
+});
+
+
+test("a revoked host confirms its durable disabled fence over its outbound signed heartbeat", { skip: !databaseUrl }, async t => {
+  const f = await fixture(t, { fetch: async () => { throw new Error("Host unreachable"); } });
+  const linked = (await f.register()).body;
+  const revoked = await f.request("DELETE", `/v1/computers/${f.row.computerId}`);
+  assert.equal(revoked.body.hostRevocationPending, true);
+  const claims = { computerId: f.row.computerId, accountId: f.account, linkId: linked.linkId, generation: linked.generation, nonce: randomUUID(), probe: false, disabled: true };
+  const result = await f.request("POST", `/v1/computers/${f.row.computerId}/heartbeat`, { proof: await signProof(hostKey.privateJwk, claims, "heartbeat", f.config.origin) });
+  assert.equal(result.status, 200);
+  assert.equal((await store.getHost(f.row.computerId)).hostRevocationPending, false);
+  assert.equal((await f.request("GET", "/v1/computers")).body.computers.length, 0);
 });

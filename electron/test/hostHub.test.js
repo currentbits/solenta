@@ -15,7 +15,7 @@ async function waitFor(check, timeoutMs = 5_000) {
 }
 
 /** A stand-in remote Solenta Web host: auth + invoke + push. */
-async function fakeHost({ token = "tok", threads = [], projects = [], computerId } = {}) {
+async function fakeHost({ token = "tok", threads = [], projects = [], computerId, onAuth } = {}) {
   const server = http.createServer();
   const wss = new WebSocketServer({ server, path: "/ws" });
   const state = { threads, projects, calls: [], credentials: [], sockets: new Set() };
@@ -27,6 +27,7 @@ async function fakeHost({ token = "tok", threads = [], projects = [], computerId
         if (msg.kind !== "auth" || msg.token !== token) return ws.close(4401);
         authed = true;
         state.sockets.add(ws);
+        onAuth?.();
         ws.send(JSON.stringify({ kind: "auth-ok", ...(computerId ? { computer: { kind: "solenta", computerId, protocol: { min: 1, max: 1 }, runtimeKind: "server" } } : {}) }));
         return;
       }
@@ -512,5 +513,27 @@ it("cloud sidebar routes rotate credentials in place and disappear on account si
     assert.deepEqual(hub.list(), []);
     assert.equal(hub.mergeThreads([]).length, 0);
     assert.equal(unsubscribed, 1);
+  } finally { hub.close(); await remote.close(); }
+});
+
+
+it("a cloud route flushes rotation during auth and uses narrowed saved scopes on reconnect", async () => {
+  let update;
+  const remote = await fakeHost({ computerId: "computer-one", threads: [{ id: "remote-one", projectId: "rp" }], onAuth: () => update?.({ token: "rotated", computerId: "computer-one", deviceId: "device-one" }) });
+  const attempts = [];
+  const { hub } = makeHub(remote, { openTunnel: async input => {
+    attempts.push(input.cloud.scopes);
+    return { child: { backPort: remote.port, kill() {} }, token: "tok", descriptor: { kind: "solenta", computerId: "computer-one", protocol: { min: 1, max: 1 }, runtimeKind: "server" },
+      subscribeCredentials: listener => { update = listener; return () => { update = null; }; } };
+  } });
+  try {
+    const route = { ...HOST, computerId: "computer-one", cloud: { accountId: "user_test", computerId: "computer-one", scopes: ["full"] } };
+    hub.setHosts([route]);
+    await waitFor(() => hub.mergeThreads([]).length === 1 && remote.state.credentials.length > 0);
+    assert.equal(remote.state.credentials[0], "rotated");
+    hub.setHosts([{ ...route, cloud: { ...route.cloud, scopes: ["read"] } }]);
+    remote.dropAll();
+    await waitFor(() => attempts.length > 1);
+    assert.deepEqual(attempts.at(-1), ["read"]);
   } finally { hub.close(); await remote.close(); }
 });

@@ -294,13 +294,14 @@ function createHostHub(deps) {
       };
       entry.beat = setTimer(beat, HEARTBEAT_MS);
     }
-    ws.on("open", () => { if (entry.ws === ws) ws.send(JSON.stringify({ kind: "auth", token: opened.token, ...(opened.descriptor ? { computerId: opened.descriptor.computerId, protocol: 1 } : {}) })); });
+    let authToken;
+    ws.on("open", () => { if (entry.ws === ws) { authToken = opened.token; ws.send(JSON.stringify({ kind: "auth", token: authToken, ...(opened.descriptor ? { computerId: opened.descriptor.computerId, protocol: 1 } : {}) })); } });
     let authenticated = false;
     entry.cancelCredentials = opened.subscribeCredentials?.(value => {
       if (entry.ws !== ws) return;
       if (!value || value.computerId !== opened.descriptor?.computerId) { dropSocket(entry, "The cloud session ended. Sign in to reconnect."); return; }
       opened.token = value.token;
-      if (authenticated && ws.readyState === WS.OPEN) ws.send(JSON.stringify({ kind: "auth-update", token: value.token, computerId: value.computerId }));
+      if (authenticated && ws.readyState === WS.OPEN) { authToken = value.token; ws.send(JSON.stringify({ kind: "auth-update", token: value.token, computerId: value.computerId })); }
     });
     ws.on("message", (raw) => {
       if (entry.ws !== ws) return;
@@ -317,6 +318,10 @@ function createHostHub(deps) {
         try { descriptor = confirmComputer(opened.descriptor, msg.computer, entry.computerId); }
         catch (err) { dropSocket(entry, err.message); return; }
         authenticated = true;
+        if (route.cloud && authToken !== opened.token) {
+          authToken = opened.token;
+          ws.send(JSON.stringify({ kind: "auth-update", token: opened.token, computerId: descriptor.computerId }));
+        }
         if (descriptor) {
           entry.computerId = descriptor.computerId;
           entry.descriptor = descriptor;
@@ -377,6 +382,7 @@ function createHostHub(deps) {
     });
     ws.on("close", (code) => {
       if (entry.ws !== ws) return;
+      if (code === 4401 && !authenticated && route.cloud && authToken !== opened.token) { dropSocket(entry, "Cloud credential changed during authentication."); return; }
       dropSocket(entry, code === 4409 ? "Computer identity or protocol mismatch. Verify this connection before reconnecting." : code === 4401 ? `${entry.label} rejected this computer's token. Connect again from Settings → Connections.` : "Connection closed.");
     });
     ws.on("error", () => {
@@ -467,6 +473,7 @@ function createHostHub(deps) {
       }
       if (held) {
         primary(held).refusedRoutes.delete(key);
+        held.cloud = h.cloud;
         held.allowLegacy = h.allowLegacy === true;
         if (!held.computerId && h.computerId) held.computerId = h.computerId;
       }

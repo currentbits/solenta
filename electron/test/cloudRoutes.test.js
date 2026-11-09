@@ -88,3 +88,43 @@ test("a long cloud RPC refreshes its socket credential before receiving its orig
   assert.equal(value, "completed");
   assert.deepEqual(messages, ["auth", "invoke", "auth-update"]);
 });
+
+
+test("focusing an existing cloud window returns its current narrowed access metadata", async t => {
+  const f = fixture(t);
+  f.session.scopes = ["full"];
+  const first = await openRemoteConnection({ cloud: { ...f.cloud, scopes: ["full"] } }, f.deps);
+  assert.deepEqual(first.cloud.scopes, ["full"]);
+  f.session.scopes = ["read"];
+  const next = await openRemoteConnection({ cloud: f.cloud }, f.deps);
+  assert.equal(f.windows.length, 1);
+  assert.deepEqual(next.cloud.scopes, ["read"]);
+});
+
+test("remote cloud windows block cross-origin HTTP redirects", async t => {
+  const f = fixture(t);
+  await openRemoteConnection({ cloud: f.cloud }, f.deps);
+  let prevented = false;
+  f.windows[0].webContents.emit("will-redirect", { preventDefault: () => { prevented = true; } }, "https://outside.example.com/");
+  assert.equal(prevented, true);
+});
+
+
+test("cloud RPC flushes a rotation received during initial authentication before invoking", async t => {
+  const f = fixture(t), messages = [];
+  class Socket extends EventEmitter {
+    static OPEN = 1; readyState = 1;
+    constructor() { super(); queueMicrotask(() => this.emit("open")); }
+    send(raw) {
+      const msg = JSON.parse(raw); messages.push(msg.kind);
+      if (msg.kind === "auth") {
+        f.emit({ type: "session", computerId: f.cloud.computerId, session: { ...f.session, token: "rotated" } });
+        queueMicrotask(() => this.emit("message", JSON.stringify({ kind: "auth-ok", computer: f.session.computer })));
+      }
+      if (msg.kind === "invoke") queueMicrotask(() => this.emit("message", JSON.stringify({ kind: "reply", id: 1, result: "done" })));
+    }
+    terminate() {}
+  }
+  assert.equal(await invokeRemote({ cloud: f.cloud }, "threads:list", [], { ...f.deps, WebSocketImpl: Socket, timeoutMs: 500 }), "done");
+  assert.deepEqual(messages, ["auth", "auth-update", "invoke"]);
+});

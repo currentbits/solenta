@@ -305,3 +305,14 @@ write an implementation plan and proceed with the approved scope.
 - [Clerk device authorization](https://clerk.com/docs/guides/configure/auth-strategies/oauth/device-authorization-grant)
 - [Clerk OAuth token verification](https://clerk.com/docs/guides/configure/auth-strategies/oauth/verify-oauth-tokens)
 - [Cloudflare Tunnel setup](https://developers.cloudflare.com/tunnel/get-started/)
+
+
+### Implementation ruling: artifact streaming
+
+Cloud desktop windows use the existing non-persistent per-window browser
+partition for an exact-host Secure/HttpOnly/SameSite=Strict cookie restricted
+to `/api/run-artifacts`. Main sets it before loading the window, rotates it
+before notifying the pinned main frame, and removes it on close. Only the
+artifact read route accepts it, with normal per-request device expiry and
+revocation checks. This retains ranged video streaming without bearer tokens
+in URLs, localStorage, or a whole-video JavaScript blob buffer.

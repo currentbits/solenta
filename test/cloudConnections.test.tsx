@@ -88,3 +88,16 @@ it("enabling and unlinking this host are separate actions, with honest pending r
   assert.deepEqual(f.calls.map(call => call.method), ["link", "unlink"]);
   assert.deepEqual(f.calls[1].input, { computerId: "this-computer" });
 });
+
+
+it("keeps revoked computers with pending cleanup actionable after refreshing", async () => {
+  const f = fixture();
+  f.api.cloudComputers = async () => [{ computerId: "remote-computer", label: "Build machine", status: "revoked", lastSeen: null, cleanupPending: true }];
+  const m = await mount(<ConnectionsSection cloudApi={f.api} />);
+  assert.match(m.container.textContent || "", /cleanup pending/);
+  assert.equal((m.container.querySelector("[data-cloud-connect]") as HTMLButtonElement).disabled, true);
+  await m.click(m.query("[data-cloud-unlink]"));
+  assert.ok(f.calls.some(call => call.method === "unlink"));
+  assert.match(m.container.textContent || "", /Retry cleanup/);
+  m.unmount();
+});

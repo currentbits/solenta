@@ -91,7 +91,6 @@ This script uses public device login, creates a simulated-agent thread in a
 worktree, checks a real terminal through renewal and reconnect, and unlinks
 the explicitly selected staging host. It does not invoke SSH. It requires host
 revocation acknowledgement and provider cleanup to report success. Never point
-it at a production computer. Login credentials use a temporary private 0600
-file and are cleared on exit; the test thread remains on the execution host.
+it at a production computer. Login credentials remain in the acceptance process memory; the test thread remains on the execution host.
 Run the native connector smoke and service lifecycle matrix separately; this
 does not establish reboot survival or macOS signature validity.

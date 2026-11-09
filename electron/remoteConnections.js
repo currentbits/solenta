@@ -694,6 +694,7 @@ function inspectHost(target, token, timeoutMs = 8_000, descriptor = null) {
         return done(null);
       }
       if (msg.kind === "auth-ok") {
+        if (authenticated) return;
         try { confirmComputer(descriptor, msg.computer, descriptor?.computerId); } catch { return done(null); }
         ws.send(JSON.stringify({ kind: "invoke", id: 1, channel: "app:status", args: [] }));
         ws.send(JSON.stringify({ kind: "invoke", id: 2, channel: "providers:list", args: [] }));
@@ -920,12 +921,16 @@ async function createHostWindow({ origin, title, token, computerId, allowLegacy,
     event.preventDefault();
     if (/^https?:\/\//.test(url)) void shell.openExternal(url);
   });
+  win.webContents.on("will-redirect", (event, url) => {
+    try { if (new URL(url).origin === origin) return; } catch {}
+    event.preventDefault();
+  });
   // Keep the window title ours; the remote page would overwrite it.
   win.on("page-title-updated", (event) => event.preventDefault());
   win.on("closed", onClosed);
   if (cloudSession) {
     if (!deps.cloudWindows) { win.destroy(); throw new Error("Cloud windows require the desktop app."); }
-    deps.cloudWindows.track(win, deps.cloudClient, cloudSession);
+    await deps.cloudWindows.track(win, deps.cloudClient, cloudSession);
   }
   // Web hosts accept a query token and scrub it after boot.
   try {
@@ -1007,7 +1012,10 @@ async function openDirectConnection(conn, deps) {
     throw new Error(`Enter a device token for ${label}. On that computer, open Settings > Connections > Let other devices in, add a device with Full access, and paste its link or token here.`);
   }
   const prior = focusOpen(key);
-  if (prior) return prior;
+  if (prior) {
+    const result = await prior;
+    return conn.cloud ? { ...result, cloud: conn.cloud } : result;
+  }
   const entry = { child: null, win: null, promise: null, closing: false, front: null, backPort: null, sockets: new Set() };
   active.set(key, entry);
   entry.promise = (async () => {
@@ -1210,7 +1218,7 @@ function closeRemoteConnections() {
 function wsInvoke(wsUrl, token, channel, args, timeoutMs, descriptor, subscribeCredentials, WS = WebSocket) {
   return new Promise((resolve, reject) => {
     const ws = new WS(wsUrl, { maxPayload: 128 * 1024 * 1024 });
-    let settled = false, unsubscribe, authenticated = false, currentToken = token;
+    let settled = false, unsubscribe, authenticated = false, currentToken = token, authToken = token;
     const done = (err, value) => {
       if (settled) return;
       settled = true;
@@ -1221,11 +1229,12 @@ function wsInvoke(wsUrl, token, channel, args, timeoutMs, descriptor, subscribeC
     };
     const timer = setTimeout(() => done(new Error("The remote Solenta host did not answer in time.")), timeoutMs);
     unsubscribe = subscribeCredentials?.(value => {
+      if (settled) return;
       if (!value || value.computerId !== descriptor?.computerId) { done(new Error("The cloud session ended. Sign in to reconnect.")); return; }
       currentToken = value.token;
-      if (authenticated && ws.readyState === WS.OPEN) ws.send(JSON.stringify({ kind: "auth-update", token: value.token, computerId: value.computerId }));
+      if (authenticated && ws.readyState === WS.OPEN) { authToken = value.token; ws.send(JSON.stringify({ kind: "auth-update", token: value.token, computerId: value.computerId })); }
     });
-    ws.once("open", () => ws.send(JSON.stringify({ kind: "auth", token: currentToken })));
+    ws.once("open", () => { authToken = currentToken; ws.send(JSON.stringify({ kind: "auth", token: authToken })); });
     ws.on("message", (raw) => {
       let msg;
       try {
@@ -1234,8 +1243,10 @@ function wsInvoke(wsUrl, token, channel, args, timeoutMs, descriptor, subscribeC
         return done(new Error("The remote Solenta host sent an unreadable reply."));
       }
       if (msg.kind === "auth-ok") {
+        if (authenticated) return;
         try { confirmComputer(descriptor, msg.computer, descriptor?.computerId); } catch (err) { return done(err); }
         authenticated = true;
+        if (currentToken !== authToken) { authToken = currentToken; ws.send(JSON.stringify({ kind: "auth-update", token: currentToken, computerId: descriptor?.computerId })); }
         ws.send(JSON.stringify({ kind: "invoke", id: 1, channel, args }));
         return;
       }
@@ -1246,7 +1257,12 @@ function wsInvoke(wsUrl, token, channel, args, timeoutMs, descriptor, subscribeC
         : String(msg.error)));
     });
     ws.once("error", (err) => done(err));
-    ws.once("close", () => done(new Error("The remote Solenta host closed the connection.")));
+    ws.once("close", code => {
+      if (settled) return;
+      if (code === 4401 && !authenticated && currentToken !== authToken) {
+        done(null, wsInvoke(wsUrl, currentToken, channel, args, timeoutMs, descriptor, subscribeCredentials, WS));
+      } else done(new Error("The remote Solenta host closed the connection."));
+    });
   });
 }
 
@@ -1272,7 +1288,7 @@ async function openHostTunnel(input, deps = {}, onClose) {
   if (input?.cloud) {
     const session = await cloudSession(input, deps);
     const descriptor = await (deps.probeToken || probeToken)(session.origin, session.token, { computerId: session.computerId, allowLegacy: false, timeoutMs: DIRECT_PROBE_MS });
-    return { child: { backPort: null, kill() {} }, token: session.token, wsUrl: wsUrlFor(session.origin), descriptor,
+    return { child: { backPort: null, kill() {} }, token: session.token, deviceId: session.deviceId, wsUrl: wsUrlFor(session.origin), descriptor,
       subscribeCredentials: listener => deps.cloudClient.subscribe(event => {
         if (event.type === "account" || (["expired", "unlinked"].includes(event.type) && event.computerId === session.computerId)) { listener(null); return; }
         if (event.type !== "session" || event.computerId !== session.computerId) return;

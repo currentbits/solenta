@@ -23,7 +23,7 @@ function publicComputer(row) {
   return { computerId: row.computerId, label: row.label, publicKey: row.publicKey, linkId: row.linkId, generation: row.generation,
     origin: row.allocation.hostname ? `https://${row.allocation.hostname}` : null,
     status: row.status === "online" && Date.now() - row.lastSeen > 90_000 ? "offline" : row.status,
-    lastSeen: row.lastSeen, descriptor: row.descriptor ?? null };
+    lastSeen: row.lastSeen, descriptor: row.descriptor ?? null, cleanupPending: Boolean(row.cleanupPending), hostRevocationPending: row.hostRevocationPending === true };
 }
 
 function createClerkVerifier({ secretKey, clientId, fetch = globalThis.fetch }) {
@@ -77,6 +77,9 @@ function createBroker({ store, verifyAccount, tunnels, signingKey, fetch = globa
       if (!row) fail(404, "Cloud computer not found.");
       const claims = await verifyProof(input.proof, row.publicKey, { purpose: "heartbeat", audience: config.origin });
       if (claims.computerId !== row.computerId || !NONCE.test(claims.nonce)) fail(400, "Invalid host heartbeat.");
+      if (row.revoked && claims.disabled === true && row.revocationSnapshot && binding(claims, row.revocationSnapshot)) {
+        await store.updateIfLink(row.computerId, row.linkId, current => { if (current.revoked) current.hostRevocationPending = false; });
+      }
       const linked = !row.revoked && binding(claims, row);
       if (linked && claims.probe !== false) {
         let descriptor;

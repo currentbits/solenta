@@ -79,11 +79,13 @@ function createConnector({ cacheDir, fetch, install = ensureBinary, spawn = spaw
       attempts++; state = "running";
       const current = spawn(binary, ["tunnel", "--no-autoupdate", "--loglevel", "error", "run"], { env, stdio: "ignore", windowsHide: true });
       child = current;
+      const startedAt = Date.now();
       let ended = false;
       const exit = () => {
         if (ended) return; ended = true;
         if (child === current) child = null;
         if (!wanted || epoch !== generation) return;
+        if (Date.now() - startedAt >= 60_000) attempts = 0;
         retry(epoch);
       };
       current.once("exit", exit); current.once("error", exit);
@@ -97,7 +99,7 @@ function createConnector({ cacheDir, fetch, install = ensureBinary, spawn = spaw
   return {
     status: () => ({ state, supported: Boolean(TARGETS[`${process.platform}-${process.arch}`]) }),
     async start(input) {
-      if (wanted && token === input.token) return;
+      if (wanted && token === input.token && state !== "failed") return;
       if (typeof input.token !== "string" || !input.token || input.token.length > 16384) throw new Error("Invalid connector credential.");
       generation++; cancel(timer); child?.kill("SIGTERM"); child = null;
       token = input.token; beforeStart = input.beforeStart; wanted = true; attempts = 0; state = "starting";

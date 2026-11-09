@@ -83,6 +83,7 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
   let computerId = opts.expectedComputerId;
   let authenticatingComputerId: string | undefined;
   let authSent = false;
+  let authenticatingToken = opts.token;
   let token = opts.token;
   let deviceId: string | undefined;
   let credentialRevision = 0;
@@ -233,8 +234,12 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
       }
       ready = true;
       awaitingCredentialAck = false;
-      if (deviceId && msg.deviceId && deviceId !== msg.deviceId) { block("Cloud device identity mismatch."); return; }
+      if (deviceId && deviceId !== msg.deviceId) { block("Cloud device identity mismatch."); return; }
       deviceId = msg.deviceId ?? deviceId;
+      if (authenticatingToken !== token && computerId) {
+        authenticatingToken = token; awaitingCredentialAck = true;
+        send({ kind: "auth-update", token, computerId });
+      }
       backoffMs = MIN_BACKOFF_MS;
       const reconnecting = everAuthed;
       everAuthed = true;
@@ -313,7 +318,7 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
       // A wrong or revoked token will not heal by retrying: stop, and let
       // the token gate ask for a new one.
       if (code === CLOSE_TOKEN_REJECTED) {
-        if (awaitingCredentialAck) { awaitingCredentialAck = false; scheduleReconnect(); return; }
+        if (awaitingCredentialAck || authenticatingToken !== token) { awaitingCredentialAck = false; scheduleReconnect(); return; }
         rejected = true;
         rejectQueued(TOKEN_REJECTED_ERROR);
         setWireStatus({ state: "rejected" });
@@ -365,7 +370,7 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
       }
       // A public descriptor selects a route. Only auth-ok pins/persists it.
       authenticatingComputerId = computer.computerId;
-      authSent = true;
+      authSent = true; authenticatingToken = token;
       send({ kind: "auth", token, computerId: computer.computerId, protocol: 1 });
     } catch (error) {
       if (socket === ws) block(error instanceof Error ? error.message : String(error));
@@ -389,7 +394,7 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
         if (socket !== ws || ws.readyState !== WS.OPEN) return;
         if (revision === credentialRevision) credentials(value);
       }
-      if (!computerId && opts.allowLegacy !== false) { authSent = true; send({ kind: "auth", token }); return; }
+      if (!computerId && opts.allowLegacy !== false) { authSent = true; authenticatingToken = token; send({ kind: "auth", token }); return; }
       await preflight(ws);
     } catch { if (socket === ws && ws.readyState === WS.OPEN) ws.close(); }
   }
@@ -398,7 +403,7 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
     const changed = value.token !== token;
     try { credentials(value); } catch (error) { block(error instanceof Error ? error.message : String(error)); return; }
     if (blockedReason) return;
-    if (ready && computerId) { awaitingCredentialAck = true; send({ kind: "auth-update", token, computerId }); }
+    if (ready && computerId) { awaitingCredentialAck = true; authenticatingToken = token; send({ kind: "auth-update", token, computerId }); }
     else if (rejected && changed) { rejected = false; openSocket(); }
   });
 

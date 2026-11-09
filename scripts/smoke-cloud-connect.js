@@ -29,9 +29,9 @@ async function main() {
   class TrackedSocket extends WebSocket {
     constructor(...args) { super(...args); sockets.push(this); currentSocket = this; }
   }
-  const client = createCloudClient({ config: { origin: process.env.SOLENTA_CONNECT_ORIGIN }, credentials: createCredentials({ file: path.join(dir, "account.json"), allowPlaintext: true }) });
+  const client = createCloudClient({ config: { origin: process.env.SOLENTA_CONNECT_ORIGIN }, credentials: createCredentials({ file: path.join(dir, "account.json") }) });
   try {
-    console.log("Staging credentials use a temporary private 0600 file, removed on exit.");
+    console.log("Staging credentials remain in this process memory.");
     await client.login({ headless: true, onCode: code => console.log(`Open ${code.verificationUri}\nEnter code: ${code.userCode}`) });
     await Promise.race([(async () => {
     const first = await client.session(computerId, { scopes: ["full"] });

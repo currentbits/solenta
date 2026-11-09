@@ -425,7 +425,8 @@ async function serveRunArtifact(req, res, opts) {
     return true;
   }
   const authorize = resolveAuthorize(opts);
-  if (!authorize(url.searchParams.get("token") || "")) {
+  const cookie = /(?:^|;\s*)solenta-cloud-session=([A-Za-z0-9_-]{1,1024})(?:;|$)/.exec(req.headers.cookie || "")?.[1];
+  if (!authorize(url.searchParams.get("token") || cookie || "")) {
     if (opts.limiter) opts.limiter.fail(remote);
     res.writeHead(401, artifactSecurityHeaders());
     res.end();

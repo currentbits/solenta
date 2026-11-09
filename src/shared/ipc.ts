@@ -3737,9 +3737,11 @@ export interface CloudStatus {
   error?: string;
 }
 export interface CloudComputer {
+  cleanupPending?: boolean;
+  hostRevocationPending?: boolean;
   computerId: string;
   label: string;
-  status: "pending" | "connecting" | "online" | "offline" | "setup-error";
+  status: "pending" | "connecting" | "online" | "offline" | "setup-error" | "revoked";
   lastSeen: number | null;
   descriptor?: RemoteComputerDescriptor | null;
 }

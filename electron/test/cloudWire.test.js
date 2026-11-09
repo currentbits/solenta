@@ -111,3 +111,20 @@ test("successful credential replacement replaces the old expiry timer, while act
   f.ws.send(JSON.stringify({ kind: "invoke", id: 1, channel: "threads:list", args: [] }));
   assert.equal(await closed, 4401);
 });
+
+
+test("expired cloud devices do not exhaust the quota across desktop restarts, and direct devices remain", t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "solenta-cloud-quota-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  let now = 1000;
+  const devices = createWebDevices(dir, { now: () => now });
+  const direct = devices.add({ name: "Direct", scopes: ["full"] });
+  const cloud = { accountId: "user_test", linkId: randomUUID(), generation: 1, jkt: "a".repeat(43) };
+  for (let i = 0; i < 35; i++) {
+    const grant = devices.createCloudEnrollment({ cloud, nonce: randomUUID(), name: "Restarted desktop", scopes: ["read"] });
+    devices.redeemCloudEnrollment({ grant: grant.grant, cloud });
+    now += 600_001;
+  }
+  assert.ok(devices.authorize(direct.token));
+  assert.equal(devices.list().filter(row => row.id === direct.device.id).length, 1);
+});
