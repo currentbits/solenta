@@ -1,0 +1,146 @@
+{
+  "index.html": {
+    "lastmod": "2026-11-05",
+    "sha256": "188ba548020da7b53a0c30a976b51937ee25a1793736e90cc82199a9b110b941"
+  },
+  "docs.html": {
+    "lastmod": "2026-11-08",
+    "sha256": "2e8c10cb1001567fe7ed982d468559dd3dc4e2ae2b9bf3c7a44e19a3f928e382"
+  },
+  "changelog.html": {
+    "lastmod": "2026-11-05",
+    "sha256": "0df171e552f655920186feb3fd6a20a8efab7f66a6c2d579ec6eaf693deba9be"
+  },
+  "docs/analytics/index.html": {
+    "lastmod": "2026-11-02",
+    "sha256": "cf494a67dcf199266b61da74ddf81c0da7a6f8033a0dedf77961cd280820a468"
+  },
+  "docs/architecture/index.html": {
+    "lastmod": "2026-11-02",
+    "sha256": "14b908835295a5a5124d317fbe5a7c678e6024fe9a63cb1bd7f7552177912d53"
+  },
+  "docs/ask/index.html": {
+    "lastmod": "2026-11-02",
+    "sha256": "2f3d08609ca1dd3039687f7ce6e6d35edd60f50cbc162dda6895fbdc5f67adcb"
+  },
+  "docs/automations/index.html": {
+    "lastmod": "2026-11-07",
+    "sha256": "bf5c40e71c901403e7c0058efa46992dea7f0b999b880008e9f576012e2dda0d"
+  },
+  "docs/cli-sessions/index.html": {
+    "lastmod": "2026-11-02",
+    "sha256": "84f6cb431270d4bbca63f8b0c6072f4fecebffe00c8ed16928ee3223ce1b3d46"
+  },
+  "docs/codex/index.html": {
+    "lastmod": "2026-11-02",
+    "sha256": "623f118927e80885e4880dbb7847a6ed8f74b4d652c923554e4569458ecd62b3"
+  },
+  "docs/dev-servers/index.html": {
+    "lastmod": "2026-11-02",
+    "sha256": "92204268b541cc2eac746e7ce928da7a800765342ae5d73e22052308847c2e9e"
+  },
+  "docs/getting-started/index.html": {
+    "lastmod": "2026-11-02",
+    "sha256": "19e1dd85e0aaf73c9a6bb9c5597d725b7a8a0323bbf834daef5267ab52bf83a4"
+  },
+  "docs/guardrails/index.html": {
+    "lastmod": "2026-11-02",
+    "sha256": "4333bf25ac65049f6a8a75b8ba7c3d780b4cd6f6897f2430cefb4f9dd3c56ad7"
+  },
+  "docs/integrations/index.html": {
+    "lastmod": "2026-11-02",
+    "sha256": "beb0c7a4478671adc4a5b3d0a4e1deb2172795f4c9cbd77dc75c96a3b7971409"
+  },
+  "docs/memory/index.html": {
+    "lastmod": "2026-11-02",
+    "sha256": "3e8f87df7f418335968e4abe44796957ffb63c245524ee002cdaf71aa5aec54e"
+  },
+  "docs/orchestration/index.html": {
+    "lastmod": "2026-11-02",
+    "sha256": "3fbd4b6a87c26cd01cd763c57f7151f31c22b7cb22467090437fefd98bccb4c6"
+  },
+  "docs/palette/index.html": {
+    "lastmod": "2026-11-02",
+    "sha256": "35bc064ad0698047c525b1b7720589eac83d860184506fa43539706bcb14b5a1"
+  },
+  "docs/panes/index.html": {
+    "lastmod": "2026-11-02",
+    "sha256": "03713171e459962c6d6b28d389191242adf414bd5b53b9a206bf71947b265f33"
+  },
+  "docs/performance/index.html": {
+    "lastmod": "2026-11-02",
+    "sha256": "6e309834935a4d72bec75e325d5c13b34e96ff8e3750c7613fb3993b2db2980f"
+  },
+  "docs/project-config/index.html": {
+    "lastmod": "2026-11-02",
+    "sha256": "425f5774ec2cd9bf77b34bb3926d72a24448cd987190192c5276ca06878aec04"
+  },
+  "docs/review/index.html": {
+    "lastmod": "2026-11-02",
+    "sha256": "597096618ca1b86f3e796c3d6e550e8c6c7a494c35b8c8a3742361ab1d19fae5"
+  },
+  "docs/skills/index.html": {
+    "lastmod": "2026-11-02",
+    "sha256": "d915fb3926dc3de9043f526c40ef0429c9ec0a57c24e8d85f1068d8b9c4804b3"
+  },
+  "docs/spec/index.html": {
+    "lastmod": "2026-11-02",
+    "sha256": "c983826fdf5870cfdbb73e3746f8e9a8ee9392447ff32737593b30e49216fba9"
+  },
+  "docs/spend/index.html": {
+    "lastmod": "2026-11-02",
+    "sha256": "f4901834499656b916b6f5af2baf94f43638165b26841db24a26c0c2482ff8c4"
+  },
+  "docs/ssh/index.html": {
+    "lastmod": "2026-11-08",
+    "sha256": "176bc716f7bc8017dbba6aa8b5579d9e27e82e6bf4d9843b3283dab6a742d1e3"
+  },
+  "docs/teach/index.html": {
+    "lastmod": "2026-11-02",
+    "sha256": "1cd98a1349a4c6a792aeb50a8e4a6dd950ffc0f928c4da1822188ce931b247b6"
+  },
+  "docs/threads/index.html": {
+    "lastmod": "2026-11-02",
+    "sha256": "d62fea355161ad508f217049ec623d3954ed828e90ab4b1d0f95f525627321d3"
+  },
+  "docs/updates/index.html": {
+    "lastmod": "2026-11-02",
+    "sha256": "a00cc7eaca5261028dfc47c52382aaf24903c65aee5948f04347bbbdc76034bf"
+  },
+  "docs/views/index.html": {
+    "lastmod": "2026-11-02",
+    "sha256": "32f2b27aaf44a86ec2c5f971b4b82f23f9a4aee639318e5db12c5613601d2eb3"
+  },
+  "docs/web-mode/index.html": {
+    "lastmod": "2026-11-08",
+    "sha256": "398ed2cae065572dd58a011319a5b46fb5792d07cf871960003d0961fb7268ab"
+  },
+  "docs/windows/index.html": {
+    "lastmod": "2026-11-02",
+    "sha256": "b7ba2f93385b2960ad0f1216191f0f90262c6c9bea680418c866e0407cdf31b0"
+  },
+  "docs/workflows/index.html": {
+    "lastmod": "2026-11-02",
+    "sha256": "497ce88b780bc20cb9dfbb6509ce93dda8cf7c2109b7b3c22849cc72c726037d"
+  },
+  "docs/worktrees/index.html": {
+    "lastmod": "2026-11-02",
+    "sha256": "72024e2c32fef1b0b9320370d03eb8f9e08c19f5d38d015d82bb2fd38ce48fe0"
+  },
+  "guides/run-coding-agents-in-parallel/index.html": {
+    "lastmod": "2026-11-02",
+    "sha256": "8201f083d1bb62938f32e348cb80b8a4dc1ac835c9e233253aea76d56e93e777"
+  },
+  "compare/solenta-vs-claude-squad/index.html": {
+    "lastmod": "2026-11-02",
+    "sha256": "a2720e3567b37a80d79f734341efe98888cd632303e458ddef7284f86885bcf8"
+  },
+  "compare/solenta-vs-conductor/index.html": {
+    "lastmod": "2026-11-02",
+    "sha256": "5ed749ddcab09d9b4a87025543ad4187358c02bf0a595a7b68b42186157b4484"
+  },
+  "alternatives/conductor/index.html": {
+    "lastmod": "2026-11-02",
+    "sha256": "2ecbb7f46295f49c279a7e68e16e57dc4efc43d6fed755298a22c9a8a7da9e85"
+  }
+}
