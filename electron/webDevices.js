@@ -370,7 +370,7 @@ function createWebDevices(userDataPath, opts = {}) {
           // a persist miss must not reject a valid device
         }
       }
-      return { id: found.id, name: found.name, scopes: rowScopes(found), ...(found.expiresAt !== undefined ? { expiresAt: found.expiresAt } : {}) };
+      return { id: found.id, name: found.name, scopes: rowScopes(found), ...(found.legacy ? { legacy: true } : {}), ...(found.expiresAt !== undefined ? { expiresAt: found.expiresAt } : {}) };
     },
   };
 }

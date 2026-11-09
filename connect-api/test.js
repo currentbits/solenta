@@ -151,6 +151,17 @@ test("failed allocation checkpoints survive a new store instance and resume the 
   assert.equal((await f.register()).status, 200);
 });
 
+test("a host can reconcile its signed link state before starting an offline connector", { skip: !databaseUrl }, async t => {
+  const f = await fixture(t, { fetch: () => assert.fail("reconciliation must not require a running tunnel") });
+  const linked = (await f.register()).body;
+  const claims = { computerId: f.row.computerId, accountId: f.account, linkId: linked.linkId, generation: linked.generation, nonce: randomUUID(), probe: false };
+  const result = await f.request("POST", `/v1/computers/${f.row.computerId}/heartbeat`, { proof: await signProof(hostKey.privateJwk, claims, "heartbeat", f.config.origin) });
+  assert.equal(result.status, 200);
+  const verified = await verifyProof(result.body.proof, brokerKey.publicJwk, { purpose: "heartbeat-response", audience: f.row.computerId });
+  assert.equal(verified.linked, true);
+  assert.equal((await f.request("GET", "/v1/computers")).body.computers[0].status, "connecting");
+});
+
 test("a failed host revocation remains visibly pending after provider cleanup succeeds", { skip: !databaseUrl }, async t => {
   const f = await fixture(t, { fetch: async () => Response.json({ ok: true }) });
   await f.register();

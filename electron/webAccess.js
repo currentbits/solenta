@@ -416,6 +416,8 @@ function createWebAccess(deps) {
     isRunning() {
       return Boolean(server);
     },
+    address() { return server ? { host, port: server.port } : null; },
+    disconnect(id) { return server?.disconnect(id) ?? 0; },
   };
 }
 

@@ -601,6 +601,7 @@ function startWebServer(opts) {
       res.end(req.method === "HEAD" ? undefined : JSON.stringify(computer));
       return;
     }
+    if (opts.cloudHandler && await opts.cloudHandler(req, res)) return;
     if (await serveEnrollment(req, res, { url, limiter, redeemEnrollment: opts.redeemEnrollment, ctx })) return;
     const handled = await serveRunArtifact(req, res, {
       authorize,

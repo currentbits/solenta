@@ -78,7 +78,7 @@ function createBroker({ store, verifyAccount, tunnels, signingKey, fetch = globa
       const claims = await verifyProof(input.proof, row.publicKey, { purpose: "heartbeat", audience: config.origin });
       if (claims.computerId !== row.computerId || !NONCE.test(claims.nonce)) fail(400, "Invalid host heartbeat.");
       const linked = !row.revoked && binding(claims, row);
-      if (linked) {
+      if (linked && claims.probe !== false) {
         let descriptor;
         try {
           descriptor = parseComputerDescriptor(await fetchJSON(fetch, `https://${row.allocation.hostname}${DESCRIPTOR_PATH}`));

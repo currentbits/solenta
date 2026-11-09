@@ -125,11 +125,25 @@ function createCloudClient({ config, credentials, fetch = globalThis.fetch, open
     flights.set(computerId, pending);
     try { return structuredClone(await flight); } finally { if (flights.get(computerId) === pending) flights.delete(computerId); }
   }
+  function status() {
+    try { const saved = broker ? credentials.read() : null; const signedIn = Boolean(saved?.accountId && saved.origin === broker); return { configured: Boolean(broker), brokerOrigin: broker, signedIn, ...(signedIn ? { accountId: saved.accountId } : {}), storage: credentials.storage() }; }
+    catch (error) { return { configured: Boolean(broker), brokerOrigin: broker, signedIn: false, error: error.message, storage: credentials.storage() }; }
+  }
+  async function acceptLogin(auth, epoch = generation) {
+    if (!broker || typeof auth?.accessToken !== "string" || !auth.accessToken || auth.accessToken.length > 16384 ||
+        typeof auth.refreshToken !== "string" || !auth.refreshToken || auth.refreshToken.length > 16384 ||
+        !Number.isSafeInteger(auth.expiresAt) || auth.expiresAt <= Date.now() || auth.expiresAt > Date.now() + 7 * 86400_000) throw new Error("Invalid cloud credentials.");
+    active(epoch);
+    const result = await fetchJSON(fetch, `${broker}/v1/computers`, { signal: lifecycle.signal, headers: { authorization: `Bearer ${auth.accessToken}` } });
+    if (typeof result.accountId !== "string" || !/^[a-zA-Z0-9_-]{1,128}$/.test(result.accountId)) throw new Error("Cloud account identity is invalid.");
+    const pair = await createKeyPair();
+    active(epoch);
+    credentials.write({ origin: broker, accountId: result.accountId, oauth: { accessToken: auth.accessToken, refreshToken: auth.refreshToken, expiresAt: auth.expiresAt }, proofKey: pair.privateJwk });
+    reset(); notify({ type: "account", signedIn: true, accountId: result.accountId });
+    return status();
+  }
   return {
-    status() {
-      try { const saved = broker ? credentials.read() : null; const signedIn = Boolean(saved?.accountId && saved.origin === broker); return { configured: Boolean(broker), signedIn, ...(signedIn ? { accountId: saved.accountId } : {}), storage: credentials.storage() }; }
-      catch (error) { return { configured: Boolean(broker), signedIn: false, error: error.message, storage: credentials.storage() }; }
-    },
+    status, acceptLogin,
     async login(options = {}) {
       if (closed) throw new Error("Cloud connection is closed.");
       if (!loginFlight) {
@@ -137,14 +151,7 @@ function createCloudClient({ config, credentials, fetch = globalThis.fetch, open
         loginFlight = (async () => {
           const auth = await (await provider()).login({ ...options, signal: AbortSignal.any([options.signal ?? new AbortController().signal, lifecycle.signal]) });
           active(epoch);
-          const result = await fetchJSON(fetch, `${broker}/v1/computers`, { signal: lifecycle.signal, headers: { authorization: `Bearer ${auth.accessToken}` } });
-          if (typeof result.accountId !== "string" || !/^[a-zA-Z0-9_-]{1,128}$/.test(result.accountId)) throw new Error("Cloud account identity is invalid.");
-          const pair = await createKeyPair();
-          active(epoch);
-          credentials.write({ origin: broker, accountId: result.accountId, oauth: auth, proofKey: pair.privateJwk });
-          reset();
-          notify({ type: "account", signedIn: true, accountId: result.accountId });
-          return this.status();
+          return acceptLogin(auth, epoch);
         })().finally(() => { loginFlight = null; });
       }
       return loginFlight;
@@ -163,6 +170,12 @@ function createCloudClient({ config, credentials, fetch = globalThis.fetch, open
       return result.computers;
     },
     session,
+    async registerHost(input, keyPair) {
+      const saved = record(), nonce = randomUUID();
+      const fields = { computerId: input.computerId, port: input.port, label: input.label, nonce };
+      const proof = await signProof(keyPair.privateJwk, { ...fields, accountId: saved.accountId }, "register", broker);
+      return api("/v1/computers", "POST", { ...fields, publicKey: publicKey(keyPair.publicJwk), proof });
+    },
     async deregister(computerId) {
       const result = await api(`/v1/computers/${encodeURIComponent(computerId)}`, "DELETE");
       cancelTimeout(timers.get(computerId)); timers.delete(computerId); sessions.delete(computerId);

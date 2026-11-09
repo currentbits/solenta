@@ -21,7 +21,6 @@
 const crypto = require("node:crypto");
 const { isServerMaintenance, MAINTENANCE_MESSAGE } = require("./serverMaintenance.js");
 const { WebSocketServer, WebSocket } = require("ws");
-const { IPC_HANDLERS } = require("./ipc.js");
 const { PUSH_SCOPE, allows, argsAllowed, scopeForChannel } = require("./webScopes.js");
 
 const WS_PATH = "/ws";
@@ -125,7 +124,7 @@ function attachWebBridge(httpServer, opts) {
   const authorize = resolveAuthorize(opts);
   const limiter = opts.limiter || createAuthLimiter();
   const ctx = opts.ctx;
-  const handlers = opts.handlers || IPC_HANDLERS;
+  const handlers = opts.handlers || require("./ipc.js").IPC_HANDLERS;
   const path = opts.path || WS_PATH;
   const pingIntervalMs = opts.pingIntervalMs ?? 30000;
   const maxBufferedBytes = opts.maxBufferedBytes ?? 4 * 1024 * 1024;
@@ -272,7 +271,8 @@ function attachWebBridge(httpServer, opts) {
         }
         // Web has no solenta-media protocol; image handlers reply with
         // async data URLs instead of a custom-scheme src (issue #145).
-        const result = await fn({ ...ctx, serveDataUrls: true, transport: "web" }, ...args);
+        const result = await fn({ ...ctx, serveDataUrls: true, transport: "web",
+          cloudLocalAdmin: current.legacy === true && ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(remote) }, ...args);
         const frame = JSON.stringify({ kind: "reply", id, result });
         if (ws.readyState !== WebSocket.OPEN) return;
         // A big reply (Teleport back, #1702) legitimately sits over the

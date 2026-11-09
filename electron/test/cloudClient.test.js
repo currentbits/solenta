@@ -6,10 +6,11 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const http = require("node:http");
-const { randomUUID, createHash } = require("node:crypto");
+const { randomUUID } = require("node:crypto");
 const { createCredentials } = require("../cloud/credentials");
 const { createCloudClient } = require("../cloud/client");
-const { createKeyPair, signProof, verifyProof, thumbprint } = require("../cloud/protocol");
+const { createCloudHost } = require("../cloud/host");
+const { createKeyPair, verifyProof } = require("../cloud/protocol");
 const { createWebDevices } = require("../webDevices");
 const { createBroker } = require("../../connect-api/server");
 const { readJSON } = require("../cloud/http");
@@ -88,7 +89,9 @@ async function bootstrap(t, timers = {}) {
   const brokerOrigin = "https://connect.example.com", hostOrigin = "https://c-test.hosts.example.com";
   const row = { computerId: randomUUID(), accountId: "user_test", publicKey: hostKey.publicJwk, linkId: randomUUID(), generation: 1, allocation: { hostname: new URL(hostOrigin).hostname } };
   let descriptor = { kind: "solenta", computerId: row.computerId, protocol: { min: 1, max: 1 }, runtimeKind: "server", version: "0.29.0" };
-  const devices = createWebDevices(path.dirname(file(t)));
+  const dataDir = path.dirname(file(t)), devices = createWebDevices(dataDir);
+  const hostCredentials = createCredentials({ file: file(t) });
+  hostCredentials.write({ ...hostKey, link: { ...row, brokerOrigin, brokerKey: brokerKey.publicJwk, enabled: true, connectorToken: "fixture-connector" } });
   let exchanges = 0, offline = false;
   const servers = [];
   async function server(handler) {
@@ -105,31 +108,20 @@ async function bootstrap(t, timers = {}) {
     if (!local) throw new Error("Unexpected fixture endpoint");
     return fetch(`${local}${target.pathname}${target.search}`, options);
   };
+  const cloudHost = createCloudHost({ dataDir, devices, descriptor, port: 4621, credentials: hostCredentials, config: { origin: brokerOrigin }, account: {}, fetch: fetchMapped,
+    connector: { start: async () => {}, close: async () => {}, status: () => ({ state: "running" }) } });
+  t.after(cloudHost.close);
   mapped.set(hostOrigin, await server(async (req, res) => {
     res.setHeader("content-type", "application/json");
     try {
       if (req.url === "/.well-known/solenta") return res.end(JSON.stringify(descriptor));
-      const input = await readJSON(req);
-      if (req.url === "/api/cloud/mint") {
-        const claims = await verifyProof(input.proof, brokerKey.publicJwk, { purpose: "mint", audience: row.computerId });
-        const cloud = { accountId: claims.accountId, linkId: claims.linkId, generation: claims.generation, jkt: claims.jkt };
-        const grant = devices.createCloudEnrollment({ cloud, nonce: claims.nonce, name: "Cloud desktop", scopes: claims.scopes, deviceId: claims.deviceId });
-        return res.end(JSON.stringify({ proof: await signProof(hostKey.privateJwk, { ...claims, grant: grant.grant, expiresAt: grant.expiresAt }, "mint-response", brokerOrigin) }));
-      }
-      assert.equal(req.url, "/api/cloud/exchange"); exchanges++;
-      const claims = await verifyProof(input.proof, input.publicKey, { purpose: "exchange", audience: row.computerId });
-      const jkt = await thumbprint(input.publicKey);
-      assert.equal(claims.jkt, jkt);
-      assert.equal(claims.grantHash, createHash("sha256").update(input.grant).digest("base64url"));
-      const cloud = { accountId: claims.accountId, linkId: claims.linkId, generation: claims.generation, jkt };
-      const redeemed = devices.redeemCloudEnrollment({ grant: input.grant, cloud });
-      const response = { token: redeemed.token, deviceId: redeemed.device.id, scopes: redeemed.device.scopes, expiresAt: redeemed.expiresAt, computer: descriptor };
-      response.proof = await signProof(hostKey.privateJwk, { ...claims, tokenHash: createHash("sha256").update(response.token).digest("base64url"), deviceId: response.deviceId, scopes: response.scopes, expiresAt: response.expiresAt }, "session-response", jkt);
-      res.end(JSON.stringify(response));
+      if (req.url === "/api/cloud/exchange") exchanges++;
+      if (!await cloudHost.handleRequest(req, res)) { res.statusCode = 404; res.end(); }
     } catch (error) { res.statusCode = 400; res.end(JSON.stringify({ error: error.message })); }
   }));
   mapped.set(brokerOrigin, await server(createBroker({ store: { getHost: async () => row }, verifyAccount: async () => "user_test", tunnels: {}, signingKey: brokerKey.privateJwk, fetch: fetchMapped,
     config: { origin: brokerOrigin, issuer: "https://identity.example.com", clientId: "public-client", maxComputers: 3 } })));
+  await cloudHost.start();
   const credentials = createCredentials({ file: file(t) });
   credentials.write({ origin: brokerOrigin, accountId: "user_test", oauth: { accessToken: "access-secret", refreshToken: "refresh-secret", expiresAt: Date.now() + 3600_000 }, proofKey: clientKey.privateJwk });
   const client = createCloudClient({ config: { origin: brokerOrigin }, credentials, fetch: fetchMapped, ...timers });
@@ -198,6 +190,31 @@ test("login saves the broker-verified account but returns only public status", a
   assert.equal(a.storage, "session");
   assert.equal(JSON.stringify(a).includes("secret"), false);
   assert.equal(credentials.read().proofKey.crv, "Ed25519");
+});
+
+test("server-owned headless login verifies the account before saving, and registration proves its separate host key", async t => {
+  const credentials = createCredentials({ file: file(t) });
+  const hostKey = await createKeyPair();
+  const origin = "https://connect.example.com";
+  const client = createCloudClient({ config: { origin }, credentials, fetch: async (url, options) => {
+    if (options.method === "POST") {
+      const input = JSON.parse(options.body);
+      const proof = await verifyProof(input.proof, hostKey.publicJwk, { purpose: "register", audience: origin });
+      assert.equal(proof.accountId, "verified-user");
+      assert.equal(input.port, 4621);
+      assert.equal(input.publicKey.x, hostKey.publicJwk.x);
+      return Response.json({ computerId: input.computerId });
+    }
+    assert.equal(options.headers.authorization, "Bearer headless-access");
+    return Response.json({ accountId: "verified-user", computers: [] });
+  } });
+  t.after(client.close);
+  await assert.rejects(client.acceptLogin({ accessToken: "invalid" }), /credential/i);
+  const status = await client.acceptLogin({ accessToken: "headless-access", refreshToken: "headless-refresh", expiresAt: Date.now() + 3600_000 });
+  assert.equal(status.accountId, "verified-user");
+  assert.equal(status.brokerOrigin, origin);
+  const computerId = randomUUID();
+  assert.equal((await client.registerHost({ computerId, label: "Host", port: 4621 }, hostKey)).computerId, computerId);
 });
 
 test("scheduled renewal notifies owners; an outage preserves the current session until its actual expiry", { timeout: 10_000 }, async t => {
