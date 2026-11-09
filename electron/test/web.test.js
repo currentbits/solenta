@@ -736,7 +736,7 @@ describe("heartbeat + backpressure (attachWebBridge)", () => {
         ws.once("error", reject);
       });
       ws.send(JSON.stringify({ kind: "auth", token: "secret-token" }));
-      assert.deepEqual(await onceMessage(ws), { kind: "auth-ok", deviceId: "owner" });
+      assert.deepEqual(await onceMessage(ws), { kind: "auth-ok", deviceId: "token" });
 
       const deadline = Date.now() + 3000;
       while (ws.readyState !== WebSocket.CLOSED || bridge.wss.clients.size > 0) {
@@ -759,7 +759,7 @@ describe("heartbeat + backpressure (attachWebBridge)", () => {
     try {
       const ws = await connect(url);
       ws.send(JSON.stringify({ kind: "auth", token: "secret-token" }));
-      assert.deepEqual(await onceMessage(ws), { kind: "auth-ok", deviceId: "owner" });
+      assert.deepEqual(await onceMessage(ws), { kind: "auth-ok", deviceId: "token" });
 
       // pause() only stops reads; cork() keeps the first send in
       // _writableState so bufferedAmount stays above the 1-byte ceiling.
@@ -886,7 +886,7 @@ describe("web bridge denies simulator invoke and push", () => {
     try {
       const ws = await connect(url);
       ws.send(JSON.stringify({ kind: "auth", token: "secret-token" }));
-      assert.deepEqual(await onceMessage(ws), { kind: "auth-ok", deviceId: "owner" });
+      assert.deepEqual(await onceMessage(ws), { kind: "auth-ok", deviceId: "token" });
       for (const [i, channel] of SIMULATOR_CHANNELS.entries()) {
         ws.send(
           JSON.stringify({
@@ -916,7 +916,7 @@ describe("web bridge denies simulator invoke and push", () => {
     try {
       const ws = await connect(url);
       ws.send(JSON.stringify({ kind: "auth", token: "secret-token" }));
-      assert.deepEqual(await onceMessage(ws), { kind: "auth-ok", deviceId: "owner" });
+      assert.deepEqual(await onceMessage(ws), { kind: "auth-ok", deviceId: "token" });
       let pushed = [];
       ws.on("message", (data) => {
         pushed.push(JSON.parse(String(data)));
