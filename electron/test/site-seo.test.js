@@ -3,9 +3,11 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const os = require("node:os");
+const { createHash } = require("node:crypto");
 const { JSDOM } = require("jsdom");
 const { execFileSync } = require("node:child_process");
-const { PAGES } = require("../../scripts/build-sitemap.js");
+const { PAGES, render } = require("../../scripts/build-sitemap.js");
 const ROOT = path.join(__dirname, "..", "..");
 const read = (file) => fs.readFileSync(path.join(ROOT, "site", file), "utf8");
 const page = (file) => new JSDOM(read(file), { url: `https://solenta.app/${file}` }).window.document;
@@ -81,7 +83,10 @@ test("home features and ten newest releases link to existing documentation secti
   }
 });
 
-test("sitemap lists canonical HTML pages with dates at least as recent as their commits", () => {
+test("sitemap lists canonical HTML pages with dates bound to their current content", () => {
+  const dates = JSON.parse(read("sitemap-dates.json"));
+  assert.deepEqual(Object.keys(dates), PAGES);
+  assert.equal(read("sitemap.xml"), render(), "run node scripts/build-sitemap.js");
   const xml = new JSDOM(read("sitemap.xml"), { contentType: "text/xml" }).window.document;
   const entries = [...xml.querySelectorAll("url")];
   assert.equal(entries.length, PAGES.length);
@@ -90,10 +95,54 @@ test("sitemap lists canonical HTML pages with dates at least as recent as their 
     assert.equal(entries[i].querySelector("loc").textContent, url);
     const date = entries[i].querySelector("lastmod").textContent;
     assert.match(date, /^\d{4}-\d{2}-\d{2}$/);
-    const committed = execFileSync("git", ["log", "-1", "--format=%cs", "--", `site/${file}`], { cwd: ROOT, encoding: "utf8" }).trim();
-    assert.ok(date >= committed, `${file}: run node scripts/build-sitemap.js`);
+    const hash = createHash("sha256").update(read(file).replace(/\r\n/g, "\n")).digest("hex");
+    assert.equal(dates[file].sha256, hash, `${file}: run node scripts/build-sitemap.js`);
+    assert.equal(date, dates[file].lastmod, file);
+    for (const script of page(file).querySelectorAll('script[type="application/ld+json"]')) {
+      const modified = JSON.parse(script.textContent).dateModified;
+      if (modified) assert.ok(date >= modified, file);
+    }
     assert.ok(date <= new Date().toISOString().slice(0, 10));
   }
+});
+
+test("sitemap dates survive a next-day squash and advance only when page content changes", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "solenta-sitemap-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, "scripts"));
+  fs.mkdirSync(path.join(root, "site"));
+  fs.copyFileSync(path.join(ROOT, "scripts/build-sitemap.js"), path.join(root, "scripts/build-sitemap.js"));
+  const files = ["index.html", "docs.html", "changelog.html"];
+  for (const file of files) fs.writeFileSync(path.join(root, "site", file), `<h1>${file}</h1>\n`);
+  fs.writeFileSync(path.join(root, "site/sitemap-dates.json"), "{}");
+  const readOutput = () => ["sitemap.xml", "sitemap-dates.json"].map((file) => fs.readFileSync(path.join(root, "site", file), "utf8"));
+  const build = (day) => {
+    fs.writeFileSync(path.join(root, "clock.cjs"), `Date = class extends Date { constructor() { super("2026-11-${day}T12:00:00Z"); } };`);
+    execFileSync(process.execPath, ["--require", path.join(root, "clock.cjs"), path.join(root, "scripts/build-sitemap.js")]);
+  };
+  build("08");
+  const beforeSquash = readOutput();
+  const git = (...args) => execFileSync("git", args, { cwd: root, env: { ...process.env, GIT_AUTHOR_DATE: "2026-11-09T12:00:00Z", GIT_COMMITTER_DATE: "2026-11-09T12:00:00Z" } });
+  git("init", "--quiet", "--initial-branch=main");
+  git("add", "site", "scripts");
+  git("-c", "user.name=Sitemap Test", "-c", "user.email=sitemap@example.com", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "-m", "Squash pages generated yesterday");
+  build("10");
+  assert.deepEqual(readOutput(), beforeSquash, "clean rebuild after squash must be byte-identical");
+
+  fs.appendFileSync(path.join(root, "site/docs.html"), "<p>New content</p>\n");
+  build("10");
+  const changed = JSON.parse(readOutput()[1]);
+  assert.equal(changed["docs.html"].lastmod, "2026-11-10");
+  assert.equal(changed["index.html"].lastmod, "2026-11-08");
+  assert.equal(changed["changelog.html"].lastmod, "2026-11-08");
+  fs.appendFileSync(path.join(root, "site/docs.html"), "<p>Another same-day edit</p>\n");
+  const staleHash = createHash("sha256").update(fs.readFileSync(path.join(root, "site/docs.html"))).digest("hex");
+  assert.notEqual(changed["docs.html"].sha256, staleHash, "freshness detects edits even before the date advances");
+  build("10");
+  assert.notEqual(JSON.parse(readOutput()[1])["docs.html"].sha256, changed["docs.html"].sha256);
+  const afterChange = readOutput();
+  build("11");
+  assert.deepEqual(readOutput(), afterChange, "unchanged dirty pages must keep their content date");
 });
 
 test("conventional icons contain the required image dimensions", () => {
