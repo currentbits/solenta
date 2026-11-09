@@ -162,7 +162,7 @@ cp electron/speech-models.json "$APP_DIR/electron/speech-models.json"
 # @lydell/node-pty-<platform>-<arch>; this bundle is arm64 only (see the
 # speech runtime below). pty.node + the executable spawn-helper are loose
 # Mach-O files, signed by the nested-binary walk at the end of this script.
-ROOT_NM_PKGS=(ws cross-spawn path-key shebang-command shebang-regex which isexe yauzl pend qrcode-generator @lydell/node-pty @lydell/node-pty-darwin-arm64 pdfjs-dist)
+ROOT_NM_PKGS=(ws jose cross-spawn path-key shebang-command shebang-regex which isexe yauzl pend qrcode-generator @lydell/node-pty @lydell/node-pty-darwin-arm64 pdfjs-dist)
 mkdir -p "$APP_DIR/node_modules"
 for pkg in "${ROOT_NM_PKGS[@]}"; do
   if [[ ! -d "node_modules/$pkg" ]]; then

@@ -198,9 +198,13 @@ test("the connector owner stops its own tunnel child when its parent disappears"
   const exit = new Promise(resolve => owner.once("exit", resolve));
   owner.send({ binary: process.execPath, args: ["-e", 'require("node:fs").writeFileSync(process.env.TEST_PID_FILE,String(process.pid));setInterval(()=>{},1000)'], env: { TEST_PID_FILE: pidFile } });
   const deadline = Date.now() + 3000;
-  while (!fs.existsSync(pidFile) && Date.now() < deadline) await wait(10);
-  assert.ok(fs.existsSync(pidFile), "owned child started");
-  const pid = Number(fs.readFileSync(pidFile, "utf8"));
+  let pid;
+  while (Date.now() < deadline) {
+    try { pid = Number(fs.readFileSync(pidFile, "utf8")); } catch {}
+    if (Number.isInteger(pid) && pid > 0) break;
+    await wait(10);
+  }
+  assert.ok(pid > 0, "owned child started");
   owner.disconnect();
   await exit;
   assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
@@ -264,4 +268,20 @@ test("unlink reports broker cleanup still pending after access was revoked", asy
   f.setCleanupPending(false);
   await f.host.unlink();
   assert.equal(f.host.status().cleanupPending, false);
+});
+
+
+test("remote revoke fences devices before acknowledging, then drains its own tunnel response before stopping", async t => {
+  const f = await fixture(t);
+  await f.host.link();
+  const cloud = (await f.enroll()).result;
+  const binding = await f.claims();
+  const stops = f.actions.filter(action => action === "stopped").length;
+  const response = await f.request("/api/cloud/revoke", { proof: await signProof(f.brokerKey.privateJwk, binding, "revoke", f.descriptor.computerId) });
+  assert.equal(response.status, 200);
+  assert.equal(f.devices.authorize(cloud.token), null);
+  assert.equal(f.host.status().enabled, false);
+  assert.equal(f.actions.filter(action => action === "stopped").length, stops, "Do not cut the tunnel carrying the revocation response");
+  await wait(1200);
+  assert.equal(f.actions.filter(action => action === "stopped").length, stops + 1);
 });

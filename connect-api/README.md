@@ -74,3 +74,24 @@ ownership and concurrency tests against an isolated real Postgres database, set
 `CONNECT_TEST_DATABASE_URL` in the test environment. These tests create the
 `cloud_computers` table and randomized account rows; use a disposable database.
 No live Clerk or Cloudflare acceptance is implied by fixture results.
+
+For real staging acceptance, first run a dedicated installed host with
+`CODER_SIMULATE=1`, its own data directory and port (4621 on AgentOS), then
+`solenta-connect link` on that host. Keep the existing 4620 desktop untouched.
+From a separate client checkout, set the public `SOLENTA_CONNECT_ORIGIN`, the
+staging host's `CONNECT_ACCEPTANCE_COMPUTER_ID`, and
+`CONNECT_ACCEPTANCE_PROJECT` to an existing throwaway repository on that host.
+Run:
+
+```sh
+node --import=./test/support/render.mjs --experimental-strip-types scripts/smoke-cloud-connect.js --revoke-test-host
+```
+
+This script uses public device login, creates a simulated-agent thread in a
+worktree, checks a real terminal through renewal and reconnect, and unlinks
+the explicitly selected staging host. It does not invoke SSH. It requires host
+revocation acknowledgement and provider cleanup to report success. Never point
+it at a production computer. Login credentials use a temporary private 0600
+file and are cleared on exit; the test thread remains on the execution host.
+Run the native connector smoke and service lifecycle matrix separately; this
+does not establish reboot survival or macOS signature validity.

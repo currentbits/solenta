@@ -1,0 +1,41 @@
+name: cloud-connect
+
+on:
+  push:
+    paths:
+      - "connect-api/**"
+      - "electron/cloud/**"
+      - "electron/test/cloud*.test.js"
+      - "electron/webDevices.js"
+      - "electron/serverIdentity.js"
+      - "package*.json"
+      - ".github/workflows/cloud-connect.yml"
+  workflow_dispatch:
+
+jobs:
+  broker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: solenta-ci-only
+          POSTGRES_DB: connect_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: "**/package-lock.json"
+      - run: npm ci --ignore-scripts
+      - run: npm ci --prefix connect-api --ignore-scripts
+      - run: npm test --prefix connect-api
+        env:
+          CONNECT_TEST_DATABASE_URL: postgres://postgres:solenta-ci-only@127.0.0.1:5432/connect_test

@@ -29,11 +29,10 @@ function packagedAllowlist(rel) {
 
 function electronThirdPartyRequires() {
   const ids = new Set();
-  for (const name of fs.readdirSync(ELECTRON_DIR)) {
-    if (!name.endsWith(".js")) continue;
-    const src = fs.readFileSync(path.join(ELECTRON_DIR, name), "utf8");
-    // require.resolve counts too: pdf-text.js import()s pdfjs by resolved path.
-    for (const m of src.matchAll(/require(?:\.resolve)?\(["']([^"']+)["']\)/g)) {
+  for (const file of fs.readdirSync(ELECTRON_DIR, { recursive: true })) {
+    if (!file.endsWith(".js") || file.split(path.sep).includes("test")) continue;
+    const src = fs.readFileSync(path.join(ELECTRON_DIR, file), "utf8");
+    for (const m of src.matchAll(/(?<![.\w])(?:require(?:\.resolve)?|import)\(["']([^"']+)["']\)/g)) {
       const id = m[1];
       if (id.startsWith(".") || id.startsWith("node:")) continue;
       const pkg = id.startsWith("@") ? id.split("/").slice(0, 2).join("/") : id.split("/")[0];

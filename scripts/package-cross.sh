@@ -132,7 +132,7 @@ cp electron/speech-models.json "$PAYLOAD/electron/speech-models.json"
 
 # Same explicit root deps as package-app.sh (ws + cross-spawn + yauzl trees,
 # node-pty wrapper). The per-target node-pty binary package is added below.
-ROOT_NM_PKGS=(ws cross-spawn path-key shebang-command shebang-regex which isexe yauzl pend qrcode-generator @lydell/node-pty pdfjs-dist)
+ROOT_NM_PKGS=(ws jose cross-spawn path-key shebang-command shebang-regex which isexe yauzl pend qrcode-generator @lydell/node-pty pdfjs-dist)
 mkdir -p "$PAYLOAD/node_modules"
 for pkg in "${ROOT_NM_PKGS[@]}"; do
   if [[ ! -d "node_modules/$pkg" ]]; then

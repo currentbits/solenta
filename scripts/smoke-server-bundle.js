@@ -36,6 +36,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   execFileSync("tar", ["-xzf", archive, "-C", tmp]);
   const bin = path.join(tmp, "solenta-server", "bin");
   step(`bundled node ${execFileSync(path.join(bin, "node"), ["--version"], { encoding: "utf8" }).trim()} (${process.platform}-${process.arch})`);
+  const app = path.join(tmp, "solenta-server", "app");
+  const proofCheck = `const p = require(${JSON.stringify(path.join(app, "electron/cloud/protocol.js"))}); (async () => { const key = await p.createKeyPair(); const proof = await p.signProof(key.privateJwk, { nonce: "package-check" }, "package-check", "package-check"); const claims = await p.verifyProof(proof, key.publicJwk, { purpose: "package-check", audience: "package-check" }); if (claims.nonce !== "package-check") process.exit(1); })().catch(() => process.exit(1));`;
+  execFileSync(path.join(bin, "node"), ["-e", proofCheck], { cwd: home, stdio: "pipe" });
+  assert.match(execFileSync(path.join(bin, "solenta-connect"), ["--help"], { cwd: home, encoding: "utf8" }), /login.*link.*status/s);
+  step("bundled cloud proof dependency and connect CLI resolve outside the checkout");
   execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
   execFileSync("git", ["-c", "user.email=s@s", "-c", "user.name=s", "commit", "-q", "--allow-empty", "-m", "init"], { cwd: repo });
 

@@ -137,10 +137,10 @@ const path = require("path");
 const appRes = process.argv[2];
 const electronDir = path.join(appRes, "electron");
 const ids = new Set();
-for (const name of fs.readdirSync(electronDir)) {
+for (const name of fs.readdirSync(electronDir, { recursive: true })) {
   if (!name.endsWith(".js")) continue;
   const src = fs.readFileSync(path.join(electronDir, name), "utf8");
-  for (const m of src.matchAll(/require\(["']([^"']+)["']\)/g)) {
+  for (const m of src.matchAll(/(?<![.\w])(?:require(?:\.resolve)?|import)\(["']([^"']+)["']\)/g)) {
     const id = m[1];
     if (id.startsWith(".") || id.startsWith("node:") || id === "electron") continue;
     ids.add(id);

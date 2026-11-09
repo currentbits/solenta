@@ -31,12 +31,13 @@ function createCloudHost({ dataDir, devices, descriptor, port, credentials, conf
   function revokeDevices() {
     if (state?.link) for (const id of devices.revokeCloud(state.link.linkId)) disconnect(id);
   }
-  async function disable() {
+  async function disable(stopConnector = true) {
+    clearTimeout(timer);
     reconciled = false; connectorStarted = false;
     fence();
     revokeDevices();
     if (state?.link) { state.link.enabled = false; save(); }
-    await connector.close();
+    if (stopConnector) await connector.close();
   }
   async function reconcile(probe = false) {
     if (closed || !isActive() || !config.origin || !state?.link?.enabled) return false;
@@ -153,7 +154,15 @@ function createCloudHost({ dataDir, devices, descriptor, port, credentials, conf
             const grant = devices.createCloudEnrollment({ name: "Cloud device", cloud: { accountId: link.accountId, linkId: link.linkId, generation: link.generation, jkt: claims.jkt }, nonce: claims.nonce, scopes: claims.scopes, deviceId: claims.deviceId });
             reply(200, { proof: await signProof(state.privateJwk, { ...claims, grant: grant.grant, expiresAt: grant.expiresAt }, "mint-response", config.origin) });
           } else {
-            await disable();
+            const revokedLink = state.link;
+            await disable(false);
+            // Drain the reply before stopping the tunnel that carries it.
+            res.once("finish", () => {
+              timer = setTimeout(() => {
+                void exclusive(async () => { if (state.link === revokedLink && !state.link.enabled) await connector.close(); });
+              }, 1000);
+              timer.unref?.();
+            });
             reply(200, { proof: await signProof(state.privateJwk, { ...claims, revoked: true }, "revoke-response", config.origin) });
           }
         }

@@ -18,6 +18,7 @@ on:
       - "scripts/package-server.sh"
       - "scripts/smoke-server-bundle.js"
       - "scripts/smoke-server-lifecycle.js"
+      - "scripts/smoke-cloud-connector.js"
       - ".github/actions/npm-ci-electron/**"
       - ".github/workflows/server-bundle.yml"
   workflow_dispatch:
@@ -46,6 +47,8 @@ jobs:
       - run: npm ci --prefix memory-server
       - run: bash scripts/package-server.sh ${{ matrix.target }}
       - run: node scripts/smoke-server-bundle.js out/solenta-server-*-${{ matrix.target }}.tar.gz
+      - name: Check pinned connector on its native architecture
+        run: node scripts/smoke-cloud-connector.js
       - name: Prepare native Linux user manager
         if: runner.os == 'Linux'
         shell: bash

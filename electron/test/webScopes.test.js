@@ -187,7 +187,7 @@ describe("bridge enforces scopes on the host", () => {
     const next = () =>
       inbox.length ? Promise.resolve(inbox.shift()) : new Promise((r) => waiters.push(r));
     ws.send(JSON.stringify({ kind: "auth", token }));
-    assert.deepEqual(await next(), { kind: "auth-ok" });
+    assert.deepEqual(await next(), { kind: "auth-ok", deviceId: TOKENS[token].id });
     let id = 0;
     const invoke = async (channel) => {
       ws.send(JSON.stringify({ kind: "invoke", id: ++id, channel, args: [] }));

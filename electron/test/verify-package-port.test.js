@@ -68,6 +68,9 @@ it("package probes follow config port rewrites through startup, health, store, a
       ELECTRON_PID=$$
       curl() { "$NODE_BIN" "$PROBE_FIXTURE" curl "$@"; }
       lsof() { "$NODE_BIN" "$PROBE_FIXTURE" lsof "$@"; }
+      stop_probe() { :; }
+      verify_macos_gatekeeper() { :; }
+      APP=fixture-signature-checked-separately
       ${refresh}
       ${source.slice(probeStart)}
     `], {

@@ -378,6 +378,13 @@ const BY_SCOPE = {
     "pairing:denyConsent",
     // Enrollment and revocation require full owner access; server switches
     // and direct reusable-token issuance also enforce desktop transport.
+    "app:cloudStatus",
+    "app:cloudLogin",
+    "app:cloudLogout",
+    "app:cloudComputers",
+    "app:cloudLink",
+    "app:cloudUnlink",
+    "app:cloudConnect",
     "web:status",
     "web:setEnabled",
     "web:addDevice",
