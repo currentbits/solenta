@@ -86,6 +86,15 @@ function createHostHub(deps) {
   function primary(entry) {
     return (entry.following && hosts.get(entry.following)) || entry;
   }
+  function routesFor(entry) {
+    return [entry, ...[...hosts.values()].filter((r) => r.following === entry.key && r.descriptor?.computerId === entry.descriptor?.computerId)]
+      .filter((r) => !entry.refusedRoutes?.has(r.key));
+  }
+  function sameComputer(left, right) {
+    const a = hosts.get(left);
+    const b = hosts.get(right);
+    return !!a && !!b && primary(a) === primary(b);
+  }
   function shownInSidebar(entry) {
     return [...hosts.values()].some((route) => primary(route) === entry && !route.peer);
   }
@@ -203,6 +212,8 @@ function createHostHub(deps) {
   }
 
   function dropSocket(entry, why) {
+    entry.generation = (entry.generation || 0) + 1;
+    entry.connecting = false;
     const ws = entry.ws;
     entry.ws = null;
     if (entry.beat) clearTimer(entry.beat);
@@ -219,16 +230,18 @@ function createHostHub(deps) {
     entry.pending.clear();
     if (entry.removed || entry.retry) return;
     setStatus(entry, "offline", why);
-    // A refused login, host key or token will not heal by retrying, and with
-    // in-app SSH prompts (#1818) each retry would ask again. Wait for the
-    // user: Connect, or Show in sidebar off and on, calls setHosts again.
+    // A refused credential will not heal by retrying the same route. Other
+    // previously verified routes retain their own credentials. Once all are
+    // refused, wait for an explicit save/connect rather than prompting in a loop.
     if (NO_RETRY.test(why || "")) {
-      entry.parked = true;
-      return;
+      entry.refusedRoutes.add(entry.attemptedRouteKey || entry.key);
+      if (!routesFor(entry).length) { entry.parked = true; return; }
+      entry.routeCursor = 0;
+    } else {
+      entry.routeCursor = (entry.routeCursor || 0) + 1;
     }
     // Rotate only previously authenticated routes for this computer. The
     // entry remains the stable owner of IDs, calls and retry scheduling.
-    entry.routeCursor = (entry.routeCursor || 0) + 1;
     const delay = RETRY_DELAYS_MS[Math.min(entry.attempt, RETRY_DELAYS_MS.length - 1)];
     entry.attempt += 1;
     entry.retry = setTimer(() => {
@@ -239,25 +252,29 @@ function createHostHub(deps) {
 
   async function connect(entry) {
     if (entry.removed || entry.ws || entry.following || entry.connecting) return;
+    const generation = entry.generation = (entry.generation || 0) + 1;
     entry.connecting = true;
     if (entry.status !== "online") setStatus(entry, "connecting", entry.error);
-    const routes = [entry, ...[...hosts.values()].filter((r) => r.following === entry.key && r.descriptor?.computerId === entry.descriptor?.computerId)];
+    const routes = routesFor(entry);
+    if (!routes.length) { entry.connecting = false; entry.parked = true; setStatus(entry, "offline", entry.error); return; }
     const route = routes[(entry.routeCursor || 0) % routes.length];
+    entry.attemptedRouteKey = route.key;
     let opened;
     try {
       opened = await deps.openTunnel({ host: route.host, remotePort: route.remotePort, url: route.url, label: entry.label, computerId: entry.computerId, allowLegacy: route.allowLegacy, ...(route.peer ? { peer: true } : {}), ...(route.token ? { token: route.token } : {}) }, () => {
         if (entry.child === opened?.child) dropSocket(entry, "SSH connection ended.");
       });
     } catch (err) {
+      if (entry.generation !== generation) return;
       entry.connecting = false;
       dropSocket(entry, err && err.message ? err.message : String(err));
       return;
     }
-    entry.connecting = false;
-    if (entry.removed) {
+    if (entry.removed || entry.generation !== generation) {
       opened.child.kill();
       return;
     }
+    entry.connecting = false;
     entry.child = opened.child;
     const ws = new WS(opened.wsUrl || `ws://127.0.0.1:${opened.child.backPort}/ws`, { maxPayload: 128 * 1024 * 1024 });
     entry.ws = ws;
@@ -307,7 +324,23 @@ function createHostHub(deps) {
             ws.terminate();
             entry.child?.kill();
             entry.child = null;
+            owner.refusedRoutes.delete(entry.key);
             retag(owner);
+            // Persisted workers can name this route even when another route
+            // won authentication first. Reconcile their held rows now that
+            // both routes have proven they belong to the same computer.
+            deps.onHostThreads?.(owner.key, owner.threads);
+            if (owner.status !== "online") {
+              // Token rejection parks one route, not the whole computer. Use
+              // the newly verified route with its own credential and fence any
+              // older tunnel attempt before reconnecting the stable owner.
+              dropSocket(owner, "Connecting through an authenticated alternate route.");
+              if (owner.retry) clearTimer(owner.retry);
+              owner.retry = null;
+              owner.parked = false;
+              owner.routeCursor = routesFor(owner).indexOf(entry);
+              void connect(owner);
+            }
             return;
           }
         }
@@ -419,6 +452,7 @@ function createHostHub(deps) {
         retag(primary(held));
       }
       if (held) {
+        primary(held).refusedRoutes.delete(key);
         held.allowLegacy = h.allowLegacy === true;
         if (!held.computerId && h.computerId) held.computerId = h.computerId;
       }
@@ -438,6 +472,7 @@ function createHostHub(deps) {
         continue;
       }
       const entry = {
+        refusedRoutes: new Set(),
         computerId: h.computerId, allowLegacy: h.allowLegacy === true, descriptor: null, following: null,
         key, host: h.host, remotePort: h.remotePort, url: h.url, label, beat: null, peer, token: h.token,
         status: "connecting", error: null, tag: null,
@@ -598,7 +633,7 @@ function createHostHub(deps) {
     for (const entry of [...hosts.values()]) remove(entry);
   }
 
-  return { setHosts, setPeers, list, route, ownerOf, mergeThreads, mergeProjects, invoke, projectsOf, threadsOf, close };
+  return { setHosts, setPeers, list, route, ownerOf, mergeThreads, mergeProjects, invoke, projectsOf, threadsOf, sameComputer, close };
 }
 
 module.exports = { createHostHub, applyListPush, RELAYED_PUSHES };

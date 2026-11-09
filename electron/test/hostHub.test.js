@@ -110,6 +110,81 @@ describe("hostHub", () => {
     const detail = await hub.route("threads:get", ["same-thread"], () => assert.fail("local fallback"));
     assert.equal(detail.thread.host.computerId, "computer-one");
   });
+  it("activates an authenticated alternate when the previous route is parked after token rejection", async () => {
+    const remote = await fakeHost({ computerId: "computer-one", threads: [{ id: "r1", projectId: "rp" }] });
+    let revoked = false;
+    let finishOldAttempt;
+    let staleClosed = 0;
+    const { hub } = makeHub(remote, { openTunnel: async (input) => {
+      if (revoked && input.host === HOST.host) return new Promise((resolve) => {
+        finishOldAttempt = () => resolve({ child: { backPort: remote.port, kill() { staleClosed++; } }, token: "revoked-token" });
+      });
+      return { child: { backPort: remote.port, kill() {} }, token: "tok" };
+    } });
+    cleanup.push(() => remote.close(), () => hub.close());
+    hub.setHosts([HOST]);
+    await waitFor(() => hub.mergeThreads([]).length === 1);
+    const owner = hub.list()[0].key;
+    revoked = true;
+    for (const ws of remote.state.sockets) ws.close(4401);
+    await waitFor(() => hub.list()[0].status === "offline");
+    hub.setHosts([HOST, { host: "alternate", remotePort: 4620 }]);
+    await waitFor(() => hub.list().length === 1 && hub.list()[0].status === "online" && hub.list()[0].activeRouteKey === "alternate:4620");
+    assert.equal(hub.list()[0].key, owner);
+    assert.equal((await hub.invoke(owner, "threads:get", ["r1"])).thread.id, "r1");
+    assert.ok(finishOldAttempt, "the original route was also reconnecting");
+    finishOldAttempt();
+    await waitFor(() => staleClosed === 1);
+    assert.equal(hub.list()[0].activeRouteKey, "alternate:4620", "a stale tunnel cannot replace the healthy route");
+    await waitFor(() => remote.state.sockets.size === 1);
+  });
+  it("tries an already verified alternate after token rejection and parks after all credentials fail", async () => {
+    const remote = await fakeHost({ computerId: "computer-one", threads: [{ id: "r1", projectId: "rp" }] });
+    const rejected = new Set();
+    const attempts = [];
+    const { hub } = makeHub(remote, { openTunnel: async (input) => {
+      attempts.push(input.host);
+      return { child: { backPort: remote.port, kill() {} }, token: rejected.has(input.host) ? "revoked" : "tok" };
+    } });
+    cleanup.push(() => remote.close(), () => hub.close());
+    hub.setHosts([HOST]);
+    await waitFor(() => hub.mergeThreads([]).length === 1);
+    hub.setHosts([HOST, { host: "alternate", remotePort: 4620 }]);
+    await waitFor(() => hub.list()[0].routes.length === 2 && remote.state.sockets.size === 1);
+    rejected.add(HOST.host);
+    for (const ws of remote.state.sockets) ws.close(4401);
+    await waitFor(() => hub.list()[0].status === "online" && hub.list()[0].activeRouteKey === "alternate:4620");
+    assert.equal((await hub.invoke(HOST.host + ":4620", "threads:get", ["r1"])).thread.id, "r1");
+    rejected.add("alternate");
+    for (const ws of remote.state.sockets) ws.close(4401);
+    await waitFor(() => hub.list()[0].status === "offline");
+    const parkedAttempts = attempts.length;
+    await new Promise((resolve) => setTimeout(resolve, 180));
+    assert.equal(attempts.length, parkedAttempts, "refused routes cannot form a retry loop");
+  });
+  it("preserves persisted worker wakeups and crew replies through a route that becomes an alias", async () => {
+    const { createRemoteWorkers } = require("../remoteWorkers.js");
+    const remote = await fakeHost({ computerId: "computer-one", threads: [{ id: "r1", projectId: "rp", status: "done" }] });
+    let lead = { id: "lead", projectId: "local-project", remoteWorkers: [{ hostKey: "alternate:4620", hostLabel: "Box", threadId: "r1", out: true, first: true }] };
+    const store = { getThreads: () => [lead], getThread: (id) => id === lead.id ? lead : null, updateThread: (_id, patch) => { lead = { ...lead, ...patch }; }, saveNow() {} };
+    const delivered = [];
+    let workers;
+    const { hub } = makeHub(remote, { onHostThreads: (key, rows) => workers?.onHostThreads(key, rows), onCrewCall: (key, payload) => workers?.onCrewCall(key, payload) });
+    workers = createRemoteWorkers({ store, hub, deliver: (notice) => delivered.push(notice) });
+    cleanup.push(() => remote.close(), () => hub.close());
+    hub.setHosts([HOST]);
+    await waitFor(() => hub.mergeThreads([]).length === 1);
+    assert.equal(delivered.length, 0, "ownership requires verified route identity");
+    hub.setHosts([HOST, { host: "alternate", remotePort: 4620 }]);
+    await waitFor(() => hub.list().length === 1 && hub.list()[0].routes.length === 2);
+    await waitFor(() => delivered.length === 1);
+    assert.equal(lead.remoteWorkers[0].out, false);
+    remote.push("crew:call", { callId: "alias-call", workerId: "r1", tool: "thread_merge", args: {} });
+    await waitFor(() => remote.state.calls.some((call) => call.channel === "threads:crewReply"));
+    const reply = remote.state.calls.find((call) => call.channel === "threads:crewReply").args[0];
+    assert.equal(reply.callId, "alias-call");
+    assert.match(reply.error, /does not run on the lead's computer/);
+  });
 
   it("uses newly explicit legacy compatibility when retrying a saved route", async () => {
     const remote = await fakeHost({ threads: [{ id: "legacy-thread", projectId: "rp" }] });
