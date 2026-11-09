@@ -1,0 +1,9 @@
+{
+  "name": "solenta-connect-api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "scripts": { "start": "node server.js", "test": "node --test test.js" },
+  "engines": { "node": ">=22" },
+  "dependencies": { "jose": "6.2.16", "pg": "8.23.1" }
+}
