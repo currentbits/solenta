@@ -15,6 +15,7 @@
  */
 
 const http = require("node:http");
+const { isServerMaintenance, MAINTENANCE_MESSAGE } = require("./serverMaintenance.js");
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
@@ -210,7 +211,7 @@ function serveBanner(opts) {
     ...urls.filter((u) => u.kind !== "local"),
   ];
   const best = reachable[0] || urls[0];
-  const link = best ? `${best.url}/?token=${encodeURIComponent(token)}` : "";
+  const link = best ? `${best.url}/#token=${encodeURIComponent(token)}` : "";
   const lines = [`solenta-web: token ${token}`, "", "Solenta Web is ready."];
   for (const u of [...reachable, ...urls.filter((x) => x.kind === "local")]) {
     const note = u.kind === "local" ? "this machine only" : u.kind === "tailnet" ? "your tailnet, HTTPS" : "your network, plain HTTP";
@@ -519,6 +520,52 @@ async function serveRunArtifact(req, res, opts) {
  * @param {typeof fs.createReadStream} [opts.createReadStream]
  * @param {(msg: string) => void} [opts.log]
  */
+const ENROLLMENT_PATH = "/api/enroll";
+const ENROLLMENT_BODY_LIMIT = 4096;
+
+async function serveEnrollment(req, res, { url, limiter, redeemEnrollment, ctx }) {
+  if (url.pathname !== ENROLLMENT_PATH) return false;
+  const reply = (status, body) => {
+    res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Content-Type-Options": "nosniff" });
+    res.end(JSON.stringify(body));
+  };
+  if (req.method !== "POST") { reply(405, { error: "Use POST to exchange an enrollment link." }); return true; }
+  if (isServerMaintenance(ctx)) {
+    req.resume();
+    reply(503, { error: MAINTENANCE_MESSAGE });
+    return true;
+  }
+  const remote = req.socket.remoteAddress || "unknown";
+  if (limiter.blocked(remote)) { reply(429, { error: "Too many enrollment attempts. Try again later." }); return true; }
+  if (typeof redeemEnrollment !== "function") { reply(503, { error: "Browser enrollment is unavailable on this host." }); return true; }
+  try {
+    if (url.search || !/^application\/json(?:\s*;|$)/i.test(req.headers["content-type"] || "")) throw new Error("Use a JSON enrollment body without URL credentials.");
+    if (req.headers.origin && new URL(req.headers.origin).host !== req.headers.host) throw new Error("Enrollment must use this computer's origin.");
+    if (Number(req.headers["content-length"]) > ENROLLMENT_BODY_LIMIT) { req.resume(); reply(413, { error: "Enrollment request is too large." }); return true; }
+    let size = 0;
+    const chunks = [];
+    for await (const chunk of req) {
+      size += chunk.length;
+      if (size > ENROLLMENT_BODY_LIMIT) { reply(413, { error: "Enrollment request is too large." }); return true; }
+      chunks.push(chunk);
+    }
+    let input;
+    try { input = JSON.parse(Buffer.concat(chunks).toString("utf8")); }
+    catch { throw new Error("Enrollment body is invalid."); }
+    if (!input || Array.isArray(input) || typeof input !== "object" || Object.keys(input).some(key => !["grant", "scopes", "computerId"].includes(key))) throw new Error("Enrollment body is invalid.");
+    if (input.computerId !== undefined && (typeof input.computerId !== "string" || input.computerId.length > 128)) throw new Error("Computer identity is invalid.");
+    // Maintenance may have started while the client was sending the body.
+    // Recheck at the mutation boundary so a trial cannot consume durable grants.
+    if (isServerMaintenance(ctx)) { reply(503, { error: MAINTENANCE_MESSAGE }); return true; }
+    reply(200, await redeemEnrollment(input));
+  } catch (err) {
+    limiter.fail(remote);
+    const message = err && err.message ? String(err.message) : "";
+    reply(400, { error: /^(Enrollment |This enrollment |Computer identity |Use a JSON |At most |Device access )/.test(message) ? message : "Enrollment could not be completed. Create a new browser link." });
+  }
+  return true;
+}
+
 function startWebServer(opts) {
   const host = (opts && opts.host) || DEFAULT_HOST;
   const port = opts && opts.port != null ? opts.port : DEFAULT_PORT;
@@ -526,6 +573,9 @@ function startWebServer(opts) {
   // One limiter for both doors, so the artifact route is no side channel.
   const limiter = createAuthLimiter();
   const ctx = opts && opts.ctx;
+  const { computerDescriptor, DESCRIPTOR_PATH } = require("./serverIdentity.js");
+  const dataDir = opts.userDataPath || ctx?.userDataPath;
+  const computer = opts.computer || (dataDir ? computerDescriptor(dataDir, { runtimeKind: opts.runtimeKind }) : null);
   const staticDir = (opts && opts.staticDir) || null;
   const artifactStore = (opts && opts.artifactStore) || null;
   const createReadStream = (opts && opts.createReadStream) || fs.createReadStream;
@@ -541,6 +591,17 @@ function startWebServer(opts) {
       res.end();
       return;
     }
+    if (url.pathname === DESCRIPTOR_PATH && computer) {
+      if (req.method !== "GET" && req.method !== "HEAD") {
+        res.writeHead(405, { Allow: "GET, HEAD" });
+        res.end();
+        return;
+      }
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" });
+      res.end(req.method === "HEAD" ? undefined : JSON.stringify(computer));
+      return;
+    }
+    if (await serveEnrollment(req, res, { url, limiter, redeemEnrollment: opts.redeemEnrollment, ctx })) return;
     const handled = await serveRunArtifact(req, res, {
       authorize,
       limiter,
@@ -558,6 +619,7 @@ function startWebServer(opts) {
     ctx,
     handlers: opts.handlers,
     path: WS_PATH,
+    computer,
   });
 
   const listening = new Promise((resolve, reject) => {
@@ -595,6 +657,9 @@ function startWebServer(opts) {
 }
 
 module.exports = {
+  ENROLLMENT_PATH,
+  ENROLLMENT_BODY_LIMIT,
+  serveEnrollment,
   TOKEN_FILENAME,
   DEFAULT_HOST,
   DEFAULT_PORT,

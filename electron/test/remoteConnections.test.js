@@ -20,12 +20,15 @@ const {
   prepareHostCommand,
   installHostCommand,
   installRemoteSolenta,
+  manageRemoteServer,
+  serverLifecycleCommand,
   inspectHost,
   compareVersions,
   openRemoteConnection,
   closeRemoteConnections,
   invokeRemote,
 } = require("../remoteConnections.js");
+const COMPUTER = { kind: "solenta", computerId: "test-computer-one", protocol: { min: 1, max: 1 }, runtimeKind: "server" };
 const { classifySshPrompt, createSshPrompts, startAskpassServer } = require("../sshAskpass.js");
 
 async function waitFor(check, timeoutMs = 5_000) {
@@ -53,6 +56,11 @@ describe("remote Connections", () => {
       { key: "https://mini.tail1234.ts.net", url: "https://mini.tail1234.ts.net", host: "mini.tail1234.ts.net", remotePort: 443, token: "abc", label: "mini.tail1234.ts.net" },
     );
     assert.equal(validateConnection({ url: "https://box.example.com/?token=abc", token: "typed" }).token, "typed");
+    const fragment = validateConnection({ url: "https://mini.ts.net/#token=fragment-secret&computerId=test-computer-one" });
+    assert.equal(fragment.token, "fragment-secret");
+    assert.equal(fragment.computerId, "test-computer-one");
+    assert.equal(fragment.url, "https://mini.ts.net");
+    assert.throws(() => validateConnection({ url: "https://mini.ts.net/#token=secret&computerId=test-computer-two", computerId: "test-computer-one" }), /identity mismatch/);
     for (const ok of ["http://192.168.1.20:4620", "http://10.0.0.5:4620", "http://100.101.2.3:4620", "http://mini:4620", "http://mini.local:4620", "http://[fd7a:115c::1]:4620"]) {
       assert.equal(validateConnection({ url: ok }).url, new URL(ok).origin, ok);
     }
@@ -223,12 +231,12 @@ describe("remote Connections", () => {
     assert.equal(await readRemoteToken("me@box", 4620, { execFile: run(0, "tok\n"), updater: updater("test-1829") }), "tok");
     const inner = sent.slice(7, -1);
     assert.equal(inner.includes("'"), false, "no inner single quotes");
-    assert.match(inner, /dir="\$base\/nightly-1"/, "named by the release tag in the asset");
+    assert.match(inner, /dir="\$base\/test-1829-\$t-\$sum"/, "named by requested release tag, target and archive digest");
     assert.match(inner, /linux-x64\) url="https:\/\/github\.com\/x\/linux-x64\.tar\.gz"; sum=a{64} ;;/);
     assert.match(inner, /darwin-arm64\) url=/);
     assert.doesNotMatch(inner, /nodigest|app\.tar\.gz/, "unsigned or desktop assets are not offered");
     assert.match(inner, /\[ "\$got" = "\$sum" \] \|\| \{ rm -rf "\$tmp"; exit 14; \}/);
-    assert.match(inner, /nohup "\$dir\/bin\/solenta-server" --port 4620 --data-dir "\$HOME\/.solenta\/data"/);
+    assert.match(inner, /"\$dir\/bin\/solenta-service" prepare --runtime "\$dir" --port 4620/);
     assert.ok(inner.indexOf("exit 3") === -1, "nothing installed no longer stops the connect");
     // The generated script parses as POSIX sh (checked, never run).
     execFileSync("sh", ["-n"], { input: inner });
@@ -284,7 +292,7 @@ describe("remote Connections", () => {
     );
     await assert.rejects(
       readRemoteToken("me@box", 4620, { execFile: run(4, "", "libnss3.so: cannot open\n") }),
-      /Solenta did not start on me@box[\s\S]*libnss3/,
+      /Solenta did not reach readiness on me@box[\s\S]*libnss3/,
     );
     await assert.rejects(
       readRemoteToken("me@box", 4620, { execFile: run(4, "", "solenta-web: token s3cret\n  Token    s3cret\n  Link     http://x/?token=s3cret\nGtk-ERROR\n") }),
@@ -314,7 +322,7 @@ describe("remote Connections", () => {
     ].join("\n");
     const run = (cmdName, args, opts, cb) => cb(Object.assign(new Error("exit"), { code: 4 }), "", log);
     const err = await readRemoteToken("me@box", 4620, { execFile: run }).catch((e) => e);
-    assert.match(err.message, /Solenta did not start on me@box/);
+    assert.match(err.message, /Solenta did not reach readiness on me@box/);
     assert.equal(err.message.includes(token), false, "token redacted");
     assert.match(err.message, /Gtk-ERROR \*\*: .*without a display connection/);
     assert.match(err.message, /Trace\/breakpoint trap/);
@@ -346,6 +354,7 @@ describe("remote Connections", () => {
     };
     const result = await installRemoteSolenta({ host: "me@server" }, {
       updater,
+      remoteDescriptor: async () => ({ runtimeKind: "desktop" }),
       execFile: ok("missing libnss3.so\nmissing libgbm.so.1\nmissing libweird.so.9\nrestart\ninstalled\n"),
     });
     assert.deepEqual(fetched, ["v0.26.0"]);
@@ -359,15 +368,15 @@ describe("remote Connections", () => {
     });
 
     const fail = (code) => (cmd, args, opts, cb) => cb(Object.assign(new Error("x"), { code }), "", "");
-    await assert.rejects(installRemoteSolenta({ host: "me@mac" }, { updater, execFile: fail(10) }), /Linux only[\s\S]*solenta\.app/);
-    await assert.rejects(installRemoteSolenta({ host: "me@pi" }, { updater, execFile: fail(11) }), /x86_64 only/);
-    await assert.rejects(installRemoteSolenta({ host: "me@server" }, { updater, execFile: fail(14) }), /did not match the release checksum/);
+    await assert.rejects(installRemoteSolenta({ host: "me@mac" }, { updater, remoteDescriptor: async () => ({ runtimeKind: "desktop" }), execFile: fail(10) }), /Linux only[\s\S]*solenta\.app/);
+    await assert.rejects(installRemoteSolenta({ host: "me@pi" }, { updater, remoteDescriptor: async () => ({ runtimeKind: "desktop" }), execFile: fail(11) }), /x86_64 only/);
+    await assert.rejects(installRemoteSolenta({ host: "me@server" }, { updater, remoteDescriptor: async () => ({ runtimeKind: "desktop" }), execFile: fail(14) }), /did not match the release checksum/);
     await assert.rejects(
-      installRemoteSolenta({ host: "-oProxyCommand=x" }, { updater, execFile: ok("installed\n") }),
+      installRemoteSolenta({ host: "-oProxyCommand=x" }, { updater, remoteDescriptor: async () => ({ runtimeKind: "desktop" }), execFile: ok("installed\n") }),
       /SSH host/,
     );
     const unsigned = { ...updater, fetchTag: async () => ({ tag_name: "v0.26.0", assets: [{ name: "Solenta-v0.26.0-linux-x64.tar.gz", browser_download_url: url }] }) };
-    await assert.rejects(installRemoteSolenta({ host: "me@server" }, { updater: unsigned, execFile: ok("installed\n") }), /no checksum/);
+    await assert.rejects(installRemoteSolenta({ host: "me@server" }, { updater: unsigned, remoteDescriptor: async () => ({ runtimeKind: "desktop" }), execFile: ok("installed\n") }), /no checksum/);
   });
 
   it("the install script only interpolates a plain https URL and a hex digest", () => {
@@ -452,11 +461,14 @@ describe("remote Connections", () => {
         stderr: new EventEmitter(),
         kill() { killed.push(localPort); },
       });
-      const wss = new WebSocketServer({ port: localPort, host: "127.0.0.1" });
+      const server = http.createServer((req, res) => { if (req.url !== "/.well-known/solenta") return res.end("Solenta"); res.setHeader("Content-Type", "application/json"); res.end(JSON.stringify(COMPUTER)); });
+      const wss = new WebSocketServer({ server });
+      wss.on("close", () => server.close());
+      server.listen(localPort, "127.0.0.1");
       servers.push(wss);
       wss.on("connection", (ws) => ws.on("message", (raw) => {
         const msg = JSON.parse(String(raw));
-        if (msg.kind === "auth") return ws.send(JSON.stringify(msg.token === "tok" ? { kind: "auth-ok" } : { kind: "x" }));
+        if (msg.kind === "auth") return ws.send(JSON.stringify(msg.token === "tok" ? { kind: "auth-ok", computer: COMPUTER } : { kind: "x" }));
         // A push arriving first must not be mistaken for the reply.
         ws.send(JSON.stringify({ kind: "push", channel: "threads:changed", payload: [] }));
         if (msg.channel === "threads:teleportIn") {
@@ -464,7 +476,7 @@ describe("remote Connections", () => {
         }
         ws.send(JSON.stringify({ kind: "reply", id: msg.id, error: `No handler registered for '${msg.channel}'` }));
       }));
-      wss.once("listening", () => child.stderr.emit("data", "debug1: Entering interactive session.\n"));
+      server.once("listening", () => child.stderr.emit("data", "debug1: Entering interactive session.\n"));
       return child;
     };
     const deps = {
@@ -537,10 +549,10 @@ describe("remote Connections", () => {
         server?.close();
         tunnel.emit("close", 0);
       };
-      server = http.createServer((_req, res) => res.end("Solenta"));
+      server = http.createServer((req, res) => { if (req.url !== "/.well-known/solenta") return res.end("Solenta"); res.setHeader("Content-Type", "application/json"); res.end(JSON.stringify(COMPUTER)); });
       const wss = new WebSocketServer({ server, path: "/ws" });
       wss.on("connection", (ws) => ws.on("message", (raw) => {
-        if (JSON.parse(String(raw)).token === token) ws.send('{"kind":"auth-ok"}');
+        if (JSON.parse(String(raw)).token === token) ws.send(JSON.stringify({ kind: "auth-ok", computer: COMPUTER }));
         else ws.close();
       }));
       // Real ssh -v prints this only after every forward is bound.
@@ -597,12 +609,14 @@ describe("remote Connections", () => {
         host: "user@work",
         remotePort: 4620,
         tokenSaved: true,
+        computerId: COMPUTER.computerId,
+        descriptor: COMPUTER,
         remote: { version: "0.25.0", platform: "linux", agents: [], outdated: true },
         localVersion: "0.26.0",
       });
       assert.equal(saved.get("user@work:4620"), token);
       assert.equal(window.shown, true);
-      assert.match(window.url, /\/\?token=remote-secret$/);
+      assert.match(window.url, /\/#token=remote-secret&computerId=test-computer-one$/);
       assert.equal(window.options.webPreferences.nodeIntegration, false);
       assert.equal(window.options.webPreferences.sandbox, true);
       assert.equal(window.options.webPreferences.preload, undefined);
@@ -631,7 +645,7 @@ describe("remote Connections", () => {
 
       // A blank token reuses the saved one.
       await openRemoteConnection({ host: "user@work", token: "" }, deps);
-      assert.match(window.url, /\/\?token=remote-secret$/);
+      assert.match(window.url, /\/#token=remote-secret&computerId=test-computer-one$/);
       window.close();
       await assert.rejects(
         openRemoteConnection({ host: "nobody@work", token: "" }, deps),
@@ -642,7 +656,7 @@ describe("remote Connections", () => {
       remoteFile = token;
       saved.clear();
       await openRemoteConnection({ host: "fresh@work", token: "" }, deps);
-      assert.match(window.url, /\/\?token=remote-secret$/);
+      assert.match(window.url, /\/#token=remote-secret&computerId=test-computer-one$/);
       assert.equal(saved.get("fresh@work:4620"), token);
       window.close();
       remoteFile = "";

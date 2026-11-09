@@ -19,6 +19,7 @@
  */
 
 const crypto = require("node:crypto");
+const { isServerMaintenance, MAINTENANCE_MESSAGE } = require("./serverMaintenance.js");
 const { WebSocketServer, WebSocket } = require("ws");
 const { IPC_HANDLERS } = require("./ipc.js");
 const { PUSH_SCOPE, allows, argsAllowed, scopeForChannel } = require("./webScopes.js");
@@ -128,6 +129,7 @@ function attachWebBridge(httpServer, opts) {
   const path = opts.path || WS_PATH;
   const pingIntervalMs = opts.pingIntervalMs ?? 30000;
   const maxBufferedBytes = opts.maxBufferedBytes ?? 4 * 1024 * 1024;
+  const now = opts.now || Date.now;
 
   /** Authed socket → device. @type {Map<import("ws").WebSocket, { id: string, scopes?: string[] }>} */
   const authed = new Map();
@@ -155,6 +157,20 @@ function attachWebBridge(httpServer, opts) {
     const remote = (req && req.socket && req.socket.remoteAddress) || "unknown";
     let sawFirst = false;
     let isAuthed = false;
+    let credential = null;
+    let expiryTimer;
+    function expireAt(expiresAt) {
+      if (!Number.isFinite(expiresAt)) return;
+      const remaining = expiresAt - now();
+      if (remaining <= 0) {
+        isAuthed = false;
+        authed.delete(ws);
+        ws.close(CLOSE_TOKEN_REJECTED, "Device session expired");
+        return;
+      }
+      expiryTimer = setTimeout(() => expireAt(expiresAt), Math.min(remaining, 2147483647));
+      expiryTimer.unref?.();
+    }
     /** @type {string[] | undefined} */
     let scopes;
     ws.isAlive = true;
@@ -188,6 +204,11 @@ function attachWebBridge(httpServer, opts) {
           ws.close(CLOSE_RATE_LIMITED, "Too many failed attempts");
           return;
         }
+        if ((msg.computerId && msg.computerId !== opts.computer?.computerId) ||
+            (msg.protocol !== undefined && msg.protocol !== 1)) {
+          ws.close(4409, "Computer identity or protocol mismatch");
+          return;
+        }
         const device = authorize(msg.token);
         if (!device) {
           limiter.fail(remote);
@@ -195,9 +216,11 @@ function attachWebBridge(httpServer, opts) {
           return;
         }
         isAuthed = true;
+        credential = msg.token;
         scopes = device.scopes;
         authed.set(ws, device);
-        sendJson(ws, { kind: "auth-ok" });
+        expireAt(device.expiresAt);
+        sendJson(ws, { kind: "auth-ok", ...(opts.computer ? { computer: opts.computer } : {}) });
         return;
       }
 
@@ -213,10 +236,21 @@ function attachWebBridge(httpServer, opts) {
       }
 
       if (!msg || msg.kind !== "invoke") return;
+      const current = credential && authorize(credential);
+      if (!current) {
+        isAuthed = false;
+        authed.delete(ws);
+        ws.close(CLOSE_TOKEN_REJECTED, "Device session expired or revoked");
+        return;
+      }
+      scopes = current.scopes;
       const id = msg.id;
       const channel = msg.channel;
       const args = Array.isArray(msg.args) ? msg.args : [];
       try {
+        if (isServerMaintenance(ctx) && channel !== "app:status") {
+          throw new Error(MAINTENANCE_MESSAGE);
+        }
         if (typeof channel === "string" && channel.startsWith("simulator:")) {
           sendJson(ws, {
             kind: "reply",
@@ -254,6 +288,8 @@ function attachWebBridge(httpServer, opts) {
     });
 
     ws.on("close", () => {
+      clearTimeout(expiryTimer);
+      credential = null;
       authed.delete(ws);
     });
   });
@@ -270,6 +306,11 @@ function attachWebBridge(httpServer, opts) {
     const need = PUSH_SCOPE.get(channel) || "read";
     for (const [client, device] of authed) {
       if (client.readyState !== WebSocket.OPEN) continue;
+      if (Number.isFinite(device.expiresAt) && device.expiresAt <= now()) {
+        authed.delete(client);
+        client.close(CLOSE_TOKEN_REJECTED, "Device session expired");
+        continue;
+      }
       if (!allows(device.scopes, need)) continue;
       if (client.bulkReply) continue;
       if (client.bufferedAmount > maxBufferedBytes) {
@@ -287,7 +328,7 @@ function attachWebBridge(httpServer, opts) {
     for (const [client, device] of authed) {
       if (device.id !== deviceId) continue;
       authed.delete(client);
-      client.terminate();
+      client.close(CLOSE_TOKEN_REJECTED, "Device access revoked");
       n++;
     }
     return n;

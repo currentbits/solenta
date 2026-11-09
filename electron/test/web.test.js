@@ -239,7 +239,7 @@ describe("parseServeWebArgs", () => {
     const out = serveBanner({ token: "t0k", urls: [{ kind: "local", url: "http://127.0.0.1:4620" }] });
     assert.match(out, /^solenta-web: token t0k\n/, "first line stays machine-readable");
     assert.match(out, /Address {2}http:\/\/127\.0\.0\.1:4620 {2}\(this machine only\)/);
-    assert.match(out, /Link {5}http:\/\/127\.0\.0\.1:4620\/\?token=t0k/);
+    assert.match(out, /Link {5}http:\/\/127\.0\.0\.1:4620\/#token=t0k/);
     assert.match(out, /--serve-host 0\.0\.0\.0/);
     assert.doesNotMatch(out, /Scan/);
   });
@@ -250,11 +250,11 @@ describe("parseServeWebArgs", () => {
       token: "a b",
       urls: [{ kind: "local", url: "http://127.0.0.1:4620" }, { kind: "lan", url: "http://192.168.1.20:4620" }],
     });
-    assert.match(out, /Link {5}http:\/\/192\.168\.1\.20:4620\/\?token=a%20b/);
+    assert.match(out, /Link {5}http:\/\/192\.168\.1\.20:4620\/#token=a%20b/);
     assert.match(out, /Scan to open it on a phone:\n[\u2580\u2584\u2588 ]+\n/);
     assert.ok(out.includes(HOST_FLAG_HELP));
     const tailnet = serveBanner({ token: "x", urls: [], tailnetUrl: "https://mac.tail1.ts.net" });
-    assert.match(tailnet, /Link {5}https:\/\/mac\.tail1\.ts\.net\/\?token=x/);
+    assert.match(tailnet, /Link {5}https:\/\/mac\.tail1\.ts\.net\/#token=x/);
   });
 
   it("HOST_FLAG_HELP names no TLS and LAN as an informed choice", () => {
@@ -345,10 +345,40 @@ describe("auth table + invoke + push (real socket)", () => {
     return `ws://127.0.0.1:${server.port}${WS_PATH}`;
   }
 
+
+  it("public descriptor and authenticated status name the same nonsensitive computer", async () => {
+    const response = await fetch(`http://127.0.0.1:${server.port}/.well-known/solenta`);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("cache-control"), "no-store");
+    const computer = await response.json();
+    assert.equal(computer.kind, "solenta");
+    assert.equal(computer.computerId, fs.readFileSync(path.join(tmp, "computer-id"), "utf8").trim());
+    const text = JSON.stringify(computer);
+    for (const privateValue of [tmp, "secret-token", "alpha", "README.md"]) assert.equal(text.includes(privateValue), false);
+    const ws = await connect(wsUrl());
+    ws.send(JSON.stringify({ kind: "auth", token: "secret-token", computerId: computer.computerId, protocol: 1 }));
+    assert.deepEqual(await onceMessage(ws), { kind: "auth-ok", computer });
+    ws.send(JSON.stringify({ kind: "invoke", id: 99, channel: "app:status", args: [] }));
+    const reply = await onceMessage(ws);
+    assert.deepEqual(reply.result.computer, computer);
+    assert.equal(reply.result.build.runtimeKind, computer.runtimeKind);
+    ws.close();
+    await onceClose(ws);
+  });
+
+  it("rejects a requested identity or protocol mismatch before dispatch", async () => {
+    for (const extra of [{ computerId: "another-computer" }, { protocol: 99 }]) {
+      const ws = await connect(wsUrl());
+      const closed = new Promise((resolve) => ws.once("close", resolve));
+      ws.send(JSON.stringify({ kind: "auth", token: "secret-token", ...extra }));
+      assert.equal(await closed, 4409);
+    }
+  });
+
   it("auth table: good → auth-ok; bad → close; invoke-first → error + drop", async () => {
     const good = await connect(wsUrl());
     good.send(JSON.stringify({ kind: "auth", token: "secret-token" }));
-    assert.deepEqual(await onceMessage(good), { kind: "auth-ok" });
+    assert.deepEqual(await onceMessage(good), { kind: "auth-ok", computer: require("../serverIdentity.js").computerDescriptor(tmp) });
     good.close();
     await onceClose(good);
 
@@ -376,7 +406,7 @@ describe("auth table + invoke + push (real socket)", () => {
   it("threads:list over the socket equals services.listThreads", async () => {
     const ws = await connect(wsUrl());
     ws.send(JSON.stringify({ kind: "auth", token: "secret-token" }));
-    assert.deepEqual(await onceMessage(ws), { kind: "auth-ok" });
+    assert.deepEqual(await onceMessage(ws), { kind: "auth-ok", computer: require("../serverIdentity.js").computerDescriptor(tmp) });
     ws.send(
       JSON.stringify({ kind: "invoke", id: 9, channel: "threads:list", args: [] }),
     );
@@ -427,8 +457,8 @@ describe("auth table + invoke + push (real socket)", () => {
     const stranger = await connect(wsUrl());
     a.send(JSON.stringify({ kind: "auth", token: "secret-token" }));
     b.send(JSON.stringify({ kind: "auth", token: "secret-token" }));
-    assert.deepEqual(await onceMessage(a), { kind: "auth-ok" });
-    assert.deepEqual(await onceMessage(b), { kind: "auth-ok" });
+    assert.deepEqual(await onceMessage(a), { kind: "auth-ok", computer: require("../serverIdentity.js").computerDescriptor(tmp) });
+    assert.deepEqual(await onceMessage(b), { kind: "auth-ok", computer: require("../serverIdentity.js").computerDescriptor(tmp) });
 
     const gotA = onceMessage(a);
     const gotB = onceMessage(b);
@@ -913,4 +943,3 @@ describe("web bridge denies simulator invoke and push", () => {
     }
   });
 });
-

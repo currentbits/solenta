@@ -65,8 +65,62 @@ describe("solenta-server boot", { skip: process.platform === "win32" && "no Wind
         http.get(`http://127.0.0.1:${port}/`, (res) => { res.resume(); resolve(res.statusCode); }).on("error", reject);
       });
       assert.ok([200, 404].includes(status), `HTTP ${status}`);
+      const duplicate = spawn(process.execPath, [path.join(__dirname, "../server/index.js"), "--port", "0", "--data-dir", path.join(tmp, "data")], {
+        env: { ...process.env, HOME: tmp, USERPROFILE: tmp, CODER_SIMULATE: "1" }, stdio: ["ignore", "pipe", "pipe"],
+      });
+      let duplicateLog = "";
+      duplicate.stderr.on("data", (d) => { duplicateLog += d; });
+      const duplicateCode = await new Promise((resolve) => duplicate.once("exit", resolve));
+      assert.equal(duplicateCode, 78);
+      assert.match(duplicateLog, /Another server owns this data directory/);
+      assert.equal(child.exitCode, null, "the original writer stays alive");
     } finally {
       try { process.kill(-child.pid, "SIGKILL"); } catch { /* gone */ }
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("server maintenance trial", { skip: process.platform === "win32" && "no Windows server bundle" }, () => {
+  it("serves authenticated status while refusing web work and skipping provider setup", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "solenta-server-maintenance-"));
+    const port = 49000 + Math.floor(Math.random() * 1000);
+    const child = spawn(process.execPath, [path.join(__dirname, "../server/index.js"), "--port", String(port), "--data-dir", path.join(tmp, "data"), "--maintenance"], {
+      env: { ...process.env, HOME: tmp, USERPROFILE: tmp, CODER_SIMULATE: "1" }, stdio: ["ignore", "pipe", "pipe"], detached: true,
+    });
+    let log = "";
+    child.stdout.on("data", (d) => { log += d; }); child.stderr.on("data", (d) => { log += d; });
+    let ws;
+    try {
+      const deadline = Date.now() + 45000;
+      while (!/solenta-web: listening/.test(log)) {
+        if (child.exitCode != null) assert.fail(`server exited ${child.exitCode}: ${log}`);
+        if (Date.now() > deadline) assert.fail(`maintenance server did not start: ${log}`);
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      const token = fs.readFileSync(path.join(tmp, "data/web-token"), "utf8").trim();
+      const { WebSocket } = require("ws");
+      ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+      const replies = await new Promise((resolve, reject) => {
+        const values = new Map();
+        const timer = setTimeout(() => reject(new Error("maintenance probe timed out")), 5000);
+        ws.on("error", reject);
+        ws.on("open", () => ws.send(JSON.stringify({ kind: "auth", token })));
+        ws.on("message", (raw) => {
+          const m = JSON.parse(String(raw));
+          if (m.kind === "auth-ok") {
+            ws.send(JSON.stringify({ kind: "invoke", id: 1, channel: "app:status", args: [] }));
+            ws.send(JSON.stringify({ kind: "invoke", id: 2, channel: "projects:add", args: [{ path: tmp }] }));
+          }
+          if (m.kind === "reply") { values.set(m.id, m); if (values.size === 2) { clearTimeout(timer); resolve(values); } }
+        });
+      });
+      assert.ok(replies.get(1).result.build);
+      assert.match(replies.get(2).error, /maintenance mode/);
+      assert.equal(fs.existsSync(path.join(tmp, ".claude.json")), false, "trial does not register MCP servers in provider configuration");
+    } finally {
+      ws?.terminate();
+      try { process.kill(-child.pid, "SIGKILL"); } catch { /* already gone */ }
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });

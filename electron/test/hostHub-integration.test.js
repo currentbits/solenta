@@ -170,7 +170,7 @@ describe("hostHub × real remote Solenta Web host", () => {
       { url: opened.url, host: opened.host, remotePort: opened.remotePort, tokenSaved: opened.tokenSaved },
       { url: origin, host: "127.0.0.1", remotePort: server.port, tokenSaved: true },
     );
-    assert.deepEqual(loaded, [`${origin}/?token=remote-token`]);
+    assert.deepEqual(loaded, [`${origin}/#token=remote-token&computerId=${opened.computerId}`]);
     assert.deepEqual([...tokens.map.entries()], [[origin, "remote-token"]]);
     closeRemoteConnections();
 

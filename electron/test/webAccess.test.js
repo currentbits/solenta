@@ -100,6 +100,7 @@ describe("webAccess", () => {
     tsState = { installed: true, backend: "Running", serve: {} };
     access = createWebAccess({
       devices,
+      getComputerId: () => "computer-test",
       defaultPort: 0,
       networkInterfaces: () => IFACES,
       startServer: (opts) =>
@@ -339,9 +340,9 @@ describe("webAccess", () => {
     assert.deepEqual(tsState.serve, {}, "no tailnet URL left pointing at a closed port");
   });
 
-  it("web:* handlers are desktop only, so a paired browser cannot mint or revoke", async () => {
+  it("server switches and direct-token issuance stay desktop only; scoped enrollment uses full web access", async () => {
     const handlers = require("../ipc-web.js");
-    for (const channel of Object.keys(handlers)) {
+    for (const channel of ["web:status", "web:setEnabled", "web:addDevice", "web:setTailscale"]) {
       await assert.rejects(
         handlers[channel]({ transport: "web", webAccess: access }, {}),
         /require the desktop app/,
@@ -350,6 +351,10 @@ describe("webAccess", () => {
     }
     const st = await handlers["web:status"]({ transport: "desktop", webAccess: access });
     assert.equal(st.running, false);
+    const enrollment = await handlers["web:createEnrollment"]({ transport: "web", webAccess: access }, { name: "Browser", scopes: ["read"] });
+    assert.ok(enrollment.grant);
+    assert.equal(enrollment.computerId, "computer-test");
+    assert.deepEqual(await handlers["web:enrollmentStatus"]({ transport: "web", webAccess: access }), { computerId: "computer-test", devices: [] });
   });
 });
 
@@ -449,5 +454,151 @@ describe("mcp funnel", () => {
       },
     });
     await assert.rejects(funnel.set({ on: true, port: 7422 }), /already sends HTTPS/);
+  });
+});
+
+describe("browser enrollment HTTP and session lifetime", () => {
+  let tmp;
+  let access;
+  let devices;
+  let port;
+  beforeEach(async () => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), "solenta-enroll-http-"));
+    devices = createWebDevices(tmp, { sessionTtlMs: 300 });
+    access = createWebAccess({ devices, getComputerId: () => "computer-test", defaultPort: 0,
+      exec: async () => { throw new Error("not installed"); },
+      startServer: opts => startWebServer({ ...opts, ctx: { userDataPath: tmp }, handlers: { "app:status": async () => ({ ready: true }), "web:createEnrollment": async () => { throw new Error("must not reach handler"); } } }) });
+    await access.start({});
+    port = (await access.status()).port;
+  });
+  afterEach(async () => { await access.stop(); fs.rmSync(tmp, { recursive: true, force: true }); });
+  const post = (port, body, headers = {}) => fetch(`http://127.0.0.1:${port}/api/enroll`, { method: "POST", headers: { "Content-Type": "application/json", ...headers }, body: JSON.stringify(body) });
+
+  it("redeems exactly once under concurrent requests and discloses no credentials in listings", async () => {
+    const issued = access.createEnrollment({ name: "Phone", scopes: ["read"] });
+    const replies = await Promise.all(Array.from({ length: 8 }, () => post(port, { grant: issued.grant, computerId: "computer-test" })));
+    assert.equal(replies.filter(r => r.status === 200).length, 1);
+    assert.equal(replies.filter(r => r.status === 400).length, 7);
+    const reply = replies.find(r => r.status === 200);
+    assert.equal(reply.headers.get("cache-control"), "no-store");
+    const session = await reply.json();
+    assert.equal(session.computerId, "computer-test");
+    assert.ok(devices.authorize(session.token));
+    assert.ok(!JSON.stringify(access.enrollmentStatus()).includes(issued.grant));
+    assert.ok(!JSON.stringify(access.enrollmentStatus()).includes(session.token));
+  });
+
+  it("bounds input and refuses origin/identity/scope expansion without spending a valid link", async () => {
+    const issued = access.createEnrollment({ name: "Phone", scopes: ["read"] });
+    assert.equal((await post(port, { grant: issued.grant }, { Origin: "https://another.example" })).status, 400);
+    assert.equal((await post(port, { grant: issued.grant, computerId: "different" })).status, 400);
+    assert.equal((await post(port, { grant: issued.grant, scopes: ["full"] })).status, 400);
+    assert.equal((await post(port, { grant: "x".repeat(5000) })).status, 413);
+    const valid = await post(port, { grant: issued.grant, scopes: ["read"] });
+    assert.equal(valid.status, 200);
+  });
+
+  it("expires an idle live session socket and preserves an unrelated direct device", async () => {
+    const issued = access.createEnrollment({ name: "Phone", scopes: ["read"] });
+    const session = await (await post(port, { grant: issued.grant })).json();
+    const direct = devices.add({ name: "Other computer", scopes: ["full"] });
+    const browser = await auth(port, session.token);
+    const other = await auth(port, direct.token);
+    assert.equal(browser.result, "ok");
+    assert.equal(other.result, "ok");
+    const denied = new Promise(resolve => browser.ws.once("message", raw => resolve(JSON.parse(String(raw)))));
+    browser.ws.send(JSON.stringify({ kind: "invoke", id: 1, channel: "web:createEnrollment", args: [{ name: "Escalation" }] }));
+    assert.match((await denied).error, /needs full/);
+    const closeCode = await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("Expired session socket remained open")), 2000);
+      browser.ws.once("close", code => { clearTimeout(timer); resolve(code); });
+    });
+    assert.equal(closeCode, CLOSE_TOKEN_REJECTED);
+    assert.equal(other.ws.readyState, WebSocket.OPEN);
+    assert.equal(devices.authorize(session.token), null);
+    other.ws.terminate();
+  });
+
+  it("maintenance refuses HTTP redemption without consuming the grant, then succeeds after release", async () => {
+    const previous = process.env.SOLENTA_SERVER;
+    const previousTrial = process.env.SOLENTA_SERVER_MAINTENANCE;
+    const marker = path.join(tmp, ".server-maintenance-request");
+    try {
+      process.env.SOLENTA_SERVER = "1";
+      delete process.env.SOLENTA_SERVER_MAINTENANCE;
+      const issued = access.createEnrollment({ name: "Waiting browser" });
+      fs.writeFileSync(marker, "update");
+      const blocked = await post(port, { grant: issued.grant });
+      assert.equal(blocked.status, 503);
+      assert.match((await blocked.json()).error, /maintenance mode/);
+      assert.equal(devices.list().length, 0);
+      fs.unlinkSync(marker);
+      const allowed = await post(port, { grant: issued.grant });
+      assert.equal(allowed.status, 200);
+      assert.ok(devices.authorize((await allowed.json()).token));
+    } finally {
+      if (previous === undefined) delete process.env.SOLENTA_SERVER; else process.env.SOLENTA_SERVER = previous;
+      if (previousTrial === undefined) delete process.env.SOLENTA_SERVER_MAINTENANCE; else process.env.SOLENTA_SERVER_MAINTENANCE = previousTrial;
+    }
+  });
+
+  it("rechecks maintenance after body upload before consuming a grant", async () => {
+    const previous = process.env.SOLENTA_SERVER;
+    const previousTrial = process.env.SOLENTA_SERVER_MAINTENANCE;
+    const marker = path.join(tmp, ".server-maintenance-request");
+    try {
+      process.env.SOLENTA_SERVER = "1";
+      delete process.env.SOLENTA_SERVER_MAINTENANCE;
+      const issued = access.createEnrollment({ name: "Uploading browser" });
+      const status = await new Promise((resolve, reject) => {
+        const req = http.request({ host: "127.0.0.1", port, path: "/api/enroll", method: "POST", headers: { "Content-Type": "application/json", Expect: "100-continue" } }, res => {
+          res.resume();
+          res.on("end", () => resolve(res.statusCode));
+        });
+        req.on("error", reject);
+        req.setTimeout(3000, () => req.destroy(new Error("Enrollment upload timed out")));
+        req.on("continue", () => {
+          // Node emitted 100 Continue and entered the request handler before
+          // this client callback. Raise maintenance while body reading awaits.
+          fs.writeFileSync(marker, "update during upload");
+          req.end(JSON.stringify({ grant: issued.grant }));
+        });
+        req.flushHeaders();
+      });
+      assert.equal(status, 503);
+      assert.equal(devices.list().length, 0);
+      fs.unlinkSync(marker);
+      assert.equal((await post(port, { grant: issued.grant })).status, 200);
+    } finally {
+      if (previous === undefined) delete process.env.SOLENTA_SERVER; else process.env.SOLENTA_SERVER = previous;
+      if (previousTrial === undefined) delete process.env.SOLENTA_SERVER_MAINTENANCE; else process.env.SOLENTA_SERVER_MAINTENANCE = previousTrial;
+    }
+  });
+
+  it("an explicit trial stays fenced even after its marker is removed", async () => {
+    const previous = process.env.SOLENTA_SERVER;
+    const previousTrial = process.env.SOLENTA_SERVER_MAINTENANCE;
+    const marker = path.join(tmp, ".server-maintenance-request");
+    try {
+      process.env.SOLENTA_SERVER = "1";
+      process.env.SOLENTA_SERVER_MAINTENANCE = "1";
+      const issued = access.createEnrollment({ name: "Trial browser" });
+      fs.writeFileSync(marker, "trial");
+      assert.equal((await post(port, { grant: issued.grant })).status, 503);
+      fs.unlinkSync(marker);
+      assert.equal((await post(port, { grant: issued.grant })).status, 503);
+      assert.equal(devices.list().length, 0);
+      delete process.env.SOLENTA_SERVER_MAINTENANCE;
+      assert.equal((await post(port, { grant: issued.grant })).status, 200);
+    } finally {
+      if (previous === undefined) delete process.env.SOLENTA_SERVER; else process.env.SOLENTA_SERVER = previous;
+      if (previousTrial === undefined) delete process.env.SOLENTA_SERVER_MAINTENANCE; else process.env.SOLENTA_SERVER_MAINTENANCE = previousTrial;
+    }
+  });
+
+  it("rate-limits enrollment guessing before accepting another credential", async () => {
+    const issued = access.createEnrollment({ name: "Phone" });
+    for (let i = 0; i < 10; i++) assert.equal((await post(port, { grant: "x".repeat(43) })).status, 400);
+    assert.equal((await post(port, { grant: issued.grant })).status, 429);
   });
 });

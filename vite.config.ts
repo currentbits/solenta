@@ -9,6 +9,9 @@ import react from "@vitejs/plugin-react";
  * is how we catch that without a new IPC channel.
  */
 function packagedBuildSha(): string | null {
+  // A packager that exports BUILD_SHA (package-server.sh stamps the full sha)
+  // must bake the exact same string, or every page boots into "Reload required".
+  if (process.env.BUILD_SHA) return process.env.BUILD_SHA;
   try {
     const sha = execSync("git rev-parse --short HEAD 2>/dev/null || echo unknown", {
       encoding: "utf8",

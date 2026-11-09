@@ -22,12 +22,26 @@ NODE_VERSION="24.22.2"
 VERSION="$(node -p "require('./package.json').version")"
 PTY_VER="$(node -p "require('./node_modules/@lydell/node-pty/package.json').version")"
 CACHE="out/.server-cache"
-TARGETS=("$@")
+CHANNEL=""
+RELEASE_TAG=""
+TARGETS=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --channel) CHANNEL="$2"; shift 2 ;;
+    --tag) RELEASE_TAG="$2"; shift 2 ;;
+    *) TARGETS+=("$1"); shift ;;
+  esac
+done
+[[ -z "$CHANNEL" || "$CHANNEL" == prod || "$CHANNEL" == nightly ]] || { echo "Invalid server channel" >&2; exit 1; }
+BUILD_SHA="$(git rev-parse HEAD)"
+git diff --quiet 2>/dev/null || BUILD_SHA="${BUILD_SHA}+dirty"
+BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+export CHANNEL RELEASE_TAG BUILD_SHA BUILD_TIME
 [[ ${#TARGETS[@]} -gt 0 ]] || TARGETS=(darwin-arm64 darwin-x64 linux-x64 linux-arm64)
 
 mkdir -p "$CACHE"
-[[ -f dist/index.html ]] || npx vite build
-[[ -f core/dist/index.js ]] || (cd core && npm run build)
+npx vite build
+npm run build --prefix core
 
 # Shared app payload: same file set as the desktop bundle (package-cross.sh).
 PAYLOAD="out/.server-payload"
@@ -35,7 +49,12 @@ rm -rf "$PAYLOAD"
 mkdir -p "$PAYLOAD/electron" "$PAYLOAD/core" "$PAYLOAD/native" "$PAYLOAD/memory-server" "$PAYLOAD/node_modules"
 rsync -a --prune-empty-dirs --exclude='/test/' --include='*/' --include='*.js' --exclude='*' electron/ "$PAYLOAD/electron/"
 cp electron/speech-models.json "$PAYLOAD/electron/speech-models.json"
-cp package.json "$PAYLOAD/package.json"
+node - "$PAYLOAD/package.json" <<'JS'
+const fs = require("node:fs");
+const p = JSON.parse(fs.readFileSync("package.json", "utf8"));
+Object.assign(p, { runtimeKind: "server", buildSha: process.env.BUILD_SHA, buildTime: process.env.BUILD_TIME, channel: process.env.CHANNEL || null, releaseTag: process.env.RELEASE_TAG || null });
+fs.writeFileSync(process.argv[2], JSON.stringify(p, null, 2) + "\n");
+JS
 cp -R dist "$PAYLOAD/dist"
 cp -R core/dist "$PAYLOAD/core/dist"
 cp core/package.json "$PAYLOAD/core/package.json"
@@ -82,7 +101,12 @@ for target in "${TARGETS[@]}"; do
 here="$(cd "$(dirname "$0")" && pwd)"
 exec "$here/node" "$here/../app/electron/server/index.js" "$@"
 SH
-  chmod +x "$STAGE/bin/solenta-server" "$STAGE/bin/node"
+  cat > "$STAGE/bin/solenta-service" <<'SH'
+#!/bin/sh
+here="$(cd "$(dirname "$0")" && pwd)"
+exec "$here/node" "$here/../app/electron/server/service.js" "$@"
+SH
+  chmod +x "$STAGE/bin/solenta-service" "$STAGE/bin/solenta-server" "$STAGE/bin/node"
 
   # This target's node-pty prebuild, at the wrapper's exact version.
   pty_pkg="node-pty-$os-$cpu"

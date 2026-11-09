@@ -1,6 +1,7 @@
 "use strict";
 
 const path = require("node:path");
+const { isServerMaintenance } = require("./serverMaintenance.js");
 const { withProjectEnv, isRemoteProject } = require("./worktreeEnv.js");
 const { loadDirenv } = require("./direnvEnv.js");
 const { randomUUID } = require("node:crypto");
@@ -1808,6 +1809,9 @@ function createRunner(opts) {
   }
 
   async function startRun(input) {
+    if (isServerMaintenance({ userDataPath })) {
+      throw new Error("The server is stopping or updating. Retry after it restarts.");
+    }
     // Capture completed fixed-destination automation outcomes before a manual turn changes the row.
     if (require("./automations.js").settleAutomationRuns({ store })) store.save();
     const fold = { taken: null };

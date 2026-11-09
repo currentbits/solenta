@@ -447,6 +447,9 @@ function buildDevCoder(): CoderApi {
       async installRemoteSolenta(): Promise<RemoteInstallResult> {
         throw new Error("Remote Connections require the desktop app.");
       },
+      async manageRemoteServer(): Promise<never> {
+        throw new Error("Remote server management requires the desktop app.");
+      },
       async answerSshPrompt(): Promise<void> {},
       async feedback(input: {
         text: string;

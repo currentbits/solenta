@@ -123,6 +123,7 @@ import type {
   ThreadSearchMessagesInput,
   ThreadSearchMessagesResult,
 } from "./shared/ipc";
+import { liveComputerHost, useComputerContext, useComputerWorkflows } from "./coder/computerContext";
 import { resolveCoderApi } from "./coderApi";
 import { isWebMode } from "./shared/wire";
 import { pushSidebarHosts } from "./remoteHosts";
@@ -205,6 +206,8 @@ export interface UseCoderResult {
   threads: ThreadInfo[];
   /** Provider registry loaded once at startup. */
   providers: ProviderInfo[];
+  computer: ReturnType<typeof useComputerContext>;
+  localProviders: ProviderInfo[];
   /** Workflow templates loaded at startup; refreshed after save/remove. */
   workflows: WorkflowTemplateInfo[];
   /** Scheduled automations; refreshed after add/update/remove/runNow. */
@@ -957,6 +960,7 @@ export interface UseCoderResult {
    * Pass `{ throwOnError: true }` to surface a list failure (onboarding
    * Recheck); the previous list is still kept.
    */
+  refreshLocalProviders: () => Promise<void>;
   refreshProviders: (options?: { throwOnError?: boolean }) => Promise<void>;
   projectById: Map<string, ProjectInfo>;
   /** Thin memory passthroughs; callers hold list/search state locally. */
@@ -1829,6 +1833,12 @@ export function useCoder(): UseCoderResult {
     return projects[0]?.id ?? null;
   }, [selectedThreadId, threads, projects]);
 
+  const computerHost = threads.find(t => t.id === selectedThreadId)?.host
+    ?? projects.find(p => p.id === selectedProjectId)?.host;
+  const currentComputerHost = liveComputerHost(computerHost, sidebarHosts);
+  const computer = useComputerContext(api, currentComputerHost, settings, providers);
+  const workflowComputer = useComputerWorkflows(api, currentComputerHost, workflows, workflowListError);
+
   const selectThread = useCallback((id: string | null) => {
     setSelectedThreadId(id);
   }, []);
@@ -1883,6 +1893,7 @@ export function useCoder(): UseCoderResult {
     exportWorkflowToRepo,
   } = useCoderWorkflows({
     api,
+    workflowComputer,
     selectedThreadId,
     setWorkflows,
     setWorkflowListError,
@@ -2106,16 +2117,21 @@ export function useCoder(): UseCoderResult {
     [api, applyThreadUpdate],
   );
 
+  const refreshLocalProviders = useCallback(async () => {
+    try { setProviders(await api.providers.list()); } catch { /* Existing local snapshot remains usable. */ }
+  }, [api]);
+
   const refreshProviders = useCallback(
     async (options?: { throwOnError?: boolean }) => {
       try {
+        if (computer.key) { computer.refresh(); return; }
         setProviders(await api.providers.list());
       } catch (err) {
         // Best-effort staleness fix; keep the boot list on failure.
         if (options?.throwOnError) throw err;
       }
     },
-    [api],
+    [api, computer.key, computer.refresh],
   );
 
   const listCheckpoints = useCallback(
@@ -2471,9 +2487,11 @@ export function useCoder(): UseCoderResult {
     api,
     projects,
     threads,
-    providers,
-    workflows,
-    workflowListError,
+    providers: computer.providers,
+    localProviders: providers,
+    computer,
+    workflows: workflowComputer.workflows,
+    workflowListError: workflowComputer.error,
     automations,
     selectedThreadId,
     selectThread,
@@ -2696,6 +2714,7 @@ export function useCoder(): UseCoderResult {
     downloadUpdate,
     applyUpdate,
     refreshProviders,
+    refreshLocalProviders,
     projectById,
     searchMemory,
     recentMemory,

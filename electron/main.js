@@ -5,6 +5,8 @@
 // bundle's default_app.asar. We ship app code as a plain directory, so asar
 // support buys nothing — turn it off for the whole main process.
 process.noAsar = true;
+const { createActivationGate } = require("./server/activationGate.js");
+const serverMaintenance = process.env.SOLENTA_SERVER === "1" && process.env.SOLENTA_SERVER_MAINTENANCE === "1";
 
 // V8 code cache for every module required below (#418): ~10-15% off the
 // main-process require graph on warm launches. Keyed by file content and
@@ -110,6 +112,7 @@ const {
   openRemoteConnection,
   forgetRemoteConnection,
   installRemoteSolenta,
+  manageRemoteServer,
   invokeRemote,
   openHostTunnel,
   closeRemoteConnections,
@@ -302,6 +305,11 @@ let channels = null;
 /** #1720: MCP OAuth token refresh, every minute. */
 /** @type {ReturnType<typeof setInterval> | null} */
 let mcpOauthRefreshTimer = null;
+let serverActivation = null;
+let askpassRelay = null;
+let attentionTimer = null;
+let bootSweepTimer = null;
+let artifactCleanupTimer = null;
 
 /** @type {ReturnType<typeof startAutoDispatch> | null} */
 let autoDispatch = null;
@@ -843,43 +851,53 @@ app.whenReady().then(async () => {
   });
 
   const userData = app.getPath("userData");
-  // Windows ssh keeps BatchMode: no askpass relay there.
-  if (process.platform !== "win32") {
-    startAskpassServer({
-      dir: path.join(userData, "ssh-askpass"),
-      ask: (req) => sshPrompts.ask(req),
-    })
-      .then((relay) => setSshAskpass({ env: relay.env, forget: (host) => sshPrompts.forget(host) }))
-      .catch((err) => console.warn(`ssh askpass relay failed to start: ${err.message}`));
-  }
-  // Cached signed catalog now, release refresh in the background (#1529).
-  void require("./remoteCatalog.js").initRemoteCatalog(userData);
-  try {
-    speech = createSpeechManager({
-      userDataPath: userData,
-      resourcesPath: process.resourcesPath,
-      platform: process.platform,
-      arch: process.arch,
-      onStatus: (status) => broadcast("speech:changed", status),
-      // Read per call: store boots after speech, and keys change at runtime.
-      getSpeechSettings: () => (store ? store.getSettings().speech : null),
-    });
-    installSpeechMediaPermissions({
-      session: session.defaultSession,
-      speech,
-      isSolentaFrame: (wc, details) =>
-        isSolentaMainFrame(wc, details, {
-          isDev,
-          devServerUrl: process.env.VITE_DEV_SERVER_URL || "http://localhost:5173",
-        }),
-    });
-  } catch (err) {
-    speech = null;
-    console.warn(
-      "speech: unavailable this session:",
-      err && err.message ? err.message : err,
-    );
-  }
+  serverActivation = createActivationGate({
+    maintenance: serverMaintenance,
+    blocked: () => process.env.SOLENTA_SERVER === "1" && fs.existsSync(path.join(userData, ".server-maintenance-request")),
+    onError: (name, error) => console.warn(`solenta: ${name} activation failed: ${error && error.message ? error.message : error}`),
+  });
+  const activate = (name, run) => serverActivation.defer(name, run);
+
+  activate("host utilities", async ({ isActive }) => {
+    // Windows ssh keeps BatchMode: no askpass relay there.
+    if (process.platform !== "win32") {
+      try {
+        const relay = await startAskpassServer({ dir: path.join(userData, "ssh-askpass"), ask: (req) => sshPrompts.ask(req) });
+        if (!isActive()) { relay.close(); return; }
+        askpassRelay = relay;
+        setSshAskpass({ env: relay.env, forget: (host) => sshPrompts.forget(host) });
+      } catch (err) { console.warn(`ssh askpass relay failed to start: ${err.message}`); }
+    }
+    if (!isActive()) return;
+    // Cached signed catalog now, release refresh in the background (#1529).
+    void require("./remoteCatalog.js").initRemoteCatalog(userData);
+    try {
+      speech = createSpeechManager({
+        userDataPath: userData,
+        resourcesPath: process.resourcesPath,
+        platform: process.platform,
+        arch: process.arch,
+        onStatus: (status) => broadcast("speech:changed", status),
+        // Read per call: store boots after speech, and keys change at runtime.
+        getSpeechSettings: () => (store ? store.getSettings().speech : null),
+      });
+      installSpeechMediaPermissions({
+        session: session.defaultSession,
+        speech,
+        isSolentaFrame: (wc, details) =>
+          isSolentaMainFrame(wc, details, {
+            isDev,
+            devServerUrl: process.env.VITE_DEV_SERVER_URL || "http://localhost:5173",
+          }),
+      });
+    } catch (err) {
+      speech = null;
+      console.warn(
+        "speech: unavailable this session:",
+        err && err.message ? err.message : err,
+      );
+    }
+  });
   mediaProtocol.installHandler({
     protocol,
     net,
@@ -897,6 +915,7 @@ app.whenReady().then(async () => {
   // that gets deleted. Only migrate when booting the default userData.
   const defaultUserData = path.join(app.getPath("appData"), app.getName());
   const canMigrate =
+    process.env.SOLENTA_SERVER !== "1" &&
     path.resolve(userData) === path.resolve(defaultUserData) &&
     process.env.SOLENTA_SKIP_USERDATA_MIGRATION !== "1";
 
@@ -955,19 +974,17 @@ app.whenReady().then(async () => {
 
       // Hooks inherit this path; the memory server also resolves it beside its config.
       process.env.CODER_GUARDRAILS_PATH = path.join(userData, "guardrails-enabled");
-      memorySupervisor = createMemorySupervisor({
-        userDataPath: userData,
-        appPath,
-        log: (msg) => console.warn(msg),
-      });
+
     },
     // Never block or fail app start on memory supervision.
     // Kicks the async login-shell PATH capture now that the window has
     // painted; the supervisor probes kimi/cursor CLIs, so it waits for it.
-    startMemory: async () => {
+    startMemory: () => activate("memory supervision", async ({ isActive }) => {
       await refreshLoginPath();
-      return memorySupervisor ? memorySupervisor.start() : undefined;
-    },
+      if (!isActive()) return;
+      memorySupervisor = createMemorySupervisor({ userDataPath: userData, appPath, log: (msg) => console.warn(msg) });
+      void memorySupervisor.start().catch((err) => console.warn("memory-server: supervisor start error; continuing without memory:", err && err.message ? err.message : err));
+    }),
     onMemoryError: (err) => {
       console.warn(
         "memory-server: supervisor start error; continuing without memory:",
@@ -1018,60 +1035,63 @@ app.whenReady().then(async () => {
     userDataPath: userData,
   });
 
-  // Same userDataPath as the artifact store: recovery only touches recording
-  // temp files inside that store's own staging root, and a mismatch would make
-  // it quarantine legitimate journals. Safe to construct off macOS and without
-  // Xcode — nothing probes the toolchain until a thread asks for a device.
-  try {
-    iosSimulator = createIOSSimulatorService({
-      store,
-      userDataPath: userData,
-      worktreeBase: path.join(userData, "worktrees"),
-      artifactStore,
-      broadcast,
-      logger: { warn: (msg) => console.warn(msg) },
-      getStreamBroker: () => iosSimulatorStream,
-    });
-    void iosSimulator
-      .recover()
-      .catch((err) =>
-        console.warn(
-          "ios-simulator: recovery failed:",
-          err && err.message ? err.message : err,
-        ),
-      )
-      .then(() => {
-        iosSimulatorRecovered = true;
+  activate("simulator recovery", () => {
+    // Same userDataPath as the artifact store: recovery only touches recording
+    // temp files inside that store's own staging root, and a mismatch would make
+    // it quarantine legitimate journals. Safe to construct off macOS and without
+    // Xcode — nothing probes the toolchain until a thread asks for a device.
+    try {
+      iosSimulator = createIOSSimulatorService({
+        store,
+        userDataPath: userData,
+        worktreeBase: path.join(userData, "worktrees"),
+        artifactStore,
+        broadcast,
+        logger: { warn: (msg) => console.warn(msg) },
+        getStreamBroker: () => iosSimulatorStream,
       });
-  } catch (err) {
-    // Never block app start on it; the rest of the app has no dependency here.
-    iosSimulator = null;
-    console.warn(
-      "ios-simulator: unavailable this session:",
-      err && err.message ? err.message : err,
-    );
-  }
-
-  // Loopback video broker for the native helper (#248). Failure must not
-  // block boot; Task 6 wires sessions into the device service.
-  try {
-    iosSimulatorStream = createIOSSimulatorStreamBroker({
-      log: (msg) => console.warn(msg),
-    });
-    void iosSimulatorStream.listen().catch((err) => {
+      void iosSimulator
+        .recover()
+        .catch((err) =>
+          console.warn(
+            "ios-simulator: recovery failed:",
+            err && err.message ? err.message : err,
+          ),
+        )
+        .then(() => {
+          iosSimulatorRecovered = true;
+        });
+    } catch (err) {
+      // Never block app start on it; the rest of the app has no dependency here.
+      iosSimulator = null;
       console.warn(
-        "ios-simulator-stream: listen failed:",
+        "ios-simulator: unavailable this session:",
         err && err.message ? err.message : err,
       );
+    }
+
+    // Loopback video broker for the native helper (#248). Failure must not
+    // block boot; Task 6 wires sessions into the device service.
+    try {
+      iosSimulatorStream = createIOSSimulatorStreamBroker({
+        log: (msg) => console.warn(msg),
+      });
+      void iosSimulatorStream.listen().catch((err) => {
+        console.warn(
+          "ios-simulator-stream: listen failed:",
+          err && err.message ? err.message : err,
+        );
+        iosSimulatorStream = null;
+      });
+    } catch (err) {
       iosSimulatorStream = null;
-    });
-  } catch (err) {
-    iosSimulatorStream = null;
-    console.warn(
-      "ios-simulator-stream: unavailable this session:",
-      err && err.message ? err.message : err,
-    );
-  }
+      console.warn(
+        "ios-simulator-stream: unavailable this session:",
+        err && err.message ? err.message : err,
+      );
+    }
+
+  });
 
   const lastStatus = new Map();
   for (const t of store.getThreads()) {
@@ -1230,19 +1250,23 @@ app.whenReady().then(async () => {
   // Polled, not pushed: opening a thread clears its unread by stamping the
   // store with no broadcast, and a snooze expires on the clock.
   // ponytail: O(threads) every 2s; hook store writes if it ever shows in a profile.
-  syncAttentionBadge(store);
-  setInterval(() => syncAttentionBadge(store), 2000);
+  activate("attention badges", ({ isActive }) => {
+    syncAttentionBadge(store);
+    attentionTimer = setInterval(() => { if (isActive()) syncAttentionBadge(store); }, 2000);
+  });
 
   // ctx is read when the server starts, after registerIpc below returns.
   let registered = null;
   const webStaticDir = path.join(__dirname, "../dist");
   webAccess = createWebAccess({
     devices: createWebDevices(userData),
+    getComputerId: () => require("./serverIdentity.js").loadOrCreateComputerId(userData),
     fileToken: () => loadOrCreateToken(userData),
     defaultPort: WEB_DEFAULT_PORT,
     startServer: (opts) =>
       startWebServer({
         ...opts,
+        userDataPath: userData,
         staticDir: fs.existsSync(webStaticDir) ? webStaticDir : null,
         ctx: registered.ctx,
         artifactStore,
@@ -1261,13 +1285,15 @@ app.whenReady().then(async () => {
   // Linked computers (#1832): this Solenta's agents fork onto them, desktop
   // or headless. SOLENTA_LINK (solenta-server --link) links one at boot.
   peerLinks = require("./peerLinks.js").createPeerLinks({ userDataPath: userData, hub: hostHub });
-  peerLinks.start();
-  if (process.env.SOLENTA_LINK) {
-    peerLinks.link({ link: process.env.SOLENTA_LINK, label: process.env.SOLENTA_LINK_LABEL || "" }).then(
-      (rows) => console.warn(`linked computers: ${rows.map((r) => r.label).join(", ")}`),
-      (err) => console.warn(`linked computers: ${err && err.message ? err.message : err}`),
-    );
-  }
+  activate("linked computers", () => {
+    peerLinks.start();
+    if (process.env.SOLENTA_LINK) {
+      peerLinks.link({ link: process.env.SOLENTA_LINK, label: process.env.SOLENTA_LINK_LABEL || "" }).then(
+        (rows) => console.warn(`linked computers: ${rows.map((r) => r.label).join(", ")}`),
+        (err) => console.warn(`linked computers: ${err && err.message ? err.message : err}`),
+      );
+    }
+  });
   // Workers other computers forked here reach their crew there (#1821).
   crewRelay = require("./crewRelay.js").createCrewRelay({
     store,
@@ -1304,6 +1330,7 @@ app.whenReady().then(async () => {
     openRemoteConnection,
     forgetRemoteConnection,
     installRemoteSolenta,
+    manageRemoteServer,
     invokeRemote,
     hostHub,
     answerSshPrompt: (id, answer) => sshPrompts.answer(id, answer),
@@ -1312,24 +1339,26 @@ app.whenReady().then(async () => {
   ipcMain.handle("window:detachThread", (_event, threadId) => openThreadWindow(threadId));
   // Recently deleted expiry (#940): reclaim after restart even if the
   // renderer has not listed threads yet.
-  const { expireTrashedThreads } = require("./services.js");
-  expireTrashedThreads(store, {
-    cleanupRunArtifacts: () =>
-      artifactStore ? artifactStore.cleanup() : Promise.resolve(),
-    log: (msg) => console.warn(msg),
+  activate("expired threads and teleports", () => {
+    const { expireTrashedThreads } = require("./services.js");
+    expireTrashedThreads(store, {
+      cleanupRunArtifacts: () =>
+        artifactStore ? artifactStore.cleanup() : Promise.resolve(),
+      log: (msg) => console.warn(msg),
   });
   // No Teleport send survives a restart (#1702): unlock a half-sent thread.
   require("./teleport.js").clearPendingTeleports(store);
+  });
   // Renderer may already have mounted against empty state; this is the
   // signal that invoke channels will answer (#618).
   broadcast("boot:ready");
-  openDeepLink(pendingDeepLink);
-  pendingDeepLink = null;
+  activate("pending deep link", () => { openDeepLink(pendingDeepLink); pendingDeepLink = null; });
 
   // Opt-in resume after restart (issue #1512 I3): only after first paint
   // and the login-shell PATH, so the notice can render and providers resolve.
-  void (async () => {
+  activate("interrupted-run resume", async ({ isActive }) => {
     await whenPathReady();
+    if (!isActive()) return;
     await Promise.all(
       BrowserWindow.getAllWindows()
         .filter((w) => w.webContents.isLoading())
@@ -1340,13 +1369,8 @@ app.whenReady().then(async () => {
             ),
         ),
     );
-    if (runner) await runner.resumeInterruptedRuns();
-  })().catch((err) =>
-    console.warn(
-      "solenta: resume after restart failed:",
-      err && err.message ? err.message : err,
-    ),
-  );
+    if (runner && isActive()) await runner.resumeInterruptedRuns();
+  });
 
   if (serveOpts.enabled) {
     // The port is fixed, so EADDRINUSE is routine (a previous instance still
@@ -1396,7 +1420,7 @@ app.whenReady().then(async () => {
       },
     },
   });
-  prStateRefresher.start();
+
 
   // Opt-in idle-thread compaction (#1765): off unless the user turns it on
   // in Settings. Same unref'd-interval shape as the PR refresher above.
@@ -1405,73 +1429,77 @@ app.whenReady().then(async () => {
     runner,
     broadcast,
   });
-  idleCompactScheduler.start();
 
-  // Anonymous daily usage ping (installs, OS, agents) for the team's stats.
-  if (app.isPackaged) {
-    require("./telemetry.js").startTelemetry({
-      userData,
-      version: app.getVersion(),
-      getThreads: () => store.getThreads(),
-    });
-  }
 
-  // Boot-time worktree GC: reclaim clean worktree dirs no thread references
-  // (crash/store-drift orphans). Conservative by design — dirty trees are
-  // committed to recovered/<id> first (#1386) and unmerged branches are
-  // never deleted. Delayed + unref'd like the PR
-  // refresher so startup stays fast and a short-lived process can exit.
-  // Retention is owned by the periodic sweeper below (#641), not this timer.
-  const worktreeBase = path.join(userData, "worktrees");
-  // #192: keep 2 idle worktrees per project so new threads skip `worktree add`.
-  require("./worktrees.js").setWorktreePoolSize(2);
-  const sweepTimer = setTimeout(() => {
-    const { sweepOrphanWorktrees } = require("./worktrees.js");
-    void sweepOrphanWorktrees({ store, worktreeBase })
-      .then((result) => {
-        if (result.removed.length > 0) {
-          console.warn(
-            `worktree sweep: removed ${result.removed.length} orphan(s)`,
-          );
-        }
-        for (const r of result.recovered || []) {
-          console.warn(`worktree sweep: saved ${r.dir} to branch ${r.branch}`);
-        }
-        const { scheduleImagePrune } = require("./image-store.js");
-        return scheduleImagePrune({ store, userDataPath: userData });
-      })
-      .then((result) => {
-        if (result && result.removed > 0) {
-          console.warn(`image prune: removed ${result.removed} item(s)`);
-        }
+  activate("background services", async ({ isActive }) => {
+    prStateRefresher.start();
+    idleCompactScheduler.start();
+    // Anonymous daily usage ping (installs, OS, agents) for the team's stats.
+    if (app.isPackaged) {
+      require("./telemetry.js").startTelemetry({
+        userData,
+        version: app.getVersion(),
+        getThreads: () => store.getThreads(),
       });
-  }, 15_000);
-  sweepTimer.unref();
+    }
 
-  const artifactCleanupTimer = setTimeout(() => {
-    if (!artifactStore) return;
-    void artifactStore
-      .cleanup()
-      .catch((err) =>
-        console.warn(
-          "run-artifacts: cleanup failed:",
-          err && err.message ? err.message : err,
-        ),
-      );
-  }, 15_000);
-  artifactCleanupTimer.unref();
+    // Boot-time worktree GC: reclaim clean worktree dirs no thread references
+    // (crash/store-drift orphans). Conservative by design — dirty trees are
+    // committed to recovered/<id> first (#1386) and unmerged branches are
+    // never deleted. Delayed + unref'd like the PR
+    // refresher so startup stays fast and a short-lived process can exit.
+    // Retention is owned by the periodic sweeper below (#641), not this timer.
+    const worktreeBase = path.join(userData, "worktrees");
+    // #192: keep 2 idle worktrees per project so new threads skip `worktree add`.
+    require("./worktrees.js").setWorktreePoolSize(2);
+    bootSweepTimer = setTimeout(() => {
+      if (!isActive()) return;
+      const { sweepOrphanWorktrees } = require("./worktrees.js");
+      void sweepOrphanWorktrees({ store, worktreeBase })
+        .then((result) => {
+          if (result.removed.length > 0) {
+            console.warn(
+              `worktree sweep: removed ${result.removed.length} orphan(s)`,
+            );
+          }
+          for (const r of result.recovered || []) {
+            console.warn(`worktree sweep: saved ${r.dir} to branch ${r.branch}`);
+          }
+          const { scheduleImagePrune } = require("./image-store.js");
+          return scheduleImagePrune({ store, userDataPath: userData });
+        })
+        .then((result) => {
+          if (result && result.removed > 0) {
+            console.warn(`image prune: removed ${result.removed} item(s)`);
+          }
+        });
+    }, 15_000);
+    bootSweepTimer.unref();
 
-  // Periodic retention (#641): grace-period crossings during a multi-day
-  // uptime used to wait until the next launch or archive. Startup pass at
-  // 15s (same delay as the orphan sweep); then every 6h. Cheap no-op when
-  // no project sets a limit. Unref'd so a short-lived process can exit.
-  retentionSweeper = createRetentionSweeper({
-    store,
-    worktreeBase,
-    userDataPath: userData,
-    broadcast,
-    intervalMs: 6 * 60 * 60 * 1000,
-    startupDelayMs: 15_000,
+    artifactCleanupTimer = setTimeout(() => {
+      if (!artifactStore || !isActive()) return;
+      void artifactStore
+        .cleanup()
+        .catch((err) =>
+          console.warn(
+            "run-artifacts: cleanup failed:",
+            err && err.message ? err.message : err,
+          ),
+        );
+    }, 15_000);
+    artifactCleanupTimer.unref();
+
+    // Periodic retention (#641): grace-period crossings during a multi-day
+    // uptime used to wait until the next launch or archive. Startup pass at
+    // 15s (same delay as the orphan sweep); then every 6h. Cheap no-op when
+    // no project sets a limit. Unref'd so a short-lived process can exit.
+    retentionSweeper = createRetentionSweeper({
+      store,
+      worktreeBase,
+      userDataPath: userData,
+      broadcast,
+      intervalMs: 6 * 60 * 60 * 1000,
+      startupDelayMs: 15_000,
   });
   retentionSweeper.start();
 
@@ -1535,6 +1563,7 @@ app.whenReady().then(async () => {
     );
   }
 
+  if (!isActive()) return;
   mcpFunnel = createMcpFunnel({ log: (msg) => console.warn(msg) });
   if (pairingMod.getPublicEnabled(userData)) {
     const st = orchServer.getStatus();
@@ -1550,6 +1579,7 @@ app.whenReady().then(async () => {
     }
   }
 
+  if (!isActive()) return;
   // User MCP servers from settings: fold every enabled entry into the four
   // provider injection hooks. Built-ins (coder-memory, coder-threads) are
   // untouched by the sync. Runs after the orch server so its registration
@@ -1575,7 +1605,12 @@ app.whenReady().then(async () => {
       log: (msg) => console.warn(msg),
     }).catch(() => {});
   void refreshMcpOauth();
-  mcpOauthRefreshTimer = setInterval(refreshMcpOauth, 60_000);
+  mcpOauthRefreshTimer = setInterval(() => { if (isActive()) void refreshMcpOauth(); }, 60_000);
+  });
+  // The listener and authenticated status are ready before any deferred work
+  // can run. A trial never activates, and a pending update waits until
+  // the lifecycle owner removes its marker after exact readiness validation.
+  serverActivation.start();
 });
 
 shutdown = installShutdown({
@@ -1586,6 +1621,7 @@ shutdown = installShutdown({
       log: (msg) => console.warn(msg),
       // Stop active runs and drain session transcript queue before exit.
       stopRuns() {
+        serverActivation?.cancel();
         if (!runner) return;
         try {
           runner.stopAll();
@@ -1611,7 +1647,12 @@ shutdown = installShutdown({
 
 /** Servers, schedulers, and child processes: last, after runs and the device. */
 function teardownServices() {
+  serverActivation?.cancel();
+  if (attentionTimer) { clearInterval(attentionTimer); attentionTimer = null; }
+  if (bootSweepTimer) { clearTimeout(bootSweepTimer); bootSweepTimer = null; }
+  if (artifactCleanupTimer) { clearTimeout(artifactCleanupTimer); artifactCleanupTimer = null; }
   sshPrompts.cancelAll();
+  if (askpassRelay) { askpassRelay.close(); askpassRelay = null; }
   closeRemoteConnections();
   hostHub.close();
   // No token refresh (and store write) mid-shutdown.

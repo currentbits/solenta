@@ -376,10 +376,13 @@ const BY_SCOPE = {
     "pairing:listConsents",
     "pairing:approveConsent",
     "pairing:denyConsent",
-    // Desktop-only already (ipc-web.js); a device must not mint or revoke devices.
+    // Enrollment and revocation require full owner access; server switches
+    // and direct reusable-token issuance also enforce desktop transport.
     "web:status",
     "web:setEnabled",
     "web:addDevice",
+    "web:createEnrollment",
+    "web:enrollmentStatus",
     "web:revokeDevice",
     "web:setTailscale",
     "threads:purge",
@@ -395,6 +398,7 @@ const BY_SCOPE = {
     "app:openRemoteConnection",
     "app:forgetRemoteConnection",
     "app:installRemoteSolenta",
+    "app:manageRemoteServer",
     "app:setSidebarHosts",
     "app:answerSshPrompt",
     // Diagnostics zip (#1723): host logs + native save dialog; desktop only.
@@ -471,6 +475,15 @@ function allows(scopes, need) {
   return scopes.includes(need);
 }
 
+/** Enrollment can delegate fewer capabilities, never more than its grant. */
+function narrowScopes(granted, requested) {
+  if (requested === undefined) return sanitizeScopes(granted);
+  if (!Array.isArray(requested) || requested.length > SCOPES.length || requested.some(scope => !SCOPES.includes(scope))) throw new Error("Enrollment scopes are invalid.");
+  const scopes = sanitizeScopes(requested);
+  if (scopes.some(scope => !allows(granted, scope))) throw new Error("Enrollment cannot grant that access.");
+  return scopes;
+}
+
 function realOrNull(p) {
   try {
     return fs.realpathSync(p);
@@ -514,6 +527,7 @@ function argsAllowed(scopes, channel, ctx, args) {
 }
 
 module.exports = {
+  narrowScopes,
   argsAllowed,
   SCOPES,
   PRESETS,

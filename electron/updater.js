@@ -216,6 +216,9 @@ async function doCheck(deps, install) {
     notesBody: null,
     publishedAt: null,
   };
+  // Server archives carry release metadata for identity. Their immutable
+  // Node runtime is owned by solenta-service, never the desktop bundle swap.
+  if (process.env.SOLENTA_SERVER === "1" || deps.pkg?.runtimeKind === "server") return status;
   if (!channel || !tag) return status;
   if (stagedTag) {
     return {

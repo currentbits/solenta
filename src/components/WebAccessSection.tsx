@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { isWebMode } from "../shared/wire";
 import { resolveCoderApi } from "../coderApi";
 import { formatRelativeAge } from "../format";
 import type {
   CoderApi,
   WebAccessStatus,
   WebDeviceCreated,
+  WebEnrollmentCreated,
   WebDeviceInfo,
   WebDeviceScope,
 } from "../shared/ipc";
@@ -12,8 +14,8 @@ import styles from "./SettingsModal.module.css";
 
 /**
  * Solenta Web in Settings (#1512 I2): the server switch, per-device tokens
- * with a pairing QR, and the optional Tailscale Serve helper. Desktop only;
- * the Connections pane is hidden in web mode.
+ * with a pairing QR, one-time browser enrollment, and Tailscale Serve.
+ * Full-access web owners see enrollment and named-device revocation only.
  */
 
 function resolveWeb(): CoderApi["web"] | null {
@@ -81,8 +83,12 @@ export function pairingBases(status: WebAccessStatus): string[] {
   return out;
 }
 
+export function enrollmentLink(base: string, enrollment: Pick<WebEnrollmentCreated, "grant" | "computerId">): string {
+  return `${base.replace(/\/+$/, "")}/#pair=${encodeURIComponent(enrollment.grant)}&computerId=${encodeURIComponent(enrollment.computerId)}`;
+}
+
 export function pairingLink(base: string, token: string): string {
-  return `${base.replace(/\/+$/, "")}/?token=${encodeURIComponent(token)}`;
+  return `${base.replace(/\/+$/, "")}/#token=${encodeURIComponent(token)}`;
 }
 
 /** Rendered locally from the link; nothing leaves the machine. */
@@ -109,7 +115,8 @@ function useQrDataUrl(text: string | null): string | null {
   return url;
 }
 
-export function WebAccessSection({ active }: { active: boolean }) {
+export function WebAccessSection({ active, browserOnly = isWebMode() }: { active: boolean; browserOnly?: boolean }) {
+  const web = useMemo(resolveWeb, []);
   const [status, setStatus] = useState<WebAccessStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -117,26 +124,28 @@ export function WebAccessSection({ active }: { active: boolean }) {
   const [preset, setPreset] = useState<Preset>("steer");
   const [grants, setGrants] = useState<Grant[]>([]);
   const [terminal, setTerminal] = useState<Terminal>("none");
+  const [enrollment, setEnrollment] = useState<WebEnrollmentCreated | null>(null);
   const [created, setCreated] = useState<WebDeviceCreated | null>(null);
   const [base, setBase] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
   const load = useCallback(async () => {
-    const web = resolveWeb();
     if (!web) return;
     try {
-      setStatus(await web.status());
+      if (browserOnly) {
+        const result = await web.enrollmentStatus();
+        setStatus({ running: true, lan: false, port: Number(window.location.port) || (window.location.protocol === "https:" ? 443 : 80), urls: [{ kind: "lan", url: window.location.origin }], devices: result.devices, tailscale: { installed: false, loggedIn: false, host: null, serving: false, url: null } });
+      } else setStatus(await web.status());
     } catch (err) {
       setError(message(err));
     }
-  }, []);
+  }, [browserOnly, web]);
 
   useEffect(() => {
     if (active) void load();
   }, [active, load]);
 
   const run = async (fn: (web: CoderApi["web"]) => Promise<void>) => {
-    const web = resolveWeb();
     if (!web || busy) return;
     setBusy(true);
     setError(null);
@@ -153,6 +162,13 @@ export function WebAccessSection({ active }: { active: boolean }) {
   const chosen = base && bases.includes(base) ? base : (bases[0] ?? null);
   const link = created && chosen ? pairingLink(chosen, created.token) : null;
   const qr = useQrDataUrl(link);
+  const browserLink = enrollment && chosen ? enrollmentLink(chosen, enrollment) : null;
+  const browserQr = useQrDataUrl(browserLink);
+  useEffect(() => {
+    if (!enrollment) return;
+    const timer = window.setTimeout(() => setEnrollment(null), Math.max(0, enrollment.expiresAt - Date.now()));
+    return () => window.clearTimeout(timer);
+  }, [enrollment]);
 
   if (!status) {
     return error ? (
@@ -166,6 +182,9 @@ export function WebAccessSection({ active }: { active: boolean }) {
 
   return (
     <section className={styles.section} data-web-access="">
+      <p className={styles.sectionLabel}>Browser access</p>
+      {browserOnly && <p className={styles.note}>Create a one-time enrollment link for another browser. Its session belongs to this computer and expires after 30 days.</p>}
+      {!browserOnly && <>
       <p className={styles.sectionLabel}>Let other devices in</p>
       <p className={styles.note} data-web-howto="">
         Solenta Web serves this app to a browser or phone. Turn it on, add a
@@ -226,6 +245,7 @@ export function WebAccessSection({ active }: { active: boolean }) {
         its own token. Use Tailscale below for HTTPS.
       </p>
 
+      </>}
       {error ? (
         <p className={styles.fieldError} role="alert">
           {error}
@@ -233,6 +253,17 @@ export function WebAccessSection({ active }: { active: boolean }) {
       ) : null}
 
       <span className={styles.fieldLabel}>Devices</span>
+      {enrollment && browserLink && <div className={styles.pairingReveal} data-web-enrollment-reveal="">
+        <p className={styles.pairingName}>Enroll {enrollment.name}</p>
+        <p className={styles.note}>{scopeSummary(enrollment.scopes)}. Use this link once within five minutes. The enrolled session expires after 30 days.</p>
+        {bases.length > 1 && <select className={styles.input} aria-label="Address for browser enrollment" value={chosen ?? ""} onChange={e => setBase(e.target.value)}>{bases.map(url => <option key={url} value={url}>{url}</option>)}</select>}
+        {browserQr && <img className={styles.webQr} src={browserQr} alt={`QR code to enroll ${enrollment.name}`} />}
+        <pre className={styles.pairingPre} data-web-enrollment-link="">{browserLink}</pre>
+        <div className={styles.fieldRow}>
+          <button type="button" className={styles.btn} onClick={() => void navigator.clipboard.writeText(browserLink)}>Copy browser link</button>
+          <button type="button" className={styles.btn} onClick={() => setEnrollment(null)}>Done</button>
+        </div>
+      </div>}
       {created ? (
         <div className={styles.pairingReveal} data-web-reveal="">
           <p className={styles.pairingName}>Pair {created.device.name}</p>
@@ -297,7 +328,7 @@ export function WebAccessSection({ active }: { active: boolean }) {
           disabled={busy}
           onChange={(e) => setName(e.target.value)}
         />
-        <button
+        {!browserOnly && <button
           type="button"
           className={`${styles.btn} ${styles.btnPrimary}`}
           data-web-add-device=""
@@ -315,8 +346,15 @@ export function WebAccessSection({ active }: { active: boolean }) {
           }
         >
           Add device
-        </button>
+        </button>}
+        <button type="button" className={`${styles.btn} ${styles.btnPrimary}`} data-web-create-enrollment=""
+          disabled={busy || !name.trim() || !status.running || !chosen}
+          onClick={() => void run(async web => {
+            setEnrollment(await web.createEnrollment({ name: name.trim(), scopes: deviceScopes(preset, grants, terminal) }));
+            setName("");
+          })}>Create browser link</button>
       </div>
+      <p className={styles.note}>Browser links enroll one browser within five minutes and create a 30-day session. {browserOnly ? "" : "Add device creates the reusable direct link used by other Solenta computers and linked agents."}</p>
       <div className={styles.fieldRow}>
         <select
           className={styles.input}
@@ -381,6 +419,7 @@ export function WebAccessSection({ active }: { active: boolean }) {
                   <span data-web-device-scopes="">{scopeSummary(d.scopes)}</span>
                   {" · "}
                   {seenLabel(d)}
+                  {d.expiresAt !== undefined ? ` · ${d.expiresAt <= Date.now() ? "Expired" : `Expires ${new Date(d.expiresAt).toLocaleDateString()}`}` : ""}
                   {d.legacy ? " · read over SSH when another computer connects; revoking it makes a new one the next time Solenta Web starts" : ""}
                 </p>
               </div>
@@ -394,7 +433,7 @@ export function WebAccessSection({ active }: { active: boolean }) {
                   void run(async (web) => {
                     await web.revokeDevice({ id: d.id });
                     if (created?.device.id === d.id) setCreated(null);
-                    setStatus(await web.status());
+                    await load();
                   })
                 }
               >
@@ -407,7 +446,7 @@ export function WebAccessSection({ active }: { active: boolean }) {
         <p className={styles.note}>No devices yet. Revoking one signs it out at once.</p>
       )}
 
-      {ts.installed ? (
+      {!browserOnly && ts.installed ? (
         <div className={styles.field} data-web-tailscale={ts.serving ? "serving" : ts.loggedIn ? "ready" : "offline"}>
           <span className={styles.fieldLabel}>Tailscale</span>
           {!ts.loggedIn ? (

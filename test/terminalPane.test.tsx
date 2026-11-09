@@ -100,6 +100,7 @@ function harness(over: Partial<TerminalApi> = {}) {
   const calls: { call: string; input: Record<string, unknown> }[] = [];
   const terms: FakeTerm[] = [];
   const listeners = new Set<(p: TerminalDataPush) => void>();
+  const reconnects = new Set<() => void>();
   const rec = <T,>(call: string, input: object, value: T | Promise<T>) => {
     calls.push({ call, input: input as Record<string, unknown> });
     return Promise.resolve(value);
@@ -120,6 +121,10 @@ function harness(over: Partial<TerminalApi> = {}) {
       listeners.add(cb);
       return () => listeners.delete(cb);
     },
+    onReconnect: (cb) => {
+      reconnects.add(cb);
+      return () => reconnects.delete(cb);
+    },
   };
   const load = async () => () => {
     const t = new FakeTerm();
@@ -132,12 +137,117 @@ function harness(over: Partial<TerminalApi> = {}) {
         cb({ threadId: "t1", termId: "1", from: 0, data: "", cursor: 0, running: true, ...p });
       }
     });
-  return { api, load, calls, terms, push, listeners };
+  const reconnect = () => inAct(() => { for (const cb of reconnects) cb(); });
+  return { api, load, calls, terms, push, listeners, reconnect, reconnects };
 }
 
 const settle = () => inAct(() => new Promise((r) => setTimeout(r, 0)));
 
 describe("TerminalPane", () => {
+  it("recovers final output and exit entirely missed during a connection outage", async () => {
+    const h = harness({
+      open: async () => state({ text: "old", cursor: 3 }),
+      read: async () => state({ text: "done", cursor: 7, running: false }),
+    });
+    const m = await mount(<TerminalPane threadId="t1" api={h.api} load={h.load} />);
+    await settle();
+    await h.reconnect();
+    await settle();
+    assert.equal(h.terms[0].screen, "olddone");
+    assert.equal(m.query("[data-running]")?.getAttribute("data-running"), "false");
+    assert.deepEqual(h.calls.filter((c) => c.call === "read").map((c) => c.input), [
+      { threadId: "t1", termId: "1", since: 3 },
+    ]);
+    await unmountAll();
+    assert.equal(h.reconnects.size, 0);
+  });
+
+  it("recovers an exit without output at the same terminal cursor", async () => {
+    const h = harness({
+      open: async () => state({ text: "old", cursor: 3 }),
+      read: async () => state({ text: "", cursor: 3, running: false }),
+    });
+    const m = await mount(<TerminalPane threadId="t1" api={h.api} load={h.load} />);
+    await settle();
+    await h.reconnect();
+    await settle();
+    assert.equal(h.terms[0].screen, "old");
+    assert.equal(m.query("[data-running]")?.getAttribute("data-running"), "false");
+  });
+
+  it("re-reads when another recovery arrives during an older read", async () => {
+    let finish!: (value: TerminalState) => void;
+    let reads = 0;
+    const h = harness({
+      open: async () => state({ text: "old", cursor: 3 }),
+      read: async () => ++reads === 1
+        ? new Promise<TerminalState>((resolve) => { finish = resolve; })
+        : state({ text: "!", cursor: 8, running: false }),
+    });
+    const m = await mount(<TerminalPane threadId="t1" api={h.api} load={h.load} />);
+    await settle();
+    await h.reconnect();
+    await h.reconnect();
+    await inAct(() => finish(state({ text: "done", cursor: 7 })));
+    await settle();
+    assert.equal(reads, 2);
+    assert.equal(h.terms[0].screen, "olddone!");
+    assert.equal(m.query("[data-running]")?.getAttribute("data-running"), "false");
+  });
+
+  it("does not let a stale reset response erase newer pushed output", async () => {
+    let finish!: (value: TerminalState) => void;
+    let reads = 0;
+    const h = harness({
+      open: async () => state({ text: "old", cursor: 3 }),
+      read: async () => ++reads === 1
+        ? new Promise<TerminalState>((resolve) => { finish = resolve; })
+        : state({ text: "", cursor: 6 }),
+    });
+    await mount(<TerminalPane threadId="t1" api={h.api} load={h.load} />);
+    await settle();
+    await h.reconnect();
+    await h.push({ from: 3, data: "new", cursor: 6 });
+    await inAct(() => finish(state({ text: "old", cursor: 3, reset: true })));
+    await settle();
+    assert.equal(h.terms[0].screen, "oldnew");
+    assert.equal(reads, 2);
+  });
+
+  it("recovers output pushed before the initial terminal snapshot arrives", async () => {
+    let finish!: (value: TerminalState) => void;
+    const h = harness({
+      open: async () => new Promise<TerminalState>((resolve) => { finish = resolve; }),
+      read: async () => state({ text: "done", cursor: 7, running: false }),
+    });
+    const m = await mount(<TerminalPane threadId="t1" api={h.api} load={h.load} />);
+    await settle();
+    await h.push({ from: 3, data: "done", cursor: 7, running: false });
+    await inAct(() => finish(state({ text: "old", cursor: 3 })));
+    await settle();
+    assert.equal(h.terms[0].screen, "olddone");
+    assert.equal(m.query("[data-running]")?.getAttribute("data-running"), "false");
+  });
+
+  it("does not revive a terminal when an older read races its exit push", async () => {
+    let finish!: (value: TerminalState) => void;
+    let reads = 0;
+    const h = harness({
+      open: async () => state({ text: "old", cursor: 3 }),
+      read: async () => ++reads === 1
+        ? new Promise<TerminalState>((resolve) => { finish = resolve; })
+        : state({ text: "", cursor: 3, running: false }),
+    });
+    const m = await mount(<TerminalPane threadId="t1" api={h.api} load={h.load} />);
+    await settle();
+    await h.reconnect();
+    await h.push({ from: 3, cursor: 3, running: false });
+    await inAct(() => finish(state({ text: "", cursor: 3, running: true })));
+    await settle();
+    assert.equal(m.query("[data-running]")?.getAttribute("data-running"), "false");
+    assert.equal(h.terms[0].screen, "old");
+  });
+
   it("opens at the xterm's size and paints the replayed scrollback", async () => {
     const h = harness({ open: async () => state({ text: "old\r\n$ ", cursor: 7 }) });
     const m = await mount(<TerminalPane threadId="t1" api={h.api} load={h.load} />);

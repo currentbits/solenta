@@ -13,6 +13,19 @@ import { setWireStatus } from "../src/wireStatus";
 const settle = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 describe("ConnectionBanner", () => {
+  it("keeps credentials when computer identity is blocked and explains the next action", async () => {
+    setWireStatus({ state: "connected", queuedSend: false });
+    const m = await mount(<ConnectionBanner />);
+    window.localStorage.setItem(WEB_TOKEN_KEY, "keep-this-token");
+    await act(async () => setWireStatus({ state: "blocked", error: "This address belongs to a different computer." }));
+    assert.ok(m.query("[data-connection-banner=blocked][role=alert]"));
+    assert.match(m.text(), /different computer/);
+    assert.equal(window.localStorage.getItem(WEB_TOKEN_KEY), "keep-this-token");
+    assert.equal(m.query("[data-web-token-gate-dialog]"), null);
+    m.unmount();
+    setWireStatus({ state: "connected" });
+  });
+
   it("stays quiet for short drops, then says it is reconnecting and that a message waits", async () => {
     setWireStatus({ state: "connected", queuedSend: false });
     const m = await mount(<ConnectionBanner />);

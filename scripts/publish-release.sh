@@ -62,7 +62,7 @@ bash scripts/package-app.sh --channel "$CHANNEL" --tag "$TAG"
 bash scripts/package-cross.sh --channel "$CHANNEL" --tag "$TAG"
 # Headless server per target (#1829): SSH connect sets it up on a computer
 # with no Solenta installed.
-bash scripts/package-server.sh
+bash scripts/package-server.sh --channel "$CHANNEL" --tag "$TAG"
 
 # Nightly bundles carry their own name (package-app.sh) so both channels can
 # sit side by side in /Applications. The asset name keeps the platform token

@@ -32,6 +32,7 @@ function lastReplyLine(detail) {
  * }} deps
  */
 function createRemoteWorkers({ store, hub, deliver, runner }) {
+  const sameHost = (left, right) => left === right || hub.sameComputer?.(left, right) === true;
   /** Leads with a remote worker still out. Built from the store on first use. */
   let leads = null;
   function pendingLeads() {
@@ -264,7 +265,7 @@ function createRemoteWorkers({ store, hub, deliver, runner }) {
     for (const leadId of [...set]) {
       const lead = store.getThread(leadId);
       const all = lead && Array.isArray(lead.remoteWorkers) ? lead.remoteWorkers : [];
-      const done = all.filter((w) => w.out && w.hostKey === key && finished(w, byId.get(w.threadId)));
+      const done = all.filter((w) => w.out && sameHost(w.hostKey, key) && finished(w, byId.get(w.threadId)));
       if (done.length) {
         store.updateThread(leadId, {
           remoteWorkers: all.map((w) => (done.includes(w) ? { ...w, out: false, first: false, sawWorking: false } : w)),
@@ -284,7 +285,7 @@ function createRemoteWorkers({ store, hub, deliver, runner }) {
   function onCrewCall(hostKey, payload) {
     const { RELAYED_TOOLS } = require("./crewRelay.js");
     const hit = payload && find(String(payload.workerId || ""));
-    if (!hit || hit.w.hostKey !== hostKey) return null;
+    if (!hit || !sameHost(hit.w.hostKey, hostKey)) return null;
     const lead = store.getThread(hit.leadId);
     if (!lead) return Promise.reject(new Error("Your lead thread no longer exists."));
     if (!RELAYED_TOOLS.has(payload.tool)) return Promise.reject(new Error(`${payload.tool} does not run on the lead's computer.`));

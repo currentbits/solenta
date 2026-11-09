@@ -3,10 +3,13 @@
  * Also the Teleport targets in the thread menu (#1702).
  */
 
-import type { CoderApi, SidebarHostStatus } from "./shared/ipc";
+import type { CoderApi, SidebarHostStatus, RemoteComputerDescriptor } from "./shared/ipc";
 
 export type SavedHost = {
   id: string;
+  computerId?: string;
+  descriptor?: RemoteComputerDescriptor;
+  legacy?: true;
   label: string;
   host: string;
   remotePort: number;
@@ -31,7 +34,8 @@ export function loadHosts(): SavedHost[] {
       typeof item.label === "string" && typeof item.host === "string" &&
       Number.isInteger(item.remotePort) && item.remotePort > 0 &&
       item.remotePort <= 65535 &&
-      (item.url === undefined || typeof item.url === "string"),
+      (item.url === undefined || typeof item.url === "string") &&
+      (item.computerId === undefined || typeof item.computerId === "string"),
     ).slice(0, 30);
   } catch {
     return [];
@@ -57,6 +61,20 @@ export function pushSidebarHosts(
   if (typeof setSidebarHosts !== "function") return Promise.resolve([]);
   const shown = hosts
     .filter((h) => h.inSidebar)
-    .map(({ host, remotePort, url, label }) => ({ host, remotePort, label, ...(url ? { url } : {}) }));
+    .map(({ host, remotePort, url, label, computerId, legacy }) => ({ host, remotePort, label, ...(url ? { url } : {}), ...(computerId ? { computerId } : {}), ...(legacy ? { allowLegacy: true } : {}) }));
   return setSidebarHosts(shown).catch(() => []);
+}
+
+/** Routes stay separate for credential storage; only verified identities group. */
+export type SavedComputer = { key: string; computerId?: string; label: string; routes: SavedHost[] };
+export function groupSavedComputers(hosts: SavedHost[]): SavedComputer[] {
+  const computers = new Map<string, SavedComputer>();
+  for (const route of hosts) {
+    const key = route.computerId ? `computer:${route.computerId}` : `route:${hostKeyOf(route)}`;
+    const held = computers.get(key);
+    if (held) {
+      if (!held.routes.some((r) => hostKeyOf(r) === hostKeyOf(route))) held.routes.push(route);
+    } else computers.set(key, { key, computerId: route.computerId, label: route.label, routes: [route] });
+  }
+  return [...computers.values()];
 }

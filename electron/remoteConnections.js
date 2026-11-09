@@ -6,6 +6,7 @@ const fs = require("node:fs");
 const net = require("node:net");
 const path = require("node:path");
 const { WebSocket } = require("ws");
+const { parseComputerDescriptor, confirmComputer, DESCRIPTOR_PATH } = require("./serverIdentity.js");
 const { PROMPT_TIMEOUT_MS } = require("./sshAskpass.js");
 
 const DEFAULT_REMOTE_PORT = 4620;
@@ -46,11 +47,27 @@ function createTokenStore(file, safeStorage) {
       write({ ...read(), [key]: safeStorage.encryptString(token).toString("base64") });
       return true;
     },
-    delete(key) {
+    computerId(key) {
+      const id = read().__computers?.[key];
+      return typeof id === "string" ? id : undefined;
+    },
+    bindComputer(key, computerId) {
+      const saved = read();
+      const prior = saved.__computers?.[key];
+      if (prior && prior !== computerId) throw new Error("Computer identity mismatch. Forget this route before pairing another computer.");
+      write({ ...saved, __computers: { ...saved.__computers, [key]: computerId } });
+    },
+    forget(key) {
       const tokens = read();
-      if (!(key in tokens)) return;
+      if (!(key in tokens) && !tokens.__computers?.[key]) return;
       delete tokens[key];
+      if (tokens.__computers) delete tokens.__computers[key];
       write(tokens);
+    },
+    delete(key) {
+      const saved = read();
+      delete saved[key];
+      write(saved);
     },
   };
 }
@@ -99,23 +116,31 @@ function parseDirectUrl(raw) {
   if (u.protocol === "http:" && !isPrivateHostname(u.hostname)) {
     throw new Error(`Plain http:// would send the token unencrypted to ${u.hostname}. Use an https:// address, such as the one Expose over Tailscale gives on that computer.`);
   }
+  const fragment = new URLSearchParams(u.hash.slice(1));
   return {
     url: u.origin,
     hostname: u.hostname.replace(/^\[|\]$/g, ""),
     port: Number(u.port) || (u.protocol === "https:" ? 443 : 80),
-    linkToken: (u.searchParams.get("token") || "").trim(),
+    linkToken: (fragment.get("token") || u.searchParams.get("token") || "").trim(),
+    computerId: fragment.get("computerId") || u.searchParams.get("computerId") || undefined,
   };
 }
 
 function validateConnection(input) {
+  if (input?.computerId !== undefined && (typeof input.computerId !== "string" || !/^[a-zA-Z0-9][a-zA-Z0-9._:-]{7,127}$/.test(input.computerId))) throw new Error("Invalid saved computer identity.");
+  const identity = { ...(input?.computerId ? { computerId: input.computerId } : {}), allowLegacy: input?.allowLegacy === true };
   const host = typeof input?.host === "string" ? input.host.trim() : "";
   const label = typeof input?.label === "string" ? input.label.trim() : "";
   const token = typeof input?.token === "string" ? input.token.trim() : "";
   if (typeof input?.url === "string" && input.url.trim()) {
     const direct = parseDirectUrl(input.url);
+    if (direct.computerId && !/^[a-zA-Z0-9][a-zA-Z0-9._:-]{7,127}$/.test(direct.computerId)) throw new Error("Invalid computer identity in the device link.");
+    if (direct.computerId && identity.computerId && direct.computerId !== identity.computerId) throw new Error("Computer identity mismatch. The device link belongs to another computer.");
+    if (direct.computerId) identity.computerId = direct.computerId;
     const typed = token || direct.linkToken;
     if (typed.length > 1024) throw new Error("Enter the device token from that computer.");
     return {
+      ...identity,
       key: direct.url,
       url: direct.url,
       host: direct.hostname,
@@ -138,6 +163,7 @@ function validateConnection(input) {
     throw new Error("Enter the Solenta Web token from the remote host.");
   }
   return {
+    ...identity,
     key: `${host}:${remotePort}`,
     url: null,
     host,
@@ -247,21 +273,23 @@ const SERVER_LOCK_EXIT = 7;
 const SERVER_TARGETS = ["darwin-arm64", "darwin-x64", "linux-x64", "linux-arm64"];
 const SERVER_MATCH = "/.solenta/server/[^ ]*/app/electron/server/index.js";
 
-// Nothing installed (#1829): set up this version's headless server, T3-style.
-// Side by side under ~/.solenta/server/<version>, checked against the sha256
+// Nothing installed: stage this release's Node server before preparing its owner.
+// Side by side under ~/.solenta/server/<tag>-<target>-<digest>, checked against the sha256
 // this computer passes in (so the download's transport does not matter),
 // one installer at a time per version. Data lives in ~/.solenta/data, apart
 // from a desktop Solenta's. No single quotes: this runs inside sh -c '...'.
-function provisionServerLines(p, server) {
-  const v = String(server.version);
-  if (!/^[\w.+-]+$/.test(v)) throw new Error("Unexpected server version.");
+function provisionServerLines(p, server, launch = true) {
+  const v = String(server.releaseTag || server.version);
+  if (!/^[\w.+-]{1,128}$/.test(v)) throw new Error("Unexpected server release tag.");
+  const shaArg = server.buildSha ? ` --build-sha ${String(server.buildSha)}` : "";
+  if (server.buildSha && !/^[0-9a-f]{7,64}(?:\+dirty)?$/.test(server.buildSha)) throw new Error("Unexpected server build SHA.");
   const arms = SERVER_TARGETS.filter((t) => server.byTarget[t]).map((t) => {
     const { url, sha256 } = server.byTarget[t];
     if (!/^https?:\/\/[\w./%:+-]+$/.test(url) || !/^[0-9a-f]{64}$/.test(sha256)) throw new Error("Unexpected server download.");
     return `    ${t}) url="${url}"; sum=${sha256} ;;`;
   });
   return `
-  base="$HOME/.solenta/server"; dir="$base/${v}"
+  base="$HOME/.solenta/server"
   case "$(uname -s)-$(uname -m)" in
     Darwin-arm64) t=darwin-arm64 ;; Darwin-x86_64) t=darwin-x64 ;;
     Linux-x86_64|Linux-amd64) t=linux-x64 ;; Linux-aarch64|Linux-arm64) t=linux-arm64 ;;
@@ -272,11 +300,12 @@ function provisionServerLines(p, server) {
 ${arms.join("\n")}
   esac
   [ -n "$url" ] || exit ${NO_SERVER_BUILD_EXIT}
+  dir="$base/${v}-$t-$sum"
   if [ ! -f "$dir/.install-complete" ]; then
     mkdir -p "$base"
     i=0
-    until mkdir "$base/.lock-${v}" 2>/dev/null; do i=$((i+1)); [ "$i" -gt 600 ] && exit ${SERVER_LOCK_EXIT}; sleep 1; done
-    trap "rm -rf \"$base/.lock-${v}\"" EXIT
+    until mkdir "$base/.lock-${v}-$t-$sum" 2>/dev/null; do i=$((i+1)); [ "$i" -gt 600 ] && exit ${SERVER_LOCK_EXIT}; sleep 1; done
+    cleanupInstall() { rmdir "$base/.lock-${v}-$t-$sum" 2>/dev/null || true; }; trap cleanupInstall EXIT
     if [ ! -f "$dir/.install-complete" ]; then
       tmp="$base/.staging-$$"; rm -rf "$tmp"; mkdir -p "$tmp"
       if command -v curl >/dev/null 2>&1; then curl -fsSL -o "$tmp/s.tgz" "$url" || exit 12
@@ -285,12 +314,16 @@ ${arms.join("\n")}
       got="$( (sha256sum "$tmp/s.tgz" 2>/dev/null || shasum -a 256 "$tmp/s.tgz") | cut -d" " -f1)"
       [ "$got" = "$sum" ] || { rm -rf "$tmp"; exit 14; }
       tar -xzf "$tmp/s.tgz" -C "$tmp" || { rm -rf "$tmp"; exit 15; }
-      rm -rf "$dir"; mv "$tmp/solenta-server" "$dir"; rm -rf "$tmp"
-      echo ${v} > "$dir/.install-complete"
+      [ -x "$tmp/solenta-server/bin/solenta-server" ] && [ -x "$tmp/solenta-server/bin/solenta-service" ] || { rm -rf "$tmp"; exit 15; }
+      "$tmp/solenta-server/bin/solenta-service" verify --runtime "$tmp/solenta-server" --release-tag ${v}${shaArg} >/dev/null || { rm -rf "$tmp"; exit 17; }
+      [ ! -e "$dir" ] || { rm -rf "$tmp"; echo "An incomplete runtime directory already exists; inspect it before retrying." >&2; exit 16; }
+      mv "$tmp/solenta-server" "$dir"; rm -rf "$tmp"
+      echo "${v}:$sum" > "$dir/.install-complete"
     fi
   fi
-  mkdir -p "$HOME/.solenta/data"
-  nohup "$dir/bin/solenta-server" --port ${p} --data-dir "$HOME/.solenta/data" >"${HEADLESS_LOG}" 2>&1 </dev/null &`;
+  [ "$(cat "$dir/.install-complete")" = "${v}:$sum" ] || exit 17
+  "$dir/bin/solenta-service" verify --runtime "$dir" --release-tag ${v}${shaArg} --archive-sha "$sum" >/dev/null || exit 17
+  ${launch ? `"$dir/bin/solenta-service" prepare --runtime "$dir" --port ${p} --data-dir "$HOME/.solenta/data" --release-tag ${v}${shaArg} --archive-sha "$sum" >"${HEADLESS_LOG}" 2>&1 || { tail -n 40 "${HEADLESS_LOG}" >&2; exit ${DID_NOT_START_EXIT}; }` : ""}`;
 }
 
 /**
@@ -380,7 +413,10 @@ async function serverDownloads(deps = {}) {
       version = m[1];
       byTarget[m[2]] = { url: String(a.browser_download_url), sha256: sha[1] };
     }
-    const found = version ? { version, byTarget } : null;
+    const pkg = deps.pkg || require("../package.json");
+    const found = version ? { version, releaseTag: String(release.tag_name || tag), byTarget,
+      ...(pkg.releaseTag === tag && pkg.buildSha ? { buildSha: String(pkg.buildSha) } : {}),
+    } : null;
     serverDownloadsByTag.set(tag, found);
     return found;
   } catch {
@@ -426,7 +462,7 @@ async function readRemoteToken(host, remotePort = DEFAULT_REMOTE_PORT, deps = {}
       }
       if (err && err.code === DID_NOT_START_EXIT) {
         const tail = headlessLogTail(stderr);
-        return reject(new Error(`Solenta did not start on ${host}. On a Mac someone must be logged in to the desktop; on Linux see ~/.solenta-headless.log there. If Solenta was already open there, restart it and connect again.${tail ? `\n${tail}` : ""}`));
+        return reject(new Error(`Solenta did not reach readiness on ${host}. A managed Node server needs an available Linux user service manager or a logged-in macOS GUI session. Inspect ~/.solenta-headless.log there; an externally managed server can instead be started explicitly with solenta-server.${tail ? `\n${tail}` : ""}`));
       }
       if (err && err.code === NO_SERVER_BUILD_EXIT) {
         return reject(new Error(`There is no Solenta server build for ${host}'s system. Builds exist for macOS and Linux on Intel and ARM; install Solenta there yourself.`));
@@ -458,6 +494,8 @@ const INSTALL_EXITS = {
   13: "The remote computer has neither curl nor wget to download Solenta with.",
   14: "The download did not match the release checksum, so nothing was installed.",
   15: "The download could not be unpacked on the remote computer.",
+  16: "An incomplete runtime directory already exists. Inspect it on the remote computer before retrying; no existing runtime was replaced.",
+  17: "The cached or staged Node runtime does not match the requested release identity. No existing runtime or data was replaced.",
 };
 function installHostCommand(url, sha256) {
   if (!/^https:\/\/[\w./%:-]+$/.test(url)) throw new Error("Unexpected release download URL.");
@@ -520,6 +558,18 @@ async function linuxReleaseAsset(deps = {}) {
 }
 
 async function installRemoteSolenta(input, deps = {}) {
+  const conn = validateConnection({ host: input && input.host, remotePort: input && input.remotePort, token: "" });
+  const description = await remoteDescriptor(conn, deps);
+  if (input.computerId && description.computerId !== input.computerId) throw new Error("The computer identity changed or could not be verified. Update refused.");
+  if (description.runtimeKind === "server") {
+    const result = await manageRemoteServer({ ...input, action: "update" }, deps);
+    return { ...result, tag: result.releaseTag || "", missingLibraries: [], aptCommand: null, restartNeeded: false };
+  }
+  if (description.runtimeKind !== "desktop") throw new Error("The running computer's runtime could not be verified. Check its status before updating.");
+  return installRemoteDesktop(input, deps);
+}
+
+async function installRemoteDesktop(input, deps = {}) {
   const { host } = validateConnection({ host: input && input.host, token: "" });
   const asset = await linuxReleaseAsset(deps);
   const env = sshEnv(host, deps);
@@ -549,6 +599,72 @@ async function installRemoteSolenta(input, deps = {}) {
   };
 }
 
+
+// Lifecycle commands use the existing SSH trust/askpass boundary. Inspecting
+// status never prepares a server, unlike the explicit install action.
+function remoteExec(conn, command, deps = {}) {
+  const env = sshEnv(conn.host, deps);
+  return new Promise((resolve, reject) => (deps.execFile || execFile)("ssh", ["-T", ...sshAuthOptions(!!env), "-o", "ConnectTimeout=10", conn.host, command], { timeout: 15 * 60_000, maxBuffer: 256 * 1024, ...(env ? { env } : {}) }, (error, out, stderr) => {
+    if (!error) return resolve(String(out));
+    reject(new Error(error.code === 255 ? sshFailure(conn.host, String(stderr || ""), error.code, deps) : headlessLogTail(stderr) || `Server operation failed (exit ${error.code}).`));
+  }));
+}
+async function remoteDescriptor(conn, deps) {
+  if (deps.remoteDescriptor) return deps.remoteDescriptor(conn);
+  const out = await remoteExec(conn, `sh -c '
+descriptor="$(curl -fsS -m 5 "http://127.0.0.1:${conn.remotePort}/.well-known/solenta" 2>/dev/null || true)"
+case "$descriptor" in
+  \{*) printf "%s\\n" "$descriptor" ;;
+  *) if pgrep -f "${SERVER_MATCH}" >/dev/null 2>&1; then echo server;
+     elif pgrep -x solenta >/dev/null 2>&1 || pgrep -x solenta-nightly >/dev/null 2>&1 || ps -axo comm= | grep -E "/Contents/MacOS/Solenta( Nightly)?$" >/dev/null 2>&1; then echo desktop;
+     else echo unknown; fi ;;
+esac
+'`, deps);
+  if (["server", "desktop"].includes(out.trim())) return { runtimeKind: out.trim() };
+  try { const d = JSON.parse(out); return d && d.kind === "solenta" ? d : {}; } catch { return {}; }
+}
+function serverLifecycleCommand(action, port, server, computerId = null, serviceMode = "managed") {
+  if (!["managed", "external"].includes(serviceMode)) throw new Error("Invalid server preparation mode.");
+  if (computerId && !/^[a-zA-Z0-9._:-]{1,128}$/.test(computerId)) throw new Error("Invalid expected computer identity.");
+  if (!["install", "status", "logs", "start", "stop", "restart", "update", "recover", "uninstall"].includes(action)) throw new Error("Unknown server lifecycle action.");
+  return `sh -c '
+${server ? provisionServerLines(port, server, false) : `base="$HOME/.solenta/server"; dir=""
+for candidate in "$base"/*; do [ -x "$candidate/bin/solenta-service" ] && dir="$candidate"; done`}
+if [ -z "$dir" ] || [ ! -x "$dir/bin/solenta-service" ]; then
+  ${["status", "logs"].includes(action) ? `available=false; manager=null; linger=""
+case "$(uname -s)" in
+  Linux) manager="\\"systemd-user\\""; systemctl --user show-environment >/dev/null 2>&1 && available=true
+    lingerValue="$(loginctl show-user "$(id -u)" --property=Linger --value 2>/dev/null || true)"
+    case "$lingerValue" in yes) linger=",\\"linger\\":true" ;; no) linger=",\\"linger\\":false" ;; esac
+    sessionLimit="Linux user manager availability was checked. Before-login and after-logout operation requires administrator-enabled linger." ;;
+  Darwin) manager="\\"launchd\\""; launchctl print "gui/$(id -u)" >/dev/null 2>&1 && available=true
+    sessionLimit="macOS launchd requires a GUI login session. It does not run before login and stops at logout." ;;
+  *) sessionLimit="No supported user service manager on this platform." ;;
+esac
+cat <<EOFSTATUS
+{"mode":"external","manager":$manager,"installed":false,"available":$available,"running":false,"sessionLimit":"$sessionLimit"$linger}
+EOFSTATUS
+exit 0` : 'echo "No managed Node server is installed. Prepare its service explicitly; existing external servers must be stopped by their owner first." >&2; exit 1'}
+fi
+"$dir/bin/solenta-service" ${action === "install" && serviceMode === "external" ? "external-start" : action} --data-dir "$HOME/.solenta/data" --port ${port}${server ? ` --runtime "$dir" --release-tag ${String(server.releaseTag || server.version)}${server.buildSha ? ` --build-sha ${server.buildSha}` : ""} --archive-sha "$sum"` : ''}${computerId ? ` --computer-id ${computerId}` : ""}
+'`;
+}
+async function manageRemoteServer(input, deps = {}) {
+  const conn = validateConnection({ host: input && input.host, remotePort: input && input.remotePort, token: "" });
+  const action = String(input && input.action || "status");
+  const server = ["install", "update"].includes(action) ? await serverDownloads(deps) : null;
+  if (["install", "update"].includes(action) && !server) throw new Error("This build has no checksum-pinned published server release. Install a release build or manage the server explicitly on that computer.");
+  const raw = await remoteExec(conn, serverLifecycleCommand(action, conn.remotePort, server, input.computerId, input.serviceMode || "managed"), deps);
+  let result;
+  try { result = JSON.parse(raw.trim()); } catch { throw new Error("The server lifecycle command did not return verified status. Inspect its service logs."); }
+  if (!["managed", "external"].includes(result.mode)) throw new Error("Invalid server lifecycle status.");
+  if (typeof result.logs === "string") result.logs = result.logs
+    .replace(/(token[=:\s]+)[^\s&"']+/gi, "$1[redacted]")
+    .replace(/(Bearer\s+)\S+/gi, "$1[redacted]")
+    .split("\n").filter((line) => !/[\u2580\u2584\u2588]/.test(line)).slice(-80).join("\n");
+  return result;
+}
+
 // ws:// for a forwarded loopback port, ws(s):// for a direct address.
 function wsUrlFor(target) {
   return typeof target === "number"
@@ -559,7 +675,7 @@ function wsUrlFor(target) {
 // After the token check: which Solenta and which agents the host has, for
 // the Connections row. One extra socket; null when the host is too old to
 // answer or slow, never an error. `target` is a loopback port or an origin.
-function inspectHost(target, token, timeoutMs = 8_000) {
+function inspectHost(target, token, timeoutMs = 8_000, descriptor = null) {
   return new Promise((resolve) => {
     const ws = new WebSocket(wsUrlFor(target));
     const replies = new Map();
@@ -578,6 +694,7 @@ function inspectHost(target, token, timeoutMs = 8_000) {
         return done(null);
       }
       if (msg.kind === "auth-ok") {
+        try { confirmComputer(descriptor, msg.computer, descriptor?.computerId); } catch { return done(null); }
         ws.send(JSON.stringify({ kind: "invoke", id: 1, channel: "app:status", args: [] }));
         ws.send(JSON.stringify({ kind: "invoke", id: 2, channel: "providers:list", args: [] }));
         return;
@@ -636,30 +753,62 @@ function freeLoopbackPort() {
 
 // Checks the token on a loopback port (the SSH forward) or a direct
 // origin. A direct host that never answers fails with `unreachable`.
-function probeToken(target, token, opts = {}) {
+// This unauthenticated request MUST finish before a saved token leaves the
+// process. No redirects: an endpoint cannot redirect credentials elsewhere.
+async function fetchComputerDescriptor(target, opts = {}) {
+  const origin = typeof target === "number" ? `http://127.0.0.1:${target}` : target;
+  const response = await (opts.fetch || fetch)(`${origin}${DESCRIPTOR_PATH}`, {
+    redirect: "manual", signal: AbortSignal.timeout(opts.timeoutMs ?? 5_000),
+    headers: { Accept: "application/json" },
+  });
+  if (response.status === 404 || response.status === 410) {
+    if (!opts.computerId && opts.allowLegacy) return null;
+    throw new Error("This computer does not publish a Solenta identity. Enable legacy compatibility for an unbound connection, or update it there.");
+  }
+  if (!response.ok) throw new Error(`The computer identity check failed (HTTP ${response.status}).`);
+  const body = await response.text();
+  // Old web hosts serve their SPA for unknown paths. Only an explicit
+  // compatibility attempt can use that behavior; JSON errors stay errors.
+  if (!opts.computerId && opts.allowLegacy && !/json/i.test(response.headers.get("content-type") || "") && !body.trim().startsWith("{")) return null;
+  if (body.length > 32_768) throw new Error("The remote computer identity response is too large.");
+  let value;
+  try { value = JSON.parse(body); } catch { throw new Error("The remote computer returned an invalid Solenta identity."); }
+  const descriptor = parseComputerDescriptor(value);
+  if (opts.computerId && descriptor.computerId !== opts.computerId) {
+    throw new Error("Computer identity mismatch. This address belongs to a different computer; no token was sent and the saved connection was preserved.");
+  }
+  return descriptor;
+}
+
+async function probeToken(target, token, opts = {}) {
   const unreachable = opts.unreachable || "SSH tunnel is not ready.";
+  let descriptor;
+  try { descriptor = await fetchComputerDescriptor(target, opts); }
+  catch (err) {
+    if (/fetch failed|timeout|aborted/i.test(err.message)) throw new Error(unreachable);
+    throw err;
+  }
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(wsUrlFor(target));
     let opened = false;
     let settled = false;
     const timer = setTimeout(() => done(new Error(unreachable)), opts.timeoutMs ?? 1_000);
-    const done = (err) => {
+    const done = (err, computer) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       ws.terminate();
-      err ? reject(err) : resolve();
+      err ? reject(err) : resolve(computer);
     };
     ws.once("open", () => {
       opened = true;
-      ws.send(JSON.stringify({ kind: "auth", token }));
+      ws.send(JSON.stringify({ kind: "auth", token, ...(descriptor ? { computerId: descriptor.computerId, protocol: 1 } : {}) }));
     });
     ws.once("message", (raw) => {
       try {
-        if (JSON.parse(String(raw)).kind === "auth-ok") return done();
-      } catch {
-        // A different service owns the forwarded port.
-      }
+        const msg = JSON.parse(String(raw));
+        if (msg.kind === "auth-ok") return done(null, confirmComputer(descriptor, msg.computer, opts.computerId));
+      } catch (err) { return done(err); }
       done(new Error(typeof target === "number"
         ? "The forwarded port is not a Solenta Web host."
         : `${target} is not a Solenta Web host.`));
@@ -671,11 +820,18 @@ function probeToken(target, token, opts = {}) {
   });
 }
 
+function bindExpectedComputer(conn, tokens) {
+  const stored = tokens.computerId?.(conn.key);
+  if (stored && conn.computerId && stored !== conn.computerId) throw new Error("Computer identity mismatch. The saved route was preserved.");
+  if (stored) conn.computerId = stored;
+  return conn;
+}
+
 // Never probe before ssh owns the forwarded port: until then another local
 // process could hold it and would receive the token. "Local forwarding
 // listening" is logged BEFORE bind(), so it proves nothing; with
 // ExitOnForwardFailure, ssh only enters the session once every bind worked.
-async function waitForHost(child, token) {
+async function waitForHost(child, token, opts = {}) {
   // An in-app password or host-key prompt may hold ssh before it is ready.
   const deadline = Date.now() + 15_000 + (child.interactive ? PROMPT_TIMEOUT_MS : 0);
   while (Date.now() < deadline) {
@@ -685,8 +841,7 @@ async function waitForHost(child, token) {
       continue;
     }
     try {
-      await probeToken(child.backPort, token);
-      return;
+      return await probeToken(child.backPort, token, opts);
     } catch (err) {
       if (!/SSH tunnel is not ready/.test(err.message)) throw err;
     }
@@ -736,7 +891,7 @@ function spawnTunnel(spawnFn, host, backPort, remotePort, onClose, deps = {}) {
 
 // The isolated desktop window for one host's Solenta Web. Links leaving
 // `origin` open in the browser. Destroyed again if the page will not load.
-async function createHostWindow({ origin, title, token, deps, onClosed }) {
+async function createHostWindow({ origin, title, token, computerId, allowLegacy, deps, onClosed }) {
   const { BrowserWindow, shell } = deps.electron || require("electron");
   const win = new BrowserWindow({
     width: 1440,
@@ -769,7 +924,7 @@ async function createHostWindow({ origin, title, token, deps, onClosed }) {
   win.on("closed", onClosed);
   // Web hosts accept a query token and scrub it after boot.
   try {
-    await win.loadURL(`${origin}/?token=${encodeURIComponent(token)}`);
+    await win.loadURL(`${origin}/#token=${encodeURIComponent(token)}${computerId ? `&computerId=${encodeURIComponent(computerId)}` : allowLegacy ? "&allowLegacy=1" : ""}`);
   } catch {
     if (!win.isDestroyed()) win.destroy();
     throw new Error("Unable to load the remote Solenta window.");
@@ -798,10 +953,11 @@ function savedTokenRejected(err, fromKeychain, tokens, key) {
 
 // After the window opened: keep (or drop) the proven token and report
 // which Solenta the host runs.
-async function connectedResult(conn, token, inspected, deps) {
+async function connectedResult(conn, token, inspected, deps, descriptor) {
   let tokenSaved = false;
   try {
     const tokens = tokenStoreFor(deps);
+    if (descriptor) tokens.bindComputer?.(conn.key, descriptor.computerId);
     if (conn.remember) tokenSaved = tokens.set(conn.key, token);
     else tokens.delete(conn.key);
   } catch {
@@ -817,6 +973,7 @@ async function connectedResult(conn, token, inspected, deps) {
     remotePort: conn.remotePort,
     ...(conn.url ? { url: conn.url } : {}),
     tokenSaved,
+    ...(descriptor ? { computerId: descriptor.computerId, descriptor } : { legacy: true }),
     remote,
     localVersion: mine,
   };
@@ -833,6 +990,7 @@ function unreachableText(url) {
 async function openDirectConnection(conn, deps) {
   const { url, key, label } = conn;
   const tokens = tokenStoreFor(deps);
+  bindExpectedComputer(conn, tokens);
   let token = conn.token;
   let fromKeychain = false;
   if (!token) {
@@ -848,12 +1006,14 @@ async function openDirectConnection(conn, deps) {
   active.set(key, entry);
   entry.promise = (async () => {
     try {
-      await (deps.probeToken || probeToken)(url, token, { timeoutMs: DIRECT_PROBE_MS, unreachable: unreachableText(url) });
-      const inspected = (deps.inspectHost || inspectHost)(url, token).catch(() => null);
+      const descriptor = await (deps.probeToken || probeToken)(url, token, { ...conn, timeoutMs: DIRECT_PROBE_MS, unreachable: unreachableText(url) });
+      const inspected = (deps.inspectHost || inspectHost)(url, token, 8_000, descriptor).catch(() => null);
       const win = await createHostWindow({
         origin: url,
         title: `${label} · Solenta`,
         token,
+        computerId: descriptor?.computerId,
+        allowLegacy: conn.allowLegacy,
         deps,
         onClosed: () => {
           entry.closing = true;
@@ -862,7 +1022,7 @@ async function openDirectConnection(conn, deps) {
       });
       entry.win = win;
       win.show();
-      return await connectedResult(conn, token, inspected, deps);
+      return await connectedResult(conn, token, inspected, deps, descriptor);
     } catch (err) {
       active.delete(key);
       if (entry.win && !entry.win.isDestroyed()) entry.win.destroy();
@@ -877,6 +1037,7 @@ async function openRemoteConnection(input, deps = {}) {
   if (conn.url) return openDirectConnection(conn, deps);
   const { host, label, remotePort, token: typed, key } = conn;
   const tokens = tokenStoreFor(deps);
+  bindExpectedComputer(conn, tokens);
   // Typed, then the host's own token file over SSH (always current), then
   // the keychain copy for hosts whose token file cannot be read.
   // Always prepare the host, even with a typed token: it is what starts
@@ -949,7 +1110,7 @@ async function openRemoteConnection(input, deps = {}) {
       let child = null;
       try {
         child = await startTunnel();
-        await waitForHost(child, token);
+        await waitForHost(child, token, conn);
         entry.backPort = child.backPort;
         entry.reconnecting = false;
         if (!entry.win.isDestroyed()) entry.win.setTitle(title);
@@ -976,14 +1137,17 @@ async function openRemoteConnection(input, deps = {}) {
     try {
       const port = await startFront();
       const child = await startTunnel();
-      await waitForHost(child, token);
+      const descriptor = await waitForHost(child, token, conn);
+      if (descriptor) conn.computerId = descriptor.computerId;
       entry.backPort = child.backPort;
       // Runs while the window loads; only the Connections row waits for it.
-      const inspected = (deps.inspectHost || inspectHost)(port, token).catch(() => null);
+      const inspected = (deps.inspectHost || inspectHost)(port, token, 8_000, descriptor).catch(() => null);
       const win = await createHostWindow({
         origin: `http://127.0.0.1:${port}`,
         title,
         token,
+        computerId: descriptor?.computerId,
+        allowLegacy: conn.allowLegacy,
         deps,
         onClosed: () => {
           entry.closing = true;
@@ -993,7 +1157,7 @@ async function openRemoteConnection(input, deps = {}) {
       });
       entry.win = win;
       win.show();
-      return await connectedResult(conn, token, inspected, deps);
+      return await connectedResult(conn, token, inspected, deps, descriptor);
     } catch (err) {
       active.delete(key);
       if (entry.win && !entry.win.isDestroyed()) entry.win.destroy();
@@ -1016,7 +1180,8 @@ function closeEntry(entry) {
 }
 
 function forgetRemoteConnection(input, deps = {}) {
-  tokenStoreFor(deps).delete(validateConnection({ ...input, token: "" }).key);
+  const tokens = tokenStoreFor(deps);
+  (tokens.forget || tokens.delete).call(tokens, validateConnection({ ...input, token: "" }).key);
 }
 
 function closeRemoteConnections() {
@@ -1029,7 +1194,7 @@ function closeRemoteConnections() {
 
 // One invoke on the host's web API over a tunnel of its own, no window.
 // The reply can be large (Teleport back, #1702), hence the raised maxPayload.
-function wsInvoke(wsUrl, token, channel, args, timeoutMs) {
+function wsInvoke(wsUrl, token, channel, args, timeoutMs, descriptor) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(wsUrl, { maxPayload: 128 * 1024 * 1024 });
     let settled = false;
@@ -1050,6 +1215,7 @@ function wsInvoke(wsUrl, token, channel, args, timeoutMs) {
         return done(new Error("The remote Solenta host sent an unreadable reply."));
       }
       if (msg.kind === "auth-ok") {
+        try { confirmComputer(descriptor, msg.computer, descriptor?.computerId); } catch (err) { return done(err); }
         ws.send(JSON.stringify({ kind: "invoke", id: 1, channel, args }));
         return;
       }
@@ -1069,9 +1235,9 @@ function wsInvoke(wsUrl, token, channel, args, timeoutMs) {
  * host prep as Connect: the host's token file over SSH, then the keychain.
  */
 async function invokeRemote(input, channel, args, deps = {}) {
-  const { child, token, wsUrl } = await openHostTunnel(input, deps);
+  const { child, token, wsUrl, descriptor } = await openHostTunnel(input, deps);
   try {
-    return await wsInvoke(wsUrl, token, channel, args, deps.timeoutMs ?? 10 * 60_000);
+    return await wsInvoke(wsUrl, token, channel, args, deps.timeoutMs ?? 10 * 60_000, descriptor);
   } finally {
     child.kill();
   }
@@ -1083,16 +1249,22 @@ async function invokeRemote(input, channel, args, deps = {}) {
  * The caller owns `child` and kills it when done.
  */
 async function openHostTunnel(input, deps = {}, onClose) {
-  const conn = validateConnection({ host: input && input.host, remotePort: input && input.remotePort, url: input && input.url, label: input && input.label, token: "" });
+  const conn = validateConnection({ ...input, token: "" });
+  // Peer links own their token and verified identity in peers.json. A sidebar
+  // route has a separate credential lifetime; unlinking a peer must not leave
+  // an invisible binding in that store or erase a user's saved route.
+  const peer = input?.peer === true && Boolean(conn.url);
+  if (!peer) bindExpectedComputer(conn, tokenStoreFor(deps));
   if (conn.url) {
     // Direct route: no tunnel to own, so `child` only satisfies the shape.
     // A linked computer (#1832) carries its own token: no keychain on a server.
-    const token = (input && typeof input.token === "string" && input.token) || tokenStoreFor(deps).get(conn.key);
+    const token = (input && typeof input.token === "string" && input.token) || (!peer && tokenStoreFor(deps).get(conn.key));
     if (!token) {
       throw new Error(`No web token found for ${conn.label}. Connect to it once from Settings > Connections with its device token.`);
     }
-    await (deps.probeToken || probeToken)(conn.url, token, { timeoutMs: DIRECT_PROBE_MS, unreachable: unreachableText(conn.url) });
-    return { child: { backPort: null, kill() {} }, token, wsUrl: wsUrlFor(conn.url) };
+    const descriptor = await (deps.probeToken || probeToken)(conn.url, token, { ...conn, timeoutMs: DIRECT_PROBE_MS, unreachable: unreachableText(conn.url) });
+    if (descriptor && !peer) tokenStoreFor(deps).bindComputer?.(conn.key, descriptor.computerId);
+    return { child: { backPort: null, kill() {} }, token, wsUrl: wsUrlFor(conn.url), descriptor };
   }
   const { host, remotePort } = conn;
   const token = (await readRemoteToken(host, remotePort, deps)) || tokenStoreFor(deps).get(`${host}:${remotePort}`);
@@ -1100,13 +1272,15 @@ async function openHostTunnel(input, deps = {}, onClose) {
     throw new Error(`No web token found on ${host}. Connect to it once from Settings > Connections.`);
   }
   const child = spawnTunnel(deps.spawn || spawn, host, await freeLoopbackPort(), remotePort, onClose, deps);
+  let descriptor;
   try {
-    await waitForHost(child, token);
+    descriptor = await waitForHost(child, token, conn);
+    if (descriptor) tokenStoreFor(deps).bindComputer?.(conn.key, descriptor.computerId);
   } catch (err) {
     child.kill();
     throw err;
   }
-  return { child, token, wsUrl: wsUrlFor(child.backPort) };
+  return { child, token, wsUrl: wsUrlFor(child.backPort), descriptor };
 }
 
 module.exports = {
@@ -1120,9 +1294,12 @@ module.exports = {
   prepareHostCommand,
   installHostCommand,
   installRemoteSolenta,
+  manageRemoteServer,
+  serverLifecycleCommand,
   inspectHost,
   compareVersions,
   probeToken,
+  fetchComputerDescriptor,
   parseDirectUrl,
   createTokenStore,
   openRemoteConnection,

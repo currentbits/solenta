@@ -29,6 +29,7 @@ function parseArgs(argv) {
     else if (flag === "--data-dir") out.dataDir = path.resolve(value());
     else if (flag === "--link") out.link = value();
     else if (flag === "--link-label") out.linkLabel = value();
+    else if (flag === "--maintenance") out.maintenance = true;
     else if (flag === "--version") out.version = true;
     else if (flag === "--help") out.help = true;
     else throw new Error(`Unknown option ${argv[i]}. Try --help.`);
@@ -56,10 +57,19 @@ if (opts.help) {
   process.exit(0);
 }
 
-fs.mkdirSync(opts.dataDir, { recursive: true, mode: 0o700 });
+let releaseLock;
+try {
+  releaseLock = require("./dataLock.js").acquireDataLock(opts.dataDir);
+} catch (error) {
+  console.error(error.message);
+  process.exit(78);
+}
+process.once("exit", () => releaseLock());
 // No keychain here: settings secrets stay in the 0600 store, like dev builds.
 process.env.SOLENTA_ENABLE_SAFE_STORAGE = "0";
 process.env.SOLENTA_SERVER = "1";
+if (opts.maintenance) process.env.SOLENTA_SERVER_MAINTENANCE = "1";
+else delete process.env.SOLENTA_SERVER_MAINTENANCE;
 if (opts.link) process.env.SOLENTA_LINK = opts.link;
 if (opts.linkLabel) process.env.SOLENTA_LINK_LABEL = opts.linkLabel;
 
@@ -72,3 +82,11 @@ Module._load = function (request, ...rest) {
 
 process.argv = [process.argv[0], path.join(appRoot, "electron", "main.js"), "--headless", `--serve-web=${opts.port}`, `--serve-host=${opts.host}`];
 require("../main.js");
+// A maintenance trial belongs to its updater, not the native service. Losing
+// that exact parent must release the trial's writer before recovery can restore
+// state. IPC closes on updater death without guessing or signalling another PID.
+if (opts.maintenance && typeof process.send === "function") {
+  const stopOrphanTrial = () => process.kill(process.pid, "SIGTERM");
+  process.once("disconnect", stopOrphanTrial);
+  if (!process.connected) stopOrphanTrial();
+}

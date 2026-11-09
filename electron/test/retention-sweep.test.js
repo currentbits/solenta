@@ -261,8 +261,8 @@ describe("main.js retention sweeper wiring (#641)", () => {
     assert.match(main, /sweepOrphanWorktrees/);
     // Boot timeout is orphan-only; the sweeper owns enforceRetention.
     const bootSweep = main.slice(
-      main.indexOf("const sweepTimer"),
-      main.indexOf("sweepTimer.unref()"),
+      main.indexOf("bootSweepTimer = setTimeout"),
+      main.indexOf("bootSweepTimer.unref()"),
     );
     assert.match(bootSweep, /sweepOrphanWorktrees/);
     assert.doesNotMatch(bootSweep, /enforceRetention/);

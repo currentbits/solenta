@@ -948,6 +948,8 @@ export function createWeb(): Pick<CoderApi, "web"> {
   });
   return {
     web: {
+      enrollmentStatus: async () => ({ computerId: null, devices: [] }),
+      createEnrollment: async () => { throw new Error("Browser enrollment needs a running Solenta host."); },
       status,
       async setEnabled(input) {
         running = input.enabled;

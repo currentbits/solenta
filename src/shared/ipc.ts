@@ -58,7 +58,20 @@ export type FilePreview =
  * The other Solenta host a project or thread lives on (#1819). Absent on
  * this machine's own rows. Calls naming such a row run on that host.
  */
+/** Public identity of one data directory; contains no credentials or paths. */
+export interface RemoteComputerDescriptor {
+  kind: "solenta";
+  computerId: string;
+  protocol: { min: number; max: number };
+  runtimeKind: "server" | "desktop";
+  version?: string;
+  releaseTag?: string;
+  buildSha?: string;
+  capabilities?: string[];
+}
+
 export interface HostTag {
+  computerId?: string;
   /** host:remotePort of the saved Connection, or its address (#1824). */
   key: string;
   label: string;
@@ -67,6 +80,12 @@ export interface HostTag {
 
 /** One saved Connection shown in the sidebar (#1819). */
 export interface SidebarHostStatus {
+  /** Current transport route; the key above remains the computer owner. */
+  activeRouteKey?: string;
+  computerId?: string;
+  descriptor?: RemoteComputerDescriptor;
+  /** Verified alternate routes, retaining their separate credentials. */
+  routes?: Array<{ key: string; host: string; remotePort: number; url?: string }>;
   key: string;
   host: string;
   remotePort: number;
@@ -80,6 +99,7 @@ export interface SidebarHostStatus {
 
 /** A linked computer (#1832): address and name, never its token. */
 export interface PeerLink {
+  computerId?: string;
   key: string;
   url: string;
   label: string;
@@ -3660,6 +3680,8 @@ export type RemoteAgentInfo = Pick<ProviderInfo, "id" | "name" | "available" | "
 
 /** What Connect learned about the other computer; null when it did not answer. */
 export interface RemoteHostInfo {
+  computerId?: string;
+  runtimeKind?: "server" | "desktop";
   version: string;
   platform: string;
   /** Older than this app. */
@@ -3672,6 +3694,8 @@ export type TeleportPayload = { version: number } & Record<string, unknown>;
 
 /** A saved Remote Connection a thread can teleport to (#1702). */
 export interface TeleportTarget {
+  computerId?: string;
+  allowLegacy?: boolean;
   host: string;
   remotePort: number;
   /** Direct route (#1824): reach the host at this origin instead of over SSH. */
@@ -3680,6 +3704,10 @@ export interface TeleportTarget {
 }
 
 export interface RemoteConnectionResult {
+  computerId?: string;
+  descriptor?: RemoteComputerDescriptor;
+  /** Explicit compatibility connection to an older host without identity. */
+  legacy?: true;
   host: string;
   remotePort: number;
   /** The normalized origin, for a direct route (#1824). */
@@ -3687,6 +3715,25 @@ export interface RemoteConnectionResult {
   tokenSaved: boolean;
   remote?: RemoteHostInfo | null;
   localVersion?: string;
+}
+
+export interface RemoteServerStatus {
+  mode: "managed" | "external";
+  manager: "systemd-user" | "launchd" | null;
+  installed: boolean;
+  running: boolean;
+  sessionLimit: string;
+  linger?: boolean;
+  logs?: string;
+  recoveryRequired?: boolean;
+  cleanupWarning?: string;
+}
+export interface RemoteServerAction {
+  host: string;
+  serviceMode?: "managed" | "external";
+  computerId?: string;
+  remotePort?: number;
+  action: "install" | "status" | "logs" | "start" | "stop" | "restart" | "recover" | "uninstall";
 }
 
 export interface RemoteInstallResult {
@@ -3698,6 +3745,7 @@ export interface RemoteInstallResult {
   aptCommand: string | null;
   /** A desktop copy of Solenta there still runs the old files. */
   restartNeeded: boolean;
+  cleanupWarning?: string;
 }
 
 /** "ssh:prompt" push: ssh's own prompt text, relayed by askpass (#1818). */
@@ -5025,6 +5073,8 @@ export type WebDeviceScope =
   | "full";
 
 export interface WebDeviceInfo {
+  /** Browser enrollment sessions expire; legacy direct devices omit this. */
+  expiresAt?: number;
   id: string;
   name: string;
   createdAt: number;
@@ -5058,6 +5108,19 @@ export interface WebAccessStatus {
 }
 
 /** Returned once from addDevice. The token is stored only as a hash. */
+export interface WebEnrollmentCreated {
+  grant: string;
+  name: string;
+  scopes: WebDeviceScope[];
+  expiresAt: number;
+  sessionTtlMs: number;
+  computerId: string;
+}
+export interface WebEnrollmentStatus {
+  computerId: string | null;
+  devices: WebDeviceInfo[];
+}
+
 export interface WebDeviceCreated {
   device: WebDeviceInfo;
   token: string;
@@ -5433,6 +5496,8 @@ export interface CliSlashCommand {
 }
 
 export interface AppStatus {
+  computer?: RemoteComputerDescriptor;
+  serverActivity?: { active: number };
   /** Aggregated cost of all runs that finished today (local time). */
   spendTodayUsd: number;
   memory: {
@@ -5456,6 +5521,9 @@ export interface AppStatus {
     /** Update channel stamped at package time; null in a dev tree. */
     channel: "prod" | "nightly" | null;
     platform?: string;
+    runtimeKind?: "server" | "desktop";
+    releaseTag?: string;
+    buildSha?: string;
   };
 }
 
@@ -5813,6 +5881,9 @@ export interface CoderApi {
      * over SSH, or directly at `url` with a device token (#1824).
      */
     openRemoteConnection(input: {
+      computerId?: string;
+      /** Unbound older hosts only. Never bypasses a saved identity mismatch. */
+      allowLegacy?: boolean;
       host: string;
       /**
        * Solenta Web address (https://, or http:// on a private network or
@@ -5833,7 +5904,8 @@ export interface CoderApi {
      * Install or update this build's Linux tarball in ~/solenta on an SSH
      * host, checked against the release's sha256. Linux x86_64 only.
      */
-    installRemoteSolenta(input: { host: string }): Promise<RemoteInstallResult>;
+    installRemoteSolenta(input: { host: string; remotePort?: number; computerId?: string }): Promise<RemoteInstallResult>;
+    manageRemoteServer(input: RemoteServerAction): Promise<RemoteServerStatus>;
     /**
      * Show these saved Connections' projects and threads in this window
      * (#1819). Replaces the previous set; resolves each host's state. Desktop only.
@@ -5845,10 +5917,10 @@ export interface CoderApi {
      * computer (Full access). Tokens are never returned.
      */
     listPeers(): Promise<PeerLink[]>;
-    linkPeer(input: { link: string; label?: string; token?: string }): Promise<PeerLink[]>;
+    linkPeer(input: { link: string; label?: string; token?: string; allowLegacy?: boolean }): Promise<PeerLink[]>;
     unlinkPeer(input: { key: string }): Promise<PeerLink[]>;
     setSidebarHosts(
-      hosts: Array<{ host: string; remotePort: number; url?: string; label?: string }>,
+      hosts: Array<{ host: string; remotePort: number; url?: string; label?: string; computerId?: string; allowLegacy?: boolean }>,
     ): Promise<SidebarHostStatus[]>;
     /** Answer an "ssh:prompt" push; null cancels. Desktop only (#1818). */
     answerSshPrompt(input: { id: string; answer: string | null }): Promise<void>;
@@ -5986,10 +6058,14 @@ export interface CoderApi {
   };
   /**
    * Solenta Web (#1512 I2): the in-app server switch, per-device tokens and
-   * the optional Tailscale Serve helper. Desktop only; a web client gets an
-   * error. Revoking a device drops its open sockets at once.
+   * the optional Tailscale Serve helper. Server switches and reusable direct
+   * tokens are desktop-only. Full web owners may enroll or revoke sessions.
+   * Revocation and session expiry close live sockets at once.
    */
   web: {
+    /** Full-access owner operations; also available to a headless host's web UI. */
+    enrollmentStatus(): Promise<WebEnrollmentStatus>;
+    createEnrollment(input: { name: string; scopes?: WebDeviceScope[] }): Promise<WebEnrollmentCreated>;
     status(): Promise<WebAccessStatus>;
     setEnabled(input: { enabled: boolean; lan?: boolean }): Promise<WebAccessStatus>;
     /** Omitted scopes mean read only. */

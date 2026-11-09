@@ -121,7 +121,7 @@ const PANE_META: Record<
   },
   connections: {
     label: "Connections",
-    hint: "Use this Solenta from your phone or a browser, or open the Solenta running on another computer.",
+    hint: "Work on another computer, open this one in a browser, or link agents between computers.",
     keywords: "remote ssh host server tunnel workstation web token phone device qr pair tailscale https lan network browser",
   },
   integrations: {
@@ -145,6 +145,8 @@ function isSettingsPane(value: string | null | undefined): value is SettingsPane
 
 export interface SettingsModalProps {
   open: boolean;
+  computer?: { label: string; remote: boolean; onChange: (remote: boolean) => void };
+  providerApi?: CoderApi;
   onClose: () => void;
   /** Open onto a specific pane (sidebar worktree usage deep-links to Git). */
   initialPane?: SettingsPane | null;
@@ -190,6 +192,7 @@ export interface SettingsModalProps {
   onShowOnboarding?: () => void;
   onOpenConnection?: CoderApi["app"]["openRemoteConnection"];
   onForgetConnection?: CoderApi["app"]["forgetRemoteConnection"];
+  onManageRemoteServer?: CoderApi["app"]["manageRemoteServer"];
   onInstallSolenta?: CoderApi["app"]["installRemoteSolenta"];
   onSidebarHosts?: CoderApi["app"]["setSidebarHosts"];
   /** Live state of the Connections shown in the sidebar (#1819). */
@@ -274,6 +277,8 @@ function settingsDraftSnapshot(settings: AppSettings | null) {
 
 export function SettingsModal({
   open,
+  computer,
+  providerApi,
   onClose,
   initialPane = null,
   settings,
@@ -298,6 +303,7 @@ export function SettingsModal({
   onOpenConnection,
   onForgetConnection,
   onInstallSolenta,
+  onManageRemoteServer,
   onSidebarHosts,
   sidebarHosts,
   onRenameMemoryScope,
@@ -313,6 +319,7 @@ export function SettingsModal({
     return persistSettings(patch);
   };
   const [pane, setPane] = useState<SettingsPane>("general");
+  const [connectionPane, setConnectionPane] = useState<"computers" | "browser" | "agents">(() => isWebMode() ? "browser" : "computers");
   const [navQuery, setNavQuery] = useState("");
   /** Selector of a "Find a setting" pick, scrolled to and flashed once its pane renders. */
   const [highlightTarget, setHighlightTarget] = useState<string | null>(null);
@@ -386,7 +393,7 @@ export function SettingsModal({
     };
 
     if (justOpened) {
-      setPane(isSettingsPane(initialPane) ? initialPane : "general");
+      setPane(computer?.remote ? "providers" : isSettingsPane(initialPane) ? initialPane : "general");
       setToolsProjectId(currentProjectId);
       setNavQuery("");
       applyDrafts(settings, false);
@@ -417,9 +424,11 @@ export function SettingsModal({
   useModalFocus(open, dialogRef);
 
   useEffect(() => {
-    if (!open || !isSettingsPane(initialPane)) return;
+    if (!open) return;
+    if (computer?.remote) { setPane(initialPane === "agents" ? "agents" : "providers"); return; }
+    if (!isSettingsPane(initialPane)) return;
     setPane(initialPane);
-  }, [open, initialPane]);
+  }, [open, initialPane, computer?.remote]);
 
   // "Find a setting" jump: once the target pane has rendered, scroll to the
   // setting's own control and flash its row (same device as the sidebar's
@@ -715,6 +724,15 @@ export function SettingsModal({
           </button>
         </header>
 
+        {computer && <label className={styles.fieldRow}>
+          <span>Settings on</span>
+          <select aria-label="Settings computer" value={computer.remote ? "remote" : "local"}
+            onChange={e => computer.onChange(e.target.value === "remote")}>
+            <option value="local">This computer</option>
+            <option value="remote">{computer.label}</option>
+          </select>
+          {computer.remote && <span className={styles.fieldNote}>Credentials, models and profiles belong to {computer.label}. Sign-in runs there.</span>}
+        </label>}
         <div className={styles.shell}>
           <nav className={styles.nav} aria-label="Settings sections">
             <input
@@ -722,6 +740,7 @@ export function SettingsModal({
               type="search"
               data-settings-search=""
               placeholder="Find a setting"
+              disabled={computer?.remote}
               value={navQuery}
               onChange={(e) => setNavQuery(e.target.value)}
               onKeyDown={(e) => {
@@ -768,7 +787,7 @@ export function SettingsModal({
               </div>
             ) : null}
             <div className={styles.navList}>
-              {visiblePanes.map((id) => (
+              {visiblePanes.filter(id => !computer?.remote || id === "providers" || id === "agents").map((id) => (
                 <button
                   key={id}
                   type="button"
@@ -917,6 +936,7 @@ export function SettingsModal({
 
           {pane === "providers" && (
           <ProvidersPane
+            api={providerApi}
             settings={settings}
             providers={providers}
             saving={saving}
@@ -944,20 +964,37 @@ export function SettingsModal({
           </>
           )}
 
-          {pane === "connections" && isWebMode() && (
-            <LinkedComputersSection active={open && pane === "connections"} />
-          )}
-          {pane === "connections" && !isWebMode() && (
+          {pane === "connections" && (
           <>
-          <WebAccessSection active={open && pane === "connections"} />
-          <p className={styles.sectionLabel}>Connect to another computer</p>
-          <ConnectionsSection onOpen={onOpenConnection} onForget={onForgetConnection} onInstall={onInstallSolenta} onSidebarHosts={onSidebarHosts} sidebarHosts={sidebarHosts} />
-          <LinkedComputersSection active={open && pane === "connections"} />
-          <p className={styles.note} data-connections-remote-project-hint="">
-            Only need one repo from a server, in this window? Add it as a
-            project with a Remote host instead (Add project, then Remote
-            host). Its git and agents run there over SSH.
-          </p>
+          <div className={styles.connectionTabs} role="tablist" aria-label="Connection settings">
+            {(!isWebMode() ? ["computers", "browser", "agents"] as const : ["browser", "agents"] as const).map(tab =>
+              <button key={tab} type="button" role="tab" id={`connection-tab-${tab}`} aria-selected={connectionPane === tab}
+                aria-controls={`connection-panel-${tab}`} tabIndex={connectionPane === tab ? 0 : -1}
+                className={styles.connectionTab} onClick={() => setConnectionPane(tab)}
+                onKeyDown={event => {
+                  if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+                  event.preventDefault();
+                  const tabs = Array.from(event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]') || []);
+                  const current = tabs.indexOf(event.currentTarget);
+                  const next = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 :
+                    (current + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+                  tabs[next]?.click(); tabs[next]?.focus();
+                }}>
+                {{ computers: "Computers", browser: "Browser access", agents: "Agent links" }[tab]}
+              </button>)}
+          </div>
+          {!isWebMode() && <div role="tabpanel" id="connection-panel-computers" aria-labelledby="connection-tab-computers" hidden={connectionPane !== "computers"}>
+            <ConnectionsSection onManage={onManageRemoteServer} onOpen={onOpenConnection} onForget={onForgetConnection} onInstall={onInstallSolenta} onSidebarHosts={onSidebarHosts} sidebarHosts={sidebarHosts} />
+            <p className={styles.note} data-connections-remote-project-hint="">
+              For a single SSH repository, you can also use Add project &gt; Remote host.
+            </p>
+          </div>}
+          <div role="tabpanel" id="connection-panel-browser" aria-labelledby="connection-tab-browser" hidden={connectionPane !== "browser"}>
+            <WebAccessSection active={open && connectionPane === "browser"} />
+          </div>
+          <div role="tabpanel" id="connection-panel-agents" aria-labelledby="connection-tab-agents" hidden={connectionPane !== "agents"}>
+            <LinkedComputersSection active={open && connectionPane === "agents"} />
+          </div>
           </>
           )}
 

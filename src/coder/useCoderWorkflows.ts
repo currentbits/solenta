@@ -10,6 +10,7 @@ import type {
   WorkflowTemplateInfo,
 } from "../shared/ipc";
 import type { CoderError, WorkflowSaveInput } from "../useCoder";
+import type { useComputerWorkflows } from "./computerContext";
 import { errorMessage } from "./errorMessage";
 
 function upsertWorkflow(
@@ -29,6 +30,7 @@ function upsertWorkflow(
 export function useCoderWorkflows({
   api,
   selectedThreadId,
+  workflowComputer,
   setWorkflows,
   setWorkflowListError,
   setAutomations,
@@ -41,6 +43,7 @@ export function useCoderWorkflows({
 }: {
   api: CoderApi;
   selectedThreadId: string | null;
+  workflowComputer?: ReturnType<typeof useComputerWorkflows>;
   setWorkflows: Dispatch<SetStateAction<WorkflowTemplateInfo[]>>;
   setWorkflowListError: Dispatch<SetStateAction<string | null>>;
   setAutomations: Dispatch<SetStateAction<AutomationInfo[]>>;
@@ -52,6 +55,8 @@ export function useCoderWorkflows({
   applyThreads: (next: ThreadInfo[]) => void;
 }) {
   const refreshWorkflows = useCallback(async () => {
+    workflowComputer?.assertCurrent();
+    if (workflowComputer?.key) return workflowComputer.refresh();
     try {
       const list = await api.workflows.list();
       setWorkflows(list);
@@ -62,7 +67,7 @@ export function useCoderWorkflows({
       );
       throw err;
     }
-  }, [api]);
+  }, [api, workflowComputer]);
 
   const refreshAutomations = useCallback(async () => {
     const list = await api.automations.list();
@@ -134,10 +139,13 @@ export function useCoderWorkflows({
       if (!selectedThreadId) return;
       const threadId = selectedThreadId;
       try {
+        workflowComputer?.assertTemplate(templateId);
+        if (selectedRef.current !== threadId) throw new Error("The selected thread changed. Choose its workflow again.");
         await api.runs.startWorkflow({
           threadId,
           prompt,
           ...(templateId ? { templateId } : {}),
+          ...(workflowComputer?.key ? { onHost: workflowComputer.key } : {}),
         });
         const d = await api.threads.get(threadId);
         if (selectedRef.current !== threadId) return;
@@ -153,7 +161,7 @@ export function useCoderWorkflows({
         throw err;
       }
     },
-    [api, selectedThreadId, applyThreads],
+    [api, selectedThreadId, applyThreads, workflowComputer],
   );
 
   const retryWorkflowAgent = useCallback(
@@ -181,6 +189,8 @@ export function useCoderWorkflows({
 
   const saveWorkflow = useCallback(
     async (template: WorkflowSaveInput) => {
+      workflowComputer?.assertCurrent();
+      if (workflowComputer?.key) return workflowComputer.save(template);
       setWorkflowListError(null);
       const saved = await api.workflows.save(template);
       // Adopt the write immediately. A later list rejection must not hide
@@ -195,11 +205,13 @@ export function useCoderWorkflows({
       }
       return saved;
     },
-    [api, refreshWorkflows],
+    [api, refreshWorkflows, workflowComputer],
   );
 
   const removeWorkflow = useCallback(
     async (workflowId: string) => {
+      workflowComputer?.assertCurrent();
+      if (workflowComputer?.key) return workflowComputer.remove(workflowId);
       setWorkflowListError(null);
       await api.workflows.remove({ id: workflowId });
       setWorkflows((prev) => prev.filter((w) => w.id !== workflowId));
@@ -211,19 +223,21 @@ export function useCoderWorkflows({
         );
       }
     },
-    [api, refreshWorkflows],
+    [api, refreshWorkflows, workflowComputer],
   );
 
   const exportWorkflowToRepo = useCallback(
     async (workflowId: string, overwrite: boolean) => {
       if (!selectedThreadId) throw new Error("Select a thread first");
-      return api.workflows.exportToRepo({
+      workflowComputer?.assertTemplate(workflowId);
+      if (selectedRef.current !== selectedThreadId) throw new Error("The selected thread changed. Choose its workflow again.");
+      return (workflowComputer?.api ?? api).workflows.exportToRepo({
         id: workflowId,
         threadId: selectedThreadId,
         overwrite,
       });
     },
-    [api, selectedThreadId],
+    [api, selectedThreadId, workflowComputer],
   );
 
   return {

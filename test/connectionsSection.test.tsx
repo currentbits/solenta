@@ -74,7 +74,7 @@ it("offers Install when the host has no Solenta, then connects once it is instal
   await m.click(install);
   assert.deepEqual(installs, [{ host: "me@server" }]);
   assert.equal(opened.length, 2, "connects again right after a clean install");
-  assert.match(m.query("[data-connection-installed]")?.textContent || "", /Installed Solenta v0\.26\.0 in ~\/solenta on me@server/);
+  assert.match(m.query("[data-connection-installed]")?.textContent || "", /Installed Solenta v0\.26\.0 on me@server/);
   assert.equal(m.query("[data-connection-install]"), null);
 });
 
@@ -109,6 +109,7 @@ it("after connecting, lists the host's version and agents, and offers Update on 
       remotePort: 4620,
       tokenSaved: true,
       localVersion: "0.26.0",
+      descriptor: { kind: "solenta", computerId: "linux-desktop", protocol: { min: 1, max: 1 }, runtimeKind: "desktop" },
       remote: {
         version: "0.25.0",
         platform: "linux",
@@ -132,9 +133,9 @@ it("after connecting, lists the host's version and agents, and offers Update on 
   assert.match(m.query('[data-connection-agent="claude"]')?.textContent || "", /Claude Code: Signed in as me@x\.dev · Max/);
   assert.match(m.query('[data-connection-agent="codex"]')?.textContent || "", /Codex: Signed out/);
   assert.match(m.query('[data-connection-agent="grok"]')?.textContent || "", /Grok: Not installed/);
-  assert.match(info, /open Settings > Agents in its window/);
+  assert.match(info, /open Settings > Providers in its window/);
   await m.click(m.query("[data-connection-update]"));
-  assert.deepEqual(installs, [{ host: "me@server" }]);
+  assert.deepEqual(installs, [{ host: "me@server", computerId: "linux-desktop" }]);
 });
 
 it("an older Mac host gets a pointer, not an Update button", async () => {
@@ -148,7 +149,7 @@ it("an older Mac host gets a pointer, not an Update button", async () => {
   await m.type(m.query("[data-connection-host]"), "me@mac");
   await m.click(m.query("[data-connection-open]"));
   assert.equal(m.query("[data-connection-update]"), null);
-  assert.match(m.query("[data-connection-remote]")?.textContent || "", /Update it on that computer/);
+  assert.match(m.query("[data-connection-remote]")?.textContent || "", /update on that computer using its own supported installer/);
 });
 
 it("shows a connected host in the sidebar and hands main the shown set (#1819)", async () => {
@@ -203,8 +204,108 @@ it("adds a computer by address with a pasted device link, keeping only the addre
   assert.match(saved, /"url":"https:\/\/mini\.tail1234\.ts\.net"/);
   assert.doesNotMatch(saved, /link-secret/);
   assert.deepEqual(pushed.at(-1), [{ host: "mini.tail1234.ts.net", remotePort: 443, label: "Mini", url: "https://mini.tail1234.ts.net" }]);
-  assert.match(m.container.textContent || "", /https:\/\/mini\.tail1234\.ts\.net · token saved · in sidebar/);
+  assert.match(m.container.textContent || "", /https:\/\/mini\.tail1234\.ts\.net · token saved · connected/);
   await m.click(m.query('[aria-label="Forget Mini"]'));
   assert.deepEqual(forgot, [{ host: "mini.tail1234.ts.net", remotePort: 443, url: "https://mini.tail1234.ts.net" }]);
   m.unmount();
+});
+
+it("checks separately from preparation and offers only supported managed controls", async () => {
+  const actions: string[] = [];
+  const m = await mount(<ConnectionsSection onManage={async input => {
+    actions.push(input.action);
+    return { mode: "managed", manager: "systemd-user", installed: input.action !== "status", running: false, sessionLimit: "User service requires linger to survive logout", linger: false };
+  }} />);
+  await m.type(m.query("[data-connection-host]"), "me@new");
+  await m.click(m.query("[data-connection-check]"));
+  assert.deepEqual(actions, ["status"]);
+  assert.match(m.text(), /Not installed, stopped/);
+  await m.click(m.query("[data-connection-prepare]"));
+  assert.deepEqual(actions, ["status", "install"]);
+  assert.match(m.text(), /Installed, stopped/);
+  assert.match(m.text(), /Start server/);
+  assert.doesNotMatch(m.text(), /Stop server|Uninstall/);
+  await m.change(m.query("[data-connection-mode]"), "address");
+  assert.equal(m.query("[data-connection-check]"), null);
+  assert.equal(m.query("[data-connection-prepare]"), null);
+});
+
+it("saves verified computer identity and sends it on subsequent connections", async () => {
+  const calls: unknown[] = [];
+  const descriptor = { kind: "solenta" as const, computerId: "computer-one", runtimeKind: "server" as const, protocol: { min: 1 as const, max: 1 as const }, buildSha: "abc123" };
+  const m = await mount(<ConnectionsSection onOpen={async input => {
+    calls.push(input);
+    return { host: input.host, remotePort: 4620, tokenSaved: true, computerId: descriptor.computerId, descriptor };
+  }} />);
+  await m.type(m.query("[data-connection-host]"), "me@server");
+  await m.click(m.query("[data-connection-open]"));
+  assert.match(m.text(), /Computer computer-one · build abc123/);
+  await m.click(m.query("[data-connection-open]"));
+  assert.equal((calls[1] as { computerId: string }).computerId, "computer-one");
+  const saved = JSON.parse(window.localStorage.getItem("coder.remoteConnections")!);
+  assert.equal(saved[0].descriptor.buildSha, "abc123");
+  assert.equal(saved[0].token, undefined);
+});
+
+it("allows identity-free compatibility only after an explicit choice", async () => {
+  const calls: unknown[] = [];
+  const m = await mount(<ConnectionsSection onOpen={async input => {
+    calls.push(input);
+    return { host: input.host, remotePort: 4620, tokenSaved: false, legacy: true };
+  }} />);
+  await m.type(m.query("[data-connection-host]"), "old-host");
+  await m.click(m.query("[data-connection-legacy]"));
+  await m.click(m.query("[data-connection-open]"));
+  assert.equal((calls[0] as { allowLegacy: boolean }).allowLegacy, true);
+  const saved = JSON.parse(window.localStorage.getItem("coder.remoteConnections")!);
+  assert.equal(saved[0].legacy, true);
+});
+
+it("offers managed server release installation when nightly package versions match", async () => {
+  const installs: unknown[] = [];
+  const descriptor = { kind: "solenta" as const, computerId: "nightly-host", runtimeKind: "server" as const, protocol: { min: 1, max: 1 }, version: "0.29.0", buildSha: "older-build" };
+  const m = await mount(<ConnectionsSection
+    onOpen={async input => ({ host: input.host, remotePort: 4620, tokenSaved: true, descriptor, computerId: descriptor.computerId,
+      localVersion: "0.29.0", remote: { version: "0.29.0", platform: "linux", outdated: false, agents: [] } })}
+    onManage={async () => ({ mode: "managed", manager: "systemd-user", installed: true, running: true, sessionLimit: "User service" })}
+    onInstall={async input => { installs.push(input); return { tag: "nightly-new", missingLibraries: [], aptCommand: null, restartNeeded: false }; }}
+  />);
+  await m.type(m.query("[data-connection-host]"), "builder");
+  await m.click(m.query("[data-connection-open]"));
+  assert.match(m.query("[data-connection-update]")?.textContent || "", /Install matching server release/);
+  await m.click(m.query("[data-connection-update]"));
+  assert.deepEqual(installs, [{ host: "builder", computerId: "nightly-host" }]);
+});
+
+it("offers explicit external preparation without claiming service supervision", async () => {
+  const prepared: unknown[] = [];
+  const m = await mount(<ConnectionsSection onManage={async input => {
+    prepared.push(input);
+    return { mode: "external", manager: null, installed: false, running: true, sessionLimit: "Unsupervised; no restart guarantee." };
+  }} />);
+  await m.type(m.query("[data-connection-host]"), "headless-mac");
+  await m.change(m.query("[data-connection-service-mode]"), "external");
+  assert.match(m.text(), /no service supervision or guaranteed restart after logout or reboot/);
+  await m.click(m.query("[data-connection-prepare]"));
+  assert.deepEqual(prepared, [{ host: "headless-mac", remotePort: 4620, serviceMode: "external", action: "install" }]);
+  assert.match(m.text(), /externally managed/);
+  assert.match(m.text(), /External runtime, running/);
+  assert.doesNotMatch(m.text(), /Not installed, running/);
+  assert.equal(m.query("[data-connection-prepare]"), null, "preparation must not take over an external process");
+  assert.doesNotMatch(m.text(), /Start server|Recent logs/);
+});
+
+it("offers recovery instead of starting a service with an interrupted update", async () => {
+  const actions: string[] = [];
+  const m = await mount(<ConnectionsSection onManage={async input => {
+    actions.push(input.action);
+    return { mode: "managed", manager: "systemd-user", installed: true, running: false, sessionLimit: "User service", recoveryRequired: input.action !== "recover" };
+  }} />);
+  await m.type(m.query("[data-connection-host]"), "builder");
+  await m.click(m.query("[data-connection-check]"));
+  assert.doesNotMatch(m.text(), /Start server/);
+  await m.click(m.query("[data-connection-recover]"));
+  assert.deepEqual(actions, ["status", "recover"]);
+  assert.equal(m.query("[data-connection-recover]"), null);
+  assert.match(m.text(), /Start server/);
 });

@@ -79,6 +79,7 @@ function makeCtx(deps) {
     openRemoteConnection: deps.openRemoteConnection,
     forgetRemoteConnection: deps.forgetRemoteConnection,
     installRemoteSolenta: deps.installRemoteSolenta,
+    manageRemoteServer: deps.manageRemoteServer,
     invokeRemote: deps.invokeRemote,
     hostHub: deps.hostHub || null,
     crewRelay: deps.crewRelay || null,

@@ -6,6 +6,7 @@ export type WireState =
   | "connecting"
   | "connected"
   | "reconnecting"
+  | "blocked"
   | "rejected"
   | "rateLimited";
 
@@ -13,6 +14,8 @@ export type WireStatus = {
   state: WireState;
   /** A message went into the offline queue since the last auth-ok. */
   queuedSend: boolean;
+  /** Identity/protocol failures need action and must not clear credentials. */
+  error?: string;
 };
 
 let status: WireStatus = { state: "connecting", queuedSend: false };
@@ -24,7 +27,8 @@ export function getWireStatus(): WireStatus {
 
 export function setWireStatus(patch: Partial<WireStatus>): void {
   const next = { ...status, ...patch };
-  if (next.state === status.state && next.queuedSend === status.queuedSend) return;
+  if (next.state !== "blocked") delete next.error;
+  if (next.state === status.state && next.queuedSend === status.queuedSend && next.error === status.error) return;
   status = next;
   for (const cb of subscribers) cb();
 }

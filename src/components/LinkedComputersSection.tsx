@@ -52,7 +52,7 @@ export function LinkedComputersSection({ active }: { active: boolean }) {
       <p className={styles.fieldNote}>
         Agents running on this Solenta can start workers on a linked computer
         and are woken when they finish. On that computer: Settings → Connections →
-        Let other devices in, add a device with Full access, and paste its link here.
+        Browser access, add a device with Full access, and paste its link here.
       </p>
       {peers.length ? (
         <ul className={styles.connectionSteps} data-linked-list="">
@@ -73,7 +73,7 @@ export function LinkedComputersSection({ active }: { active: boolean }) {
       ) : null}
       <label className={styles.field}>
         <span>Device link</span>
-        <input className={styles.input} data-linked-link="" value={link} onChange={(e) => setLink(e.target.value)} placeholder="https://mac.tailnet.ts.net/?token=…" autoComplete="off" spellCheck={false} />
+        <input className={styles.input} data-linked-link="" value={link} onChange={(e) => setLink(e.target.value)} placeholder="https://mac.tailnet.ts.net/#token=…" autoComplete="off" spellCheck={false} />
       </label>
       <label className={styles.field}>
         <span>Name</span>

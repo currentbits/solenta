@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type ReactNode } from "react";
+import { useEffect, useId, createContext, useContext, useState, type ReactNode } from "react";
 import { BEST_EFFORT_NOTE } from "../../modelPicker";
 import { resolveCoderApi } from "../../coderApi";
 import type {
@@ -135,6 +135,7 @@ function errorText(err: unknown, fallback: string): string {
   return err instanceof Error && err.message ? err.message : fallback;
 }
 
+export const ProviderComputerApi = createContext<CoderApi | undefined>(undefined);
 function resolveApi(): CoderApi | null {
   try {
     const existing = (window as unknown as { coder?: CoderApi }).coder;
@@ -153,7 +154,7 @@ type View =
   | { kind: "add" }
   | { kind: "local"; id: LocalKind };
 
-export function ProvidersPane({
+function ProvidersPaneContent({
   settings,
   providers,
   saving,
@@ -170,6 +171,7 @@ export function ProvidersPane({
   onRefreshProviders?: () => void;
   onProviderSignIn?: SignIn;
 }) {
+  const scopedApi = useContext(ProviderComputerApi);
   // Mounted only while this pane shows: opening it re-probes sign-in state.
   useEffect(() => {
     onRefreshProviders?.();
@@ -178,7 +180,7 @@ export function ProvidersPane({
   const instances = settings?.providerInstances ?? [];
   const [local, setLocal] = useState<LocalModelServer[] | null>(null);
   const detectLocal = async (urls?: Partial<Record<LocalKind, string>>) => {
-    const api = resolveApi();
+    const api = scopedApi ?? resolveApi();
     if (typeof api?.providers.detectLocal !== "function") return setLocal([]);
     // A saved instance's host (a LAN Ollama) is where its server lives.
     const saved = (kind: LocalKind) =>
@@ -1109,6 +1111,7 @@ function ModelsPanel({
   saving: boolean;
   persistModels: (pref: ProviderModelPrefs) => Promise<void>;
 }) {
+  const scopedApi = useContext(ProviderComputerApi);
   const [live, setLive] = useState<FetchedModel[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setFetchError] = useState<string | null>(null);
@@ -1147,7 +1150,7 @@ function ModelsPanel({
       setFetchError("Add an API key to list models live. Showing the catalog.");
       return;
     }
-    const api = resolveApi();
+    const api = scopedApi ?? resolveApi();
     if (!api) return;
     setLoading(true);
     try {
@@ -2363,4 +2366,8 @@ function CompatForm({
       </div>
     </div>
   );
+}
+
+export function ProvidersPane({ api, ...props }: Parameters<typeof ProvidersPaneContent>[0] & { api?: CoderApi }) {
+  return <ProviderComputerApi.Provider value={api}><ProvidersPaneContent {...props} /></ProviderComputerApi.Provider>;
 }
