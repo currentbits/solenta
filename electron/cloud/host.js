@@ -9,7 +9,7 @@ const { readJSON, fetchJSON } = require("./http");
 const { createAuthLimiter } = require("../webBridge");
 
 const hash = value => createHash("sha256").update(value).digest("base64url");
-function createCloudHost({ dataDir, devices, descriptor, port, credentials, config, connector, account, fetch = globalThis.fetch, disconnect = () => {}, isActive = () => true }) {
+function createCloudHost({ dataDir, devices, descriptor, port, credentials, config, connector, account, fetch = globalThis.fetch, disconnect = () => {}, isActive = () => true, setTimeout: scheduleTimeout = setTimeout, clearTimeout: cancelTimeout = clearTimeout }) {
   if (!dataDir) throw new Error("Cloud hosting requires its runtime's data directory.");
   const disabledFile = path.join(dataDir, "cloud-disabled");
   let state = credentials.read(), reconciled = false, connectorStarted = false, closed = false, timer, error;
@@ -32,7 +32,7 @@ function createCloudHost({ dataDir, devices, descriptor, port, credentials, conf
     if (state?.link) for (const id of devices.revokeCloud(state.link.linkId)) disconnect(id);
   }
   async function disable(stopConnector = true) {
-    clearTimeout(timer);
+    cancelTimeout(timer);
     reconciled = false; connectorStarted = false;
     fence();
     revokeDevices();
@@ -52,8 +52,8 @@ function createCloudHost({ dataDir, devices, descriptor, port, credentials, conf
     if (verified.computerId !== descriptor.computerId || verified.linkId !== link.linkId || verified.generation !== link.generation || verified.nonce !== nonce || typeof verified.linked !== "boolean") throw new Error("Cloud link reconciliation failed its identity check.");
     if (!verified.linked) {
       await disable();
-      if (wasEnabled) await reconcile(false);
-      else { state.link.revocationPending = false; save(); }
+      if (wasEnabled) { state.link.receiptPending = true; save(); await reconcile(false); }
+      else { state.link.revocationPending = false; state.link.receiptPending = false; save(); }
       error = "This computer was unlinked from its cloud account."; return false;
     }
     if (!wasEnabled) return false;
@@ -61,9 +61,9 @@ function createCloudHost({ dataDir, devices, descriptor, port, credentials, conf
     return true;
   }
   function schedule() {
-    clearTimeout(timer);
-    if (closed || !state?.link?.enabled) return;
-    timer = setTimeout(() => {
+    cancelTimeout(timer);
+    if (closed || !state?.link || (!state.link.enabled && !state.link.receiptPending)) return;
+    timer = scheduleTimeout(() => {
       void exclusive(async () => {
         try {
           if (await reconcile(connectorStarted && connector.status().state === "running") && (!connectorStarted || connector.status().state === "failed")) await startConnector();
@@ -82,7 +82,7 @@ function createCloudHost({ dataDir, devices, descriptor, port, credentials, conf
     return { configured: Boolean(config.origin), enabled: Boolean(state?.link?.enabled), computerId: descriptor.computerId,
       supported: connector.status().supported !== false,
       accountId: state?.link?.accountId, origin: state?.link?.origin, state: state?.link?.enabled ? (reconciled ? connector.status().state : "offline") : "unlinked",
-      revocationPending: state?.link?.revocationPending === true, cleanupPending: state?.link?.cleanupPending === true, ...(error ? { error } : {}) };
+      revocationPending: state?.link?.revocationPending === true || state?.link?.receiptPending === true, cleanupPending: state?.link?.cleanupPending === true, ...(error ? { error } : {}) };
   }
   return {
     status,
@@ -117,18 +117,19 @@ function createCloudHost({ dataDir, devices, descriptor, port, credentials, conf
       schedule(); return status();
     }); },
     unlink() { return exclusive(async () => {
-      clearTimeout(timer);
+      cancelTimeout(timer);
       if (!state?.link) return { revocationPending: false };
       state.link.revocationPending = true;
       await disable();
       try {
         const result = await account.deregister(descriptor.computerId);
-        state.link.revocationPending = false; state.link.cleanupPending = result.cleanupPending === true; delete state.link.connectorToken; save();
+        state.link.revocationPending = false; state.link.receiptPending = result.hostRevocationPending === true; state.link.cleanupPending = result.cleanupPending === true; delete state.link.connectorToken; save(); schedule();
         return { revocationPending: false, cleanupPending: result.cleanupPending === true, hostRevocationPending: result.hostRevocationPending === true };
       } catch { return { revocationPending: true }; }
     }); },
     start() { return exclusive(async () => {
       if (closed || !config.origin || !state?.link) return status();
+      if (!state.link.enabled) { state.link.receiptPending = true; save(); }
       try { if (await reconcile(false)) await startConnector(); }
       catch { error = "Cloud link cannot be verified. Its connector stays stopped until verification succeeds."; }
       schedule(); return status();
@@ -162,10 +163,12 @@ function createCloudHost({ dataDir, devices, descriptor, port, credentials, conf
           } else {
             const revokedLink = state.link;
             await disable(false);
+            state.link.receiptPending = true; save();
             // Drain the reply before stopping the tunnel that carries it.
             res.once("finish", () => {
-              timer = setTimeout(() => {
-                void exclusive(async () => { if (state.link === revokedLink && !state.link.enabled) await connector.close(); });
+              if (closed) return;
+              timer = scheduleTimeout(() => {
+                void exclusive(async () => { if (state.link === revokedLink && !state.link.enabled) { await connector.close(); schedule(); } });
               }, 1000);
               timer.unref?.();
             });
@@ -175,7 +178,7 @@ function createCloudHost({ dataDir, devices, descriptor, port, credentials, conf
       } catch { limiter.fail(remote); reply(400, { error: "Cloud enrollment or identity proof was rejected." }); }
       return true;
     },
-    async close() { closed = true; reconciled = false; clearTimeout(timer); await connector.close(); },
+    async close() { closed = true; reconciled = false; cancelTimeout(timer); await connector.close(); },
   };
 }
 

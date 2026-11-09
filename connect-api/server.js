@@ -164,10 +164,12 @@ function createBroker({ store, verifyAccount, tunnels, signingKey, fetch = globa
       if (!snapshot) return { revoked: true, cleanupPending: false, hostRevocationPending: row.hostRevocationPending ?? false };
       let hostRevocationPending = false, cleanupPending = false;
       try {
-        const claims = { computerId: snapshot.computerId, accountId, linkId: snapshot.linkId, generation: snapshot.generation, nonce: randomUUID() };
-        const result = await hostJSON(snapshot, "/api/cloud/revoke", claims, "revoke");
-        const response = await verifyProof(result.proof, snapshot.publicKey, { purpose: "revoke-response", audience: config.origin });
-        if (!binding(response, snapshot) || response.nonce !== claims.nonce || response.revoked !== true) throw new Error();
+        if (row.hostRevocationPending !== false) {
+          const claims = { computerId: snapshot.computerId, accountId, linkId: snapshot.linkId, generation: snapshot.generation, nonce: randomUUID() };
+          const result = await hostJSON(snapshot, "/api/cloud/revoke", claims, "revoke");
+          const response = await verifyProof(result.proof, snapshot.publicKey, { purpose: "revoke-response", audience: config.origin });
+          if (!binding(response, snapshot) || response.nonce !== claims.nonce || response.revoked !== true) throw new Error();
+        }
       }
       catch { hostRevocationPending = true; }
       try {
@@ -176,10 +178,11 @@ function createBroker({ store, verifyAccount, tunnels, signingKey, fetch = globa
           if (current.revoked) { delete current.cleanupPending; current.retired = []; }
         });
       } catch { cleanupPending = true; }
-      await store.updateIfLink(snapshot.computerId, snapshot.linkId, current => {
-        if (current.revoked) current.hostRevocationPending = hostRevocationPending;
+      const committed = await store.updateIfLink(snapshot.computerId, snapshot.linkId, current => {
+        if (current.revoked) current.hostRevocationPending = current.hostRevocationPending !== false && hostRevocationPending;
+        return { hostRevocationPending: current.hostRevocationPending === true, cleanupPending: Boolean(current.cleanupPending) };
       });
-      return { revoked: true, hostRevocationPending, cleanupPending };
+      return { revoked: true, ...(committed ?? { hostRevocationPending, cleanupPending }) };
     }
     fail(404, "Cloud endpoint not found.");
   }

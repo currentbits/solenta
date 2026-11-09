@@ -20,7 +20,7 @@ const { createCloudAdmin } = require("../cloud/admin");
 const { main: connectCommand } = require("../server/connect");
 const { startWebServer } = require("../webServer");
 
-async function fixture(t) {
+async function fixture(t, timers = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "solenta-cloud-host-"));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const brokerKey = await createKeyPair(), clientKey = await createKeyPair();
@@ -28,7 +28,7 @@ async function fixture(t) {
   const descriptor = { kind: "solenta", computerId, protocol: { min: 1, max: 1 }, runtimeKind: "server" };
   const devices = createWebDevices(dir), disconnected = [], actions = [];
   const credentials = createCredentials({ file: path.join(dir, "host.json"), allowPlaintext: true });
-  let linked = true, offline = false, active = true, cleanupPending = false, registration;
+  let linked = true, offline = false, active = true, cleanupPending = false, failReceipt = false, registration;
   const connector = { async start(input) { assert.equal(actions.at(-1), "reconciled"); assert.equal(input.token, "connector-secret"); actions.push("connector"); }, async close() { actions.push("stopped"); }, status: () => ({ state: "running" }) };
   const account = { status: () => ({ signedIn: true, accountId: "user_test" }), async registerHost(input, key) {
     assert.equal(input.port, 4621);
@@ -41,10 +41,11 @@ async function fixture(t) {
     const state = credentials.read();
     const claims = await verifyProof(JSON.parse(options.body).proof, state.publicJwk, { purpose: "heartbeat", audience: origin });
     assert.equal(claims.probe, false);
+    if (claims.disabled && failReceipt) { failReceipt = false; throw new Error("Receipt temporarily unavailable"); }
     actions.push("reconciled");
     return Response.json({ proof: await signProof(brokerKey.privateJwk, { computerId, linkId: claims.linkId, generation: claims.generation, nonce: claims.nonce, linked }, "heartbeat-response", computerId) });
   };
-  const make = () => createCloudHost({ dataDir: dir, devices, descriptor, port: () => 4621, credentials, config: { origin }, account, connector, fetch: fetchBroker, disconnect: id => disconnected.push(id), isActive: () => active });
+  const make = () => createCloudHost({ dataDir: dir, devices, descriptor, port: () => 4621, credentials, config: { origin }, account, connector, fetch: fetchBroker, disconnect: id => disconnected.push(id), isActive: () => active, ...timers });
   const host = make();
   t.after(host.close);
   const server = http.createServer(async (req, res) => { if (!await host.handleRequest(req, res)) { res.statusCode = 404; res.end(); } });
@@ -66,7 +67,7 @@ async function fixture(t) {
     assert.equal(result.status, 200);
     return { result: result.body, exchange: body };
   }
-  return { host, devices, credentials, request, brokerKey, clientKey, claims, enroll, actions, disconnected, make, setLinked: value => { linked = value; }, setOffline: value => { offline = value; }, setActive: value => { active = value; }, setCleanupPending: value => { cleanupPending = value; }, descriptor };
+  return { host, devices, credentials, request, brokerKey, clientKey, claims, enroll, actions, disconnected, make, setLinked: value => { linked = value; }, setOffline: value => { offline = value; }, setActive: value => { active = value; }, setCleanupPending: value => { cleanupPending = value; }, failReceiptOnce: () => { failReceipt = true; }, descriptor };
 }
 
 test("host links its exact port, reconciles before starting the connector and signs a one-use exchange", async t => {
@@ -299,4 +300,23 @@ test("a failed connector accepts an explicit retry with the same token after con
   offline = false; await connector.start(input);
   assert.equal(launches, 1); assert.equal(connector.status().state, "running");
   await connector.close();
+});
+
+
+test("disabled hosts retry a lost signed receipt while keeping their connector stopped", async t => {
+  const timers = [];
+  const f = await fixture(t, { setTimeout: (fn, delay) => { const timer = { fn, delay, unref() {} }; timers.push(timer); return timer; }, clearTimeout: timer => { const index = timers.indexOf(timer); if (index >= 0) timers.splice(index, 1); } });
+  await f.host.link();
+  f.setLinked(false); f.failReceiptOnce();
+  await f.host.start();
+  assert.equal(f.host.status().enabled, false);
+  assert.equal(f.host.status().revocationPending, true);
+  const launches = f.actions.filter(action => action === "connector").length;
+  const retry = timers.find(timer => timer.delay === 30_000);
+  assert.ok(retry, "Pending disabled receipt must retain a retry timer");
+  retry.fn();
+  const deadline = Date.now() + 1000;
+  while (f.host.status().revocationPending && Date.now() < deadline) await wait(5);
+  assert.equal(f.host.status().revocationPending, false);
+  assert.equal(f.actions.filter(action => action === "connector").length, launches);
 });

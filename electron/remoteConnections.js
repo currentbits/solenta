@@ -694,7 +694,6 @@ function inspectHost(target, token, timeoutMs = 8_000, descriptor = null) {
         return done(null);
       }
       if (msg.kind === "auth-ok") {
-        if (authenticated) return;
         try { confirmComputer(descriptor, msg.computer, descriptor?.computerId); } catch { return done(null); }
         ws.send(JSON.stringify({ kind: "invoke", id: 1, channel: "app:status", args: [] }));
         ws.send(JSON.stringify({ kind: "invoke", id: 2, channel: "providers:list", args: [] }));

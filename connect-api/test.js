@@ -281,3 +281,20 @@ test("a revoked host confirms its durable disabled fence over its outbound signe
   assert.equal((await store.getHost(f.row.computerId)).hostRevocationPending, false);
   assert.equal((await f.request("GET", "/v1/computers")).body.computers.length, 0);
 });
+
+
+test("provider cleanup retry never reverses an acknowledged host revocation", { skip: !databaseUrl }, async t => {
+  const f = await fixture(t);
+  await f.register();
+  f.tunnels.remove = async () => { throw new Error("Provider down"); };
+  const first = await f.request("DELETE", `/v1/computers/${f.row.computerId}`);
+  assert.equal(first.body.hostRevocationPending, false); assert.equal(first.body.cleanupPending, true);
+  f.tunnels.remove = async () => {};
+  // A later notification failure must not erase an existing acknowledgement.
+  const saved = await store.getHost(f.row.computerId);
+  saved.revocationSnapshot.publicKey = clientKey.publicJwk;
+  await store.updateIfLink(saved.computerId, saved.linkId, row => { row.revocationSnapshot = saved.revocationSnapshot; });
+  const retry = await f.request("DELETE", `/v1/computers/${f.row.computerId}`);
+  assert.equal(retry.body.hostRevocationPending, false);
+  assert.equal((await store.getHost(f.row.computerId)).hostRevocationPending, false);
+});
