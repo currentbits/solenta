@@ -525,6 +525,26 @@ function createHostHub(deps) {
     }));
   }
 
+  function findHost(name) {
+    const want = String(name).trim().toLowerCase();
+    const matches = new Set();
+    const named = (value) => typeof value === "string" && value.toLowerCase() === want;
+    for (const route of hosts.values()) {
+      if (named(route.key) || named(route.label)) matches.add(primary(route));
+    }
+    // A sidebar route may replace the peer's label for the same origin.
+    for (const peer of peerInput) {
+      if (!named(peer.label)) continue;
+      let key;
+      try { key = new URL(peer.url).origin; } catch { continue; }
+      const route = hosts.get(key);
+      if (route && (!peer.computerId || peer.computerId === route.computerId)) matches.add(primary(route));
+    }
+    if (matches.size > 1) throw new Error(`More than one computer is called "${name}". Use its connection address instead.`);
+    const [entry] = matches;
+    return entry ? list({ peers: true }).find((h) => h.key === entry.key) : null;
+  }
+
   /** @param {unknown[]} args */
   function ownerOf(args) {
     // Calls that create something on a host (add/clone a project, browse
@@ -654,7 +674,7 @@ function createHostHub(deps) {
     for (const entry of [...hosts.values()]) remove(entry);
   }
 
-  return { setHosts, setPeers, list, route, ownerOf, mergeThreads, mergeProjects, invoke, projectsOf, threadsOf, sameComputer, refreshCloudRoutes: apply, close };
+  return { setHosts, setPeers, list, findHost, route, ownerOf, mergeThreads, mergeProjects, invoke, projectsOf, threadsOf, sameComputer, refreshCloudRoutes: apply, close };
 }
 
 module.exports = { createHostHub, applyListPush, RELAYED_PUSHES };

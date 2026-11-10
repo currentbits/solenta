@@ -18,10 +18,12 @@ function fakeStore(threads) {
 function fakeHub(rows, calls = []) {
   return {
     list: () => [{ key: "box:1", label: "Box", status: "online" }],
+    findHost: (name) => ["box:1", "box"].includes(String(name).trim().toLowerCase()) ? { key: "box:1", label: "Box", status: "online" } : null,
     projectsOf: () => [{ id: "rp", slug: "Acme/Rocket" }],
     threadsOf: () => rows,
-    invoke: async (key, channel, args) => {
+    async invoke(key, channel, args) {
       calls.push(channel);
+      if (channel === "projects:list") return this.projectsOf(key);
       if (channel === "threads:create") return { id: "w1", title: args[0].title, projectId: "rp" };
       if (channel === "threads:get") return { thread: { branch: "coder/w1" }, messages: [{ role: "assistant", text: "All done\nmore" }] };
       return {};
@@ -39,7 +41,7 @@ describe("remote workers (#1821)", () => {
     const rw = createRemoteWorkers({ store, hub: fakeHub([{ id: "w1", status: "idle" }], calls), deliver: (i) => delivered.push(i) });
     const res = await rw.fork({ lead: store.getThread("lead"), host: "Box", prompt: "go" });
     assert.deepEqual(res, { threadId: "w1", host: "Box" });
-    assert.deepEqual(calls, ["threads:create", "threads:setCrewRelay", "runs:start"]);
+    assert.deepEqual(calls, ["projects:list", "threads:create", "threads:setCrewRelay", "runs:start"]);
     await tick();
     assert.equal(delivered.length, 0, "stale idle row is not a finish");
 
@@ -108,5 +110,20 @@ describe("remote workers (#1821)", () => {
     const rw = createRemoteWorkers({ store, hub, deliver() {} });
     await assert.rejects(rw.fork({ lead: store.getThread("lead"), host: "Nope", prompt: "go" }), /No computer called "Nope".*"Box"/);
     await assert.rejects(rw.fork({ lead: store.getThread("lead"), host: "box:1", prompt: "go" }), /Box has no project for acme\/rocket/);
+  });
+
+  it("does not start work from cached projects when the fresh list is missing, invalid or unavailable", async () => {
+    const store = fakeStore([{ id: "lead", projectId: "p" }]);
+    for (const [reply, error] of [[[], /has no project/], [{}, /invalid project list/], [new Error("connection lost"), /connection lost/]]) {
+      const hub = fakeHub([]);
+      hub.invoke = async (_key, channel) => {
+        assert.equal(channel, "projects:list", "never creates a worker after a failed refresh");
+        if (reply instanceof Error) throw reply;
+        return reply;
+      };
+      const rw = createRemoteWorkers({ store, hub, deliver() {} });
+      await assert.rejects(rw.fork({ lead: store.getThread("lead"), host: "Box", prompt: "go" }), error);
+      assert.equal(store.getThread("lead").remoteWorkers, undefined);
+    }
   });
 });

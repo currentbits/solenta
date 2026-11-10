@@ -82,6 +82,17 @@ function makeHub(remote, overrides = {}) {
   return { hub, pushes, changed: () => changed, tunnels: () => tunnels };
 }
 
+function workersFor(hub) {
+  const { createRemoteWorkers } = require("../remoteWorkers.js");
+  const lead = { id: "lead", projectId: "local-project" };
+  const store = {
+    getThreads: () => [lead], getThread: () => lead,
+    getProject: () => ({ slug: "acme/rocket" }),
+    updateThread: (_id, patch) => Object.assign(lead, patch), saveNow() {},
+  };
+  return { lead, workers: createRemoteWorkers({ store, hub, deliver() {} }) };
+}
+
 const LOCAL = [{ id: "l1", projectId: "lp", title: "local" }];
 const HOST = { host: "me@box", remotePort: 4620, label: "Box" };
 
@@ -91,6 +102,34 @@ describe("hostHub", () => {
   afterEach(async () => {
     for (const fn of cleanup.reverse()) await fn();
     cleanup = [];
+  });
+
+  it("resolves a linked name when the same route has a different sidebar label", async () => {
+    const remote = await fakeHost({ computerId: "computer-one", projects: [{ id: "rp", slug: "acme/rocket" }] });
+    const origin = `http://127.0.0.1:${remote.port}`;
+    const { hub } = makeHub(remote, {
+      openTunnel: async () => ({ child: { backPort: remote.port, kill() {} }, token: "tok", descriptor: { kind: "solenta", computerId: "computer-one", protocol: { min: 1, max: 1 }, runtimeKind: "server" } }),
+    });
+    cleanup.push(() => remote.close(), () => hub.close());
+    hub.setPeers([{ url: `${origin}/`, label: "AgentOS", token: "tok", computerId: "computer-one" }]);
+    hub.setHosts([{ url: origin, label: "generated-hostname", remotePort: remote.port }]);
+    await waitFor(() => hub.list()[0]?.status === "online");
+    const { workers, lead } = workersFor(hub);
+    await workers.fork({ lead, host: " agentos ", prompt: "go" });
+    assert.equal(remote.state.calls.find((c) => c.channel === "threads:create").args[0].projectId, "rp");
+    hub.setPeers([{ url: origin, label: "Wrong computer", token: "tok", computerId: "computer-other" }]);
+    await assert.rejects(workers.fork({ lead, host: "Wrong computer", prompt: "go" }), /No computer called/);
+    hub.setPeers([]);
+    await assert.rejects(workers.fork({ lead, host: "AgentOS", prompt: "go" }), /No computer called/, "unlink removes the alias without removing the sidebar route");
+  });
+
+  it("rejects a name shared by different computers instead of picking the first", async () => {
+    const { hub } = makeHub({}, { openTunnel: async () => { throw new Error("offline"); } });
+    cleanup.push(() => hub.close());
+    hub.setHosts([{ ...HOST, label: "Same" }, { host: "other", remotePort: 4620, label: "Same" }]);
+    const { workers, lead } = workersFor(hub);
+    await assert.rejects(workers.fork({ lead, host: "same", prompt: "go" }), /more than one computer/i);
+    await assert.rejects(workers.fork({ lead, host: "me@box:4620", prompt: "go" }), /offline|connecting/);
   });
 
   it("rejects unknown explicit owners with zero hosts and never calls local", async () => {
