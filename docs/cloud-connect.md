@@ -1,9 +1,10 @@
 # Cloud connections
 
-Cloud connections are being built and require a configured Solenta Connect
-broker, GitHub OAuth application and Cloudflare host domain. An
-unconfigured build cannot sign in or create a tunnel. Local test success does
-not establish that the public cloud service is available.
+Solenta builds include the public Solenta Connect broker address. Sign in with
+GitHub in Settings > Connections > Cloud to link a computer or connect to one
+you already linked. Self-hosted deployments can override the broker address
+with `SOLENTA_CONNECT_ORIGIN`, an exact HTTPS origin. A build without either
+configuration cannot sign in or create a tunnel.
 
 Install the Solenta server archive once on the execution computer and start it
 on its chosen port. Cloud setup uses outbound connections and does not require

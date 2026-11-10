@@ -59,6 +59,12 @@ link again with GitHub. Never rewrite account IDs in the database.
 Cloudflare's [remotely managed tunnel API](https://developers.cloudflare.com/api/resources/zero_trust/subresources/tunnels/subresources/cloudflared/methods/create/)
 provides a per-link tunnel and connector token. A derived `c-<link-id>` DNS name
 routes only to `http://127.0.0.1:<host-port>`, with a final 404 ingress rule.
+Create separate token policies: an account policy for Tunnel Edit, and a domain
+policy restricted to the selected zone for DNS Edit. Zone Read allows setup
+discovery; SSL and Certificates Read allows checking certificate coverage. The
+dashboard's "Specified Domains" policy only lists domain permissions, so it
+cannot contain the account-scoped tunnel permission. The hosted broker uses
+`CONNECT_HOST_DOMAIN=solenta.app`, making names directly under its wildcard.
 The host domain must have TLS coverage for these names. A wildcard certificate
 for `example.com` does not cover `c-<id>.hosts.example.com`; verify coverage or
 use a dedicated zone. Do not deploy until that coverage is confirmed.

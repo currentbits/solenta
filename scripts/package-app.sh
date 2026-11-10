@@ -117,6 +117,7 @@ git diff --quiet 2>/dev/null || BUILD_DIRTY="+dirty"
 BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 RELEASE_TAG_JSON="null"
+CONNECT_ORIGIN_JSON="$(node -p "JSON.stringify(require('./package.json').connectOrigin || null)")"
 if [[ -n "$RELEASE_TAG" ]]; then
   RELEASE_TAG_JSON="\"${RELEASE_TAG}\""
 fi
@@ -127,6 +128,7 @@ cat > "$APP_DIR/package.json" <<EOF
   "productName": "Solenta",
   "version": "${VERSION}",
   "main": "electron/main.js",
+  "connectOrigin": ${CONNECT_ORIGIN_JSON},
   "buildSha": "${BUILD_SHA}${BUILD_DIRTY}",
   "buildTime": "${BUILD_TIME}",
   "channel": "${CHANNEL}",

@@ -5,6 +5,7 @@
   "license": "MIT",
   "description": "Solenta - desktop agentic development tool",
   "main": "electron/main.js",
+  "connectOrigin": "https://solenta-connect.platform.rungirder.com",
   "scripts": {
     "build:site": "node scripts/build-site-docs.js && node scripts/build-site-content.js && node scripts/build-site-metadata.js && node scripts/build-llms.js && node scripts/build-sitemap.js",
     "dev": "node scripts/dev.js",
