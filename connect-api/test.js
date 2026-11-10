@@ -7,7 +7,7 @@ const { randomUUID } = require("node:crypto");
 const { Pool } = require("pg");
 const { createKeyPair, signProof, verifyProof, thumbprint } = require("../electron/cloud/protocol");
 const { createStore } = require("./store");
-const { createBroker, createClerkVerifier } = require("./server");
+const { createBroker, createGitHubOAuth } = require("./server");
 const { createCloudflare } = require("./cloudflare");
 
 const databaseUrl = process.env.CONNECT_TEST_DATABASE_URL;
@@ -30,7 +30,7 @@ async function listen(handler) {
 
 async function fixture(t, overrides = {}) {
   const account = `user_${randomUUID()}`;
-  const config = { origin: "https://connect.example.com", issuer: "https://identity.example.com", clientId: "public-client", maxComputers: 3 };
+  const config = { origin: "https://connect.example.com", issuer: "https://github.com", clientId: "public-client", maxComputers: 3 };
   let prepares = 0, deletes = 0, mintClaims;
   const tunnels = {
     async prepare(row) { prepares++; row.allocation = { tunnelId: randomUUID(), hostname: `c-${row.linkId}.hosts.example.com` }; return "connector-secret"; },
@@ -206,21 +206,102 @@ test("revocation precedes cleanup, survives failure and fences a later re-link",
   assert.equal((await store.getHost(f.row.computerId)).linkId, second.linkId);
 });
 
-test("Clerk REST verification checks client, subject, expiry and revocation without leaking tokens", async () => {
-  const data = { object: "oauth_access_token", type: "oauth_token", client_id: "public-client", subject: "user_test", revoked: false, expired: false, expiration: Math.floor(Date.now() / 1000) + 300 };
-  const verify = createClerkVerifier({ secretKey: "server-secret", clientId: "public-client", fetch: async (url, options) => {
-    assert.equal(url, "https://api.clerk.com/v1/oauth_applications/access_tokens/verify");
+test("GitHub verifies the configured app, immutable user ID, expiry and identity-only scopes", async () => {
+  const data = { app: { client_id: "public-client" }, token: "opaque-token", user: { id: 12345, login: "renameable", type: "User" }, scopes: [], expires_at: new Date(Date.now() + 300_000).toISOString() };
+  const oauth = createGitHubOAuth({ clientSecret: "server-secret", clientId: "public-client", fetch: async (url, options) => {
+    assert.equal(url, "https://api.github.com/applications/public-client/token");
     assert.equal(options.redirect, "error");
-    assert.equal(options.headers.authorization, "Bearer server-secret");
+    assert.equal(options.headers.authorization, `Basic ${Buffer.from("public-client:server-secret").toString("base64")}`);
     assert.deepEqual(JSON.parse(options.body), { access_token: "opaque-token" });
     return Response.json(data);
   } });
-  assert.equal(await verify("opaque-token"), "user_test");
-  for (const [key, value] of [["client_id", "wrong"], ["revoked", true], ["expired", true], ["subject", ""], ["expiration", 1]]) {
-    const old = data[key]; data[key] = value;
-    await assert.rejects(verify("opaque-token"), /authorization/i);
-    data[key] = old;
+  assert.equal(await oauth.verify("opaque-token"), "github_12345");
+  data.user.login = "renamed";
+  assert.equal(await oauth.verify("opaque-token"), "github_12345");
+  for (const patch of [{ app: { client_id: "wrong" } }, { user: { id: "12345", type: "User" } }, { user: { id: 12345, type: "Organization" } }, { scopes: ["repo"] }, { expires_at: null }, { expires_at: "bad-date" }, { expires_at: new Date(0).toISOString() }, { token: "another-token" }]) {
+    const original = { ...data }; Object.assign(data, patch);
+    await assert.rejects(oauth.verify("opaque-token"), /authorization/i);
+    Object.assign(data, original);
   }
+});
+
+test("GitHub exchanges only bounded PKCE/refresh grants and never exposes its client secret", async () => {
+  let requests = 0;
+  const oauth = createGitHubOAuth({ clientSecret: "server-secret", clientId: "public-client", fetch: async (url, options) => {
+    requests++;
+    assert.equal(url, "https://github.com/login/oauth/access_token");
+    assert.equal(options.redirect, "error");
+    const body = new URLSearchParams(options.body);
+    assert.equal(body.get("client_secret"), "server-secret");
+    assert.equal(body.get("client_id"), "public-client");
+    assert.equal(body.has("attacker"), false);
+    return Response.json({ access_token: "access", refresh_token: "refresh", token_type: "bearer", expires_in: 28800, scope: "", client_secret: "server-secret" });
+  } });
+  const input = { client_id: "public-client", grant_type: "authorization_code", code: "one-use", code_verifier: "a".repeat(43), redirect_uri: "http://127.0.0.1:1234/callback", attacker: "ignored" };
+  assert.equal((await oauth.exchange(input)).access_token, "access");
+  assert.equal(JSON.stringify(await oauth.exchange({ client_id: "public-client", grant_type: "refresh_token", refresh_token: "refresh" })).includes("server-secret"), false);
+  for (const patch of [{ client_id: "wrong" }, { grant_type: "password" }, { code_verifier: "short" }, { code: "" }, { redirect_uri: "https://evil.example.com/callback" }, { redirect_uri: "http://user@127.0.0.1:1234/callback" }, { redirect_uri: "http://127.0.0.1:1234/callback?next=evil" }, { redirect_uri: "http://127.0.0.1:1234/other" }]) {
+    await assert.rejects(oauth.exchange({ ...input, ...patch }), /Invalid GitHub/i);
+  }
+  assert.equal(requests, 2);
+});
+
+test("GitHub rejects provider errors, broad permissions and unrefreshable credentials", async () => {
+  for (const data of [{ error: "bad_code", error_description: "private-upstream-error" }, { access_token: "access", refresh_token: "refresh", token_type: "bearer", expires_in: 28800, scope: "repo" }, { access_token: "access", token_type: "bearer", expires_in: 28800 }, { access_token: "access", refresh_token: "refresh", token_type: "bearer", expires_in: -1 }]) {
+    const oauth = createGitHubOAuth({ clientId: "public-client", clientSecret: "server-secret", fetch: async () => Response.json(data) });
+    await assert.rejects(oauth.exchange({ client_id: "public-client", grant_type: "refresh_token", refresh_token: "refresh" }), error => error.status === 401 && !error.message.includes("private-upstream-error"));
+  }
+  const oauth = createGitHubOAuth({ clientId: "public-client", clientSecret: "server-secret", fetch: async () => Response.json({ message: "private-upstream-error" }, { status: 404 }) });
+  await assert.rejects(oauth.verify("wrong-app-token"), /authorization/i);
+});
+
+test("GitHub sign-out deletes one app token, leaving other devices authorized", async () => {
+  const oauth = createGitHubOAuth({ clientId: "public-client", clientSecret: "server-secret", fetch: async (url, options) => {
+    assert.equal(url, "https://api.github.com/applications/public-client/token");
+    assert.equal(options.method, "DELETE");
+    assert.equal(options.redirect, "error");
+    assert.deepEqual(JSON.parse(options.body), { access_token: "this-device-token" });
+    return new Response(null, { status: 204 });
+  } });
+  await oauth.revoke("this-device-token");
+});
+
+test("broker exposes bounded OAuth exchange and requires an app-verified token for revocation", async t => {
+  let revoked = false, exchanges = 0;
+  const config = { origin: "https://connect.example.com", issuer: "https://github.com", clientId: "public-client", maxComputers: 3 };
+  const oauth = createGitHubOAuth({ clientId: config.clientId, clientSecret: "server-secret", fetch: async (url, options) => {
+    if (url === "https://github.com/login/oauth/access_token") {
+      exchanges++;
+      return Response.json({ access_token: "access", refresh_token: "refresh", expires_in: 28800, token_type: "bearer", scope: "" });
+    }
+    const token = JSON.parse(options.body).access_token;
+    if (token !== "access" || revoked) return Response.json({ message: "untrusted-provider-error" }, { status: 404 });
+    if (options.method === "DELETE") { revoked = true; return new Response(null, { status: 204 }); }
+    return Response.json({ app: { client_id: config.clientId }, token, user: { id: 42, type: "User" }, scopes: [], expires_at: new Date(Date.now() + 28800_000).toISOString() });
+  } });
+  const server = await listen(createBroker({ config, store: { list: async () => [] }, signingKey: brokerKey.privateJwk, oauth, verifyAccount: oauth.verify }));
+  t.after(server.close);
+  const request = (path, body, accessToken) => fetch(server.origin + path, { method: "POST", headers: { "content-type": "application/json", ...(accessToken ? { authorization: `Bearer ${accessToken}` } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) });
+  const publicConfig = await (await fetch(server.origin + "/v1/config")).json();
+  assert.equal(publicConfig.issuer, "https://github.com");
+  assert.equal(JSON.stringify(publicConfig).includes("secret"), false);
+  assert.equal((await request("/v1/oauth/token", { client_id: "wrong", grant_type: "refresh_token", refresh_token: "refresh" })).status, 400);
+  assert.equal((await request("/v1/oauth/token", { oversized: "x".repeat(40000) })).status, 413);
+  const exchange = await request("/v1/oauth/token", { client_id: config.clientId, grant_type: "refresh_token", refresh_token: "refresh" });
+  assert.equal(exchange.status, 200);
+  assert.equal(exchange.headers.get("cache-control"), "no-store");
+  assert.equal(JSON.stringify(await exchange.json()).includes("server-secret"), false);
+  assert.equal(exchanges, 1);
+  const account = await (await fetch(server.origin + "/v1/computers", { headers: { authorization: "Bearer access" } })).json();
+  assert.equal(account.accountId, "github_42");
+  assert.equal((await request("/v1/oauth/revoke")).status, 401);
+  assert.equal((await request("/v1/oauth/revoke", undefined, "wrong-app-token")).status, 401);
+  assert.equal(revoked, false);
+  assert.equal((await request("/v1/oauth/revoke", undefined, "access")).status, 200);
+  assert.equal(revoked, true);
+  assert.equal((await fetch(server.origin + "/v1/computers", { headers: { authorization: "Bearer access" } })).status, 401);
+  for (let i = 0; i < 27; i++) await request("/v1/oauth/token", { client_id: "wrong" });
+  assert.equal((await request("/v1/oauth/token", { client_id: "wrong" })).status, 429);
 });
 
 test("Cloudflare retry reconciles its tunnel after DNS failure; origin is always loopback", async () => {

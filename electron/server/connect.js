@@ -35,7 +35,7 @@ async function main(argv, deps = {}) {
     if (!origin) throw new Error("Solenta Cloud is not configured in this running server.");
     const config = await fetchJSON(deps.fetch ?? fetch, `${origin}/v1/config`);
     if (config.origin !== origin || config.protocol !== 1) throw new Error("Cloud login configuration does not match this server.");
-    const oauth = (deps.createOAuth ?? createOAuth)({ issuer: config.issuer, clientId: config.clientId, fetch: deps.fetch });
+    const oauth = (deps.createOAuth ?? createOAuth)({ brokerOrigin: origin, issuer: config.issuer, clientId: config.clientId, fetch: deps.fetch });
     output(status.account?.storage === "plaintext" ? "Cloud credentials are stored unencrypted in a private 0600 file on this host.\n" : "Cloud credentials will use this runtime's secure storage.\n");
     const auth = await oauth.login({ headless: true, onCode: code => output(`Open ${code.verificationUri}\nEnter code: ${code.userCode}\n`) });
     return call("accept-login", { oauth: auth });

@@ -30,7 +30,7 @@ function createCloudClient({ config, credentials, fetch = globalThis.fetch, open
     if (!broker) throw new Error("Solenta Cloud is not configured.");
     if (!publicConfig) publicConfig = await fetchJSON(fetch, `${broker}/v1/config`, { signal: lifecycle.signal });
     if (publicConfig.origin !== broker || publicConfig.protocol !== 1) throw new Error("Cloud login configuration is invalid.");
-    oauth = createOAuth({ issuer: publicConfig.issuer, clientId: publicConfig.clientId, fetch, openExternal });
+    oauth = createOAuth({ brokerOrigin: broker, issuer: publicConfig.issuer, clientId: publicConfig.clientId, fetch, openExternal });
     return oauth;
   }
   async function access() {

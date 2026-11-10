@@ -50,9 +50,9 @@ export function CloudConnections({ api, hosts, onHosts }: { api: CloudConnection
   return <div className={styles.section} data-cloud-connections="">
     <h3 className={styles.sectionLabel}>Cloud</h3>
     {!status ? <p className={styles.fieldNote}>Checking cloud access…</p> : !status.account.configured ? <p className={styles.fieldNote}>Cloud access is not configured in this build.</p> : <>
-      <p className={styles.fieldNote}>Sign in on each computer, then connect without SSH. Agents, credentials and work stay on their execution computer.</p>
+      <p className={styles.fieldNote}>Sign in with GitHub on each computer, then connect without SSH. Agents, credentials and work stay on their execution computer.</p>
       <div className={styles.fieldRow}>
-        {!status.account.signedIn ? <button className={styles.btnPrimary} type="button" data-cloud-sign-in="" disabled={busy || Boolean(status.account.error)} onClick={() => void run(() => api.cloudLogin())}>Sign in</button>
+        {!status.account.signedIn ? <button className={styles.btnPrimary} type="button" data-cloud-sign-in="" disabled={busy || Boolean(status.account.error)} onClick={() => void run(() => api.cloudLogin())}>Sign in with GitHub</button>
           : <><span className={styles.fieldNote}>Signed in{status.account.storage === "session" ? " for this session" : ""}</span>
             <button className={styles.btn} type="button" data-cloud-sign-out="" disabled={busy} onClick={() => void run(async () => {
               const result = await api.cloudLogout();

@@ -26,21 +26,50 @@ function publicComputer(row) {
     lastSeen: row.lastSeen, descriptor: row.descriptor ?? null, cleanupPending: Boolean(row.cleanupPending), hostRevocationPending: row.hostRevocationPending === true };
 }
 
-function createClerkVerifier({ secretKey, clientId, fetch = globalThis.fetch }) {
-  if (!secretKey || !clientId) throw new Error("Clerk verification is not configured.");
-  return async token => {
-    try {
-      const data = await fetchJSON(fetch, "https://api.clerk.com/v1/oauth_applications/access_tokens/verify", {
-        method: "POST", headers: { authorization: `Bearer ${secretKey}`, "content-type": "application/json" }, body: JSON.stringify({ access_token: token }),
-      });
-      if (data.client_id !== clientId || typeof data.subject !== "string" || !ACCOUNT.test(data.subject) ||
-          data.revoked !== false || data.expired !== false || !Number.isSafeInteger(data.expiration) || data.expiration <= Date.now() / 1000 || data.act) throw new Error();
-      return data.subject;
-    } catch { fail(401, "Cloud authorization failed. Sign in again."); }
+function createGitHubOAuth({ clientSecret, clientId, fetch = globalThis.fetch }) {
+  if (typeof clientSecret !== "string" || !clientSecret || typeof clientId !== "string" || !/^[a-zA-Z0-9._-]{1,256}$/.test(clientId)) throw new Error("GitHub verification is not configured.");
+  const endpoint = `https://api.github.com/applications/${clientId}/token`;
+  const headers = { authorization: `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString("base64")}`, "content-type": "application/json", accept: "application/vnd.github+json", "user-agent": "Solenta-Connect", "x-github-api-version": "2022-11-28" };
+  const token = value => typeof value === "string" && /^[^\s]{1,16384}$/.test(value);
+  const identityScopes = scopes => Array.isArray(scopes) && scopes.every(scope => scope === "offline_access");
+  return {
+    async verify(accessToken) {
+      try {
+        if (!token(accessToken)) throw new Error();
+        const data = await fetchJSON(fetch, endpoint, { method: "POST", headers, body: JSON.stringify({ access_token: accessToken }) });
+        const expires = Date.parse(data.expires_at);
+        if (data.app?.client_id !== clientId || data.token !== accessToken || !Number.isSafeInteger(data.user?.id) || data.user.id < 1 || data.user.type !== "User" ||
+            !identityScopes(data.scopes) || !Number.isFinite(expires) || expires <= Date.now()) throw new Error();
+        return `github_${data.user.id}`;
+      } catch { fail(401, "Cloud authorization failed. Sign in with GitHub again."); }
+    },
+    async exchange(input) {
+      if (input.client_id !== clientId) fail(400, "Invalid GitHub client.");
+      let fields;
+      if (input.grant_type === "authorization_code") {
+        let redirect;
+        try { redirect = new URL(input.redirect_uri); } catch { fail(400, "Invalid GitHub callback."); }
+        if (redirect.protocol !== "http:" || redirect.hostname !== "127.0.0.1" || !redirect.port || redirect.username || redirect.password || redirect.pathname !== "/callback" || redirect.search || redirect.hash ||
+            typeof input.code !== "string" || !input.code || input.code.length > 4096 || typeof input.code_verifier !== "string" || !/^[a-zA-Z0-9._~-]{43,128}$/.test(input.code_verifier)) fail(400, "Invalid GitHub PKCE exchange.");
+        fields = { code: input.code, code_verifier: input.code_verifier, redirect_uri: redirect.toString() };
+      } else if (input.grant_type === "refresh_token" && token(input.refresh_token)) fields = { refresh_token: input.refresh_token };
+      else fail(400, "Invalid GitHub grant.");
+      try {
+        const data = await fetchJSON(fetch, "https://github.com/login/oauth/access_token", { method: "POST", headers: { accept: "application/json", "content-type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({ client_id: clientId, client_secret: clientSecret, grant_type: input.grant_type, ...fields }).toString() });
+        if (data.error || !token(data.access_token) || !token(data.refresh_token) || data.token_type?.toLowerCase() !== "bearer" || !Number.isSafeInteger(data.expires_in) || data.expires_in <= 0 || data.expires_in > 86400 ||
+            typeof (data.scope ?? "") !== "string" || !identityScopes((data.scope ?? "").split(/[ ,]+/).filter(Boolean))) throw new Error();
+        return { access_token: data.access_token, refresh_token: data.refresh_token, token_type: "bearer", expires_in: data.expires_in };
+      } catch { fail(401, "GitHub token exchange failed. Sign in again."); }
+    },
+    async revoke(accessToken) {
+      const response = await fetch(endpoint, { method: "DELETE", headers, body: JSON.stringify({ access_token: accessToken }), redirect: "error", signal: AbortSignal.timeout(15_000) });
+      if (response.status !== 204) fail(502, "GitHub token revocation could not be confirmed.");
+    },
   };
 }
 
-function createBroker({ store, verifyAccount, tunnels, signingKey, fetch = globalThis.fetch, config }) {
+function createBroker({ store, verifyAccount, oauth, tunnels, signingKey, fetch = globalThis.fetch, config }) {
   origin(config.origin); origin(config.issuer);
   if (!config.clientId || !Number.isInteger(config.maxComputers) || config.maxComputers < 1 || config.maxComputers > 100) throw new Error("Cloud broker configuration is incomplete.");
   const { d, ...publicJwk } = signingKey;
@@ -69,6 +98,11 @@ function createBroker({ store, verifyAccount, tunnels, signingKey, fetch = globa
     const path = req.url;
     if (req.method === "GET" && path === "/health") return { ok: true };
     rate(`ip:${req.socket.remoteAddress}`, 240);
+    if (req.method === "POST" && path === "/v1/oauth/token") {
+      rate(`oauth:${req.socket.remoteAddress}`, 30);
+      if (!oauth) fail(503, "GitHub login is unavailable.");
+      return oauth.exchange(await readJSON(req));
+    }
     if (req.method === "GET" && path === "/v1/config") return { protocol: 1, origin: config.origin, issuer: config.issuer, clientId: config.clientId, publicKey: publicJwk };
     const match = /^\/v1\/computers\/([a-zA-Z0-9._:-]{8,128})(?:\/(connect|heartbeat))?$/.exec(path);
     if (match?.[2] === "heartbeat" && req.method === "POST") {
@@ -102,6 +136,11 @@ function createBroker({ store, verifyAccount, tunnels, signingKey, fetch = globa
     try { accountId = await verifyAccount(token); } catch { fail(401, "Cloud authorization failed. Sign in again."); }
     if (typeof accountId !== "string" || !ACCOUNT.test(accountId)) fail(401, "Cloud authorization failed.");
     rate(`account:${accountId}`, 90);
+    if (req.method === "POST" && path === "/v1/oauth/revoke") {
+      if (!oauth) fail(503, "GitHub sign-out is unavailable.");
+      await oauth.revoke(token);
+      return { revoked: true };
+    }
     if (path === "/v1/computers" && req.method === "GET") return { accountId, computers: (await store.list(accountId)).map(publicComputer) };
     if (path === "/v1/computers" && req.method === "POST") {
       const input = await readJSON(req);
@@ -201,12 +240,13 @@ async function main() {
   const { Pool } = require("pg");
   const { createStore } = require("./store");
   const { createCloudflare } = require("./cloudflare");
-  const config = { origin: process.env.CONNECT_ORIGIN, issuer: process.env.CLERK_ISSUER, clientId: process.env.CLERK_CLIENT_ID, maxComputers: Number(process.env.CONNECT_MAX_COMPUTERS ?? 3) };
+  const config = { origin: process.env.CONNECT_ORIGIN, issuer: "https://github.com", clientId: process.env.CONNECT_GITHUB_CLIENT_ID, maxComputers: Number(process.env.CONNECT_MAX_COMPUTERS ?? 3) };
   if (!process.env.DATABASE_URL) throw new Error("Connect database is not configured.");
   const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 10, connectionTimeoutMillis: 5000 });
   const store = createStore(pool); await store.init();
+  const oauth = createGitHubOAuth({ clientSecret: process.env.CONNECT_GITHUB_CLIENT_SECRET, clientId: config.clientId });
   const handler = createBroker({ store, config, signingKey: JSON.parse(process.env.CONNECT_SIGNING_JWK),
-    verifyAccount: createClerkVerifier({ secretKey: process.env.CLERK_SECRET_KEY, clientId: config.clientId }),
+    verifyAccount: oauth.verify, oauth,
     tunnels: createCloudflare({ token: process.env.CLOUDFLARE_API_TOKEN, accountId: process.env.CLOUDFLARE_ACCOUNT_ID, zoneId: process.env.CLOUDFLARE_ZONE_ID, domain: process.env.CONNECT_HOST_DOMAIN }),
   });
   const server = http.createServer({ requestTimeout: 20_000, headersTimeout: 10_000, maxHeaderSize: 20_000 }, handler);
@@ -215,4 +255,4 @@ async function main() {
   process.once("SIGTERM", close); process.once("SIGINT", close);
 }
 if (require.main === module) main().catch(() => { process.stderr.write("Solenta Connect failed to start. Check its secure configuration.\n"); process.exitCode = 1; });
-module.exports = { createBroker, createClerkVerifier };
+module.exports = { createBroker, createGitHubOAuth };

@@ -12,7 +12,7 @@ const { createCloudClient } = require("../cloud/client");
 const { createCloudHost } = require("../cloud/host");
 const { createKeyPair, verifyProof } = require("../cloud/protocol");
 const { createWebDevices } = require("../webDevices");
-const { createBroker } = require("../../connect-api/server");
+const { createBroker, createGitHubOAuth } = require("../../connect-api/server");
 const { readJSON } = require("../cloud/http");
 const { Readable } = require("node:stream");
 
@@ -120,7 +120,7 @@ async function bootstrap(t, timers = {}) {
     } catch (error) { res.statusCode = 400; res.end(JSON.stringify({ error: error.message })); }
   }));
   mapped.set(brokerOrigin, await server(createBroker({ store: { getHost: async () => row }, verifyAccount: async () => "user_test", tunnels: {}, signingKey: brokerKey.privateJwk, fetch: fetchMapped,
-    config: { origin: brokerOrigin, issuer: "https://identity.example.com", clientId: "public-client", maxComputers: 3 } })));
+    config: { origin: brokerOrigin, issuer: "https://github.com", clientId: "public-client", maxComputers: 3 } })));
   await cloudHost.start();
   const credentials = createCredentials({ file: file(t) });
   credentials.write({ origin: brokerOrigin, accountId: "user_test", oauth: { accessToken: "access-secret", refreshToken: "refresh-secret", expiresAt: Date.now() + 3600_000 }, proofKey: clientKey.privateJwk });
@@ -262,5 +262,53 @@ test("explicit logout clears locked credentials; sign-in never overwrites them b
   assert.equal(fs.readFileSync(target, "utf8"), "invalid");
   assert.equal((await client.logout()).revocationPending, true);
   assert.equal(fs.existsSync(target), false);
+  assert.equal(client.status().signedIn, false);
+});
+
+
+test("real desktop GitHub flow crosses the broker, verifies identity and revokes the login", async t => {
+  const brokerOrigin = "https://connect.example.com", pair = await createKeyPair();
+  let accessToken = "github-access", revoked = false, exchanges = 0;
+  const github = createGitHubOAuth({ clientId: "public-client", clientSecret: "broker-secret", fetch: async (url, options) => {
+    if (url === "https://github.com/login/oauth/access_token") {
+      const body = new URLSearchParams(options.body);
+      assert.equal(body.get("client_secret"), "broker-secret");
+      assert.equal(body.get("grant_type"), "authorization_code");
+      exchanges++;
+      return Response.json({ access_token: accessToken, refresh_token: "github-refresh", expires_in: 28800, token_type: "bearer", scope: "" });
+    }
+    assert.equal(url, "https://api.github.com/applications/public-client/token");
+    assert.equal(JSON.parse(options.body).access_token, accessToken);
+    if (options.method === "DELETE") { revoked = true; return new Response(null, { status: 204 }); }
+    return Response.json({ app: { client_id: "public-client" }, token: accessToken, user: { id: 42, type: "User" }, scopes: [], expires_at: new Date(Date.now() + 28800_000).toISOString() });
+  } });
+  const handler = createBroker({ store: { list: async account => { assert.equal(account, "github_42"); return []; } }, verifyAccount: github.verify, oauth: github,
+    signingKey: pair.privateJwk, config: { origin: brokerOrigin, issuer: "https://github.com", clientId: "public-client", maxComputers: 3 } });
+  const broker = http.createServer(handler);
+  await new Promise(resolve => broker.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise(resolve => broker.close(resolve)));
+  const credentials = createCredentials({ file: file(t) });
+  const client = createCloudClient({ config: { origin: brokerOrigin }, credentials,
+    fetch: (url, options) => {
+      assert.ok(url.startsWith(brokerOrigin + "/"));
+      assert.equal(String(options.body).includes("broker-secret"), false);
+      return fetch(`http://127.0.0.1:${broker.address().port}` + url.slice(brokerOrigin.length), options);
+    },
+    openExternal: async url => {
+      const auth = new URL(url);
+      assert.equal(auth.origin, "https://github.com");
+      assert.equal(auth.searchParams.get("scope"), "offline_access");
+      const callback = new URL(auth.searchParams.get("redirect_uri"));
+      callback.search = new URLSearchParams({ code: "one-use-code", state: auth.searchParams.get("state") });
+      assert.equal((await fetch(callback)).status, 200);
+    },
+  });
+  t.after(client.close);
+  assert.equal((await client.login()).accountId, "github_42");
+  assert.equal(exchanges, 1);
+  assert.equal(credentials.read().oauth.refreshToken, "github-refresh");
+  assert.deepEqual(await client.computers(), []);
+  assert.deepEqual(await client.logout(), { revocationPending: false });
+  assert.equal(revoked, true);
   assert.equal(client.status().signedIn, false);
 });

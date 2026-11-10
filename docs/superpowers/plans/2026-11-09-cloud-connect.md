@@ -4,9 +4,9 @@
 
 **Goal:** Link a Solenta host to an account and connect from another desktop without SSH or Tailscale SSH permissions.
 
-**Architecture:** Reuse the existing host, wire bridge, computer identity, named device sessions and route hub. A Girder/Postgres broker verifies Clerk OAuth and provisions Cloudflare tunnels. A host-owned connector serves a stable endpoint; signed, client-bound one-use enrollment creates short host sessions directly on the host.
+**Architecture:** Reuse the existing host, wire bridge, computer identity, named device sessions and route hub. A Girder/Postgres broker verifies GitHub OAuth and provisions Cloudflare tunnels. A host-owned connector serves a stable endpoint; signed, client-bound one-use enrollment creates short host sessions directly on the host.
 
-**Tech Stack:** Existing Node/CommonJS and React/TypeScript; Postgres `pg`; reviewed `jose` for signed proofs; Clerk OAuth public client; Cloudflare Tunnel API and pinned `cloudflared`.
+**Tech Stack:** Existing Node/CommonJS and React/TypeScript; Postgres `pg`; reviewed `jose` for signed proofs; GitHub OAuth login app; Cloudflare Tunnel API and pinned `cloudflared`.
 
 **Spec:** `docs/superpowers/specs/2026-11-09-cloud-connect-design.md`, approved by the user's “ok keep building” on 2026-11-09.
 
@@ -53,7 +53,7 @@
 Endpoints: `GET /health`, `GET /v1/config`, `GET /v1/computers`, `POST /v1/computers`, `POST /v1/computers/:id/connect`, `POST /v1/computers/:id/heartbeat`, `DELETE /v1/computers/:id`. Protected routes derive account from verified OAuth token; IDs and keys are never authority by themselves.
 
 - [ ] Write real HTTP tests for account isolation, host registration proof, host-key pinning, limits and bounded requests; confirm missing implementation fails.
-- [ ] Implement OAuth-token verification against Clerk's supported verification endpoint; check subject, approved public client and expiry. Fail closed on provider rejection.
+- [ ] Implement OAuth-token verification against GitHub's app-authenticated token-check endpoint; check numeric user ID, approved client, identity-only scopes and expiry. Fail closed on provider rejection.
 - [ ] Implement Postgres transactions, unique ownership, stable allocation and generation-fenced revoke/cleanup. No in-memory production database.
 - [ ] Test partial Cloudflare failure/retry and two concurrent registrations; assert one stable allocation, no caller-provided upstream and no redirects.
 - [ ] Implement signed mint request/response with the task-1 protocol; broker returns one-use client-bound grant, never reusable host token.
@@ -63,10 +63,10 @@ Endpoints: `GET /health`, `GET /v1/config`, `GET /v1/computers`, `POST /v1/compu
 
 **Files:** Create `electron/cloud/{oauth.js,credentials.js,client.js}`, `electron/test/cloudOAuth.test.js`, `electron/test/cloudClient.test.js`.
 
-**Interfaces:** `createOAuth({ issuer, clientId, fetch, openExternal, now })` exposes `login({ headless, onCode, signal })`, `refresh(credentials)`, `revoke(credentials)`. `createCredentials({ file, safeStorage, allowPlaintext })` reads/writes/deletes bounded atomic files; desktop defaults to encrypted or session-only, CLI explicitly permits 0600 storage. `createCloudClient({ config, credentials, fetch, openExternal })` exposes `status`, `login`, `logout`, `computers`, `session(computerId)`, `deregister(computerId)` and `close`.
+**Interfaces:** `createOAuth({ issuer, brokerOrigin, clientId, fetch, openExternal, now })` exposes `login({ headless, onCode, signal })`, `refresh(credentials)`, `revoke(credentials)`. `createCredentials({ file, safeStorage, allowPlaintext })` reads/writes/deletes bounded atomic files; desktop defaults to encrypted or session-only, CLI explicitly permits 0600 storage. `createCloudClient({ config, credentials, fetch, openExternal })` exposes `status`, `login`, `logout`, `computers`, `session(computerId)`, `deregister(computerId)` and `close`.
 
 - [ ] Write PKCE callback tests for wrong state, duplicate callback and cancellation; device grant tests assert interval/slow_down/expiry handling.
-- [ ] Implement discovery using configured issuer, public-client PKCE and device grant without client secret; test provider errors and timeouts.
+- [ ] Pin GitHub endpoints; use broker-only secret for desktop PKCE/refresh and direct headless device grant; test provider errors and timeouts.
 - [ ] Implement secure storage and single-flight refresh/rotation; test failed refresh preserves valid credentials and logout clears state.
 - [ ] Test a real local broker/host bootstrap: validate descriptor before exchanging, verify host response and present client-bound proof directly to host.
 - [ ] Implement cached sessions with rotation before ten-minute expiry and notifications to connection owners. Preserve established work until actual expiry/revocation.
@@ -104,7 +104,7 @@ Endpoints: `GET /health`, `GET /v1/config`, `GET /v1/computers`, `POST /v1/compu
 
 - [ ] Test packaged resolution of all new runtime dependencies and launcher --help; ensure connector/model cache writes occur outside signed bundles.
 - [ ] Run meaningful full relevant checks: root typecheck, renderer Connections/wire tests, cloud/broker/identity/device/server lifecycle tests, package checks.
-- [ ] Configure a separate Girder broker app/Postgres and public Clerk/Cloudflare settings when credentials are available. Verify exact deploy plan before publishing public access.
+- [ ] Configure a separate Girder broker app/Postgres and public GitHub/Cloudflare settings when credentials are available. Verify exact deploy plan before publishing public access.
 - [ ] Run staging link on the existing Linux host at 4621 without touching the 4620 desktop. Connect through HTTPS with SSH disabled in the acceptance client, run fake-provider work and a real terminal, reconnect and revoke.
 - [ ] Perform native connector/service checks and post-use macOS signature checks before cutting a release. Report any missing real-platform or reboot coverage precisely.
 - [ ] Obtain a fresh whole-branch security/correctness review, resolve findings, open a Solenta PR and record actual acceptance results on #1974. Never mark cloud complete based only on fixtures or an allocated tunnel.
@@ -117,3 +117,14 @@ independent reviewer for the complete trust boundary before publication. Do not
 ask the user again for routine code/plan choices already covered by that approval.
 External account setup can proceed independently of local implementation; secret
 values must be supplied through secure deployment configuration, not chat.
+
+## Approved authentication update, 2026-11-10
+
+The user chose direct GitHub login instead of Clerk. Update OAuth client,
+broker verification/exchange/revocation, desktop/CLI callers, auth fixtures,
+login copy and deployment docs. Preserve host sessions, tunnel routing and
+scope/revocation guarantees. Use a dedicated login-only OAuth app, expiring
+tokens, state/S256 PKCE on desktop and device authorization on headless hosts.
+Test wrong-app/expired/broad tokens, immutable IDs, bounded PKCE callbacks,
+refresh rotation, single-token sign-out and public-config secret exclusion.
+Live GitHub/Cloudflare acceptance remains required before release.

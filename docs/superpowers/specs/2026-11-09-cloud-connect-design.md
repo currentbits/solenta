@@ -44,7 +44,7 @@ the older remote desktop service as part of enabling cloud access.
 
 ## Proposed infrastructure
 
-Use Clerk's public OAuth application for sign-in, Cloudflare managed tunnels
+Use a dedicated GitHub OAuth application for sign-in, Cloudflare managed tunnels
 for reachability, and a small Node service with Postgres on existing Girder
 hosting for the broker. The broker is a separate Solenta app and database;
 it does not run inside the website, feedback service or desktop process.
@@ -60,7 +60,7 @@ single-level subdomain if the account's certificate setup requires it.
 Provision no resources and publish no new network endpoints during design.
 The implementation should include checked configuration, migrations, a
 container definition, health checks, setup validation and a rollback runbook.
-Actual public verification requires configured Clerk and Cloudflare resources.
+Actual public verification requires configured GitHub OAuth and Cloudflare resources.
 Missing configuration must produce a setup error, never a fake successful login
 or an apparently online computer.
 
@@ -75,7 +75,7 @@ There is no need to adopt T3's framework or copy its service architecture.
 ### Receiving desktop
 
 Connections gains a Cloud area alongside the existing computer routes. Sign in
-opens the system browser. A public-client OAuth authorization-code flow uses
+opens the system browser. The desktop OAuth authorization-code flow uses
 PKCE S256, state, a bounded one-use loopback callback, and a strict redirect
 allowlist. No OAuth client secret is shipped in desktop or server packages.
 Keep OAuth credentials in Electron main and encrypted native storage. A
@@ -100,7 +100,7 @@ An installed desktop can sign in and choose Enable cloud access for this
 computer. A standalone archive gains `bin/solenta-connect` with `login`, `link`,
 `status`, `unlink` and `logout` commands and `--data-dir`/`--port` where needed.
 `link` starts login if required, then registers this exact computer identity.
-Headless login uses Clerk's OAuth device grant: show a verification URL and
+Headless login uses GitHub's OAuth device grant: show a verification URL and
 short code, honor advertised expiry/poll intervals and slow_down, and stop on
 denial/cancellation. Device authorization does not use PKCE or a callback port.
 
@@ -156,7 +156,7 @@ The desktop owns OAuth credentials, its client proof key and host sessions in
 secure storage. Public renderer state contains labels, identifiers and status;
 never OAuth refresh tokens, connector credentials or private signing keys.
 
-The broker never receives a provider credential, repository, terminal stream,
+The broker never receives a model-provider credential, repository, terminal stream,
 thread transcript or reusable host session token. Host list labels and version
 metadata are cloud data and must be named in the privacy documentation.
 Cloudflare terminates tunnel HTTPS; do not claim end-to-end encryption or an
@@ -182,11 +182,16 @@ transport, execution backend, device store or home-grown OAuth provider.
 
 ## Authentication and bootstrap
 
-Use Clerk-supported verification for the configured OAuth token format. Clerk
-supports opaque and JWT OAuth access tokens; do not mistake a decoded JWT or a
-Clerk browser session token for a verified OAuth access token. Validate issuer,
-approved client, subject, expiry and required scopes. Refresh-token handling is
-single-flight and rotation-safe, with revocation on explicit logout.
+Use GitHub's app-authenticated token-check endpoint to verify the dedicated
+login app, token, numeric user ID, expiry and identity-only scopes. Account IDs
+are `github_<numeric-id>`, never usernames. Request only `offline_access`; reject
+repository permissions and nonexpiring credentials. Desktop PKCE code exchange
+and refresh run through bounded broker routes with the app secret held only on
+the broker. Headless device flow talks directly to GitHub and refreshes through
+the same broker. Refresh-token handling is single-flight and rotation-safe;
+explicit logout deletes only this device's app token. No GitHub app secret ships in
+the desktop or server archive. The broker processes OAuth tokens transiently
+for exchange, refresh and verification, without persisting or logging them. GitHub OAuth does not use OIDC discovery.
 
 Account login permits listing owned computers, not trusting arbitrary URLs.
 Broker allocation endpoints derive account, computer and origin from committed
@@ -285,25 +290,25 @@ Already confirmed: existing Girder Solenta stack, plain-Node server archives,
 four native server targets, desktop packaging, identity and scoped enrollment.
 No existing Solenta cloud broker was found in the hosting inventory.
 
-Need to configure/confirm: Clerk instance/public OAuth application and grants;
-the broker's verification secret; Cloudflare account/zone and tunnel/DNS API
+Need to configure/confirm: dedicated GitHub OAuth app with device flow, expiring tokens
+and the loopback callback; its broker-only client secret; Cloudflare account/zone and tunnel/DNS API
 permissions; endpoint DNS/certificate coverage; production public client config;
 broker signing/encryption keys and database; consent/privacy copy and per-account
 limits. Never commit or print these secrets. The user's latest request authorizes
 building the feature; it does not confirm that these resources already exist.
 
-The question currently put to the user is which existing accounts/hosting to use,
-with Clerk + Cloudflare offered as the default. Their answer overrides these
-proposals. Once the description is approved (or questions are explicitly skipped),
-write an implementation plan and proceed with the approved scope.
+On 2026-11-10 the user approved direct GitHub sign-in in place of the earlier
+Clerk proposal. This changes account authentication only; Cloudflare and Girder
+remain the proposed reachability and broker infrastructure. No Clerk deployment
+or account migration is implied.
 
 ## Primary references
 
 - [Solenta tracking issue](https://github.com/currentbits/solenta/issues/1974)
 - [T3 remote setup](https://github.com/pingdotgg/t3code/blob/ade473018d32003658b7d38693e083ee2e314bd8/docs/user/remote-access.md)
 - [T3 Connect architecture and trust](https://github.com/pingdotgg/t3code/blob/ade473018d32003658b7d38693e083ee2e314bd8/docs/internals/t3-connect.md)
-- [Clerk device authorization](https://clerk.com/docs/guides/configure/auth-strategies/oauth/device-authorization-grant)
-- [Clerk OAuth token verification](https://clerk.com/docs/guides/configure/auth-strategies/oauth/verify-oauth-tokens)
+- [GitHub OAuth, PKCE and device authorization](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps)
+- [GitHub app-bound token verification and revocation](https://docs.github.com/en/rest/apps/oauth-applications)
 - [Cloudflare Tunnel setup](https://developers.cloudflare.com/tunnel/get-started/)
 
 

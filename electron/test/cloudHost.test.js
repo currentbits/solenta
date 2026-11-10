@@ -320,3 +320,39 @@ test("disabled hosts retry a lost signed receipt while keeping their connector s
   assert.equal(f.host.status().revocationPending, false);
   assert.equal(f.actions.filter(action => action === "connector").length, launches);
 });
+
+
+test("CLI GitHub device login sends its credential only to the selected local runtime", async () => {
+  const output = [], origin = "https://connect.example.com", calls = [];
+  const result = await connectCommand(["login", "--port", "4621", "--data-dir", "/tmp/test-selected-host"], {
+    output: text => output.push(text),
+    invoke: async (port, dir, channel, args) => {
+      assert.equal(port, 4621);
+      assert.equal(channel, "cloud:admin");
+      calls.push(args[0].action);
+      if (args[0].action === "status") return { account: { brokerOrigin: origin, signedIn: false, storage: "plaintext" } };
+      assert.equal(args[0].action, "accept-login");
+      assert.equal(args[0].oauth.accessToken, "headless-access");
+      assert.equal(args[0].oauth.refreshToken, "headless-refresh");
+      return { signedIn: true, accountId: "github_42" };
+    },
+    fetch: async (url, options) => {
+      if (url === `${origin}/v1/config`) return Response.json({ protocol: 1, origin, issuer: "https://github.com", clientId: "public-client" });
+      assert.equal(options.redirect, "error");
+      const body = new URLSearchParams(options.body);
+      assert.equal(body.has("client_secret"), false);
+      if (url === "https://github.com/login/device/code") {
+        assert.equal(body.get("scope"), "offline_access");
+        return Response.json({ device_code: "private-device-code", user_code: "ABCD-EFGH", verification_uri: "https://github.com/login/device", interval: 1, expires_in: 30 });
+      }
+      assert.equal(url, "https://github.com/login/oauth/access_token");
+      assert.equal(body.get("device_code"), "private-device-code");
+      return Response.json({ access_token: "headless-access", refresh_token: "headless-refresh", token_type: "bearer", expires_in: 28800 });
+    },
+  });
+  assert.deepEqual(calls, ["status", "accept-login"]);
+  assert.equal(result.accountId, "github_42");
+  assert.match(output.join(""), /github.com\/login\/device/);
+  assert.match(output.join(""), /ABCD-EFGH/);
+  assert.doesNotMatch(output.join(""), /private-device-code|headless-access|headless-refresh/);
+});

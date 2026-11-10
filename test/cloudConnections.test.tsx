@@ -39,6 +39,7 @@ it("shows unavailable cloud configuration without offering a fake sign-in", asyn
 it("reports a failed browser sign-in and keeps the user signed out", async () => {
   const f = fixture(); f.status.account.signedIn = false; f.failLogin("Browser sign-in cancelled");
   const m = await mount(<ConnectionsSection cloudApi={f.api} />);
+  assert.equal(m.query("[data-cloud-sign-in]")?.textContent, "Sign in with GitHub");
   await m.click(m.query("[data-cloud-sign-in]"));
   assert.match(m.container.textContent || "", /Browser sign-in cancelled/);
   assert.equal(m.query("[data-cloud-sign-out]"), null);
