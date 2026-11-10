@@ -49,7 +49,7 @@ export function CloudConnections({ api, hosts, onHosts }: { api: CloudConnection
   const own = status?.host;
   return <div className={styles.section} data-cloud-connections="">
     <h3 className={styles.sectionLabel}>Cloud</h3>
-    {!status ? <p className={styles.fieldNote}>Checking cloud access…</p> : !status.account.configured ? <p className={styles.fieldNote}>Cloud access is not configured in this build.</p> : <>
+    {!status ? <p className={styles.fieldNote}>Checking cloud access…</p> : !status.account.configured ? <p className={styles.fieldNote}>Use Address below to connect through your own HTTPS tunnel with a device token. Account-based cloud access requires your own broker.</p> : <>
       <p className={styles.fieldNote}>Sign in with GitHub on each computer, then connect without SSH. Agents, credentials and work stay on their execution computer.</p>
       <div className={styles.fieldRow}>
         {!status.account.signedIn ? <button className={styles.btnPrimary} type="button" data-cloud-sign-in="" disabled={busy || Boolean(status.account.error)} onClick={() => void run(() => api.cloudLogin())}>Sign in with GitHub</button>

@@ -169,12 +169,12 @@ export function ConnectionsSection({ onOpen, onForget, onInstall, onManage, onSi
         <ol className={`${styles.fieldNote} ${styles.connectionSteps}`} data-connection-steps="address">
           <li>
             On that computer, open Settings &gt; Connections &gt; Browser access
-            and turn on Serve Solenta Web. Then press Expose over
-            Tailscale (HTTPS), or turn on Allow devices on my network.
+            and turn on Serve Solenta Web. Expose it through your own HTTPS
+            tunnel, press Expose over Tailscale (HTTPS), or turn on Allow devices on my network.
           </li>
-          <li>Under Devices there, add a device with Full access and copy its link.</li>
+          <li>Under Devices there, add a device with Full access and copy its link or token.</li>
           <li>
-            Paste the link as the Address here and press Connect. That computer
+            Paste the link as the Address here, or enter your tunnel&apos;s HTTPS address and the device token, then press Connect. That computer
             must already run Solenta Web or the standalone server. An address connection does not install or start it.
           </li>
         </ol>
@@ -252,7 +252,7 @@ export function ConnectionsSection({ onOpen, onForget, onInstall, onManage, onSi
           setServerStatus(null);
         }}>
           <option value="ssh">SSH</option>
-          <option value="address">Address (Tailscale or your network)</option>
+          <option value="address">Address (your HTTPS tunnel, Tailscale or network)</option>
         </select>
       </label>
       {mode === "address" ? (

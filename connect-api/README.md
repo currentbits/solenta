@@ -5,6 +5,10 @@ Cloudflare tunnels. Agent credentials, work and reusable host sessions stay on
 the execution computer. Cloudflare terminates HTTPS and this broker is trusted
 to authorize account access. This is not end-to-end encryption.
 
+This is an optional self-hosted service. Official builds have no broker address
+configured. For access without running a broker, use your own tunnel and
+[direct device pairing](../docs/cloud-connect.md#connect-through-your-own-tunnel).
+
 Run `npm ci --prefix connect-api`, then `npm start --prefix connect-api`.
 Build the container from the repository root:
 `docker build -f connect-api/Dockerfile -t solenta-connect .`.
@@ -63,8 +67,8 @@ Create separate token policies: an account policy for Tunnel Edit, and a domain
 policy restricted to the selected zone for DNS Edit. Zone Read allows setup
 discovery; SSL and Certificates Read allows checking certificate coverage. The
 dashboard's "Specified Domains" policy only lists domain permissions, so it
-cannot contain the account-scoped tunnel permission. The hosted broker uses
-`CONNECT_HOST_DOMAIN=solenta.app`, making names directly under its wildcard.
+cannot contain the account-scoped tunnel permission. Setting
+`CONNECT_HOST_DOMAIN=example.com` places names directly under that domain.
 The host domain must have TLS coverage for these names. A wildcard certificate
 for `example.com` does not cover `c-<id>.hosts.example.com`; verify coverage or
 use a dedicated zone. Do not deploy until that coverage is confirmed.

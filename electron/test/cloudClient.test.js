@@ -9,6 +9,7 @@ const http = require("node:http");
 const { randomUUID } = require("node:crypto");
 const { createCredentials } = require("../cloud/credentials");
 const { createCloudClient } = require("../cloud/client");
+const { cloudConfig } = require("../cloud/config");
 const { createCloudHost } = require("../cloud/host");
 const { createKeyPair, verifyProof } = require("../cloud/protocol");
 const { createWebDevices } = require("../webDevices");
@@ -23,6 +24,12 @@ function file(t) {
 }
 const encrypted = { isEncryptionAvailable: () => true, getSelectedStorageBackend: () => "keychain",
   encryptString: text => Buffer.from(text).map(byte => byte ^ 123), decryptString: value => Buffer.from(value.map(byte => byte ^ 123)).toString() };
+
+test("official builds have no broker default and accept an explicit self-hosted HTTPS origin", () => {
+  assert.deepEqual(cloudConfig({}), { origin: null });
+  assert.deepEqual(cloudConfig({ SOLENTA_CONNECT_ORIGIN: "https://connect.example.com" }), { origin: "https://connect.example.com" });
+  assert.throws(() => cloudConfig({ SOLENTA_CONNECT_ORIGIN: "http://connect.example.com" }), /HTTPS/);
+});
 
 test("credentials use encrypted atomic files or explicit 0600 headless storage; unavailable desktop storage is session-only", t => {
   const target = file(t);

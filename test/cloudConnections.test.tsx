@@ -29,10 +29,11 @@ function fixture() {
   return { status, api, calls, offline: () => { computers = computers.map(row => ({ ...row, status: "offline" })); }, failLogin: (error: string) => { loginError = error; }, failConnect: (error: string) => { connectError = error; }, pending: () => { pending = true; } };
 }
 
-it("shows unavailable cloud configuration without offering a fake sign-in", async () => {
+it("points unconfigured builds to a user-owned tunnel without offering account sign-in", async () => {
   const f = fixture(); f.status.account.configured = false; f.status.account.signedIn = false;
   const m = await mount(<ConnectionsSection cloudApi={f.api} />);
-  assert.match(m.container.textContent || "", /cloud.*not configured|cloud.*isn.t configured/i);
+  assert.match(m.container.textContent || "", /your own HTTPS tunnel with a device token/);
+  assert.match(m.container.textContent || "", /requires your own broker/);
   assert.equal(m.query("[data-cloud-sign-in]"), null);
 });
 

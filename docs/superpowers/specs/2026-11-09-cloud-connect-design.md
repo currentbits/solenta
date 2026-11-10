@@ -1,7 +1,14 @@
 # Solenta cloud connections
 
-Status: proposed design for #1974. Implementation was requested on 2026-11-09;
-the infrastructure choices below are proposed defaults, not user decisions.
+Status: the hosted-default proposal below was superseded on 2026-11-10.
+The user requires remote access without Solenta-operated infrastructure.
+Official builds have no default account broker. The supported user-owned path
+uses an independently configured HTTPS tunnel and existing direct device
+pairing; the account broker remains optional self-hosted software. See
+[current setup instructions](../../cloud-connect.md).
+
+The following records the original account-based design, implemented after
+the 2026-11-09 request. Its infrastructure choices are not product defaults.
 
 ## Outcome
 

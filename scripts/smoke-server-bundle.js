@@ -67,7 +67,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
     const descriptor = await fetch(`http://127.0.0.1:${port}/.well-known/solenta`, { redirect: "error" }).then(r => r.json());
     const packaged = JSON.parse(fs.readFileSync(path.join(tmp, "solenta-server", "app", "package.json"), "utf8"));
-    assert.equal(packaged.connectOrigin, require("../package.json").connectOrigin, "server archive must preserve its public cloud broker configuration");
+    assert.equal(packaged.connectOrigin, require("../package.json").connectOrigin, "server archive must preserve its optional self-hosted broker configuration");
     assert.equal(descriptor.runtimeKind, "server");
     assert.equal(descriptor.computerId, fs.readFileSync(path.join(tmp, "data", "computer-id"), "utf8").trim());
     assert.equal(descriptor.buildSha, packaged.buildSha);

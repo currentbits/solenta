@@ -1,10 +1,35 @@
 # Cloud connections
 
-Solenta builds include the public Solenta Connect broker address. Sign in with
-GitHub in Settings > Connections > Cloud to link a computer or connect to one
-you already linked. Self-hosted deployments can override the broker address
-with `SOLENTA_CONNECT_ORIGIN`, an exact HTTPS origin. A build without either
-configuration cannot sign in or create a tunnel.
+Solenta builds do not include a Solenta-operated broker address. Remote access
+can use your own HTTPS endpoint and Solenta's existing device pairing, without
+a Solenta account or broker.
+
+## Connect through your own tunnel
+
+1. Run Solenta Web or the standalone server on the execution computer. Keep it
+   bound to loopback, for example `127.0.0.1:4621`.
+2. Configure a tunnel in your own Cloudflare account, with your own hostname,
+   pointing to that local HTTP address. Run the connector on that computer.
+3. On that computer, open Settings > Connections > Browser access. Under
+   Devices, add a device with Full access and copy its link. Its `#token=`
+   fragment contains the device token.
+4. On the receiving computer, choose Settings > Connections > Address. Enter
+   your public HTTPS address and the device token, then press Connect.
+
+This uses the existing address connection. Tunnel setup and connector service
+management are manual. Revoke a device on the execution computer to remove its
+access. Solenta's servers do not participate in pairing or connecting.
+Cloudflare carries the traffic and terminates HTTPS; this is not end-to-end
+encryption. The execution computer and its connector must stay running.
+
+## Optional self-hosted account broker
+
+The account-based flow below requires deploying your own
+[broker](../connect-api/README.md), database, GitHub OAuth app and Cloudflare
+configuration. Set `SOLENTA_CONNECT_ORIGIN` to your broker's exact HTTPS origin
+on each computer, or set `connectOrigin` in your custom build's package manifest.
+An unconfigured build cannot sign in to a broker or create a broker-managed
+tunnel. Direct address connections remain available.
 
 Install the Solenta server archive once on the execution computer and start it
 on its chosen port. Cloud setup uses outbound connections and does not require

@@ -1,5 +1,10 @@
 # Solenta Cloud Connect Implementation Plan
 
+Status: the user superseded the hosted-default requirement on 2026-11-10.
+Official builds have no broker address. User-owned HTTPS tunnels use existing
+direct device pairing; the account-based implementation below is optional
+self-hosted software. See `docs/cloud-connect.md` for the current setup.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Link a Solenta host to an account and connect from another desktop without SSH or Tailscale SSH permissions.
