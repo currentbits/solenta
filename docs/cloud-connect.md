@@ -6,13 +6,22 @@ a Solenta account or broker.
 
 ## Connect through your own tunnel
 
+In the desktop app, open Settings > Connections > Computers and select
+**Set up a connection without SSH**. The wizard walks through desktop or
+standalone host startup, your own tunnel, and device pairing. It validates the
+public HTTPS address, accepts the host's local device link, and tests identity
+and device access before saving. Tunnel creation still happens in your own
+provider account; the wizard never asks for your Cloudflare API credentials.
+
 1. Run Solenta Web or the standalone server on the execution computer. Keep it
    bound to loopback, for example `127.0.0.1:4621`.
 2. Configure a tunnel in your own Cloudflare account, with your own hostname,
    pointing to that local HTTP address. Run the connector on that computer.
 3. On that computer, open Settings > Connections > Browser access. Under
    Devices, add a device with Full access and copy its link. Its `#token=`
-   fragment contains the device token.
+   fragment contains the device token. For a standalone host, use the device
+   link or token printed at startup instead; reusable device creation requires
+   the desktop app.
 4. On the receiving computer, choose Settings > Connections > Address. Enter
    your public HTTPS address and the device token, then press Connect.
 

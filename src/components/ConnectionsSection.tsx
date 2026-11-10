@@ -4,6 +4,7 @@ import { accountLine } from "../providerAccounts";
 import { groupSavedComputers, hostKeyOf, loadHosts, pushSidebarHosts, STORAGE_KEY, type SavedHost } from "../remoteHosts";
 import styles from "./SettingsModal.module.css";
 import { CloudConnections, type CloudConnectionsApi } from "./CloudConnections";
+import { ConnectionSetupWizard } from "./ConnectionSetupWizard";
 
 type OpenConnection = CoderApi["app"]["openRemoteConnection"];
 type ForgetConnection = CoderApi["app"]["forgetRemoteConnection"];
@@ -52,6 +53,7 @@ export function ConnectionsSection({ onOpen, onForget, onInstall, onManage, onSi
   // What the last Connect learned about the other computer.
   const [remote, setRemote] = useState<{ host: string; info: RemoteHostInfo; remotePort: number; descriptor?: RemoteComputerDescriptor; localVersion?: string } | null>(null);
   const [installing, setInstalling] = useState(false);
+  const [setupOpen, setSetupOpen] = useState(false);
   const [installed, setInstalled] = useState<(RemoteInstallResult & { host: string }) | null>(null);
 
   const saveHosts = (next: SavedHost[]) => {
@@ -73,8 +75,8 @@ export function ConnectionsSection({ onOpen, onForget, onInstall, onManage, onSi
     finally { setBusy(false); setProgress(null); }
   };
 
-  const connect = async () => {
-    if (!onOpen || busy) return;
+  const connect = async (setup?: Parameters<OpenConnection>[0]) => {
+    if (!onOpen || busy) return false;
     setBusy(true);
     setProgress("Connecting and checking the computer's identity and agents…");
     setError(null);
@@ -82,7 +84,7 @@ export function ConnectionsSection({ onOpen, onForget, onInstall, onManage, onSi
     try {
       const saved = hosts.find(h => h.id === selectedId);
       const identity = { ...(saved?.computerId ? { computerId: saved.computerId } : {}), ...(allowLegacy ? { allowLegacy: true } : {}) };
-      const result = await onOpen(mode === "address"
+      const result = await onOpen(setup ?? (mode === "address"
         ? { ...identity, host: "", url: url.trim(), label: label.trim(), token: token.trim(), remember }
         : {
           ...identity,
@@ -91,15 +93,15 @@ export function ConnectionsSection({ onOpen, onForget, onInstall, onManage, onSi
           remotePort: Number(remotePort),
           token: token.trim(),
           remember,
-        });
+        }));
       const profile: SavedHost = {
-        id: selectedId || crypto.randomUUID(),
-        label: label.trim() || result.host,
+        id: (setup ? null : selectedId) || crypto.randomUUID(),
+        label: (setup ? setup.label?.trim() : label.trim()) || result.host,
         host: result.host,
         remotePort: result.remotePort,
         ...(result.url ? { url: result.url } : {}),
         tokenSaved: result.tokenSaved,
-        inSidebar,
+        inSidebar: setup ? true : inSidebar,
         ...(result.computerId ? { computerId: result.computerId } : {}),
         ...(result.descriptor ? { descriptor: result.descriptor } : {}),
         ...(result.legacy ? { legacy: true } : {}),
@@ -107,13 +109,22 @@ export function ConnectionsSection({ onOpen, onForget, onInstall, onManage, onSi
       saveHosts((hosts.some(item => item.id === profile.id) ? hosts.map(item => item.id === profile.id ? profile : item) : [...hosts, profile]).slice(0, 30));
       setSelectedId(profile.id);
       setToken("");
+      if (setup) {
+        setMode("address");
+        setLabel(setup.label ?? "");
+        setRemember(setup.remember ?? true);
+        setInSidebar(true);
+        setAllowLegacy(false);
+        setServerStatus(null);
+      }
       // A pasted pairing link carries the token: keep only the address.
       if (result.url) setUrl(result.url);
       if (result.remote) setRemote({ host: result.host, info: result.remote, remotePort: result.remotePort, descriptor: result.descriptor, localVersion: result.localVersion });
-      if (mode === "ssh" && onManage) {
+      if (!setup && mode === "ssh" && onManage) {
         try { setServerStatus({ host: result.host, info: await onManage({ host: result.host, remotePort: result.remotePort, ...(result.computerId ? { computerId: result.computerId } : {}), action: "status" }) }); }
         catch { /* Connection is authenticated; a separate status check can be retried. */ }
       }
+      return true;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setError(message);
@@ -121,6 +132,7 @@ export function ConnectionsSection({ onOpen, onForget, onInstall, onManage, onSi
       if (/rejected the saved token/.test(message)) {
         saveHosts(hosts.map((item) => item.id === selectedId ? { ...item, tokenSaved: false } : item));
       }
+      return false;
     } finally {
       setBusy(false);
       setProgress(null);
@@ -163,6 +175,8 @@ export function ConnectionsSection({ onOpen, onForget, onInstall, onManage, onSi
         Use another computer&apos;s agents and projects here. Your credentials and work stay on that computer,
         and keep running when you disconnect.
       </p>
+      {setupOpen ? <ConnectionSetupWizard onConnect={connect} busy={busy} error={error} onClose={() => { setSetupOpen(false); setError(null); }} /> : <>
+      <button type="button" className={styles.btn} data-connection-setup="" disabled={!onOpen || busy || installing} onClick={() => { setError(null); setSetupOpen(true); }}>Set up a connection without SSH</button>
       {cloudApi && <CloudConnections api={cloudApi} hosts={hosts} onHosts={saveHosts} />}
       <details className={styles.connectionGuide}><summary>How setup works</summary>
       {mode === "address" ? (
@@ -407,6 +421,7 @@ export function ConnectionsSection({ onOpen, onForget, onInstall, onManage, onSi
           setServiceMode("managed");
         }}>Add another computer</button>}
       </div>
+      </>}
     </section>
   );
 }
