@@ -243,8 +243,12 @@ describe("hostHub × real remote Solenta Web host", () => {
     };
     workers = createRemoteWorkers({ store: leadStore, hub: leadHub, runner: leadRunner, deliver: (input) => delivered.push(input) });
     try {
+      const registeredProjects = store.getProjects();
+      store.setProjects([]);
       leadHub.setHosts([{ host: "me@box", remotePort: 4620, label: "Box" }]);
-      await waitFor(() => leadHub.list()[0].status === "online" && leadHub.projectsOf("me@box:4620").length > 0);
+      await waitFor(() => leadHub.list()[0].status === "online" && leadHub.threadsOf("me@box:4620").length > 0);
+      assert.deepEqual(leadHub.projectsOf("me@box:4620"), []);
+      store.setProjects(registeredProjects);
 
       const handlers = createToolHandlers({
         store: leadStore,

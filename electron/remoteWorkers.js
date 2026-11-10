@@ -47,9 +47,8 @@ function createRemoteWorkers({ store, hub, deliver, runner }) {
   }
 
   function findHost(name) {
-    const want = String(name).trim().toLowerCase();
     const hosts = hub.list({ peers: true });
-    const host = hosts.find((h) => h.key.toLowerCase() === want || h.label.toLowerCase() === want);
+    const host = hub.findHost(name);
     if (!host) {
       const names = hosts.map((h) => `"${h.label}"`).join(", ");
       throw new Error(
@@ -72,7 +71,9 @@ function createRemoteWorkers({ store, hub, deliver, runner }) {
     const project = store.getProject(lead.projectId);
     const slug = String((project && project.slug) || "").toLowerCase();
     // Same repo = same slug (owner/name from origin, or the folder name).
-    const there = hub.projectsOf(host.key).find(
+    const projects = await hub.invoke(host.key, "projects:list", []);
+    if (!Array.isArray(projects)) throw new Error(`${host.label} returned an invalid project list.`);
+    const there = projects.find(
       (p) => p && !p.scratch && String(p.slug || "").toLowerCase() === slug,
     );
     if (!there) {
