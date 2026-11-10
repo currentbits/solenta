@@ -26,7 +26,7 @@ const tag = release.tag_name;
 const sha = api(`commits/${encodeURIComponent(tag)}`).sha;
 const platform = `${process.platform}-x64`;
 const suffix = process.platform === 'win32' ? `${platform}.zip` : `${platform}.tar.gz`;
-const assets = release.assets.filter((a) => a.name.endsWith(`-${suffix}`));
+const assets = release.assets.filter((a) => a.name === `Solenta-${tag}-${suffix}`);
 assert.equal(assets.length, 1, 'Expected exactly one platform asset');
 const asset = assets[0];
 assert.match(asset.digest || '', /^sha256:[a-f0-9]{64}$/, 'Release asset must have a SHA-256 digest');
