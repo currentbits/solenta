@@ -120,8 +120,10 @@ describe("onSettle runs", () => {
     });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     setRunCommandFn(null);
+    store.saveNow();
+    await store.flushPending();
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 

@@ -153,6 +153,15 @@ describe("teleport IPC", () => {
     assert.deepEqual([...new Set(calls.map((c) => c.target.url))], [target.url]);
   });
 
+  it("preserves cloud account and computer references for teleport and return", async () => {
+    const cloud = { accountId: "user_test", computerId: "computer-one", scopes: ["full"] };
+    const sent = await IPC_HANDLERS["threads:teleport"](laptop.ctx, { threadId, host: "cloud-host", remotePort: 443, label: "Cloud", computerId: cloud.computerId, cloud });
+    assert.deepEqual(sent.teleportedTo.cloud, cloud);
+    await IPC_HANDLERS["threads:teleportBack"](laptop.ctx, { threadId });
+    assert.equal(calls.every(call => call.target.computerId === cloud.computerId), true);
+    assert.equal(calls.every(call => JSON.stringify(call.target.cloud) === JSON.stringify(cloud)), true);
+  });
+
   it("unlocks the local thread when the send fails", async () => {
     // No project there, and a local-path origin is not a URL it may clone.
     remote.store.setProjects([]);

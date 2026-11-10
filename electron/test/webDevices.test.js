@@ -99,6 +99,70 @@ describe("webDevices", () => {
   });
 });
 
+describe("cloud device enrollment", () => {
+  let tmp;
+  let time;
+  let devices;
+  const cloud = { accountId: "owner-one", linkId: "link-one", generation: 1, jkt: "a".repeat(43) };
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), "solenta-cloud-device-"));
+    time = 1000;
+    devices = createWebDevices(tmp, { now: () => time });
+  });
+  afterEach(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  const input = (nonce, extra = {}) => ({ name: "Cloud desktop", scopes: ["read"], cloud, nonce, ...extra });
+
+  it("a cloud grant needs its verified client binding and can be consumed once", () => {
+    const enrollment = devices.createCloudEnrollment(input("unique-mint-nonce-one"));
+    assert.throws(() => devices.redeemEnrollment({ grant: enrollment.grant }), /client proof/);
+    assert.throws(() => devices.redeemCloudEnrollment({ grant: enrollment.grant, cloud: { ...cloud, jkt: "b".repeat(43) } }), /binding/);
+    const session = devices.redeemCloudEnrollment({ grant: enrollment.grant, cloud });
+    assert.deepEqual(session.device.scopes, ["read"]);
+    assert.equal(session.expiresAt, 601000);
+    assert.ok(devices.authorize(session.token));
+    assert.throws(() => devices.redeemCloudEnrollment({ grant: enrollment.grant, cloud }), /invalid, expired or already used/);
+    assert.throws(() => devices.createCloudEnrollment(input("unique-mint-nonce-one")), /already used/);
+    const raw = fs.readFileSync(path.join(tmp, FILE_NAME), "utf8");
+    assert.equal(raw.includes(session.token), false);
+  });
+
+  it("renewal rotates one device's credential without widening or duplicating its grant", () => {
+    const first = devices.redeemCloudEnrollment({ grant: devices.createCloudEnrollment(input("unique-mint-nonce-one")).grant, cloud });
+    time = 301000;
+    assert.throws(() => devices.createCloudEnrollment(input("unique-mint-nonce-two", { deviceId: first.device.id, scopes: ["full"] })), /cannot grant that access/);
+    const renew = devices.createCloudEnrollment(input("unique-mint-nonce-two", { deviceId: first.device.id }));
+    const second = devices.redeemCloudEnrollment({ grant: renew.grant, cloud });
+    assert.equal(second.device.id, first.device.id);
+    assert.deepEqual(second.device.scopes, ["read"]);
+    assert.equal(second.expiresAt, 901000);
+    assert.equal(devices.list().length, 1);
+    assert.equal(devices.authorize(first.token), null);
+    assert.ok(createWebDevices(tmp, { now: () => time }).authorize(second.token));
+    assert.throws(() => devices.createCloudEnrollment(input("unique-mint-nonce-three", { cloud: { ...cloud, accountId: "other" }, deviceId: first.device.id })), /binding/);
+    time = 901000;
+    assert.equal(devices.authorize(second.token), null);
+  });
+
+  it("competing renewals cannot invalidate the credential that already won", () => {
+    const first = devices.redeemCloudEnrollment({ grant: devices.createCloudEnrollment(input("unique-mint-nonce-one")).grant, cloud });
+    const one = devices.createCloudEnrollment(input("unique-mint-nonce-two", { deviceId: first.device.id }));
+    const two = devices.createCloudEnrollment(input("unique-mint-nonce-three", { deviceId: first.device.id }));
+    const winner = devices.redeemCloudEnrollment({ grant: one.grant, cloud });
+    assert.throws(() => devices.redeemCloudEnrollment({ grant: two.grant, cloud }), /changed/);
+    assert.ok(devices.authorize(winner.token));
+  });
+
+  it("cloud unlink removes its sessions and pending grants while preserving other access", () => {
+    const direct = devices.add({ name: "Direct phone", scopes: ["full"] });
+    const session = devices.redeemCloudEnrollment({ grant: devices.createCloudEnrollment(input("unique-mint-nonce-one")).grant, cloud });
+    const pending = devices.createCloudEnrollment(input("unique-mint-nonce-two"));
+    assert.deepEqual(devices.revokeCloud(cloud.linkId), [session.device.id]);
+    assert.equal(devices.authorize(session.token), null);
+    assert.ok(devices.authorize(direct.token));
+    assert.throws(() => devices.redeemCloudEnrollment({ grant: pending.grant, cloud }), /invalid, expired or already used/);
+  });
+});
+
 describe("one-time browser enrollment", () => {
   let tmp;
   beforeEach(() => { tmp = fs.mkdtempSync(path.join(os.tmpdir(), "solenta-enrollment-")); });

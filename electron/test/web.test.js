@@ -357,7 +357,7 @@ describe("auth table + invoke + push (real socket)", () => {
     for (const privateValue of [tmp, "secret-token", "alpha", "README.md"]) assert.equal(text.includes(privateValue), false);
     const ws = await connect(wsUrl());
     ws.send(JSON.stringify({ kind: "auth", token: "secret-token", computerId: computer.computerId, protocol: 1 }));
-    assert.deepEqual(await onceMessage(ws), { kind: "auth-ok", computer });
+    assert.deepEqual(await onceMessage(ws), { kind: "auth-ok", deviceId: "token", computer });
     ws.send(JSON.stringify({ kind: "invoke", id: 99, channel: "app:status", args: [] }));
     const reply = await onceMessage(ws);
     assert.deepEqual(reply.result.computer, computer);
@@ -378,7 +378,7 @@ describe("auth table + invoke + push (real socket)", () => {
   it("auth table: good → auth-ok; bad → close; invoke-first → error + drop", async () => {
     const good = await connect(wsUrl());
     good.send(JSON.stringify({ kind: "auth", token: "secret-token" }));
-    assert.deepEqual(await onceMessage(good), { kind: "auth-ok", computer: require("../serverIdentity.js").computerDescriptor(tmp) });
+    assert.deepEqual(await onceMessage(good), { kind: "auth-ok", deviceId: "token", computer: require("../serverIdentity.js").computerDescriptor(tmp) });
     good.close();
     await onceClose(good);
 
@@ -406,7 +406,7 @@ describe("auth table + invoke + push (real socket)", () => {
   it("threads:list over the socket equals services.listThreads", async () => {
     const ws = await connect(wsUrl());
     ws.send(JSON.stringify({ kind: "auth", token: "secret-token" }));
-    assert.deepEqual(await onceMessage(ws), { kind: "auth-ok", computer: require("../serverIdentity.js").computerDescriptor(tmp) });
+    assert.deepEqual(await onceMessage(ws), { kind: "auth-ok", deviceId: "token", computer: require("../serverIdentity.js").computerDescriptor(tmp) });
     ws.send(
       JSON.stringify({ kind: "invoke", id: 9, channel: "threads:list", args: [] }),
     );
@@ -457,8 +457,8 @@ describe("auth table + invoke + push (real socket)", () => {
     const stranger = await connect(wsUrl());
     a.send(JSON.stringify({ kind: "auth", token: "secret-token" }));
     b.send(JSON.stringify({ kind: "auth", token: "secret-token" }));
-    assert.deepEqual(await onceMessage(a), { kind: "auth-ok", computer: require("../serverIdentity.js").computerDescriptor(tmp) });
-    assert.deepEqual(await onceMessage(b), { kind: "auth-ok", computer: require("../serverIdentity.js").computerDescriptor(tmp) });
+    assert.deepEqual(await onceMessage(a), { kind: "auth-ok", deviceId: "token", computer: require("../serverIdentity.js").computerDescriptor(tmp) });
+    assert.deepEqual(await onceMessage(b), { kind: "auth-ok", deviceId: "token", computer: require("../serverIdentity.js").computerDescriptor(tmp) });
 
     const gotA = onceMessage(a);
     const gotB = onceMessage(b);
@@ -584,7 +584,7 @@ describe("one map, two transports + packaging", () => {
     assert.match(ipcSrc, /Object\.entries\(IPC_HANDLERS\)/);
     assert.match(bridgeSrc, /require\("\.\/ipc\.js"\)/);
     assert.match(bridgeSrc, /IPC_HANDLERS/);
-    assert.match(bridgeSrc, /fn\([^)]*ctx[^)]*\.\.\.args\)/);
+    assert.match(bridgeSrc, /fn\(\{ \.\.\.ctx,[\s\S]*?\}, \.\.\.args\)/);
   });
 
   it("covers every channel the table names, plus desktop-only contextMenu", async () => {
@@ -736,7 +736,7 @@ describe("heartbeat + backpressure (attachWebBridge)", () => {
         ws.once("error", reject);
       });
       ws.send(JSON.stringify({ kind: "auth", token: "secret-token" }));
-      assert.deepEqual(await onceMessage(ws), { kind: "auth-ok" });
+      assert.deepEqual(await onceMessage(ws), { kind: "auth-ok", deviceId: "token" });
 
       const deadline = Date.now() + 3000;
       while (ws.readyState !== WebSocket.CLOSED || bridge.wss.clients.size > 0) {
@@ -759,7 +759,7 @@ describe("heartbeat + backpressure (attachWebBridge)", () => {
     try {
       const ws = await connect(url);
       ws.send(JSON.stringify({ kind: "auth", token: "secret-token" }));
-      assert.deepEqual(await onceMessage(ws), { kind: "auth-ok" });
+      assert.deepEqual(await onceMessage(ws), { kind: "auth-ok", deviceId: "token" });
 
       // pause() only stops reads; cork() keeps the first send in
       // _writableState so bufferedAmount stays above the 1-byte ceiling.
@@ -799,7 +799,7 @@ describe("heartbeat + backpressure (attachWebBridge)", () => {
     try {
       const ws = await connect(url);
       ws.send(JSON.stringify({ kind: "auth", token: "secret-token" }));
-      assert.deepEqual(await onceMessage(ws), { kind: "auth-ok" });
+      assert.deepEqual(await onceMessage(ws), { kind: "auth-ok", deviceId: "owner" });
       const [client] = bridge.wss.clients;
       // A slow link: the reply cannot drain while the socket is corked.
       client._socket.cork();
@@ -886,7 +886,7 @@ describe("web bridge denies simulator invoke and push", () => {
     try {
       const ws = await connect(url);
       ws.send(JSON.stringify({ kind: "auth", token: "secret-token" }));
-      assert.deepEqual(await onceMessage(ws), { kind: "auth-ok" });
+      assert.deepEqual(await onceMessage(ws), { kind: "auth-ok", deviceId: "token" });
       for (const [i, channel] of SIMULATOR_CHANNELS.entries()) {
         ws.send(
           JSON.stringify({
@@ -916,7 +916,7 @@ describe("web bridge denies simulator invoke and push", () => {
     try {
       const ws = await connect(url);
       ws.send(JSON.stringify({ kind: "auth", token: "secret-token" }));
-      assert.deepEqual(await onceMessage(ws), { kind: "auth-ok" });
+      assert.deepEqual(await onceMessage(ws), { kind: "auth-ok", deviceId: "token" });
       let pushed = [];
       ws.on("message", (data) => {
         pushed.push(JSON.parse(String(data)));

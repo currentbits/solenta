@@ -76,6 +76,14 @@ ZIP="out/Solenta-${TAG}-macos-arm64.zip"
 rm -f "$ZIP"
 ditto -c -k --keepParent "$APP_BUNDLE" "$ZIP"
 
+# Verify what users will extract, after all boot probes and archive creation.
+ARCHIVE_CHECK="$(mktemp -d "${TMPDIR:-/tmp}/solenta-release-seal.XXXXXX")"
+trap 'rm -rf "$ARCHIVE_CHECK"' EXIT
+ditto -x -k "$ZIP" "$ARCHIVE_CHECK"
+SOLENTA_VERIFY_GATEKEEPER_ONLY=1 bash scripts/verify-package.sh "$ARCHIVE_CHECK/$(basename "$APP_BUNDLE")"
+rm -rf "$ARCHIVE_CHECK"
+trap - EXIT
+
 # Cross archives come out versioned; name release assets by tag so every
 # asset in a release carries the tag the updater compares against.
 ASSETS=("$ZIP")

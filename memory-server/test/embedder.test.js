@@ -7,7 +7,33 @@ import {
   floatToBlob,
   blobToFloat,
   EMBED_MAX_CHARS,
+  createRealEmbedder,
 } from '../src/embedder.js'
+import os from 'node:os'
+import path from 'node:path'
+
+describe('real embedder model cache', () => {
+  for (const cacheDir of [undefined, path.join(os.tmpdir(), 'isolated-memory', 'models')]) {
+    it(`passes an external cache to the model loader (${cacheDir ? 'configured' : 'default'})`, async () => {
+      let loads = 0
+      let receivedCache
+      const embedder = createRealEmbedder({
+        cacheDir,
+        loadTransformers: async () => ({
+          pipeline: async (_task, _model, options) => {
+            loads++
+            receivedCache = options.cache_dir
+            return async () => ({ data: new Float32Array([3, 4]) })
+          },
+        }),
+      })
+      const vectors = await Promise.all([embedder.embed('first'), embedder.embed('second')])
+      assert.equal(loads, 1)
+      assert.equal(receivedCache, cacheDir ?? path.join(os.homedir(), '.cache', 'solenta', 'models'))
+      assert.ok(vectors.every(v => v instanceof Float32Array && Math.abs(Math.hypot(...v) - 1) < 1e-5))
+    })
+  }
+})
 
 describe('vector math', () => {
   it('cosine of identical normalized vectors is ~1, orthogonal ~0', () => {

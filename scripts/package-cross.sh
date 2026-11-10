@@ -107,6 +107,7 @@ PAYLOAD="$(mktemp -d "${TMPDIR:-/tmp}/solenta-cross-payload.XXXXXX")/app"
 mkdir -p "$PAYLOAD"
 
 RELEASE_TAG_JSON="null"
+CONNECT_ORIGIN_JSON="$(node -p "JSON.stringify(require('./package.json').connectOrigin || null)")"
 if [[ -n "$RELEASE_TAG" ]]; then
   RELEASE_TAG_JSON="\"${RELEASE_TAG}\""
 fi
@@ -117,6 +118,7 @@ cat > "$PAYLOAD/package.json" <<EOF
   "productName": "Solenta",
   "version": "${VERSION}",
   "main": "electron/main.js",
+  "connectOrigin": ${CONNECT_ORIGIN_JSON},
   "buildSha": "${BUILD_SHA}",
   "buildTime": "${BUILD_TIME}",
   "channel": "${CHANNEL}",
@@ -132,7 +134,7 @@ cp electron/speech-models.json "$PAYLOAD/electron/speech-models.json"
 
 # Same explicit root deps as package-app.sh (ws + cross-spawn + yauzl trees,
 # node-pty wrapper). The per-target node-pty binary package is added below.
-ROOT_NM_PKGS=(ws cross-spawn path-key shebang-command shebang-regex which isexe yauzl pend qrcode-generator @lydell/node-pty pdfjs-dist)
+ROOT_NM_PKGS=(ws jose cross-spawn path-key shebang-command shebang-regex which isexe yauzl pend qrcode-generator @lydell/node-pty pdfjs-dist)
 mkdir -p "$PAYLOAD/node_modules"
 for pkg in "${ROOT_NM_PKGS[@]}"; do
   if [[ ! -d "node_modules/$pkg" ]]; then

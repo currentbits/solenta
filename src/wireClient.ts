@@ -7,6 +7,7 @@ import {
 } from "./shared/wire";
 import { setWireStatus } from "./wireStatus";
 
+export type WireCredentials = { token: string; computerId: string; deviceId: string };
 export type CreateWireCoderOptions = {
   url: string;
   token: string;
@@ -16,6 +17,8 @@ export type CreateWireCoderOptions = {
   allowLegacy?: boolean;
   fetch?: typeof fetch;
   onComputer?: (computer: RemoteComputerDescriptor) => void;
+  getCredentials?: () => Promise<WireCredentials>;
+  subscribeCredentials?: (listener: (credentials: WireCredentials | null) => void) => () => void;
 };
 
 function computerDescriptor(value: unknown): RemoteComputerDescriptor {
@@ -80,6 +83,11 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
   let computerId = opts.expectedComputerId;
   let authenticatingComputerId: string | undefined;
   let authSent = false;
+  let authenticatingToken = opts.token;
+  let token = opts.token;
+  let deviceId: string | undefined;
+  let credentialRevision = 0;
+  let awaitingCredentialAck = false;
 
   const inflight = new Map<number, Pending>();
   const queued: Pending[] = [];
@@ -199,6 +207,14 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
     } catch {
       return;
     }
+    if (msg.kind === "auth-updated") {
+      if (!awaitingCredentialAck) return;
+      try {
+        if (computerDescriptor(msg.computer).computerId !== computerId || msg.deviceId !== deviceId) throw new Error("Cloud credential identity mismatch.");
+        awaitingCredentialAck = false;
+      } catch (error) { block(error instanceof Error ? error.message : String(error)); }
+      return;
+    }
     if (msg.kind === "auth-ok") {
       if (!authSent) return;
       try {
@@ -217,6 +233,13 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
         return;
       }
       ready = true;
+      awaitingCredentialAck = false;
+      if (deviceId && deviceId !== msg.deviceId) { block("Cloud device identity mismatch."); return; }
+      deviceId = msg.deviceId ?? deviceId;
+      if (authenticatingToken !== token && computerId) {
+        authenticatingToken = token; awaitingCredentialAck = true;
+        send({ kind: "auth-update", token, computerId });
+      }
       backoffMs = MIN_BACKOFF_MS;
       const reconnecting = everAuthed;
       everAuthed = true;
@@ -270,12 +293,7 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
     authSent = false;
     ws.onopen = () => {
       if (socket !== ws) return;
-      if (!computerId && opts.allowLegacy !== false) {
-        authSent = true;
-        send({ kind: "auth", token: opts.token });
-        return;
-      }
-      void preflight(ws);
+      void authenticate(ws);
     };
     ws.onmessage = (ev: MessageEvent) => {
       if (socket !== ws) return;
@@ -300,6 +318,7 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
       // A wrong or revoked token will not heal by retrying: stop, and let
       // the token gate ask for a new one.
       if (code === CLOSE_TOKEN_REJECTED) {
+        if (awaitingCredentialAck || authenticatingToken !== token) { awaitingCredentialAck = false; scheduleReconnect(); return; }
         rejected = true;
         rejectQueued(TOKEN_REJECTED_ERROR);
         setWireStatus({ state: "rejected" });
@@ -351,8 +370,8 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
       }
       // A public descriptor selects a route. Only auth-ok pins/persists it.
       authenticatingComputerId = computer.computerId;
-      authSent = true;
-      send({ kind: "auth", token: opts.token, computerId: computer.computerId, protocol: 1 });
+      authSent = true; authenticatingToken = token;
+      send({ kind: "auth", token, computerId: computer.computerId, protocol: 1 });
     } catch (error) {
       if (socket === ws) block(error instanceof Error ? error.message : String(error));
     }
@@ -361,6 +380,32 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
   function openSocket(): void {
     attach(new WS(opts.url));
   }
+
+  function credentials(value: WireCredentials): void {
+    if (!value || typeof value.token !== "string" || !value.token || value.token.length > 1024 || typeof value.computerId !== "string" || !value.computerId ||
+        typeof value.deviceId !== "string" || !value.deviceId || (computerId && value.computerId !== computerId) || (deviceId && value.deviceId !== deviceId)) throw new Error("Cloud credential identity mismatch.");
+    token = value.token; computerId = value.computerId; deviceId = value.deviceId; credentialRevision++;
+  }
+  async function authenticate(ws: InstanceType<typeof WS>): Promise<void> {
+    try {
+      const revision = credentialRevision;
+      if (opts.getCredentials) {
+        const value = await opts.getCredentials();
+        if (socket !== ws || ws.readyState !== WS.OPEN) return;
+        if (revision === credentialRevision) credentials(value);
+      }
+      if (!computerId && opts.allowLegacy !== false) { authSent = true; authenticatingToken = token; send({ kind: "auth", token }); return; }
+      await preflight(ws);
+    } catch { if (socket === ws && ws.readyState === WS.OPEN) ws.close(); }
+  }
+  opts.subscribeCredentials?.(value => {
+    if (!value) { block("Cloud access ended. Reconnect from the desktop's Connections settings."); return; }
+    const changed = value.token !== token;
+    try { credentials(value); } catch (error) { block(error instanceof Error ? error.message : String(error)); return; }
+    if (blockedReason) return;
+    if (ready && computerId) { awaitingCredentialAck = true; authenticatingToken = token; send({ kind: "auth-update", token, computerId }); }
+    else if (rejected && changed) { rejected = false; openSocket(); }
+  });
 
   function on(channel: string, cb: (payload: unknown) => void): () => void {
     if (!(WIRE_PUSH_CHANNELS as readonly string[]).includes(channel)) {

@@ -25,6 +25,7 @@ import { SettingsLoadNotice } from "./SettingsLoadNotice";
 import { IntegrationsSection } from "./IntegrationsSection";
 import { ChannelsSection } from "./settings/ChannelsSection";
 import { ConnectionsSection } from "./ConnectionsSection";
+import type { CloudConnectionsApi } from "./CloudConnections";
 import { LinkedComputersSection } from "./LinkedComputersSection";
 import { WebAccessSection } from "./WebAccessSection";
 import { isWebMode } from "../shared/wire";
@@ -191,6 +192,7 @@ export interface SettingsModalProps {
   /** Relaunch the first-run welcome tour (#628). */
   onShowOnboarding?: () => void;
   onOpenConnection?: CoderApi["app"]["openRemoteConnection"];
+  cloudApi?: CloudConnectionsApi;
   onForgetConnection?: CoderApi["app"]["forgetRemoteConnection"];
   onManageRemoteServer?: CoderApi["app"]["manageRemoteServer"];
   onInstallSolenta?: CoderApi["app"]["installRemoteSolenta"];
@@ -301,6 +303,7 @@ export function SettingsModal({
   onDiscoverSourceControl,
   onShowOnboarding,
   onOpenConnection,
+  cloudApi,
   onForgetConnection,
   onInstallSolenta,
   onManageRemoteServer,
@@ -984,7 +987,7 @@ export function SettingsModal({
               </button>)}
           </div>
           {!isWebMode() && <div role="tabpanel" id="connection-panel-computers" aria-labelledby="connection-tab-computers" hidden={connectionPane !== "computers"}>
-            <ConnectionsSection onManage={onManageRemoteServer} onOpen={onOpenConnection} onForget={onForgetConnection} onInstall={onInstallSolenta} onSidebarHosts={onSidebarHosts} sidebarHosts={sidebarHosts} />
+            <ConnectionsSection cloudApi={isWebMode() ? undefined : cloudApi} onManage={onManageRemoteServer} onOpen={onOpenConnection} onForget={onForgetConnection} onInstall={onInstallSolenta} onSidebarHosts={onSidebarHosts} sidebarHosts={sidebarHosts} />
             <p className={styles.note} data-connections-remote-project-hint="">
               For a single SSH repository, you can also use Add project &gt; Remote host.
             </p>

@@ -870,6 +870,13 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           restartNeeded: false,
         }),
       answerSshPrompt: (input: unknown) => rec("app.answerSshPrompt", [input], undefined),
+      cloudStatus: () => rec("app.cloudStatus", [], { account: { configured: false, signedIn: false }, host: null }),
+      cloudLogin: () => rec("app.cloudLogin", [], { configured: false, signedIn: false }),
+      cloudLogout: () => rec("app.cloudLogout", [], { revocationPending: false }),
+      cloudComputers: () => rec("app.cloudComputers", [], []),
+      cloudLink: () => rec("app.cloudLink", [], { configured: false, supported: false, enabled: false, computerId: "local-computer", state: "unlinked" as const, revocationPending: false }),
+      cloudUnlink: (input: unknown) => rec("app.cloudUnlink", [input], { revocationPending: false }),
+      cloudConnect: (input: unknown) => rec("app.cloudConnect", [input], { host: "cloud.example.com", remotePort: 443, tokenSaved: false }),
     },
     memory: {
       search: (input: unknown) => rec("memory.search", [input], [] as MemoryEntryInfo[]),

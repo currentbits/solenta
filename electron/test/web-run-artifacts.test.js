@@ -103,6 +103,12 @@ describe("web run-artifacts route", () => {
     assertArtifactSecurityHeaders(wrongToken.headers, "wrong token ");
   });
 
+  it("accepts a host session cookie for media reads without putting it into a URL", async () => {
+    const response = await httpRequest(url("/api/run-artifacts/t1/art1"), { headers: { cookie: `solenta-cloud-session=${token}` } });
+    assert.equal(response.status, 200);
+    assert.equal(response.body.toString(), "0123456789");
+  });
+
   it("returns 404 for wrong thread", async () => {
     const res = await httpRequest(
       url("/api/run-artifacts/t2/art1", `?token=${encodeURIComponent(token)}`),

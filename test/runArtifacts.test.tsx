@@ -209,3 +209,14 @@ describe("RunArtifacts unavailable on media error", () => {
     m.unmount();
   });
 });
+
+
+it("cloud artifact URLs use the private HTTP session and never query or stored credentials", async () => {
+  const m = await mount(<div />);
+  const target = window as unknown as { solentaCloudSession?: unknown };
+  target.solentaCloudSession = {};
+  try {
+    window.localStorage.setItem("coder.web.token", "never-use-this");
+    assert.equal(runArtifactMediaUrl("t1", "img-1"), "/api/run-artifacts/t1/img-1");
+  } finally { delete target.solentaCloudSession; m.unmount(); }
+});

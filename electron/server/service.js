@@ -4,70 +4,9 @@ const fs = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
 const { spawn, execFileSync } = require("node:child_process");
-const { WebSocket } = require("ws");
-const http = require("node:http");
-const { parseComputerDescriptor, confirmComputer, DESCRIPTOR_PATH } = require("../serverIdentity.js");
+const { requestStatus } = require("./localRpc.js");
 const { createLifecycle } = require("./lifecycle.js");
 const { processAlive } = require("./dataLock.js");
-async function publicDescriptor(port, expectedComputerId, timeout) {
-  return new Promise((resolve, reject) => {
-    const req = http.get({ host: "127.0.0.1", port, path: DESCRIPTOR_PATH, timeout }, (response) => {
-      if (response.statusCode !== 200) { response.resume(); reject(new Error("The local endpoint did not provide a Solenta identity. No credential was sent.")); return; }
-      let raw = "";
-      response.on("data", (chunk) => {
-        raw += chunk;
-        if (raw.length > 64 * 1024) req.destroy(new Error("The local endpoint identity response was too large."));
-      });
-      response.on("error", reject);
-      response.on("end", () => {
-        try {
-          const computer = parseComputerDescriptor(JSON.parse(raw));
-          if (computer.computerId !== expectedComputerId || computer.runtimeKind !== "server") throw new Error("The local endpoint belongs to a different computer or runtime. No credential was sent.");
-          resolve(computer);
-        } catch (error) { reject(error); }
-      });
-    });
-    req.on("timeout", () => req.destroy(new Error("Timed out verifying the local server identity.")));
-    req.on("error", reject);
-  });
-}
-async function requestStatus(port, dataDir, timeout = 5000) {
-  const expectedComputerId = fs.readFileSync(path.join(dataDir, "computer-id"), "utf8").trim();
-  // An occupied loopback port can belong to another process after shutdown.
-  // Check its public identity before a saved token leaves this process.
-  const computer = await publicDescriptor(port, expectedComputerId, timeout);
-  const token = fs.readFileSync(path.join(dataDir, "web-token"), "utf8").trim();
-  return new Promise((resolve, reject) => {
-    let authenticatedComputer;
-    let finished = false;
-    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
-    const done = (error, value) => {
-      if (finished) return;
-      finished = true;
-      clearTimeout(timer); ws.terminate(); error ? reject(error) : resolve(value);
-    };
-    const timer = setTimeout(() => done(new Error("Timed out authenticating server readiness.")), timeout);
-    ws.on("error", (e) => done(e));
-    ws.on("open", () => ws.send(JSON.stringify({ kind: "auth", token })));
-    ws.on("message", (raw) => {
-      let msg;
-      try { msg = JSON.parse(String(raw)); } catch { return done(new Error("Invalid server response.")); }
-      try {
-        if (msg.kind === "auth-ok") {
-          authenticatedComputer = confirmComputer(computer, msg.computer, expectedComputerId);
-          ws.send(JSON.stringify({ kind: "invoke", id: 1, channel: "app:status", args: [] }));
-        }
-        if (msg.kind === "reply" && msg.id === 1) {
-          if (msg.error) return done(new Error(msg.error));
-          if (!authenticatedComputer) throw new Error("Server replied before authentication.");
-          confirmComputer(authenticatedComputer, msg.result?.computer, expectedComputerId);
-          done(null, msg.result);
-        }
-      } catch (error) { done(error); }
-    });
-    ws.on("close", () => done(new Error("Server closed before readiness was verified.")));
-  });
-}
 function metadata(runtime) { return JSON.parse(fs.readFileSync(path.join(runtime, "app/package.json"), "utf8")); }
 function verifyRuntime(runtime, target = {}) {
   const m = metadata(runtime);

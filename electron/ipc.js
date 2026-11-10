@@ -86,6 +86,8 @@ function makeCtx(deps) {
     peerLinks: deps.peerLinks || null,
     answerSshPrompt: deps.answerSshPrompt,
     webAccess: deps.webAccess || null,
+    cloud: deps.cloud || null,
+    cloudError: deps.cloudError || null,
     channels: deps.channels || null,
     getMcpFunnel:
       typeof deps.getMcpFunnel === "function"

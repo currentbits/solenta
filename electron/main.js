@@ -13,7 +13,7 @@ const serverMaintenance = process.env.SOLENTA_SERVER === "1" && process.env.SOLE
 // runtime version, so app updates never load stale bytecode.
 require("node:module").enableCompileCache?.();
 
-const { app, BrowserWindow, ipcMain, dialog, shell, Notification, nativeTheme, nativeImage, protocol, net, powerSaveBlocker, powerMonitor, session, Tray, Menu } = require("electron");
+const { app, BrowserWindow, ipcMain, dialog, shell, safeStorage, Notification, nativeTheme, nativeImage, protocol, net, powerSaveBlocker, powerMonitor, session, Tray, Menu } = require("electron");
 const { overlayLabel, overlayDescription, overlayBitmap } = require("./taskbarOverlay.js");
 const { windowBackgroundColor, nativeThemeSource } = require("./theme.js");
 const { createStayAwake } = require("./caffeinate.js");
@@ -323,6 +323,9 @@ let memoryConsolidateScheduler = null;
 /** Solenta Web: Settings switch, devices, Tailscale (#1512 I2). */
 /** @type {ReturnType<typeof createWebAccess> | null} */
 let webAccess = null;
+let cloudServices = null;
+let cloudError = null;
+const remoteDeps = () => ({ cloudClient: cloudServices?.client, cloudWindows: cloudServices?.windows });
 
 /** Opt-in Tailscale Funnel for /mcp (#1541). */
 /** @type {ReturnType<typeof createMcpFunnel> | null} */
@@ -612,7 +615,8 @@ let crewRelay = null;
 let peerLinks = null;
 // Remote Solenta hosts shown in this window's sidebar (#1819).
 const hostHub = createHostHub({
-  openTunnel: (input, onClose) => openHostTunnel(input, {}, onClose),
+  openTunnel: (input, onClose) => openHostTunnel(input, remoteDeps(), onClose),
+  canUseCloudRoute: ref => cloudServices?.client.status().signedIn && cloudServices.client.status().accountId === ref.accountId && cloudServices.host.status().computerId !== ref.computerId,
   pushWindows,
   onHostThreads: (key, rows) => remoteWorkers?.onHostThreads(key, rows),
   onCrewCall: (key, call) => (remoteWorkers ? remoteWorkers.onCrewCall(key, call) : null),
@@ -1258,8 +1262,9 @@ app.whenReady().then(async () => {
   // ctx is read when the server starts, after registerIpc below returns.
   let registered = null;
   const webStaticDir = path.join(__dirname, "../dist");
+  const webDevices = createWebDevices(userData);
   webAccess = createWebAccess({
-    devices: createWebDevices(userData),
+    devices: webDevices,
     getComputerId: () => require("./serverIdentity.js").loadOrCreateComputerId(userData),
     fileToken: () => loadOrCreateToken(userData),
     defaultPort: WEB_DEFAULT_PORT,
@@ -1270,10 +1275,18 @@ app.whenReady().then(async () => {
         staticDir: fs.existsSync(webStaticDir) ? webStaticDir : null,
         ctx: registered.ctx,
         artifactStore,
+        cloudHandler: (req, res) => cloudServices?.host.handleRequest(req, res) ?? false,
+        handlers: { ...require("./ipc.js").IPC_HANDLERS, ...(cloudServices?.adminHandlers ?? {}) },
         log: (msg) => console.warn(msg),
       }),
     log: (msg) => console.warn(msg),
   });
+  try {
+    cloudServices = require("./cloud/index.js").createCloudServices({ dataDir: userData, devices: webDevices, webAccess, safeStorage, ipcMain,
+      isActive: () => serverActivation?.state() === "active",
+      descriptor: require("./serverIdentity.js").computerDescriptor(userData), openExternal: url => shell.openExternal(url) });
+    cloudServices.client.subscribe(event => { if (event.type === "account") hostHub.refreshCloudRoutes(); });
+  } catch (error) { cloudError = error.message; console.warn("Cloud connections are unavailable. Check their configuration and secure storage."); }
 
   channels = require("./channels/index.js").createChannels({
     store,
@@ -1300,6 +1313,8 @@ app.whenReady().then(async () => {
     pushWeb: (channel, payload) => webAccess && webAccess.broadcast(channel, payload),
   });
   registered = registerIpc({
+    cloud: cloudServices,
+    cloudError,
     channels,
     webAccess,
     crewRelay,
@@ -1327,11 +1342,11 @@ app.whenReady().then(async () => {
     getOrchStatus: () =>
       orchServer ? orchServer.getStatus() : { running: false, port: null },
     getMcpFunnel: () => mcpFunnel,
-    openRemoteConnection,
+    openRemoteConnection: input => openRemoteConnection(input, remoteDeps()),
     forgetRemoteConnection,
     installRemoteSolenta,
     manageRemoteServer,
-    invokeRemote,
+    invokeRemote: (input, channel, args) => invokeRemote(input, channel, args, remoteDeps()),
     hostHub,
     answerSshPrompt: (id, answer) => sshPrompts.answer(id, answer),
   });
@@ -1398,6 +1413,7 @@ app.whenReady().then(async () => {
     // also allowed network access. Never throws.
     await webAccess.restore();
   }
+  activate("cloud connector", () => cloudServices?.host.start());
 
   // Round 47: lazy PR-state freshness. Async/serialized/latched so a slow gh
   // cannot freeze the main process (ISSUES.md prStatus hang) and non-GitHub
@@ -1655,6 +1671,7 @@ function teardownServices() {
   if (askpassRelay) { askpassRelay.close(); askpassRelay = null; }
   closeRemoteConnections();
   hostHub.close();
+  if (cloudServices) { void cloudServices.close().catch(() => {}); cloudServices = null; }
   // No token refresh (and store write) mid-shutdown.
   if (mcpOauthRefreshTimer) {
     clearInterval(mcpOauthRefreshTimer);

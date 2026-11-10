@@ -61,7 +61,7 @@ cp core/package.json "$PAYLOAD/core/package.json"
 cp -R native/ios-simulator-helper "$PAYLOAD/native/ios-simulator-helper"
 cp -R memory-server/src "$PAYLOAD/memory-server/src"
 cp memory-server/package.json memory-server/package-lock.json "$PAYLOAD/memory-server/"
-ROOT_NM_PKGS=(ws cross-spawn path-key shebang-command shebang-regex which isexe yauzl pend qrcode-generator @lydell/node-pty pdfjs-dist)
+ROOT_NM_PKGS=(ws jose cross-spawn path-key shebang-command shebang-regex which isexe yauzl pend qrcode-generator @lydell/node-pty pdfjs-dist)
 for pkg in "${ROOT_NM_PKGS[@]}"; do
   [[ -d "node_modules/$pkg" ]] || { echo "ERROR: node_modules/$pkg missing; npm install" >&2; exit 1; }
   mkdir -p "$(dirname "$PAYLOAD/node_modules/$pkg")"
@@ -106,7 +106,12 @@ SH
 here="$(cd "$(dirname "$0")" && pwd)"
 exec "$here/node" "$here/../app/electron/server/service.js" "$@"
 SH
-  chmod +x "$STAGE/bin/solenta-service" "$STAGE/bin/solenta-server" "$STAGE/bin/node"
+  cat > "$STAGE/bin/solenta-connect" <<'SH'
+#!/bin/sh
+here="$(cd "$(dirname "$0")" && pwd)"
+exec "$here/node" "$here/../app/electron/server/connect.js" "$@"
+SH
+  chmod +x "$STAGE/bin/solenta-connect" "$STAGE/bin/solenta-service" "$STAGE/bin/solenta-server" "$STAGE/bin/node"
 
   # This target's node-pty prebuild, at the wrapper's exact version.
   pty_pkg="node-pty-$os-$cpu"

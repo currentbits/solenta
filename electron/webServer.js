@@ -425,7 +425,8 @@ async function serveRunArtifact(req, res, opts) {
     return true;
   }
   const authorize = resolveAuthorize(opts);
-  if (!authorize(url.searchParams.get("token") || "")) {
+  const cookie = /(?:^|;\s*)solenta-cloud-session=([A-Za-z0-9_-]{1,1024})(?:;|$)/.exec(req.headers.cookie || "")?.[1];
+  if (!authorize(url.searchParams.get("token") || cookie || "")) {
     if (opts.limiter) opts.limiter.fail(remote);
     res.writeHead(401, artifactSecurityHeaders());
     res.end();
@@ -601,6 +602,7 @@ function startWebServer(opts) {
       res.end(req.method === "HEAD" ? undefined : JSON.stringify(computer));
       return;
     }
+    if (opts.cloudHandler && await opts.cloudHandler(req, res)) return;
     if (await serveEnrollment(req, res, { url, limiter, redeemEnrollment: opts.redeemEnrollment, ctx })) return;
     const handled = await serveRunArtifact(req, res, {
       authorize,
@@ -615,6 +617,7 @@ function startWebServer(opts) {
 
   const bridge = attachWebBridge(server, {
     authorize,
+    reauthorize: opts.reauthorize,
     limiter,
     ctx,
     handlers: opts.handlers,

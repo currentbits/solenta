@@ -961,7 +961,9 @@ function isMain() {
 if (isMain()) {
   exitWhenOrphaned()
   const config = loadOrCreateConfig()
-  const embedder = semanticEnabled() ? createRealEmbedder() : null
+  const embedder = semanticEnabled()
+    ? createRealEmbedder({ cacheDir: path.join(path.dirname(config.dbPath), 'models') })
+    : null
   const memory = new Memory(config.dbPath, { embedder })
   startServer(memory, config, '127.0.0.1', configPath()).then((server) => {
     const address = server.address()
