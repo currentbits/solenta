@@ -16,7 +16,7 @@ function httpsOrigin(value) {
 function createCloudClient({ config, credentials, fetch = globalThis.fetch, openExternal, oauth, setTimeout: scheduleTimeout = setTimeout, clearTimeout: cancelTimeout = clearTimeout }) {
   const broker = config?.origin ? httpsOrigin(config.origin) : null;
   const sessions = new Map(), flights = new Map(), timers = new Map(), listeners = new Set();
-  let generation = 0, lifecycle = new AbortController(), loginFlight, refreshFlight, closed = false, publicConfig;
+  let generation = 0, lifecycle = new AbortController(), loginFlight, refreshFlight, refreshResult, closed = false, publicConfig;
   const notify = event => { for (const listener of listeners) { try { listener(event); } catch {} } };
   function active(epoch) { if (closed || epoch !== generation) throw new Error("Cloud sign-in changed or was cancelled."); }
   function record() {
@@ -38,14 +38,17 @@ function createCloudClient({ config, credentials, fetch = globalThis.fetch, open
     if (saved.oauth.expiresAt > Date.now() + 60_000) return saved.oauth.accessToken;
     if (!refreshFlight) {
       const epoch = generation;
+      // Logout must revoke rotated credentials even after fencing the caller.
+      const result = provider().then(provider => provider.refresh(saved.oauth));
+      refreshResult = result;
       const pending = (async () => {
-        const refreshed = await (await provider()).refresh(saved.oauth);
+        const refreshed = await result;
         active(epoch);
         const current = record();
         if (current.accountId !== saved.accountId || current.oauth.refreshToken !== saved.oauth.refreshToken) throw new Error("Cloud sign-in changed.");
         credentials.write({ ...current, oauth: refreshed });
         return refreshed.accessToken;
-      })().finally(() => { if (refreshFlight === pending) refreshFlight = null; });
+      })().finally(() => { if (refreshFlight === pending) { refreshFlight = null; refreshResult = null; } });
       refreshFlight = pending;
     }
     return refreshFlight;
@@ -61,7 +64,7 @@ function createCloudClient({ config, credentials, fetch = globalThis.fetch, open
   function reset() {
     generation++; lifecycle.abort(); lifecycle = new AbortController();
     for (const timer of timers.values()) cancelTimeout(timer);
-    timers.clear(); sessions.clear(); flights.clear(); refreshFlight = null;
+    timers.clear(); sessions.clear(); flights.clear(); refreshFlight = null; refreshResult = null;
   }
   function schedule(computerId, cached, delay = cached.expiresAt - Date.now() - 60_000) {
     cancelTimeout(timers.get(computerId));
@@ -160,11 +163,11 @@ function createCloudClient({ config, credentials, fetch = globalThis.fetch, open
     async logout() {
       let saved, unreadable = false;
       try { saved = credentials.read(); } catch { unreadable = true; }
+      const pendingRefresh = refreshResult;
       reset(); credentials.clear(); notify({ type: "account", signedIn: false });
-      if (unreadable) return { revocationPending: true };
-      if (!saved?.oauth) return { revocationPending: false };
-      if (saved.origin !== broker) return { revocationPending: true };
-      try { await (await provider()).revoke(saved.oauth); return { revocationPending: false }; }
+      if (!saved?.oauth && !pendingRefresh) return { revocationPending: unreadable };
+      if (saved && saved.origin !== broker) return { revocationPending: true };
+      try { await (await provider()).revoke(pendingRefresh ? await pendingRefresh : saved.oauth); return { revocationPending: false }; }
       catch { return { revocationPending: true }; }
     },
     async computers() {

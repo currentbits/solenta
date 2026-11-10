@@ -77,8 +77,10 @@ test("concurrent API calls refresh once; temporary failure retains credentials a
   unblock = new Promise(resolve => { release = resolve; });
   const pending = client.computers();
   await new Promise(resolve => setImmediate(resolve));
-  await client.logout();
+  const logout = client.logout();
+  assert.equal(client.status().signedIn, false);
   release();
+  await logout;
   await assert.rejects(pending, /sign|cancel|changed/i);
   assert.equal(credentials.read(), null);
   assert.equal(client.status().signedIn, false);
@@ -311,4 +313,37 @@ test("real desktop GitHub flow crosses the broker, verifies identity and revokes
   assert.deepEqual(await client.logout(), { revocationPending: false });
   assert.equal(revoked, true);
   assert.equal(client.status().signedIn, false);
+});
+
+test("logout fences access immediately and revokes the winner of an in-flight GitHub refresh", async t => {
+  const { createOAuth } = require("../cloud/oauth");
+  const origin = "https://connect.example.com", credentials = createCredentials({ file: file(t) });
+  credentials.write({ origin, accountId: "github_42", proofKey: {}, oauth: { accessToken: "old-access", refreshToken: "old-refresh", expiresAt: Date.now() - 1 } });
+  let release, started, refreshes = 0, revoked;
+  const gate = new Promise(resolve => { release = resolve; });
+  const refreshing = new Promise(resolve => { started = resolve; });
+  const oauth = createOAuth({ issuer: "https://github.com", brokerOrigin: origin, clientId: "public-client", fetch: async (url, options) => {
+    if (url.endsWith("/v1/oauth/token")) {
+      assert.equal(JSON.parse(options.body).refresh_token, "old-refresh");
+      if (++refreshes > 1) return Response.json({ error: "bad_refresh_token" }, { status: 401 });
+      started(); await gate;
+      return Response.json({ access_token: "new-access", refresh_token: "new-refresh", token_type: "bearer", expires_in: 28800 });
+    }
+    assert.equal(url, `${origin}/v1/oauth/revoke`);
+    revoked = options.headers.authorization;
+    return Response.json({ revoked: true });
+  } });
+  const client = createCloudClient({ config: { origin }, credentials, oauth, fetch: () => assert.fail("cancelled API must not send the new token") });
+  t.after(client.close);
+  const pending = client.computers(); pending.catch(() => {});
+  await refreshing;
+  const logout = client.logout();
+  assert.equal(client.status().signedIn, false);
+  assert.equal(credentials.read(), null);
+  release();
+  assert.deepEqual(await logout, { revocationPending: false });
+  await assert.rejects(pending, /changed|cancelled/);
+  assert.equal(refreshes, 1);
+  assert.equal(revoked, "Bearer new-access");
+  assert.equal(credentials.read(), null);
 });
