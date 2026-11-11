@@ -131,6 +131,7 @@ const BY_SCOPE = {
     "devserver:status",
     "preview:info",
     "preview:screenshot",
+    "preview:originalScreenshot",
     "preview:snapshot",
     "preview:diagnostics",
     "speech:status",

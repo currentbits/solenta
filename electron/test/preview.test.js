@@ -152,6 +152,46 @@ describe("preview session (issue #155)", () => {
     assert.equal(nav.url, "http://localhost:5173/");
   });
 
+  it("keeps the un-resized original for user save while the shot stays bounded (#1940)", async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const img = (width, height) => ({
+      isEmpty: () => false,
+      getSize: () => ({ width, height }),
+      resize: ({ width: w }) => img(w, Math.round((height * w) / width)),
+      toDataURL: () => `data:image/png;base64,${width}x${height}`,
+    });
+    const wc = fakeWebContents({ url: "http://localhost:5173/" });
+    wc.capturePage = async () => img(3200, 2000);
+    preview.setWebContentsLookup(() => wc);
+    preview.bind({ threadId: "t1", webContentsId: 7 });
+
+    await assert.rejects(preview.originalScreenshot({ threadId: "t1" }), /No screenshot to save/);
+
+    const shot = await preview.screenshot({ threadId: "t1" });
+    assert.deepEqual(shot.image, { width: 1600, height: 1000 }, "agent payload unchanged");
+    assert.equal(shot.dataUrl, "data:image/png;base64,1600x1000");
+    assert.equal("original" in shot, false);
+
+    const full = await preview.originalScreenshot({ threadId: "t1" });
+    assert.deepEqual(full, {
+      dataUrl: "data:image/png;base64,3200x2000",
+      image: { width: 3200, height: 2000 },
+    });
+    await assert.rejects(preview.originalScreenshot({ threadId: "t2" }), /not open/);
+
+    t.mock.timers.tick(10 * 60_000);
+    await assert.rejects(preview.originalScreenshot({ threadId: "t1" }), /No screenshot to save/);
+
+    await preview.screenshot({ threadId: "t1" });
+    preview.unbind({ threadId: "t1" });
+    preview.bind({ threadId: "t1", webContentsId: 7 });
+    await assert.rejects(
+      preview.originalScreenshot({ threadId: "t1" }),
+      /No screenshot to save/,
+      "pane close drops the original",
+    );
+  });
+
   it("bind then screenshot / navigate / click / type", async () => {
     const wc = fakeWebContents({ url: "http://localhost:5173/" });
     preview.setWebContentsLookup((id) => (id === 7 ? wc : null));
