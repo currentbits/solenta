@@ -63,7 +63,8 @@ if (process.env.CODER_FAKE_CLAUDE_ARGV_FILE) {
 function emit(obj) {
   process.stdout.write(JSON.stringify(obj) + "\\n");
 }
-emit({ type: "system", subtype: "init", session_id: "sess-budget", model: "m" });
+// Pre-2.1.277 reset protocol: each resumed process reports its own cost (#1961).
+emit({ type: "system", subtype: "init", session_id: "sess-budget", model: "m", claude_code_version: "2.1.276" });
 emit({
   type: "assistant",
   message: { content: [{ type: "text", text: "ok" }] },

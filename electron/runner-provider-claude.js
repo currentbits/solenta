@@ -59,7 +59,7 @@ const fs = require("node:fs");
 const { recordCompaction } = require("./compaction.js");
 const { claudeCompaction } = require("./claude-context.js");
 
-const { createClaudeUsage } = require("./claude-usage.js");
+const { createClaudeUsage, normalizeClaudeCheckpoint, claudeCheckpointFromHandle } = require("./claude-usage.js");
 
 /**
  * @param {object} ctx - createRunner context (see runner-watchdogs.js header)
@@ -691,6 +691,13 @@ function createClaudeRun(ctx) {
         projectId: thread.projectId,
         projectName: store.getProject(thread.projectId)?.name, title: thread.title,
       });
+      // Same tick as the ledger writes, so both land in one Store save (#1961).
+      // A newer process owns the session once it replaces this handle.
+      const sess = claudeSessions.get(threadId);
+      const checkpoint = interactive && (!sess || sess.handle === handle)
+        ? claudeCheckpointFromHandle(handle, claudeAccountingScope, capturedSessionId)
+        : null;
+      if (checkpoint) store.updateThread(threadId, { claudeAccounting: checkpoint });
       return { prev, nextUsage };
     }
 
@@ -1048,6 +1055,9 @@ function createClaudeRun(ctx) {
           }
           if (typeof ev.model === "string" && ev.model) {
             capturedModel = ev.model;
+          }
+          if (handle?.claudeResume && typeof ev.claude_code_version === "string") {
+            handle.claudeResume.version = ev.claude_code_version;
           }
           // #1529: Fast was asked for but the CLI refused (e.g.
           // extra_usage_disabled). Say so once per thread, not every turn.
@@ -1513,6 +1523,15 @@ function createClaudeRun(ctx) {
       ),
     );
 
+    // Where the provider keeps this session's totals: account, execution
+    // target and config home. Model/effort respawns keep the same scope.
+    const claudeAccountingScope = JSON.stringify({
+      provider: threadProviderRef(thread),
+      remote: project.remoteHost || null,
+      wsl: crossesBoundary(project) && !project.remoteHost ? project.path : null,
+      configHome: spawnEnv?.CLAUDE_CONFIG_DIR || null,
+    });
+
     // Reuse key: everything a spawn bakes into argv/env EXCEPT the session
     // id (--resume changes after turn one; the live process needs no resume).
     const sessionKey = JSON.stringify({
@@ -1592,6 +1611,14 @@ function createClaudeRun(ctx) {
           onError: (err) => sess.dispatch.onError(err),
         });
         sess.handle = handle;
+        // A resumed process may restore provider totals. Its first cumulative
+        // result decides whether this checkpoint is its starting baseline.
+        if (thread.sessionId) {
+          const saved = normalizeClaudeCheckpoint(store.getThread(threadId)?.claudeAccounting);
+          const matches = saved && !thread.forkSessionAt && saved.sessionId === thread.sessionId &&
+            saved.scope === claudeAccountingScope;
+          handle.claudeResume = { checkpoint: matches ? saved : null, version: null };
+        }
       } else {
         // Non-interactive claude-stream (e.g. grok): unchanged per-turn CLI.
         handle = runClaude({

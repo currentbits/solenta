@@ -15,6 +15,7 @@ const { normalizeBudget } = require("./budgetCaps.js");
 const { normalizeAutoApprove } = require("./autoApprove.js");
 const { branchPrefixError } = require("./worktrees-branches.js");
 const { normalizeTrustHash } = require("./repoConfig.js");
+const { normalizeClaudeCheckpoint } = require("./claude-usage.js");
 const {
   normalizeSetupCommand,
   normalizeQuickActions,
@@ -672,6 +673,11 @@ function migrateThread(t) {
   } else {
     delete next.sessionStartModel;
   }
+  // Claude session accounting checkpoint (#1961). Old stores have none; a
+  // malformed one is dropped, never reconstructed from usage totals.
+  const claudeAccounting = normalizeClaudeCheckpoint(t.claudeAccounting);
+  if (claudeAccounting) next.claudeAccounting = claudeAccounting;
+  else delete next.claudeAccounting;
   // Named provider instance (#453). Omitted when unset so old fixtures
   // still deepEqual.
   if (typeof t.providerInstance === "string" && t.providerInstance) {
