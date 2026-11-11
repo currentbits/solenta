@@ -139,7 +139,13 @@ function MarkdownLink({ href, children }: { href?: string; children?: ReactNode 
   if (!local) {
     const github = isGithubUrl(href);
     const anchor = (
-      <a href={href} target="_blank" rel="noreferrer">
+      <a
+        href={href}
+        target="_blank"
+        rel="noreferrer"
+        // A bare URL is technical text; a labelled link reads with its prose.
+        dir={flattenText(children) === href ? "ltr" : undefined}
+      >
         {github ? <GithubMark className={styles.githubMark} /> : null}
         {children}
       </a>
@@ -233,7 +239,7 @@ function CodeBlock({ children }: { children?: ReactNode }) {
   );
 
   return (
-    <div className={styles.codeBlock}>
+    <div className={styles.codeBlock} dir="ltr">
       <div className={styles.codeHead}>
         <span className={styles.codeLang}>{lang || "code"}</span>
         <button
@@ -325,6 +331,45 @@ function TaskListItem(props: { children?: ReactNode } & ExtraProps) {
   return <li>{linkifyNode(children)}</li>;
 }
 
+type HastNode = {
+  type: string;
+  tagName?: string;
+  value?: string;
+  children?: HastNode[];
+};
+
+const RTL_LETTER =
+  /[\p{Script=Hebrew}\p{Script=Arabic}\p{Script=Syriac}\p{Script=Thaana}\p{Script=Nko}]/u;
+
+/**
+ * First-strong direction of a container's text, skipping code. Containers
+ * need this because dir="auto" ignores children carrying their own dir,
+ * which every <p>/<th> inside a blockquote or table does.
+ */
+export function blockDir(node: HastNode | undefined): "rtl" | "ltr" | "auto" {
+  if (!node) return "auto";
+  if (node.type === "text") {
+    const letter = /\p{L}/u.exec(node.value ?? "");
+    if (!letter) return "auto";
+    return RTL_LETTER.test(letter[0]) ? "rtl" : "ltr";
+  }
+  if (node.tagName === "code" || node.tagName === "pre") return "auto";
+  for (const child of node.children ?? []) {
+    const dir = blockDir(child);
+    if (dir !== "auto") return dir;
+  }
+  return "auto";
+}
+
+/**
+ * Bidi (#1939): text blocks take dir="auto", so Arabic/Hebrew paragraphs run
+ * right-to-left from their first strong letter. Containers (lists, quotes,
+ * tables) get the same first-strong rule via blockDir, so markers, the quote
+ * bar and column order follow the text. Code, path links and bare URLs carry
+ * dir="ltr": the dir=auto scan skips any descendant with its own dir, so a
+ * reply opening with `src/app.ts` still reads RTL when the prose is Arabic,
+ * and the path itself stays an isolated left-to-right run.
+ */
 const COMPONENTS: Components = {
   pre: (props) => <CodeBlock>{props.children}</CodeBlock>,
   // Double-click takes the whole span: word selection stops at `-` and `/`,
@@ -332,6 +377,7 @@ const COMPONENTS: Components = {
   code: (props) => (
     <code
       className={styles.inlineCode}
+      dir="ltr"
       onDoubleClick={(e) =>
         window.getSelection()?.selectAllChildren(e.currentTarget)
       }
@@ -339,15 +385,24 @@ const COMPONENTS: Components = {
       {linkifyNode(props.children, { githubRefs: false })}
     </code>
   ),
-  p: (props) => <p>{linkifyNode(props.children)}</p>,
+  p: (props) => <p dir="auto">{linkifyNode(props.children)}</p>,
+  // ponytail: direction per list, not per item, so markers and indent stay on
+  // one side; a list mixing RTL and LTR items aligns to its first strong text.
+  ul: ({ node, ...rest }) => <ul dir={blockDir(node)} {...rest} />,
+  ol: ({ node, ...rest }) => <ol dir={blockDir(node)} {...rest} />,
+  table: ({ node, ...rest }) => <table dir={blockDir(node)} {...rest} />,
   li: TaskListItem,
-  td: (props) => <td>{linkifyNode(props.children)}</td>,
-  th: (props) => <th>{linkifyNode(props.children)}</th>,
-  h1: (props) => <h1>{linkifyNode(props.children)}</h1>,
-  h2: (props) => <h2>{linkifyNode(props.children)}</h2>,
-  h3: (props) => <h3>{linkifyNode(props.children)}</h3>,
-  h4: (props) => <h4>{linkifyNode(props.children)}</h4>,
-  blockquote: (props) => <blockquote>{linkifyNode(props.children)}</blockquote>,
+  td: (props) => <td dir="auto">{linkifyNode(props.children)}</td>,
+  th: (props) => <th dir="auto">{linkifyNode(props.children)}</th>,
+  h1: (props) => <h1 dir="auto">{linkifyNode(props.children)}</h1>,
+  h2: (props) => <h2 dir="auto">{linkifyNode(props.children)}</h2>,
+  h3: (props) => <h3 dir="auto">{linkifyNode(props.children)}</h3>,
+  h4: (props) => <h4 dir="auto">{linkifyNode(props.children)}</h4>,
+  blockquote: (props) => (
+    <blockquote dir={blockDir(props.node)}>
+      {linkifyNode(props.children)}
+    </blockquote>
+  ),
   a: (props) => <MarkdownLink href={props.href}>{props.children}</MarkdownLink>,
   img: (props) => <MarkdownImage src={props.src} alt={props.alt} />,
 };

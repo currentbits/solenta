@@ -149,7 +149,7 @@ export function ScopeMenu({
                 seed={p.id}
                 size={16}
               />
-              {p.slug || p.name}
+              <span className={styles.scopeName}>{p.slug || p.name}</span>
               <HostChip host={p.host} />
               {p.folders?.length ? (
                 <span
