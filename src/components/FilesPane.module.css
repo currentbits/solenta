@@ -317,3 +317,40 @@
     transition: none;
   }
 }
+
+/* PDF viewer (#1938) */
+.pdf {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.pdfSpacer {
+  flex: 1;
+}
+
+.pdfPages {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px;
+  background: var(--panel);
+}
+
+.pdfPages:focus-visible {
+  outline: none;
+  box-shadow: inset var(--focus-ring);
+}
+
+.textBtn:disabled {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+.pdfCanvas {
+  display: block;
+  margin: 0 auto;
+  background: #fff;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 0.25);
+}

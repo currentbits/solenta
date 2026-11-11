@@ -21,6 +21,7 @@ import { MENTION_PATH_MIME } from "../dropFiles";
 import { formatBytes } from "../format";
 import { languageForPath, useHighlightedLines } from "../syntaxHighlight";
 import { MarkdownBody } from "./Markdown";
+import { PdfPreview, type PdfView } from "./PdfPreview";
 import { EDITOR_PREF_KEY } from "../shared/ipc";
 import styles from "./FilesPane.module.css";
 
@@ -41,6 +42,34 @@ const FILTER_ROWS = 200;
 
 const errorText = (err: unknown) =>
   err instanceof Error ? err.message : String(err);
+
+/**
+ * What each thread's pane had open (#1938). The pane remounts per thread, so
+ * this outlives it: switching back reopens the same file, and a PDF reopens
+ * on the same page and zoom. Least recently used threads and PDFs fall off.
+ */
+type PaneMemory = { openPath: string | null; pdf: Map<string, PdfView> };
+const memory = new Map<string, PaneMemory>();
+const MEMORY_THREADS = 50;
+const MEMORY_PDFS = 20;
+
+/** Re-inserting keeps Map order as recency, oldest first. */
+function touch<K, V>(map: Map<K, V>, key: K, value: V, cap: number) {
+  map.delete(key);
+  map.set(key, value);
+  while (map.size > cap) map.delete(map.keys().next().value as K);
+}
+
+function paneMemory(threadId: string): PaneMemory {
+  const m = memory.get(threadId) ?? { openPath: null, pdf: new Map() };
+  touch(memory, threadId, m, MEMORY_THREADS);
+  return m;
+}
+
+/** Tests start each case from a clean slate. */
+export function forgetFilesPaneMemory() {
+  memory.clear();
+}
 
 /**
  * Subsequence match of `query` in `path`, higher is better, null when it
@@ -115,8 +144,15 @@ function FilesBrowser({
   const [showIgnored, setShowIgnored] = useState(false);
   const [dirs, setDirs] = useState<Record<string, DirState>>({});
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
-  const [cursor, setCursor] = useState<string | null>(null);
-  const [openPath, setOpenPath] = useState<string | null>(null);
+  const [cursor, setCursor] = useState<string | null>(
+    () => paneMemory(threadId).openPath,
+  );
+  const [openPath, setOpenPath] = useState<string | null>(
+    () => paneMemory(threadId).openPath,
+  );
+  useEffect(() => {
+    paneMemory(threadId).openPath = openPath;
+  }, [threadId, openPath]);
   const [filter, setFilter] = useState("");
   const [allFiles, setAllFiles] = useState<FileTreeEntry[] | null>(null);
   const [epoch, setEpoch] = useState(0);
@@ -483,6 +519,17 @@ function Preview({
   }, [api, threadId, path]);
 
   const preview = state && "preview" in state ? state.preview : null;
+  // Deleted or unreadable: stop reopening it on the next visit.
+  useEffect(() => {
+    if (!state || !("error" in state)) return;
+    const m = paneMemory(threadId);
+    m.pdf.delete(path);
+    if (m.openPath === path) m.openPath = null;
+  }, [state, threadId, path]);
+  const onPdfView = useCallback(
+    (view: PdfView) => touch(paneMemory(threadId).pdf, path, view, MEMORY_PDFS),
+    [threadId, path],
+  );
   const markdown = /\.(md|markdown)$/i.test(path) && preview?.kind === "text";
   const openIn = (id: EditorId) =>
     api.openIn({ threadId, path, editor: id }).then(
@@ -535,8 +582,14 @@ function Preview({
       ) : state.preview.kind === "tooLarge" ? (
         <div className={styles.empty} data-files-too-large="">
           Too large to preview ({formatBytes(state.preview.size)}). Previews stop
-          at 1 MB.
+          at {/\.pdf$/i.test(path) ? "32 MB" : "1 MB"}.
         </div>
+      ) : state.preview.kind === "pdf" ? (
+        <PdfPreview
+          data={state.preview.data}
+          view={paneMemory(threadId).pdf.get(path) ?? null}
+          onView={onPdfView}
+        />
       ) : state.preview.kind === "binary" ? (
         <div className={styles.empty} data-files-binary="">
           Binary file, no preview.
