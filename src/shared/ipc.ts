@@ -52,6 +52,8 @@ export type FilePreview =
   | { kind: "text"; size: number; text: string }
   | { kind: "image"; size: number; dataUrl: string }
   | { kind: "binary"; size: number }
+  /** Raw bytes as base64 for the renderer's pdf.js viewer (#1938). */
+  | { kind: "pdf"; size: number; data: string }
   | { kind: "tooLarge"; size: number };
 
 /**
@@ -7835,7 +7837,7 @@ export interface CoderApi {
       showIgnored?: boolean;
       all?: boolean;
     }): Promise<{ entries: FileTreeEntry[]; truncated: boolean }>;
-    /** Read-only preview of one file in the thread checkout (1 MB cap). */
+    /** Read-only preview of one file in the thread checkout (1 MB cap, 32 MB for PDFs). */
     read(input: { threadId: string; path: string }): Promise<FilePreview>;
   };
   /**
@@ -8063,6 +8065,10 @@ export interface CoderApi {
       input: { threadId: string },
     ): Promise<PreviewSnapshot & { viewportPreset: PreviewViewportPreset }>;
     screenshot(input: { threadId: string }): Promise<PreviewScreenshot>;
+    /** Un-resized PNG behind the latest screenshot, for user save only (#1940). */
+    originalScreenshot(input: {
+      threadId: string;
+    }): Promise<{ dataUrl: string; image?: { width: number; height: number } }>;
     /** Pass a CSS selector, or a ref from the latest snapshot (#1191). */
     click(input: { threadId: string; selector?: string; ref?: string }): Promise<PreviewActionResult>;
     type(input: {

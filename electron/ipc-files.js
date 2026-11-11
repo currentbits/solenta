@@ -181,6 +181,8 @@ const RESOLVE_PATHS_MAX = 500;
 const PREVIEW_MAX_BYTES = 1024 * 1024;
 /** Same cap as the Changes pane: a generated mockup PNG is 1-2 MB (#1844). */
 const IMAGE_PREVIEW_MAX_BYTES = 8 * 1024 * 1024;
+/** PDFs (#1938) render page by page in a pdf.js worker, so they get more room. */
+const PDF_PREVIEW_MAX_BYTES = 32 * 1024 * 1024;
 const TREE_DIR_MAX = 2000;
 const TREE_ALL_MAX = 20000;
 const IMAGE_MIME = {
@@ -326,9 +328,11 @@ async function readPreview(root, raw) {
   const size = stat.size;
   const ext = path.extname(abs).slice(1).toLowerCase();
   const mime = IMAGE_MIME[ext];
-  const cap = mime ? IMAGE_PREVIEW_MAX_BYTES : PREVIEW_MAX_BYTES;
+  const cap =
+    ext === "pdf" ? PDF_PREVIEW_MAX_BYTES : mime ? IMAGE_PREVIEW_MAX_BYTES : PREVIEW_MAX_BYTES;
   if (size > cap) return { kind: "tooLarge", size };
   const buf = await fs.promises.readFile(abs);
+  if (ext === "pdf") return { kind: "pdf", size, data: buf.toString("base64") };
   if (mime) {
     return { kind: "image", size, dataUrl: `data:${mime};base64,${buf.toString("base64")}` };
   }

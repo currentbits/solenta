@@ -4363,6 +4363,11 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           canGoForward: false,
           dataUrl: "data:image/png;base64,aaa",
         }),
+      originalScreenshot: (input: unknown) =>
+        rec("preview.originalScreenshot", [input], {
+          dataUrl: "data:image/png;base64,full",
+          image: { width: 3200, height: 2000 },
+        }),
       click: (input: unknown) =>
         rec("preview.click", [input], {
           url: "",

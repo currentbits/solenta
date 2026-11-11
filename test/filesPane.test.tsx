@@ -10,13 +10,18 @@ import { describe, it, afterEach } from "node:test";
 import { inAct, mount, unmountAll } from "./support/dom.ts";
 import {
   FilesPane,
+  forgetFilesPaneMemory,
   fuzzyScore,
   type FilesPaneApi,
 } from "../src/components/FilesPane";
+import { pdfEngine, type PdfDoc } from "../src/components/PdfPreview";
 import type { ReviewComment } from "../src/diffView";
 import type { FilePreview, FileTreeEntry } from "../src/shared/ipc";
 
-afterEach(unmountAll);
+afterEach(() => {
+  unmountAll();
+  forgetFilesPaneMemory();
+});
 
 const TREE: Record<string, FileTreeEntry[]> = {
   "": [
@@ -36,6 +41,7 @@ const FILES: Record<string, FilePreview> = {
   "big.log": { kind: "tooLarge", size: 5 * 1024 * 1024 },
   "x.bin": { kind: "binary", size: 10 },
   "logo.png": { kind: "image", size: 3, dataUrl: "data:image/png;base64,AAA=" },
+  "doc.pdf": { kind: "pdf", size: 4, data: btoa("%PDF") },
 };
 
 function fakeApi() {
@@ -276,5 +282,131 @@ describe("FilesPane row drag (#1794)", () => {
     const data = await dragStart(m.query("[data-files-row='src']"));
     assert.equal(data["application/x-solenta-path"], "src/");
     assert.equal(data["text/plain"], "src/");
+  });
+});
+
+describe("FilesPane PDF viewer (#1938)", () => {
+  const realOpen = pdfEngine.open;
+  afterEach(() => {
+    pdfEngine.open = realOpen;
+    TREE[""] = TREE[""]!.filter((e) => e.path !== "doc.pdf");
+    FILES["doc.pdf"] = { kind: "pdf", size: 4, data: btoa("%PDF") };
+  });
+
+  /** Stub engine: records opened bytes, renders and destroys. */
+  function stubEngine(numPages = 3) {
+    const log = { opened: [] as string[], renders: [] as string[], destroyed: 0 };
+    pdfEngine.open = async (data) => {
+      log.opened.push(new TextDecoder().decode(data));
+      const doc: PdfDoc = {
+        numPages,
+        pageWidth: 600,
+        render(page, zoom) {
+          log.renders.push(`${page}@${zoom}`);
+          return { promise: Promise.resolve(), cancel() {} };
+        },
+        destroy() {
+          log.destroyed += 1;
+        },
+      };
+      return doc;
+    };
+    return log;
+  }
+
+  async function openPdf(threadId: string, api: FilesPaneApi) {
+    TREE[""]!.push({ name: "doc.pdf", path: "doc.pdf", dir: false });
+    const m = await mount(<FilesPane threadId={threadId} api={api} />);
+    await m.flush();
+    await m.click(m.query("[data-files-row='doc.pdf']"));
+    await m.flush();
+    await m.flush();
+    return m;
+  }
+
+  const pageText = (m: Awaited<ReturnType<typeof mount>>) =>
+    m.query("[data-files-pdf-page]")!.textContent;
+
+  it("renders pages, pages and zooms, and keeps the place across a thread switch", async () => {
+    const log = stubEngine(3);
+    const { api } = fakeApi();
+    let m = await openPdf("t1", api);
+    assert.deepEqual(log.opened, ["%PDF"]);
+    assert.equal(pageText(m), "1 / 3");
+    assert.equal(m.query("[data-files-pdf-prev]")!.hasAttribute("disabled"), true);
+    await m.click(m.query("[data-files-pdf-next]"));
+    await m.click(m.query("[data-files-pdf-zoom-in]"));
+    assert.equal(pageText(m), "2 / 3");
+    assert.equal(m.query("[data-files-pdf-zoom]")!.textContent, "125%");
+    assert.equal(log.renders.at(-1), "2@1.25");
+    const pages = m.query("[data-files-pdf] [role='document']") as HTMLElement;
+    await inAct(() => pages.focus());
+    await m.pressFocused("End");
+    assert.equal(pageText(m), "3 / 3");
+    assert.equal(m.query("[data-files-pdf-next]")!.hasAttribute("disabled"), true);
+
+    // Switching threads remounts the pane (ThreadView keys it by thread).
+    m.unmount();
+    assert.equal(log.destroyed, 1, "the document dies with its preview");
+    const other = await mount(<FilesPane threadId="t2" api={api} />);
+    await other.flush();
+    assert.equal(other.query("[data-files-pdf]"), null);
+    other.unmount();
+
+    m = await mount(<FilesPane threadId="t1" api={api} />);
+    await m.flush();
+    await m.flush();
+    assert.equal(pageText(m), "3 / 3");
+    assert.equal(m.query("[data-files-pdf-zoom]")!.textContent, "125%");
+    assert.equal(log.renders.at(-1), "3@1.25");
+  });
+
+  it("clamps a remembered page when the PDF shrank", async () => {
+    stubEngine(3);
+    const { api } = fakeApi();
+    const m = await openPdf("t1", api);
+    await m.click(m.query("[data-files-pdf-next]"));
+    await m.click(m.query("[data-files-pdf-next]"));
+    m.unmount();
+    const log = stubEngine(1);
+    const again = await mount(<FilesPane threadId="t1" api={api} />);
+    await again.flush();
+    await again.flush();
+    assert.equal(pageText(again), "1 / 1");
+    assert.equal(log.renders.at(-1), "1@1");
+  });
+
+  it("forgets a deleted PDF instead of reopening it", async () => {
+    stubEngine();
+    const { api } = fakeApi();
+    const m = await openPdf("t1", api);
+    m.unmount();
+    delete FILES["doc.pdf"];
+    const gone = await mount(<FilesPane threadId="t1" api={api} />);
+    await gone.flush();
+    assert.match(gone.text(), /Path does not exist/);
+    gone.unmount();
+    const fresh = await mount(<FilesPane threadId="t1" api={api} />);
+    await fresh.flush();
+    assert.match(fresh.text(), /Pick a file to preview it/);
+  });
+
+  it("falls back to a message when pdf.js cannot open the file", async () => {
+    pdfEngine.open = async () => {
+      throw new Error("Invalid PDF structure.");
+    };
+    const { api } = fakeApi();
+    const m = await openPdf("t1", api);
+    assert.match(
+      m.query("[data-files-pdf-error]")!.textContent!,
+      /Could not open this PDF: Invalid PDF structure\./,
+    );
+  });
+
+  it("says an oversized PDF stops at 32 MB", async () => {
+    FILES["doc.pdf"] = { kind: "tooLarge", size: 40 * 1024 * 1024 };
+    const { api } = fakeApi();
+    const m = await openPdf("t1", api);
+    assert.match(m.query("[data-files-too-large]")!.textContent!, /stop at 32 MB/);
   });
 });
