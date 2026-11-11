@@ -353,11 +353,13 @@ const PROVIDERS = [
     // is the "start here" pick). CLI 2.1.283 warns unrecognized_model for
     // sonnet-5-5 / haiku-5-5 but the API serves them. Previous-generation
     // ids stay for existing threads; the CLI lists them under "overflow".
+    // Fable 5.2: https://code.claude.com/docs/en/model-config (CLI 2.1.321+).
     models: [
       "claude-opus-5-5",
-      "claude-fable-5-1",
+      "claude-fable-5-2",
       "claude-sonnet-5-5",
       "claude-haiku-5-5",
+      "claude-fable-5-1",
       "claude-fable-5",
       "claude-opus-5",
       "claude-sonnet-5",
@@ -375,12 +377,13 @@ const PROVIDERS = [
         fast: true,
       },
       {
-        id: "claude-fable-5-1",
-        label: "Fable 5.1",
-        description: "Most capable; uses limits much faster than Opus",
+        id: "claude-fable-5-2",
+        label: "Fable 5.2",
+        description: "Most capable; requires Claude Code 2.1.321 or newer",
         vendor: "Anthropic",
         contextTokens: 1_000_000,
         efforts: CLAUDE_EFFORTS.slice(),
+        fast: true,
       },
       {
         id: "claude-sonnet-5-5",
@@ -394,6 +397,14 @@ const PROVIDERS = [
         id: "claude-haiku-5-5",
         label: "Haiku 5.5",
         description: "Cheapest and fastest replies",
+        vendor: "Anthropic",
+        contextTokens: 1_000_000,
+        efforts: CLAUDE_EFFORTS.slice(),
+      },
+      {
+        id: "claude-fable-5-1",
+        label: "Fable 5.1",
+        description: "Previous generation Fable.",
         vendor: "Anthropic",
         contextTokens: 1_000_000,
         efforts: CLAUDE_EFFORTS.slice(),

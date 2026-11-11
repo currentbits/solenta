@@ -65,11 +65,13 @@ describe("providers registry", () => {
     // #1521: current lineup first, previous generation kept for old threads.
     assert.deepEqual(claude.models.slice(0, 4), [
       "claude-opus-5-5",
-      "claude-fable-5-1",
+      "claude-fable-5-2",
       "claude-sonnet-5-5",
       "claude-haiku-5-5",
     ]);
     assert.ok(claude.models.includes("claude-opus-5"));
+    assert.ok(claude.models.includes("claude-fable-5-1"));
+    assert.ok(claude.models.includes("claude-fable-5"));
     assert.ok(claude.models.includes("claude-haiku-4-5"));
     assert.deepEqual(
       claude.modelInfo.filter((m) => m.recommended).map((m) => m.id),

@@ -8,7 +8,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { execFileSync } = require("node:child_process");
-const { getProvider, listProviders, modelSupportsFast } = require("../providers.js");
+const { getProvider, listProviders, modelSupportsFast, honouredEfforts } = require("../providers.js");
 const catalog = require("../catalogDivergence.js");
 const { Store } = require("../store.js");
 const services = require("../services.js");
@@ -22,6 +22,23 @@ const codex = getProvider("codex");
 const FAST_SETTINGS = JSON.stringify({ fastMode: true });
 
 describe("fast tier: buildArgs", () => {
+  it("offers Fable 5.2 with its context, effort levels and fast launch settings", () => {
+    const provider = listProviders({ which: () => null, readFile: () => null }).find((p) => p.id === "claude");
+    const model = provider.modelInfo.find((m) => m.id === "claude-fable-5-2");
+    assert.ok(model, "Fable 5.2 is selectable without a live CLI catalog");
+    assert.equal(model.contextTokens, 1_000_000);
+    assert.match(model.description, /2\.1\.321/);
+    assert.equal(model.fast, true);
+    assert.deepEqual(honouredEfforts(claude, model.id), ["low", "medium", "high", "xhigh", "max"]);
+    for (const effort of model.efforts) {
+      const args = claude.buildArgs({ prompt: "p", model: model.id, reasoningEffort: effort, fast: true });
+      assert.equal(args[args.indexOf("--model") + 1], model.id);
+      assert.equal(args[args.indexOf("--effort") + 1], effort);
+      assert.equal(args[args.indexOf("--settings") + 1], FAST_SETTINGS);
+    }
+    assert.ok(!claude.buildArgs({ prompt: "p", model: model.id, fast: false }).includes("--settings"));
+  });
+
   it("claude sends --settings fastMode only on a fast model", () => {
     const on = claude.buildArgs({ prompt: "p", model: "claude-opus-5", fast: true });
     assert.equal(on[on.indexOf("--settings") + 1], FAST_SETTINGS);
