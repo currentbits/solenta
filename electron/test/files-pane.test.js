@@ -158,6 +158,18 @@ describe("files pane IPC", () => {
       await handlers["files:read"]({ threadId: thread.id, path: "big.txt" }),
       { kind: "tooLarge", size: 1024 * 1024 + 1 },
     );
+
+    // PDFs (#1938) ship their bytes to the renderer's pdf.js, past the 1 MB text cap.
+    fs.writeFileSync(path.join(repo, "doc.pdf"), Buffer.alloc(1024 * 1024 + 1, 0x25));
+    const pdf = await handlers["files:read"]({ threadId: thread.id, path: "doc.pdf" });
+    assert.equal(pdf.kind, "pdf");
+    assert.equal(pdf.size, 1024 * 1024 + 1);
+    assert.equal(Buffer.from(pdf.data, "base64").length, 1024 * 1024 + 1);
+    fs.truncateSync(path.join(repo, "doc.pdf"), 32 * 1024 * 1024 + 1);
+    assert.deepEqual(
+      await handlers["files:read"]({ threadId: thread.id, path: "doc.pdf" }),
+      { kind: "tooLarge", size: 32 * 1024 * 1024 + 1 },
+    );
   });
 
   it("refuses dot-dot and absolute paths outside the root", async () => {
