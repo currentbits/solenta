@@ -591,3 +591,68 @@ describe("GitHub ref links (#1771)", () => {
     assert.equal(anchor?.querySelector("svg"), null);
   });
 });
+
+describe("mixed RTL/LTR direction (#1939)", () => {
+  const dirOf = (el: Element | null) => el?.getAttribute("dir") ?? null;
+
+  it("text blocks pick direction from their own text", async () => {
+    const m = await mount(
+      <Markdown
+        text={[
+          "# عنوان",
+          "שלום, this is mixed.",
+          "> اقتباس",
+          "- أولاً\n- ثانياً",
+          "3. אחד\n4. שניים",
+          "| ملف | status |\n| --- | --- |\n| א | ok |",
+        ].join("\n\n")}
+      />,
+    );
+    const c = m.container;
+    for (const sel of ["h1", "p", "th", "td"]) {
+      assert.equal(dirOf(c.querySelector(sel)), "auto", `${sel} is dir=auto`);
+    }
+    // Containers resolve first-strong themselves: dir=auto would skip their
+    // dir'd children and fall back to ltr.
+    for (const sel of ["blockquote", "ul", "ol", "table"]) {
+      assert.equal(dirOf(c.querySelector(sel)), "rtl", `${sel} is rtl`);
+    }
+    assert.equal(c.querySelector("ol")?.getAttribute("start"), "3");
+  });
+
+  it("container direction skips code and follows the first strong letter", async () => {
+    const m = await mount(
+      <Markdown
+        text={"> `npm test` ثم راجع\n\n- English first\n- ثم عربي\n\n> 123 — ..."}
+      />,
+    );
+    const [rtlQuote, neutralQuote] = m.container.querySelectorAll("blockquote");
+    assert.equal(dirOf(rtlQuote), "rtl", "inline code is not meaningful text");
+    assert.equal(dirOf(m.container.querySelector("ul")), "ltr");
+    assert.equal(dirOf(neutralQuote), "auto", "no letters: leave it to the browser");
+  });
+
+  it("keeps the task-list class on gfm lists", async () => {
+    const m = await mount(<Markdown text={"- [x] تم\n- [ ] لا"} />);
+    assert.match(m.container.querySelector("ul")?.className ?? "", /contains-task-list/);
+  });
+
+  it("code, fences, paths and bare URLs stay left-to-right", async () => {
+    const m = await mount(
+      linked(
+        "`src/foo.ts` يحتوي على الدالة، راجع src/foo.ts:12 و https://example.com.\n\n[التوثيق](https://example.com)\n\n```ts\nconst x = 1;\n```",
+      ),
+    );
+    await m.flush();
+    const c = m.container;
+    assert.equal(dirOf(c.querySelector("p code")), "ltr");
+    for (const link of c.querySelectorAll("[data-path-link]")) {
+      assert.equal(dirOf(link), "ltr");
+    }
+    assert.ok(c.querySelectorAll("[data-path-link]").length >= 2);
+    const [bare, labelled] = c.querySelectorAll("a");
+    assert.equal(dirOf(bare), "ltr", "bare URL is ltr");
+    assert.equal(dirOf(labelled), null, "labelled link follows its paragraph");
+    assert.equal(dirOf(c.querySelector("pre")?.parentElement ?? null), "ltr");
+  });
+});

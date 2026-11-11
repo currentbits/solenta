@@ -23,7 +23,7 @@
 .md ul,
 .md ol {
   margin: 8px 0;
-  padding-left: 22px;
+  padding-inline-start: 22px;
 }
 
 .md li {
@@ -85,7 +85,7 @@
 .md blockquote {
   margin: 8px 0;
   padding: 2px 12px;
-  border-left: 3px solid var(--border);
+  border-inline-start: 3px solid var(--border);
   color: var(--text-muted);
 }
 
@@ -109,7 +109,7 @@
 .md td {
   border: 1px solid var(--border-soft);
   padding: 4px 10px;
-  text-align: left;
+  text-align: start;
 }
 
 .md th {

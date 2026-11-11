@@ -212,6 +212,7 @@ export function PathAnchor({
     <span
       role="link"
       tabIndex={0}
+      dir="ltr"
       className={styles.pathLink}
       data-path-link={hit.path}
       data-path-line={hit.line != null ? String(hit.line) : undefined}
@@ -272,6 +273,7 @@ function threadLinked(
         key={`${keyPrefix}t${m.index}`}
         role="link"
         tabIndex={0}
+        dir="ltr"
         className={styles.pathLink}
         data-thread-link={id}
         title={title || id}
