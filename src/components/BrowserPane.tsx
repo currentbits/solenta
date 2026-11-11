@@ -395,6 +395,25 @@ export function BrowserPane({
     }
   };
 
+  // #1940: the agent and the composer get the bounded image; this saves the
+  // un-resized original of the latest screenshot (yours or the agent's).
+  const onSaveOriginal = async () => {
+    if (!preview) return;
+    setError(null);
+    try {
+      const shot = await preview.originalScreenshot({ threadId });
+      const a = document.createElement("a");
+      a.href = shot.dataUrl;
+      a.download = shot.image
+        ? `screenshot-${shot.image.width}x${shot.image.height}.png`
+        : "screenshot.png";
+      a.rel = "noopener";
+      a.click();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
   const onViewport = async (preset: PreviewViewportPreset) => {
     if (!preview) return;
     setViewportPreset(preset);
@@ -566,6 +585,17 @@ export function BrowserPane({
           onClick={() => void onScreenshot()}
         >
           {capturing ? "Capturing…" : "Add screenshot"}
+        </button>
+        <button
+          type="button"
+          className={styles.navBtn}
+          data-browser-save-original=""
+          aria-label="Save full-size screenshot"
+          title="Save the latest screenshot at full resolution"
+          disabled={!preview || !bound}
+          onClick={() => void onSaveOriginal()}
+        >
+          ⤓
         </button>
         <button
           type="button"

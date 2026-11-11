@@ -137,6 +137,52 @@ async function bindAndLoad(m: Awaited<ReturnType<typeof mount>>) {
   assert.equal(m.query("[data-browser-empty]"), null);
 }
 
+describe("BrowserPane full-size save (issue #1940)", () => {
+  it("downloads the original while the composer keeps the bounded shot", async () => {
+    const asked: string[] = [];
+    const preview = fakePreview({
+      originalScreenshot: async (input) => {
+        asked.push(input.threadId);
+        return { dataUrl: "data:image/png;base64,full", image: { width: 3200, height: 2000 } };
+      },
+    });
+    const clicked: { href: string; download: string }[] = [];
+    const m = await mount(<BrowserPane threadId="t1" preview={preview} />);
+    // The DOM globals exist only after mount.
+    const anchor = Object.getPrototypeOf(document.createElement("a"));
+    const realClick = anchor.click;
+    anchor.click = function (this: HTMLAnchorElement) {
+      clicked.push({ href: this.href, download: this.download });
+    };
+    try {
+      await bindAndLoad(m);
+      await m.click(m.query("[data-browser-save-original]"));
+      await m.flush();
+      assert.deepEqual(asked, ["t1"]);
+      assert.deepEqual(clicked, [
+        { href: "data:image/png;base64,full", download: "screenshot-3200x2000.png" },
+      ]);
+      m.unmount();
+    } finally {
+      anchor.click = realClick;
+    }
+  });
+
+  it("shows the main-process message when there is nothing to save", async () => {
+    const preview = fakePreview({
+      originalScreenshot: async () => {
+        throw new Error("No screenshot to save. Take a screenshot first.");
+      },
+    });
+    const m = await mount(<BrowserPane threadId="t1" preview={preview} />);
+    await bindAndLoad(m);
+    await m.click(m.query("[data-browser-save-original]"));
+    await m.flush();
+    assert.match(m.query("[data-browser-error]")!.textContent || "", /No screenshot to save/);
+    m.unmount();
+  });
+});
+
 describe("BrowserPane diagnostics and viewport (issue #1191)", () => {
   it("shows the agent's console and network evidence and drives the viewport", async () => {
     const presets: string[] = [];
