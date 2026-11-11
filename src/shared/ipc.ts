@@ -8063,6 +8063,10 @@ export interface CoderApi {
       input: { threadId: string },
     ): Promise<PreviewSnapshot & { viewportPreset: PreviewViewportPreset }>;
     screenshot(input: { threadId: string }): Promise<PreviewScreenshot>;
+    /** Un-resized PNG behind the latest screenshot, for user save only (#1940). */
+    originalScreenshot(input: {
+      threadId: string;
+    }): Promise<{ dataUrl: string; image?: { width: number; height: number } }>;
     /** Pass a CSS selector, or a ref from the latest snapshot (#1191). */
     click(input: { threadId: string; selector?: string; ref?: string }): Promise<PreviewActionResult>;
     type(input: {

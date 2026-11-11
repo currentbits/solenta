@@ -447,6 +447,7 @@ const IPC_CHANNELS = Object.freeze([
   { ns: "preview", method: "goForward" },
   { ns: "preview", method: "info" },
   { ns: "preview", method: "screenshot" },
+  { ns: "preview", method: "originalScreenshot" },
   { ns: "preview", method: "click" },
   { ns: "preview", method: "type" },
   { ns: "preview", method: "snapshot" },

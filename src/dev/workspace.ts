@@ -213,6 +213,9 @@ export function createWorkspace(): Pick<CoderApi, "servers" | "simulator" | "pre
           dataUrl: "data:image/png;base64,aaa",
         };
       },
+      async originalScreenshot(_input: { threadId: string }) {
+        return { dataUrl: "data:image/png;base64,aaa" };
+      },
       async click(_input: { threadId: string; selector?: string; ref?: string }) {
         return { url: "", title: "", canGoBack: false, canGoForward: false, ok: true, completion: "done" as const };
       },

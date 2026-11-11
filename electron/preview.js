@@ -20,6 +20,12 @@ const PREVIEW_PARTITION_PREFIX = "solenta-preview:";
 const PANE_CLOSED =
   "Browser pane is not open on this thread. Open Views → Browser, then retry.";
 const MAX_SHOT_WIDTH = 1600;
+// #1940: the un-resized capture behind the latest screenshot, kept only for
+// an explicit user save. One per thread, in memory, dropped on expiry,
+// the next shot, or pane close. It never goes to the agent.
+const ORIGINAL_TTL_MS = 10 * 60_000;
+const NO_ORIGINAL =
+  "No screenshot to save. Take a screenshot first (originals are kept for 10 minutes).";
 const INITIAL_LOAD_WAIT_MS = 2000;
 // Fallback only: Electron >=27 emits `audio-state-changed` itself, so this
 // timer never starts on a real build (issue #1807).
@@ -57,6 +63,7 @@ const CONSOLE_LEVELS = ["debug", "info", "warning", "error"];
  *   natural: { width: number, height: number } | null,
  *   audible: boolean,
  *   muted: boolean,
+ *   original: { image: object, timer: ReturnType<typeof setTimeout> } | null,
  *   detach: () => void,
  * }} Session
  */
@@ -274,6 +281,7 @@ function attachSession(threadId, wc, webContentsId) {
     natural: null,
     audible: typeof wc.isCurrentlyAudible === "function" ? Boolean(wc.isCurrentlyAudible()) : false,
     muted: typeof wc.isAudioMuted === "function" ? Boolean(wc.isAudioMuted()) : false,
+    original: null,
     detach: () => {},
   };
   const push = (/** @type {"console" | "network"} */ kind, cap, entry) => {
@@ -382,6 +390,7 @@ function attachSession(threadId, wc, webContentsId) {
     s.console.length = 0;
     s.network.length = 0;
     started.clear();
+    keepOriginal(s, null);
   };
   return s;
 }
@@ -646,6 +655,17 @@ async function info(input) {
   return { ...navState(wc), viewportPreset: s.emulation ? s.emulation.preset : "fill" };
 }
 
+function keepOriginal(s, image) {
+  if (s.original) clearTimeout(s.original.timer);
+  s.original = null;
+  if (!image) return;
+  const timer = setTimeout(() => {
+    if (s.original && s.original.timer === timer) s.original = null;
+  }, ORIGINAL_TTL_MS);
+  if (typeof timer.unref === "function") timer.unref();
+  s.original = { image, timer };
+}
+
 /**
  * The PNG carries the viewport it was taken at: CSS size and DPR measured
  * in the page, plus the image's own pixel size.
@@ -668,10 +688,26 @@ async function screenshot(input) {
       })
     : wc.capturePage());
   const shot = encodeImage(image);
+  keepOriginal(s, image);
   return {
     dataUrl: shot.dataUrl,
     ...navState(wc),
     viewport: viewportInfo(s, await measureViewport(wc)),
+    ...(shot.size ? { image: { width: shot.size.width, height: shot.size.height } } : {}),
+  };
+}
+
+/**
+ * Full-resolution PNG of the latest screenshot, for the user's Save button
+ * only (#1940). The agent tool never calls this.
+ * @param {{ threadId?: string }} input
+ */
+async function originalScreenshot(input) {
+  const { s } = requireSession(threadIdOf(input));
+  if (!s.original) throw new Error(NO_ORIGINAL);
+  const shot = encodeImage(s.original.image, Infinity, Infinity);
+  return {
+    dataUrl: shot.dataUrl,
     ...(shot.size ? { image: { width: shot.size.width, height: shot.size.height } } : {}),
   };
 }
@@ -1559,6 +1595,7 @@ module.exports = {
   goForward,
   info,
   screenshot,
+  originalScreenshot,
   snapshot,
   diagnostics,
   viewport,

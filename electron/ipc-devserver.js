@@ -302,6 +302,10 @@ module.exports = {
     resolveDevServerRoot(ctx, input && input.threadId);
     return preview.screenshot(input);
   },
+  "preview:originalScreenshot": async (ctx, input) => {
+    resolveDevServerRoot(ctx, input && input.threadId);
+    return preview.originalScreenshot(input);
+  },
   "preview:click": async (ctx, input) => {
     resolveDevServerRoot(ctx, input && input.threadId);
     return preview.click(input);
