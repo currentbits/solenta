@@ -14,6 +14,9 @@ const crypto = require("node:crypto");
 const { spawn: defaultSpawn } = require("node:child_process");
 const { WebSocket: DefaultWebSocket } = require("ws");
 const { models, localSpeechConfig, localSpeechError } = require("./speech-config.js");
+const { writeConfigAtomicSync } = require("./atomic-config.js");
+
+const { verifyModelFile, verifiedFileUnchanged, loadModelLocations } = require("./speech-model-location.js");
 
 const MODEL_BYTES = 699872960;
 const MODEL_SHA256 =
@@ -399,6 +402,13 @@ function createSpeechManager(deps) {
           resourcesPath: deps.resourcesPath || process.resourcesPath,
         });
   const modelDir = path.join(userDataPath, "speech");
+  const locationsFile = path.join(modelDir, "model-locations.json");
+  const locations = loadModelLocations(locationsFile, models);
+  const verified = new Map();
+  let externalPath = null;
+  let externalError = "";
+  let verificationJob = null;
+  let locationBusy = false;
   let selectedModel;
   let localLanguage = "en-US";
   let compatibilityError = "";
@@ -458,7 +468,8 @@ function createSpeechManager(deps) {
   function syncModel() {
     // A recording/download keeps its original model and language even if
     // another window saves settings while it is in flight.
-    if (starting || active || cloudActive || downloadJob) return;
+    if (starting || active || cloudActive || downloadJob || verificationJob || locationBusy) return;
+    const previousId = selectedModel?.id;
     const settings = getSpeechSettings();
     const config = localSpeechConfig(settings);
     compatibilityError = localSpeechError(settings);
@@ -468,8 +479,12 @@ function createSpeechManager(deps) {
     modelBytes = deps.modelBytes ?? spec?.bytes;
     modelSha256 = deps.modelSha256 ?? spec?.sha256;
     modelUrl = deps.modelUrl ?? spec?.url;
-    modelPath = spec ? path.join(modelDir, spec.filename) : null;
-    partialPath = modelPath ? `${modelPath}.partial` : null;
+    const nextExternal = locations[config.localModel] || null;
+    if (nextExternal !== externalPath || previousId !== config.localModel) externalError = "";
+    externalPath = nextExternal;
+    const internalPath = spec ? path.join(modelDir, spec.filename) : null;
+    modelPath = externalPath || internalPath;
+    partialPath = internalPath ? `${internalPath}.partial` : null;
   }
 
   function runtimeIsReady() {
@@ -478,7 +493,9 @@ function createSpeechManager(deps) {
 
   function modelIsReady() {
     try {
-      return !compatibilityError && !!modelPath && fs.statSync(modelPath).size === modelBytes;
+      return !compatibilityError && !!modelPath && (externalPath
+        ? verifiedFileUnchanged(verified.get(modelPath) || {})
+        : fs.statSync(modelPath).isFile() && fs.statSync(modelPath).size === modelBytes);
     } catch {
       return false;
     }
@@ -490,7 +507,7 @@ function createSpeechManager(deps) {
       return state;
     }
     const usable = (runtimeIsReady() && modelIsReady()) || cloudConfig() != null;
-    if (compatibilityError && !cloudConfig()) return "error";
+    if ((compatibilityError || externalError) && !cloudConfig()) return "error";
     if (state === "error" && !usable) return "error";
     return usable ? "ready" : "missing";
   }
@@ -504,7 +521,8 @@ function createSpeechManager(deps) {
       modelReady: modelIsReady(),
       ...(selectedModel ? { model: { id: selectedModel.id, label: selectedModel.label, bytes: modelBytes } } : {}),
       language: localLanguage,
-      ...(compatibilityError ? { localError: compatibilityError } : {}),
+      ...(compatibilityError || externalError ? { localError: compatibilityError || externalError } : {}),
+      modelLocation: externalPath ? { source: "external", filename: selectedModel.filename, verifying: !!verificationJob } : { source: "internal" },
     };
     if (state === "downloading" && downloadProgress) {
       out.download = {
@@ -521,7 +539,7 @@ function createSpeechManager(deps) {
       }
     }
     if (extra && typeof extra.error === "string") out.error = extra.error;
-    else if (state === "error" && (compatibilityError || lastError)) out.error = compatibilityError || lastError;
+    else if (state === "error" && (compatibilityError || externalError || lastError)) out.error = compatibilityError || externalError || lastError;
     if (active) out.sessionId = active.id;
     else if (cloudActive) out.sessionId = cloudActive.id;
     return out;
@@ -537,7 +555,73 @@ function createSpeechManager(deps) {
   }
 
   function status() {
+    syncModel();
+    if (externalPath && !compatibilityError && !cloudConfig() && !modelIsReady() && !verificationJob && !externalError && !starting && !active && !cloudActive && !downloadJob && !locationBusy) {
+      void verifyExternal().catch(() => {});
+    }
     return snapshot();
+  }
+
+  function verificationSpec() {
+    return { ...selectedModel, bytes: modelBytes, sha256: modelSha256 };
+  }
+
+  function verifyExternal() {
+    if (!externalPath || verifiedFileUnchanged(verified.get(externalPath) || {})) return Promise.resolve();
+    if (verificationJob) return verificationJob;
+    const file = externalPath;
+    const spec = verificationSpec();
+    verificationJob = verifyModelFile(file, spec).then((result) => {
+      // Keep the saved canonical target; never silently follow a replacement link.
+      if (result.path !== file) throw new Error("The selected speech model location changed. Choose its folder again.");
+      verified.set(file, result);
+      externalError = "";
+    }).catch((err) => {
+      verified.delete(file);
+      externalError = `${err.message} Choose another folder or use the default location in Settings > Voice input.`;
+      throw new Error(externalError);
+    }).finally(() => { verificationJob = null; emit(); });
+    return verificationJob;
+  }
+
+  function assertLocationChange(input) {
+    syncModel();
+    if (!selectedModel || input?.modelId !== selectedModel.id) throw new Error("Speech model changed. Review the selected model again.");
+    if (starting || active || cloudActive || downloadJob || verificationJob || locationBusy) throw new Error("Finish dictation, downloading or verification before changing the model location.");
+  }
+
+  function saveLocations() {
+    fs.mkdirSync(modelDir, { recursive: true });
+    writeConfigAtomicSync(locationsFile, JSON.stringify(locations), { mode: 0o600 });
+  }
+
+  async function useModelFolder(input, folder) {
+    assertLocationChange(input);
+    if (typeof folder !== "string" || !path.isAbsolute(folder)) throw new Error("Choose a speech model folder.");
+    locationBusy = true;
+    try {
+      const result = await verifyModelFile(path.join(folder, selectedModel.filename), verificationSpec());
+      const id = selectedModel.id;
+      const previous = locations[id];
+      locations[id] = result.path;
+      try { saveLocations(); } catch (err) { if (previous) locations[id] = previous; else delete locations[id]; throw err; }
+      verified.set(result.path, result);
+      externalError = "";
+      lastError = "";
+    } finally { locationBusy = false; emit(); }
+    return status();
+  }
+
+  async function resetModelLocation(input) {
+    assertLocationChange(input);
+    const id = selectedModel.id;
+    const previous = locations[id];
+    delete locations[id];
+    try { saveLocations(); } catch (err) { if (previous) locations[id] = previous; throw err; }
+    externalError = "";
+    lastError = "";
+    emit();
+    return status();
   }
 
   function isRecordingRequested() {
@@ -783,7 +867,8 @@ function createSpeechManager(deps) {
       throw new Error("Speech model changed. Review the download again.");
     }
     if (!runtimeIsReady()) throw new Error("Local speech is unavailable on this platform or its bundled runtime is missing.");
-    if (starting || active || cloudActive) throw new Error("Finish dictation before downloading a speech model.");
+    if (starting || active || cloudActive || locationBusy) throw new Error("Finish dictation before downloading a speech model.");
+    if (externalPath) { await verifyExternal(); emit(); return; }
     if (downloadJob) return downloadJob;
     if (modelIsReady()) {
       lastError = "";
@@ -886,7 +971,7 @@ function createSpeechManager(deps) {
 
   async function start() {
     syncModel();
-    if (starting || state === "recording" || state === "stopping" || active || cloudActive) {
+    if (locationBusy || starting || state === "recording" || state === "stopping" || active || cloudActive) {
       throw new Error("Speech session already active.");
     }
     const cloud = cloudConfig();
@@ -901,6 +986,10 @@ function createSpeechManager(deps) {
     if (compatibilityError) throw new Error(compatibilityError);
     if (state === "downloading") {
       throw new Error("Speech model is downloading.");
+    }
+    if (externalPath) {
+      starting = true;
+      try { await verifyExternal(); } finally { starting = false; }
     }
     if (!modelIsReady()) {
       throw new Error("Speech model is not installed.");
@@ -988,6 +1077,7 @@ function createSpeechManager(deps) {
       starting = true;
       cloudActive = null;
       try {
+        if (!compatibilityError) await verifyExternal();
         if (compatibilityError || !modelIsReady() || !runtimeIsReady()) {
           throw new Error(compatibilityError ? `${why} ${compatibilityError}` : `${why} Install the local speech model to fall back.`);
         }
@@ -1100,6 +1190,8 @@ function createSpeechManager(deps) {
 
   return {
     status,
+    useModelFolder,
+    resetModelLocation,
     /** Re-broadcast after the speech provider setting changes. */
     refresh: () => emit(),
     download,

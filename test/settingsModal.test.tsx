@@ -1952,6 +1952,36 @@ describe("SettingsModal voice input provider (#1725)", () => {
     m.unmount();
   });
 
+  it("chooses and resets a verified external model, handles cancellation and reports verification errors", async () => {
+    const shell = await mount(<div />);
+    const fake = createFakeCoder();
+    installFakeCoder(fake);
+    shell.unmount();
+    const selected = { state: "ready" as const, runtimeReady: true, modelReady: true,
+      model: { id: "nemotron-en", label: "Nemotron English", bytes: 699872960 },
+      modelLocation: { source: "external" as const, filename: "nemotron-speech-streaming-en-0.6b.q8_0.gguf" } };
+    let choosing: (status: typeof selected) => void = () => assert.fail("picker not opened");
+    fake.api.speech.chooseModelFolder = async () => new Promise((resolve) => { choosing = resolve; });
+    try {
+      const m = await mount(modal({ initialPane: "general", settings: base }));
+      await m.click(m.query("[data-speech-choose-folder]"));
+      assert.match(m.query("[data-speech-choose-folder]")?.textContent ?? "", /Verifying/);
+      assert.equal((m.query("[data-speech-local-model]") as HTMLSelectElement).disabled, true);
+      await inAct(async () => { choosing(selected); });
+      assert.match(m.query("[data-speech-model-location]")?.textContent ?? "", /Using selected file/);
+      await m.click(m.query("[data-speech-reset-location]"));
+      assert.deepEqual(fake.of("speech.resetModelLocation")[0].args, [{ modelId: "nemotron-en" }]);
+      fake.api.speech.chooseModelFolder = async () => null;
+      await m.click(m.query("[data-speech-choose-folder]"));
+      assert.equal(m.query("[data-speech-reset-location]"), null);
+      fake.api.speech.chooseModelFolder = async () => { throw new Error("The selected speech model failed SHA-256 verification."); };
+      await m.click(m.query("[data-speech-choose-folder]"));
+      assert.match(m.text(), /failed SHA-256 verification/);
+      assert.equal(fake.of("speech.download").length, 0);
+      m.unmount();
+    } finally { delete (window as unknown as { coder?: unknown }).coder; }
+  });
+
   it("saves a write-only key and only ever shows whether one is set", async () => {
     const patches: Partial<AppSettings>[] = [];
     const m = await mount(

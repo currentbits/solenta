@@ -357,6 +357,8 @@ const BY_SCOPE = {
     "vibeKanban:import",
     "vibeKanban:export",
     "speech:download",
+    "speech:chooseModelFolder",
+    "speech:resetModelLocation",
   ],
   // Listed so the coverage test sees them classified; unlisted means full too.
   full: [

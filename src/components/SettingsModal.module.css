@@ -707,11 +707,13 @@ label.fieldRow:has(> input[type="checkbox"]) {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  min-width: 0;
   border-right: 1px solid var(--border-soft);
   background: var(--input-fill);
 }
 
 .navSearch {
+  min-width: 0;
   margin: 10px 10px 6px;
   padding: 7px 10px 7px 30px;
   border-radius: var(--radius);
@@ -951,6 +953,10 @@ label.fieldRow:has(> input[type="checkbox"]) {
     overflow-x: auto;
     overflow-y: hidden;
     padding: 0 8px 8px;
+  }
+
+  .navSearch {
+    margin-right: 48px;
   }
 
   .navItem {

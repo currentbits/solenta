@@ -5161,6 +5161,20 @@ a.menuItem {
   overflow: visible;
 }
 
+/* Short tiles keep the draft introduction scrollable above the composer. */
+@media (max-height: 600px) {
+  .chatSlot[data-draft-hero] {
+    justify-content: safe center;
+    padding-bottom: 0;
+  }
+
+  .chatSlot[data-draft-hero] > [data-thread-body] {
+    flex: 0 1 auto;
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+}
+
 .heroDraft {
   display: flex;
   flex-direction: column;

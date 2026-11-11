@@ -3486,6 +3486,20 @@ describe("Composer live dictation (#845)", () => {
     m.unmount();
   });
 
+  it("waits for external model verification without offering a download", async () => {
+    const fake = createFakeCoder({ speechStatus: { state: "missing", runtimeReady: true, modelReady: false,
+      modelLocation: { source: "external", filename: "selected.gguf", verifying: true } } });
+    const { m } = await mountSpeechComposer(fake);
+    const btn = mic(m);
+    assert.ok(btn);
+    assert.equal(btn.getAttribute("aria-label"), "Verifying speech model");
+    assert.equal(btn.disabled, true);
+    await m.click(btn);
+    assert.equal(m.query("[data-speech-confirm]"), null);
+    assert.equal(fake.of("speech.download").length, 0);
+    m.unmount();
+  });
+
   it("first click while missing asks for confirmation and does not open the mic", async () => {
     const fake = createFakeCoder({ speechStatus: { state: "missing", runtimeReady: true, modelReady: false } });
     const media = installSpeechMedia();

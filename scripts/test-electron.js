@@ -19,6 +19,8 @@ const args = [
 // inject the platform / never spawn. git.exe is on windows-latest.
 // Not here: execFile of a fake (gh, fm), signals, /bin/sh, hardcoded /tmp.
 const WIN32_FILES = [
+  "electron/test/atomic-config.test.js", // staged config publication; POSIX-only checks skip
+  "electron/test/windowGeometry.test.js", // shared main and detached window bounds
   "electron/test/wsl.test.js", // the boundary contract itself
   "electron/test/worktree-wsl.test.js", // worktree placement across it
   "electron/test/diff-relative.test.js", // real git paths; symlink case skips win32
@@ -92,6 +94,7 @@ const WIN32_FILES = [
   "electron/test/updater.test.js", // win32 portable stage + helper (#755)
   "electron/test/speech-packaging.test.js", // fixture tree; no archive download (#845)
   "electron/test/speech-multilingual.test.js", // protocol fixture; no native runtime or model download
+  "electron/test/speech-model-reuse.test.js", // read-only fixture models, no download or microphone
   "electron/test/workflow-crash-resume.test.js", // store load only; no spawn (#824)
   "electron/test/workflow-phase-retry.test.js",
   "electron/test/workflow-retry-agent.test.js",

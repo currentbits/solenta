@@ -18,6 +18,7 @@
 
 const crypto = require("node:crypto");
 const fs = require("node:fs");
+const { writeConfigAtomicSync } = require("./atomic-config.js");
 const path = require("node:path");
 const run = require("./user-hooks-run.js");
 
@@ -368,7 +369,7 @@ function prepareRunHooks(opts) {
     return null;
   }
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(
+  writeConfigAtomicSync(
     file,
     JSON.stringify({
       version: 1,

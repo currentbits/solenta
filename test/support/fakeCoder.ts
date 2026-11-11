@@ -3937,6 +3937,8 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           },
         ),
       download: (input) => rec("speech.download", input ? [input] : [], undefined),
+      chooseModelFolder: (input) => rec("speech.chooseModelFolder", [input], null),
+      resetModelLocation: (input) => rec("speech.resetModelLocation", [input], { state: "missing" as const, runtimeReady: false, modelReady: false, modelLocation: { source: "internal" as const } }),
       start: () => rec("speech.start", [], { sessionId: "speech-session" }),
       write: (input: unknown) => rec("speech.write", [input], undefined),
       stop: (input: unknown) => rec("speech.stop", [input], undefined),

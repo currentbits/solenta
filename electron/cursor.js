@@ -3,6 +3,7 @@
 const { runJsonLines, SIGKILL_AFTER_MS } = require("./agent.js");
 const { harvestToolResult } = require("./tool-images.js");
 const fs = require("node:fs");
+const { writeConfigAtomicSync } = require("./atomic-config.js");
 const path = require("node:path");
 const { reclaimOverlayHomes } = require("./overlayHomes.js");
 
@@ -382,7 +383,7 @@ function linkOrSkip(src, dst) {
 }
 
 function writeSecretFile(file, data) {
-  fs.writeFileSync(file, data, { mode: 0o600, encoding: "utf8" });
+  writeConfigAtomicSync(file, data, { mode: 0o600, encoding: "utf8" });
   try {
     fs.chmodSync(file, 0o600);
   } catch {
