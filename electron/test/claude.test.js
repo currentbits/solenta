@@ -632,11 +632,14 @@ async function main() {
 
   if (scenario === "resume-turn") {
     // Second turn: expect --resume in argv (asserted by test via argv file).
+    // Pre-2.1.277 CLIs reset totals per process; without a version a
+    // cost-only resumed result has no provable baseline (#1961).
     emit({
       type: "system",
       subtype: "init",
       session_id: "sess-abc-001",
       model: "claude-opus-test",
+      claude_code_version: "2.1.276",
     });
     await delay(20);
     emit({
