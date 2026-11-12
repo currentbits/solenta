@@ -1404,6 +1404,9 @@ describe("App selection stamps lastVisitedAt (round 43 unread)", () => {
         "opening Usage must read the ledger exactly once",
       );
       assert.ok(m.query("[data-usage]"), "usage view must render");
+      await m.change(m.query("[data-usage-source]"), "cli");
+      await m.flush();
+      assert.deepEqual(fake.of("usage.byDay").at(-1)?.args, [{ scope: "cli" }], "source reaches IPC through useCoder");
     } finally {
       m.unmount();
     }

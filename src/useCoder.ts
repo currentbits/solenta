@@ -113,6 +113,7 @@ import type {
   CrewIntegration,
   UpdateStatus,
   UsageReport,
+  UsageReportInput,
   VerifyResult,
   CommandRunResult,
   WorkflowTemplateInfo,
@@ -804,7 +805,7 @@ export interface UseCoderResult {
   /** Cross-thread newest-first activity feed. */
   listActivity: () => Promise<ActivityItem[]>;
   /** Per-day / provider / model usage ledger. */
-  listUsageByDay: () => Promise<UsageReport>;
+  listUsageByDay: (input?: UsageReportInput) => Promise<UsageReport>;
   listProviderLimits: () => Promise<ProviderUsage[]>;
   /** Receipt for the last unattended window (issue #323). */
   listDigest: (input?: { sinceMs?: number }) => Promise<DigestResult>;

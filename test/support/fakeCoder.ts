@@ -349,6 +349,7 @@ export interface FakeOptions {
   insights?: FailureMode[];
   /** Override usage.byDay (default: empty ledger). */
   usage?: UsageReport;
+  cliUsage?: UsageReport;
   /** Solenta Web (#1512 I2). Default: off, no devices, no Tailscale. */
   webAccess?: WebAccessStatus;
 }
@@ -3380,11 +3381,11 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       },
     },
     usage: {
-      byDay: () =>
+      byDay: (input) =>
         rec(
           "usage.byDay",
-          [],
-          opts.usage ?? ({ byDay: {}, threadsByDay: {} } as UsageReport),
+          input ? [input] : [],
+          (input?.scope === "cli" ? opts.cliUsage : opts.usage) ?? ({ byDay: {}, threadsByDay: {} } as UsageReport),
         ),
       providerLimits: () => rec("usage.providerLimits", [], [] as ProviderUsage[]),
     },

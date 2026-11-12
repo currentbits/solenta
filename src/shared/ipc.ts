@@ -2099,7 +2099,17 @@ export type UsageThreadsByDay = Record<
 export interface UsageReport {
   byDay: UsageByDay;
   threadsByDay: UsageThreadsByDay;
+  /** Read-only CLI scan provenance; never part of the spend ledger. */
+  cli?: {
+    files: number;
+    skippedFiles: number;
+    skippedRecords: number;
+    partial: boolean;
+    unpricedModels: string[];
+  };
 }
+
+export interface UsageReportInput { scope?: "solenta" | "cli" }
 
 /**
  * One provider-reported quota window (5-hour, weekly, …).
@@ -7118,7 +7128,7 @@ export interface CoderApi {
   };
   usage: {
     /** Per-day usage ledger, by provider/model and by thread (90 days). */
-    byDay(): Promise<UsageReport>;
+    byDay(input?: UsageReportInput): Promise<UsageReport>;
     /**
      * Provider-reported account quotas (5-hour / weekly when the vendor
      * exposes them). Separate from byDay; never inferred from local spend.

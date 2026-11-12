@@ -807,3 +807,53 @@ describe("UsageView token-type cost split (#1764)", () => {
     m.unmount();
   });
 });
+
+describe("CLI usage scope", () => {
+  it("switches reports without adding app usage, labels estimates/coverage and limits attribution", async () => {
+    const calls: string[] = [];
+    const today = daysAgo(0);
+    const m = await mount(<UsageView loadUsage={async (input) => {
+      calls.push(input?.scope ?? "solenta");
+      return input?.scope === "cli" ? {
+        byDay: { [today]: { codex: { gpt: entry({ inputTokens: 1500, cachedInputTokens: 2000, outputTokens: 500, turns: 3 }) } } },
+        threadsByDay: {},
+        cli: { files: 4, skippedFiles: 1, skippedRecords: 2, partial: false, unpricedModels: ["gpt"] },
+      } : richReport();
+    }} />);
+    await m.flush();
+    await m.change(m.query("[data-usage-source]"), "cli");
+    await m.flush();
+    assert.deepEqual(calls, ["solenta", "cli"]);
+    assert.equal(m.query("[data-usage]")?.getAttribute("data-metric"), "tokens");
+    assert.equal(m.query('[data-usage-provider="claude"]'), null);
+    assert.ok(m.query('[data-usage-provider="codex"]'));
+    assert.match(m.text(), /4 session files scanned/);
+    assert.match(m.text(), /Missing prices for 1 model/);
+    assert.match(m.text(), /Partial coverage: 1 unreadable\/changing files, 2 unsupported/);
+    assert.match(m.text(), /not subscription charges/);
+    assert.match(m.text(), /3 responses/);
+    assert.equal(m.query('[data-usage-group-btn="project"]'), null);
+    assert.equal(m.query('[data-usage-group-btn="thread"]'), null);
+    await m.click(m.query('[data-usage-metric="cost"]'));
+    assert.match(m.text(), /unmetered/);
+    await m.change(m.query("[data-usage-source]"), "solenta");
+    await m.flush();
+    assert.ok(m.query('[data-usage-provider="claude"]'));
+    assert.equal(m.query("[data-usage-cli-note]"), null);
+    m.unmount();
+  });
+
+  it("rejects a late report from the previous source", async () => {
+    let resolveApp!: (report: UsageReport) => void;
+    const m = await mount(<UsageView loadUsage={(input) => input?.scope === "cli"
+      ? Promise.resolve({ byDay: {}, threadsByDay: {}, cli: { files: 0, skippedFiles: 0, skippedRecords: 0, partial: false, unpricedModels: [] } })
+      : new Promise((resolve) => { resolveApp = resolve; })} />);
+    await m.change(m.query("[data-usage-source]"), "cli");
+    await m.flush();
+    resolveApp(richReport());
+    await m.flush();
+    assert.equal(m.query('[data-usage-provider="claude"]'), null);
+    assert.match(m.text(), /0 session files scanned/);
+    m.unmount();
+  });
+});

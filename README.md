@@ -367,7 +367,10 @@ The root `package.json` already allows scripts for the pinned Electron version.
   well-formed ones reach `plan:todo` and auto-dispatch.
 - **Usage and fleet analytics** — cost and tokens per provider/model, merge
   rate, review tax, rework and cost per merged PR, and felt vs wall-clock
-  speedup. OTel GenAI spans ship to your tracing backend.
+  speedup. Usage can also read Claude/Codex CLI sessions on the connected host,
+  with configured-price estimates and visible coverage gaps. This separate
+  source includes Solenta-launched sessions; the two reports overlap.
+  OTel GenAI spans ship to your tracing backend.
 - **Morning digest** — one summary of everything that ran unattended.
 - **Agent profiles** — save a provider + model + effort + permission combination
   and apply it in one click. A profile can carry a governance policy

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { formatCostUsd, formatTokenCount, providerDisplayName } from "../format";
-import type { ModelPrice, ProviderInfo, UsageReport } from "../shared/ipc";
+import type { ModelPrice, ProviderInfo, UsageReport, UsageReportInput } from "../shared/ipc";
 import {
   USAGE_RANGES,
   filterUsageReport,
@@ -31,7 +31,7 @@ export interface UsageReportControls {
 }
 
 export interface UsageViewProps {
-  loadUsage: () => Promise<UsageReport>;
+  loadUsage: (input?: UsageReportInput) => Promise<UsageReport>;
   loadProviderLimits?: ProviderLimitsLoader;
   quotaDemo?: boolean;
   /** Registry rows for display names ("Claude Code"); ids show without it. */
@@ -128,6 +128,7 @@ export function UsageView({
   reportControls,
   onReportControlsChange,
 }: UsageViewProps) {
+  const [scope, setScope] = useState<"solenta" | "cli">("solenta");
   const [report, setReport] = useState<UsageReport>(EMPTY_REPORT);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -182,7 +183,7 @@ export function UsageView({
     setLoading(true);
     setError(null);
     try {
-      const next = await loadUsage();
+      const next = await loadUsage({ scope });
       if (gen !== loadGen.current) return;
       const byDay =
         next && typeof next === "object" && next.byDay && typeof next.byDay === "object" &&
@@ -195,7 +196,7 @@ export function UsageView({
         !Array.isArray(next.threadsByDay)
           ? next.threadsByDay
           : {};
-      setReport({ byDay, threadsByDay });
+      setReport({ byDay, threadsByDay, ...(next?.cli ? { cli: next.cli } : {}) });
       setHasLastSuccess(true);
       setNow(Date.now());
     } catch (err) {
@@ -208,7 +209,7 @@ export function UsageView({
     } finally {
       if (gen === loadGen.current) setLoading(false);
     }
-  }, [loadUsage]);
+  }, [loadUsage, scope]);
 
   useEffect(() => {
     void loadAll();
@@ -348,6 +349,22 @@ export function UsageView({
           ) : null}
         </div>
         <div className={styles.controls}>
+          <select className={styles.providerSelect} aria-label="Usage source" data-usage-source=""
+            value={scope} onChange={(e) => {
+              loadGen.current += 1;
+              const next = e.target.value === "cli" ? "cli" : "solenta";
+              setScope(next);
+              setLimitsOpen(false);
+              setReport(EMPTY_REPORT);
+              setHasLastSuccess(false);
+              setLoading(true);
+              setError(null);
+              setProviderFilter(null);
+              if (next === "cli") { setMetricState("tokens"); setGroup("model"); }
+            }}>
+            <option value="solenta">Solenta runs</option>
+            <option value="cli">CLI sessions</option>
+          </select>
           <div className={styles.segment} role="group" aria-label="Metric">
             <button
               type="button"
@@ -481,6 +498,18 @@ export function UsageView({
         </div>
       </header>
 
+      {scope === "cli" && !limitsOpen ? (
+        <div className={styles.hint} data-usage-cli-note="">
+          <p>Claude and Codex logs on this connection’s host, including Solenta-launched sessions. This replaces the Solenta report; do not add the two totals.</p>
+          <p>Costs are estimates from your configured model prices, not subscription charges. Counts are model responses. Project and thread attribution is available in Solenta runs.</p>
+          {report.cli ? <p>{report.cli.files} session files scanned.
+            {report.cli.unpricedModels.length ? ` Missing prices for ${report.cli.unpricedModels.length} model(s); cost totals are incomplete.` : ""}
+            {report.cli.partial || report.cli.skippedFiles || report.cli.skippedRecords
+              ? ` Partial coverage: ${report.cli.skippedFiles} unreadable/changing files, ${report.cli.skippedRecords} unsupported or malformed records${report.cli.partial ? "; scan limit reached" : ""}.` : ""}
+          </p> : null}
+        </div>
+      ) : null}
+
       {limitsOpen && loadProviderLimits ? (
         <div className={styles.body}>
           <div className={styles.column}>
@@ -542,8 +571,8 @@ export function UsageView({
               <section className={styles.totals} data-usage-totals="">
                 <p className={styles.totalValue}>{totalLabel}</p>
                 <p className={styles.totalMeta}>
-                  {summary.totals.turns} turns
-                  {allUnreported || costUnmeteredTotal ? null : (
+                  {summary.totals.turns} {scope === "cli" ? "responses" : "turns"}
+                  {scope === "cli" || allUnreported || costUnmeteredTotal ? null : (
                     <>
                       {" · "}
                       <span data-usage-caveat="">if billed at full API rate</span>
@@ -555,6 +584,7 @@ export function UsageView({
               <section className={styles.providers} aria-label="Providers">
                 {providerRows.map((row) => (
                   <ProviderRow
+                    responses={scope === "cli"}
                     key={row.provider}
                     row={row}
                     metric={metric}
@@ -688,7 +718,7 @@ export function UsageView({
                 kind="output"
                 costUsd={costByType.outputUsd}
               />
-              <Stat
+              {scope !== "cli" ? <Stat
                 label="Wasted"
                 value={
                   summary.totals.wastedUsd > 0
@@ -697,7 +727,7 @@ export function UsageView({
                 }
                 kind="wasted"
                 title="Spend on runs that ended failed or stopped"
-              />
+              /> : null}
             </div>
           </section>
 
@@ -705,7 +735,7 @@ export function UsageView({
             <div className={styles.breakdownHead}>
               <h2 className={styles.sectionTitle}>Breakdown</h2>
               <div className={styles.segment} role="group" aria-label="Breakdown">
-                {BREAKDOWN_KINDS.map((item) => (
+                {BREAKDOWN_KINDS.filter((item) => scope !== "cli" || item.id === "model" || item.id === "day").map((item) => (
                   <button
                     key={item.id}
                     type="button"
@@ -733,7 +763,7 @@ export function UsageView({
                   <th className={styles.num}>Cost</th>
                   <th className={styles.num}>Share</th>
                   <th className={styles.num}>Tokens</th>
-                  <th className={styles.num}>Turns</th>
+                  <th className={styles.num}>{scope === "cli" ? "Responses" : "Turns"}</th>
                 </tr>
               </thead>
               <tbody>
@@ -881,10 +911,12 @@ function Stat({
 }
 
 function ProviderRow({
+  responses,
   row,
   metric,
   name,
 }: {
+  responses?: boolean;
   row: UsageProviderTotal;
   metric: UsageMetric;
   name: string;
@@ -919,7 +951,7 @@ function ProviderRow({
         />
         <ProviderMark providerId={row.provider} size={13} decorative className={styles.providerMark} />
         <span className={styles.providerName}>{name}</span>
-        <span className={styles.providerTurns}>{row.turns} turns</span>
+        <span className={styles.providerTurns}>{row.turns} {responses ? "responses" : "turns"}</span>
         <span className={styles.providerValue}>{value}</span>
       </div>
       <p className={styles.providerMeta} data-usage-cache={row.cacheMultiplier != null ? row.provider : undefined}>
