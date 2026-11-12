@@ -125,6 +125,17 @@ describe("local CLI usage", () => {
     assert.equal(modelCell(report, "claude", "sonnet").turns, 1);
     await assert.rejects(handler({ store }, { scope: "unsupported" }), /Invalid usage scope/);
   });
+
+  it("IPC CLI reads include isolated-home instances under userData", async () => {
+    const userDataPath = path.join(root, "userdata");
+    write("userdata/provider-homes/work/claude/projects/project/root.jsonl", [claude("isolated-one")]);
+    const handler = require("../ipc-insights.js")["usage:byDay"];
+    const store = { getSettings: () => ({
+      providerInstances: [{ id: "work", provider: "claude", name: "Work", isolatedHome: true }], modelPrices: {},
+    }) };
+    const report = await handler({ store, userDataPath }, { scope: "cli" });
+    assert.equal(modelCell(report, "claude", "sonnet").turns, 1);
+  });
 });
 
 describe("CLI scan boundaries", () => {

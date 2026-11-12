@@ -21,7 +21,7 @@ module.exports = {
     if (scope !== "solenta" && scope !== "cli") throw new Error("Invalid usage scope");
     if (scope === "cli") {
       return cliUsage.read({
-        instances: require("./services.js").instanceAuthProbes(ctx.store),
+        instances: require("./services.js").instanceAuthProbes(ctx.store, ctx.userDataPath),
         prices: ctx.store.getSettings().modelPrices,
       });
     }
