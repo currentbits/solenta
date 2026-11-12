@@ -87,7 +87,7 @@ describe("sidebar draft marker", () => {
     card.unmount();
   });
 
-  it("appears once the composer gets real text, title Unsent draft", async () => {
+  it("appears once the composer gets real text, with its preview", async () => {
     const card = await cardFor("t1");
     const composer = await composerFor("t1");
     assert.equal(card.query("[data-card-draft]"), null);
@@ -95,7 +95,8 @@ describe("sidebar draft marker", () => {
     await composer.type(textarea(composer), "half a thought");
     const marker = card.query("[data-card-draft]");
     assert.ok(marker, "marker shows once a draft has real text");
-    assert.equal(marker!.getAttribute("title"), "Unsent draft");
+    assert.equal(marker!.getAttribute("aria-label"), "Open unsent draft");
+    assert.match(card.query("[data-draft-preview]")!.textContent!, /half a thought/);
 
     card.unmount();
     composer.unmount();
