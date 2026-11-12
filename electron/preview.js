@@ -186,6 +186,8 @@ function guestWebviewPolicy(webPreferences, params) {
   wp.nodeIntegrationInSubFrames = false;
   wp.contextIsolation = true;
   wp.sandbox = true;
+  // Paint the browser canvas, so guest screenshots don't depend on the host backdrop.
+  wp.transparent = false;
   const partition = String(
     (params && params.partition) || wp.partition || "",
   );
