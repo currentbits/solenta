@@ -43,6 +43,8 @@ in two threads, focus/tooltip dismissal, draft selection, send, transient recall
 thread switching and context-only markers. The inspected screenshot is
 `/tmp/solenta-draft-preview.png`.
 
-No full repository suite, signed package, main-branch integration or release was
-performed. Screen-reader behavior was checked through accessible DOM relationships,
-not with a real screen reader.
+The later [combined verification](2026-11-12-synara-batch-verification.md) ran the
+full renderer/backend suites and corrected the missing static-render snapshot
+callback on the badge subscription. No signed package, main-branch integration or
+release was performed. Screen-reader behavior was checked through accessible DOM
+relationships, not with a real screen reader.

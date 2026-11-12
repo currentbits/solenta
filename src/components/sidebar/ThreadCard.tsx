@@ -53,7 +53,8 @@ function DraftBadge({ threadId, onSelect }: {
   threadId: string;
   onSelect: (id: string, opts?: SelectOpts) => void;
 }) {
-  const preview = useSyncExternalStore(subscribeDrafts, () => getDraftPreview(threadId));
+  const snapshot = () => getDraftPreview(threadId);
+  const preview = useSyncExternalStore(subscribeDrafts, snapshot, snapshot);
   const tipId = useId();
   const [dismissed, setDismissed] = useState(false);
   if (!preview) return null;

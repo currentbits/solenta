@@ -82,6 +82,12 @@ Xcode 27.2 with iOS 26.5. The older Indigo route was retained but not exercised
 against an older installed Xcode. No signed/released application upgrade or
 full desktop-pane visual test was run.
 
+The subsequent [combined verification](2026-11-12-synara-batch-verification.md)
+also built the release helper and repeated all nine sandbox checks through the
+verification script. Its Xcode probe now tests the selected `simctl` toolchain
+without requiring a Simulator GUI bundle, and it explicitly requires the
+IOSurface and H.264 permission results as well as the original checks.
+
 Text retains the existing ASCII HID mapping. Synara's separate accessibility-based
 Unicode replacement, edge gestures and per-device manager were not ported.
 Action/shake are unavailable on DTUHID because this source provides no supported

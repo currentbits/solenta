@@ -4,7 +4,7 @@
 /**
  * Compile and Seatbelt-check SolentaSimulatorHelper (#248).
  *
- * Full Xcode with Simulator is required. Command Line Tools is not enough;
+ * Full Xcode with simulator tools is required. Command Line Tools is not enough;
  * this script never reports a pass without a real compile + sandbox self-test.
  */
 
@@ -24,7 +24,7 @@ const DENY_TESTS = [
   "deny-listen",
   "deny-non-loopback",
 ];
-const ALLOW_TESTS = ["allow-loopback-client"];
+const ALLOW_TESTS = ["allow-loopback-client", "allow-iosurface", "allow-h264-encoder"];
 const UNVERIFIED = "unverified: full Xcode unavailable";
 
 function parseArgs(argv) {
@@ -72,8 +72,7 @@ function xcodeSelectPath() {
 function hasFullXcode(developerDir) {
   if (!developerDir || !fs.existsSync(developerDir)) return false;
   if (developerDir.includes("CommandLineTools")) return false;
-  const simulatorApp = path.join(developerDir, "Applications", "Simulator.app");
-  if (!fs.existsSync(simulatorApp)) return false;
+  // Headless helper builds need simctl, not an installed Simulator GUI bundle.
   try {
     execFileSync("/usr/bin/xcrun", ["simctl", "help"], {
       env: { ...process.env, DEVELOPER_DIR: developerDir },
@@ -249,4 +248,5 @@ function main() {
   }
 }
 
-main();
+module.exports = { hasFullXcode, runSandboxSelfTest };
+if (require.main === module) main();

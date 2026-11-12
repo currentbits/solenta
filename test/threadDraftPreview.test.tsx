@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { it } from "node:test";
+import { renderToStaticMarkup } from "react-dom/server";
 import { inAct, mount } from "./support/dom.ts";
 import { thread, providers } from "./support/sidebarFixtures.tsx";
 import { ThreadCard } from "../src/components/sidebar/ThreadCard";
@@ -18,6 +19,14 @@ import {
   syncListRecord,
 } from "../src/composerSession";
 import { makePasteCard } from "../src/pasteCards";
+
+it("renders saved draft snapshots in static card consumers", () => {
+  keptDrafts.a = "saved thought";
+  const html = renderToStaticMarkup(<ThreadCard thread={thread({ id: "a" })}
+    slug="solenta" providers={providers} active={false} now={Date.now()} onSelect={() => {}} />);
+  assert.match(html, /data-draft-badge="a"/);
+  assert.match(html, /Unsent draft: saved thought/);
+});
 
 it("normalizes and bounds excerpts without changing saved text or splitting emoji", () => {
   keptDrafts.a = "  Fix\n\t the \uFFFC sidebar   ";
