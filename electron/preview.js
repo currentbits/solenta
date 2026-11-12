@@ -313,7 +313,11 @@ function attachSession(threadId, wc, webContentsId) {
     s.docGeneration += 1;
   };
   const onInPage = (_event, _url, isMainFrame) => {
-    if (isMainFrame !== false) s.docGeneration += 1;
+    const main = _event && typeof _event.isMainFrame === "boolean" ? _event.isMainFrame : isMainFrame;
+    if (main !== false) {
+      s.docGeneration += 1;
+      void runInGuest(wc, inspectScript(true)).catch(() => {});
+    }
   };
   const onDestroyed = () => {
     if (sessions.get(threadId) === s) sessions.delete(threadId);
@@ -364,6 +368,7 @@ function attachSession(threadId, wc, webContentsId) {
   s.detach = () => {
     s.detach = () => {};
     audioOff();
+    try { void runInGuest(wc, inspectScript(true)).catch(() => {}); } catch { /* guest already gone */ }
     if (typeof wc.removeListener === "function") {
       wc.removeListener("console-message", onConsole);
       wc.removeListener("did-navigate", onNavigate);
@@ -1113,14 +1118,22 @@ function pageAction(input) {
  * Element inspector (#1193). Runs INSIDE the guest page, in an isolated
  * world so page scripts cannot read or patch it. Stringified, so it must not
  * close over anything. Resolves once with { cancelled } or the picked
- * element's description; a second call (cancel or a new pick) settles the
- * pending one as cancelled. Every page activation event is swallowed while
+ * element's description. With a session identity, subsequent calls keep the
+ * blocker and captured element references alive. Every page activation event is swallowed while
  * picking, so selecting a submit button does not submit its form.
  * @param {{ cancel?: boolean, htmlCap: number, textCap: number }} opts
  */
 function guestInspect(opts) {
   const KEY = "__solentaInspect";
   const pending = window[KEY];
+  if (opts.markers) {
+    if (pending && pending.sessionId === opts.sessionId) pending.markers(opts.markers);
+    return { ok: true };
+  }
+  if (pending && opts.sessionId && pending.sessionId === opts.sessionId && !opts.cancel) {
+    return pending.next(opts.annotationId);
+  }
+  if (opts.cancel && opts.sessionId && pending && pending.sessionId !== opts.sessionId) return { cancelled: true };
   if (pending) pending.finish({ cancelled: true });
   if (opts.cancel) return { cancelled: true };
 
@@ -1291,6 +1304,27 @@ function guestInspect(opts) {
     root.append(box, badge);
     (document.body || document.documentElement).appendChild(host);
 
+    let resolvePick = resolve;
+    let annotationId = opts.annotationId;
+    const markers = new Map();
+    let paint = null;
+    const redraw = () => {
+      paint = null;
+      // Read all bounds before writing marker styles.
+      const rows = Array.from(markers.values(), (m) => ({ m, rect: m.el.isConnected ? m.el.getBoundingClientRect() : null }));
+      for (const { m, rect } of rows) {
+        m.badge.style.display = m.committed && rect && rect.width && rect.height ? "block" : "none";
+        if (rect) Object.assign(m.badge.style, { left: `${Math.max(0, rect.left)}px`, top: `${Math.max(0, rect.top)}px` });
+      }
+    };
+    const scheduleDraw = () => { paint ??= requestAnimationFrame(redraw); };
+    const observer = new MutationObserver(scheduleDraw);
+    if (opts.sessionId) {
+      observer.observe(document.documentElement, { subtree: true, childList: true, attributes: true });
+      window.addEventListener("scroll", scheduleDraw, true);
+      window.addEventListener("resize", scheduleDraw);
+    }
+
     let current = null;
     const pickable = (n) => n && n.nodeType === 1 && n !== host && n !== document.documentElement;
     const highlight = (el) => {
@@ -1318,15 +1352,16 @@ function guestInspect(opts) {
     };
     const onBlocked = (e) => {
       swallow(e);
-      if (e.type === "click" && e.button === 0 && pickable(e.target)) select(e.target);
+      if (e.isTrusted && e.type === "click" && e.button === 0 && pickable(e.target)) select(e.target);
     };
     const onMove = (e) => {
-      if (e.target !== current) highlight(e.target);
+      if (e.isTrusted && e.target !== current) highlight(e.target);
     };
     const onFocus = (e) => highlight(e.target);
     const onKeyDown = (e) => {
       if (e.key === "Tab") return;
       swallow(e);
+      if (!e.isTrusted) return;
       if (e.key === "Escape") return finish({ cancelled: true });
       if (e.key === "ArrowUp" && current && pickable(current.parentElement)) {
         highlight(current.parentElement);
@@ -1366,22 +1401,62 @@ function guestInspect(opts) {
       if (done) return;
       done = true;
       listen(false);
+      observer.disconnect();
+      window.removeEventListener("scroll", scheduleDraw, true);
+      window.removeEventListener("resize", scheduleDraw);
+      if (paint !== null) cancelAnimationFrame(paint);
       host.remove();
-      if (window[KEY] === state) delete window[KEY];
+      markers.clear();
+      current = null;
+      // Keep a stopped session tombstone so an in-flight crop cannot restart it.
+      if (window[KEY] === state && !opts.sessionId) delete window[KEY];
       // Two frames so the overlay is gone before main captures the crop.
       const raf = window.requestAnimationFrame || ((cb) => setTimeout(cb, 16));
-      raf(() => raf(() => resolve(result)));
+      const settle = resolvePick;
+      resolvePick = null;
+      raf(() => raf(() => settle?.(result)));
     }
     function select(el) {
+      if (!resolvePick) return;
+      if (opts.sessionId && markers.size >= 100) return finish({ cancelled: true });
       let result;
       try {
         result = describe(el);
       } catch (err) {
         result = { cancelled: true, error: String((err && err.message) || err) };
       }
-      finish(result);
+      if (!opts.sessionId || result.cancelled) return finish(result);
+      const marker = document.createElement("div");
+      marker.style.cssText = "position:fixed;pointer-events:none;border-radius:50%;background:#2563eb;color:white;font:600 12px/22px system-ui;text-align:center;min-width:22px;box-shadow:0 0 0 2px white";
+      root.append(marker);
+      markers.set(annotationId, { el, badge: marker, committed: false });
+      const settle = resolvePick;
+      resolvePick = null;
+      host.style.visibility = "hidden";
+      const raf = window.requestAnimationFrame || ((cb) => setTimeout(cb, 16));
+      raf(() => raf(() => settle(result)));
     }
-    const state = { finish };
+    const state = {
+      finish, sessionId: opts.sessionId,
+      next(id) {
+        if (done) return { cancelled: true };
+        resolvePick?.({ cancelled: true });
+        annotationId = id;
+        host.style.visibility = "visible";
+        box.style.display = badge.style.display = "none";
+        scheduleDraw();
+        return new Promise((next) => { resolvePick = next; });
+      },
+      markers(rows) {
+        if (done) return;
+        const wanted = new Map(rows.map((row) => [row.id, row.number]));
+        for (const [id, marker] of markers) {
+          if (!wanted.has(id) && marker.committed) { marker.badge.remove(); markers.delete(id); }
+          else if (wanted.has(id)) { marker.committed = true; marker.badge.textContent = String(wanted.get(id)); }
+        }
+        scheduleDraw();
+      },
+    };
     window[KEY] = state;
     listen(true);
     if (pickable(document.activeElement) && document.activeElement !== document.body) {
@@ -1397,8 +1472,8 @@ const INSPECT_STYLE_CAP = 32;
 const INSPECT_CROP_PAD = 8;
 const MAX_CROP_EDGE = 800;
 
-function inspectScript(cancel) {
-  const opts = { cancel, htmlCap: INSPECT_HTML_CAP, textCap: INSPECT_TEXT_CAP };
+function inspectScript(cancel, session = {}) {
+  const opts = { ...session, cancel, htmlCap: INSPECT_HTML_CAP, textCap: INSPECT_TEXT_CAP };
   return `(${guestInspect.toString()})(${JSON.stringify(opts)})`;
 }
 
@@ -1508,21 +1583,31 @@ function cropRect(rect, viewport, zoom = 1) {
  * Start an element pick on the bound guest. Resolves when the user selects
  * (click, or Enter on the focused element) or cancels (Escape, cancelInspect,
  * navigation, pane closed).
- * @param {{ threadId?: string }} input
+ * @param {{ threadId?: string, sessionId?: string, annotationId?: string }} input
  */
 async function inspect(input) {
   const threadId = threadIdOf(input);
-  const wc = requireBound(threadId);
+  const { s, wc } = requireSession(threadId);
+  const generation = s.docGeneration;
+  const sessionId = input && input.sessionId;
+  const annotationId = input && input.annotationId;
+  if (sessionId != null || annotationId != null) {
+    if (!inspectId(sessionId) || !inspectId(annotationId)) throw new Error("Invalid annotation identity");
+    if (typeof wc.executeJavaScriptInIsolatedWorld !== "function") throw new Error("Annotations need an isolated preview");
+  }
+  const current = () => sessions.get(threadId) === s && s.docGeneration === generation
+    && !(wc.isDestroyed && wc.isDestroyed()) && navState(wc).url === pageUrl;
   if (typeof wc.executeJavaScript !== "function") {
     throw new Error("Inspect is not available");
   }
-  const pageUrl = navState(wc).url;
+  const initialSnapshot = navState(wc);
+  const pageUrl = initialSnapshot.url;
   if (!pageUrl || pageUrl === "about:blank") {
     throw new Error("Load a page before inspecting");
   }
-  const raw = await untilPageLeaves(wc, runInGuest(wc, inspectScript(false)));
-  if (!raw || raw.cancelled || navState(wc).url !== pageUrl) {
-    return { cancelled: true, ...navState(wc) };
+  const raw = await untilPageLeaves(wc, runInGuest(wc, inspectScript(false, { sessionId, annotationId })));
+  if (!raw || raw.cancelled || !current()) {
+    return { cancelled: true, ...initialSnapshot };
   }
   const element = sanitizePick(raw);
   const zoom = typeof wc.getZoomFactor === "function" ? Number(wc.getZoomFactor()) : 1;
@@ -1540,11 +1625,13 @@ async function inspect(input) {
       cropNote = `Crop failed: ${err instanceof Error ? err.message : String(err)}`;
     }
   }
+  if (!current()) return { cancelled: true, ...initialSnapshot };
   return {
     cancelled: false,
     ...navState(wc),
     url: pageUrl,
     capturedAt: Date.now(),
+    ...(annotationId ? { annotationId } : {}),
     element,
     crop,
     cropRect: rect,
@@ -1572,10 +1659,32 @@ function setAudioMuted(input) {
  * @param {{ threadId?: string }} input
  */
 async function cancelInspect(input) {
+  if (input && input.sessionId != null && !inspectId(input.sessionId)) throw new Error("Invalid annotation identity");
   const wc = requireBound(threadIdOf(input));
   if (typeof wc.executeJavaScript === "function") {
-    await runInGuest(wc, inspectScript(true)).catch(() => {});
+    await runInGuest(wc, inspectScript(true, { sessionId: input && input.sessionId })).catch(() => {});
   }
+  return { ok: true };
+}
+
+function inspectId(value) {
+  return typeof value === "string" && /^[a-zA-Z0-9_-]{1,80}$/.test(value);
+}
+
+/** Update only references captured in this live session; never resolve selectors. */
+async function annotations(input) {
+  const wc = requireBound(threadIdOf(input));
+  if (typeof wc.executeJavaScriptInIsolatedWorld !== "function") throw new Error("Annotations need an isolated preview");
+  if (!inspectId(input.sessionId) || !Array.isArray(input.markers) || input.markers.length > 100) {
+    throw new Error("Invalid annotations");
+  }
+  const markers = input.markers.map((row) => {
+    if (!row || !inspectId(row.id) || !Number.isInteger(row.number) || row.number < 1 || row.number > 100) {
+      throw new Error("Invalid annotation marker");
+    }
+    return { id: row.id, number: row.number };
+  });
+  await runInGuest(wc, inspectScript(false, { sessionId: input.sessionId, markers }));
   return { ok: true };
 }
 
@@ -1604,6 +1713,7 @@ module.exports = {
   redactUrl,
   inspect,
   cancelInspect,
+  annotations,
   inspectScript,
   cropRect,
   setAudioMuted,

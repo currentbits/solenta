@@ -1,5 +1,5 @@
 // Verify the Browser pane element inspector (#1193) in real Electron: a
-// synthetic click on a submit button picks it without submitting the form,
+// trusted click on a submit button picks it without submitting the form,
 // the reported rect matches the layout, and the crop is cut from the right
 // place (inner pixels are the button's red, padding is the page's white), at
 // zoom 1 and 1.5. Escape cancels. Unit tests cannot see any of this.
@@ -18,6 +18,8 @@ app.setPath(
 
 const PAGE = `<!doctype html><html><body style="margin:0;background:#fff">
 <form id="f" onsubmit="document.title='SUBMITTED';return false">
+  <h1 id="heading" style="position:absolute;left:60px;top:30px;width:200px;height:40px;margin:0">A local page</h1>
+  <button id="second" type="button" style="position:absolute;left:200px;top:240px;width:160px;height:48px">Save changes</button>
   <button id="go" type="submit" style="position:absolute;left:200px;top:150px;width:160px;height:48px;border:0;background:#f00">Sign in</button>
 </form></body></html>`;
 
@@ -91,6 +93,55 @@ async function verifyAt(wc, zoom) {
   check(`${tag}: overlay removed`, overlay === "f", String(overlay));
 }
 
+async function verifyContinuous(wc) {
+  wc.setZoomFactor(1);
+  await sleep(200);
+  const markers = [];
+  const picks = [[280, 174, "button"], [280, 264, "button"], [120, 50, "h1"]];
+  for (const [index, [x, y, tag]] of picks.entries()) {
+    let settled = false;
+    const pending = preview.inspect({ threadId: "verify", sessionId: "continuous", annotationId: `a${index}` })
+      .then((result) => { settled = true; return result; });
+    await sleep(150);
+    await wc.executeJavaScript("document.getElementById('go').click(); document.getElementById('go').dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', bubbles:true}));");
+    await sleep(60);
+    check(`annotation ${index + 1}: synthetic input is ignored`, !settled);
+    wc.sendInputEvent({ type: "mouseMove", x, y });
+    wc.sendInputEvent({ type: "mouseDown", x, y, button: "left", clickCount: 1 });
+    wc.sendInputEvent({ type: "mouseUp", x, y, button: "left", clickCount: 1 });
+    const result = await pending;
+    check(`annotation ${index + 1}: trusted pick`, !result.cancelled && result.element.tag === tag);
+    markers.push({ id: `a${index}`, number: index + 1 });
+    await preview.annotations({ threadId: "verify", sessionId: "continuous", markers });
+  }
+  const waiting = preview.inspect({ threadId: "verify", sessionId: "continuous", annotationId: "next" });
+  await sleep(150);
+  const image = await wc.capturePage();
+  require("node:fs").writeFileSync("/tmp/solenta-browser-annotations.png", image.toPNG());
+  const bluePixels = (image, x, y) => {
+    const bmp = image.toBitmap();
+    const { width, height } = image.getSize();
+    const scale = width / 800;
+    let count = 0;
+    for (let row = Math.floor(y * scale); row < Math.min(height, (y + 22) * scale); row++) {
+      for (let col = Math.floor(x * scale); col < Math.min(width, (x + 22) * scale); col++) {
+        const at = (row * width + col) * 4;
+        if (bmp[at] > 140 && bmp[at + 2] < 100) count++;
+      }
+    }
+    return count;
+  };
+  check("three numbered markers are visible", bluePixels(image, 200, 150) > 20 && bluePixels(image, 200, 240) > 20 && bluePixels(image, 60, 30) > 20);
+  await preview.annotations({ threadId: "verify", sessionId: "continuous", markers: [markers[0], { id: "a2", number: 2 }] });
+  await sleep(100);
+  check("removed marker disappears", bluePixels(await wc.capturePage(), 200, 240) < 10);
+  await preview.cancelInspect({ threadId: "verify", sessionId: "stale-session" });
+  check("old cancellation preserves current picker", await wc.executeJavaScriptInIsolatedWorld(1193, [{ code: "Boolean(window.__solentaInspect)" }]));
+  await preview.cancelInspect({ threadId: "verify", sessionId: "continuous" });
+  check("stop cancels the pending pick", (await waiting).cancelled);
+  check("synthetic activation never submitted", await wc.executeJavaScript("document.title !== 'SUBMITTED'"));
+}
+
 app.whenReady().then(async () => {
   try {
     const win = new BrowserWindow({
@@ -106,6 +157,7 @@ app.whenReady().then(async () => {
 
     await verifyAt(wc, 1);
     await verifyAt(wc, 1.5);
+    await verifyContinuous(wc);
 
     wc.setZoomFactor(1);
     const pending = preview.inspect({ threadId: "verify" });

@@ -304,6 +304,7 @@ const BY_SCOPE = {
     "preview:cancelInspect",
     // Mute a thread's browser tab from the sidebar speaker icon (#1807).
     "preview:setAudioMuted",
+    "preview:annotations",
     "devserver:start",
     "devserver:stop",
   ],

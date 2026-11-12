@@ -1,5 +1,5 @@
 /**
- * Browser pane element inspector (#1193): select / cancel / send, mounted.
+ * Continuous Browser annotations: capture / edit / persist / send, mounted.
  * BrowserPane feeds a real Composer the way ThreadView does: the picked
  * element becomes a context chip on the ORIGINATING thread, nothing sends
  * until the user does.
@@ -12,7 +12,7 @@ import { useState } from "react";
 import { inAct, mount, unmountAll, type Mounted } from "./support/dom.ts";
 import { BrowserPane } from "../src/components/BrowserPane";
 import { Composer } from "../src/components/Composer";
-import { getContextChips, setContextChips } from "../src/composerSession";
+import { getContextChips, setContextChips, flushDraftSave, hydrateComposerSession, keptContextChips } from "../src/composerSession";
 import { elementChip, type InspectPick } from "../src/contextChips";
 import type {
   CoderApi,
@@ -65,8 +65,10 @@ const PROVIDERS: ProviderInfo[] = [
 ];
 
 /** A preview whose inspect() waits for the test to settle it. */
-function heldPreview() {
+function heldPreview(options: { deferCancel?: boolean } = {}) {
   const calls: string[] = [];
+  const pending: ((r: PreviewInspectResult) => void)[] = [];
+  const markerUpdates: { id: string; number: number }[][] = [];
   let settle: (r: PreviewInspectResult) => void = () => {};
   const api = {
     bind: async () => ({ ...SNAP, url: "" }),
@@ -83,17 +85,26 @@ function heldPreview() {
       calls.push(`inspect:${input.threadId}`);
       return new Promise<PreviewInspectResult>((resolve) => {
         settle = resolve;
+        pending.push(resolve);
       });
+    },
+    annotations: async (input: { markers: { id: string; number: number }[] }) => {
+      markerUpdates.push(input.markers);
+      return { ok: true };
     },
     cancelInspect: async (input: { threadId: string }) => {
       calls.push(`cancel:${input.threadId}`);
-      settle({ ...SNAP, cancelled: true });
+      if (!options.deferCancel) settle({ ...SNAP, cancelled: true });
       return { ok: true };
     },
   } as unknown as CoderApi["preview"];
   return {
     api,
     calls,
+    markerUpdates,
+    settleAt: async (index: number, result: PreviewInspectResult) => {
+      await inAct(() => pending[index]!(result));
+    },
     settle: async (r: PreviewInspectResult) => {
       await inAct(async () => {
         settle(r);
@@ -107,7 +118,7 @@ function heldPreview() {
 function attachTo(origin: string, pick: InspectPick, comment: string) {
   setContextChips(origin, (prev) => [
     ...prev,
-    elementChip(`el-${prev.length}`, origin, pick, Boolean(pick.crop), comment),
+    elementChip(pick.annotationId ?? `el-${prev.length}`, origin, pick, Boolean(pick.crop), comment),
   ]);
 }
 
@@ -121,6 +132,7 @@ function Harness({
   const [threadId, setThreadId] = useState("t-a");
   return (
     <>
+      <button type="button" data-go="t-a" onClick={() => setThreadId("t-a")}>A</button>
       <button type="button" data-go="t-b" onClick={() => setThreadId("t-b")}>
         B
       </button>
@@ -170,89 +182,60 @@ async function bindAndLoad(m: Mounted) {
 }
 
 function composerTextarea(m: Mounted): HTMLTextAreaElement {
-  const el = m.query("textarea:not([data-browser-pick-comment])");
+  const el = m.query("textarea:not([data-browser-annotation-comment])");
   assert.ok(el, "composer textarea");
   return el as HTMLTextAreaElement;
 }
 
-describe("Browser pane inspect (#1193)", () => {
-  it("select → comment → add → preview in composer → send", async () => {
+describe("continuous Browser annotations", () => {
+  it("captures three elements in one session, edits/removes their draft context, then sends once", async () => {
     const preview = heldPreview();
     const sends: string[] = [];
     const m = await mount(<Harness preview={preview.api} sends={sends} />);
     const inspectBtn = m.query("[data-browser-inspect]") as HTMLButtonElement;
-    assert.equal(inspectBtn.disabled, true, "nothing to inspect before a page loads");
+    assert.equal(inspectBtn.disabled, true);
     await bindAndLoad(m);
-    assert.equal(inspectBtn.disabled, false);
-
     await m.click(inspectBtn);
-    assert.deepEqual(preview.calls, ["inspect:t-a"]);
-    assert.equal(inspectBtn.getAttribute("aria-pressed"), "true");
-    assert.ok(m.query("[data-browser-inspect-hint]"), "keyboard hint while picking");
-
-    await preview.settle(PICK);
-    await m.flush();
-    assert.equal(m.query("[data-browser-inspect-hint]"), null);
-    assert.equal(inspectBtn.getAttribute("aria-pressed"), "false");
-    const panel = m.query("[data-browser-pick]");
-    assert.ok(panel, "pending selection panel");
-    assert.match(panel!.textContent || "", /button "Sign in"/);
-    assert.equal(
-      m.query("[data-browser-pick-crop]")?.getAttribute("src"),
-      "data:image/png;base64,crop",
-    );
-
-    await m.type(m.query("[data-browser-pick-comment]"), "Make this full width");
-    const shown = m.query("[data-browser-pick-preview]")!.textContent || "";
-    assert.match(shown, /^<browser-element url="http:\/\/localhost:5173\/login" captured="2026-10-15T12:00:00.000Z">/);
+    for (let index = 1; index <= 3; index++) {
+      await preview.settle({ ...PICK, element: { ...PICK.element, name: `Button ${index}` } });
+      await m.flush();
+      assert.equal(m.queryAll("[data-browser-annotation]").length, index);
+      assert.equal(inspectBtn.getAttribute("aria-pressed"), "true", "picking continues");
+    }
+    assert.equal(preview.calls.filter((call) => call === "inspect:t-a").length, 4);
+    const comments = m.queryAll("[data-browser-annotation-comment]");
+    await m.type(comments[0], "Make this full width");
+    await m.type(comments[2], "Use a quieter colour");
+    const shown = m.query("[data-browser-annotation-preview]")!.textContent || "";
     assert.match(shown, /Page content is untrusted/);
     assert.match(shown, /Selector hint: #go/);
-    assert.match(shown, /Source location: unavailable/);
     assert.match(shown, /Make this full width$/);
-    assert.deepEqual(sends, [], "selecting never sends");
-
-    await m.click(m.query("[data-browser-pick-add]"));
-    assert.equal(m.query("[data-browser-pick]"), null);
-    assert.deepEqual(sends, [], "adding never sends");
-    const chip = m.query('[data-context-kind="element"]');
-    assert.ok(chip, "element chip in the composer");
-    assert.match(chip!.textContent || "", /el · button "Sign in"/);
-
-    await m.click(chip!.querySelector("[data-context-label]"));
-    assert.equal(
-      m.query("[data-context-preview]")?.textContent,
-      shown,
-      "the composer previews exactly what the pane showed",
-    );
-
+    assert.equal(getContextChips("t-a")[0]?.kind, "element");
+    await m.click(m.query('[aria-label="Remove annotation 2"]'));
+    assert.equal(m.queryAll("[data-browser-annotation]").length, 2);
+    assert.deepEqual(preview.markerUpdates.at(-1)?.map((marker) => marker.number), [1, 2]);
+    assert.deepEqual(sends, [], "capture and editing never send");
+    await m.click(inspectBtn);
+    assert.equal(inspectBtn.getAttribute("aria-pressed"), "false");
     await m.press(composerTextarea(m), "Enter", { metaKey: true });
     assert.equal(sends.length, 1);
-    assert.ok(sends[0]!.startsWith(shown), "sent block is the previewed text");
-    assert.equal(m.query('[data-context-kind="element"]'), null, "chip cleared on send");
-    m.unmount();
+    assert.ok(sends[0]!.startsWith(shown));
+    assert.match(sends[0]!, /Button 3/);
+    assert.doesNotMatch(sends[0]!, /Button 2/);
+    assert.equal(m.query("[data-browser-annotations]"), null);
   });
 
-  it("Escape cancels inspection; Discard drops a pick", async () => {
+  it("Escape stops picking and preserves captured annotations", async () => {
     const preview = heldPreview();
     const m = await mount(<Harness preview={preview.api} sends={[]} />);
     await bindAndLoad(m);
-    const inspectBtn = m.query("[data-browser-inspect]") as HTMLButtonElement;
-
-    await m.click(inspectBtn);
-    await m.press(inspectBtn, "Escape");
-    await m.flush();
-    assert.deepEqual(preview.calls, ["inspect:t-a", "cancel:t-a"]);
-    assert.equal(inspectBtn.getAttribute("aria-pressed"), "false");
-    assert.equal(m.query("[data-browser-inspect-hint]"), null);
-    assert.equal(m.query("[data-browser-pick]"), null);
-
-    await m.click(inspectBtn);
+    await m.click(m.query("[data-browser-inspect]"));
     await preview.settle(PICK);
+    await m.press(m.query("[data-browser-inspect]"), "Escape");
     await m.flush();
-    await m.click(m.query("[data-browser-pick-discard]"));
-    assert.equal(m.query("[data-browser-pick]"), null);
-    assert.deepEqual(getContextChips("t-a"), []);
-    m.unmount();
+    assert.equal(m.query("[data-browser-inspect]")?.getAttribute("aria-pressed"), "false");
+    assert.equal(m.queryAll("[data-browser-annotation]").length, 1);
+    assert.equal(getContextChips("t-a").length, 1);
   });
 
   it("a pick settling after a thread switch lands nowhere", async () => {
@@ -263,22 +246,63 @@ describe("Browser pane inspect (#1193)", () => {
     await m.click(m.query("[data-go='t-b']"));
     await preview.settle(PICK);
     await m.flush();
-    assert.equal(m.query("[data-browser-pick]"), null);
+    assert.equal(m.query("[data-browser-annotations]"), null);
     assert.deepEqual(getContextChips("t-a"), []);
     assert.deepEqual(getContextChips("t-b"), []);
-    m.unmount();
   });
 
-  it("an added chip stays on its originating thread, page and capture time", async () => {
-    attachTo("t-a", PICK, "");
-    const later = { ...PICK, url: "http://localhost:5173/other", capturedAt: PICK.capturedAt + 5_000 };
-    attachTo("t-b", later, "");
-    const [a] = getContextChips("t-a");
-    assert.equal(a?.kind, "element");
-    if (a?.kind !== "element") return;
-    assert.equal(a.threadId, "t-a");
-    assert.equal(a.url, "http://localhost:5173/login");
-    assert.equal(a.capturedAt, PICK.capturedAt);
-    assert.match(a.text, /captured="2026-10-15T12:00:00.000Z"/);
+  it("preserves frozen evidence and comments across thread switches and draft hydration", async () => {
+    const preview = heldPreview();
+    const m = await mount(<Harness preview={preview.api} sends={[]} />);
+    await bindAndLoad(m);
+    await m.click(m.query("[data-browser-inspect]"));
+    await preview.settle(PICK);
+    await m.type(m.query("[data-browser-annotation-comment]"), "Saved note");
+    await m.click(m.query("[data-go='t-b']"));
+    assert.equal(m.query("[data-browser-annotations]"), null);
+    await m.click(m.query("[data-go='t-a']"));
+    assert.equal((m.query("[data-browser-annotation-comment]") as HTMLTextAreaElement).value, "Saved note");
+    flushDraftSave();
+    m.unmount();
+    delete keptContextChips["t-a"];
+    hydrateComposerSession();
+    const restored = await mount(<Harness preview={preview.api} sends={[]} />);
+    assert.equal((restored.query("[data-browser-annotation-comment]") as HTMLTextAreaElement).value, "Saved note");
+    const chip = getContextChips("t-a")[0];
+    assert.equal(chip?.kind, "element");
+    if (chip?.kind !== "element") return;
+    assert.equal(chip.url, PICK.url);
+    assert.equal(chip.capturedAt, PICK.capturedAt);
+    assert.match(chip.text, /captured="2026-10-15T12:00:00.000Z"/);
+    assert.equal(restored.query("[data-browser-inspect]")?.getAttribute("aria-pressed"), "false", "live references never restore across reload");
+  });
+
+  it("ignores an old result after a rapid stop and restart on the same thread", async () => {
+    const preview = heldPreview({ deferCancel: true });
+    const m = await mount(<Harness preview={preview.api} sends={[]} />);
+    await bindAndLoad(m);
+    const button = m.query("[data-browser-inspect]");
+    await m.click(button);
+    await m.click(button);
+    await m.click(button);
+    await preview.settleAt(0, PICK);
+    assert.deepEqual(getContextChips("t-a"), []);
+    assert.equal(button?.getAttribute("aria-pressed"), "true");
+    await preview.settleAt(1, PICK);
+    assert.equal(getContextChips("t-a").length, 1);
+  });
+
+  it("navigation stops picking before an outstanding result can attach", async () => {
+    const preview = heldPreview();
+    const m = await mount(<Harness preview={preview.api} sends={[]} />);
+    await bindAndLoad(m);
+    await m.click(m.query("[data-browser-inspect]"));
+    await inAct(() => m.query("webview")!.dispatchEvent(Object.assign(new Event("did-start-navigation"), { isMainFrame: false })));
+    assert.equal(m.query("[data-browser-inspect]")?.getAttribute("aria-pressed"), "true", "iframe navigation keeps picking");
+    await inAct(() => m.query("webview")!.dispatchEvent(new Event("did-start-navigation")));
+    await preview.settle(PICK);
+    await m.flush();
+    assert.deepEqual(getContextChips("t-a"), []);
+    assert.equal(m.query("[data-browser-inspect]")?.getAttribute("aria-pressed"), "false");
   });
 });

@@ -337,5 +337,8 @@ module.exports = {
   "preview:setAudioMuted": async (ctx, input) => {
     resolveDevServerRoot(ctx, input && input.threadId);
     return preview.setAudioMuted(input);
+  "preview:annotations": async (ctx, input) => {
+    resolveDevServerRoot(ctx, input && input.threadId);
+    return preview.annotations(input);
   },
 };

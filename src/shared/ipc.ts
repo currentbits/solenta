@@ -3117,6 +3117,8 @@ export type PreviewInspectResult =
   | (PreviewSnapshot & {
       cancelled: false;
       capturedAt: number;
+      /** Identity supplied by the annotation session, never a page selector. */
+      annotationId?: string;
       element: PreviewInspectElement;
       /** PNG data URL of the element crop, at most 800px per edge. */
       crop: string | null;
@@ -8089,8 +8091,13 @@ export interface CoderApi {
      * Pick one element on the visible page (#1193). Settles when the user
      * selects or cancels (Escape, cancelInspect, navigation, pane closed).
      */
-    inspect(input: { threadId: string }): Promise<PreviewInspectResult>;
-    cancelInspect(input: { threadId: string }): Promise<{ ok: boolean }>;
+    inspect(input: { threadId: string; sessionId?: string; annotationId?: string }): Promise<PreviewInspectResult>;
+    cancelInspect(input: { threadId: string; sessionId?: string }): Promise<{ ok: boolean }>;
+    annotations(input: {
+      threadId: string;
+      sessionId: string;
+      markers: { id: string; number: number }[];
+    }): Promise<{ ok: boolean }>;
     /** Mute/unmute the bound guest's audio from the sidebar indicator (#1807). */
     setAudioMuted(input: { threadId: string; muted: boolean }): Promise<{ ok: boolean; muted: boolean }>;
   };

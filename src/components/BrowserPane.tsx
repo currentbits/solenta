@@ -4,6 +4,7 @@ import {
   useEffect,
   useRef,
   useState,
+  useSyncExternalStore,
   type FormEvent,
 } from "react";
 import type {
@@ -15,10 +16,11 @@ import type {
   PreviewViewportPreset,
 } from "../shared/ipc";
 import {
-  elementChip,
   elementChipPrompt,
   type InspectPick,
+  type ElementChip,
 } from "../contextChips";
+import { getContextChips, setContextChips, subscribeContextChips } from "../composerSession";
 import { coercePreviewUrl, isLoopbackPreviewUrl } from "../previewUrl";
 import styles from "./BrowserPane.module.css";
 
@@ -178,11 +180,11 @@ export function BrowserPane({
   const [diag, setDiag] = useState<PreviewDiagnostics | null>(null);
   const [diagOpen, setDiagOpen] = useState(false);
   const [inspecting, setInspecting] = useState(false);
-  const [picked, setPicked] = useState<{
-    threadId: string;
-    pick: InspectPick;
-    comment: string;
-  } | null>(null);
+  const readChips = () => getContextChips(threadId);
+  const chips = useSyncExternalStore(subscribeContextChips, readChips, readChips);
+  const annotations = chips.filter((chip): chip is ElementChip => chip.kind === "element");
+  const inspectSession = useRef<{ threadId: string; id: string } | null>(null);
+  const [savingAnnotation, setSavingAnnotation] = useState(false);
   const autoLoaded = useRef<string | null>(null);
   const threadIdRef = useRef(threadId);
   const captureGenRef = useRef(0);
@@ -232,7 +234,7 @@ export function BrowserPane({
     setDiag(null);
     setViewportPreset("fill");
     setInspecting(false);
-    setPicked(null);
+    setSavingAnnotation(false);
   }, [threadId]);
 
   // Diagnostics also carry the viewport preset, so an agent-driven resize
@@ -299,11 +301,25 @@ export function BrowserPane({
       setCanGoBack(Boolean(any.canGoBack?.()));
       setCanGoForward(Boolean(any.canGoForward?.()));
     };
+    const invalidateInspect = (event?: Event) => {
+      if (event && "isMainFrame" in event && event.isMainFrame === false) return;
+      captureGenRef.current += 1;
+      const session = inspectSession.current;
+      inspectSession.current = null;
+      setInspecting(false);
+      setSavingAnnotation(false);
+      if (session) void preview.cancelInspect({ threadId: session.threadId, sessionId: session.id }).catch(() => {});
+    };
+    el.addEventListener("did-start-navigation", invalidateInspect);
+    el.addEventListener("did-navigate-in-page", invalidateInspect);
     el.addEventListener("did-navigate", onNav);
     el.addEventListener("did-navigate-in-page", onNav);
     el.addEventListener("did-stop-loading", onNav);
     return () => {
       cancelled = true;
+      invalidateInspect();
+      el.removeEventListener("did-start-navigation", invalidateInspect);
+      el.removeEventListener("did-navigate-in-page", invalidateInspect);
       el.removeEventListener("did-attach", tryBind);
       el.removeEventListener("did-navigate", onNav);
       el.removeEventListener("did-navigate-in-page", onNav);
@@ -431,48 +447,60 @@ export function BrowserPane({
       diag.network.filter((n) => n.error || (n.status ?? 0) >= 400).length
     : 0;
   const cancelInspect = () => {
-    if (preview) void preview.cancelInspect({ threadId }).catch(() => {});
+    const session = inspectSession.current;
+    inspectSession.current = null;
+    setInspecting(false);
+    if (preview && session) void preview.cancelInspect({ threadId: session.threadId, sessionId: session.id }).catch(() => {});
   };
+
+  const syncMarkers = async (session: { threadId: string; id: string }) => {
+    const markers = getContextChips(session.threadId)
+      .filter((chip) => chip.kind === "element")
+      .slice(0, 100).map((chip, index) => ({ id: chip.id, number: index + 1 }));
+    await preview?.annotations({ threadId: session.threadId, sessionId: session.id, markers });
+  };
+
+  useEffect(() => {
+    const session = inspectSession.current;
+    if (session) void syncMarkers(session).catch(() => {});
+  }, [chips]);
 
   const onInspect = async () => {
-    if (!preview) return;
-    if (inspecting) return cancelInspect();
-    const originThreadId = threadId;
-    const isLive = liveGuard(originThreadId);
+    if (!preview || !onAttachElement) return;
+    if (inspectSession.current) return cancelInspect();
+    const session = { threadId, id: crypto.randomUUID() };
+    const isLive = liveGuard(threadId);
+    const active = () => isLive() && inspectSession.current === session;
+    inspectSession.current = session;
     setInspecting(true);
-    setPicked(null);
     setError(null);
-    // Keys go to the guest, so Tab/Enter/Escape drive the picker there.
     webviewRef.current?.focus();
     try {
-      const res = await preview.inspect({ threadId: originThreadId });
-      if (!isLive() || res.cancelled) return;
-      setPicked({ threadId: originThreadId, pick: res, comment: "" });
+      while (active() && getContextChips(threadId).filter((chip) => chip.kind === "element").length < 100) {
+        const annotationId = crypto.randomUUID();
+        const res = await preview.inspect({ threadId, sessionId: session.id, annotationId });
+        if (!active() || res.cancelled) break;
+        setSavingAnnotation(true);
+        await onAttachElement({ ...res, annotationId }, "", threadId);
+        if (!active()) break;
+        setSavingAnnotation(false);
+        await syncMarkers(session);
+      }
     } catch (err) {
-      if (isLive()) setError(err instanceof Error ? err.message : String(err));
+      if (active()) setError(err instanceof Error ? err.message : String(err));
     } finally {
-      if (isLive()) setInspecting(false);
+      if (active()) {
+        inspectSession.current = null;
+        setInspecting(false);
+        setSavingAnnotation(false);
+      }
+      void preview.cancelInspect({ threadId, sessionId: session.id }).catch(() => {});
     }
-  };
-
-  const addPicked = () => {
-    if (!picked || !onAttachElement) return;
-    setPicked(null);
-    void onAttachElement(picked.pick, picked.comment.trim(), picked.threadId);
   };
 
   const showEmpty = !address;
   const canShot = Boolean(preview && onAttachScreenshot && bound && address);
-  const canInspect = Boolean(preview && onAttachElement && bound && address);
-  const pickedChip = picked
-    ? elementChip(
-        "preview",
-        picked.threadId,
-        picked.pick,
-        Boolean(picked.pick.crop),
-        picked.comment.trim(),
-      )
-    : null;
+  const canInspect = Boolean(preview && onAttachElement && bound && address && annotations.length < 100);
 
   return (
     <div
@@ -567,9 +595,9 @@ export function BrowserPane({
             type="button"
             className={styles.navBtn}
             data-browser-inspect=""
-            aria-label="Inspect element"
+            aria-label={inspecting ? "Stop annotating" : "Annotate elements"}
             aria-pressed={inspecting}
-            title="Inspect: pick an element to send as context"
+            title="Pick several elements and add comments to the draft"
             disabled={!canInspect && !inspecting}
             onClick={() => void onInspect()}
           >
@@ -630,69 +658,36 @@ export function BrowserPane({
       {diagOpen ? <DiagnosticsPanel diag={diag} /> : null}
       {inspecting ? (
         <p className={styles.hint} data-browser-inspect-hint="" role="status">
-          Click an element, or Tab to one and press Enter. ↑ picks its parent.
-          Esc cancels.
+          {savingAnnotation ? "Saving element… " : "Click elements to add them to the draft. "}
+          Tab and Enter also pick; ↑ picks a parent. Esc stops. Edit comments below.
         </p>
       ) : null}
-      {picked && pickedChip ? (
-        <section
-          className={styles.pick}
-          data-browser-pick=""
-          aria-label="Selected element"
-        >
-          <div className={styles.pickHead}>
-            <strong className={styles.pickLabel}>{pickedChip.label}</strong>
-            <span className={styles.pickUrl} title={picked.pick.url}>
-              {picked.pick.url}
-            </span>
-          </div>
-          <div className={styles.pickBody}>
-            {picked.pick.crop ? (
-              <img
-                className={styles.pickCrop}
-                data-browser-pick-crop=""
-                src={picked.pick.crop}
-                alt={`Crop of ${pickedChip.label}`}
-              />
-            ) : null}
-            <textarea
-              className={styles.pickComment}
-              data-browser-pick-comment=""
-              aria-label="Comment for the agent"
-              placeholder="What should change? (optional)"
-              rows={2}
-              value={picked.comment}
-              onChange={(e) => {
-                const comment = e.target.value;
-                setPicked((p) => (p ? { ...p, comment } : p));
-              }}
-            />
-          </div>
-          <div className={styles.pickActions}>
-            <button
-              type="button"
-              className={styles.shot}
-              data-primary="true"
-              data-browser-pick-add=""
-              onClick={addPicked}
-            >
-              Add to composer
-            </button>
-            <button
-              type="button"
-              className={styles.go}
-              data-browser-pick-discard=""
-              onClick={() => setPicked(null)}
-            >
-              Discard
-            </button>
-          </div>
-          <details className={styles.pickDetails}>
-            <summary>Exact text added to the message</summary>
-            <pre data-browser-pick-preview="">
-              {elementChipPrompt(pickedChip)}
-            </pre>
-          </details>
+      {annotations.length > 0 ? (
+        <section className={styles.pick} data-browser-annotations="" aria-label="Browser annotations">
+          <strong>{annotations.length} annotation{annotations.length === 1 ? "" : "s"} in the draft</strong>
+          <ol className={styles.annotations}>
+            {annotations.map((chip, index) => (
+              <li key={chip.id} data-browser-annotation="">
+                <div className={styles.pickHead}>
+                  <strong className={styles.pickLabel}>{index + 1}. {chip.label}</strong>
+                  <span className={styles.pickUrl} title={chip.url}>{chip.url}</span>
+                  <button type="button" className={styles.go} aria-label={`Remove annotation ${index + 1}`}
+                    onClick={() => setContextChips(threadId, (prev) => prev.filter((c) => c.id !== chip.id))}>Remove context</button>
+                </div>
+                <textarea className={styles.pickComment} data-browser-annotation-comment=""
+                  aria-label={`Comment for annotation ${index + 1}`} placeholder="What should change? (optional)" rows={2}
+                  value={chip.comment} onChange={(e) => {
+                    const comment = e.target.value;
+                    setContextChips(threadId, (prev) => prev.map((c) => c.id === chip.id ? { ...c, comment } : c));
+                  }} />
+                <details className={styles.pickDetails}>
+                  <summary>Exact text added to the message</summary>
+                  <pre data-browser-annotation-preview="">{elementChipPrompt(chip)}</pre>
+                </details>
+              </li>
+            ))}
+          </ol>
+          <span className={styles.pickUrl}>Nothing sends until you send the composer. Crops are separate image attachments.</span>
         </section>
       ) : null}
       <div className={styles.stage}>

@@ -410,6 +410,7 @@ export const IPC_CHANNELS = [
   { ns: "preview", method: "inspect" },
   { ns: "preview", method: "cancelInspect" },
   { ns: "preview", method: "setAudioMuted" },
+  { ns: "preview", method: "annotations" },
   { ns: "simulator", method: "capabilities" },
   { ns: "simulator", method: "selectDeveloperDir" },
   { ns: "simulator", method: "listDevices" },

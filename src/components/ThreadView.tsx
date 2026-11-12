@@ -2419,10 +2419,11 @@ export const ThreadView = memo(function ThreadView({
       const cropAttached = pick.crop
         ? await attachBrowserScreenshot(pick.crop, originThreadId)
         : false;
-      const id =
+      const id = pick.annotationId ?? (
         typeof crypto !== "undefined" && crypto.randomUUID
           ? crypto.randomUUID()
-          : `element-${Date.now()}`;
+          : `element-${Date.now()}`
+      );
       setContextChips(originThreadId, (prev) => [
         ...prev,
         elementChip(id, originThreadId, pick, cropAttached, comment),

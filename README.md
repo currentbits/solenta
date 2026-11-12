@@ -111,7 +111,9 @@ it.
   server. Screenshot the page into the composer, or let the agent navigate,
   click, type and screenshot it through the `preview` tool, read a page
   snapshot and console/network diagnostics, and switch viewport presets.
-  Inspect picks an element and attaches it as a composer chip. The terminal
+  Annotate picks several elements in one session, with numbered page markers
+  and editable comments saved in the thread's draft. Esc stops picking; the
+  captured context stays in the composer until you send or remove it. The terminal
   has Find, Clear, Copy and send-selection-to-composer.
 - **Planboard** — a project's plan as its GitHub or GitLab issues. Agents on a GitHub
   origin use the coder-threads tools `issue_create`, `issue_list`,
