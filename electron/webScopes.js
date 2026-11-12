@@ -368,6 +368,7 @@ const BY_SCOPE = {
     // mcp:save registers a command to spawn; pairing:* mints or approves tokens.
     "mcp:save",
     "mcp:installImport",
+    "mcp:resolveProposal",
     "mcp:pairXcode",
     // Opens the host's browser and listens on a host loopback port.
     "mcp:oauthConnect",

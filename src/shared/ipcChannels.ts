@@ -93,6 +93,7 @@ export const IPC_CHANNELS = [
   { ns: "mcp", method: "pickImport" },
   { ns: "mcp", method: "previewImport" },
   { ns: "mcp", method: "installImport" },
+  { ns: "mcp", method: "resolveProposal" },
   { ns: "mcp", method: "discardImport" },
   { ns: "mcp", method: "oauthConnect" },
   { ns: "mcp", method: "oauthCancel" },

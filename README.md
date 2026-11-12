@@ -134,6 +134,10 @@ it.
   agent tries to install are scanned locally before they land and reported as
   trusted, caution, or blocked. A diff that reaches outside the files the task
   implied is flagged as blast radius. Stored provider keys are encrypted.
+- **Connector proposals in chat** — agents can prepare an MCP add/remove change.
+  Review the command or URL on the owning desktop before approving; enter
+  credentials locally and explicitly trust local commands. Existing connectors
+  and bulk imports are managed in Settings, Skills & MCP.
 - **You own it** — MIT, no Solenta account, no Solenta cloud, local SQLite,
   GitHub issues. The only network traffic is a release check.
 

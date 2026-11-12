@@ -1014,6 +1014,7 @@ export interface UseCoderResult {
   fusionSync: (input: FusionInput & { paths: string[] }) => Promise<FusionSyncResult>;
   /** Dedicated MCP CRUD; results are public redacted definitions only. */
   listMcpServers: () => Promise<McpServerDefinition[]>;
+  resolveMcpProposal: CoderApi["mcp"]["resolveProposal"];
   saveMcpServer: (input: McpServerSaveInput) => Promise<McpServerDefinition>;
   removeMcpServer: (input: { name: string }) => Promise<void>;
   setMcpEnabled: (input: {
@@ -2689,6 +2690,7 @@ export function useCoder(): UseCoderResult {
     files: filesApi,
     preview: api.preview,
     mentions: api.mentions,
+    resolveMcpProposal: api.mcp.resolveProposal,
     simulator: api.simulator,
     simulatorStatus,
     audioByThread,

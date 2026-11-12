@@ -140,6 +140,9 @@ const INSTRUCTIONS =
   "with no taskId takes the next unblocked task. Finish with task_complete and a " +
   "note; hand a task back with task_release rather than looping. Talk to a peer " +
   "directly with peer_send instead of routing artifacts through the lead. " +
+  "mcp_propose prepares an inert connector add/remove proposal in your own chat. " +
+  "Only desktop review on the owning computer applies it. Supply credential " +
+  "names, never secret values in configuration, URLs, commands or arguments. " +
   "When a worker model pool is configured, your prompt lists described aliases. " +
   "Pass pool=<alias> on thread_fork to pick one; omit pool to use the default. " +
   "Do not pass a raw model id. " +
@@ -1424,6 +1427,15 @@ function createToolHandlers(deps) {
     return { ...result, title: report.title };
   }
 
+  async function mcp_propose(args) {
+    const own = { ...args, threadId: resolveBoundCaller(args.threadId) };
+    requireOwnThread(own);
+    const proposal = require("./mcpProposals.js").createProposal(store, own);
+    try { runner.refreshDetail?.(own.threadId); } catch { /* next detail read recovers */ }
+    return { proposalId: proposal.id, status: proposal.status,
+      message: "Review this proposal in chat on the owning computer. No connector configuration has changed." };
+  }
+
   async function automation_create(args) {
     const thread = requireOwnThread(args);
     const triggerRaw = args && args.trigger;
@@ -1996,6 +2008,7 @@ function createToolHandlers(deps) {
     hypothesis_record,
     work_suggest,
     solenta_bug_report,
+    mcp_propose,
     automation_create,
     spec_submit,
     teach_review,
@@ -2444,6 +2457,32 @@ function buildMcpServer(sdk, handlers, opts = {}) {
       async (args) => json(await handlers.solenta_bug_report(args)),
     );
   }
+
+  server.registerTool(
+    "mcp_propose",
+    {
+      description: "Prepare an inert MCP connector proposal in YOUR OWN thread on this computer. " +
+        "action add registers a new name; remove proposes removing an existing name. The user reviews " +
+        "the exact configuration in chat on the owning desktop before it is applied. This tool cannot " +
+        "approve or install. envNames/headerNames request locally entered credentials; never put " +
+        "secret values in URLs, commands or arguments. URLs with query/fragment are not supported. " +
+        "Editing existing definitions, remote SSH projects and bulk imports use connector settings.",
+      inputSchema: {
+        threadId: z.string().min(1), projectId: z.string().min(1),
+        action: z.enum(["add", "remove"]),
+        config: z.object({
+          name: z.string().regex(/^[a-z0-9-]{1,64}$/),
+          transport: z.enum(["stdio", "http", "sse"]).optional(),
+          command: z.string().max(1024).optional(),
+          args: z.array(z.string().max(8192)).max(128).optional(),
+          cwd: z.string().max(4096).optional(), url: z.string().max(2048).optional(),
+          envNames: z.array(z.string().min(1).max(128)).max(32).optional(),
+          headerNames: z.array(z.string().min(1).max(128)).max(32).optional(),
+        }).strict(),
+      },
+    },
+    async (args) => json(await handlers.mcp_propose(args)),
+  );
 
   server.registerTool(
     "automation_create",

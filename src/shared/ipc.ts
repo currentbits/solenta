@@ -1316,6 +1316,8 @@ export interface ThreadInfo {
    * until an agent suggests something.
    */
   suggestions?: WorkSuggestion[];
+  /** Inert connector changes awaiting review on the owning desktop. */
+  mcpProposals?: McpProposal[];
   /**
    * Spec mode (issue #269): the thread writes three gated artifacts before it
    * writes code. Absent = normal thread. Set by threads.startSpec, advanced
@@ -5324,6 +5326,34 @@ export interface McpInstallResult {
   installed: Array<McpServerDefinition | string>;
 }
 
+/** Credential values are supplied only during desktop approval, never here. */
+export interface McpProposal {
+  id: string;
+  reviewToken: string;
+  action: "add" | "remove";
+  status: "pending" | "approved" | "dismissed" | "stale";
+  at: number;
+  config: {
+    name: string;
+    transport?: "stdio" | "http" | "sse";
+    command?: string;
+    args?: string[];
+    cwd?: string;
+    url?: string;
+    envNames?: string[];
+    headerNames?: string[];
+  };
+}
+
+export interface McpProposalResolution {
+  threadId: string;
+  proposalId: string;
+  resolution: "approved" | "dismissed";
+  trustLocal?: boolean;
+  reviewToken?: string;
+  secrets?: Record<string, string>;
+}
+
 /** A CLI custom agent a thread can run as (#172). */
 export interface CliAgentInfo {
   name: string;
@@ -6112,6 +6142,8 @@ export interface CoderApi {
     pickImport(): Promise<McpImportPreview | null>;
     previewImport(input: McpPreviewImportInput): Promise<McpImportPreview>;
     installImport(input: McpInstallRequest): Promise<McpInstallResult>;
+    /** Only the owning desktop transport may approve/dismiss proposals. */
+    resolveProposal(input: McpProposalResolution): Promise<McpProposal>;
     discardImport(input: { previewId: string }): Promise<void>;
     /**
      * MCP OAuth sign-in for a remote server (#1720): opens the browser and

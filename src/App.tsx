@@ -458,6 +458,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     fusionPlan,
     fusionSync,
     listMcpServers,
+    resolveMcpProposal,
     saveMcpServer,
     removeMcpServer,
     setMcpEnabled,
@@ -2850,6 +2851,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onListDiscussionsForMention={listDiscussionsForMention}
         onIssueDetailForMention={issueDetailForMention}
         onDiscussionDetailForMention={discussionDetailForMention}
+        onResolveMcpProposal={isWebMode() ? undefined : resolveMcpProposal}
         simulator={simulator}
         simulatorStatus={simulatorStatus}
         devServerStatus={devServerStatus}

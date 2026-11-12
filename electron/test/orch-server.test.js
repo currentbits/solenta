@@ -319,6 +319,23 @@ describe("preview MCP tool: per-thread browser access (#1797)", () => {
   });
 });
 
+describe("MCP connector proposals", () => {
+  it("only records a proposal for the bound own thread and cannot approve it", async () => {
+    const deps = makeDeps();
+    const handlers = createToolHandlers({ ...deps, boundThreadId: "t1", boundProjectId: "p1" });
+    const input = { threadId: "t1", projectId: "p1", action: "add", config: {
+      name: "test-tools", transport: "http", url: "https://tools.example/mcp",
+    } };
+    const response = await handlers.mcp_propose(input);
+    assert.equal(response.status, "pending");
+    assert.equal(deps.store.getThread("t1").mcpProposals[0].status, "pending");
+    assert.equal(deps.store.getSettings().mcpServers, undefined);
+    assert.equal(handlers.mcp_approve, undefined);
+    await assert.rejects(handlers.mcp_propose({ ...input, threadId: "t2" }), /own|bound|not/);
+    await assert.rejects(handlers.mcp_propose({ ...input, threadId: "t3", projectId: "p2" }), /own|bound|not/);
+  });
+});
+
 describe("refresh_worker_snapshot MCP tool", () => {
   function orchWorker(overrides = {}) {
     return {
@@ -1626,12 +1643,17 @@ describe("orch-server HTTP", () => {
     }
     assert.equal(previewSchema.properties.arguments.type, "object");
     assert.equal(previewSchema.properties.invocationId.maxLength, 128);
+    const proposalSchema = list.body.result.tools.find((t) => t.name === "mcp_propose").inputSchema;
+    assert.deepEqual(proposalSchema.properties.action.enum, ["add", "remove"]);
+    assert.equal(proposalSchema.properties.config.additionalProperties, false);
+    assert.ok(!proposalSchema.properties.config.properties.token);
     const names = list.body.result.tools.map((t) => t.name).sort();
     assert.deepEqual(names, [
       "ask_user",
       "automation_create",
       "hypothesis_record",
       "link_pull_request",
+      "mcp_propose",
       "peer_send",
       "preview",
       "refresh_worker_snapshot",

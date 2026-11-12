@@ -1236,6 +1236,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         }),
     },
     mcp: {
+      resolveProposal: async () => { throw new Error("MCP proposal fixture unavailable"); },
       list: () =>
         rec(
           "mcp.list",
