@@ -203,7 +203,9 @@ cp core/package.json "$APP_DIR/core/package.json"
 # ../native/ios-simulator-helper/protocol.json at module load, and the
 # toolchain builds the Swift helper from this tree at runtime.
 mkdir -p "$APP_DIR/native"
-cp -R native/ios-simulator-helper "$APP_DIR/native/ios-simulator-helper"
+# Local Swift builds contain host binaries and absolute build paths.
+tar -C native --exclude=.build --exclude=.swiftpm -cf - ios-simulator-helper \
+  | tar -C "$APP_DIR/native" -xf -
 
 # memory-server: src + package.json + node_modules (for the SDK + embedder).
 # Supervisor resolves: path.join(appPath, "memory-server", "src", "index.js")
