@@ -50,7 +50,7 @@ const {
   deepLinkFromArgv,
   resolveProjectRef,
 } = require("./deepLinks.js");
-const { guestWebviewPolicy, attachGuestPolicy, setAudioPush } = require("./preview.js");
+const { guestWebviewPolicy, attachGuestPolicy, setAudioPush, webMcpPolicyAllowed } = require("./preview.js");
 const { createTray, createUsageMenu, shouldHideOnClose } = require("./tray.js");
 const {
   createMemorySupervisor,
@@ -804,7 +804,7 @@ function notifyPairingLaunch(event) {
   n.show();
 }
 
-// Guest <webview> for the Browser pane (issue #155). Strip node/preload
+// Guest <webview> for the Browser pane (issue #155). Replace untrusted preload
 // and refuse any partition that is not solenta-preview:<threadId>. The app
 // window itself still never navigates to the web (links.js above).
 app.on("web-contents-created", (_event, contents) => {
@@ -837,6 +837,12 @@ app.on("web-contents-created", (_event, contents) => {
     const { Menu } = require("electron");
     Menu.buildFromTemplate(template).popup();
   });
+});
+
+// The sandboxed guest preload can only ask for its own response policy.
+ipcMain.on("preview:webmcpPolicy", (event) => {
+  const frame = event.senderFrame;
+  event.returnValue = Boolean(frame && !frame.parent && webMcpPolicyAllowed(event.sender, frame.url));
 });
 
 app.whenReady().then(async () => {

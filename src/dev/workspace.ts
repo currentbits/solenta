@@ -172,6 +172,11 @@ export function createWorkspace(): Pick<CoderApi, "servers" | "simulator" | "pre
       },
     },
     preview: {
+      async webmcpTools() {
+        return { available: false, tools: [], skipped: 0, untrusted: true as const };
+      },
+      async webmcpInvoke() { throw new Error("WebMCP requires the desktop Browser pane"); },
+      async webmcpCancel() { return { ok: true }; },
       async bind(_input: { threadId: string; webContentsId: number }): Promise<PreviewSnapshot> {
         return { url: "", title: "", canGoBack: false, canGoForward: false };
       },

@@ -3035,6 +3035,29 @@ export interface PreviewActionResult extends PreviewSnapshot {
   message?: string;
 }
 
+/** Page-provided WebMCP metadata and results are always untrusted. */
+export interface PreviewWebMcpTools {
+  available: boolean;
+  untrusted: true;
+  skipped: number;
+  tools: {
+    ref: string;
+    name: string;
+    description: string;
+    inputSchema: Record<string, unknown>;
+    annotations: { readOnlyHint: boolean; consequentialHint: boolean; untrustedContentHint: true };
+  }[];
+}
+
+export interface PreviewWebMcpResult {
+  ok: boolean;
+  completion: "done" | "uncertain";
+  invocationId: string;
+  untrusted: true;
+  result?: unknown;
+  message?: string;
+}
+
 /** One visible control or landmark in a semantic snapshot. */
 export interface PreviewSnapshotNode {
   /** Valid only for this snapshot of this document, e.g. "s3e12". */
@@ -8093,6 +8116,14 @@ export interface CoderApi {
     snapshot(input: { threadId: string }): Promise<PreviewPageSnapshot>;
     /** Bounded console and request-outcome rings since the pane bound. */
     diagnostics(input: { threadId: string }): Promise<PreviewDiagnostics>;
+    webmcpTools(input: { threadId: string }): Promise<PreviewWebMcpTools>;
+    webmcpInvoke(input: {
+      threadId: string;
+      ref: string;
+      arguments?: Record<string, unknown>;
+      invocationId?: string;
+    }): Promise<PreviewWebMcpResult>;
+    webmcpCancel(input: { threadId: string; invocationId: string }): Promise<{ ok: boolean }>;
     viewport(input: {
       threadId: string;
       preset: PreviewViewportPreset;

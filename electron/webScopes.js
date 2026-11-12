@@ -134,6 +134,7 @@ const BY_SCOPE = {
     "preview:originalScreenshot",
     "preview:snapshot",
     "preview:diagnostics",
+    "preview:webmcpTools",
     "speech:status",
   ],
   steer: [
@@ -298,6 +299,8 @@ const BY_SCOPE = {
     "preview:goForward",
     "preview:click",
     "preview:type",
+    "preview:webmcpInvoke",
+    "preview:webmcpCancel",
     "preview:viewport",
     // Inspect reads the guest DOM the user points at (#1193).
     "preview:inspect",

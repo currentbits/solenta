@@ -111,6 +111,8 @@ it.
   server. Screenshot the page into the composer, or let the agent navigate,
   click, type and screenshot it through the `preview` tool, read a page
   snapshot and console/network diagnostics, and switch viewport presets.
+  Agents can discover and invoke a local page's registered WebMCP tools;
+  references expire with the document and page tool changes.
   Annotate picks several elements in one session, with numbered page markers
   and editable comments saved in the thread's draft. Esc stops picking; the
   captured context stays in the composer until you send or remove it. The terminal

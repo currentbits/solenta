@@ -234,7 +234,7 @@ describe("preview MCP tool (issue #155)", () => {
     const calls = [];
     const deps = makeDeps();
     deps.preview = Object.fromEntries(
-      ["snapshot", "diagnostics", "viewport", "click", "type"].map((name) => [
+      ["snapshot", "diagnostics", "viewport", "click", "type", "webmcpTools", "webmcpInvoke", "webmcpCancel"].map((name) => [
         name,
         async (input) => {
           calls.push([name, input]);
@@ -249,12 +249,18 @@ describe("preview MCP tool (issue #155)", () => {
     await h.preview({ ...base, action: "viewport", preset: "mobile" });
     await h.preview({ ...base, action: "click", ref: "s1e2" });
     await h.preview({ ...base, action: "type", ref: "s1e3", text: "a@b.co" });
+    await h.preview({ ...base, action: "webmcp_tools" });
+    await h.preview({ ...base, action: "webmcp_invoke", ref: "w123", arguments: { text: "test" }, invocationId: "call1" });
+    await h.preview({ ...base, action: "webmcp_cancel", invocationId: "call1" });
     assert.deepEqual(calls, [
       ["snapshot", { threadId: "t1" }],
       ["diagnostics", { threadId: "t1" }],
       ["viewport", { threadId: "t1", preset: "mobile" }],
       ["click", { threadId: "t1", selector: undefined, ref: "s1e2" }],
       ["type", { threadId: "t1", selector: undefined, ref: "s1e3", text: "a@b.co" }],
+      ["webmcpTools", { threadId: "t1" }],
+      ["webmcpInvoke", { threadId: "t1", ref: "w123", arguments: { text: "test" }, invocationId: "call1" }],
+      ["webmcpCancel", { threadId: "t1", invocationId: "call1" }],
     ]);
   });
 
@@ -1614,6 +1620,12 @@ describe("orch-server HTTP", () => {
     assert.ok(autoSchema.properties.preset.enum.includes("cron"));
     const linkSchema = list.body.result.tools.find((t) => t.name === "link_pull_request").inputSchema;
     assert.equal(linkSchema.properties.primary.type, "boolean");
+    const previewSchema = list.body.result.tools.find((t) => t.name === "preview").inputSchema;
+    for (const action of ["webmcp_tools", "webmcp_invoke", "webmcp_cancel"]) {
+      assert.ok(previewSchema.properties.action.enum.includes(action));
+    }
+    assert.equal(previewSchema.properties.arguments.type, "object");
+    assert.equal(previewSchema.properties.invocationId.maxLength, 128);
     const names = list.body.result.tools.map((t) => t.name).sort();
     assert.deepEqual(names, [
       "ask_user",

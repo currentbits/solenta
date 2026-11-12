@@ -127,6 +127,7 @@ describe("preview session (issue #155)", () => {
     );
     assert.equal(ok.sandbox, true);
     assert.equal(ok.partition, "solenta-preview:t1");
+    assert.equal(ok.preload, require("node:path").resolve(__dirname, "../preview-webmcp-preload.js"));
   });
 
   it("navigate waits for the guest's initial about:blank load to stop", async () => {

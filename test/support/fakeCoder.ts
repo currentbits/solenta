@@ -4310,6 +4310,11 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         simMutate("simulator.stopRecording", [input], {}),
     },
     preview: {
+      webmcpTools: (input: unknown) => rec("preview.webmcpTools", [input], {
+        available: false, tools: [], skipped: 0, untrusted: true as const,
+      }),
+      webmcpInvoke: async () => { throw new Error("WebMCP fixture unavailable"); },
+      webmcpCancel: (input: unknown) => rec("preview.webmcpCancel", [input], { ok: true }),
       bind: (input: unknown) =>
         rec("preview.bind", [input], {
           url: "",

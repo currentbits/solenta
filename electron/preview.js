@@ -12,9 +12,12 @@
  * semantic snapshot whose refs die with the document, bounded console and
  * network rings, and explicit viewport presets. Page scripts are fixed
  * functions below run in an isolated world; nothing evaluates caller code.
+ * WebMCP uses a separate sandboxed preload and fixed main-world calls to the
+ * page's own registered tools. No host API is exposed to that page.
  */
 
 const { previewNavigateAction } = require("./links.js");
+const { randomUUID } = require("node:crypto");
 
 const PREVIEW_PARTITION_PREFIX = "solenta-preview:";
 const PANE_CLOSED =
@@ -55,6 +58,7 @@ const CONSOLE_LEVELS = ["debug", "info", "warning", "error"];
  *   docGeneration: number,
  *   snapshotSeq: number,
  *   snapshot: { id: number, docGeneration: number } | null,
+ *   webmcp: { refs: Set<string>, pending: Map<string, () => void> },
  *   console: object[],
  *   network: object[],
  *   dropped: { console: number, network: number },
@@ -73,6 +77,20 @@ const sessions = new Map();
 
 /** @type {WeakSet<object>} */
 const policyAttached = new WeakSet();
+const webMcpPolicies = new WeakMap();
+
+function webMcpHeadersAllowed(headers) {
+  // shortcut: old Chromium cannot parse the draft tools policy; reject every
+  // explicit tools directive until native Permissions-Policy support is used.
+  return !Object.entries(headers || {}).some(([name, values]) =>
+    name.toLowerCase() === "permissions-policy" && /(?:^|,)\s*tools\b/i.test([values].flat().join(",")),
+  );
+}
+
+function webMcpPolicyAllowed(wc, url) {
+  const policy = webMcpPolicies.get(wc);
+  return Boolean(policy?.allowed && policy.url === String(url).split("#")[0] && previewNavigateAction(url).allow);
+}
 
 /** @type {(id: number) => object | null} */
 let lookupWebContents = defaultLookup;
@@ -175,6 +193,7 @@ function guestWebviewPolicy(webPreferences, params) {
     return { allow: false };
   }
   wp.partition = partition;
+  wp.preload = require("node:path").join(__dirname, "preview-webmcp-preload.js");
   return { allow: true };
 }
 
@@ -185,6 +204,19 @@ function guestWebviewPolicy(webPreferences, params) {
 function attachGuestPolicy(wc) {
   if (!wc || policyAttached.has(wc)) return;
   policyAttached.add(wc);
+  // This partition belongs to one guest; keep response policy outside the page.
+  wc.session?.webRequest?.onHeadersReceived?.((details, callback) => {
+    if (details.resourceType === "mainFrame" && details.webContentsId === wc.id) {
+      webMcpPolicies.set(wc, {
+        url: String(details.url).split("#")[0],
+        allowed: webMcpHeadersAllowed(details.responseHeaders),
+      });
+    }
+    callback({});
+  });
+  wc.on?.("did-start-navigation", (_event, _url, inPlace, mainFrame) => {
+    if (mainFrame && !inPlace) webMcpPolicies.delete(wc);
+  });
   if (typeof wc.setWindowOpenHandler === "function") {
     wc.setWindowOpenHandler(({ url }) => {
       const decision = previewNavigateAction(url);
@@ -273,6 +305,7 @@ function attachSession(threadId, wc, webContentsId) {
     docGeneration: 0,
     snapshotSeq: 0,
     snapshot: null,
+    webmcp: { refs: new Set(), pending: new Map() },
     console: [],
     network: [],
     dropped: { console: 0, network: 0 },
@@ -310,11 +343,16 @@ function attachSession(threadId, wc, webContentsId) {
     });
   };
   const onNavigate = () => {
+    clearWebMcp(s, wc);
     s.docGeneration += 1;
+  };
+  const onStart = (_event, _url, inPlace, mainFrame) => {
+    if (mainFrame && !inPlace) onNavigate();
   };
   const onInPage = (_event, _url, isMainFrame) => {
     const main = _event && typeof _event.isMainFrame === "boolean" ? _event.isMainFrame : isMainFrame;
     if (main !== false) {
+      clearWebMcp(s, wc);
       s.docGeneration += 1;
       void runInGuest(wc, inspectScript(true)).catch(() => {});
     }
@@ -352,6 +390,7 @@ function attachSession(threadId, wc, webContentsId) {
   if (typeof wc.on === "function") {
     wc.on("console-message", onConsole);
     wc.on("did-navigate", onNavigate);
+    wc.on("did-start-navigation", onStart);
     wc.on("did-navigate-in-page", onInPage);
   }
   if (typeof wc.once === "function") wc.once("destroyed", onDestroyed);
@@ -368,10 +407,12 @@ function attachSession(threadId, wc, webContentsId) {
   s.detach = () => {
     s.detach = () => {};
     audioOff();
+    clearWebMcp(s, wc);
     try { void runInGuest(wc, inspectScript(true)).catch(() => {}); } catch { /* guest already gone */ }
     if (typeof wc.removeListener === "function") {
       wc.removeListener("console-message", onConsole);
       wc.removeListener("did-navigate", onNavigate);
+      wc.removeListener("did-start-navigation", onStart);
       wc.removeListener("did-navigate-in-page", onInPage);
       wc.removeListener("destroyed", onDestroyed);
     }
@@ -904,6 +945,115 @@ function click(input) {
  */
 function type(input) {
   return act(input, "type");
+}
+
+// WebMCP deliberately enters the page's main world: the API and its callbacks
+// are page-owned. Only these fixed bridge operations and JSON data cross over.
+function webMcpCall(wc, method, args = []) {
+  const code = `(() => { const b = globalThis.__solentaWebMcp; return b ? b[${JSON.stringify(method)}](...${JSON.stringify(args)}) : null; })()`;
+  return wc.executeJavaScript(code);
+}
+
+function clearWebMcp(s, wc) {
+  s.webmcp.refs.clear();
+  for (const [id, cancel] of s.webmcp.pending) {
+    cancel();
+    try { void webMcpCall(wc, "cancel", [id]).catch(() => {}); } catch { /* guest gone */ }
+  }
+  s.webmcp.pending.clear();
+}
+
+function webMcpJson(raw, maxBytes, maxDepth = 20) {
+  if (typeof raw !== "string" || Buffer.byteLength(raw) > maxBytes) throw new Error("Invalid or oversized WebMCP response");
+  const result = JSON.parse(raw);
+  const checkDepth = (value, depth) => {
+    if (depth > maxDepth) throw new Error("WebMCP response is too deep");
+    if (value && typeof value === "object") for (const child of Object.values(value)) checkDepth(child, depth + 1);
+  };
+  checkDepth(result, 0);
+  return result;
+}
+
+async function webmcpTools(input) {
+  const threadId = threadIdOf(input);
+  const { s, wc } = requireSession(threadId);
+  if (!previewNavigateAction(wc.getURL()).allow) throw new Error("WebMCP requires a local Browser page");
+  s.webmcp.refs.clear();
+  const generation = s.docGeneration;
+  const raw = await withTimeout(webMcpCall(wc, "tools"), READ_TIMEOUT_MS);
+  if (raw === TIMED_OUT) throw new Error("WebMCP discovery timed out");
+  if (sessions.get(threadId) !== s || generation !== s.docGeneration) throw new Error("WebMCP document changed; discover tools again");
+  if (raw === null) return { available: false, tools: [], skipped: 0, untrusted: true };
+  const data = webMcpJson(raw, 36_864, 23);
+  if (typeof data.documentId !== "string" || data.documentId.length > 128 ||
+      typeof data.available !== "boolean" || !Array.isArray(data.tools) || data.tools.length > 128) {
+    throw new Error("Invalid WebMCP discovery response");
+  }
+  const tools = data.tools.map((tool) => {
+    if (typeof tool.ref !== "string" || !/^w[A-Za-z0-9-]{1,180}$/.test(tool.ref) ||
+        typeof tool.name !== "string" || !/^[A-Za-z0-9_.-]{1,128}$/.test(tool.name) ||
+        typeof tool.description !== "string" || Buffer.byteLength(tool.description) > 4096 ||
+        !tool.inputSchema || tool.inputSchema.type !== "object" || Buffer.byteLength(JSON.stringify(tool.inputSchema)) > 16_384) {
+      throw new Error("Invalid WebMCP tool descriptor");
+    }
+    return {
+      ref: tool.ref, name: tool.name, description: tool.description,
+      inputSchema: webMcpJson(JSON.stringify(tool.inputSchema), 16_384),
+      annotations: {
+        readOnlyHint: tool.annotations?.readOnlyHint === true,
+        consequentialHint: tool.annotations?.consequentialHint === true,
+        untrustedContentHint: true,
+      },
+    };
+  });
+  s.webmcp.refs = new Set(tools.map((t) => t.ref));
+  return { available: data.available, tools, skipped: Math.max(0, Math.min(10000, Number(data.skipped) || 0)), untrusted: true };
+}
+
+async function webmcpInvoke(input) {
+  const threadId = threadIdOf(input);
+  const { s, wc } = requireSession(threadId);
+  const ref = input?.ref;
+  if (!s.webmcp.refs.has(ref)) throw new Error("WebMCP tool is stale; discover tools again");
+  if (!previewNavigateAction(wc.getURL()).allow) throw new Error("WebMCP requires a local Browser page");
+  const args = webMcpJson(JSON.stringify(input.arguments ?? {}), 16_384);
+  if (!args || typeof args !== "object" || Array.isArray(args)) throw new Error("WebMCP arguments must be an object");
+  const id = input.invocationId ?? randomUUID();
+  if (typeof id !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(id)) throw new Error("Invalid WebMCP invocationId");
+  if (s.webmcp.pending.size >= 8 || s.webmcp.pending.has(id)) throw new Error("WebMCP invocation already active or concurrency limit reached");
+  const generation = s.docGeneration;
+  let cancel;
+  const cancelled = new Promise((resolve) => { cancel = () => resolve(TIMED_OUT); });
+  s.webmcp.pending.set(id, cancel);
+  try {
+    const raw = await withTimeout(Promise.race([webMcpCall(wc, "invoke", [ref, args, id]), cancelled]), ACTION_TIMEOUT_MS);
+    if (raw === TIMED_OUT || sessions.get(threadId) !== s || generation !== s.docGeneration) {
+      s.webmcp.refs.clear();
+      void webMcpCall(wc, "cancel", [id]).catch(() => {});
+      return { ok: false, completion: "uncertain", invocationId: id, untrusted: true,
+        message: "WebMCP call timed out, was cancelled, or its document changed. It may have run; observe the page before retrying." };
+    }
+    const data = webMcpJson(raw, 65_560, 21);
+    return { ok: true, completion: "done", invocationId: id, untrusted: true, result: data.result };
+  } catch (error) {
+    // Page errors are untrusted and bounded just like successful results.
+    return { ok: false, completion: "uncertain", invocationId: id, untrusted: true,
+      message: String(error?.message || "WebMCP call failed").slice(0, 500) };
+  } finally {
+    if (s.webmcp.pending.get(id) === cancel) s.webmcp.pending.delete(id);
+  }
+}
+
+function webmcpCancel(input) {
+  const { s, wc } = requireSession(threadIdOf(input));
+  const id = input?.invocationId;
+  const cancel = s.webmcp.pending.get(id);
+  if (cancel) {
+    s.webmcp.refs.clear();
+    cancel();
+    void webMcpCall(wc, "cancel", [id]).catch(() => {});
+  }
+  return { ok: true };
 }
 
 // ---------------------------------------------------------------------------
@@ -1710,6 +1860,11 @@ module.exports = {
   viewport,
   click,
   type,
+  webmcpTools,
+  webmcpInvoke,
+  webmcpCancel,
+  webMcpHeadersAllowed,
+  webMcpPolicyAllowed,
   redactUrl,
   inspect,
   cancelInspect,
