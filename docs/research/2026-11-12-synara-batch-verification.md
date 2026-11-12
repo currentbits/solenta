@@ -66,8 +66,19 @@ Full logs: `/tmp/solenta-synara-renderer.log`, `/tmp/solenta-synara-backend.log`
 `/tmp/solenta-synara-native-sandbox.log`, `/tmp/solenta-synara-swift.log`,
 `/tmp/solenta-synara-native-adapter.log` and `/tmp/solenta-synara-webmcp.log`.
 
+## Local package
+
+`bash scripts/package-app.sh` built and Developer ID-signed `out/Solenta.app`
+(unnotarized local build) and its boot probe passed: memory server `/health`,
+isolated userData and a live embed. The packaged helper tree is 240 KiB with no
+`.build` or `.swiftpm` cache, and includes `LICENSES/` and `NOTICE.md`. The new
+modules `cli-session-usage.js`, `mcpProposals.js` and
+`preview-webmcp-preload.js` are in the bundle. A copy of the packaged helper
+sources compiled with Xcode and passed all nine sandbox checks, including
+IOSurface and the H.264 encoder. Log: `/tmp/pkg-05039948.log`.
+
 Core, memory-server and stats suites were not rerun in this pass. There was no
-signed package, installed-app upgrade, main-branch integration, live-provider
+notarized package, installed-app upgrade, main-branch integration, live-provider
 handshake or release. This pass did not boot or send input to a simulator; the
 earlier real-device acceptance remains in the simulator adoption report. Browser
 screenshot/Inspect capture investigation [#2006](https://github.com/currentbits/solenta/issues/2006)
