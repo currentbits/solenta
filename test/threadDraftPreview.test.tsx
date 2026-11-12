@@ -20,12 +20,12 @@ import {
 } from "../src/composerSession";
 import { makePasteCard } from "../src/pasteCards";
 
-it("renders saved draft snapshots in static card consumers", () => {
+it("static card consumers render without drafts (server snapshot, #1770)", () => {
   keptDrafts.a = "saved thought";
   const html = renderToStaticMarkup(<ThreadCard thread={thread({ id: "a" })}
     slug="solenta" providers={providers} active={false} now={Date.now()} onSelect={() => {}} />);
-  assert.match(html, /data-draft-badge="a"/);
-  assert.match(html, /Unsent draft: saved thought/);
+  assert.doesNotMatch(html, /data-draft-badge|saved thought/);
+  delete keptDrafts.a;
 });
 
 it("normalizes and bounds excerpts without changing saved text or splitting emoji", () => {

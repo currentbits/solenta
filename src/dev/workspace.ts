@@ -277,6 +277,7 @@ export function createWorkspace(): Pick<CoderApi, "servers" | "simulator" | "pre
       },
       async setAudioMuted(input: { threadId: string; muted: boolean }) {
         return { ok: true, muted: Boolean(input.muted) };
+      },
       async annotations() {
         return { ok: true };
       },

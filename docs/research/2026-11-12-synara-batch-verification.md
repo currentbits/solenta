@@ -84,3 +84,26 @@ earlier real-device acceptance remains in the simulator adoption report. Browser
 screenshot/Inspect capture investigation [#2006](https://github.com/currentbits/solenta/issues/2006)
 is independent work and was not taken over. Current main's existing draft marker
 still needs reconciliation when integrating this older-baseline branch.
+
+## Replayed onto origin/main
+
+The batch was cherry-picked onto `origin/main` (`c8c8581b`) as branch
+`coder/synara-adoption`. The old branch was cut from a local main whose ACP and
+budget merges reached origin as squash PRs, so merging it produced 51 duplicate
+conflicts. Replaying only the Synara commits left additive conflicts with
+main's tab audio mute, bug reports, mentions and fusion work, all kept on both
+sides.
+
+Draft previews now reuse main's pencil marker (#1770) instead of adding a
+second "Draft" badge: the marker became a button with the preview tooltip, and
+also shows for attachment- or context-only drafts. Main's rules stay: compact
+cards have no marker and static renders show no drafts. Preview text refreshes
+through a microtask-coalesced notification, because draft lists mutate inside
+React updaters.
+
+After replay: typecheck and IPC preload sync pass, 3,989/3,989 renderer tests
+pass and the production build succeeds. 6,274 Electron tests ran with a
+CI-like environment. The 19 Cloud Connect failures came from this worktree's
+`node_modules` missing main's new `jose` dependency. With `jose@6.2.16`
+installed, and its integrity matching the lockfile, both cloud test files pass
+17/17.
