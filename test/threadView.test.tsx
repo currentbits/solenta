@@ -34,6 +34,7 @@ import { TRANSCRIPT_WINDOW } from "../src/transcriptWindow";
 import "../src/components/HtmlPage";
 import type {
   AttachmentInfo,
+  CoderApi,
   ChatMessage,
   DiffResult,
   PendingPermissionInfo,
@@ -262,6 +263,7 @@ function view(props: {
   onStartSuggestion?: (s: WorkSuggestion) => void | Promise<void>;
   onFileSuggestion?: (s: WorkSuggestion) => void | Promise<void>;
   onDismissSuggestion?: (s: WorkSuggestion) => void | Promise<void>;
+  onResolveMcpProposal?: CoderApi["mcp"]["resolveProposal"];
   onOpenAutomations?: (automationId?: string) => void;
   onIntegrateWorker?: (workerThreadId: string) => Promise<void>;
   revealMessageId?: string | null;
@@ -353,6 +355,7 @@ function view(props: {
       onStartSuggestion={props.onStartSuggestion}
       onFileSuggestion={props.onFileSuggestion}
       onDismissSuggestion={props.onDismissSuggestion}
+      onResolveMcpProposal={props.onResolveMcpProposal}
       onOpenAutomations={props.onOpenAutomations}
       onIntegrateWorker={props.onIntegrateWorker}
       revealMessageId={props.revealMessageId}
@@ -413,6 +416,22 @@ afterEach(() => {
 });
 
 describe("ThreadView empty states", () => {
+  it("renders a pending connector proposal and routes desktop approval with its thread identity", async () => {
+    const proposal = { id: "proposal-thread", reviewToken: "review-token", action: "add" as const, status: "pending" as const, at: Date.now(), config: {
+      name: "chat-tools", transport: "http" as const, url: "https://tools.example/mcp", envNames: [], headerNames: [],
+    } };
+    const calls: unknown[] = [];
+    const m = await mount(view({ detail: detail({ thread: thread({ mcpProposals: [proposal] }) }),
+      onResolveMcpProposal: async (input) => { calls.push(input); return { ...proposal, status: "approved" }; },
+    }));
+    assert.ok(m.query('[aria-label="chat-tools MCP proposal"]'));
+    await m.click(m.byText("Review connection"));
+    await m.click(m.byText("Approve connector"));
+    assert.equal((calls[0] as {threadId:string}).threadId, "t1");
+    assert.match(m.text(), /Connector approved/);
+    await m.rerender(view({ detail: detail({ thread: thread({ id: "t2" }) }) }));
+    assert.equal(m.query('[aria-label="chat-tools MCP proposal"]'), null);
+  });
   it("asks for a project when none are registered", () => {
     const html = render({ hasProjects: false, detail: null });
     assert.ok(

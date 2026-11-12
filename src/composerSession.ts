@@ -20,6 +20,26 @@ export const keptReviewComments: Record<string, ReviewComment[]> = {};
 /** Typed context chips (#1526): threads, PRs, skills, terminal, quotes. */
 export const keptContextChips: Record<string, ContextChip[]> = {};
 
+/** A bounded excerpt, never expanded context bodies or sent history. */
+export function getDraftPreview(threadId: string): string {
+  const text = (keptDrafts[threadId] ?? "")
+    .replace(/\uFFFC/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (text) {
+    const chars = Array.from(text);
+    return chars.length > 180 ? `${chars.slice(0, 180).join("").trimEnd()}…` : text;
+  }
+  const parts: string[] = [];
+  const attachments = keptAttachments[threadId]?.length ?? 0;
+  const context = (keptPasteCards[threadId]?.length ?? 0) +
+    (keptContextChips[threadId]?.length ?? 0) +
+    (keptReviewComments[threadId]?.length ?? 0);
+  if (attachments) parts.push(`${attachments} attachment${attachments === 1 ? "" : "s"}`);
+  if (context) parts.push(`${context} context item${context === 1 ? "" : "s"}`);
+  return parts.join(" · ");
+}
+
 export const DRAFTS_STORAGE_KEY = "coder.composerDrafts";
 export const DRAFTS_SAVE_MS = 400;
 /**
@@ -138,6 +158,7 @@ export function serializeDrafts(cap = DRAFTS_STORE_CAP): string {
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 
 export function flushDraftSave(): void {
+  notifyDraftsSoon();
   if (saveTimer != null) clearTimeout(saveTimer);
   saveTimer = null;
   const store = storage();
@@ -153,12 +174,14 @@ export function flushDraftSave(): void {
 
 /** Called after any draft map mutation; coalesces bursts of typing. */
 export function scheduleDraftSave(): void {
+  notifyDraftsSoon();
   if (saveTimer != null) clearTimeout(saveTimer);
   saveTimer = setTimeout(flushDraftSave, DRAFTS_SAVE_MS);
 }
 
 /** Refill the maps from storage. Runs once at import; tests call it again. */
 export function hydrateComposerSession(): void {
+  notifyDraftsSoon();
   const store = storage();
   if (!store) return;
   let rows: Record<string, SavedDraft>;
@@ -253,6 +276,17 @@ function notifyDrafts(): void {
   for (const l of draftListeners) l();
 }
 
+let draftNotificationPending = false;
+/** Preview text changes; coalesced because list mutations run inside React updaters. */
+function notifyDraftsSoon(): void {
+  if (draftNotificationPending) return;
+  draftNotificationPending = true;
+  queueMicrotask(() => {
+    draftNotificationPending = false;
+    notifyDrafts();
+  });
+}
+
 /** Sidebar draft marker (#1770): subscribe instead of polling keptDrafts. */
 export function subscribeDrafts(listener: () => void): () => void {
   draftListeners.add(listener);
@@ -302,6 +336,7 @@ export function pruneComposerDrafts(threadIds: Iterable<string>): number {
 }
 
 export function resetComposerSession(): void {
+  notifyDrafts();
   if (saveTimer != null) clearTimeout(saveTimer);
   saveTimer = null;
   clearRecord(keptDrafts);

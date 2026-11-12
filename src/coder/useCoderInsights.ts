@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import type { CoderApi, ThreadSummariesInput } from "../shared/ipc";
+import type { CoderApi, ThreadSummariesInput, UsageReportInput } from "../shared/ipc";
 
 /** Activity, usage, digest, thread summaries and crew reads (IPC pass-throughs). */
 export function useCoderInsights(api: CoderApi) {
@@ -7,8 +7,8 @@ export function useCoderInsights(api: CoderApi) {
     return api.activity.list();
   }, [api]);
 
-  const listUsageByDay = useCallback(async () => {
-    return api.usage.byDay();
+  const listUsageByDay = useCallback(async (input?: UsageReportInput) => {
+    return api.usage.byDay(input);
   }, [api]);
 
   const listProviderLimits = useCallback(async () => {

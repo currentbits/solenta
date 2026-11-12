@@ -1,4 +1,4 @@
-import { memo, useRef, useState, useSyncExternalStore } from "react";
+import { memo, useId, useRef, useState, useSyncExternalStore } from "react";
 import type {
   ConflictForecast,
   ProjectInfo,
@@ -13,7 +13,7 @@ import {
 } from "../../conflictForecast";
 import { formatRelativeAge, middleTruncate } from "../../format";
 import { isCrewWorker } from "../../sidebarGroups";
-import { hasNonEmptyDraft, subscribeDrafts } from "../../composerSession";
+import { getDraftPreview, subscribeDrafts } from "../../composerSession";
 import { ProviderMark } from "../ProviderMark";
 import { showContextMenu } from "../../contextMenu";
 import {
@@ -48,6 +48,62 @@ import { Icon } from "./Icon";
 import styles from "../Sidebar.module.css";
 
 export type SelectOpts = { meta?: boolean; shift?: boolean };
+
+function DraftBadge({ threadId, onSelect }: {
+  threadId: string;
+  onSelect: (id: string, opts?: SelectOpts) => void;
+}) {
+  const snapshot = () => getDraftPreview(threadId);
+  const preview = useSyncExternalStore(subscribeDrafts, snapshot, snapshot);
+  const tipId = useId();
+  const [dismissed, setDismissed] = useState(false);
+  if (!preview) return null;
+  return (
+    <span className={styles.conflictWrap} onMouseLeave={() => setDismissed(false)}>
+      <button
+        type="button"
+        className={`${styles.cardDraft} ${styles.draftBadge}`}
+        data-card-draft=""
+        data-draft-badge={threadId}
+        aria-label="Open unsent draft"
+        aria-describedby={tipId}
+        onFocus={() => setDismissed(false)}
+        onMouseEnter={() => setDismissed(false)}
+        onKeyDown={(e) => {
+          if (e.key !== "Escape") return;
+          e.preventDefault();
+          e.stopPropagation();
+          setDismissed(true);
+        }}
+        onClick={(e) => {
+          e.stopPropagation();
+          onSelect(threadId, {
+            meta: e.metaKey || e.ctrlKey,
+            shift: e.shiftKey,
+          });
+        }}
+      >
+        <svg
+          width="11"
+          height="11"
+          viewBox="0 0 16 16"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M11.4 2.4a1.4 1.4 0 0 1 2 2L5 12.8l-3 .8.8-3Z" />
+        </svg>
+      </button>
+      <span id={tipId} role="tooltip" className={`${styles.conflictTip} ${styles.draftTip}`}
+        style={dismissed ? { display: "none" } : undefined} data-draft-preview="">
+        Unsent draft: {preview}
+      </span>
+    </span>
+  );
+}
 
 /**
  * F4 diamond (#1429): the logo glyph as the status marker. Hollow when
@@ -300,7 +356,7 @@ export const ThreadCard = memo(function ThreadCard({
   // Server snapshot: renderToString (prRender tests) has no drafts.
   const hasDraft = useSyncExternalStore(
     subscribeDrafts,
-    () => hasNonEmptyDraft(thread.id),
+    () => getDraftPreview(thread.id) !== "",
     () => false,
   );
   const hasLine3 =
@@ -918,29 +974,7 @@ export const ThreadCard = memo(function ThreadCard({
                   className={styles.cardProvider}
                 />
               ) : null}
-              {hasDraft ? (
-                <span
-                  className={styles.cardDraft}
-                  data-card-draft=""
-                  role="img"
-                  aria-label="Unsent draft"
-                  title="Unsent draft"
-                >
-                  <svg
-                    width="11"
-                    height="11"
-                    viewBox="0 0 16 16"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    aria-hidden="true"
-                  >
-                    <path d="M11.4 2.4a1.4 1.4 0 0 1 2 2L5 12.8l-3 .8.8-3Z" />
-                  </svg>
-                </span>
-              ) : null}
+              {hasDraft ? <DraftBadge threadId={thread.id} onSelect={onSelect} /> : null}
             </>
           )}
         </div>

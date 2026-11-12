@@ -2,6 +2,7 @@
 #define SOLENTA_SH_PRIVATE_CONTEXT_INTERNAL_H
 
 #import "SimulatorPrivateBridge.h"
+#import "DTUHIDTransport.h"
 
 #import <Foundation/Foundation.h>
 #import <CoreGraphics/CoreGraphics.h>
@@ -72,9 +73,14 @@ struct SHPrivateContext {
 
   __strong id _Nullable simDevice;
   __strong id _Nullable hidClient;
+  __strong SynaraDTUHIDTransport *_Nullable dtuhid;
+  BOOL usesDTUHID;
+  NSTimeInterval inputDeadline;
+  unsigned inputEventsSent;
   __strong id _Nullable ioClient;
   __strong NSMutableArray *_Nullable descriptors;
   __strong NSMutableDictionary *_Nullable callbackUUIDs;
+  __strong id _Nullable captureState;
   __strong id _Nullable translator;
   __strong id _Nullable axDelegate;
   __strong dispatch_queue_t _Nullable captureQueue;

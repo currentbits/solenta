@@ -56,6 +56,26 @@ async function openAppDestination(
 }
 
 describe("App boot wiring", () => {
+  it("routes a chat connector review through useCoder to the dedicated MCP approval channel", async () => {
+    const proposal = { id: "app-proposal", reviewToken: "app-review", action: "add" as const, status: "pending" as const, at: Date.now(), config: {
+      name: "app-tools", transport: "http" as const, url: "https://tools.example/mcp", envNames: [], headerNames: [],
+    } };
+    const row = thread({ id: "mcp-thread", mcpProposals: [proposal] });
+    const fake = createFakeCoder({ threads: [row], details: { [row.id]: detail({ thread: row }) } });
+    fake.api.mcp.resolveProposal = async (input) => {
+      fake.calls.push({ channel: "mcp.resolveProposal", args: [input] });
+      return { ...proposal, status: "approved" };
+    };
+    const m = await boot(fake);
+    try {
+      await m.click(m.byText("Review connection"));
+      await m.click(m.byText("Approve connector"));
+      assert.deepEqual(fake.of("mcp.resolveProposal")[0]?.args, [{ threadId: row.id, proposalId: proposal.id,
+        resolution: "approved", reviewToken: proposal.reviewToken, trustLocal: false, secrets: {},
+      }]);
+      assert.match(m.text(), /Connector approved/);
+    } finally { m.unmount(); }
+  });
   it("loads projects, threads, providers and workflows on boot", async () => {
     const fake = createFakeCoder();
     const m = await boot(fake);
@@ -1404,6 +1424,9 @@ describe("App selection stamps lastVisitedAt (round 43 unread)", () => {
         "opening Usage must read the ledger exactly once",
       );
       assert.ok(m.query("[data-usage]"), "usage view must render");
+      await m.change(m.query("[data-usage-source]"), "cli");
+      await m.flush();
+      assert.deepEqual(fake.of("usage.byDay").at(-1)?.args, [{ scope: "cli" }], "source reaches IPC through useCoder");
     } finally {
       m.unmount();
     }

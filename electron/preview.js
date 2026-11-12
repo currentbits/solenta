@@ -12,9 +12,12 @@
  * semantic snapshot whose refs die with the document, bounded console and
  * network rings, and explicit viewport presets. Page scripts are fixed
  * functions below run in an isolated world; nothing evaluates caller code.
+ * WebMCP uses a separate sandboxed preload and fixed main-world calls to the
+ * page's own registered tools. No host API is exposed to that page.
  */
 
 const { previewNavigateAction } = require("./links.js");
+const { randomUUID } = require("node:crypto");
 
 const PREVIEW_PARTITION_PREFIX = "solenta-preview:";
 const PANE_CLOSED =
@@ -55,6 +58,7 @@ const CONSOLE_LEVELS = ["debug", "info", "warning", "error"];
  *   docGeneration: number,
  *   snapshotSeq: number,
  *   snapshot: { id: number, docGeneration: number } | null,
+ *   webmcp: { refs: Set<string>, pending: Map<string, () => void> },
  *   console: object[],
  *   network: object[],
  *   dropped: { console: number, network: number },
@@ -73,6 +77,20 @@ const sessions = new Map();
 
 /** @type {WeakSet<object>} */
 const policyAttached = new WeakSet();
+const webMcpPolicies = new WeakMap();
+
+function webMcpHeadersAllowed(headers) {
+  // shortcut: old Chromium cannot parse the draft tools policy; reject every
+  // explicit tools directive until native Permissions-Policy support is used.
+  return !Object.entries(headers || {}).some(([name, values]) =>
+    name.toLowerCase() === "permissions-policy" && /(?:^|,)\s*tools\b/i.test([values].flat().join(",")),
+  );
+}
+
+function webMcpPolicyAllowed(wc, url) {
+  const policy = webMcpPolicies.get(wc);
+  return Boolean(policy?.allowed && policy.url === String(url).split("#")[0] && previewNavigateAction(url).allow);
+}
 
 /** @type {(id: number) => object | null} */
 let lookupWebContents = defaultLookup;
@@ -175,6 +193,7 @@ function guestWebviewPolicy(webPreferences, params) {
     return { allow: false };
   }
   wp.partition = partition;
+  wp.preload = require("node:path").join(__dirname, "preview-webmcp-preload.js");
   return { allow: true };
 }
 
@@ -185,6 +204,19 @@ function guestWebviewPolicy(webPreferences, params) {
 function attachGuestPolicy(wc) {
   if (!wc || policyAttached.has(wc)) return;
   policyAttached.add(wc);
+  // This partition belongs to one guest; keep response policy outside the page.
+  wc.session?.webRequest?.onHeadersReceived?.((details, callback) => {
+    if (details.resourceType === "mainFrame" && details.webContentsId === wc.id) {
+      webMcpPolicies.set(wc, {
+        url: String(details.url).split("#")[0],
+        allowed: webMcpHeadersAllowed(details.responseHeaders),
+      });
+    }
+    callback({});
+  });
+  wc.on?.("did-start-navigation", (_event, _url, inPlace, mainFrame) => {
+    if (mainFrame && !inPlace) webMcpPolicies.delete(wc);
+  });
   if (typeof wc.setWindowOpenHandler === "function") {
     wc.setWindowOpenHandler(({ url }) => {
       const decision = previewNavigateAction(url);
@@ -273,6 +305,7 @@ function attachSession(threadId, wc, webContentsId) {
     docGeneration: 0,
     snapshotSeq: 0,
     snapshot: null,
+    webmcp: { refs: new Set(), pending: new Map() },
     console: [],
     network: [],
     dropped: { console: 0, network: 0 },
@@ -310,10 +343,19 @@ function attachSession(threadId, wc, webContentsId) {
     });
   };
   const onNavigate = () => {
+    clearWebMcp(s, wc);
     s.docGeneration += 1;
   };
+  const onStart = (_event, _url, inPlace, mainFrame) => {
+    if (mainFrame && !inPlace) onNavigate();
+  };
   const onInPage = (_event, _url, isMainFrame) => {
-    if (isMainFrame !== false) s.docGeneration += 1;
+    const main = _event && typeof _event.isMainFrame === "boolean" ? _event.isMainFrame : isMainFrame;
+    if (main !== false) {
+      clearWebMcp(s, wc);
+      s.docGeneration += 1;
+      void runInGuest(wc, inspectScript(true)).catch(() => {});
+    }
   };
   const onDestroyed = () => {
     if (sessions.get(threadId) === s) sessions.delete(threadId);
@@ -348,6 +390,7 @@ function attachSession(threadId, wc, webContentsId) {
   if (typeof wc.on === "function") {
     wc.on("console-message", onConsole);
     wc.on("did-navigate", onNavigate);
+    wc.on("did-start-navigation", onStart);
     wc.on("did-navigate-in-page", onInPage);
   }
   if (typeof wc.once === "function") wc.once("destroyed", onDestroyed);
@@ -364,9 +407,12 @@ function attachSession(threadId, wc, webContentsId) {
   s.detach = () => {
     s.detach = () => {};
     audioOff();
+    clearWebMcp(s, wc);
+    try { void runInGuest(wc, inspectScript(true)).catch(() => {}); } catch { /* guest already gone */ }
     if (typeof wc.removeListener === "function") {
       wc.removeListener("console-message", onConsole);
       wc.removeListener("did-navigate", onNavigate);
+      wc.removeListener("did-start-navigation", onStart);
       wc.removeListener("did-navigate-in-page", onInPage);
       wc.removeListener("destroyed", onDestroyed);
     }
@@ -901,6 +947,115 @@ function type(input) {
   return act(input, "type");
 }
 
+// WebMCP deliberately enters the page's main world: the API and its callbacks
+// are page-owned. Only these fixed bridge operations and JSON data cross over.
+function webMcpCall(wc, method, args = []) {
+  const code = `(() => { const b = globalThis.__solentaWebMcp; return b ? b[${JSON.stringify(method)}](...${JSON.stringify(args)}) : null; })()`;
+  return wc.executeJavaScript(code);
+}
+
+function clearWebMcp(s, wc) {
+  s.webmcp.refs.clear();
+  for (const [id, cancel] of s.webmcp.pending) {
+    cancel();
+    try { void webMcpCall(wc, "cancel", [id]).catch(() => {}); } catch { /* guest gone */ }
+  }
+  s.webmcp.pending.clear();
+}
+
+function webMcpJson(raw, maxBytes, maxDepth = 20) {
+  if (typeof raw !== "string" || Buffer.byteLength(raw) > maxBytes) throw new Error("Invalid or oversized WebMCP response");
+  const result = JSON.parse(raw);
+  const checkDepth = (value, depth) => {
+    if (depth > maxDepth) throw new Error("WebMCP response is too deep");
+    if (value && typeof value === "object") for (const child of Object.values(value)) checkDepth(child, depth + 1);
+  };
+  checkDepth(result, 0);
+  return result;
+}
+
+async function webmcpTools(input) {
+  const threadId = threadIdOf(input);
+  const { s, wc } = requireSession(threadId);
+  if (!previewNavigateAction(wc.getURL()).allow) throw new Error("WebMCP requires a local Browser page");
+  s.webmcp.refs.clear();
+  const generation = s.docGeneration;
+  const raw = await withTimeout(webMcpCall(wc, "tools"), READ_TIMEOUT_MS);
+  if (raw === TIMED_OUT) throw new Error("WebMCP discovery timed out");
+  if (sessions.get(threadId) !== s || generation !== s.docGeneration) throw new Error("WebMCP document changed; discover tools again");
+  if (raw === null) return { available: false, tools: [], skipped: 0, untrusted: true };
+  const data = webMcpJson(raw, 36_864, 23);
+  if (typeof data.documentId !== "string" || data.documentId.length > 128 ||
+      typeof data.available !== "boolean" || !Array.isArray(data.tools) || data.tools.length > 128) {
+    throw new Error("Invalid WebMCP discovery response");
+  }
+  const tools = data.tools.map((tool) => {
+    if (typeof tool.ref !== "string" || !/^w[A-Za-z0-9-]{1,180}$/.test(tool.ref) ||
+        typeof tool.name !== "string" || !/^[A-Za-z0-9_.-]{1,128}$/.test(tool.name) ||
+        typeof tool.description !== "string" || Buffer.byteLength(tool.description) > 4096 ||
+        !tool.inputSchema || tool.inputSchema.type !== "object" || Buffer.byteLength(JSON.stringify(tool.inputSchema)) > 16_384) {
+      throw new Error("Invalid WebMCP tool descriptor");
+    }
+    return {
+      ref: tool.ref, name: tool.name, description: tool.description,
+      inputSchema: webMcpJson(JSON.stringify(tool.inputSchema), 16_384),
+      annotations: {
+        readOnlyHint: tool.annotations?.readOnlyHint === true,
+        consequentialHint: tool.annotations?.consequentialHint === true,
+        untrustedContentHint: true,
+      },
+    };
+  });
+  s.webmcp.refs = new Set(tools.map((t) => t.ref));
+  return { available: data.available, tools, skipped: Math.max(0, Math.min(10000, Number(data.skipped) || 0)), untrusted: true };
+}
+
+async function webmcpInvoke(input) {
+  const threadId = threadIdOf(input);
+  const { s, wc } = requireSession(threadId);
+  const ref = input?.ref;
+  if (!s.webmcp.refs.has(ref)) throw new Error("WebMCP tool is stale; discover tools again");
+  if (!previewNavigateAction(wc.getURL()).allow) throw new Error("WebMCP requires a local Browser page");
+  const args = webMcpJson(JSON.stringify(input.arguments ?? {}), 16_384);
+  if (!args || typeof args !== "object" || Array.isArray(args)) throw new Error("WebMCP arguments must be an object");
+  const id = input.invocationId ?? randomUUID();
+  if (typeof id !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(id)) throw new Error("Invalid WebMCP invocationId");
+  if (s.webmcp.pending.size >= 8 || s.webmcp.pending.has(id)) throw new Error("WebMCP invocation already active or concurrency limit reached");
+  const generation = s.docGeneration;
+  let cancel;
+  const cancelled = new Promise((resolve) => { cancel = () => resolve(TIMED_OUT); });
+  s.webmcp.pending.set(id, cancel);
+  try {
+    const raw = await withTimeout(Promise.race([webMcpCall(wc, "invoke", [ref, args, id]), cancelled]), ACTION_TIMEOUT_MS);
+    if (raw === TIMED_OUT || sessions.get(threadId) !== s || generation !== s.docGeneration) {
+      s.webmcp.refs.clear();
+      void webMcpCall(wc, "cancel", [id]).catch(() => {});
+      return { ok: false, completion: "uncertain", invocationId: id, untrusted: true,
+        message: "WebMCP call timed out, was cancelled, or its document changed. It may have run; observe the page before retrying." };
+    }
+    const data = webMcpJson(raw, 65_560, 21);
+    return { ok: true, completion: "done", invocationId: id, untrusted: true, result: data.result };
+  } catch (error) {
+    // Page errors are untrusted and bounded just like successful results.
+    return { ok: false, completion: "uncertain", invocationId: id, untrusted: true,
+      message: String(error?.message || "WebMCP call failed").slice(0, 500) };
+  } finally {
+    if (s.webmcp.pending.get(id) === cancel) s.webmcp.pending.delete(id);
+  }
+}
+
+function webmcpCancel(input) {
+  const { s, wc } = requireSession(threadIdOf(input));
+  const id = input?.invocationId;
+  const cancel = s.webmcp.pending.get(id);
+  if (cancel) {
+    s.webmcp.refs.clear();
+    cancel();
+    void webMcpCall(wc, "cancel", [id]).catch(() => {});
+  }
+  return { ok: true };
+}
+
 // ---------------------------------------------------------------------------
 // Page functions. These are serialized with toString() and run inside the
 // guest's isolated world, so they must not reference anything outside
@@ -1113,14 +1268,22 @@ function pageAction(input) {
  * Element inspector (#1193). Runs INSIDE the guest page, in an isolated
  * world so page scripts cannot read or patch it. Stringified, so it must not
  * close over anything. Resolves once with { cancelled } or the picked
- * element's description; a second call (cancel or a new pick) settles the
- * pending one as cancelled. Every page activation event is swallowed while
+ * element's description. With a session identity, subsequent calls keep the
+ * blocker and captured element references alive. Every page activation event is swallowed while
  * picking, so selecting a submit button does not submit its form.
  * @param {{ cancel?: boolean, htmlCap: number, textCap: number }} opts
  */
 function guestInspect(opts) {
   const KEY = "__solentaInspect";
   const pending = window[KEY];
+  if (opts.markers) {
+    if (pending && pending.sessionId === opts.sessionId) pending.markers(opts.markers);
+    return { ok: true };
+  }
+  if (pending && opts.sessionId && pending.sessionId === opts.sessionId && !opts.cancel) {
+    return pending.next(opts.annotationId);
+  }
+  if (opts.cancel && opts.sessionId && pending && pending.sessionId !== opts.sessionId) return { cancelled: true };
   if (pending) pending.finish({ cancelled: true });
   if (opts.cancel) return { cancelled: true };
 
@@ -1291,6 +1454,27 @@ function guestInspect(opts) {
     root.append(box, badge);
     (document.body || document.documentElement).appendChild(host);
 
+    let resolvePick = resolve;
+    let annotationId = opts.annotationId;
+    const markers = new Map();
+    let paint = null;
+    const redraw = () => {
+      paint = null;
+      // Read all bounds before writing marker styles.
+      const rows = Array.from(markers.values(), (m) => ({ m, rect: m.el.isConnected ? m.el.getBoundingClientRect() : null }));
+      for (const { m, rect } of rows) {
+        m.badge.style.display = m.committed && rect && rect.width && rect.height ? "block" : "none";
+        if (rect) Object.assign(m.badge.style, { left: `${Math.max(0, rect.left)}px`, top: `${Math.max(0, rect.top)}px` });
+      }
+    };
+    const scheduleDraw = () => { paint ??= requestAnimationFrame(redraw); };
+    const observer = new MutationObserver(scheduleDraw);
+    if (opts.sessionId) {
+      observer.observe(document.documentElement, { subtree: true, childList: true, attributes: true });
+      window.addEventListener("scroll", scheduleDraw, true);
+      window.addEventListener("resize", scheduleDraw);
+    }
+
     let current = null;
     const pickable = (n) => n && n.nodeType === 1 && n !== host && n !== document.documentElement;
     const highlight = (el) => {
@@ -1318,15 +1502,16 @@ function guestInspect(opts) {
     };
     const onBlocked = (e) => {
       swallow(e);
-      if (e.type === "click" && e.button === 0 && pickable(e.target)) select(e.target);
+      if (e.isTrusted && e.type === "click" && e.button === 0 && pickable(e.target)) select(e.target);
     };
     const onMove = (e) => {
-      if (e.target !== current) highlight(e.target);
+      if (e.isTrusted && e.target !== current) highlight(e.target);
     };
     const onFocus = (e) => highlight(e.target);
     const onKeyDown = (e) => {
       if (e.key === "Tab") return;
       swallow(e);
+      if (!e.isTrusted) return;
       if (e.key === "Escape") return finish({ cancelled: true });
       if (e.key === "ArrowUp" && current && pickable(current.parentElement)) {
         highlight(current.parentElement);
@@ -1366,22 +1551,62 @@ function guestInspect(opts) {
       if (done) return;
       done = true;
       listen(false);
+      observer.disconnect();
+      window.removeEventListener("scroll", scheduleDraw, true);
+      window.removeEventListener("resize", scheduleDraw);
+      if (paint !== null) cancelAnimationFrame(paint);
       host.remove();
-      if (window[KEY] === state) delete window[KEY];
+      markers.clear();
+      current = null;
+      // Keep a stopped session tombstone so an in-flight crop cannot restart it.
+      if (window[KEY] === state && !opts.sessionId) delete window[KEY];
       // Two frames so the overlay is gone before main captures the crop.
       const raf = window.requestAnimationFrame || ((cb) => setTimeout(cb, 16));
-      raf(() => raf(() => resolve(result)));
+      const settle = resolvePick;
+      resolvePick = null;
+      raf(() => raf(() => settle?.(result)));
     }
     function select(el) {
+      if (!resolvePick) return;
+      if (opts.sessionId && markers.size >= 100) return finish({ cancelled: true });
       let result;
       try {
         result = describe(el);
       } catch (err) {
         result = { cancelled: true, error: String((err && err.message) || err) };
       }
-      finish(result);
+      if (!opts.sessionId || result.cancelled) return finish(result);
+      const marker = document.createElement("div");
+      marker.style.cssText = "position:fixed;pointer-events:none;border-radius:50%;background:#2563eb;color:white;font:600 12px/22px system-ui;text-align:center;min-width:22px;box-shadow:0 0 0 2px white";
+      root.append(marker);
+      markers.set(annotationId, { el, badge: marker, committed: false });
+      const settle = resolvePick;
+      resolvePick = null;
+      host.style.visibility = "hidden";
+      const raf = window.requestAnimationFrame || ((cb) => setTimeout(cb, 16));
+      raf(() => raf(() => settle(result)));
     }
-    const state = { finish };
+    const state = {
+      finish, sessionId: opts.sessionId,
+      next(id) {
+        if (done) return { cancelled: true };
+        resolvePick?.({ cancelled: true });
+        annotationId = id;
+        host.style.visibility = "visible";
+        box.style.display = badge.style.display = "none";
+        scheduleDraw();
+        return new Promise((next) => { resolvePick = next; });
+      },
+      markers(rows) {
+        if (done) return;
+        const wanted = new Map(rows.map((row) => [row.id, row.number]));
+        for (const [id, marker] of markers) {
+          if (!wanted.has(id) && marker.committed) { marker.badge.remove(); markers.delete(id); }
+          else if (wanted.has(id)) { marker.committed = true; marker.badge.textContent = String(wanted.get(id)); }
+        }
+        scheduleDraw();
+      },
+    };
     window[KEY] = state;
     listen(true);
     if (pickable(document.activeElement) && document.activeElement !== document.body) {
@@ -1397,8 +1622,8 @@ const INSPECT_STYLE_CAP = 32;
 const INSPECT_CROP_PAD = 8;
 const MAX_CROP_EDGE = 800;
 
-function inspectScript(cancel) {
-  const opts = { cancel, htmlCap: INSPECT_HTML_CAP, textCap: INSPECT_TEXT_CAP };
+function inspectScript(cancel, session = {}) {
+  const opts = { ...session, cancel, htmlCap: INSPECT_HTML_CAP, textCap: INSPECT_TEXT_CAP };
   return `(${guestInspect.toString()})(${JSON.stringify(opts)})`;
 }
 
@@ -1508,21 +1733,31 @@ function cropRect(rect, viewport, zoom = 1) {
  * Start an element pick on the bound guest. Resolves when the user selects
  * (click, or Enter on the focused element) or cancels (Escape, cancelInspect,
  * navigation, pane closed).
- * @param {{ threadId?: string }} input
+ * @param {{ threadId?: string, sessionId?: string, annotationId?: string }} input
  */
 async function inspect(input) {
   const threadId = threadIdOf(input);
-  const wc = requireBound(threadId);
+  const { s, wc } = requireSession(threadId);
+  const generation = s.docGeneration;
+  const sessionId = input && input.sessionId;
+  const annotationId = input && input.annotationId;
+  if (sessionId != null || annotationId != null) {
+    if (!inspectId(sessionId) || !inspectId(annotationId)) throw new Error("Invalid annotation identity");
+    if (typeof wc.executeJavaScriptInIsolatedWorld !== "function") throw new Error("Annotations need an isolated preview");
+  }
+  const current = () => sessions.get(threadId) === s && s.docGeneration === generation
+    && !(wc.isDestroyed && wc.isDestroyed()) && navState(wc).url === pageUrl;
   if (typeof wc.executeJavaScript !== "function") {
     throw new Error("Inspect is not available");
   }
-  const pageUrl = navState(wc).url;
+  const initialSnapshot = navState(wc);
+  const pageUrl = initialSnapshot.url;
   if (!pageUrl || pageUrl === "about:blank") {
     throw new Error("Load a page before inspecting");
   }
-  const raw = await untilPageLeaves(wc, runInGuest(wc, inspectScript(false)));
-  if (!raw || raw.cancelled || navState(wc).url !== pageUrl) {
-    return { cancelled: true, ...navState(wc) };
+  const raw = await untilPageLeaves(wc, runInGuest(wc, inspectScript(false, { sessionId, annotationId })));
+  if (!raw || raw.cancelled || !current()) {
+    return { cancelled: true, ...initialSnapshot };
   }
   const element = sanitizePick(raw);
   const zoom = typeof wc.getZoomFactor === "function" ? Number(wc.getZoomFactor()) : 1;
@@ -1540,11 +1775,13 @@ async function inspect(input) {
       cropNote = `Crop failed: ${err instanceof Error ? err.message : String(err)}`;
     }
   }
+  if (!current()) return { cancelled: true, ...initialSnapshot };
   return {
     cancelled: false,
     ...navState(wc),
     url: pageUrl,
     capturedAt: Date.now(),
+    ...(annotationId ? { annotationId } : {}),
     element,
     crop,
     cropRect: rect,
@@ -1572,10 +1809,32 @@ function setAudioMuted(input) {
  * @param {{ threadId?: string }} input
  */
 async function cancelInspect(input) {
+  if (input && input.sessionId != null && !inspectId(input.sessionId)) throw new Error("Invalid annotation identity");
   const wc = requireBound(threadIdOf(input));
   if (typeof wc.executeJavaScript === "function") {
-    await runInGuest(wc, inspectScript(true)).catch(() => {});
+    await runInGuest(wc, inspectScript(true, { sessionId: input && input.sessionId })).catch(() => {});
   }
+  return { ok: true };
+}
+
+function inspectId(value) {
+  return typeof value === "string" && /^[a-zA-Z0-9_-]{1,80}$/.test(value);
+}
+
+/** Update only references captured in this live session; never resolve selectors. */
+async function annotations(input) {
+  const wc = requireBound(threadIdOf(input));
+  if (typeof wc.executeJavaScriptInIsolatedWorld !== "function") throw new Error("Annotations need an isolated preview");
+  if (!inspectId(input.sessionId) || !Array.isArray(input.markers) || input.markers.length > 100) {
+    throw new Error("Invalid annotations");
+  }
+  const markers = input.markers.map((row) => {
+    if (!row || !inspectId(row.id) || !Number.isInteger(row.number) || row.number < 1 || row.number > 100) {
+      throw new Error("Invalid annotation marker");
+    }
+    return { id: row.id, number: row.number };
+  });
+  await runInGuest(wc, inspectScript(false, { sessionId: input.sessionId, markers }));
   return { ok: true };
 }
 
@@ -1601,9 +1860,15 @@ module.exports = {
   viewport,
   click,
   type,
+  webmcpTools,
+  webmcpInvoke,
+  webmcpCancel,
+  webMcpHeadersAllowed,
+  webMcpPolicyAllowed,
   redactUrl,
   inspect,
   cancelInspect,
+  annotations,
   inspectScript,
   cropRect,
   setAudioMuted,

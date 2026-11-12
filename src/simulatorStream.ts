@@ -47,11 +47,47 @@ export function connectSimulatorStream(
 
   let closed = false;
   let decoder: VideoDecoder | null = null;
+  let configuration: Uint8Array | null = null;
+  let pendingFrame: { image: VideoFrame | ImageBitmap; width: number; height: number } | null = null;
+  let paintRequest: number | null = null;
+  let outputGeneration = 0;
   const ws = new WS(opts.info.url) as unknown as SocketLike;
   ws.binaryType = "arraybuffer";
   opts.onStatus?.("connecting");
 
+  // Adapted from Synara's useDeviceVideoStream (c96b828); see native helper NOTICE.md.
+  const paint = () => {
+    paintRequest = null;
+    const frame = pendingFrame;
+    pendingFrame = null;
+    if (!frame) return;
+    try {
+      const context = opts.canvas.getContext("2d");
+      if (!context || closed) return;
+      if (opts.canvas.width !== frame.width || opts.canvas.height !== frame.height) {
+        opts.canvas.width = frame.width;
+        opts.canvas.height = frame.height;
+        opts.onDimensions({ width: frame.width, height: frame.height });
+      }
+      context.drawImage(frame.image, 0, 0);
+    } finally {
+      frame.image.close();
+    }
+  };
+
+  const queueFrame = (image: VideoFrame | ImageBitmap, width: number, height: number) => {
+    pendingFrame?.image.close();
+    pendingFrame = { image, width, height };
+    paintRequest ??= requestAnimationFrame(paint);
+  };
+
   const resetDecoder = () => {
+    outputGeneration += 1;
+    if (paintRequest !== null) cancelAnimationFrame(paintRequest);
+    paintRequest = null;
+    pendingFrame?.image.close();
+    pendingFrame = null;
+    configuration = null;
     if (!decoder) return;
     try {
       decoder.close();
@@ -78,32 +114,31 @@ export function connectSimulatorStream(
       opts.onError?.(new Error("WebCodecs VideoDecoder is unavailable"));
       return;
     }
+    if (decoder && configuration?.length === record.payload.length
+        && configuration.every((byte, index) => byte === record.payload[index])) return;
     resetDecoder();
-    decoder = new VD({
+    const current = new VD({
       output: (frame) => {
-        try {
-          const context = opts.canvas.getContext("2d");
-          if (!context) return;
-          opts.canvas.width = frame.displayWidth;
-          opts.canvas.height = frame.displayHeight;
-          context.drawImage(frame, 0, 0);
-          opts.onDimensions({
-            width: frame.displayWidth,
-            height: frame.displayHeight,
-          });
-        } finally {
+        if (closed || decoder !== current) {
           frame.close();
+          return;
         }
+        outputGeneration += 1;
+        queueFrame(frame, frame.displayWidth, frame.displayHeight);
       },
       error: (err) => {
+        if (closed || decoder !== current) return;
+        resetDecoder();
         opts.onError?.(err);
       },
     });
+    decoder = current;
     decoder.configure({
       codec: codecFromAvcC(record.payload),
       description: record.payload,
       optimizeForLatency: true,
     });
+    configuration = record.payload.slice();
   };
 
   const handleSample = (record: VideoRecord) => {
@@ -119,22 +154,14 @@ export function connectSimulatorStream(
 
   const handleJpeg = async (record: VideoRecord) => {
     if (!makeBitmap) return;
+    const generation = ++outputGeneration;
     const blob = new Blob([record.payload as BlobPart], { type: "image/jpeg" });
     const image = await makeBitmap(blob);
-    if (closed) {
+    if (closed || generation !== outputGeneration) {
       image.close();
       return;
     }
-    const context = opts.canvas.getContext("2d");
-    if (!context) {
-      image.close();
-      return;
-    }
-    opts.canvas.width = image.width;
-    opts.canvas.height = image.height;
-    context.drawImage(image, 0, 0);
-    opts.onDimensions({ width: image.width, height: image.height });
-    image.close();
+    queueFrame(image, image.width, image.height);
   };
 
   const onOpen = () => {

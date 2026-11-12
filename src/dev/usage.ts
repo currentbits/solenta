@@ -8,6 +8,7 @@ import type {
   DigestResult,
   UsageEntry,
   UsageReport,
+  UsageReportInput,
   UsageThreadEntry,
   ProviderUsage,
   WorkLogItem,
@@ -52,7 +53,7 @@ export function createUsage(ctx: DevCtx): Pick<CoderApi, "activity" | "governanc
       },
     },
     usage: {
-      async byDay(): Promise<UsageReport> {
+      async byDay(input?: UsageReportInput): Promise<UsageReport> {
         const cell = (
           costUsd: number,
           inputTokens: number,
@@ -76,6 +77,14 @@ export function createUsage(ctx: DevCtx): Pick<CoderApi, "activity" | "governanc
           const m = String(d.getMonth() + 1).padStart(2, "0");
           const dd = String(d.getDate()).padStart(2, "0");
           return `${y}-${m}-${dd}`;
+        };
+        if (input?.scope === "cli") return {
+          byDay: { [day(0)]: {
+            claude: { "claude-sonnet-4-5": cell(0, 12000, 1600, 12, { cachedInputTokens: 75000, cacheWriteTokens: 8000 }) },
+            codex: { "gpt-5": cell(0, 35000, 2400, 8, { cachedInputTokens: 42000 }) },
+          } },
+          threadsByDay: {},
+          cli: { files: 8, skippedFiles: 0, skippedRecords: 0, partial: false, unpricedModels: ["claude-sonnet-4-5", "gpt-5"] },
         };
         const threadCell = (
           costUsd: number,

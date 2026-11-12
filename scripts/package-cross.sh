@@ -166,7 +166,9 @@ cp core/package.json "$PAYLOAD/core/package.json"
 # ../native/ios-simulator-helper/protocol.json at module load on every
 # platform (main.js requires the chain unconditionally).
 mkdir -p "$PAYLOAD/native"
-cp -R native/ios-simulator-helper "$PAYLOAD/native/ios-simulator-helper"
+# Local Swift builds contain host binaries and absolute build paths.
+tar -C native --exclude=.build --exclude=.swiftpm -cf - ios-simulator-helper \
+  | tar -C "$PAYLOAD/native" -xf -
 
 # App icon. Windows/Linux have no Info.plist, so electron/main.js sets the
 # window icon from these files at runtime; without them the Windows taskbar

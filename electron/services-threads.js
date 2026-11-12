@@ -1942,6 +1942,7 @@ function decorateThread(store, thread, profiles = agentProfilesOf(store)) {
     : null;
   return {
     ...thread,
+    ...(thread.mcpProposals ? { mcpProposals: thread.mcpProposals.map(require("./mcpProposals.js").publicProposal) } : {}),
     sandbox: resolveSandbox({
       provider: thread.provider,
       permissionMode: thread.permissionMode,
@@ -1979,6 +1980,7 @@ function listRow(row) {
   const {
     hypotheses,
     suggestions,
+    mcpProposals,
     lastActivity,
     recap,
     nextPromptSuggestion,

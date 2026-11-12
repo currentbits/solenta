@@ -111,7 +111,11 @@ it.
   server. Screenshot the page into the composer, or let the agent navigate,
   click, type and screenshot it through the `preview` tool, read a page
   snapshot and console/network diagnostics, and switch viewport presets.
-  Inspect picks an element and attaches it as a composer chip. The terminal
+  Agents can discover and invoke a local page's registered WebMCP tools;
+  references expire with the document and page tool changes.
+  Annotate picks several elements in one session, with numbered page markers
+  and editable comments saved in the thread's draft. Esc stops picking; the
+  captured context stays in the composer until you send or remove it. The terminal
   has Find, Clear, Copy and send-selection-to-composer.
 - **Planboard** — a project's plan as its GitHub or GitLab issues. Agents on a GitHub
   origin use the coder-threads tools `issue_create`, `issue_list`,
@@ -130,6 +134,10 @@ it.
   agent tries to install are scanned locally before they land and reported as
   trusted, caution, or blocked. A diff that reaches outside the files the task
   implied is flagged as blast radius. Stored provider keys are encrypted.
+- **Connector proposals in chat** — agents can prepare an MCP add/remove change.
+  Review the command or URL on the owning desktop before approving; enter
+  credentials locally and explicitly trust local commands. Existing connectors
+  and bulk imports are managed in Settings, Skills & MCP.
 - **You own it** — MIT, no Solenta account, no Solenta cloud, local SQLite,
   GitHub issues. The only network traffic is a release check.
 
@@ -365,7 +373,10 @@ The root `package.json` already allows scripts for the pinned Electron version.
   well-formed ones reach `plan:todo` and auto-dispatch.
 - **Usage and fleet analytics** — cost and tokens per provider/model, merge
   rate, review tax, rework and cost per merged PR, and felt vs wall-clock
-  speedup. OTel GenAI spans ship to your tracing backend.
+  speedup. Usage can also read Claude/Codex CLI sessions on the connected host,
+  with configured-price estimates and visible coverage gaps. This separate
+  source includes Solenta-launched sessions; the two reports overlap.
+  OTel GenAI spans ship to your tracing backend.
 - **Morning digest** — one summary of everything that ran unattended.
 - **Agent profiles** — save a provider + model + effort + permission combination
   and apply it in one click. A profile can carry a governance policy
@@ -412,7 +423,8 @@ welcome, and small PRs more so than large ones.
 ## Acknowledgments
 
 Solenta's design and some of its feature ideas are inspired by
-[t3code](https://github.com/pingdotgg/t3code). No code from that project is
-used; everything here is original work under the [MIT license](LICENSE).
+[t3code](https://github.com/pingdotgg/t3code). Code adapted from Synara and
+other simulator projects is documented in the helper's
+[notices](native/ios-simulator-helper/NOTICE.md) and ships with its licenses.
 
 [issues]: https://github.com/currentbits/solenta/issues

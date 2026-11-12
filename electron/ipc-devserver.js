@@ -322,6 +322,18 @@ module.exports = {
     resolveDevServerRoot(ctx, input && input.threadId);
     return preview.diagnostics(input);
   },
+  "preview:webmcpTools": async (ctx, input) => {
+    resolveDevServerRoot(ctx, input && input.threadId);
+    return preview.webmcpTools(input);
+  },
+  "preview:webmcpInvoke": async (ctx, input) => {
+    resolveDevServerRoot(ctx, input && input.threadId);
+    return preview.webmcpInvoke(input);
+  },
+  "preview:webmcpCancel": async (ctx, input) => {
+    resolveDevServerRoot(ctx, input && input.threadId);
+    return preview.webmcpCancel(input);
+  },
   "preview:viewport": async (ctx, input) => {
     resolveDevServerRoot(ctx, input && input.threadId);
     return preview.viewport(input);
@@ -337,5 +349,9 @@ module.exports = {
   "preview:setAudioMuted": async (ctx, input) => {
     resolveDevServerRoot(ctx, input && input.threadId);
     return preview.setAudioMuted(input);
+  },
+  "preview:annotations": async (ctx, input) => {
+    resolveDevServerRoot(ctx, input && input.threadId);
+    return preview.annotations(input);
   },
 };

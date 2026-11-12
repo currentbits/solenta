@@ -3,7 +3,7 @@
  * Run: node --import=./test/support/render.mjs --experimental-strip-types --test test/simulatorStream.test.ts
  */
 import assert from "node:assert/strict";
-import { afterEach, describe, it } from "node:test";
+import { afterEach, beforeEach, describe, it } from "node:test";
 import { encodeVideoRecord } from "../src/simulatorProtocol.ts";
 import { connectSimulatorStream } from "../src/simulatorStream.ts";
 import type { SimulatorStreamInfo } from "../src/shared/ipc";
@@ -15,6 +15,23 @@ const INFO: SimulatorStreamInfo = {
   protocolVersion: 1,
   maxMessageBytes: 4194304,
 };
+
+const originalRequestPaint = globalThis.requestAnimationFrame;
+const originalCancelPaint = globalThis.cancelAnimationFrame;
+let nextPaint = 0;
+const paints = new Map<number, FrameRequestCallback>();
+function paint() {
+  const callbacks = [...paints.values()];
+  paints.clear();
+  callbacks.forEach((callback) => callback(0));
+}
+beforeEach(() => {
+  globalThis.requestAnimationFrame = (callback) => {
+    paints.set(++nextPaint, callback);
+    return nextPaint;
+  };
+  globalThis.cancelAnimationFrame = (id) => { paints.delete(id); };
+});
 
 type FakeFrame = {
   displayWidth: number;
@@ -131,6 +148,9 @@ function record(
 }
 
 afterEach(() => {
+  paints.clear();
+  globalThis.requestAnimationFrame = originalRequestPaint;
+  globalThis.cancelAnimationFrame = originalCancelPaint;
   FakeVideoDecoder.instances = [];
   FakeSocket.instances = [];
 });
@@ -186,6 +206,7 @@ describe("connectSimulatorStream", () => {
       },
     };
     decoder.output(frame);
+    paint();
     assert.equal(canvas.width, 1179);
     assert.equal(canvas.height, 2556);
     assert.equal(canvas.ctx.calls.length, 1);
@@ -216,7 +237,8 @@ describe("connectSimulatorStream", () => {
         this.closed += 1;
       },
     };
-    assert.throws(() => FakeVideoDecoder.instances[0]!.output(frame));
+    FakeVideoDecoder.instances[0]!.output(frame);
+    assert.throws(paint);
     assert.equal(frame.closed, 1);
   });
 
@@ -234,7 +256,7 @@ describe("connectSimulatorStream", () => {
     ws.emitOpen();
     ws.emitBinary(record("avcC"));
     const first = FakeVideoDecoder.instances[0]!;
-    ws.emitBinary(record("avcC", { sequence: 9 }));
+    ws.emitBinary(record("avcC", { sequence: 9, payload: new Uint8Array([1, 0x42, 0, 0x1e]) }));
     assert.equal(first.closeCalls, 1);
     assert.equal(FakeVideoDecoder.instances.length, 2);
     assert.equal(FakeVideoDecoder.instances[1]!.configureCalls.length, 1);
@@ -269,6 +291,7 @@ describe("connectSimulatorStream", () => {
     ws.emitBinary(record("jpeg", { width: 80, height: 160 }));
     await Promise.resolve();
     await Promise.resolve();
+    paint();
     assert.equal(canvas.width, 80);
     assert.equal(canvas.height, 160);
     assert.deepEqual(sizes, [{ width: 80, height: 160 }]);
@@ -297,5 +320,62 @@ describe("connectSimulatorStream", () => {
     ws.emitBinary(record("key"));
     assert.equal(decoder.decodeCalls.length, 0);
     assert.ok(statuses.includes("disconnected"));
+  });
+
+  it("paints only the latest decoded frame and releases superseded GPU buffers", () => {
+    const canvas = fakeCanvas();
+    const handle = connectSimulatorStream({
+      info: INFO, canvas: canvas as unknown as HTMLCanvasElement, onDimensions: () => {},
+      WebSocket: FakeSocket as unknown as typeof WebSocket,
+      VideoDecoder: FakeVideoDecoder as unknown as typeof VideoDecoder,
+    });
+    const ws = FakeSocket.instances[0]!;
+    ws.emitBinary(record("avcC"));
+    const decoder = FakeVideoDecoder.instances[0]!;
+    const frames = Array.from({ length: 8 }, () => ({
+      displayWidth: 10, displayHeight: 20, closed: 0,
+      close() { this.closed += 1; },
+    }));
+    frames.forEach((frame) => decoder.output(frame));
+    assert.equal(canvas.ctx.calls.length, 0);
+    assert.equal(paints.size, 1);
+    assert.ok(frames.slice(0, -1).every((frame) => frame.closed === 1));
+    paint();
+    assert.equal(canvas.ctx.calls.length, 1);
+    assert.equal(canvas.ctx.calls[0]![0], frames[7]);
+    assert.ok(frames.every((frame) => frame.closed === 1));
+    ws.emitBinary(record("avcC"));
+    assert.equal(FakeVideoDecoder.instances.length, 1, "unchanged parameters retain the decoder");
+    const pending = { ...frames[0]!, closed: 0 };
+    decoder.output(pending);
+    handle.disconnect();
+    assert.equal(pending.closed, 1);
+    assert.equal(paints.size, 0);
+    const stale = { ...pending, closed: 0 };
+    decoder.output(stale);
+    assert.equal(stale.closed, 1);
+    assert.equal(paints.size, 0);
+  });
+
+  it("does not let a late JPEG seed overwrite a newer decoded frame", async () => {
+    const canvas = fakeCanvas();
+    let resolveBitmap!: (bitmap: ImageBitmap) => void;
+    connectSimulatorStream({
+      info: INFO, canvas: canvas as unknown as HTMLCanvasElement, onDimensions: () => {},
+      WebSocket: FakeSocket as unknown as typeof WebSocket,
+      VideoDecoder: FakeVideoDecoder as unknown as typeof VideoDecoder,
+      createImageBitmap: () => new Promise((resolve) => { resolveBitmap = resolve; }),
+    });
+    const ws = FakeSocket.instances[0]!;
+    ws.emitBinary(record("avcC"));
+    ws.emitBinary(record("jpeg"));
+    const frame = { displayWidth: 10, displayHeight: 20, closed: 0, close() { this.closed += 1; } };
+    FakeVideoDecoder.instances[0]!.output(frame);
+    const bitmap = { width: 10, height: 20, closed: 0, close() { this.closed += 1; } };
+    resolveBitmap(bitmap as unknown as ImageBitmap);
+    await Promise.resolve();
+    assert.equal(bitmap.closed, 1);
+    paint();
+    assert.equal(canvas.ctx.calls[0]![0], frame);
   });
 });

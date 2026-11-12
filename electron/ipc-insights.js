@@ -3,6 +3,7 @@
 const { buildActivity } = require("./activity.js");
 const { collectDigest } = require("./digest.js");
 const { collectFleet } = require("./fleet.js");
+const cliUsage = require("./cli-session-usage.js").createCliUsageReader();
 
 /** IPC_HANDLERS rows for activity:*, governance:*, usage:*, insights:*, fleet:*, digest:*; ipc.js spreads them in. */
 module.exports = {
@@ -15,7 +16,15 @@ module.exports = {
     const threads = ctx.store.getThreads();
     return buildActivity(threads, ctx.store.data.workLogByThread, Date.now());
   },
-  "usage:byDay": async (ctx) => {
+  "usage:byDay": async (ctx, input) => {
+    const scope = input?.scope ?? "solenta";
+    if (scope !== "solenta" && scope !== "cli") throw new Error("Invalid usage scope");
+    if (scope === "cli") {
+      return cliUsage.read({
+        instances: require("./services.js").instanceAuthProbes(ctx.store, ctx.userDataPath),
+        prices: ctx.store.getSettings().modelPrices,
+      });
+    }
     const { applyModelPrices } = require("./modelPrices.js");
     return applyModelPrices(
       {

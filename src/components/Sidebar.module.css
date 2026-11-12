@@ -1238,6 +1238,31 @@
   display: block;
 }
 
+.draftBadge {
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.draftBadge:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+
+.draftTip {
+  width: min(240px, 65vw);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.draftTip::before {
+  content: "";
+  position: absolute;
+  inset: -6px 0 auto;
+  height: 6px;
+}
+
 /* Pinned threads end with a gap, not a rule. */
 .pinnedDivider {
   display: none;

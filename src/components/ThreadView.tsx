@@ -25,6 +25,7 @@ import { resolveDefaultWorktree } from "../projectDefaults";
 import { deriveBackgroundJobs } from "../backgroundJobs";
 import { WorkspaceStrip } from "./WorkspaceStrip";
 import { ProjectIcon } from "./ProjectIcon";
+import { McpProposalCard } from "./McpProposalCard";
 import {
   hasPaneType,
   hydratePaneLayout,
@@ -724,6 +725,7 @@ interface ThreadViewProps {
     projectPath: string;
     number: number;
   }) => Promise<DiscussionDetailForMentionResult>;
+  onResolveMcpProposal?: CoderApi["mcp"]["resolveProposal"];
   /** Desktop-only iOS Simulator pane (#248). */
   simulator?: CoderApi["simulator"] | null;
   simulatorStatus?: SimulatorStatus | null;
@@ -1097,6 +1099,7 @@ export const ThreadView = memo(function ThreadView({
   onStartSuggestion,
   onFileSuggestion,
   onDismissSuggestion,
+  onResolveMcpProposal,
   onOpenAutomations,
   onIntegrateWorker,
   handoffSource = null,
@@ -2419,10 +2422,11 @@ export const ThreadView = memo(function ThreadView({
       const cropAttached = pick.crop
         ? await attachBrowserScreenshot(pick.crop, originThreadId)
         : false;
-      const id =
+      const id = pick.annotationId ?? (
         typeof crypto !== "undefined" && crypto.randomUUID
           ? crypto.randomUUID()
-          : `element-${Date.now()}`;
+          : `element-${Date.now()}`
+      );
       setContextChips(originThreadId, (prev) => [
         ...prev,
         elementChip(id, originThreadId, pick, cropAttached, comment),
@@ -5351,6 +5355,10 @@ export const ThreadView = memo(function ThreadView({
           onFile={onFileSuggestion}
           onDismiss={onDismissSuggestion}
         />
+
+        {thread.mcpProposals?.map((proposal) => (
+          <McpProposalCard key={`${thread.id}:${proposal.id}`} threadId={thread.id} proposal={proposal} onResolve={onResolveMcpProposal} />
+        ))}
 
         {thread.spec && !thread.ask ? (
           <SpecCard

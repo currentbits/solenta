@@ -168,6 +168,7 @@ export function createMcp(ctx: DevCtx): Pick<CoderApi, "mcp"> {
 
   return {
     mcp: {
+      async resolveProposal() { throw new Error("MCP proposals require the owning desktop app"); },
       async list(): Promise<McpServerDefinition[]> {
         return redactMcpServers(ctx.mcpServers) as unknown as McpServerDefinition[];
       },

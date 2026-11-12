@@ -1316,6 +1316,8 @@ export interface ThreadInfo {
    * until an agent suggests something.
    */
   suggestions?: WorkSuggestion[];
+  /** Inert connector changes awaiting review on the owning desktop. */
+  mcpProposals?: McpProposal[];
   /**
    * Spec mode (issue #269): the thread writes three gated artifacts before it
    * writes code. Absent = normal thread. Set by threads.startSpec, advanced
@@ -2099,7 +2101,17 @@ export type UsageThreadsByDay = Record<
 export interface UsageReport {
   byDay: UsageByDay;
   threadsByDay: UsageThreadsByDay;
+  /** Read-only CLI scan provenance; never part of the spend ledger. */
+  cli?: {
+    files: number;
+    skippedFiles: number;
+    skippedRecords: number;
+    partial: boolean;
+    unpricedModels: string[];
+  };
 }
+
+export interface UsageReportInput { scope?: "solenta" | "cli" }
 
 /**
  * One provider-reported quota window (5-hour, weekly, …).
@@ -3025,6 +3037,29 @@ export interface PreviewActionResult extends PreviewSnapshot {
   message?: string;
 }
 
+/** Page-provided WebMCP metadata and results are always untrusted. */
+export interface PreviewWebMcpTools {
+  available: boolean;
+  untrusted: true;
+  skipped: number;
+  tools: {
+    ref: string;
+    name: string;
+    description: string;
+    inputSchema: Record<string, unknown>;
+    annotations: { readOnlyHint: boolean; consequentialHint: boolean; untrustedContentHint: true };
+  }[];
+}
+
+export interface PreviewWebMcpResult {
+  ok: boolean;
+  completion: "done" | "uncertain";
+  invocationId: string;
+  untrusted: true;
+  result?: unknown;
+  message?: string;
+}
+
 /** One visible control or landmark in a semantic snapshot. */
 export interface PreviewSnapshotNode {
   /** Valid only for this snapshot of this document, e.g. "s3e12". */
@@ -3117,6 +3152,8 @@ export type PreviewInspectResult =
   | (PreviewSnapshot & {
       cancelled: false;
       capturedAt: number;
+      /** Identity supplied by the annotation session, never a page selector. */
+      annotationId?: string;
       element: PreviewInspectElement;
       /** PNG data URL of the element crop, at most 800px per edge. */
       crop: string | null;
@@ -5289,6 +5326,34 @@ export interface McpInstallResult {
   installed: Array<McpServerDefinition | string>;
 }
 
+/** Credential values are supplied only during desktop approval, never here. */
+export interface McpProposal {
+  id: string;
+  reviewToken: string;
+  action: "add" | "remove";
+  status: "pending" | "approved" | "dismissed" | "stale";
+  at: number;
+  config: {
+    name: string;
+    transport?: "stdio" | "http" | "sse";
+    command?: string;
+    args?: string[];
+    cwd?: string;
+    url?: string;
+    envNames?: string[];
+    headerNames?: string[];
+  };
+}
+
+export interface McpProposalResolution {
+  threadId: string;
+  proposalId: string;
+  resolution: "approved" | "dismissed";
+  trustLocal?: boolean;
+  reviewToken?: string;
+  secrets?: Record<string, string>;
+}
+
 /** A CLI custom agent a thread can run as (#172). */
 export interface CliAgentInfo {
   name: string;
@@ -6077,6 +6142,8 @@ export interface CoderApi {
     pickImport(): Promise<McpImportPreview | null>;
     previewImport(input: McpPreviewImportInput): Promise<McpImportPreview>;
     installImport(input: McpInstallRequest): Promise<McpInstallResult>;
+    /** Only the owning desktop transport may approve/dismiss proposals. */
+    resolveProposal(input: McpProposalResolution): Promise<McpProposal>;
     discardImport(input: { previewId: string }): Promise<void>;
     /**
      * MCP OAuth sign-in for a remote server (#1720): opens the browser and
@@ -7116,7 +7183,7 @@ export interface CoderApi {
   };
   usage: {
     /** Per-day usage ledger, by provider/model and by thread (90 days). */
-    byDay(): Promise<UsageReport>;
+    byDay(input?: UsageReportInput): Promise<UsageReport>;
     /**
      * Provider-reported account quotas (5-hour / weekly when the vendor
      * exposes them). Separate from byDay; never inferred from local spend.
@@ -8081,6 +8148,14 @@ export interface CoderApi {
     snapshot(input: { threadId: string }): Promise<PreviewPageSnapshot>;
     /** Bounded console and request-outcome rings since the pane bound. */
     diagnostics(input: { threadId: string }): Promise<PreviewDiagnostics>;
+    webmcpTools(input: { threadId: string }): Promise<PreviewWebMcpTools>;
+    webmcpInvoke(input: {
+      threadId: string;
+      ref: string;
+      arguments?: Record<string, unknown>;
+      invocationId?: string;
+    }): Promise<PreviewWebMcpResult>;
+    webmcpCancel(input: { threadId: string; invocationId: string }): Promise<{ ok: boolean }>;
     viewport(input: {
       threadId: string;
       preset: PreviewViewportPreset;
@@ -8089,8 +8164,13 @@ export interface CoderApi {
      * Pick one element on the visible page (#1193). Settles when the user
      * selects or cancels (Escape, cancelInspect, navigation, pane closed).
      */
-    inspect(input: { threadId: string }): Promise<PreviewInspectResult>;
-    cancelInspect(input: { threadId: string }): Promise<{ ok: boolean }>;
+    inspect(input: { threadId: string; sessionId?: string; annotationId?: string }): Promise<PreviewInspectResult>;
+    cancelInspect(input: { threadId: string; sessionId?: string }): Promise<{ ok: boolean }>;
+    annotations(input: {
+      threadId: string;
+      sessionId: string;
+      markers: { id: string; number: number }[];
+    }): Promise<{ ok: boolean }>;
     /** Mute/unmute the bound guest's audio from the sidebar indicator (#1807). */
     setAudioMuted(input: { threadId: string; muted: boolean }): Promise<{ ok: boolean; muted: boolean }>;
   };

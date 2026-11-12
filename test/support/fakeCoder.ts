@@ -349,6 +349,7 @@ export interface FakeOptions {
   insights?: FailureMode[];
   /** Override usage.byDay (default: empty ledger). */
   usage?: UsageReport;
+  cliUsage?: UsageReport;
   /** Solenta Web (#1512 I2). Default: off, no devices, no Tailscale. */
   webAccess?: WebAccessStatus;
 }
@@ -1235,6 +1236,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         }),
     },
     mcp: {
+      resolveProposal: async () => { throw new Error("MCP proposal fixture unavailable"); },
       list: () =>
         rec(
           "mcp.list",
@@ -3380,11 +3382,11 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       },
     },
     usage: {
-      byDay: () =>
+      byDay: (input) =>
         rec(
           "usage.byDay",
-          [],
-          opts.usage ?? ({ byDay: {}, threadsByDay: {} } as UsageReport),
+          input ? [input] : [],
+          (input?.scope === "cli" ? opts.cliUsage : opts.usage) ?? ({ byDay: {}, threadsByDay: {} } as UsageReport),
         ),
       providerLimits: () => rec("usage.providerLimits", [], [] as ProviderUsage[]),
     },
@@ -4309,6 +4311,11 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         simMutate("simulator.stopRecording", [input], {}),
     },
     preview: {
+      webmcpTools: (input: unknown) => rec("preview.webmcpTools", [input], {
+        available: false, tools: [], skipped: 0, untrusted: true as const,
+      }),
+      webmcpInvoke: async () => { throw new Error("WebMCP fixture unavailable"); },
+      webmcpCancel: (input: unknown) => rec("preview.webmcpCancel", [input], { ok: true }),
       bind: (input: unknown) =>
         rec("preview.bind", [input], {
           url: "",

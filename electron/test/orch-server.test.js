@@ -234,7 +234,7 @@ describe("preview MCP tool (issue #155)", () => {
     const calls = [];
     const deps = makeDeps();
     deps.preview = Object.fromEntries(
-      ["snapshot", "diagnostics", "viewport", "click", "type"].map((name) => [
+      ["snapshot", "diagnostics", "viewport", "click", "type", "webmcpTools", "webmcpInvoke", "webmcpCancel"].map((name) => [
         name,
         async (input) => {
           calls.push([name, input]);
@@ -249,12 +249,18 @@ describe("preview MCP tool (issue #155)", () => {
     await h.preview({ ...base, action: "viewport", preset: "mobile" });
     await h.preview({ ...base, action: "click", ref: "s1e2" });
     await h.preview({ ...base, action: "type", ref: "s1e3", text: "a@b.co" });
+    await h.preview({ ...base, action: "webmcp_tools" });
+    await h.preview({ ...base, action: "webmcp_invoke", ref: "w123", arguments: { text: "test" }, invocationId: "call1" });
+    await h.preview({ ...base, action: "webmcp_cancel", invocationId: "call1" });
     assert.deepEqual(calls, [
       ["snapshot", { threadId: "t1" }],
       ["diagnostics", { threadId: "t1" }],
       ["viewport", { threadId: "t1", preset: "mobile" }],
       ["click", { threadId: "t1", selector: undefined, ref: "s1e2" }],
       ["type", { threadId: "t1", selector: undefined, ref: "s1e3", text: "a@b.co" }],
+      ["webmcpTools", { threadId: "t1" }],
+      ["webmcpInvoke", { threadId: "t1", ref: "w123", arguments: { text: "test" }, invocationId: "call1" }],
+      ["webmcpCancel", { threadId: "t1", invocationId: "call1" }],
     ]);
   });
 
@@ -310,6 +316,23 @@ describe("preview MCP tool: per-thread browser access (#1797)", () => {
     deps.store.updateThread("t1", { browserAccess: true });
     const out = await h.preview({ threadId: "t1", projectId: "p1", action: "info" });
     assert.deepEqual(out, { ok: true });
+  });
+});
+
+describe("MCP connector proposals", () => {
+  it("only records a proposal for the bound own thread and cannot approve it", async () => {
+    const deps = makeDeps();
+    const handlers = createToolHandlers({ ...deps, boundThreadId: "t1", boundProjectId: "p1" });
+    const input = { threadId: "t1", projectId: "p1", action: "add", config: {
+      name: "test-tools", transport: "http", url: "https://tools.example/mcp",
+    } };
+    const response = await handlers.mcp_propose(input);
+    assert.equal(response.status, "pending");
+    assert.equal(deps.store.getThread("t1").mcpProposals[0].status, "pending");
+    assert.equal(deps.store.getSettings().mcpServers, undefined);
+    assert.equal(handlers.mcp_approve, undefined);
+    await assert.rejects(handlers.mcp_propose({ ...input, threadId: "t2" }), /own|bound|not/);
+    await assert.rejects(handlers.mcp_propose({ ...input, threadId: "t3", projectId: "p2" }), /own|bound|not/);
   });
 });
 
@@ -1614,12 +1637,23 @@ describe("orch-server HTTP", () => {
     assert.ok(autoSchema.properties.preset.enum.includes("cron"));
     const linkSchema = list.body.result.tools.find((t) => t.name === "link_pull_request").inputSchema;
     assert.equal(linkSchema.properties.primary.type, "boolean");
+    const previewSchema = list.body.result.tools.find((t) => t.name === "preview").inputSchema;
+    for (const action of ["webmcp_tools", "webmcp_invoke", "webmcp_cancel"]) {
+      assert.ok(previewSchema.properties.action.enum.includes(action));
+    }
+    assert.equal(previewSchema.properties.arguments.type, "object");
+    assert.equal(previewSchema.properties.invocationId.maxLength, 128);
+    const proposalSchema = list.body.result.tools.find((t) => t.name === "mcp_propose").inputSchema;
+    assert.deepEqual(proposalSchema.properties.action.enum, ["add", "remove"]);
+    assert.equal(proposalSchema.properties.config.additionalProperties, false);
+    assert.ok(!proposalSchema.properties.config.properties.token);
     const names = list.body.result.tools.map((t) => t.name).sort();
     assert.deepEqual(names, [
       "ask_user",
       "automation_create",
       "hypothesis_record",
       "link_pull_request",
+      "mcp_propose",
       "peer_send",
       "preview",
       "refresh_worker_snapshot",

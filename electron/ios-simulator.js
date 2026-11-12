@@ -70,6 +70,12 @@ function disconnectedHelperState() {
 }
 
 function mapHelperError(code) {
+  if (code === "input_not_delivered") {
+    return iosError("capability_unavailable", "Simulator input service is unavailable; no input was sent");
+  }
+  if (code === "input_delivery_uncertain") {
+    return iosError("unexpected", "Simulator input may have been partially delivered. Check the device before retrying.");
+  }
   if (code === "generation_mismatch" || code === "token_mismatch") {
     return leaseStale();
   }

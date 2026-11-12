@@ -228,6 +228,18 @@ describe("bridge enforces scopes on the host", () => {
     }
   });
 
+  it("read-only clients discover WebMCP but cannot invoke or cancel page tools", async () => {
+    const s = await listen();
+    try {
+      const reader = await client(s.url, "t-read");
+      assert.equal((await reader.invoke("preview:webmcpTools")).result, "ok");
+      assert.match((await reader.invoke("preview:webmcpInvoke")).error, /needs preview access/);
+      assert.match((await reader.invoke("preview:webmcpCancel")).error, /needs preview access/);
+      assert.deepEqual(s.called, ["preview:webmcpTools"]);
+      reader.ws.close();
+    } finally { await s.close(); }
+  });
+
   it("terminal:data reaches only devices with terminal access", async () => {
     const s = await listen();
     try {

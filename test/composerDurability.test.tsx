@@ -11,6 +11,7 @@ import {
   DRAFTS_SAVE_MS,
   DRAFTS_STORAGE_KEY,
   flushDraftSave,
+  getDraftPreview,
   hydrateComposerSession,
   keptAttachments,
   keptDrafts,
@@ -249,6 +250,37 @@ describe("↑ recalls sent prompts", () => {
     await m.type(textarea(m), "b edited");
     await m.press(textarea(m), "ArrowUp");
     assert.equal(textarea(m).value, "b edited");
+  });
+
+  it("keeps recalled history transient until edited, including across a restart", async () => {
+    const sends: string[] = [];
+    const m = await mountComposer({ sends });
+    await sendAll(m, ["already sent"]);
+    await m.press(textarea(m), "ArrowUp");
+    assert.equal(textarea(m).value, "already sent");
+    assert.equal(getDraftPreview("t1"), "");
+    flushDraftSave();
+    assert.equal(JSON.parse(window.localStorage.getItem(DRAFTS_STORAGE_KEY)!).t1.text, undefined);
+    m.unmount();
+    restart();
+    const back = await mountComposer({ sends });
+    assert.equal(textarea(back).value, "");
+    await back.press(textarea(back), "ArrowUp");
+    await back.type(textarea(back), "already sent, with changes");
+    assert.equal(getDraftPreview("t1"), "already sent, with changes");
+    await back.press(textarea(back), "Enter", { metaKey: true });
+    assert.equal(sends.at(-1), "already sent, with changes");
+    assert.equal(getDraftPreview("t1"), "");
+  });
+
+  it("can send recalled text directly without creating a saved draft", async () => {
+    const sends: string[] = [];
+    const m = await mountComposer({ sends });
+    await sendAll(m, ["again"]);
+    await m.press(textarea(m), "ArrowUp");
+    await m.press(textarea(m), "Enter", { metaKey: true });
+    assert.deepEqual(sends, ["again", "again"]);
+    assert.equal(getDraftPreview("t1"), "");
   });
 
   it("keeps history per thread and across a restart", async () => {

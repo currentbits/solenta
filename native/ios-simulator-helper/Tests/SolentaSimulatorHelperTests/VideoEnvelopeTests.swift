@@ -84,6 +84,7 @@ final class VideoEnvelopeTests: XCTestCase {
       XCTAssertEqual(error as? VideoEncoderError, .reservedNonzero)
     }
 
+    record[6] = 0
     XCTAssertThrowsError(try VideoEncoder.decode(record.subdata(in: 0..<(record.count - 1)))) { error in
       XCTAssertEqual(error as? VideoEncoderError, .lengthMismatch)
     }

@@ -668,8 +668,8 @@ export const Composer = memo(function Composer({
     [threadId, syncHasPrompt, syncOverflow, onComposerActivity],
   );
   const writeDraft = useCallback(
-    (text: string, caret?: number) => {
-      setDraftText(threadId, text);
+    (text: string, caret?: number, persist = true) => {
+      if (persist) setDraftText(threadId, text);
       const el = textareaRef.current;
       if (el) {
         el.value = text;
@@ -1636,7 +1636,8 @@ export const Composer = memo(function Composer({
     }
     recallIndexRef.current = next;
     const text = next == null ? "" : history[next]!;
-    writeDraft(text, text.length);
+    // Browsing sent prompts is transient until the user edits or sends one.
+    writeDraft(text, text.length, false);
     return true;
   };
 

@@ -230,7 +230,7 @@
   font-size: 12px;
 }
 
-/* Pending pick (#1193). Scrolls inside the pane so narrow splits keep the page. */
+/* Annotation drafts scroll inside the pane so narrow splits keep the page. */
 .pick {
   flex-shrink: 0;
   display: flex;
@@ -252,6 +252,19 @@
   min-width: 0;
 }
 
+.annotations {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.annotations li {
+  display: grid;
+  gap: 6px;
+}
+
 .pickLabel {
   color: var(--text);
   font-family: var(--mono);
@@ -269,24 +282,8 @@
   font-size: 11px;
 }
 
-.pickBody {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  min-width: 0;
-}
-
-.pickCrop {
-  max-width: min(240px, 100%);
-  max-height: 120px;
-  object-fit: contain;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg);
-}
-
 .pickComment {
-  flex: 1 1 160px;
+  width: 100%;
   min-width: 0;
   padding: 5px 8px;
   border: 1px solid var(--border);
@@ -310,12 +307,6 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   color: var(--text-muted);
-}
-
-.pickActions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
 }
 
 .pickComment:focus-visible,

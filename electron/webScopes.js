@@ -134,6 +134,7 @@ const BY_SCOPE = {
     "preview:originalScreenshot",
     "preview:snapshot",
     "preview:diagnostics",
+    "preview:webmcpTools",
     "speech:status",
   ],
   steer: [
@@ -298,12 +299,15 @@ const BY_SCOPE = {
     "preview:goForward",
     "preview:click",
     "preview:type",
+    "preview:webmcpInvoke",
+    "preview:webmcpCancel",
     "preview:viewport",
     // Inspect reads the guest DOM the user points at (#1193).
     "preview:inspect",
     "preview:cancelInspect",
     // Mute a thread's browser tab from the sidebar speaker icon (#1807).
     "preview:setAudioMuted",
+    "preview:annotations",
     "devserver:start",
     "devserver:stop",
   ],
@@ -364,6 +368,7 @@ const BY_SCOPE = {
     // mcp:save registers a command to spawn; pairing:* mints or approves tokens.
     "mcp:save",
     "mcp:installImport",
+    "mcp:resolveProposal",
     "mcp:pairXcode",
     // Opens the host's browser and listens on a host loopback port.
     "mcp:oauthConnect",

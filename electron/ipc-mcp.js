@@ -113,6 +113,17 @@ async function listWithPublic(ctx) {
 
 /** IPC_HANDLERS rows for mcp:*, pairing:*; ipc.js spreads them in. */
 const handlers = {
+  "mcp:resolveProposal": async (ctx, input) => {
+    try {
+      const result = require("./mcpProposals.js").resolveProposal(ctx, input);
+      if (result.status === "approved") {
+        syncUserMcpServers(ctx.store.getSettings().mcpServers, { userDataPath: ctx.userDataPath });
+      }
+      return result;
+    } finally {
+      try { if (input?.threadId) ctx.runner?.refreshDetail?.(input.threadId); } catch { /* next detail read recovers */ }
+    }
+  },
   "mcp:list": async (ctx) => {
     const settings = services.getSettings(ctx.store);
     return redactMcpServers(settings.mcpServers);

@@ -11,6 +11,7 @@ let package = Package(
     .target(
       name: "SimulatorPrivateBridge",
       publicHeadersPath: "include",
+      cSettings: [.unsafeFlags(["-fobjc-arc"])],
       linkerSettings: [
         .linkedFramework("Foundation"),
         .linkedFramework("CoreMedia"),
