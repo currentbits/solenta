@@ -91,13 +91,18 @@ id SHInvokeObjObjError(id target, SEL sel, id arg, NSError **err) {
   return ((Fn)imp)(target, sel, arg, err);
 }
 
-static BOOL hasSimulatorKit(const char *developerDir) {
+static NSString *simulatorKitPath(const char *developerDir) {
   if (developerDir == NULL || developerDir[0] != '/') {
-    return NO;
+    return nil;
   }
-  NSString *path = [[NSString stringWithUTF8String:developerDir]
-    stringByAppendingPathComponent:@"Library/PrivateFrameworks/SimulatorKit.framework/SimulatorKit"];
-  return [[NSFileManager defaultManager] isReadableFileAtPath:path];
+  NSString *dir = [NSString stringWithUTF8String:developerDir];
+  for (NSString *path in @[
+    [dir stringByAppendingPathComponent:@"Library/PrivateFrameworks/SimulatorKit.framework/SimulatorKit"],
+    [[dir stringByDeletingLastPathComponent] stringByAppendingPathComponent:@"SharedFrameworks/SimulatorKit.framework/SimulatorKit"]
+  ]) {
+    if ([[NSFileManager defaultManager] isReadableFileAtPath:path]) return path;
+  }
+  return nil;
 }
 
 static void *openFramework(const char *path) {
@@ -338,6 +343,12 @@ BOOL SHEnsureHIDClient(SHPrivateContextRef ctx) {
   if (ctx->simDevice == nil && !SHResolveDevice(ctx)) {
     return NO;
   }
+  if (ctx->usesDTUHID) {
+    if (ctx->dtuhid == nil) {
+      ctx->dtuhid = [[SynaraDTUHIDTransport alloc] initWithDevice:ctx->simDevice];
+    }
+    return YES;
+  }
   Class cls = hidClientClass();
   if (cls == Nil) {
     return NO;
@@ -400,13 +411,18 @@ static void probeCapabilities(SHPrivateContextRef ctx) {
   BOOL kit = ctx->simKitHandle != NULL;
   BOOL core = ctx->coreSimHandle != NULL && probeCoreSimulator();
   BOOL io = probeIOClient();
-  BOOL hid = kit && probeHIDClient();
+  ctx->usesDTUHID = core && SynaraCoreSimulatorUsesDTUHID();
+  BOOL dtuhid = ctx->usesDTUHID
+    && dlsym(RTLD_DEFAULT, "xpc_endpoint_create_mach_port_4sim") != NULL
+    && dlsym(RTLD_DEFAULT, "xpc_connection_enable_sim2host_4sim") != NULL
+    && SHMethodShapeMatches(NSClassFromString(@"SimDevice"), NSSelectorFromString(@"lookup:error:"), 'I', 4, NO);
+  BOOL hid = kit && !ctx->usesDTUHID && probeHIDClient();
   BOOL axp = ctx->axpHandle != NULL && probeAXP();
 
   ctx->caps.stream = kit && core && io;
-  ctx->caps.touch = hid && ctx->mouseFn != NULL;
-  ctx->caps.keyboard = hid && ctx->hidArbFn != NULL;
-  ctx->caps.hardwareButtons = hid && ctx->buttonFn != NULL && ctx->hidArbFn != NULL;
+  ctx->caps.touch = dtuhid || (hid && ctx->mouseFn != NULL);
+  ctx->caps.keyboard = dtuhid || (hid && ctx->hidArbFn != NULL);
+  ctx->caps.hardwareButtons = dtuhid || (hid && ctx->buttonFn != NULL && ctx->hidArbFn != NULL);
   ctx->caps.accessibility = axp && core;
 }
 
@@ -432,7 +448,8 @@ SHPrivateContextRef SHCreatePrivateContext(
     ctx->udid = strdup(udid);
   }
 
-  if (hasSimulatorKit(ctx->developerDir)) {
+  NSString *kitPath = simulatorKitPath(ctx->developerDir);
+  if (kitPath != nil) {
     ctx->coreSimHandle = openFramework(
       "/Library/Developer/PrivateFrameworks/CoreSimulator.framework/CoreSimulator"
     );
@@ -440,8 +457,6 @@ SHPrivateContextRef SHCreatePrivateContext(
       "/Library/Developer/PrivateFrameworks/CoreSimulator.framework/Frameworks/"
       "CoreSimDeviceIO.framework/CoreSimDeviceIO"
     );
-    NSString *kitPath = [[NSString stringWithUTF8String:ctx->developerDir]
-      stringByAppendingPathComponent:@"Library/PrivateFrameworks/SimulatorKit.framework/SimulatorKit"];
     ctx->simKitHandle = openFramework([kitPath fileSystemRepresentation]);
     NSBundle *render = [NSBundle bundleWithPath:
       @"/Library/Developer/PrivateFrameworks/CoreSimulator.framework/Resources/"
@@ -470,6 +485,7 @@ SHPrivateContextRef SHCreatePrivateContext(
   if (ctx->udid && (ctx->caps.stream || ctx->caps.touch || ctx->caps.keyboard
                     || ctx->caps.hardwareButtons || ctx->caps.accessibility)) {
     (void)SHResolveDevice(ctx);
+    if (ctx->usesDTUHID) (void)SHEnsureHIDClient(ctx);
   }
   return ctx;
 }
@@ -479,6 +495,8 @@ void SHDestroyPrivateContext(SHPrivateContextRef ctx) {
     return;
   }
   SHStopCaptureLocked(ctx);
+  [ctx->dtuhid invalidate];
+  ctx->dtuhid = nil;
   ctx->hidClient = nil;
   ctx->simDevice = nil;
   ctx->ioClient = nil;

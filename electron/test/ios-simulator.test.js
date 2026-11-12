@@ -5928,6 +5928,24 @@ describe("createIOSSimulatorService helper session", () => {
     tmpDirs = [];
   });
 
+  for (const [code, message] of [
+    ["input_not_delivered", "no input was sent"],
+    ["input_delivery_uncertain", "partially delivered"],
+  ]) {
+    it(`surfaces ${code} without retrying native input`, async () => {
+      const harness = makeHelperHarness({ helperOpts: {
+        onRequest(value) {
+          if (value.method === "touch") return { raw: encodeControl({ id: value.id, ok: false, error: code }) };
+        },
+      } });
+      const attached = await harness.service.attach({ threadId: "t1", deviceUdid: DEVICE_UDID });
+      await assert.rejects(harness.service.tap({ threadId: "t1", generation: attached.generation, x: 10, y: 20 }),
+        (error) => error.message.includes(message));
+      assert.equal(harness.fake.requests.filter((request) => request.method === "touch").length, 1);
+      await harness.service.shutdown();
+    });
+  }
+
   it("spawns the helper on attach with inherited FD 3/4 and sandboxed argv", async () => {
     const harness = makeHelperHarness();
     const attached = await harness.service.attach({
@@ -6434,4 +6452,3 @@ describe("createIOSSimulatorService helper session", () => {
     assert.equal(fs.existsSync(journalPath(harness.userDataPath)), false);
   });
 });
-

@@ -97,6 +97,7 @@ final class HelperSession: @unchecked Sendable {
       return
     }
 
+    SHBeginInput(privateContext)
     switch request.method {
     case "handshake":
       generation = request.generation
@@ -219,7 +220,9 @@ final class HelperSession: @unchecked Sendable {
     if !connected.0 {
       return connected
     }
-    return startCapture()
+    let capture = startCapture()
+    if !capture.0 { closeVideo() }
+    return capture
   }
 
   /// Long-lived config for the helper→broker video socket (mostly one-way after auth).

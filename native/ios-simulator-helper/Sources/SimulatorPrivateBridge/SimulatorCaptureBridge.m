@@ -1,5 +1,23 @@
 #import "SHPrivateContextInternal.h"
 
+@interface SHCaptureState : NSObject
+@property(nonatomic, assign) SHPrivateContextRef context;
+@end
+@implementation SHCaptureState
+@end
+
+static BOOL modernCallbackOK(id descriptor, NSString *name, NSString *removeName) {
+  SEL selector = NSSelectorFromString(name);
+  // CoreSimulator's ROCK proxies forward these methods without class IMPs.
+  NSMethodSignature *signature = [descriptor methodSignatureForSelector:selector];
+  NSMethodSignature *remove = [descriptor methodSignatureForSelector:NSSelectorFromString(removeName)];
+  return signature && signature.methodReturnType[0] == 'v' && signature.numberOfArguments == 4
+    && [signature getArgumentTypeAtIndex:2][0] == '@'
+    && strcmp([signature getArgumentTypeAtIndex:3], "@?") == 0
+    && remove && remove.methodReturnType[0] == 'v' && remove.numberOfArguments == 3
+    && [remove getArgumentTypeAtIndex:2][0] == '@';
+}
+
 static CVPixelBufferRef copyPixelBuffer(CVPixelBufferRef source) {
   if (source == NULL) {
     return NULL;
@@ -113,7 +131,7 @@ static void captureLatest(SHPrivateContextRef ctx) {
     }
     typedef id (*Fn)(id, SEL);
     id surfaceObj = ((Fn)imp)(desc, surfSel);
-    if (surfaceObj == nil) {
+    if (surfaceObj == nil || CFGetTypeID((__bridge CFTypeRef)surfaceObj) != IOSurfaceGetTypeID()) {
       continue;
     }
     IOSurfaceRef surface = (__bridge IOSurfaceRef)surfaceObj;
@@ -138,11 +156,19 @@ void SHStopCaptureLocked(SHPrivateContextRef ctx) {
   if (ctx == NULL) {
     return;
   }
+  SHCaptureState *state = ctx->captureState;
+  @synchronized(state) { state.context = NULL; }
   SEL unreg = NSSelectorFromString(@"unregisterScreenCallbacksWithUUID:");
   for (id desc in ctx->descriptors) {
-    NSUUID *uuid = ctx->callbackUUIDs[[NSValue valueWithNonretainedObject:desc]];
-    if (uuid && [desc respondsToSelector:unreg]) {
-      ((void (*)(id, SEL, id))objc_msgSend)(desc, unreg, uuid);
+    NSDictionary *ids = ctx->callbackUUIDs[[NSValue valueWithNonretainedObject:desc]];
+    for (NSString *name in ids) {
+      SEL remove = [name isEqualToString:@"damage"]
+        ? NSSelectorFromString(@"unregisterDamageRectanglesCallbackWithUUID:")
+        : [name isEqualToString:@"surfaces"]
+          ? NSSelectorFromString(@"unregisterIOSurfacesChangeCallbackWithUUID:") : unreg;
+      if ([desc respondsToSelector:remove]) {
+        ((void (*)(id, SEL, id))objc_msgSend)(desc, remove, ids[name]);
+      }
     }
   }
   ctx->descriptors = nil;
@@ -151,6 +177,7 @@ void SHStopCaptureLocked(SHPrivateContextRef ctx) {
   ctx->frameCallback = NULL;
   ctx->frameUser = NULL;
   ctx->captureActive = NO;
+  ctx->captureState = nil;
 }
 
 bool SHStartCapture(
@@ -193,60 +220,89 @@ bool SHStartCapture(
   }
   ctx->ioClient = io;
   ((void (*)(id, SEL))objc_msgSend)(io, NSSelectorFromString(@"updateIOPorts"));
-  NSArray *ports = [io valueForKey:@"deviceIOPorts"];
+  NSArray *ports = [io valueForKey:[io respondsToSelector:NSSelectorFromString(@"ioPorts")] ? @"ioPorts" : @"deviceIOPorts"];
   if (![ports isKindOfClass:[NSArray class]]) {
     SHSetError(errorOut, "capability_unavailable");
     return false;
   }
 
-  SEL pidSel = NSSelectorFromString(@"portIdentifier");
   SEL descSel = NSSelectorFromString(@"descriptor");
   SEL surfSel = NSSelectorFromString(@"framebufferSurface");
   SEL regSel = NSSelectorFromString(
     @"registerScreenCallbacksWithUUID:callbackQueue:frameCallback:surfacesChangedCallback:propertiesChangedCallback:"
   );
 
-  NSMutableArray *candidates = [NSMutableArray array];
+  id best = nil;
+  size_t bestArea = 0;
   for (id port in ports) {
-    if (![port respondsToSelector:pidSel] || ![port respondsToSelector:descSel]) {
-      continue;
-    }
-    id pid = ((id (*)(id, SEL))objc_msgSend)(port, pidSel);
-    if ([[pid description] isEqualToString:@"com.apple.framebuffer.display"] == NO) {
+    if (![port respondsToSelector:descSel]) {
       continue;
     }
     id desc = ((id (*)(id, SEL))objc_msgSend)(port, descSel);
     if (desc == nil || ![desc respondsToSelector:surfSel]) {
       continue;
     }
-    if (!callbackEncodingOK(desc, regSel)) {
+    BOOL modern = modernCallbackOK(desc, @"registerCallbackWithUUID:damageRectanglesCallback:", @"unregisterDamageRectanglesCallbackWithUUID:")
+      || modernCallbackOK(desc, @"registerCallbackWithUUID:ioSurfacesChangeCallback:", @"unregisterIOSurfacesChangeCallbackWithUUID:");
+    if (!modern && !callbackEncodingOK(desc, regSel)) {
       continue;
     }
-    [candidates addObject:desc];
+    id surface = ((id (*)(id, SEL))objc_msgSend)(desc, surfSel);
+    if (surface == nil || CFGetTypeID((__bridge CFTypeRef)surface) != IOSurfaceGetTypeID()) continue;
+    size_t area = IOSurfaceGetWidth((__bridge IOSurfaceRef)surface) * IOSurfaceGetHeight((__bridge IOSurfaceRef)surface);
+    if (area > bestArea) { best = desc; bestArea = area; }
   }
-  if (candidates.count == 0) {
+  if (best == nil) {
     SHSetError(errorOut, "capability_unavailable");
     return false;
   }
 
   SHStopCaptureLocked(ctx);
   ctx->ioClient = io;
-  ctx->descriptors = candidates;
+  ctx->descriptors = [NSMutableArray arrayWithObject:best];
   ctx->callbackUUIDs = [NSMutableDictionary dictionary];
   ctx->frameCallback = callback;
   ctx->frameUser = user;
+  SHCaptureState *state = [SHCaptureState new];
+  state.context = ctx;
+  ctx->captureState = state;
   if (ctx->captureQueue == nil) {
     ctx->captureQueue = dispatch_queue_create("solenta.simulator.capture", DISPATCH_QUEUE_SERIAL);
   }
 
-  for (id desc in candidates) {
+  for (id desc in ctx->descriptors) {
+    NSMutableDictionary *ids = [NSMutableDictionary new];
+    ctx->callbackUUIDs[[NSValue valueWithNonretainedObject:desc]] = ids;
+    BOOL modern = NO;
+    // Adapted from Synara FrameStream/CoreSimulatorBridge at c96b828.
+    if (modernCallbackOK(desc, @"registerCallbackWithUUID:damageRectanglesCallback:", @"unregisterDamageRectanglesCallbackWithUUID:")) {
+      NSUUID *uuid = [NSUUID UUID];
+      ids[@"damage"] = uuid;
+      void (^frame)(id) = ^(id ignored) {
+        @synchronized(state) { captureLatest(state.context); }
+      };
+      ((void (*)(id, SEL, id, id))objc_msgSend)(desc,
+        NSSelectorFromString(@"registerCallbackWithUUID:damageRectanglesCallback:"), uuid, frame);
+      modern = YES;
+    }
+    if (modernCallbackOK(desc, @"registerCallbackWithUUID:ioSurfacesChangeCallback:", @"unregisterIOSurfacesChangeCallbackWithUUID:")) {
+      NSUUID *uuid = [NSUUID UUID];
+      ids[@"surfaces"] = uuid;
+      void (^surfaces)(id, id) = ^(id ignored, id updated) {
+        @synchronized(state) { captureLatest(state.context); }
+      };
+      ((void (*)(id, SEL, id, id))objc_msgSend)(desc,
+        NSSelectorFromString(@"registerCallbackWithUUID:ioSurfacesChangeCallback:"), uuid, surfaces);
+      modern = YES;
+    }
+    if (modern) continue;
     NSUUID *uuid = [NSUUID UUID];
-    ctx->callbackUUIDs[[NSValue valueWithNonretainedObject:desc]] = uuid;
+    ids[@"legacy"] = uuid;
     void (^frame)(void) = ^{
-      captureLatest(ctx);
+      @synchronized(state) { captureLatest(state.context); }
     };
     void (^surfaces)(void) = ^{
-      captureLatest(ctx);
+      @synchronized(state) { captureLatest(state.context); }
     };
     void (^props)(void) = ^{
     };
@@ -260,6 +316,7 @@ bool SHStartCapture(
     ((RegFn)imp)(desc, regSel, uuid, ctx->captureQueue, frame, surfaces, props);
   }
   ctx->captureActive = YES;
+  @synchronized(state) { captureLatest(state.context); }
   return true;
 }
 

@@ -54,6 +54,7 @@ SHPrivateContextRef SHCreatePrivateContext(
 
 bool SHStartCapture(SHPrivateContextRef ctx, SHFrameCallback callback, void *user, char **errorOut);
 bool SHStopCapture(SHPrivateContextRef ctx, char **errorOut);
+void SHBeginInput(SHPrivateContextRef ctx);
 bool SHSendTouch(SHPrivateContextRef ctx, SHTouchPhase phase, double x, double y, char **errorOut);
 bool SHSendScrollTo(SHPrivateContextRef ctx, double x, double y, double dx, double dy, char **errorOut);
 bool SHSendKey(SHPrivateContextRef ctx, SHKeyEvent event, char **errorOut);

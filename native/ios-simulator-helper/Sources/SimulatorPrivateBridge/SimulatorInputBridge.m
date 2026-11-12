@@ -3,6 +3,43 @@
 #include <math.h>
 #include <unistd.h>
 
+// Synara's DTUHID readiness/delivery fences, bounded inside our 10s RPC deadline.
+void SHBeginInput(SHPrivateContextRef ctx) {
+  if (ctx == NULL) return;
+  ctx->inputDeadline = NSProcessInfo.processInfo.systemUptime + 8.0;
+  ctx->inputEventsSent = 0;
+}
+
+static NSTimeInterval remainingInputTime(SHPrivateContextRef ctx) {
+  return fmax(0, ctx->inputDeadline - NSProcessInfo.processInfo.systemUptime);
+}
+
+static BOOL inputFailed(SHPrivateContextRef ctx, char **errorOut) {
+  SHSetError(errorOut, ctx->usesDTUHID
+    ? (ctx->inputEventsSent ? "input_delivery_uncertain" : "input_not_delivered")
+    : "capability_unavailable");
+  return NO;
+}
+
+static BOOL inputReady(SHPrivateContextRef ctx, char **errorOut) {
+  if (!SHEnsureHIDClient(ctx)) return inputFailed(ctx, errorOut);
+  if (!ctx->usesDTUHID) return YES;
+  NSTimeInterval remaining = remainingInputTime(ctx);
+  if (remaining <= 0 || ![ctx->dtuhid waitUntilReadyWithTimeout:fmin(5.0, remaining) error:nil]) {
+    return inputFailed(ctx, errorOut);
+  }
+  return YES;
+}
+
+static BOOL dtuhidSent(SHPrivateContextRef ctx, BOOL sent, BOOL flush, char **errorOut) {
+  if (!sent) return inputFailed(ctx, errorOut);
+  ctx->inputEventsSent += 1;
+  if (flush && ![ctx->dtuhid flushWithTimeout:fmin(1.0, remainingInputTime(ctx))]) {
+    return inputFailed(ctx, errorOut);
+  }
+  return YES;
+}
+
 static double clamp01(double value) {
   if (value < 0) {
     return 0;
@@ -35,14 +72,11 @@ bool SHSendTouch(
   if (errorOut) {
     *errorOut = NULL;
   }
-  if (ctx == NULL || !ctx->caps.touch || ctx->mouseFn == NULL) {
+  if (ctx == NULL || !ctx->caps.touch) {
     SHSetError(errorOut, "capability_unavailable");
     return false;
   }
-  if (!SHEnsureHIDClient(ctx)) {
-    SHSetError(errorOut, "capability_unavailable");
-    return false;
-  }
+  if (!inputReady(ctx, errorOut)) return false;
   if (ctx->widthPoints <= 0 || ctx->heightPoints <= 0) {
     SHSetError(errorOut, "capability_unavailable");
     return false;
@@ -51,6 +85,15 @@ bool SHSendTouch(
     clamp01(x / ctx->widthPoints),
     clamp01(y / ctx->heightPoints)
   );
+  if (!isfinite(x) || !isfinite(y)) {
+    SHSetError(errorOut, "protocol_error");
+    return false;
+  }
+  if (ctx->usesDTUHID) {
+    return dtuhidSent(ctx, [ctx->dtuhid sendTouchAtX:point.x y:point.y
+      down:phase != SHTouchPhaseUp edge:SynaraTouchEdgeNone], phase == SHTouchPhaseUp, errorOut);
+  }
+  if (ctx->mouseFn == NULL) return inputFailed(ctx, errorOut);
   void *message = ctx->mouseFn(
     &point,
     NULL,
@@ -79,14 +122,11 @@ bool SHSendScrollTo(
   if (errorOut) {
     *errorOut = NULL;
   }
-  if (ctx == NULL || !ctx->caps.touch || ctx->mouseFn == NULL) {
+  if (ctx == NULL || !ctx->caps.touch) {
     SHSetError(errorOut, "capability_unavailable");
     return false;
   }
-  if (!SHEnsureHIDClient(ctx)) {
-    SHSetError(errorOut, "capability_unavailable");
-    return false;
-  }
+  if (!inputReady(ctx, errorOut)) return false;
   if (ctx->widthPoints <= 0 || ctx->heightPoints <= 0) {
     SHSetError(errorOut, "capability_unavailable");
     return false;
@@ -121,6 +161,12 @@ static BOOL sendHIDUsage(
   uint32_t usage,
   uint32_t operation
 ) {
+  if (ctx->usesDTUHID) {
+    if (remainingInputTime(ctx) <= 0 || page != SHIndigoHIDPageKeyboard) return NO;
+    BOOL sent = [ctx->dtuhid sendKeyUsage:usage down:operation == SHIndigoDirDown];
+    if (sent) ctx->inputEventsSent += 1;
+    return sent;
+  }
   if (ctx->hidArbFn == NULL) {
     return NO;
   }
@@ -136,14 +182,11 @@ bool SHSendKey(SHPrivateContextRef ctx, SHKeyEvent event, char **errorOut) {
   if (errorOut) {
     *errorOut = NULL;
   }
-  if (ctx == NULL || !ctx->caps.keyboard || ctx->hidArbFn == NULL) {
+  if (ctx == NULL || !ctx->caps.keyboard) {
     SHSetError(errorOut, "capability_unavailable");
     return false;
   }
-  if (!SHEnsureHIDClient(ctx)) {
-    SHSetError(errorOut, "capability_unavailable");
-    return false;
-  }
+  if (!inputReady(ctx, errorOut)) return false;
   uint32_t operation = event.down ? SHIndigoDirDown : SHIndigoDirUp;
   uint32_t mods[4];
   unsigned modCount = 0;
@@ -163,27 +206,33 @@ bool SHSendKey(SHPrivateContextRef ctx, SHKeyEvent event, char **errorOut) {
   if (event.down) {
     for (unsigned i = 0; i < modCount; i++) {
       if (!sendHIDUsage(ctx, SHIndigoHIDPageKeyboard, mods[i], SHIndigoDirDown)) {
-        SHSetError(errorOut, "capability_unavailable");
-        return false;
+        goto failed;
       }
     }
     if (!sendHIDUsage(ctx, SHIndigoHIDPageKeyboard, event.usage, operation)) {
-      SHSetError(errorOut, "capability_unavailable");
-      return false;
+      goto failed;
     }
   } else {
     if (!sendHIDUsage(ctx, SHIndigoHIDPageKeyboard, event.usage, operation)) {
-      SHSetError(errorOut, "capability_unavailable");
-      return false;
+      goto failed;
     }
     for (unsigned i = modCount; i > 0; i--) {
       if (!sendHIDUsage(ctx, SHIndigoHIDPageKeyboard, mods[i - 1], SHIndigoDirUp)) {
-        SHSetError(errorOut, "capability_unavailable");
-        return false;
+        goto failed;
       }
     }
   }
+  if (ctx->usesDTUHID && !event.down
+      && ![ctx->dtuhid flushWithTimeout:fmin(1.0, remainingInputTime(ctx))]) goto failed;
   return true;
+failed:
+  // Release admitted keys after a partial send; never replay the input itself.
+  if (ctx->usesDTUHID && ctx->inputEventsSent) {
+    [ctx->dtuhid sendKeyUsage:event.usage down:NO];
+    for (unsigned i = modCount; i > 0; i--) [ctx->dtuhid sendKeyUsage:mods[i - 1] down:NO];
+    [ctx->dtuhid flushWithTimeout:1.0];
+  }
+  return inputFailed(ctx, errorOut);
 }
 
 static BOOL asciiToKeyEvent(char c, SHKeyEvent *eventOut) {
@@ -246,7 +295,7 @@ bool SHSendText(SHPrivateContextRef ctx, const char *utf8, char **errorOut) {
   if (errorOut) {
     *errorOut = NULL;
   }
-  if (ctx == NULL || !ctx->caps.keyboard || ctx->hidArbFn == NULL) {
+  if (ctx == NULL || !ctx->caps.keyboard) {
     SHSetError(errorOut, "capability_unavailable");
     return false;
   }
@@ -254,10 +303,7 @@ bool SHSendText(SHPrivateContextRef ctx, const char *utf8, char **errorOut) {
     SHSetError(errorOut, "protocol_error");
     return false;
   }
-  if (!SHEnsureHIDClient(ctx)) {
-    SHSetError(errorOut, "capability_unavailable");
-    return false;
-  }
+  if (!inputReady(ctx, errorOut)) return false;
   for (const char *cursor = utf8; *cursor != '\0'; cursor++) {
     // Non-ASCII UTF-8 bytes have no HID usage mapping and are skipped.
     if ((unsigned char)*cursor > 0x7Fu) {
@@ -271,10 +317,12 @@ bool SHSendText(SHPrivateContextRef ctx, const char *utf8, char **errorOut) {
     if (!SHSendKey(ctx, event, errorOut)) {
       return false;
     }
+    if (ctx->usesDTUHID) usleep(12 * 1000);
     event.down = false;
     if (!SHSendKey(ctx, event, errorOut)) {
       return false;
     }
+    if (ctx->usesDTUHID) usleep(18 * 1000);
   }
   return true;
 }
@@ -317,9 +365,21 @@ bool SHPressButton(
     SHSetError(errorOut, "capability_unavailable");
     return false;
   }
-  if (!SHEnsureHIDClient(ctx)) {
-    SHSetError(errorOut, "capability_unavailable");
-    return false;
+  if (!inputReady(ctx, errorOut)) return false;
+  if (ctx->usesDTUHID) {
+    uint16_t usage;
+    switch (button) {
+      case SHHardwareButtonHome: usage = 0x40; break;
+      case SHHardwareButtonLock: usage = 0x30; break;
+      case SHHardwareButtonVolumeUp: usage = 0xe9; break;
+      case SHHardwareButtonVolumeDown: usage = 0xea; break;
+      default:
+        SHSetError(errorOut, "capability_unavailable");
+        return false;
+    }
+    if (!dtuhidSent(ctx, [ctx->dtuhid sendConsumerUsage:usage down:YES], NO, errorOut)) return false;
+    usleep(100 * 1000);
+    return dtuhidSent(ctx, [ctx->dtuhid sendConsumerUsage:usage down:NO], YES, errorOut);
   }
   BOOL ok = NO;
   switch (button) {

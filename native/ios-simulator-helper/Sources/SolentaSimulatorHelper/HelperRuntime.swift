@@ -1,7 +1,9 @@
 import Darwin
 import Foundation
+import IOSurface
 import MachO
 import SimulatorPrivateBridge
+import VideoToolbox
 
 enum HelperError: Error, CustomStringConvertible {
   case usage(String)
@@ -145,6 +147,8 @@ func sandboxParameters(developerDir: String) -> [String: String] {
   let tmp = FileManager.default.temporaryDirectory.path
   return [
     "DEVELOPER_DIR": developerDir,
+    "SIMULATOR_KIT_DIR": URL(fileURLWithPath: developerDir).deletingLastPathComponent()
+      .appendingPathComponent("SharedFrameworks/SimulatorKit.framework").path,
     "HELPER_PATH": currentHelperPath(),
     "CACHE_DIR": tmp,
     "TMPDIR": ProcessInfo.processInfo.environment["TMPDIR"] ?? tmp,
@@ -161,7 +165,24 @@ enum SandboxSelfTest {
       (name: "deny-listen", denied: listenDenied()),
       (name: "deny-non-loopback", denied: nonLoopbackDenied()),
       (name: "allow-loopback-client", denied: !loopbackClientAllowed()),
+      (name: "allow-iosurface", denied: IOSurfaceCreate([
+        kIOSurfaceWidth: 16, kIOSurfaceHeight: 16, kIOSurfaceBytesPerElement: 4,
+      ] as CFDictionary) == nil),
+      (name: "allow-h264-encoder", denied: !h264EncoderAllowed()),
     ]
+  }
+
+  private static func h264EncoderAllowed() -> Bool {
+    var session: VTCompressionSession?
+    let status = VTCompressionSessionCreate(
+      allocator: kCFAllocatorDefault, width: 16, height: 16,
+      codecType: kCMVideoCodecType_H264, encoderSpecification: nil,
+      imageBufferAttributes: nil, compressedDataAllocator: nil,
+      outputCallback: nil, refcon: nil, compressionSessionOut: &session
+    )
+    guard status == noErr, let session else { return false }
+    VTCompressionSessionInvalidate(session)
+    return true
   }
 
   private static func spawnDenied(path: String, arguments: [String]) -> Bool {

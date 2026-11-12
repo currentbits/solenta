@@ -1,15 +1,80 @@
 # Solenta iOS Simulator helper — third-party notices
 
-This package ships original Solenta source plus adaptations of two
+This package ships original Solenta source plus adaptations of three
 independently licensed upstream projects. License texts are stored
-verbatim under `LICENSES/`. Solenta does not execute or download either
+verbatim under `LICENSES/`. Solenta does not execute or download any upstream
 project at runtime.
 
 Adapted files were audited at the pinned revisions **before** any
 implementation was copied. Private-framework calls are loaded with
-`dlopen`/`dlsym` and Objective-C `method_getTypeEncoding` probes. A
+`dlopen`/`dlsym` and Objective-C method-signature probes. A
 capability is reported true only when its probes pass. No private
 selector or C ABI is invented.
+
+## MIT — Synara
+
+- Project: https://github.com/Emanuele-web04/synara
+- Revision: `c96b82879b4fe4b110133dac06ba6138a9d9761f` (merged PR #2108)
+- License copy: `LICENSES/Synara-MIT.txt` (including both upstream copyright notices)
+
+Adapted source:
+
+- `apps/server/native/device-helper/Sources/DTUHIDTransport.h` and `.m`
+  — copied into `Sources/SimulatorPrivateBridge/`. The per-device XPC connection,
+  liveness barrier, connection invalidation, contact state, numeric HID payloads,
+  flush barrier, and bounded background warm-up are retained. This implementation
+  documents facebook/idb's MIT-licensed HID wire format as its reference.
+- `apps/server/native/device-helper/Sources/HIDBridge.m`
+  — DTUHID dispatch, consumer usages, readiness/delivery checks, key-release
+  cleanup and typing cadence adapted into Solenta's existing input bridge.
+  Solenta keeps its probed legacy Indigo ABI; Synara's legacy buffer surgery is
+  not used. A native input has an eight-second budget plus at most one second
+  for key release, inside Solenta's ten-second control RPC timeout. A refused
+  operation and uncertain partial delivery are reported separately, without replay.
+- `apps/server/native/device-helper/Sources/CoreSimulatorBridge.swift`
+  — SimulatorKit lookup supports both the selected developer directory and
+  its sibling `SharedFrameworks/SimulatorKit.framework` on newer Xcode. The
+  sandbox grants read/map access to that exact selected framework.
+  Live capture also requires scoped access to `IOSurfaceRootUserClient` and
+  the `com.apple.coremedia.videoencoder` service. Solenta does not adopt
+  Synara's unscoped Mach/IOKit grants or its process-exec allowance.
+- `apps/server/native/device-helper/Sources/FrameStream.swift` and
+  `CoreSimulatorBridge.swift`
+  — largest valid framebuffer from `ioPorts`, distinct damage/surface callbacks
+  and an initial seed frame, adapted into `SimulatorCaptureBridge.m`. Runtime
+  method signatures validate forwarded ROCK objects as well as direct Objective-C
+  methods. Callback state is revoked before unregistering, so late callbacks do
+  not access a destroyed context. The existing legacy callbacks remain a fallback.
+- `apps/server/native/device-helper/Sources/main.swift`
+  — close the newly opened video connection when native capture fails to start.
+- `apps/web/src/components/device/useDeviceVideoStream.ts`
+  — latest decoded frame per animation frame, releasing superseded buffers and
+  retaining unchanged codec configuration, adapted into `src/simulatorStream.ts`.
+  Solenta retains its SLV1/AVCC wire format and also fences asynchronous JPEG seeds.
+
+CoreSimulator 1155.4 and newer use DTUHID with no silent Indigo fallback. Symbol
+and `SimDevice.lookup:error:` shape checks gate availability, and every input
+waits for the guest service's liveness response. Older CoreSimulator keeps the
+existing probed Indigo path. DTUHID supports home, lock and volume buttons;
+action and shake remain unavailable there rather than inventing a wire mapping.
+Text retains Solenta's existing ASCII HID mapping; this port does not add
+Synara's separate accessibility-based Unicode replacement command.
+
+The standalone adapter regression uses a fake daemon transport and display,
+linking the production input/capture adapters. It never boots or sends input
+to a user simulator:
+
+```sh
+xcrun clang -fobjc-arc -fblocks -fmodules -framework Foundation -framework CoreGraphics \
+  -framework CoreVideo -framework IOSurface \
+  -I native/ios-simulator-helper/Sources/SimulatorPrivateBridge/include \
+  native/ios-simulator-helper/Sources/SimulatorPrivateBridge/DTUHIDTransport.m \
+  native/ios-simulator-helper/Sources/SimulatorPrivateBridge/SimulatorInputBridge.m \
+  native/ios-simulator-helper/Sources/SimulatorPrivateBridge/SimulatorCaptureBridge.m \
+  native/ios-simulator-helper/Sources/SimulatorPrivateBridge/PrivateFrameworkLoader.m \
+  native/ios-simulator-helper/Tests/InputTransportTests.m -o /tmp/solenta-dtuhid-tests
+/tmp/solenta-dtuhid-tests
+```
 
 ## Apache-2.0 — Baguette
 
@@ -95,14 +160,18 @@ use and that this helper probes:
 | AccessibilityPlatformTranslation | `/System/Library/PrivateFrameworks/AccessibilityPlatformTranslation.framework/AccessibilityPlatformTranslation` |
 | SimRenderingServices (bundle) | CoreSimulator `Resources/SimRenderingServices.simdeviceio` |
 
-Xcode 26.6 (17F113) SimulatorKit on this host was inspected with
+The original audit inspected Xcode 26.6 (17F113) SimulatorKit with
 `dlopen` + `method_getTypeEncoding` and `otool` of C prologues. That
 is a binary/signature audit, **not** a booted-simulator acceptance
-run. Xcode 27 was not present.
+run. The subsequent Synara adaptation was verified on Xcode 27.2 (27B52),
+CoreSimulator 1174.21 and an isolated iOS 26.5 simulator: actual tap and text
+effects, Home acknowledgement, and JPEG/avcC/H.264 key/delta records through
+the production stream broker. All sandbox self-tests pass, including
+IOSurface and encoder access. See [the adoption report](../../docs/research/2026-11-12-synara-ios-simulator.md).
 
 ### Capture / stream
 
-Only Baguette implements framebuffer capture among the pinned files.
+The original Baguette capture path used the following IO client selectors.
 Selectors and encodings confirmed on this host for the IO client path:
 
 - `SimDevice.io` `@16@0:8`
@@ -140,8 +209,9 @@ Solenta therefore:
 - Enables `touch` only after SimulatorKit, the mouse symbol, and
   `SimDeviceLegacyHIDClient` init/send encodings probe true.
 
-Xcode 27 may change this C shape; the capability must fail closed
-there until encodings/symbols are re-confirmed.
+This shape remains the legacy path. CoreSimulator 1155.4+ instead selects the
+Synara DTUHID transport described above; it never falls back to this ABI after
+a failed DTUHID send.
 
 ### Keyboard / hardware buttons
 

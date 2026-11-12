@@ -19,7 +19,7 @@ final class VideoStreamTests: XCTestCase {
     )
   }
 
-  func testStartStreamAssignsHandlerAndSendsBinaryOverLoopbackWebSocket() throws {
+  func testFailedCaptureClosesItsLoopbackWebSocket() throws {
     let server = try LoopbackWSServer()
     defer { server.close() }
 
@@ -45,27 +45,14 @@ final class VideoStreamTests: XCTestCase {
     let started = try harness.readObject()
     XCTAssertEqual(started["ok"] as? Bool, false)
     XCTAssertEqual(started["error"] as? String, "capability_unavailable")
-    XCTAssertNotNil(harness.session.videoHandler)
+    XCTAssertNil(harness.session.videoHandler)
 
     let auth = try server.waitForText(timeout: 3)
     let object = try JSONSerialization.jsonObject(with: Data(auth.utf8)) as! [String: Any]
     XCTAssertEqual(object["token"] as? String, "helper-tok")
     XCTAssertEqual(jsonUInt64(object["generation"]), 7)
 
-    harness.session.emitVideo(
-      H264Session.Encoded(
-        kind: .avcC,
-        payload: Data([1, 2, 3]),
-        width: 0,
-        height: 0,
-        timestampUs: 42
-      )
-    )
-    let binary = try server.waitForBinary(timeout: 3)
-    let record = try VideoEncoder.decode(binary)
-    XCTAssertEqual(record.type, .avcC)
-    XCTAssertEqual(record.payload, Data([1, 2, 3]))
-    XCTAssertEqual(record.generation, 7)
+    XCTAssertEqual(server.disconnected.wait(timeout: .now() + 3), .success)
 
     try harness.send([
       "id": 3,
@@ -82,6 +69,7 @@ private final class LoopbackWSServer: @unchecked Sendable {
   private let listener: NWListener
   private let queue = DispatchQueue(label: "solenta.test.ws")
   private let lock = NSLock()
+  let disconnected = DispatchSemaphore(value: 0)
   private var connection: NWConnection?
   private var texts: [String] = []
   private var binaries: [Data] = []
@@ -216,11 +204,14 @@ private final class LoopbackWSServer: @unchecked Sendable {
           self.lock.unlock()
           waiters.forEach { $0.signal() }
         default:
+          if metadata.opcode == .close { self.disconnected.signal() }
           self.lock.unlock()
         }
       }
       if error == nil {
         self.receive(on: conn)
+      } else {
+        self.disconnected.signal()
       }
     }
   }

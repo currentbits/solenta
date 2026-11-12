@@ -8,6 +8,9 @@
 (allow sysctl-read)
 (allow file-read-metadata)
 
+;; Import CoreSimulator's framebuffer IOSurface through its driver client.
+(allow iokit-open (iokit-user-client-class "IOSurfaceRootUserClient"))
+
 ;; Already-open inherited control pipes (FD 3/4) and stdio keep working
 ;; because Seatbelt checks typically run at open. Explicit /dev access
 ;; covers common runtime probes.
@@ -39,12 +42,14 @@
   (subpath "/usr/lib")
   (literal (param "HELPER_PATH"))
   (subpath (param "DEVELOPER_DIR"))
+  (subpath (param "SIMULATOR_KIT_DIR"))
 )
 
 ;; Helper executable and selected Xcode / Simulator frameworks.
 (allow file-read*
   (literal (param "HELPER_PATH"))
   (subpath (param "DEVELOPER_DIR"))
+  (subpath (param "SIMULATOR_KIT_DIR"))
   (subpath "/Library/Developer/PrivateFrameworks")
   (subpath "/Library/Developer/CoreSimulator")
 )
@@ -67,6 +72,7 @@
   (global-name-regex #"^com\.apple\.CoreSimulator")
   (global-name-regex #"^com\.apple\.iphonesimulator")
   (global-name-regex #"^com\.apple\.SimulatorKit")
+  (global-name "com.apple.coremedia.videoencoder")
   (global-name "com.apple.system.logger")
   (global-name "com.apple.logd")
   (global-name "com.apple.diagnosticd")
