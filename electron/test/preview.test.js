@@ -126,6 +126,7 @@ describe("preview session (issue #155)", () => {
       { allow: true },
     );
     assert.equal(ok.sandbox, true);
+    assert.equal(ok.transparent, false);
     assert.equal(ok.partition, "solenta-preview:t1");
     assert.equal(ok.preload, require("node:path").resolve(__dirname, "../preview-webmcp-preload.js"));
   });
