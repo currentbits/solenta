@@ -6579,11 +6579,14 @@ export interface CoderApi {
      */
     /**
      * Approval inbox (#291): every pending prompt across all non-archived
-     * threads, oldest run first. Answer each via respondPermission.
+     * threads, oldest run first. A worker scope (#1931) reads only that
+     * child's requests and routes to its computer. Answer via respondPermission.
      */
-    pendingApprovals(): Promise<PendingApprovalInfo[]>;
+    pendingApprovals(input?: { threadId: string; onHost?: string }): Promise<PendingApprovalInfo[]>;
     respondPermission(input: {
       threadId: string;
+      /** Explicit computer for a worker approval shown on its parent's thread. */
+      onHost?: string;
       requestId: string;
       decision: PermissionDecision;
       /**

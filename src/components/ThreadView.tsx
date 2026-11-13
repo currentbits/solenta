@@ -24,6 +24,7 @@ import { useWorktreeChrome } from "./WorktreeControl";
 import { resolveDefaultWorktree } from "../projectDefaults";
 import { deriveBackgroundJobs } from "../backgroundJobs";
 import { WorkspaceStrip } from "./WorkspaceStrip";
+import { WorkerApprovals, type WorkerApprovalsProps } from "./WorkerApprovals";
 import { ProjectIcon } from "./ProjectIcon";
 import { McpProposalCard } from "./McpProposalCard";
 import {
@@ -459,6 +460,7 @@ interface ThreadViewProps {
     feedback?: string,
     alwaysRule?: string,
   ) => void | Promise<void>;
+  workerApprovals?: Omit<WorkerApprovalsProps, "parent">;
   /**
    * Sending a normal message while a plain permission card is open (#1762):
    * decline it and hand the typed text to the agent as the new direction.
@@ -968,6 +970,7 @@ export const ThreadView = memo(function ThreadView({
   onRestoreDraftConsumed,
   onSetPermissionMode,
   onRespondPermission,
+  workerApprovals,
   onRedirectPermission,
   onImplementPlan,
   onSavePlan,
@@ -5508,6 +5511,8 @@ export const ThreadView = memo(function ThreadView({
             onRespond={onRespondPermission}
           />
         ) : null}
+
+        {workerApprovals && <WorkerApprovals key={`${thread.host?.key ?? ""}:${thread.projectId}:${thread.id}`} parent={thread} {...workerApprovals} />}
 
         {queuedPrompt != null && (
           <div
