@@ -176,7 +176,7 @@ describe("providerAuth", () => {
       };
       const probes = services.instanceAuthProbes(store, userDataPath);
       assert.deepEqual(probes, [
-        { ref: "codex:iso", provider: "codex", env: { CODEX_HOME: isoHome } },
+        { ref: "codex:iso", name: "solo", provider: "codex", env: { CODEX_HOME: isoHome } },
       ]);
       providerAuth.setExecFile(fakeExec(SIGNED_IN).fn);
       await providerAuth.refresh({ env: { HOME: userDataPath }, instances: probes });

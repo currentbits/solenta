@@ -120,9 +120,14 @@ describe("local CLI usage", () => {
   it("IPC CLI reads never access or mutate the Solenta usage/spend ledger", async () => {
     write("claude/projects/project/root.jsonl", [claude("one")]);
     const handler = require("../ipc-insights.js")["usage:byDay"];
-    const store = { getSettings: () => ({ providerInstances: [], modelPrices: {} }), getUsageByDay: () => { throw new Error("ledger accessed"); } };
-    const report = await handler({ store }, { scope: "cli" });
-    assert.equal(modelCell(report, "claude", "sonnet").turns, 1);
+    const ledger = () => { throw new Error("ledger accessed"); };
+    const store = { getThreads: () => [], getSettings: () => ({ providerInstances: [], modelPrices: {} }),
+      getUsageByDay: ledger, getUsageThreadsByDay: ledger, recordSpend: ledger, recordUsage: ledger, updateThread: ledger, save: ledger };
+    for (const scope of ["cli", "external"]) {
+      const report = await handler({ store }, { scope });
+      assert.equal(modelCell(report, "claude", "sonnet").turns, 1);
+    }
+    await assert.rejects(handler({ store }, { scope: "external", homes: "claude" }), /Invalid usage homes/);
     await assert.rejects(handler({ store }, { scope: "unsupported" }), /Invalid usage scope/);
   });
 
@@ -130,7 +135,7 @@ describe("local CLI usage", () => {
     const userDataPath = path.join(root, "userdata");
     write("userdata/provider-homes/work/claude/projects/project/root.jsonl", [claude("isolated-one")]);
     const handler = require("../ipc-insights.js")["usage:byDay"];
-    const store = { getSettings: () => ({
+    const store = { getThreads: () => [], getSettings: () => ({
       providerInstances: [{ id: "work", provider: "claude", name: "Work", isolatedHome: true }], modelPrices: {},
     }) };
     const report = await handler({ store, userDataPath }, { scope: "cli" });
@@ -148,23 +153,30 @@ describe("CLI scan boundaries", () => {
     assert.deepEqual({ ...report.byDay }, {});
   });
 
-  it("discards files changed during a scan instead of caching a mixed snapshot", async () => {
-    const file = write("claude/projects/project/root.jsonl", [claude("one")]);
+  it("discards a file truncated during a scan, but reads one that grows", async () => {
+    const file = write("claude/projects/project/root.jsonl", [claude("one"), claude("two")]);
     const open = fsp.open;
+    let mutate = () => fs.truncateSync(file, 10);
     fsp.open = async (...args) => {
       const handle = await open(...args);
       const stat = handle.stat.bind(handle);
       let calls = 0;
       handle.stat = async () => {
-        if (++calls === 2) fs.appendFileSync(file, "\n");
+        if (++calls === 2) mutate();
         return stat();
       };
       return handle;
     };
     const reader = createCliUsageReader();
-    try { assert.equal((await reader.read()).cli.skippedFiles, 1); }
-    finally { fsp.open = open; }
-    assert.equal(modelCell(await reader.read(), "claude", "sonnet").turns, 1);
+    try {
+      assert.equal((await reader.read()).cli.skippedFiles, 1);
+      write("claude/projects/project/root.jsonl", [claude("one")]);
+      mutate = () => fs.appendFileSync(file, JSON.stringify(claude("late")) + "\n");
+      const report = await reader.read();
+      assert.equal(report.cli.skippedFiles, 0);
+      assert.equal(modelCell(report, "claude", "sonnet").turns, 1, "bytes after the snapshot wait for the next scan");
+    } finally { fsp.open = open; }
+    assert.equal(modelCell(await reader.read(), "claude", "sonnet").turns, 2);
   });
 });
 
@@ -184,5 +196,123 @@ describe("CLI history attribution", () => {
     const report = await createCliUsageReader().read();
     assert.deepEqual({ ...report.byDay }, {});
     assert.equal(report.cli.skippedRecords, 2);
+  });
+});
+
+const totalTurns = (report) => Object.values(report.byDay).flatMap((p) => Object.values(p)).flatMap((m) => Object.values(m)).reduce((n, c) => n + c.turns, 0);
+const at = (msAgo) => new Date(Date.now() - msAgo).toISOString();
+const usageHandler = () => require("../ipc-insights.js")["usage:byDay"];
+const storeWith = (threads, settings = {}) => ({ getThreads: () => threads, getSettings: () => ({ providerInstances: [], modelPrices: {}, ...settings }) });
+
+describe("usage outside Solenta", () => {
+  it("drops Claude responses Solenta ran, across resumes, forks and subagents, but keeps imported history", async () => {
+    const created = Date.now() - 10 * 60_000;
+    const row = (session, id, msAgo = 1000) => ({ ...claude(id), sessionId: session, timestamp: at(msAgo) });
+    // Imported at `created`: the earlier "cli-history" response ran in Terminal.
+    write("claude/projects/p/sol.jsonl", [row("sol", "cli-history", 20 * 60_000), row("sol", "solenta-1"), row("sol", "solenta-1")]);
+    write("claude/projects/p/sol/subagents/agent-a.jsonl", [row("sol", "solenta-sub")]);
+    write("claude/projects/p/fork.jsonl", [row("fork", "cli-history", 20 * 60_000), row("fork", "solenta-1"), row("fork", "fork-new")]);
+    write("claude/projects/p/terminal.jsonl", [row("terminal", "terminal-1")]);
+    const store = storeWith([{ id: "t", provider: "claude", sessionId: "sol", createdAt: created }]);
+    const external = await usageHandler()({ store }, { scope: "external" });
+    assert.equal(totalTurns(external), 3, "cli-history + fork-new + terminal-1");
+    assert.equal(external.cli.solentaResponses, 2);
+    assert.equal(external.cli.scope, "external");
+    const all = await usageHandler()({ store }, { scope: "cli" });
+    assert.equal(totalTurns(all), 5);
+    assert.equal(all.cli.solentaResponses, 0);
+  });
+
+  it("drops Codex turns from Solenta sessions and their spawned subagents, not from CLI forks", async () => {
+    write("codex/sessions/sol.jsonl", [codexMeta("csol"), turn("t1"), usage(100)]);
+    write("codex/sessions/sub.jsonl", [codexMeta("sub", { source: { subagent: { thread_spawn: { parent_thread_id: "csol" } } } }), turn("t2"), usage(50)]);
+    write("codex/sessions/fork.jsonl", [codexMeta("cfork", { forked_from_id: "csol" }), turn("t1"), usage(100), turn("t3"), usage(110)]);
+    const store = storeWith([{ id: "t", provider: "codex", sessionId: "csol", createdAt: 0 }]);
+    const external = await usageHandler()({ store }, { scope: "external" });
+    assert.equal(totalTurns(external), 1, "only the fork's new turn ran outside Solenta");
+    assert.equal(external.cli.solentaResponses, 2);
+  });
+
+  it("reads only appended bytes, and re-reads a file rewritten in place", async () => {
+    const file = write("claude/projects/p/s.jsonl", [claude("one")]);
+    const reader = createCliUsageReader();
+    await reader.read();
+    const size = fs.statSync(file).size;
+    const open = fsp.open;
+    const starts = [];
+    fsp.open = async (...args) => {
+      const handle = await open(...args);
+      const stream = handle.createReadStream.bind(handle);
+      handle.createReadStream = (opts) => { starts.push(opts.start); return stream(opts); };
+      return handle;
+    };
+    try {
+      fs.appendFileSync(file, JSON.stringify(claude("two")) + "\n");
+      const grown = await reader.read();
+      assert.deepEqual(starts, [size]);
+      assert.equal(modelCell(grown, "claude", "sonnet").turns, 2);
+      assert.equal(grown.cli.rereadFiles, 0);
+      // Same inode, longer content, different bytes: not an append.
+      fs.writeFileSync(file, [claude("x", 1), claude("y", 1), claude("z", 1)].map((r) => JSON.stringify(r)).join("\n") + "\n");
+      const rewritten = await reader.read();
+      assert.equal(starts.at(-1), 0);
+      assert.equal(rewritten.cli.rereadFiles, 1);
+      assert.equal(modelCell(rewritten, "claude", "sonnet").turns, 3);
+      assert.equal(modelCell(rewritten, "claude", "sonnet").outputTokens, 3);
+    } finally { fsp.open = open; }
+  });
+
+  it("continues Codex parse state across appends and reports vanished logs as missing", async () => {
+    const file = write("codex/sessions/s.jsonl", [codexMeta("s"), turn("t1"), usage(100)]);
+    const reader = createCliUsageReader();
+    assert.equal(modelCell(await reader.read(), "codex", "gpt").turns, 1);
+    fs.appendFileSync(file, [usage(100), usage(120)].map((r) => JSON.stringify(r)).join("\n") + "\n");
+    assert.equal(modelCell(await reader.read(), "codex", "gpt").turns, 2, "the repeated snapshot is not a new request");
+    fs.unlinkSync(file);
+    const gone = await reader.read();
+    assert.equal(gone.cli.missingFiles, 1);
+    assert.deepEqual({ ...gone.byDay }, {});
+  });
+
+  it("scans only the selected homes, each isolated", async () => {
+    const userDataPath = path.join(root, "userdata");
+    write("claude/projects/p/default.jsonl", [claude("default-1")]);
+    write("userdata/provider-homes/work/claude/projects/p/work.jsonl", [claude("work-1"), claude("work-2")]);
+    const store = storeWith([], { providerInstances: [{ id: "work", provider: "claude", name: "Work", isolatedHome: true }] });
+    const work = await usageHandler()({ store, userDataPath }, { scope: "external", homes: ["instance:claude:work"] });
+    assert.equal(totalTurns(work), 2);
+    assert.deepEqual(work.cli.homes.map((h) => [h.id, h.label, h.selected]), [
+      ["claude", "Claude Code", false], ["codex", "Codex", false], ["instance:claude:work", "Work", true],
+    ]);
+    assert.equal(totalTurns(await usageHandler()({ store, userDataPath }, { scope: "external", homes: ["claude"] })), 1);
+    assert.equal(totalTurns(await usageHandler()({ store, userDataPath }, { scope: "external", homes: [] })), 0);
+  });
+
+  it("separates CLI-reported cost from API-rate estimates and keeps unpriced tokens unpriced", async () => {
+    write("claude/projects/p/s.jsonl", [
+      { ...claude("reported"), costUSD: 0.5 },
+      claude("estimated"),
+      { ...claude("other"), message: { ...claude("other").message, model: "mystery" } },
+      // Cumulative session totals (restored on resume, #1961) are not per-response costs.
+      { type: "cost-state", sessionId: "s", totalCostUSD: 99, modelUsage: { sonnet: { costUSD: 99 } } },
+    ]);
+    const report = await createCliUsageReader().read({ prices: { sonnet: { input: 1, output: 1 } } });
+    assert.equal(report.cli.reportedCostUsd, 0.5);
+    assert.ok(Math.abs(report.cli.estimatedCostUsd - (10 + 30 + 5 + 20) / 1e6) < 1e-12);
+    assert.deepEqual(report.cli.unpricedModels, ["mystery"]);
+    const mystery = modelCell(report, "claude", "mystery");
+    assert.equal(mystery.costUsd, 0);
+    assert.equal(mystery.unpricedTokens.outputTokens, 20);
+  });
+
+  it("skips an overlong line split across appends exactly once", async () => {
+    const file = write("claude/projects/p/s.jsonl", [claude("one")]);
+    fs.appendFileSync(file, "x".repeat(1024 * 1024 + 10));
+    const reader = createCliUsageReader();
+    assert.equal((await reader.read()).cli.skippedRecords, 1, "unterminated tail is incomplete");
+    fs.appendFileSync(file, "tail-of-long-line\n" + JSON.stringify(claude("two")) + "\n");
+    const report = await reader.read();
+    assert.equal(report.cli.skippedRecords, 1);
+    assert.equal(modelCell(report, "claude", "sonnet").turns, 2);
   });
 });

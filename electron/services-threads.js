@@ -1496,7 +1496,7 @@ function genericProviderInfo(inst) {
  * CLAUDE_CONFIG_DIR, so the probe reads that instance's own home.
  * @param {import('./store').Store} store
  * @param {string} [userDataPath]
- * @returns {Array<{ ref: string, provider: string, env: Record<string, string> }>}
+ * @returns {Array<{ ref: string, name?: string, provider: string, env: Record<string, string> }>}
  */
 function instanceAuthProbes(store, userDataPath) {
   // Custom CLIs (#458) and OpenAI-compatible endpoints (#1714) have no
@@ -1506,6 +1506,7 @@ function instanceAuthProbes(store, userDataPath) {
   );
   return instances.map((inst) => ({
     ref: isBaseOverlay(inst) ? inst.provider : providerRef(inst.provider, inst.id),
+    name: inst.name,
     provider: inst.provider,
     env: instanceEnv(inst, undefined, userDataPath),
   }));

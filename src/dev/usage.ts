@@ -78,13 +78,21 @@ export function createUsage(ctx: DevCtx): Pick<CoderApi, "activity" | "governanc
           const dd = String(d.getDate()).padStart(2, "0");
           return `${y}-${m}-${dd}`;
         };
-        if (input?.scope === "cli") return {
+        if (input?.scope === "cli" || input?.scope === "external") return {
           byDay: { [day(0)]: {
             claude: { "claude-sonnet-4-5": cell(0, 12000, 1600, 12, { cachedInputTokens: 75000, cacheWriteTokens: 8000 }) },
             codex: { "gpt-5": cell(0, 35000, 2400, 8, { cachedInputTokens: 42000 }) },
           } },
           threadsByDay: {},
-          cli: { files: 8, skippedFiles: 0, skippedRecords: 0, partial: false, unpricedModels: ["claude-sonnet-4-5", "gpt-5"] },
+          cli: {
+            files: 8, skippedFiles: 0, skippedRecords: 0, partial: false, unpricedModels: ["claude-sonnet-4-5", "gpt-5"],
+            scope: input.scope, missingFiles: 0, rereadFiles: 0, solentaResponses: input.scope === "external" ? 14 : 0,
+            reportedCostUsd: 0, estimatedCostUsd: 0,
+            homes: [
+              { id: "claude", provider: "claude", label: "Claude Code", selected: !input.homes || input.homes.includes("claude") },
+              { id: "codex", provider: "codex", label: "Codex", selected: !input.homes || input.homes.includes("codex") },
+            ],
+          },
         };
         const threadCell = (
           costUsd: number,

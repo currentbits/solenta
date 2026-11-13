@@ -843,6 +843,37 @@ describe("CLI usage scope", () => {
     m.unmount();
   });
 
+  it("outside Solenta: explicit home pick, Solenta-run exclusions and reported vs estimated cost", async () => {
+    const calls: unknown[] = [];
+    const m = await mount(<UsageView loadUsage={async (input) => {
+      calls.push(input);
+      return input?.scope === "external" ? {
+        byDay: { [daysAgo(0)]: { claude: { sonnet: entry({ costUsd: 0.75, inputTokens: 10, outputTokens: 5, turns: 2 }) } } },
+        threadsByDay: {},
+        cli: {
+          files: 3, skippedFiles: 0, skippedRecords: 0, partial: false, unpricedModels: [], missingFiles: 1,
+          scope: "external", solentaResponses: 4, reportedCostUsd: 0.5, estimatedCostUsd: 0.25,
+          homes: [
+            { id: "claude", provider: "claude", label: "Claude Code", selected: true },
+            { id: "instance:claude:work", provider: "claude", label: "Work", selected: true },
+          ],
+        },
+      } : richReport();
+    }} />);
+    await m.flush();
+    await m.change(m.query("[data-usage-source]"), "external");
+    await m.flush();
+    assert.match(m.text(), /minus responses Solenta threads ran/);
+    assert.match(m.text(), /never counts toward today’s spend limit/);
+    assert.match(m.text(), /4 Solenta-run responses left out/);
+    assert.match(m.text(), /\$0\.50 CLI-reported, \$0\.25 estimated/);
+    assert.match(m.text(), /1 missing files/);
+    await m.change(m.query("[data-usage-home]"), "instance:claude:work");
+    await m.flush();
+    assert.deepEqual(calls.slice(1), [{ scope: "external" }, { scope: "external", homes: ["instance:claude:work"] }]);
+    m.unmount();
+  });
+
   it("rejects a late report from the previous source", async () => {
     let resolveApp!: (report: UsageReport) => void;
     const m = await mount(<UsageView loadUsage={(input) => input?.scope === "cli"
