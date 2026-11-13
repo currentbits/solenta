@@ -49,8 +49,11 @@ class FakeTerm implements XtermLike {
   finds: [string, boolean][] = [];
   hits = true;
   open() {}
-  write(d: string) {
+  write(d: string, cb?: () => void) {
     this.screen += d;
+    // Like xterm: a Device Attributes query is answered via onData while parsing.
+    if (d.includes("\x1b[c")) this.dataCb("\x1b[?1;2c");
+    cb?.();
   }
   reset() {
     this.screen = "";
@@ -258,6 +261,20 @@ describe("TerminalPane", () => {
     assert.equal(h.terms[0].focused, true);
     assert.ok(m.query("[data-terminal-output][role=region]"));
     assert.equal(m.query("[data-running]")!.getAttribute("data-running"), "true");
+  });
+
+  it("does not answer terminal queries in replayed output into the shell", async () => {
+    const h = harness({ open: async () => state({ text: "old\x1b[c$ ", cursor: 9 }) });
+    await mount(<TerminalPane threadId="t1" api={h.api} load={h.load} />);
+    await settle();
+    assert.equal(h.calls.some((c) => c.call === "write"), false, "replay reply was dropped");
+    await h.push({ from: 9, data: "\x1b[c", cursor: 12 });
+    await inAct(() => h.terms[0].dataCb("ls\r"));
+    assert.deepEqual(
+      h.calls.filter((c) => c.call === "write").map((c) => c.input.data),
+      ["\x1b[?1;2c", "ls\r"],
+      "live queries and keystrokes still reach the shell",
+    );
   });
 
   it("sends raw keystrokes and resizes to the shell", async () => {
