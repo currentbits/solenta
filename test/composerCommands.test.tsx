@@ -29,6 +29,7 @@ function mountComposer(
   over: {
     onSlashAction?: (action: SlashAction) => void;
     busy?: boolean;
+    onModelPickerOpen?: (providerId?: string) => void;
   } = {},
 ) {
   return mount(
@@ -57,6 +58,7 @@ function mountComposer(
       onSend={onSend}
       onBuild={() => {}}
       onSlashAction={over.onSlashAction}
+      onModelPickerOpen={over.onModelPickerOpen}
     />,
   );
 }
@@ -182,6 +184,16 @@ describe("Composer / command popup", () => {
     assert.equal(textarea(m).value, "");
     assert.ok(m.query('[aria-label="Model picker"]'), "model picker opened");
     assert.deepEqual(sends, []);
+  });
+
+  it("/model refreshes the current provider's models like the picker button", async () => {
+    const opened: (string | undefined)[] = [];
+    const m = await mountComposer(() => {}, { onModelPickerOpen: (id) => opened.push(id) });
+    const el = textarea(m);
+    await m.type(el, "/model");
+    await caretToEnd(m);
+    await m.press(el, "Enter");
+    assert.deepEqual(opened, ["claude"]);
   });
 
   it("Enter on /permissions opens the permission menu", async () => {

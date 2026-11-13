@@ -949,6 +949,11 @@ export const Composer = memo(function Composer({
     setLocalError,
   });
 
+  // Every way of opening the picker refreshes the current provider's models.
+  const openModelPicker = useCallback(
+    () => onModelPickerOpen?.(provider),
+    [onModelPickerOpen, provider],
+  );
   const {
     commandIndex,
     setCommandIndex,
@@ -968,7 +973,7 @@ export const Composer = memo(function Composer({
     setModeOpen,
     setEffortOpen,
     setOptionsOpen,
-    onModelPickerOpen,
+    onModelPickerOpen: openModelPicker,
     onSlashAction,
   });
   /** Last idle Esc; a second press within DOUBLE_ESC_MS rewinds (#478). */
@@ -3091,7 +3096,7 @@ export const Composer = memo(function Composer({
                                     type="button"
                                     className={styles.customModelBtn}
                                     title="Look for the CLI again"
-                                    onClick={() => onModelPickerOpen?.()}
+                                    onClick={openModelPicker}
                                   >
                                     Check again
                                   </button>
