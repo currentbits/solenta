@@ -447,6 +447,33 @@ export function GeneralPane({
           <label className={styles.fieldRow}>
             <input
               type="checkbox"
+              data-confirm-cold-claude-resume=""
+              checked={settings?.confirmColdClaudeResume !== false}
+              disabled={saving || settings == null}
+              onChange={(e) => {
+                setError(null);
+                void onSaveSettings({
+                  confirmColdClaudeResume: e.target.checked,
+                }).catch((err) => {
+                  setError(
+                    err instanceof Error && err.message
+                      ? err.message
+                      : "Failed to save settings",
+                  );
+                });
+              }}
+            />
+            <span>Ask before resuming a large idle Claude thread</span>
+          </label>
+          <p className={styles.note}>
+            After an hour idle, Claude re-reads the whole context without
+            the prompt cache. Offers to compact first.
+          </p>
+        </div>
+        <div className={styles.field}>
+          <label className={styles.fieldRow}>
+            <input
+              type="checkbox"
               data-pinch-zoom-window=""
               checked={settings?.pinchZoomWindow !== false}
               disabled={saving || settings == null}

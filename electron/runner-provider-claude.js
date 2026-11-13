@@ -77,6 +77,8 @@ function createClaudeRun(ctx) {
     claudeContextTokens,
     reportedModelUsageWindow,
     classifyClaudeResultError,
+    classifyClaudeTransient,
+    CLAUDE_TRANSIENT_RETRY_MS,
     formatRunExitError,
     trackLiveClaudeChild,
     abortIfCancelled,
@@ -494,24 +496,6 @@ function createClaudeRun(ctx) {
     if (thread.ultracode === true && entryDef.id === "claude" && !ultracodeCli) {
       throw new Error("Ultracode requires Claude Code 2.1.219 or newer. Could not verify support on this host. Update the CLI or turn Ultracode off.");
     }
-    const args = entryDef.buildArgs({
-      prompt,
-      sessionId: thread.sessionId || null,
-      permissionMode: thread.permissionMode || "default",
-      model: thread.model || null,
-      reasoningEffort: thread.reasoningEffort || null,
-      webSearch: thread.webSearch === true,
-      agent: thread.agent || null,
-      fast: thread.fast === true,
-      ultracode: thread.ultracode === true,
-      cliSupportsUltracode: ultracodeCli,
-      forkSessionAt: thread.forkSessionAt || null,
-      addDirs: extraDirs,
-      askWriteDirs,
-      askReads,
-      userHooks: userHookSettings,
-      extraArgs: extraArgv,
-    });
     // Claude runs interactively: prompt over stdin, permission prompts via
     // the control protocol. Other claude-stream providers (e.g. grok) keep
     // the argv prompt and their own MCP injection.
@@ -522,10 +506,38 @@ function createClaudeRun(ctx) {
       threadId,
       memoryOnly: thread.memoryConsolidate === true,
     });
-    if (interactive) {
-      // No trailing prompt in interactive argv, so appending is safe.
-      args.push(...mcpArgs);
-    }
+    /**
+     * Launch argv for a session. Rebuilt when a transient retry respawns, so
+     * a first turn resumes the session its failed result reported.
+     * @param {string | null} sessionId
+     * @param {unknown} forkSessionAt
+     */
+    const buildLaunchArgs = (sessionId, forkSessionAt) => {
+      const built = entryDef.buildArgs({
+        prompt,
+        sessionId,
+        permissionMode: thread.permissionMode || "default",
+        model: thread.model || null,
+        reasoningEffort: thread.reasoningEffort || null,
+        webSearch: thread.webSearch === true,
+        agent: thread.agent || null,
+        fast: thread.fast === true,
+        ultracode: thread.ultracode === true,
+        cliSupportsUltracode: ultracodeCli,
+        forkSessionAt,
+        addDirs: extraDirs,
+        askWriteDirs,
+        askReads,
+        userHooks: userHookSettings,
+        extraArgs: extraArgv,
+      });
+      if (interactive) {
+        // No trailing prompt in interactive argv, so appending is safe.
+        built.push(...mcpArgs);
+      }
+      return built;
+    };
+    const args = buildLaunchArgs(thread.sessionId || null, thread.forkSessionAt || null);
     /** @type {NodeJS.ProcessEnv | undefined} */
     let grokHomeEnv;
     if (entryDef.id === "grok") {
@@ -591,7 +603,7 @@ function createClaudeRun(ctx) {
         }
       }
     }
-    const spawn = resolveSpawn(project, binary, args, localCwd, grokHomeEnv, threadId);
+    let spawn = resolveSpawn(project, binary, args, localCwd, grokHomeEnv, threadId);
 
     if (abortIfCancelled(threadId, runId)) return { runId };
     const entry = claimPreparingRun(threadId, runId, {
@@ -663,7 +675,7 @@ function createClaudeRun(ctx) {
 
     /** Assigned below (reused or freshly spawned) before any event fires. */
     let handle;
-    function recordMeasuredUsage(ev) {
+    function recordMeasuredUsage(ev, countTurn = true) {
       const batch = usageMeasurements.finish(ev, handle, capturedModel);
       if (!batch) return null;
       const prev = store.getUsage(threadId) || { model: null, inputTokens: 0, outputTokens: 0, costUsd: 0, turns: 0 };
@@ -676,7 +688,7 @@ function createClaudeRun(ctx) {
         inputTokens: prev.inputTokens + batch.inputTokens,
         outputTokens: prev.outputTokens + batch.outputTokens,
         costUsd: prev.costUsd + batch.costUsd,
-        turns: prev.turns + 1,
+        turns: prev.turns + (countTurn ? 1 : 0),
         accounting: batch.accounting,
       };
       for (const field of ["cachedInputTokens", "cacheWriteTokens", "reasoningTokens"]) {
@@ -687,7 +699,7 @@ function createClaudeRun(ctx) {
       store.setUsage(threadId, nextUsage);
       if (batch.costUsd > 0) store.recordSpend(batch.costUsd);
       for (const [index, row] of batch.rows.entries()) store.recordUsage({
-        provider: threadProviderRef(thread), ...row, threadId, turns: index === 0 ? 1 : 0,
+        provider: threadProviderRef(thread), ...row, threadId, turns: index === 0 && countTurn ? 1 : 0,
         projectId: thread.projectId,
         projectName: store.getProject(thread.projectId)?.name, title: thread.title,
       });
@@ -710,6 +722,47 @@ function createClaudeRun(ctx) {
     // Turn-local: settings can reload between sends on the same process.
     let contextCompaction = null;
     let sawCompactionPolicy = false;
+
+    // Transient upstream failures (529 overloaded, 5xx, Cloudflare pages)
+    // retry this same turn in place, on the same Claude session.
+    const retryTransient = interactive;
+    let transientRetries = 0;
+    /** @type {string | null} */
+    let retryNoteId = null;
+
+    function scheduleTransientRetry(live, transient) {
+      const delayMs = CLAUDE_TRANSIENT_RETRY_MS[transientRetries++];
+      const note = `Claude is ${transient}, retrying in ${Math.round(delayMs / 1000)}s…`;
+      if (retryNoteId) store.updateMessage(threadId, retryNoteId, { text: note });
+      else retryNoteId = appendMessage(threadId, "event", note, runId);
+      store.save();
+      pushDetail(threadId, claudeState);
+      live.retryTimer = setTimeout(() => {
+        const e = guard();
+        if (!e) return;
+        e.retryTimer = null;
+        sawResult = false;
+        sawTurnContent = false;
+        sawAnyEvent = false;
+        assistantText = "";
+        assistantMsgId = null;
+        // A first turn learned its session id from the failed result.
+        thread.sessionId = capturedSessionId;
+        // Any fresh process from here on (this branch, or onExit's respawn
+        // when a dead CLI swallowed the send) must resume the session this
+        // turn already has; the original argv predates it, or forked from
+        // another.
+        if (capturedSessionId) {
+          spawn = resolveSpawn(project, binary, buildLaunchArgs(capturedSessionId, null), localCwd, grokHomeEnv, threadId);
+        }
+        const sess = claudeSessions.get(threadId);
+        reused = Boolean(sess && sess.handle === handle && handle.send(prompt));
+        if (!reused) {
+          if (sess) disposeClaudeSession(threadId);
+          spawnForTurn();
+        }
+      }, delayMs);
+    }
 
     function disarmAck() {
       const e = active.get(threadId);
@@ -1113,6 +1166,16 @@ function createClaudeRun(ctx) {
           }
         }
 
+        // The CLI's own "API Error: 529 …" bubble: the result handler retries
+        // or fails the turn with that detail, so it is not assistant copy.
+        if (
+          type === "assistant" && retryTransient && ev.message?.model === "<synthetic>" &&
+          Array.isArray(ev.message.content) &&
+          classifyClaudeTransient({ result: ev.message.content.map((b) => b?.text || "").join("\n") })
+        ) {
+          return;
+        }
+
         if (type === "assistant" && ev.message && Array.isArray(ev.message.content)) {
           // Complete assistant restates streamed partials: replace, don't append.
           if (partialText) {
@@ -1246,6 +1309,25 @@ function createClaudeRun(ctx) {
           // result (#1608). Stay open for it; this turn's usage still counts.
           // If the CLI dies first, onExit fails the run: the steer went unanswered.
           const awaitingSteer = live.unansweredSteers.length > 0;
+          const transient =
+            retryTransient && (ev.subtype !== "success" || ev.is_error === true)
+              ? classifyClaudeTransient({
+                  errors: ev.errors,
+                  result: typeof ev.result === "string" ? ev.result : "",
+                })
+              : null;
+          if (transient && !awaitingSteer && transientRetries < CLAUDE_TRANSIENT_RETRY_MS.length) {
+            if (typeof ev.session_id === "string" && ev.session_id) {
+              capturedSessionId = ev.session_id;
+            }
+            if (capturedSessionId) {
+              store.updateThread(threadId, { sessionId: capturedSessionId });
+            }
+            // Spend is real; the user's turn is not over, so count it once.
+            recordMeasuredUsage(ev, false);
+            scheduleTransientRetry(live, transient);
+            return;
+          }
           if (!awaitingSteer) {
             sawResult = true;
             completeWorkLogStep(threadId, startingId);
@@ -1300,7 +1382,7 @@ function createClaudeRun(ctx) {
               pushDetail(threadId, claudeState);
             })().catch(() => {}); // Optional meter metadata must not fail a successful turn.
           }
-          const ok = ev.subtype === "success";
+          const ok = ev.subtype === "success" && !transient;
           // Assistant text from stream, or fall back to result field
           // (skip when result merely repeats the last streamed bubble).
           // Error/cancel results are not assistant copy (#549).
@@ -1376,7 +1458,10 @@ function createClaudeRun(ctx) {
               terminalText =
                 lastAssistantText(threadId, runId) || "Run stopped";
             } else {
-              const failText = classified.text;
+              const failText =
+                transient && transientRetries > 0
+                  ? `Claude is still ${transient} after ${transientRetries} ${transientRetries === 1 ? "retry" : "retries"}. Send your message again to try once more.\n${classified.text}`
+                  : classified.text;
               const failure = markRunFailed(threadId, failText, runId, {
                 sessionId: classified.sessionLost ? null : capturedSessionId,
               });
@@ -1417,6 +1502,8 @@ function createClaudeRun(ctx) {
         // Result already cleared this run, or a newer run owns the slot.
         if (!e || e.stopping || e.runId !== runId) return;
         if (e.kind !== "claude") return;
+        // Died while a transient retry waits: its timer respawns with --resume.
+        if (e.retryTimer) return;
 
         // A kept-alive CLI can be on its way out when this turn's send()
         // lands: the write succeeds (EPIPE is async), nothing reads it, and

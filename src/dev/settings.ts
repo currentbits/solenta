@@ -90,6 +90,7 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
   let agentsPanelRememberLast = false;
   let stayAwake: AppSettings["stayAwake"] = "agent";
   let confirmQuitWithActiveWork = true;
+  let confirmColdClaudeResume = true;
   let pinchZoomWindow = true;
   let closeToTray = false;
   let menuBarUsage = false;
@@ -224,6 +225,7 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           stayAwake,
           quotaWaitAutoResume: ctx.quotaWaitAutoResume,
           confirmQuitWithActiveWork,
+          confirmColdClaudeResume,
           pinchZoomWindow,
           closeToTray,
           menuBarUsage,
@@ -470,6 +472,12 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
             throw new Error("confirmQuitWithActiveWork must be a boolean");
           }
           confirmQuitWithActiveWork = patch.confirmQuitWithActiveWork;
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, "confirmColdClaudeResume")) {
+          if (typeof patch.confirmColdClaudeResume !== "boolean") {
+            throw new Error("confirmColdClaudeResume must be a boolean");
+          }
+          confirmColdClaudeResume = patch.confirmColdClaudeResume;
         }
         if (Object.prototype.hasOwnProperty.call(patch, "pinchZoomWindow")) {
           if (typeof patch.pinchZoomWindow !== "boolean") {
@@ -724,6 +732,7 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           stayAwake,
           quotaWaitAutoResume: ctx.quotaWaitAutoResume,
           confirmQuitWithActiveWork,
+          confirmColdClaudeResume,
           pinchZoomWindow,
           closeToTray,
           menuBarUsage,

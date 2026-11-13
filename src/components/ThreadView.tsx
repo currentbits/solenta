@@ -355,6 +355,10 @@ interface ThreadViewProps {
   providers: ProviderInfo[];
   /** Saved agent profiles from settings; passed through to Composer. */
   agentProfiles?: AgentProfile[];
+  /** Settings confirmColdClaudeResume: ask before a cold Claude resume send. */
+  confirmColdResume?: boolean;
+  /** Persist "Don't ask again" for the cold Claude resume confirm. */
+  onDontAskColdResume?: () => void;
   workflows: WorkflowTemplateInfo[];
   hasProjects: boolean;
   onAddProject: () => void;
@@ -932,6 +936,8 @@ export const ThreadView = memo(function ThreadView({
   project,
   providers,
   agentProfiles = [],
+  confirmColdResume = true,
+  onDontAskColdResume,
   workflows,
   hasProjects,
   onAddProject,
@@ -5922,6 +5928,10 @@ export const ThreadView = memo(function ThreadView({
         contextWindow={composerContextWindow}
         contextUsed={detail.usage?.contextTokens ?? null}
         onCompactFirst={nativeCompact ? handleCompact : undefined}
+        coldResumeTokens={
+          confirmColdResume && nativeCompact && !isArchived ? coldCompact : null
+        }
+        onDontAskColdResume={onDontAskColdResume}
         statusTab={composerStatus}
         workspaceStrip={
           !project ||

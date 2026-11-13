@@ -108,6 +108,7 @@ class StoreSettingsMethods {
       stayAwake: n.stayAwake,
       quotaWaitAutoResume: n.quotaWaitAutoResume,
       confirmQuitWithActiveWork: n.confirmQuitWithActiveWork,
+      confirmColdClaudeResume: n.confirmColdClaudeResume,
       pinchZoomWindow: n.pinchZoomWindow,
       closeToTray: n.closeToTray,
       menuBarUsage: n.menuBarUsage,
@@ -470,6 +471,13 @@ class StoreSettingsMethods {
         throw new Error("confirmQuitWithActiveWork must be a boolean");
       }
       this.data.settings.confirmQuitWithActiveWork = v;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "confirmColdClaudeResume")) {
+      const v = patch.confirmColdClaudeResume;
+      if (typeof v !== "boolean") {
+        throw new Error("confirmColdClaudeResume must be a boolean");
+      }
+      this.data.settings.confirmColdClaudeResume = v;
     }
     if (Object.prototype.hasOwnProperty.call(patch, "pinchZoomWindow")) {
       const v = patch.pinchZoomWindow;
