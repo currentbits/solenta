@@ -893,7 +893,7 @@ interface ThreadViewProps {
   /** Load a sibling transcript without marking it visited. */
   onPeekThread?: (id: string) => Promise<ThreadDetail>;
   /** Fired when the composer model picker opens (provider list refresh). */
-  onModelPickerOpen?: () => void;
+  onModelPickerOpen?: (providerId?: string) => void;
   /** Sign in a signed-out provider from the picker (#1501). */
   onProviderSignIn?: (providerId: string) => Promise<void>;
   loadProviderLimits?: ProviderLimitsLoader;

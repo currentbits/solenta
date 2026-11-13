@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
+  FetchedModel,
   SidebarHostStatus,
   AutoApprove,
   ActivityItem,
@@ -145,6 +146,7 @@ import {
 } from "./bootSnapshot";
 import { detachedThreadId } from "./detachedWindow";
 import { prunePaneLayouts } from "./paneLayout";
+import { LIVE_MODELS_TTL_MS, withLiveModels } from "./liveModels";
 import { pruneComposerDrafts } from "./composerSession";
 import { createThreadDetailCache } from "./threadDetailCache";
 import { errorMessage } from "./coder/errorMessage";
@@ -963,6 +965,11 @@ export interface UseCoderResult {
    */
   refreshLocalProviders: () => Promise<void>;
   refreshProviders: (options?: { throwOnError?: boolean }) => Promise<void>;
+  /**
+   * Ask the provider's API for new models (providers.fetchModels) and merge
+   * them into `providers`. Throttled per provider; failures are silent.
+   */
+  refreshProviderModels: (providerId: string) => Promise<void>;
   projectById: Map<string, ProjectInfo>;
   /** Thin memory passthroughs; callers hold list/search state locally. */
   searchMemory: (input: {
@@ -2136,6 +2143,30 @@ export function useCoder(): UseCoderResult {
     [api, computer.key, computer.refresh],
   );
 
+  const [liveModels, setLiveModels] = useState<Record<string, FetchedModel[]>>({});
+  const liveModelsAt = useRef(new Map<string, number>());
+  const refreshProviderModels = useCallback(
+    async (providerId: string) => {
+      // A remote computer's keys live on that host; its list stays as listed.
+      if (computer.key || !providerId) return;
+      const now = Date.now();
+      const last = liveModelsAt.current.get(providerId);
+      if (last !== undefined && now - last < LIVE_MODELS_TTL_MS) return;
+      liveModelsAt.current.set(providerId, now);
+      try {
+        const models = await api.providers.fetchModels({ provider: providerId });
+        setLiveModels((prev) => ({ ...prev, [providerId]: models }));
+      } catch {
+        // No key, no endpoint or offline: keep the current list.
+      }
+    },
+    [api, computer.key],
+  );
+  const providersWithLive = useMemo(
+    () => (computer.key ? computer.providers : withLiveModels(computer.providers, liveModels)),
+    [computer.key, computer.providers, liveModels],
+  );
+
   const listCheckpoints = useCallback(
     async (threadId: string) => {
       return api.git.listCheckpoints({ threadId });
@@ -2489,7 +2520,7 @@ export function useCoder(): UseCoderResult {
     api,
     projects,
     threads,
-    providers: computer.providers,
+    providers: providersWithLive,
     localProviders: providers,
     computer,
     workflows: workflowComputer.workflows,
@@ -2717,6 +2748,7 @@ export function useCoder(): UseCoderResult {
     downloadUpdate,
     applyUpdate,
     refreshProviders,
+    refreshProviderModels,
     refreshLocalProviders,
     projectById,
     searchMemory,

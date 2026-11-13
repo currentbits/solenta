@@ -441,6 +441,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     setStayAwakeMode,
     testWebhook,
     refreshProviders,
+    refreshProviderModels,
     refreshLocalProviders,
     projectById,
     searchMemory,
@@ -1473,9 +1474,13 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     setChipError(null);
   }, []);
 
-  const handleModelPickerOpen = useCallback(() => {
-    void refreshProviders();
-  }, [refreshProviders]);
+  const handleModelPickerOpen = useCallback(
+    (providerId?: string) => {
+      void refreshProviders();
+      if (providerId) void refreshProviderModels(providerId);
+    },
+    [refreshProviders, refreshProviderModels],
+  );
 
 
   // Wrapped, not passed through: this one is bound straight to a button's

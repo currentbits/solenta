@@ -348,7 +348,7 @@ export interface ComposerProps {
    */
   onDelegate?: (providerId: string, task: string) => void | Promise<void>;
   /** Fired each time the model picker popover opens (provider list refresh). */
-  onModelPickerOpen?: () => void;
+  onModelPickerOpen?: (providerId?: string) => void;
   /** Start a signed-out provider's login in a terminal (#1501). */
   onProviderSignIn?: (providerId: string) => Promise<void>;
   placeholder?: string;
@@ -2691,7 +2691,8 @@ export const Composer = memo(function Composer({
                     setOptionsOpen(false);
                     // Providers were fetched once at boot; re-check so a CLI
                     // installed mid-session does not show "not installed".
-                    onModelPickerOpen?.();
+                    // Also asks the current provider's API for new models.
+                    onModelPickerOpen?.(provider);
                   }
                 }}
               >
