@@ -496,24 +496,6 @@ function createClaudeRun(ctx) {
     if (thread.ultracode === true && entryDef.id === "claude" && !ultracodeCli) {
       throw new Error("Ultracode requires Claude Code 2.1.219 or newer. Could not verify support on this host. Update the CLI or turn Ultracode off.");
     }
-    const args = entryDef.buildArgs({
-      prompt,
-      sessionId: thread.sessionId || null,
-      permissionMode: thread.permissionMode || "default",
-      model: thread.model || null,
-      reasoningEffort: thread.reasoningEffort || null,
-      webSearch: thread.webSearch === true,
-      agent: thread.agent || null,
-      fast: thread.fast === true,
-      ultracode: thread.ultracode === true,
-      cliSupportsUltracode: ultracodeCli,
-      forkSessionAt: thread.forkSessionAt || null,
-      addDirs: extraDirs,
-      askWriteDirs,
-      askReads,
-      userHooks: userHookSettings,
-      extraArgs: extraArgv,
-    });
     // Claude runs interactively: prompt over stdin, permission prompts via
     // the control protocol. Other claude-stream providers (e.g. grok) keep
     // the argv prompt and their own MCP injection.
@@ -524,10 +506,38 @@ function createClaudeRun(ctx) {
       threadId,
       memoryOnly: thread.memoryConsolidate === true,
     });
-    if (interactive) {
-      // No trailing prompt in interactive argv, so appending is safe.
-      args.push(...mcpArgs);
-    }
+    /**
+     * Launch argv for a session. Rebuilt when a transient retry respawns, so
+     * a first turn resumes the session its failed result reported.
+     * @param {string | null} sessionId
+     * @param {unknown} forkSessionAt
+     */
+    const buildLaunchArgs = (sessionId, forkSessionAt) => {
+      const built = entryDef.buildArgs({
+        prompt,
+        sessionId,
+        permissionMode: thread.permissionMode || "default",
+        model: thread.model || null,
+        reasoningEffort: thread.reasoningEffort || null,
+        webSearch: thread.webSearch === true,
+        agent: thread.agent || null,
+        fast: thread.fast === true,
+        ultracode: thread.ultracode === true,
+        cliSupportsUltracode: ultracodeCli,
+        forkSessionAt,
+        addDirs: extraDirs,
+        askWriteDirs,
+        askReads,
+        userHooks: userHookSettings,
+        extraArgs: extraArgv,
+      });
+      if (interactive) {
+        // No trailing prompt in interactive argv, so appending is safe.
+        built.push(...mcpArgs);
+      }
+      return built;
+    };
+    const args = buildLaunchArgs(thread.sessionId || null, thread.forkSessionAt || null);
     /** @type {NodeJS.ProcessEnv | undefined} */
     let grokHomeEnv;
     if (entryDef.id === "grok") {
@@ -593,7 +603,7 @@ function createClaudeRun(ctx) {
         }
       }
     }
-    const spawn = resolveSpawn(project, binary, args, localCwd, grokHomeEnv, threadId);
+    let spawn = resolveSpawn(project, binary, args, localCwd, grokHomeEnv, threadId);
 
     if (abortIfCancelled(threadId, runId)) return { runId };
     const entry = claimPreparingRun(threadId, runId, {
@@ -738,6 +748,13 @@ function createClaudeRun(ctx) {
         assistantMsgId = null;
         // A first turn learned its session id from the failed result.
         thread.sessionId = capturedSessionId;
+        // Any fresh process from here on (this branch, or onExit's respawn
+        // when a dead CLI swallowed the send) must resume the session this
+        // turn already has; the original argv predates it, or forked from
+        // another.
+        if (capturedSessionId) {
+          spawn = resolveSpawn(project, binary, buildLaunchArgs(capturedSessionId, null), localCwd, grokHomeEnv, threadId);
+        }
         const sess = claudeSessions.get(threadId);
         reused = Boolean(sess && sess.handle === handle && handle.send(prompt));
         if (!reused) {

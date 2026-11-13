@@ -61,7 +61,7 @@ function fakeClaude(dir) {
     `#!/usr/bin/env node
 "use strict";
 const fs = require("fs");
-fs.appendFileSync(process.env.CODER_FAKE_SPAWNS, "spawn\\n");
+fs.appendFileSync(process.env.CODER_FAKE_SPAWNS, JSON.stringify(process.argv.slice(2)) + "\\n");
 const emit = (o) => process.stdout.write(JSON.stringify(o) + "\\n");
 emit({ type: "system", subtype: "init", session_id: "s1", model: "m" });
 let buf = "";
@@ -78,10 +78,13 @@ process.stdin.on("data", (c) => {
     n++;
     fs.appendFileSync(process.env.CODER_FAKE_SENDS, JSON.stringify(msg.message.content) + "\\n");
     const err = process.env.CODER_FAKE_ERR;
-    if (n <= Number(process.env.CODER_FAKE_FAILS)) {
+    // Counted across processes, so a respawned CLI continues the sequence.
+    const total = fs.readFileSync(process.env.CODER_FAKE_SENDS, "utf8").trim().split("\\n").length;
+    if (total <= Number(process.env.CODER_FAKE_FAILS)) {
       emit({ type: "assistant", error: "server_error", message: { model: "<synthetic>", content: [{ type: "text", text: err }] } });
       emit({ type: "result", subtype: "success", is_error: true, result: err, session_id: "s1",
         usage: { input_tokens: 0, output_tokens: 0 } });
+      if (process.env.CODER_FAKE_EXIT_ON_FAIL) setImmediate(() => process.exit(1));
     } else {
       emit({ type: "assistant", message: { content: [{ type: "text", text: "ok" }] } });
       emit({ type: "result", subtype: "success", result: "ok", session_id: "s1",
@@ -97,7 +100,7 @@ setInterval(() => {}, 500);
 
 describe("Claude runner: transient retry", () => {
   const ENV = ["CODER_SIMULATE", "CODER_AGENT_CMD", "CODER_CLAUDE_BIN", "CODER_FAKE_SPAWNS",
-    "CODER_FAKE_SENDS", "CODER_FAKE_FAILS", "CODER_FAKE_ERR"];
+    "CODER_FAKE_SENDS", "CODER_FAKE_FAILS", "CODER_FAKE_ERR", "CODER_FAKE_EXIT_ON_FAIL"];
   const saved = {};
   let tmpDir;
   let runner;
@@ -212,6 +215,21 @@ describe("Claude runner: transient retry", () => {
     for (let i = 0; i < 50; i++) await new Promise((r) => setImmediate(r));
     assert.equal(sends().length, 1);
     assert.notEqual(status(), "working");
+  });
+
+  it("a first turn whose CLI exits during backoff respawns resuming the captured session", async () => {
+    process.env.CODER_FAKE_FAILS = "1";
+    process.env.CODER_FAKE_EXIT_ON_FAIL = "1";
+    await runner.startRun({ threadId: thread.id, prompt: "hello" });
+    await until(() => events().some((t) => t.includes("retrying in 5s")), "first backoff");
+    for (let i = 0; i < 50; i++) await new Promise((r) => setImmediate(r));
+    mock.timers.tick(5000);
+    await until(() => status() === "done", "done");
+    const argvs = fs.readFileSync(process.env.CODER_FAKE_SPAWNS, "utf8").trim().split("\n").map((l) => JSON.parse(l));
+    assert.equal(argvs.length, 2, "the exited CLI was replaced");
+    assert.ok(!argvs[0].includes("--resume"), "the first turn started without a session");
+    const at = argvs[1].indexOf("--resume");
+    assert.ok(at >= 0 && argvs[1][at + 1] === "s1", `respawn resumes s1: ${JSON.stringify(argvs[1])}`);
   });
 
   it("never retries a non-transient error", async () => {
