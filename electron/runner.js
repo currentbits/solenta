@@ -87,6 +87,7 @@ const {
   classifyWriterLock,
   decideQuotaWait,
   formatQuotaWaitClock,
+  isQuotaLike,
 } = require("./quotaWait.js");
 const { startWithPoolFailover } = require("./subagentPool.js");
 const { normalizeQueued } = require("./queued.js");
@@ -351,6 +352,37 @@ function classifyClaudeResultError(input) {
     text += "\nSession reset; the next message starts fresh.";
   }
   return { kind: "fail", text, sessionLost: Boolean(sessionLost) };
+}
+
+/** Backoff before each in-place retry of a transient Claude failure. */
+const CLAUDE_TRANSIENT_RETRY_MS = [5000, 15000, 45000];
+
+/**
+ * Narrow upstream-outage check on a failed Claude result's errors[] + result
+ * text: 529/overloaded, API 5xx, Cloudflare HTML 403/5xx pages. Auth, quota
+ * and rate limits (quotaWait owns those), session loss and cancels never
+ * match. Returns the short status wording, or null when not transient.
+ * @param {{ errors?: unknown, result?: unknown }} [input]
+ * @returns {"overloaded" | "unavailable" | null}
+ */
+function classifyClaudeTransient(input) {
+  const src = input && typeof input === "object" ? input : {};
+  const errors = asErrorList(src.errors);
+  const resultText = typeof src.result === "string" ? src.result.trim() : "";
+  const s = [...errors, resultText].join("\n");
+  if (!s.trim()) return null;
+  if (errors.some(isBareCancelError) || isBareCancelError(resultText)) return null;
+  if (looksSessionLost(s) || isQuotaLike(s)) return null;
+  if (/\b401\b|authenticat|unauthori[sz]ed|invalid.{0,10}api.?key|oauth|\/login|credit balance/i.test(s)) {
+    return null;
+  }
+  if (/overloaded|\b529\b/i.test(s)) return "overloaded";
+  if (/API Error:?\s*5\d\d\b/i.test(s)) return "unavailable";
+  // Cloudflare edge pages: a 403/5xx with an HTML body, not an API 403.
+  if (/\b(?:403|5\d\d)\b/.test(s) && /cloudflare|<!doctype html|<html/i.test(s)) {
+    return "unavailable";
+  }
+  return null;
 }
 
 /**
@@ -1651,6 +1683,10 @@ function createRunner(opts) {
     if (entry.ackTimer) {
       clearTimeout(entry.ackTimer);
       entry.ackTimer = null;
+    }
+    if (entry.retryTimer) {
+      clearTimeout(entry.retryTimer);
+      entry.retryTimer = null;
     }
     if (typeof entry.discardHeldPhantom === "function") {
       entry.discardHeldPhantom();
@@ -3208,6 +3244,8 @@ function createRunner(opts) {
     setIntervalFn,
     tickMs,
     classifyClaudeResultError,
+    classifyClaudeTransient,
+    CLAUDE_TRANSIENT_RETRY_MS,
     claudeContextTokens,
     isPhantomClaudeResult,
     launchWasCancelled,
@@ -3454,6 +3492,7 @@ module.exports = {
   ADJECTIVES,
   NOUNS,
   classifyClaudeResultError,
+  classifyClaudeTransient,
   formatRunExitError,
   looksWriterLock,
   /** @internal test/diagnostics */
