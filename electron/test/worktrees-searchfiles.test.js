@@ -103,4 +103,33 @@ describe("worktrees searchFiles", () => {
     });
     assert.equal(files.length, 5);
   });
+
+  it("returns real UTF-8 paths for non-ASCII filenames", async () => {
+    fs.writeFileSync(path.join(repo, "café.txt"), "bonjour unique-needle\n");
+    git(repo, ["add", "."]);
+    git(repo, ["commit", "-m", "accent"]);
+    const { files } = await listFiles({ store, threadId: thread.id, query: "caf" });
+    assert.ok(files.includes("café.txt"), `got ${JSON.stringify(files)}`);
+    const { hits } = await searchFiles({
+      store,
+      threadId: thread.id,
+      query: "unique-needle",
+    });
+    assert.equal(hits.length, 1);
+    assert.equal(hits[0].path, "café.txt");
+    assert.equal(hits[0].line, 1);
+    assert.equal(hits[0].text, "bonjour unique-needle");
+  });
+
+  it("listFiles reports truncation past the 20,000-path cap", async () => {
+    const blob = git(repo, ["hash-object", "-w", "README.md"]);
+    const lines = [];
+    for (let i = 0; i <= 20000; i++) lines.push(`100644 ${blob}\tbulk/f${i}.txt`);
+    execFileSync("git", ["update-index", "--index-info"], {
+      cwd: repo,
+      input: lines.join("\n") + "\n",
+    });
+    const res = await listFiles({ store, threadId: thread.id, query: "readme" });
+    assert.equal(res.truncated, true);
+  });
 });

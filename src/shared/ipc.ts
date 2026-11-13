@@ -7883,7 +7883,11 @@ export interface CoderApi {
       query?: string;
       /** Cap (default 20, max 80). Palette file search asks for more. */
       limit?: number;
-    }): Promise<{ files: string[] }>;
+    }): Promise<{
+      files: string[];
+      /** The repo exceeded the 20,000-path index cap; some files are unlisted. */
+      truncated?: true;
+    }>;
     /**
      * Fixed-string content search (`git grep`) in the thread worktree or
      * project checkout. Empty query → no hits. Unknown thread rejects.

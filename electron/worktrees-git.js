@@ -5,7 +5,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { execFile } = require("node:child_process");
-const { execCommand, wrapCommand, SYNC_TIMEOUT_MS } = require("./ssh.js");
+const { execCommand, wrapCommand, escalateKill, SYNC_TIMEOUT_MS } = require("./ssh.js");
 const { pathSide, isWindowsMount, wslTarget, buildWslCommand } = require("./wsl.js");
 
 /** @type {typeof execFile} */
@@ -157,6 +157,20 @@ function gitSubcommand(args) {
 }
 
 /**
+ * Signal for a sync git timeout. execFileSync sends exactly one signal and
+ * then blocks until the child exits, so a git that ignores SIGTERM would
+ * freeze the main process. Read-only commands run lock-free
+ * (GIT_OPTIONAL_LOCKS=0) and are safe to SIGKILL; writes keep SIGTERM so git
+ * can remove its index.lock instead of leaving it stale.
+ *
+ * @param {string[]} args
+ * @returns {NodeJS.Signals}
+ */
+function syncKillSignal(args) {
+  return READ_ONLY_GIT.has(gitSubcommand(args)) ? "SIGKILL" : "SIGTERM";
+}
+
+/**
  * The one env for every local git spawn. Read-only subcommands get
  * GIT_OPTIONAL_LOCKS=0 (#1520); win32 gets core.longpaths=true appended
  * after any GIT_CONFIG_COUNT entries already set (#1523).
@@ -259,6 +273,7 @@ function gitOut(cwd, args, opts) {
     stdio: ["ignore", "pipe", "pipe"],
     maxBuffer: GIT_MAX_BUFFER,
     env: gitEnv(args),
+    killSignal: syncKillSignal(args),
   };
   if (cmd.cwd) execOpts.cwd = cmd.cwd;
   const raw = execCommand(null, cmd.bin, cmd.args, execOpts);
@@ -270,17 +285,21 @@ function gitOut(cwd, args, opts) {
  * Run git without throwing. Returns { ok, stdout, stderr, combined }.
  * @param {string} cwd
  * @param {string[]} args
- * @param {{ raw?: boolean, env?: NodeJS.ProcessEnv, timeout?: number }} [opts]
+ * @param {{ raw?: boolean, env?: NodeJS.ProcessEnv, timeout?: number, input?: string }} [opts]
+ *   input: written to git's stdin (e.g. `--pathspec-from-file=-`)
  */
 function gitTry(cwd, args, opts) {
   try {
+    const input = opts && opts.input != null ? opts.input : undefined;
     /** @type {import('node:child_process').ExecFileSyncOptionsWithStringEncoding} */
     const execOpts = {
       cwd,
       encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: [input == null ? "ignore" : "pipe", "pipe", "pipe"],
+      input,
       maxBuffer: GIT_MAX_BUFFER,
       env: gitEnv(args, opts && opts.env),
+      killSignal: syncKillSignal(args),
     };
     if (opts && opts.timeout != null) {
       execOpts.timeout = opts.timeout;
@@ -369,7 +388,7 @@ function gitExecThrowAsync(project, cwd, args, opts) {
     if (cmd.cwd) execOpts.cwd = cmd.cwd;
   }
   return new Promise((resolve, reject) => {
-    execFileImpl(cmd.bin, cmd.args, execOpts, (err, stdout, stderr) => {
+    const child = execFileImpl(cmd.bin, cmd.args, execOpts, (err, stdout, stderr) => {
       if (err) {
         if (err.stdout == null && stdout != null) err.stdout = stdout;
         if (err.stderr == null && stderr != null) err.stderr = stderr;
@@ -383,6 +402,7 @@ function gitExecThrowAsync(project, cwd, args, opts) {
       const out = stdout == null ? "" : String(stdout);
       resolve(opts && opts.raw ? out : out.trim());
     });
+    escalateKill(child, timeout);
   });
 }
 
@@ -448,7 +468,7 @@ function gitTryAsync(cwd, args, opts) {
   };
   if (cmd.cwd) execOpts.cwd = cmd.cwd;
   return new Promise((resolve) => {
-    execFileImpl(
+    const child = execFileImpl(
       cmd.bin,
       cmd.args,
       execOpts,
@@ -478,6 +498,7 @@ function gitTryAsync(cwd, args, opts) {
         });
       },
     );
+    escalateKill(child, timeout);
   });
 }
 

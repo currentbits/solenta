@@ -810,6 +810,27 @@ function normalizeCommitPaths(cwd, paths) {
   return out;
 }
 
+/** Pathspec argv above this many chars goes through stdin instead. */
+const PATHSPEC_ARGV_MAX = 8000;
+
+/**
+ * Literal, top-anchored pathspecs for `paths`. Small lists stay on argv;
+ * a large selection would hit E2BIG / Windows' 32K command-line limit, so it
+ * is fed on stdin (`--pathspec-from-file`, git >= 2.25) instead.
+ *
+ * @param {string[]} paths
+ * @returns {{ args: string[], input?: string }} append `args`; pass `input`
+ *   as gitTry's stdin
+ */
+function pathspecArgs(paths) {
+  const specs = paths.map((p) => `:(top,literal)${p}`);
+  if (specs.join(" ").length <= PATHSPEC_ARGV_MAX) return { args: ["--", ...specs] };
+  return {
+    args: ["--pathspec-from-file=-", "--pathspec-file-nul"],
+    input: specs.join("\0"),
+  };
+}
+
 /**
  * Stage the given paths, or the whole tree when `paths` is null.
  *
@@ -817,10 +838,8 @@ function normalizeCommitPaths(cwd, paths) {
  * @param {string[] | null} paths
  */
 function stageForCommit(cwd, paths) {
-  const args = paths
-    ? ["add", "-A", "--", ...paths.map((p) => `:(top,literal)${p}`)]
-    : ["add", "-A"];
-  const add = gitTry(cwd, args);
+  const spec = paths ? pathspecArgs(paths) : { args: [] };
+  const add = gitTry(cwd, ["add", "-A", ...spec.args], { input: spec.input });
   if (!add.ok) {
     throw new Error(tailErr(add.stderr || add.combined, "git add failed"));
   }
@@ -876,10 +895,8 @@ function commit(opts) {
     return { subject: message.split("\n")[0] };
   }
   stageForCommit(cwd, paths);
-  const commitArgs = paths
-    ? ["commit", "-m", message, "--", ...paths.map((p) => `:(top,literal)${p}`)]
-    : ["commit", "-m", message];
-  const res = gitTry(cwd, commitArgs);
+  const spec = paths ? pathspecArgs(paths) : { args: [] };
+  const res = gitTry(cwd, ["commit", "-m", message, ...spec.args], { input: spec.input });
   if (!res.ok) {
     throw new Error(tailErr(res.stderr || res.combined, "git commit failed"));
   }
@@ -958,22 +975,28 @@ function applyPatch(cwd, flags, relPath, patch, env) {
 function commitPartial(cwd, message, paths, patches) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "solenta-index-"));
   const env = { GIT_INDEX_FILE: path.join(dir, "index") };
-  const run = (/** @type {string[]} */ args, /** @type {string} */ fallback) => {
-    const res = gitTry(cwd, args, { env });
+  const run = (
+    /** @type {string[]} */ args,
+    /** @type {string} */ fallback,
+    /** @type {string | undefined} */ input,
+  ) => {
+    const res = gitTry(cwd, args, { env, input });
     if (!res.ok) throw new Error(tailErr(res.stderr || res.combined, fallback));
   };
   try {
     run(["read-tree", "HEAD"], "git read-tree failed");
     const whole = paths.filter((p) => !patches.has(p));
     if (whole.length) {
-      run(["add", "-A", "--", ...whole.map((p) => `:(top,literal)${p}`)], "git add failed");
+      const spec = pathspecArgs(whole);
+      run(["add", "-A", ...spec.args], "git add failed", spec.input);
     }
     for (const [rel, text] of patches) applyPatch(cwd, ["--cached"], rel, text, env);
     run(["commit", "-m", message], "git commit failed");
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
-  gitTry(cwd, ["reset", "-q", "--", ...paths.map((p) => `:(top,literal)${p}`)]);
+  const spec = pathspecArgs(paths);
+  gitTry(cwd, ["reset", "-q", ...spec.args], { input: spec.input });
 }
 
 /**
@@ -1064,16 +1087,17 @@ const SEARCH_QUERY_MAX = 200;
  * ponytail: single entry, not a per-cwd map — the popup only looks at one cwd
  * at a time. Key it by cwd if two threads start thrashing it.
  *
- * @type {{ cwd: string, at: number, files: string[] } | null}
+ * @type {{ cwd: string, at: number, files: string[], truncated: boolean } | null}
  */
 let lsFilesCache = null;
 
 /**
  * Tracked plus untracked (gitignored excluded) paths for a repo, cached for
- * LS_FILES_TTL_MS.
+ * LS_FILES_TTL_MS. `truncated` is set when the repo has more than
+ * LS_FILES_CAP paths and the list was cut.
  *
  * @param {string} cwd
- * @returns {Promise<string[]>}
+ * @returns {Promise<{ files: string[], truncated: boolean }>}
  */
 async function lsFiles(cwd) {
   const now = Date.now();
@@ -1081,19 +1105,23 @@ async function lsFiles(cwd) {
     lsFilesCache &&
     lsFilesCache.cwd === cwd &&
     now - lsFilesCache.at < LS_FILES_TTL_MS;
-  if (hit) return lsFilesCache.files;
+  if (hit) return lsFilesCache;
+  // -z: NUL-separated, unquoted paths. Without it git octal-escapes
+  // non-ASCII names ("caf\303\251.txt") into paths that do not exist.
   const out = await gitTryAsync(cwd, [
     "ls-files",
+    "-z",
     "--cached",
     "--others",
     "--exclude-standard",
-  ], { timeout: SYNC_TIMEOUT_MS });
+  ], { timeout: SYNC_TIMEOUT_MS, raw: true });
   if (!out.ok) {
     throw new Error(tailErr(out.stderr || out.combined, "git ls-files failed"));
   }
-  const files = out.stdout.split("\n").filter(Boolean).slice(0, LS_FILES_CAP);
-  lsFilesCache = { cwd, at: now, files };
-  return files;
+  const all = out.stdout.split("\0").filter(Boolean);
+  const files = all.slice(0, LS_FILES_CAP);
+  lsFilesCache = { cwd, at: now, files, truncated: all.length > LS_FILES_CAP };
+  return lsFilesCache;
 }
 
 /**
@@ -1128,13 +1156,14 @@ function directoriesFromFiles(files) {
  * @param {string} opts.threadId
  * @param {string} [opts.query]
  * @param {number} [opts.limit]
- * @returns {Promise<{ files: string[] }>}
+ * @returns {Promise<{ files: string[], truncated?: true }>} truncated: the
+ *   repo exceeded LS_FILES_CAP paths, so some files are not searchable.
  */
 async function listFiles(opts) {
   const { store, threadId } = opts;
   const query = String(opts.query || "").toLowerCase();
   const { cwd } = threadGitCwd(store, threadId);
-  const all = await lsFiles(cwd);
+  const { files: all, truncated } = await lsFiles(cwd);
   const entries = all.concat(directoriesFromFiles(all));
   // Copy when unfiltered: the sort below must not reorder the cached list.
   const matched = query
@@ -1153,7 +1182,8 @@ async function listFiles(opts) {
     Number.isFinite(rawLimit) && rawLimit > 0
       ? Math.min(Math.floor(rawLimit), LIST_FILES_RESULT_MAX)
       : LIST_FILES_RESULT;
-  return { files: matched.slice(0, limit) };
+  const files = matched.slice(0, limit);
+  return truncated ? { files, truncated: true } : { files };
 }
 
 /**
@@ -1173,7 +1203,8 @@ async function searchFiles(opts) {
   const { cwd } = threadGitCwd(store, threadId);
   const out = await gitTryAsync(
     cwd,
-    ["grep", "-n", "-I", "-i", "-F", "-e", query],
+    // -z: `path\0line\0text`, paths unquoted (UTF-8 names stay intact).
+    ["grep", "-z", "-n", "-I", "-i", "-F", "-e", query],
     { timeout: SEARCH_FILES_TIMEOUT_MS, raw: true },
   );
   if (!out.ok) {
@@ -1185,12 +1216,12 @@ async function searchFiles(opts) {
   const hits = [];
   for (const line of String(out.stdout || "").split("\n")) {
     if (!line) continue;
-    const m = line.match(/^(.*):(\d+):(.*)$/);
-    if (!m) continue;
+    const [file, num, ...rest] = line.split("\0");
+    if (!file || !/^\d+$/.test(num || "")) continue;
     hits.push({
-      path: m[1],
-      line: Number(m[2]),
-      text: m[3].slice(0, 200),
+      path: file,
+      line: Number(num),
+      text: rest.join("\0").slice(0, 200),
     });
     if (hits.length >= SEARCH_FILES_RESULT) break;
   }
@@ -1207,6 +1238,7 @@ module.exports = {
   gateCiWorkflowMerge,
   ciWorkflowMergeReview,
   normalizeCommitPaths,
+  pathspecArgs,
   stageForCommit,
   commit,
   revertFile,

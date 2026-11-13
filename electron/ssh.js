@@ -19,6 +19,38 @@ let execFileImpl = defaultExecFile;
 const SYNC_TIMEOUT_MS = 15_000;
 
 /**
+ * Grace after an async timeout's SIGTERM before escalating to SIGKILL. A
+ * child that ignores SIGTERM would otherwise keep execFile from ever
+ * calling back.
+ */
+const KILL_FALLBACK_MS = 2_000;
+
+/**
+ * Arm the SIGKILL fallback for an execFile child with a `timeout`. If the
+ * child is still alive KILL_FALLBACK_MS after the timeout fired, SIGKILL it
+ * and drop its pipes (a grandchild such as a hook can hold them open), so
+ * the callback always runs with a killed/signal error.
+ *
+ * @param {import("node:child_process").ChildProcess | undefined} child
+ * @param {number | undefined} timeout
+ */
+function escalateKill(child, timeout) {
+  if (!child || typeof child.once !== "function" || !(Number(timeout) > 0)) return;
+  const timer = setTimeout(() => {
+    try {
+      child.kill("SIGKILL");
+    } catch {
+      // already gone
+    }
+    if (child.stdout) child.stdout.destroy();
+    if (child.stderr) child.stderr.destroy();
+  }, Number(timeout) + KILL_FALLBACK_MS);
+  // The live child keeps the loop alive on its own; never hold exit open.
+  timer.unref();
+  child.once("exit", () => clearTimeout(timer));
+}
+
+/**
  * Test hook: swap execFileSync (git/ssh) for a fake spawn. Pass null/undefined
  * to restore the real implementation.
  * @param {typeof defaultExecFileSync | null | undefined} fn
@@ -203,10 +235,11 @@ function execCommandAsync(project, bin, argv, execOpts) {
     delete opts.cwd;
   }
   return new Promise((resolve, reject) => {
-    execFileImpl(cmd.bin, cmd.args, opts, (err, stdout) => {
+    const child = execFileImpl(cmd.bin, cmd.args, opts, (err, stdout) => {
       if (err) reject(err);
       else resolve(stdout);
     });
+    escalateKill(child, opts.timeout);
   });
 }
 
@@ -219,6 +252,8 @@ module.exports = {
   setExecFileSync,
   setExecFile,
   SYNC_TIMEOUT_MS,
+  KILL_FALLBACK_MS,
+  escalateKill,
   envPairs,
   boundaryArgv,
 };
