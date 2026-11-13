@@ -110,7 +110,7 @@ async function basenameIndex(root) {
   }
   const byBase = new Map();
   try {
-    for (const f of await lsFiles(root)) {
+    for (const f of (await lsFiles(root)).files) {
       const base = f.slice(f.lastIndexOf("/") + 1);
       const list = byBase.get(base);
       if (list) list.push(f);
@@ -293,8 +293,9 @@ async function listTreeDir(root, input) {
  */
 async function listTreeAll(root) {
   let files;
+  let capped = false;
   try {
-    files = await lsFiles(root);
+    ({ files, truncated: capped } = await lsFiles(root));
   } catch {
     const all = await fs.promises.readdir(root, {
       recursive: true,
@@ -305,7 +306,7 @@ async function listTreeAll(root) {
       .map((d) => toPosix(path.relative(root, path.join(d.parentPath, d.name))))
       .filter((p) => !p.startsWith(".git/"));
   }
-  const truncated = files.length > TREE_ALL_MAX;
+  const truncated = capped || files.length > TREE_ALL_MAX;
   return {
     entries: files.slice(0, TREE_ALL_MAX).map((p) => ({
       name: p.slice(p.lastIndexOf("/") + 1),

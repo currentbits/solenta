@@ -1064,16 +1064,17 @@ const SEARCH_QUERY_MAX = 200;
  * ponytail: single entry, not a per-cwd map — the popup only looks at one cwd
  * at a time. Key it by cwd if two threads start thrashing it.
  *
- * @type {{ cwd: string, at: number, files: string[] } | null}
+ * @type {{ cwd: string, at: number, files: string[], truncated: boolean } | null}
  */
 let lsFilesCache = null;
 
 /**
  * Tracked plus untracked (gitignored excluded) paths for a repo, cached for
- * LS_FILES_TTL_MS.
+ * LS_FILES_TTL_MS. `truncated` is set when the repo has more than
+ * LS_FILES_CAP paths and the list was cut.
  *
  * @param {string} cwd
- * @returns {Promise<string[]>}
+ * @returns {Promise<{ files: string[], truncated: boolean }>}
  */
 async function lsFiles(cwd) {
   const now = Date.now();
@@ -1081,19 +1082,23 @@ async function lsFiles(cwd) {
     lsFilesCache &&
     lsFilesCache.cwd === cwd &&
     now - lsFilesCache.at < LS_FILES_TTL_MS;
-  if (hit) return lsFilesCache.files;
+  if (hit) return lsFilesCache;
+  // -z: NUL-separated, unquoted paths. Without it git octal-escapes
+  // non-ASCII names ("caf\303\251.txt") into paths that do not exist.
   const out = await gitTryAsync(cwd, [
     "ls-files",
+    "-z",
     "--cached",
     "--others",
     "--exclude-standard",
-  ], { timeout: SYNC_TIMEOUT_MS });
+  ], { timeout: SYNC_TIMEOUT_MS, raw: true });
   if (!out.ok) {
     throw new Error(tailErr(out.stderr || out.combined, "git ls-files failed"));
   }
-  const files = out.stdout.split("\n").filter(Boolean).slice(0, LS_FILES_CAP);
-  lsFilesCache = { cwd, at: now, files };
-  return files;
+  const all = out.stdout.split("\0").filter(Boolean);
+  const files = all.slice(0, LS_FILES_CAP);
+  lsFilesCache = { cwd, at: now, files, truncated: all.length > LS_FILES_CAP };
+  return lsFilesCache;
 }
 
 /**
@@ -1128,13 +1133,14 @@ function directoriesFromFiles(files) {
  * @param {string} opts.threadId
  * @param {string} [opts.query]
  * @param {number} [opts.limit]
- * @returns {Promise<{ files: string[] }>}
+ * @returns {Promise<{ files: string[], truncated?: true }>} truncated: the
+ *   repo exceeded LS_FILES_CAP paths, so some files are not searchable.
  */
 async function listFiles(opts) {
   const { store, threadId } = opts;
   const query = String(opts.query || "").toLowerCase();
   const { cwd } = threadGitCwd(store, threadId);
-  const all = await lsFiles(cwd);
+  const { files: all, truncated } = await lsFiles(cwd);
   const entries = all.concat(directoriesFromFiles(all));
   // Copy when unfiltered: the sort below must not reorder the cached list.
   const matched = query
@@ -1153,7 +1159,8 @@ async function listFiles(opts) {
     Number.isFinite(rawLimit) && rawLimit > 0
       ? Math.min(Math.floor(rawLimit), LIST_FILES_RESULT_MAX)
       : LIST_FILES_RESULT;
-  return { files: matched.slice(0, limit) };
+  const files = matched.slice(0, limit);
+  return truncated ? { files, truncated: true } : { files };
 }
 
 /**
@@ -1173,7 +1180,8 @@ async function searchFiles(opts) {
   const { cwd } = threadGitCwd(store, threadId);
   const out = await gitTryAsync(
     cwd,
-    ["grep", "-n", "-I", "-i", "-F", "-e", query],
+    // -z: `path\0line\0text`, paths unquoted (UTF-8 names stay intact).
+    ["grep", "-z", "-n", "-I", "-i", "-F", "-e", query],
     { timeout: SEARCH_FILES_TIMEOUT_MS, raw: true },
   );
   if (!out.ok) {
@@ -1185,12 +1193,12 @@ async function searchFiles(opts) {
   const hits = [];
   for (const line of String(out.stdout || "").split("\n")) {
     if (!line) continue;
-    const m = line.match(/^(.*):(\d+):(.*)$/);
-    if (!m) continue;
+    const [file, num, ...rest] = line.split("\0");
+    if (!file || !/^\d+$/.test(num || "")) continue;
     hits.push({
-      path: m[1],
-      line: Number(m[2]),
-      text: m[3].slice(0, 200),
+      path: file,
+      line: Number(num),
+      text: rest.join("\0").slice(0, 200),
     });
     if (hits.length >= SEARCH_FILES_RESULT) break;
   }
