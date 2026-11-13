@@ -58,7 +58,7 @@ const CONSOLE_LEVELS = ["debug", "info", "warning", "error"];
  *   docGeneration: number,
  *   snapshotSeq: number,
  *   snapshot: { id: number, docGeneration: number } | null,
- *   webmcp: { refs: Set<string>, pending: Map<string, () => void> },
+ *   webmcp: { refs: Map<string, { name: string, inputSchema: object }>, pending: Map<string, () => void> },
  *   console: object[],
  *   network: object[],
  *   dropped: { console: number, network: number },
@@ -214,8 +214,12 @@ function attachGuestPolicy(wc) {
     }
     callback({});
   });
-  wc.on?.("did-start-navigation", (_event, _url, inPlace, mainFrame) => {
-    if (mainFrame && !inPlace) webMcpPolicies.delete(wc);
+  wc.on?.("did-start-navigation", (_event, url, inPlace, mainFrame) => {
+    if (!mainFrame) return;
+    const policy = webMcpPolicies.get(wc);
+    // Same-document (pushState/hash) navigation keeps the document's response policy.
+    if (inPlace && policy) policy.url = String(url).split("#")[0];
+    else webMcpPolicies.delete(wc);
   });
   if (typeof wc.setWindowOpenHandler === "function") {
     wc.setWindowOpenHandler(({ url }) => {
@@ -305,7 +309,7 @@ function attachSession(threadId, wc, webContentsId) {
     docGeneration: 0,
     snapshotSeq: 0,
     snapshot: null,
-    webmcp: { refs: new Set(), pending: new Map() },
+    webmcp: { refs: new Map(), pending: new Map() },
     console: [],
     network: [],
     dropped: { console: 0, network: 0 },
@@ -974,50 +978,102 @@ function webMcpJson(raw, maxBytes, maxDepth = 20) {
   return result;
 }
 
+const JSON_TYPES = {
+  string: (v) => typeof v === "string",
+  number: (v) => typeof v === "number",
+  integer: Number.isInteger,
+  boolean: (v) => typeof v === "boolean",
+  null: (v) => v === null,
+  array: Array.isArray,
+  object: (v) => v !== null && typeof v === "object" && !Array.isArray(v),
+};
+const plainObject = JSON_TYPES.object;
+
+// ponytail: top-level JSON Schema subset (required, type, enum,
+// additionalProperties:false). Nested values stay the page callback's job;
+// swap in a bounded full validator if pages need nested checks.
+function webMcpArgsError(schema, args) {
+  const props = plainObject(schema.properties) ? schema.properties : {};
+  for (const key of schema.required ?? []) {
+    if (!Object.hasOwn(args, key)) return `missing required argument "${key}"`;
+  }
+  for (const [key, value] of Object.entries(args)) {
+    const spec = Object.hasOwn(props, key) ? props[key] : undefined;
+    if (!plainObject(spec)) {
+      if (schema.additionalProperties === false) return `unexpected argument "${key}"`;
+      continue;
+    }
+    const types = [spec.type ?? []].flat().filter((t) => Object.hasOwn(JSON_TYPES, t));
+    if (types.length && !types.some((t) => JSON_TYPES[t](value))) return `argument "${key}" must be ${types.join(" or ")}`;
+    if (Array.isArray(spec.enum) && !spec.enum.some((e) => JSON.stringify(e) === JSON.stringify(value))) {
+      return `argument "${key}" is not an allowed value`;
+    }
+  }
+  return null;
+}
+
+const UNAVAILABLE = Object.freeze({ available: false, tools: [], skipped: 0, untrusted: true });
+
 async function webmcpTools(input) {
   const threadId = threadIdOf(input);
   const { s, wc } = requireSession(threadId);
   if (!previewNavigateAction(wc.getURL()).allow) throw new Error("WebMCP requires a local Browser page");
   s.webmcp.refs.clear();
+  // The host owns the response policy. Never trust a page-defined bridge
+  // global on a document whose headers denied (or never offered) WebMCP.
+  if (!webMcpPolicyAllowed(wc, wc.getURL())) return { ...UNAVAILABLE };
   const generation = s.docGeneration;
   const raw = await withTimeout(webMcpCall(wc, "tools"), READ_TIMEOUT_MS);
   if (raw === TIMED_OUT) throw new Error("WebMCP discovery timed out");
   if (sessions.get(threadId) !== s || generation !== s.docGeneration) throw new Error("WebMCP document changed; discover tools again");
-  if (raw === null) return { available: false, tools: [], skipped: 0, untrusted: true };
+  if (raw === null) return { ...UNAVAILABLE };
   const data = webMcpJson(raw, 36_864, 23);
-  if (typeof data.documentId !== "string" || data.documentId.length > 128 ||
+  if (typeof data.documentId !== "string" || !/^[A-Za-z0-9-]{1,128}$/.test(data.documentId) ||
       typeof data.available !== "boolean" || !Array.isArray(data.tools) || data.tools.length > 128) {
     throw new Error("Invalid WebMCP discovery response");
   }
-  const tools = data.tools.map((tool) => {
-    if (typeof tool.ref !== "string" || !/^w[A-Za-z0-9-]{1,180}$/.test(tool.ref) ||
+  const prefix = `w${data.documentId}-`;
+  const refs = new Map();
+  const tools = [];
+  for (const tool of data.tools) {
+    const schema = tool?.inputSchema;
+    if (typeof tool?.ref !== "string" || !tool.ref.startsWith(prefix) || !/^w[A-Za-z0-9-]{1,180}$/.test(tool.ref) ||
+        refs.has(tool.ref) ||
         typeof tool.name !== "string" || !/^[A-Za-z0-9_.-]{1,128}$/.test(tool.name) ||
         typeof tool.description !== "string" || Buffer.byteLength(tool.description) > 4096 ||
-        !tool.inputSchema || tool.inputSchema.type !== "object" || Buffer.byteLength(JSON.stringify(tool.inputSchema)) > 16_384) {
-      throw new Error("Invalid WebMCP tool descriptor");
+        !plainObject(schema) || schema.type !== "object" || Buffer.byteLength(JSON.stringify(schema)) > 16_384 ||
+        (schema.properties !== undefined && !plainObject(schema.properties)) ||
+        (schema.required !== undefined && !(Array.isArray(schema.required) && schema.required.every((k) => typeof k === "string")))) {
+      continue; // counted as skipped below
     }
-    return {
-      ref: tool.ref, name: tool.name, description: tool.description,
-      inputSchema: webMcpJson(JSON.stringify(tool.inputSchema), 16_384),
+    const inputSchema = webMcpJson(JSON.stringify(schema), 16_384);
+    refs.set(tool.ref, { name: tool.name, inputSchema });
+    tools.push({
+      ref: tool.ref, name: tool.name, description: tool.description, inputSchema,
       annotations: {
         readOnlyHint: tool.annotations?.readOnlyHint === true,
         consequentialHint: tool.annotations?.consequentialHint === true,
         untrustedContentHint: true,
       },
-    };
-  });
-  s.webmcp.refs = new Set(tools.map((t) => t.ref));
-  return { available: data.available, tools, skipped: Math.max(0, Math.min(10000, Number(data.skipped) || 0)), untrusted: true };
+    });
+  }
+  s.webmcp.refs = refs;
+  const skipped = Math.max(0, Math.min(10000, Number(data.skipped) || 0)) + data.tools.length - tools.length;
+  return { available: data.available, tools, skipped, untrusted: true };
 }
 
 async function webmcpInvoke(input) {
   const threadId = threadIdOf(input);
   const { s, wc } = requireSession(threadId);
   const ref = input?.ref;
-  if (!s.webmcp.refs.has(ref)) throw new Error("WebMCP tool is stale; discover tools again");
+  const tool = typeof ref === "string" ? s.webmcp.refs.get(ref) : undefined;
+  if (!tool) throw new Error("WebMCP tool is stale; discover tools again");
   if (!previewNavigateAction(wc.getURL()).allow) throw new Error("WebMCP requires a local Browser page");
   const args = webMcpJson(JSON.stringify(input.arguments ?? {}), 16_384);
-  if (!args || typeof args !== "object" || Array.isArray(args)) throw new Error("WebMCP arguments must be an object");
+  if (!plainObject(args)) throw new Error("WebMCP arguments must be an object");
+  // Rejected before the page sees anything, so these calls never ran.
+  const invalid = webMcpArgsError(tool.inputSchema, args);
+  if (invalid) throw new Error(`Invalid WebMCP arguments for ${tool.name}: ${invalid}`.slice(0, 300));
   const id = input.invocationId ?? randomUUID();
   if (typeof id !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(id)) throw new Error("Invalid WebMCP invocationId");
   if (s.webmcp.pending.size >= 8 || s.webmcp.pending.has(id)) throw new Error("WebMCP invocation already active or concurrency limit reached");
