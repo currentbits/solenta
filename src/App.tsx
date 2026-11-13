@@ -594,6 +594,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   const [memoryDraft, setMemoryDraft] = useState<DistilledMemory | null>(null);
   const clearMemoryDraft = useCallback(() => setMemoryDraft(null), []);
   const [chipError, setChipError] = useState<string | null>(null);
+  const [dropNotice, setDropNotice] = useState<string | null>(null);
   /** Discarded queued follow-up, handed back to the composer draft (#364, #1212). */
   const [queuedDraftRestore, setQueuedDraftRestore] =
     useState<ComposerProps["restoreDraft"]>(null);
@@ -1470,6 +1471,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     [selectedThreadId, forkThread],
   );
 
+  const dismissDropNotice = useCallback(() => setDropNotice(null), []);
   const dismissChipError = useCallback(() => {
     setChipError(null);
   }, []);
@@ -2125,6 +2127,30 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     [addProject],
   );
 
+  // Sidebar folder drop: only the Electron preload can turn a dropped File
+  // into an absolute path, so web mode gets no drop target.
+  const droppedPathOf = api.attachments.droppedFilePath;
+  const handleDropProjectFolders = useCallback(
+    (folders: File[], skipped: number) => {
+      if (skipped > 0) {
+        setDropNotice(
+          `Ignored ${skipped === 1 ? "1 file" : `${skipped} files`}: drop folders to add projects`,
+        );
+      }
+      const paths = folders
+        .map((f) => {
+          try {
+            return droppedPathOf?.(f) ?? "";
+          } catch {
+            return "";
+          }
+        })
+        .filter((p) => p.length > 0);
+      if (paths.length > 0) void addProjectPaths(paths);
+    },
+    [droppedPathOf, addProjectPaths],
+  );
+
   const pickProjectDirectory = useCallback(
     () => api.projects.pickDirectory(),
     [api],
@@ -2200,6 +2226,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       !removeFailMessage &&
       !distillError &&
       !chipError &&
+      !dropNotice &&
       !backgroundToast
     ) {
       return null;
@@ -2266,6 +2293,15 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
             onDismiss={dismissChipError}
           />
         )}
+        {dropNotice && (
+          <ArchiveToast
+            docked
+            key={`drop-${dropNotice}`}
+            variant="error"
+            title={dropNotice}
+            onDismiss={dismissDropNotice}
+          />
+        )}
         {backgroundToast && (
           <ArchiveToast
             docked
@@ -2299,6 +2335,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     openBackgroundThread,
     dismissBackgroundToast,
     dismissChipError,
+    dropNotice,
+    dismissDropNotice,
   ]);
   // Only one of these is ever non-null at a time: the toast moves between
   // docks, it never renders twice.
@@ -2468,6 +2506,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         listCliSessions={listCliSessions}
         importCliSession={handleImportCliSession}
         onAddProject={handleAddProject}
+        onDropFolders={droppedPathOf ? handleDropProjectFolders : undefined}
         onRemoveProject={handleRemoveProject}
         onEditProject={setEditProjectId}
         projectError={error?.scope === "project" ? error.message : null}

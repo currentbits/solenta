@@ -217,6 +217,22 @@ export function captureDropItems(
   return out;
 }
 
+/**
+ * Sidebar folder drop: the dropped Files that are directories, plus how many
+ * dropped items were not. Call during the drop event.
+ */
+export function droppedDirectories(
+  dt: DataTransfer | null | undefined,
+): { dirs: File[]; skipped: number } {
+  const dirs: File[] = [];
+  let skipped = 0;
+  for (const item of captureDropItems(dt)) {
+    if (item.entry?.isDirectory && item.file) dirs.push(item.file);
+    else skipped++;
+  }
+  return { dirs, skipped };
+}
+
 export async function foldersFromCapturedItems(
   items: CapturedDropItem[],
 ): Promise<DroppedFolder[]> {
