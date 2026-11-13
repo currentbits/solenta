@@ -1507,7 +1507,10 @@ function guestInspect(opts) {
     const onMove = (e) => {
       if (e.isTrusted && e.target !== current) highlight(e.target);
     };
-    const onFocus = (e) => highlight(e.target);
+    // Page-dispatched focus would steer what a trusted Enter picks.
+    const onFocus = (e) => {
+      if (e.isTrusted) highlight(e.target);
+    };
     const onKeyDown = (e) => {
       if (e.key === "Tab") return;
       swallow(e);
@@ -1761,7 +1764,8 @@ async function inspect(input) {
   }
   const element = sanitizePick(raw);
   const zoom = typeof wc.getZoomFactor === "function" ? Number(wc.getZoomFactor()) : 1;
-  const rect = cropRect(element.rect, element.viewport, zoom);
+  // A viewport preset draws the page at emulation.scale inside the pane.
+  const rect = cropRect(element.rect, element.viewport, zoom * (s.emulation?.scale ?? 1));
   let crop = null;
   let cropNote;
   if (!rect) {

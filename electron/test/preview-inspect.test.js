@@ -93,6 +93,18 @@ describe("preview.inspect (#1193)", () => {
     assert.equal(res.cropNote, undefined);
   });
 
+  it("crops at the viewport preset's display scale times page zoom", async () => {
+    const viewportProbe = { width: 720, height: 450, devicePixelRatio: 2 };
+    const wc = fakeGuest({ zoom: 1.5, pick: async (code) => (code.includes("innerWidth") && !code.includes("__solentaInspect") ? viewportProbe : PICK) });
+    wc.enableDeviceEmulation = () => {};
+    bindGuest(wc);
+    await preview.viewport({ threadId: "t1", preset: "desktop" }); // 1440x900 drawn at 0.5
+    const res = await preview.inspect({ threadId: "t1" });
+    // 8px pad around (100,50,120,40), times zoom 1.5 * display scale 0.5.
+    assert.deepEqual(wc._state.captures.at(-1), { x: 69, y: 31, width: 102, height: 42 });
+    assert.deepEqual(res.cropRect, wc._state.captures.at(-1));
+  });
+
   it("re-caps everything the untrusted guest reports", async () => {
     const styles = {};
     for (let i = 0; i < 80; i += 1) styles[`p-${String.fromCharCode(97 + (i % 26))}${i}`] = "x".repeat(500);
@@ -413,5 +425,18 @@ describe("continuous guest annotations", () => {
     assert.deepEqual(g.counts(), { submitted: 0, clicked: 0 });
     g.cancel();
     assert.equal((await pending).cancelled, true);
+  });
+
+  it("a page-dispatched focus cannot retarget the user's keyboard pick", async () => {
+    const g = guestPage();
+    const button = g.window.document.getElementById("go");
+    const pending = g.start({ sessionId: "session-a", annotationId: "one" });
+    button.focus(); // user Tabs to the button
+    g.window.__trustedForTest = false;
+    g.window.document.getElementById("pw").dispatchEvent(new g.window.FocusEvent("focusin", { bubbles: true }));
+    g.window.__trustedForTest = true;
+    key(g.window, "keydown", "Enter");
+    assert.equal((await pending).tag, "button");
+    g.cancel();
   });
 });
