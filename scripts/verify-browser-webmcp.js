@@ -57,6 +57,7 @@ app.whenReady().then(async () => {
   let list = await tools();
   assert.equal(list.length, 4, "registered before discovery");
   const ref = list.find((t) => t.name === "counter").ref;
+  await assert.rejects(preview.webmcpInvoke({ ...base, ref, arguments: { increment: "2" } }), /must be number/);
   const result = await preview.webmcpInvoke({ ...base, ref, arguments: { increment: 2 } });
   assert.deepEqual(result.result, { count: 2 });
   assert.equal(await wc.executeJavaScript("document.querySelector('#counter').textContent"), "Count: 2");
@@ -85,6 +86,8 @@ app.whenReady().then(async () => {
   const oldRef = list[0].ref;
   await load();
   await assert.rejects(preview.webmcpInvoke({ ...base, ref: oldRef }), /stale/);
+  await wc.executeJavaScript("history.pushState({}, '', '/spa-route')");
+  assert.equal((await tools()).length, 4, "same-document pushState keeps the response policy");
   await load("/denied");
   assert.equal((await preview.webmcpTools(base)).available, false);
   assert.equal(await wc.executeJavaScript("typeof document.modelContext"), "undefined");

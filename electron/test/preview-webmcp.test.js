@@ -32,13 +32,18 @@ function bound(context) {
   wc.id = 7;
   wc.url = "http://localhost:5173";
   wc.getURL = () => wc.url;
-  wc.session = { webRequest: { onSendHeaders() {}, onCompleted() {}, onErrorOccurred() {} } };
+  wc.session = { webRequest: { onSendHeaders() {}, onCompleted() {}, onErrorOccurred() {},
+    onHeadersReceived(listener) { wc.headersReceived = listener; } } };
   wc.executeJavaScript = (code) => Promise.resolve(vm.runInContext(code, context, { timeout: 1000 }));
   wc.executeJavaScriptInIsolatedWorld = async () => null;
   preview.setWebContentsLookup((id) => id === wc.id ? wc : null);
   preview.bind({ threadId: "t1", webContentsId: wc.id });
+  respond(wc);
   return wc;
 }
+// The main-document response the host observed; its headers decide WebMCP policy.
+const respond = (wc, responseHeaders = {}) => wc.headersReceived(
+  { resourceType: "mainFrame", webContentsId: wc.id, url: wc.url, responseHeaders }, () => {});
 const base = { threadId: "t1" };
 afterEach(() => preview.resetForTests());
 
@@ -215,6 +220,7 @@ it("refuses discovery that raced navigation and cancels before a slow descriptor
   assert.equal((await pending).completion, "uncertain");
   resolve([tool]); await new Promise((r) => setImmediate(r));
   assert.equal(executed, false);
+  respond(wc);
   const discovery = preview.webmcpTools(base);
   wc.emit("did-navigate");
   resolve([tool]);
@@ -244,4 +250,83 @@ it("allows JSON at the advertised nesting limit and rejects deeper payloads", as
   assert.equal((await preview.webmcpInvoke({ ...base, ref, arguments: args })).ok, true);
   at.child = {};
   await assert.rejects(preview.webmcpInvoke({ ...base, ref, arguments: args }), /deep/);
+});
+
+it("denies a page-defined bridge when the host-observed response policy refuses WebMCP", async () => {
+  // The preload stayed out (policy denied), so the page plants its own global.
+  const context = page({ allowed: false });
+  vm.runInContext(`globalThis.__solentaWebMcp = { tools: async () => JSON.stringify({ documentId: "d", available: true,
+    tools: [{ ref: "wd-1", name: "evil", description: "x", inputSchema: { type: "object" } }], skipped: 0 }),
+    invoke: async () => { globalThis.invoked = true; return "{}"; }, cancel() {} };`, context);
+  const wc = bound(context);
+  respond(wc, { "Permissions-Policy": "tools=()" });
+  assert.deepEqual(await preview.webmcpTools(base), { available: false, tools: [], skipped: 0, untrusted: true });
+  await assert.rejects(preview.webmcpInvoke({ ...base, ref: "wd-1" }), /stale/);
+  // A navigation start forgets the old response until the new one arrives.
+  respond(wc);
+  assert.equal((await preview.webmcpTools(base)).tools.length, 1);
+  wc.emit("did-start-navigation", {}, wc.url, false, true);
+  assert.equal((await preview.webmcpTools(base)).available, false);
+  assert.equal(context.invoked, undefined);
+});
+
+it("keeps policy across same-document pushState and binds refs to the reporting document", async () => {
+  const context = page(); await register(context); const wc = bound(context);
+  wc.emit("did-start-navigation", {}, "http://localhost:5173/route#x", true, true);
+  wc.url = "http://localhost:5173/route#x";
+  const list = await preview.webmcpTools(base);
+  assert.equal(list.tools.length, 1);
+  const forged = JSON.stringify({ documentId: "other", available: true, skipped: 0,
+    tools: [{ ...list.tools[0] }, { ...list.tools[0], ref: "wother-1" }] });
+  const real = wc.executeJavaScript;
+  wc.executeJavaScript = async () => forged;
+  const result = await preview.webmcpTools(base);
+  assert.deepEqual(result.tools.map((t) => t.ref), ["wother-1"]);
+  assert.equal(result.skipped, 1);
+  wc.executeJavaScript = real;
+});
+
+it("refuses a ref from another thread's Browser pane", async () => {
+  const context = page(); await register(context); bound(context);
+  const ref = (await preview.webmcpTools(base)).tools[0].ref;
+  const other = new EventEmitter();
+  Object.assign(other, { id: 8, url: "http://localhost:5173", getURL: () => other.url,
+    session: { webRequest: { onSendHeaders() {}, onCompleted() {}, onErrorOccurred() {} } },
+    executeJavaScript: (code) => Promise.resolve(vm.runInContext(code, context)) });
+  const lookup = (id) => (id === 7 ? null : id === 8 ? other : null);
+  preview.setWebContentsLookup(lookup);
+  preview.bind({ threadId: "t2", webContentsId: 8 });
+  await assert.rejects(preview.webmcpInvoke({ threadId: "t2", ref }), /stale/);
+  assert.equal(context.count, undefined);
+});
+
+it("checks arguments against the discovered schema and refuses refs after schema replacement", async () => {
+  const context = page();
+  await vm.runInContext(`globalThis.registration = new AbortController(); document.modelContext.registerTool({
+    name: "set", description: "Set the counter", annotations: { readOnlyHint: true },
+    inputSchema: { type: "object", additionalProperties: false, required: ["value"],
+      properties: { value: { type: "integer" }, mode: { enum: ["add", "set"] }, note: { type: ["string", "null"] } } },
+    execute(input) { globalThis.count = input.value; return { count: input.value }; }
+  }, { signal: registration.signal });`, context);
+  bound(context);
+  let ref = (await preview.webmcpTools(base)).tools[0].ref;
+  for (const [args, message] of [
+    [{}, /missing required argument "value"/],
+    [{ value: 1.5 }, /must be integer/],
+    [{ value: 1, mode: "drop" }, /not an allowed value/],
+    [{ value: 1, note: 3 }, /must be string or null/],
+    [{ value: 1, extra: true }, /unexpected argument "extra"/],
+  ]) await assert.rejects(preview.webmcpInvoke({ ...base, ref, arguments: args }), message);
+  assert.equal(context.count, undefined);
+  // readOnlyHint does not skip validation or authorize anything: the mutation still runs only on valid input.
+  assert.deepEqual((await preview.webmcpInvoke({ ...base, ref, arguments: { value: 2, mode: "set", note: null } })).result, { count: 2 });
+  await vm.runInContext(`registration.abort(); document.modelContext.registerTool({
+    name: "set", description: "Set the counter", inputSchema: { type: "object", properties: { value: { type: "string" } } },
+    execute(input) { globalThis.count = input.value; }
+  });`, context);
+  const stale = await preview.webmcpInvoke({ ...base, ref, arguments: { value: 3 } });
+  assert.equal(stale.ok, false);
+  assert.equal(context.count, 2);
+  ref = (await preview.webmcpTools(base)).tools[0].ref;
+  await assert.rejects(preview.webmcpInvoke({ ...base, ref, arguments: { value: 3 } }), /must be string/);
 });
