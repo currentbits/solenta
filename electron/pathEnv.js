@@ -176,7 +176,11 @@ function loginShellCall(env) {
     env.SHELL || "/bin/zsh",
     [
       "-lic",
-      `printf '%s' '${MARK_BEGIN}'"$PATH"'${MARK_END}${ENV_BEGIN}'; env -0; printf '%s' '${ENV_END}'`,
+      // A DEBUG trap that echoes $BASH_COMMAND (or any rc hook printing the
+      // command) must not leak a marker: the markers are only ever assembled
+      // by printf, never spelled out in the command text. The subshell keeps
+      // that trap (not inherited by `( )`) from echoing inside the env dump.
+      `(printf '__CODER_%s_BEGIN__%s__CODER_%s_END____CODER_%s_BEGIN__' PATH "$PATH" PATH ENV; env -0; printf '__CODER_%s_END__' ENV)`,
     ],
     {
       encoding: "utf8",

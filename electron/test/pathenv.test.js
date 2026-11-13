@@ -293,3 +293,26 @@ describe("login env (#320)", () => {
     assert.ok(!fs.readFileSync(cacheFile, "utf8").includes("s3cret"));
   });
 });
+
+describe("login shell with a DEBUG trap that echoes each command", () => {
+  it("captures the real PATH and env, not the echoed command text", { skip: process.platform === "win32" || !fs.existsSync("/bin/bash") }, async () => {
+    const { captureLoginPathAsync, primeProcessPath, refreshLoginPath } = require("../pathEnv.js");
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "pathenv-trap-"));
+    fs.writeFileSync(
+      path.join(home, ".bash_profile"),
+      "export PATH=/trap/bin:$PATH\nexport CODER_TRAP_LAST=tail\ntrap 'echo \"$BASH_COMMAND\"' DEBUG\n",
+    );
+    const env = { HOME: home, SHELL: "/bin/bash", PATH: "/usr/bin:/bin" };
+    // /etc/profile may add system dirs (macOS path_helper); the rc's entry
+    // must lead and no echoed command text may leak in.
+    for (const login of [await captureLoginPathAsync(env), captureLoginPath(env)]) {
+      assert.equal(login?.[0], "/trap/bin", JSON.stringify(login));
+      assert.ok(login.includes("/usr/bin") && login.every((e) => e.startsWith("/")), JSON.stringify(login));
+    }
+
+    primeProcessPath({ cacheFile: path.join(home, "cache.json"), env, existsFn: () => false, home, platform: process.platform });
+    await refreshLoginPath();
+    assert.equal(env.CODER_TRAP_LAST, "tail");
+    assert.ok(Object.keys(env).every((k) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(k)), Object.keys(env).join(","));
+  });
+});
