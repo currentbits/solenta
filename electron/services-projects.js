@@ -31,7 +31,7 @@ const {
   scheduleSimulatorRelease,
   purgeThread,
 } = require("./services-shared.js");
-const { gitOutAsync } = require("./services-git.js");
+const { gitOutAsync, notARepo, gitErrorText } = require("./services-git.js");
 const {
   DEFAULT_BRANCH_PREFIX,
   branchPrefixError,
@@ -118,7 +118,9 @@ function findExistingProject(store, input) {
 
 /**
  * True when cwd is a git work tree. A missing git binary, a non-repo, or a
- * bare repo all return false — callers then decide whether to init.
+ * bare repo all return false — callers then decide whether to init. Any
+ * other git failure (dubious ownership, timeout) throws, so it is never
+ * mistaken for "not a repo" and answered with `git init`.
  * @param {string} cwd
  * @returns {Promise<boolean>}
  */
@@ -126,8 +128,9 @@ async function isInsideWorkTree(cwd) {
   try {
     const inside = await gitOutAsync(cwd, ["rev-parse", "--is-inside-work-tree"]);
     return inside === "true";
-  } catch {
-    return false;
+  } catch (err) {
+    if (notARepo(err)) return false;
+    throw new Error(`Git failed in ${cwd}: ${gitErrorText(err)}`);
   }
 }
 

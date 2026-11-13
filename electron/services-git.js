@@ -29,8 +29,36 @@ async function gitOutAsync(cwd, args, project, opts) {
 }
 
 /**
+ * True only for a genuine "this is not a repo" git failure: git's own
+ * message, or a missing directory/binary (ENOENT). Dubious ownership,
+ * timeouts, ssh failures and the rest are real errors to surface.
+ *
+ * @param {any} err
+ * @returns {boolean}
+ */
+function notARepo(err) {
+  if (err && err.code === "ENOENT") return true;
+  const text = `${(err && err.stderr) || ""}\n${(err && err.message) || ""}`;
+  return /not a git repository/i.test(text);
+}
+
+/**
+ * Message for a git failure that is not "not a repo": git's stderr without
+ * execFile's "Command failed: <argv>" prefix, or "timed out".
+ *
+ * @param {any} err
+ * @returns {string}
+ */
+function gitErrorText(err) {
+  if (err && err.killed) return "git timed out";
+  const raw = String((err && (err.stderr || err.message)) || err || "git failed");
+  return raw.replace(/^Command failed:[^\n]*\n?/, "").trim() || "git failed";
+}
+
+/**
  * @param {string | { path?: string, remoteHost?: string, remotePath?: string }} projectOrPath
  * @returns {{ isRepo: boolean, branch: string, dirty: boolean }}
+ * @throws when git fails for any reason other than "not a git repository"
  */
 async function gitStatus(projectOrPath) {
   const project =
@@ -49,8 +77,9 @@ async function gitStatus(projectOrPath) {
     if (inside !== "true") {
       return { isRepo: false, branch: "", dirty: false };
     }
-  } catch {
-    return { isRepo: false, branch: "", dirty: false };
+  } catch (err) {
+    if (notARepo(err)) return { isRepo: false, branch: "", dirty: false };
+    throw new Error(`Git failed in ${resolved}: ${gitErrorText(err)}`);
   }
 
   let branch = "";
@@ -297,6 +326,8 @@ async function gitPull(cwd) {
 
 module.exports = {
   gitOutAsync,
+  notARepo,
+  gitErrorText,
   gitStatus,
   parseRevListCount,
   gitSyncInfo,
