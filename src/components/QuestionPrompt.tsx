@@ -15,6 +15,7 @@ import {
   REMOTE_QUESTION_ATTACH_NOTE,
 } from "../questionAnswer";
 import styles from "./ThreadView.module.css";
+import { isImeComposing } from "../imeComposing";
 
 export type QuestionAnswerHandler = (
   answers: Record<string, string>,
@@ -345,7 +346,7 @@ export function QuestionPrompt({
       ) {
         return;
       }
-      if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
+      if (ev.metaKey || ev.ctrlKey || ev.altKey || isImeComposing(ev)) return;
       if (ev.key === "Enter") {
         if (allAnswered && pending === 0) {
           ev.preventDefault();
@@ -528,7 +529,7 @@ function QuestionBlock({
               value={other}
               onChange={(ev) => onOtherChange(ev.target.value)}
               onKeyDown={(ev) => {
-                if (ev.key === "Enter") {
+                if (ev.key === "Enter" && !isImeComposing(ev)) {
                   ev.preventDefault();
                   onOtherEnter();
                 }

@@ -19,6 +19,7 @@ import { PathBrowser } from "./PathBrowser";
 import { HistoryProjectPicker } from "./HistoryProjectPicker";
 import type { CliImportProvider } from "./ImportCliSessionModal";
 import styles from "./SettingsModal.module.css";
+import { isImeComposing } from "../imeComposing";
 
 function failedDoctorChecks(result: unknown): WindowsDoctorCheck[] {
   if (!result || typeof result !== "object") return [];
@@ -345,7 +346,7 @@ export function AddProjectPathModal({
   };
 
   const onEnter = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter") {
+    if (e.key === "Enter" && !isImeComposing(e)) {
       e.preventDefault();
       void submit();
     }

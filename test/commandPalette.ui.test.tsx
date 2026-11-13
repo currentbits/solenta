@@ -133,6 +133,23 @@ describe("command palette ui", () => {
     m.unmount();
   });
 
+  it("ignores Enter and arrows while an IME is composing", async () => {
+    const ran: string[] = [];
+    const m = await mount(<PalletteHost onRunAction={(id) => ran.push(id)} />);
+    const input = m.query("[data-command-palette-input]") as HTMLInputElement;
+    await m.type(input, "settings");
+    await m.flush();
+    await m.press(input, "ArrowDown", { isComposing: true });
+    await m.press(input, "Enter", { isComposing: true });
+    await m.flush();
+    assert.deepEqual(ran, []);
+    assert.ok(m.query("[data-command-palette]"));
+    await m.press(input, "Enter");
+    await m.flush();
+    assert.deepEqual(ran, ["settings"]);
+    m.unmount();
+  });
+
   it("a leading > shows actions only (#1506)", async () => {
     const searched: string[] = [];
     const m = await mount(

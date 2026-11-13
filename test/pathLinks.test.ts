@@ -34,6 +34,18 @@ describe("findPathRefs", () => {
     assert.equal(col[0].col, 4);
   });
 
+  it("links a file:start-end range at its start line", () => {
+    for (const path of ["src/foo.ts", "C:\\repo\\foo.ts"]) {
+      const text = `see ${path}:42-64, then`;
+      const hits = findPathRefs(text);
+      assert.equal(hits.length, 1, text);
+      assert.equal(hits[0].path, path);
+      assert.equal(hits[0].line, 42);
+      assert.equal(hits[0].col, undefined);
+      assert.equal(text.slice(hits[0].start, hits[0].end), `${path}:42-64`);
+    }
+  });
+
   it("keeps compiler positions separate from file names", () => {
     for (const path of ["src/foo.ts", "src/routes/(app)/page.tsx", "C:\\repo\\foo.ts"]) {
       for (const suffix of ["(12,3)", "(12, 3)", "(12)"]) {

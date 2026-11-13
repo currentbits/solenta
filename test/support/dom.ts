@@ -67,6 +67,7 @@ export interface Mounted {
       ctrlKey?: boolean;
       shiftKey?: boolean;
       altKey?: boolean;
+      isComposing?: boolean;
     },
   ): Promise<void>;
   /** Let pending promises and effects settle. */

@@ -77,15 +77,15 @@ function trimPathToken(raw: string): { token: string; offset: number } {
 }
 
 /**
- * Pull a `:line` / `:line:col` suffix off a token without eating a Windows
- * drive letter (`C:\foo`).
+ * Pull a `:line` / `:line:col` / `:start-end` suffix off a token without
+ * eating a Windows drive letter (`C:\foo`). A range opens at its start line.
  */
 export function splitLineSuffix(raw: string): {
   path: string;
   line?: number;
   col?: number;
 } {
-  const m = raw.match(/^(.*?):(\d+)(?::(\d+))?$/) ??
+  const m = raw.match(/^(.*?):(\d+)(?::(\d+)|-\d+)?$/) ??
     raw.match(/^(.*?)\((\d+)(?:,\s*(\d+))?\)$/);
   if (!m) return { path: raw };
   // `C:` alone is a drive, not `file:12`.
