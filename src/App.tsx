@@ -1241,6 +1241,9 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
 
   const handleRegenerateOpenThread = useCallback(() => {
     if (!selectedThreadId) return;
+    // Same guard as the thread menu item: not while a turn is running.
+    const open = threadsRef.current.find((t) => t.id === selectedThreadId);
+    if (open?.status === "working") return;
     void regenerateTitle([selectedThreadId]);
   }, [regenerateTitle, selectedThreadId]);
 
@@ -1590,21 +1593,26 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  // ⌘⇧P / ⌘⇧A toggle pin and settle for the open thread (#1770). Both
-  // bindings use mod, so unlike plain-letter shortcuts they still fire while
+  // ⌘⇧P / ⌘⇧A toggle pin and settle for the open thread (#1770), ⌘⌥R
+  // regenerates its title. All bindings use mod, so unlike plain-letter shortcuts they still fire while
   // a text field is focused; only an open dialog blocks them.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented || dialogOpen()) return;
       const pin = matchesBinding(e, "thread.togglePin");
       const settle = !pin && matchesBinding(e, "thread.toggleSettle");
-      if (!pin && !settle) return;
+      const retitle = !pin && !settle && matchesBinding(e, "thread.regenerateTitle");
+      if (!pin && !settle && !retitle) return;
       const threadId = selectedThreadId;
       const active = threadId
         ? threadsRef.current.find((t) => t.id === threadId)
         : undefined;
       if (!active) return;
       e.preventDefault();
+      if (retitle) {
+        handleRegenerateOpenThread();
+        return;
+      }
       if (pin) {
         handleSetPinned(active.id, !isPinned(active));
         return;
@@ -1621,7 +1629,13 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [selectedThreadId, handleSetPinned, handleSetSettled, settings]);
+  }, [
+    selectedThreadId,
+    handleSetPinned,
+    handleSetSettled,
+    handleRegenerateOpenThread,
+    settings,
+  ]);
 
   // Close the center Changes panel when switching threads (old behavior).
   useEffect(() => {
@@ -1975,10 +1989,12 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   /** PALETTE_ACTIONS plus "Stop all running threads" while any thread works. */
   const paletteActions = useMemo(
     () =>
-      workingCount > 0
-        ? PALETTE_ACTIONS
-        : PALETTE_ACTIONS.filter((a) => a.id !== "stop-all-threads"),
-    [workingCount],
+      PALETTE_ACTIONS.filter(
+        (a) =>
+          (a.id !== "stop-all-threads" || workingCount > 0) &&
+          (a.id !== "regenerate-title" || selectedThreadId != null),
+      ),
+    [workingCount, selectedThreadId],
   );
 
   const runPaletteAction = useCallback(
@@ -1997,6 +2013,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       else if (id === "add-project") handleAddProject();
       else if (id === "toggle-agents") toggleAgents();
       else if (id === "stop-all-threads") openStopAllConfirm();
+      else if (id === "regenerate-title") handleRegenerateOpenThread();
       else if (id === "reopen-pane") {
         window.dispatchEvent(new Event(REOPEN_PANE_EVENT));
       } else if (id === "fresh-agent-context") {
@@ -2020,6 +2037,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       handleAddProject,
       toggleAgents,
       openStopAllConfirm,
+      handleRegenerateOpenThread,
       restartAgentSession,
     freshAgentContext,
     ],

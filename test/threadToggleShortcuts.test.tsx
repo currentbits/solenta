@@ -76,7 +76,12 @@ async function settle(m: Mounted) {
 function press(
   target: EventTarget,
   key: string,
-  mods: { metaKey?: boolean; shiftKey?: boolean } = { metaKey: true, shiftKey: true },
+  mods: {
+    metaKey?: boolean;
+    shiftKey?: boolean;
+    altKey?: boolean;
+    code?: string;
+  } = { metaKey: true, shiftKey: true },
 ) {
   target.dispatchEvent(
     new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...mods }),
@@ -260,6 +265,36 @@ describe("settling the open thread advances selection (#1790)", () => {
         m.query('[data-thread-card="t1"][data-active="true"]'),
         "undo re-selects the settled thread",
       );
+    } finally {
+      m.unmount();
+    }
+  });
+
+  it("⌘⌥R regenerates the open thread's title", async () => {
+    const { m, fake, target } = await boot();
+    try {
+      await inAct(() =>
+        press(document.body, "®", { metaKey: true, altKey: true, code: "KeyR" }),
+      );
+      await settle(m);
+      const calls = fake.of("threads.regenerateTitle");
+      assert.equal(calls.length, 1);
+      assert.deepEqual(calls[0]!.args[0], { threadIds: [target.id] });
+    } finally {
+      m.unmount();
+    }
+  });
+
+  it("⌘⌥R does nothing while a turn is running", async () => {
+    const { m, fake } = await boot(
+      thread({ id: "t3", title: "busy", status: "working" }),
+    );
+    try {
+      await inAct(() =>
+        press(document.body, "®", { metaKey: true, altKey: true, code: "KeyR" }),
+      );
+      await settle(m);
+      assert.equal(fake.of("threads.regenerateTitle").length, 0);
     } finally {
       m.unmount();
     }
