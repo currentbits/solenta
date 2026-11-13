@@ -267,7 +267,7 @@ function parsePromptSnippets(raw, strict) {
  * AUTO_SETTLE_AFTER_DAYS — old stores without the key heal here so null
  * remains "user disabled" and is never confused with "never configured".
  */
-const DEFAULT_AUTO_SETTLE_AFTER_DAYS = 3;
+const DEFAULT_AUTO_SETTLE_AFTER_DAYS = 7;
 
 /**
  * Default PR size cap in changed lines (additions + deletions vs the base
@@ -405,10 +405,10 @@ function validateQuotaFailover(raw) {
  * Normalize settings from disk.
  *
  * autoSettleAfterDays tri-state at the store boundary:
- *   - key ABSENT on old stores → DEFAULT (3)  (contract: missing = constant)
+ *   - key ABSENT on old stores → DEFAULT (7)  (contract: missing = constant)
  *   - null                      → null         (user disabled inactivity path)
  *   - positive integer          → kept
- *   - junk on disk              → DEFAULT (3)  (heal; setSettings rejects junk)
+ *   - junk on disk              → DEFAULT (7)  (heal; setSettings rejects junk)
  *
  * dailyBudgetUsd and orchestrationBudgetUsd still collapse absent/junk →
  * null (no-cap).

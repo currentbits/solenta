@@ -27,9 +27,9 @@ function quiet(id: string): ThreadInfo {
     projectId: "p1",
     title: id,
     status: "idle",
-    updatedAt: NOW - 5 * DAY_MS,
+    updatedAt: NOW - 8 * DAY_MS,
     createdAt: NOW - 10 * DAY_MS,
-    lastVisitedAt: NOW - 5 * DAY_MS,
+    lastVisitedAt: NOW - 8 * DAY_MS,
   });
 }
 

@@ -40,16 +40,16 @@ const providers: ProviderInfo[] = [
   },
 ];
 
-/** Quiet for 4 days — settles under default 3, stays attention at 7. */
-function quietThread(): ThreadInfo {
+/** Quiet for 4 days by default — settles at 3, stays attention at 7. */
+function quietThread(ageDays = 4): ThreadInfo {
   return thread({
     id: "quiet-4d",
     projectId: "p1",
     title: "quiet four days",
     status: "idle",
-    updatedAt: NOW - 4 * DAY_MS,
+    updatedAt: NOW - ageDays * DAY_MS,
     createdAt: NOW - 10 * DAY_MS,
-    lastVisitedAt: NOW - 4 * DAY_MS,
+    lastVisitedAt: NOW - ageDays * DAY_MS,
   });
 }
 
@@ -63,8 +63,14 @@ function noise(): ThreadInfo {
   });
 }
 
-function Host({ days }: { days: number | null | undefined }) {
-  const [threads] = useState([noise(), quietThread()]);
+function Host({
+  days,
+  ageDays,
+}: {
+  days: number | null | undefined;
+  ageDays?: number;
+}) {
+  const [threads] = useState([noise(), quietThread(ageDays)]);
   return (
     <Sidebar
       appName="Solenta"
@@ -84,12 +90,12 @@ function Host({ days }: { days: number | null | undefined }) {
 }
 
 describe("Sidebar auto-settle window (round 45)", () => {
-  it("quiet 4-day thread settles under default constant (3)", async () => {
-    assert.equal(AUTO_SETTLE_AFTER_DAYS, 3);
-    // undefined = loading → constant 3
-    const m = await mount(<Host days={undefined} />);
+  it("quiet 8-day thread settles under default constant (7)", async () => {
+    assert.equal(AUTO_SETTLE_AFTER_DAYS, 7);
+    // undefined = loading → constant 7
+    const m = await mount(<Host days={undefined} ageDays={8} />);
     const header = m.query("[data-settled-shelf-toggle]");
-    assert.ok(header, "Settled shelf present under default 3");
+    assert.ok(header, "Settled shelf present under default 7");
     assert.match(
       header!.textContent || "",
       /Settled · 1/,
@@ -101,7 +107,17 @@ describe("Sidebar auto-settle window (round 45)", () => {
     }
     assert.ok(
       m.query('[data-thread-card="quiet-4d"][data-settled="true"]'),
-      "quiet 4d is a settled row under window 3",
+      "quiet 8d is a settled row under window 7",
+    );
+    m.unmount();
+  });
+
+  it("quiet 4-day thread stays in attention under default constant (7)", async () => {
+    const m = await mount(<Host days={undefined} />);
+    assert.equal(m.query("[data-settled-shelf-toggle]") != null, false);
+    assert.equal(
+      m.query('[data-thread-card="quiet-4d"]')?.getAttribute("data-settled"),
+      null,
     );
     m.unmount();
   });

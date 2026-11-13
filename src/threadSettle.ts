@@ -9,7 +9,7 @@ import {
  * Default inactivity window (days) before a quiet thread auto-settles.
  * Single knob: inject via opts so a future setting needs no rework.
  */
-export const AUTO_SETTLE_AFTER_DAYS = 3;
+export const AUTO_SETTLE_AFTER_DAYS = 7;
 
 /**
  * Global settled tail paging.

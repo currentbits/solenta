@@ -110,8 +110,8 @@ test("inactivity respects active runs, pin, override, open/linked PRs and merge 
 
 test("missing inactivity setting uses the application default", () => {
   const f = fixture(); f.store.getSettings = () => ({});
-  assert.equal(commands.managedOwnerSettled(f.store, { ...f.thread, updatedAt: Date.now() - 4 * 86400000 }), true);
-  assert.equal(commands.managedOwnerSettled(f.store, { ...f.thread, updatedAt: Date.now() - 2 * 86400000 }), false);
+  assert.equal(commands.managedOwnerSettled(f.store, { ...f.thread, updatedAt: Date.now() - 8 * 86400000 }), true);
+  assert.equal(commands.managedOwnerSettled(f.store, { ...f.thread, updatedAt: Date.now() - 6 * 86400000 }), false);
 });
 
 test("live server stop keeps logs, stops once, and uses captured launch ownership on Windows", (t) => {
