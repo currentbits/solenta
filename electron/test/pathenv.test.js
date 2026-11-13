@@ -13,6 +13,16 @@ const {
 } = require("../pathEnv.js");
 
 describe("parseLoginPath", () => {
+  it("wraps the probe in a subshell for POSIX shells but not for fish", () => {
+    const calls = [];
+    const fake = (file, args) => { calls.push({ file, cmd: args[1] }); return ""; };
+    captureLoginPath({ SHELL: "/bin/bash" }, fake, "darwin");
+    captureLoginPath({ SHELL: "/opt/homebrew/bin/fish" }, fake, "darwin");
+    assert.match(calls[0].cmd, /^\(printf .*\)$/);
+    assert.match(calls[1].cmd, /^printf /);
+    assert.doesNotMatch(calls[1].cmd, /^\(/);
+  });
+
   it("extracts entries between the markers", () => {
     const out = "__CODER_PATH_BEGIN__/a:/b:/c__CODER_PATH_END__";
     assert.deepEqual(parseLoginPath(out), ["/a", "/b", "/c"]);

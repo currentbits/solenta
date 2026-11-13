@@ -2,6 +2,7 @@
 
 const fs = require("node:fs");
 const os = require("node:os");
+const path = require("node:path");
 const { execFile, execFileSync } = require("node:child_process");
 
 /**
@@ -172,15 +173,19 @@ function captureLoginPath(env, execFn = execFileSync, platform = process.platfor
 
 /** @param {NodeJS.ProcessEnv} env */
 function loginShellCall(env) {
+  const shell = env.SHELL || "/bin/zsh";
+  // A DEBUG trap that echoes $BASH_COMMAND (or any rc hook printing the
+  // command) must not leak a marker: the markers are only ever assembled
+  // by printf, never spelled out in the command text.
+  const probe = "printf '__CODER_%s_BEGIN__%s__CODER_%s_END____CODER_%s_BEGIN__' PATH \"$PATH\" PATH ENV; env -0; printf '__CODER_%s_END__' ENV";
   return /** @type {const} */ ([
-    env.SHELL || "/bin/zsh",
+    shell,
     [
       "-lic",
-      // A DEBUG trap that echoes $BASH_COMMAND (or any rc hook printing the
-      // command) must not leak a marker: the markers are only ever assembled
-      // by printf, never spelled out in the command text. The subshell keeps
-      // that trap (not inherited by `( )`) from echoing inside the env dump.
-      `(printf '__CODER_%s_BEGIN__%s__CODER_%s_END____CODER_%s_BEGIN__' PATH "$PATH" PATH ENV; env -0; printf '__CODER_%s_END__' ENV)`,
+      // The subshell keeps that trap (not inherited by `( )`) from echoing
+      // inside the env dump. fish reads `( )` as command substitution and
+      // has no DEBUG trap, so it runs the probe bare.
+      path.basename(shell) === "fish" ? probe : `(${probe})`,
     ],
     {
       encoding: "utf8",
