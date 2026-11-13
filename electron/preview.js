@@ -38,6 +38,10 @@ const AUDIO_POLL_MS = 1000;
 const ISOLATED_WORLD_ID = 1191;
 const ACTION_TIMEOUT_MS = 5000;
 const READ_TIMEOUT_MS = 5000;
+// A hung page must not stall the agent: navigate returns what committed,
+// a capture fails with a reason.
+const NAVIGATE_TIMEOUT_MS = 30_000;
+const CAPTURE_TIMEOUT_MS = 10_000;
 const SNAPSHOT_LIMITS = { maxNodes: 250, maxDepth: 48, maxBytes: 32_000, maxName: 80 };
 const CONSOLE_RING = 100;
 const NETWORK_RING = 100;
@@ -659,7 +663,23 @@ async function navigate(input) {
   const target = decision.url || "about:blank";
   await initialLoadSettled(wc);
   if (typeof wc.loadURL === "function") {
-    await wc.loadURL(target);
+    let loaded;
+    try {
+      loaded = await withTimeout(wc.loadURL(target), NAVIGATE_TIMEOUT_MS);
+    } catch (err) {
+      // Electron rejects loadURL with ERR_ABORTED (-3) when the page starts
+      // another document load before finishing (a client-side redirect).
+      // That's the page working, not a failed navigation.
+      if (!err || err.errno !== -3) throw err;
+    }
+    if (loaded === TIMED_OUT) {
+      return {
+        ...navState(wc),
+        message:
+          `The page did not finish loading within ${NAVIGATE_TIMEOUT_MS / 1000}s; it may still be loading or a script may be blocking it. ` +
+          "url and title are what has committed so far. Take a screenshot or snapshot to see it.",
+      };
+    }
   }
   return navState(wc);
 }
@@ -731,14 +751,19 @@ async function screenshot(input) {
   const e = s.emulation;
   // Under a preset the page is drawn at displayScale in the pane's top-left
   // corner; capture exactly that rectangle, not the blank pane around it.
-  const image = await (e
+  const image = await withTimeout(e
     ? wc.capturePage({
         x: 0,
         y: 0,
         width: Math.round(e.width * e.scale),
         height: Math.round(e.height * e.scale),
       })
-    : wc.capturePage());
+    : wc.capturePage(), CAPTURE_TIMEOUT_MS);
+  if (image === TIMED_OUT) {
+    throw new Error(
+      `Screenshot timed out after ${CAPTURE_TIMEOUT_MS / 1000}s; the page may be hung or not painting. Try reload or navigate.`,
+    );
+  }
   const shot = encodeImage(image);
   keepOriginal(s, image);
   return {
@@ -1904,6 +1929,8 @@ module.exports = {
   PREVIEW_PARTITION_PREFIX,
   PANE_CLOSED,
   ACTION_TIMEOUT_MS,
+  NAVIGATE_TIMEOUT_MS,
+  CAPTURE_TIMEOUT_MS,
   VIEWPORTS,
   partitionForThread,
   guestWebviewPolicy,
