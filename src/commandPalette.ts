@@ -240,6 +240,12 @@ export const PALETTE_ACTIONS: readonly PaletteAction[] = [
     keywords: "restore undo close terminal git",
   },
   {
+    id: "regenerate-title",
+    title: "Regenerate thread title",
+    binding: "thread.regenerateTitle",
+    keywords: "rename retitle",
+  },
+  {
     id: "fresh-agent-context",
     title: "Start fresh agent context",
     keywords: "new conversation reset context keep transcript worktree",

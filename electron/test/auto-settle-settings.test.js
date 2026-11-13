@@ -15,7 +15,7 @@ const {
 const services = require("../services");
 
 describe("normalizeSettings autoSettleAfterDays", () => {
-  it("absent key → default 3", () => {
+  it("absent key → default 7", () => {
     assert.deepEqual(normalizeSettings({}), {
       dailyBudgetUsd: null,
       orchestrationBudgetUsd: null,
@@ -32,7 +32,7 @@ describe("normalizeSettings autoSettleAfterDays", () => {
     assert.deepEqual(normalizeSettings(null), {
       dailyBudgetUsd: null,
       orchestrationBudgetUsd: null,
-      autoSettleAfterDays: 3,
+      autoSettleAfterDays: 7,
       autoSettleOnMerge: true,
       stripAgentCoauthors: false,
       prCrossReview: false,
@@ -42,7 +42,7 @@ describe("normalizeSettings autoSettleAfterDays", () => {
       mcpServers: [],
       defaultWorktree: false, defaultOrchestrate: false, defaultProvider: null, defaultModel: null, quotaFailover: [], onboardingSeen: false, updateChannel: null, notifications: true, notificationSound: false, notificationProjects: [], notifyEvents: { approval: true, turnFinished: true, turnFailed: true, automationFinished: true, ciFailed: false }, feltEstimatePrompt: false, suggestNextPrompt: false, theme: "dark", agentsPanelDefault: "closed", agentsPanelRememberLast: false, stayAwake: "agent", quotaWaitAutoResume: true, confirmQuitWithActiveWork: true, confirmColdClaudeResume: true, pinchZoomWindow: true, closeToTray: false, menuBarUsage: false, defaultAccounts: {}, resumeInterruptedRuns: true, resumeInterruptedRunsSet: false, combineQueuedFollowUps: true, agentBugReports: true, guardrailsEnabled: true, idleCompactClaudeThreads: false, titleInstructions: "", commitMessageInstructions: "", prInstructions: "", prDiffCapLines: 400, maxConcurrentRuns: 4, agentProfiles: [], providerInstances: [], cliProxyUsage: { enabled: false, managementUrl: "", managementKey: null }, providerModels: {}, defaultOrchestratorProfileId: null, promptSnippets: [], subagentPool: { defaultAlias: null, force: false, entries: [] }, otel: { endpoint: null, headers: {}, claudeMetrics: false }, uiScale: 1, linearApiKey: null, sentryAuthToken: null, githubHosts: [], webhook: { url: null, onDone: true, onFailed: true, onWaiting: true }, telegram: { enabled: false, botToken: null, allowedSenderIds: [], projectId: null, agentProfileId: null }, slack: { enabled: false, appToken: null, botToken: null, allowedSenderIds: [], projectId: null, agentProfileId: null }, discord: { enabled: false, botToken: null, allowedSenderIds: [], projectId: null, agentProfileId: null }, modelPrices: {}, speech: { provider: "local", localModel: "nemotron-en", language: "en-US", openaiApiKey: null, elevenlabsApiKey: null }, worktreeRoot: null, gitTextModel: null, privacyGateway: { default: "off", providers: {}, patterns: [] },
     });
-    assert.equal(DEFAULT_AUTO_SETTLE_AFTER_DAYS, 3);
+    assert.equal(DEFAULT_AUTO_SETTLE_AFTER_DAYS, 7);
   });
 
   it("null → null (user disabled)", () => {
@@ -59,22 +59,22 @@ describe("normalizeSettings autoSettleAfterDays", () => {
     );
   });
 
-  it("junk on disk heals to default 3 (not null)", () => {
+  it("junk on disk heals to default 7 (not null)", () => {
     assert.equal(
       normalizeSettings({ autoSettleAfterDays: "nope" }).autoSettleAfterDays,
-      3,
+      7,
     );
     assert.equal(
       normalizeSettings({ autoSettleAfterDays: 0 }).autoSettleAfterDays,
-      3,
+      7,
     );
     assert.equal(
       normalizeSettings({ autoSettleAfterDays: 1.5 }).autoSettleAfterDays,
-      3,
+      7,
     );
     assert.equal(
       normalizeSettings({ autoSettleAfterDays: NaN }).autoSettleAfterDays,
-      3,
+      7,
     );
   });
 });
@@ -98,7 +98,7 @@ describe("setSettings autoSettleAfterDays validation", () => {
 
   it("accepts null and positive integers; rejects junk", () => {
     const store = new Store(filePath);
-    assert.equal(store.getSettings().autoSettleAfterDays, 3);
+    assert.equal(store.getSettings().autoSettleAfterDays, 7);
 
     assert.deepEqual(
       services.setSettings(store, { autoSettleAfterDays: 7 }),
@@ -133,7 +133,7 @@ describe("setSettings autoSettleAfterDays validation", () => {
     );
   });
 
-  it("old store file without the key heals to 3 on load", () => {
+  it("old store file without the key heals to 7 on load", () => {
     fs.writeFileSync(
       filePath,
       JSON.stringify({
@@ -147,7 +147,7 @@ describe("setSettings autoSettleAfterDays validation", () => {
     assert.deepEqual(store.getSettings(), {
       dailyBudgetUsd: null,
       orchestrationBudgetUsd: null,
-      autoSettleAfterDays: 3,
+      autoSettleAfterDays: 7,
       autoSettleOnMerge: true,
       stripAgentCoauthors: false,
       prCrossReview: false,
@@ -159,7 +159,7 @@ describe("setSettings autoSettleAfterDays validation", () => {
     });
   });
 
-  it("null survives save + reload (Never is not healed to 3)", () => {
+  it("null survives save + reload (Never is not healed to 7)", () => {
     const store = new Store(filePath);
     services.setSettings(store, { autoSettleAfterDays: null });
     assert.equal(store.getSettings().autoSettleAfterDays, null);
@@ -168,7 +168,7 @@ describe("setSettings autoSettleAfterDays validation", () => {
     assert.equal(
       reloaded.getSettings().autoSettleAfterDays,
       null,
-      "explicit Never must persist across reload, not become default 3",
+      "explicit Never must persist across reload, not become default 7",
     );
   });
 

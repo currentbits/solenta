@@ -3031,6 +3031,14 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         threads = threads.map((t) => (t.id === i.threadId ? next : t));
         return Promise.resolve(next);
       },
+      regenerateTitle: (input: unknown) => {
+        const i = input as { threadIds: string[] };
+        return rec(
+          "threads.regenerateTitle",
+          [input],
+          i.threadIds.map((threadId) => ({ threadId, title: null })),
+        );
+      },
       setProvider: (input: unknown) => rec("threads.setProvider", [input], thread()),
       setReasoningEffort: (input: unknown) =>
         rec("threads.setReasoningEffort", [input], thread()),

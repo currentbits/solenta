@@ -441,6 +441,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     setStayAwakeMode,
     testWebhook,
     refreshProviders,
+    refreshProviderModels,
     refreshLocalProviders,
     projectById,
     searchMemory,
@@ -593,6 +594,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   const [memoryDraft, setMemoryDraft] = useState<DistilledMemory | null>(null);
   const clearMemoryDraft = useCallback(() => setMemoryDraft(null), []);
   const [chipError, setChipError] = useState<string | null>(null);
+  const [dropNotice, setDropNotice] = useState<string | null>(null);
   /** Discarded queued follow-up, handed back to the composer draft (#364, #1212). */
   const [queuedDraftRestore, setQueuedDraftRestore] =
     useState<ComposerProps["restoreDraft"]>(null);
@@ -1241,6 +1243,9 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
 
   const handleRegenerateOpenThread = useCallback(() => {
     if (!selectedThreadId) return;
+    // Same guard as the thread menu item: not while a turn is running.
+    const open = threadsRef.current.find((t) => t.id === selectedThreadId);
+    if (open?.status === "working") return;
     void regenerateTitle([selectedThreadId]);
   }, [regenerateTitle, selectedThreadId]);
 
@@ -1466,13 +1471,18 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     [selectedThreadId, forkThread],
   );
 
+  const dismissDropNotice = useCallback(() => setDropNotice(null), []);
   const dismissChipError = useCallback(() => {
     setChipError(null);
   }, []);
 
-  const handleModelPickerOpen = useCallback(() => {
-    void refreshProviders();
-  }, [refreshProviders]);
+  const handleModelPickerOpen = useCallback(
+    (providerId?: string) => {
+      void refreshProviders();
+      if (providerId) void refreshProviderModels(providerId);
+    },
+    [refreshProviders, refreshProviderModels],
+  );
 
 
   // Wrapped, not passed through: this one is bound straight to a button's
@@ -1590,21 +1600,26 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  // ⌘⇧P / ⌘⇧A toggle pin and settle for the open thread (#1770). Both
-  // bindings use mod, so unlike plain-letter shortcuts they still fire while
+  // ⌘⇧P / ⌘⇧A toggle pin and settle for the open thread (#1770), ⌘⌥R
+  // regenerates its title. All bindings use mod, so unlike plain-letter shortcuts they still fire while
   // a text field is focused; only an open dialog blocks them.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented || dialogOpen()) return;
       const pin = matchesBinding(e, "thread.togglePin");
       const settle = !pin && matchesBinding(e, "thread.toggleSettle");
-      if (!pin && !settle) return;
+      const retitle = !pin && !settle && matchesBinding(e, "thread.regenerateTitle");
+      if (!pin && !settle && !retitle) return;
       const threadId = selectedThreadId;
       const active = threadId
         ? threadsRef.current.find((t) => t.id === threadId)
         : undefined;
       if (!active) return;
       e.preventDefault();
+      if (retitle) {
+        handleRegenerateOpenThread();
+        return;
+      }
       if (pin) {
         handleSetPinned(active.id, !isPinned(active));
         return;
@@ -1621,7 +1636,13 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [selectedThreadId, handleSetPinned, handleSetSettled, settings]);
+  }, [
+    selectedThreadId,
+    handleSetPinned,
+    handleSetSettled,
+    handleRegenerateOpenThread,
+    settings,
+  ]);
 
   // Close the center Changes panel when switching threads (old behavior).
   useEffect(() => {
@@ -1975,10 +1996,12 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   /** PALETTE_ACTIONS plus "Stop all running threads" while any thread works. */
   const paletteActions = useMemo(
     () =>
-      workingCount > 0
-        ? PALETTE_ACTIONS
-        : PALETTE_ACTIONS.filter((a) => a.id !== "stop-all-threads"),
-    [workingCount],
+      PALETTE_ACTIONS.filter(
+        (a) =>
+          (a.id !== "stop-all-threads" || workingCount > 0) &&
+          (a.id !== "regenerate-title" || selectedThreadId != null),
+      ),
+    [workingCount, selectedThreadId],
   );
 
   const runPaletteAction = useCallback(
@@ -1997,6 +2020,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       else if (id === "add-project") handleAddProject();
       else if (id === "toggle-agents") toggleAgents();
       else if (id === "stop-all-threads") openStopAllConfirm();
+      else if (id === "regenerate-title") handleRegenerateOpenThread();
       else if (id === "reopen-pane") {
         window.dispatchEvent(new Event(REOPEN_PANE_EVENT));
       } else if (id === "fresh-agent-context") {
@@ -2020,6 +2044,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       handleAddProject,
       toggleAgents,
       openStopAllConfirm,
+      handleRegenerateOpenThread,
       restartAgentSession,
     freshAgentContext,
     ],
@@ -2102,6 +2127,30 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     [addProject],
   );
 
+  // Sidebar folder drop: only the Electron preload can turn a dropped File
+  // into an absolute path, so web mode gets no drop target.
+  const droppedPathOf = api.attachments.droppedFilePath;
+  const handleDropProjectFolders = useCallback(
+    (folders: File[], skipped: number) => {
+      if (skipped > 0) {
+        setDropNotice(
+          `Ignored ${skipped === 1 ? "1 file" : `${skipped} files`}: drop folders to add projects`,
+        );
+      }
+      const paths = folders
+        .map((f) => {
+          try {
+            return droppedPathOf?.(f) ?? "";
+          } catch {
+            return "";
+          }
+        })
+        .filter((p) => p.length > 0);
+      if (paths.length > 0) void addProjectPaths(paths);
+    },
+    [droppedPathOf, addProjectPaths],
+  );
+
   const pickProjectDirectory = useCallback(
     () => api.projects.pickDirectory(),
     [api],
@@ -2177,6 +2226,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       !removeFailMessage &&
       !distillError &&
       !chipError &&
+      !dropNotice &&
       !backgroundToast
     ) {
       return null;
@@ -2243,6 +2293,15 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
             onDismiss={dismissChipError}
           />
         )}
+        {dropNotice && (
+          <ArchiveToast
+            docked
+            key={`drop-${dropNotice}`}
+            variant="error"
+            title={dropNotice}
+            onDismiss={dismissDropNotice}
+          />
+        )}
         {backgroundToast && (
           <ArchiveToast
             docked
@@ -2276,6 +2335,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     openBackgroundThread,
     dismissBackgroundToast,
     dismissChipError,
+    dropNotice,
+    dismissDropNotice,
   ]);
   // Only one of these is ever non-null at a time: the toast moves between
   // docks, it never renders twice.
@@ -2445,6 +2506,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         listCliSessions={listCliSessions}
         importCliSession={handleImportCliSession}
         onAddProject={handleAddProject}
+        onDropFolders={droppedPathOf ? handleDropProjectFolders : undefined}
         onRemoveProject={handleRemoveProject}
         onEditProject={setEditProjectId}
         projectError={error?.scope === "project" ? error.message : null}

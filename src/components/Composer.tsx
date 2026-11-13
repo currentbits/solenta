@@ -348,7 +348,7 @@ export interface ComposerProps {
    */
   onDelegate?: (providerId: string, task: string) => void | Promise<void>;
   /** Fired each time the model picker popover opens (provider list refresh). */
-  onModelPickerOpen?: () => void;
+  onModelPickerOpen?: (providerId?: string) => void;
   /** Start a signed-out provider's login in a terminal (#1501). */
   onProviderSignIn?: (providerId: string) => Promise<void>;
   placeholder?: string;
@@ -949,6 +949,11 @@ export const Composer = memo(function Composer({
     setLocalError,
   });
 
+  // Every way of opening the picker refreshes the current provider's models.
+  const openModelPicker = useCallback(
+    () => onModelPickerOpen?.(provider),
+    [onModelPickerOpen, provider],
+  );
   const {
     commandIndex,
     setCommandIndex,
@@ -968,7 +973,7 @@ export const Composer = memo(function Composer({
     setModeOpen,
     setEffortOpen,
     setOptionsOpen,
-    onModelPickerOpen,
+    onModelPickerOpen: openModelPicker,
     onSlashAction,
   });
   /** Last idle Esc; a second press within DOUBLE_ESC_MS rewinds (#478). */
@@ -2691,7 +2696,8 @@ export const Composer = memo(function Composer({
                     setOptionsOpen(false);
                     // Providers were fetched once at boot; re-check so a CLI
                     // installed mid-session does not show "not installed".
-                    onModelPickerOpen?.();
+                    // Also asks the current provider's API for new models.
+                    onModelPickerOpen?.(provider);
                   }
                 }}
               >
@@ -3090,7 +3096,7 @@ export const Composer = memo(function Composer({
                                     type="button"
                                     className={styles.customModelBtn}
                                     title="Look for the CLI again"
-                                    onClick={() => onModelPickerOpen?.()}
+                                    onClick={openModelPicker}
                                   >
                                     Check again
                                   </button>

@@ -90,7 +90,7 @@ describe("quota-wait never auto-settles", () => {
 
 describe("AUTO_SETTLE_AFTER_DAYS", () => {
   it("is the single default knob (3 days)", () => {
-    assert.equal(AUTO_SETTLE_AFTER_DAYS, 3);
+    assert.equal(AUTO_SETTLE_AFTER_DAYS, 7);
   });
 });
 

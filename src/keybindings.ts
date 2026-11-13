@@ -270,6 +270,13 @@ export const KEYBINDINGS: readonly KeybindingDef[] = [
     chord: "mod+shift+a",
   },
   {
+    id: "thread.regenerateTitle",
+    label: "Regenerate the open thread's title",
+    scope: "window",
+    // mod+r and mod+shift+r are the View menu's reload/force reload.
+    chord: "mod+alt+r",
+  },
+  {
     id: "turn.prev",
     label: "Previous prompt",
     scope: "window",

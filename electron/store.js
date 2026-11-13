@@ -77,11 +77,11 @@ const EMPTY = {
   prViewed: {},
   // Chat channels (#1718): per-transport poll offset and chat -> thread map.
   channelState: {},
-  // autoSettleAfterDays defaults to 3 (AUTO_SETTLE_AFTER_DAYS); null = disabled.
+  // autoSettleAfterDays defaults to 7 (AUTO_SETTLE_AFTER_DAYS); null = disabled.
   settings: {
     dailyBudgetUsd: null,
     orchestrationBudgetUsd: null,
-    autoSettleAfterDays: 3,
+    autoSettleAfterDays: DEFAULT_AUTO_SETTLE_AFTER_DAYS,
     mcpServers: [],
     agentProfiles: [],
     subagentPool: { defaultAlias: null, force: false, entries: [] },
@@ -2705,11 +2705,11 @@ function cloneEmpty() {
     digestSeenAt: null,
     prViewed: {},
     channelState: {},
-    // autoSettleAfterDays defaults to 3 (AUTO_SETTLE_AFTER_DAYS); null = disabled.
+    // autoSettleAfterDays defaults to 7 (AUTO_SETTLE_AFTER_DAYS); null = disabled.
     settings: {
       dailyBudgetUsd: null,
       orchestrationBudgetUsd: null,
-      autoSettleAfterDays: 3,
+      autoSettleAfterDays: DEFAULT_AUTO_SETTLE_AFTER_DAYS,
       mcpServers: [],
       agentProfiles: [],
       subagentPool: { defaultAlias: null, force: false, entries: [] },

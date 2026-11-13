@@ -511,6 +511,14 @@
   gap: 2px;
 }
 
+/* OS files dragged over the list: dropping folders adds them as projects. */
+.list[data-folder-drop="true"] {
+  outline: 1px dashed var(--accent);
+  outline-offset: -4px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+
 /*
  * The list scrolls but is still a flex COLUMN, so its rows are flex items and
  * shrink to fit the viewport unless told not to — a 4-line card (wait row)

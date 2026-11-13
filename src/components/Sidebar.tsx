@@ -25,6 +25,7 @@ import type {
   UpdateStatus,
 } from "../shared/ipc";
 import { isWebMode } from "../shared/wire";
+import { droppedDirectories, isFileDrag } from "../dropFiles";
 import {
   crewAncestorIds,
   visibleFamilyRows,
@@ -195,6 +196,12 @@ export interface SidebarProps {
    */
   defaultWorktree?: boolean;
   onAddProject: () => void;
+  /**
+   * Folders dropped from the OS onto the thread list, each to be added as a
+   * project; `skipped` counts dropped items that were not folders. Unset
+   * (web mode has no absolute paths) turns the drop target off.
+   */
+  onDropFolders?: (folders: File[], skipped: number) => void;
   /**
    * Remove project entry (after the sidebar confirm). Caller owns
    * the IPC call, selection handoff, and failure toast. Resolves on success;
@@ -397,6 +404,7 @@ export const Sidebar = memo(function Sidebar({
   onCreateThread,
   listBaseBranches,
   onAddProject,
+  onDropFolders,
   onRemoveProject,
   onEditProject,
   projectError = null,
@@ -566,6 +574,7 @@ export const Sidebar = memo(function Sidebar({
   );
   const [selectAnchor, setSelectAnchor] = useState<string | null>(null);
   const [batchFeedback, setBatchFeedback] = useState<string | null>(null);
+  const [folderDrop, setFolderDrop] = useState(false);
   /** Rows with a title regeneration in flight (#1774); cheap inline state. */
   const [regeneratingTitles, setRegeneratingTitles] = useState<Set<string>>(
     () => new Set(),
@@ -1942,7 +1951,37 @@ export const Sidebar = memo(function Sidebar({
       <div
         className={styles.list}
         data-sidebar-list=""
+        data-folder-drop={folderDrop ? "true" : undefined}
         ref={bindListAnimation}
+        // OS drags only: row reorder and thread drags carry no files, so
+        // they never reach these handlers' work (isFileDrag is false).
+        onDragOver={
+          onDropFolders &&
+          ((e) => {
+            if (!isFileDrag(e.dataTransfer)) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = "copy";
+            setFolderDrop(true);
+          })
+        }
+        onDragLeave={
+          onDropFolders &&
+          ((e) => {
+            if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+              setFolderDrop(false);
+            }
+          })
+        }
+        onDrop={
+          onDropFolders &&
+          ((e) => {
+            setFolderDrop(false);
+            if (!isFileDrag(e.dataTransfer)) return;
+            e.preventDefault();
+            const { dirs, skipped } = droppedDirectories(e.dataTransfer);
+            onDropFolders(dirs, skipped);
+          })
+        }
       >
         {projects.length === 0 && (
           <button
