@@ -93,6 +93,7 @@ function msg(
     text: over.text,
     createdAt: over.createdAt ?? 1,
     runId: over.runId ?? null,
+    runConfiguration: over.runConfiguration,
     tool: over.tool,
   };
 }
@@ -320,6 +321,64 @@ describe("time spent in the message footer", () => {
 });
 
 describe("run headers", () => {
+  const configuration = {
+    provider: "codex",
+    model: "gpt-6.1-sol",
+    reasoningEffort: "high",
+  };
+  const snapshot = (id: string, runId: string, createdAt: number) => msg({
+    id, runId, createdAt, role: "event", text: "Model and effort",
+    runConfiguration: configuration,
+  });
+
+  it("keeps configuration-anchored run headers when adjacent snapshots deduplicate", async () => {
+    const m = await mount(view({ detail: detail({ messages: [
+      snapshot("config1", "r1", 1_000),
+      msg({ id: "a1", role: "assistant", text: "FIRST_REPLY", runId: "r1", createdAt: 2_000 }),
+      snapshot("config2", "r2", 3_000),
+      snapshot("config2-repeat", "r2", 3_001),
+      msg({ id: "a2", role: "assistant", text: "SECOND_REPLY", runId: "r2", createdAt: 4_000 }),
+    ] }) }));
+    await m.flush();
+    assert.equal(m.queryAll('[aria-label="Model and effort"]').length, 1);
+    assert.equal(m.queryAll("[data-run-header]").length, 2);
+    assert.equal(m.queryAll("[data-run-header='r2']").length, 1);
+    assert.ok(m.html().indexOf('data-run-header="r1"') < m.html().indexOf("FIRST_REPLY"));
+    await m.click(m.query("[data-run-header='r2']"));
+    assert.ok(!m.text().includes("SECOND_REPLY"));
+    assert.ok(m.text().includes("FIRST_REPLY"));
+    assert.equal(m.queryAll("[data-run-header='r2']").length, 1);
+    await m.click(m.query("[data-run-header='r2']"));
+    assert.ok(m.text().includes("SECOND_REPLY"));
+  });
+
+  it("does not add another header when the configuration follows the user row", async () => {
+    const m = await mount(view({ detail: detail({ messages: [
+      msg({ id: "u1", role: "user", text: "prompt", runId: "r1", createdAt: 1_000 }),
+      snapshot("config1", "r1", 1_001),
+      msg({ id: "a1", role: "assistant", text: "reply", runId: "r1", createdAt: 2_000 }),
+    ] }) }));
+    await m.flush();
+    assert.equal(m.queryAll("[data-run-header='r1']").length, 1);
+    assert.equal(m.queryAll('[aria-label="Model and effort"]').length, 1);
+  });
+
+  it("preserves a collapsed run header when an older configuration page is prepended", async () => {
+    const answer = msg({ id: "a1", role: "assistant", text: "PAGED_REPLY", runId: "r1", createdAt: 2_000 });
+    const m = await mount(view({ detail: {
+      ...detail({ messages: [answer] }), hasOlderMessages: true,
+    } }));
+    await m.flush();
+    await m.click(m.query("[data-run-header='r1']"));
+    await m.rerender(view({ detail: detail({ messages: [
+      snapshot("config1", "r1", 1_000), answer,
+    ] }) }));
+    assert.equal(m.queryAll("[data-run-header='r1']").length, 1);
+    assert.ok(!m.text().includes("PAGED_REPLY"));
+    await m.click(m.query("[data-run-header='r1']"));
+    assert.ok(m.text().includes("PAGED_REPLY"));
+  });
+
   it("renders a Worked for header above each completed run", async () => {
     const m = await mount(view({ detail: twoRuns }));
     await m.flush();

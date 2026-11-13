@@ -50,6 +50,8 @@ const {
   isBinAvailable,
   listProviders,
   codexModelAcceptsImages,
+  turnModelFor,
+  honouredEfforts,
 } = require("./providers.js");
 const orchcommands = require("./orchcommands.js");
 const cliCommands = require("./cliCommands.js");
@@ -1510,12 +1512,18 @@ function createRunner(opts) {
       createdAt: Date.now(),
     };
     if (runId) msg.runId = runId;
+    // Keep attribution on output too: a paged tail can omit its start event.
+    const live = runId && active.get(threadId);
+    if (role === "assistant" && live && live.runId === runId && live.runConfiguration) {
+      msg.runConfiguration = { ...live.runConfiguration };
+    }
     if (tool) msg.tool = tool;
     if (attachments && attachments.length) msg.attachments = attachments;
     if (extra && extra.thinking) msg.thinking = true;
     if (extra && extra.fromNotice === true) msg.fromNotice = true;
     if (extra && extra.steer === true) msg.steer = true;
     if (extra && extra.pdfText === true) msg.pdfText = true;
+    if (extra && extra.runConfiguration) msg.runConfiguration = extra.runConfiguration;
     if (extra && extra.fromThread && extra.fromThread.id) {
       msg.fromThread = {
         id: String(extra.fromThread.id),
@@ -1585,6 +1593,15 @@ function createRunner(opts) {
   }
 
   function markRunFailed(threadId, errText, runId, extraPatch) {
+    // A refused launch/auth/transport can fail asynchronously after dispatch
+    // returned a handle. With no agent output there is no conversation portion
+    // to attribute; keep its error, but discard the provisional model divider.
+    const messages = store.getMessages(threadId);
+    if (!messages.some((m) => m.runId === runId &&
+      (m.role === "assistant" || m.role === "tool" || m.thinking))) {
+      const kept = messages.filter((m) => !(m.runId === runId && m.role === "event" && m.runConfiguration));
+      if (kept.length !== messages.length) store.setMessages(threadId, kept);
+    }
     const overflow = classifyContextOverflow(errText);
     const writerLock = overflow ? null : classifyWriterLock(errText);
     const upgrade = overflow || writerLock ? null : classifyCliUpgrade(errText);
@@ -1825,7 +1842,21 @@ function createRunner(opts) {
     const existing = active.get(threadId);
     if (!existing || existing.runId !== runId) return null;
     Object.assign(existing, fields);
+    // Adapters can refine the provisional picker snapshot from their resolved
+    // launch arguments (for example version-gated Claude Ultracode effort).
+    if (fields.runConfiguration) {
+      const boundary = store.getMessages(threadId).find((m) =>
+        m.runId === runId && m.role === "event" && m.runConfiguration);
+      if (boundary) store.updateMessage(threadId, boundary.id, {
+        runConfiguration: fields.runConfiguration,
+        text: runConfigurationText(fields.runConfiguration),
+      });
+    }
     return existing;
+  }
+
+  function runConfigurationText(configuration) {
+    return `${configuration.provider} · ${configuration.model || "default model"} · ${configuration.reasoningEffort ? `${configuration.reasoningEffort} effort` : "default effort"}`;
   }
 
   function stampPreparingSteps(threadId, runId, steps) {
@@ -2589,57 +2620,85 @@ function createRunner(opts) {
 
       const name = workflowNameFromThreadId(threadId);
 
-      if (provider === "simulate") {
-        return await startSimulatedRun(threadId, dispatchPrompt, runId, name);
-      }
-      if (provider === "generic") {
-        return await startGenericRun(threadId, dispatchPrompt, runId, name);
-      }
+      // Snapshot what the adapter is about to dispatch, including plan-mode
+      // overrides. Picker changes during a live turn only affect its next run.
+      const providerEntry = getProvider(provider);
+      const selected = turnModelFor(providerEntry, store.getThread(threadId));
+      const configuration = {
+        provider,
+        model: selected.model,
+        reasoningEffort: honouredEfforts(providerEntry, selected.model).includes(selected.reasoningEffort)
+          ? selected.reasoningEffort : null,
+      };
+      pendingEntry.runConfiguration = configuration;
+      const launch = async () => {
+        if (provider === "simulate") {
+          return await startSimulatedRun(threadId, dispatchPrompt, runId, name);
+        }
+        if (provider === "generic") {
+          return await startGenericRun(threadId, dispatchPrompt, runId, name);
+        }
 
-      const entryDef = getProvider(provider) || getProvider("claude");
-      if (entryDef.kind === "claude-stream") {
-        return await startClaudeRun(threadId, dispatchPrompt, runId, entryDef);
-      }
-      if (entryDef.kind === "codex-json") {
-        return await startCodexRun(
+        const entryDef = getProvider(provider) || getProvider("claude");
+        if (entryDef.kind === "claude-stream") {
+          return await startClaudeRun(threadId, dispatchPrompt, runId, entryDef);
+        }
+        if (entryDef.kind === "codex-json") {
+          return await startCodexRun(
+            threadId,
+            dispatchPrompt,
+            runId,
+            entryDef,
+            nativeImages,
+          );
+        }
+        if (entryDef.kind === "kimi-stream") {
+          return await startKimiRun(threadId, dispatchPrompt, runId, entryDef);
+        }
+        if (entryDef.kind === "opencode-json") {
+          return await startOpencodeRun(
+            threadId,
+            dispatchPrompt,
+            runId,
+            entryDef,
+            nativeFiles,
+          );
+        }
+        if (entryDef.kind === "cursor-stream") {
+          return await startCursorRun(threadId, dispatchPrompt, runId, entryDef);
+        }
+        if (entryDef.kind === "muse-json") {
+          return await startMuseRun(threadId, dispatchPrompt, runId, entryDef);
+        }
+        return await startClaudeRun(
           threadId,
           dispatchPrompt,
           runId,
-          entryDef,
-          nativeImages,
+          getProvider("claude"),
         );
+      };
+      // A separate boundary also covers queued/replayed starts with no new
+      // user row. Stage it immediately before dispatch and roll it back if
+      // launch is refused, throws, or Stop cancels preparation.
+      const boundaryText = runConfigurationText(configuration);
+      const boundaryId = appendMessage(threadId, "event", boundaryText, runId,
+        null, null, { runConfiguration: configuration });
+      let accepted = false;
+      try {
+        const result = await launch();
+        accepted = pendingEntry.kind !== "preparing" && !pendingEntry.stopping;
+        return result;
+      } finally {
+        if (!accepted) {
+          store.setMessages(threadId, store.getMessages(threadId).filter((m) => m.id !== boundaryId));
+        }
+        store.save();
+        pushDetail(threadId);
       }
-      if (entryDef.kind === "kimi-stream") {
-        return await startKimiRun(threadId, dispatchPrompt, runId, entryDef);
-      }
-      if (entryDef.kind === "opencode-json") {
-        return await startOpencodeRun(
-          threadId,
-          dispatchPrompt,
-          runId,
-          entryDef,
-          nativeFiles,
-        );
-      }
-      if (entryDef.kind === "cursor-stream") {
-        return await startCursorRun(threadId, dispatchPrompt, runId, entryDef);
-      }
-      if (entryDef.kind === "muse-json") {
-        return await startMuseRun(threadId, dispatchPrompt, runId, entryDef);
-      }
-      return await startClaudeRun(
-        threadId,
-        dispatchPrompt,
-        runId,
-        getProvider("claude"),
-      );
     } catch (err) {
-      // A throw before a provider claimed the slot would leak it and the
-      // thread would read "already active" forever (#1430 R5).
-      if (
-        active.get(threadId) === pendingEntry &&
-        pendingEntry.kind === "preparing"
-      ) {
+      // A provider can throw after claiming preparation but before returning
+      // a handle. Release that same entry too, so Retry can start again.
+      if (active.get(threadId) === pendingEntry) {
         clearRun(threadId);
         store.updateThread(
           threadId,
