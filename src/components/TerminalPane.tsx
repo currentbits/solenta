@@ -22,7 +22,8 @@ export interface XtermLike {
   rows: number;
   options: { theme?: Record<string, string> };
   open(el: HTMLElement): void;
-  write(data: string): void;
+  /** `cb` runs once xterm has parsed `data`. */
+  write(data: string, cb?: () => void): void;
   reset(): void;
   focus(): void;
   dispose(): void;
@@ -204,6 +205,10 @@ function TerminalView({
     let reading = false;
     let readAgain = false;
     let pushRevision = 0;
+    // True while replayed output parses. Old output can hold terminal
+    // queries (DA `ESC[c`, DSR `ESC[6n`, OSC `11;?`, DCS XTGETTCAP...) that
+    // xterm answers via onData; those replies must not reach the live shell.
+    let replaying = false;
     const subs: { dispose(): void }[] = [];
     setSession(null);
     setFailed(false);
@@ -213,7 +218,10 @@ function TerminalView({
       if (!live || !term) return;
       if (s.reset) {
         term.reset();
-        term.write(s.text);
+        // The empty write flips the flag right before the replay parses, so
+        // keystrokes queued ahead of it still go through.
+        term.write("", () => { replaying = true; });
+        term.write(s.text, () => { replaying = false; });
       } else if (s.cursor > cursor) {
         term.write(s.text.slice(Math.max(0, s.text.length - (s.cursor - cursor))));
       } else if (s.cursor < cursor) {
@@ -283,6 +291,7 @@ function TerminalView({
         t.attachCustomKeyEventHandler(copyKeys(t));
         subs.push(
           t.onData((data) => {
+            if (replaying) return;
             void api.write({ threadId, termId, data }).catch(() => {});
           }),
           t.onResize(({ cols, rows }) => {
