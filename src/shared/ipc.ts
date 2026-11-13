@@ -2108,10 +2108,28 @@ export interface UsageReport {
     skippedRecords: number;
     partial: boolean;
     unpricedModels: string[];
+    /** Logs read before that vanished, or vanished mid-scan: their history is gone. */
+    missingFiles?: number;
+    /** Files re-read from the start because they were truncated or rewritten. */
+    rereadFiles?: number;
+    scope?: "cli" | "external";
+    /** "external": responses left out because a Solenta thread ran them. */
+    solentaResponses?: number;
+    /** Per-response CLI-reported USD (older Claude Code logs). Never a subscription charge. */
+    reportedCostUsd?: number;
+    /** API-rate estimate from the user's model prices. Never a subscription charge. */
+    estimatedCostUsd?: number;
+    /** Every local home that can be scanned; `selected` ones were. */
+    homes?: Array<{ id: string; provider: string; label: string; selected: boolean }>;
   };
 }
 
-export interface UsageReportInput { scope?: "solenta" | "cli" }
+/**
+ * "solenta": the spend ledger. "external": Claude/Codex session logs minus
+ * responses Solenta ran (addable to "solenta"). "cli": every session log,
+ * overlapping "solenta". `homes` picks local homes by id; omitted = all.
+ */
+export interface UsageReportInput { scope?: "solenta" | "cli" | "external"; homes?: string[] }
 
 /**
  * One provider-reported quota window (5-hour, weekly, …).

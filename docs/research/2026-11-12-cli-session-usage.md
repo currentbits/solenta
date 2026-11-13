@@ -77,3 +77,46 @@ The expanded budget-spend suite has five date-sensitive failures: fixed August
 2026 fixtures are now pruned during reload. All five also reproduce on the
 unchanged pre-feature baseline `cb41c9a8`. They are a separate suggested task;
 the budget-cap tests and the new scanner's ledger-isolation check pass.
+
+## Outside Solenta scope (#2013)
+
+Follow-up inspired by Synara [#2109](https://github.com/Emanuele-web04/synara/pull/2109).
+Usage now has three sources: **Solenta runs** (the ledger), **Outside Solenta**,
+and **All CLI sessions** (the original overlapping report).
+
+- **Ownership.** A response is Solenta's when its provider session id belongs to
+  a Solenta thread (trashed threads and Claude accounting checkpoints included)
+  and it is timestamped at or after the thread's creation. An imported session
+  keeps its id, so its pre-import history stays outside Solenta. Claude subagent
+  sidechains carry the parent session id. Codex spawned subagents inherit the
+  parent's ownership; CLI forks do not. Ownership follows the stable response
+  identity (Claude message id, Codex turn + cumulative counters), so a Solenta
+  response copied into a resume or fork stays Solenta's and counts once.
+- **Known ceiling.** If a Solenta session is later resumed from Terminal into the
+  same file, those responses stay Solenta's. Splitting them would need
+  per-response run windows. Sessions whose thread was deleted (not trashed),
+  rewound or moved count as outside.
+- **Incremental reads.** Each file resumes from its last consumed newline when
+  the inode is the same, the file has not shrunk, and a hash of its first and
+  last 4 KiB before the offset still matches. Truncation, replacement or
+  in-place rewrite re-reads from byte 0 (`rereadFiles`). Codex parse state carries
+  across appends. Bytes appended during a scan wait for the next scan. Only
+  shrink/replace mid-read discards the file. An unterminated tail is incomplete
+  and re-read later. An overlong line split across appends is skipped once. Logs
+  that vanish are reported as `missingFiles`.
+- **Homes.** The default Claude/Codex homes and each instance home are listed by
+  id. The picker scans one home or all of them, and deduplication runs only
+  within the selection.
+- **Cost.** A per-response `costUSD` (older Claude Code logs) is CLI-reported.
+  Every other response is priced only from the user's model prices (API-rate
+  estimate). Unpriced tokens stay unpriced and are listed. Neither figure is a
+  subscription charge. Claude's cumulative `cost-state` rows, which a resume
+  restores, are ignored. Solenta's exact saved-counter resume classification
+  (#1961) is unchanged; Synara's first-result omission was not adopted.
+- **Ledger.** Both log scopes are computed per request and never call or write
+  the spend/usage ledger, so external history never reaches today's spend cap.
+
+A read-only scan of this host's logs and live store took about 1–2 s. It
+excluded about 17k Solenta-run responses and kept about 3k outside
+Solenta. It reported partial coverage because of the existing 512 MiB per-scan
+read bound, which warms more files on each refresh.

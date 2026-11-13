@@ -5,6 +5,29 @@ const { collectDigest } = require("./digest.js");
 const { collectFleet } = require("./fleet.js");
 const cliUsage = require("./cli-session-usage.js").createCliUsageReader();
 
+/**
+ * Provider sessions Solenta ran (#2002 follow-up): session id → the owning
+ * thread's creation time. An imported CLI session keeps its id, so responses
+ * before the import stay outside Solenta. Trashed threads still count: their
+ * spend stays in the ledger.
+ * ponytail: a Solenta session later resumed from Terminal stays Solenta's;
+ * per-response run windows would be needed to split it.
+ */
+function solentaSessions(threads = []) {
+  const owned = { claude: {}, codex: {} };
+  const add = (provider, id, since) => {
+    if (!owned[provider] || typeof id !== "string" || !id) return;
+    owned[provider][id] = Math.min(owned[provider][id] ?? Infinity, since);
+  };
+  for (const thread of threads || []) {
+    if (!thread) continue;
+    const since = Number.isFinite(thread.createdAt) ? thread.createdAt : 0;
+    add(thread.provider, thread.sessionId, since);
+    add("claude", thread.claudeAccounting?.sessionId, since);
+  }
+  return owned;
+}
+
 /** IPC_HANDLERS rows for activity:*, governance:*, usage:*, insights:*, fleet:*, digest:*; ipc.js spreads them in. */
 module.exports = {
   // Read-only (#262): nothing in the renderer can append to the audit.
@@ -18,9 +41,17 @@ module.exports = {
   },
   "usage:byDay": async (ctx, input) => {
     const scope = input?.scope ?? "solenta";
-    if (scope !== "solenta" && scope !== "cli") throw new Error("Invalid usage scope");
-    if (scope === "cli") {
+    if (scope !== "solenta" && scope !== "cli" && scope !== "external") throw new Error("Invalid usage scope");
+    const homes = input?.homes;
+    if (homes !== undefined && (!Array.isArray(homes) || homes.length > 64 || !homes.every((h) => typeof h === "string"))) {
+      throw new Error("Invalid usage homes");
+    }
+    if (scope !== "solenta") {
+      // Read-only: the report is computed per request and never enters the spend ledger.
       return cliUsage.read({
+        scope,
+        homes,
+        owned: solentaSessions(ctx.store.getThreads()),
         instances: require("./services.js").instanceAuthProbes(ctx.store, ctx.userDataPath),
         prices: ctx.store.getSettings().modelPrices,
       });
