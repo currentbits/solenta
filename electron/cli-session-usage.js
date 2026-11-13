@@ -161,7 +161,9 @@ async function readFile(info, prev) {
   try {
     const st = await handle.stat();
     if (!st.isFile()) throw new Error("changed");
-    const grown = prev && prev.ino === st.ino && st.size >= prev.offset && await probe(handle, prev.offset) === prev.probe;
+    // Same size with a new stamp is an in-place rewrite, whatever the probes say.
+    const grown = prev && prev.ino === st.ino && st.size >= prev.offset && st.size !== prev.size
+      && await probe(handle, prev.offset) === prev.probe;
     const entry = grown
       ? { ...prev, records: prev.records.slice(), state: { ...prev.state } }
       : { ino: st.ino, offset: 0, records: [], state: {}, skippedRecords: 0, partial: false };
@@ -221,11 +223,18 @@ async function readFile(info, prev) {
  *   Provider session id → epoch ms from which that session's responses were
  *   Solenta's (the owning thread's creation; earlier history was imported).
  */
-function ownership(owned = {}) {
+function ownership(owned = {}, spawnedBy = new Map()) {
   const since = (provider, session) => session && Object.hasOwn(owned[provider] || {}, session) ? owned[provider][session] : undefined;
-  return (entry, provider, row) => {
-    const from = since(provider, row.session || entry.session) ?? since(provider, entry.subagentOf);
-    return from !== undefined && row.at >= from;
+  // Spawned subagents (at any depth) belong to their root's run; forks stop the walk.
+  return (provider, session, at) => {
+    const seen = new Set();
+    while (session && !seen.has(session)) {
+      seen.add(session);
+      const from = since(provider, session);
+      if (from !== undefined) return at >= from;
+      session = spawnedBy.get(`${provider}:${session}`);
+    }
+    return false;
   };
 }
 
@@ -241,7 +250,7 @@ function createCliUsageReader() {
     const chosen = all.filter((home) => !Array.isArray(selected) || selected.includes(home.id));
     stats.homes = all.map(({ id, provider, label }) => ({ id, provider, label, selected: chosen.some((home) => home.id === id) }));
     const chosenIds = new Set(chosen.map((home) => home.id));
-    const isOwned = ownership(owned);
+    const spawnedBy = new Map();
     const since = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 89).getTime();
     const files = await discover(rootsFor(chosen), stats);
     const live = new Set(files.map((f) => f.file));
@@ -277,6 +286,7 @@ function createCliUsageReader() {
       stats.files++;
       stats.skippedRecords += entry.skippedRecords + (entry.tail ? 1 : 0);
       stats.partial ||= entry.partial;
+      if (entry.session && entry.subagentOf) spawnedBy.set(`${info.provider}:${entry.session}`, entry.subagentOf);
       if (entry.session && info.provider === "codex") loadedSessions.set(entry.session, {
         parent: entry.parent, fork: entry.fork, complete: !entry.partial && !entry.skippedRecords,
       });
@@ -288,21 +298,23 @@ function createCliUsageReader() {
           if (entry.session && loadedSessions.has(entry.session)) loadedSessions.get(entry.session).complete = false;
           break;
         }
-        const owns = isOwned(entry, info.provider, row);
+        const claim = { session: row.session || entry.session, at: row.at };
         const previous = unique.get(row.key);
         // Claude repeats usage on content blocks; keep the fullest snapshot.
         // A response Solenta ran anywhere (fork/resume copies too) stays Solenta's.
-        if (!previous) unique.set(row.key, { ...row, owned: owns });
+        if (!previous) unique.set(row.key, { ...row, claims: [claim] });
         else {
           const fullest = row.tokens.reduce((a, b) => a + b, 0) > previous.tokens.reduce((a, b) => a + b, 0) ? row : previous;
           const cost = fullest.costUsd ?? previous.costUsd ?? row.costUsd;
           unique.set(row.key, {
-            ...fullest, at: Math.min(row.at, previous.at), fork: Boolean(row.fork && previous.fork), owned: previous.owned || owns,
+            ...fullest, at: Math.min(row.at, previous.at), fork: Boolean(row.fork && previous.fork), claims: [...previous.claims, claim],
             ...(cost !== undefined ? { costUsd: cost } : {}),
           });
         }
       }
     }
+    const isOwned = ownership(owned, spawnedBy);
+    for (const row of unique.values()) row.owned = row.claims.some((c) => isOwned(row.provider, c.session, c.at));
     const ancestryKnown = (session) => {
       const visited = new Set();
       while (session && !visited.has(session)) {

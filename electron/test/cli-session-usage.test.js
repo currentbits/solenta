@@ -233,6 +233,29 @@ describe("usage outside Solenta", () => {
     assert.equal(external.cli.solentaResponses, 2);
   });
 
+  it("drops nested Codex subagents of a Solenta session at any depth", async () => {
+    const spawn = (parent) => ({ source: { subagent: { thread_spawn: { parent_thread_id: parent } } } });
+    write("codex/sessions/sol.jsonl", [codexMeta("csol"), turn("t1"), usage(100)]);
+    write("codex/sessions/child.jsonl", [codexMeta("child", spawn("csol")), turn("t2"), usage(50)]);
+    write("codex/sessions/grandchild.jsonl", [codexMeta("grand", spawn("child")), turn("t3"), usage(30)]);
+    const store = storeWith([{ id: "t", provider: "codex", sessionId: "csol", createdAt: 0 }]);
+    const external = await usageHandler()({ store }, { scope: "external" });
+    assert.equal(totalTurns(external), 0);
+    assert.equal(external.cli.solentaResponses, 3);
+  });
+
+  it("re-reads a same-size in-place rewrite whose head and tail are unchanged", async () => {
+    const pad = (id) => claude(id, 1, { content: "x".repeat(5000) });
+    const file = write("claude/projects/p/s.jsonl", [pad("head"), claude("mid", 1), pad("tail")]);
+    const reader = createCliUsageReader();
+    assert.equal(modelCell(await reader.read(), "claude", "sonnet").outputTokens, 3);
+    const before = fs.statSync(file);
+    fs.writeFileSync(file, fs.readFileSync(file, "utf8").replace('"id":"mid","model":"sonnet","content":"PRIVATE PROMPT MUST NOT LEAVE THE SCANNER","usage":{"input_tokens":10,"output_tokens":1', '"id":"mid","model":"sonnet","content":"PRIVATE PROMPT MUST NOT LEAVE THE SCANNER","usage":{"input_tokens":10,"output_tokens":9'));
+    fs.utimesSync(file, before.atime, new Date(before.mtimeMs + 2000));
+    assert.equal(fs.statSync(file).size, before.size);
+    assert.equal(modelCell(await reader.read(), "claude", "sonnet").outputTokens, 11);
+  });
+
   it("reads only appended bytes, and re-reads a file rewritten in place", async () => {
     const file = write("claude/projects/p/s.jsonl", [claude("one")]);
     const reader = createCliUsageReader();
