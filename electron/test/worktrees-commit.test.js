@@ -78,6 +78,28 @@ describe("worktrees commit/revertFile", () => {
     assert.doesNotMatch(git(repo, ["status", "--porcelain"]), /a\.txt/);
   });
 
+  it("commit with a selection too large for argv commits only those files", () => {
+    // ~1.3 MB of pathspecs: past macOS ARG_MAX and Windows' 32K limit.
+    const dir = "d".repeat(80);
+    fs.mkdirSync(path.join(repo, dir));
+    const paths = [];
+    for (let i = 0; i < 12000; i++) {
+      const rel = `${dir}/f${i}.txt`;
+      fs.writeFileSync(path.join(repo, rel), "x\n");
+      paths.push(rel);
+    }
+    fs.writeFileSync(path.join(repo, "left-out.txt"), "y\n");
+    fs.appendFileSync(path.join(repo, "README.md"), "more\n");
+    git(repo, ["add", "README.md"]);
+
+    commit({ store, threadId: thread.id, message: "feat: bulk", paths });
+    assert.equal(git(repo, ["log", "-1", "--format=%s"]), "feat: bulk");
+    assert.match(git(repo, ["show", "--shortstat", "--format=", "HEAD"]), /12000 files changed/);
+    const status = git(repo, ["status", "--porcelain"]);
+    assert.match(status, /left-out\.txt/);
+    assert.match(status, /^M  README\.md/m);
+  });
+
   it("commit with paths leaves already-staged siblings uncommitted", () => {
     fs.writeFileSync(path.join(repo, "a.txt"), "one\n");
     fs.appendFileSync(path.join(repo, "README.md"), "more\n");

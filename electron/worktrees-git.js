@@ -270,15 +270,18 @@ function gitOut(cwd, args, opts) {
  * Run git without throwing. Returns { ok, stdout, stderr, combined }.
  * @param {string} cwd
  * @param {string[]} args
- * @param {{ raw?: boolean, env?: NodeJS.ProcessEnv, timeout?: number }} [opts]
+ * @param {{ raw?: boolean, env?: NodeJS.ProcessEnv, timeout?: number, input?: string }} [opts]
+ *   input: written to git's stdin (e.g. `--pathspec-from-file=-`)
  */
 function gitTry(cwd, args, opts) {
   try {
+    const input = opts && opts.input != null ? opts.input : undefined;
     /** @type {import('node:child_process').ExecFileSyncOptionsWithStringEncoding} */
     const execOpts = {
       cwd,
       encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: [input == null ? "ignore" : "pipe", "pipe", "pipe"],
+      input,
       maxBuffer: GIT_MAX_BUFFER,
       env: gitEnv(args, opts && opts.env),
     };

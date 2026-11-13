@@ -45,6 +45,7 @@ const {
   gateCiWorkflowMerge,
   ciWorkflowMergeReview,
   normalizeCommitPaths,
+  pathspecArgs,
   stageForCommit,
 } = require("./worktrees-changes.js");
 
@@ -471,10 +472,10 @@ function mergeWorktree(opts) {
     if (!paths || paths.length > 0) {
       stageForCommit(wtPath, paths);
       const commitMsg = `coder: session changes for ${thread.title}`;
-      const commitArgs = paths
-        ? ["commit", "-m", commitMsg, "--", ...paths.map((p) => `:(top,literal)${p}`)]
-        : ["commit", "-m", commitMsg];
-      const committed = gitTry(wtPath, commitArgs);
+      const spec = paths ? pathspecArgs(paths) : { args: [] };
+      const committed = gitTry(wtPath, ["commit", "-m", commitMsg, ...spec.args], {
+        input: spec.input,
+      });
       if (!committed.ok) {
         throw new Error(
           `Failed to commit worktree changes: ${committed.combined.split("\n")[0]}`,
