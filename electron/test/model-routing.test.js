@@ -9,14 +9,11 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { execFileSync } = require("node:child_process");
 const { Store, normalizeSettings } = require("../store");
 const services = require("../services");
 const { nextQuotaFailover } = require("../quotaWait.js");
 
-function git(cwd, args) {
-  execFileSync("git", args, { cwd, stdio: "ignore" });
-}
+const { git } = require("./support/git.js");
 
 describe("model routing settings (#711)", () => {
   it("absent/junk defaultProvider, defaultModel, quotaFailover heal", () => {

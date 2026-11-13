@@ -9,9 +9,7 @@ const services = require("../services.js");
 const ssh = require("../ssh.js");
 const doctor = require("../doctor.js");
 
-function git(cwd, args) {
-  execFileSync("git", args, { cwd, stdio: "ignore" });
-}
+const { git } = require("./support/git.js");
 
 describe("services", () => {
   let tmpDir;

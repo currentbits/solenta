@@ -5,7 +5,6 @@ const os = require("node:os");
 const path = require("node:path");
 const http = require("node:http");
 const { pathToFileURL } = require("node:url");
-const { execFileSync } = require("node:child_process");
 const { Store } = require("../store.js");
 const services = require("../services.js");
 const { createRunner } = require("../runner.js");
@@ -37,9 +36,7 @@ function freePort() {
   });
 }
 
-function git(cwd, args) {
-  execFileSync("git", args, { cwd, stdio: "ignore" });
-}
+const { git } = require("./support/git.js");
 
 async function loadCore() {
   const corePath = path.join(__dirname, "../../core/dist/index.js");

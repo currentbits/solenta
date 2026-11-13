@@ -13,7 +13,6 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
-const { execFileSync } = require("node:child_process");
 const { Store } = require("../store.js");
 const services = require("../services.js");
 const { createRunner, looksWriterLock } = require("../runner.js");
@@ -25,9 +24,7 @@ const WRITER_LOCK_STDERR =
   "failed to initialize thread persistence: thread-store conflict: " +
   "thread 01a072f7-10e0-7fd2-b691-7d481327516f already has an active writer";
 
-function git(cwd, args) {
-  execFileSync("git", args, { cwd, stdio: "ignore" });
-}
+const { git } = require("./support/git.js");
 
 async function loadCore() {
   const corePath = path.join(__dirname, "../../core/dist/index.js");

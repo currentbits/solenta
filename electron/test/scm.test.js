@@ -9,7 +9,6 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { execFileSync } = require("node:child_process");
 const { Store } = require("../store.js");
 const services = require("../services.js");
 const {
@@ -21,9 +20,7 @@ const {
 } = require("../scm.js");
 const { presentProject } = require("../projectIcon.js");
 
-function git(cwd, args) {
-  execFileSync("git", args, { cwd, stdio: "ignore" });
-}
+const { git } = require("./support/git.js");
 
 describe("detectScm", () => {
   let tmpDir;

@@ -22,9 +22,7 @@ const { rmTree } = require("./support/rmTree.js");
 
 const EJECTED_SESSION = "01a072f7-10e0-7fd2-b691-7d481327516f";
 
-function git(cwd, args) {
-  execFileSync("git", args, { cwd, stdio: "ignore" });
-}
+const { git } = require("./support/git.js");
 
 async function loadCore() {
   const corePath = path.join(__dirname, "../../core/dist/index.js");

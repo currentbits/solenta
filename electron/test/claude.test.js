@@ -4,7 +4,6 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
-const { execFileSync } = require("node:child_process");
 const Module = require("node:module");
 const { rmTree } = require("./support/rmTree.js");
 
@@ -35,9 +34,7 @@ const { writeFakeBin } = require("./support/fakeBin.js");
 const PNG_B64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
 
-function git(cwd, args) {
-  execFileSync("git", args, { cwd, stdio: "ignore" });
-}
+const { git } = require("./support/git.js");
 
 async function loadCore() {
   const corePath = path.join(__dirname, "../../core/dist/index.js");

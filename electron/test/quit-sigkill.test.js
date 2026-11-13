@@ -9,7 +9,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { spawn, execFileSync } = require("node:child_process");
+const { spawn } = require("node:child_process");
 const { pathToFileURL } = require("node:url");
 const { Store } = require("../store.js");
 const services = require("../services.js");
@@ -22,9 +22,7 @@ const posix = process.platform !== "win32";
 const IGNORER =
   "process.on('SIGTERM',()=>{});require('fs').writeFileSync('agent.pid',String(process.pid));setInterval(()=>{},200)";
 
-function git(cwd, args) {
-  execFileSync("git", args, { cwd, stdio: "ignore" });
-}
+const { git } = require("./support/git.js");
 
 function waitFor(predicate, { timeoutMs = 5000, intervalMs = 20 } = {}) {
   return new Promise((resolve, reject) => {

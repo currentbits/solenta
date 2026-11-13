@@ -15,9 +15,7 @@ const { createRunner } = require("../runner.js");
 const { setupWorktree, gcClean } = require("../worktrees.js");
 const { rmTree } = require("./support/rmTree.js");
 
-function git(cwd, args) {
-  execFileSync("git", args, { cwd, stdio: "ignore" });
-}
+const { git } = require("./support/git.js");
 
 async function loadCore() {
   const corePath = path.join(__dirname, "../../core/dist/index.js");

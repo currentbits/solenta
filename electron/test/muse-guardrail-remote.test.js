@@ -13,7 +13,6 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { execFileSync } = require("node:child_process");
 const { pathToFileURL } = require("node:url");
 
 const remoteOverlay = require("../remote-overlay.js");
@@ -30,9 +29,7 @@ const { rmTree } = require("./support/rmTree.js");
 
 const ECHO_HELLO = path.join(__dirname, "fixtures", "muse", "echo-hello.jsonl");
 
-function git(cwd, args) {
-  execFileSync("git", args, { cwd, stdio: "ignore" });
-}
+const { git } = require("./support/git.js");
 
 async function loadCore() {
   const corePath = path.join(__dirname, "../../core/dist/index.js");

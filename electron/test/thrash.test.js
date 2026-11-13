@@ -77,9 +77,7 @@ describe("thrash tracker (#391)", () => {
   });
 });
 
-function git(cwd, args) {
-  execFileSync("git", args, { cwd, stdio: "ignore" });
-}
+const { git } = require("./support/git.js");
 
 function waitFor(predicate, { timeoutMs = 15000, intervalMs = 20 } = {}) {
   return new Promise((resolve, reject) => {

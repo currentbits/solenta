@@ -1,0 +1,40 @@
+# TEMPORARY: repeats the Windows electron + memory suites to catch the
+# intermittent `git init` / `git commit` beforeEach failures with stderr.
+# Delete before merging.
+name: flake-hunt
+
+on:
+  push:
+    branches: [coder/windows-git-helper-flake]
+
+jobs:
+  hunt:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: "**/package-lock.json"
+      - uses: ./.github/actions/npm-ci-electron
+      - run: npm ci --prefix core
+      - run: npm run build --prefix core
+      - run: npm ci --prefix memory-server --onnxruntime-node-install-cuda=skip
+      - name: Repeat suites
+        shell: bash
+        run: |
+          fail=0
+          for i in 1 2 3; do
+            echo "::group::round $i electron"
+            npm run test:electron > "electron-$i.log" 2>&1 || { fail=1; echo "ROUND $i ELECTRON FAILED"; }
+            grep -aE -A40 '^\s*not ok' "electron-$i.log" | grep -avE '^\s*(ok |# Subtest)' | head -200
+            echo "::endgroup::"
+            npm run test:memory > "memory-$i.log" 2>&1 || { fail=1; echo "ROUND $i MEMORY FAILED"; grep -aE -A30 '^\s*not ok' "memory-$i.log" | head -120; }
+          done
+          exit $fail

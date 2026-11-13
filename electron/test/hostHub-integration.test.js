@@ -67,9 +67,7 @@ function fakeElectron(loaded) {
   return { BrowserWindow, shell: {}, dialog: {} };
 }
 
-function git(cwd, args) {
-  execFileSync("git", args, { cwd, stdio: "ignore" });
-}
+const { git } = require("./support/git.js");
 
 async function waitFor(check, timeoutMs = 15_000) {
   const deadline = Date.now() + timeoutMs;
