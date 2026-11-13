@@ -13,6 +13,16 @@ const {
 } = require("../pathEnv.js");
 
 describe("parseLoginPath", () => {
+  it("wraps the probe in a subshell for POSIX shells but not for fish", () => {
+    const calls = [];
+    const fake = (file, args) => { calls.push({ file, cmd: args[1] }); return ""; };
+    captureLoginPath({ SHELL: "/bin/bash" }, fake, "darwin");
+    captureLoginPath({ SHELL: "/opt/homebrew/bin/fish" }, fake, "darwin");
+    assert.match(calls[0].cmd, /^\(printf .*\)$/);
+    assert.match(calls[1].cmd, /^printf /);
+    assert.doesNotMatch(calls[1].cmd, /^\(/);
+  });
+
   it("extracts entries between the markers", () => {
     const out = "__CODER_PATH_BEGIN__/a:/b:/c__CODER_PATH_END__";
     assert.deepEqual(parseLoginPath(out), ["/a", "/b", "/c"]);
@@ -291,5 +301,28 @@ describe("login env (#320)", () => {
     assert.equal(env.PATH, "/login/bin:/usr/bin");
     assert.equal(env.TOKEN, "s3cret");
     assert.ok(!fs.readFileSync(cacheFile, "utf8").includes("s3cret"));
+  });
+});
+
+describe("login shell with a DEBUG trap that echoes each command", () => {
+  it("captures the real PATH and env, not the echoed command text", { skip: process.platform === "win32" || !fs.existsSync("/bin/bash") }, async () => {
+    const { captureLoginPathAsync, primeProcessPath, refreshLoginPath } = require("../pathEnv.js");
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "pathenv-trap-"));
+    fs.writeFileSync(
+      path.join(home, ".bash_profile"),
+      "export PATH=/trap/bin:$PATH\nexport CODER_TRAP_LAST=tail\ntrap 'echo \"$BASH_COMMAND\"' DEBUG\n",
+    );
+    const env = { HOME: home, SHELL: "/bin/bash", PATH: "/usr/bin:/bin" };
+    // /etc/profile may add system dirs (macOS path_helper); the rc's entry
+    // must lead and no echoed command text may leak in.
+    for (const login of [await captureLoginPathAsync(env), captureLoginPath(env)]) {
+      assert.equal(login?.[0], "/trap/bin", JSON.stringify(login));
+      assert.ok(login.includes("/usr/bin") && login.every((e) => e.startsWith("/")), JSON.stringify(login));
+    }
+
+    primeProcessPath({ cacheFile: path.join(home, "cache.json"), env, existsFn: () => false, home, platform: process.platform });
+    await refreshLoginPath();
+    assert.equal(env.CODER_TRAP_LAST, "tail");
+    assert.ok(Object.keys(env).every((k) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(k)), Object.keys(env).join(","));
   });
 });

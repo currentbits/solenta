@@ -463,6 +463,49 @@ describe("preview session (issue #155)", () => {
     assert.match(result.message, /snapshot or screenshot before retrying/);
   });
 
+  it("navigate to a page that never finishes loading returns the nav state with a note", async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const wc = fakeWebContents({ url: "http://localhost:5173/" });
+    wc.loadURL = () => new Promise(() => {});
+    preview.setWebContentsLookup(() => wc);
+    preview.bind({ threadId: "t1", webContentsId: 7 });
+    const pending = preview.navigate({ threadId: "t1", url: "http://localhost:5173/slow" });
+    await new Promise((r) => setImmediate(r));
+    t.mock.timers.tick(preview.NAVIGATE_TIMEOUT_MS);
+    const nav = await pending;
+    assert.equal(nav.url, "http://localhost:5173/");
+    assert.match(nav.message, /did not finish loading within 30s/);
+  });
+
+  it("navigate treats ERR_ABORTED (a client-side redirect) as success", async () => {
+    const wc = fakeWebContents({ url: "http://localhost:5173/" });
+    wc.loadURL = async () => {
+      wc._state.url = "http://localhost:5173/login";
+      throw Object.assign(new Error("ERR_ABORTED (-3) loading 'http://localhost:5173/login'"), { errno: -3, code: "ERR_ABORTED" });
+    };
+    preview.setWebContentsLookup(() => wc);
+    preview.bind({ threadId: "t1", webContentsId: 7 });
+    const nav = await preview.navigate({ threadId: "t1", url: "http://localhost:5173/" });
+    assert.equal(nav.url, "http://localhost:5173/login");
+    assert.equal(nav.message, undefined);
+    wc.loadURL = async () => {
+      throw Object.assign(new Error("ERR_CONNECTION_REFUSED (-102)"), { errno: -102 });
+    };
+    await assert.rejects(preview.navigate({ threadId: "t1", url: "http://localhost:5173/" }), /CONNECTION_REFUSED/);
+  });
+
+  it("a screenshot the page never delivers fails instead of hanging", async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const wc = fakeWebContents({ url: "http://localhost:5173/" });
+    wc.capturePage = () => new Promise(() => {});
+    preview.setWebContentsLookup(() => wc);
+    preview.bind({ threadId: "t1", webContentsId: 7 });
+    const pending = preview.screenshot({ threadId: "t1" });
+    await new Promise((r) => setImmediate(r));
+    t.mock.timers.tick(preview.CAPTURE_TIMEOUT_MS);
+    await assert.rejects(pending, /Screenshot timed out after 10s/);
+  });
+
   it("viewport presets are explicit and screenshots record the real viewport", async () => {
     const wc = fakeWebContents({ url: "http://localhost:5173/" });
     preview.setWebContentsLookup(() => wc);
