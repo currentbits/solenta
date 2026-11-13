@@ -33,6 +33,7 @@ import type {
   ThreadSearchMessagesResult,
 } from "../shared/ipc";
 import styles from "./CommandPalette.module.css";
+import { isImeComposing } from "../imeComposing";
 
 const DEBOUNCE_MS = 150;
 const RESULT_CAP = 40;
@@ -502,6 +503,7 @@ export function CommandPalette({
   );
 
   const onInputKeyDown = (e: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (isImeComposing(e)) return;
     if (e.key === "ArrowDown") {
       e.preventDefault();
       if (items.length === 0) return;

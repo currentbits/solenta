@@ -7,6 +7,7 @@ import {
 } from "react";
 import { findSurfaceForEvent } from "../findInView";
 import styles from "./FindBar.module.css";
+import { isImeComposing } from "../imeComposing";
 
 export function useFindSession() {
   const [open, setOpen] = useState(false);
@@ -120,7 +121,7 @@ export function FindBar({
         aria-label={surface === "diff" ? "Find in diffs" : "Find in thread"}
         onChange={(e) => onQuery(e.target.value)}
         onKeyDown={(e) => {
-          if (e.key === "Enter") {
+          if (e.key === "Enter" && !isImeComposing(e)) {
             e.preventDefault();
             if (e.shiftKey) onPrev();
             else onNext();

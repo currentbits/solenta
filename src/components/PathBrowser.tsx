@@ -11,6 +11,7 @@ import {
   isWindowsPlatform,
 } from "../browsePath";
 import styles from "./SettingsModal.module.css";
+import { isImeComposing } from "../imeComposing";
 
 export interface PathBrowserProps {
   id: string;
@@ -178,6 +179,7 @@ export function PathBrowser({
   }, [browsePath.parentPath, onChange, pinned]);
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (isImeComposing(e)) return;
     if (e.key === "ArrowDown") {
       e.preventDefault();
       if (rows.length === 0) return;
