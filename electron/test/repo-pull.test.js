@@ -3,7 +3,6 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { execFileSync } = require("node:child_process");
 const {
   repoInfoFromRemote,
   gitRepoInfo,
@@ -12,9 +11,7 @@ const {
   gitPull,
 } = require("../services.js");
 
-function git(cwd, args) {
-  execFileSync("git", args, { cwd, stdio: "ignore" });
-}
+const { git } = require("./support/git.js");
 
 /** Minimal repo with one commit and user config. Returns its path. */
 function initRepo(dir) {

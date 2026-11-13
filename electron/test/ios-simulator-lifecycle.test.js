@@ -10,7 +10,6 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
-const { execFileSync } = require("node:child_process");
 
 const { Store } = require("../store.js");
 const services = require("../services.js");
@@ -621,9 +620,7 @@ describe("createIOSSimulatorService shutdown", () => {
 // Durable thread/project lifecycle: release only after the metadata landed.
 // ---------------------------------------------------------------------------
 
-function git(cwd, args) {
-  execFileSync("git", args, { cwd, stdio: "ignore" });
-}
+const { git } = require("./support/git.js");
 
 async function loadCore() {
   const corePath = path.join(__dirname, "../../core/dist/index.js");

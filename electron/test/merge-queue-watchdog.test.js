@@ -17,7 +17,6 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { execFileSync } = require("node:child_process");
 const { Store } = require("../store.js");
 const services = require("../services.js");
 const issues = require("../issues.js");
@@ -30,9 +29,7 @@ const {
 } = require("../mergeQueue.js");
 const { rmTree } = require("./support/rmTree.js");
 
-function git(cwd, args) {
-  execFileSync("git", args, { cwd, stdio: "ignore" });
-}
+const { git } = require("./support/git.js");
 
 const stubCore = {
   createWorkflow() {

@@ -12,16 +12,13 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { execFileSync } = require("node:child_process");
 const { Store } = require("../store.js");
 const services = require("../services.js");
 const { ejectCommand } = require("../providers.js");
 const { posixQuote } = require("../ssh.js");
 const { rmTree } = require("./support/rmTree.js");
 
-function git(cwd, args) {
-  execFileSync("git", args, { cwd, stdio: "ignore" });
-}
+const { git } = require("./support/git.js");
 
 describe("ejectCommand (#554)", () => {
   const cwd = "/tmp/solenta-wt";

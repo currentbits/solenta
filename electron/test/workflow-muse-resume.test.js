@@ -12,7 +12,6 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
-const { execFileSync } = require("node:child_process");
 
 const { spawnPhaseAgent } = require("../workflow.js");
 const { Store } = require("../store.js");
@@ -26,9 +25,7 @@ const ECHO_SESSION_ID = "01a06856-a922-7ec0-a75a-aa6eab933dff";
 const ECHO_TEXT =
   "echo: Reply with the single word hello and do not use tools.";
 
-function git(cwd, args) {
-  execFileSync("git", args, { cwd, stdio: "ignore" });
-}
+const { git } = require("./support/git.js");
 
 async function loadCore() {
   const corePath = path.join(__dirname, "../../core/dist/index.js");

@@ -14,7 +14,6 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { execFileSync } = require("node:child_process");
 const { pathToFileURL } = require("node:url");
 const Module = require("node:module");
 
@@ -32,9 +31,7 @@ const {
 } = require("../mergeQueue.js");
 const devservers = require("../devservers.js");
 
-function git(cwd, args) {
-  execFileSync("git", args, { cwd, stdio: "ignore" });
-}
+const { git } = require("./support/git.js");
 
 function stubElectron() {
   const origLoad = Module._load;

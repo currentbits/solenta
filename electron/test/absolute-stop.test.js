@@ -13,7 +13,6 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
-const { execFileSync } = require("node:child_process");
 const { pathToFileURL } = require("node:url");
 const Module = require("node:module");
 const { rmTree } = require("./support/rmTree.js");
@@ -40,9 +39,7 @@ const services = require("../services.js");
 const { createRunner } = require("../runner.js");
 const { start, stop, status } = require("../devservers.js");
 
-function git(cwd, args) {
-  execFileSync("git", args, { cwd, stdio: "ignore" });
-}
+const { git } = require("./support/git.js");
 
 async function loadCore() {
   const corePath = path.join(__dirname, "../../core/dist/index.js");

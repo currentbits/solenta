@@ -78,11 +78,13 @@ describe('memory core', () => {
       importance: 5,
       force: true,
     })
-    // Pin identical timestamps so importance alone decides (avoids micro-decay on the older row).
+    // Pin identical timestamps so importance alone decides. Decay anchors on
+    // updated_at (#311); low sits exactly on the 20% gate (1/5), so any gap
+    // between the two store() calls (slow Windows CI) gated it out.
     const now = new Date().toISOString()
     memory.db
-      .prepare(`UPDATE entries SET created_at = ?, last_accessed_at = NULL WHERE id IN (?, ?)`)
-      .run(now, low.id, high.id)
+      .prepare(`UPDATE entries SET created_at = ?, updated_at = ?, last_accessed_at = NULL WHERE id IN (?, ?)`)
+      .run(now, now, low.id, high.id)
     const hits = await memory.search({ query: 'shared topic phrase' })
     assert.ok(hits.length >= 2)
     assert.equal(hits[0].id, high.id)
