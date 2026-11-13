@@ -121,6 +121,8 @@ async function mountView(
     onStartRun?: (prompt: string) => void;
     onResumeCrew?: () => void;
     loadProviderLimits?: () => Promise<ProviderUsage[]>;
+    confirmColdResume?: boolean;
+    onDontAskColdResume?: () => void;
   } = {},
 ) {
   return mount(
@@ -156,6 +158,8 @@ async function mountView(
       onNewThread={over.onNewThread}
       onSettleThread={over.onSettleThread}
       loadProviderLimits={over.loadProviderLimits ?? (async () => QUOTAS)}
+      confirmColdResume={over.confirmColdResume}
+      onDontAskColdResume={over.onDontAskColdResume}
     />,
   );
 }
@@ -441,6 +445,83 @@ describe("ThreadView / palette actions", () => {
       assert.equal(quiet.query("[data-cold-compact]"), null);
       quiet.unmount();
     }
+  });
+
+  describe("cold Claude resume confirm", () => {
+    const cold = Date.now() - 2 * 60 * 60 * 1000;
+    const coldDetail = (over: Partial<ThreadDetail["thread"]> = {}, contextTokens = 180_000) =>
+      detail({
+        thread: thread({ provider: "claude", sessionId: "s1", updatedAt: cold, ...over }),
+        usage: { ...USAGE, contextTokens },
+      });
+    async function typeAndSend(m: Mounted, text: string) {
+      await m.type(m.query("textarea"), text);
+      await m.click(m.query('button[aria-label="Send"]'));
+    }
+
+    it("holds the send and offers Send anyway / Compact first", async () => {
+      const sent: string[] = [];
+      const m = await mountView({ detail: coldDetail(), onStartRun: (p) => sent.push(p) });
+      await typeAndSend(m, "next step");
+      assert.deepEqual(sent, [], "a cold send waits for the confirm");
+      const box = m.query("[data-cold-resume-confirm]");
+      assert.ok(box);
+      assert.match(box.textContent ?? "", /≈180k tokens/);
+
+      // ⌘Enter while the confirm is up re-asks; it never sends.
+      await m.press(m.query("textarea"), "Enter", { metaKey: true });
+      assert.deepEqual(sent, []);
+
+      await m.click(m.query("[data-cold-resume-send]"));
+      await m.flush();
+      assert.deepEqual(sent, ["next step"], "Send anyway sends exactly once");
+      assert.equal(m.query("[data-cold-resume-confirm]"), null);
+      m.unmount();
+    });
+
+    it("Compact first runs /compact and keeps the draft", async () => {
+      const sent: string[] = [];
+      const m = await mountView({ detail: coldDetail(), onStartRun: (p) => sent.push(p) });
+      await typeAndSend(m, "next step");
+      await m.click(m.query("[data-cold-resume-compact]"));
+      assert.deepEqual(sent, ["/compact"]);
+      assert.equal((m.query("textarea") as HTMLTextAreaElement).value, "next step");
+      m.unmount();
+    });
+
+    it("Don't ask again persists the opt-out and sends", async () => {
+      const sent: string[] = [];
+      let optedOut = 0;
+      const m = await mountView({
+        detail: coldDetail(),
+        onStartRun: (p) => sent.push(p),
+        onDontAskColdResume: () => optedOut++,
+      });
+      await typeAndSend(m, "next step");
+      await m.click(m.query("[data-cold-resume-dont-ask]"));
+      await m.flush();
+      assert.equal(optedOut, 1);
+      assert.deepEqual(sent, ["next step"]);
+      m.unmount();
+    });
+
+    it("sends straight away unless every condition holds", async () => {
+      for (const over of [
+        { detail: coldDetail({ updatedAt: Date.now() - 30 * 60 * 1000 }) },
+        { detail: coldDetail({}, 40_000) },
+        { detail: coldDetail({ provider: "codex" }) },
+        { detail: coldDetail({ sessionId: null }) },
+        { detail: coldDetail(), confirmColdResume: false },
+      ]) {
+        const sent: string[] = [];
+        const m = await mountView({ ...over, onStartRun: (p) => sent.push(p) });
+        await typeAndSend(m, "go");
+        await m.flush();
+        assert.deepEqual(sent, ["go"], JSON.stringify(over.confirmColdResume ?? over.detail.thread));
+        assert.equal(m.query("[data-cold-resume-confirm]"), null);
+        m.unmount();
+      }
+    });
   });
 
   it("held crew notices after a restart show Resume crew (#1426)", async () => {

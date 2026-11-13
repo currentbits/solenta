@@ -441,6 +441,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
     stayAwake: "agent",
     quotaWaitAutoResume: true,
     confirmQuitWithActiveWork: true,
+    confirmColdClaudeResume: true,
     resumeInterruptedRuns: true,
     combineQueuedFollowUps: true,
     agentBugReports: true,
@@ -1075,6 +1076,16 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
             );
           }
           next.confirmQuitWithActiveWork = v;
+        }
+        if (Object.prototype.hasOwnProperty.call(p, "confirmColdClaudeResume")) {
+          const v = p.confirmColdClaudeResume;
+          if (typeof v !== "boolean") {
+            calls.push({ channel: "settings.set", args: [patch] });
+            return Promise.reject(
+              new Error("confirmColdClaudeResume must be a boolean"),
+            );
+          }
+          next.confirmColdClaudeResume = v;
         }
         if (Object.prototype.hasOwnProperty.call(p, "worktreeRoot")) {
           const v = typeof p.worktreeRoot === "string" ? p.worktreeRoot.trim() : "";

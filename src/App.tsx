@@ -984,6 +984,10 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
    * model are inherited for free by createThread (it reads the still-selected
    * draft); permission mode is not, so it is copied explicitly.
    */
+  // Stable for the memoized ThreadView. Save errors surface via settingsError.
+  const handleDontAskColdResume = useCallback(() => {
+    void saveSettings({ confirmColdClaudeResume: false }).catch(() => {});
+  }, [saveSettings]);
   const handleSendInBackground = useCallback(
     async (prompt: string, attachments?: AttachmentInfo[]) => {
       const draft = threadsRef.current.find((t) => t.id === selectedThreadId);
@@ -2676,6 +2680,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         project={project}
         providers={providers}
         agentProfiles={agentSettings?.agentProfiles ?? EMPTY_AGENT_PROFILES}
+        confirmColdResume={settings?.confirmColdClaudeResume !== false}
+        onDontAskColdResume={handleDontAskColdResume}
         workflows={workflows}
         hasProjects={projects.length > 0}
         onAddProject={handleAddProject}

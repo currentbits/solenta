@@ -4467,6 +4467,12 @@ export interface AppSettings {
    */
   confirmQuitWithActiveWork: boolean;
   /**
+   * Ask before a send resumes a Claude session idle past the prompt-cache
+   * TTL with a large context (re-read uncached). Default on; only an
+   * explicit false ("Don't ask again") opts out.
+   */
+  confirmColdClaudeResume: boolean;
+  /**
    * Trackpad pinch magnifies the window like a browser, via
    * webContents.setVisualZoomLevelLimits (issue #1807). Default on; an
    * explicit false pins the limit at 1 (no visual zoom). Independent of

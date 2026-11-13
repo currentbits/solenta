@@ -564,6 +564,7 @@ function normalizeSettings(raw) {
     stayAwake: "agent",
     quotaWaitAutoResume: true,
     confirmQuitWithActiveWork: true,
+    confirmColdClaudeResume: true,
     pinchZoomWindow: true,
     closeToTray: false,
     menuBarUsage: false,
@@ -756,6 +757,10 @@ function normalizeSettings(raw) {
   settings.confirmQuitWithActiveWork =
     /** @type {{ confirmQuitWithActiveWork?: unknown }} */ (obj)
       .confirmQuitWithActiveWork !== false;
+  // Cold Claude resume confirm: only an explicit false opts out.
+  settings.confirmColdClaudeResume =
+    /** @type {{ confirmColdClaudeResume?: unknown }} */ (obj)
+      .confirmColdClaudeResume !== false;
   // pinchZoomWindow (#1807): default on; only an explicit false pins the
   // visual zoom limit at 1 (no trackpad pinch magnification).
   settings.pinchZoomWindow =

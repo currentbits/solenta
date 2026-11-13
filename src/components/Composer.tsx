@@ -263,6 +263,13 @@ export interface ComposerProps {
   /** "Compact first" escape hatch on the oversized-send warning, when native compaction is available. */
   onCompactFirst?: () => void | Promise<void>;
   /**
+   * Context tokens a send would re-read uncached (cold Claude resume). Set
+   * means confirm before sending; null/absent sends straight away.
+   */
+  coldResumeTokens?: number | null;
+  /** "Don't ask again" on the cold-resume confirm: persist the opt-out. */
+  onDontAskColdResume?: () => void;
+  /**
    * Tab under the card: editable workspace + base branch on a draft, a
    * read-only "where this runs" label once the thread has started.
    */
@@ -562,6 +569,8 @@ export const Composer = memo(function Composer({
   contextWindow = null,
   contextUsed = null,
   onCompactFirst,
+  coldResumeTokens = null,
+  onDontAskColdResume,
   workspaceStrip,
   statusTab,
   disabled = false,
@@ -702,6 +711,8 @@ export const Composer = memo(function Composer({
   // the exact same action/failLabel the first call bailed with — no reason
   // to re-render for data nothing visible reads.
   const sizeConfirmedRef = useRef(false);
+  /** Cold Claude resume confirm: shares pendingSendRef/sizeConfirmedRef. */
+  const [coldWarning, setColdWarning] = useState(false);
   const pendingSendRef = useRef<{
     action: (prompt: string) => void | Promise<void>;
     failLabel: string;
@@ -973,6 +984,7 @@ export const Composer = memo(function Composer({
     pendingSendRef.current = null;
     sizeConfirmedRef.current = false;
     setSizeWarning(null);
+    setColdWarning(false);
     return () => {
       void cancelDictationRef.current();
     };
@@ -1387,11 +1399,18 @@ export const Composer = memo(function Composer({
         setSizeWarning(warning);
         return;
       }
+      // A queued/steered send while busy rides a warm session: no confirm.
+      if (coldResumeTokens != null && !busy) {
+        pendingSendRef.current = { action, failLabel };
+        setColdWarning(true);
+        return;
+      }
     }
     sizeConfirmedRef.current = false;
     setSending(true);
     setLocalError(null);
     setSizeWarning(null);
+    setColdWarning(false);
     try {
       await action(prompt);
       recordSent(threadId, typed);
@@ -1416,6 +1435,7 @@ export const Composer = memo(function Composer({
   const confirmOversizedSend = () => {
     const pending = pendingSendRef.current;
     pendingSendRef.current = null;
+    setColdWarning(false);
     setSizeWarning(null);
     if (!pending) return;
     sizeConfirmedRef.current = true;
@@ -1424,11 +1444,17 @@ export const Composer = memo(function Composer({
   const cancelOversizedSend = () => {
     pendingSendRef.current = null;
     setSizeWarning(null);
+    setColdWarning(false);
   };
   const compactFirstForOversizedSend = () => {
     pendingSendRef.current = null;
     setSizeWarning(null);
+    setColdWarning(false);
     void onCompactFirst?.();
+  };
+  const sendColdAndStopAsking = () => {
+    onDontAskColdResume?.();
+    confirmOversizedSend();
   };
 
   const submitSend = () => {
@@ -2358,6 +2384,57 @@ export const Composer = memo(function Composer({
           >
             ×
           </button>
+        </div>
+      )}
+      {coldWarning && coldResumeTokens != null && (
+        <div
+          className={styles.sizeWarning}
+          role="alert"
+          data-cold-resume-confirm=""
+        >
+          <span className={styles.errorText}>
+            Idle over an hour: this send re-reads ≈
+            {formatWindowSize(coldResumeTokens)} tokens of context without the
+            prompt cache.
+          </span>
+          <div className={styles.sizeWarningActions}>
+            {onCompactFirst && (
+              <button
+                type="button"
+                className={styles.sizeWarningBtn}
+                data-cold-resume-compact=""
+                onClick={compactFirstForOversizedSend}
+              >
+                Compact first
+              </button>
+            )}
+            <button
+              type="button"
+              className={styles.sizeWarningBtn}
+              data-cold-resume-send=""
+              onClick={confirmOversizedSend}
+            >
+              Send anyway
+            </button>
+            {onDontAskColdResume && (
+              <button
+                type="button"
+                className={styles.sizeWarningBtn}
+                data-cold-resume-dont-ask=""
+                onClick={sendColdAndStopAsking}
+              >
+                Send, don't ask again
+              </button>
+            )}
+            <button
+              type="button"
+              className={styles.sizeWarningBtn}
+              data-cold-resume-cancel=""
+              onClick={cancelOversizedSend}
+            >
+              Cancel
+            </button>
+          </div>
         </div>
       )}
       {sizeWarning && (
