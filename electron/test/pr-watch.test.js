@@ -133,6 +133,19 @@ describe("prWatch.observePr", () => {
     assert.equal(delivered.length, 1);
   });
 
+  it("wakes on raw terminal failure states when gh omits buckets", async () => {
+    scenario.checks = [
+      { name: "manual", state: "ACTION_REQUIRED" },
+      { name: "timeout", state: "TIMED_OUT" },
+      { name: "startup", state: "STARTUP_FAILURE" },
+      { name: "neutral", state: "NEUTRAL" },
+    ];
+    await observe({ now: 1 });
+    assert.equal(delivered.length, 1);
+    assert.match(delivered[0].line, /Checks failed: manual, timeout, startup/);
+    assert.doesNotMatch(delivered[0].line, /neutral/);
+  });
+
   it("debounces, holds while the thread works, and caps per PR", async () => {
     scenario.checks = [FAIL];
     await observe({ now: 0 });

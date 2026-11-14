@@ -154,6 +154,28 @@ describe("providerInstances parsing", () => {
     }
   });
 
+  it("expands current-user home paths in spawn and probe env without changing settings", () => {
+    const home = os.homedir();
+    const env = {
+      SSH_AUTH_SOCK: "~/.ssh/agent.sock",
+      XDG_CONFIG_HOME: "~",
+      OTHER_USER: "~someone/config",
+      LITERAL: "$HOME/$(echo nope)",
+      URL: "https://example.com/~user",
+      EMPTY: "",
+    };
+    for (const id of ["claude", "work"]) {
+      const row = { ...WORK, id, configDir: null, env };
+      const settings = { providerInstances: [row] };
+      const expected = { ...env, SSH_AUTH_SOCK: path.join(home, ".ssh/agent.sock"), XDG_CONFIG_HOME: home };
+      assert.deepEqual(inst.instanceEnv(row), expected);
+      assert.deepEqual(inst.threadInstanceEnv(settings, { provider: "claude", providerInstance: id === "work" ? id : null }, { local: true }), expected);
+      assert.deepEqual(services.instanceAuthProbes({ getSettings: () => settings })[0].env, expected);
+      assert.equal(row.env.SSH_AUTH_SOCK, "~/.ssh/agent.sock");
+      assert.equal(inst.threadInstanceEnv(settings, { provider: "claude" }, { local: false }), undefined);
+    }
+  });
+
   it("isolated CLI home (#1808): computed, exclusive, and ignores configDir", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "inst-home-"));
     const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), "inst-userdata-"));

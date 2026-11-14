@@ -19,6 +19,7 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
+const { expandUserPath } = require("./fsBrowse.js");
 
 /**
  * The env var each CLI reads its config dir from. Checked against claude
@@ -431,7 +432,8 @@ function isolatedHomeDir(userDataPath, inst) {
 }
 
 /**
- * Env overlay for one spawn of this instance. `~/` expands against `home`.
+ * Env overlay for one spawn of this instance. Leading home paths in env
+ * values and `~/` in configDir expand against `home`, without a shell.
  * An isolatedHome instance (#1808) ignores configDir and computes its own
  * exclusive folder under `userDataPath` instead; without a userDataPath
  * (callers that have none to give) it falls through with no dir var set,
@@ -443,7 +445,7 @@ function isolatedHomeDir(userDataPath, inst) {
  */
 function instanceEnv(inst, home = require("node:os").homedir(), userDataPath) {
   /** @type {Record<string, string>} */
-  const out = { ...inst.env };
+  const out = Object.fromEntries(Object.entries(inst.env || {}).map(([key, value]) => [key, expandUserPath(value, home)]));
   const dirVar = CONFIG_DIR_ENV[inst.provider];
   if (dirVar && inst.isolatedHome && userDataPath) {
     const dir = isolatedHomeDir(userDataPath, inst);
@@ -490,7 +492,7 @@ function threadInstanceEnv(settings, thread, opts = {}) {
   if (!id) {
     const provider = String((thread && thread.provider) || "");
     const base = opts.local === true ? findInstance(settings, provider, provider) : null;
-    return base && Object.keys(base.env).length > 0 ? { ...base.env } : undefined;
+    return base && Object.keys(base.env).length > 0 ? instanceEnv(base, undefined, opts.userDataPath) : undefined;
   }
   const inst = findInstance(settings, String(thread.provider || ""), id);
   if (!inst) {
