@@ -346,11 +346,7 @@ async function sweepOrphanWorktrees(opts) {
 
     try {
       // Owning repo: the worktree's common git dir is <repo>/.git.
-      const common = await gitTryAsync(dir, [
-        "rev-parse",
-        "--path-format=absolute",
-        "--git-common-dir",
-      ]);
+      const common = await worktreeCommonDir(dir);
       if (!common.ok || !common.stdout) {
         if (forceOk && gitSaysNotARepo(common)) {
           const forced = await forceRemoveWorktreeDir(dir, null);
@@ -551,8 +547,8 @@ function baseBranchOf(repoPath, cache) {
 }
 
 /**
- * True only for `fatal: not a git repository`. Other git failures (lock,
- * timeout, missing binary) must not be treated as a corrupt worktree —
+ * True only for Git's missing-repository / broken-gitfile errors. Other
+ * failures (lock, timeout, missing binary) must not be treated as a corrupt worktree —
  * those stay blocked so we never `fs.rm` a checkout git simply couldn't
  * talk to (#642).
  * @param {{ ok?: boolean, stderr?: string, combined?: string, stdout?: string } | null | undefined} res
@@ -560,7 +556,23 @@ function baseBranchOf(repoPath, cache) {
 function gitSaysNotARepo(res) {
   if (!res || res.ok) return false;
   const text = String(res.stderr || res.combined || res.stdout || "");
-  return /not a git repository/i.test(text);
+  return /not a git repository|gitfile does not point to a valid repository/i.test(text);
+}
+
+/** Git discovery may walk into a parent repo; GC must only act on this checkout. */
+async function worktreeCommonDir(dir) {
+  const res = await gitTryAsync(dir, [
+    "rev-parse",
+    "--path-format=absolute",
+    "--show-prefix",
+    "--git-common-dir",
+  ], { raw: true });
+  if (!res.ok) return res;
+  const common = res.stdout.slice(1, -1);
+  if (!res.stdout.startsWith("\n") || !res.stdout.endsWith("\n") || !common) {
+    return { ...res, ok: false, stdout: "", stderr: "directory is not a checkout root" };
+  }
+  return { ...res, stdout: common };
 }
 
 /**
@@ -604,15 +616,11 @@ async function inspectWorktreeDir(dir, baseCache, ttlMs) {
 }
 
 async function inspectWorktreeDirUncached(dir, baseCache) {
-  const common = await gitTryAsync(dir, [
-    "rev-parse",
-    "--path-format=absolute",
-    "--git-common-dir",
-  ]);
-  let repoPath = null;
-  if (common.ok && common.stdout) {
-    repoPath = path.dirname(path.resolve(dir, common.stdout));
+  const common = await worktreeCommonDir(dir);
+  if (!common.ok) {
+    return { repoPath: null, readable: false, dirty: false, branch: null, unmerged: 0, notARepo: gitSaysNotARepo(common) };
   }
+  const repoPath = path.dirname(path.resolve(dir, common.stdout));
   const status = await gitTryAsync(
     dir,
     ["status", "--porcelain", "-uall"],
@@ -876,11 +884,7 @@ async function removeGcWorktree(store, cand) {
     if (project && project.path) repoPath = project.path;
   }
   if (!repoPath && fs.existsSync(dir)) {
-    const common = await gitTryAsync(dir, [
-      "rev-parse",
-      "--path-format=absolute",
-      "--git-common-dir",
-    ]);
+    const common = await worktreeCommonDir(dir);
     if (common.ok && common.stdout) {
       repoPath = path.dirname(path.resolve(dir, common.stdout));
     }

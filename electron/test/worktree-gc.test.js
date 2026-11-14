@@ -18,6 +18,7 @@ const {
   maybeRenameWorktreeBranch,
   gcScan,
   gcClean,
+  sweepOrphanWorktrees,
   enforceRetention,
   prepareThreadWorktree,
   setExecFile,
@@ -97,6 +98,52 @@ describe("gcScan / gcClean", { concurrency: 1 }, () => {
     setExecFile(null);
     fs.rmSync(fx.tmpDir, { recursive: true, force: true });
   });
+
+  it("never recovers or cleans an ancestor repository through an orphan folder", async () => {
+    const worktreeBase = path.join(fx.repo, "worktrees");
+    const dir = path.join(worktreeBase, "orphan");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "work.txt"), "keep\n");
+    fs.writeFileSync(path.join(fx.repo, "precious.txt"), "parent work\n");
+    const head = git(fx.repo, ["rev-parse", "HEAD"]);
+    const branch = git(fx.repo, ["branch", "--show-current"]);
+
+    const sweep = await sweepOrphanWorktrees({ store: fx.store, worktreeBase });
+    assert.deepEqual(sweep.recovered, []);
+    assert.deepEqual(sweep.kept, [dir]);
+    const scan = await gcScan({ store: fx.store, worktreeBase, skipSizes: true });
+    assert.equal(scan.candidates.length, 1);
+    assert.match(scan.candidates[0].blocked, /git could not read/i);
+    const clean = await gcClean({ store: fx.store, worktreeBase, paths: [dir], skipSizes: true });
+    assert.deepEqual(clean.removed, []);
+    assert.equal(clean.failed.length, 1);
+    assert.equal(git(fx.repo, ["rev-parse", "HEAD"]), head);
+    assert.equal(git(fx.repo, ["branch", "--show-current"]), branch);
+    assert.equal(git(fx.repo, ["status", "--porcelain"]).includes("precious.txt"), true);
+    assert.equal(fs.readFileSync(path.join(dir, "work.txt"), "utf8"), "keep\n");
+  });
+
+  for (const cleanup of ["sweep", "gcClean"]) {
+    it(`${cleanup} recognizes Git's broken-gitfile diagnostic`, async () => {
+      const wt = addWorktree(fx, "Broken gitfile");
+      fs.writeFileSync(path.join(wt.worktreePath, ".git"), `gitdir: ${fx.tmpDir}/missing\n`);
+      fx.store.removeThread(wt.id);
+      setExecFile((bin, args, opts, cb) => {
+        if (bin === "git" && opts.cwd === wt.worktreePath) {
+          const stderr = `fatal: gitfile does not point to a valid repository: ${wt.worktreePath}/.git\n`;
+          queueMicrotask(() => cb(Object.assign(new Error(stderr), { code: 128 }), "", stderr));
+          return;
+        }
+        return execFile(bin, args, opts, cb);
+      });
+      const result = cleanup === "sweep"
+        ? await sweepOrphanWorktrees({ store: fx.store, worktreeBase: fx.worktreeBase })
+        : await gcClean({ store: fx.store, worktreeBase: fx.worktreeBase, paths: [wt.worktreePath], skipSizes: true });
+      assert.deepEqual(result.removed, [wt.worktreePath]);
+      assert.equal(fs.existsSync(wt.worktreePath), false);
+      assert.equal(branchExists(fx.repo, wt.branch), true);
+    });
+  }
 
   it("reports an orphan directory as a candidate", async () => {
     const live = addWorktree(fx, "Live");

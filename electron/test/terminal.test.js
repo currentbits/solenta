@@ -104,6 +104,20 @@ describe("terminal pipe fallback", () => {
     await waitFor(id, (t) => /^v=bar\r$/m.test(t));
     terminal.close(id);
   });
+
+  it("loads .bash_profile for a macOS bash terminal", { skip: process.platform !== "darwin" }, async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "solenta-bash-login-"));
+    const id = "bash-profile";
+    try {
+      fs.writeFileSync(path.join(home, ".bash_profile"), "export SOLENTA_LOGIN_TEST=profile-loaded\n");
+      terminal.open(id, home, { env: { ...ENV, HOME: home, SHELL: "/bin/bash", SOLENTA_LOGIN_TEST: "" }, pty: null });
+      terminal.write(id, 'echo "$SOLENTA_LOGIN_TEST"\r');
+      await waitFor(id, (t) => /\r\nprofile-loaded\r\n/.test(t));
+    } finally {
+      terminal.close(id);
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("terminal sessions", () => {
@@ -349,6 +363,36 @@ describe("terminal thread deletion (#1183)", () => {
 });
 
 describe("terminal safety", () => {
+  it("starts macOS bash as a login shell in PTY and pipe sessions", () => {
+    for (const [platform, shell, args] of [
+      ["darwin", "/bin/bash", ["-l"]],
+      ["darwin", "/opt/homebrew/bin/bash", ["-l"]],
+      ["darwin", "/bin/zsh", []],
+      ["linux", "/bin/bash", []],
+      ["win32", "cmd.exe", []],
+    ]) {
+      for (const pty of [true, false]) {
+        const id = `login-${platform}-${pty}`;
+        const calls = [];
+        const spawn = (bin, argv) => {
+          calls.push({ bin, args: argv });
+          return { pid: 0, on() {}, onData() {}, onExit() {} };
+        };
+        try {
+          terminal.open(id, os.tmpdir(), {
+            platform,
+            env: { SHELL: shell, COMSPEC: shell },
+            pty: pty ? { spawn } : null,
+            spawn,
+          });
+          assert.deepEqual(calls, [{ bin: shell, args }]);
+        } finally {
+          terminal.close(id);
+        }
+      }
+    }
+  });
+
   it("never runs an SSH project's shell locally", () => {
     let spawned = false;
     const state = terminal.open("t-remote", "/remote/path", {

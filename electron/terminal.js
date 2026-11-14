@@ -403,9 +403,10 @@ function open(threadId, root, opts = {}) {
   // the translated project path and there is no worktree translation yet.
   const wsl = wslTarget(project, platform);
   const shell = wsl ? "bash" : defaultShell(platform, env);
+  const shellArgs = platform === "darwin" && path.basename(shell) === "bash" ? ["-l"] : [];
   const wrapped = wsl
     ? wrapCommand(project, shell, [], platform)
-    : { bin: shell, args: [] };
+    : { bin: shell, args: shellArgs };
   const ptyLib = opts.pty !== undefined ? opts.pty : loadPty();
 
   /** @type {TerminalSession} */
