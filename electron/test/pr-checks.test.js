@@ -94,6 +94,12 @@ describe("parsePrChecksJson", () => {
     assert.equal(checks[1].bucket, "fail");
   });
 
+  it("uses GitHub failure conclusions when buckets are missing", () => {
+    const states = ["ACTION_REQUIRED", "TIMED_OUT", "STARTUP_FAILURE", "NEUTRAL"];
+    const checks = parsePrChecksJson(JSON.stringify(states.map((state) => ({ name: state, state }))));
+    assert.deepEqual(checks.map((c) => c.bucket), ["fail", "fail", "fail", "skipping"]);
+  });
+
   it("treats empty stdout as an empty list", () => {
     assert.deepEqual(parsePrChecksJson(""), []);
   });
@@ -114,6 +120,10 @@ describe("parsePrChecksJson", () => {
 });
 
 describe("parsePrChecksText", () => {
+  it("recognizes raw GitHub conclusions in older CLI tables", () => {
+    const checks = parsePrChecksText("manual\taction_required\t0\ntimeout\ttimed_out\t0\nstartup\tstartup_failure\t0\nneutral\tneutral\t0\n");
+    assert.deepEqual(checks.map((c) => c.bucket), ["fail", "fail", "fail", "skipping"]);
+  });
   it("parses tab-separated name / pass-fail-pending rows", () => {
     const checks = parsePrChecksText(TEXT_FIXTURE);
     assert.equal(checks.length, 3);

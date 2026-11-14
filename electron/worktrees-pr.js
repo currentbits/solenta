@@ -1010,16 +1010,7 @@ function normalizeCheckBucket(raw) {
   }
   if (s === "skipping" || s === "skipped" || s === "skip") return "skipping";
   if (s === "cancel" || s === "cancelled" || s === "canceled") return "cancel";
-  if (
-    s === "pending" ||
-    s === "queued" ||
-    s === "in_progress" ||
-    s === "inprogress" ||
-    s === "waiting"
-  ) {
-    return "pending";
-  }
-  return "pending";
+  return github.checkBucket(s);
 }
 
 /**
@@ -1079,7 +1070,7 @@ function parsePrChecksJson(stdout) {
 }
 
 const CHECK_TEXT_BUCKET =
-  /^(pass|fail|pending|skipping|cancel|success|failure|failed|error|queued|in_progress|inprogress|waiting|skipped|skip|cancelled|canceled)$/i;
+  /^(pass|fail|pending|skipping|cancel|success|failure|failed|error|queued|in_progress|inprogress|waiting|skipped|skip|cancelled|canceled|action_required|timed_out|startup_failure|neutral|completed)$/i;
 
 /**
  * Parse plain `gh pr checks <number>` text (tab- or multi-space-separated
@@ -1097,7 +1088,7 @@ function parsePrChecksText(stdout) {
       : trimmed.split(/\s{2,}/).map((s) => s.trim());
     if (cols.length < 2) continue;
     let bucketIdx = -1;
-    for (let i = 0; i < cols.length; i++) {
+    for (let i = 1; i < cols.length; i++) {
       if (CHECK_TEXT_BUCKET.test(cols[i])) {
         bucketIdx = i;
         break;

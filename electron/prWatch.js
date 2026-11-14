@@ -20,6 +20,7 @@
  * a remote instruction channel into an unattended agent, so only these wake.
  */
 const TRUSTED_ASSOCIATIONS = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
+const { checkBucket } = require("./github.js");
 
 /**
  * Frame external text (review body, CI log) as quoted data for the agent.
@@ -113,7 +114,10 @@ async function failingChecks(cwd, number, runGh, timeout) {
     // "no required checks reported" is an error with no JSON: fall back.
     if (!Array.isArray(rows) || (required && rows.length === 0)) continue;
     return rows
-      .filter((r) => r && (r.bucket === "fail" || r.bucket === "cancel"))
+      .filter((r) => {
+        const bucket = r && (r.bucket || checkBucket(r.state));
+        return bucket === "fail" || bucket === "cancel";
+      })
       .map((r) => ({ name: String(r.name || ""), link: String(r.link || "") }));
   }
   return null;
