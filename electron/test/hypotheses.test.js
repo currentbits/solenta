@@ -355,10 +355,11 @@ describe("hypothesis_record MCP tool", () => {
   });
 });
 
-describe("work_suggest MCP tool", () => {
+describe("suggested-work MCP tools", () => {
   function makeDeps() {
     const threads = [
       makeThread({ id: "t1", projectId: "p1", title: "First" }),
+      makeThread({ id: "t2", projectId: "p1", title: "Same project" }),
       makeThread({ id: "t3", projectId: "p2", title: "Other" }),
     ];
     const refreshed = [];
@@ -371,6 +372,8 @@ describe("work_suggest MCP tool", () => {
       forkThread: () => ({ id: "fork-1" }),
       getProvider: () => null,
       refreshed,
+      boundThreadId: "t1",
+      boundProjectId: "p1",
     };
   }
 
@@ -407,5 +410,85 @@ describe("work_suggest MCP tool", () => {
     );
     assert.equal(deps.store.getThread("t3").suggestions, undefined);
     assert.deepEqual(deps.refreshed, []);
+  });
+
+  it("lists pending suggestions with the ids and context needed to review them", async () => {
+    const deps = makeDeps();
+    const h = createToolHandlers(deps);
+    assert.deepEqual(await h.work_list({ threadId: "t1", projectId: "p1" }), {
+      suggestions: [],
+    });
+    const chips = ["open", "started", "filed", "dismissed"].map((status) => ({
+      id: status, title: `${status} task`, prompt: `${status} context`, status, at: 1,
+    }));
+    deps.store.getThread("t1").suggestions = chips;
+    assert.deepEqual(await h.work_list({ threadId: "t1", projectId: "p1" }), {
+      suggestions: [chips[0]],
+    });
+    assert.deepEqual(deps.refreshed, []);
+  });
+
+  it("dismisses only the selected open chip, persists it and refreshes detail", async () => {
+    const deps = makeDeps();
+    let saves = 0;
+    deps.store.save = () => saves++;
+    const h = createToolHandlers(deps);
+    await h.work_suggest({ threadId: "t1", projectId: "p1", title: "Already fixed", prompt: "Old work" });
+    await h.work_suggest({ threadId: "t1", projectId: "p1", title: "Still relevant", prompt: "Pending work" });
+    const [stale, pending] = deps.store.getThread("t1").suggestions;
+    deps.refreshed.length = 0;
+    saves = 0;
+    const args = { threadId: "t1", projectId: "p1", suggestionId: stale.id };
+    const updatedAt = deps.store.getThread("t1").updatedAt;
+    assert.deepEqual(await h.work_dismiss(args), { dismissed: true, status: "dismissed" });
+    assert.equal(deps.store.getThread("t1").suggestions[0].status, "dismissed");
+    assert.equal(deps.store.getThread("t1").updatedAt, updatedAt);
+    assert.deepEqual(await h.work_list(args), { suggestions: [pending] });
+    assert.equal(saves, 1);
+    assert.deepEqual(deps.refreshed, ["t1"]);
+    assert.deepEqual(await h.work_dismiss(args), { dismissed: false, status: "dismissed" });
+    assert.equal(saves, 1, "a retry does not write or refresh again");
+    assert.deepEqual(deps.refreshed, ["t1"]);
+  });
+
+  it("leaves started threads and filed issues alone", async () => {
+    const deps = makeDeps();
+    const chips = [
+      { id: "started", status: "started", startedThreadId: "t2" },
+      { id: "filed", status: "filed", issueNumber: 123 },
+    ];
+    deps.store.getThread("t1").suggestions = chips;
+    const h = createToolHandlers(deps);
+    for (const chip of chips) {
+      assert.deepEqual(await h.work_dismiss({ threadId: "t1", projectId: "p1", suggestionId: chip.id }), {
+        dismissed: false, status: chip.status,
+      });
+    }
+    assert.equal(deps.store.getThread("t1").suggestions, chips);
+    assert.deepEqual(deps.refreshed, []);
+  });
+
+  it("rejects another thread even in the same project, and a foreign project", async () => {
+    const deps = makeDeps();
+    const h = createToolHandlers(deps);
+    for (const tool of ["work_list", "work_dismiss"]) {
+      await assert.rejects(() => h[tool]({ threadId: "t2", projectId: "p1", suggestionId: "x" }), /bound caller/);
+      await assert.rejects(() => h[tool]({ threadId: "t3", projectId: "p2", suggestionId: "x" }), /bound caller/);
+      const unbound = createToolHandlers({ ...deps, boundThreadId: null });
+      await assert.rejects(() => unbound[tool]({ threadId: "t3", projectId: "p2", suggestionId: "x" }), /belongs to "Beta".*not to "Alpha"/s);
+      await assert.rejects(() => unbound[tool]({ threadId: "ghost", projectId: "p1", suggestionId: "x" }), /Unknown thread/);
+    }
+    assert.deepEqual(deps.refreshed, []);
+  });
+
+  it("rejects an unknown suggestion and keeps dismissal saved if refresh fails", async () => {
+    const deps = makeDeps();
+    const h = createToolHandlers(deps);
+    await assert.rejects(() => h.work_dismiss({ threadId: "t1", projectId: "p1", suggestionId: "ghost" }), /Unknown suggestion/);
+    await h.work_suggest({ threadId: "t1", projectId: "p1", title: "Done", prompt: "Obsolete" });
+    const suggestionId = deps.store.getThread("t1").suggestions[0].id;
+    deps.runner.refreshDetail = () => { throw new Error("renderer disconnected"); };
+    assert.deepEqual(await h.work_dismiss({ threadId: "t1", projectId: "p1", suggestionId }), { dismissed: true, status: "dismissed" });
+    assert.deepEqual(await h.work_list({ threadId: "t1", projectId: "p1" }), { suggestions: [] });
   });
 });

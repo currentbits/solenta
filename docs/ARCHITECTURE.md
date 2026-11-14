@@ -506,6 +506,7 @@ Host tools wrap the same actions as the sidebar / header:
 | `thread_merge` | squash the worker onto the caller's tree, then delete its worktree |
 | `thread_pr` | push the worker branch and open a PR; leave the worktree for review |
 | `work_suggest` | out-of-scope finding → one-click chip (`thread.suggestions`) |
+| `work_list` / `work_dismiss` | review pending suggestions / permanently hide an obsolete chip on the caller's thread |
 | `hypothesis_record` / `spec_submit` / `teach_review` | mode-specific |
 | `task_*` / `peer_send` | crew task list and peer messaging (above) |
 
@@ -521,6 +522,12 @@ sub-crew onto its own branch; that branch is still gated upstream.
 `work_suggest` never starts the work; the chip is Start a
 thread / File on the planboard / Dismiss (`SuggestedWorkStrip` in
 `ThreadView.tsx`).
+Agents review pending suggestions with `work_list` before suggesting more work
+and before finishing a task. When work is completed, superseded, or no longer
+relevant, `work_dismiss` reuses the existing persisted dismissal and refreshes
+the thread detail immediately. Only open chips can be dismissed this way;
+started threads and filed issues are unchanged. Neither age alone nor uncertain
+relevance triggers removal.
 
 ## Orchestration commands
 

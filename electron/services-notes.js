@@ -244,7 +244,7 @@ function suggestedWorkNoteFor() {
     return "";
   }
   return (
-    "\n\n[Suggested work] When you notice work worth doing that is OUT OF SCOPE for the current task, call the coder-threads tool work_suggest (with your own threadId/projectId) — a short title plus a self-contained prompt for a fresh agent with none of your context. It renders as a chip the user can start as a new thread with one click. Never start or do that work yourself, never derail the current task for it, and suggest at most a few per run. Skip anything already suggested on this thread."
+    "\n\n[Suggested work] When you notice work worth doing that is OUT OF SCOPE for the current task, call the coder-threads tool work_suggest (with your own threadId/projectId) — a short title plus a self-contained prompt for a fresh agent with none of your context. It renders as a chip the user can start as a new thread with one click. Never start or do that work yourself, never derail the current task for it, and suggest at most a few per run. Review pending suggestions with work_list before adding more and before finishing a task. Use work_dismiss with a suggestionId from that list when you know the work is completed, superseded, or no longer relevant. Keep suggestions whose relevance is uncertain; age alone is not a reason to remove one. Skip anything already suggested on this thread."
   );
 }
 

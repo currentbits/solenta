@@ -2123,6 +2123,9 @@ describe("suggestedWorkNoteFor", () => {
     );
     const note = services.suggestedWorkNoteFor();
     assert.match(note, /work_suggest/);
+    assert.match(note, /work_list/);
+    assert.match(note, /work_dismiss/);
+    assert.match(note, /age alone is not a reason/);
     assert.match(note, /OUT OF SCOPE/);
     unregisterMcpServer("coder-threads");
     assert.equal(services.suggestedWorkNoteFor(), "");
