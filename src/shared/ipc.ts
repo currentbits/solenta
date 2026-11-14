@@ -1312,8 +1312,8 @@ export interface ThreadInfo {
   /**
    * Suggested-work chips (issue #550): out-of-scope findings the agent
    * offered as one-click follow-up work. Written only by the coder-threads
-   * MCP tool `work_suggest`; resolved by threads.resolveSuggestion. Absent
-   * until an agent suggests something.
+   * MCP tool `work_suggest`; resolved by threads.resolveSuggestion or the
+   * agent's `work_dismiss` tool. Absent until an agent suggests something.
    */
   suggestions?: WorkSuggestion[];
   /** Inert connector changes awaiting review on the owning desktop. */

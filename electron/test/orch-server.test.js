@@ -1677,6 +1677,8 @@ describe("orch-server HTTP", () => {
       "thread_status",
       "thread_stop",
       "threads_list",
+      "work_dismiss",
+      "work_list",
       "work_suggest",
     ]);
   });
@@ -1699,6 +1701,35 @@ describe("orch-server HTTP", () => {
     assert.equal(payload[0].id, "t1");
     assert.equal(payload[0].archived, false);
     assert.ok(!payload.some((t) => t.id === "t3"));
+  });
+
+  it("lists and dismisses suggested work over a bound MCP session", async () => {
+    const { orch, deps } = await startOrch();
+    const { recordSuggestion } = require("../services.js");
+    const chip = recordSuggestion(deps.store, {
+      threadId: "t1", title: "Already fixed", prompt: "Old work",
+    });
+    const refreshed = [];
+    deps.runner.refreshDetail = (id) => refreshed.push(id);
+    const st = orch.getStatus();
+    const cfg = JSON.parse(fs.readFileSync(path.join(tmpDir, "orch-server.json"), "utf8"));
+    const call = async (name, args) => {
+      const response = await mcpPost(st.port, cfg.token, {
+        jsonrpc: "2.0", id: 5, method: "tools/call",
+        params: { name, arguments: { threadId: "t1", projectId: "p1", ...args } },
+      }, { query: "projectId=p1&threadId=t1" });
+      assert.equal(response.status, 200);
+      return response.body.result;
+    };
+    const listed = await call("work_list");
+    assert.deepEqual(JSON.parse(listed.content[0].text), { suggestions: [chip] });
+    const refused = await call("work_dismiss", { threadId: "t2", suggestionId: chip.id });
+    assert.equal(refused.isError, true);
+    assert.equal(deps.store.getThread("t1").suggestions[0].status, "open");
+    const dismissed = await call("work_dismiss", { suggestionId: chip.id });
+    assert.deepEqual(JSON.parse(dismissed.content[0].text), { dismissed: true, status: "dismissed" });
+    assert.deepEqual(refreshed, ["t1"]);
+    assert.deepEqual(JSON.parse((await call("work_list")).content[0].text), { suggestions: [] });
   });
 
   it("lists the PR + CI tools only for a GitHub-origin session (#1749)", async () => {

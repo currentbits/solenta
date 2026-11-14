@@ -31,6 +31,7 @@ const {
   setRoute,
   recordHypothesis,
   recordSuggestion,
+  resolveSuggestion,
   submitSpec,
   recordTeachReview,
   addCrewTasks,
@@ -78,6 +79,8 @@ const INSTRUCTIONS =
   "distinct approach as soon as you know how it turned out. " +
   "When you notice work worth doing that is out of scope, call work_suggest with a " +
   "short title and a self-contained prompt; do not start the work yourself. " +
+  "Review your pending suggestions with work_list and use work_dismiss when " +
+  "the work is completed, superseded, or no longer relevant. " +
   "When the user describes a scheduled or GitHub-triggered workflow they want to keep " +
   "running, call automation_create with name, prompt, and either a schedule " +
   "(hourly/daily/weekly, a cron expression, or once at a future runAt for a single fire) " +
@@ -1388,6 +1391,41 @@ function createToolHandlers(deps) {
     return { recorded: true, total };
   }
 
+  async function work_list(args) {
+    const thread = requireOwnThread({
+      ...args,
+      threadId: resolveBoundCaller(args.threadId),
+    });
+    const suggestions = Array.isArray(thread.suggestions) ? thread.suggestions : [];
+    return { suggestions: suggestions.filter((s) => s.status === "open") };
+  }
+
+  async function work_dismiss(args) {
+    const thread = requireOwnThread({
+      ...args,
+      threadId: resolveBoundCaller(args.threadId),
+    });
+    const suggestions = Array.isArray(thread.suggestions) ? thread.suggestions : [];
+    const suggestion = suggestions.find((s) => s.id === args.suggestionId);
+    if (!suggestion) throw new Error(`Unknown suggestion: ${args.suggestionId}`);
+    if (suggestion.status !== "open") {
+      return { dismissed: false, status: suggestion.status };
+    }
+    resolveSuggestion(store, {
+      threadId: thread.id,
+      suggestionId: suggestion.id,
+      status: "dismissed",
+    });
+    if (typeof runner.refreshDetail === "function") {
+      try {
+        runner.refreshDetail(thread.id);
+      } catch {
+        // A missed chip push must not fail the tool.
+      }
+    }
+    return { dismissed: true, status: "dismissed" };
+  }
+
   /** Agent-filed Solenta defect over the /feedback path (#1703). */
   async function solenta_bug_report(args) {
     const thread = requireOwnThread(args);
@@ -2007,6 +2045,8 @@ function createToolHandlers(deps) {
     show_user,
     hypothesis_record,
     work_suggest,
+    work_list,
+    work_dismiss,
     solenta_bug_report,
     mcp_propose,
     automation_create,
@@ -2431,6 +2471,40 @@ function buildMcpServer(sdk, handlers, opts = {}) {
       },
     },
     async (args) => json(await handlers.work_suggest(args)),
+  );
+
+  server.registerTool(
+    "work_list",
+    {
+      description:
+        "List pending suggested work on YOUR OWN thread, including ids, titles " +
+        "and prompts. Review these as work progresses; use work_dismiss when " +
+        "evidence shows a suggestion is completed, superseded, or no longer relevant. " +
+        "threadId and projectId are your own.",
+      inputSchema: {
+        threadId: z.string().min(1),
+        projectId: z.string().min(1),
+      },
+    },
+    async (args) => json(await handlers.work_list(args)),
+  );
+
+  server.registerTool(
+    "work_dismiss",
+    {
+      description:
+        "Remove a pending suggested-work chip from YOUR OWN thread when its " +
+        "work is completed, superseded, or no longer relevant. Get suggestionId " +
+        "from work_list. Dismissal persists and immediately hides the chip. " +
+        "Started threads and filed issues are left alone. Do not dismiss work " +
+        "just because it is old or uncertain. threadId and projectId are your own.",
+      inputSchema: {
+        threadId: z.string().min(1),
+        projectId: z.string().min(1),
+        suggestionId: z.string().min(1),
+      },
+    },
+    async (args) => json(await handlers.work_dismiss(args)),
   );
 
   if (opts.bugReports !== false) {
