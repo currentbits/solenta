@@ -1204,7 +1204,8 @@ process.stdin.on("data", (c) => {
 
   function lastArgvPrompt() {
     const argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
-    return argv[argv.length - 1];
+    // Replay-context assertions cover the context and user text before per-run guidance.
+    return argv[argv.length - 1].split("\n\n[Turn plan]")[0];
   }
 
   it("turn 1 CLI prompt is prefixed from retained tail; turn 2 is not", async () => {
