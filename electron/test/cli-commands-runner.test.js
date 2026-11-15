@@ -151,4 +151,18 @@ process.exit(0);
       "CLI prompt must be the expanded skill, not the slash token",
     );
   });
+
+  it("expands a mid-sentence user skill but leaves agent notices unexpanded", async () => {
+    const thread = store.getThreads()[0];
+    const prompt = "Please use /commit, then explain.";
+    await runner.startRun({ threadId: thread.id, prompt });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+    let argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
+    assert.match(argv[argv.indexOf("-p") + 1], /Look at git diff --staged/);
+    assert.ok(store.getMessages(thread.id).some((m) => m.role === "user" && m.text === prompt));
+    await runner.startRun({ threadId: thread.id, prompt, fromNotice: true });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+    argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
+    assert.doesNotMatch(argv[argv.indexOf("-p") + 1], /Look at git diff --staged/);
+  });
 });

@@ -12,6 +12,7 @@ const path = require("node:path");
 const {
   listInvocableCommands,
   expandInvocableCommand,
+  expandPromptSkills,
 } = require("../cliCommands.js");
 
 let tmp;
@@ -1417,6 +1418,34 @@ it("uses the current provider's skill roots and shared fallback", () => {
   const project = path.join(tmp, "project");
   writeSkill(path.join(project, ".codex", "skills"), "demo", "Project Codex version");
   assert.match(expandInvocableCommand("/demo", { env, projectPath: project, provider: "codex" }).prompt, /Project Codex/);
+});
+
+it("loads explicit typed skills once, preferring the provider and sharing other providers' skills", () => {
+  const project = path.join(tmp, "project");
+  writeSkill(path.join(tmp, ".claude/skills"), "audit", "Claude audit instructions");
+  writeSkill(path.join(tmp, ".codex/skills"), "audit", "Wrong duplicate");
+  writeSkill(path.join(project, ".codex/skills"), "shared", "Shared project instructions");
+  writeSkill(path.join(tmp, ".claude/skills"), "private", "---\nuser-invocable: false\n---\nPrivate instructions");
+  const opts = { env: envHome(), projectPath: project, provider: "claude" };
+  const hit = expandPromptSkills("Please use /audit, then $shared! Also /audit again and /private.", opts);
+  assert.ok(hit);
+  assert.equal(hit.prompt.split("Claude audit instructions").length - 1, 1);
+  assert.match(hit.prompt, /Shared project instructions/);
+  assert.doesNotMatch(hit.prompt, /Wrong duplicate|Private instructions/);
+  assert.match(hit.prompt, /Directory:/);
+  assert.equal(expandPromptSkills("`/audit`\n```\n$shared\n```\n> /audit", opts), null);
+  assert.equal(expandPromptSkills("/unknown", opts), null);
+  assert.match(expandPromptSkills("/audit, please", opts).prompt, /^# Invoked skill: audit/);
+});
+
+it("keeps command argument substitution and bounds extra skill text", () => {
+  writeCommand(path.join(tmp, ".claude/commands/ship.md"), "Ship", "Deploy $ARGUMENTS");
+  writeSkill(path.join(tmp, ".claude/skills"), "long", "x".repeat(30_000));
+  const opts = { env: envHome(), provider: "claude" };
+  assert.equal(expandPromptSkills("/ship staging", opts).prompt, "Deploy staging");
+  const hit = expandPromptSkills("Please use /long", opts);
+  assert.ok(hit.prompt.length < 25_000);
+  assert.match(hit.prompt, /Truncated: read the full instructions/);
 });
 
 it("kimi reads $KIMI_CODE_HOME/skills and the repo's .kimi-code/skills", () => {

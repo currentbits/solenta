@@ -964,6 +964,7 @@ function createClaudeRun(ctx) {
             }
             if (
               ev.decision === "allow" ||
+              (ev.layer === "profile.default" && toolName === "mcp__coder-threads__update_plan") ||
               takeRestartGrant(threadId, toolName, rawInput) ||
               (!governed && isAlwaysAllowed(threadId, toolName, rawInput))
             ) {

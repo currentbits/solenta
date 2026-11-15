@@ -267,7 +267,7 @@ function listInvocableCommands(opts = {}) {
   const provider = Object.hasOwn(dirs, opts.provider) ? opts.provider : null;
   const providers = provider ? [provider, "agents"] : Object.keys(dirs);
   const commandProviders = provider ? [provider].filter((p) => ["claude", "grok"].includes(p)) : ["claude", "grok"];
-  const projectProviders = provider ? providers : ["claude", "grok"];
+  const projectProviders = providers;
   const project =
     typeof opts.projectPath === "string" ? opts.projectPath.trim() : "";
   /** @type {Map<string, InvocableCommand>} */
@@ -411,6 +411,43 @@ function expandInvocableCommand(prompt, opts = {}) {
   };
 }
 
+/** Expand explicit user skill mentions without interpreting quoted code as an invocation. */
+function expandPromptSkills(prompt, opts = {}) {
+  const prose = String(prompt).replace(/```[\s\S]*?(?:```|$)|~~~[\s\S]*?(?:~~~|$)|`[^`]*(?:`|$)/g, "").replace(/^[ \t]*>.*$/gm, "");
+  const names = [...new Set([...prose.matchAll(/(?:^|\s)[/$]([A-Za-z][A-Za-z0-9_:-]*)(?=[\s.,;!?)]|$)/g)]
+    .map((hit) => hit[1].replace(/:+$/, "")))].slice(0, 12);
+  const leading = prose.trimStart().startsWith("/") ? expandInvocableCommand(prompt, opts) : null;
+  if (!names.length) return leading;
+  if (names.length === 1 && leading?.name === `/${names[0]}`) return leading;
+  const preferred = listInvocableCommands(opts);
+  const shared = listInvocableCommands({ ...opts, provider: undefined });
+  const seen = new Set();
+  const first = leading && preferred.find((row) => row.name === leading.name);
+  if (first) {
+    try { seen.add(fs.realpathSync(first.file)); } catch { /* file disappeared */ }
+  }
+  const blocks = [];
+  let remaining = 48_000;
+  for (const name of names) {
+    if (ORCH_TOKENS.has(name)) continue;
+    const row = preferred.find((item) => item.name === `/${name}`) || shared.find((item) => item.name === `/${name}` && item.kind === "skill");
+    if (!row || row.kind !== "skill") continue;
+    let file;
+    try { file = fs.realpathSync(row.file); } catch { continue; }
+    if (seen.has(file)) continue;
+    seen.add(file);
+    const raw = readFile(file);
+    if (raw === null) continue;
+    const body = stripFrontmatter(raw);
+    const limit = Math.min(24_000, remaining);
+    if (limit <= 0) break;
+    remaining -= Math.min(body.length, limit);
+    blocks.push(`# Invoked skill: ${name}\nDirectory: ${JSON.stringify(path.dirname(file))}\n${body.slice(0, limit)}${body.length > limit ? `\n[Truncated: read the full instructions in ${JSON.stringify(file)} before proceeding.]` : ""}`);
+  }
+  if (!blocks.length) return leading;
+  return { prompt: `${blocks.join("\n\n")}\n\n## User request\n\n${leading?.prompt ?? prompt}` };
+}
+
 /**
  * Palette rows for the renderer: no filesystem paths.
  * @param {object} [opts]
@@ -431,6 +468,7 @@ module.exports = {
   ORCH_TOKENS,
   listInvocableCommands,
   expandInvocableCommand,
+  expandPromptSkills,
   listPaletteCommands,
   commandHint,
   pluginInstallPaths,
