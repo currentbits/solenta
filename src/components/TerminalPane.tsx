@@ -343,10 +343,13 @@ function TerminalView({
             frame = requestAnimationFrame(() => term && safeFit(term));
           });
     if (ro && hostRef.current) ro.observe(hostRef.current);
-    const themeWatch = new MutationObserver(() => {
+    const refreshTheme = () => {
       if (term) term.options.theme = themeFromCss();
-    });
-    themeWatch.observe(document.documentElement, { attributeFilter: ["data-theme"] });
+    };
+    const themeWatch = new MutationObserver(refreshTheme);
+    themeWatch.observe(document.documentElement, { attributeFilter: ["data-theme", "data-palette", "data-contrast"] });
+    const contrastMedia = window.matchMedia?.("(prefers-contrast: more)");
+    contrastMedia?.addEventListener("change", refreshTheme);
 
     return () => {
       live = false;
@@ -354,6 +357,7 @@ function TerminalView({
       offReconnect?.();
       ro?.disconnect();
       themeWatch.disconnect();
+      contrastMedia?.removeEventListener("change", refreshTheme);
       cancelAnimationFrame(frame);
       for (const s of subs) s.dispose();
       term?.dispose();

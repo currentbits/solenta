@@ -12,7 +12,6 @@ import type {
   WebhookSettings,
   WebhookTestResult,
 } from "../../shared/ipc";
-import { syncTheme, type ThemePreference } from "../../theme";
 import { applyContrast } from "../../contrast";
 import {
   CHAT_WIDTH_MODES,
@@ -48,6 +47,7 @@ import {
 } from "../../uiPrefs";
 import styles from "../SettingsModal.module.css";
 import type { SettingsDraftKey, SettingsModalProps } from "../SettingsModal";
+import { PaletteSettings } from "./PaletteSettings";
 
 const UI_SCALE_MIN = 0.8;
 const UI_SCALE_MAX = 1.6;
@@ -184,9 +184,10 @@ export function GeneralPane({
             value={settings?.theme ?? "dark"}
             disabled={saving || settings == null}
             onChange={(e) => {
-              const theme = e.target.value as ThemePreference;
+              const theme = e.target.value;
+              if (theme !== "system" && theme !== "light" && theme !== "dark") return;
               setError(null);
-              syncTheme(theme);
+              // App owns the OS listener and applies the saved appearance.
               void onSaveSettings({ theme }).catch((err) => {
                 setError(
                   err instanceof Error && err.message
@@ -204,6 +205,7 @@ export function GeneralPane({
             System follows the OS. Light and Dark stay put.
           </p>
         </div>
+        <PaletteSettings />
         <div className={styles.field}>
           <label className={styles.fieldLabel} htmlFor="agents-panel-default">
             Agents panel

@@ -1,5 +1,5 @@
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
-import { renderMermaid } from "../mermaidEngine";
+import { mermaidThemeKey, renderMermaid } from "../mermaidEngine";
 import styles from "./Markdown.module.css";
 
 /** Test hook: swap the real renderer (jsdom has no SVG layout) for a stub. */
@@ -9,16 +9,21 @@ function subscribeTheme(onChange: () => void): () => void {
   const observer = new MutationObserver(onChange);
   observer.observe(document.documentElement, {
     attributes: true,
-    attributeFilter: ["data-theme"],
+    attributeFilter: ["data-theme", "data-palette", "data-contrast"],
   });
-  return () => observer.disconnect();
+  const contrastMedia = window.matchMedia?.("(prefers-contrast: more)");
+  contrastMedia?.addEventListener("change", onChange);
+  return () => {
+    observer.disconnect();
+    contrastMedia?.removeEventListener("change", onChange);
+  };
 }
 
-/** `<html data-theme>`, so diagrams re-render on a light/dark switch. */
-function useThemeAttr(): string | null {
+/** Effective colors also distinguish replacement imports using the same custom ID. */
+function useThemeKey(): string | null {
   return useSyncExternalStore(
     subscribeTheme,
-    () => document.documentElement.getAttribute("data-theme"),
+    mermaidThemeKey,
     () => null,
   );
 }
@@ -34,7 +39,7 @@ export default function MermaidDiagram({
   code: string;
   fallback: ReactNode;
 }) {
-  const theme = useThemeAttr();
+  const theme = useThemeKey();
   const key = `${theme}\0${code}`;
   const [state, setState] = useState<{ key: string; svg: string | null } | null>(null);
   useEffect(() => {

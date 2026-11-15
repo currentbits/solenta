@@ -10,7 +10,8 @@
  */
 import assert from "node:assert/strict";
 import { describe, it, afterEach } from "node:test";
-import { act, cloneElement, useState } from "react";
+import { act, cloneElement, useEffect, useState } from "react";
+import { syncTheme } from "../src/theme";
 import { inAct, mount, unmountAll } from "./support/dom.ts";
 import { createFakeCoder, installFakeCoder } from "./support/fakeCoder.ts";
 import { SettingsModal, type SettingsPane } from "../src/components/SettingsModal";
@@ -2495,6 +2496,39 @@ describe("SettingsModal panes", () => {
 });
 
 describe("SettingsModal Appearance (#651)", () => {
+  it("leaves OS appearance subscriptions to App when switching System back to Light", async () => {
+    const fake = createFakeCoder();
+    const initial = await fake.api.settings.get();
+    const original = Object.getOwnPropertyDescriptor(globalThis, "matchMedia");
+    const listeners = new Set<(event: { matches: boolean }) => void>();
+    Object.defineProperty(globalThis, "matchMedia", { configurable: true, value: () => ({
+      matches: false,
+      addEventListener(_type: string, cb: (event: { matches: boolean }) => void) { listeners.add(cb); },
+      removeEventListener(_type: string, cb: (event: { matches: boolean }) => void) { listeners.delete(cb); },
+    }) });
+    function Appearance() {
+      const [settings, setSettings] = useState(initial);
+      useEffect(() => syncTheme(settings.theme), [settings.theme]);
+      return modal({ settings, onSaveSettings: async (patch) => {
+        const next = await fake.api.settings.set(patch);
+        setSettings(next);
+        return next;
+      } });
+    }
+    try {
+      const m = await mount(<Appearance />);
+      await m.change(m.query("[data-theme-setting]"), "system");
+      assert.equal(listeners.size, 1, "one owner for system appearance");
+      await m.change(m.query("[data-theme-setting]"), "light");
+      assert.equal(listeners.size, 0, "Light stops following OS changes");
+      assert.equal(document.documentElement.getAttribute("data-theme"), "light");
+      m.unmount();
+    } finally {
+      if (original) Object.defineProperty(globalThis, "matchMedia", original);
+      else Reflect.deleteProperty(globalThis, "matchMedia");
+    }
+  });
+
   it("puts the theme control on General and saves the pick", async () => {
     const patches: Partial<AppSettings>[] = [];
     const m = await mount(
@@ -2525,7 +2559,12 @@ describe("SettingsModal Appearance (#651)", () => {
     assert.equal(select.value, "dark");
     await m.change(select, "light");
     assert.deepEqual(patches, [{ theme: "light" }]);
+    assert.ok(m.query("#theme-palette"), "General must expose the palette control");
+    await m.change(m.query("#theme-palette"), "midnight");
+    assert.equal(document.documentElement.getAttribute("data-palette"), "midnight");
+    assert.deepEqual(patches, [{ theme: "light" }], "palette previews are local display preferences");
     m.unmount();
+    assert.equal(document.documentElement.getAttribute("data-palette"), "solenta", "closing settings reverts the preview");
   });
 
   it("defaults the control to dark when settings.theme is absent", async () => {

@@ -90,6 +90,64 @@ describe("mermaid fences (#1506)", () => {
     await flush();
     assert.deepEqual(seen, []);
   });
+
+  it("recolors palette previews, same-id replacements and cancellation", async () => {
+    const m = await mount(<div />);
+    const root = document.documentElement;
+    root.style.setProperty("--card-hover", "#111111");
+    const seen = stub(async () => `<svg><text>${getComputedStyle(root).getPropertyValue("--card-hover")}</text></svg>`);
+    try {
+      await m.rerender(<MarkdownBody text={FENCE} />);
+      await flush();
+      assert.match(m.query("[data-mermaid]")?.textContent ?? "", /#111111/);
+      for (const color of ["#222222", "#333333", "#111111"]) {
+        await inAct(() => {
+          root.style.setProperty("--card-hover", color);
+          root.setAttribute("data-palette", "custom:same-id");
+        });
+        await flush();
+        assert.ok(m.query("[data-mermaid]")?.textContent?.includes(color));
+      }
+      assert.equal(seen.length, 4);
+    } finally {
+      m.unmount();
+      root.style.removeProperty("--card-hover");
+      root.removeAttribute("data-palette");
+    }
+  });
+});
+
+describe("mermaid theme cache", () => {
+  it("keys SVGs by effective colors and captures them before waiting in the render queue", async (t) => {
+    await mount(<div />);
+    const mermaid = (await import("mermaid")).default;
+    const { renderMermaid } = await import("../src/mermaidEngine");
+    let color = "";
+    const rendered: string[] = [];
+    t.mock.method(mermaid, "initialize", (config: Parameters<typeof mermaid.initialize>[0]) => {
+      color = String(config?.themeVariables?.primaryColor ?? "");
+    });
+    t.mock.method(mermaid, "parse", async () => ({ diagramType: "flowchart-v2" }));
+    t.mock.method(mermaid, "render", async () => {
+      rendered.push(color);
+      return { svg: `<svg><text>${color}</text></svg>`, diagramType: "flowchart-v2" };
+    });
+    const root = document.documentElement;
+    const code = "graph TD\nCache --> Palette";
+    try {
+      root.style.setProperty("--card-hover", "#111111");
+      const first = renderMermaid(code);
+      root.style.setProperty("--card-hover", "#222222");
+      const second = renderMermaid(code);
+      const [a, b] = await Promise.all([first, second]);
+      assert.match(a ?? "", /#111111/);
+      assert.match(b ?? "", /#222222/);
+      assert.equal(await renderMermaid(code), b);
+      root.style.setProperty("--card-hover", "#111111");
+      assert.equal(await renderMermaid(code), a, "cancelling a preview reuses the correct colors");
+      assert.deepEqual(rendered, ["#111111", "#222222"]);
+    } finally { root.style.removeProperty("--card-hover"); }
+  });
 });
 
 describe("mermaid sanitiser (#1506)", () => {

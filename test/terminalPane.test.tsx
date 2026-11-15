@@ -147,6 +147,36 @@ function harness(over: Partial<TerminalApi> = {}) {
 const settle = () => inAct(() => new Promise((r) => setTimeout(r, 0)));
 
 describe("TerminalPane", () => {
+  it("refreshes mounted terminal colors when palette or contrast changes", async () => {
+    const h = harness();
+    const m = await mount(<TerminalPane threadId="t1" api={h.api} load={h.load} />);
+    await settle();
+    const root = document.documentElement;
+    try {
+      await inAct(() => {
+        root.style.setProperty("--bg", "#102030");
+        root.setAttribute("data-palette", "midnight");
+      });
+      await settle();
+      assert.equal(h.terms[0].options.theme?.background, "#102030");
+      await inAct(() => {
+        root.style.setProperty("--bg", "#111010");
+        root.setAttribute("data-contrast", "high");
+      });
+      await settle();
+      assert.equal(h.terms[0].options.theme?.background, "#111010");
+      m.unmount();
+      const last = h.terms[0].options.theme;
+      root.setAttribute("data-palette", "forest");
+      await settle();
+      assert.equal(h.terms[0].options.theme, last, "disposed terminals stop observing colors");
+    } finally {
+      root.style.removeProperty("--bg");
+      root.removeAttribute("data-palette");
+      root.removeAttribute("data-contrast");
+    }
+  });
+
   it("skips a trimmed control sequence through later pushes without losing cursor alignment", async () => {
     const h = harness({ open: async () => state({ text: "tail", cursor: 4, sequenceState: 3 }) });
     await mount(<TerminalPane threadId="t1" api={h.api} load={h.load} />);
