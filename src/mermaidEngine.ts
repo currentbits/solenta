@@ -44,6 +44,10 @@ function themeVariables(): Record<string, string | boolean> {
   };
 }
 
+export function mermaidThemeKey(): string {
+  return JSON.stringify(themeVariables());
+}
+
 /** Sanitised SVG or null (a parse/render error), by theme + source. */
 const cache = new Map<string, string | null>();
 // ponytail: dropped wholesale at the cap; LRU if long threads thrash it.
@@ -51,13 +55,13 @@ const CACHE_CAP = 100;
 let queue: Promise<unknown> = Promise.resolve();
 let seq = 0;
 
-async function renderNow(code: string): Promise<string | null> {
+async function renderNow({ code, variables }: { code: string; variables: ReturnType<typeof themeVariables> }): Promise<string | null> {
   mermaid.initialize({
     startOnLoad: false,
     securityLevel: "strict",
     htmlLabels: false,
     theme: "base",
-    themeVariables: themeVariables(),
+    themeVariables: variables,
   });
   if (!(await mermaid.parse(code, { suppressErrors: true }))) return null;
   const { svg } = await mermaid.render(`solenta-mermaid-${++seq}`, code);
@@ -82,9 +86,10 @@ export function sanitizeSvg(svg: string): string {
  * render must not interleave with another diagram's.
  */
 export function renderMermaid(code: string): Promise<string | null> {
-  const key = `${document.documentElement.getAttribute("data-theme")}\0${code}`;
+  const variables = themeVariables();
+  const key = `${JSON.stringify(variables)}\0${code}`;
   if (cache.has(key)) return Promise.resolve(cache.get(key)!);
-  const run = queue.then(() => renderNow(code)).catch(() => null);
+  const run = queue.then(() => renderNow({ code, variables })).catch(() => null);
   queue = run;
   return run.then((svg) => {
     if (cache.size >= CACHE_CAP) cache.clear();

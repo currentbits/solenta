@@ -2,7 +2,7 @@
 
 In **Settings → General → Color palette**, choose Solenta, Midnight or Forest. Each has light and dark colors; **Theme** still controls whether the app follows the OS or stays Light/Dark.
 
-Selecting a palette previews it immediately, including mounted terminals. **Apply palette** saves it on this device. **Cancel preview**, closing Settings or leaving General restores the saved palette. Other display preferences still save separately. Increased contrast, whether enabled in Solenta or by the OS, uses the default Solenta colors without forgetting the selected palette.
+Selecting a palette previews it immediately, including mounted terminals and Mermaid diagrams. **Apply palette** saves it on this device. **Cancel preview**, closing Settings or leaving General restores the saved palette. Other display preferences still save separately. Increased contrast, whether enabled in Solenta or by the OS, uses the default Solenta colors without forgetting the selected palette.
 
 ## Import and export
 
