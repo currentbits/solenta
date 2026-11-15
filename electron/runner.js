@@ -1440,6 +1440,16 @@ function createRunner(opts) {
     pushThreadsChanged();
   }
 
+  function updateTurnPlan(threadId, runId, items) {
+    const entry = active.get(threadId);
+    if (!entry || entry.stopping || entry.runId !== runId) throw new Error("This turn is no longer active");
+    const thread = store.getThread(threadId);
+    if (!thread || thread.provider !== "claude") throw new Error("Turn plans are available to Claude sessions only");
+    savePlanSteps(threadId, require("./turnPlan.js").parseTurnPlan(items));
+    refreshDetail(threadId);
+    return { shown: true };
+  }
+
   /**
    * Create a work-log step item (done:false). Returns its id.
    * @param {string} threadId
@@ -2365,15 +2375,16 @@ function createRunner(opts) {
     const rawPrompt = String(prompt ?? "");
     let cliPrompt = rawPrompt;
     let slashExpanded = false;
-    if (!input.fromNotice && rawPrompt.trimStart().startsWith("/")) {
+    if (!input.fromNotice && !input.fromInbound && !input.fromIdleCompact) {
       try {
-        const hit = cliCommands.expandInvocableCommand(rawPrompt, {
+        const hit = cliCommands.expandPromptSkills(rawPrompt, {
           projectPath: projectForGate && projectForGate.path,
           provider: thread.provider,
+          env: { ...process.env, ...threadInstanceEnv(store.getSettings(), thread, { userDataPath }) },
         });
         if (hit) {
           cliPrompt = hit.prompt;
-          slashExpanded = true;
+          slashExpanded = rawPrompt.trimStart().startsWith("/");
         }
       } catch {
         /* discovery is best-effort; send the raw slash */
@@ -2408,6 +2419,7 @@ function createRunner(opts) {
       attachmentPromptSection(promptAttachments) +
       (leadSlash ? prefix : "") +
       services.planboardNoteFor(projectForGate) +
+      (provider === "claude" ? `\n\n[Turn plan] Your current runId is ${runId}. For multi-step work, use coder-threads update_plan to keep the visible checklist current; include this runId and your own threadId/projectId. Update it alongside other tool calls. Mark only finished steps completed; interrupted work stays open.` : "") +
       services.selfIdNoteFor(
         dispatchThread,
         projectForGate,
@@ -2764,11 +2776,19 @@ function createRunner(opts) {
       provider,
       attachments,
     });
+    let cliPrompt = prompt;
+    try {
+      cliPrompt = cliCommands.expandPromptSkills(prompt, {
+        projectPath: store.getProject(thread.projectId)?.path,
+        provider: thread.provider,
+        env: { ...process.env, ...threadInstanceEnv(store.getSettings(), thread, { userDataPath }) },
+      })?.prompt ?? prompt;
+    } catch { /* discovery is best-effort */ }
     const { text, note: privacyNote } = privacyGateway.filterOutbound(
       store.getSettings(),
       threadId,
       provider,
-      prompt + attachmentPromptSection(attachments) + pdfNote,
+      cliPrompt + attachmentPromptSection(attachments) + pdfNote,
     );
     // PDF extraction can outlast the run.
     if (active.get(threadId) !== entry || entry.stopping) {
@@ -3449,6 +3469,7 @@ function createRunner(opts) {
     listActiveThreadIds,
     listActiveBtwCount,
     activeRunId,
+    updateTurnPlan,
     isAutoTurn,
     resumeInterruptedRuns,
     resumeCrew,

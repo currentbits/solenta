@@ -260,6 +260,49 @@ describe("primeProcessPath / refreshLoginPath (#1475)", () => {
     assert.equal(env.PATH, "C:\\a;C:\\b");
     assert.equal(whenPathReady(), null);
   });
+
+  it("retries failed discovery without blocking spawns and stops after success", async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const { stopLoginPathRefresh } = require("../pathEnv.js");
+    t.after(stopLoginPathRefresh);
+    let calls = 0;
+    const env = { PATH: "/usr/bin", SHELL: "/bin/zsh" };
+    primeProcessPath({ cacheFile: path.join(tmp(), "cache"), env, platform: "darwin", home: "/h", existsFn: () => false,
+      execFn: (file, args, opts, cb) => {
+        calls++;
+        cb(null, calls === 1 ? "" : "__CODER_PATH_BEGIN__/recovered/bin__CODER_PATH_END__");
+      },
+    });
+    assert.equal(await refreshLoginPath(), null);
+    assert.equal(whenPathReady(), null);
+    assert.equal(env.PATH, "/usr/bin");
+    t.mock.timers.tick(30_000);
+    await refreshLoginPath();
+    assert.equal(env.PATH, "/recovered/bin:/usr/bin");
+    t.mock.timers.tick(300_000);
+    assert.equal(calls, 2);
+  });
+
+  it("bounds retries and ignores a capture after shutdown or re-prime", async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const { stopLoginPathRefresh } = require("../pathEnv.js");
+    t.after(stopLoginPathRefresh);
+    let calls = 0;
+    primeProcessPath({ cacheFile: path.join(tmp(), "cache"), env: { PATH: "/usr/bin" }, platform: "darwin", home: "/h", existsFn: () => false,
+      execFn: (file, args, opts, cb) => { calls++; cb(null, ""); },
+    });
+    await refreshLoginPath();
+    for (let i = 0; i < 15; i++) { t.mock.timers.tick(30_000); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); }
+    assert.equal(calls, 11);
+    const shell = deferredShell("__CODER_PATH_BEGIN__/stale/bin__CODER_PATH_END__");
+    const env = { PATH: "/usr/bin" };
+    primeProcessPath({ cacheFile: path.join(tmp(), "cache"), env, platform: "darwin", home: "/h", existsFn: () => false, execFn: shell.execFn });
+    const pending = refreshLoginPath();
+    stopLoginPathRefresh();
+    shell.release();
+    await pending;
+    assert.equal(env.PATH, "/usr/bin");
+  });
 });
 
 describe("login env (#320)", () => {

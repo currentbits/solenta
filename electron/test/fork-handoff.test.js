@@ -499,7 +499,8 @@ process.stdin.on("data", (c) => {
 
   function lastArgvPrompt() {
     const argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
-    return argv[argv.length - 1];
+    // Hand-off assertions cover the context and user text before per-run guidance.
+    return argv[argv.length - 1].split("\n\n[Turn plan]")[0];
   }
 
   it("turn 1 CLI prompt is prefixed; transcript stores raw; turn 2 unprefixed", async () => {
@@ -752,7 +753,7 @@ process.stdin.on("data", (c) => {
     assert.deepEqual(argv.slice(i, i + 5), [
       "--resume", "sess-src", "--fork-session", "--resume-session-at", "cut-1",
     ]);
-    assert.equal(prompt, "try again", "native fork needs no hand-off digest");
+    assert.equal(prompt.split("\n\n[Turn plan]")[0], "try again", "native fork needs no hand-off digest");
     const t = store.getThread(forked.id);
     assert.equal(t.forkSessionAt, null);
     const reply = store.getMessages(forked.id).find((m) => m.text === "forked reply");

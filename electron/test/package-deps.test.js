@@ -11,6 +11,8 @@ const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const os = require("node:os");
+const { execFileSync } = require("node:child_process");
 
 const ROOT = path.join(__dirname, "..", "..");
 const ELECTRON_DIR = path.join(ROOT, "electron");
@@ -95,3 +97,19 @@ describe("packaged electron node_modules allowlist", () => {
     );
   });
 });
+
+for (const script of ["scripts/package-app.sh", "scripts/package-cross.sh", "scripts/package-server.sh"]) {
+  it(`${script} ships a loadable terminal parser outside the source checkout`, { skip: process.platform === "win32" }, () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "solenta-parser-package-"));
+    try {
+      const line = read(script).split("\n").find((line) => line.startsWith("rsync -a"));
+      assert.ok(line, `${script} copy command`);
+      const filters = [...line.matchAll(/--(include|exclude)='([^']*)'/g)].map((m) => `--${m[1]}=${m[2]}`);
+      execFileSync("rsync", ["-a", "--prune-empty-dirs", ...filters, ELECTRON_DIR + path.sep, dir + path.sep]);
+      execFileSync(process.execPath, ["-e", 'const assert = require("node:assert/strict"); const p = require("./terminalSequences.mjs"); assert.equal(p.skipPartialSequence(3, "title\\x07visible").text, "visible");'], { cwd: dir });
+      assert.equal(fs.existsSync(path.join(dir, "test")), false);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+}

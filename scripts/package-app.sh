@@ -143,11 +143,11 @@ if [[ "$PKG_NAME" != "solenta" ]]; then
   exit 1
 fi
 
-# electron/ .js sources, subdirectories included (electron/channels/, #1718),
+# electron/ JS sources, subdirectories included (electron/channels/, #1718),
 # tests excluded. A top-level-only copy silently dropped channels/ and every
 # packaged build died at boot on require("./channels/index.js").
 mkdir -p "$APP_DIR/electron"
-rsync -a --prune-empty-dirs --exclude='/test/' --include='*/' --include='*.js' --exclude='*' \
+rsync -a --prune-empty-dirs --exclude='/test/' --include='*/' --include='*.js' --include='*.mjs' --exclude='*' \
   electron/ "$APP_DIR/electron/"
 cp electron/speech-models.json "$APP_DIR/electron/speech-models.json"
 

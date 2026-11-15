@@ -1426,6 +1426,28 @@ describe("runner claude provider", () => {
     assert.ok(store.getThread(thread.id).updatedAt >= updatedBefore);
   });
 
+  it("accepts a bound live turn plan and rejects malformed, foreign and stale updates", async () => {
+    process.env.CODER_FAKE_CLAUDE_SCENARIO = "slow";
+    const thread = store.getThreads()[0];
+    await runner.startRun({ threadId: thread.id, prompt: "investigate and test" });
+    const { createToolHandlers } = require("../orchServer.js");
+    const handlers = createToolHandlers({ store, runner, boundProjectId: thread.projectId, boundThreadId: thread.id });
+    const args = { threadId: thread.id, projectId: thread.projectId, runId: runner.activeRunId(thread.id), items: [
+      { content: "Investigate", status: "completed" }, { content: "Test", status: "in_progress" },
+    ] };
+    assert.deepEqual(await handlers.update_plan(args), { shown: true });
+    const plan = store.getThread(thread.id).planSteps;
+    assert.deepEqual(plan, [{ step: "Investigate", status: "done" }, { step: "Test", status: "doing" }]);
+    await assert.rejects(handlers.update_plan({ ...args, threadId: "someone-else" }), /bound caller/);
+    await assert.rejects(handlers.update_plan({ ...args, runId: "previous-turn" }), /no longer active/);
+    for (const items of [[], [{ content: "", status: "pending" }], [{ content: "x", status: "invalid" }], Array(13).fill(args.items[0])]) {
+      await assert.rejects(handlers.update_plan({ ...args, items }), /Plan needs/);
+    }
+    await runner.stopRun({ threadId: thread.id });
+    await assert.rejects(handlers.update_plan(args), /no longer active/);
+    assert.deepEqual(store.getThread(thread.id).planSteps, plan, "interrupted work is not marked complete");
+  });
+
   it("pushes threads:changed when a background subagent settles after the turn", async () => {
     process.env.CODER_FAKE_CLAUDE_SCENARIO = "subagent-after-result";
     const thread = store.getThreads()[0];
@@ -1565,7 +1587,7 @@ describe("runner claude provider", () => {
         fs.readFileSync(stdinFile, "utf8").split("\n")[0],
       );
       assert.equal(firstStdinLine.type, "user");
-      assert.equal(firstStdinLine.message.content, "guarded work");
+      assert.match(firstStdinLine.message.content, /^guarded work\n\n\[Turn plan\]/);
       const argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
       assert.ok(!argv.includes("guarded work"));
 
@@ -3115,6 +3137,9 @@ describe("runner claude provider", () => {
     process.env.CODER_FAKE_CLAUDE_STDIN_FILE = stdinFile;
 
     const thread = store.getThreads()[0];
+    const skillDir = path.join(store.getProject(thread.projectId).path, ".claude/skills/steer-check");
+    fs.mkdirSync(skillDir, { recursive: true });
+    fs.writeFileSync(path.join(skillDir, "SKILL.md"), "Steer skill instructions loaded");
     const { runId } = await runner.startRun({
       threadId: thread.id,
       prompt: "do the thing",
@@ -3128,7 +3153,7 @@ describe("runner claude provider", () => {
 
     const steered = await runner.steerRun({
       threadId: thread.id,
-      prompt: "stop that, do X instead",
+      prompt: "stop that, do X instead /steer-check",
     });
     assert.equal(steered.runId, runId);
 
@@ -3138,7 +3163,7 @@ describe("runner claude provider", () => {
     const steerMsg = msgs.find((m) => m.steer === true);
     assert.ok(steerMsg, "expected a steered user row");
     assert.equal(steerMsg.role, "user");
-    assert.equal(steerMsg.text, "stop that, do X instead");
+    assert.equal(steerMsg.text, "stop that, do X instead /steer-check");
     assert.equal(steerMsg.runId, runId);
 
     const users = msgs.filter((m) => m.role === "user");
@@ -3156,6 +3181,7 @@ describe("runner claude provider", () => {
     const stdin = fs.readFileSync(stdinFile, "utf8");
     assert.match(stdin, /do the thing/);
     assert.match(stdin, /stop that, do X instead/);
+    assert.match(stdin, /Steer skill instructions loaded/);
     delete process.env.CODER_FAKE_CLAUDE_STDIN_FILE;
   });
 

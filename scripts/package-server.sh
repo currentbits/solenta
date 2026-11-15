@@ -47,7 +47,7 @@ npm run build --prefix core
 PAYLOAD="out/.server-payload"
 rm -rf "$PAYLOAD"
 mkdir -p "$PAYLOAD/electron" "$PAYLOAD/core" "$PAYLOAD/native" "$PAYLOAD/memory-server" "$PAYLOAD/node_modules"
-rsync -a --prune-empty-dirs --exclude='/test/' --include='*/' --include='*.js' --exclude='*' electron/ "$PAYLOAD/electron/"
+rsync -a --prune-empty-dirs --exclude='/test/' --include='*/' --include='*.js' --include='*.mjs' --exclude='*' electron/ "$PAYLOAD/electron/"
 cp electron/speech-models.json "$PAYLOAD/electron/speech-models.json"
 node - "$PAYLOAD/package.json" <<'JS'
 const fs = require("node:fs");

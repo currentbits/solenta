@@ -1598,6 +1598,16 @@ describe("orch-server HTTP", () => {
       fs.readFileSync(path.join(tmpDir, "orch-server.json"), "utf8"),
     );
 
+    for (const [query, visible] of [["", false], ["projectId=p1&threadId=t1", true], ["projectId=p1&threadId=t2", false], ["projectId=p2&threadId=t1", false]]) {
+      const listed = await mcpPost(st.port, cfg.token, { jsonrpc: "2.0", id: 101, method: "tools/list", params: {} }, { query });
+      const plan = listed.body.result.tools.find((t) => t.name === "update_plan");
+      assert.equal(Boolean(plan), visible);
+      if (plan) {
+        assert.equal(plan._meta["anthropic/alwaysLoad"], true);
+        assert.equal(plan.inputSchema.properties.items.maxItems, 12);
+      }
+    }
+
     const init = {
       jsonrpc: "2.0",
       id: 1,

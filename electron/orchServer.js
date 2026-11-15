@@ -1347,6 +1347,12 @@ function createToolHandlers(deps) {
     };
   }
 
+  async function update_plan(args) {
+    if (!boundThreadId) throw new Error("Turn plans require a thread-bound session");
+    const thread = requireOwnThread({ ...args, threadId: resolveBoundCaller(args.threadId) });
+    return runner.updateTurnPlan(thread.id, args.runId, args.items);
+  }
+
   async function hypothesis_record(args) {
     const thread = store.getThread(args.threadId);
     if (!thread) {
@@ -2043,6 +2049,7 @@ function createToolHandlers(deps) {
     ask_user,
     secret_request,
     show_user,
+    update_plan,
     hypothesis_record,
     work_suggest,
     work_list,
@@ -2080,7 +2087,7 @@ function createToolHandlers(deps) {
  * Build the MCP server exposing the thread tools.
  * @param {{ McpServer: unknown, z: unknown }} sdk
  * @param {ReturnType<typeof createToolHandlers>} handlers
- * @param {{ planboard?: boolean, github?: boolean, bugReports?: boolean, browser?: boolean }} [opts] - planboard:
+ * @param {{ planboard?: boolean, github?: boolean, bugReports?: boolean, browser?: boolean, turnPlan?: boolean }} [opts] - planboard:
  *   every project-bound session (#849, #1843); github: PR/CI tools on GitHub
  *   origins only (#1749); bugReports: false hides solenta_bug_report (#1703);
  *   browser: false hides preview when the bound thread's browserAccess is
@@ -2093,6 +2100,19 @@ function buildMcpServer(sdk, handlers, opts = {}) {
     { name: SERVER_NAME, version: "0.1.0" },
     { instructions: INSTRUCTIONS },
   );
+
+  if (opts.turnPlan) {
+    const { MAX_STEPS, MAX_CONTENT } = require("./turnPlan.js");
+    server.registerTool("update_plan", {
+      description: "Keep Solenta's visible checklist current during multi-step work. Send the whole plan alongside another tool call, starting with the first tool call. Use the current runId from [Turn plan] and your own threadId/projectId. Only mark finished work completed; do not create Planboard issues for individual steps.",
+      inputSchema: {
+        threadId: z.string().min(1), projectId: z.string().min(1), runId: z.string().min(1),
+        items: z.array(z.object({ content: z.string().trim().min(1).max(MAX_CONTENT), status: z.enum(["pending", "in_progress", "completed"]) })).min(1).max(MAX_STEPS),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      _meta: { "anthropic/alwaysLoad": true },
+    }, async (args) => json(await handlers.update_plan(args)));
+  }
 
   server.registerTool(
     "threads_list",
@@ -3245,6 +3265,7 @@ function createOrchServer(opts) {
             bugReports: bugReportsEnabled(store),
             github: Boolean(boundProject && isGitHubProject(boundProject)),
             browser: !boundThread || boundThread.browserAccess !== false,
+            turnPlan: boundThread?.provider === "claude" && boundThread.projectId === boundProjectId,
           });
         }
         const transport = new sdk.StreamableHTTPServerTransport({

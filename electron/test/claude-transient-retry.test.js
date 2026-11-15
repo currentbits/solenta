@@ -174,7 +174,9 @@ describe("Claude runner: transient retry", () => {
     await backoff(2, 15000);
     await until(() => status() === "done", "done");
 
-    assert.deepEqual(sends().map((s) => JSON.parse(s)), ["hello", "hello", "hello"]);
+    const prompts = sends().map((s) => JSON.parse(s));
+    assert.match(prompts[0], /^hello\n\n\[Turn plan\] Your current runId is /);
+    assert.deepEqual(prompts, [prompts[0], prompts[0], prompts[0]], "retries keep the same prompt and run identity");
     assert.equal(spawns(), 1, "same Claude process and session, no restart");
     const msgs = store.getMessages(thread.id);
     assert.equal(msgs.filter((m) => m.role === "user").length, 1);
