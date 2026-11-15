@@ -123,6 +123,17 @@
   gap: 6px;
 }
 
+.paletteActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.paletteActions a {
+  text-decoration: none;
+}
+
 .fieldLabel {
   font-size: 13px;
   font-weight: 500;

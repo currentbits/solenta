@@ -45,6 +45,13 @@ export const SETTINGS_INDEX: SettingsIndexEntry[] = [
   },
   {
     pane: "general",
+    label: "Color palette",
+    selector: "#theme-palette",
+    help: "Preview, apply, import or export light and dark colors on this device.",
+    keywords: "theme appearance colors midnight forest JSON",
+  },
+  {
+    pane: "general",
     label: "UI scale",
     selector: "[data-ui-scale]",
     help: "Zoom the whole app in or out.",
