@@ -112,7 +112,7 @@ function harness(over: Partial<TerminalApi> = {}) {
     open: (input) =>
       over.open ? (calls.push({ call: "open", input }), over.open(input)) : rec("open", input, state({ termId: input.termId ?? "1" })),
     write: (input) => rec("write", input, { ok: true }),
-    resize: (input) => rec("resize", input, { ok: true }),
+    resize: (input) => over.resize ? (calls.push({ call: "resize", input }), over.resize(input)) : rec("resize", input, { ok: true }),
     read: (input) => (over.read ? (calls.push({ call: "read", input }), over.read(input)) : rec("read", input, state())),
     list: (input) => (over.list ? over.list(input) : rec("list", input, [] as string[])),
     close: (input) => rec("close", input, state({ running: false })),
@@ -147,6 +147,57 @@ function harness(over: Partial<TerminalApi> = {}) {
 const settle = () => inAct(() => new Promise((r) => setTimeout(r, 0)));
 
 describe("TerminalPane", () => {
+  it("skips a trimmed control sequence through later pushes without losing cursor alignment", async () => {
+    const h = harness({ open: async () => state({ text: "tail", cursor: 4, sequenceState: 3 }) });
+    await mount(<TerminalPane threadId="t1" api={h.api} load={h.load} />);
+    await settle();
+    assert.equal(h.terms[0].screen, "");
+    await h.push({ from: 4, data: "\x1b", cursor: 5 });
+    await h.push({ from: 5, data: "\\visible", cursor: 13 });
+    assert.equal(h.terms[0].screen, "visible");
+    assert.equal(h.calls.filter((c) => c.call === "write").length, 0);
+  });
+
+  it("retries a rejected or refused resize once and resends unchanged size on reconnect", async () => {
+    for (const reject of [false, true]) {
+      let fail = false;
+      const h = harness({ resize: async () => {
+        if (fail && reject) throw new Error("disconnected");
+        return { ok: !fail };
+      } });
+      const m = await mount(<TerminalPane threadId="t1" api={h.api} load={h.load} />);
+      await settle();
+      h.calls.length = 0;
+      fail = true;
+      await inAct(() => h.terms[0].resizeCb({ cols: 80, rows: 20 }));
+      await settle();
+      assert.equal(h.calls.filter((c) => c.call === "resize").length, 2);
+      fail = false;
+      await h.reconnect();
+      await settle();
+      assert.equal(h.calls.filter((c) => c.call === "resize").length, 3);
+      m.unmount();
+    }
+  });
+
+  it("does not retry an older grid or a disposed pane", async () => {
+    let rejectOld: (reason: Error) => void = () => {};
+    const h = harness({ resize: (s) => s.cols === 70 ? new Promise((_resolve, reject) => { rejectOld = reject; }) : Promise.resolve({ ok: true }) });
+    const m = await mount(<TerminalPane threadId="t1" api={h.api} load={h.load} />);
+    await settle();
+    h.calls.length = 0;
+    await inAct(() => h.terms[0].resizeCb({ cols: 70, rows: 20 }));
+    await inAct(() => h.terms[0].resizeCb({ cols: 80, rows: 20 }));
+    await inAct(() => rejectOld(new Error("old failure")));
+    await settle();
+    assert.equal(h.calls.filter((c) => c.call === "resize").length, 2);
+    await inAct(() => h.terms[0].resizeCb({ cols: 70, rows: 20 }));
+    m.unmount();
+    rejectOld(new Error("late failure"));
+    await settle();
+    assert.equal(h.calls.filter((c) => c.call === "resize").length, 3);
+  });
+
   it("recovers final output and exit entirely missed during a connection outage", async () => {
     const h = harness({
       open: async () => state({ text: "old", cursor: 3 }),
@@ -284,7 +335,7 @@ describe("TerminalPane", () => {
     await inAct(() => h.terms[0].dataCb("ls\r"));
     await inAct(() => h.terms[0].resizeCb({ cols: 120, rows: 40 }));
     assert.deepEqual(h.calls.find((c) => c.call === "write")?.input, { threadId: "t1", termId: "1", data: "ls\r" });
-    assert.deepEqual(h.calls.find((c) => c.call === "resize")?.input, {
+    assert.deepEqual(h.calls.filter((c) => c.call === "resize").at(-1)?.input, {
       threadId: "t1",
       termId: "1",
       cols: 120,
@@ -485,7 +536,7 @@ describe("TerminalPane", () => {
     await settle();
     assert.deepEqual(
       h.calls.filter((c) => c.call !== "list").map((c) => c.call),
-      ["open", "close", "open"],
+      ["open", "resize", "close", "open", "resize"],
     );
     assert.equal(h.terms[0].disposed, true);
     assert.equal(h.terms.length, 2);

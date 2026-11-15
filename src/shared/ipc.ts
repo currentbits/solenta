@@ -2978,6 +2978,8 @@ export interface TerminalState {
   text: string;
   /** The caller's cursor was missing or scrolled out; `text` replaces all. */
   reset: boolean;
+  /** ANSI parser state at the retained buffer's start; absent on older hosts. */
+  sequenceState?: number;
   startedAt: number;
   /** The shell is still running in a checkout the thread has since left. */
   staleRoot: boolean;

@@ -126,9 +126,9 @@ cat > "$PAYLOAD/package.json" <<EOF
 }
 EOF
 
-# Same as package-app.sh: every electron/ .js, subdirectories included, no tests.
+# Same as package-app.sh: every electron/ JS source, subdirectories included, no tests.
 mkdir -p "$PAYLOAD/electron"
-rsync -a --prune-empty-dirs --exclude='/test/' --include='*/' --include='*.js' --exclude='*' \
+rsync -a --prune-empty-dirs --exclude='/test/' --include='*/' --include='*.js' --include='*.mjs' --exclude='*' \
   electron/ "$PAYLOAD/electron/"
 cp electron/speech-models.json "$PAYLOAD/electron/speech-models.json"
 

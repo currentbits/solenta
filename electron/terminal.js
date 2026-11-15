@@ -23,6 +23,7 @@ const spawn = require("cross-spawn");
 const { wrapCommand } = require("./ssh.js");
 const { wslTarget } = require("./wsl.js");
 const { safeId } = require("./worktreeEnv.js");
+const { sequenceStateAfter, skipPartialSequence } = require("./terminalSequences.mjs");
 
 /** Scrollback lines kept per session (and replayed after a restart). */
 const LINE_LIMIT = 5000;
@@ -35,9 +36,9 @@ const DEFAULT_TERM = "1";
 const TERM_ID_RE = /^[A-Za-z0-9]{1,16}$/;
 /** Leave the alternate screen and reset attributes after replayed output. */
 const RESTORE_MARK =
-  "\x1b[?1049l\x1b[0m\r\n\x1b[2m[restored output from a previous session]\x1b[0m\r\n";
+  "\x18\x1b[?1049l\x1b[0m\r\n\x1b[2m[restored output from a previous session]\x1b[0m\r\n";
 /** Separator above a shell that "Move to worktree" restarted in `cwd`. @param {string} cwd */
-const moveMark = (cwd) => `\x1b[?1049l\x1b[0m\r\n\x1b[2m[moved to ${cwd}]\x1b[0m\r\n`;
+const moveMark = (cwd) => `\x18\x1b[?1049l\x1b[0m\r\n\x1b[2m[moved to ${cwd}]\x1b[0m\r\n`;
 
 /**
  * @typedef {{
@@ -50,6 +51,7 @@ const moveMark = (cwd) => `\x1b[?1049l\x1b[0m\r\n\x1b[2m[moved to ${cwd}]\x1b[0m
  *   proc: any,
  *   buf: string,
  *   base: number,
+ *   sequenceState: number,
  *   lines: number,
  *   line: string,
  *   dead: boolean,
@@ -140,6 +142,9 @@ function commit(sess, text) {
     cut += extra;
   }
   if (cut > 0) {
+    // Do not start a retained UTF-16 string halfway through a surrogate pair.
+    if (sess.buf.charCodeAt(cut) >= 0xdc00 && sess.buf.charCodeAt(cut) <= 0xdfff) cut++;
+    sess.sequenceState = sequenceStateAfter(sess.sequenceState, sess.buf, cut);
     sess.buf = sess.buf.slice(cut);
     sess.base += cut;
   }
@@ -178,7 +183,7 @@ function scheduleFlush(sess) {
     sess.flushTimer = null;
     fs.mkdir(path.dirname(sess.logPath), { recursive: true }, () => {
       // close() may have deleted the log meanwhile; do not resurrect it.
-      if (owned()) fs.writeFile(sess.logPath, sess.buf, () => {});
+      if (owned()) fs.writeFile(sess.logPath, skipPartialSequence(sess.sequenceState, sess.buf).text, () => {});
     });
   }, FLUSH_MS);
   if (typeof sess.flushTimer.unref === "function") sess.flushTimer.unref();
@@ -191,7 +196,7 @@ function flushSync(sess) {
   if (!sess.logPath) return;
   try {
     fs.mkdirSync(path.dirname(sess.logPath), { recursive: true });
-    fs.writeFileSync(sess.logPath, sess.buf);
+    fs.writeFileSync(sess.logPath, skipPartialSequence(sess.sequenceState, sess.buf).text);
   } catch {
     // best effort; losing scrollback must not block quit
   }
@@ -277,6 +282,7 @@ function toState(sess, since) {
     cursor: end,
     text: stale ? sess.buf : sess.buf.slice(since - sess.base),
     reset: stale,
+    sequenceState: stale ? sess.sequenceState : 0,
     startedAt: sess.startedAt,
     staleRoot: false,
   };
@@ -383,7 +389,7 @@ function open(threadId, root, opts = {}) {
   }
   // An exited shell's scrollback carries over to its replacement, the same
   // way a log from a previous app run does below.
-  const carried = existing ? existing.buf : null;
+  const carried = existing ? skipPartialSequence(existing.sequenceState, existing.buf).text : null;
   if (existing) {
     killSession(existing);
     sessions.delete(key);
@@ -420,6 +426,7 @@ function open(threadId, root, opts = {}) {
     proc: null,
     buf: "",
     base: 0,
+    sequenceState: 0,
     lines: 0,
     line: "",
     dead: false,

@@ -76,6 +76,7 @@ const { startMemoryConsolidateScheduler } = require("./memory-consolidate.js");
 const {
   primeProcessPath,
   refreshLoginPath,
+  stopLoginPathRefresh,
   whenPathReady,
 } = require("./pathEnv.js");
 const {
@@ -1670,6 +1671,7 @@ shutdown = installShutdown({
 /** Servers, schedulers, and child processes: last, after runs and the device. */
 function teardownServices() {
   serverActivation?.cancel();
+  stopLoginPathRefresh();
   if (attentionTimer) { clearInterval(attentionTimer); attentionTimer = null; }
   if (bootSweepTimer) { clearTimeout(bootSweepTimer); bootSweepTimer = null; }
   if (artifactCleanupTimer) { clearTimeout(artifactCleanupTimer); artifactCleanupTimer = null; }

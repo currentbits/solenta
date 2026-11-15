@@ -295,6 +295,17 @@ let primed = null;
 /** @type {Promise<string[] | null> | null} */
 let refreshing = null;
 let refreshed = false;
+let retries = 0;
+let retryTimer = null;
+
+function stopLoginPathRefresh() {
+  clearTimeout(retryTimer);
+  retryTimer = null;
+  primed = null;
+  refreshing = null;
+  refreshed = false;
+  retries = 0;
+}
 
 /** @param {string} file @returns {string[] | null} */
 function readCachedPath(file) {
@@ -324,9 +335,7 @@ function readCachedPath(file) {
 function primeProcessPath(opts) {
   const env = opts.env || process.env;
   const platform = opts.platform || process.platform;
-  primed = null;
-  refreshing = null;
-  refreshed = false;
+  stopLoginPathRefresh();
   if (platform === "win32") {
     const r = enrichProcessPath({ env, platform });
     return { source: "win32", entries: r.entries };
@@ -354,11 +363,12 @@ function primeProcessPath(opts) {
 }
 
 /**
- * Start (once) the background login-shell capture. On success PATH becomes
+ * Start the background login-shell capture. On success PATH becomes
  * login + launch PATH + fallback dirs, exactly what enrichProcessPath built,
  * the cache is rewritten, and the rest of the login env is applied (not
  * cached: rc files often export tokens, and spawns await this anyway). On
- * failure the primed PATH stays. Never rejects.
+ * failure the primed PATH stays; retry up to ten times at 30 s intervals.
+ * Retries never block later spawns. Never rejects.
  *
  * @returns {Promise<string[] | null>}
  */
@@ -367,11 +377,16 @@ function refreshLoginPath() {
   if (!refreshing) {
     const p = primed;
     const sent = { ...p.env };
+    let captured = false;
+    clearTimeout(retryTimer);
+    retryTimer = null;
     refreshing = loginShellOutputAsync(p.env, p.execFn, p.platform)
       .then((out) => {
+        if (primed !== p) return null;
         applyLoginEnv(p.env, sent, parseLoginEnv(out || ""));
         const login = parseLoginPath(out || "");
         if (login) {
+          captured = true;
           p.env.PATH = mergePathEntries(
             login,
             p.launch,
@@ -387,7 +402,15 @@ function refreshLoginPath() {
       })
       .catch(() => null)
       .finally(() => {
+        if (primed !== p) return;
         refreshed = true;
+        if (!captured) {
+          refreshing = null;
+          if (retries++ < 10) {
+            retryTimer = setTimeout(() => { void refreshLoginPath(); }, 30_000);
+            retryTimer.unref?.();
+          }
+        }
       });
   }
   return refreshing;
@@ -413,6 +436,7 @@ module.exports = {
   enrichProcessPath,
   primeProcessPath,
   refreshLoginPath,
+  stopLoginPathRefresh,
   whenPathReady,
   captureLoginPath,
   captureLoginPathAsync,

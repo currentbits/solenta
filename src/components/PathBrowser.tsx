@@ -3,6 +3,7 @@ import type { FsBrowseEntry, FsBrowseInput, FsBrowseResult } from "../shared/ipc
 import {
   appendBrowsePathSegment,
   createBrowseNavigationCoordinator,
+  ensureBrowseDirectoryPath,
   filterFilesystemBrowseEntries,
   filterPinnedBrowseEntries,
   getCloneDestinationBrowsePath,
@@ -12,6 +13,7 @@ import {
 } from "../browsePath";
 import styles from "./SettingsModal.module.css";
 import { isImeComposing } from "../imeComposing";
+import { errorMessage } from "../coder/errorMessage";
 
 export interface PathBrowserProps {
   id: string;
@@ -67,33 +69,46 @@ export function PathBrowser({
   const [highlight, setHighlight] = useState(-1);
   const [browseError, setBrowseError] = useState<string | null>(null);
   const navRef = useRef(createBrowseNavigationCoordinator());
+  const context = JSON.stringify([environment || "", cwd || ""]);
+  const lastReadable = useRef<{ context: string; value: string } | null>(null);
+  const recovery = browseError && lastReadable.current?.context === context ? lastReadable.current : null;
+  const recovering = Boolean(recovery);
+  const navigationValue = recovery?.value ?? value;
+  const navigationPath = recovering ? getFilesystemBrowsePath(navigationValue, platform) : browsePath;
+  const currentEntries = lastReadable.current?.context === context ? entries : [];
 
   const pinned = pinnedDirectoryName?.trim() || "";
   const filtered = useMemo(() => {
     if (pinned) {
       return filterPinnedBrowseEntries({
-        browseEntries: entries,
-        filterQuery: browsePath.filterQuery,
+        browseEntries: currentEntries,
+        filterQuery: navigationPath.filterQuery,
         pinnedDirectoryName: pinned,
         caseSensitive: !isWindowsPlatform(platform),
       });
     }
-    return filterFilesystemBrowseEntries(entries, browsePath.filterQuery);
-  }, [entries, browsePath.filterQuery, pinned, platform]);
+    return filterFilesystemBrowseEntries(currentEntries, navigationPath.filterQuery);
+  }, [currentEntries, navigationPath.filterQuery, pinned, platform]);
 
   const rows: Array<{ kind: "up" } | { kind: "dir"; entry: FsBrowseEntry }> =
     useMemo(() => {
       const list: Array<
         { kind: "up" } | { kind: "dir"; entry: FsBrowseEntry }
       > = [];
-      if (browsePath.canBrowseUp) list.push({ kind: "up" });
+      if (navigationPath.canBrowseUp) list.push({ kind: "up" });
       for (const entry of filtered.visibleEntries) {
         list.push({ kind: "dir", entry });
       }
       return list;
-    }, [browsePath.canBrowseUp, filtered.visibleEntries]);
+    }, [navigationPath.canBrowseUp, filtered.visibleEntries]);
 
   useEffect(() => {
+    if (lastReadable.current?.context !== context) {
+      lastReadable.current = null;
+      setEntries([]);
+      setParentPath(null);
+      setBrowseError(null);
+    }
     if (disabled || !browsePath.isBrowsing || !browsePath.directoryPath) {
       setEntries([]);
       setParentPath(null);
@@ -114,20 +129,17 @@ export function PathBrowser({
         } catch (err) {
           next = {
             error:
-              err instanceof Error && err.message
-                ? err.message
-                : "Could not list that folder.",
+              errorMessage(err) || "Could not list that folder.",
           };
         }
       },
       () => {
         if (cancelled || !next) return;
         if ("error" in next) {
-          setEntries([]);
-          setParentPath(browsePath.directoryPath);
           setBrowseError(next.error);
           return;
         }
+        lastReadable.current = { context, value: ensureBrowseDirectoryPath(browsePath.directoryPath) };
         setBrowseError(null);
         setEntries(next.entries || []);
         setParentPath(next.parentPath || browsePath.directoryPath);
@@ -144,6 +156,7 @@ export function PathBrowser({
     cwd,
     onBrowse,
     disabled,
+    context,
   ]);
 
   useEffect(() => {
@@ -152,10 +165,10 @@ export function PathBrowser({
 
   const descend = useCallback(
     (name: string) => {
-      const entry = entries.find((e) => e.name === name);
+      const entry = currentEntries.find((e) => e.name === name);
       const next = pinned
         ? getCloneDestinationBrowsePath({
-            browseDirectoryPath: browsePath.directoryPath,
+            browseDirectoryPath: navigationPath.directoryPath,
             selectedDirectoryName: name,
             cloneDirectoryName: pinned,
             caseSensitive: !isWindowsPlatform(platform),
@@ -164,19 +177,19 @@ export function PathBrowser({
           ? entry.fullPath.endsWith("/") || entry.fullPath.endsWith("\\")
             ? entry.fullPath
             : `${entry.fullPath}${value.includes("\\") ? "\\" : "/"}`
-          : appendBrowsePathSegment(value, name);
+          : appendBrowsePathSegment(navigationValue, name);
       onChange(next);
       setHighlight(-1);
     },
-    [browsePath.directoryPath, entries, onChange, pinned, platform, value],
+    [navigationPath.directoryPath, currentEntries, onChange, pinned, platform, navigationValue, value],
   );
 
   const browseUp = useCallback(() => {
-    const parent = browsePath.parentPath;
+    const parent = navigationPath.parentPath;
     if (!parent) return;
     onChange(getCloneDestinationPath(parent, pinned || null));
     setHighlight(-1);
-  }, [browsePath.parentPath, onChange, pinned]);
+  }, [navigationPath.parentPath, onChange, pinned]);
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (isImeComposing(e)) return;
@@ -202,7 +215,7 @@ export function PathBrowser({
       return;
     }
     if (e.key === "ArrowLeft") {
-      if (browsePath.canBrowseUp && !browsePath.filterQuery) {
+      if (navigationPath.canBrowseUp && !navigationPath.filterQuery) {
         e.preventDefault();
         browseUp();
       }
@@ -231,7 +244,7 @@ export function PathBrowser({
   };
 
   const willCreate =
-    browsePath.isBrowsing &&
+    !browseError && browsePath.isBrowsing &&
     Boolean(browsePath.filterQuery) &&
     !filtered.exactEntry;
 
@@ -271,11 +284,13 @@ export function PathBrowser({
           role="listbox"
           data-path-browser-list=""
         >
-          {browseError ? (
-            <li className={styles.browseEmpty} role="presentation">
+          {browseError && (
+            <li className={styles.browseEmpty} role="presentation" aria-live="polite">
               {browseError}
+              {recovering && ` Showing ${navigationPath.directoryPath}`}
             </li>
-          ) : rows.length === 0 ? (
+          )}
+          {rows.length === 0 ? (
             <li className={styles.browseEmpty} role="presentation">
               {willCreate
                 ? "No matching folder. Add will create this path."

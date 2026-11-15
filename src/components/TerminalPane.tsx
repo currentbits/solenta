@@ -4,6 +4,7 @@ import { detectFailure, failureKey, plainText, type Failure, type FixHandler } f
 import { FixSuggestion } from "./FixSuggestion";
 import { useModalFocus } from "../useModalFocus";
 import styles from "./TerminalPane.module.css";
+import { skipPartialSequence } from "../../electron/terminalSequences.mjs";
 
 /** Terminals side by side in one pane. More than this is unreadable. */
 const MAX_SPLITS = 4;
@@ -209,6 +210,23 @@ function TerminalView({
     // queries (DA `ESC[c`, DSR `ESC[6n`, OSC `11;?`, DCS XTGETTCAP...) that
     // xterm answers via onData; those replies must not reach the live shell.
     let replaying = false;
+    let sequenceState = 0;
+    const replayText = (text: string) => {
+      const next = skipPartialSequence(sequenceState, text);
+      sequenceState = next.state;
+      return next.text;
+    };
+    let resizeRevision = 0;
+    const resize = (cols: number, rows: number, retry = false) => {
+      if (!live) return;
+      const revision = ++resizeRevision;
+      const retryOnce = () => {
+        if (!retry && live && revision === resizeRevision) resize(cols, rows, true);
+      };
+      void api.resize({ threadId, termId, cols, rows })
+        .then((result) => { if (!result.ok) retryOnce(); })
+        .catch(retryOnce);
+    };
     const subs: { dispose(): void }[] = [];
     setSession(null);
     setFailed(false);
@@ -218,12 +236,13 @@ function TerminalView({
       if (!live || !term) return;
       if (s.reset) {
         term.reset();
+        sequenceState = s.sequenceState ?? 0;
         // The empty write flips the flag right before the replay parses, so
         // keystrokes queued ahead of it still go through.
         term.write("", () => { replaying = true; });
-        term.write(s.text, () => { replaying = false; });
+        term.write(replayText(s.text), () => { replaying = false; });
       } else if (s.cursor > cursor) {
-        term.write(s.text.slice(Math.max(0, s.text.length - (s.cursor - cursor))));
+        term.write(replayText(s.text.slice(Math.max(0, s.text.length - (s.cursor - cursor)))));
       } else if (s.cursor < cursor) {
         return;
       }
@@ -258,7 +277,7 @@ function TerminalView({
     };
     const offReconnect = api.onReconnect?.(() => {
       resync();
-      if (term) safeFit(term);
+      if (term) { safeFit(term); resize(term.cols, term.rows); }
     });
 
     const offPush = api.onData((p) => {
@@ -269,7 +288,7 @@ function TerminalView({
       if (p.cursor <= cursor || !term) return;
       if (p.from > cursor) return resync();
       const data = p.data.slice(cursor - p.from);
-      term.write(data);
+      term.write(replayText(data));
       cursor = p.cursor;
       if (!scanRef.current) return;
       const fresh = plainText(data);
@@ -295,7 +314,7 @@ function TerminalView({
             void api.write({ threadId, termId, data }).catch(() => {});
           }),
           t.onResize(({ cols, rows }) => {
-            void api.resize({ threadId, termId, cols, rows }).catch(() => {});
+            resize(cols, rows);
           }),
           t.onSelectionChange(() => {
             if (!live) return;
@@ -304,6 +323,8 @@ function TerminalView({
           }),
         );
         return api.open({ threadId, termId, cols: t.cols, rows: t.rows }).then((s) => {
+          if (!live) return;
+          resize(t.cols, t.rows);
           apply({ ...s, reset: true });
           if (readAgain) resync();
           if (live) t.focus();
