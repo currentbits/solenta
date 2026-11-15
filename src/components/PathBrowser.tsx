@@ -70,12 +70,13 @@ export function PathBrowser({
   const [browseError, setBrowseError] = useState<string | null>(null);
   const navRef = useRef(createBrowseNavigationCoordinator());
   const context = JSON.stringify([environment || "", cwd || ""]);
-  const lastReadable = useRef<{ context: string; value: string } | null>(null);
-  const recovery = browseError && lastReadable.current?.context === context ? lastReadable.current : null;
+  const lastReadable = useRef<{ context: string; value: string; onBrowse: PathBrowserProps["onBrowse"] } | null>(null);
+  const readable = lastReadable.current?.context === context && lastReadable.current.onBrowse === onBrowse ? lastReadable.current : null;
+  const recovery = browseError ? readable : null;
   const recovering = Boolean(recovery);
   const navigationValue = recovery?.value ?? value;
   const navigationPath = recovering ? getFilesystemBrowsePath(navigationValue, platform) : browsePath;
-  const currentEntries = lastReadable.current?.context === context ? entries : [];
+  const currentEntries = readable ? entries : [];
 
   const pinned = pinnedDirectoryName?.trim() || "";
   const filtered = useMemo(() => {
@@ -103,7 +104,7 @@ export function PathBrowser({
     }, [navigationPath.canBrowseUp, filtered.visibleEntries]);
 
   useEffect(() => {
-    if (lastReadable.current?.context !== context) {
+    if (!lastReadable.current || lastReadable.current.context !== context || lastReadable.current.onBrowse !== onBrowse) {
       lastReadable.current = null;
       setEntries([]);
       setParentPath(null);
@@ -139,7 +140,7 @@ export function PathBrowser({
           setBrowseError(next.error);
           return;
         }
-        lastReadable.current = { context, value: ensureBrowseDirectoryPath(browsePath.directoryPath) };
+        lastReadable.current = { context, value: ensureBrowseDirectoryPath(browsePath.directoryPath), onBrowse };
         setBrowseError(null);
         setEntries(next.entries || []);
         setParentPath(next.parentPath || browsePath.directoryPath);

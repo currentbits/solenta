@@ -16,9 +16,9 @@ const browse = async ({ path, environment }: FsBrowseInput): Promise<FsBrowseRes
   ] };
 };
 
-function Picker({ environment = "host" }: { environment?: string }) {
+function Picker({ environment = "host", onBrowse = browse }: { environment?: string; onBrowse?: typeof browse }) {
   const [value, onChange] = useState("/root/");
-  return <PathBrowser id="path" value={value} onChange={onChange} onBrowse={browse} environment={environment} inputDataAttr="data-path" />;
+  return <PathBrowser id="path" value={value} onChange={onChange} onBrowse={onBrowse} environment={environment} inputDataAttr="data-path" />;
 }
 
 it("keeps readable siblings and Up usable after a child folder fails", async () => {
@@ -43,6 +43,17 @@ it("never reuses a previous host's readable folders after a host switch", async 
   await m.rerender(<Picker environment="other" />);
   await m.flush();
   assert.match(m.text(), /Permission denied/);
+  assert.equal(m.query('[data-browse-entry="good"]'), null);
+  assert.doesNotMatch(m.text(), /Showing/);
+});
+
+it("clears the readable listing when the browse connection changes with the same environment and cwd", async () => {
+  const m = await mount(<Picker />);
+  await m.flush();
+  assert.ok(m.query('[data-browse-entry="good"]'));
+  await m.rerender(<Picker onBrowse={async () => { throw new Error("New computer is offline"); }} />);
+  await m.flush();
+  assert.match(m.text(), /New computer is offline/);
   assert.equal(m.query('[data-browse-entry="good"]'), null);
   assert.doesNotMatch(m.text(), /Showing/);
 });
