@@ -92,13 +92,23 @@ describe("providers registry", () => {
     assert.ok(codex.models.includes("gpt-5.3-codex-spark"));
     assert.equal(codex.models.includes("gpt-5.4-mini"), false);
     assert.ok(codex.models.length >= 5);
-    // GPT-6.1 Sol (2026-09-29) is Codex 0.159's default and ours.
-    assert.equal(codex.models[0], "gpt-6.1-sol");
+    // GPT-6.2 Sol is Codex 0.170's default (priority 1) and ours; Astra
+    // follows. Both need CLI 0.166+.
+    assert.deepEqual(codex.models.slice(0, 3), ["gpt-6.2-sol", "gpt-6.2-astra", "gpt-6.1-sol"]);
+    for (const id of ["gpt-6.2-sol", "gpt-6.2-astra"]) {
+      const m = codex.modelInfo.find((x) => x.id === id);
+      assert.equal(m.minCli, "0.166.0");
+      assert.ok(m.efforts.includes("ultra"));
+      assert.deepEqual(m.inputModalities, ["text", "image"]);
+      assert.equal(m.fast, true);
+    }
+    const sol62 = codex.modelInfo.find((m) => m.id === "gpt-6.2-sol");
+    assert.equal(sol62.recommended, true);
+    assert.equal(sol62.contextTokens, 500_000);
+    assert.equal(codex.modelInfo.find((m) => m.id === "gpt-6.2-astra").contextTokens, 272_000);
     const sol61 = codex.modelInfo.find((m) => m.id === "gpt-6.1-sol");
-    assert.equal(sol61.recommended, true);
-    assert.equal(sol61.contextTokens, 272_000);
-    assert.ok(sol61.efforts.includes("ultra"));
-    assert.deepEqual(sol61.inputModalities, ["text", "image"]);
+    assert.equal(sol61.recommended, undefined);
+    assert.equal(sol61.contextTokens, 500_000);
     const astra = codex.modelInfo.find((m) => m.id === "gpt-6-astra");
     assert.equal(astra.recommended, undefined);
     assert.equal(astra.contextTokens, 272_000);
@@ -242,6 +252,8 @@ describe("providers registry", () => {
       "Spark input_modalities are text-only (#1167)",
     );
     for (const id of [
+      "gpt-6.2-sol",
+      "gpt-6.2-astra",
       "gpt-6-astra",
       "gpt-6-sol",
       "gpt-6-luna",

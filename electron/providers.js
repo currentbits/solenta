@@ -563,15 +563,17 @@ const PROVIDERS = [
     // Interactive app-server uses approvalPolicy on-request (#1208).
     // Do not flip exec AskForApproval to on-request: workflow / ask /
     // commitmsg stay runCodex exec --json with never-policy.
-    // GPT-6.1 Sol (DevDay 2026-09-29): app-server model/list on 0.159.2
-    // (isDefault, priority 1) + ~/.codex/models_cache.json 2026-09-30. It is
-    // recommended; older CLIs (<0.159) do not list it.
+    // GPT-6.2 Sol / Astra: bundled catalog in codex 0.170.0 (2026-11-18),
+    // minimal_client_version 0.166.0. Sol is priority 1 and recommended;
+    // GPT-6.1 Sol (DevDay 2026-09-29) drops to previous generation.
     // Keep previous-generation entries for existing installations: spark
     // and gpt-6-terra are absent from the 0.159.2 list, gpt-5.5 is hidden
     // there and retires from Codex on 2026-10-14. gpt-5.4 / gpt-5.4-mini
     // are omitted. gpt-reserve / codex-auto-review are visibility=hide.
     // contextTokens are cache context_window (not max_context_window).
     models: [
+      "gpt-6.2-sol",
+      "gpt-6.2-astra",
       "gpt-6.1-sol",
       "gpt-6-astra",
       "gpt-6-sol",
@@ -585,13 +587,35 @@ const PROVIDERS = [
     ],
     modelInfo: [
       {
-        id: "gpt-6.1-sol",
-        label: "GPT-6.1-Sol",
-        description: "Latest workhorse model for coding and everyday work.",
+        id: "gpt-6.2-sol",
+        label: "GPT-6.2-Sol",
+        description: "Fast, go-to model for coding and everyday work.",
         vendor: "OpenAI",
         recommended: true,
-        minCli: "0.159.0",
+        minCli: "0.166.0",
+        contextTokens: 500_000,
+        efforts: CODEX_SOL_TERRA_EFFORTS.slice(),
+        inputModalities: CODEX_TEXT_IMAGE.slice(),
+        fast: true,
+      },
+      {
+        id: "gpt-6.2-astra",
+        label: "GPT-6.2-Astra",
+        description: "Our most capable model for complex coding and professional work.",
+        vendor: "OpenAI",
+        minCli: "0.166.0",
         contextTokens: 272_000,
+        efforts: CODEX_SOL_TERRA_EFFORTS.slice(),
+        inputModalities: CODEX_TEXT_IMAGE.slice(),
+        fast: true,
+      },
+      {
+        id: "gpt-6.1-sol",
+        label: "GPT-6.1-Sol",
+        description: "Previous generation model for coding and everyday work.",
+        vendor: "OpenAI",
+        minCli: "0.159.0",
+        contextTokens: 500_000,
         efforts: CODEX_SOL_TERRA_EFFORTS.slice(),
         inputModalities: CODEX_TEXT_IMAGE.slice(),
         fast: true,
@@ -599,7 +623,7 @@ const PROVIDERS = [
       {
         id: "gpt-6-astra",
         label: "GPT-6-Astra",
-        description: "Frontier intelligence for the most demanding work.",
+        description: "Previous generation model for complex coding and professional work.",
         vendor: "OpenAI",
         contextTokens: 272_000,
         efforts: CODEX_SOL_TERRA_EFFORTS.slice(),
