@@ -426,8 +426,8 @@ describe("listProviders catalog notes", () => {
       assert.ok(codex.models.includes("gpt-5.6-sol"));
       const rec = codex.modelInfo.filter((m) => m.recommended).map((m) => m.id);
       assert.deepEqual(rec, ["gpt-5.5"]);
-      assert.match(codex.catalogNote, /gpt-6-astra/);
-      assert.match(codex.catalogNote, /gpt-6-sol/);
+      assert.match(codex.catalogNote, /gpt-6\.2-sol/);
+      assert.match(codex.catalogNote, /gpt-6\.2-astra/);
       assert.match(codex.catalogNote, /codex update/);
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
@@ -445,8 +445,8 @@ describe("listProviders catalog notes", () => {
       });
       const codex = list.find((p) => p.id === "codex");
       const rec = codex.modelInfo.filter((m) => m.recommended).map((m) => m.id);
-      assert.deepEqual(rec, ["gpt-6.1-sol"]);
-      assert.equal(codex.models[0], "gpt-6.1-sol");
+      assert.deepEqual(rec, ["gpt-6.2-sol"]);
+      assert.equal(codex.models[0], "gpt-6.2-sol");
       assert.equal(codex.catalogNote, undefined);
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
