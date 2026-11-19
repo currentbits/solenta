@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileSync, spawn } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
 import { setTimeout as delay } from 'node:timers/promises';
 import { signalGroup } from '../electron/proc.js';
@@ -26,7 +26,7 @@ const tag = release.tag_name;
 const sha = api(`commits/${encodeURIComponent(tag)}`).sha;
 const platform = `${process.platform}-x64`;
 const suffix = process.platform === 'win32' ? `${platform}.zip` : `${platform}.tar.gz`;
-const assets = release.assets.filter((a) => a.name.endsWith(`-${suffix}`));
+const assets = release.assets.filter((a) => a.name === `Solenta-${tag}-${suffix}`);
 assert.equal(assets.length, 1, 'Expected exactly one platform asset');
 const asset = assets[0];
 assert.match(asset.digest || '', /^sha256:[a-f0-9]{64}$/, 'Release asset must have a SHA-256 digest');
@@ -135,13 +135,18 @@ try {
   process.exitCode = 1;
 } finally {
   if (child?.pid) {
-    const killed = signalGroup(child, 'SIGKILL');
+    const killed = signalGroup(child, 'SIGKILL', { spawn: (command, args, options) => {
+      const result = spawnSync(command, args, { ...options, stdio: 'pipe', encoding: 'utf8' });
+      report.cleanupAttempt = { status: result.status, signal: result.signal, error: result.error?.message, stdout: result.stdout, stderr: result.stderr };
+      return result;
+    } });
     if (!killed && child.exitCode === null && child.signalCode === null) {
       report.passed = false;
       report.cleanupError = 'Could not terminate packaged process tree';
       process.exitCode = 1;
     }
     await Promise.race([closed, delay(6000)]);
+    report.processAfterCleanup = { exitCode: child.exitCode, signalCode: child.signalCode };
   }
   if (fs.existsSync(logPath)) fs.writeFileSync(logPath, fs.readFileSync(logPath, 'utf8').replaceAll(token, '[redacted]'));
   fs.writeFileSync(path.join(reports, 'result.json'), JSON.stringify(report, null, 2));
