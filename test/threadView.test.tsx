@@ -588,6 +588,32 @@ describe("ThreadView sandbox badge", () => {
   });
 });
 
+describe("ThreadView model and effort history (#1927)", () => {
+  it("renders change dividers and historical footers after provider and effort changes", () => {
+    const initial = { provider: "codex", model: "gpt-6.1-sol", reasoningEffort: "high" };
+    const next = { provider: "claude", model: "claude-opus-5-5", reasoningEffort: "low" };
+    const messages: ChatMessage[] = [
+      { id: "boundary1", role: "event", text: "Model and effort", runId: "r1", createdAt: 1, runConfiguration: initial },
+      msg({ id: "answer1", role: "assistant", text: "old answer", runId: "r1", createdAt: 2 }),
+      { id: "boundary2", role: "event", text: "Model and effort", runId: "r2", createdAt: 3, runConfiguration: initial },
+      { id: "boundary3", role: "event", text: "Model and effort", runId: "r3", createdAt: 4, runConfiguration: next },
+      msg({ id: "answer3", role: "assistant", text: "new answer", runId: "r3", createdAt: 5 }),
+      msg({ id: "legacy", role: "assistant", text: "legacy answer", runId: "old", createdAt: 6 }),
+    ];
+    const html = renderToStaticMarkup(view({ detail: detail({ messages,
+      thread: thread({ provider: "grok", model: "grok-4.7", reasoningEffort: "medium" }),
+    }) }));
+    assert.equal((html.match(/aria-label="Model and effort"/g) ?? []).length, 2);
+    assert.match(html, /codex · gpt-6.1-sol · high effort/);
+    assert.match(html, /claude · opus 5.5 · low effort/);
+    const root = document.createElement("div");
+    root.innerHTML = html;
+    assert.match(root.querySelector('[data-msg="answer1"] footer')!.textContent!, /codex · gpt-6.1-sol · high/);
+    assert.match(root.querySelector('[data-msg="answer3"] footer')!.textContent!, /claude · opus 5.5 · low/);
+    assert.doesNotMatch(root.querySelector('[data-msg="legacy"] footer')!.textContent!, /grok|medium|gpt|opus/);
+  });
+});
+
 describe("ThreadView message roles", () => {
   it("renders user and assistant messages with distinct structure", () => {
     const html = render({

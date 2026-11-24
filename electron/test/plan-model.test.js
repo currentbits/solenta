@@ -58,6 +58,10 @@ function writeFakeClaude(dir) {
 "use strict";
 const fs = require("fs");
 const argv = process.argv.slice(2);
+if (argv.includes("--version")) {
+  console.log((process.env.FAKE_VERSION || "2.1.283") + " (Claude Code)");
+  process.exit(0);
+}
 fs.appendFileSync(process.env.FAKE_ARGS, JSON.stringify(argv) + "\\n");
 const model = argv[argv.indexOf("--model") + 1];
 const plan = argv[argv.indexOf("--permission-mode") + 1] === "plan";
@@ -205,13 +209,14 @@ describe("plan model on threads (#1716)", () => {
   let runner;
   let project;
   const saved = {};
-  const ENV = ["CODER_SIMULATE", "CODER_AGENT_CMD", "CODER_CLAUDE_BIN", "FAKE_ARGS", "FAKE_STDIN", "FAKE_ASK_PLAN"];
+  const ENV = ["CODER_SIMULATE", "CODER_AGENT_CMD", "CODER_CLAUDE_BIN", "FAKE_ARGS", "FAKE_STDIN", "FAKE_ASK_PLAN", "FAKE_VERSION"];
 
   beforeEach(async () => {
     for (const k of ENV) saved[k] = process.env[k];
     delete process.env.CODER_SIMULATE;
     delete process.env.CODER_AGENT_CMD;
     delete process.env.FAKE_ASK_PLAN;
+    delete process.env.FAKE_VERSION;
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-plan-model-"));
     process.env.CODER_CLAUDE_BIN = writeFakeClaude(tmpDir);
     process.env.FAKE_ARGS = path.join(tmpDir, "args");
@@ -300,7 +305,8 @@ describe("plan model on threads (#1716)", () => {
     assert.equal(store.getUsage(id).model, PLAN);
 
     services.setPermissionMode(store, { threadId: id, mode: "default" });
-    assert.ok(events(id).includes("Switched to Sonnet 5.5 for implementation"));
+    assert.ok(!events(id).includes("Switched to Sonnet 5.5 for implementation"),
+      "a mode picker change has not dispatched the implementation model yet");
 
     await runner.startRun({ threadId: id, prompt: "go" });
     await waitFor(() => store.getThread(id).status === "done" && store.getUsage(id)?.turns === 2);
@@ -310,7 +316,53 @@ describe("plan model on threads (#1716)", () => {
     assert.equal(flag(second, "--resume"), "sess-pm", "same session, no fork");
     assert.equal(flag(second, "--effort"), null, "act effort is the thread's (none)");
     assert.equal(store.getUsage(id).model, ACT);
+    assert.deepEqual(store.getMessages(id).filter((m) => m.role === "event" && m.runConfiguration)
+      .map((m) => m.runConfiguration), [
+        { provider: "claude", model: PLAN, reasoningEffort: "high" },
+        { provider: "claude", model: ACT, reasoningEffort: null },
+      ]);
     assert.equal(store.getThreads().length, 1, "no new thread");
+  });
+
+  it("records the launched Ultracode effort and its change back to ordinary effort", async () => {
+    await startRunner();
+    const t = services.createThread(store, { projectId: project.id, title: "ultracode", provider: "claude" });
+    store.updateThread(t.id, { model: PLAN, reasoningEffort: "low" });
+    services.setUltracode(store, { threadId: t.id, ultracode: true });
+    await runner.startRun({ threadId: t.id, prompt: "first" });
+    await waitFor(() => store.getThread(t.id).status === "done");
+    assert.equal(flag(spawns()[0], "--model"), PLAN);
+    assert.equal(flag(spawns()[0], "--effort"), "xhigh");
+    assert.equal(store.getThread(t.id).reasoningEffort, "low", "ordinary picker preference remains independent");
+
+    services.setUltracode(store, { threadId: t.id, ultracode: false });
+    await runner.startRun({ threadId: t.id, prompt: "second" });
+    await waitFor(() => store.getThread(t.id).status === "done" && store.getUsage(t.id)?.turns === 2);
+    assert.equal(flag(spawns()[1], "--model"), PLAN);
+    assert.equal(flag(spawns()[1], "--effort"), "low");
+    const configurations = store.getMessages(t.id).filter((m) => m.role === "event" && m.runConfiguration);
+    assert.deepEqual(configurations.map((m) => m.runConfiguration), [
+      { provider: "claude", model: PLAN, reasoningEffort: "xhigh" },
+      { provider: "claude", model: PLAN, reasoningEffort: "low" },
+    ]);
+    assert.match(configurations[0].text, /xhigh effort/);
+    assert.match(configurations[1].text, /low effort/);
+    assert.deepEqual(store.getMessages(t.id).filter((m) => m.role === "assistant")
+      .map((m) => m.runConfiguration.reasoningEffort), ["xhigh", "low"]);
+    store.saveNow();
+    assert.deepEqual(new Store(path.join(tmpDir, "store.json")).getMessages(t.id)
+      .filter((m) => m.role === "event" && m.runConfiguration), configurations);
+  });
+
+  it("records no model boundary when the installed Claude version cannot launch Ultracode", async () => {
+    process.env.FAKE_VERSION = "2.1.218";
+    await startRunner();
+    const t = services.createThread(store, { projectId: project.id, title: "old CLI", provider: "claude" });
+    store.updateThread(t.id, { model: PLAN, reasoningEffort: "low" });
+    services.setUltracode(store, { threadId: t.id, ultracode: true });
+    await assert.rejects(runner.startRun({ threadId: t.id, prompt: "work" }), /2\.1\.219 or newer/);
+    assert.equal(store.getMessages(t.id).filter((m) => m.runConfiguration).length, 0);
+    assert.equal(fs.existsSync(process.env.FAKE_ARGS), false, "version check never launches an agent");
   });
 
   it("switches the live process with set_model on plan approval and bills each model its share", async () => {
@@ -346,6 +398,11 @@ describe("plan model on threads (#1716)", () => {
     );
     assert.equal(store.getUsage(id).model, ACT);
     assert.equal(store.getThread(id).permissionMode, "default");
+    assert.deepEqual(store.getMessages(id).filter((m) => m.role === "event" && m.runConfiguration)
+      .map((m) => m.runConfiguration), [
+        { provider: "claude", model: PLAN, reasoningEffort: "high" },
+        { provider: "claude", model: ACT, reasoningEffort: "high" },
+      ], "a live set_model boundary preserves the effort that the process is actually using");
     const ev = events(id);
     assert.ok(ev.indexOf("Switched to Sonnet 5.5 for implementation") > ev.indexOf("Plan approved"));
   });

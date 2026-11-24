@@ -2538,7 +2538,9 @@ describe("runner claude provider", () => {
       "the real turn must land",
     );
     assert.deepEqual(
-      msgs.filter((m) => m.role === "event").map((m) => m.text),
+      msgs
+        .filter((m) => m.role === "event" && !m.runConfiguration)
+        .map((m) => m.text),
       [],
       "no fabricated failure while the CLI was still working",
     );

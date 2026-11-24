@@ -13,7 +13,6 @@ const {
   catalogCliProbeStarted,
   honouredPermissionModes,
   snapPermissionMode,
-  planActSwitchNote,
 } = require("./providers.js");
 const providerAuth = require("./providerAuth.js");
 const {
@@ -489,17 +488,8 @@ function setPermissionMode(store, input) {
     if (!thread.pendingQuestion) patch.awaitingInput = false;
   }
   const updated = store.updateThread(threadId, patch);
-  // Leaving plan mode hands the next turn to the act model (#1716).
-  const switchNote =
-    mode !== "plan" ? planActSwitchNote(entry, thread) : null;
-  if (switchNote) {
-    store.appendMessage(threadId, {
-      id: randomUUID(),
-      role: "event",
-      text: switchNote,
-      createdAt: Date.now(),
-    });
-  }
+  // Model/effort history is written by the runner when the next turn
+  // actually dispatches, including a queued or rejected start (#1927).
   store.save();
   const row = updated || { ...thread, ...patch };
   return decorateThread(store, row);
