@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import type {
   PendingPermissionInfo,
   PermissionDecision,
@@ -280,9 +280,14 @@ type PermissionRespond = (
 export function PermissionPrompt({
   pending,
   onRespond,
+  shortcuts = true,
+  composerRedirect = true,
 }: {
   pending: PendingPermissionInfo;
   onRespond: PermissionRespond;
+  /** Multiple worker cards must never compete with the open thread's keys. */
+  shortcuts?: boolean;
+  composerRedirect?: boolean;
 }) {
   const original = pending.command ?? null;
   const hasCommand = original !== null;
@@ -296,6 +301,8 @@ export function PermissionPrompt({
     : "";
   const [command, setCommand] = useState(original ?? "");
   const [sent, setSent] = useState(false);
+  const sending = useRef(false);
+  const [responseError, setResponseError] = useState<string | null>(null);
   const edited =
     editable && original !== null && command.trim() !== original.trim();
   const empty = editable && command.trim() === "";
@@ -313,26 +320,34 @@ export function PermissionPrompt({
   const scoped = editable && acceptAlways;
   const ruleEmpty = scoped && rule.trim() === "";
 
-  const answer = (decision: PermissionDecision, alwaysRule?: string) => {
-    if (sent) return;
+  const answer = async (decision: PermissionDecision, alwaysRule?: string) => {
+    if (sending.current) return;
     if (decision !== "deny" && empty) return;
+    sending.current = true;
     setSent(true);
-    void onRespond(
-      pending.requestId,
-      decision,
-      undefined,
-      editable ? command : undefined,
-      undefined,
-      undefined,
-      alwaysRule,
-    );
+    setResponseError(null);
+    try {
+      await onRespond(
+        pending.requestId,
+        decision,
+        undefined,
+        editable ? command : undefined,
+        undefined,
+        undefined,
+        alwaysRule,
+      );
+    } catch (err) {
+      sending.current = false;
+      setSent(false);
+      setResponseError(err instanceof Error ? err.message : String(err));
+    }
   };
   // No alwaysRule sends the suggested rules (main still holds them).
   const always = scoped
     ? () => answer("allowAlways", ruleDraft === null && suggested ? undefined : rule.trim())
     : () => answer("allowAlways");
   usePermissionKeys(
-    sent
+    sent || !shortcuts
       ? {}
       : {
           n: () => answer("deny"),
@@ -435,9 +450,9 @@ export function PermissionPrompt({
           className={styles.permissionAllow}
           disabled={sent || empty}
           onClick={() => answer("allow")}
-          aria-keyshortcuts="y"
+          aria-keyshortcuts={shortcuts ? "y" : undefined}
         >
-          <KeyHint k="y" /> Accept
+          {shortcuts && <KeyHint k="y" />} Accept
         </button>
         {scoped ? (
           <button
@@ -447,9 +462,9 @@ export function PermissionPrompt({
             data-permission-always=""
             title={`Remember ${rule} for this thread: later commands starting with it run without asking`}
             onClick={always}
-            aria-keyshortcuts="a"
+            aria-keyshortcuts={shortcuts ? "a" : undefined}
           >
-            <KeyHint k="a" /> Always allow <code>{rule}</code> in this thread
+            {shortcuts && <KeyHint k="a" />} Always allow <code>{rule}</code> in this thread
           </button>
         ) : acceptAlways ? (
           <button
@@ -457,9 +472,9 @@ export function PermissionPrompt({
             className={styles.permissionAllow}
             disabled={sent || empty}
             onClick={always}
-            aria-keyshortcuts="a"
+            aria-keyshortcuts={shortcuts ? "a" : undefined}
           >
-            <KeyHint k="a" /> Accept all
+            {shortcuts && <KeyHint k="a" />} Accept all
           </button>
         ) : null}
         {pending.folderGrant ? (
@@ -479,14 +494,15 @@ export function PermissionPrompt({
           className={styles.permissionDeny}
           disabled={sent}
           onClick={() => answer("deny")}
-          aria-keyshortcuts="n"
+          aria-keyshortcuts={shortcuts ? "n" : undefined}
         >
-          <KeyHint k="n" /> Deny
+          {shortcuts && <KeyHint k="n" />} Deny
         </button>
       </div>
-      <div className={styles.permissionRedirectHint} data-permission-redirect-hint="">
+      {responseError && <p className={styles.permissionGuardrail} role="alert">{responseError} Try again.</p>}
+      {composerRedirect && <div className={styles.permissionRedirectHint} data-permission-redirect-hint="">
         Sending a message declines this and redirects the agent
-      </div>
+      </div>}
       {scoped ? (
         <details className={styles.permissionMore} data-permission-more="">
           <summary>Always-allow options</summary>

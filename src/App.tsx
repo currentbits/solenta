@@ -2819,6 +2819,14 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onRestoreDraftConsumed={clearQueuedDraftRestore}
         onSetPermissionMode={setPermissionMode}
         onRespondPermission={respondPermission}
+        workerApprovals={{
+          threads,
+          projects,
+          loadApprovals: api.threads.pendingApprovals,
+          respond: api.threads.respondPermission,
+          subscribe: api.on,
+          onOpenWorker: handleSelectThread,
+        }}
         onRedirectPermission={redirectPermission}
         onClearQuestion={clearQuestion}
         onAnswerSecret={answerSecret}

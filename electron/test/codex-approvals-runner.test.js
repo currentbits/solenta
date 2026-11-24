@@ -281,6 +281,8 @@ describe("Codex ServerRequest reply path (#1171)", () => {
       [["Codex Ask", "a1"], ["Codex Ask", "a2"], ["Codex Two", "b1"]],
     );
     assert.equal(rows.find((r) => r.requestId === "b1").threadId, b.id);
+    assert.deepEqual(runner.listPendingApprovals({ threadId: a.id }).map((r) => r.requestId), ["a1", "a2"]);
+    assert.deepEqual(runner.listPendingApprovals({ threadId: "missing" }), []);
     // Answer A's second prompt, not its head: nothing else moves.
     runner.respondPermission({ threadId: a.id, requestId: "a2", decision: "deny" });
     assert.deepEqual(

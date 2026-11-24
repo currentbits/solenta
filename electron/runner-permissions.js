@@ -156,9 +156,10 @@ function createPermissions(ctx) {
    * tagged with its thread. Oldest thread run first; within a thread, the
    * provider's own order.
    */
-  function listPendingApprovals() {
+  function listPendingApprovals(input) {
     const out = [];
     for (const t of store.getThreads()) {
+      if (input && t.id !== input.threadId) continue;
       if (t.archived) continue;
       for (const p of pendingPermissionsFor(t.id)) {
         out.push({
