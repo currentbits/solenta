@@ -1,0 +1,21 @@
+{
+  "provenance": "Synthetic protocol fixtures, not a paid CLI recording. The restored-total branch follows native 2.1.283 and 2.1.318 source; the reset branch models pre-2.1.277 or a transcript without saved cost-state.",
+  "sessionId": "synthetic-resume-session",
+  "turns": [
+    {
+      "model": "fixture-model-a",
+      "usage": { "input_tokens": 10, "output_tokens": 2, "cache_read_input_tokens": 20, "cache_creation_input_tokens": 3 },
+      "cost": 0.01
+    },
+    {
+      "model": "fixture-model-b",
+      "usage": { "input_tokens": 4, "output_tokens": 1, "cache_read_input_tokens": 5, "cache_creation_input_tokens": 1 },
+      "cost": 0.02
+    },
+    {
+      "model": "fixture-model-b",
+      "usage": { "input_tokens": 2, "output_tokens": 1, "cache_read_input_tokens": 1, "cache_creation_input_tokens": 0 },
+      "cost": 0.01
+    }
+  ]
+}

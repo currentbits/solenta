@@ -952,17 +952,9 @@ async function main() {
       message: { content: [{ type: "text", text: "hang after result" }] },
     });
     await delay(20);
-    emit({
-      type: "result",
-      subtype: "success",
-      result: "hang after result",
-      usage: { input_tokens: 1, output_tokens: 2 },
-      total_cost_usd: 0,
-      num_turns: 1,
-      session_id: "sess-hang",
-    });
     // Trap SIGTERM briefly so a naive kill without tracking would miss us if
     // the handle was already dropped; write a marker so tests can observe.
+    // Install before result: its observer can immediately call stopAll.
     let gotTerm = false;
     process.on("SIGTERM", () => {
       if (gotTerm) return;
@@ -973,6 +965,15 @@ async function main() {
         } catch { /* ignore */ }
       }
       setTimeout(() => process.exit(0), 200);
+    });
+    emit({
+      type: "result",
+      subtype: "success",
+      result: "hang after result",
+      usage: { input_tokens: 1, output_tokens: 2 },
+      total_cost_usd: 0,
+      num_turns: 1,
+      session_id: "sess-hang",
     });
     // Stay alive until reaped (or 30s safety).
     await delay(30000);
