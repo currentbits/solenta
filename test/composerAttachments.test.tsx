@@ -345,7 +345,7 @@ describe("Composer attachments", () => {
     assert.ok(m.text().includes("specs"));
 
     await m.type(m.query("textarea"), "what is in here");
-    await m.click(m.query('button[aria-label="Send"]'));
+    await m.click(m.query('button[data-composer-send]'));
 
     assert.deepEqual(
       h.sends,
@@ -368,7 +368,7 @@ describe("Composer attachments", () => {
   it("sends attachments with no typed text (#1759)", async () => {
     const h: Harness = { sends: [] };
     const m = await mount(composer(h, { picks: [IMAGE] }));
-    const send = m.query('button[aria-label="Send"]') as HTMLButtonElement;
+    const send = m.query('button[data-composer-send]') as HTMLButtonElement;
     assert.equal(send.disabled, true, "nothing to send yet");
     await m.click(m.query('button[aria-label="Attach files or folders"]'));
     assert.equal(send.disabled, false, "an attachment alone is sendable");
@@ -381,7 +381,7 @@ describe("Composer attachments", () => {
     const h: Harness = { sends: [] };
     const m = await mount(composer(h));
     await m.type(m.query("textarea"), "plain prompt");
-    await m.click(m.query('button[aria-label="Send"]'));
+    await m.click(m.query('button[data-composer-send]'));
     assert.deepEqual(
       h.sends,
       [{ prompt: "plain prompt", attachments: undefined }],
@@ -407,7 +407,7 @@ describe("Composer attachments", () => {
     );
 
     await m.type(m.query("textarea"), "go");
-    await m.click(m.query('button[aria-label="Send"]'));
+    await m.click(m.query('button[data-composer-send]'));
     assert.deepEqual(
       h.sends,
       [{ prompt: "go", attachments: [FOLDER] }],
@@ -862,7 +862,7 @@ describe("Composer attachments", () => {
     );
     assert.deepEqual(stored, [], "pending composer state is not written to localStorage");
 
-    await second.click(second.query('button[aria-label="Send"]'));
+    await second.click(second.query('button[data-composer-send]'));
     await second.flush();
     assert.equal(h.sends.length, 1);
     assert.match(h.sends[0]!.prompt, /ship the notes/);

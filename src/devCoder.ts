@@ -393,6 +393,7 @@ function buildDevCoder(): CoderApi {
   const devSettings = createSettings(ctx);
   const api: CoderApi = {
     app: {
+      async claimStarPrompt() { return false; },
       async status(): Promise<AppStatus> {
         return {
           spendTodayUsd,

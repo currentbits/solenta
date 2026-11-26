@@ -790,6 +790,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
 
   const api = {
     app: {
+      claimStarPrompt: async () => false,
       status: () =>
         rec(
           "app.status",

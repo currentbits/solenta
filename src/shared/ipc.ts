@@ -5997,6 +5997,7 @@ export type ThreadForkOpts = {
 export interface CoderApi {
   app: {
     status(): Promise<AppStatus>;
+    claimStarPrompt(): Promise<boolean>;
     /** Check the release channel. Read-only: never installs anything. */
     checkUpdate(): Promise<UpdateStatus>;
     /** User-initiated install: download, verify the digest, stage the swap. */

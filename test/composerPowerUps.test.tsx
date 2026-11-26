@@ -122,7 +122,7 @@ describe("Composer paste-cards and stash (#381)", () => {
     assert.equal(textarea(m).value, "", "textarea stays empty");
     assert.ok(m.query("[data-paste-overflow]"), "overflow counter is up");
 
-    await m.click(m.query('button[aria-label="Send"]'));
+    await m.click(m.query('button[data-composer-send]'));
     assert.equal(sent.length, 1);
     assert.match(sent[0], /<pasted-context/);
     assert.match(sent[0], /x{400}/);
@@ -160,7 +160,7 @@ describe("Composer paste-cards and stash (#381)", () => {
     });
     assert.ok(m.query("[data-reply-chip]"));
     await m.type(textarea(m), "why folders?");
-    await m.click(m.query('button[aria-label="Send"]'));
+    await m.click(m.query('button[data-composer-send]'));
     assert.equal(sent.length, 1);
     assert.match(sent[0], /<reply-context message="a1">/);
     assert.match(sent[0], /agent said folders first/);
@@ -303,7 +303,7 @@ describe("Composer paste-cards and stash (#381)", () => {
       },
     });
     await m.type(textarea(m), "trim this");
-    await m.click(m.query('button[aria-label="Send"]'));
+    await m.click(m.query('button[data-composer-send]'));
     assert.equal(sent.length, 1);
     assert.match(sent[0], /quoted message truncated/);
     assert.match(sent[0], /trim this/);

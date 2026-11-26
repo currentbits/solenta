@@ -12,8 +12,11 @@ import assert from "node:assert/strict";
 import { describe, it, afterEach } from "node:test";
 import { useState, type ReactNode } from "react";
 import { mount, unmountAll, inAct } from "./support/dom.ts";
+import { bindingLabel } from "../src/keybindings";
+import { ConversationSettings } from "../src/components/ConversationSettings";
 import { Composer } from "../src/components/Composer";
 import {
+  getComposerBusyAction,
   setComposerBusyAction,
   setComposerSpellcheckEnabled,
   setComposerVimEnabled,
@@ -798,7 +801,7 @@ describe("Composer send", () => {
     assert.ok(ta, "composer must render a prompt textarea");
     await m.type(ta, "fix the sidebar chip");
 
-    const send = m.query('button[aria-label="Send"]') as HTMLButtonElement | null;
+    const send = m.query('button[data-composer-send]') as HTMLButtonElement | null;
     assert.ok(send, "Send control must exist");
     assert.equal(send.disabled, false, "Send must enable once there is a prompt");
     await m.click(send);
@@ -815,7 +818,7 @@ describe("Composer send", () => {
   it("refuses to submit an empty or whitespace-only prompt", async () => {
     const h = makeHarness();
     const m = await mount(composer(h));
-    const send = m.query('button[aria-label="Send"]') as HTMLButtonElement;
+    const send = m.query('button[data-composer-send]') as HTMLButtonElement;
 
     assert.equal(send.disabled, true, "empty prompt: Send disabled");
     await openOptions(m);
@@ -832,11 +835,11 @@ describe("Composer send", () => {
     const ta = m.query("textarea");
     await m.type(ta, "   \n\t  ");
     assert.equal(
-      (m.query('button[aria-label="Send"]') as HTMLButtonElement).disabled,
+      (m.query('button[data-composer-send]') as HTMLButtonElement).disabled,
       true,
       "whitespace-only prompt must still disable Send",
     );
-    await m.click(m.query('button[aria-label="Send"]'));
+    await m.click(m.query('button[data-composer-send]'));
     assert.equal(h.sends.length, 0, "whitespace Send must not call onSend");
     m.unmount();
   });
@@ -851,7 +854,7 @@ describe("Composer oversized-send guard (#1797)", () => {
     );
     const ta = m.query("textarea");
     await m.type(ta, "x".repeat(400));
-    await m.click(m.query('button[aria-label="Send"]'));
+    await m.click(m.query('button[data-composer-send]'));
 
     assert.equal(h.sends.length, 0, "the oversized send must be held back");
     assert.ok(
@@ -870,7 +873,7 @@ describe("Composer oversized-send guard (#1797)", () => {
     );
     const ta = m.query("textarea");
     await m.type(ta, "a small prompt");
-    await m.click(m.query('button[aria-label="Send"]'));
+    await m.click(m.query('button[data-composer-send]'));
 
     assert.deepEqual(h.sends, ["a small prompt"]);
     assert.equal(m.query("[data-oversized-prompt-warning]"), null);
@@ -884,7 +887,7 @@ describe("Composer oversized-send guard (#1797)", () => {
     );
     const ta = m.query("textarea");
     await m.type(ta, "x".repeat(10_000));
-    await m.click(m.query('button[aria-label="Send"]'));
+    await m.click(m.query('button[data-composer-send]'));
 
     assert.equal(
       h.sends.length,
@@ -902,7 +905,7 @@ describe("Composer oversized-send guard (#1797)", () => {
     );
     const ta = m.query("textarea");
     await m.type(ta, "x".repeat(400));
-    await m.click(m.query('button[aria-label="Send"]'));
+    await m.click(m.query('button[data-composer-send]'));
     assert.equal(h.sends.length, 0);
 
     await m.click(m.query("[data-oversized-send-anyway]"));
@@ -925,7 +928,7 @@ describe("Composer oversized-send guard (#1797)", () => {
     );
     const ta = m.query("textarea");
     await m.type(ta, "x".repeat(400));
-    await m.click(m.query('button[aria-label="Send"]'));
+    await m.click(m.query('button[data-composer-send]'));
 
     const compactBtn = m.query("[data-oversized-compact-first]");
     assert.ok(compactBtn, "Compact first must render when the hook is given");
@@ -1102,7 +1105,7 @@ describe("Composer options", () => {
     const m = await mount(composer(h, { ask: true }));
     assert.equal(m.query("[data-composer-options]"), null);
     assert.equal(m.query("[data-workflow-run]"), null);
-    assert.ok(m.query('button[aria-label="Send"]'));
+    assert.ok(m.query('button[data-composer-send]'));
     assert.ok(m.query('button[aria-label^="Model:"]'));
     m.unmount();
   });
@@ -2254,7 +2257,7 @@ describe("Composer while hard-disabled (archived thread)", () => {
     const ta = m.query("textarea") as HTMLTextAreaElement;
     assert.equal(ta.disabled, true, "prompt must be locked on an archived thread");
 
-    const send = m.query('button[aria-label="Send"]') as HTMLButtonElement;
+    const send = m.query('button[data-composer-send]') as HTMLButtonElement;
     assert.equal(send.disabled, true, "Send disabled while archived");
     assert.equal(m.query("[data-composer-options]"), null, "no Options button to reach");
 
@@ -2273,7 +2276,7 @@ describe("Composer while hard-disabled (archived thread)", () => {
 
     const m2 = await mount(composer(h, { disabled: true }));
     await m2.type(m2.query("textarea"), "sneaky second prompt");
-    const send = m2.query('button[aria-label="Send"]') as HTMLButtonElement;
+    const send = m2.query('button[data-composer-send]') as HTMLButtonElement;
     assert.equal(send.disabled, true, "disabled overrides a non-empty prompt");
     await m2.click(send);
     assert.equal(h.sends.length, 0);
@@ -2295,7 +2298,7 @@ describe("Composer while a run is active (busy)", () => {
     assert.equal(ta.disabled, false, "type-ahead must be allowed mid-run");
 
     await m.type(ta, "then run the tests");
-    const send = m.query('button[aria-label="Send"]') as HTMLButtonElement;
+    const send = m.query('button[data-composer-send]') as HTMLButtonElement;
     assert.equal(send.disabled, false, "Send must stay live to queue");
     await m.click(send);
     assert.deepEqual(
@@ -2317,14 +2320,14 @@ describe("Composer while a run is active (busy)", () => {
     assert.equal(steer.getAttribute("aria-pressed"), "false");
 
     await m.type(m.query("textarea"), "keep going that way");
-    await m.click(m.query('button[aria-label="Send"]'));
+    await m.click(m.query('button[data-composer-send]'));
     assert.deepEqual(h.sends, ["keep going that way"]);
     assert.deepEqual(h.steers, [false], "Queue is the default send");
 
     await m.type(m.query("textarea"), "no, do X instead");
     await m.click(steer);
     assert.equal(steer.getAttribute("aria-pressed"), "true");
-    await m.click(m.query('button[aria-label="Send"]'));
+    await m.click(m.query('button[data-composer-send]'));
     assert.deepEqual(h.sends, ["keep going that way", "no, do X instead"]);
     assert.deepEqual(h.steers, [false, true]);
     m.unmount();
@@ -2339,7 +2342,7 @@ describe("Composer while a run is active (busy)", () => {
     assert.ok(steer, "Steer must be offered on a live Codex turn");
     await m.type(m.query("textarea"), "no, do X instead");
     await m.click(steer);
-    await m.click(m.query('button[aria-label="Send"]'));
+    await m.click(m.query('button[data-composer-send]'));
     assert.deepEqual(h.sends, ["no, do X instead"]);
     assert.deepEqual(h.steers, [true]);
     m.unmount();
@@ -2350,13 +2353,13 @@ describe("Composer while a run is active (busy)", () => {
     const m = await mount(composer(h, { busy: true, provider: "kimi" }));
     assert.equal(m.query("[data-steer-toggle]"), null);
     await m.type(m.query("textarea"), "follow up");
-    await m.click(m.query('button[aria-label="Send"]'));
+    await m.click(m.query('button[data-composer-send]'));
     assert.deepEqual(h.sends, ["follow up"]);
     assert.deepEqual(h.steers, [false]);
     m.unmount();
   });
 
-  it("⌘⇧Enter always steers when the provider can", async () => {
+  it("⌘⇧Enter steers once while Queue stays the default", async () => {
     const h = makeHarness();
     const m = await mount(composer(h, { busy: true }));
     const ta = m.query("textarea") as HTMLTextAreaElement;
@@ -2376,6 +2379,64 @@ describe("Composer while a run is active (busy)", () => {
     assert.deepEqual(h.sends, ["redirect now"]);
     assert.deepEqual(h.steers, [true]);
     m.unmount();
+  });
+
+  it("Cmd+Shift+Enter queues once while Steer remains the default", async () => {
+    setComposerBusyAction("steer");
+    const h = makeHarness();
+    const m = await mount(composer(h, { busy: true }));
+    const ta = m.query("textarea")!;
+    const send = m.query("[data-composer-send]")!;
+    assert.equal(send.getAttribute("aria-label"), "Steer live turn");
+    assert.equal(send.textContent, "Steer");
+    await m.type(ta, "after this, check the tests");
+    await m.press(ta, "Enter", { metaKey: true, shiftKey: true });
+    assert.deepEqual(h.steers, [false]);
+    assert.equal(getComposerBusyAction(), "steer");
+    await m.type(ta, "redirect now");
+    await m.press(ta, "Enter", { metaKey: true });
+    assert.deepEqual(h.steers, [false, true]);
+
+  });
+
+  it("queues for unsupported agents without forgetting the preferred action", async () => {
+    setComposerBusyAction("steer");
+    const h = makeHarness("kimi");
+    const m = await mount(composer(h, { busy: true, provider: "kimi" }));
+    const send = m.query("[data-composer-send]")!;
+    assert.equal(send.getAttribute("aria-label"), "Queue follow-up");
+
+    await m.type(m.query("textarea"), "later");
+    await m.press(m.query("textarea"), "Enter", { metaKey: true, shiftKey: true });
+    assert.deepEqual(h.steers, [false]);
+    assert.equal(getComposerBusyAction(), "steer");
+  });
+
+  it("the alternate shortcut starts an ordinary turn when idle", async () => {
+    setComposerBusyAction("steer");
+    const h = makeHarness();
+    const m = await mount(composer(h));
+    assert.equal(m.query("[data-composer-send]")?.getAttribute("aria-label"), "Send");
+    await m.type(m.query("textarea"), "first request");
+    await m.press(m.query("textarea"), "Enter", { metaKey: true, shiftKey: true });
+    assert.deepEqual(h.sends, ["first request"]);
+    assert.deepEqual(h.steers, [false]);
+    assert.equal(getComposerBusyAction(), "steer");
+  });
+
+  it("Settings and an already-open composer share one live follow-up preference", async () => {
+    const h = makeHarness();
+    const m = await mount(<><ConversationSettings />{composer(h, { busy: true })}</>);
+    const select = m.query("#conversation-follow-up") as HTMLSelectElement;
+    await m.change(select, "steer");
+    assert.equal(m.query('[data-steer-action="steer"]')?.getAttribute("aria-pressed"), "true");
+    assert.equal(m.query("[data-composer-send]")?.getAttribute("aria-label"), "Steer live turn");
+    await m.type(m.query("textarea"), "changed from settings");
+    await m.click(m.query("[data-composer-send]"));
+    assert.deepEqual(h.steers, [true]);
+    await m.click(m.query('[data-steer-action="queue"]'));
+    assert.equal(select.value, "queue");
+    assert.equal(window.localStorage.getItem("coder.composerBusyAction"), "queue");
   });
 
   it("still locks what cannot be queued", async () => {
@@ -3449,7 +3510,7 @@ describe("Composer keyboard hints (issue #364)", () => {
     // #1429: the hint row is gone; the shortcuts stay discoverable on Send
     // and in the keyboard sheet.
     assert.equal(m.query("[data-kbd-hints]"), null);
-    const send = m.query('button[aria-label="Send"]') as HTMLElement;
+    const send = m.query('button[data-composer-send]') as HTMLElement;
     assert.match(send.title, /⌘Enter/);
     assert.match(send.title, /⌥Enter asks a side question/);
     assert.match(send.title, /⌘S stashes/);
@@ -3460,9 +3521,9 @@ describe("Composer keyboard hints (issue #364)", () => {
   it("busy Send title mentions queueing, steering and Esc stop", async () => {
     const h = makeHarness();
     const m = await mount(composer(h, { busy: true }));
-    const send = m.query('button[aria-label="Send"]') as HTMLElement;
-    assert.match(send.title, /Queue for when this run lands \(⌘Enter\)/);
-    assert.match(send.title, /⌘⇧Enter steers/);
+    const send = m.query('button[data-composer-send]') as HTMLElement;
+    assert.ok(send.title.includes(`Queue for when this run lands (${bindingLabel("composer.send")})`));
+    assert.ok(send.title.includes(`${bindingLabel("composer.steer")} steers once`));
     assert.match(send.title, /Esc stops the run/);
     m.unmount();
   });

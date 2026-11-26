@@ -85,7 +85,7 @@ describe("queued follow-up (issue #92 / #314)", () => {
     const ta = m.query("textarea") as HTMLTextAreaElement;
     assert.equal(ta.disabled, false, "the prompt must accept type-ahead");
     await m.type(ta, "then update the changelog");
-    await m.click(m.query('button[aria-label="Send"]'));
+    await m.click(m.query('button[data-composer-send]'));
     await m.flush();
 
     assert.equal(
@@ -121,7 +121,7 @@ describe("queued follow-up (issue #92 / #314)", () => {
     const { fake, m, busy } = await bootOnBusyThread();
 
     await m.type(m.query("textarea"), "then update the changelog");
-    await m.click(m.query('button[aria-label="Send"]'));
+    await m.click(m.query('button[data-composer-send]'));
     await m.flush();
     assert.ok(m.query("[data-queued-prompt]"), "the queue must be visible");
 
@@ -153,10 +153,10 @@ describe("queued follow-up (issue #92 / #314)", () => {
     const { fake, m } = await bootOnBusyThread();
 
     await m.type(m.query("textarea"), "first thought");
-    await m.click(m.query('button[aria-label="Send"]'));
+    await m.click(m.query('button[data-composer-send]'));
     await m.flush();
     await m.type(m.query("textarea"), "second thought");
-    await m.click(m.query('button[aria-label="Send"]'));
+    await m.click(m.query('button[data-composer-send]'));
     await m.flush();
 
     assert.equal(fake.of("runs.start").length, 0);
@@ -179,7 +179,7 @@ describe("queued follow-up (issue #92 / #314)", () => {
     const { fake, m, busy } = await bootOnBusyThread();
 
     await m.type(m.query("textarea"), "never mind this one");
-    await m.click(m.query('button[aria-label="Send"]'));
+    await m.click(m.query('button[data-composer-send]'));
     await m.flush();
 
     const cancel = m.query("button[data-cancel-queued]");
@@ -206,7 +206,7 @@ describe("queued follow-up (issue #92 / #314)", () => {
     const { fake, m } = await bootOnBusyThread();
 
     await m.type(m.query("textarea"), "then update the changelog");
-    await m.click(m.query('button[aria-label="Send"]'));
+    await m.click(m.query('button[data-composer-send]'));
     await m.flush();
 
     const queuedCalls = fake.of("threads.setQueued");
@@ -375,7 +375,7 @@ describe("queued follow-up (issue #92 / #314)", () => {
     const { fake, m } = await bootOnBusyThread();
 
     await m.type(m.query("textarea"), "original words");
-    await m.click(m.query('button[aria-label="Send"]'));
+    await m.click(m.query('button[data-composer-send]'));
     await m.flush();
 
     const edit = m.query("button[data-edit-queued]");
@@ -422,7 +422,7 @@ describe("queued follow-up (issue #92 / #314)", () => {
     const { fake, m } = await bootOnBusyThread();
 
     await m.type(m.query("textarea"), "still queued");
-    await m.click(m.query('button[aria-label="Send"]'));
+    await m.click(m.query('button[data-composer-send]'));
     await m.flush();
 
     await m.click(m.query("button[data-edit-queued]"));
@@ -500,7 +500,7 @@ describe("queued follow-up (issue #92 / #314)", () => {
     const { m } = await bootOnBusyThread();
 
     await m.type(m.query("textarea"), "keep these words");
-    await m.click(m.query('button[aria-label="Send"]'));
+    await m.click(m.query('button[data-composer-send]'));
     await m.flush();
     const ta = m.query("textarea") as HTMLTextAreaElement;
     assert.equal(ta.value, "", "queueing clears the composer");
@@ -524,7 +524,7 @@ describe("queued follow-up (issue #92 / #314)", () => {
     const { fake, m } = await bootOnBusyThread();
 
     await m.type(m.query("textarea"), "never mind this one");
-    await m.click(m.query('button[aria-label="Send"]'));
+    await m.click(m.query('button[data-composer-send]'));
     await m.flush();
 
     const orig = fake.api.threads.setQueued.bind(fake.api.threads);
@@ -559,7 +559,7 @@ describe("queued follow-up (issue #92 / #314)", () => {
     const { m } = await bootOnBusyThread();
 
     await m.type(m.query("textarea"), "queued words");
-    await m.click(m.query('button[aria-label="Send"]'));
+    await m.click(m.query('button[data-composer-send]'));
     await m.flush();
     const ta = m.query("textarea") as HTMLTextAreaElement;
     await m.type(ta, "half-typed draft");
@@ -580,7 +580,7 @@ describe("queued follow-up (issue #92 / #314)", () => {
     const { fake, m } = await bootOnBusyThread();
 
     await m.type(m.query("textarea"), "never mind this one");
-    await m.click(m.query('button[aria-label="Send"]'));
+    await m.click(m.query('button[data-composer-send]'));
     await m.flush();
     const ta = m.query("textarea") as HTMLTextAreaElement;
     assert.equal(ta.value, "", "queueing clears the composer");
@@ -618,10 +618,10 @@ describe("queued follow-up (issue #92 / #314)", () => {
 
   async function queueTwoThoughts(m: Awaited<ReturnType<typeof bootOnBusyThread>>["m"]) {
     await m.type(m.query("textarea"), "first thought");
-    await m.click(m.query('button[aria-label="Send"]'));
+    await m.click(m.query('button[data-composer-send]'));
     await m.flush();
     await m.type(m.query("textarea"), "second thought");
-    await m.click(m.query('button[aria-label="Send"]'));
+    await m.click(m.query('button[data-composer-send]'));
     await m.flush();
   }
 
@@ -692,7 +692,7 @@ describe("queued follow-up (issue #92 / #314)", () => {
       "the queued image returns as a composer chip",
     );
 
-    await m.click(m.query('button[aria-label="Send"]'));
+    await m.click(m.query('button[data-composer-send]'));
     await m.flush();
     const requeued = fake
       .of("threads.setQueued")
@@ -721,7 +721,7 @@ describe("queued follow-up (issue #92 / #314)", () => {
       return orig(input);
     };
 
-    await m.click(m.query('button[aria-label="Send"]'));
+    await m.click(m.query('button[data-composer-send]'));
     await m.flush();
     assert.equal(ta.value, "first thought\n\nsecond thought", "draft survives");
     assert.ok(m.query(chip), "the file chip survives");
@@ -731,7 +731,7 @@ describe("queued follow-up (issue #92 / #314)", () => {
     assert.match(m.text(), /queue write failed/, "the failure is visible");
 
     reject = false;
-    await m.click(m.query('button[aria-label="Send"]'));
+    await m.click(m.query('button[data-composer-send]'));
     await m.flush();
     assert.equal(ta.value, "", "a landed retry clears the composer");
     assert.equal(m.query(chip), null);
@@ -1000,10 +1000,10 @@ describe("queued follow-up (issue #92 / #314)", () => {
     const { m } = await bootOnBusyThread();
 
     await m.type(m.query("textarea"), "para one\n\npara two");
-    await m.click(m.query('button[aria-label="Send"]'));
+    await m.click(m.query('button[data-composer-send]'));
     await m.flush();
     await m.type(m.query("textarea"), "second thought");
-    await m.click(m.query('button[aria-label="Send"]'));
+    await m.click(m.query('button[data-composer-send]'));
     await m.flush();
 
     const items = m.queryAll("[data-queued-item]");
@@ -1522,7 +1522,7 @@ describe("side question /btw during a run (issue #471)", () => {
     const { fake, m } = await bootOnBusyThread();
 
     await m.type(m.query("textarea"), "/btw where is createThread");
-    await m.click(m.query('button[aria-label="Send"]'));
+    await m.click(m.query('button[data-composer-send]'));
     await m.flush();
 
     assert.equal(
@@ -1552,7 +1552,7 @@ describe("/goal (issue #1531)", () => {
     const { fake, m } = await bootOnBusyThread();
 
     await m.type(m.query("textarea"), "/goal all tests green");
-    await m.click(m.query('button[aria-label="Send"]'));
+    await m.click(m.query('button[data-composer-send]'));
     await m.flush();
 
     assert.equal(fake.of("runs.start").length, 0);
@@ -1578,7 +1578,7 @@ describe("/goal (issue #1531)", () => {
   it("bare /goal with no goal explains instead of sending", async () => {
     const { fake, m } = await bootOnBusyThread();
     await m.type(m.query("textarea"), "/goal");
-    await m.click(m.query('button[aria-label="Send"]'));
+    await m.click(m.query('button[data-composer-send]'));
     await m.flush();
     assert.equal(fake.of("threads.setGoal").length, 0);
     assert.equal(fake.of("threads.setQueued").length, 0);

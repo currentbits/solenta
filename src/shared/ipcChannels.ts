@@ -48,6 +48,7 @@ export type PushChannel = (typeof PUSH_CHANNELS)[number];
 
 export const IPC_CHANNELS = [
   { ns: "app", method: "status" },
+  { ns: "app", method: "claimStarPrompt" },
   { ns: "app", method: "checkUpdate" },
   { ns: "app", method: "downloadUpdate" },
   { ns: "app", method: "applyUpdate" },

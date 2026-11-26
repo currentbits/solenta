@@ -1,4 +1,4 @@
-import { useCallback, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { bindingLabel, formatChord, KEYBINDINGS } from "../keybindings";
 import {
   useComposerVimEnabled,
@@ -75,6 +75,8 @@ interface KeyboardSheetProps {
 }
 
 export function KeyboardSheet({ open, onClose }: KeyboardSheetProps) {
+  const [query, setQuery] = useState("");
+  useEffect(() => { if (!open) setQuery(""); }, [open]);
   const composerVim = useComposerVimEnabled();
   const enterSends = useEnterSendsEnabled();
   useKeybindingOverrides();
@@ -83,6 +85,9 @@ export function KeyboardSheet({ open, onClose }: KeyboardSheetProps) {
   useEscapeClose(open, handleClose);
   useModalFocus(open, dialogRef);
   if (!open) return null;
+  const matches = (row: ShortcutRow) => `${row.action} ${row.keys}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase());
+  const appRows = appShortcutRows(composerVim, enterSends).filter(matches);
+  const vimRows = composerVim ? VIM_SHORTCUTS.filter(matches) : [];
 
   return (
     <div
@@ -115,11 +120,13 @@ export function KeyboardSheet({ open, onClose }: KeyboardSheetProps) {
             ×
           </button>
         </header>
-        <ShortcutList rows={appShortcutRows(composerVim, enterSends)} />
-        {composerVim && (
+        <input type="search" className={styles.search} aria-label="Search keyboard shortcuts" placeholder="Search shortcuts…" value={query} onChange={e => setQuery(e.target.value)} />
+        <ShortcutList rows={appRows} />
+        {!appRows.length && !vimRows.length && <p className={styles.empty} role="status">No matching shortcuts.</p>}
+        {vimRows.length > 0 && (
           <>
             <h3 className={styles.section}>Composer vim</h3>
-            <ShortcutList rows={VIM_SHORTCUTS} />
+            <ShortcutList rows={vimRows} />
           </>
         )}
       </div>

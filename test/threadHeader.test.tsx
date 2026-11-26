@@ -174,6 +174,7 @@ function view(props: {
     opts?: { worktree?: boolean; orchestrate?: boolean },
   ) => void;
   onRenameThread?: (title: string) => void | Promise<void>;
+  onEnsureFullHistory?: (threadId: string) => void;
   onExportReport?: (input: { threadId: string }) => Promise<string | null>;
   onExportReportMarkdown?: (input: { threadId: string }) => Promise<string | null>;
   onSetCrossThreadInbound?: (
@@ -227,6 +228,7 @@ function view(props: {
       onAddProject={() => {}}
       onCreateThread={props.onCreateThread}
       onRenameThread={props.onRenameThread}
+      onEnsureFullHistory={props.onEnsureFullHistory}
       onExportReport={props.onExportReport}
       onExportReportMarkdown={props.onExportReportMarkdown}
       onStartRun={props.onStartRun ?? (() => {})}
@@ -2356,5 +2358,33 @@ describe("Workers header control and parent navigation", () => {
       "Task is no longer available",
     );
     missingTask.unmount();
+  });
+});
+
+
+describe("copy conversation and branch", () => {
+  it("waits for complete history, copies Markdown, and reports clipboard failure", async () => {
+    const copied: string[] = [];
+    let fail = false;
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: {
+      writeText: async (text: string) => { if (fail) throw new Error("denied"); copied.push(text); },
+    } });
+    const requested: string[] = [];
+    const partial = { ...detail(), hasOlderMessages: true };
+    const m = await mount(view({ detail: partial, onEnsureFullHistory: id => requested.push(id) }));
+    await m.click(m.query('[aria-label="Thread actions"]'));
+    await m.click(m.query('[data-copy-conversation]'));
+    assert.deepEqual(requested, ["t1"]);
+    assert.deepEqual(copied, [], "never copies a partial transcript silently");
+    const complete = detail({ messages: [msg({role: "user", text: "Original request"}), msg({role: "assistant", text: "Final **answer**"})] });
+    await m.rerender(view({ detail: complete }));
+    await m.click(m.query('[data-copy-conversation]'));
+    assert.match(copied[0]!, /Original request/);
+    assert.match(copied[0]!, /Final \*\*answer\*\*/);
+    await m.click(m.query('[data-copy-branch]'));
+    assert.equal(copied[1], "coder/header-features-abc123");
+    fail = true;
+    await m.click(m.query('[data-copy-conversation]'));
+    assert.match(m.text(), /Could not copy/);
   });
 });

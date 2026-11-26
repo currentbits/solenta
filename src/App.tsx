@@ -15,6 +15,7 @@ import { computerApi, liveComputerHost, useComputerContext } from "./coder/compu
 import { useCoder } from "./useCoder";
 import { addPrCommentToDraft } from "./prCommentContext";
 import type { PrListViewProps } from "./components/PrListView";
+import { StarPromptToast } from "./components/StarPromptToast";
 import { isDevBuild } from "./coderApi";
 import { demoProviderLimits } from "./providerUsageDemo";
 import { ErrorBoundary } from "./components/ErrorBoundary";
@@ -2353,6 +2354,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     <PrHoverFetchContext.Provider value={prDetail}>
     <div className={styles.shell}>
       <ConnectionBanner />
+      <StarPromptToast enabled={!isWebMode() && !loading && !onboardingOpen && threads.length > 0}
+        blocked={settingsOpen || onboardingOpen || Boolean(archiveToastNode || backgroundToast)} claim={api.app.claimStarPrompt} />
       {computer.key && computer.error && !settingsOpen && <SettingsLoadNotice
         error={`${computer.label}: ${computer.error}`} loading={computer.loading}
         onRetry={async () => computer.refresh()} />}

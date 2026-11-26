@@ -456,7 +456,7 @@ describe("ThreadView / palette actions", () => {
       });
     async function typeAndSend(m: Mounted, text: string) {
       await m.type(m.query("textarea"), text);
-      await m.click(m.query('button[aria-label="Send"]'));
+      await m.click(m.query('button[data-composer-send]'));
     }
 
     it("holds the send and offers Send anyway / Compact first", async () => {

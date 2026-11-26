@@ -1,3 +1,5 @@
+import { ConversationAnnouncer } from "./ConversationAnnouncer";
+import { conversationMarkdown } from "../conversationMarkdown";
 import type { FarLink, FarLinks } from "../app/useThreadRoster";
 import type { MachineOption } from "./WorkspaceStrip";
 import {
@@ -1271,6 +1273,9 @@ export const ThreadView = memo(function ThreadView({
     | "id"
     | "link"
     | "path"
+    | "conversation"
+    | "branch"
+    | "copy-failed"
     | "reply"
     | "report"
     | "report-failed"
@@ -3303,9 +3308,15 @@ export const ThreadView = memo(function ThreadView({
   // for threads with no worktree of their own.
   const copyPath = thread.worktreePath || project?.path || null;
 
-  const handleCopy = async (what: "id" | "link" | "path") => {
+  const handleCopy = async (what: "id" | "link" | "path" | "conversation" | "branch") => {
     let text = `solenta://thread/${thread.id}`;
-    if (what === "id") text = thread.id;
+    if (what === "conversation") {
+      if (detail.hasOlderMessages) { onEnsureFullHistory?.(thread.id); return; }
+      text = conversationMarkdown(detail);
+    } else if (what === "branch") {
+      if (!thread.branch) return;
+      text = thread.branch;
+    } else if (what === "id") text = thread.id;
     else if (what === "path") {
       if (!copyPath) return;
       text = copyPath;
@@ -3313,9 +3324,10 @@ export const ThreadView = memo(function ThreadView({
     try {
       await navigator.clipboard.writeText(text);
     } catch {
+      if (currentThreadIdRef.current === thread.id) flashCopied("copy-failed");
       return;
     }
-    flashCopied(what);
+    if (currentThreadIdRef.current === thread.id) flashCopied(what);
   };
 
   const handleExportReport = async () => {
@@ -3612,6 +3624,7 @@ export const ThreadView = memo(function ThreadView({
       data-thread-drop=""
       data-chat-width={chatWidth}
     >
+      <ConversationAnnouncer detail={detail} scopeId={`${thread.host?.key ?? "local"}:${thread.id}`} />
       {fileDrag && onDropAttachmentFiles ? (
         <div className={styles.dropOverlay} data-drop-overlay="" aria-hidden>
           {DROP_OVERLAY_MESSAGE}
@@ -3814,6 +3827,16 @@ export const ThreadView = memo(function ThreadView({
                       >
                         {copied === "link" ? "Copied" : "Copy link"}
                       </button>
+                      <button type="button" className={styles.menuItem} role="menuitem" data-copy-conversation=""
+                        disabled={Boolean(detail.hasOlderMessages && !onEnsureFullHistory)}
+                        onClick={() => void handleCopy("conversation")}>
+                        {copied === "conversation" ? "Copied" : detail.hasOlderMessages ? "Load full conversation to copy" : "Copy conversation"}
+                      </button>
+                      {thread.branch && <button type="button" className={styles.menuItem} role="menuitem" data-copy-branch=""
+                        onClick={() => void handleCopy("branch")}>
+                        {copied === "branch" ? "Copied" : "Copy branch name"}
+                      </button>}
+                      {copied === "copy-failed" && <span role="status" className={styles.menuItem}>Could not copy. Try again.</span>}
                       {copyPath && (
                         <button
                           type="button"

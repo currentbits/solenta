@@ -140,7 +140,7 @@ export const KEYBINDINGS: readonly KeybindingDef[] = [
   },
   {
     id: "composer.steer",
-    label: "Steer the live turn",
+    label: "Use the opposite follow-up action once (queue / steer)",
     scope: "composer",
     chord: "mod+shift+enter",
   },

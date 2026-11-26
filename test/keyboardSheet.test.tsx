@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
 import { useState } from "react";
-import { mount } from "./support/dom.ts";
+import { mount, unmountAll } from "./support/dom.ts";
 import { KeyboardSheet } from "../src/components/KeyboardSheet";
 import { setMacPlatformForTests } from "../src/keybindings";
 import {
@@ -15,6 +15,7 @@ import {
 } from "../src/uiPrefs";
 
 setMacPlatformForTests(true);
+afterEach(unmountAll);
 
 const VIM_MOTION_KEYS = [
   "h / j / k / l",
@@ -212,6 +213,8 @@ describe("keyboard sheet focus trap", () => {
     assert.ok(dialog.contains(first), "Tab stays inside");
     assert.notEqual(first, dialog, "Tab moves to a focusable inside the dialog");
     await m.pressFocused("Tab");
+    assert.equal(document.activeElement, m.query('input[type="search"]'), "Tab reaches shortcut search");
+    await m.pressFocused("Tab");
     assert.equal(document.activeElement, first, "Tab wraps inside the dialog");
 
     await m.pressFocused("Escape");
@@ -263,6 +266,24 @@ describe("keyboard sheet renders the keybinding table (#1506)", () => {
     assert.ok(kbds.includes("Ctrl + K"));
     assert.ok(kbds.includes("Alt + ←"), "back is Alt+Left off mac");
     assert.ok(!kbds.some((k) => k.includes("⌘")));
+    m.unmount();
+  });
+});
+
+
+describe("keyboard shortcut search", () => {
+  it("filters actions, shows no results, and resets on reopen", async () => {
+    const m = await mount(<KeyboardSheet open onClose={() => {}} />);
+    const search = m.query('input[type="search"]')!;
+    await m.type(search, "command palette");
+    assert.equal(m.queryAll("kbd").length, 1);
+    assert.match(m.text(), /Command palette/);
+    await m.type(search, "no such shortcut");
+    assert.equal(m.queryAll("kbd").length, 0);
+    assert.match(m.text(), /No matching shortcuts/);
+    await m.rerender(<KeyboardSheet open={false} onClose={() => {}} />);
+    await m.rerender(<KeyboardSheet open onClose={() => {}} />);
+    assert.ok(m.queryAll("kbd").length > 10);
     m.unmount();
   });
 });

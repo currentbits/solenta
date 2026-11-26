@@ -3866,7 +3866,7 @@ describe("ThreadView permission redirect (#1762)", () => {
     );
     const ta = composerTextarea(m);
     await m.type(ta, "do the other thing instead");
-    await m.click(m.query('button[aria-label="Send"]'));
+    await m.click(m.query('button[data-composer-send]'));
     assert.deepEqual(redirected, [
       { requestId: "req-1762", prompt: "do the other thing instead" },
     ]);
@@ -3893,7 +3893,7 @@ describe("ThreadView permission redirect (#1762)", () => {
     );
     const ta = composerTextarea(m);
     await m.type(ta, "/btw is this safe?");
-    await m.click(m.query('button[aria-label="Send"]'));
+    await m.click(m.query('button[data-composer-send]'));
     assert.equal(redirected.length, 0, "/btw must not decline the permission card");
     assert.deepEqual(started, ["/btw is this safe?"]);
     m.unmount();
@@ -4088,7 +4088,7 @@ describe("ThreadView deferred question/approval cards (#1789)", () => {
       "sanity: the card is deferred for this send",
     );
 
-    await m.click(m.query('button[aria-label="Send"]'));
+    await m.click(m.query('button[data-composer-send]'));
     assert.deepEqual(redirected, [
       { requestId: "req-1789", prompt: "do the other thing instead" },
     ]);
