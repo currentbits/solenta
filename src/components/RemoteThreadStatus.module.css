@@ -1,0 +1,26 @@
+.status {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 18px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.status[data-unavailable] { background: var(--card); }
+.copy { display: flex; flex: 1; flex-direction: column; gap: 4px; min-width: 180px; }
+.copy strong { color: var(--text); font-weight: 500; }
+.hint { color: var(--text-dim); overflow-wrap: anywhere; }
+.action {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  padding: 4px 8px;
+  font: inherit;
+  cursor: pointer;
+}
+.action:hover { background: var(--card-hover); }
+.action:disabled { opacity: 0.5; cursor: default; }
+.action:focus-visible { outline: none; box-shadow: var(--focus-ring); }

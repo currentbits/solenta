@@ -280,6 +280,8 @@ export interface ComposerProps {
    * attaches it to the card.
    */
   statusTab?: ReactNode;
+  /** Keep editing the local draft while its computer is unavailable. */
+  sendBlockedReason?: string | null;
   /** Hard lock (archived thread): nothing can be typed or started. */
   disabled?: boolean;
   /**
@@ -574,6 +576,7 @@ export const Composer = memo(function Composer({
   workspaceStrip,
   statusTab,
   disabled = false,
+  sendBlockedReason = null,
   busy = false,
   onSend,
   onSendInBackground,
@@ -834,9 +837,9 @@ export const Composer = memo(function Composer({
   // mode changes. Adjusting during render drops it before paint, so the
   // focus restore cannot run after the textarea takes the new thread.
   const [menuGuardSeen, setMenuGuardSeen] = useState(
-    () => `${threadId}|${disabled || busy ? 1 : 0}|${ask ? 1 : 0}`,
+    () => `${threadId}|${disabled || busy || sendBlockedReason ? 1 : 0}|${ask ? 1 : 0}`,
   );
-  const menuGuard = `${threadId}|${disabled || busy ? 1 : 0}|${ask ? 1 : 0}`;
+  const menuGuard = `${threadId}|${disabled || busy || sendBlockedReason ? 1 : 0}|${ask ? 1 : 0}`;
   if (menuGuardSeen !== menuGuard) {
     setMenuGuardSeen(menuGuard);
     setOptionsOpen(false);
@@ -1027,7 +1030,10 @@ export const Composer = memo(function Composer({
   const selectedWorkflowName =
     workflows.find((w) => w.id === templateId)?.name ?? null;
 
+  const sendBlockedRef = useRef(sendBlockedReason);
+  sendBlockedRef.current = sendBlockedReason;
   const canSend =
+    !sendBlockedReason &&
     !disabled &&
     !sending &&
     (hasPrompt ||
@@ -1039,7 +1045,7 @@ export const Composer = memo(function Composer({
    * Everything that cannot be queued (workflow start, model, permission mode)
    * waits for the run to land; only the prompt and Send stay live while busy.
    */
-  const locked = disabled || busy;
+  const locked = disabled || busy || Boolean(sendBlockedReason);
   // #1806: the ghost only makes sense on an idle, empty draft — typing or a
   // new turn starting (locked flips true) hides it with no extra state.
   const suggestion = (nextPromptSuggestion || "").trim();
@@ -1349,7 +1355,7 @@ export const Composer = memo(function Composer({
    * line back if nothing replaced it.
    */
   const runShell = async (typed: string, command: string) => {
-    if (!onShell || disabled) return;
+    if (!onShell || disabled || sendBlockedRef.current) return;
     if (!command) {
       setLocalError("Type a command after !");
       return;
@@ -1372,6 +1378,7 @@ export const Composer = memo(function Composer({
     action: (prompt: string) => void | Promise<void>,
     failLabel: string,
   ) => {
+    if (sendBlockedRef.current) return;
     const typed = readDraft();
     const shellLine = onShell ? shellCommand(typed) : null;
     if (shellLine !== null) {
@@ -1386,7 +1393,7 @@ export const Composer = memo(function Composer({
     const prompt = await composeOutgoing(typed);
     // Attachments alone are a message (#1759): the runner gives the agent
     // a stand-in prompt and the transcript shows just the images.
-    if ((!prompt.trim() && attachments.length === 0) || disabled || sending)
+    if ((!prompt.trim() && attachments.length === 0) || disabled || sending || sendBlockedRef.current)
       return;
     if (!sizeConfirmedRef.current) {
       const estTokens = estimateTokens(
@@ -1450,6 +1457,7 @@ export const Composer = memo(function Composer({
     setColdWarning(false);
   };
   const compactFirstForOversizedSend = () => {
+    if (sendBlockedRef.current) return;
     pendingSendRef.current = null;
     setSizeWarning(null);
     setColdWarning(false);
@@ -3792,7 +3800,7 @@ export const Composer = memo(function Composer({
             disabled={!canSend}
             data-queues={busy && !(canSteer && busyAction === "steer") ? "" : undefined}
             title={
-              canSteer && busyAction === "steer"
+              sendBlockedReason || (canSteer && busyAction === "steer"
                 ? `Steer the live turn (${bindingLabel("composer.send")}). ${bindingLabel("composer.steer")} queues once.`
                 : busy
                   ? canSteer
@@ -3800,7 +3808,7 @@ export const Composer = memo(function Composer({
                     : "Queue for when this run lands (⌘Enter). ⌥Enter asks a side question. Esc stops the run."
                   : onSendInBackground
                     ? "Send (⌘Enter). ⌥Enter asks a side question. ⌘⌥Enter starts this in the background. ⌘S stashes the draft."
-                    : "Send (⌘Enter). ⌥Enter asks a side question. ⌘S stashes the draft."
+                    : "Send (⌘Enter). ⌥Enter asks a side question. ⌘S stashes the draft.")
             }
             onClick={() => submitSend()}
           >

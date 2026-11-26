@@ -1,3 +1,4 @@
+import { RemoteThreadStatus, type ThreadComputer } from "./RemoteThreadStatus";
 import { ConversationAnnouncer } from "./ConversationAnnouncer";
 import { conversationMarkdown } from "../conversationMarkdown";
 import type { FarLink, FarLinks } from "../app/useThreadRoster";
@@ -337,6 +338,9 @@ interface ThreadViewProps {
   revealMessageId?: string | null;
   /** threads.get failure for the selected thread; shown with a retry. */
   detailError?: string | null;
+  computer?: ThreadComputer | null;
+  onReconnectComputer?: () => Promise<void>;
+  onComputerConnections?: () => void;
   /** Re-fetch the selected thread's detail after a load failure. */
   onRetryDetail?: () => void;
   /**
@@ -933,6 +937,9 @@ export const ThreadView = memo(function ThreadView({
   detail,
   revealMessageId = null,
   detailError = null,
+  computer = null,
+  onReconnectComputer,
+  onComputerConnections,
   onRetryDetail,
   onLoadOlderMessages,
   onEnsureFullHistory,
@@ -3026,10 +3033,12 @@ export const ThreadView = memo(function ThreadView({
   }
 
   if (!detail) {
-    if (detailError) {
+    if (detailError || (computer && computer.status !== "online")) {
       return (
         <main className={styles.main}>
           {returnToHeader(returnToView, onReturnToView)}
+          {computer && <RemoteThreadStatus key={computer.key} computer={computer} stale
+            onReconnect={onReconnectComputer} onConnections={onComputerConnections} />}
           <div className={styles.empty}>
             <div className={styles.emptyGlyph} aria-hidden="true">
               <svg
@@ -3047,9 +3056,9 @@ export const ThreadView = memo(function ThreadView({
                 <path d="M6.9 2.3 1.6 11.6A1.5 1.5 0 0 0 2.9 13.9h10.2a1.5 1.5 0 0 0 1.3-2.3L9.1 2.3a1.5 1.5 0 0 0-2.2 0Z" />
               </svg>
             </div>
-            <p className={styles.emptyTitle}>Couldn’t load this thread</p>
+            <p className={styles.emptyTitle}>{computer && computer.status !== "online" ? `Waiting for ${computer.label}` : "Couldn’t load this thread"}</p>
             <p className={styles.emptyHint}>{detailError}</p>
-            {onRetryDetail && (
+            {onRetryDetail && !computer && (
               <button
                 type="button"
                 className={`${styles.btn} ${styles.btnPrimary}`}
@@ -4533,6 +4542,8 @@ export const ThreadView = memo(function ThreadView({
           ) : null}
         </div>
       </header>
+      {computer && <RemoteThreadStatus key={computer.key} computer={computer} stale={Boolean(detailError)}
+        onReconnect={onReconnectComputer} onConnections={onComputerConnections} />}
       {worktree.banner}
 
       {(displayPins.length > 0 || pinError) && (
@@ -6005,6 +6016,8 @@ export const ThreadView = memo(function ThreadView({
           ) : undefined
         }
         disabled={isArchived}
+        sendBlockedReason={computer && (computer.status !== "online" || detailError)
+          ? `Reconnect ${computer.label} and refresh this thread before sending.` : null}
         busy={isWorking}
         placeholder={
           isArchived

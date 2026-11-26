@@ -63,12 +63,14 @@ export function hostKeyOf(h: Pick<SavedHost, "host" | "remotePort" | "url" | "cl
 export function pushSidebarHosts(
   setSidebarHosts: CoderApi["app"]["setSidebarHosts"] | undefined,
   hosts: SavedHost[] = loadHosts(),
+  options?: { throwOnError?: boolean },
 ): Promise<SidebarHostStatus[]> {
   if (typeof setSidebarHosts !== "function") return Promise.resolve([]);
   const shown = hosts
     .filter((h) => h.inSidebar)
     .map(({ host, remotePort, url, label, computerId, legacy, cloud }) => ({ host, remotePort, label, ...(cloud ? { cloud } : {}), ...(url ? { url } : {}), ...(computerId ? { computerId } : {}), ...(legacy ? { allowLegacy: true } : {}) }));
-  return setSidebarHosts(shown).catch(() => []);
+  const result = setSidebarHosts(shown);
+  return options?.throwOnError ? result : result.catch(() => []);
 }
 
 /** Routes stay separate for credential storage; only verified identities group. */

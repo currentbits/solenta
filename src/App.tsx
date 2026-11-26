@@ -1,3 +1,4 @@
+import { pushSidebarHosts } from "./remoteHosts";
 import { captureComposerDraft, restoreComposerDraft } from "./composerSession";
 import { threadProjectMoveBlockReason } from "./threadActionMenu";
 import type { ProjectInfo } from "./shared/ipc";
@@ -1876,6 +1877,23 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     (selectedProjectId ? projectById.get(selectedProjectId) : undefined) ||
     null;
 
+  const threadHost = selectedThreadId
+    ? threads.find((t) => t.id === selectedThreadId)?.host ?? visibleDetail?.thread.host ?? project?.host
+    : undefined;
+  const threadComputer = threadHost ? sidebarHosts.find((h) => h.key === threadHost.key ||
+    h.routes?.some((r) => r.key === threadHost.key) ||
+    (threadHost.computerId && h.computerId === threadHost.computerId)) ?? {
+      key: threadHost.key, label: threadHost.label, status: "offline" as const,
+      error: "This computer is not connected in this window.",
+    } : null;
+  const reconnectThreadComputer = async () => {
+    const id = selectedThreadId;
+    if (threadComputer?.status !== "online") {
+      await pushSidebarHosts((hosts) => api.app.setSidebarHosts(hosts), undefined, { throwOnError: true });
+    }
+    if (selectedThreadIdRef.current === id) retryDetail();
+  };
+
   const inspectorSummary =
     view === "thread" && selectedThreadId
       ? (threads.find((t) => t.id === selectedThreadId) ?? null)
@@ -2765,6 +2783,9 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         detail={visibleDetail}
         detailError={selectedThreadId ? detailError : null}
         onRetryDetail={retryDetail}
+        computer={threadComputer}
+        onReconnectComputer={reconnectThreadComputer}
+        onComputerConnections={() => { setEditRemoteSettings(false); openSettings("connections"); }}
         onLoadOlderMessages={loadOlderMessages}
         onEnsureFullHistory={ensureFullHistory}
         revealMessageId={revealMessageId}

@@ -1766,12 +1766,17 @@ export function useCoder(): UseCoderResult {
         setSidebarHosts(next);
         // Pushes missed while a computer was away are not replayed (#1831):
         // refetch the open thread when its computer comes back.
-        const openHost = detailRef.current?.thread.host?.key;
+        const openHost = threadsRef.current.find((t) => t.id === selectedRef.current)?.host
+          ?? (detailRef.current?.thread.id === selectedRef.current ? detailRef.current.thread.host : undefined);
         for (const h of next) {
           const back = h.status === "online" && !online.has(h.key);
           if (h.status === "online") online.add(h.key);
           else online.delete(h.key);
-          if (back && h.key === openHost) setDetailRetryNonce((n) => n + 1);
+          if (back && openHost && (h.key === openHost.key ||
+            h.routes?.some((route) => route.key === openHost.key) ||
+            (openHost.computerId && h.computerId === openHost.computerId))) {
+            setDetailRetryNonce((n) => n + 1);
+          }
         }
       }));
       unsubs.push(api.on("boot:ready", push));
@@ -1794,7 +1799,7 @@ export function useCoder(): UseCoderResult {
       return;
     }
     let cancelled = false;
-    setDetailError(null);
+    if (detailRef.current?.thread.id !== selectedThreadId) setDetailError(null);
     // Render-first (#364): paint the last-known transcript for this thread
     // immediately; the in-flight threads.get replaces it in one round-trip
     // (replaced wholesale, never merged, so a stale tail is fine). Skip when
@@ -1819,7 +1824,12 @@ export function useCoder(): UseCoderResult {
         );
       } catch (err) {
         if (!cancelled) {
-          setDetail(null);
+          // A disconnected host must not erase the last readable transcript
+          // or unmount its local composer draft. Never retain another thread.
+          const owner = threadsRef.current.find((t) => t.id === selectedThreadId)?.host;
+          setDetail((previous) => owner
+            ? previous?.thread.id === selectedThreadId ? previous : cached ?? null
+            : null);
           setDetailError(errorMessage(err));
         }
       }
@@ -1855,7 +1865,6 @@ export function useCoder(): UseCoderResult {
 
   /** Re-run the detail fetch for the already-selected thread (error retry). */
   const retryDetail = useCallback(() => {
-    setDetailError(null);
     setDetailRetryNonce((n) => n + 1);
   }, []);
 
