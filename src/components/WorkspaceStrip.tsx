@@ -32,17 +32,21 @@ export interface WorkspaceStripProps {
   started?: { branch: string | null } | null;
   /**
    * Machines the draft can run on (#1835): this computer and each connected
-   * computer with the same repo. Shown only when there is a choice.
+   * computer, including computers that still need a checkout.
    */
   machines?: MachineOption[];
   onSetMachine?: (projectId: string) => Promise<unknown>;
+  onSetupMachine?: (machine: MachineOption) => void | Promise<void>;
+  onConnectComputer?: () => void;
   /** Read-only: the computer a started thread runs on, when not this one. */
   machineLabel?: string | null;
 }
 
 export interface MachineOption {
   /** That machine's copy of the project. */
-  projectId: string;
+  projectId?: string;
+  hostKey?: string;
+  path?: string;
   label: string;
   current: boolean;
   online: boolean;
@@ -63,6 +67,8 @@ export function WorkspaceStrip({
   started = null,
   machines = [],
   onSetMachine,
+  onSetupMachine,
+  onConnectComputer,
   machineLabel = null,
 }: WorkspaceStripProps) {
   const [open, setOpen] = useState<Open>(null);
@@ -71,6 +77,7 @@ export function WorkspaceStrip({
     branches: string[];
   } | null>(null);
   const [query, setQuery] = useState("");
+  const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -102,10 +109,13 @@ export function WorkspaceStrip({
   const run = async (fn: () => Promise<unknown>) => {
     setOpen(null);
     setError(null);
+    setPending(true);
     try {
       await fn();
     } catch (err) {
       setError(err instanceof Error && err.message ? err.message : String(err));
+    } finally {
+      setPending(false);
     }
   };
 
@@ -141,7 +151,7 @@ export function WorkspaceStrip({
 
   return (
     <div className={styles.strip} ref={rootRef} data-workspace-strip="">
-      {machines.length > 1 && onSetMachine ? (
+      {onSetMachine ? (
         <div className={styles.anchor}>
           <button
             type="button"
@@ -150,10 +160,11 @@ export function WorkspaceStrip({
             aria-haspopup="menu"
             aria-expanded={open === "machine"}
             title="Computer this thread runs on"
+            disabled={pending}
             onClick={() => setOpen((o) => (o === "machine" ? null : "machine"))}
           >
             <MachineGlyph />
-            {machines.find((m) => m.current)?.label ?? "This computer"}
+            Run on {machines.find((m) => m.current)?.label ?? "This computer"}
             <Chevron />
           </button>
           {open === "machine" && (
@@ -161,7 +172,7 @@ export function WorkspaceStrip({
               <div className={styles.menuLabel}>Runs on</div>
               {machines.map((m) => (
                 <button
-                  key={m.projectId}
+                  key={m.projectId ?? `host:${m.hostKey ?? ""}`}
                   type="button"
                   role="menuitemradio"
                   aria-checked={m.current}
@@ -173,17 +184,27 @@ export function WorkspaceStrip({
                       setOpen(null);
                       return;
                     }
-                    void run(() => onSetMachine(m.projectId));
+                    const projectId = m.projectId;
+                    void run(async () => {
+                      if (projectId) await onSetMachine(projectId);
+                      else await onSetupMachine?.(m);
+                    });
                   }}
                 >
                   <MachineGlyph />
                   <span className={styles.itemText}>
                     {m.label}
-                    <small>{m.online ? (m.current ? "Runs here" : "Same repo there") : "Offline"}</small>
+                    <small>{m.online ? (m.current ? "Runs here" : m.projectId ? m.path ?? "Same repo there" : "Set up repository…") : "Offline"}</small>
                   </span>
                   {m.current && <Check />}
                 </button>
               ))}
+              {onConnectComputer && (
+                <button type="button" role="menuitem" className={styles.item}
+                  data-connect-computer="" onClick={() => { setOpen(null); onConnectComputer(); }}>
+                  Connect another computer…
+                </button>
+              )}
             </div>
           )}
         </div>

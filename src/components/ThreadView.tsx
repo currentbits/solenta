@@ -806,6 +806,8 @@ interface ThreadViewProps {
   /** Draft strip machine picker (#1835): where this draft can run. */
   draftMachines?: MachineOption[];
   onMoveDraftToMachine?: (threadId: string, projectId: string) => Promise<void>;
+  onSetupDraftMachine?: (threadId: string, machine: MachineOption) => Promise<void>;
+  onConnectComputer?: () => void;
   /** Unmerged worktree files plus capped conflict-marker snippets. */
   conflictContext?: (threadId: string) => Promise<ConflictContext>;
   /** Open the thread worktree in the configured editor. */
@@ -1082,6 +1084,8 @@ export const ThreadView = memo(function ThreadView({
   onSetPendingWorktree,
   draftMachines,
   onMoveDraftToMachine,
+  onSetupDraftMachine,
+  onConnectComputer,
   previousWorktree,
   heroProjects,
   onMoveDraftToProject,
@@ -5992,6 +5996,8 @@ export const ThreadView = memo(function ThreadView({
               }
               previous={previousWorktree}
               machines={draftMachines}
+              onConnectComputer={onConnectComputer}
+              onSetupMachine={(machine) => onSetupDraftMachine?.(thread.id, machine)}
               onSetMachine={
                 onMoveDraftToMachine ? (projectId) => onMoveDraftToMachine(thread.id, projectId) : undefined
               }

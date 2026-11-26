@@ -249,6 +249,7 @@ export interface UseCoderResult {
     title?: string,
     projectId?: string,
     opts?: {
+      ownerProject?: ProjectInfo;
       worktree?: boolean;
       orchestrate?: boolean;
       teach?: boolean;

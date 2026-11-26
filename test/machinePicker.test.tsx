@@ -179,3 +179,132 @@ describe("new thread: pick the computer it runs on (#1835)", () => {
     });
   }
 });
+
+
+describe("machine setup from the composer", () => {
+  function unconfigured() {
+    const fx = fixture();
+    return { ...fx, projects: [fx.projects[0]!], threads: [fx.threads[0]!] };
+  }
+  function connect(fake: FakeCoder) {
+    fake.api.app.setSidebarHosts = async () => [{ ...BOX, host: "box", remotePort: 4620, error: null }];
+    fake.api.git.repoInfo = async () => ({ ok: true, owner: "acme", repo: "rocket", webUrl: "https://github.com/acme/rocket" });
+  }
+  const destination = project({ id: "new-remote-project", slug: "acme/rocket", path: "/srv/rocket", host: BOX });
+
+  it("always offers Run on and a connection setup entry with only this computer", async () => {
+    const m = await boot(createFakeCoder(unconfigured()));
+    try {
+      await select(m, "Draft");
+      assert.match(m.query("[data-workspace-machine]")?.textContent ?? "", /Run on/);
+      await m.click(m.query("[data-workspace-machine]"));
+      assert.equal(m.queryAll("[data-workspace-machine-option]").length, 1);
+      await m.click(m.query("[data-connect-computer]"));
+      assert.ok(m.query('[role="dialog"]'));
+      assert.match(m.text(), /Connections/);
+    } finally { m.unmount(); }
+  });
+
+  it("offers a connected computer without a project and clones there before moving", async () => {
+    const fake = createFakeCoder(unconfigured());
+    connect(fake);
+    let cloneInput: unknown;
+    fake.api.projects.clone = async (input) => { cloneInput = input; return destination; };
+    const settingsGet = fake.api.settings.get;
+    const settingsOwners: unknown[] = [];
+    fake.api.settings.get = async (...args: unknown[]) => { settingsOwners.push(args[0]); return settingsGet(); };
+    setDraftText("t-draft", "keep my request");
+    const m = await boot(fake);
+    try {
+      await pickBox(m);
+      assert.match(m.text(), /Run on Box/);
+      assert.equal(m.query("[data-add-project-mode-create]"), null);
+      assert.equal(m.query("[data-add-project-computer]"), null);
+      assert.equal((m.query("[data-add-project-clone-url]") as HTMLInputElement).value, "https://github.com/acme/rocket");
+      await m.type(m.query("[data-add-project-clone-location]"), "/srv");
+      await m.click(m.query("[data-add-project-path-submit]"));
+      assert.equal((cloneInput as { onHost: string }).onHost, BOX.key);
+      assert.equal((fake.only("threads.create").args[0] as { projectId: string }).projectId, destination.id);
+      assert.ok(settingsOwners.some((c) => (c as { onHost?: string })?.onHost === BOX.key), "fresh checkout uses destination settings");
+      assert.equal(captureComposerDraft("t-new").text, "keep my request");
+      assert.equal(m.query("[data-add-project-path-dialog]"), null);
+    } finally { m.unmount(); }
+  });
+
+  it("adds an existing checkout on the chosen host without initializing an empty repo", async () => {
+    const fake = createFakeCoder(unconfigured());
+    connect(fake);
+    let addInput: unknown[] = [];
+    fake.api.projects.add = async (...input) => { addInput = input; return destination; };
+    const m = await boot(fake);
+    try {
+      await pickBox(m);
+      await m.click(m.query("[data-add-project-mode-existing]"));
+      await m.type(m.query("[data-add-project-path-input]"), "/srv/rocket");
+      await m.click(m.query("[data-add-project-path-submit]"));
+      assert.deepEqual(addInput, ["/srv/rocket", { onHost: BOX.key, requireExistingRepo: true }]);
+      assert.equal(fake.of("threads.create").length, 1);
+    } finally { m.unmount(); }
+  });
+
+  it("retains the original draft when the selected checkout is a different repository", async () => {
+    const fake = createFakeCoder(unconfigured());
+    connect(fake);
+    fake.api.projects.add = async () => ({ ...destination, slug: "acme/other" });
+    const saved = richDraft();
+    const m = await boot(fake);
+    try {
+      await pickBox(m);
+      await m.click(m.query("[data-add-project-mode-existing]"));
+      await m.type(m.query("[data-add-project-path-input]"), "/srv/other");
+      await m.click(m.query("[data-add-project-path-submit]"));
+      assert.match(m.text(), /Choose a checkout of acme\/rocket/);
+      assert.equal(fake.of("threads.create").length, 0);
+      assert.deepEqual(captureComposerDraft("t-draft"), saved);
+    } finally { m.unmount(); }
+  });
+
+  it("keeps the draft if the destination disconnects while setup is open", async () => {
+    const fake = createFakeCoder(unconfigured());
+    connect(fake);
+    const host = { ...BOX, status: "online" as "online" | "offline", host: "box", remotePort: 4620, error: null };
+    fake.api.app.setSidebarHosts = async () => [host];
+    const saved = richDraft();
+    const m = await boot(fake);
+    try {
+      await pickBox(m);
+      host.status = "offline";
+      await m.click(m.query("[data-add-project-path-submit]"));
+      assert.match(m.text(), /computer is offline/);
+      assert.equal(fake.of("projects.clone").length, 0);
+      assert.equal(fake.of("threads.create").length, 0);
+      assert.deepEqual(captureComposerDraft("t-draft"), saved);
+    } finally { m.unmount(); }
+  });
+
+  it("reuses a completed clone when moving fails and the user retries", async () => {
+    const fake = createFakeCoder(unconfigured());
+    connect(fake);
+    let clones = 0;
+    fake.api.projects.clone = async () => { clones++; return destination; };
+    const create = fake.api.threads.create;
+    let attempts = 0;
+    fake.api.threads.create = async (input) => {
+      if (++attempts === 1) throw new Error("connection lost");
+      return create(input);
+    };
+    const saved = richDraft();
+    const m = await boot(fake);
+    try {
+      await pickBox(m);
+      await m.click(m.query("[data-add-project-path-submit]"));
+      assert.equal(clones, 1);
+      assert.deepEqual(captureComposerDraft("t-draft"), saved);
+      assert.match(m.text(), /Could not start the thread/);
+      await m.click(m.query("[data-add-project-path-submit]"));
+      assert.equal(clones, 1);
+      assert.equal(attempts, 2);
+      assert.deepEqual(captureComposerDraft("t-new"), saved);
+    } finally { m.unmount(); }
+  });
+});

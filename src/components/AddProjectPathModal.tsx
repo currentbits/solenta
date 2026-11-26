@@ -62,6 +62,8 @@ function browsePlatform(): string {
 
 interface AddProjectPathModalProps {
   onClose: () => void;
+  /** Fixed destination while preparing a draft on another computer. */
+  runOn?: { hostKey?: string; label: string; cloneUrl: string; repository: string };
   /** Add an existing checkout: path (or remote host/path pair). */
   onSubmit: (
     path: string,
@@ -105,6 +107,7 @@ interface AddProjectPathModalProps {
  */
 export function AddProjectPathModal({
   onClose,
+  runOn,
   onSubmit,
   onCreate,
   onClone,
@@ -119,7 +122,7 @@ export function AddProjectPathModal({
 }: AddProjectPathModalProps) {
   // "" is this computer. Another host's project lives (and its folders are
   // browsed) there; the local picker, cwd and SSH fields do not apply.
-  const [onHost, setOnHost] = useState("");
+  const [onHost, setOnHost] = useState(runOn?.hostKey ?? "");
   const onBrowse = useCallback(
     (input: FsBrowseInput) => browseHere(onHost ? { ...input, onHost } : input),
     [browseHere, onHost],
@@ -128,14 +131,14 @@ export function AddProjectPathModal({
   const currentProjectCwd = onHost ? null : cwdHere;
   const [mode, setMode] = useState<
     "existing" | "create" | "clone" | "history"
-  >("existing");
+  >(runOn?.cloneUrl ? "clone" : "existing");
   const [historyPath, setHistoryPath] = useState<string | null>(null);
   // Added from history with sessions to offer: the import step (#1858).
   const [historyAdded, setHistoryAdded] = useState<{
     projectId: string;
     row: HistoryProject;
   } | null>(null);
-  const [cloneUrl, setCloneUrl] = useState("");
+  const [cloneUrl, setCloneUrl] = useState(runOn?.cloneUrl ?? "");
   const [cloneName, setCloneName] = useState("");
   const [cloneProgress, setCloneProgress] = useState<string | null>(null);
   const cloneIdRef = useRef<string | null>(null);
@@ -371,7 +374,7 @@ export function AddProjectPathModal({
       >
         <div className={styles.header}>
           <h2 id="add-project-path-title" className={styles.title}>
-            Add project
+            {runOn ? `Run on ${runOn.label}` : "Add project"}
           </h2>
           <button
             type="button"
@@ -454,6 +457,7 @@ export function AddProjectPathModal({
             </>
           ) : (
             <>
+          {runOn && <p className={styles.fieldNote}>Choose a checkout of {runOn.repository} on {runOn.label}, or clone it there. Files and agents run on that computer. Cloning uses published commits; uncommitted changes stay on the source computer.</p>}
           <div className={styles.fieldRow} role="group" aria-label="Add mode">
             <button
               type="button"
@@ -472,7 +476,7 @@ export function AddProjectPathModal({
             >
               Add existing
             </button>
-            <button
+            {!runOn && <button
               type="button"
               className={
                 mode === "create"
@@ -488,7 +492,7 @@ export function AddProjectPathModal({
               }}
             >
               Create new
-            </button>
+            </button>}
             {onClone ? (
               <button
                 type="button"
@@ -529,7 +533,7 @@ export function AddProjectPathModal({
             ) : null}
           </div>
 
-          {computers.length > 0 ? (
+          {!runOn && computers.length > 0 ? (
             <div className={styles.field}>
               <label className={styles.fieldLabel} htmlFor="add-project-computer">
                 Computer
@@ -719,11 +723,10 @@ export function AddProjectPathModal({
                   browseDataAttr="data-add-project-browse-path"
                 />
                 <p className={styles.fieldNote} data-add-project-git-init-note="">
-                  If the folder does not exist yet, or is not a git repository,
-                  Solenta will create and initialize it.
+                  {runOn ? "Choose an existing Git checkout of this repository." : "If the folder does not exist yet, or is not a git repository, Solenta will create and initialize it."}
                 </p>
               </div>
-              {onHost ? null : (<>
+              {onHost || runOn ? null : (<>
               <div className={styles.field}>
                 <label
                   className={styles.fieldLabel}
@@ -787,7 +790,9 @@ export function AddProjectPathModal({
                   : mode === "clone"
                     ? "Cloning…"
                     : "Adding…"
-                : mode === "create"
+                : runOn
+                  ? mode === "clone" ? "Clone and move draft" : "Use checkout and move draft"
+                  : mode === "create"
                   ? "Create"
                   : mode === "clone"
                     ? "Clone"

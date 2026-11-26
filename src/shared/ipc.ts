@@ -493,6 +493,8 @@ export interface FusionSyncResult {
 
 /** Optional remotes for projects.add. Empty/absent = local project. */
 export interface AddProjectOptions {
+  /** Refuse missing/non-repository paths instead of creating them. */
+  requireExistingRepo?: boolean;
   remoteHost?: string;
   remotePath?: string;
   /** Another Solenta host in the sidebar (#1819): run there, by host key. */

@@ -40,6 +40,20 @@ describe("services.createProject", () => {
     assert.equal(store.getProjects()[0].id, project.id);
   });
 
+  it("requires a real checkout for machine setup without creating or initializing paths", async () => {
+    const missing = path.join(tmpDir, "missing");
+    await assert.rejects(services.addProject(store, missing, { requireExistingRepo: true }), /existing Git checkout/);
+    assert.equal(fs.existsSync(missing), false);
+    const empty = path.join(tmpDir, "empty");
+    fs.mkdirSync(empty);
+    await assert.rejects(services.addProject(store, empty, { requireExistingRepo: true }), /existing Git checkout/);
+    assert.equal(fs.existsSync(path.join(empty, ".git")), false);
+    execFileSync("git", ["init", "-q", empty]);
+    const added = await services.addProject(store, empty, { requireExistingRepo: true });
+    assert.equal(added.path, empty);
+    assert.equal(store.getProjects().length, 1);
+  });
+
   it("rejects an empty name", async () => {
     await assert.rejects(
       () => services.createProject(store, { name: "   ", parentDir: tmpDir }),

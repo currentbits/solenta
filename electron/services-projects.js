@@ -219,6 +219,11 @@ async function addProject(store, projectPath, opts) {
     );
   }
   const resolved = path.resolve(expandUserPath(raw));
+  if (opts?.requireExistingRepo) {
+    if (!fs.existsSync(resolved) || !(await isInsideWorkTree(resolved))) {
+      throw new Error("Choose an existing Git checkout, or clone the repository first.");
+    }
+  }
   const existing = findExistingProject(store, { path: resolved });
   if (existing) return presentAdded(existing);
 

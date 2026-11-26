@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import type {
+  AddProjectOptions,
   CloneProjectInput,
   CoderApi,
   CreateProjectInput,
@@ -23,7 +24,7 @@ export function useCoderProjects({
 }) {
   const addProject = useCallback(async (
     path?: string,
-    opts?: { remoteHost?: string; remotePath?: string; onHost?: string },
+    opts?: AddProjectOptions,
   ) => {
     try {
       const trimmed = typeof path === "string" ? path.trim() : "";
@@ -40,7 +41,7 @@ export function useCoderProjects({
       // pass a path (the path-input modal). Never fall through to addViaDialog.
       if (isWebMode() && !trimmed && !remoteHost) return null;
       const p = trimmed || remoteHost
-        ? await api.projects.add(trimmed || remotes?.remotePath || "", remotes)
+        ? await api.projects.add(trimmed || remotes?.remotePath || "", opts?.requireExistingRepo ? { ...remotes, requireExistingRepo: true } : remotes)
         : await api.projects.addViaDialog();
       if (p) {
         setProjects((prev) => {
