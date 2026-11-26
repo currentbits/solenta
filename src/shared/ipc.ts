@@ -2632,6 +2632,8 @@ export type GitRepoInfo =
       owner: string;
       repo: string;
       webUrl: string;
+      /** Credential-free origin hostname and full repository path. */
+      originIdentity?: string | null;
       /** Forge that drives PRs for this origin (#456); null = none. */
       forge?: SourceControlProviderKind | null;
     }
@@ -7726,7 +7728,7 @@ export interface CoderApi {
      * Origin owner/repo + https web URL for the thread root. Never rejects:
      * `{ ok: false }` when there is no repo, no origin, or a remote project.
      */
-    repoInfo(input: { threadId: string }): Promise<GitRepoInfo>;
+    repoInfo(input: { threadId: string } | { projectId: string }): Promise<GitRepoInfo>;
     /**
      * `git pull --ff-only` in the thread root. Never rejects: dirty tree, no
      * upstream, diverged, and not-a-repo come back as `{ ok: false, reason }`.

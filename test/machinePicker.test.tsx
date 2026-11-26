@@ -188,7 +188,7 @@ describe("machine setup from the composer", () => {
   }
   function connect(fake: FakeCoder) {
     fake.api.app.setSidebarHosts = async () => [{ ...BOX, host: "box", remotePort: 4620, error: null }];
-    fake.api.git.repoInfo = async () => ({ ok: true, owner: "acme", repo: "rocket", webUrl: "https://github.com/acme/rocket" });
+    fake.api.git.repoInfo = async () => ({ ok: true, owner: "acme", repo: "rocket", webUrl: "https://github.com/acme/rocket", originIdentity: "github.com/acme/rocket" });
   }
   const destination = project({ id: "new-remote-project", slug: "acme/rocket", path: "/srv/rocket", host: BOX });
 
@@ -251,6 +251,10 @@ describe("machine setup from the composer", () => {
     const fake = createFakeCoder(unconfigured());
     connect(fake);
     fake.api.projects.add = async () => ({ ...destination, slug: "acme/other" });
+    const repoInfo = fake.api.git.repoInfo;
+    fake.api.git.repoInfo = async (input) => "projectId" in input
+      ? { ok: true, owner: "acme", repo: "other", webUrl: "https://github.com/acme/other", originIdentity: "github.com/acme/other" }
+      : repoInfo(input);
     const saved = richDraft();
     const m = await boot(fake);
     try {
@@ -258,11 +262,43 @@ describe("machine setup from the composer", () => {
       await m.click(m.query("[data-add-project-mode-existing]"));
       await m.type(m.query("[data-add-project-path-input]"), "/srv/other");
       await m.click(m.query("[data-add-project-path-submit]"));
-      assert.match(m.text(), /Choose a checkout of acme\/rocket/);
+      assert.match(m.text(), /Choose a checkout of the same repository/);
       assert.equal(fake.of("threads.create").length, 0);
       assert.deepEqual(captureComposerDraft("t-draft"), saved);
     } finally { m.unmount(); }
   });
+
+  for (const mode of ["existing", "clone", "registered"] as const) {
+    for (const identity of ["gitlab.com/acme/rocket", "gitlab.com/another/group/acme/rocket", null]) {
+      it(`refuses ${mode} checkout with matching slug but unverified origin ${identity}`, async () => {
+        const fake = createFakeCoder(mode === "registered" ? fixture() : unconfigured());
+        connect(fake);
+        fake.api.projects.add = async () => destination;
+        fake.api.projects.clone = async () => destination;
+        fake.api.git.repoInfo = async (input) => ({
+          ok: true, owner: "acme", repo: "rocket", webUrl: "https://github.com/acme/rocket",
+          originIdentity: "projectId" in input ? identity
+            : identity?.includes("another/group") ? "gitlab.com/original/group/acme/rocket" : "github.com/acme/rocket",
+        });
+        const saved = richDraft();
+        const m = await boot(fake);
+        try {
+          await pickBox(m);
+          if (mode !== "registered") {
+            if (mode === "existing") {
+              await m.click(m.query("[data-add-project-mode-existing]"));
+              await m.type(m.query("[data-add-project-path-input]"), "/srv/rocket");
+            }
+            await m.click(m.query("[data-add-project-path-submit]"));
+          }
+          assert.match(m.text(), identity ? /same repository, including its host/ : /Could not verify both repository origins/);
+          assert.equal(fake.of("threads.create").length, 0);
+          assert.equal(fake.of("threads.delete").length, 0);
+          assert.deepEqual(captureComposerDraft("t-draft"), saved);
+        } finally { m.unmount(); }
+      });
+    }
+  }
 
   it("keeps the draft if the destination disconnects while setup is open", async () => {
     const fake = createFakeCoder(unconfigured());

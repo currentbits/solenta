@@ -1158,6 +1158,16 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       ) {
         throw new Error("Only an unstarted draft can move to another computer.");
       }
+      const [sourceRepo, destinationRepo] = await Promise.all([
+        api.git.repoInfo({ threadId }),
+        api.git.repoInfo({ projectId }),
+      ]);
+      if (!sourceRepo.ok || !sourceRepo.originIdentity || !destinationRepo.ok || !destinationRepo.originIdentity) {
+        throw new Error("Could not verify both repository origins. Configure origin on both checkouts and update Solenta on both computers, then retry.");
+      }
+      if (sourceRepo.originIdentity !== destinationRepo.originIdentity) {
+        throw new Error("Choose a checkout of the same repository, including its host and full group path. The original draft has been kept.");
+      }
       const saved = captureComposerDraft(threadId);
       const created = await createThread(draft.title || "New Thread", projectId, {
         ownerProject,

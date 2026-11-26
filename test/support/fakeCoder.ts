@@ -3823,6 +3823,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           owner: "owner",
           repo: "repo",
           webUrl: "https://github.com/owner/repo",
+          originIdentity: "github.com/owner/repo",
         } as GitRepoInfo),
       publish: (input: unknown) =>
         rec("git.publish", [input], {

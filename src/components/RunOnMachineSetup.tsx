@@ -27,9 +27,6 @@ export function RunOnMachineSetup({ target, source, cloneUrl, api, onClose, addP
     if ((project.host?.key ?? "") !== (target.hostKey ?? "")) {
       throw new Error("The checkout belongs to another computer. Reconnect and try again.");
     }
-    if (project.slug.toLowerCase() !== source.slug.toLowerCase()) {
-      throw new Error(`Choose a checkout of ${source.slug}. This folder contains ${project.slug}.`);
-    }
     assertOnline();
     await onMove(project);
     return project;
