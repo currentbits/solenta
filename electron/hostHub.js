@@ -1,7 +1,7 @@
 "use strict";
 
 /**
- * Host hub (#1819): other machines' Solenta in this window, T3-style.
+ * Host hub (#1819): other machines' Solenta in this window.
  *
  * Each machine owns its projects, threads and runs. For every saved
  * Connection with "Show in sidebar" on, the hub keeps one tunnel + web

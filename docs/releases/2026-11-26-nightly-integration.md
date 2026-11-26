@@ -1,4 +1,4 @@
-# T3-inspired work integrated into v0.29
+# Conversation improvements integrated into v0.29
 
 The source branch `feat/solenta-environments` ended at a991e44b on a v0.22
 baseline. This nightly integrates its missing behavior onto v0.29 at 3e46f49b.

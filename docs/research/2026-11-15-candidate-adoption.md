@@ -1,6 +1,6 @@
 # November 15 candidate implementation
 
-Tracking: [#2032](https://github.com/currentbits/solenta/issues/2032). Implements the six candidates in the [research refresh](2026-11-15-synara-t3.md). The separate [T3 theming report](2026-11-15-t3-theming.md) is research only.
+Tracking: [#2032](https://github.com/currentbits/solenta/issues/2032). Implements the six candidates from the November 15 research refresh. Historical research snapshots remain in Git history; theming research did not change the application.
 
 | Candidate | Result | Scope and limits |
 | --- | --- | --- |

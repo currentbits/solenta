@@ -923,7 +923,7 @@ and tests cover it; the UI does not call it. There is no
   (snooze as a parent with children, pin, fork / handoff, rename, mute,
   settle). Never an in-card overlay inside the sidebar scroller.
 - **Project icons** (`electron/projectIcon.js`): user override, then a
-  checked-in `solenta.json` / `t3.json` `iconPath`, then well-known
+  checked-in `solenta.json` `iconPath`, then well-known
   favicon / app-icon files, then `<link rel="icon">`. Cached per
   git-common-dir so worktrees of the same repo share the main
   checkout's answer. `iconUrl` is never persisted.

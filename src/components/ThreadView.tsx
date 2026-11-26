@@ -310,8 +310,7 @@ function swapQueuedItem<T>(items: T[], index: number, delta: number): T[] {
 
 /**
  * A thread on another computer (#1831). Opens it here, live, when that
- * computer is connected; otherwise says how to connect, like T3's
- * "Runs on X. Connect to it to open the thread there."
+ * computer is connected; otherwise explains how to connect.
  */
 function FarLinkButton({ link, label, onOpen, attr }: { link: FarLink; label: string; onOpen?: (id: string) => void; attr: string }) {
   const where = link.host ?? "that computer";

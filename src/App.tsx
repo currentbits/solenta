@@ -1137,7 +1137,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   projectsForMoveRef.current = projects;
 
   /**
-   * Run a draft on another machine (#1835), T3-style: the draft is recreated
+   * Run a draft on another machine (#1835): the draft is recreated
    * in that machine's copy of the repo, with its complete composer draft,
    * and the old draft is dropped. Threads never move once they have run.
    */

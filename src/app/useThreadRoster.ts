@@ -153,7 +153,7 @@ export function useThreadRoster({
   }, [taskKey]);
 
   /**
-   * Work on other computers this thread links to (#1831), T3-style: each a
+   * Work on other computers this thread links to (#1831): each a
    * live thread you can open here when its computer is connected. Value-keyed
    * so stream ticks elsewhere keep the identity.
    */

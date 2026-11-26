@@ -1,5 +1,5 @@
 /**
- * Project icon resolver (#610): well-known favicon paths, t3.json /
+ * Project icon resolver (#610): well-known favicon paths,
  * solenta.json iconPath, HTML <link rel="icon">, user override, and
  * cache keyed by git-common-dir so worktrees reuse the main checkout.
  *
@@ -91,42 +91,34 @@ describe("projectIcon resolver", () => {
     }
   });
 
-  it("prefers a t3.json iconPath over well-known locations", () => {
+  it("prefers a solenta.json iconPath over well-known locations", () => {
     write(tmpDir, "public/favicon.png", PNG_1X1);
     const branded = write(tmpDir, "brand/logo.svg", SVG);
-    write(tmpDir, "t3.json", JSON.stringify({ iconPath: "brand/logo.svg" }));
+    write(tmpDir, "solenta.json", JSON.stringify({ iconPath: "brand/logo.svg" }));
     assert.equal(resolveIconPath(tmpDir), branded);
   });
 
-  it("reads solenta.json iconPath when t3.json is absent", () => {
+  it("reads a checked-in iconPath without a favicon", () => {
     const branded = write(tmpDir, "assets/solenta.svg", SVG);
     write(tmpDir, "solenta.json", JSON.stringify({ iconPath: "assets/solenta.svg" }));
     assert.equal(resolveIconPath(tmpDir), branded);
   });
 
-  it("solenta.json wins over t3.json when both declare iconPath", () => {
-    const ours = write(tmpDir, "ours.svg", SVG);
-    write(tmpDir, "theirs.png", PNG_1X1);
-    write(tmpDir, "solenta.json", JSON.stringify({ iconPath: "ours.svg" }));
-    write(tmpDir, "t3.json", JSON.stringify({ iconPath: "theirs.png" }));
-    assert.equal(resolveIconPath(tmpDir), ours);
-  });
-
   it("falls through when the checked-in iconPath is missing", () => {
-    write(tmpDir, "t3.json", JSON.stringify({ iconPath: "missing.svg" }));
+    write(tmpDir, "solenta.json", JSON.stringify({ iconPath: "missing.svg" }));
     const fallback = write(tmpDir, "favicon.png", PNG_1X1);
     assert.equal(resolveIconPath(tmpDir), fallback);
   });
 
-  it("ignores invalid t3.json", () => {
-    write(tmpDir, "t3.json", "{not json");
+  it("ignores invalid solenta.json", () => {
+    write(tmpDir, "solenta.json", "{not json");
     const fallback = write(tmpDir, "public/favicon.png", PNG_1X1);
     assert.equal(resolveIconPath(tmpDir), fallback);
   });
 
-  it("user override wins over t3.json and well-known paths", () => {
+  it("user override wins over solenta.json and well-known paths", () => {
     write(tmpDir, "public/favicon.png", PNG_1X1);
-    write(tmpDir, "t3.json", JSON.stringify({ iconPath: "brand/logo.svg" }));
+    write(tmpDir, "solenta.json", JSON.stringify({ iconPath: "brand/logo.svg" }));
     write(tmpDir, "brand/logo.svg", SVG);
     const picked = write(tmpDir, "custom/pick.png", PNG_1X1);
     assert.equal(resolveIconPath(tmpDir, "custom/pick.png"), picked);

@@ -17,7 +17,7 @@ self-hosted software. See `docs/cloud-connect.md` for the current setup.
 
 ## Global Constraints
 
-- T3 Code research is read-only; no upstream interactions.
+- Upstream research is read-only; no upstream interactions.
 - One personal account owns each linked computer. Proposed default cap: three linked computers per account.
 - Cloud host sessions expire after ten minutes. Renewal is single-flight and preserves device identity and chosen scopes.
 - Provider credentials, work and execution remain on the host. The broker never receives a reusable host session.
