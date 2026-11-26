@@ -84,7 +84,7 @@ const PANE_META: Record<
     label: "Threads",
     hint: "How new threads start, and when quiet ones leave the attention list.",
     keywords:
-      "worktree isolate orchestrate delegate settle sidebar quota resume default provider model failover bug report feedback",
+      "conversation queue steer follow-up tool detail transcript vim duration screen reader announcements accessibility worktree isolate orchestrate delegate settle sidebar quota resume default provider model failover bug report feedback",
   },
   spending: {
     label: "Spending",

@@ -94,6 +94,7 @@ function on(channel, cb) {
 /* <ipc-channels> */
 const IPC_CHANNELS = Object.freeze([
   { ns: "app", method: "status" },
+  { ns: "app", method: "claimStarPrompt" },
   { ns: "app", method: "checkUpdate" },
   { ns: "app", method: "downloadUpdate" },
   { ns: "app", method: "applyUpdate" },

@@ -422,9 +422,7 @@ welcome, and small PRs more so than large ones.
 
 ## Acknowledgments
 
-Solenta's design and some of its feature ideas are inspired by
-[t3code](https://github.com/pingdotgg/t3code). Code adapted from Synara and
-other simulator projects is documented in the helper's
+Code adapted from Synara and other simulator projects is documented in the helper's
 [notices](native/ios-simulator-helper/NOTICE.md) and ships with its licenses.
 
 [issues]: https://github.com/currentbits/solenta/issues

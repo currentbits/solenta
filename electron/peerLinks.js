@@ -1,7 +1,7 @@
 "use strict";
 
 /**
- * Linked computers (#1832), T3's peer links: another Solenta this one's
+ * Linked computers (#1832): another Solenta this one's
  * agents can fork workers onto, whatever runs this one: the desktop app or
  * the headless server. Each link is that computer's Solenta Web address plus
  * a Full access device token, kept in <userData>/peers.json (0600; a server

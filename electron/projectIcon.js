@@ -2,7 +2,7 @@
 
 /**
  * Project icon discovery (#610):
- * user override, then a checked-in solenta.json / t3.json iconPath, then
+ * user override, then a checked-in solenta.json iconPath, then
  * well-known favicon/app-icon files, then <link rel="icon"> in a short
  * list of HTML/root files.
  *
@@ -363,11 +363,6 @@ function resolveInRoot(root, override) {
   const solenta = readJsonIconPath(root, "solenta.json");
   if (solenta) {
     const found = existingFile(root, solenta);
-    if (found) return found;
-  }
-  const legacy = readJsonIconPath(root, "t3.json");
-  if (legacy) {
-    const found = existingFile(root, legacy);
     if (found) return found;
   }
 

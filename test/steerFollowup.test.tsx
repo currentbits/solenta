@@ -94,7 +94,7 @@ async function steerDraft(
   await m.click(steer);
   const ta = m.query("textarea") as HTMLTextAreaElement;
   await m.type(ta, text);
-  await m.click(m.query('button[aria-label="Send"]') as HTMLButtonElement);
+  await m.click(m.query('button[data-composer-send]') as HTMLButtonElement);
   await m.flush();
   return ta;
 }

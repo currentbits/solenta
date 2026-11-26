@@ -123,7 +123,7 @@ SH
   echo "[$target] installing memory-server deps ($os/$cpu)..."
   LIBC=()
   [[ "$os" == linux ]] && LIBC=(--libc=glibc)
-  (cd "$STAGE/app/memory-server" && npm ci --omit=dev --no-audit --no-fund --os="$os" --cpu="$cpu" ${LIBC[@]+"${LIBC[@]}"} --loglevel=error)
+  (cd "$STAGE/app/memory-server" && npm ci --omit=dev --onnxruntime-node-install-cuda=skip --no-audit --no-fund --os="$os" --cpu="$cpu" ${LIBC[@]+"${LIBC[@]}"} --loglevel=error)
   rm -rf "$STAGE/app/memory-server/node_modules/onnxruntime-web"
   # onnxruntime-node ships every platform; keep this target's.
   ORT_BIN="$STAGE/app/memory-server/node_modules/onnxruntime-node/bin/napi-v3"

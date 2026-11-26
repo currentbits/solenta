@@ -144,7 +144,7 @@ import { useFileDrop } from "../useFileDrop";
 import { applyMention } from "../mention";
 import { isWebMode } from "../shared/wire";
 import {
-  getComposerBusyAction,
+  useComposerBusyAction,
   getLastReasoningEffort,
   getPasteCardsEnabled,
   setComposerBusyAction,
@@ -172,7 +172,7 @@ import { useSlashMenu } from "./composer/useSlashMenu";
 import { useEscapeInterrupt } from "./composer/useEscapeInterrupt";
 import { useTranscriptViewShortcuts } from "./composer/useTranscriptViewShortcuts";
 import { usePasteCards } from "./composer/usePasteCards";
-import { matchesBinding } from "../keybindings";
+import { bindingLabel, matchesBinding } from "../keybindings";
 import { dialogOpen } from "../app/useAppShortcuts";
 
 import styles from "./Composer.module.css";
@@ -699,9 +699,7 @@ export const Composer = memo(function Composer({
   const liveThreadIdRef = useRef(threadId);
   liveThreadIdRef.current = threadId;
   const [sending, setSending] = useState(false);
-  const [busyAction, setBusyAction] = useState<ComposerBusyAction>(
-    getComposerBusyAction,
-  );
+  const busyAction = useComposerBusyAction();
   const [localError, setLocalError] = useState<string | null>(null);
   /** Oversized-send inline confirm (#1797); null hides the banner. */
   const [sizeWarning, setSizeWarning] = useState<OversizedPromptWarning | null>(
@@ -1462,7 +1460,7 @@ export const Composer = memo(function Composer({
     confirmOversizedSend();
   };
 
-  const submitSend = () => {
+  const submitSend = (action: ComposerBusyAction = busyAction) => {
     if (!canSend) return;
     const jump = ask ? null : parseJumpCommand(readDraft());
     if (jump !== null && onJump) {
@@ -1507,20 +1505,9 @@ export const Composer = memo(function Composer({
       await onSend(
         prompt,
         attachments.length ? attachments : undefined,
-        canSteer && busyAction === "steer" ? { steer: true } : undefined,
+        canSteer && action === "steer" ? { steer: true } : undefined,
       );
     }, "Failed to start run");
-  };
-
-  const submitSteer = () => {
-    if (!canSend) return;
-    void runAction(async (prompt) => {
-      await onSend(
-        prompt,
-        attachments.length ? attachments : undefined,
-        { steer: true },
-      );
-    }, "Failed to steer");
   };
 
   const submitBackground = () => {
@@ -1796,8 +1783,7 @@ export const Composer = memo(function Composer({
     }
     if (matchesBinding(e, "composer.steer")) {
       e.preventDefault();
-      if (canSteer) submitSteer();
-      else submitSend();
+      submitSend(canSteer && busyAction === "queue" ? "steer" : "queue");
       return;
     }
     if (matchesBinding(e, "composer.editLastQueued") && onEditLastQueued) {
@@ -3710,9 +3696,8 @@ export const Composer = memo(function Composer({
                 type="button"
                 aria-pressed={busyAction === "queue"}
                 data-steer-action="queue"
-                title="Queue for when this run lands (⌘Enter)"
+                title={`Queue for when this run lands (${bindingLabel("composer.send")})`}
                 onClick={() => {
-                  setBusyAction("queue");
                   setComposerBusyAction("queue");
                 }}
               >
@@ -3722,9 +3707,8 @@ export const Composer = memo(function Composer({
                 type="button"
                 aria-pressed={busyAction === "steer"}
                 data-steer-action="steer"
-                title="Steer the live turn (⌘Enter). ⌘⇧Enter always steers."
+                title={`Steer the live turn (${bindingLabel("composer.send")}). ${bindingLabel("composer.steer")} uses the opposite action once.`}
                 onClick={() => {
-                  setBusyAction("steer");
                   setComposerBusyAction("steer");
                 }}
               >
@@ -3802,15 +3786,17 @@ export const Composer = memo(function Composer({
           <button
             type="button"
             className={styles.send}
-            aria-label="Send"
+            data-composer-send=""
+            data-busy={busy ? "" : undefined}
+            aria-label={busy ? canSteer && busyAction === "steer" ? "Steer live turn" : "Queue follow-up" : "Send"}
             disabled={!canSend}
             data-queues={busy && !(canSteer && busyAction === "steer") ? "" : undefined}
             title={
               canSteer && busyAction === "steer"
-                ? "Steer the live turn (⌘Enter). ⌘⇧Enter also steers."
+                ? `Steer the live turn (${bindingLabel("composer.send")}). ${bindingLabel("composer.steer")} queues once.`
                 : busy
                   ? canSteer
-                    ? "Queue for when this run lands (⌘Enter). ⌘⇧Enter steers. Esc stops the run."
+                    ? `Queue for when this run lands (${bindingLabel("composer.send")}). ${bindingLabel("composer.steer")} steers once. Esc stops the run.`
                     : "Queue for when this run lands (⌘Enter). ⌥Enter asks a side question. Esc stops the run."
                   : onSendInBackground
                     ? "Send (⌘Enter). ⌥Enter asks a side question. ⌘⌥Enter starts this in the background. ⌘S stashes the draft."
@@ -3818,6 +3804,7 @@ export const Composer = memo(function Composer({
             }
             onClick={() => submitSend()}
           >
+            {busy && <span>{canSteer && busyAction === "steer" ? "Steer" : "Queue"}</span>}
             <svg
               width="15"
               height="15"

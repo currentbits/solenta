@@ -167,7 +167,7 @@ export interface ProjectInfo {
   defaultMergeMethod?: MergeMethod | null;
   /**
    * User override (#610): a path relative to the project checkout. Absent
-   * means Automatic (detect from favicon / t3.json / HTML). Never an
+   * means Automatic (detect from favicon / solenta.json / HTML). Never an
    * absolute path.
    */
   iconPath?: string;
@@ -5997,6 +5997,7 @@ export type ThreadForkOpts = {
 export interface CoderApi {
   app: {
     status(): Promise<AppStatus>;
+    claimStarPrompt(): Promise<boolean>;
     /** Check the release channel. Read-only: never installs anything. */
     checkUpdate(): Promise<UpdateStatus>;
     /** User-initiated install: download, verify the digest, stage the swap. */

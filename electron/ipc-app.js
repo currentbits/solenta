@@ -65,6 +65,7 @@ module.exports = {
     return ctx.openRemoteConnection({ host: "", token: "", label: typeof input.label === "string" ? input.label : "Cloud computer", computerId: input.computerId,
       cloud: { accountId: status.accountId, computerId: input.computerId, scopes } });
   },
+  "app:claimStarPrompt": async ctx => ctx.transport === "desktop" && require("./starPrompt.js").claimStarPrompt(ctx.userDataPath),
   "app:status": async (ctx) => {
     const status = await services.appStatus(ctx.store);
     if (!ctx.userDataPath) return status;

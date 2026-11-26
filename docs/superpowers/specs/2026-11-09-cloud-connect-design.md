@@ -22,7 +22,7 @@ outbound internet access.
 This is the cloud discovery and tunnel phase that was previously deferred.
 The existing server, computer identity, device access, direct HTTPS routes,
 SSH routes, service lifecycle and host-owned execution remain the foundation.
-Research into T3 Code is read-only. No upstream comments, reviews, reactions
+Upstream research is read-only. No upstream comments, reviews, reactions
 or issues are authorized.
 
 Cloud access cannot install software on an arbitrary untouched computer.
@@ -75,7 +75,7 @@ Alternatives considered: SSH remains useful but cannot provide the requested
 experience when SSH is denied. A custom WebSocket proxy on Girder would put all
 app traffic through a new proxy we would have to operate. Cloudflare manages
 that transport; the broker only handles identity, discovery and authorization.
-There is no need to adopt T3's framework or copy its service architecture.
+Keep the existing framework and service architecture.
 
 ## User flows
 
@@ -312,8 +312,6 @@ or account migration is implied.
 ## Primary references
 
 - [Solenta tracking issue](https://github.com/currentbits/solenta/issues/1974)
-- [T3 remote setup](https://github.com/pingdotgg/t3code/blob/ade473018d32003658b7d38693e083ee2e314bd8/docs/user/remote-access.md)
-- [T3 Connect architecture and trust](https://github.com/pingdotgg/t3code/blob/ade473018d32003658b7d38693e083ee2e314bd8/docs/internals/t3-connect.md)
 - [GitHub OAuth, PKCE and device authorization](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps)
 - [GitHub app-bound token verification and revocation](https://docs.github.com/en/rest/apps/oauth-applications)
 - [Cloudflare Tunnel setup](https://developers.cloudflare.com/tunnel/get-started/)

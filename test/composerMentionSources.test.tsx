@@ -202,7 +202,7 @@ describe("Composer @-mention sources", () => {
     const [chip] = chips(m);
     assert.equal(chip.getAttribute("data-context-source"), "terminal");
     assert.match(chip.textContent || "", /terminal · 2 lines · 20 B/);
-    await m.click(m.query('button[aria-label="Send"]'));
+    await m.click(m.query('button[data-composer-send]'));
     await settle();
     assert.equal(sent.length, 1);
     assert.match(sent[0], /<mention-context source="terminal" label="2 lines · 20 B">\n\$ npm test\nok\n<\/mention-context>/);
@@ -249,7 +249,7 @@ describe("Composer @-mention sources", () => {
     assert.match(chip.textContent || "", /problems · running…/);
 
     await m.type(el, "fix it");
-    await m.click(m.query('button[aria-label="Send"]'));
+    await m.click(m.query('button[data-composer-send]'));
     await settle();
     assert.equal(sent.length, 0, "send waits for the run");
     assert.match(m.container.textContent || "", /@problems is still loading/);

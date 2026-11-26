@@ -44,7 +44,7 @@ jobs:
           cache-dependency-path: "**/package-lock.json"
       - uses: ./.github/actions/npm-ci-electron
       - run: npm ci --prefix core
-      - run: npm ci --prefix memory-server
+      - run: npm ci --prefix memory-server --onnxruntime-node-install-cuda=skip
       - run: bash scripts/package-server.sh ${{ matrix.target }}
       - run: node scripts/smoke-server-bundle.js out/solenta-server-*-${{ matrix.target }}.tar.gz
       - name: Check pinned connector on its native architecture

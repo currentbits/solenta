@@ -365,6 +365,7 @@ const BY_SCOPE = {
   ],
   // Listed so the coverage test sees them classified; unlisted means full too.
   full: [
+    "app:claimStarPrompt",
     // mcp:save registers a command to spawn; pairing:* mints or approves tokens.
     "mcp:save",
     "mcp:installImport",

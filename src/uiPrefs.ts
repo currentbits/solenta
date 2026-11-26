@@ -354,6 +354,12 @@ export function setLastReasoningEffort(effort: ReasoningEffort | null): void {
 export type ComposerBusyAction = "queue" | "steer";
 const BUSY_ACTION_KEY = "coder.composerBusyAction";
 let busyAction: ComposerBusyAction | undefined;
+const busyActionListeners = new Set<() => void>();
+
+function subscribeBusyAction(listener: () => void): () => void {
+  busyActionListeners.add(listener);
+  return () => { busyActionListeners.delete(listener); };
+}
 
 export function getComposerBusyAction(): ComposerBusyAction {
   if (busyAction === undefined) {
@@ -375,7 +381,46 @@ export function setComposerBusyAction(action: ComposerBusyAction): void {
   } catch {
     // Private mode / quota: the preference just stops surviving a relaunch.
   }
+  for (const listener of busyActionListeners) listener();
 }
+
+export function useComposerBusyAction(): ComposerBusyAction {
+  return useSyncExternalStore(subscribeBusyAction, getComposerBusyAction, () => "queue");
+}
+
+export type ConversationAnnouncements = "off" | "status" | "replies";
+const ANNOUNCEMENTS_KEY = "coder.conversationAnnouncements";
+let announcements: ConversationAnnouncements | undefined;
+const announcementListeners = new Set<() => void>();
+
+export function getConversationAnnouncements(): ConversationAnnouncements {
+  if (announcements === undefined) {
+    let raw: string | null = null;
+    try { raw = window.localStorage.getItem(ANNOUNCEMENTS_KEY); } catch { /* session-only */ }
+    announcements = raw === "off" || raw === "replies" ? raw : "status";
+  }
+  return announcements;
+}
+
+export function setConversationAnnouncements(mode: ConversationAnnouncements): void {
+  announcements = mode === "off" || mode === "replies" ? mode : "status";
+  try { window.localStorage.setItem(ANNOUNCEMENTS_KEY, announcements); } catch { /* session-only */ }
+  for (const listener of announcementListeners) listener();
+}
+
+function subscribeAnnouncements(listener: () => void): () => void {
+  announcementListeners.add(listener);
+  return () => { announcementListeners.delete(listener); };
+}
+
+export function useConversationAnnouncements(): ConversationAnnouncements {
+  return useSyncExternalStore(subscribeAnnouncements, getConversationAnnouncements, () => "status");
+}
+
+const announcementTitle = makeFlagPref("coder.conversationAnnouncementTitle", true);
+export const getConversationAnnouncementTitle = announcementTitle.get;
+export const setConversationAnnouncementTitle = announcementTitle.set;
+export const useConversationAnnouncementTitle = announcementTitle.use;
 
 /** Git pane diff toggles (#1493): side-by-side, soft wrap, `git diff -w`. */
 const diffSplit = makeFlagPref("coder.diffSplit", false);

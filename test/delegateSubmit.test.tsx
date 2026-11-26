@@ -133,7 +133,7 @@ function view(calls: string[]) {
 
 async function submit(m: Awaited<ReturnType<typeof mount>>, prompt: string) {
   await m.type(m.query("textarea"), prompt);
-  await m.click(m.query('button[aria-label="Send"]'));
+  await m.click(m.query('button[data-composer-send]'));
 }
 
 describe("delegation command", () => {

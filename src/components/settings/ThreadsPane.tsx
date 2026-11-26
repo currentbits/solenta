@@ -1,3 +1,4 @@
+import { ConversationSettings } from "../ConversationSettings";
 import type { RefObject } from "react";
 import type { AppSettings, ProviderInfo } from "../../shared/ipc";
 import styles from "../SettingsModal.module.css";
@@ -42,6 +43,7 @@ export function ThreadsPane({
 
   return (
     <>
+      <ConversationSettings />
       <section className={styles.section}>
         <h3 className={styles.sectionLabel}>Sidebar</h3>
         <div className={styles.field}>
