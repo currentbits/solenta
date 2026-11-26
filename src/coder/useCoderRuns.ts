@@ -47,6 +47,8 @@ export function useCoderRuns({
       title = "New Thread",
       projectId?: string,
       opts?: {
+        /** A checkout just added, before its projects push renders. */
+        ownerProject?: ProjectInfo;
         worktree?: boolean;
         orchestrate?: boolean;
         teach?: boolean;
@@ -67,7 +69,7 @@ export function useCoderRuns({
       // worktree itself — its worker does — so it wins over `worktree`.
       // Ask (issue #392) wins over both: a Q&A thread must never grow a
       // worktree or fork a worker, even when those defaults are on.
-      const project = projects.find((p) => p.id === pid);
+      const project = opts?.ownerProject?.id === pid ? opts.ownerProject : projects.find((p) => p.id === pid);
       let ownerSettings = settings;
       if (project?.host) {
         try { ownerSettings = await computerApi(api, project.host.key).settings.get(); }

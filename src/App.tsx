@@ -1,5 +1,6 @@
 import { captureComposerDraft, restoreComposerDraft } from "./composerSession";
 import { threadProjectMoveBlockReason } from "./threadActionMenu";
+import type { ProjectInfo } from "./shared/ipc";
 import type { MachineOption } from "./components/WorkspaceStrip";
 import {
   useCallback,
@@ -156,6 +157,9 @@ const SignInTerminal = lazyNamed(() =>
 );
 const OnboardingModal = lazyNamed(() =>
   import("./components/onboarding/OnboardingModal").then((m) => m.OnboardingModal),
+);
+const RunOnMachineSetup = lazyNamed(() =>
+  import("./components/RunOnMachineSetup").then((m) => m.RunOnMachineSetup),
 );
 const AddProjectPathModal = lazyNamed(() =>
   import("./components/AddProjectPathModal").then((m) => m.AddProjectPathModal),
@@ -1142,7 +1146,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
    * and the old draft is dropped. Threads never move once they have run.
    */
   const moveDraftToMachine = useCallback(
-    async (threadId: string, projectId: string) => {
+    async (threadId: string, projectId: string, ownerProject?: ProjectInfo) => {
       // Sidebar moves also reach this path, including threads that have run
       // without a worktree or CLI session. Check their actual history first.
       const source = await api.threads.peek(threadId, { limit: 1 });
@@ -1154,8 +1158,21 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       ) {
         throw new Error("Only an unstarted draft can move to another computer.");
       }
+      const [sourceRepo, destinationRepo] = await Promise.all([
+        api.git.repoInfo({ threadId }),
+        api.git.repoInfo({ projectId }),
+      ]);
+      if (!sourceRepo.ok || !sourceRepo.originIdentity || !destinationRepo.ok || !destinationRepo.originIdentity) {
+        throw new Error("Could not verify both repository origins. Configure origin on both checkouts and update Solenta on both computers, then retry.");
+      }
+      if (sourceRepo.originIdentity !== destinationRepo.originIdentity) {
+        throw new Error("Choose a checkout of the same repository, including its host and full group path. The original draft has been kept.");
+      }
       const saved = captureComposerDraft(threadId);
       const created = await createThread(draft.title || "New Thread", projectId, {
+        ownerProject,
+        inheritProvider: false,
+        orchestrate: false,
         worktree: Boolean(draft.pendingWorktree),
         baseBranch: draft.baseBranch ?? null,
       });
@@ -1163,6 +1180,9 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       restoreComposerDraft(created.id, saved);
       let deleted = false;
       try {
+        if (draft.pendingWorktree && draft.worktreeFromOrigin) {
+          await api.threads.setPendingWorktree({ threadId: created.id, worktree: true, fromOrigin: true });
+        }
         await api.threads.delete({ threadId });
         deleted = true;
         if (!await purgeThread(threadId)) throw new Error("Could not remove the original draft.");
@@ -1911,30 +1931,36 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     projects,
   });
 
-  /** Machines the open draft can run on: this one and connected computers with the same repo. */
+  const [machineSetup, setMachineSetup] = useState<{
+    threadId: string; source: ProjectInfo; target: MachineOption; cloneUrl: string;
+  } | null>(null);
+  const sidebarHostsRef = useRef(sidebarHosts);
+  sidebarHostsRef.current = sidebarHosts;
   const draftMachines = useMemo(() => {
     const cur = visibleDetail?.thread;
-    if (!cur) return [];
-    const here = projects.find((p) => p.id === cur.projectId);
-    const slug = here?.slug?.toLowerCase();
-    if (!here || !slug || here.scratch || here.remoteHost) return [];
-    const seen = new Set<string>();
+    const here = projects.find((p) => p.id === cur?.projectId);
+    if (!here || here.scratch || here.remoteHost) return [];
+    const hosts = new Map<string, { label: string; status: string }>();
+    hosts.set("", { label: HERE_LABEL, status: "online" });
+    for (const p of projects) if (p.host) hosts.set(p.host.key, p.host);
+    for (const h of sidebarHosts) hosts.set(h.key, h);
     const out: MachineOption[] = [];
-    for (const p of projects) {
-      if (p.scratch || p.remoteHost || p.slug?.toLowerCase() !== slug) continue;
-      const machine = p.host?.key ?? "";
-      if (seen.has(machine) && p.id !== cur.projectId) continue;
-      seen.add(machine);
-      const status = p.host ? sidebarHosts.find((h) => h.key === p.host!.key)?.status ?? p.host.status : "online";
-      out.push({
-        projectId: p.id,
-        label: p.host?.label ?? HERE_LABEL,
-        current: p.id === cur.projectId,
-        online: status === "online",
-      });
+    for (const [hostKey, host] of hosts) {
+      const matches = projects.filter((p) => !p.scratch && !p.remoteHost &&
+        (p.host?.key ?? "") === hostKey && p.slug?.toLowerCase() === here.slug?.toLowerCase());
+      if (!matches.length) out.push({ hostKey, label: host.label, current: false, online: host.status === "online" });
+      for (const p of matches) out.push({ projectId: p.id, hostKey, path: p.path,
+        label: host.label, current: p.id === cur?.projectId, online: host.status === "online" });
     }
-    return out.sort((a, b) => Number(b.label === HERE_LABEL) - Number(a.label === HERE_LABEL));
+    return out;
   }, [visibleDetail?.thread, projects, sidebarHosts]);
+  const setupDraftMachine = async (threadId: string, target: MachineOption) => {
+    const draft = await api.threads.peek(threadId, { limit: 1 });
+    const source = projectsForMoveRef.current.find((p) => p.id === draft.thread.projectId);
+    if (!source) return;
+    const repo = await api.git.repoInfo({ threadId }).catch(() => null);
+    setMachineSetup({ threadId, source, target, cloneUrl: repo?.ok ? repo.webUrl : "" });
+  };
 
   const {
     handleImportCliSession,
@@ -2762,6 +2788,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onSetPendingWorktree={setPendingWorktree}
         draftMachines={draftMachines}
         onMoveDraftToMachine={moveDraftToMachine}
+        onSetupDraftMachine={setupDraftMachine}
+        onConnectComputer={() => { setEditRemoteSettings(false); openSettings("connections"); }}
         previousWorktree={previousWorktree}
         heroProjects={projects}
         onMoveDraftToProject={handleSetThreadProject}
@@ -3240,6 +3268,23 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
           onCancel={() => setStopAllConfirmOpen(false)}
         />
         <Suspense fallback={null}>
+        {machineSetup && (
+          <RunOnMachineSetup
+            key={`${machineSetup.threadId}:${machineSetup.target.hostKey ?? ""}`}
+            {...machineSetup}
+            api={api}
+            addProject={addProject}
+            cloneProject={cloneProject}
+            onClose={() => setMachineSetup(null)}
+            assertOnline={() => {
+              const key = machineSetup.target.hostKey;
+              if (key && sidebarHostsRef.current.find((h) => h.key === key)?.status !== "online") {
+                throw new Error("This computer is offline. Reconnect it in Settings → Connections, then retry.");
+              }
+            }}
+            onMove={(project) => moveDraftToMachineRef.current(machineSetup.threadId, project.id, project)}
+          />
+        )}
         {addPathOpen && (
           <AddProjectPathModal
             onClose={() => setAddPathOpen(false)}

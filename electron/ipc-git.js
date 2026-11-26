@@ -550,12 +550,12 @@ module.exports = {
     // Never throws: anything missing or unparseable is { ok: false }.
     try {
       const threadId = input && input.threadId;
-      if (!threadId) return { ok: false };
-      const thread = ctx.store.getThread(threadId);
-      if (!thread) return { ok: false };
-      const project = ctx.store.getProject(thread.projectId);
+      const thread = threadId ? ctx.store.getThread(threadId) : null;
+      if (threadId && !thread) return { ok: false };
+      const projectId = thread?.projectId || input?.projectId;
+      const project = projectId ? ctx.store.getProject(projectId) : null;
       if (!project || project.remoteHost) return { ok: false };
-      const root = thread.worktreePath || project.path;
+      const root = thread?.worktreePath || project.path;
       if (!root) return { ok: false };
       const info = await services.gitRepoInfo(root);
       // Worktree folders are thread ids; name the new repo after the project checkout.

@@ -360,10 +360,9 @@ export function createGit(ctx: DevCtx): Pick<CoderApi, "git" | "mergeQueue"> {
       async fetch(_input: { threadId: string }) {
         // Dev mock: no remotes.
       },
-      async repoInfo(input: { threadId: string }) {
-        const detail = details.get(input.threadId);
-        if (!detail) return { ok: false as const };
-        const project = ctx.projects.find((p) => p.id === detail.thread.projectId);
+      async repoInfo(input: { threadId: string } | { projectId: string }) {
+        const projectId = "projectId" in input ? input.projectId : details.get(input.threadId)?.thread.projectId;
+        const project = ctx.projects.find((p) => p.id === projectId);
         const slug = project?.slug ?? "";
         const [owner, repo] = slug.split("/");
         if (!owner || !repo) return { ok: false as const };
@@ -372,6 +371,7 @@ export function createGit(ctx: DevCtx): Pick<CoderApi, "git" | "mergeQueue"> {
           owner,
           repo,
           webUrl: `https://github.com/${owner}/${repo}`,
+          originIdentity: `github.com/${owner}/${repo}`,
         };
       },
       async publish(input: { threadId: string; forge: string; name: string }) {

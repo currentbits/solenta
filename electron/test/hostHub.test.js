@@ -15,7 +15,7 @@ async function waitFor(check, timeoutMs = 5_000) {
 }
 
 /** A stand-in remote Solenta Web host: auth + invoke + push. */
-async function fakeHost({ token = "tok", threads = [], projects = [], computerId, onAuth } = {}) {
+async function fakeHost({ token = "tok", threads = [], projects = [], computerId, onAuth, onInvoke } = {}) {
   const server = http.createServer();
   const wss = new WebSocketServer({ server, path: "/ws" });
   const state = { threads, projects, calls: [], credentials: [], sockets: new Set() };
@@ -43,6 +43,7 @@ async function fakeHost({ token = "tok", threads = [], projects = [], computerId
       else if (msg.channel === "threads:get") result = { thread: state.threads.find((t) => t.id === msg.args[0]), messages: [] };
       else if (msg.channel === "threads:create") result = { id: "r-new", projectId: msg.args[0].projectId, title: "new" };
       else if (msg.channel === "boom") return ws.send(JSON.stringify({ kind: "reply", id: msg.id, error: "remote failed" }));
+      else if (onInvoke) result = onInvoke(msg.channel, msg.args);
       ws.send(JSON.stringify({ kind: "reply", id: msg.id, result }));
     });
     ws.on("close", () => state.sockets.delete(ws));
@@ -379,6 +380,27 @@ describe("hostHub", () => {
     assert.equal(hub.route("fs:browse", [{ path: "~" }], async () => null), null, "no onHost: local");
     await assert.rejects(hub.route("fs:browse", [{ path: "~", onHost: "gone:1" }], async () => null), /no longer in the sidebar/);
   });
+
+  for (const channel of ["projects:add", "projects:clone"]) {
+    it(`routes a new thread to its freshly prepared checkout after ${channel}`, async () => {
+      const remote = await fakeHost({ onInvoke: (called) => called === channel
+        ? { id: "fresh-project", path: "/srv/rocket", slug: "acme/rocket" } : undefined });
+      const { hub } = makeHub(remote);
+      cleanup.push(() => remote.close(), () => hub.close());
+      hub.setHosts([HOST]);
+      await waitFor(() => hub.list()[0]?.status === "online");
+      const hostKey = "me@box:4620";
+      const args = channel === "projects:add"
+        ? ["/srv/rocket", { onHost: hostKey, requireExistingRepo: true }]
+        : [{ url: "https://github.com/acme/rocket", parentDir: "/srv", onHost: hostKey }];
+      const project = await hub.route(channel, args, () => assert.fail("ran locally"));
+      assert.equal(project.host.key, hostKey);
+      if (channel === "projects:add") assert.deepEqual(remote.state.calls.at(-1).args, ["/srv/rocket", { requireExistingRepo: true }]);
+      const draft = await hub.route("threads:create", [{ projectId: project.id, title: "Draft" }], () => assert.fail("created locally"));
+      assert.equal(draft.host.key, hostKey);
+      assert.equal(remote.state.calls.at(-1).args[0].projectId, project.id);
+    });
+  }
 
   it("applies the host's row-patch pushes and refetches on a gap", async () => {
     const remote = await fakeHost({ threads: [{ id: "r1", projectId: "rp", title: "a" }] });

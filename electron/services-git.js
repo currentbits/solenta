@@ -161,6 +161,22 @@ async function gitFetch(cwd) {
   }
 }
 
+function originIdentity(url) {
+  const raw = String(url || "").trim();
+  const scp = raw.match(/^(?:[^@/\s]+@)?([^:/\s]+):([^/].*)$/);
+  try {
+    const parsed = new URL(scp && !raw.includes("://") ? `ssh://${scp[1]}/${scp[2]}` : raw);
+    if (!["http:", "https:", "ssh:", "git:"].includes(parsed.protocol)) return null;
+    const repoPath = parsed.pathname.replace(/^\/+|\/+$/g, "").replace(/\.git$/i, "");
+    if (!parsed.hostname || !repoPath) return null;
+    // The transport and credentials do not identify the repository. Keep
+    // nonstandard ports and the entire case-sensitive path, including groups.
+    const port = (parsed.protocol === "ssh:" && parsed.port === "22") ||
+      (parsed.protocol === "git:" && parsed.port === "9418") ? "" : parsed.port;
+    return `${parsed.hostname.toLowerCase()}${port ? `:${port}` : ""}/${repoPath}`;
+  } catch { return null; }
+}
+
 /**
  * owner/repo plus a web URL from a git remote URL, or null.
  * Handles scp-style ssh (git@host:owner/repo), ssh:// and http(s) URLs.
@@ -238,7 +254,7 @@ async function gitRepoInfo(cwd) {
   }
   const info = repoInfoFromRemote(remote);
   if (!info) return { ok: false };
-  return { ok: true, ...info, forge: await forgeKindOf(remote) };
+  return { ok: true, ...info, originIdentity: originIdentity(remote), forge: await forgeKindOf(remote) };
 }
 
 /**
@@ -333,6 +349,7 @@ module.exports = {
   gitSyncInfo,
   gitFetch,
   repoInfoFromRemote,
+  originIdentity,
   gitRepoInfo,
   summarizePullOutput,
   pullFailureReason,

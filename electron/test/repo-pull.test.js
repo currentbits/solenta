@@ -11,6 +11,7 @@ const {
   gitPull,
 } = require("../services.js");
 
+const { originIdentity } = require("../services-git.js");
 const { git } = require("./support/git.js");
 
 /** Minimal repo with one commit and user config. Returns its path. */
@@ -84,6 +85,22 @@ describe("repoInfoFromRemote", () => {
   });
 });
 
+describe("origin identity for cross-computer drafts", () => {
+  it("matches SSH and HTTPS without exposing credentials", () => {
+    const expected = "github.com/acme/rocket";
+    for (const url of ["git@github.com:acme/rocket.git", "ssh://git@github.com:22/acme/rocket.git", "https://user:secret@GitHub.com/acme/rocket.git/"]) {
+      assert.equal(originIdentity(url), expected);
+    }
+  });
+  it("distinguishes forges, full group paths, and nonstandard ports", () => {
+    const urls = ["https://github.com/acme/rocket", "https://gitlab.com/acme/rocket", "https://gitlab.com/one/acme/rocket", "https://gitlab.com/two/acme/rocket", "https://gitlab.com:8443/acme/rocket"];
+    assert.equal(new Set(urls.map(originIdentity)).size, urls.length);
+  });
+  it("fails closed for local or unparseable origins", () => {
+    for (const url of ["", "/srv/rocket", "file:///srv/rocket", "not a URL"]) assert.equal(originIdentity(url), null);
+  });
+});
+
 describe("gitRepoInfo", () => {
   let tmp;
 
@@ -110,6 +127,19 @@ describe("gitRepoInfo", () => {
     assert.deepEqual(await gitRepoInfo(repo), { ok: false, noOrigin: true });
   });
 
+  it("reads a freshly added project origin without requiring a thread", async () => {
+    const repo = initRepo(path.join(tmp, "repo"));
+    git(repo, ["remote", "add", "origin", "ssh://git@gitlab.com/group/sub/rocket.git"]);
+    const handler = require("../ipc-git.js")["git:repoInfo"];
+    const ctx = { store: {
+      getProject: (id) => id === "p" ? { id, path: repo } : null,
+      getThread: () => { throw new Error("No thread exists yet"); },
+    } };
+    const result = await handler(ctx, { projectId: "p" });
+    assert.equal(result.originIdentity, "gitlab.com/group/sub/rocket");
+    assert.deepEqual(await handler(ctx, { projectId: "missing" }), { ok: false });
+  });
+
   it("returns owner/repo and webUrl for a repo with an origin", async () => {
     const repo = initRepo(path.join(tmp, "repo"));
     git(repo, ["remote", "add", "origin", "git@github.com:acme/widgets.git"]);
@@ -119,6 +149,7 @@ describe("gitRepoInfo", () => {
       repo: "widgets",
       webUrl: "https://github.com/acme/widgets",
       forge: "github",
+      originIdentity: "github.com/acme/widgets",
     });
   });
 });
