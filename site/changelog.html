@@ -36,7 +36,7 @@
   <!-- Meterbird analytics, cookieless until the visitor allows it in the
        consent.js banner; replay only after "Allow". -->
   <script src="consent.js" defer></script>
-<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage","name":"Solenta changelog","url":"https://solenta.app/changelog.html","dateModified":"2026-11-05","about":{"@type":"SoftwareApplication","name":"Solenta","url":"https://solenta.app/","softwareVersion":"0.29.0","datePublished":"2026-11-05"},"publisher":{"@id":"https://solenta.app/#org"},"breadcrumb":{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Solenta","item":"https://solenta.app/"},{"@type":"ListItem","position":2,"name":"Changelog","item":"https://solenta.app/changelog.html"}]}}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage","name":"Solenta changelog","url":"https://solenta.app/changelog.html","dateModified":"2026-11-28","about":{"@type":"SoftwareApplication","name":"Solenta","url":"https://solenta.app/","softwareVersion":"0.30.0","datePublished":"2026-11-28"},"publisher":{"@id":"https://solenta.app/#org"},"breadcrumb":{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Solenta","item":"https://solenta.app/"},{"@type":"ListItem","position":2,"name":"Changelog","item":"https://solenta.app/changelog.html"}]}}</script>
 </head>
 <body>
 
@@ -65,6 +65,44 @@
       <p class="lede">
         Every notable change to Solenta, newest first.
       </p>
+
+      <h2 id="v0-30-0">0.30.0 <small>2026-11-28</small></h2>
+      <h3>Added</h3>
+      <ul>
+        <li><strong><a href="docs/ssh">Run on another computer</a>.</strong> The composer always shows Run on…, lists every connected computer, and can open an existing checkout or clone the repo there before the thread starts.</li>
+        <li><strong>Connect without SSH.</strong> A three-step wizard links a computer through an HTTPS tunnel in your own account and device pairing. Agents, repos and credentials stay on that computer.</li>
+        <li><strong>Remote computers own their work.</strong> A remote computer keeps running its threads after you disconnect, uses its own agent settings, and updates and restarts its own server.</li>
+        <li><strong>Color palettes.</strong> General settings offers Solenta, Midnight and Forest palettes with a live preview, and imports or exports your own as JSON.</li>
+        <li><strong><a href="docs/spend">Usage</a> outside Solenta.</strong> Usage can count local Claude Code and Codex sessions that no Solenta thread ran, without counting anything twice, and shows monthly Claude extra-usage budgets.</li>
+        <li><strong>Fresh context and Ultracode.</strong> Start a new provider conversation in the same thread and keep its history. Ultracode is its own Claude session toggle.</li>
+        <li><strong><a href="docs/automations">Automation sessions</a>.</strong> An automation can start a new thread, continue a chosen thread, or reuse it with fresh context.</li>
+        <li><strong>Projects from CLI history.</strong> Add project › From CLI history lists folders you used with Claude Code, Codex and other CLIs. You can also drop folders on the sidebar.</li>
+        <li><strong><a href="docs/review">PR comments as context</a>.</strong> Add review comments, with their file and line, to a thread or a new draft. PR descriptions complete <code>@user</code> and issue references, and checklists tick in place.</li>
+        <li><strong>Page tools for agents.</strong> Agents can call the tools the page open in the Browser pane registers, scoped to that page, and you can pick several annotations into one draft.</li>
+        <li><strong>Connector proposals.</strong> Agents can propose adding or removing an MCP connector. It installs only after you approve it.</li>
+        <li><strong>PDF preview.</strong> The Files pane previews PDFs and keeps the page and zoom across thread switches.</li>
+        <li><strong>New models.</strong> Fable 5.2 for Claude, and GPT-6.2 Sol and Astra for Codex. The model picker checks for new models when you open it.</li>
+        <li><strong>Dictation in 32 languages.</strong> An optional local model transcribes 32 languages and detects which one you speak.</li>
+        <li><strong>Conversation extras.</strong> Copy a conversation or branch, search the shortcut reference, keep Queue/Steer preferences across threads, and regenerate a title with ⌘⌥R.</li>
+      </ul>
+      <h3>Changed</h3>
+      <ul>
+        <li><strong>Claude retries in place.</strong> Overloaded and server errors retry in the same session after 5, 15 and 45 seconds. Resuming a large thread idle for over an hour asks first.</li>
+        <li><strong>Claude plans and skills.</strong> Claude gets a plan tool that uses the thread checklist, and typed skill references resolve when you send.</li>
+        <li><strong>Auto-settle after 7 days.</strong> The default is now 7 days instead of 3. A value you saved keeps working.</li>
+        <li><strong>Stop servers on settle.</strong> Opt in to stop Solenta-managed servers and actions when a thread settles.</li>
+        <li><strong>Faster iOS Simulator.</strong> Input and the live display run over a hardware video stream.</li>
+      </ul>
+      <h3>Fixed</h3>
+      <ul>
+        <li><strong>Remote threads through disconnects.</strong> A remote thread shows its computer's connection status with Reconnect, stays readable, and keeps your draft. Sending waits until the computer is back.</li>
+        <li><strong>Terminal.</strong> Resizes and trimmed history recover after restarts, and replayed scrollback no longer answers queries into the shell.</li>
+        <li><strong>Git.</strong> Non-ASCII paths, large commits and hung reads work, and errors show git's real message.</li>
+        <li><strong>Browser pane.</strong> Screenshots keep their full resolution and are no longer transparent, and Inspect crops at the preset scale.</li>
+        <li><strong>Right-to-left text.</strong> Mixed Arabic or Hebrew and English renders in the right direction.</li>
+        <li><strong>Finding agent CLIs.</strong> Provider CLIs are found past noisy login shells, and home paths in provider environments expand.</li>
+        <li><strong>Self-hosted GitLab.</strong> Origins keep their host and account, and reviews show each reviewer's verdict.</li>
+      </ul>
 
       <h2 id="v0-29-0">0.29.0 <small>2026-11-05</small></h2>
       <h3>Added</h3>
